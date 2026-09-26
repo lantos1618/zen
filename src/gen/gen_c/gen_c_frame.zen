@@ -1,0 +1,148 @@
+// Per-function lowering state: bindings, closures, loops, blocks, and owned
+// Values. These rows are discarded between functions; backend work queues are
+// Deliberately not part of the frame.
+
+str = std.text
+Vec = std.collections
+TyId = sema.sema_ty
+Ctx = sema.sema_check
+Inst = sema.sema_inst
+Lambda = std.ast
+
+// One binding in scope, and the number that makes its C name unique
+// inside its function.
+LocalSlot* = {
+    name*: str,
+    index*: usize,
+    ty*: TyId,
+
+    // The C name is a pointer to the value rather than the value.
+    // "`::` means the method writes the receiver's own bytes", so a
+    // `::` parameter is passed by address and every read of it goes
+    // through a dereference. A `::=` local is not by reference: it is
+    // the frame's own storage and there is nothing to alias.
+    by_ref*: bool,
+
+    // Which loop this name is the handle of, 1-based, or 0 for an
+    // ordinary binding. `(h, value) { .. }` binds `h` to a
+    // `LoopHandle` — not a value, no C storage: it's the two labels of
+    // the loop it came from, so the binding carries the loop's depth
+    // and `h.break(v)` reads the frame back out. Depth, not a pointer,
+    // because a body inlined inside another has both loops in scope
+    // and the inner one shadows.
+    handle*: usize,
+
+    // Which closure this name is, 1-based, or 0 for an ordinary
+    // binding. A lambda handed to a function-typed parameter has no C
+    // storage either: "a body is a non-escaping stack closure, inlined
+    // at the call site" — so the binding carries an index into the
+    // backend's closure table, and `f(x)` inlines the lambda rather
+    // than calling through a pointer.
+    closure*: usize,
+
+    is_closure* = (self: @Self) bool { self.closure > 0 }
+
+    is_handle* = (self: @Self) bool { self.handle > 0 }
+
+    // A value row, rather than a handle or closure row. Whether its type
+    // occupies bytes is a separate question (`has_storage` owns unit).
+    is_value* = (self: @Self) bool {
+        (self.is_handle() == false) && (self.is_closure() == false)
+    }
+}
+
+// A lambda bound to a function-typed parameter, and everything the
+// inliner needs to put its body back where it was written.
+// The frame is the half that is easy to get wrong: a closure's free
+// names mean what they meant where it was written, and inlining puts
+// the body inside the callee's frame — where `find`'s own
+// `range.loop((h, value) { .. })` would otherwise silently capture a
+// caller's `h` with a different value, rather than erroring. So `home`
+// and `check_home` are the two scope stacks' depths when the lambda
+// was written, and the inliner rewinds both.
+// `ctx` is the caller's, which is what makes a `.try()` inside a lambda
+// body return from the real function it was written in, not the callee
+// it was inlined into.
+Closure* = {
+    lam*: Lambda,
+    // the closure's declared parameter types, from the signature it was
+    // handed to: "a closure passed to a function whose signature is
+    // already known infers its parameter types from that signature"
+    ptys*: Vec<TyId>,
+    ret*: TyId,
+    home*: usize,
+    check_home*: usize,
+    // Where the writing function's own frame begins — not `home`:
+    // `home` is where the lambda was written, this is where the body it
+    // was written in started. The difference (every binding the writing
+    // function had made by then) decides whether `x = ..` inside the
+    // lambda declares an `x` or stores into the one already there.
+    floor*: usize,
+    inst*: Inst,
+    ctx*: Ctx,
+    // The function where this callback was written, even when it is inlined.
+    return_to*: Res<usize>,
+}
+
+// A function inlined into another C body returns to its result and end label.
+// The ledger keeps usage shared by callbacks that capture the target id.
+InlineReturn* = {
+    result*: str,
+    label*: str,
+    depth*: usize,
+    used* :: bool = false,
+
+    note_use* = (self :: @Self) () { self.used = true; }
+}
+
+// The two labels and the result of one loop being lowered.
+// `h.break(v)` and `h.next()` are `goto`s and not C's `break` and
+// `continue`: an inlined body sits inside whatever the lowering of a
+// `.match` produced, and a C `break` there would leave that construct
+// rather than the loop. A label is unambiguous wherever it is written.
+LoopFrame* = {
+    brk*: usize,        // the label a `break` jumps to
+    cnt*: usize,        // the label the next pass starts at
+    next_used* :: bool = false,
+    break_used* :: bool = false,
+    result*: str,       // the C name the loop's value lands in
+    has_result*: bool,  // ..when it has one; a discarded loop has none
+    ty*: TyId,          // the `Res<T>` that value is
+
+    // How many blocks were open when the loop was. A `goto` jumps over
+    // closing braces, so the cleanup those braces stood for has to be
+    // written before the jump — `h.break()`/`h.next()` unwind every
+    // block from the innermost out to this depth. Without it, the drops
+    // simply never run, the one failure shape a backend may not have.
+    depth*: usize,
+
+    note_next* = (self :: @Self) () { self.next_used = true; }
+    note_break* = (self :: @Self) () { self.break_used = true; }
+}
+
+// One binding a block must destroy when it leaves.
+// The C name is rebuilt from these two rather than stored: a `str`
+// field would own its bytes, and `sym_local` already turns the pair
+// back into the same name `declare_local` wrote.
+// `live` is the number of the `int` saying whether this binding still
+// owns its value, or 0 when nothing can move it. "The compiler calls
+// drop exactly once" isn't a straight-line fact — a value may be moved
+// on one path and not another — so a `consume`d binding carries a flag,
+// cleared at the move and tested at every exit. One `int` on the
+// frame; getting it wrong statically costs a double free.
+DropEntry* = {
+    name*: str,
+    index*: usize,
+    ty*: TyId,
+    live*: usize,
+}
+
+// One emitted C block, while it is open.
+// This stack follows emitted braces rather than `locals`, which the
+// inliner rewinds to the frame a closure was written in — a `.try()`
+// inside an inlined body still has to unwind the block it is
+// physically standing in.
+BlockFrame* = {
+    mark*: usize,   // where this block's drops start in `drops`
+    rec*: usize,    // the number of its `zg_scope` record, or 0 for none
+}

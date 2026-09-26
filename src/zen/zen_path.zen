@@ -1,0 +1,279 @@
+// Module path and name rules shared by build and editor drivers.
+//
+// A module may live at `<name>.zen` or `<name>/<name>.zen`; its qualified name
+// is the root-relative path without the extension and with dot separators.
+//
+// Build source spans are relative to the compilation root. Editor entries
+// outside that root retain their absolute path for overlays and URI replies.
+
+Alloc, AllocError = std.mem
+str, String = std.text
+Range, Path = std.core
+Vec = std.collections
+join_path = std.core.path
+
+QualifiedName = std.ast.ast_span
+ZEN_STD_ENV = std.build
+
+// Anchor a filesystem path at the actual process directory. Redundant `/`
+// and `.` components share one spelling; `..` stays intact because resolving
+// it lexically would change traversal through a symbolic link. No file needs
+// to exist, so the same operation applies to unsaved editor buffers.
+anchored_path* = (a: Alloc, directory: str, path: str)
+                 Res<str, AllocError> {
+    full = path.starts_with("/").match({
+        true  => path,
+        false => join_path(a, directory, path).try().view(),
+    });
+    out ::= a.String("/").try();
+    full.split('/').loop((part) {
+        (!part.is_empty() && !part.eq(".")).then(() {
+            (out.len() > 1).then(() { out.add('/').try(); });
+            out.add(part).try();
+        });
+    });
+    Ok(out.view());
+}
+
+// Derive a module's canonical dotted name from its root-relative path.
+module_name* = (a: Alloc, root: str, path: str) Res<str, AllocError> {
+    base ::= root;
+    out  ::= a.String().try();
+    // An editor can check a tool outside its selected import namespace. Keep
+    // the same dotted ../ identity used by an explicit CLI entry, while its
+    // Unit retains the original filesystem path for overlays and diagnostics.
+    loop(() { !path.under(base) && !base.is_empty() }, (h) {
+        base = Path(base).parent().value_or(Path("")).text;
+        out.add("...").try();
+    });
+    relative = relative_to(base, path);
+    inner    = relative.slice(0, relative.len - EXT_BYTES);
+    Range(0, inner.len).loop((h, i) {
+        out.add(dot_for(inner.index(i))).try();
+    });
+    Ok(out.view());
+}
+
+// Resolve the standard-library root for an embedded driver. `ZEN_STD` wins;
+// otherwise an absolute program path may locate a sibling `src/std` tree.
+std_root_for* = (env: Env, a: Alloc) str {
+    env.var(ZEN_STD_ENV).match({
+        Ok(path) => path.is_empty().match({
+            true  => std_root_beside_program(env, a),
+            false => path,
+        }),
+        None     => std_root_beside_program(env, a),
+    })
+}
+
+std_root_beside_program = (env: Env, a: Alloc) str {
+    found: Res<str> = loop<str>((h) {
+        program = env.argv.get(0).match({
+            None     => { h.break(""); "" },
+            Ok(path) => path,
+        });
+        dir     = Path(program).parent().value_or(Path("")).text;
+        dir.is_empty().then(() { h.break(""); });
+
+        root   = join_path(a, dir, "src").match({
+            Err(_)    => { h.break(""); "" },
+            Ok(value) => value.view(),
+        });
+        marker = join_path(a, root, "std/std.zen").match({
+            Err(_)    => { h.break(""); "" },
+            Ok(value) => value.view(),
+        });
+        (!env.fs.exists(marker)).then(() { h.break(""); });
+        h.break(root);
+    });
+    found.match({ Ok(root) => root, None => "" })
+}
+
+// Infer an editor compilation root without climbing above `floor`. Folder
+// modules (`<name>/<name>.zen`) are climbed through. A project `build.zen`
+// selects its `src` child when the open file is beneath that child.
+inferred_root = (env: Env, a: Alloc, floor: str, path: str) str {
+    dir ::= Path(path).parent().value_or(Path("")).text;
+    // The parent of an absolute root-level document is `/`, not an absent
+    // compilation root anchored at the process directory.
+    (dir.is_empty() && path.starts_with("/")).then(() { dir = "/"; });
+    loop(() { dir.len > floor.len && holds_its_own_name(env, a, dir) }, (h) {
+        dir = Path(dir).parent().value_or(Path("")).text;
+    });
+    settled = dir;
+    marked ::= dir;
+    loop(marked.len > floor.len && !holds_build_zen(env, a, marked), (h) {
+        marked = Path(marked).parent().value_or(Path("")).text;
+    });
+    (marked.len >= floor.len && !marked.is_empty()
+     && holds_build_zen(env, a, marked)).match({
+        true  => source_root(a, marked, path),
+        false => settled,
+    });
+}
+
+// Explicit editor mappings select an import namespace for a document without
+// changing discovery for unrelated examples, tests or nested projects.
+SourceRoot* = {
+    path*: str,
+    root*: str,
+}
+
+root_for* = (
+    env      : Env,
+    a        : Alloc,
+    floor    : str,
+    path     : str,
+    mappings : Res<Vec<SourceRoot>>
+) str {
+    chosen        ::= "";
+    length: usize ::= 0;
+    mappings.match({
+        None        => (),
+        Ok(entries) => entries.loop((entry) {
+            (path.under(floor) && (path.eq(entry.path) || path.under(entry.path))
+                && entry.path.len > length).then(() {
+                chosen = entry.root;
+                length = entry.path.len;
+            });
+        }),
+    });
+    chosen.is_empty().match({
+        true  => inferred_root(env, a, floor, path),
+        false => chosen,
+    })
+}
+
+// A project marker does not necessarily mark the module namespace root.
+source_root = (a: Alloc, project: str, path: str) str {
+    join_path(a, project, "src").match({
+        Err(_)  => project,
+        Ok(src) => path.under(src.view()).match({
+            true  => src.view(),
+            false => project,
+        }),
+    })
+}
+
+// Test the `<dir>/<basename>.zen` folder-module convention. Allocation
+// failure stops the climb.
+holds_its_own_name = (env: Env, a: Alloc, dir: str) bool {
+    a.String("{}/{}.zen", dir, Path(dir).name()).match({
+        Err(_) => false,
+        Ok(f)  => env.fs.exists(f.view()),
+    })
+}
+
+// Test for a project marker. Allocation failure stops the climb.
+holds_build_zen* = (env: Env, a: Alloc, dir: str) bool {
+    join_path(a, dir, "build.zen").match({
+        Err(_) => false,
+        Ok(f)  => env.fs.exists(f.view()),
+    })
+}
+
+// Return a root-relative path, or the original path when it is outside root.
+relative_to* = (root: str, path: str) str {
+    path.under(root).match({
+        true  => path.slice(
+            root.eq("/").match({ true => 1, false => root.len + 1 }),
+            path.len
+        ),
+        false => path,
+    });
+}
+
+// `path` names something strictly inside the directory `root`.
+under* = (path: str, root: str) bool {
+    root.eq("/").match({
+        true  => path.len > 1 && path.starts_with("/"),
+        false => path.len > root.len + 1
+            && path.slice(0, root.len).eq(root)
+            && path.index(root.len) == '/',
+    })
+}
+
+EXT_BYTES : usize = 4
+
+dot_for = (b: u8) u8 {
+    (b == '/').match({ true  => '.', false => b })
+}
+
+// Convert a dotted module name to path separators.
+slash_for* = (b: u8) u8 {
+    (b == '.').match({ true  => '/', false => b })
+}
+
+// A module's canonical name, source path, and root-relative source path.
+Unit* = {
+    name*: str,     // the dotted module name: `std.core.result`
+    path*: str,     // the file to open, as given
+    rel*:  str,     // the same file, relative to the compilation root
+}
+
+// Build a Unit from a path rather than the import spelling that found it.
+unit_at* = (a: Alloc, root: str, path: str) Res<Unit, AllocError> {
+    name = module_name(a, root, path).try();
+    Ok(Unit(name: name, path: path, rel: relative_to(root, path)));
+}
+
+// Resolve `<root>/<name>.zen` or the folder-module form
+// `<root>/<name>/<last>.zen`. When neither exists, return the flat candidate
+// so the eventual read reports the requested path.
+candidate* = (env: Env, a: Alloc, root: str, name: str) Res<Unit, AllocError> {
+    flat ::= a.String("{}/{}.zen", root, name).try();
+    last = Path(name).name();
+    nest ::= a.String("{}/{}/{}.zen", root, name, last).try();
+    take_flat = env.fs.exists(flat.view()) || !env.fs.exists(nest.view());
+    take_flat.match({
+        true  => unit_at(a, root, flat.view()),
+        false => unit_at(a, root, nest.view()),
+    })
+}
+
+// Conventional program entry module and declaration name.
+ENTRY*: str = "main"
+
+// Resolve an explicit entry path or probe conventional module names.
+entry_of* = (env: Env, a: Alloc, root: str, named: str)
+            Res<Unit, AllocError> {
+    named.is_empty().match({
+        false => entry_named(env, a, root, named),
+        true  => entry_probed(env, a, root),
+    })
+}
+
+// An explicit entry is root-relative and is not probed for alternatives.
+entry_named = (env: Env, a: Alloc, root: str, named: str)
+              Res<Unit, AllocError> {
+    path ::= a.String("{}/{}", root, named).try();
+    unit_at(a, root, path.view())
+}
+
+// Probe `main`, the root basename, then the compiler's `zen` entry.
+entry_probed = (env: Env, a: Alloc, root: str) Res<Unit, AllocError> {
+    first = candidate(env, a, root, ENTRY).try();
+    env.fs.exists(first.path).match({
+        true  => Ok(first),
+        false => entry_after_main(env, a, root),
+    })
+}
+
+entry_after_main = (env: Env, a: Alloc, root: str) Res<Unit, AllocError> {
+    base   = Path(root).name();
+    second = candidate(env, a, root, base).try();
+    env.fs.exists(second.path).match({
+        true  => Ok(second),
+        false => candidate(env, a, root, "zen"),
+    })
+}
+
+// The flat or folder-module source path of a qualified import under `root`.
+joined* = (a: Alloc, root: str, q: QualifiedName, folder: bool)
+          Res<str, AllocError> {
+    out ::= a.String("{}", root).try();
+    q.segments.loop((h, s) { out.fmt("/{}", s.text).try() });
+    folder.then(() { out.fmt("/{}", q.last_segment()).try() });
+    out.add(".zen").try();
+    Ok(out.view());
+}

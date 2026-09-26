@@ -1,0 +1,126 @@
+// Comments and blank lines survive parsing and attach to the right node.
+//
+// The five placements TESTING.md names are all in the file below:
+// before a declaration, after one, inside a match arm, between arms,
+// and at end of file. AST_CONTRACT.md fixes who owns each:
+//
+//   LEADING  the outermost node beginning at that token — so the
+//            comment above `Point` belongs to the DECLARATION, not to
+//            its name and not to the module
+//   TRAILING the outermost node whose span ends before it on that line
+//   EOF      Module.trailing, which has nowhere else to go
+//
+// A BLANK LINE IS TRIVIA TOO, and it is the one piece the lexer does
+// not hand over: whitespace is not a token, so the parser derives a
+// `Blank` from the gap between two spans. A formatter that silently
+// deleted the blank line between two declarations would fail its own
+// round trip, so the derivation is asserted here beside the comments.
+
+scan, Source = std.lex.lex
+Parser, module = std.parse
+Ast = std.ast.ast_arena
+TriviaRun = std.ast.ast_span
+Decl, Block = std.ast.ast_node
+ExprId = std.ast.ast_id
+
+//   1  // before the declaration
+//   2  Point = {
+//   3      x: i32,  // after the field
+//   4  }
+//   5
+//   6  name = (s: Shape) str {
+//   7      s.match({
+//   8          // between the arms
+//   9          Circle => "c",  // after an arm
+//  10          Square => "s",
+//  11      });
+//  12  }
+//  13  // at end of file
+SOURCE: str = "// before the declaration\nPoint = {\n    x: i32,  // after the field\n}\n\nname = (s: Shape) str {\n    s.match({\n        // between the arms\n        Circle => \"c\",  // after an arm\n        Square => \"s\",\n    });\n}\n// at end of file\n"
+
+// Every piece of a run, in order. A count alone would pass while the
+// parser attached the wrong comment, which is the failure this test
+// exists to catch.
+show_run = (env: Env, tree: Ast, label: str, run: TriviaRun) () {
+    println("{} {}", label, run.len);
+    Range(0, run.len).loop((h, i) {
+        t = tree.trivia_at(run, i);
+        t.kind.match({
+            LineComment  => println("  line {} {}", t.span.start.line, t.text),
+            BlockComment => println("  block {} {}", t.span.start.line, t.text),
+            Blank        => println(
+                "  blank {}..{}",
+                t.span.start.line,
+                t.span.end.line
+            ),
+        });
+    });
+}
+
+show_members = (env: Env, tree: Ast, d: Decl) () {
+    d.kind.match({
+        Struct(s) => s.members.loop((h, mem) {
+            show_run(env, tree, "member.leading", mem.leading);
+            show_run(env, tree, "member.trailing", mem.trailing);
+        }),
+        _         => println("not a struct"),
+    });
+}
+
+show_arms = (env: Env, tree: Ast, d: Decl) () {
+    d.kind.match({
+        Function(f) => f.body.match({
+            Ok(b) => show_arms_in(env, tree, tree.block_at(b)),
+            None  => println("no body"),
+        }),
+        _           => println("not a function"),
+    });
+}
+
+show_arms_in = (env: Env, tree: Ast, b: Block) () {
+    b.stmts.loop((h, s) {
+        s.kind.match({
+            Expr(es) => show_arms_of(env, tree, es.expr),
+            _        => println("not an expression statement"),
+        });
+    });
+}
+
+show_arms_of = (env: Env, tree: Ast, id: ExprId) () {
+    tree.expr_at(id).kind.match({
+        Match(mt) => mt.arms.loop((h, a) {
+            show_run(env, tree, "arm.leading", a.leading);
+            show_run(env, tree, "arm.trailing", a.trailing);
+        }),
+        _         => println("not a match"),
+    });
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+    lexed = scan(alloc, Source(file: "t.zen", text: SOURCE)).try();
+    p ::= alloc.Parser(lexed);
+    m = p.module("t").try();
+    println("lex {} parse {}", lexed.diags.len, p.diags.len);
+
+    show_run(env, p.tree, "module.leading", m.leading);
+
+    m.decls.get(0).match({
+        Ok(d) => {
+            show_run(env, p.tree, "decl0.leading", d.leading);
+            show_members(env, p.tree, d);
+        },
+        None  => println("no decl 0"),
+    });
+
+    m.decls.get(1).match({
+        Ok(d) => {
+            show_run(env, p.tree, "decl1.leading", d.leading);
+            show_arms(env, p.tree, d);
+        },
+        None  => println("no decl 1"),
+    });
+
+    show_run(env, p.tree, "module.trailing", m.trailing);
+    Ok(0);
+}

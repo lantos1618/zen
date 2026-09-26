@@ -1,0 +1,436 @@
+// Reads into the caller's `Jsons` arena. Syntax faults carry the failing byte
+// offset; allocation failures are JsonFault.NoMemory.
+
+str, String, push_utf8 = std.text
+Vec = std.collections
+Alloc = std.mem
+Range = std.core
+HEX_BASE = std.core.byte
+Jsons, Json, JsonId, Pair = std.json.json_write
+
+JsonFault* = Unexpected(usize)   // a byte that cannot begin what is expected here
+           | Truncated(usize)    // the document ended inside a value
+           | BadEscape(usize)    // a backslash sequence that is not one
+           | BadNumber(usize)    // digits that are not JSON's number grammar
+           | TooDeep(usize)      // nested past MAX_NESTING
+           | Trailing(usize)     // a complete value, and then more bytes
+           | NoMemory            // the arena could not grow
+
+// Bounds recursive DOM reads and the incremental decoder's frame stack.
+MAX_NESTING*: usize = 64
+
+// The cursor borrows plain strings from the input. Escaped strings are decoded
+// with the supplied allocator.
+Reader* = {
+    text: str,
+    a: Alloc,
+    at :: usize = 0,
+    depth :: usize = 0,
+
+    value* = (self :: @Self, tree :: Jsons) Res<JsonId, JsonFault> {
+        self.spaces();
+        b = self.peek().try();
+        b.match({
+            '{' => self.object(tree),
+            '[' => self.array(tree),
+            '"' => self.string(tree),
+            _   => self.atom(tree, b),
+        })
+    }
+
+    atom = (self :: @Self, tree :: Jsons, b: u8) Res<JsonId, JsonFault> {
+        b.match({
+            't' => self.word(tree, "true", Json.Bool(true)),
+            'f' => self.word(tree, "false", Json.Bool(false)),
+            'n' => self.word(tree, "null", Json.Null),
+            _   => self.number(tree),
+        })
+    }
+
+    word = (self :: @Self, tree :: Jsons, spelling: str, v: Json)
+           Res<JsonId, JsonFault> {
+        rest = self.text.slice(self.at, self.text.len);
+        rest.starts_with(spelling).match({
+            false => Err(JsonFault.Unexpected(self.at)),
+            true  => {
+                self.at = self.at + spelling.len;
+                tree.add(v).replace_err(JsonFault.NoMemory)
+            },
+        })
+    }
+
+    // JSON number grammar:
+    //
+    //     -? ( 0 | [1-9][0-9]* ) ( . [0-9]+ )? ( [eE] [+-]? [0-9]+ )?
+    //
+    // The lexeme is stored after validation, not converted.
+    number = (self :: @Self, tree :: Jsons) Res<JsonId, JsonFault> {
+        tree.add(Json.Num(self.number_text().try()))
+            .replace_err(JsonFault.NoMemory)
+    }
+
+    number_text = (self :: @Self) Res<str, JsonFault> {
+        from = self.at;
+        self.byte_if('-');
+        self.integer_part().try();
+        self.fraction_part().try();
+        self.exponent_part().try();
+        Ok(self.text.slice(from, self.at))
+    }
+
+    // A leading zero stands alone: `0` is a number and `01` is two.
+    integer_part = (self :: @Self) Res<(), JsonFault> {
+        b = self.peek().try();
+        (b == '0').match({
+            true  => { self.at = self.at + 1; Ok(()) },
+            false => b.is_digit().match({
+                false => Err(JsonFault.BadNumber(self.at)),
+                true  => { self.digits(); Ok(()) },
+            }),
+        })
+    }
+
+    // `1.` is not a JSON number.
+    fraction_part = (self :: @Self) Res<(), JsonFault> {
+        self.byte_if('.').match({
+            false => Ok(()),
+            true  => self.at_least_one_digit(),
+        })
+    }
+
+    exponent_part = (self :: @Self) Res<(), JsonFault> {
+        (self.byte_if('e') || self.byte_if('E')).match({
+            false => Ok(()),
+            true  => {
+                self.byte_if('+') || self.byte_if('-');
+                self.at_least_one_digit()
+            },
+        })
+    }
+
+    at_least_one_digit = (self :: @Self) Res<(), JsonFault> {
+        from = self.at;
+        self.digits();
+        (self.at == from).match({
+            true  => Err(JsonFault.BadNumber(from)),
+            false => Ok(()),
+        })
+    }
+
+    digits = (self :: @Self) () {
+        loop(self.digit_here(), (h) { self.at = self.at + 1; });
+        ();
+    }
+
+    digit_here = (self: @Self) bool {
+        self.text.get(self.at).match({
+            Ok(b) => b.is_digit(),
+            None  => false,
+        })
+    }
+
+    array = (self :: @Self, tree :: Jsons) Res<JsonId, JsonFault> {
+        self.down().try();
+        self.at = self.at + 1;
+        kids ::= self.a.Vec<JsonId>();
+        self.spaces();
+        more ::= !self.here(']');
+        more.loop((h) {
+            kids.add(self.value(tree).try()).try(JsonFault.NoMemory);
+            self.spaces();
+            more = self.byte_if(',');
+            more.then(() { self.spaces(); });
+        });
+        self.close(']').try();
+        self.up();
+        run = tree.add_items(kids).try(JsonFault.NoMemory);
+        tree.add(Json.Arr(run)).replace_err(JsonFault.NoMemory);
+    }
+
+    object = (self :: @Self, tree :: Jsons) Res<JsonId, JsonFault> {
+        self.down().try();
+        self.at = self.at + 1;
+        kids ::= self.a.Vec<Pair>();
+        self.spaces();
+        more ::= !self.here('}');
+        more.loop((h) {
+            kids.add(self.member(tree).try()).try(JsonFault.NoMemory);
+            self.spaces();
+            more = self.byte_if(',');
+            more.then(() { self.spaces(); });
+        });
+        self.close('}').try();
+        self.up();
+        run = tree.add_pairs(kids).try(JsonFault.NoMemory);
+        tree.add(Json.Obj(run)).replace_err(JsonFault.NoMemory);
+    }
+
+    member = (self :: @Self, tree :: Jsons) Res<Pair, JsonFault> {
+        self.spaces();
+        key = self.text_at().try();
+        self.spaces();
+        (self.byte_if(':')).match({
+            false => Err(JsonFault.Unexpected(self.at)),
+            true  => Ok(Pair(key: key, value: self.value(tree).try())),
+        })
+    }
+
+    // A container missing its close at EOF reports Truncated(text.len).
+    close = (self :: @Self, b: u8) Res<(), JsonFault> {
+        self.byte_if(b).match({
+            true  => Ok(()),
+            false => (self.at >= self.text.len).match({
+                true  => Err(JsonFault.Truncated(self.text.len)),
+                false => Err(JsonFault.Unexpected(self.at)),
+            }),
+        })
+    }
+
+    string = (self :: @Self, tree :: Jsons) Res<JsonId, JsonFault> {
+        s = self.text_at().try();
+        tree.add(Json.Text(s)).replace_err(JsonFault.NoMemory);
+    }
+
+    // Borrows an unescaped string and allocates only when decoding escapes.
+    text_at = (self :: @Self) Res<str, JsonFault> {
+        self.byte_if('"').match({
+            false => Err(JsonFault.Unexpected(self.at)),
+            true  => self.raw_or_decoded(),
+        })
+    }
+
+    raw_or_decoded = (self :: @Self) Res<str, JsonFault> {
+        from = self.at;
+        plain ::= true;
+        done  ::= false;
+        loop(!done, (h) {
+            self.peek().try().text_byte(self.at).try().match({
+                TextEnd    => { done = true; },
+                TextEscape => { plain = false; done = true; },
+                TextPlain  => { self.at = self.at + 1; },
+            });
+        });
+        plain.match({
+            true  => { self.at = self.at + 1; Ok(self.text.slice(
+                from,
+                self.at - 1
+            )) },
+            false => self.decoded(from),
+        })
+    }
+
+    // `self.at` points to the first backslash.
+    decoded = (self :: @Self, from: usize) Res<str, JsonFault> {
+        out ::= self.a.String().try(JsonFault.NoMemory);
+        out.add(self.text.slice(from, self.at)).try(JsonFault.NoMemory);
+        done ::= false;
+        loop(!done, (h) {
+            b       = self.peek().try();
+            kind    = b.text_byte(self.at).try();
+            self.at = self.at + 1;
+            kind.match({
+                TextEnd    => { done = true; },
+                TextEscape => { self.escape(out).try(); },
+                TextPlain  => {
+                    out.add(b).try(JsonFault.NoMemory);
+                },
+            });
+        });
+        Ok(out.view());
+    }
+
+    // `self.at` is on the byte after the backslash.
+    escape = (self :: @Self, out :: String) Res<(), JsonFault> {
+        b       = self.peek().try();
+        self.at = self.at + 1;
+        b.unescaped().match({
+            Ok(x) => out.add(x).replace_err(JsonFault.NoMemory),
+            None  => (b == 'u').match({
+                true  => self.unicode(out),
+                false => Err(JsonFault.BadEscape(self.at - 1)),
+            }),
+        })
+    }
+
+    // Decode `\uXXXX`, combining a high and low surrogate when present. A
+    // lone surrogate is BadEscape.
+    unicode = (self :: @Self, out :: String) Res<(), JsonFault> {
+        hi = self.four_hex().try();
+        (hi >= SURROGATE_HI_MIN && hi <= SURROGATE_HI_MAX).match({
+            false => (hi >= SURROGATE_LO_MIN && hi <= SURROGATE_LO_MAX).match({
+                true  => Err(JsonFault.BadEscape(self.at - 4)),
+                false => out.push_utf8(hi).replace_err(JsonFault.NoMemory),
+            }),
+            true  => self.low_half(hi, out),
+        })
+    }
+
+    low_half = (self :: @Self, hi: u32, out :: String) Res<(), JsonFault> {
+        (self.byte_if('\\') && self.byte_if('u')).match({
+            false => Err(JsonFault.BadEscape(self.at)),
+            true  => {
+                lo = self.four_hex().try();
+                (lo >= SURROGATE_LO_MIN && lo <= SURROGATE_LO_MAX).match({
+                    false => Err(JsonFault.BadEscape(self.at - 4)),
+                    true  => out.push_utf8(
+                        ASTRAL_BASE
+                            + (hi - SURROGATE_HI_MIN) * SURROGATE_SPAN
+                            + (lo - SURROGATE_LO_MIN)
+                    ).replace_err(JsonFault.NoMemory),
+                })
+            },
+        })
+    }
+
+    four_hex = (self :: @Self) Res<u32, JsonFault> {
+        from = self.at;
+        v: u32 ::= 0;
+        ok     ::= self.at + 4 <= self.text.len;
+        Range(0, 4).loop((h, i) {
+            ok.then(() {
+                self.text.index(from + i).hex_value().match({
+                    Ok(d) => { v = v * HEX_BASE.to_u32() + d.to_u32(); },
+                    None  => { ok = false; },
+                });
+            });
+        });
+        ok.match({
+            true  => { self.at = from + 4; Ok(v) },
+            false => Err(JsonFault.BadEscape(from)),
+        })
+    }
+
+    // The byte under the cursor; past the end is Truncated, not Unexpected.
+    peek = (self: @Self) Res<u8, JsonFault> {
+        self.text.get(self.at).match({
+            Ok(b) => Ok(b),
+            None  => Err(JsonFault.Truncated(self.text.len)),
+        })
+    }
+
+    here = (self: @Self, b: u8) bool {
+        self.text.get(self.at).match({ Ok(x) => x == b, None => false })
+    }
+
+    byte_if = (self :: @Self, b: u8) bool {
+        found = self.here(b);
+        found.then(() { self.at = self.at + 1; });
+        found;
+    }
+
+    spaces = (self :: @Self) () {
+        loop(self.space_here(), (h) { self.at = self.at + 1; });
+        ();
+    }
+
+    space_here = (self: @Self) bool {
+        self.text.get(self.at).match({
+            Ok(b) => b.is_json_space(),
+            None  => false,
+        })
+    }
+
+    // Bytes after a complete value are Trailing.
+    at_end = (self: @Self) Res<(), JsonFault> {
+        (self.at == self.text.len).match({
+            true  => Ok(()),
+            false => Err(JsonFault.Trailing(self.at)),
+        })
+    }
+
+    owned = (self: @Self, value: str) Res<String, JsonFault> {
+        out ::= self.a.String().try(JsonFault.NoMemory);
+        out.add(value).try(JsonFault.NoMemory);
+        Ok(out)
+    }
+
+    down = (self :: @Self) Res<(), JsonFault> {
+        self.depth = self.depth + 1;
+        (self.depth > MAX_NESTING).match({
+            true  => Err(JsonFault.TooDeep(self.at)),
+            false => Ok(()),
+        })
+    }
+
+    up = (self :: @Self) () { self.depth = self.depth - 1; }
+}
+
+// Read one complete value. Non-whitespace after it is a trailing-data fault.
+read* = (a: Alloc, tree :: Jsons, text: str) Res<JsonId, JsonFault> {
+    r ::= Reader(text: text, a: a);
+    root = r.value(tree).try();
+    r.spaces();
+    r.at_end().try();
+    Ok(root)
+}
+
+// One quoted string token, decoded into an owned String.
+decode_text_token* = (a: Alloc, raw: str) Res<String, JsonFault> {
+    r ::= Reader(text: raw, a: a);
+    value = r.text_at().try();
+    r.at_end().try();
+    r.owned(value)
+}
+
+// One number token, validated and copied.
+number_token* = (a: Alloc, raw: str) Res<String, JsonFault> {
+    r ::= Reader(text: raw, a: a);
+    value = r.number_text().try();
+    r.at_end().try();
+    r.owned(value)
+}
+
+// JSON whitespace; `is_space` also admits `\v` and `\f`.
+is_json_space* = (b: u8) bool { b.is_in([' ', '\t', '\n', '\r']) }
+
+// The byte a one-letter escape stands for.
+unescaped* = (b: u8) Res<u8> {
+    b.match({
+        '"'  => Ok('"'),
+        '\\' => Ok('\\'),
+        '/'  => Ok('/'),
+        'n'  => Ok('\n'),
+        'r'  => Ok('\r'),
+        't'  => Ok('\t'),
+        'b'  => Ok(BACKSPACE),
+        'f'  => Ok(FORM_FEED),
+        _    => None,
+    })
+}
+
+TextByte* = TextEnd | TextEscape | TextPlain
+
+// A byte inside a quoted string; raw controls are Unexpected.
+text_byte* = (b: u8, at: usize) Res<TextByte, JsonFault> {
+    b.match({
+        '"'  => Ok(TextByte.TextEnd),
+        '\\' => Ok(TextByte.TextEscape),
+        _    => (b < ' ').match({
+            true  => Err(JsonFault.Unexpected(at)),
+            false => Ok(TextByte.TextPlain),
+        }),
+    })
+}
+
+// The same fault with its offset rebased into an enclosing document.
+shifted* = (self: JsonFault, base: usize) JsonFault {
+    self.match({
+        Unexpected(at) => JsonFault.Unexpected(base + at),
+        Truncated(at)  => JsonFault.Truncated(base + at),
+        BadEscape(at)  => JsonFault.BadEscape(base + at),
+        BadNumber(at)  => JsonFault.BadNumber(base + at),
+        TooDeep(at)    => JsonFault.TooDeep(base + at),
+        Trailing(at)   => JsonFault.Trailing(base + at),
+        NoMemory       => JsonFault.NoMemory,
+    })
+}
+
+BACKSPACE: u8 = 8
+FORM_FEED: u8 = 12
+
+SURROGATE_HI_MIN: u32 = 0xD800
+SURROGATE_HI_MAX: u32 = 0xDBFF
+SURROGATE_LO_MIN: u32 = 0xDC00
+SURROGATE_LO_MAX: u32 = 0xDFFF
+SURROGATE_SPAN: u32 = 0x400
+ASTRAL_BASE: u32 = 0x10000

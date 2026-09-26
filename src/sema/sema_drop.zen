@@ -1,0 +1,68 @@
+Expr, Bind, Impl, Span = std.ast
+AllocError = std.mem
+Vec = std.collections
+str = std.text
+ImplId = sema.sema_id
+TyId, TyNamed = sema.sema_ty
+Checker, Ctx = sema.sema_check
+SemaFault, NameFault = sema.sema_diag
+Own = sema.sema_own
+
+// `g = f` on a value with a `Drop` impl would drop it twice.
+check_drop_copy* = (c :: Checker, o :: Own, b: Bind, ctx: Ctx)
+                   Res<(), AllocError> {
+    node = c.tree.expr_at(b.value);
+    node.kind.match({
+        Name(n) => c.drop_copy_of_name(o, node, n.text),
+        // Construction arguments follow constructor ownership rules.
+        _       => Ok(()),
+    })
+}
+
+// A name this frame does not bind is a global or a constant, and it is
+// not a place this rule has an opinion about.
+drop_copy_of_name = (c :: Checker, o :: Own, node: Expr, text: str)
+                    Res<(), AllocError> {
+    o.find_var(text).match({
+        None  => Ok(()),
+        Ok(_) => c.refuse_if_drop(node.span, o.var_type(text), text),
+    })
+}
+
+refuse_if_drop = (c :: Checker, span: Span, ty: TyId, text: str)
+                 Res<(), AllocError> {
+    c.is_drop_type(ty).try().match({
+        false => Ok(()),
+        true  => c.refuse(
+            span,
+            SemaFault.CopyOfDropValue(NameFault(name: text))
+        ),
+    })
+}
+
+// Whether the type's own module holds an impl of `Drop` for it.
+is_drop_type* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
+    c.types.at(ty).match({
+        Named(n) => c.named_is_drop(n),
+        _        => Ok(false),
+    })
+}
+
+named_is_drop = (c :: Checker, n: TyNamed) Res<bool, AllocError> {
+    ids ::= c.alloc.Vec<ImplId>();
+    c.world.impls_named(c.tree, n.name, ids).try();
+    Ok(ids.find((id) { c.is_drop_impl(n, id) }).match({
+        Ok(_) => true,
+        None  => false,
+    }));
+}
+
+is_drop_impl = (c: Checker, n: TyNamed, id: ImplId) bool {
+    (n.decl.module == id.decl.module) && c.world.impl_at(c.tree, id).match({
+        None   => false,
+        Ok(im) => c.tree.type_at(im.bound).kind.match({
+            Named(b) => b.name.text.eq("Drop"),
+            _        => false,
+        }),
+    })
+}

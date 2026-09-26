@@ -1,0 +1,136 @@
+// Static `Type.NAME` resolution. A payload variant denotes its constructor;
+// a union member that carries a value cannot stand alone.
+
+Expr, ExprId, Access = std.ast
+AllocError = std.mem
+Vec = std.collections
+str = std.text
+TyId = sema.sema_ty
+is_integer, is_float = sema.sema_ty
+SemaFault, TypeFault = sema.sema_diag
+Checker, Ctx = sema.sema_check
+Case, cases_of, find_case = sema.sema_case
+is_case = sema.sema_case
+module_named_by, module_access = sema.sema_module
+value_access = sema.sema_member
+union_carrier = sema.sema_union
+
+// A bare union member that carries a value is refused.
+static_value* = (
+    c    :: Checker,
+    id   : ExprId,
+    node : Expr,
+    ac   : Access,
+    ty   : TyId,
+    ctx  : Ctx
+) Res<TyId, AllocError> {
+    carried = c.union_carrier(ty, ac.name.text).try();
+    c.is_unknown(carried).match({
+        true  => c.static_access(id, node, ac, ty, ctx),
+        false => c.needs_value(node, ac, ty, carried),
+    })
+}
+
+needs_value = (
+    c       :: Checker,
+    node    : Expr,
+    ac      : Access,
+    ty      : TyId,
+    carried : TyId
+) Res<TyId, AllocError> {
+    c.report(
+        node.span.file,
+        node.span,
+        SemaFault.MemberNeedsValue(TypeFault(
+            name: ac.name.text,
+            expected: carried,
+            found: ty
+        ))
+    ).try();
+    c.types.unknown()
+}
+
+// Resolve modules before type variants, primitive constants, and members.
+static_access* = (
+    c    :: Checker,
+    id   : ExprId,
+    node : Expr,
+    ac   : Access,
+    ty   : TyId,
+    ctx  : Ctx
+) Res<TyId, AllocError> {
+    c.module_named_by(ty).match({
+        Ok(mi) => c.module_access(node, ac, mi),
+        None   => c.type_access(id, node, ac, ty, ctx),
+    })
+}
+
+type_access = (
+    c    :: Checker,
+    id   : ExprId,
+    node : Expr,
+    ac   : Access,
+    ty   : TyId,
+    ctx  : Ctx
+) Res<TyId, AllocError> {
+    c.is_case(ty, ac.name.text).try().match({
+        true  => c.variant_type(ty, ac.name.text),
+        false => c.static_member(id, node, ac, ty, ctx),
+    })
+}
+
+variant_type* = (c :: Checker, ty: TyId, name: str) Res<TyId, AllocError> {
+    cases ::= c.alloc.Vec<Case>();
+    c.cases_of(ty, cases).try();
+    cases.find_case(name).match({
+        None   => c.types.unknown(),
+        Ok(cs) => c.variant_value(ty, cs),
+    })
+}
+
+variant_value = (c :: Checker, ty: TyId, cs: Case) Res<TyId, AllocError> {
+    cs.has_payload.match({
+        true  => c.variant_ctor(ty, cs),
+        false => Ok(ty),
+    })
+}
+
+variant_ctor = (c :: Checker, ty: TyId, cs: Case) Res<TyId, AllocError> {
+    params ::= c.alloc.Vec<TyId>();
+    params.add(cs.payload).try();
+    c.types.fn_ty(params, ty)
+}
+
+// `i32.MAX`, `i32.BITS`; other names fall through to the member table.
+static_member = (
+    c    :: Checker,
+    id   : ExprId,
+    node : Expr,
+    ac   : Access,
+    ty   : TyId,
+    ctx  : Ctx
+) Res<TyId, AllocError> {
+    c.has_prim_const(ty, ac.name.text).match({
+        true  => c.prim_const_type(ty, ac.name.text),
+        false => c.value_access(id, node, ac, ty, ctx),
+    })
+}
+
+// Every numeric primitive carries MIN, MAX, and BITS. MIN and MAX are of
+// the type; BITS is a count, so `usize`.
+has_prim_const = (c: Checker, ty: TyId, name: str) bool {
+    c.numeric_prim(ty) && name.is_in(["MIN", "MAX", "BITS"])
+}
+
+prim_const_type = (c :: Checker, ty: TyId, name: str)
+                  Res<TyId, AllocError> {
+    name.eq("BITS").match({
+        true  => c.types.prim("usize"),
+        false => Ok(ty),
+    })
+}
+
+numeric_prim = (c: Checker, ty: TyId) bool {
+    name = c.prim_name(ty);
+    is_integer(name) || is_float(name)
+}

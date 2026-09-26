@@ -1,0 +1,7 @@
+c stdout
+c file
+c directory
+js stdout
+asm stdout
+unavailable unknown
+usage --backend

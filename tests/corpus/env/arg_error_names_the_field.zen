@@ -1,0 +1,64 @@
+// `ArgError` is the answer `env.args<T>()` promises, and the promise is
+// that a failure NAMES THE FIELD -- "no string fishing", env.zen's own
+// words. Two faces and no third: a required field was absent
+// (`Missing`), or it was there and did not parse as its type (`Parse`).
+// A reason is never invented, so the payload is the field name and
+// nothing else.
+//
+// The parser landed on 2026-09-03 (`gen_c_args.zen` over
+// `std.env.env_args`; the `args_*` tests beside this one drive it), and
+// it fills exactly this shape. This file still pins the CONTRACT on its
+// own: the enum, its payloads, and the `Res<T, ArgError>` match shape a
+// caller writes, with no argv in the way.
+//
+// WHAT THIS FILE CATCHES, STATED HONESTLY. Its faces are the enum's
+// SHAPE, so the mutations it answers are shape-shaped: drop `Parse`'s
+// payload in env.zen -- "a reason is never invented", the rule the
+// payload exists for -- and it is rejected at `f.len` with `no `len`
+// on `()``. It does NOT answer a wrong-tag or wrong-payload mutation
+// in the backend, because there is no such mutation to answer: match
+// arms bind BY NAME, so reversing ArgError's two variants in env.zen
+// and reversing the case list `sema_case.add_variants` builds both
+// leave every line of this output standing (both were tried). That is
+// a fact about the compiler, not a gap in the file.
+//
+// MUTATION RESISTANCE: every field name is printed WITH ITS LENGTH,
+// and the two names are DIFFERENT LENGTHS on purpose (4 and 5). A
+// payload dropped for the tag, or an Err built at the wrong variant,
+// prints the other line's name or ` 0` -- neither of which is a
+// plausible-looking answer. The Ok arm carries two fields of two types
+// so a match that took the error path at all stops printing `zen 7`.
+
+ArgError = std.env
+
+Cfg = {
+    name: str,
+    count: i64,
+}
+
+// stands in for the @meta walk env.zen describes: one call, three
+// outcomes, the same Res<Cfg, ArgError> the real one answers with
+fill = (want: i64) Res<Cfg, ArgError> {
+    (want == 0).match({
+        true  => Ok(Cfg(name: "zen", count: 7)),
+        false => (want == 1).match({
+            true  => Err(ArgError.Missing("name")),
+            false => Err(ArgError.Parse("count")),
+        }),
+    })
+}
+
+show = (r: Res<Cfg, ArgError>) () {
+    r.match({
+        Ok(c)           => println("ok {} {}", c.name, c.count),
+        Err(Missing(f)) => println("missing {} {}", f, f.len),
+        Err(Parse(f))   => println("parse {} {}", f, f.len),
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    show(fill(0));
+    show(fill(1));
+    show(fill(2));
+    Ok(0);
+}

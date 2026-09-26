@@ -1,0 +1,34 @@
+// tests/corpus/std/create_allocates_a_whole_element.zen
+// Three wide allocations must not overlap. Writing them after all three
+// calls makes an undersized `create<T>` visible in the earlier values.
+
+Wide = {
+    head: i64,
+    p1: i64,
+    p2: i64,
+    p3: i64,
+    p4: i64,
+    p5: i64,
+    p6: i64,
+    tail: i64,
+}
+
+filled = (n: i64) Wide {
+    Wide(head: n, p1: n, p2: n, p3: n, p4: n, p5: n, p6: n, tail: n)
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+
+    a = alloc.create<Wide>().try();
+    b = alloc.create<Wide>().try();
+    c = alloc.create<Wide>().try();
+
+    a.write(0, filled(1));
+    b.write(0, filled(2));
+    c.write(0, filled(3));
+
+    println("head {} {} {}", a.read(0).head, b.read(0).head, c.read(0).head);
+    println("tail {} {} {}", a.read(0).tail, b.read(0).tail, c.read(0).tail);
+    Ok(0);
+}

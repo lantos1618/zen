@@ -1,0 +1,403 @@
+Expr, ExprId, Literal = std.ast
+Decl, Const = std.ast
+Block, BlockId, Stmt = std.ast
+Binary, Unary, Bind, Match, Access, Call, Lambda = std.ast
+ArrayLit, FixedArray, Index = std.ast
+AllocError = std.mem
+Vec = std.collections
+str = std.text
+TyId, TyArray = sema.sema_ty
+Def, decl_at = sema.sema_def
+SemaFault, NameFault = sema.sema_diag
+Checker, Ctx, Binding = sema.sema_check
+is_predicate = sema.sema_check
+try_type = sema.sema_try
+alias_module, module_not_a_value = sema.sema_module
+match_type = sema.sema_match
+access_type, computed_member = sema.sema_member
+variant_type = sema.sema_static
+call_type = sema.sema_call
+meta_type = sema.sema_meta
+meta_refused, walk_name, walk_projection_type = sema.sema_meta
+WalkName = sema.sema_meta
+bind_stmt = sema.sema_place
+is_handle_ty, refuse_handle_at = sema.sema_handle
+check_binary, check_index, check_literal = sema.sema_trap
+element_agrees = sema.sema_trap
+check_arms, check_arms_agree = sema.sema_hoist
+check_statement = sema.sema_effect
+check_eq = sema.sema_bound
+operands_agree, check_neg = sema.sema_operand
+seed_left_spine, spine_ahead = sema.sema_spine
+type_from_ast, self_type, declared_or_alias = sema.sema_denote
+
+type_of* = (c :: Checker, id: ExprId, ctx: Ctx) Res<TyId, AllocError> {
+    c.walk_projection_type(id, ctx).try().match({
+        Ok(ty) => Ok(ty),
+        None   => c.rechecking().match({
+            // a field-walk body is retyped per field
+            true  => c.compute_expr(id, ctx),
+            false => c.expr_memo.get(id).match({
+                None    => c.compute_expr(id, ctx),
+                Ok(hit) => Ok(hit),
+            }),
+        }),
+    })
+}
+
+compute_expr = (c :: Checker, id: ExprId, ctx: Ctx)
+               Res<TyId, AllocError> {
+    poison = c.types.unknown().try();
+    c.expr_memo.set(id, poison).try();
+    node = c.tree.expr_at(id);
+    got  = c.expr_kind(id, node, ctx).try();
+    c.expr_memo.set(id, got).try();
+    Ok(got);
+}
+
+expr_kind = (c :: Checker, id: ExprId, node: Expr, ctx: Ctx)
+             Res<TyId, AllocError> {
+    node.kind.match({
+        Literal(l)    => c.literal_type(l),
+        Unit          => c.types.unit(),
+        SelfType      => c.self_type(ctx),
+        Name(n)       => c.name_type(id, node, n.text, ctx),
+        Paren(p)      => c.type_of(p.inner, ctx),
+        Binary(b)     => c.binary_type(node, b, ctx),
+        Unary(u)      => c.unary_type(node, u, ctx),
+        Try(t)        => c.try_type(t.name_span, t.operand, t.error, ctx),
+        Consume(x)    => c.type_of(x.operand, ctx),
+        Block(b)      => c.block_type(b, ctx),
+        Match(m)      => c.match_type(node, m, ctx),
+        Access(a)     => c.access_type(id, node, a, ctx),
+        Call(k)       => c.call_type(id, node, k, ctx),
+        Array(a)      => c.array_lit_type(a, ctx),
+        FixedArray(f) => c.fixed_array_type(f, ctx),
+        Index(x)      => c.index_element_type(node, x, ctx),
+        Meta(_)       => c.meta_type(node, ctx),
+        _             => c.types.unknown(),
+    })
+}
+
+lambda_type* = (c :: Checker, l: Lambda) Res<TyId, AllocError> {
+    hole = c.types.infer().try();
+    params ::= c.alloc.Vec<TyId>();
+    l.params.loop((h, p) { params.add(hole).try() });
+    c.types.fn_ty(params, hole)
+}
+
+array_lit_type = (c :: Checker, a: ArrayLit, ctx: Ctx)
+                 Res<TyId, AllocError> {
+    elem ::= c.types.infer().try();
+    a.elems.loop((h, i, e) {
+        got = c.type_of(e, ctx).try();
+        (i == 0).then(() { elem = got; });
+    });
+    c.types.array(elem, a.elems.len)
+}
+
+fixed_array_type = (c :: Checker, f: FixedArray, ctx: Ctx)
+                   Res<TyId, AllocError> {
+    ty   = c.type_from_ast(f.type, ctx).try();
+    elem = c.element_of(ty);
+    f.elems.loop((h, e) {
+        c.type_of(e, ctx).try();
+        c.element_agrees(e, elem).try();
+        c.check_literal(e, elem).try();
+        c.check_arms(e, elem).try();
+    });
+    Ok(ty);
+}
+
+element_of = (c: Checker, ty: TyId) TyId {
+    c.types.at(ty).match({ Array(a) => a.elem, _ => ty })
+}
+
+index_element_type = (c :: Checker, node: Expr, x: Index, ctx: Ctx)
+                     Res<TyId, AllocError> {
+    base = c.type_of(x.base, ctx).try();
+    c.type_of(x.index, ctx).try();
+    c.types.at(base).match({
+        Array(a) => c.array_element(node, x, a),
+        Prim(p)  => p.name.eq("str").match({
+            true  => c.types.prim("u8"),
+            false => c.types.unknown(),
+        }),
+        _        => c.types.unknown(),
+    })
+}
+
+array_element = (c :: Checker, node: Expr, x: Index, a: TyArray)
+               Res<TyId, AllocError> {
+    c.check_index(node, x, a).try();
+    Ok(a.elem);
+}
+
+literal_type = (c :: Checker, l: Literal) Res<TyId, AllocError> {
+    l.kind.match({
+        Int   => c.types.prim("int"),
+        Float => c.types.prim("float"),
+        Str   => c.types.prim("str"),
+        Char  => c.types.prim("u8"),
+        Bool  => c.types.prim("bool"),
+    })
+}
+
+name_type = (c :: Checker, id: ExprId, node: Expr, text: str, ctx: Ctx)
+            Res<TyId, AllocError> {
+    c.walk_name(text).match({
+        WalkNone => c.lookup(text).match({
+            None  => c.unbound_name_type(node, text, ctx),
+            Ok(b) => c.bound_name_type(id, b),
+        }),
+        _        => c.meta_refused(node),
+    })
+}
+
+bound_name_type = (c :: Checker, id: ExprId, b: Binding)
+                  Res<TyId, AllocError> {
+    b.param.match({
+        true  => c.param_memo.set(id, true),
+        false => Ok(()),
+    }).try();
+    Ok(b.ty);
+}
+
+unbound_name_type = (c :: Checker, node: Expr, text: str, ctx: Ctx)
+                    Res<TyId, AllocError> {
+    text.eq("None").match({
+        true  => c.none_type(),
+        false => c.global_name_type(node, text, ctx),
+    })
+}
+
+none_type = (c :: Checker) Res<TyId, AllocError> {
+    hole = c.types.infer().try();
+    c.types.res_absence(hole)
+}
+
+global_name_type* = (c :: Checker, node: Expr, text: str, ctx: Ctx)
+                   Res<TyId, AllocError> {
+    c.world.first_def_of(ctx.module, text).try().match({
+        None  => c.variant_name_type(node, text, ctx),
+        Ok(d) => c.value_def_type(node, d),
+    })
+}
+
+value_def_type = (c :: Checker, node: Expr, d: Def) Res<TyId, AllocError> {
+    c.alias_module(d.id).match({
+        None   => c.def_type(d),
+        Ok(mi) => c.module_not_a_value(node.span, d.name, mi),
+    })
+}
+
+variant_name_type = (c :: Checker, node: Expr, text: str, ctx: Ctx)
+                    Res<TyId, AllocError> {
+    found ::= c.alloc.Vec<Def>();
+    c.world.variant_defs(c.tree, ctx.module, text, found).try();
+    found.get(0).match({
+        None  => c.unresolved_name(node, text),
+        Ok(d) => c.bare_variant_type(d, text),
+    })
+}
+
+bare_variant_type = (c :: Checker, d: Def, text: str)
+                   Res<TyId, AllocError> {
+    ty = c.decl_as_type(d).try();
+    c.variant_type(ty, text)
+}
+
+unresolved_name = (c :: Checker, node: Expr, text: str)
+                  Res<TyId, AllocError> {
+    c.report(
+        node.span.file,
+        node.span,
+        SemaFault.UndefinedName(NameFault(name: text))
+    ).try();
+    c.types.unknown()
+}
+
+def_type* = (c :: Checker, d: Def) Res<TyId, AllocError> {
+    d.kind.match({
+        ConstDef => c.const_type(d),
+        AliasDef => c.def_alias_type(d),
+        _        => c.decl_as_type(d),
+    })
+}
+
+def_alias_type = (c :: Checker, d: Def) Res<TyId, AllocError> {
+    empty ::= c.alloc.Vec<TyId>();
+    c.declared_or_alias(d, empty)
+}
+
+decl_as_type* = (c :: Checker, d: Def) Res<TyId, AllocError> {
+    empty ::= c.alloc.Vec<TyId>();
+    c.types.named(d.id, d.qname, d.name, empty)
+}
+
+const_type = (c :: Checker, d: Def) Res<TyId, AllocError> {
+    decl_at(c.tree, d.id).match({
+        Ok(x) => c.const_decl_type(x, d),
+        None  => c.types.unknown(),
+    })
+}
+
+const_decl_type = (c :: Checker, x: Decl, d: Def) Res<TyId, AllocError> {
+    poison = c.types.unknown().try();
+    ctx    = Ctx(d.id.module.to_usize(), poison);
+    x.kind.match({
+        Const(k) => c.written_or_value(k, ctx),
+        _        => c.types.unknown(),
+    })
+}
+
+written_or_value = (c :: Checker, k: Const, ctx: Ctx) Res<TyId, AllocError> {
+    k.type.match({
+        Ok(t) => c.type_from_ast(t, ctx),
+        None  => c.type_of(k.value, ctx),
+    })
+}
+
+binary_type* = (c :: Checker, node: Expr, b: Binary, ctx: Ctx)
+              Res<TyId, AllocError> {
+    c.spine_ahead(b.lhs).match({
+        false => Ok(()),
+        true  => c.seed_left_spine(b.lhs, ctx),
+    }).try();
+    lhs     = c.type_of(b.lhs, ctx).try();
+    rhs     = c.type_of(b.rhs, ctx).try();
+    operand = c.arith_type(lhs, rhs).try();
+    got     = is_predicate(b.op).match({
+        true  => c.types.bool_ty(),
+        false => Ok(operand),
+    }).try();
+    c.check_binary(b, got).try();
+    c.check_logical(b, lhs, rhs).try();
+    c.check_eq(b, operand).try();
+    // the pair, after each side on its own
+    c.operands_agree(b, lhs, rhs).try();
+    c.check_arms_agree(b.lhs).try();
+    c.check_arms_agree(b.rhs).try();
+    Ok(got);
+}
+
+// A literal takes the other side's type.
+arith_type = (c :: Checker, lhs: TyId, rhs: TyId) Res<TyId, AllocError> {
+    // `Ok` outside the match: two `Ok(..)` arms leave it no written type
+    Ok(c.is_literal_ty(lhs).match({
+        true  => rhs,
+        false => lhs,
+    }));
+}
+
+unary_type = (c :: Checker, node: Expr, u: Unary, ctx: Ctx)
+             Res<TyId, AllocError> {
+    inner = c.type_of(u.operand, ctx).try();
+    u.op.match({
+        Not  => c.check_not(u, inner),
+        Neg  => c.check_neg(u, inner),
+        Addr => c.addr_type(node, u, inner, ctx),
+    })
+}
+
+addr_type = (c :: Checker, node: Expr, u: Unary, inner: TyId, ctx: Ctx)
+            Res<TyId, AllocError> {
+    operand = c.tree.expr_at(u.operand);
+    operand.kind.match({
+        Access(a) => c.addr_of_access(node, a, inner, ctx),
+        _         => Ok(inner),
+    })
+}
+
+addr_of_access = (
+    c     :: Checker,
+    node  : Expr,
+    a     : Access,
+    inner : TyId,
+    ctx   : Ctx
+) Res<TyId, AllocError> {
+    c.computed_member(a, ctx).try().match({
+        true  => c.no_address(node, a, inner),
+        false => Ok(inner),
+    })
+}
+
+no_address = (c :: Checker, node: Expr, a: Access, inner: TyId)
+             Res<TyId, AllocError> {
+    c.report(
+        node.span.file,
+        node.span,
+        SemaFault.ComputedFieldAddress(NameFault(name: a.name.text))
+    ).try();
+    Ok(inner);
+}
+
+// The block's own tail only: a trailing block statement refused its
+// tail when it was typed, so `sema_hoist.tail_expr` would repeat it.
+refuse_handle_tail = (c :: Checker, block: Block, got: TyId)
+                      Res<(), AllocError> {
+    block.own_tail().match({
+        None   => Ok(()),
+        Ok(id) => c.is_handle_ty(got).match({
+            false => Ok(()),
+            true  => c.refuse_handle_at(id),
+        }),
+    })
+}
+
+own_tail = (block: Block) Res<ExprId> {
+    block.value.match({
+        Ok(v) => Ok(v),
+        None  => block.last_stmt_value(),
+    })
+}
+
+last_stmt_value = (block: Block) Res<ExprId> {
+    n = block.stmts.len;
+    (n > 0).match({
+        false => None,
+        true  => block.stmts.get(n - 1).match({
+            None  => None,
+            Ok(s) => s.kind.match({
+                Expr(e) => Ok(e.expr),
+                _       => None,
+            }),
+        }),
+    })
+}
+
+block_type* = (c :: Checker, id: BlockId, ctx: Ctx)
+              Res<TyId, AllocError> {
+    mark  = c.mark();
+    outer = c.enter_block();
+    block = c.tree.block_at(id);
+    tail  = c.walk_stmts(block, ctx).try();
+    got   = block.value.match({
+        Ok(e) => c.type_of(e, ctx),
+        None  => Ok(tail),
+    }).try();
+    c.refuse_handle_tail(block, got).try();
+    c.leave_block(outer);
+    c.release(mark).try();
+    Ok(got);
+}
+
+walk_stmts = (c :: Checker, block: Block, ctx: Ctx)
+             Res<TyId, AllocError> {
+    last ::= c.types.unit().try();
+    n = block.stmts.len;
+    block.stmts.loop((h, i, s) {
+        last = c.stmt_type(s, ctx).try();
+        c.check_statement(block, i, n, s, last).try();
+    });
+    Ok(last);
+}
+
+stmt_type* = (c :: Checker, s: Stmt, ctx: Ctx) Res<TyId, AllocError> {
+    s.kind.match({
+        Expr(e)  => c.type_of(e.expr, ctx),
+        Bind(b)  => c.bind_stmt(b, ctx),
+        Block(b) => c.block_type(b, ctx),
+        Decl(_)  => c.types.unit(),
+    })
+}

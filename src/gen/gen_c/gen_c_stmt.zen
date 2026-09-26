@@ -1,0 +1,524 @@
+// What a statement is in C, and where a value goes.
+// C separates statements and expressions while every Zen block is a value.
+// Dest records where that value goes. Forms that cannot be C expressions lower
+// directly into their destination. Destination types provide context for
+// literals and joins, and statements are typed before emission.
+
+Expr, ExprId, BlockId, Block, Stmt, Bind = std.ast
+Decl = std.ast
+Match = std.ast
+AllocError = std.mem
+str, String = std.text
+TyId = sema.sema_ty
+Ctx = sema.sema_check
+subst = sema.sema_inst
+stmt_type = sema.sema_type
+type_from_ast = sema.sema_denote
+settled_array = sema.sema_place
+sym_local = gen.gen_name
+GenFault = gen.gen_diag
+CBackend = gen.gen_c.gen_c_state
+lower_match = gen.gen_c.gen_c_flow
+lower_try = gen.gen_c.gen_c_try
+declarator, is_unit, has_storage = gen.gen_c.gen_c_type
+expr, ty_of, spills = gen.gen_c.gen_c_expr
+enter_block, leave_block, note_drop, displace = gen.gen_c.gen_c_own
+
+Dest* = Discard | Return | Into(str)
+
+// A block yields its explicit trailing value, or its last expression statement
+// when the parser represents a semicolon-terminated tail that way.
+block* = (be :: CBackend, id: BlockId, ctx: Ctx, want: TyId, dst: Dest)
+         Res<(), AllocError> {
+    blk   = be.tree.block_at(id);
+    cmark = be.check.mark();
+    lmark = be.mark();
+    be.enter_block(id).try();
+    tail = tail_index(blk, dst);
+    blk.stmts.loop((h, i, s) {
+        (i < tail).then(() { be.stmt(s, ctx).try() });
+    });
+    close_block(be, blk, ctx, want, dst, tail).try();
+    be.release(lmark).try();
+    be.check.release(cmark).try();
+    Ok(());
+}
+
+// Exclude the final expression statement when it supplies the block value.
+tail_index = (blk: Block, dst: Dest) usize {
+    blk.value.match({
+        Ok(_) => blk.stmts.len,
+        None  => stmt_tail(blk, dst),
+    })
+}
+
+stmt_tail = (blk: Block, dst: Dest) usize {
+    wants_value(dst).match({
+        false => blk.stmts.len,
+        true  => value_stmt_index(blk),
+    })
+}
+
+value_stmt_index = (blk: Block) usize {
+    (blk.stmts.len == 0).match({
+        true  => 0,
+        false => last_expr_index(blk),
+    })
+}
+
+// A nested Block statement can be the enclosing block's value.
+last_expr_index = (blk: Block) usize {
+    blk.stmts.get(blk.stmts.len - 1).match({
+        None  => blk.stmts.len,
+        Ok(s) => s.kind.match({
+            Expr(_)  => blk.stmts.len - 1,
+            Block(_) => blk.stmts.len - 1,
+            _        => blk.stmts.len,
+        }),
+    })
+}
+
+wants_value* = (dst: Dest) bool {
+    dst.match({ Discard => false, Return => true, Into(_) => true })
+}
+
+// Only blocks with pending cleanup need destination-aware closing.
+close_block = (
+    be   :: CBackend,
+    blk  : Block,
+    ctx  : Ctx,
+    want : TyId,
+    dst  : Dest,
+    tail : usize
+) Res<(), AllocError> {
+    be.has_cleanup().match({
+        false => be.plain_close(blk, ctx, want, dst, tail),
+        true  => be.cleaned_close(blk, ctx, want, dst, tail),
+    })
+}
+
+has_cleanup = (be :: CBackend) bool {
+    (be.block_depth() == 0).match({
+        true  => false,
+        false => be.frame_has_cleanup(),
+    })
+}
+
+frame_has_cleanup = (be :: CBackend) bool {
+    be.block_at(be.block_depth() - 1).match({
+        None  => false,
+        Ok(f) => (f.rec > 0) || (be.drop_count() > f.mark),
+    })
+}
+
+plain_close = (
+    be   :: CBackend,
+    blk  : Block,
+    ctx  : Ctx,
+    want : TyId,
+    dst  : Dest,
+    tail : usize
+) Res<(), AllocError> {
+    be.close_value(blk, ctx, want, dst, tail).try();
+    be.leave_block(be.keep_name(blk, tail))
+}
+
+// Discard and Into remain in scope through cleanup; Return must be spilled.
+cleaned_close = (
+    be   :: CBackend,
+    blk  : Block,
+    ctx  : Ctx,
+    want : TyId,
+    dst  : Dest,
+    tail : usize
+) Res<(), AllocError> {
+    dst.match({
+        Return => be.returning_close(blk, ctx, want, tail),
+        _      => be.plain_close(blk, ctx, want, dst, tail),
+    })
+}
+
+// Spill a returned block value before running cleanup for its bindings.
+returning_close = (
+    be   :: CBackend,
+    blk  : Block,
+    ctx  : Ctx,
+    want : TyId,
+    tail : usize
+) Res<(), AllocError> {
+    be.is_unit(want).match({
+        true  => be.unit_return(blk, ctx, want, tail),
+        false => be.spilled_return(blk, ctx, want, tail),
+    })
+}
+
+unit_return = (
+    be   :: CBackend,
+    blk  : Block,
+    ctx  : Ctx,
+    want : TyId,
+    tail : usize
+) Res<(), AllocError> {
+    be.close_value(blk, ctx, want, Dest.Discard, tail).try();
+    be.leave_block("").try();
+    be.writeln("return;")
+}
+
+spilled_return = (
+    be   :: CBackend,
+    blk  : Block,
+    ctx  : Ctx,
+    want : TyId,
+    tail : usize
+) Res<(), AllocError> {
+    tmp  ::= be.fresh_name("k").try();
+    decl ::= be.alloc.String().try();
+    be.declarator(want, tmp.view(), decl).try();
+    be.fmt("{};\n", decl.view()).try();
+    be.close_value(blk, ctx, want, Dest.Into(tmp.view()), tail).try();
+    be.leave_block(be.keep_name(blk, tail)).try();
+    be.fmt("return {};\n", tmp.view())
+}
+
+// Preserve a bare binding handed out as the block value. tail identifies both
+// semicolon and non-semicolon value spellings; Discard preserves nothing.
+keep_name = (be :: CBackend, blk: Block, tail: usize) str {
+    blk.value.match({
+        Ok(e) => be.bare_name(e),
+        None  => be.tail_stmt_name(blk, tail),
+    })
+}
+
+tail_stmt_name = (be :: CBackend, blk: Block, tail: usize) str {
+    (tail == blk.stmts.len).match({
+        true  => "",
+        false => be.stmt_at_name(blk, tail),
+    })
+}
+
+stmt_at_name = (be :: CBackend, blk: Block, tail: usize) str {
+    blk.stmts.get(tail).match({
+        None  => "",
+        Ok(s) => be.stmt_value_name(s),
+    })
+}
+
+// Propagate a nested block's escaped binding to the enclosing cleanup frame.
+stmt_value_name = (be :: CBackend, s: Stmt) str {
+    s.kind.match({
+        Expr(e)  => be.bare_name(e.expr),
+        Block(k) => be.nested_keep_name(k),
+        _        => "",
+    })
+}
+
+nested_keep_name = (be :: CBackend, id: BlockId) str {
+    blk = be.tree.block_at(id);
+    be.keep_name(blk, tail_index(blk, Dest.Return))
+}
+
+// A bare name, through as many `Paren`s as it is written inside.
+bare_name* = (be :: CBackend, id: ExprId) str {
+    be.tree.expr_at(id).kind.match({
+        Name(n)  => n.text,
+        Paren(p) => be.bare_name(p.inner),
+        _        => "",
+    })
+}
+
+close_value = (
+    be   :: CBackend,
+    blk  : Block,
+    ctx  : Ctx,
+    want : TyId,
+    dst  : Dest,
+    tail : usize
+) Res<(), AllocError> {
+    blk.value.match({
+        Ok(e) => be.deliver(e, ctx, want, dst),
+        None  => be.close_tail(blk, ctx, want, dst, tail),
+    })
+}
+
+close_tail = (
+    be   :: CBackend,
+    blk  : Block,
+    ctx  : Ctx,
+    want : TyId,
+    dst  : Dest,
+    tail : usize
+) Res<(), AllocError> {
+    (tail == blk.stmts.len).match({
+        true  => be.close_valueless(dst),
+        false => be.deliver_stmt(blk, ctx, want, dst, tail),
+    })
+}
+
+deliver_stmt = (
+    be   :: CBackend,
+    blk  : Block,
+    ctx  : Ctx,
+    want : TyId,
+    dst  : Dest,
+    tail : usize
+) Res<(), AllocError> {
+    blk.stmts.get(tail).match({
+        None  => Ok(()),
+        Ok(s) => be.deliver_expr_stmt(s, ctx, want, dst),
+    })
+}
+
+deliver_expr_stmt = (
+    be   :: CBackend,
+    s    : Stmt,
+    ctx  : Ctx,
+    want : TyId,
+    dst  : Dest
+) Res<(), AllocError> {
+    s.kind.match({
+        Expr(e)  => be.deliver(e.expr, ctx, want, dst),
+        Block(k) => block(be, k, ctx, want, dst),
+        _        => Ok(()),
+    })
+}
+
+// A unit return emits `return;`; an absent value for Into remains unwritten.
+close_valueless = (be :: CBackend, dst: Dest) Res<(), AllocError> {
+    dst.match({
+        Return  => be.writeln("return;"),
+        Discard => Ok(()),
+        Into(_) => Ok(()),
+    })
+}
+
+// Write the value of `id` into `dst`, spilling first when the form
+// cannot be a C expression.
+deliver* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId, dst: Dest)
+           Res<(), AllocError> {
+    be.spills(id).match({
+        true  => be.deliver_spilling(id, ctx, want, dst),
+        false => be.deliver_simple(id, ctx, want, dst),
+    })
+}
+
+// Spilling forms lower directly into their destination.
+deliver_spilling = (
+    be   :: CBackend,
+    id   : ExprId,
+    ctx  : Ctx,
+    want : TyId,
+    dst  : Dest
+) Res<(), AllocError> {
+    node = be.tree.expr_at(id);
+    ty   = be.destination_type(id, ctx, want).try();
+    node.kind.match({
+        Match(m) => be.lower_match(node, m, ctx, ty, dst),
+        Try(t)   => be.lower_try(id, node, t.operand, t.error, ctx, ty, dst),
+        Block(b) => block(be, b, ctx, ty, dst),
+        Paren(p) => be.deliver(p.inner, ctx, ty, dst),
+        _        => Ok(()),
+    })
+}
+
+// A destination's storage type overrides an inferred expression join.
+destination_type* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
+                    Res<TyId, AllocError> {
+    be.check.is_unknown(want).match({
+        false => Ok(want),
+        true  => be.ty_of(id, ctx, want),
+    })
+}
+
+deliver_simple = (
+    be   :: CBackend,
+    id   : ExprId,
+    ctx  : Ctx,
+    want : TyId,
+    dst  : Dest
+) Res<(), AllocError> {
+    text ::= be.alloc.String().try();
+    expr(be, id, ctx, want, text).try();
+    be.write_dest(dst, text.view())
+}
+
+write_dest* = (be :: CBackend, dst: Dest, text: str) Res<(), AllocError> {
+    dst.match({
+        Into(name) => be.assign_line(name, text),
+        Return     => be.return_line(text),
+        Discard    => be.discard_line(text),
+    })
+}
+
+assign_line = (be :: CBackend, name: str, text: str) Res<(), AllocError> {
+    be.set_line(name, text)
+}
+
+return_line = (be :: CBackend, text: str) Res<(), AllocError> {
+    be.fmt("return {text};\n")
+}
+
+discard_line = (be :: CBackend, text: str) Res<(), AllocError> {
+    be.fmt("(void)({text});\n")
+}
+
+stmt* = (be :: CBackend, s: Stmt, ctx: Ctx) Res<(), AllocError> {
+    s.kind.match({
+        Bind(b)  => be.lower_bind(s, b, ctx),
+        Expr(e)  => be.lower_expr_stmt(s, e.expr, ctx),
+        Block(b) => be.lower_nested(b, ctx),
+        Decl(_)  => be.report(
+            s.span.file,
+            s.span,
+            GenFault.Unsupported("a declaration inside a body")
+        ),
+    })
+}
+
+lower_nested = (be :: CBackend, id: BlockId, ctx: Ctx) Res<(), AllocError> {
+    unit = be.check.types.prim("()").try();
+    be.writeln("{").try();
+    be.indent();
+    block(be, id, ctx, unit, Dest.Discard).try();
+    be.dedent();
+    be.writeln("}").try();
+    Ok(());
+}
+
+lower_expr_stmt = (be :: CBackend, s: Stmt, id: ExprId, ctx: Ctx)
+                  Res<(), AllocError> {
+    be.check.stmt_type(s, ctx).try();
+    be.deliver(id, ctx, be.check.types.unknown().try(), Dest.Discard)
+}
+
+// Only a bare name can declare a binding; member and index targets assign.
+lower_bind = (be :: CBackend, s: Stmt, b: Bind, ctx: Ctx)
+             Res<(), AllocError> {
+    be.check.stmt_type(s, ctx).try();
+    target = be.tree.expr_at(b.target);
+    ty     = be.binding_type(b, ctx).try();
+    target.kind.match({
+        Name(n) => bind_name(be, n.text, b, ty, ctx),
+        _       => be.assign_target(b, ty, ctx),
+    }).try();
+    Ok(());
+}
+
+// An untyped immutable bind to a name already bound in this frame is a store;
+// written types and ::= introduce declarations.
+bind_name = (be :: CBackend, name: str, b: Bind, ty: TyId, ctx: Ctx)
+            Res<(), AllocError> {
+    be.is_store(name, b).match({
+        true  => be.assign_target(b, ty, ctx),
+        false => be.declare_local(name, b, ty, ctx),
+    })
+}
+
+// Store detection is frame-local so inlined callee names may shadow callers.
+is_store = (be :: CBackend, name: str, b: Bind) bool {
+    written = b.type.match({ Ok(_) => true, None => false });
+    (b.mutable == false) && (written == false) && be.bound_in_frame(name)
+}
+
+// Stores use the place's instantiated type, including within generic methods.
+binding_type = (be :: CBackend, b: Bind, ctx: Ctx) Res<TyId, AllocError> {
+    unknown = be.check.types.unknown().try();
+    raw     = b.type.match({
+        Ok(t) => be.check.type_from_ast(t, ctx),
+        None  => be.inferred_type(b, ctx, unknown),
+    }).try();
+    subst(be.check, raw, be.inst)
+}
+
+inferred_type = (be :: CBackend, b: Bind, ctx: Ctx, unknown: TyId)
+                Res<TyId, AllocError> {
+    be.slot_type(b).match({
+        Ok(t) => Ok(t),
+        None  => be.tree.expr_at(b.target).kind.match({
+            Name(_) => be.settled_value_type(b, ctx, unknown),
+            _       => be.ty_of(b.target, ctx, unknown),
+        }),
+    })
+}
+
+// An unannotated binding freezes the initializer's settled value type.
+settled_value_type = (be :: CBackend, b: Bind, ctx: Ctx, unknown: TyId)
+                     Res<TyId, AllocError> {
+    got = be.ty_of(b.value, ctx, unknown).try();
+    be.check.settled_array(got)
+}
+
+slot_type = (be :: CBackend, b: Bind) Res<TyId> {
+    (b.mutable == false).match({
+        false => None,
+        true  => be.named_slot_type(b.target),
+    })
+}
+
+named_slot_type = (be :: CBackend, target: ExprId) Res<TyId> {
+    be.tree.expr_at(target).kind.match({
+        Name(n) => be.slot_of(n.text).match({ Ok(s) => Ok(s.ty), None => None }),
+        _       => None,
+    })
+}
+
+// RAII tracks owned bindings, not temporaries, parameters, or match binders.
+// Publish and register a binding only after its initializer lands so shadowing
+// initializers resolve outer names and reverse drop order remains valid.
+declare_local = (be :: CBackend, name: str, b: Bind, ty: TyId, ctx: Ctx)
+                Res<(), AllocError> {
+    n = be.reserve(name).try();
+    cname ::= be.alloc.String().try();
+    sym_local(cname, name, n).try();
+    be.has_storage(ty).match({
+        false => be.deliver(b.value, ctx, ty, Dest.Discard),
+        true  => {
+            decl ::= be.alloc.String().try();
+            be.declarator(ty, cname.view(), decl).try();
+            be.fmt("{};\n", decl.view()).try();
+            be.deliver(b.value, ctx, ty, Dest.Into(cname.view()))
+        },
+    }).try();
+    be.publish(name, n, ty, false).try();
+    be.note_drop(name, n, ty).try();
+    Ok(());
+}
+
+// A store to a tracked Drop binding evaluates the RHS first, drops the
+// displaced value, rearms the slot, then stores. Members and indices are not
+// tracked as independent bindings here.
+assign_target = (be :: CBackend, b: Bind, ty: TyId, ctx: Ctx)
+                Res<(), AllocError> {
+    be.tree.expr_at(b.target).kind.match({
+        Name(n) => be.has_drop(ty).try().match({
+            false => be.store_plain(b, ty, ctx),
+            true  => be.store_displacing(n.text, b, ty, ctx),
+        }),
+        _       => be.store_plain(b, ty, ctx),
+    }).try();
+    Ok(());
+}
+
+store_plain = (be :: CBackend, b: Bind, ty: TyId, ctx: Ctx)
+              Res<(), AllocError> {
+    place ::= be.alloc.String().try();
+    expr(be, b.target, ctx, ty, place).try();
+    be.deliver(b.value, ctx, ty, Dest.Into(place.view())).try()
+}
+
+store_displacing = (
+    be   :: CBackend,
+    name : str,
+    b    : Bind,
+    ty   : TyId,
+    ctx  : Ctx
+) Res<(), AllocError> {
+    place ::= be.alloc.String().try();
+    expr(be, b.target, ctx, ty, place).try();
+    tmp  ::= be.fresh_name("s").try();
+    decl ::= be.alloc.String().try();
+    be.declarator(ty, tmp.view(), decl).try();
+    be.fmt("{};\n", decl.view()).try();
+    be.deliver(b.value, ctx, ty, Dest.Into(tmp.view())).try();
+    be.displace(name).try();
+    be.write_dest(Dest.Into(place.view()), tmp.view())
+}

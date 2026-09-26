@@ -1,0 +1,197 @@
+// Syntax for written types. Name resolution and arity checks belong to sema.
+// Imports bind bare type names, so written types are unqualified. Union nodes
+// are flattened while parsing in type position.
+
+AllocError = std.mem
+Span, no_trivia = std.ast.ast_span
+TypeId = std.ast.ast_id
+Type, TypeKind, Named, Union, FnType, ArrayType, Param, TParam = std.ast.ast_node
+TokenKind, WILDCARD = std.parse.parse_token
+Parser, Mark = std.parse.parser
+expr = std.parse.parse_expr
+params_list, type_params = std.parse.parse_member
+ret_ahead = std.parse.parse_lookahead
+
+type* = (p :: Parser) Res<TypeId, AllocError> {
+    p.enter().try();
+    id = p.union_type().try();
+    p.leave();
+    Ok(id);
+}
+
+written_type* = (p :: Parser) Res<Res<TypeId>, AllocError> {
+    t = p.type().try();
+    Ok(Ok(t));
+}
+
+// Union members are stored flat. A type without `|` keeps its original kind.
+union_type = (p :: Parser) Res<TypeId, AllocError> {
+    m     = p.open();
+    first = p.primary_type_at(m).try();
+    p.at_kind(TokenKind.Bar).match({
+        false => Ok(first),
+        true  => p.union_rest(m, first),
+    });
+}
+
+union_rest = (p :: Parser, m: Mark, first: TypeId) Res<TypeId, AllocError> {
+    members ::= p.alloc.Vec<TypeId>();
+    members.add(first).try();
+    loop(p.at_kind(TokenKind.Bar), (h) {
+        p.bump().try();
+        members.add(p.primary_type().try()).try();
+    });
+    p.add_type(TypeKind.Union(Union(members: members)), m)
+}
+
+primary_type = (p :: Parser) Res<TypeId, AllocError> {
+    m = p.open();
+    p.primary_type_at(m);
+}
+
+primary_type_at = (p :: Parser, m: Mark) Res<TypeId, AllocError> {
+    p.too_deep.match({
+        true  => p.poison_type(),
+        false => p.primary_type_here(m),
+    });
+}
+
+primary_type_here = (p :: Parser, m: Mark) Res<TypeId, AllocError> {
+    p.peek().kind.match({
+        Ident       => p.named_or_infer(m),
+        AtSelf      => p.token_type(TypeKind.SelfType, m),
+        Ellipsis    => p.token_type(TypeKind.Variadic, m),
+        BracketOpen => p.array_type(m),
+        ParenOpen   => p.paren_type(m),
+        Lt          => p.fn_type(m),
+        _           => {
+            p.error("expected a type").try();
+            p.poison_type();
+        },
+    });
+}
+
+named_or_infer = (p :: Parser, m: Mark) Res<TypeId, AllocError> {
+    p.at_text(WILDCARD).match({
+        true  => p.token_type(TypeKind.Infer, m),
+        false => p.named_type(m),
+    });
+}
+
+token_type = (p :: Parser, kind: TypeKind, m: Mark) Res<TypeId, AllocError> {
+    p.bump().try();
+    p.add_type(kind, m);
+}
+
+// Zen has no `>>` operator, so nested generics close without a lexer
+// special case.
+named_type = (p :: Parser, m: Mark) Res<TypeId, AllocError> {
+    name = p.ident("expected a type name").try();
+    args ::= p.alloc.Vec<TypeId>();
+    p.at_kind(TokenKind.Lt).then(() { p.type_args(args).try(); });
+    p.add_type(TypeKind.Named(Named(name: name, args: args)), m);
+}
+
+// Type arguments do not accept the bounds allowed on type parameters.
+type_args* = (p :: Parser, out :: Vec<TypeId>) Res<(), AllocError> {
+    open = p.here_span();
+    p.bump().try();
+    out.add(p.type().try()).try();
+    loop(p.at_kind(TokenKind.Comma), (h) {
+        p.bump().try();
+        out.add(p.type().try()).try();
+    });
+    p.expect_close(
+        TokenKind.Gt,
+        "unclosed `<`: this type argument list is never closed",
+        open
+    ).try();
+    Ok(());
+}
+
+// A fixed-array count is a comptime expression, not necessarily a literal.
+array_type = (p :: Parser, m: Mark) Res<TypeId, AllocError> {
+    open = p.here_span();
+    p.bump().try();
+    elem = p.type().try();
+    p.expect(
+        TokenKind.Comma,
+        "expected `,` between a fixed array's element type and its length"
+    ).try();
+    count = p.expr().try();
+    p.expect_close(
+        TokenKind.BracketClose,
+        "unclosed `[`: this fixed array type is never closed",
+        open
+    ).try();
+    p.add_type(TypeKind.Array(ArrayType(elem: elem, count: count)), m);
+}
+
+// `()` is unit unless a function return type follows the parameter list.
+paren_type = (p :: Parser, m: Mark) Res<TypeId, AllocError> {
+    ps ::= p.alloc.Vec<Param>();
+    span = p.params_list(ps).try();
+    (ps.len == 0 && !p.ret_ahead()).match({
+        true  => p.add_type(TypeKind.Unit, m),
+        false => p.fn_type_rest(m, p.alloc.Vec<TParam>(), ps, span),
+    });
+}
+
+fn_type = (p :: Parser, m: Mark) Res<TypeId, AllocError> {
+    tps ::= p.alloc.Vec<TParam>();
+    p.type_params(tps).try();
+    ps ::= p.alloc.Vec<Param>();
+    span = p.params_list(ps).try();
+    p.fn_type_rest(m, tps, ps, span);
+}
+
+// Function types require named parameters. Lambda parameter lists may infer
+// types, so validation waits until the list is known to describe a type.
+named_params = (p :: Parser, ps: Vec<Param>) Res<(), AllocError> {
+    ps.loop((h, param) {
+        param.type.match({
+            Ok(_) => (),
+            None  => p.error_at(
+                "expected a parameter name: a function type must name its parameters, and this is a type where the name belongs",
+                param.span
+            ).try(),
+        });
+    });
+    Ok(());
+}
+
+fn_type_rest = (
+    p    :: Parser,
+    m    : Mark,
+    tps  : Vec<TParam>,
+    ps   : Vec<Param>,
+    span : Span
+) Res<TypeId, AllocError> {
+    p.named_params(ps).try();
+    ret = p.type().try();
+    p.add_type(TypeKind.Fn(FnType(
+        tparams: tps,
+        params: ps,
+        params_span: span,
+        ret: ret,
+    )), m);
+}
+
+// Recovery inserts an inferred type so later tree walks remain valid.
+poison_type = (p :: Parser) Res<TypeId, AllocError> {
+    p.tree.add_type(Type(
+        kind: TypeKind.Infer,
+        span: p.empty_span(),
+        leading: no_trivia(),
+        trailing: no_trivia(),
+    ))
+}
+
+add_type = (p :: Parser, kind: TypeKind, m: Mark) Res<TypeId, AllocError> {
+    p.tree.add_type(Type(
+        kind: kind,
+        span: p.span_from(m.start),
+        leading: m.leading,
+        trailing: no_trivia(),
+    ))
+}

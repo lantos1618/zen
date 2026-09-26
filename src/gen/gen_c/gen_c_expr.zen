@@ -1,0 +1,1015 @@
+// Expression lowering. Statements are emitted to the backend buffer and the
+// C expression naming their result is written to the caller's buffer. Forms
+// that cannot remain expressions spill into temporaries.
+//
+// Zen evaluates call arguments left to right while C leaves their order
+// unspecified. The ordering helpers below hold effectful positions in
+// temporaries. Sema remains the authority for types; an absent semantic and
+// contextual type is reported as `Untyped`.
+
+ExprId, Block, Span = std.ast
+Decl, Consume = std.ast
+Literal, Binary, Unary, Match = std.ast
+Access, Call = std.ast
+TypeId = std.ast
+AllocError = std.mem
+literal_byte_len = std.lex
+Vec = std.collections
+str, String = std.text
+Range = std.core
+TyId = sema.sema_ty
+Def, decl_at = sema.sema_def
+Ctx = sema.sema_check
+type_of = sema.sema_type
+type_from_ast = sema.sema_denote
+sym_local = gen.gen_name
+CBackend = gen.gen_c.gen_c_state
+LocalSlot = gen.gen_c.gen_c_frame
+sub, constructed, unsettled = gen.gen_c.gen_c_mono
+has_var = sema.sema_inst
+loop_result_type = gen.gen_c.gen_c_shape
+unsupported, closure_storage = gen.gen_c.gen_c_report
+declarator, is_unit, has_storage = gen.gen_c.gen_c_type
+lower_access = gen.gen_c.gen_c_read
+access_field_type = gen.gen_c.gen_c_read
+lower_array_lit, lower_fixed_array = gen.gen_c.gen_c_array
+request_type = gen.gen_c.gen_c_type
+Dest, deliver, destination_type = gen.gen_c.gen_c_stmt
+lower_call, res_value, is_res_ctor = gen.gen_c.gen_c_call
+call_callee = sema.sema_call
+needs_hoist, hoist_expr = gen.gen_c.gen_c_hoist
+needs_widen, widen_expr, needs_set, set_expr = gen.gen_c.gen_c_widen
+is_print = gen.gen_c.gen_c_print
+call_ret_type = gen.gen_c.gen_c_infer
+lower_unary, lower_binary, binary_type = gen.gen_c.gen_c_op
+lower_index, index_type = gen.gen_c.gen_c_index
+is_ptr_member, ptr_member_type = gen.gen_c.gen_c_ptr
+create_type = gen.gen_c.gen_c_alloc
+field_of = gen.gen_c.gen_c_type
+inline_result_type = gen.gen_c.gen_c_settle
+needs_fat, write_fat_value = gen.gen_c.gen_c_fat
+release_binding = gen.gen_c.gen_c_own
+lower_scope_ref, is_scope_ref, scope_type = gen.gen_c.gen_c_scope
+lower_global_value = gen.gen_c.gen_c_const
+
+// expressions
+
+// A spilling form may not appear where C wants a pure expression — the
+// right operand of `&&`/`||` and an argument ask this first.
+spills* = (be: CBackend, id: ExprId) bool {
+    be.tree.expr_at(id).kind.match({
+        Match(_) => true,
+        Try(_)   => true,
+        Block(_) => true,
+        Paren(p) => be.spills(p.inner),
+        _        => false,
+    })
+}
+
+// Reports spills in the entire subtree so short-circuit operands keep nested
+// `.try()` and other effects under their guard. Unknown forms conservatively
+// Report a spill.
+spills_anywhere* = (be: CBackend, id: ExprId) bool {
+    be.tree.expr_at(id).kind.match({
+        Literal(_) => false,
+        Name(_)    => false,
+        Unit       => false,
+        Scope      => false,
+        Consume(_) => true,
+        Paren(p)   => be.spills_anywhere(p.inner),
+        Unary(u)   => be.spills_anywhere(u.operand),
+        Binary(b)  => be.spills_anywhere(b.lhs) || be.spills_anywhere(b.rhs),
+        Access(a)  => be.spills_anywhere(a.base),
+        Index(x)   => be.spills_anywhere(x.base) || be.spills_anywhere(x.index),
+        Call(c)    => be.call_spills(c),
+        _          => true,
+    })
+}
+
+// A call whose arguments will be held spills too, and this is where
+// short-circuiting learns it: `gen_c_op.zen` refuses to lower a `&&`
+// whose right operand spills as C's own `&&`, and a held argument is a
+// statement written in front of the operand exactly as a hoisted
+// `.try()` is. `may_reorder`, below, asks the same question the emitter
+// will, one receiver more conservatively, and says why.
+call_spills = (be: CBackend, c: Call) bool {
+    got ::= be.may_reorder(c) || be.spills_anywhere(c.callee);
+    c.args.loop((h, a) { got = got || be.spills_anywhere(a.value); });
+    got
+}
+
+// argument order
+// A position is held while a call remains to its right. A position that
+// itself calls is also held while any later position remains. The rightmost
+// position can stay inline because nothing follows it.
+
+// Whether the position at signature index `pos` must be held. `first` is
+// how many positions the receiver took, so an argument at argument-index
+// `i` asks with `i + first`, and a receiver asks with `0` and `1`.
+// This is the call equivalent of `gen_c_array.zen`'s `elem_held`.
+holds* = (be: CBackend, c: Call, pos: usize, first: usize) bool {
+    be.reorderable(c, first) && (
+        (pos < (be.last_call_arg(c) + first)) || (
+            (pos < ((c.args.len + first) - 1)) && be.position_calls(
+                c,
+                pos,
+                first
+            )
+        )
+    )
+}
+
+// The arity question and the something-runs question together: the only
+// shape where C's freedom over the order is observable. A receiver is a
+// position too, so something running in it — `make(d.tick()).show(d.n,
+// d.n)` — answers the second question as surely as an argument does.
+reorderable* = (be: CBackend, c: Call, first: usize) bool {
+    ((c.args.len + first) > 1) && (
+        be.any_arg_calls(c) || ((first > 0) && be.recv_calls(c))
+    )
+}
+
+// `first` is not known until a call has been lowered, so the question a
+// `&&` asks about its right operand is asked at the arity the callee's
+// Spelling implies: a call written through a `.` may put a receiver in
+// front of its arguments. Wrong this way costs a lowering shape; wrong
+// the other way is a `&&` that stopped short-circuiting.
+may_reorder* = (be: CBackend, c: Call) bool {
+    be.reorderable(c, be.recv_slots(c))
+}
+
+recv_slots = (be: CBackend, c: Call) usize {
+    call_callee(be.tree, c).kind.match({ Access(_) => 1, _ => 0 })
+}
+
+// Whether something runs in the receiver — the base a `.`-callee stands
+// on. A callee that is not an `Access` has no receiver, which is the
+// answer `recv_slots` already gives.
+recv_calls = (be: CBackend, c: Call) bool {
+    call_callee(be.tree, c).kind.match({
+        Access(a) => be.has_call(a.base),
+        _         => false,
+    })
+}
+
+// Whether something runs at one position: the receiver's base for the
+// positions `first` took, the argument's own value past them. A miss
+// answers yes, for `has_call`'s reason: wrong in this direction costs a
+// temporary, wrong the other way lets C order effects.
+position_calls = (be: CBackend, c: Call, pos: usize, first: usize) bool {
+    (pos < first).match({
+        true  => be.recv_calls(c),
+        false => c.args.get(pos - first).match({
+            Ok(a) => be.has_call(a.value),
+            None  => true,
+        }),
+    })
+}
+
+any_arg_calls = (be: CBackend, c: Call) bool {
+    got ::= false;
+    c.args.loop((h, a) { got = got || be.has_call(a.value); });
+    got
+}
+
+// The index of the last argument containing a call.
+last_call_arg = (be: CBackend, c: Call) usize {
+    at ::= 0;
+    c.args.loop((h, i, a) { at = later(at, i, be.has_call(a.value)); });
+    at
+}
+
+later = (at: usize, i: usize, yes: bool) usize {
+    yes.match({ true => i, false => at })
+}
+
+// The binary-operator form of the same ordering rule. The left operand is
+// held whenever either operand contains a call; the right has nothing after
+// it and may remain inline.
+infix_operand_held* = (be: CBackend, b: Binary) bool {
+    be.has_call(b.lhs) || be.has_call(b.rhs)
+}
+
+// Whether a call occurs anywhere below `id`. The iterative walk handles
+// arbitrarily deep expression trees without consuming the C stack. Unknown
+// forms and allocation failure conservatively answer true, which may add a
+// temporary but cannot expose C's unspecified evaluation order.
+has_call* = (be: CBackend, id: ExprId) bool {
+    be.call_effects.has_call(id)
+}
+
+// Whether a value may be copied to a temporary without changing move,
+// Lifetime, or inline-lambda semantics. Names are held when a later call could
+// Mutate their storage through a `::` parameter.
+holdable* = (be: CBackend, id: ExprId) bool {
+    be.tree.expr_at(id).kind.match({
+        Call(_)   => true,
+        Access(_) => true,
+        Index(_)  => true,
+        Unary(_)  => true,
+        Binary(_) => true,
+        Name(_)   => true,
+        Paren(p)  => be.holdable(p.inner),
+        _         => false,
+    })
+}
+
+// Returns sema's type after applying the current instantiation. If sema has no
+// Answer, call declarations provide a fallback. Frame state is authoritative
+// For locals and `@scope`.
+ty_of* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
+         Res<TyId, AllocError> {
+    be.ty_source(id, ctx, want).try().match({
+        ScopeRef   => be.scope_type(ctx),
+        Frame(t)   => Ok(t),
+        Backend(t) => Ok(t),
+        Sema(got)  => be.settled_answer(id, ctx, got, want),
+        Unanswered => be.fallback_type(id, ctx, want),
+    })
+}
+
+// Which authority answered, and the order they are asked in. The order
+// is the whole rule, and this list is the only statement of it: the
+// frame before the backend, the backend before sema, sema before the
+// context's expectation. Each variant carries the type its own source
+// computed, so nothing below asks a second time.
+TySource = ScopeRef | Frame(TyId) | Backend(TyId) | Sema(TyId) | Unanswered
+
+ty_source = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
+            Res<TySource, AllocError> {
+    be.is_scope_ref(id).match({
+        true  => Ok(TySource.ScopeRef),
+        false => be.local_answer(id).try().match({
+            Ok(t) => Ok(TySource.Frame(t)),
+            None  => be.ptr_answer(id, ctx, want).try().match({
+                Ok(t) => Ok(TySource.Backend(t)),
+                None  => be.sema_source(id, ctx),
+            }),
+        }),
+    })
+}
+
+sema_source = (be :: CBackend, id: ExprId, ctx: Ctx)
+              Res<TySource, AllocError> {
+    got = sub(be, be.check.type_of(id, ctx).try()).try();
+    be.check.is_unknown(got).match({
+        false => Ok(TySource.Sema(got)),
+        true  => Ok(TySource.Unanswered),
+    })
+}
+
+// The lowering frame is authoritative for local types because one generic
+// node id may be instantiated at several concrete types.
+// A handle and a closure are not values and have no type to give: `h`
+// is a pair of labels, a lambda is a body to inline — both left to the
+// paths that know what they are.
+// Field reads inherit the same rule from their base and its declaration.
+local_answer = (be :: CBackend, id: ExprId) Res<Res<TyId>, AllocError> {
+    be.tree.expr_at(id).kind.match({
+        Name(n)   => Ok(be.named_slot(n.text)),
+        Access(a) => be.field_slot(a),
+        _         => Ok(None),
+    })
+}
+
+field_slot = (be :: CBackend, a: Access) Res<Res<TyId>, AllocError> {
+    be.local_answer(a.base).try().match({
+        None  => Ok(None),
+        Ok(b) => be.known_field(b, a.name.text),
+    })
+}
+
+// A member that is not storage has no answer here — a nullary variant,
+// a constant on a type and a method are three other readings of the
+// same node, and `gen_c_read.zen` owns all three.
+known_field = (be :: CBackend, base: TyId, name: str)
+              Res<Res<TyId>, AllocError> {
+    be.field_of(base, name).try().match({
+        None  => Ok(None),
+        Ok(t) => Ok(be.keep_known(t)),
+    })
+}
+
+named_slot = (be :: CBackend, name: str) Res<TyId> {
+    be.slot_of(name).match({
+        None  => None,
+        Ok(s) => be.value_slot(s),
+    })
+}
+
+value_slot = (be :: CBackend, s: LocalSlot) Res<TyId> {
+    s.is_value().match({
+        false => None,
+        true  => be.keep_known(s.ty),
+    })
+}
+
+keep_known = (be :: CBackend, ty: TyId) Res<TyId> {
+    (be.check.is_unknown(ty) || has_var(be.check, ty)).match({
+        true  => None,
+        false => Ok(ty),
+    })
+}
+
+// Backend-intrinsic `Ptr` members have no semantic body from which to infer
+// their result element. The backend answers those result types before sema so
+// pointer arithmetic uses the concrete element width.
+ptr_answer = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
+             Res<Res<TyId>, AllocError> {
+    be.tree.expr_at(id).kind.match({
+        Call(c) => be.ptr_call_answer(c, ctx, want),
+        _       => Ok(None),
+    })
+}
+
+ptr_call_answer = (be :: CBackend, c: Call, ctx: Ctx, want: TyId)
+                  Res<Res<TyId>, AllocError> {
+    be.tree.expr_at(c.callee).kind.match({
+        Access(a) => be.ptr_dot_answer(c, a, ctx, want),
+        _         => Ok(None),
+    })
+}
+
+ptr_dot_answer = (be :: CBackend, c: Call, a: Access, ctx: Ctx, want: TyId)
+                 Res<Res<TyId>, AllocError> {
+    unknown = be.check.types.unknown().try();
+    rty     = be.ty_of(a.base, ctx, unknown).try();
+    be.is_ptr_member(rty, a.name.text).match({
+        false => be.create_type(c, a, rty, ctx),
+        true  => Ok(Ok(be.ptr_member_type(c, a, rty, ctx, want).try())),
+    })
+}
+
+// An open type is not an answer. Sema types `range.loop(body)` as
+// `Res<T>` because only the closure could settle `T`, and a closure
+// infers from a signature rather than into one — so the answer carries
+// a `Var`, and a binding declared at it would be the one C type every
+// loop shares. Only the loop family hits this; `gen_c_loop.zen` owns
+// the rule. Everything else is handed back untouched.
+settled_answer = (be :: CBackend, id: ExprId, ctx: Ctx, got: TyId, want: TyId)
+                 Res<TyId, AllocError> {
+    has_var(be.check, got).match({
+        false => be.opaque_answer(id, ctx, got),
+        true  => be.settle_open(id, ctx, got, want),
+    })
+}
+
+// A partially unknown call result is settled from its arguments before it is
+// Used to declare C storage. This also handles holes that are not represented
+// As ordinary free type parameters.
+opaque_answer = (be :: CBackend, id: ExprId, ctx: Ctx, got: TyId)
+                Res<TyId, AllocError> {
+    unsettled(be, got).match({
+        false => Ok(got),
+        true  => settle_call(be, id, ctx, got),
+    })
+}
+
+// The loop family first, then a callee that is inlined. Both answer the
+// same shape of question — "sema left this open because only the closure
+// could settle it" — and both have to answer before anything is written,
+// because a match scrutinee's temporary is declared at this answer and
+// filled by the lowering's.
+settle_open = (be :: CBackend, id: ExprId, ctx: Ctx, got: TyId, want: TyId)
+              Res<TyId, AllocError> {
+    walked = be.loop_result_type(id, ctx, got, want).try();
+    has_var(be.check, walked).match({
+        false => Ok(walked),
+        true  => be.settle_inlined(id, ctx, walked),
+    })
+}
+
+// And then the call itself. Sema types a generic call as its declared
+// return, and inside a member body nothing recorded an instantiation to
+// close it — so a `.try()` on one lands in a temporary declared at
+// `Res<q, E>`, which is a C struct with an unresolved element. The
+// arguments say which instantiation it is; `gen_c_call.zen` asks them.
+settle_inlined = (be :: CBackend, id: ExprId, ctx: Ctx, got: TyId)
+                 Res<TyId, AllocError> {
+    inlined = be.inline_result_type(id, ctx, got).try();
+    has_var(be.check, inlined).match({
+        false => Ok(inlined),
+        true  => settle_call(be, id, ctx, inlined),
+    })
+}
+
+// A `.try()` on one is the same question one node up. Sema types
+// `f().try()` as the callee's declared `Ok` payload, which is the
+// parameter itself when the callee is generic — so the operand is
+// re-asked and the payload read off the answer.
+settle_call = (be :: CBackend, id: ExprId, ctx: Ctx, got: TyId)
+              Res<TyId, AllocError> {
+    be.tree.expr_at(id).kind.match({
+        Call(c)  => be.call_ret_type(id, c, ctx, got),
+        Try(t)   => be.try_value_type(t.operand, ctx, got),
+        Paren(p) => be.ty_of(p.inner, ctx, got),
+        _        => Ok(got),
+    })
+}
+
+fallback_type = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
+                Res<TyId, AllocError> {
+    be.tree.expr_at(id).kind.match({
+        Call(c)   => call_type(be, c, ctx, want),
+        Paren(p)  => be.ty_of(p.inner, ctx, want),
+        Try(t)    => be.try_value_type(t.operand, ctx, want),
+        Index(x)  => be.index_type(x, ctx, want),
+        Access(a) => be.access_field_type(a, ctx, want),
+        Binary(b) => binary_type(be, b, ctx, want),
+        _         => Ok(want),
+    })
+}
+
+// What a call evaluates to: the callee's declared return type, or the
+// type it constructs.
+call_type = (be :: CBackend, c: Call, ctx: Ctx, want: TyId)
+            Res<TyId, AllocError> {
+    be.tree.expr_at(c.callee).kind.match({
+        Name(n) => be.named_call_type(n.text, ctx, want),
+        _       => Ok(want),
+    })
+}
+
+named_call_type = (be :: CBackend, name: str, ctx: Ctx, want: TyId)
+                  Res<TyId, AllocError> {
+    is_res_ctor(name).match({
+        true  => Ok(want),
+        false => be.declared_call_type(name, ctx, want),
+    })
+}
+
+declared_call_type = (be :: CBackend, name: str, ctx: Ctx, want: TyId)
+                     Res<TyId, AllocError> {
+    found ::= be.alloc.Vec<Def>();
+    be.check.world.defs_of(ctx.module, name, found).try();
+    found.len.match({
+        1 => be.def_call_type(found, want),
+        0 => be.sugar_call_type(name, want),
+        _ => Ok(want),
+    })
+}
+
+// Print sugar names no declaration but evaluates to unit. This rule applies
+// only after declaration lookup, so a module-local `println` retains its own
+// declared result type.
+sugar_call_type = (be :: CBackend, name: str, want: TyId)
+                  Res<TyId, AllocError> {
+    is_print(name).match({
+        false => Ok(want),
+        true  => be.check.types.prim("()"),
+    })
+}
+
+def_call_type = (be :: CBackend, found: Vec<Def>, want: TyId)
+                Res<TyId, AllocError> {
+    found.get(0).match({
+        None  => Ok(want),
+        Ok(d) => be.def_result_type(d, want),
+    })
+}
+
+def_result_type = (be :: CBackend, d: Def, want: TyId)
+                  Res<TyId, AllocError> {
+    d.kind.match({
+        FunctionDef => be.function_ret(d, want),
+        StructDef   => be.constructed(d),
+        _           => Ok(want),
+    })
+}
+
+function_ret = (be :: CBackend, d: Def, want: TyId) Res<TyId, AllocError> {
+    decl_at(be.tree, d.id).match({
+        None  => Ok(want),
+        Ok(x) => be.decl_ret(d, x, want),
+    })
+}
+
+decl_ret = (be :: CBackend, d: Def, x: Decl, want: TyId)
+           Res<TyId, AllocError> {
+    ctx = Ctx(
+        module: d.id.module.to_usize(),
+        ret: TyId(index: 0),
+        has_ret: false,
+        self_ty: TyId(index: 0),
+        has_self: false
+    );
+    x.kind.match({
+        Function(f) => be.written_ret(f.ret, ctx, want),
+        _           => Ok(want),
+    })
+}
+
+written_ret = (be :: CBackend, ret: Res<TypeId>, ctx: Ctx, want: TyId)
+              Res<TyId, AllocError> {
+    ret.match({
+        None  => Ok(want),
+        Ok(t) => sub(be, be.check.type_from_ast(t, ctx).try()),
+    })
+}
+
+// `.try()` evaluates to its operand's Ok payload.
+try_value_type = (be :: CBackend, operand: ExprId, ctx: Ctx, want: TyId)
+                 Res<TyId, AllocError> {
+    unknown = be.check.types.unknown().try();
+    rt      = be.ty_of(operand, ctx, unknown).try();
+    be.check.types.at(rt).match({
+        Res(r) => Ok(r.value),
+        _      => Ok(want),
+    })
+}
+
+// The `Res` an expression is, when it is one. `.try()` and a `match`
+// on a `Res` both need this and neither has a `want` that says it.
+res_type_of* = (be :: CBackend, id: ExprId, ctx: Ctx)
+               Res<TyId, AllocError> {
+    unknown = be.check.types.unknown().try();
+    be.ty_of(id, ctx, unknown)
+}
+
+// Delivers a value through the conversions shared by arguments, fields, and
+// Returns: result hoisting, error-set widening, and construction of a bound
+// Value. Required temporaries are emitted before the consuming statement.
+expr* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId, out :: String)
+        Res<(), AllocError> {
+    be.door_of(id, ctx, want).try().match({
+        Set   => be.set_expr(id, ctx, want, out),
+        Hoist => be.hoist_expr(id, ctx, want, out),
+        Widen => be.widen_expr(id, ctx, want, out),
+        Fat   => be.fat_expr(id, ctx, want, out),
+        Plain => be.value_expr(id, ctx, want, out),
+    })
+}
+
+// Conversion precedence is hoist, widen, then bound-value construction.
+Door = Set | Hoist | Widen | Fat | Plain
+
+door_of = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
+          Res<Door, AllocError> {
+    found: Res<Door> = loop<Door>((h) {
+        be.needs_set(id, ctx, want).try().then(() { h.break(Door.Set) });
+        be.needs_hoist(id, ctx, want).try().then(() { h.break(Door.Hoist) });
+        be.needs_widen(id, ctx, want).try().then(() { h.break(Door.Widen) });
+        be.needs_fat(id, ctx, want).try().then(() { h.break(Door.Fat) });
+        h.break(Door.Plain);
+    });
+    Ok(found.match({
+        Ok(door) => door,
+        None     => Door.Plain,
+    }))
+}
+
+// The value at its own type, then the record over its address: lowering
+// it at the bound would ask for a record that does not exist yet.
+fat_expr = (
+    be   :: CBackend,
+    id   : ExprId,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    unknown = be.check.types.unknown().try();
+    cty     = be.ty_of(id, ctx, unknown).try();
+    code ::= be.alloc.String().try();
+    be.value_expr(id, ctx, cty, code).try();
+    be.write_fat_value(code.view(), cty, want, out)
+}
+
+value_expr* = (
+    be   :: CBackend,
+    id   : ExprId,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    be.spills(id).match({
+        true  => be.spill_temp(id, ctx, want, out),
+        false => be.write_expr(id, ctx, want, out),
+    })
+}
+
+spill_temp = (
+    be   :: CBackend,
+    id   : ExprId,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    ty = be.destination_type(id, ctx, want).try();
+    be.spill_of(ty).match({
+        Unsettled => be.unsupported(
+            id,
+            "a spilling form whose type nothing settles",
+            out
+        ),
+        Effect    => be.spill_effect(id, ctx, ty, out),
+        Valued    => be.spill_valued(id, ctx, ty, out),
+    })
+}
+
+// What a spilled value can be held in, in the order asked: a type
+// nothing settled has no C declaration to make, and a `()` has no
+// storage to make one in.
+Spill = Unsettled | Effect | Valued
+
+spill_of = (be :: CBackend, ty: TyId) Spill {
+    be.settled_place(ty).match({
+        false => Spill.Unsettled,
+        true  => be.is_unit(ty).match({
+            true  => Spill.Effect,
+            false => Spill.Valued,
+        }),
+    })
+}
+
+// Returns the node's own type when no contextual expectation exists. An
+// Unknown result is preserved because callers use it to decide whether the
+// Expression needs storage.
+want_of* = (be :: CBackend, id: ExprId, ctx: Ctx) Res<TyId, AllocError> {
+    unknown = be.check.types.unknown().try();
+    be.ty_of(id, ctx, unknown)
+}
+
+settled_place = (be :: CBackend, ty: TyId) bool {
+    (be.check.is_unknown(ty) == false) && (has_var(be.check, ty) == false)
+}
+
+// A spilling form whose value is `()` has nothing to hold — a void
+// temporary is illegal C — and it still runs: dropping it would drop
+// the `.try()` that was the reason for writing it. `0` goes where the
+// expression went, which is what the four report helpers write.
+spill_effect = (
+    be  :: CBackend,
+    id  : ExprId,
+    ctx : Ctx,
+    ty  : TyId,
+    out :: String
+) Res<(), AllocError> {
+    be.deliver(id, ctx, ty, Dest.Discard).try();
+    out.add("0")
+}
+
+spill_valued = (
+    be  :: CBackend,
+    id  : ExprId,
+    ctx : Ctx,
+    ty  : TyId,
+    out :: String
+) Res<(), AllocError> {
+    be.request_type(ty).try();
+    tmp  ::= be.fresh_name("s").try();
+    line ::= be.alloc.String().try();
+    be.declarator(ty, tmp.view(), line).try();
+    be.fmt("{};\n", line.view()).try();
+    be.deliver(id, ctx, ty, Dest.Into(tmp.view())).try();
+    out.add(tmp.view())
+}
+
+// Holds a value at its source position to preserve Zen evaluation order.
+// Unknown and unit values remain inline because neither provides usable C
+// storage.
+value_held* = (
+    be   :: CBackend,
+    id   : ExprId,
+    ctx  : Ctx,
+    want : TyId,
+    hold : bool,
+    out  :: String
+) Res<(), AllocError> {
+    (hold && be.holdable(id)).match({
+        true  => be.hold_value(id, ctx, want, out),
+        false => be.expr(id, ctx, want, out),
+    })
+}
+
+hold_value = (
+    be   :: CBackend,
+    id   : ExprId,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    ty = be.destination_type(id, ctx, want).try();
+    be.spill_of(ty).match({
+        Valued    => be.spill_valued(id, ctx, ty, out),
+        Effect    => be.expr(id, ctx, want, out),
+        Unsettled => be.expr(id, ctx, want, out),
+    })
+}
+
+write_expr = (
+    be   :: CBackend,
+    id   : ExprId,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    node = be.tree.expr_at(id);
+    node.kind.match({
+        Literal(l)    => lower_literal(l, out),
+        Name(n)       => be.lower_name(id, n.text, ctx, want, out),
+        Paren(p)      => be.lower_paren(p.inner, ctx, want, out),
+        Unary(u)      => be.lower_unary(node, u, ctx, want, out),
+        Binary(b)     => be.lower_binary(node, b, ctx, want, out),
+        Access(a)     => be.lower_meta_or_access(id, a, ctx, want, out),
+        Call(c)       => be.lower_call(id, c, ctx, want, out),
+        Index(x)      => be.lower_index(id, x, ctx, out),
+        Array(a)      => be.lower_array_lit(id, a, ctx, want, out),
+        FixedArray(f) => be.lower_fixed_array(id, f, ctx, want, out),
+        Unit          => out.add("0"),
+        Scope         => be.lower_scope_ref(id, out),
+        Consume(x)    => be.lower_consume(x, ctx, want, out),
+        _             => be.unsupported(id, "this expression form", out),
+    }).try();
+    Ok(());
+}
+
+// `consume x` moves, and in C the bytes are simply copied — so the
+// value here is the operand's own spelling and nothing more. What the
+// move costs is the record of it: this frame handed the value away, so
+// it must not also destroy it, and the binding's live flag is cleared
+// on the way past. Without that both the source and the destination
+// drop, which is the double free `consume` exists to prevent.
+lower_consume = (
+    be   :: CBackend,
+    x    : Consume,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    be.release_moved(x.operand).try();
+    expr(be, x.operand, ctx, want, out)
+}
+
+release_moved = (be :: CBackend, id: ExprId) Res<(), AllocError> {
+    be.tree.expr_at(id).kind.match({
+        Name(n)  => be.release_binding(n.text),
+        Paren(p) => be.release_moved(p.inner),
+        _        => Ok(()),
+    })
+}
+
+lower_paren = (
+    be   :: CBackend,
+    id   : ExprId,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    out.add("(").try();
+    expr(be, id, ctx, want, out).try();
+    out.add(")").try();
+    Ok(());
+}
+
+// Scalar literals retain their checked source spelling. Strings also carry
+// a byte length and use C spelling that preserves Zen's escape boundaries.
+lower_literal = (l: Literal, out :: String) Res<(), AllocError> {
+    l.kind.match({
+        Str   => lower_str_literal(l, out),
+        Int   => lower_int_literal(l, out),
+        Float => out.add(l.text),
+        Char  => out.add(l.text),
+        Bool  => out.add(l.text),
+    }).try();
+    Ok(());
+}
+
+// C99 requires an unsigned suffix for decimal constants larger than `i64.MAX`.
+// The digits decide the suffix because their representable range is independent
+// Of the expression's settled type.
+lower_int_literal = (literal: Literal, out :: String) Res<(), AllocError> {
+    out.add(literal.text).try();
+    over_i64(literal).match({
+        true  => out.add("ULL"),
+        false => Ok(()),
+    })
+}
+
+I64_MAX_DIGITS: str = "9223372036854775807"
+
+over_i64 = (literal: Literal) bool {
+    literal.integer.match({
+        Ok(value) => value > 9223372036854775807,
+        None      => (literal.text.len == I64_MAX_DIGITS.len).match({
+            true  => I64_MAX_DIGITS.before(literal.text),
+            false => literal.text.len > I64_MAX_DIGITS.len,
+        }),
+    })
+}
+
+lower_str_literal = (l: Literal, out :: String) Res<(), AllocError> {
+    out.add("(zg_str){ (unsigned char *)").try();
+    out.write_c_literal(l.text.slice(1, l.text.len - 1)).try();
+    out.add(", ").try();
+    out.write_usize(l.text.slice(1, l.text.len - 1).literal_byte_len()).try();
+    out.add("u }").try();
+    Ok(());
+}
+
+// Append one C string from a lexer-validated, unquoted Zen literal body.
+// Zen's \0 consumes one source digit; C octal escapes can consume three.
+// Escaped backslashes stay paired so \\01 remains three ordinary bytes.
+write_c_literal* = (out :: String, raw: str) Res<(), AllocError> {
+    out.add('"').try();
+    start: usize ::= 0;
+    at: usize    ::= 0;
+    loop(() { at < raw.len }, (h) {
+        (raw[at] == '\\').match({
+            true  => {
+                (at + 2 < raw.len && raw[at + 1] == '0'
+                    && raw[at + 2] >= '0' && raw[at + 2] <= '7').then(() {
+                    out.add(raw.slice(start, at + 2)).try();
+                    out.add("00").try();
+                    start = at + 2;
+                });
+                at = at + 2;
+            },
+            false => { at = at + 1; },
+        });
+    });
+    out.add(raw.slice(start, raw.len)).try();
+    out.add('"')
+}
+
+// Reads sema's folded `@meta(T).name` and `@meta(T).fields().len` values.
+// The count chain is identified by shape before consulting its memo because
+// Name and count facts share the same written-type key.
+lower_meta_or_access* = (
+    be   :: CBackend,
+    id   : ExprId,
+    a    : Access,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    base = be.check.tree.expr_at(a.base);
+    base.kind.match({
+        Meta(m) => m.type.match({
+            Ok(t) => be.check.meta_str(t).match({
+                Ok(text) => lower_meta_name(text, out),
+                None     => be.lower_access(id, a, ctx, want, out),
+            }),
+            None  => be.lower_access(id, a, ctx, want, out),
+        }),
+        _       => be.check.meta_name_read(id).match({
+            // A walk's `field.name` (`gen_c_meta.zen`): sema marked the
+            // access, and the text it folds to is the current pass's
+            // field — `walk_now`'s top — lowered as the ordinary string
+            // literal `lower_meta_name` already writes. A marker with no
+            // walk being lowered is a bug in the dispatch, said so.
+            true  => be.check.walk_field_now().match({
+                Ok(text) => lower_meta_name(text, out),
+                None     => be.unsupported(
+                    id,
+                    "a field-name fold with no walk on the lowering stack",
+                    out
+                ),
+            }),
+            false => be.check.is_count_chain(a).match({
+                true  => be.chain_count(a.base, out),
+                false => be.lower_access(id, a, ctx, want, out),
+            }),
+        }),
+    })
+}
+
+// The chain's root, from its top access: the Call's callee carries the
+// Meta with the written type expression — the memo key. `is_count_chain`
+// has vouched for every level between; this reads the one row.
+chain_count = (be :: CBackend, call_id: ExprId, out :: String)
+              Res<(), AllocError> {
+    be.check.tree.expr_at(call_id).kind.match({
+        Call(k) => be.check.tree.expr_at(k.callee).kind.match({
+            Access(f) => be.check.tree.expr_at(f.base).kind.match({
+                Meta(m) => m.type.match({
+                    Ok(t) => be.lower_meta_count(t, out),
+                    None  => Ok(()),
+                }),
+                _       => Ok(()),
+            }),
+            _         => Ok(()),
+        }),
+        _       => Ok(()),
+    })
+}
+
+// The folded text is a type's declared name — identifier bytes, which
+// no escaping can be needed for: Zen's escapes are introduced by `\`
+// and a literal is closed by `"`, and neither byte can appear in an
+// identifier the lexer accepted. So the quotes are added around the
+// text and the length is `text.len`; there is nothing to decode.
+lower_meta_name* = (text: str, out :: String) Res<(), AllocError> {
+    out.fmt("(zg_str){ (unsigned char *)\"{}\", ", text).try();
+    out.write_usize(text.len).try();
+    out.add("u }").try();
+    Ok(());
+}
+
+// The count's sibling (`sema_check.meta_count_of`): `.fields().len`
+// folded to the type's field count at sema time, and this lowers it as
+// an ordinary integer literal — the backend learned nothing new about
+// fields, it writes a number.
+lower_meta_count* = (
+    be  :: CBackend,
+    t   : TypeId,
+    out :: String
+) Res<(), AllocError> {
+    got = be.check.meta_count_of(t);
+    got.match({
+        Ok(n) => {
+            out.write_usize(n).try();
+            Ok(())
+        },
+        None  => Ok(()),
+    })
+}
+
+// A bare identifier: a local, or a name the module declares. `None` is
+// neither — it is a `Res` constructor, and `Res` is structural in this
+// compiler's type language, so its constructors are too.
+lower_name = (
+    be   :: CBackend,
+    id   : ExprId,
+    text : str,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    be.slot_of(text).match({
+        Ok(slot) => be.write_name_slot(
+            text,
+            be.tree.expr_at(id).span,
+            slot,
+            out
+        ),
+        None     => be.lower_global_name(id, text, ctx, want, out),
+    })
+}
+
+write_name_slot* = (
+    be   :: CBackend,
+    name : str,
+    span : Span,
+    slot : LocalSlot,
+    out  :: String
+) Res<(), AllocError> {
+    be.closure_storage(span, slot, "a lambda read as a value").try().match({
+        true  => be.has_storage(slot.ty).match({
+            true  => be.write_local(name, slot, out),
+            false => out.add("0"),
+        }),
+        false => sym_local(out, name, 1),
+    })
+}
+
+// Resolves a named format hole to the C binding and type visible where the
+// Format string is written. Both console and sink formatting use this lookup,
+// So named holes remain a compile-time feature with no runtime state.
+named_hole* = (be :: CBackend, name: str, out :: String)
+              Res<Res<TyId>, AllocError> {
+    be.slot_of(name).match({
+        None  => Ok(None),
+        Ok(s) => be.hole_text(name, s, out),
+    })
+}
+
+hole_text = (be :: CBackend, name: str, s: LocalSlot, out :: String)
+            Res<Res<TyId>, AllocError> {
+    be.value_slot(s).match({
+        None  => Ok(None),
+        Ok(t) => { be.write_local(name, s, out).try(); Ok(Ok(t)) },
+    })
+}
+
+// A `::` parameter holds the address of its argument, so reading it is
+// a dereference. Parenthesised, because every use of it is a use of the
+// value: `(*p).x` and `*p.x` are different C.
+write_local = (be :: CBackend, text: str, slot: LocalSlot, out :: String)
+              Res<(), AllocError> {
+    slot.by_ref.match({
+        false => sym_local(out, text, slot.index),
+        true  => be.write_deref(text, slot, out),
+    })
+}
+
+write_deref = (be :: CBackend, text: str, slot: LocalSlot, out :: String)
+              Res<(), AllocError> {
+    out.add("(*").try();
+    sym_local(out, text, slot.index).try();
+    out.add(")").try();
+    Ok(());
+}
+
+lower_global_name = (
+    be   :: CBackend,
+    id   : ExprId,
+    text : str,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    text.eq("None").match({
+        true  => be.res_value(id, want, "None", out),
+        false => be.lower_global_value(id, text, ctx, want, out),
+    })
+}

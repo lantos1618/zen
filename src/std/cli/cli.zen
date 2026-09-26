@@ -1,0 +1,7 @@
+// Public command-line surface. The scanner stays available for compatibility;
+// Command is the declarative terminal-facing layer.
+
+Spec*, Item*, Options*, Args*, options*, is_flag*, is_word*, arg_at*,
+    OPTIONS_END* = std.cli.cli_scan
+ValueType*, ParameterKind*, CliValue*, DiagnosticKind*, Diagnostic*,
+    Parameter*, Match*, Matches*, Command*, command* = std.cli.cli_command

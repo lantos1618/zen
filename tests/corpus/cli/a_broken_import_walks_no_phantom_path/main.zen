@@ -1,0 +1,18 @@
+// A malformed import reports its parse faults without walking an empty module
+// segment. The broken source is written at runtime so corpus formatting works.
+
+Alloc, AllocError = std.mem
+str = std.text
+FsError = std.env
+BuildArgs = std.build
+build = zen
+
+BROKEN*: str = "A, B = 42\n"
+
+main = (env: Env) Res<i32, AllocError | FsError> {
+    env.fs.write("src/broken/broken.zen", BROKEN).try();
+    a ::= env.mem.alloc();
+    code = build(env, a, BuildArgs(root: "src/broken", repeat: 1)).try();
+    println("src/broken -> {}", code);
+    Ok(0);
+}

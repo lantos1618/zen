@@ -1,0 +1,47 @@
+// C keywords are mangled in every declaration position: file-scope values,
+// types, fields, methods, variants, functions, parameters, and type parameters.
+
+// file scope in C, which is a third identifier space again
+inline = 11
+
+// a struct type named after a keyword, with keyword-named fields and a
+// keyword-named method
+static = {
+    volatile: i32,
+    const: i32,
+
+    default = (self: @Self) i32 { self.volatile + self.const }
+}
+
+// an enum type named after a keyword, with keyword-named variants
+union = case(i32) | goto(i32) | extern
+
+// a top-level function named after a keyword, with keyword-named parameters
+sizeof = (register: i32, restrict: i32) i32 { register + restrict }
+
+// a generic whose TYPE PARAMETER is named after a keyword: the mangled
+// instantiation name is built out of the parameter, so the mangler has to
+// hold at the point where names are synthesised, not only where they are
+// copied
+signed = <unsigned>(typedef: unsigned) unsigned { typedef }
+
+main = (env: Env) Res<i32, AllocError> {
+    s = static(volatile: 3, const: 4);
+
+    u = union.case(5);
+    n = u.match({
+        case(v) => v,
+        goto(v) => v,
+        extern  => 0,
+    });
+
+    println(
+        "positions {} {} {} {} {}",
+        s.default(),
+        n,
+        sizeof(6, 7),
+        signed(8),
+        inline
+    );
+    Ok(0);
+}

@@ -1,0 +1,133 @@
+// Growable allocator-backed buffer.
+
+Alloc, AllocError, Ptr, null_ptr = std.mem
+Range = std.core.range
+
+// An index at or past `len`, named so a caller can propagate the miss
+// honestly instead of borrowing an unrelated error such as OutOfMemory.
+OutOfBounds* = {
+    index*: usize,
+    len*:   usize,
+}
+
+Vec*<T> = {
+    data :: Ptr<T> = null_ptr<T>(),
+    len* :: usize = 0,
+    capacity :: usize = 0,
+    alloc: Alloc,
+
+    add* = (self :: @Self, value: T) Res<(), AllocError> {
+        (self.len == self.capacity).match({
+            true  => self.grow(),
+            false => Ok(()),
+        }).try();
+        self.data.write(self.len, value);
+        self.len = self.len + 1;
+        Ok(());
+    }
+
+    get* = (self: @Self, i: usize) Res<T> {
+        (i < self.len).match({
+            true  => Ok(self.data.read(i)),
+            false => None,
+        });
+    }
+
+    // `get` with the miss named; `.try()` it into any error set that
+    // lists OutOfBounds.
+    require* = (self: @Self, i: usize) Res<T, OutOfBounds> {
+        self.get(i).ok_or(OutOfBounds(index: i, len: self.len))
+    }
+
+    // Raw storage access; callers own bounds and lifetime checks.
+    ptr* = (self: @Self) Ptr<T> { self.data }
+
+    set* = (self :: @Self, i: usize, value: T) Res<()> {
+        (i < self.len).match({
+            true  => { self.data.write(i, value); Ok(()) },
+            false => None,
+        });
+    }
+
+    // Move an element out and close its slot; the caller owns the value.
+    take* = (self :: @Self, i: usize) Res<T> {
+        value = self.get(i).try();
+        Range(i + 1, self.len).loop((h, j) {
+            self.data.write(j - 1, self.data.read(j));
+        });
+        self.len = self.len - 1;
+        Ok(consume value);
+    }
+
+    clear* = (self :: @Self) () {
+        loop(self.len > 0, (h) {
+            self.take(self.len - 1).match({
+                Ok(value) => { dropped = consume value; },
+                None      => (),
+            });
+        });
+    }
+
+    reserve* = (self :: @Self, n: usize) Res<(), AllocError> {
+        want = self.len + n;
+        (want <= self.capacity).match({
+            true  => Ok(()),
+            false => self.reallocate(want * 2),
+        })
+    }
+
+    // Copy an initialized source run, publishing its length after the copy.
+    // The caller owns the source bounds and lifetime. An aliased run must
+    // lie wholly within this Vec's initialized prefix; that run remains
+    // supported even when reallocation moves storage.
+    add_all* = (self :: @Self, source: Ptr<T>, count: usize) Res<(), AllocError> {
+        (count > 0).then(() {
+            at                = self.len;
+            alias: Res<usize> = (at + count > self.capacity).match({
+                true  => Range(0, at).find((i) { self.data.offset(i).same(source) }),
+                false => None,
+            });
+            self.reserve(count).try();
+            from = alias.match({
+                Ok(i) => self.data.offset(i),
+                None  => source,
+            });
+            self.data.offset(at).copy_from(from, count);
+            self.len = at + count;
+        });
+        Ok(())
+    }
+
+    grow = (self :: @Self) Res<(), AllocError> {
+        self.reallocate((self.capacity == 0).match({
+            true  => 1,
+            false => self.capacity * 2,
+        }))
+    }
+
+    reallocate = (self :: @Self, cap: usize) Res<(), AllocError> {
+        self.data     = self.alloc.realloc(self.data, cap).try();
+        self.capacity = cap;
+        Ok(());
+    }
+}
+
+// Iteration observes the current length, including growth during a loop.
+Vec.impl(Range<T>, {
+    start: 0,
+    end: self.len,
+
+    // Keep the Range adapter independent of generic method lookup. Once Vec
+    // has another method returning T, `@Self.get` does not settle T in the
+    // current backend even though the interface already names it.
+    at ::= (self: Vec<T>, index: usize) Res<T> {
+        (index < self.len).match({
+            true  => Ok(self.data.read(index)),
+            false => None,
+        })
+    }
+})
+
+Vec* = <T>(a: Alloc) Vec<T> {
+    Vec(alloc: a)
+}

@@ -1,0 +1,21 @@
+// A COPY IS INDEPENDENT: THE WALK READS WHAT WAS COPIED, NOT WHO FROM.
+//
+// Assignment copies bytes and severs the tie, so walking the COPY must reproduce
+// exactly the original's elements under their own indices — including
+// after the original binding has gone out of reach behind later code.
+// The failure modes are quiet ones: alias instead of copy and the two
+// names share one buffer (indistinguishable until something writes);
+// copy the wrong span and some slot reads as zero, which prints as a
+// plausible-looking 0 in the middle of an otherwise healthy line.
+//
+// The interleaved index/value lines make any single-slot slip land on
+// its own row. The reversed final read checks every copied slot directly,
+// and the values straddle 2^31 so a 32-bit-truncating copy is visible.
+
+main = (env: Env) Res<i32, AllocError> {
+    xs: [i64, 4] = [1000000007, 2, 998244353, 5];
+    ys ::= xs;
+    ys.loop((h, i, v) { println("{} {}", i, v); });
+    println("{} {} {} {}", ys[3], ys[2], ys[1], ys[0]);
+    Ok(0);
+}

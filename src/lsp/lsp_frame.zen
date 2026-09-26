@@ -1,0 +1,127 @@
+// Reads and writes byte-counted `Content-Length` envelopes. Header names are
+// case-insensitive; `Envelope.next` identifies the next frame in the buffer.
+
+str, String = std.text
+AllocError = std.mem
+
+Envelope* = {
+    body*: str,
+    next*: usize,
+}
+
+FrameFault* = NoBlank(usize) | NoLength(usize) | BadLength(usize) | Short(usize)
+
+byte* = (f: FrameFault) usize {
+    f.match({
+        NoBlank(i)   => i,
+        NoLength(i)  => i,
+        BadLength(i) => i,
+        Short(i)     => i,
+    })
+}
+
+why* = (f: FrameFault) str {
+    f.match({
+        NoBlank(_)   => "the headers never ended",
+        NoLength(_)  => "no Content-Length",
+        BadLength(_) => "Content-Length is not a number",
+        Short(_)     => "fewer bytes than Content-Length promised",
+    })
+}
+
+// True when more input could complete the frame.
+partial* = (f: FrameFault) bool {
+    f.match({
+        NoBlank(_)   => true,
+        Short(_)     => true,
+        NoLength(_)  => false,
+        BadLength(_) => false,
+    })
+}
+
+write_fault* = (f: FrameFault, out :: String) Res<(), AllocError> {
+    out.add("lsp: bad frame at byte ").try();
+    out.write_usize(f.byte()).try();
+    out.add(" (").try();
+    out.add(f.why()).try();
+    out.add(")")
+}
+
+frame_at* = (bytes: str, at: usize) Res<Envelope, FrameFault> {
+    blank = bytes.blank_at(at).try();
+    len   = bytes.length_in(at, blank).try();
+    body  = blank + BLANK.len;
+    (len <= bytes.len - body).match({
+        false => Err(FrameFault.Short(body)),
+        true  => Ok(Envelope(
+            body: bytes.slice(body, body + len),
+            next: body + len
+        )),
+    })
+}
+
+// Bytes still missing from the frame at `at`; 0 when its headers are
+// incomplete or malformed.
+short_by* = (bytes: str, at: usize) usize {
+    bytes.blank_at(at).match({
+        Err(_)    => 0,
+        Ok(blank) => bytes.length_in(at, blank).match({
+            Err(_) => 0,
+            Ok(n)  => bytes.missing(blank + BLANK.len, n),
+        }),
+    })
+}
+
+missing = (bytes: str, body: usize, len: usize) usize {
+    available = bytes.len - body;
+    (len > available).match({
+        true  => len - available,
+        false => 0,
+    })
+}
+
+blank_at = (bytes: str, at: usize) Res<usize, FrameFault> {
+    (at <= bytes.len).match({
+        false => Err(FrameFault.NoBlank(at)),
+        true  => bytes.slice(at, bytes.len).find(BLANK).match({
+            Ok(i) => Ok(at + i),
+            None  => Err(FrameFault.NoBlank(at)),
+        }),
+    })
+}
+
+length_in = (bytes: str, at: usize, blank: usize) Res<usize, FrameFault> {
+    from ::= at;
+    found: Res<str> = loop<str>(() { from < blank }, (h) {
+        stop = bytes.line_end(from, blank);
+        bytes.is_length(from, stop).then(() {
+            h.break(bytes.slice(from + NAME.len, stop));
+        });
+        from = stop + CRLF.len;
+    });
+    given           = found.ok_or(FrameFault.NoLength(at)).try();
+    given.trim().value_or("").parse_usize().ok_or(FrameFault.BadLength(at))
+}
+
+line_end = (bytes: str, from: usize, blank: usize) usize {
+    bytes.slice(from, blank).find('\r').match({
+        Ok(i) => from + i,
+        None  => blank,
+    })
+}
+
+is_length = (bytes: str, from: usize, stop: usize) bool {
+    from + NAME.len <= stop
+        && bytes.slice(from, from + NAME.len).eq_ignore_case(NAME)
+}
+
+write_frame* = (body: str, out :: String) Res<(), AllocError> {
+    out.add("Content-Length: ").try();
+    out.write_usize(body.len).try();
+    out.add(BLANK).try();
+    out.add(body)
+}
+
+NAME*: str = "content-length:"
+BLANK: str = "\r\n\r\n"
+CRLF: str = "\r\n"

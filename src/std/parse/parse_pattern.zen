@@ -1,0 +1,123 @@
+// Match-arm pattern parsing. Name binding versus variant resolution is deferred
+// to sema. A destructure binder is itself a pattern, preserving the distinction
+// between `Unit` and `Unit(_)`.
+
+AllocError = std.mem
+QualifiedName, no_trivia = std.ast.ast_span
+PatternId = std.ast.ast_id
+Pattern, PatternKind, PatName, Destructure, Literal, LiteralKind = std.ast.ast_node
+TokenKind, WILDCARD = std.parse.parse_token
+Parser, Mark = std.parse.parser
+
+pattern* = (p :: Parser) Res<PatternId, AllocError> {
+    p.enter().try();
+    id = p.pattern_guarded().try();
+    p.leave();
+    Ok(id);
+}
+
+pattern_guarded = (p :: Parser) Res<PatternId, AllocError> {
+    p.too_deep.match({
+        true  => p.poison_pattern(),
+        false => p.pattern_here(),
+    });
+}
+
+pattern_here = (p :: Parser) Res<PatternId, AllocError> {
+    m = p.open();
+    p.peek().kind.match({
+        Ident  => p.name_or_wild(m),
+        Int(_) => p.literal_pattern(m, LiteralKind.Int),
+        Float  => p.literal_pattern(m, LiteralKind.Float),
+        Str    => p.literal_pattern(m, LiteralKind.Str),
+        Char   => p.literal_pattern(m, LiteralKind.Char),
+        True   => p.literal_pattern(m, LiteralKind.Bool),
+        False  => p.literal_pattern(m, LiteralKind.Bool),
+        _      => {
+            p.error("expected a pattern").try();
+            p.poison_pattern();
+        },
+    });
+}
+
+name_or_wild = (p :: Parser, m: Mark) Res<PatternId, AllocError> {
+    p.at_text(WILDCARD).match({
+        true  => p.wild_pattern(m),
+        false => p.path_pattern(m),
+    });
+}
+
+wild_pattern = (p :: Parser, m: Mark) Res<PatternId, AllocError> {
+    p.bump().try();
+    p.add_pattern(PatternKind.Wild, m);
+}
+
+literal_pattern = (
+    p    :: Parser,
+    m    : Mark,
+    kind : LiteralKind
+) Res<PatternId, AllocError> {
+    token   = p.bump().try();
+    integer = token.kind.match({
+        Int(value) => Ok(value),
+        _          => None,
+    });
+    p.add_pattern(
+        PatternKind.Literal(Literal(
+            kind: kind,
+            text: p.text(token),
+            integer: integer
+        )),
+        m
+    );
+}
+
+path_pattern = (p :: Parser, m: Mark) Res<PatternId, AllocError> {
+    name = p.qualified_name().try();
+    p.at_kind(TokenKind.ParenOpen).match({
+        true  => p.destructure_pattern(m, name),
+        false => p.add_pattern(PatternKind.Name(PatName(name: name)), m),
+    });
+}
+
+destructure_pattern = (
+    p    :: Parser,
+    m    : Mark,
+    name : QualifiedName
+) Res<PatternId, AllocError> {
+    open = p.here_span();
+    p.bump().try();
+    binder = p.pattern().try();
+    p.expect_close(
+        TokenKind.ParenClose,
+        "unclosed `(`: this pattern's payload is never closed",
+        open
+    ).try();
+    p.add_pattern(
+        PatternKind.Destructure(Destructure(name: name, binder: binder)),
+        m
+    );
+}
+
+// Recovery uses wildcard to avoid a secondary exhaustiveness error.
+poison_pattern = (p :: Parser) Res<PatternId, AllocError> {
+    p.tree.add_pattern(Pattern(
+        kind: PatternKind.Wild,
+        span: p.empty_span(),
+        leading: no_trivia(),
+        trailing: no_trivia(),
+    ))
+}
+
+add_pattern = (
+    p    :: Parser,
+    kind : PatternKind,
+    m    : Mark
+) Res<PatternId, AllocError> {
+    p.tree.add_pattern(Pattern(
+        kind: kind,
+        span: p.span_from(m.start),
+        leading: m.leading,
+        trailing: no_trivia(),
+    ))
+}

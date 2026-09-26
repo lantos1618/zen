@@ -1,0 +1,37 @@
+// deeply nested CALLS, which is the same nesting problem with an extra
+// edge: every argument is an expression that must be evaluated before the
+// enclosing call, so an emitter that introduces a temporary per call
+// produces 128 statements, and one that does not produces a single
+// expression 128 levels deep.
+//
+// it also pins evaluation ORDER. C leaves the order of evaluation of
+// function arguments unspecified, so any lowering that turns one Zen call
+// into several C calls in an argument list has silently handed the
+// ordering decision to the C compiler. `bump` is pure here, so this file
+// cannot catch that — it catches the depth. The ordering question needs a
+// side-effecting test, and that test is now `argument_order.zen` beside
+// this one; the temporaries it asks for must not break short-circuiting,
+// which is `argument_order_short_circuits.zen`.
+//
+// WHAT THIS FILE DOES PIN, beyond surviving the depth, is that each level
+// keeps its OWN operation. The second chain alternates two different
+// functions, so a lowering that shared one temporary across levels, or that
+// applied the outermost operation 128 times, lands on a different number
+// rather than on the same 128.
+
+bump = (n: i32) i32 { n + 1 }
+
+skip = (n: i32) i32 { n + 3 }
+
+main = (env: Env) Res<i32, AllocError> {
+    deep = bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(
+        0
+    ))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
+    println("calls {}", deep);
+
+    alternating = skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(skip(bump(
+        0
+    ))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
+    println("alternating {}", alternating);
+    Ok(0);
+}

@@ -1,0 +1,66 @@
+// Public surface of the subject-split C backend. Consumers construct a
+// backend and emitter, emit a program, then inspect diagnostics and C:
+//     be ::= alloc.CBackend(tree, alloc.Checker(tree).try()).try();
+//     out ::= alloc.Emit().try();
+//     be.emit_program(0, out).try();
+//     be.diag_count().match({ .. });      // what it could not lower
+//     out.view()                          // the translation unit
+
+// Backend state and diagnostics.
+CBackend* = gen.gen_c.gen_c_state
+LocalSlot*, Closure* = gen.gen_c.gen_c_frame
+unsupported*, unresolved*, untyped*, ambiguous* = gen.gen_c.gen_c_report
+
+// Type-parameter substitution and temporaries.
+sub*, any_open*, inst_at* = gen.gen_c.gen_c_mono
+recv_inst*, settled_inst*, inst_open* = gen.gen_c.gen_c_mono
+enter_tparams*, leave_tparams*, enter_struct_tparams* = gen.gen_c.gen_c_mono
+temp*, init_temp* = gen.gen_c.gen_c_flow
+
+// Program entry points.
+emit_program*, plain_ctx*, body_ctx* = gen.gen_c.gen_c_decl
+is_res* = gen.gen_c.gen_c_type
+render_symbol_map* = gen.gen_c.gen_c_decl
+emit_main* = gen.gen_c.gen_c_main
+
+// Multi-unit output. `lower_program` walks once;
+// `emit_header` is the `zen.h` every unit includes and `emit_unit` is
+// one unit's bodies selected by the completed `group_bodies` result.
+lower_program*, emit_header*, emit_unit*, group_bodies*, ModuleBodies* = gen.gen_c.gen_c_decl
+
+// C type spelling and layout.
+ctype*, declarator*, spellable*, is_unit* = gen.gen_c.gen_c_type
+c_prim*, is_c_integer*, is_signed*, request_type* = gen.gen_c.gen_c_type
+emit_types* = gen.gen_c.gen_c_layout
+
+// Statement and expression lowering shared by peer backend modules.
+Dest*, block*, deliver*, stmt* = gen.gen_c.gen_c_stmt
+expr*, ty_of*, spills*, spills_anywhere* = gen.gen_c.gen_c_expr
+lower_meta_or_access*, lower_meta_count* = gen.gen_c.gen_c_expr
+lower_access*, type_const* = gen.gen_c.gen_c_read
+lower_meta_walk*, lower_meta_proj* = gen.gen_c.gen_c_meta
+lower_unary*, lower_binary*, c_op* = gen.gen_c.gen_c_op
+lower_call*, signature_of* = gen.gen_c.gen_c_call
+complete_inst*, call_ret_type* = gen.gen_c.gen_c_infer
+lower_match* = gen.gen_c.gen_c_flow
+lower_try* = gen.gen_c.gen_c_try
+lower_loop* = gen.gen_c.gen_c_loop
+is_loop_shape*, loop_result_type*, Shape* = gen.gen_c.gen_c_shape
+Fold*, lower_fold* = gen.gen_c.gen_c_fold
+supplies_bounds*, range_impl*, range_element_type* = gen.gen_c.gen_c_range
+handle_depth*, lower_handle_call* = gen.gen_c.gen_c_handle
+inlines*, inline_call*, inline_method* = gen.gen_c.gen_c_inline
+closure_slot*, lower_closure_call*, takes_lambda* = gen.gen_c.gen_c_inline
+inline_result_type*, inline_ret* = gen.gen_c.gen_c_settle
+is_ptr_member*, lower_ptr_member*, lower_null_ptr* = gen.gen_c.gen_c_ptr
+is_format_door*, lower_format_door* = gen.gen_c.gen_c_fmt
+CapabilityKind*, capability_kind*, lower_capability* = gen.gen_c.gen_c_cap
+is_fat*, Slot*, slots_of*, fat_value* = gen.gen_c.gen_c_fat
+needs_fat*, write_fat_value* = gen.gen_c.gen_c_fat
+convert*, lower_fat_call* = gen.gen_c.gen_c_bound
+lower_index*, index_type* = gen.gen_c.gen_c_index
+array_of*, write_array_index*, lower_array_walk* = gen.gen_c.gen_c_array
+lower_array_lit*, lower_fixed_array*, write_array_def* = gen.gen_c.gen_c_array
+
+// Runtime floor.
+C_STANDARD*, comment* = gen.gen_c.gen_c_runtime

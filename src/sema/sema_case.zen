@@ -1,0 +1,200 @@
+Decl, Enum, Variant = std.ast
+AllocError = std.mem
+Vec = std.collections
+str = std.text
+TyId, TyNamed, TyRes = sema.sema_ty
+decl_at = sema.sema_def
+Checker, Ctx = sema.sema_check
+type_from_ast = sema.sema_denote
+union_reading, union_member, member_of = sema.sema_union
+
+// One value a scrutinee can be. `payload` is `()` when there is none.
+Case* = {
+    name*: str,
+    payload*: TyId,
+    has_payload*: bool,
+
+    arity* = (self: @Self) usize {
+        self.has_payload.match({ true => 1, false => 0 })
+    }
+}
+
+// The cases of a type, or false when its alternatives cannot be enumerated.
+// Structural unions use member constructors just like declared unions.
+cases_of* = (c :: Checker, ty: TyId, out :: Vec<Case>) Res<bool, AllocError> {
+    c.types.at(ty).match({
+        Prim(p)  => c.bool_cases(p.name, out),
+        Res(r)   => c.res_cases(r, out),
+        Named(n) => c.named_cases(n, out),
+        Union(u) => c.structural_cases(ty, u.members, out),
+        _        => Ok(false),
+    })
+}
+
+// Only uniquely named members provide constructor patterns. Keep unknown or
+// otherwise unnamed alternatives conservative rather than claiming coverage.
+structural_cases = (
+    c       :: Checker,
+    ty      : TyId,
+    members : Vec<TyId>,
+    out     :: Vec<Case>
+) Res<bool, AllocError> {
+    complete ::= true;
+    members.loop((h, m) {
+        c.types.at(m).match({
+            Named(n) => c.structural_case(
+                ty,
+                m,
+                n.name.after_last('.'),
+                out
+            ).try(),
+            _        => false,
+        }).match({
+            true  => (),
+            false => { complete = false; },
+        });
+    });
+    Ok(complete);
+}
+
+structural_case = (
+    c      :: Checker,
+    ty     : TyId,
+    member : TyId,
+    name   : str,
+    out    :: Vec<Case>
+) Res<bool, AllocError> {
+    unique   = out.find_case(name).match({ Ok(_) => false, None => true });
+    resolves = c.member_of(ty, name).match({
+        Ok(found) => found.eq(member),
+        None      => false,
+    });
+    (unique && resolves).then(() {
+        out.add(Case(name: name, payload: member, has_payload: true)).try();
+    });
+    Ok(unique && resolves);
+}
+
+case_payload* = (c :: Checker, ty: TyId, name: str) Res<TyId, AllocError> {
+    cases ::= c.alloc.Vec<Case>();
+    c.cases_of(ty, cases).try();
+    cases.find_case(name).match({
+        None   => c.types.unknown(),
+        Ok(cs) => Ok(cs.payload),
+    })
+}
+
+// A case nobody declared has the arity the pattern wrote.
+case_arity* = (c :: Checker, ty: TyId, name: str, wrote_sub: bool)
+              Res<usize, AllocError> {
+    cases ::= c.alloc.Vec<Case>();
+    c.cases_of(ty, cases).try();
+    Ok(cases.find_case(name).match({
+        Ok(cs) => cs.arity(),
+        None   => wrote_sub.match({ true => 1, false => 0 }),
+    }));
+}
+
+is_case* = (c :: Checker, ty: TyId, name: str) Res<bool, AllocError> {
+    cases ::= c.alloc.Vec<Case>();
+    c.cases_of(ty, cases).try();
+    Ok(cases.find_case(name).match({ Ok(_) => true, None => false }));
+}
+
+find_case* = (cases: Vec<Case>, name: str) Res<Case> {
+    cases.find((cs) { cs.name.eq(name) })
+}
+
+// `bool` is an enum of two cases and gets no exemption.
+bool_cases = (c :: Checker, name: str, out :: Vec<Case>) Res<bool, AllocError> {
+    name.eq("bool").match({
+        true  => c.add_bool(out),
+        false => Ok(false),
+    })
+}
+
+add_bool = (c :: Checker, out :: Vec<Case>) Res<bool, AllocError> {
+    unit = c.types.unit().try();
+    out.add(Case(name: "true", payload: unit, has_payload: false)).try();
+    out.add(Case(name: "false", payload: unit, has_payload: false)).try();
+    Ok(true);
+}
+
+res_cases = (c :: Checker, r: TyRes, out :: Vec<Case>) Res<bool, AllocError> {
+    out.add(Case(name: "Ok", payload: r.value, has_payload: true)).try();
+    r.form.match({
+        Failure => out.add(Case(
+            name: "Err",
+            payload: r.error,
+            has_payload: true
+        )),
+        Absence => c.add_none(out),
+        Open    => c.add_none(out),
+    }).try();
+    Ok(true);
+}
+
+add_none = (c :: Checker, out :: Vec<Case>) Res<(), AllocError> {
+    unit = c.types.unit().try();
+    out.add(Case(name: "None", payload: unit, has_payload: false))
+}
+
+// Only an enum has cases; a struct has fields.
+named_cases = (c :: Checker, n: TyNamed, out :: Vec<Case>)
+              Res<bool, AllocError> {
+    c.tree.decl_at(n.decl).match({
+        Ok(d) => c.enum_cases(d, n, out),
+        None  => Ok(false),
+    })
+}
+
+enum_cases = (c :: Checker, d: Decl, n: TyNamed, out :: Vec<Case>)
+             Res<bool, AllocError> {
+    d.kind.match({
+        Enum(e) => c.variant_cases(e, n, out),
+        _       => Ok(false),
+    })
+}
+
+// A nominal enum variant may carry a payload; a union member always carries
+// the type named by that member.
+variant_cases = (c :: Checker, e: Enum, n: TyNamed, out :: Vec<Case>)
+                Res<bool, AllocError> {
+    c.union_reading(n.decl).match({
+        true  => c.add_members(e, n, out),
+        false => c.add_variants(e, n, out),
+    })
+}
+
+add_members = (c :: Checker, e: Enum, n: TyNamed, out :: Vec<Case>)
+              Res<bool, AllocError> {
+    e.variants.loop((h, v) {
+        out.add(Case(
+            name: v.name.text,
+            payload: c.union_member(n.decl, v.name.text).try(),
+            has_payload: true,
+        )).try();
+    });
+    Ok(true);
+}
+
+add_variants = (c :: Checker, e: Enum, n: TyNamed, out :: Vec<Case>)
+               Res<bool, AllocError> {
+    poison = c.types.unknown().try();
+    ctx    = Ctx(n.decl.module.to_usize(), poison);
+    e.variants.loop((h, v) {
+        out.add(Case(
+            name: v.name.text,
+            payload: c.variant_payload(v, ctx).try(),
+            has_payload: v.payload.match({ Ok(_) => true, None => false }),
+        )).try();
+    });
+    Ok(true);
+}
+
+variant_payload* = (c :: Checker, v: Variant, ctx: Ctx) Res<TyId, AllocError> {
+    v.payload.match({
+        Ok(t) => c.type_from_ast(t, ctx),
+        None  => c.types.unit(),
+    })
+}

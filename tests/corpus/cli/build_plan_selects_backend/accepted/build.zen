@@ -1,0 +1,18 @@
+Builder, BuildError, Codegen = std.build
+
+build = (builder :: Builder) Res<(), BuildError> {
+    selected = Codegen.C;
+    builder.exe("selected", {
+        src: Path("src/main.zen"), deps: [], backend: selected
+    }).try();
+    builder.exe("default", {
+        src: Path("src/main.zen"), deps: []
+    }).try();
+    builder.exe("javascript", {
+        src: Path("src/main.zen"), deps: [], backend: Codegen.Js
+    }).try();
+    builder.exe("assembly", {
+        src: Path("src/main.zen"), deps: [], backend: Codegen.Asm
+    }).try();
+    Ok(())
+}

@@ -1,0 +1,11 @@
+// An annotated no-range loop takes its result payload from the declaration;
+// break arguments settle only what that type leaves open.
+
+main = (env: Env) Res<i32> {
+    r: Res<i64> = loop((h) { h.break(-7); });
+    r.match({ Ok(v) => println("ann {}", v), None => println("none") });
+
+    u: Res<usize> = loop((h) { h.break(3); });
+    u.match({ Ok(v) => println("usz {}", v), None => println("none") });
+    Ok(0);
+}

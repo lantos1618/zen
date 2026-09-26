@@ -1,0 +1,238 @@
+// Blocks and statements. A semicolon distinguishes a statement; an optional
+// final expression is the block's value. Recovery is contained to statement
+// boundaries so one malformed statement does not consume the rest of a block.
+
+AllocError = std.mem
+no_trivia = std.ast.ast_span
+ExprId, TypeId, BlockId = std.ast.ast_id
+Block, Stmt, StmtKind, Bind, ExprStmt = std.ast.ast_node
+TokenKind = std.parse.parse_token
+Parser, Mark = std.parse.parser
+expr = std.parse.parse_expr
+type = std.parse.parse_type
+declaration = std.parse.parse_decl
+decl_head_ahead = std.parse.parse_lookahead
+
+// `{ statement* expression? }`
+block* = (p :: Parser) Res<BlockId, AllocError> {
+    p.enter().try();
+    id = p.block_guarded().try();
+    p.leave();
+    Ok(id);
+}
+
+block_guarded = (p :: Parser) Res<BlockId, AllocError> {
+    p.too_deep.match({
+        true  => p.poison_block(),
+        false => p.block_here(),
+    });
+}
+
+block_here = (p :: Parser) Res<BlockId, AllocError> {
+    m    = p.open();
+    open = p.here_span();
+    // A synthesized opener does not establish a statement boundary.
+    opened = p.expect(
+        TokenKind.BraceOpen,
+        "expected `{` to open a block"
+    ).try();
+    stmts              ::= p.alloc.Vec<Stmt>();
+    value: Res<ExprId> ::= None;
+    running            ::= !p.at_kind(TokenKind.BraceClose) && !p.at_eof();
+    running.loop((h) {
+        before = p.at;
+        opened.then(() { p.resume(); });
+        p.one_item(stmts).try().match({
+            Ok(v) => { value = Ok(v); running = false; },
+            None  => (),
+        });
+        (p.at == before).then(() { p.skip_one().try(); });
+        (p.at_kind(TokenKind.BraceClose) || p.at_eof()).then(() {
+            running = false;
+        });
+    });
+    // Claim closing trivia before consuming the brace; bump drains the next run.
+    close = p.claim_close();
+    p.expect_close(
+        TokenKind.BraceClose,
+        "unclosed `{`: this block is never closed",
+        open
+    ).try();
+    p.tree.add_block(Block(
+        stmts: stmts,
+        value: value,
+        span: p.span_from(m.start),
+        leading: m.leading,
+        trailing: close,
+    ));
+}
+
+// A body starts the nesting-depth check at its first inner expression.
+body_block* = (p :: Parser) Res<BlockId, AllocError> {
+    was = p.run_from();
+    id  = p.block().try();
+    p.run_until(was);
+    Ok(id);
+}
+
+// `Ok(v)` is the block's trailing value; `None` means a statement was added.
+one_item = (p :: Parser, stmts :: Vec<Stmt>) Res<Res<ExprId>, AllocError> {
+    m = p.open();
+    p.peek().kind.match({
+        BraceOpen => { p.nested_block(stmts, m).try(); Ok(None) },
+        Ident     => p.ident_item(stmts, m),
+        _         => p.expr_item(stmts, m),
+    });
+}
+
+nested_block = (p :: Parser, stmts :: Vec<Stmt>, m: Mark) Res<(), AllocError> {
+    id = p.block().try();
+    p.push(stmts, StmtKind.Block(id), m);
+}
+
+ident_item = (
+    p     :: Parser,
+    stmts :: Vec<Stmt>,
+    m     : Mark
+) Res<Res<ExprId>, AllocError> {
+    p.impl_ahead().match({
+        true  => { p.impl_item(stmts, m).try(); Ok(None) },
+        false => p.binding_item(stmts, m),
+    });
+}
+
+binding_item = (
+    p     :: Parser,
+    stmts :: Vec<Stmt>,
+    m     : Mark
+) Res<Res<ExprId>, AllocError> {
+    p.decl_head_ahead().match({
+        true  => { p.decl_item(stmts, m).try(); Ok(None) },
+        false => p.expr_item(stmts, m),
+    });
+}
+
+impl_item = (p :: Parser, stmts :: Vec<Stmt>, m: Mark) Res<(), AllocError> {
+    p.error(
+        "`.impl` declares an impl, so it is legal only at module level, never inside a body"
+    ).try();
+    p.decl_item(stmts, m)
+}
+
+decl_item = (p :: Parser, stmts :: Vec<Stmt>, m: Mark) Res<(), AllocError> {
+    d = p.declaration(false).try();
+    p.push(stmts, StmtKind.Decl(d), m);
+}
+
+expr_item = (
+    p     :: Parser,
+    stmts :: Vec<Stmt>,
+    m     : Mark
+) Res<Res<ExprId>, AllocError> {
+    target = p.expr().try();
+    p.peek().kind.match({
+        Colon        => { p.bind_typed(stmts, m, target).try(); Ok(None) },
+        Eq           => { p.bind(stmts, m, target, false).try(); Ok(None) },
+        ColonColonEq => { p.bind(stmts, m, target, true).try(); Ok(None) },
+        Semicolon    => { p.expr_stmt(stmts, m, target).try(); Ok(None) },
+        _            => p.tail_value(target),
+    });
+}
+
+tail_value = (p :: Parser, value: ExprId) Res<Res<ExprId>, AllocError> {
+    (!p.at_kind(TokenKind.BraceClose)).then(() {
+        p.error_at(
+            "expected `;` — a statement ends with one, a declaration does not",
+            p.gap_span()
+        ).try();
+    });
+    Ok(Ok(value));
+}
+
+bind_typed = (
+    p      :: Parser,
+    stmts  :: Vec<Stmt>,
+    m      : Mark,
+    target : ExprId
+) Res<(), AllocError> {
+    p.bump().try();
+    t       = p.type().try();
+    mutable = p.at_kind(TokenKind.ColonColonEq);
+    p.bind_rest(stmts, m, target, Ok(t), mutable);
+}
+
+bind = (
+    p       :: Parser,
+    stmts   :: Vec<Stmt>,
+    m       : Mark,
+    target  : ExprId,
+    mutable : bool
+) Res<(), AllocError> {
+    p.bind_rest(stmts, m, target, None, mutable)
+}
+
+bind_rest = (
+    p       :: Parser,
+    stmts   :: Vec<Stmt>,
+    m       : Mark,
+    target  : ExprId,
+    t       : Res<TypeId>,
+    mutable : bool
+) Res<(), AllocError> {
+    p.eat(TokenKind.Eq).try() || p.eat(TokenKind.ColonColonEq).try();
+    value = p.expr().try();
+    p.expect_after(
+        TokenKind.Semicolon,
+        "expected `;`: an assignment is a statement, not a value — a statement ends with `;`, a declaration does not"
+    ).try();
+    p.push(stmts, StmtKind.Bind(Bind(
+        target: target,
+        type: t,
+        mutable: mutable,
+        value: value,
+    )), m);
+}
+
+expr_stmt = (
+    p     :: Parser,
+    stmts :: Vec<Stmt>,
+    m     : Mark,
+    e     : ExprId
+) Res<(), AllocError> {
+    p.bump().try();
+    p.push(stmts, StmtKind.Expr(ExprStmt(expr: e)), m);
+}
+
+// A statement span includes its semicolon; the inner expression span does not.
+push = (
+    p     :: Parser,
+    stmts :: Vec<Stmt>,
+    kind  : StmtKind,
+    m     : Mark
+) Res<(), AllocError> {
+    end = p.prev_end;
+    stmts.add(Stmt(
+        kind: kind,
+        span: p.span_from(m.start),
+        leading: m.leading,
+        trailing: p.claim_trailing(end),
+    ));
+}
+
+// Recovery consumes one token to guarantee forward progress.
+skip_one = (p :: Parser) Res<(), AllocError> {
+    (!p.at_eof()).then(() { p.bump().try(); });
+    Ok(());
+}
+
+// Depth-limit recovery consumes no closer, so it must not claim trailing
+// trivia that belongs to the following node.
+poison_block = (p :: Parser) Res<BlockId, AllocError> {
+    p.tree.add_block(Block(
+        stmts: p.alloc.Vec<Stmt>(),
+        value: None,
+        span: p.empty_span(),
+        leading: no_trivia(),
+        trailing: no_trivia(),
+    ))
+}

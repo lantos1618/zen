@@ -1,0 +1,166 @@
+// Diagnostic notifications are deduplicated by URI and body. A semantic no-op
+// edit publishes nothing, clearing a fault publishes an empty list, and a new
+// fault publishes once. The test prints JSON bodies, not transport framing.
+
+str, String = std.text
+Alloc, AllocError = std.mem
+Server, serve = lsp.lsp_serve
+write_frame, frame_at = lsp.lsp_frame
+write_text = std.json
+
+// The second in-memory buffer starts with an undefined name.
+SHAPE_BROKEN*: str = "Point* = {\n    x*: i32,\n    y*: i32,\n}\n\narea* = (p: Point) i32 {\n    p.x * missing\n}\n"
+
+// The corrected second buffer.
+SHAPE*: str = "Point* = {\n    x*: i32,\n    y*: i32,\n}\n"
+
+// The first buffer, a semantic no-op edit, and a later sema fault.
+APP*: str = "Point = app.shape\n\nnear = (q: Point, n: i32) i32 {\n    s = q.x + n;\n    s\n}\n"
+APP_EDITED*: str = "Point = app.shape\n\nnear = (q: Point, n: i32) i32 {\n    s = q.x + n;\n    s\n}\n// a comment changes the bytes, not the program\n"
+APP_BROKEN*: str = "Point = app.shape\n\nnear = (q: Point, n: i32) i32 {\n    absent\n}\n"
+APP_BROKEN_EDITED*: str = "Point = app.shape\n\nnear = (q: Point, n: i32) i32 {\n    absent\n}\n// no diagnostic change\n"
+
+// `tests/run.py` stages a directory test into `<work>/src` and runs the
+// program from `<work>`, so these are the paths the server will open.
+URI*: str = "file://src/app/app.zen"
+SHAPE_URI*: str = "file://src/app/shape.zen"
+
+// The workspace contains the src compilation root.
+ROOT_URI*: str = "file://."
+
+INITIALIZED*: str = "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}"
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    s ::= a.Server(env);
+
+    first ::= a.String().try();
+    open_session(a, first).try();
+    write_frame(INITIALIZED, first).try();
+    open_doc(a, SHAPE_URI, SHAPE_BROKEN, first).try();
+    open_doc(a, URI, APP, first).try();
+    batch(s, a, "two buffers opened, one wrong", first.view()).try();
+
+    second ::= a.String().try();
+    change_doc(a, URI, APP_EDITED, second).try();
+    batch(s, a, "a real edit, nothing new to say", second.view()).try();
+
+    third ::= a.String().try();
+    change_doc(a, SHAPE_URI, SHAPE, third).try();
+    batch(s, a, "the wrong file fixed", third.view()).try();
+
+    fourth ::= a.String().try();
+    change_doc(a, URI, APP_BROKEN, fourth).try();
+    batch(s, a, "the clean file broken", fourth.view()).try();
+
+    repeated_changes(s, a).try();
+
+    fifth ::= a.String().try();
+    change_doc(a, URI, APP_BROKEN_EDITED, fifth).try();
+    batch(s, a, "the last overwrite stays deduplicated", fifth.view()).try();
+
+    Ok(0);
+}
+
+repeated_changes = (s :: Server, a: Alloc) Res<(), AllocError> {
+    long ::= a.String(
+        "Point = app.shape\n\nnear = (q: Point, n: i32) i32 {\n    "
+    ).try();
+    Range(0, 8192).loop((h, i) { long.add("x").try(); });
+    long.add("\n}\n").try();
+    out ::= a.String().try();
+    Range(0, 24).loop((h, i) {
+        input ::= a.String().try();
+        text = (i % 2 == 0).match({
+            true  => long.view(),
+            false => APP_BROKEN,
+        });
+        change_doc(a, URI, text, input).try();
+        serve(s, input.view(), out).try();
+    });
+    println("--- repeated changed diagnostics");
+    println("    {} frames", frame_count(out.view()));
+    Ok(())
+}
+
+// Requests.
+
+// rootUri selects workspace checking.
+open_session = (a: Alloc, into :: String) Res<(), AllocError> {
+    body ::= a.String().try();
+    body.add(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":"
+    ).try();
+    write_text(ROOT_URI, body).try();
+    body.add("}}").try();
+    write_frame(body.view(), into)
+}
+
+// didOpen carries text inside textDocument.
+open_doc = (a: Alloc, uri: str, text: str, into :: String)
+           Res<(), AllocError> {
+    body ::= a.String().try();
+    body.add(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
+    ).try();
+    write_text(uri, body).try();
+    body.add(",\"text\":").try();
+    write_text(text, body).try();
+    body.add("}}}").try();
+    write_frame(body.view(), into)
+}
+
+// Full sync carries the complete buffer in contentChanges[0].text.
+change_doc = (a: Alloc, uri: str, text: str, into :: String)
+             Res<(), AllocError> {
+    body ::= a.String().try();
+    body.add(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":"
+    ).try();
+    write_text(uri, body).try();
+    body.add("},\"contentChanges\":[{\"text\":").try();
+    write_text(text, body).try();
+    body.add("}]}}").try();
+    write_frame(body.view(), into)
+}
+
+// Session output.
+
+// One batch through the server, and every frame it produced.
+batch = (s :: Server, a: Alloc, what: str, input: str) Res<(), AllocError> {
+    out ::= a.String().try();
+    serve(s, input, out).try();
+    println("--- {}", what);
+    walk(out.view());
+    Ok(());
+}
+
+// Print every frame body so frame count and ordering remain observable.
+walk = (out: str) () {
+    from  ::= 0;
+    seen  ::= 0;
+    going ::= true;
+    loop(() { going && from < out.len }, (h) {
+        frame_at(out, from).match({
+            Err(_) => { going = false; },
+            Ok(fr) => { seen = seen + 1; println(
+                "    {}",
+                fr.body
+            ); from = fr.next; },
+        });
+    });
+    (seen == 0).then(() { println("    (no frames)"); });
+}
+
+frame_count = (out: str) usize {
+    from  ::= 0;
+    seen  ::= 0;
+    going ::= true;
+    loop(() { going && from < out.len }, (h) {
+        frame_at(out, from).match({
+            Err(_) => { going = false; },
+            Ok(fr) => { seen = seen + 1; from = fr.next; },
+        });
+    });
+    seen
+}

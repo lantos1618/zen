@@ -1,0 +1,33 @@
+// Returns one whole-document edit only when the shared formatter accepts the
+// buffer and changes it; invalid, unfaithful, and unchanged input returns `[]`.
+
+str, String = std.text
+Alloc, AllocError = std.mem
+scan, Source = std.lex
+render = fmt.fmt
+TextRange, whole_range = lsp.lsp_pos
+arr, to_json = std.json
+
+TextEdit = {
+    range: TextRange,
+    newText: str,
+
+    write = (self: @Self, a: Alloc, out :: String) Res<(), AllocError> {
+        edits ::= arr(out).try();
+        edits.next(out).try();
+        encoded ::= self.to_json(a).try();
+        out.add(encoded.view()).try();
+        edits.close(out)
+    }
+}
+
+write_edits* = (a: Alloc, text: str, out :: String) Res<(), AllocError> {
+    lexed  = scan(a, Source(file: "doc", text: text)).try();
+    shaped = render(a, lexed).try();
+    (shaped.diags.len == 0 && shaped.faithful
+        && !text.eq(shaped.text.view())).match({
+        false => out.add("[]"),
+        true  => TextEdit(range: whole_range(text), newText: shaped.text.view())
+            .write(a, out),
+    })
+}

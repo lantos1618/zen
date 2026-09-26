@@ -1,0 +1,795 @@
+Ast, Module, Decl, Ident, Span, QualifiedName, Member = std.ast
+Import, Impl, Enum = std.ast
+Alloc, AllocError, Ptr = std.mem
+Vec, Map = std.collections
+str, String = std.text
+Range, Eq, Hash = std.core
+DeclId, ImplId = sema.sema_id
+
+DefKind* = StructDef | EnumDef | AliasDef | FunctionDef | ConstDef
+
+Def* = {
+    name*: str,
+    qname*: str,
+    kind*: DefKind,
+    id*: DeclId,
+    exported*: bool,
+    span*: Span,
+}
+
+ImportBinding* = {
+    name*: str,
+    module*: str,
+    exported*: bool,
+    span*: Span,
+}
+
+// One module's own surface: what it declares, what it imports, and what
+// it impls. Built once per module by `build`.
+ModuleTable* = {
+    name*: str,
+    defs* :: Vec<Def>,
+    imports* :: Vec<ImportBinding>,
+    impls* :: Vec<ImplId>,
+
+    // Whether the module imports `name`, starred or not.
+    imports_name* = (self: @Self, name: str) bool {
+        self.imports.find((b) { b.name.eq(name) })
+            .match({ Ok(_) => true, None => false })
+    }
+}
+
+WorldIndex = {
+    exported :: Map<str, Vec<Def>>,
+    impls :: Map<str, Vec<ImplId>>,
+    members :: Map<DeclId, Map<str, Vec<usize>>>,
+}
+
+// The module every other module imports implicitly. Bootstrap must use the
+// same spelling.
+PRELUDE*: str = "std.core"
+
+PRELUDE_FILE*: str = "std.core.core"
+
+World* = {
+    tables :: Vec<ModuleTable>,
+    exact :: Map<str, usize>,
+    folders :: Map<str, usize>,
+    index: Ptr<WorldIndex>,
+    alloc: Alloc,
+
+    count* = (self: @Self) usize { self.tables.len }
+
+    table_at* = (self: @Self, i: usize) Res<ModuleTable> { self.tables.get(i) }
+
+    // "" for a missing row.
+    name_at* = (self: @Self, mi: usize) str {
+        self.table_at(mi).match({ Ok(t) => t.name, None => "" })
+    }
+
+    module_name* = (self: @Self, id: DeclId) str {
+        self.name_at(id.module.to_usize())
+    }
+
+    // Whether `mi` sees any def under `name`; false when the lookup
+    // cannot allocate.
+    defines* = (self: @Self, mi: usize, name: str) bool {
+        found ::= self.alloc.Vec<Def>();
+        self.defs_of(mi, name, found).match({
+            Err(_) => false,
+            Ok(_)  => found.len > 0,
+        })
+    }
+
+    index_of* = (self: @Self, name: str) Res<usize> {
+        self.exact.get(name).match({
+            Ok(i) => Ok(i),
+            None  => self.folders.get(name),
+        })
+    }
+
+    member_rows* = (self: @Self, id: DeclId, name: str) Res<Vec<usize>> {
+        self.index.read(0).members.get(id).match({
+            None        => None,
+            Ok(by_name) => by_name.get(name),
+        })
+    }
+
+    defs_of* = (self: @Self, mi: usize, name: str, out :: Vec<Def>)
+               Res<(), AllocError> {
+        self.own_defs(mi, name, out).try();
+        (out.len == 0).then(() { self.imported_defs(mi, name, out).try() });
+        (out.len == 0 && (self.binds_name(mi, name) == false))
+            .then(() { self.prelude_defs(mi, name, out).try() });
+        Ok(());
+    }
+
+    first_def_of* = (self: @Self, mi: usize, name: str)
+                    Res<Res<Def>, AllocError> {
+        self.first_own(mi, name).match({
+            Ok(d) => Ok(Ok(d)),
+            None  => self.first_after_own(mi, name),
+        })
+    }
+
+    first_after_own = (self: @Self, mi: usize, name: str)
+                      Res<Res<Def>, AllocError> {
+        imported = self.first_imported(mi, name).try();
+        imported.match({
+            Ok(d) => Ok(Ok(d)),
+            None  => (self.binds_name(mi, name)).match({
+                true  => Ok(None),
+                false => self.first_prelude_for(mi, name),
+            }),
+        })
+    }
+
+    first_own = (self: @Self, mi: usize, name: str) Res<Def> {
+        self.tables.get(mi).match({
+            None  => None,
+            Ok(t) => t.defs.find((d) { d.name.eq(name) }),
+        })
+    }
+
+    first_prelude_for = (self: @Self, mi: usize, name: str)
+                        Res<Res<Def>, AllocError> {
+        self.prelude_index().match({
+            None    => Ok(None),
+            Ok(pre) => (pre == mi).match({
+                true  => Ok(None),
+                false => self.first_exported(pre, name),
+            }),
+        })
+    }
+
+    first_imported = (self: @Self, mi: usize, name: str)
+                     Res<Res<Def>, AllocError> {
+        seen ::= self.alloc.Vec<usize>();
+        self.first_follow(mi, name, seen, false)
+    }
+
+    first_exported = (self: @Self, mi: usize, name: str)
+                     Res<Res<Def>, AllocError> {
+        seen ::= self.alloc.Vec<usize>();
+        self.first_exports(mi, name, seen)
+    }
+
+    first_exports = (self: @Self, mi: usize, name: str, seen :: Vec<usize>)
+                    Res<Res<Def>, AllocError> {
+        self.first_exported_own(mi, name).match({
+            Ok(d) => Ok(Ok(d)),
+            None  => self.first_follow(mi, name, seen, true),
+        })
+    }
+
+    first_exported_own = (self: @Self, mi: usize, name: str) Res<Def> {
+        self.tables.get(mi).match({
+            None  => None,
+            Ok(t) => t.defs.find((d) { d.exported && d.name.eq(name) }),
+        })
+    }
+
+    first_follow = (self: @Self, mi: usize, name: str,
+                    seen :: Vec<usize>, reexport: bool)
+                   Res<Res<Def>, AllocError> {
+        mi.is_in(seen).match({
+            true  => Ok(None),
+            false => self.first_follow_fresh(mi, name, seen, reexport),
+        })
+    }
+
+    first_follow_fresh = (self: @Self, mi: usize, name: str,
+                          seen :: Vec<usize>, reexport: bool)
+                         Res<Res<Def>, AllocError> {
+        seen.add(mi).try();
+        self.tables.get(mi).match({
+            None  => Ok(None),
+            Ok(t) => self.first_follow_imports(t, name, seen, reexport),
+        })
+    }
+
+    first_follow_imports = (self: @Self, t: ModuleTable, name: str,
+                            seen :: Vec<usize>, reexport: bool)
+                           Res<Res<Def>, AllocError> {
+        hit: Res<Def> = None;
+        t.imports.loop((h, binding) {
+            crosses = binding.exported || (reexport == false);
+            open    = hit.match({ None => true, Ok(_) => false });
+            (open && crosses && binding.name.eq(name)).then(() {
+                self.index_of(binding.module).match({
+                    None      => (),
+                    Ok(other) => self.first_exports(
+                        other,
+                        name,
+                        seen
+                    ).try().match({
+                        None    => (),
+                        Ok(def) => {
+                            hit = Ok(def);
+                            h.break();
+                        },
+                    }),
+                });
+            });
+        });
+        Ok(hit)
+    }
+
+    binds_name = (self: @Self, mi: usize, name: str) bool {
+        self.tables.get(mi).match({
+            None  => false,
+            Ok(t) => t.imports_name(name),
+        })
+    }
+
+    prelude_defs = (self: @Self, mi: usize, name: str, out :: Vec<Def>)
+                   Res<(), AllocError> {
+        self.prelude_index().match({
+            Ok(p) => self.prelude_exports(p, mi, name, out),
+            None  => Ok(()),
+        }).try();
+        Ok(());
+    }
+
+    prelude_index = (self: @Self) Res<usize> {
+        self.index_of(PRELUDE).match({
+            Ok(p) => Ok(p),
+            None  => self.index_of(PRELUDE_FILE),
+        })
+    }
+
+    prelude_exports = (self: @Self, p: usize, mi: usize, name: str,
+                       out :: Vec<Def>) Res<(), AllocError> {
+        (p == mi).match({
+            true  => Ok(()),
+            false => self.exported_defs(p, name, out),
+        }).try();
+        Ok(());
+    }
+
+    // Every exported def of `name` in `p`, following re-exports.
+    exported_defs* = (self: @Self, p: usize, name: str, out :: Vec<Def>)
+                     Res<(), AllocError> {
+        seen ::= self.alloc.Vec<usize>();
+        self.exports_of(p, name, out, seen)
+    }
+
+    prelude_of* = (self: @Self, name: str, out :: Vec<Def>)
+                  Res<(), AllocError> {
+        self.prelude_index().match({
+            Ok(p) => self.exported_defs(p, name, out),
+            None  => Ok(()),
+        }).try();
+        Ok(());
+    }
+
+    is_prelude_decl* = (self: @Self, id: DeclId, name: str)
+                       Res<bool, AllocError> {
+        defs ::= self.alloc.Vec<Def>();
+        self.prelude_of(name, defs).try();
+        Ok(
+            defs.find(
+                (d) { d.id.eq(id) }
+            ).match({ Ok(_) => true, None => false })
+        )
+    }
+
+    exported_named* = (self: @Self, name: str, out :: Vec<Def>)
+                      Res<(), AllocError> {
+        self.index.read(0).exported.get(name).match({
+            Ok(defs) => copy_defs(defs, out),
+            None     => Ok(()),
+        }).try();
+        Ok(());
+    }
+
+    // What `mi` declares under `name`, starred or not.
+    own_defs* = (self: @Self, mi: usize, name: str, out :: Vec<Def>)
+                Res<(), AllocError> {
+        self.tables.get(mi).match({
+            Ok(t) => collect_named(t.defs, name, out),
+            None  => Ok(()),
+        }).try();
+        Ok(());
+    }
+
+    imported_defs = (self: @Self, mi: usize, name: str, out :: Vec<Def>)
+                     Res<(), AllocError> {
+        seen ::= self.alloc.Vec<usize>();
+        self.follow(mi, name, out, seen, false)
+    }
+
+    // Every exported declaration of `name` in module `mi`, following
+    // that module's own re-exports.
+    exports_of* = (self: @Self, mi: usize, name: str, out :: Vec<Def>,
+                   seen :: Vec<usize>) Res<(), AllocError> {
+        self.tables.get(mi).match({
+            Ok(t) => collect_exported(t.defs, name, out),
+            None  => Ok(()),
+        }).try();
+        // A folder root declares nothing and re-exports everything.
+        (out.len == 0).then(
+            () { self.follow(mi, name, out, seen, true).try() }
+        );
+        Ok(());
+    }
+
+    follow = (self: @Self, mi: usize, name: str, out :: Vec<Def>,
+              seen :: Vec<usize>, reexport: bool) Res<(), AllocError> {
+        mi.is_in(seen).match({
+            false => self.follow_fresh(mi, name, out, seen, reexport),
+            true  => Ok(()),
+        })
+    }
+
+    follow_fresh = (self: @Self, mi: usize, name: str, out :: Vec<Def>,
+                    seen :: Vec<usize>, reexport: bool) Res<(), AllocError> {
+        seen.add(mi).try();
+        self.tables.get(mi).match({
+            Ok(t) => self.follow_imports(t, name, out, seen, reexport),
+            None  => Ok(()),
+        }).try();
+        Ok(());
+    }
+
+    follow_imports = (self: @Self, t: ModuleTable, name: str, out :: Vec<Def>,
+                      seen :: Vec<usize>, reexport: bool) Res<(), AllocError> {
+        t.imports.loop((h, binding) {
+            crosses = binding.exported || (reexport == false);
+            (crosses && binding.name.eq(name)).then(() {
+                self.follow_one(binding, name, out, seen).try();
+            });
+        });
+        Ok(());
+    }
+
+    follow_one = (self: @Self, binding: ImportBinding, name: str,
+                  out :: Vec<Def>, seen :: Vec<usize>) Res<(), AllocError> {
+        self.index_of(binding.module).match({
+            Ok(other) => self.exports_of(other, name, out, seen),
+            None      => Ok(()),
+        }).try();
+        Ok(());
+    }
+
+    impls_named* = (self: @Self, tree: Ast, target: str, out :: Vec<ImplId>)
+                   Res<(), AllocError> {
+        self.index.read(0).impls.get(target).match({
+            Ok(ids) => copy_impls(ids, out),
+            None    => Ok(()),
+        }).try();
+        Ok(());
+    }
+
+    blocked_imports* = (self: @Self, tree: Ast, mi: usize,
+                        out :: Vec<ImportBinding>) Res<(), AllocError> {
+        self.tables.get(mi).match({
+            Ok(t) => self.blocked_in(tree, t, mi, out),
+            None  => Ok(()),
+        })
+    }
+
+    blocked_in = (self: @Self, tree: Ast, t: ModuleTable, mi: usize,
+                  out :: Vec<ImportBinding>) Res<(), AllocError> {
+        t.imports.loop((h, b) { self.blocked_one(tree, b, mi, out).try() });
+        Ok(());
+    }
+
+    blocked_one = (self: @Self, tree: Ast, b: ImportBinding, mi: usize,
+                   out :: Vec<ImportBinding>) Res<(), AllocError> {
+        self.index_of(b.module).match({
+            None      => Ok(()),
+            Ok(other) => self.blocked_from(tree, b, other, mi, out),
+        })
+    }
+
+    blocked_from = (self: @Self, tree: Ast, b: ImportBinding, other: usize,
+                    mi: usize, out :: Vec<ImportBinding>)
+                   Res<(), AllocError> {
+        seen ::= self.alloc.Vec<usize>();
+        crosses = self.exports_name(tree, other, b.name, seen).try();
+        (crosses || (other == mi)).match({
+            true  => Ok(()),
+            false => out.add(b),
+        })
+    }
+
+    exports_name = (self: @Self, tree: Ast, mi: usize, name: str,
+                     seen :: Vec<usize>) Res<bool, AllocError> {
+        defs ::= self.alloc.Vec<Def>();
+        self.exported_defs(mi, name, defs).try();
+        hits ::= self.alloc.Vec<Def>();
+        (defs.len == 0).then(() {
+            self.exports_variant(tree, mi, name, hits, seen, true).try();
+        });
+        Ok(defs.len > 0 || hits.len > 0);
+    }
+
+    variant_defs* = (self: @Self, tree: Ast, mi: usize, name: str,
+                     out :: Vec<Def>) Res<(), AllocError> {
+        seen ::= self.alloc.Vec<usize>();
+        self.exports_variant(tree, mi, name, out, seen, false)
+    }
+
+    exports_variant = (self: @Self, tree: Ast, mi: usize, name: str,
+                       hits :: Vec<Def>, seen :: Vec<usize>, reexport: bool)
+                      Res<(), AllocError> {
+        mi.is_in(seen).match({
+            true  => Ok(()),
+            false => self.variant_walk(tree, mi, name, hits, seen, reexport),
+        })
+    }
+
+    variant_walk = (self: @Self, tree: Ast, mi: usize, name: str,
+                    hits :: Vec<Def>, seen :: Vec<usize>, reexport: bool)
+                   Res<(), AllocError> {
+        seen.add(mi).try();
+        self.tables.get(mi).match({
+            Ok(t) => self.variant_table(tree, t, name, hits, seen, reexport),
+            None  => Ok(()),
+        })
+    }
+
+    variant_table = (self: @Self, tree: Ast, t: ModuleTable, name: str,
+                     hits :: Vec<Def>, seen :: Vec<usize>, reexport: bool)
+                    Res<(), AllocError> {
+        collect_variant(tree, t, name, reexport, hits).try();
+        (hits.len == 0).then(() {
+            self.variant_each(tree, t, name, hits, seen, reexport).try();
+        });
+        Ok(());
+    }
+
+    // Follow imports only when the binding exports the requested variant.
+    variant_each = (self: @Self, tree: Ast, t: ModuleTable, name: str,
+                    hits :: Vec<Def>, seen :: Vec<usize>, reexport: bool)
+                   Res<(), AllocError> {
+        t.imports.loop((h, b) {
+            self.variant_hop(tree, b, name, hits, seen, reexport).try();
+        });
+        Ok(());
+    }
+
+    variant_hop = (self: @Self, tree: Ast, b: ImportBinding, name: str,
+                   hits :: Vec<Def>, seen :: Vec<usize>, reexport: bool)
+                  Res<(), AllocError> {
+        crosses = b.exported || (reexport == false);
+        (crosses && b.name.eq(name)).match({
+            false => Ok(()),
+            true  => self.variant_hop_to(tree, b.module, name, hits, seen),
+        })
+    }
+
+    // Every hop after the first crosses a module boundary and requires export.
+    variant_hop_to = (self: @Self, tree: Ast, module: str, name: str,
+                      hits :: Vec<Def>, seen :: Vec<usize>)
+                     Res<(), AllocError> {
+        self.index_of(module).match({
+            None  => Ok(()),
+            Ok(o) => self.exports_variant(tree, o, name, hits, seen, true),
+        })
+    }
+
+    // The `Impl` node an `ImplId` points at.
+    impl_at* = (self: @Self, tree: Ast, id: ImplId) Res<Impl> {
+        decl_at(tree, id.decl).match({
+            None  => None,
+            Ok(d) => d.kind.match({
+                Impl(i) => Ok(i),
+                _       => None,
+            }),
+        })
+    }
+}
+
+World* = (a: Alloc, tree: Ast) Res<World, AllocError> {
+    index  ::= WorldIndex(
+        exported: a.Map<str, Vec<Def>>(),
+        impls: a.Map<str, Vec<ImplId>>(),
+        members: a.Map<DeclId, Map<str, Vec<usize>>>(),
+    );
+    holder ::= a.Vec<WorldIndex>();
+    holder.add(index).try();
+    slot = holder.ptr();
+    w ::= World(
+        tables: a.Vec<ModuleTable>(),
+        exact: a.Map<str, usize>(),
+        folders: a.Map<str, usize>(),
+        index: slot,
+        alloc: a,
+    );
+    // IDs step beside usize positions; no unchecked narrowing.
+    module_id: u32 ::= 0;
+    Range(0, tree.module_count()).loop((h, i) {
+        tree.module_at(i).match({
+            Ok(m) => add_module(w, index, a, tree, m, i, module_id),
+            None  => Ok(()),
+        }).try();
+        module_id = module_id + 1;
+    });
+    slot.write(0, index);
+    Ok(w);
+}
+
+add_module = (
+    w     :: World,
+    index :: WorldIndex,
+    a     : Alloc,
+    tree  : Ast,
+    m     : Module,
+    i     : usize,
+    mi    : u32
+) Res<(), AllocError> {
+    t            ::= ModuleTable(
+        name: m.name,
+        defs: a.Vec<Def>(),
+        imports: a.Vec<ImportBinding>(),
+        impls: a.Vec<ImplId>(),
+    );
+    decl_id: u32 ::= 0;
+    Range(0, m.decls.len).loop((h, di) {
+        m.decls.get(di).match({
+            Ok(d) => index_decl(t, a, m, d, mi, decl_id),
+            None  => Ok(()),
+        }).try();
+        decl_id = decl_id + 1;
+    });
+    index_table(index, a, tree, t).try();
+    w.tables.add(t).try();
+    set_first(w.exact, m.name, i).try();
+    alias = module_display(m.name);
+    (alias.eq(m.name) == false).then(() {
+        set_first(w.folders, alias, i).try();
+    });
+    Ok(());
+}
+
+index_table = (index :: WorldIndex, a: Alloc, tree: Ast, t: ModuleTable)
+              Res<(), AllocError> {
+    t.defs.loop((h, d) {
+        d.exported.then(() { index_export(index.exported, a, d).try() });
+        d.kind.match({
+            StructDef => decl_at(tree, d.id).match({
+                Ok(decl) => decl.kind.match({
+                    Struct(s) => index_members(
+                        index.members,
+                        a,
+                        d.id,
+                        s.members
+                    ),
+                    _         => Ok(()),
+                }),
+                None     => Ok(()),
+            }),
+            _         => Ok(()),
+        }).try();
+    });
+    t.impls.loop((h, id) {
+        decl_at(tree, id.decl).match({
+            Ok(d) => d.kind.match({
+                Impl(im) => index_impl(index.impls, a, im.target.text, id),
+                _        => Ok(()),
+            }),
+            None  => Ok(()),
+        }).try();
+    });
+    Ok(())
+}
+
+index_export = (index :: Map<str, Vec<Def>>, a: Alloc, d: Def)
+               Res<(), AllocError> {
+    push_bucket(index, a, d.name, d)
+}
+
+index_impl = (index :: Map<str, Vec<ImplId>>, a: Alloc, target: str, id: ImplId)
+             Res<(), AllocError> {
+    push_bucket(index, a, target, id)
+}
+
+index_members = (
+    index   :: Map<DeclId, Map<str, Vec<usize>>>,
+    a       : Alloc,
+    id      : DeclId,
+    members : Vec<Member>
+) Res<(), AllocError> {
+    by_name ::= a.Map<str, Vec<usize>>();
+    members.loop((h, i, m) {
+        push_bucket(by_name, a, m.name().text, i).try();
+    });
+    index.set(id, by_name)
+}
+
+push_bucket = <K: Eq + Hash, T>(index :: Map<K, Vec<T>>, a: Alloc, key: K, v: T)
+              Res<(), AllocError> {
+    bucket ::= index.get(key).match({
+        Ok(found) => found,
+        None      => a.Vec<T>(),
+    });
+    bucket.add(v).try();
+    index.set(key, bucket)
+}
+
+set_first = (index :: Map<str, usize>, name: str, at: usize)
+            Res<(), AllocError> {
+    index.get(name).match({
+        Ok(_) => Ok(()),
+        None  => index.set(name, at),
+    })
+}
+
+index_decl = (
+    t  :: ModuleTable,
+    a  : Alloc,
+    m  : Module,
+    d  : Decl,
+    mi : u32,
+    di : u32
+) Res<(), AllocError> {
+    id = DeclId(module: mi, decl: di);
+    head_of(d).match({
+        Ok(hd) => add_def(t, a, m, hd, id, d.span),
+        None   => d.kind.match({
+            Import(im) => add_imports(t, a, im),
+            Impl(_)    => t.impls.add(ImplId(decl: id)),
+            _          => Ok(()),
+        }),
+    }).try();
+    Ok(());
+}
+
+// What a declaration binds: its name, kind, and star.
+Head = {
+    name: Ident,
+    kind: DefKind,
+    exported: bool,
+}
+
+head_of = (d: Decl) Res<Head> {
+    d.kind.match({
+        Struct(s)   => Ok(Head(
+            name: s.name,
+            kind: DefKind.StructDef,
+            exported: s.exported
+        )),
+        Enum(e)     => Ok(Head(
+            name: e.name,
+            kind: DefKind.EnumDef,
+            exported: e.exported
+        )),
+        Alias(x)    => Ok(Head(
+            name: x.name,
+            kind: DefKind.AliasDef,
+            exported: x.exported
+        )),
+        Function(f) => Ok(Head(
+            name: f.name,
+            kind: DefKind.FunctionDef,
+            exported: f.exported
+        )),
+        Const(c)    => Ok(Head(
+            name: c.name,
+            kind: DefKind.ConstDef,
+            exported: c.exported
+        )),
+        _           => None,
+    })
+}
+
+add_def = (
+    t    :: ModuleTable,
+    a    : Alloc,
+    m    : Module,
+    hd   : Head,
+    id   : DeclId,
+    span : Span
+)
+          Res<(), AllocError> {
+    q ::= a.String("{}.{}", m.name, hd.name.text).try();
+    t.defs.add(Def(
+        name: hd.name.text,
+        qname: q.view(),
+        kind: hd.kind,
+        id: id,
+        exported: hd.exported,
+        span: span,
+    ))
+}
+
+add_imports = (t :: ModuleTable, a: Alloc, im: Import) Res<(), AllocError> {
+    path = dotted(a, im.module).try();
+    im.names.loop((h, n) {
+        t.imports.add(ImportBinding(
+            name: n.name.text,
+            module: path,
+            exported: n.exported,
+            span: n.name.span,
+        )).try();
+    });
+    Ok(());
+}
+
+dotted* = (a: Alloc, q: QualifiedName) Res<str, AllocError> {
+    out ::= a.String().try();
+    q.segments.loop((h, i, seg) {
+        (i > 0).then(() { out.add(".").try() });
+        out.add(seg.text).try();
+    });
+    Ok(out.view());
+}
+
+decl_at* = (tree: Ast, id: DeclId) Res<Decl> {
+    tree.module_at(id.module.to_usize()).match({
+        None  => None,
+        Ok(m) => m.decls.get(id.decl.to_usize()),
+    })
+}
+
+copy_defs = (src: Vec<Def>, out :: Vec<Def>) Res<(), AllocError> {
+    src.loop((h, d) { out.add(d).try() });
+    Ok(());
+}
+
+copy_impls = (src: Vec<ImplId>, out :: Vec<ImplId>) Res<(), AllocError> {
+    src.loop((h, id) { out.add(id).try() });
+    Ok(())
+}
+
+collect_named = (defs: Vec<Def>, name: str, out :: Vec<Def>)
+                Res<(), AllocError> {
+    defs.loop((h, d) {
+        d.name.eq(name).then(() { out.add(d).try() });
+    });
+    Ok(());
+}
+
+collect_exported = (defs: Vec<Def>, name: str, out :: Vec<Def>)
+                   Res<(), AllocError> {
+    defs.loop((h, d) {
+        (d.exported && d.name.eq(name)).then(() { out.add(d).try() });
+    });
+    Ok(())
+}
+
+collect_variant = (
+    tree  : Ast,
+    t     : ModuleTable,
+    name  : str,
+    gated : bool,
+    out   :: Vec<Def>
+) Res<(), AllocError> {
+    t.defs.loop((h, d) {
+        lets_out = d.exported || (gated == false);
+        (lets_out && enum_has_variant(tree, d, name)).then(() {
+            out.add(d).try();
+        });
+    });
+    Ok(());
+}
+
+enum_has_variant = (tree: Ast, d: Def, name: str) bool {
+    decl_at(tree, d.id).match({
+        None  => false,
+        Ok(x) => x.kind.match({
+            Enum(e) => e.has_variant(name),
+            _       => false,
+        }),
+    })
+}
+
+has_variant* = (e: Enum, name: str) bool {
+    e.variants.find((v) { v.name.text.eq(name) })
+        .match({ Ok(_) => true, None => false })
+}
+
+module_display* = (name: str) str {
+    name.rfind('.').match({
+        None      => name,
+        Ok(split) => {
+            head = name.slice(0, split);
+            head.after_last('.').eq(name.after_last('.')).match({
+                true  => head,
+                false => name,
+            })
+        },
+    });
+}

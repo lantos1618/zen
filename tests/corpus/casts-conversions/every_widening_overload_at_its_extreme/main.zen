@@ -1,0 +1,23 @@
+// Conversion operands retain their declared source width before the target
+// cast is applied. Signed and unsigned extremes distinguish every overload
+// in num.zen's widening matrix and catch row/index confusion.
+main = (env: Env) Res<i32, AllocError> {
+    s8:  i8   = -128;
+    u8v: u8   = 255;
+    s16: i16  = -32768;
+    u16v: u16 = 65535;
+
+    println("{} {}", s8.to_i16(), s8.to_i32());
+    println("{} {}", s8.to_i64(), u8v.to_u16());
+    println("{} {}", u8v.to_u32(), u8v.to_u64());
+    println("{} {}", u8v.to_i32(), u8v.to_i64());
+    println("{} {}", s16.to_i32(), s16.to_i64());
+    println("{} {}", u16v.to_u32(), u16v.to_u64());
+    println("{} {}", u16v.to_i64(), s8.to_i64());
+
+    // Include the pointer-width target alongside fixed-width conversions.
+    big: u32 = 4294967295;
+    println("{} {}", big.to_u64(), big.to_usize());
+
+    Ok(0);
+}

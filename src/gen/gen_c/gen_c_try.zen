@@ -1,0 +1,785 @@
+// Lower `.try()` to a guard and early return. Equal canonical error sets copy;
+// widening into a declared enum wraps through its carrier variant; widening
+// into a larger structural set retags each member. Layout and propagation must
+// use the same canonical variant ranks.
+
+Expr, ExprId, Decl, Enum, Variant, Lambda, Param, Paren = std.ast
+AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+Range = std.core
+TyId, TyNamed, TyRes, ResForm, is_failure = sema.sema_ty
+decl_at = sema.sema_def
+Ctx = sema.sema_check
+Inst = sema.sema_inst
+sym_member, sym_variant, sym_local = gen.gen_name
+RES_PATH = gen.gen_name
+sym_union_variant = gen.gen_name
+GenFault = gen.gen_diag
+CBackend = gen.gen_c.gen_c_state
+enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
+ctype, declarator, is_unit, variant_type, decl_ctx, decl_inst = gen.gen_c.gen_c_type
+write_qname = gen.gen_c.gen_c_layout
+Dest, write_dest, deliver, block = gen.gen_c.gen_c_stmt
+res_type_of = gen.gen_c.gen_c_expr
+needs_hoist = gen.gen_c.gen_c_hoist
+write_set_value = gen.gen_c.gen_c_widen
+declare_temp = gen.gen_c.gen_c_flow
+unwind_to = gen.gen_c.gen_c_own
+
+lower_try* = (
+    be      :: CBackend,
+    id      : ExprId,
+    node    : Expr,
+    operand : ExprId,
+    error   : Res<ExprId>,
+    ctx     : Ctx,
+    want    : TyId,
+    dst     : Dest
+) Res<(), AllocError> {
+    rt = be.res_type_of(operand, ctx).try();
+    be.check.types.at(rt).match({
+        Res(r) => {
+            tmp ::= be.fresh_name("t").try();
+            be.declare_temp(rt, tmp.view()).try();
+            be.deliver(operand, ctx, rt, Dest.Into(tmp.view())).try();
+            be.write_guard(node, error, r, tmp.view(), ctx).try();
+            be.unwrap(id, r, want, tmp.view(), ctx, dst).try();
+            Ok(())
+        },
+        _      => be.report_expr(
+            operand,
+            GenFault.Untyped("the operand of .try()")
+        ),
+    })
+}
+
+write_guard = (
+    be    :: CBackend,
+    node  : Expr,
+    error : Res<ExprId>,
+    r     : TyRes,
+    tmp   : str,
+    ctx   : Ctx
+)
+              Res<(), AllocError> {
+    tag ::= be.alloc.String().try();
+    sym_variant(tag, RES_PATH, "Ok").try();
+    be.fmt("if ({tmp}.zg_tag != {}) {\n", tag.view()).try();
+    be.indent();
+    error.match({
+        None    => be.propagate(node, r, tmp, ctx),
+        Ok(map) => be.map_and_propagate(node, map, r, tmp, ctx),
+    }).try();
+    be.dedent();
+    be.writeln("}").try();
+    Ok(());
+}
+
+map_and_propagate = (
+    be   :: CBackend,
+    node : Expr,
+    map  : ExprId,
+    r    : TyRes,
+    tmp  : str,
+    ctx  : Ctx
+) Res<(), AllocError> {
+    be.check.types.at(ctx.ret).match({
+        Res(want) => TryPropagation(
+            node: node,
+            source: r,
+            target: want,
+            tmp: tmp,
+            ctx: ctx,
+            unwind: be.return_depth(),
+            keep: "",
+        ).map(be, map),
+        _         => be.report(
+            node.span.file,
+            node.span,
+            GenFault.Unsupported(".try(error) outside a Res function")
+        ),
+    })
+}
+
+try_lambda = (be: CBackend, id: ExprId) Res<Lambda> {
+    be.tree.expr_at(id).kind.match({
+        Lambda(l) => Ok(l),
+        Paren(p)  => be.try_lambda(p.inner),
+        _         => None,
+    })
+}
+
+bind_try_error = (be :: CBackend, p: Param, ty: TyId, tmp: str)
+                 Res<(), AllocError> {
+    n = be.declare(p.name.text, ty, false).try();
+    be.check.bind(p.name.text, ty, false, true).try();
+    cname ::= be.alloc.String().try();
+    sym_local(cname, p.name.text, n).try();
+    decl ::= be.alloc.String().try();
+    be.declarator(ty, cname.view(), decl).try();
+    value ::= be.alloc.String().try();
+    read_error(tmp, value).try();
+    be.fmt("{} = {};\n", decl.view(), value.view())
+}
+
+// Fixed facts for one failed `.try()`. The mapper must run while locals are
+// live; every other return unwinds the whole frame before it builds the
+// enclosing carrier. `tmp` is untracked, so no returned value is kept alive.
+TryPropagation = {
+    node: Expr,
+    source: TyRes,
+    target: TyRes,
+    tmp: str,
+    ctx: Ctx,
+    unwind: usize,
+    keep: str,
+
+    map = (self: @Self, be :: CBackend, mapper: ExprId)
+          Res<(), AllocError> {
+        mapped ::= be.fresh_name("e").try();
+        unit = be.is_unit(self.target.error);
+        (unit == false).then(() {
+            be.declare_temp(self.target.error, mapped.view()).try()
+        });
+        be.try_lambda(mapper).match({
+            Ok(lam) => self.lower_mapper(be, lam, mapped.view(), unit),
+            None    => be.deliver(
+                mapper,
+                self.ctx,
+                self.target.error,
+                unit.match({
+                    true  => Dest.Discard,
+                    false => Dest.Into(mapped.view()),
+                })
+            ),
+        }).try();
+        self.unwind_frame(be).try();
+        self.write_mapped_return(be, mapped.view(), unit)
+    }
+
+    lower_mapper = (self: @Self, be :: CBackend, lam: Lambda, mapped: str,
+                    unit: bool) Res<(), AllocError> {
+        mark  = be.mark();
+        cmark = be.check.mark();
+        lam.params.get(0).match({
+            Ok(p) => be.bind_try_error(p, self.source.error, self.tmp),
+            None  => Ok(()),
+        }).try();
+        block(
+            be,
+            lam.body,
+            self.ctx,
+            self.target.error,
+            unit.match({ true => Dest.Discard, false => Dest.Into(mapped) })
+        ).try();
+        be.release(mark).try();
+        be.check.release(cmark).try();
+        Ok(())
+    }
+
+    write_mapped_return = (self: @Self, be :: CBackend, mapped: str,
+                           unit: bool) Res<(), AllocError> {
+        line ::= be.alloc.String().try();
+        line.add("(").try();
+        be.ctype(self.ctx.ret, line).try();
+        line.add("){ .zg_tag = ").try();
+        line.sym_variant(RES_PATH, "Err").try();
+        (unit == false).then(() {
+            line.add(", .zg_data.").try();
+            line.sym_member("Err").try();
+            line.fmt(" = {mapped}").try();
+        });
+        line.add(" }").try();
+        write_return(be, line.view())
+    }
+
+    unwind_frame = (self: @Self, be :: CBackend) Res<(), AllocError> {
+        be.unwind_to(self.unwind, self.keep)
+    }
+
+    propagate = (self: @Self, be :: CBackend) Res<(), AllocError> {
+        self.unwind_frame(be).try();
+        forms_agree(self.source.form, self.target.form).match({
+            false => be.report_widening(self.node),
+            true  => self.propagate_failure(be),
+        })
+    }
+
+    // Absence has no error value. Equal errors carry directly; equal
+    // canonical sets under distinct C tags require a representation copy.
+    propagate_failure = (self: @Self, be :: CBackend)
+                        Res<(), AllocError> {
+        is_failure(self.source.form).match({
+            false => self.write(be, Carry.Same),
+            true  => self.propagate_error(be),
+        })
+    }
+
+    propagate_error = (self: @Self, be :: CBackend)
+                      Res<(), AllocError> {
+        self.source.error.eq(self.target.error).match({
+            true  => self.write(be, Carry.Same),
+            false => self.propagate_wider(be),
+        })
+    }
+
+    propagate_wider = (self: @Self, be :: CBackend)
+                      Res<(), AllocError> {
+        // A declared destination may carry the whole source set as one nested
+        // variant even when flattening says their semantic member sets are
+        // equal. Its C representation is then a wrapper, not a byte-compatible
+        // spelling of the source. Prefer that exact carrier before the
+        // canonical-set copy path.
+        be.carrier(self.target.error, self.source.error).match({
+            Ok(var) => self.write(be, Carry.Variant(var)),
+            None    => self.copy_or_widen(be),
+        })
+    }
+
+    copy_or_widen = (self: @Self, be :: CBackend)
+                    Res<(), AllocError> {
+        be.same_set(self.source.error, self.target.error).match({
+            true  => self.write(be, Carry.Copy),
+            false => self.widen_or_report(be),
+        })
+    }
+
+    widen_or_report = (self: @Self, be :: CBackend)
+                      Res<(), AllocError> {
+        be.check.types.at(self.target.error).match({
+            Union(_) => self.widen_into_set(be),
+            _        => self.widen_into_enum(be),
+        })
+    }
+
+    widen_into_enum = (self: @Self, be :: CBackend)
+                      Res<(), AllocError> {
+        be.carrier(self.target.error, self.source.error).match({
+            None    => self.retag_or_report(be),
+            Ok(var) => self.write(be, Carry.Variant(var)),
+        })
+    }
+
+    widen_into_set = (self: @Self, be :: CBackend)
+                     Res<(), AllocError> {
+        be.check.types.set_has(self.target.error, self.source.error).match({
+            false => self.retag_or_report(be),
+            true  => self.write(be, Carry.Member(self.source.error)),
+        })
+    }
+
+    // Strict widening maps every source tag. Payload fields retain their
+    // member type and cross unchanged.
+    retag_or_report = (self: @Self, be :: CBackend)
+                      Res<(), AllocError> {
+        be.retaggable(self.source.error, self.target.error).match({
+            false => be.report_widening(self.node),
+            true  => self.write(be, Carry.Retag),
+        })
+    }
+
+    write = (self: @Self, be :: CBackend, into: Carry)
+            Res<(), AllocError> {
+        into.match({
+            Copy  => self.write_copy(be),
+            Retag => self.write_retag(be),
+            _     => self.write_built(be, into),
+        })
+    }
+
+    write_built = (self: @Self, be :: CBackend, into: Carry)
+                  Res<(), AllocError> {
+        line ::= be.alloc.String().try();
+        line.add("(").try();
+        be.ctype(self.ctx.ret, line).try();
+        line.add("){ .zg_tag = ").try();
+        self.failure_tag(line).try();
+        is_failure(self.source.form).then(() {
+            self.carry_error(be, into, line).try()
+        });
+        line.add(" }").try();
+        write_return(be, line.view())
+    }
+
+    write_copy = (self: @Self, be :: CBackend) Res<(), AllocError> {
+        carrier ::= be.fresh_name("w").try();
+        self.write_carrier_decl(be, carrier.view()).try();
+        write_carrier_copy(be, carrier.view(), self.tmp).try();
+        write_return(be, carrier.view())
+    }
+
+    write_retag = (self: @Self, be :: CBackend) Res<(), AllocError> {
+        carrier ::= be.fresh_name("w").try();
+        self.write_carrier_decl(be, carrier.view()).try();
+        write_payload_copy(be, carrier.view(), self.tmp).try();
+        self.write_tag_map(be, carrier.view()).try();
+        write_return(be, carrier.view())
+    }
+
+    write_carrier_decl = (self: @Self, be :: CBackend, carrier: str)
+                         Res<(), AllocError> {
+        cty ::= be.alloc.String().try();
+        be.ctype(self.ctx.ret, cty).try();
+        tag ::= be.alloc.String().try();
+        self.failure_tag(tag).try();
+        be.fmt("{} {carrier} = { .zg_tag = {} };\n", cty.view(), tag.view())
+    }
+
+    failure_tag = (self: @Self, out :: String) Res<(), AllocError> {
+        is_failure(self.source.form).match({
+            true  => out.sym_variant(RES_PATH, "Err"),
+            false => out.sym_variant(RES_PATH, "None"),
+        })
+    }
+
+    carry_error = (self: @Self, be :: CBackend, into: Carry,
+                   out :: String) Res<(), AllocError> {
+        be.is_unit(self.target.error).match({
+            true  => Ok(()),
+            false => self.write_err_init(be, into, out),
+        })
+    }
+
+    write_err_init = (self: @Self, be :: CBackend, into: Carry,
+                      out :: String) Res<(), AllocError> {
+        out.add(", .zg_data.").try();
+        out.sym_member("Err").try();
+        out.add(" = ").try();
+        err ::= be.alloc.String().try();
+        read_error(self.tmp, err).try();
+        into.match({
+            Variant(var) => be.wrap_error(
+                self.target.error,
+                var,
+                err.view(),
+                out
+            ),
+            Member(mem)  => be.wrap_set_error(
+                self.target.error,
+                mem,
+                self.tmp,
+                out
+            ),
+            _            => read_error(self.tmp, out),
+        }).try();
+        Ok(())
+    }
+
+    write_tag_map = (self: @Self, be :: CBackend, carrier: str)
+                    Res<(), AllocError> {
+        members ::= be.alloc.Vec<TyId>();
+        canon = be.check.set_of(self.source.error);
+        be.check.types.members_of(canon, members).try();
+        be.open_switch(self.tmp).try();
+        members.loop((h, member) {
+            be.write_tag_case(
+                self.source.error,
+                self.target.error,
+                member,
+                carrier
+            ).try();
+        });
+        be.dedent();
+        be.writeln("}").try();
+        Ok(())
+    }
+}
+
+// Build the enclosing function's own carrier; error-set containment does not
+// perform an implicit conversion.
+propagate = (be :: CBackend, node: Expr, r: TyRes, tmp: str, ctx: Ctx)
+            Res<(), AllocError> {
+    be.check.types.at(ctx.ret).match({
+        Res(want) => TryPropagation(
+            node: node,
+            source: r,
+            target: want,
+            tmp: tmp,
+            ctx: ctx,
+            unwind: be.return_depth(),
+            keep: "",
+        ).propagate(be),
+        _         => {
+            be.unwind_to(0, "").try();
+            be.report(
+                node.span.file,
+                node.span,
+                GenFault.Unsupported(".try() outside a Res function")
+            )
+        },
+    })
+}
+
+same_set = (be :: CBackend, got: TyId, want: TyId) bool {
+    be.check.set_of(got).eq(be.check.set_of(want))
+}
+
+retaggable = (be :: CBackend, from_set: TyId, to_set: TyId) bool {
+    be.within(from_set, to_set) && be.all_tagged(from_set, to_set)
+}
+
+// Resolve declared set names before asking structural containment.
+within = (be :: CBackend, from_set: TyId, to_set: TyId) bool {
+    narrow = be.check.set_of(from_set);
+    wide   = be.check.set_of(to_set);
+    be.check.types.set_within(narrow, wide)
+}
+
+all_tagged = (be :: CBackend, from_set: TyId, to_set: TyId) bool {
+    members ::= be.alloc.Vec<TyId>();
+    canon = be.check.set_of(from_set);
+    be.check.types.members_of(canon, members).match({
+        Err(_) => false,
+        Ok(_)  => be.no_member_untagged(from_set, to_set, members),
+    })
+}
+
+no_member_untagged = (
+    be       :: CBackend,
+    from_set : TyId,
+    to_set   : TyId,
+    members  : Vec<TyId>
+) bool {
+    be.untagged(from_set, to_set, members).match({
+        Ok(_) => false,
+        None  => true,
+    })
+}
+
+untagged = (
+    be       :: CBackend,
+    from_set : TyId,
+    to_set   : TyId,
+    members  : Vec<TyId>
+) Res<usize> {
+    Range(0, members.len).find((i) {
+        members.get(i).match({
+            None  => true,
+            Ok(m) => be.both_tagged(from_set, to_set, m) == false,
+        })
+    })
+}
+
+both_tagged = (be :: CBackend, from_set: TyId, to_set: TyId, m: TyId) bool {
+    be.tagged(from_set, m) && be.tagged(to_set, m)
+}
+
+// Structural sets always compose a tag from their type codes. A declared
+// enum can name a member only through a variant carrying that exact type;
+// this must agree with `gen_c_layout.variant_ranks`.
+tagged = (be :: CBackend, set: TyId, m: TyId) bool {
+    be.check.types.at(set).match({
+        Union(_) => true,
+        _        => be.named_tagged(set, m),
+    })
+}
+
+named_tagged = (be :: CBackend, set: TyId, m: TyId) bool {
+    be.carrier(set, m).match({
+        None  => false,
+        Ok(_) => true,
+    })
+}
+
+// Compare carrier payloads by type identity; equal names from different
+// modules are not interchangeable.
+carrier* = (be :: CBackend, set: TyId, err: TyId) Res<str> {
+    be.check.types.at(set).match({
+        Named(n) => named_carrier(be, n, err),
+        _        => None,
+    })
+}
+
+named_carrier = (be :: CBackend, n: TyNamed, err: TyId) Res<str> {
+    decl_at(be.tree, n.decl).match({
+        None  => None,
+        Ok(d) => be.decl_carrier(n, d, err),
+    })
+}
+
+decl_carrier = (be :: CBackend, n: TyNamed, d: Decl, err: TyId) Res<str> {
+    d.kind.match({
+        Enum(e) => be.variant_carrying(n, e.variants, err),
+        _       => None,
+    })
+}
+
+// Carrier lookup is optional. Preserve that public boundary even though an
+// allocation failure and an absent carrier currently share `None`.
+variant_carrying = (
+    be       :: CBackend,
+    n        : TyNamed,
+    variants : Vec<Variant>,
+    err      : TyId
+) Res<str> {
+    found ::= be.alloc.Vec<str>();
+    be.collect_carrier(n, variants, err, found).match({
+        Err(_) => None,
+        Ok(_)  => found.get(0),
+    })
+}
+
+collect_carrier = (
+    be       :: CBackend,
+    n        : TyNamed,
+    variants : Vec<Variant>,
+    err      : TyId,
+    found    :: Vec<str>
+) Res<(), AllocError> {
+    ctx  = be.decl_ctx(n);
+    inst = be.decl_inst(n).try();
+    mark = be.enter_struct_tparams(n.decl).try();
+    variants.loop((h, v) {
+        be.carries(n, v, err, ctx, inst).then(() {
+            found.add(v.name.text).try();
+            h.break();
+        });
+    });
+    be.leave_tparams(mark).try();
+    Ok(());
+}
+
+carries = (
+    be   :: CBackend,
+    n    : TyNamed,
+    v    : Variant,
+    err  : TyId,
+    ctx  : Ctx,
+    inst : Inst
+) bool {
+    variant_type(be, n, v, ctx, inst).match({
+        None  => false,
+        Ok(t) => t.eq(err),
+    })
+}
+
+forms_agree = (got: ResForm, want: ResForm) bool {
+    is_failure(got) == is_failure(want)
+}
+
+report_widening = (be :: CBackend, node: Expr) Res<(), AllocError> {
+    be.report(
+        node.span.file,
+        node.span,
+        GenFault.Unsupported("widening an error set through .try()")
+    )
+}
+
+// Declared variants and structural members need distinct cases because their
+// C initialisers name different things.
+Carry = Same | Variant(str) | Member(TyId) | Copy | Retag
+
+write_return = (be :: CBackend, w: str) Res<(), AllocError> {
+    be.return_to.match({
+        None      => be.fmt("return {w};\n"),
+        Ok(index) => {
+            target = be.inline_return(index);
+            be.note_inline_return(index);
+            be.fmt("{} = {w};\ngoto {};\n", target.result, target.label)
+        },
+    })
+}
+
+// Copy only the source-sized payload. The wider destination union may be
+// larger, while all union members begin at offset zero.
+write_payload_copy = (be :: CBackend, w: str, tmp: str) Res<(), AllocError> {
+    dst ::= be.alloc.String().try();
+    read_payload(w, dst).try();
+    src ::= be.alloc.String().try();
+    read_payload(tmp, src).try();
+    be.fmt(
+        "memcpy(&{}, &{}, sizeof({}));\n",
+        dst.view(),
+        src.view(),
+        src.view()
+    )
+}
+
+read_payload = (v: str, out :: String) Res<(), AllocError> {
+    read_error(v, out).try();
+    out.add(".zg_data").try();
+    Ok(());
+}
+
+read_tag = (v: str, out :: String) Res<(), AllocError> {
+    read_error(v, out).try();
+    out.add(".zg_tag").try();
+    Ok(());
+}
+
+open_switch = (be :: CBackend, tmp: str) Res<(), AllocError> {
+    tag ::= be.alloc.String().try();
+    read_tag(tmp, tag).try();
+    be.fmt("switch ({}) {\n", tag.view()).try();
+    be.indent();
+    Ok(());
+}
+
+write_tag_case = (
+    be       :: CBackend,
+    from_set : TyId,
+    to_set   : TyId,
+    m        : TyId,
+    w        : str
+) Res<(), AllocError> {
+    from ::= be.alloc.String().try();
+    be.write_member_tag(from_set, m, from).try();
+    to ::= be.alloc.String().try();
+    be.write_member_tag(to_set, m, to).try();
+    tag ::= be.alloc.String().try();
+    read_tag(w, tag).try();
+    be.fmt("case {}: {} = {}; break;\n", from.view(), tag.view(), to.view())
+}
+
+// `retaggable` has already established that both sets can name the member.
+write_member_tag = (be :: CBackend, set: TyId, m: TyId, out :: String)
+                   Res<(), AllocError> {
+    be.check.types.at(set).match({
+        Union(_) => sym_union_variant(out, be.types(), be.world(), set, m),
+        _        => be.write_variant_tag(set, m, out),
+    })
+}
+
+write_variant_tag = (be :: CBackend, set: TyId, m: TyId, out :: String)
+                    Res<(), AllocError> {
+    be.carrier(set, m).match({
+        None  => Ok(()),
+        Ok(v) => be.write_named_tag(set, v, out),
+    })
+}
+
+write_named_tag = (be :: CBackend, set: TyId, v: str, out :: String)
+                  Res<(), AllocError> {
+    qname ::= be.alloc.String().try();
+    be.set_qname(set, qname).try();
+    out.sym_variant(qname.view(), v)
+}
+
+write_carrier_copy = (be :: CBackend, w: str, tmp: str)
+                     Res<(), AllocError> {
+    dst ::= be.alloc.String().try();
+    read_error(w, dst).try();
+    src ::= be.alloc.String().try();
+    read_error(tmp, src).try();
+    be.fmt(
+        "memcpy(&{}, &{}, sizeof({}));\n",
+        dst.view(),
+        src.view(),
+        dst.view()
+    )
+}
+
+read_error = (tmp: str, out :: String) Res<(), AllocError> {
+    out.fmt("{tmp}.zg_data.").try();
+    out.sym_member("Err").try();
+    Ok(());
+}
+
+// Unit payloads never ask for this member because C stores no unit value.
+read_ok_payload = (tmp: str, out :: String) Res<(), AllocError> {
+    out.fmt("{tmp}.zg_data.").try();
+    out.sym_member("Ok").try();
+    Ok(());
+}
+
+// Build a declared error-set variant around an already-lowered payload
+// expression. This public helper is also used by direct widening.
+wrap_error* = (
+    be      :: CBackend,
+    set     : TyId,
+    variant : str,
+    payload : str,
+    out     :: String
+) Res<(), AllocError> {
+    qname ::= be.alloc.String().try();
+    be.set_qname(set, qname).try();
+    cty ::= be.alloc.String().try();
+    be.ctype(set, cty).try();
+    out.fmt("({}){ .zg_tag = ", cty.view()).try();
+    out.sym_variant(qname.view(), variant).try();
+    out.add(", .zg_data.").try();
+    out.sym_member(variant).try();
+    out.fmt(" = {payload} }")
+}
+
+// Structural sets use the shared set-value representation; declared enums use
+// `wrap_error` because they additionally name a declaration and variant.
+wrap_set_error = (
+    be     :: CBackend,
+    set    : TyId,
+    member : TyId,
+    tmp    : str,
+    out    :: String
+) Res<(), AllocError> {
+    code ::= be.alloc.String().try();
+    read_error(tmp, code).try();
+    be.write_set_value(code.view(), member, set, out)
+}
+
+set_qname = (be :: CBackend, set: TyId, out :: String) Res<(), AllocError> {
+    be.check.types.at(set).match({
+        Named(n) => be.write_qname(out, n),
+        _        => Ok(()),
+    })
+}
+
+// Decide the destination before inspecting the payload. A hoisted unit still
+// needs its `Ok` carrier, while an unhoisted unit writes nothing. Non-unit
+// payloads are read from `tmp`; the operand has already been evaluated.
+unwrap = (
+    be   :: CBackend,
+    id   : ExprId,
+    r    : TyRes,
+    want : TyId,
+    tmp  : str,
+    ctx  : Ctx,
+    dst  : Dest
+) Res<(), AllocError> {
+    be.needs_hoist(id, ctx, want).try().match({
+        true  => be.write_hoisted_unwrap(want, r.value, tmp, dst),
+        false => be.is_unit(r.value).match({
+            true  => Ok(()),
+            false => be.write_unwrap(tmp, dst),
+        }),
+    })
+}
+
+write_unwrap = (be :: CBackend, tmp: str, dst: Dest) Res<(), AllocError> {
+    place ::= be.alloc.String().try();
+    place.fmt("{tmp}.zg_data.").try();
+    sym_member(place, "Ok").try();
+    be.write_dest(dst, place.view())
+}
+
+// A unit payload has no C union member, so its hoisted literal contains only
+// the `Ok` tag.
+write_hoisted_unwrap = (
+    be      :: CBackend,
+    want    : TyId,
+    payload : TyId,
+    tmp     : str,
+    dst     : Dest
+) Res<(), AllocError> {
+    cty ::= be.alloc.String().try();
+    be.ctype(want, cty).try();
+    place ::= be.alloc.String().try();
+    place.add("(").try();
+    place.add(cty.view()).try();
+    place.add("){ .zg_tag = ").try();
+    sym_variant(place, RES_PATH, "Ok").try();
+    be.is_unit(payload).match({
+        true  => Ok(()),
+        false => write_ok_init(tmp, place),
+    }).try();
+    place.add(" }").try();
+    be.write_dest(dst, place.view())
+}
+
+write_ok_init = (tmp: str, out :: String) Res<(), AllocError> {
+    out.add(", .zg_data.").try();
+    out.sym_member("Ok").try();
+    out.add(" = ").try();
+    read_ok_payload(tmp, out).try();
+    Ok(());
+}

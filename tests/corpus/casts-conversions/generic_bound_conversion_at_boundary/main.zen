@@ -1,0 +1,19 @@
+// Generic conversion through a bound preserves the concrete source width
+// across erased argument and result slots. Boundary values expose sign-fill,
+// zero-fill, or wrong-implementation errors.
+main = (env: Env) Res<i32, AllocError> {
+    s: i8  = -128;
+    u: u32 = 4294967295;
+    n: u16 = 65535;
+
+    println("{}", to_wide(s));
+    println("{}", to_wide(u));
+    println("{}", to_wide(n));
+    println("{}", as_u64(u));
+
+    Ok(0);
+}
+
+to_wide = <T: ToI64>(x: T) i64 { x.widen_i64() }
+
+as_u64 = <T: ToU64>(x: T) u64 { x.widen_u64() }

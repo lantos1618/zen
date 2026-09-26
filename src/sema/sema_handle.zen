@@ -1,0 +1,74 @@
+Arg, ExprId = std.ast
+AllocError = std.mem
+str = std.text
+Vec = std.collections
+TyId = sema.sema_ty
+Checker, Ctx = sema.sema_check
+SemaFault, NameFault = sema.sema_diag
+
+// A loop handle names its loop and has no storage: it may be read only as
+// `h.break(..)` or `h.next()`, and passed only to a parameter that takes
+// a handle.
+
+HANDLE_MODULE* : str = "std.core.loop.loop_handle"
+HANDLE_NAME* : str = "LoopHandle"
+
+is_handle_ty* = (c :: Checker, ty: TyId) bool {
+    c.types.at(ty).match({
+        Named(n) => c.is_handle_decl(n.decl.module.to_usize(), n.name),
+        _        => false,
+    })
+}
+
+is_handle_decl = (c :: Checker, mi: usize, name: str) bool {
+    c.world.table_at(mi).match({
+        None  => false,
+        Ok(t) => t.name.eq(HANDLE_MODULE) && name.eq(HANDLE_NAME),
+    })
+}
+
+// The name an expression spells, through any parentheses; "" otherwise.
+spelled_name* = (c :: Checker, id: ExprId) str {
+    c.tree.expr_at(id).kind.match({
+        Name(n)  => n.text,
+        Paren(p) => c.spelled_name(p.inner),
+        _        => "",
+    })
+}
+
+refuse_handle_at* = (c :: Checker, id: ExprId) Res<(), AllocError> {
+    c.refuse(
+        c.tree.expr_at(id).span,
+        SemaFault.HandleNotAValue(NameFault(name: c.spelled_name(id))),
+    )
+}
+
+refuse_handle_value* = (c :: Checker, id: ExprId, got: TyId)
+                        Res<(), AllocError> {
+    c.is_handle_ty(got).match({
+        false => Ok(()),
+        true  => c.refuse_handle_at(id),
+    })
+}
+
+refuse_handle_argument* = (c :: Checker, a: Arg, want: TyId, ctx: Ctx)
+                          Res<(), AllocError> {
+    c.type_of(a.value, ctx).match({
+        Err(_) => Ok(()),
+        Ok(ty) => (c.is_handle_ty(ty) && (c.formal_takes_handle(want) == false))
+            .match({
+                false => Ok(()),
+                true  => c.refuse_handle_at(a.value),
+            }),
+    })
+}
+
+formal_takes_handle = (c :: Checker, ty: TyId) bool {
+    c.types.at(ty).match({
+        Fn(f) => f.params.find((p) { c.is_handle_ty(p) }).match({
+            Ok(_) => true,
+            None  => false,
+        }),
+        _     => false,
+    })
+}

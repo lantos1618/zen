@@ -1,0 +1,312 @@
+// Resolve functions and computed fields supplied by an impl. Searches are
+// keyed by the declaration the impl targets; receiver-site lookup remains in
+// `gen_c_member.zen`. Overload selection here narrows candidates by arity.
+
+Decl, Struct, Enum, Member, Function, Impl, ExprId = std.ast
+AllocError = std.mem
+Vec = std.collections
+str = std.text
+Range = std.core
+DeclId, ImplId = sema.sema_id
+decl_at = sema.sema_def
+tail_is_pack = sema.sema_vararg
+CBackend = gen.gen_c.gen_c_state
+last_is_variadic = gen.gen_c.gen_c_sink
+
+// Pick a member with the requested arity. Argument-type disambiguation is
+// handled by `gen_c_member.zen`; an arity miss must not fall back to a
+// differently shaped function.
+by_arity* = (be: CBackend, found: Vec<Member>, arity: usize) Res<Member> {
+    Range(0, found.len).find((i) {
+        found.get(i).match({
+            Ok(m) => be.member_takes(m, arity),
+            None  => false,
+        })
+    }).match({
+        None  => without_arity(found),
+        Ok(i) => found.get(i),
+    })
+}
+
+// The first that survived the filter, and arity when none did. Two
+// filters narrow an overload set — a written signature (`by_sig`) and a
+// call's actual arguments (`member_that_fits`) — and both end here,
+// because arity is what is left to answer with.
+kept_or_arity* = (
+    be    : CBackend,
+    kept  : Vec<Member>,
+    found : Vec<Member>,
+    arity : usize
+) Res<Member> {
+    (kept.len > 0).match({
+        true  => kept.get(0),
+        false => by_arity(be, found, arity),
+    })
+}
+
+member_takes = (be: CBackend, m: Member, arity: usize) bool {
+    m.kind.match({
+        Function(f) => be.fn_takes(f, arity),
+        _           => false,
+    })
+}
+
+// Variadic and `vararg<T>` tails make the declared arity a minimum. Keep the
+// two predicates separate: `last_is_variadic` also identifies the formatter
+// intrinsic, while a typed pack does not.
+fn_takes = (be: CBackend, f: Function, arity: usize) bool {
+    (be.last_is_variadic(f) || tail_is_pack(be.tree, f)).match({
+        true  => (arity + 1) >= f.params.len,
+        false => f.params.len == arity,
+    })
+}
+
+// A member that is not a function has no parameter list, so arity says
+// nothing and the first is still the whole answer — the function-valued
+// Field `gen_c_member.zen` calls through, with nothing on it to count.
+// Where every candidate is a function, arity is an answer and a miss
+// is a miss.
+without_arity = (found: Vec<Member>) Res<Member> {
+    any_function(found).match({
+        true  => None,
+        false => found.get(0),
+    })
+}
+
+any_function = (found: Vec<Member>) bool {
+    Range(0, found.len).find((i) {
+        found.get(i).match({ Ok(m) => is_function(m), None => false })
+    }).match({ Ok(_) => true, None => false })
+}
+
+is_function = (m: Member) bool {
+    m.kind.match({ Function(_) => true, _ => false })
+}
+
+// Resolves a behavior member supplied by an impl. Concrete receivers call the
+// Target's function statically; dynamic bound values use the fat-value path.
+
+impl_member* = (be :: CBackend, decl: DeclId, name: str)
+               Res<Res<Function>, AllocError> {
+    found ::= be.alloc.Vec<Member>();
+    be.impl_member_at(decl, name, found).try();
+    Ok(bodied_fn(found));
+}
+
+// The same question asked of an impl, at a known arity.
+impl_member_of* = (be :: CBackend, decl: DeclId, name: str, arity: usize)
+                  Res<Res<Function>, AllocError> {
+    found ::= be.alloc.Vec<Member>();
+    be.impl_member_at(decl, name, found).try();
+    Ok(member_fn_of(by_arity(be, found, arity)));
+}
+
+member_fn_of = (m: Res<Member>) Res<Function> {
+    m.match({ Ok(x) => member_fn(x), None => None })
+}
+
+bodied_fn* = (found: Vec<Member>) Res<Function> {
+    found.get(0).match({
+        Ok(m) => member_fn(m),
+        None  => None,
+    })
+}
+
+member_fn = (m: Member) Res<Function> {
+    m.kind.match({
+        Function(f) => Ok(f),
+        _           => None,
+    })
+}
+
+// Every member an impl on `decl` supplies under `name`, with a body.
+// "An impl lives with the type, not with the trait", so the search is
+// over impls declared in the target's own module — a same-named type
+// elsewhere is never confused for this one. A required member — `at
+// ::= (..) Res<T>` with no body — is what the impl OWES, not supplies;
+// calling it would name a symbol nothing defines.
+impl_member_at* = (
+    be   :: CBackend,
+    decl : DeclId,
+    name : str,
+    out  :: Vec<Member>
+) Res<(), AllocError> {
+    ids ::= be.alloc.Vec<ImplId>();
+    be.check.world.impls_named(be.tree, be.decl_name(decl), ids).try();
+    ids.loop((h, i) { be.collect_impl_fn(decl, i, name, out).try() });
+    Ok(());
+}
+
+// The name a declaration's type goes by — the key `impls_named` is
+// asked with, and where finding a type's impls starts whatever the
+// caller wants them for. An enum carries impls the way a struct does
+// (`Color.impl(Coloured, { .. })`), so its name answers too.
+decl_name* = (be :: CBackend, decl: DeclId) str {
+    decl_at(be.tree, decl).match({
+        Ok(d) => type_name(d),
+        None  => "",
+    })
+}
+
+type_name = (d: Decl) str {
+    d.kind.match({
+        Struct(st) => st.name.text,
+        Enum(en)   => en.name.text,
+        _          => "",
+    })
+}
+
+// Generic enum impls remain unsupported because monomorphisation currently
+// derives declaration parameters only from structs. Lowering one would leave
+// its variables unbound and collapse distinct instantiations onto one symbol.
+generic_enum* = (be :: CBackend, decl: DeclId) bool {
+    decl_at(be.tree, decl).match({
+        Ok(d) => generic_enum_decl(d),
+        None  => false,
+    })
+}
+
+generic_enum_decl = (d: Decl) bool {
+    d.kind.match({
+        Enum(en) => en.tparams.len > 0,
+        _        => false,
+    })
+}
+
+collect_impl_fn = (
+    be   :: CBackend,
+    decl : DeclId,
+    i    : ImplId,
+    name : str,
+    out  :: Vec<Member>
+) Res<(), AllocError> {
+    (decl.module == i.decl.module).match({
+        false => Ok(()),
+        true  => be.impl_fn_at(i, name, out),
+    })
+}
+
+impl_fn_at = (be :: CBackend, i: ImplId, name: str, out :: Vec<Member>)
+             Res<(), AllocError> {
+    be.check.world.impl_at(be.tree, i).match({
+        Ok(im) => be.keep_impl_fn(i, im, name, out),
+        None   => Ok(()),
+    })
+}
+
+// Collect the impl's members followed by bodied defaults from its bound. Both
+// participate in one overload set; impl members lead so an explicit override
+// wins a tie without hiding differently shaped defaults.
+keep_impl_fn = (
+    be   :: CBackend,
+    i    : ImplId,
+    im   : Impl,
+    name : str,
+    out  :: Vec<Member>
+) Res<(), AllocError> {
+    im.members.loop((h, m) { keep_named_fn(m, name, out).try() });
+    be.keep_bound_default(i, im, name, out)
+}
+
+keep_bound_default = (
+    be   :: CBackend,
+    i    : ImplId,
+    im   : Impl,
+    name : str,
+    out  :: Vec<Member>
+) Res<(), AllocError> {
+    bound = be.check.impl_bound_type(im, i.decl.module.to_usize()).try();
+    members ::= be.alloc.Vec<Member>();
+    be.check.bound_members(bound, members).try();
+    members.loop((h, m) { keep_named_fn(m, name, out).try() });
+    Ok(());
+}
+
+keep_named_fn = (m: Member, name: str, out :: Vec<Member>)
+                Res<(), AllocError> {
+    m.named(name).match({
+        false => Ok(()),
+        true  => add_bodied(m, out),
+    })
+}
+
+add_bodied = (m: Member, out :: Vec<Member>) Res<(), AllocError> {
+    m.kind.match({
+        Function(f) => add_if_bodied(m, f, out),
+        _           => Ok(()),
+    })
+}
+
+add_if_bodied = (m: Member, f: Function, out :: Vec<Member>)
+                Res<(), AllocError> {
+    has_body(f).match({
+        false => Ok(()),
+        true  => out.add(m),
+    })
+}
+
+// A declaration with no body is not a definition. An impl entry that
+// only restates the bound's signature supplies nothing, and calling it
+// would name a symbol nothing defines — so it is filtered here rather
+// than refused later.
+has_body* = (f: Function) bool {
+    f.body.match({ Ok(_) => true, None => false })
+}
+
+// a member that is another function
+// `widen_u32 = to_u32` supplies the member as an alias, not a body —
+// std.core.num's widening bounds are declared this way because the
+// conversion is a backend intrinsic and there is nothing to write a
+// body in. The answer here is the aliased function's name; the caller
+// (gen_c_member.zen) lowers the call as that function with the
+// receiver at argument zero, so the two spellings cannot disagree.
+
+// The function an impl on the type aliases `name` to, when one does —
+// over the target's own module, the same search `impl_member_at` makes
+// for members with bodies.
+alias_of* = (
+    be   :: CBackend,
+    decl : DeclId,
+    name : str
+) Res<Res<str>, AllocError> {
+    ids ::= be.alloc.Vec<ImplId>();
+    be.check.world.impls_named(be.tree, be.decl_name(decl), ids).try();
+    found ::= be.alloc.Vec<str>();
+    ids.loop((h, i) { be.keep_alias(i, decl, name, found).try() });
+    Ok(found.get(0));
+}
+
+keep_alias = (
+    be   :: CBackend,
+    i    : ImplId,
+    decl : DeclId,
+    name : str,
+    out  :: Vec<str>
+) Res<(), AllocError> {
+    (i.decl.module == decl.module).match({
+        false => Ok(()),
+        true  => be.impl_alias_at(i, name, out),
+    })
+}
+
+impl_alias_at = (be :: CBackend, i: ImplId, name: str, out :: Vec<str>)
+                Res<(), AllocError> {
+    be.check.world.impl_at(be.tree, i).match({
+        None   => Ok(()),
+        Ok(im) => {
+            im.field_value(name).match({
+                None  => Ok(()),
+                Ok(x) => be.add_alias(x, out),
+            })
+        },
+    })
+}
+
+// A bare Name and nothing else: `widen_u32 = to_u32` aliases a function;
+// `start = 0` is a value, not a function to call
+add_alias = (be :: CBackend, x: ExprId, out :: Vec<str>) Res<(), AllocError> {
+    be.tree.expr_at(x).kind.match({
+        Name(n) => out.add(n.text),
+        _       => Ok(()),
+    })
+}

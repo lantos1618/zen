@@ -1,0 +1,20 @@
+// Building a supplied root probes its conventional entry points; a missing
+// root produces a diagnostic and nonzero result.
+
+Alloc, AllocError = std.mem
+str = std.text
+BuildArgs = std.build
+build = zen
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    run(env, a, "src/probe").try();
+    run(env, a, "src/absent").try();
+    Ok(0);
+}
+
+run = (env: Env, a: Alloc, root: str) Res<(), AllocError> {
+    code = build(env, a, BuildArgs(root: root, repeat: 1)).try();
+    println("{} -> {}", root, code);
+    Ok(());
+}

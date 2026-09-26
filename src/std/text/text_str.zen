@@ -1,0 +1,457 @@
+// Borrowed bytes with no allocation, growth, or ownership. len, indexing, and
+// equality are byte-based; Unicode decoding is explicit through text_utf8.
+
+Ptr = std.mem.mem
+Eq, Hash, Hasher = std.core.core
+Range, loop, LoopHandle = std.core.core
+
+str* = {
+    data: Ptr<u8>,
+    len*: usize,
+
+    is_empty* = (self: @Self) bool { self.len == 0 }
+
+    // Accepts `[A-Za-z_][A-Za-z0-9_]*`; keywords are not rejected.
+    is_identifier* = (self: @Self) bool {
+        (self.len > 0) && self.index(0).is_ident_start()
+            && Range(1, self.len).find((i) {
+                self.index(i).is_ident_cont() == false
+            }).match({ Ok(_) => false, None => true })
+    }
+
+    // Borrow the first byte for raw external calls. The same lifetime rule as
+    // String.view applies: the owner must not move or grow the backing run
+    // while the foreign call is using it.
+    ptr* = (self: @Self) Ptr<u8> { self.data }
+
+    get* = (self: @Self, i: usize) Res<u8> {
+        (i < self.len).match({
+            true  => Ok(self.data.read(i)),
+            false => None,
+        });
+    }
+
+    // Indexing traps out of range. The subtraction underflows for i >= len.
+    index* = (self: @Self, i: usize) u8 {
+        self.len - i - 1;
+        self.data.read(i);
+    }
+
+    // Borrows without copying or allocating; invalid bounds trap.
+    slice* = (self: @Self, from: usize, to: usize) str {
+        tail = self.len - to;
+        str(data: self.data.offset(from), len: self.len - from - tail);
+    }
+
+    // `dst` must have room for `self.len` bytes.
+    copy_into* = (self: @Self, dst: Ptr<u8>) () {
+        (self.len > 0).match({
+            true  => dst.copy_from(self.data, self.len),
+            false => (),
+        });
+    }
+
+    // Returns the first matching byte index, or None.
+    find* = (self: @Self, needle: u8) Res<usize> {
+        Range(0, self.len).find((i) { self.data.read(i) == needle })
+    }
+
+    // An empty needle matches at zero.
+    find* = (self: @Self, needle: str) Res<usize> {
+        needle.len.match({
+            0 => Ok(0),
+            _ => (self.len < needle.len).match({
+                true  => None,
+                false => Range(0, self.len - needle.len + 1)
+                    .find((i) { self.matches_at(i, needle) }),
+            }),
+        })
+    }
+
+    // Returns the last matching byte index, or None.
+    rfind* = (self: @Self, needle: u8) Res<usize> {
+        hit: Res<usize> = None;
+        at ::= self.len;
+        loop(at > 0, (h) {
+            at = at - 1;
+            (self.data.read(at) == needle).then(() {
+                hit = Ok(at);
+                h.break(0);
+            });
+        });
+        hit;
+    }
+
+    contains* = (self: @Self, needle: u8) bool {
+        self.find(needle).match({ Ok(_) => true, None => false })
+    }
+
+    contains* = (self: @Self, needle: str) bool {
+        self.find(needle).match({ Ok(_) => true, None => false })
+    }
+
+    // Number of non-overlapping occurrences; an empty needle has zero.
+    count* = (self: @Self, needle: str) usize {
+        n ::= 0;
+        (needle.len > 0).then(() {
+            at ::= 0;
+            loop(at <= self.len, (h) {
+                self.slice(at, self.len).find(needle).match({
+                    Ok(i) => { n = n + 1; at = at + i + needle.len; },
+                    None  => h.break(),
+                });
+            });
+        });
+        n
+    }
+
+    matches_at = (self: @Self, from: usize, other: str) bool {
+        Range(0, other.len)
+            .find((i) { self.data.read(from + i) != other.data.read(i) })
+            .match({ Ok(_) => false, None => true })
+    }
+
+    // An empty string is both a prefix and suffix of every string.
+    starts_with* = (self: @Self, head: str) bool {
+        self.len >= head.len && self.matches_at(0, head)
+    }
+
+    ends_with* = (self: @Self, tail: str) bool {
+        self.len >= tail.len && self.matches_at(self.len - tail.len, tail)
+    }
+
+    // A missing delimiter returns the whole string; a trailing delimiter
+    // returns an empty suffix.
+    after_last* = (self: @Self, delimiter: u8) str {
+        self.rfind(delimiter).match({
+            Ok(i) => self.slice(i + 1, self.len),
+            None  => self.slice(0, self.len),
+        })
+    }
+
+    // Returns None when no non-whitespace byte remains. Whitespace is the
+    // ASCII set recognized by byte.is_space.
+    trim* = (self: @Self) Res<str> {
+        self.trim_start().match({
+            Ok(head) => head.trim_end(),
+            None     => None,
+        });
+    }
+
+    trim_start* = (self: @Self) Res<str> {
+        Range(0, self.len).find((i) { !self.data.read(i).is_space() }).match({
+            Ok(i) => Ok(self.slice(i, self.len)),
+            None  => None,
+        })
+    }
+
+    trim_end* = (self: @Self) Res<str> {
+        hit: Res<str> = None;
+        keep ::= self.len;
+        loop(keep > 0, (h) {
+            keep = keep - 1;
+            (!self.data.read(keep).is_space()).then(() {
+                hit = Ok(self.slice(0, keep + 1));
+                h.break(0);
+            });
+        });
+        hit;
+    }
+
+    // ASCII-only case-insensitive equality.
+    eq_ignore_case* = (self: @Self, other: str) bool {
+        self.len == other.len && self.same_folded(other)
+    }
+
+    same_folded = (self: @Self, other: str) bool {
+        Range(0, other.len)
+            .find((i) {
+                self.data.read(i).to_lower() != other.data.read(i).to_lower()
+            })
+            .match({ Ok(_) => false, None => true })
+    }
+
+    // First newline in the bounded byte run, or its end.
+    newline_in* = (self: @Self, from: usize, stop: usize) usize {
+        self.slice(from, stop).find('\n').match({
+            Ok(i) => from + i,
+            None  => stop,
+        })
+    }
+
+    // Borrow lines without their LF or CRLF terminators.
+    lines* = (self: @Self) Lines { Lines(parts: self.split('\n')) }
+
+    split* = (self: @Self, sep: u8) Split { Split(bytes: self, sep: sep) }
+
+    // Borrow both sides of the first separator. None means it was absent;
+    // a leading or trailing separator preserves the empty side.
+    split_once* = (self: @Self, sep: u8) Res<SplitPair> {
+        at = self.find(sep).try();
+        Ok(SplitPair(
+            before: self.slice(0, at),
+            after: self.slice(at + 1, self.len),
+        ))
+    }
+
+    // An empty separator splits at zero: empty before, the full input after.
+    split_once* = (self: @Self, sep: str) Res<SplitPair> {
+        at = self.find(sep).try();
+        Ok(SplitPair(
+            before: self.slice(0, at),
+            after: self.slice(at + sep.len, self.len),
+        ))
+    }
+
+    // Lexicographic byte order; the shorter string wins a prefix tie. This is
+    // not language-aware collation.
+    before* = (self: @Self, other: str) bool {
+        shorter = (self.len < other.len).match({
+            true  => self.len,
+            false => other.len,
+        });
+        ordered ::= self.len < other.len;
+        Range(0, shorter).loop((h, i) {
+            left  = self.data.read(i);
+            right = other.data.read(i);
+            (left != right).then(() { ordered = left < right; h.break(); });
+        });
+        ordered;
+    }
+}
+
+// Borrows `len` bytes from `data`; the owner must keep them alive and stable.
+str_at* = (data: Ptr<u8>, len: usize) str { str(data: data, len: len) }
+
+// Two views into the original input; neither extends its owner's lifetime.
+SplitPair* = {
+    before*: str,
+    after*: str,
+}
+
+// Iterates borrowed byte slices without allocating. A trailing separator
+// yields a final empty piece; adjacent separators preserve empty pieces.
+Split* = {
+    bytes*: str,
+    sep*: u8,
+
+    from :: usize = 0,
+    done :: bool = false,
+
+    // Walk the full input in O(total bytes), without changing this cursor.
+    // Like Range.loop, completion is None and h.break(value) returns Ok(value).
+    loop* = (self: @Self, body: (h: LoopHandle, value: str) ()) Res<str> {
+        it ::= Split(bytes: self.bytes, sep: self.sep);
+        answer: Res<str> = loop((h) {
+            it.next().match({
+                None      => h.break(),
+                Ok(value) => body(h, value),
+            });
+        });
+        answer;
+    }
+
+    loop* = (self: @Self, body: (
+        h     : LoopHandle,
+        index : usize,
+        value : str
+    ) ()) Res<str> {
+        it ::= Split(bytes: self.bytes, sep: self.sep);
+        answer: Res<str> = loop((h, index) {
+            it.next().match({
+                None      => h.break(),
+                Ok(value) => body(h, index, value),
+            });
+        });
+        answer;
+    }
+
+    // Visit every piece without a handle; completion returns None.
+    loop* = (self: @Self, body: (value: str) ()) Res<str> {
+        self.loop((h, value) { body(value) })
+    }
+
+    // Fold a fresh sequential cursor; natural completion returns Ok(acc).
+    loop* = <A>(self: @Self, init: A, body: (
+        h     : LoopHandle,
+        index : usize,
+        value : str,
+        acc   : A
+    ) A) Res<A> {
+        it  ::= Split(bytes: self.bytes, sep: self.sep);
+        acc ::= init;
+        answer: Res<A> = loop((h, index) {
+            it.next().match({
+                None      => h.break(acc),
+                Ok(value) => { acc = body(h, index, value, acc); },
+            });
+        });
+        answer
+    }
+
+    loop* = <A>(self: @Self, init: A, body: (value: str, acc: A) A) Res<A> {
+        self.loop(init, (h, index, value, acc) { body(value, acc) })
+    }
+
+    loop* = <A>(self: @Self, init: A, body: (
+        h     : LoopHandle,
+        value : str,
+        acc   : A
+    ) A) Res<A> {
+        self.loop(init, (h, index, value, acc) { body(h, value, acc) })
+    }
+
+    // Sequential iteration is O(total bytes); `at(k)` rescans for random access.
+    next* = (self :: @Self) Res<str> {
+        self.done.match({
+            true  => None,
+            false => self.bytes.slice(self.from, self.bytes.len)
+                .find(self.sep)
+                .match({
+                    Ok(i) => {
+                        piece     = self.bytes.slice(self.from, self.from + i);
+                        self.from = self.from + i + 1;
+                        Ok(piece);
+                    },
+                    None  => {
+                        self.done = true;
+                        Ok(self.bytes.slice(self.from, self.bytes.len));
+                    },
+                }),
+        });
+    }
+}
+
+Split.impl(Range<str>, {
+    start: 0,
+    end: self.bytes.len + 1,
+
+    at ::= (self: @Self, index: usize) Res<str> {
+        s = self.bytes;
+        from ::= 0;
+        n    ::= 0;
+        answer: Res<str> = None;
+        Range(0, s.len + 1).loop((h, i) {
+            edge = s.get(i).match({
+                None  => true,
+                Ok(b) => b == self.sep,
+            });
+            edge.then(() {
+                (n == index).match({
+                    true  => { answer = Ok(s.slice(from, i)); h.break(0); },
+                    false => { from = i + 1; n = n + 1; },
+                });
+            });
+        });
+        answer;
+    }
+})
+
+// Borrowed LF/CRLF-delimited lines. Interior empty lines are retained;
+// empty input and a final line terminator add no extra line. A lone CR is data.
+Lines* = {
+    parts :: Split,
+
+    next* = (self :: @Self) Res<str> {
+        piece = self.parts.next().try();
+        self.parts.done.match({
+            true  => piece.is_empty().match({
+                true  => None,
+                false => Ok(piece),
+            }),
+            false => Ok(piece.ends_with("\r").match({
+                true  => piece.slice(0, piece.len - 1),
+                false => piece,
+            })),
+        })
+    }
+
+    // Each loop starts at the beginning and leaves this cursor unchanged.
+    loop* = (self: @Self, body: (h: LoopHandle, value: str) ()) Res<str> {
+        it ::= self.parts.bytes.lines();
+        answer: Res<str> = loop((h) {
+            it.next().match({
+                None      => h.break(),
+                Ok(value) => body(h, value),
+            });
+        });
+        answer;
+    }
+
+    loop* = (self: @Self, body: (
+        h     : LoopHandle,
+        index : usize,
+        value : str
+    ) ()) Res<str> {
+        it ::= self.parts.bytes.lines();
+        answer: Res<str> = loop((h, index) {
+            it.next().match({
+                None      => h.break(),
+                Ok(value) => body(h, index, value),
+            });
+        });
+        answer;
+    }
+
+    loop* = (self: @Self, body: (value: str) ()) Res<str> {
+        self.loop((h, value) { body(value) })
+    }
+
+    // Fold lines without indexing or allocating an intermediate collection.
+    loop* = <A>(self: @Self, init: A, body: (
+        h     : LoopHandle,
+        index : usize,
+        value : str,
+        acc   : A
+    ) A) Res<A> {
+        it  ::= self.parts.bytes.lines();
+        acc ::= init;
+        answer: Res<A> = loop((h, index) {
+            it.next().match({
+                None      => h.break(acc),
+                Ok(value) => { acc = body(h, index, value, acc); },
+            });
+        });
+        answer
+    }
+
+    loop* = <A>(self: @Self, init: A, body: (value: str, acc: A) A) Res<A> {
+        self.loop(init, (h, index, value, acc) { body(value, acc) })
+    }
+
+    loop* = <A>(self: @Self, init: A, body: (
+        h     : LoopHandle,
+        value : str,
+        acc   : A
+    ) A) Res<A> {
+        self.loop(init, (h, index, value, acc) { body(h, value, acc) })
+    }
+}
+
+// FNV basis and prime, with wrapping addition in place of xor.
+STR_HASH_SEED: u64 = 14695981039346656037
+STR_HASH_MULT: u64 = 1099511628211
+
+str.impl(Eq, {
+    eq ::= (self: @Self, other: @Self) bool {
+        self.len == other.len && self.matches_at(0, other)
+    }
+})
+
+str.impl(Hash, {
+    // Hashes bytes, matching bytewise equality.
+    hash ::= (self: @Self, hasher :: Hasher) u64 {
+        acc ::= STR_HASH_SEED;
+        Range(0, self.len).loop((h, i) {
+            acc = acc *% STR_HASH_MULT +% self.data.read(i).to_u64();
+        });
+        acc;
+    }
+})
+
+str.impl(Range<u8>, {
+    start: 0,
+    end: self.len,
+
+    at ::= (self: @Self, index: usize) Res<u8> { self.get(index) }
+})

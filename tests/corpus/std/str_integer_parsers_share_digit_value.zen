@@ -1,0 +1,41 @@
+// Integer parsing accepts complete digits within the requested type and
+// radix, rejecting malformed input, overflow, and unsupported bases.
+
+main = (env: Env) i32 {
+    i32_max  = "2147483647".parse_i32().match({
+        Ok(n) => n == i32.MAX, None => false,
+    });
+    i32_min  = "-2147483648".parse_i32().match({
+        Ok(n) => n == i32.MIN, None => false,
+    });
+    i32_over = "2147483648".parse_i32().match({
+        Ok(_) => false, None => true,
+    });
+    println("i32 {} {} {}", i32_max, i32_min, i32_over);
+
+    u16_max  = "65535".parse_u16().match({
+        Ok(n) => n == u16.MAX, None => false,
+    });
+    u16_over = "65536".parse_u16().match({
+        Ok(_) => false, None => true,
+    });
+    println("u16 {} {}", u16_max, u16_over);
+
+    usize_ok   = "4096".parse_usize().match({
+        Ok(n) => n == 4096, None => false,
+    });
+    usize_word = "40x6".parse_usize().match({
+        Ok(_) => false, None => true,
+    });
+    println("usize {} {}", usize_ok, usize_word);
+    println(
+        "radix {} {} {} {} {} {}",
+        "0".parse_u64_radix(0).match({ Ok(_) => false, None => true }),
+        "0".parse_u64_radix(1).match({ Ok(_) => false, None => true }),
+        "101".parse_u64_radix(2).match({ Ok(n) => n == 5, None => false }),
+        "fF".parse_u64_radix(16).match({ Ok(n) => n == 255, None => false }),
+        "f".parse_u64_radix(17).match({ Ok(_) => false, None => true }),
+        "1".parse_u64_radix(u64.MAX).match({ Ok(_) => false, None => true })
+    );
+    0
+}

@@ -1,0 +1,94 @@
+// Run one validated build invocation, including deterministic repetitions and
+// their numbered output paths. Compilation phases remain in zen_build.
+
+Alloc, AllocError = std.mem
+String = std.text
+Range = std.core
+BuildArgs, Emission = std.build
+
+Build = zen.zen_build
+entry_of = zen.zen_path
+
+// Repeat the whole pipeline in one process. Later outputs are numbered before
+// run_once so compilation itself has no repetition policy.
+build* = (env: Env, a: Alloc, job: BuildArgs) Res<i32, AllocError> {
+    worst ::= 0;
+    Range(0, at_least_one(job.repeat)).loop((h, i) {
+        worst = max_code(
+            worst,
+            run_once(env, a, job.numbered(a, i).try()).try()
+        );
+    });
+    Ok(worst);
+}
+
+// Each repetition gets a fresh Build so process-local compiler state cannot
+// leak between runs.
+run_once* = (env: Env, a: Alloc, job: BuildArgs) Res<i32, AllocError> {
+    b ::= a.Build(env, job.root);
+    b.set_std_root(job.std_root);
+    (job.ffi).then(() { b.enable_ffi(); });
+    b.walk_order(job.permute);
+    entry = entry_of(env, a, job.root, job.entry).try();
+    b.walk(entry).try();
+    b.back_end(job).try();
+    b.tally();
+    Ok(b.code());
+}
+
+// Programmatic callers can construct repeat=0, but a build must still run.
+at_least_one = (n: usize) usize {
+    (n == 0).match({
+        true  => 1,
+        false => n,
+    })
+}
+
+// Run zero uses requested paths; later file and symbol-map outputs gain a
+// one-based suffix. Stdout and directory emission have no file path to number.
+numbered = (job: BuildArgs, a: Alloc, i: usize) Res<BuildArgs, AllocError> {
+    (i == 0 || (!job.writes_file() && job.symbol_map.is_empty())).match({
+        true  => Ok(job),
+        false => {
+            emission = job.emission.numbered_emission(a, i).try();
+            symbols  = job.symbol_map.numbered_path(a, i).try();
+            Ok(BuildArgs(
+                root: job.root,
+                emission: emission,
+                backend: job.backend,
+                entry: job.entry,
+                std_root: job.std_root,
+                symbol_map: symbols.view(),
+                ffi: job.ffi,
+                repeat: job.repeat,
+                permute: job.permute
+            ))
+        },
+    })
+}
+
+numbered_emission = (emission: Emission, a: Alloc, i: usize)
+                    Res<Emission, AllocError> {
+    emission.match({
+        File(path) => {
+            out = path.numbered_path(a, i).try();
+            Ok(Emission.File(out.view()))
+        },
+        _          => Ok(emission),
+    })
+}
+
+numbered_path = (path: str, a: Alloc, i: usize) Res<String, AllocError> {
+    path.is_empty().match({
+        true  => a.String(),
+        false => a.String("{}.{}", path, i + 1),
+    })
+}
+
+// A repetition that found something outranks one that did not.
+max_code = (l: i32, r: i32) i32 {
+    (l > r).match({
+        true  => l,
+        false => r,
+    })
+}

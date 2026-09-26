@@ -1,0 +1,71 @@
+// Capability and bound types used in ordinary signatures are prelude names.
+// This file deliberately imports nothing.
+
+// one failure set for main: allocation, printing, and files all land here
+Fail = AllocError | IoError | FsError
+
+// A helper that prints takes the capability it uses, spelled Console.
+banner = (out: Console, title: str) Res<(), IoError> {
+    out.println("== {} ==", title)
+}
+
+// A helper that reads files takes Fs and answers FsError — names from
+// nowhere, because they travel with Env in the prelude. Writes then
+// reads back its own bytes, so the test depends on no file outside
+// itself.
+slurp = (fs: Fs, alloc :: Alloc) Res<String, FsError> {
+    fs.write("773_prelude_round_trip.txt", "prelude names").try();
+    fs.read(alloc, "773_prelude_round_trip.txt")
+}
+
+// Stdin is Env's field `in`, and its type is a prelude name like the
+// rest: a reader announces it in its own signature, imported from
+// nothing. The CALLER makes the buffer's room, so this body holds no
+// allocation and its only error is the one `read` itself answers.
+// Read answers EXACTLY n bytes; the harness feeds an empty stream,
+// so the answer printed below is ZERO — end of input, not a failure.
+peek = (inp: Stdin, held :: Vec<u8>) Res<usize, IoError> {
+    inp.read(held, 4)
+}
+
+// sort travels with Vec, so its bound must travel too: Word orders by
+// n, strictly-before, so ties keep their input order (the sort below
+// is stable).
+Word = {
+    n: i64,
+    tag: str,
+}
+
+Word.impl(Ordered, {
+    before = (self: @Self, other: @Self) bool { self.n < other.n }
+})
+
+main = (env: Env) Res<i32, Fail> {
+    alloc ::= env.mem.alloc();
+
+    banner(env.out, "hi").try();
+
+    // stdin is the named Stdin capability; an empty stream answers 0
+    room ::= alloc.Vec<u8>();
+    room.reserve(4).try();
+    println("{}", peek(env.in, room).try());
+
+    // bytes written by the named Fs, read back through it
+    head = slurp(env.fs, alloc).try();
+    view ::= head.view();
+    println("{}", view.slice(0, 5));
+
+    // [two, one, uno] sorts to one, uno, two — the tie keeps its order
+    words ::= alloc.Vec<Word>();
+    words.add(Word(n: 2, tag: "two")).try();
+    words.add(Word(n: 1, tag: "one")).try();
+    words.add(Word(n: 1, tag: "uno")).try();
+    words.sort();
+    Range(0, words.len).loop((h, k) {
+        words.get(k).match({
+            None  => (),
+            Ok(w) => println("{} {}", w.n, w.tag),
+        });
+    });
+    Ok(0);
+}

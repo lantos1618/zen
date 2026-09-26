@@ -1,0 +1,26 @@
+// Raw, unchecked access to a run of T. Callers own all bounds and lifetime
+// checks. The backend supplies these bodies because Ptr<T> lowers to T*.
+
+Ptr*<T> = {
+    addr: usize,
+
+    read* = (self: @Self, index: usize) T
+    write* = (self: @Self, index: usize, value: T) ()
+
+    // Move by `count` elements, not bytes.
+    offset* = (self: @Self, count: usize) Ptr<T>
+    back* = (self: @Self, count: usize) Ptr<T>
+
+    bytes* = (self: @Self, count: usize) usize
+
+    // Copy `count` elements; source and destination may not overlap.
+    copy_from* = (self: @Self, src: Ptr<T>, count: usize) ()
+
+    to* = <U>(self: @Self) Ptr<U>
+
+    is_null* = (self: @Self) bool
+
+    same* = (self: @Self, other: Ptr<T>) bool
+}
+
+null_ptr* = <T>() Ptr<T>

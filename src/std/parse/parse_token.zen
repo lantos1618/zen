@@ -1,0 +1,23 @@
+// The parser's view of the lexer's tokens: the types re-exported, plus what
+// the parser alone decides — which tokens are trivia, and that `_` is an
+// identifier until a pattern or type position reads it as a wildcard.
+
+Token*, TokenKind*, Source*, Lexed* = std.lex.lex
+
+Pos, Span = std.lex.lex
+
+// Synthetic Eof for an empty token stream.
+empty_eof* = () Token {
+    at = Pos(offset: 0, line: 1, col: 1);
+    Token(kind: TokenKind.Eof, span: Span(start: at, end: at));
+}
+
+is_trivia* = (kind: TokenKind) bool {
+    kind.match({
+        LineComment  => true,
+        BlockComment => true,
+        _            => false,
+    });
+}
+
+WILDCARD*: str = "_"

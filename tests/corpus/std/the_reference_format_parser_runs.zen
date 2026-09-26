@@ -1,0 +1,39 @@
+// The shared format grammar preserves literal runs, hole roles, and malformed
+// named-hole boundaries. These inputs are text arguments, not format strings.
+
+FmtStep, fmt_next = std.text
+
+Error = AllocError | IoError
+
+// every step of `f`, one line each. Spent when `next` reaches the end --
+// `hole` false is not the terminator, since a doubled brace ends a run
+// without being a hole
+walk = (label: str, f: str) Res<(), Error> {
+    println("{label}");
+    at ::= 0;
+    loop(() { at < f.len }, (h) {
+        s = f.fmt_next(at);
+        println(
+            "  run [{}] hole {} name [{}] bad {}",
+            s.literal,
+            s.hole,
+            s.name,
+            s.bad
+        );
+        at = s.next;
+    });
+    Ok(());
+}
+
+main = (env: Env) Res<i32, Error> {
+    walk("a positional hole", "{}").try();
+    walk("a run either side", "x{}y").try();
+    walk("a doubled brace, both ways", "{{}}").try();
+    walk("a lone brace is a byte", "a { b } c").try();
+    walk("the hole is seen first", "{}}").try();
+    walk("a named hole", "a{name}b").try();
+    walk("named and positional mix", "{a} {} {b}").try();
+    walk("a doubled brace is not a name", "{{name}}").try();
+    walk("refused: not an identifier", "{p.x}").try();
+    Ok(0);
+}

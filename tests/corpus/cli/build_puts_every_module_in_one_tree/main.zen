@@ -1,0 +1,51 @@
+// A program of MORE THAN ONE MODULE is checked, and EVERY module it
+// reaches is in the one tree that gets checked.
+//
+// A `Parser` used to build its own `Ast`, so N files were N unrelated id
+// spaces and a `Checker` — which is built from ONE tree and answers
+// about ids — could only ever be handed a one-module program. The driver
+// now hands the tree from parser to parser and reads it back, so one
+// counter names every node in the compilation.
+//
+// TWO DATA, because the exit code alone is not one: a `build` that did
+// nothing at all would also print `-> 0`. `units` is how many modules
+// the walk actually parsed, so a driver that never followed the import
+// prints `units=1` and this goes red on a number rather than on a
+// diagnostic it might not have produced.
+//
+// AND THE DEPENDENCY UNDER `pair/` IS MUTUAL. It used to run one way —
+// `main.zen` naming `pair.zen` — and a driver keeping only the LAST
+// parser's tree would then check `pair.zen` alone, which stood alone
+// cleanly, so this test stayed green through exactly the defect it is
+// named for. Now `pair.zen` names a type declared in `main.zen` as well:
+// whichever single tree such a driver kept, the module in it references
+// ids from the module it dropped, and no one-module check can come back
+// clean.
+//
+// The phases are driven here rather than through `build` because the
+// tally lives on `Build` and `build` answers only the code; `zen_run.zen`
+// runs exactly these five lines. `env.argv` is empty in the generated C
+// — see the report — so a real command line cannot reach either.
+
+Alloc, AllocError = std.mem
+str = std.text
+Build = zen
+BuildArgs = std.build
+entry_of = zen.zen_path
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    run(env, a, "src/pair").try();
+    Ok(0);
+}
+
+run = (env: Env, a: Alloc, root: str) Res<(), AllocError> {
+    job = BuildArgs(root: root, repeat: 1);
+    b ::= a.Build(env, root);
+    entry = entry_of(env, a, root, job.entry).try();
+    b.walk(entry).try();
+    b.back_end(job).try();
+    b.tally();
+    println("{} -> {} units={}", root, b.code(), b.units);
+    Ok(());
+}

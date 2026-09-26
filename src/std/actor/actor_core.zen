@@ -1,0 +1,16 @@
+ActorError* = Closed | Full
+ActorStartError* = OutOfMemory | Unavailable
+
+// An address to A. Calling one of A's behavior methods through a Ref enqueues
+// its arguments as a message; the call never enters actor state directly.
+Ref*<A> = {
+    id: u64,
+
+    // Close admission, drain accepted messages, then run stopped.
+    stop* = (self: @Self) ()
+
+    // Wait until the actor has drained and stopped.
+    join* = (self: @Self) ()
+}
+
+Actor* = {}

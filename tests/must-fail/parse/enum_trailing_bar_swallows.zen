@@ -1,0 +1,12 @@
+// Declarations do not terminate and newlines are insignificant, so this reads
+// as
+//
+//     Shape = Circle | Square | main = ...
+//
+// where `main` looks like a represented-enum variant. The first unnumbered
+// variant rejects the declaration, and one trailing bar produces one error.
+Shape = Circle | Square |
+
+main = (env: Env) Res<i32, ArgError> {
+    Ok(0);
+}

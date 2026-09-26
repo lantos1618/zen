@@ -1,0 +1,330 @@
+// Owns the workspace check used to publish diagnostics. A settle publishes
+// changed results and empty lists for files whose previous errors disappeared.
+
+str, String, dup = std.text
+Vec, Map = std.collections
+Alloc, AllocError, Arena = std.mem
+Note = std.parse.parse_diag
+Checker = sema.sema_check
+root_for, relative_to, SourceRoot = zen.zen_path
+TextRange, text_range = lsp.lsp_pos
+obj, arr, Nest, written, to_json = std.json
+write_frame = lsp.lsp_frame
+path_of, doc_text = lsp.lsp_uri
+Built, Spot* = lsp.lsp_built
+Classed = lsp.lsp_colour
+
+Diagnostic = {
+    range: TextRange,
+    severity: usize,
+    source: str,
+    message: str,
+}
+
+Shared* = {
+    c*: Res<Checker>,
+    root*: str,
+    file*: str,
+}
+
+// The server's inputs for one check or publication; nothing here outlives
+// the turn.
+WorkspaceTurn = {
+    env: Env,
+    workspace: str,
+    uris: Vec<str>,
+    docs: Map<str, str>,
+    temp: Alloc,
+    roots: Res<Vec<SourceRoot>>,
+
+    root = (self: @Self, path: str) str {
+        root_for(self.env, self.temp, self.workspace, path, self.roots)
+    }
+
+    text = (self: @Self, uri: str) str {
+        doc_text(self.env, self.temp, self.docs, uri)
+    }
+}
+
+Diagnostics* = {
+    roots :: Res<Vec<SourceRoot>> = None,
+
+    set_roots* = (self :: @Self, roots: Vec<SourceRoot>) () {
+        self.roots = Ok(roots);
+        self.invalidate();
+    }
+
+
+    dirty :: bool = false,
+    built :: Built,
+    fresh :: bool = false,
+    said_arena :: Arena,
+    said :: Map<str, str>,
+
+    invalidate* = (self :: @Self) () {
+        self.built.invalidate();
+        self.dirty = true;
+        self.fresh = false;
+    }
+
+    classes_for* = (self :: @Self, t: Alloc, uri: str)
+                   Res<Vec<Classed>, AllocError> {
+        self.fresh.match({
+            false => Ok(t.Vec<Classed>()),
+            true  => self.built.classed_for(t, uri),
+        })
+    }
+
+    shared* = (self :: @Self, env: Env, workspace: str, uris: Vec<str>,
+               docs: Map<str, str>, path: str, t: Alloc)
+              Res<Shared, AllocError> {
+        turn = WorkspaceTurn(
+            env: env,
+            workspace: workspace,
+            uris: uris,
+            docs: docs,
+            temp: t,
+            roots: self.roots
+        );
+        root = turn.root(path);
+        // Imported modules share the same checked facts until an overlay or
+        // watched file changes. A different root has a different namespace.
+        covered = self.built.root().eq(root)
+            && self.built.covers(t, path).try();
+        (!covered).then(() {
+            self.built.ensure(
+                turn.env,
+                root,
+                relative_to(root, path),
+                turn.uris,
+                turn.docs
+            ).try();
+        });
+        self.fresh = true;
+        Ok(Shared(
+            c: self.built.checker(),
+            root: self.built.root(),
+            file: self.built.source_file(t, path).try()
+        ));
+    }
+
+    settled* = (self :: @Self, env: Env, workspace: str, uris: Vec<str>,
+                docs: Map<str, str>, t: Alloc, out :: String)
+               Res<(), AllocError> {
+        turn = WorkspaceTurn(
+            env: env,
+            workspace: workspace,
+            uris: uris,
+            docs: docs,
+            temp: t,
+            roots: self.roots
+        );
+        self.dirty.match({
+            false => written(),
+            true  => self.publish_snapshot(turn, out),
+        })
+    }
+
+    // Check every open entry, including independent import graphs. All borrowed
+    // diagnostic text is copied before the next build can retire its arena.
+    publish_snapshot = (self :: @Self, turn: WorkspaceTurn, out :: String)
+                       Res<(), AllocError> {
+        spots ::= turn.temp.Vec<Spot>();
+        now   ::= turn.temp.Vec<str>();
+        count ::= turn.uris.len;
+        loop(() { count > 0 }, (h) {
+            count = count - 1;
+            turn.uris.get(count).match({
+                None    => written(),
+                Ok(uri) => self.collect(turn, uri, spots, now),
+            }).try();
+        });
+        spots.uris_of(now).try();
+        fresh_arena ::= turn.env.mem.alloc();
+        fresh       ::= fresh_arena.Map<str, str>();
+        now.loop((uri) {
+            body ::= turn.temp.String().try();
+            write_notification(
+                turn.temp,
+                uri,
+                turn.text(uri),
+                spots,
+                body
+            ).try();
+            self.say_changed(uri, body.view(), out).try();
+            fresh.set(
+                uri.dup(fresh_arena).try(),
+                body.view().dup(fresh_arena).try()
+            ).try();
+        });
+        self.said.pairs((h, uri, previous) {
+            now.find((current) { current.eq(uri) }).match({ None => true, Ok(_) => false }).then(() {
+                empty ::= turn.temp.String().try();
+                write_notification(
+                    turn.temp,
+                    uri,
+                    "",
+                    turn.temp.Vec<Spot>(),
+                    empty
+                ).try();
+                (!previous.eq(empty.view())).then(() { write_frame(empty.view(), out).try(); });
+            });
+        });
+        self.said_arena.drop();
+        self.said_arena = consume fresh_arena;
+        self.said       = fresh;
+        self.dirty      = false;
+        self.fresh      = true;
+        written()
+    }
+
+    collect = (self :: @Self, turn: WorkspaceTurn, uri: str,
+               spots :: Vec<Spot>, uris :: Vec<str>) Res<(), AllocError> {
+        path = path_of(turn.temp, uri).try();
+        root = turn.root(path);
+        (!turn.workspace.is_empty() && !root.is_empty()).then(() {
+            covered = self.built.root().eq(root)
+                && self.built.covers(turn.temp, path).try();
+            (!covered).then(() {
+                self.built.ensure(
+                    turn.env,
+                    root,
+                    relative_to(root, path),
+                    turn.uris,
+                    turn.docs
+                ).try();
+            });
+            self.built.append_spots(turn.temp, spots).try();
+            uris.add(uri).try();
+        });
+        written()
+    }
+
+    say_changed = (self: @Self, uri: str, body: str, out :: String)
+                  Res<(), AllocError> {
+        same = self.said.get(uri).match({ None => false, Ok(previous) => previous.eq(body) });
+        (!same).then(() { write_frame(body, out).try(); });
+        written()
+    }
+
+}
+
+Diagnostics.impl(Drop, {
+    drop = (self :: @Self) () {
+        self.built.drop();
+        self.said_arena.drop();
+    }
+})
+
+Diagnostics* = (env: Env) Diagnostics {
+    said_arena ::= env.mem.alloc();
+    diagnostics_with_said(env, consume said_arena)
+}
+
+diagnostics_with_said = (env: Env, said_arena :: Arena)
+                        Diagnostics {
+    said = said_arena.Map<str, str>();
+    Diagnostics(built: env.Built(), said_arena: consume said_arena, said: said)
+}
+
+uris_of = (spots: Vec<Spot>, into :: Vec<str>) Res<(), AllocError> {
+    spots.loop((h, s) {
+        into.find((u) { u.eq(s.uri) }).match({
+            Ok(_) => written(),
+            None  => into.add(s.uri),
+        }).try();
+    });
+    Ok(());
+}
+
+publish* = (a: Alloc, uri: str, text: str, spots: Vec<Spot>, out :: String)
+           Res<(), AllocError> {
+    body ::= a.String().try();
+    write_notification(a, uri, text, spots, body).try();
+    write_frame(body.view(), out)
+}
+
+write_notification = (
+    a     : Alloc,
+    uri   : str,
+    text  : str,
+    spots : Vec<Spot>,
+    body  :: String
+) Res<(), AllocError> {
+    top ::= obj(body).try();
+    top.text("jsonrpc", "2.0", body).try();
+    top.text("method", "textDocument/publishDiagnostics", body).try();
+    top.key("params", body).try();
+    params ::= obj(body).try();
+    params.text("uri", uri, body).try();
+    params.key("diagnostics", body).try();
+    items ::= arr(body).try();
+    spots.loop((h, s) {
+        s.uri.eq(uri).then(() {
+            items.next(body).try();
+            s.write_spot(a, text, body).try();
+        });
+    });
+    items.close(body).try();
+    params.close(body).try();
+    top.close(body)
+}
+
+write_spot = (s: Spot, a: Alloc, text: str, out :: String)
+             Res<(), AllocError> {
+    s.note.match({
+        None  => s.write_plain_spot(a, text, out),
+        Ok(n) => s.write_noted_spot(a, n, text, out),
+    })
+}
+
+write_plain_spot = (s: Spot, a: Alloc, text: str, out :: String)
+                   Res<(), AllocError> {
+    encoded ::= Diagnostic(range: text_range(text, s.span), severity: ERROR, source: "zen", message: s.message).to_json(a).try();
+    out.add(encoded.view())
+}
+
+// Typed JSON cannot omit a field, so a spot with relatedInformation is
+// streamed by hand.
+write_noted_spot = (s: Spot, a: Alloc, n: Note, text: str, out :: String)
+                   Res<(), AllocError> {
+    spot ::= obj(out).try();
+    spot.key("range", out).try();
+    range ::= text_range(text, s.span).to_json(a).try();
+    out.add(range.view()).try();
+    spot.key("severity", out).try();
+    out.write_usize(ERROR).try();
+    spot.text("source", "zen", out).try();
+    spot.text("message", s.message, out).try();
+    write_related(a, s.uri, n, text, spot, out).try();
+    spot.close(out)
+}
+
+write_related = (
+    a    : Alloc,
+    uri  : str,
+    n    : Note,
+    text : str,
+    spot :: Nest,
+    out  :: String
+)
+                Res<(), AllocError> {
+    spot.key("relatedInformation", out).try();
+    notes ::= arr(out).try();
+    notes.next(out).try();
+    note ::= obj(out).try();
+    note.key("location", out).try();
+    at ::= obj(out).try();
+    at.text("uri", uri, out).try();
+    at.key("range", out).try();
+    range ::= text_range(text, n.span).to_json(a).try();
+    out.add(range.view()).try();
+    at.close(out).try();
+    note.text("message", n.message, out).try();
+    note.close(out).try();
+    notes.close(out)
+}
+
+// Parser and sema diagnostics are rejections; neither model has warning or
+// informational variants to map onto another LSP severity.
+ERROR*: usize = 1

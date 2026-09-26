@@ -1,0 +1,178 @@
+// CLI entry point and public driver surface.
+
+Alloc, AllocError = std.mem
+str, String = std.text
+FsError = std.env
+BuildArgs, ProjectArgs = std.build
+
+Cli*, FmtJob*, cli*, USAGE, help = zen.zen_cli
+Build* = zen.zen_build
+fs_message = std.env
+std_root_for = zen.zen_path
+build* = zen.zen_run
+project, Action = zen.zen_project
+format = zen.zen_fmt
+Server, serve, serve_stdio = lsp
+arg_at = std.cli
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+    cli(env, alloc, env.argv).try().match({
+        Build(job)               => build_cli(env, alloc, job),
+        Project(job)             => project_cli(env, alloc, job, Action.Build),
+        Run(job)                 => project_cli(env, alloc, job, Action.Run),
+        Test(job)                => project_cli(env, alloc, job, Action.Test),
+        Fmt(job)                 => format(env, alloc, job),
+        Later(name)              => later(env, alloc, name),
+        Version(v)               => {
+            println("zen {}", v);
+            Ok(0)
+        },
+        Usage(word)              => usage(alloc, word),
+        Missing(flag)            => missing(alloc, flag),
+        UnavailableBackend(name) => {
+            println(
+                "zen: backend `{}` is unavailable; available backends: c, js, asm",
+                name
+            );
+            Ok(2)
+        },
+    })
+}
+
+// Project configuration and its resolved paths share the caller allocation.
+project_cli = (env: Env, a: Alloc, job: ProjectArgs, action: Action)
+              Res<i32, AllocError> {
+    std_root   = std_root_for(env, a);
+    configured = ProjectArgs(
+        root: job.root,
+        target: job.target,
+        std_root: std_root,
+        argv: job.argv,
+        args_at: job.args_at
+    );
+    project(env, a, configured, action)
+}
+
+build_cli = (env: Env, a: Alloc, job: BuildArgs) Res<i32, AllocError> {
+    job.std_root.is_empty().match({
+        false => build(env, a, job),
+        true  => {
+            std_root   = std_root_for(env, a);
+            configured = BuildArgs(
+                root: job.root,
+                emission: job.emission,
+                backend: job.backend,
+                entry: job.entry,
+                std_root: std_root,
+                symbol_map: job.symbol_map,
+                ffi: job.ffi,
+                repeat: job.repeat,
+                permute: job.permute
+            );
+            build(env, a, configured)
+        },
+    })
+}
+
+later = (env: Env, alloc: Alloc, name: str) Res<i32, AllocError> {
+    name.eq("lsp").match({
+        true  => lsp(env, alloc),
+        false => not_yet(name),
+    })
+}
+
+not_yet = (name: str) Res<i32, AllocError> {
+    println(
+        "zen {}: not yet — see docs/PLAN.md for the stage it arrives at",
+        name
+    );
+    Ok(2);
+}
+
+// `zen lsp` serves standard I/O; `zen lsp <requests> <replies>` serves the
+// same session over two files for transport tests. `--stdio` is accepted.
+lsp = (env: Env, a: Alloc) Res<i32, AllocError> {
+    from = file_arg(env, 2);
+    to   = file_arg(env, 3);
+    from.is_empty().match({
+        true  => serve_stdio(env, a),
+        false => paired(env, a, from, to),
+    })
+}
+
+// A request file without a reply file is a usage error.
+paired = (env: Env, a: Alloc, from: str, to: str) Res<i32, AllocError> {
+    to.is_empty().match({
+        true  => lsp_usage(),
+        false => answer(env, a, from, to),
+    })
+}
+
+// A transport word is not a file name.
+file_arg = (env: Env, i: usize) str {
+    word = arg_at(env.argv, i);
+    word.eq("--stdio").match({ true => "", false => word })
+}
+
+lsp_usage = () Res<i32, AllocError> {
+    println("zen lsp                       the language server, over stdin and stdout");
+    println(
+        "zen lsp <requests> <replies>  the same server over two files, which is"
+    );
+    println("                              what tests/corpus/lsp drives");
+    Ok(2);
+}
+
+answer = (env: Env, a: Alloc, from: str, to: str) Res<i32, AllocError> {
+    env.fs.read(a, from).match({
+        Err(e)    => unreadable(from, e),
+        Ok(input) => replies(env, a, input.view(), to),
+    })
+}
+
+replies = (env: Env, a: Alloc, input: str, to: str) Res<i32, AllocError> {
+    s   ::= a.Server(env);
+    out ::= a.String().try();
+    serve(s, input, out).try();
+    env.fs.write(to, out.view()).match({
+        Err(e) => unwritable(to, e),
+        Ok(_)  => Ok(0),
+    })
+}
+
+unreadable = (path: str, e: FsError) Res<i32, AllocError> {
+    println("zen lsp: {}: {}", path, fs_message(e));
+    Ok(1);
+}
+
+unwritable = (path: str, e: FsError) Res<i32, AllocError> {
+    println("zen lsp: -o {}: {}", path, fs_message(e));
+    Ok(1);
+}
+
+// Exit 2: a usage error is not a build failure.
+usage = (a: Alloc, word: str) Res<i32, AllocError> {
+    requested    = word.starts_with("@help/");
+    command_name = requested.match({
+        true  => word.slice(6, word.len).match({ "root" => "", _ => word.slice(6, word.len) }),
+        false => "",
+    });
+    text         = help(a, command_name).try();
+    (word.is_empty() || requested).match({
+        true  => println("{}", text.view()),
+        false => println("zen: unknown argument `{}`\n{}", word, text.view()),
+    });
+    requested.match({ true => Ok(0), false => Ok(2) });
+}
+
+missing = (a: Alloc, flag: str) Res<i32, AllocError> {
+    text = help(a, "build").try();
+    println(
+        "zen build: `{}` is required — a build with no `{}` writes nothing\n{}",
+        flag,
+        flag,
+        text.view()
+    );
+    Ok(2);
+}

@@ -1,0 +1,131 @@
+// End-to-end diagnostic publication: parse and sema faults are grouped by URI,
+// parse notes retain related locations, corrected files receive empty lists,
+// and a batch of document changes triggers one publication round. Repeating
+// identical bytes produces no frames. The test prints JSON bodies, not framing.
+
+str, String = std.text
+Alloc, AllocError = std.mem
+Server, serve = lsp.lsp_serve
+write_frame, frame_at = lsp.lsp_frame
+write_text = std.json
+
+// The unclosed parenthesis produces a parse diagnostic with a related span.
+BROKEN*: str = "Point = app.shape\n\nnear = (q: Point, n: i32) i32 {\n    s = (q.x + n;\n    s\n}\n"
+
+// The corrected buffer.
+FIXED*: str = "Point = app.shape\n\nnear = (q: Point, n: i32) i32 {\n    s = q.x + n;\n    s\n}\n"
+
+// A second in-memory buffer carries a sema fault in the same round.
+SHAPE_BROKEN*: str = "Point* = {\n    x*: i32,\n    y*: i32,\n}\n\narea* = (p: Point) i32 {\n    p.x * missing\n}\n"
+
+// The same module with the undefined name gone.
+SHAPE*: str = "Point* = {\n    x*: i32,\n    y*: i32,\n}\n"
+
+// `tests/run.py` stages a directory test into `<work>/src` and runs the
+// program from `<work>`, so these are the paths the server will open.
+URI*: str = "file://src/app/app.zen"
+SHAPE_URI*: str = "file://src/app/shape.zen"
+
+// The workspace contains the src compilation root.
+ROOT_URI*: str = "file://."
+
+INITIALIZED*: str = "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}"
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    s ::= a.Server(env);
+
+    // One build answers for both documents opened in this batch.
+    first ::= a.String().try();
+    open_session(a, first).try();
+    write_frame(INITIALIZED, first).try();
+    open_doc(a, SHAPE_URI, SHAPE_BROKEN, first).try();
+    open_doc(a, URI, BROKEN, first).try();
+    batch(
+        s,
+        a,
+        "two buffers opened, each wrong its own way",
+        first.view()
+    ).try();
+
+    // Both corrections share one document-change batch.
+    second ::= a.String().try();
+    change_doc(a, SHAPE_URI, SHAPE, second).try();
+    change_doc(a, URI, FIXED, second).try();
+    batch(s, a, "both files corrected, in one batch", second.view()).try();
+
+    third ::= a.String().try();
+    change_doc(a, URI, FIXED, third).try();
+    batch(s, a, "the bytes the buffer already held", third.view()).try();
+
+    Ok(0);
+}
+
+// Requests.
+
+// rootUri selects workspace checking rather than a standalone document.
+open_session = (a: Alloc, into :: String) Res<(), AllocError> {
+    body ::= a.String().try();
+    body.add(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":"
+    ).try();
+    write_text(ROOT_URI, body).try();
+    body.add("}}").try();
+    write_frame(body.view(), into)
+}
+
+// didOpen carries text inside textDocument.
+open_doc = (a: Alloc, uri: str, text: str, into :: String)
+           Res<(), AllocError> {
+    body ::= a.String().try();
+    body.add(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
+    ).try();
+    write_text(uri, body).try();
+    body.add(",\"text\":").try();
+    write_text(text, body).try();
+    body.add("}}}").try();
+    write_frame(body.view(), into)
+}
+
+// Full sync carries the complete buffer in contentChanges[0].text.
+change_doc = (a: Alloc, uri: str, text: str, into :: String)
+             Res<(), AllocError> {
+    body ::= a.String().try();
+    body.add(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":"
+    ).try();
+    write_text(uri, body).try();
+    body.add("},\"contentChanges\":[{\"text\":").try();
+    write_text(text, body).try();
+    body.add("}]}}").try();
+    write_frame(body.view(), into)
+}
+
+// Session output.
+
+// One batch through the server, and every frame it produced.
+batch = (s :: Server, a: Alloc, what: str, input: str) Res<(), AllocError> {
+    out ::= a.String().try();
+    serve(s, input, out).try();
+    println("--- {}", what);
+    walk(out.view());
+    Ok(());
+}
+
+// Print every frame body so frame count and ordering remain observable.
+walk = (out: str) () {
+    from  ::= 0;
+    seen  ::= 0;
+    going ::= true;
+    loop(() { going && from < out.len }, (h) {
+        frame_at(out, from).match({
+            Err(_) => { going = false; },
+            Ok(fr) => { seen = seen + 1; println(
+                "    {}",
+                fr.body
+            ); from = fr.next; },
+        });
+    });
+    (seen == 0).then(() { println("    (no frames)"); });
+}

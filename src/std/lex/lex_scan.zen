@@ -1,0 +1,167 @@
+// Byte dispatcher for names, comments, literals, punctuation, and invalid
+// runs. Every step advances, and scanning resumes after lexical faults.
+
+Lexer, Lexed = std.lex.lex_state
+TokenKind, Source = std.lex.lex_token
+LexFault = std.lex.lex_diag
+class_of = std.lex.lex_byte
+is_punct = std.lex.lex_punct
+string, character, number = std.lex.lex_literal
+Alloc, AllocError = std.mem
+str = std.text
+
+// Lexical faults are returned inside Lexed; Err is reserved for allocation
+// failure so scanning can continue after malformed input.
+scan* = (alloc: Alloc, source: Source) Res<Lexed, AllocError> {
+    lx ::= alloc.Lexer(source);
+    lx.cur.skip_bom();
+    loop(!lx.cur.is_done(), (h) { lx.step().try(); });
+    lx.emit(TokenKind.Eof, lx.cur.pos()).try();
+    Ok(Lexed(source: source, tokens: lx.tokens, diags: lx.diags));
+}
+
+step = (lx :: Lexer) Res<(), AllocError> {
+    lx.cur.peek().match({
+        Ok(b) => lx.dispatch(b),
+        None  => Ok(()),
+    });
+}
+
+dispatch = (lx :: Lexer, b: u8) Res<(), AllocError> {
+    class_of(b).match({
+        Space  => lx.skip(),
+        Slash  => lx.slash(),
+        Quote  => lx.string(),
+        Apos   => lx.character(),
+        Digit  => lx.number(),
+        Letter => lx.name(),
+        At     => lx.at_name(),
+        Other  => lx.punctuation(b),
+    });
+}
+
+skip = (lx :: Lexer) Res<(), AllocError> {
+    lx.cur.bump();
+    Ok(());
+}
+
+slash = (lx :: Lexer) Res<(), AllocError> {
+    lx.cur.at_byte(1, '/').match({
+        true  => lx.line_comment(),
+        false => lx.cur.at_byte(1, '*').match({
+            true  => lx.block_comment(),
+            false => lx.punctuation('/'),
+        }),
+    });
+}
+
+// A line-comment token excludes its newline.
+line_comment = (lx :: Lexer) Res<(), AllocError> {
+    from = lx.cur.pos();
+    lx.cur.bump_while((b) { b != '\n' });
+    lx.emit(TokenKind.LineComment, from);
+}
+
+// Block comments do not nest; the first `*/` closes the token.
+block_comment = (lx :: Lexer) Res<(), AllocError> {
+    from = lx.cur.pos();
+    lx.cur.bump();
+    lx.cur.bump();
+    closed ::= false;
+    loop((h) {
+        lx.cur.peek().match({
+            None    => { h.break(); },
+            Ok('*') => lx.cur.at_byte(1, '/').match({
+                true  => { lx.cur.bump(); lx.cur.bump(); closed = true; h.break(); },
+                false => { lx.cur.bump(); },
+            }),
+            Ok(_)   => { lx.cur.bump(); },
+        });
+    });
+
+    closed.match({
+        true  => lx.emit(TokenKind.BlockComment, from),
+        false => lx.report(LexFault.UnterminatedComment, from),
+    });
+}
+
+name = (lx :: Lexer) Res<(), AllocError> {
+    from = lx.cur.pos();
+    lx.cur.bump_while((b) { b.is_ident_cont() });
+    lx.emit(word_kind(lx.since(from)), from);
+}
+
+KEYWORD_COUNT*: usize = 3
+
+Keyword* = { text*: str, kind*: TokenKind }
+
+// The reserved-word table, indexed so LSP completion (lsp_compl) and C-name
+// validation (zen_c_translate) can enumerate it. Add keywords here only.
+keyword_at* = (i: usize) Res<Keyword> {
+    i.match({
+        0 => Ok(Keyword(text: "consume", kind: TokenKind.Consume)),
+        1 => Ok(Keyword(text: "false", kind: TokenKind.False)),
+        2 => Ok(Keyword(text: "true", kind: TokenKind.True)),
+        _ => None,
+    })
+}
+
+keyword_of = (word: str) Res<Keyword> {
+    Range(0, KEYWORD_COUNT).find((i) {
+        keyword_at(i).match({ Ok(keyword) => keyword.text.eq(word), None => false })
+    }).match({ Ok(i) => keyword_at(i), None => None })
+}
+
+word_kind = (word: str) TokenKind {
+    keyword_of(
+        word
+    ).match({ Ok(keyword) => keyword.kind, None => TokenKind.Ident })
+}
+
+is_keyword* = (word: str) bool {
+    keyword_of(word).match({ Ok(_) => true, None => false })
+}
+
+is_zen_name* = (word: str) bool { word.is_identifier() && !is_keyword(word) }
+
+at_name = (lx :: Lexer) Res<(), AllocError> {
+    from = lx.cur.pos();
+    lx.cur.bump();
+    lx.cur.bump_while((b) { b.is_ident_cont() });
+    at_kind(lx.since(from)).match({
+        Ok(kind) => lx.emit(kind, from),
+        None     => lx.report(LexFault.UnknownAtName, from),
+    });
+}
+
+at_kind = (word: str) Res<TokenKind> {
+    word.match({
+        "@Self"  => Ok(TokenKind.AtSelf),
+        "@meta"  => Ok(TokenKind.AtMeta),
+        "@scope" => Ok(TokenKind.AtScope),
+        _        => None,
+    });
+}
+
+punctuation = (lx :: Lexer, b: u8) Res<(), AllocError> {
+    from = lx.cur.pos();
+    lx.cur.punct_kind(b).match({
+        Ok(kind) => lx.emit(kind, from),
+        None     => lx.stray(),
+    });
+}
+
+// Report a maximal invalid-byte run once; identify a misplaced BOM separately.
+stray = (lx :: Lexer) Res<(), AllocError> {
+    from          = lx.cur.pos();
+    misplaced_bom = lx.cur.at_bom();
+    lx.cur.bump_while((b) { begins_no_token(b) });
+    misplaced_bom.match({
+        true  => lx.report(LexFault.MisplacedBom, from),
+        false => lx.report(LexFault.StrayByte, from),
+    });
+}
+
+begins_no_token = (b: u8) bool {
+    class_of(b).match({ Other => !b.is_punct(), _ => false });
+}

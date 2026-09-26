@@ -1,0 +1,11 @@
+Bag, Box = app.kit.kit
+Marker = app.kit
+
+Point* = {
+    x*: i32,
+    y*: i32,
+    marker*: Marker,
+}
+
+bagged* = (b: Bag) i32 { b.n }
+boxed* = (b: Box) i32 { b.n }

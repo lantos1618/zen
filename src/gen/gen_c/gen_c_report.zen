@@ -1,0 +1,52 @@
+// Fault helpers for lowerings. Each writes
+// `0` into the caller's buffer so the emitted C still parses around the
+// diagnostic — "A diagnostic is a value, not a raise" (gen_diag.zen).
+
+// `ast.ast_id`, not `ast`: a lone `ExprId = ast` reads as a type alias
+// named `ast` rather than an import.
+ExprId = std.ast.ast_id
+Span = std.ast.ast_span
+str, String = std.text
+AllocError = std.mem
+GenFault = gen.gen_diag
+CBackend = gen.gen_c.gen_c_state
+LocalSlot = gen.gen_c.gen_c_frame
+
+closure_storage* = (
+    be   :: CBackend,
+    span : Span,
+    slot : LocalSlot,
+    what : str
+) Res<bool, AllocError> {
+    slot.is_closure().match({
+        false => Ok(true),
+        true  => {
+            be.report(span.file, span, GenFault.Unsupported(what)).try();
+            Ok(false)
+        },
+    })
+}
+
+unsupported* = (be :: CBackend, id: ExprId, what: str, out :: String)
+               Res<(), AllocError> {
+    be.report_expr(id, GenFault.Unsupported(what)).try();
+    out.add("0")
+}
+
+unresolved* = (be :: CBackend, id: ExprId, name: str, out :: String)
+              Res<(), AllocError> {
+    be.report_expr(id, GenFault.Unresolved(name)).try();
+    out.add("0")
+}
+
+untyped* = (be :: CBackend, id: ExprId, what: str, out :: String)
+           Res<(), AllocError> {
+    be.report_expr(id, GenFault.Untyped(what)).try();
+    out.add("0")
+}
+
+ambiguous* = (be :: CBackend, id: ExprId, name: str, out :: String)
+             Res<(), AllocError> {
+    be.report_expr(id, GenFault.Ambiguous(name)).try();
+    out.add("0")
+}

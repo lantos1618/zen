@@ -1,0 +1,198 @@
+Decl, Struct, Enum, Alias, Member, Variant = std.ast
+AllocError = std.mem
+Vec = std.collections
+TyId, TyNamed = sema.sema_ty
+Checker, Ctx = sema.sema_check
+decl_at = sema.sema_def
+member_type, enter_struct_tvars, named_as = sema.sema_member
+Inst, inst_of_named, subst, push_tparams, owner_of = sema.sema_inst
+variant_payload = sema.sema_case
+type_from_ast = sema.sema_denote
+
+// Actor messages are copied into a mailbox. A primitive value owns no graph,
+// while allocator-backed containers, pointers, and functions do. Named
+// values are classified by their stored fields rather than by their spelling,
+// so wrapping an unsafe value never launders it into a transferable one.
+actor_payload_unsafe* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
+    c.types.at(ty).match({
+        // Mailbox lowering owns a direct str argument. Nested str values do
+        // not receive slice descriptors and retain the sender's pointer.
+        Prim(_) => Ok(false),
+        _       => {
+            walk ::= PayloadWalk(seen: c.alloc.Vec<TyId>());
+            walk.unsafe(c, ty)
+        },
+    })
+}
+
+// One walk owns cycle detection for an entire payload. Checker remains a
+// mutable argument: type interning and scoped type variables belong to the
+// caller's semantic state, not a copied checker stored in this traversal.
+PayloadWalk = {
+    seen :: Vec<TyId>,
+
+    unsafe = (self :: @Self, c :: Checker, ty: TyId)
+             Res<bool, AllocError> {
+        ty.is_in(self.seen).match({
+            true  => Ok(false),
+            false => {
+                self.seen.add(ty).try();
+                self.fresh(c, ty)
+            },
+        })
+    }
+
+    fresh = (self :: @Self, c :: Checker, ty: TyId)
+            Res<bool, AllocError> {
+        c.types.at(ty).match({
+            Prim(p)  => Ok(p.name.eq("str")),
+            Fn(_)    => Ok(true),
+            Var(_)   => Ok(true),
+            Infer    => Ok(false),
+            Unknown  => Ok(false),
+            Array(a) => (a.count == 0).match({
+                true  => Ok(false),
+                false => self.unsafe(c, a.elem),
+            }),
+            Res(r)   => self.unsafe(c, r.value).try().match({
+                true  => Ok(true),
+                false => self.unsafe(c, r.error),
+            }),
+            Union(u) => self.list(c, u.members),
+            Named(n) => self.named(c, ty, n),
+        })
+    }
+
+    list = (self :: @Self, c :: Checker, types: Vec<TyId>)
+           Res<bool, AllocError> {
+        unsafe ::= false;
+        types.loop((h, ty) {
+            unsafe = self.unsafe(c, ty).try();
+            unsafe.then(() { h.break(); });
+        });
+        Ok(unsafe)
+    }
+
+    named = (self :: @Self, c :: Checker, ty: TyId, n: TyNamed)
+            Res<bool, AllocError> {
+        (c.named_as(n, "String", "std.text.text_string")
+            || c.named_as(n, "Vec", "std.collections.collections_vec")
+            || c.named_as(n, "Ptr", "std.mem.mem_ptr")).match({
+            true  => Ok(true),
+            false => {
+                wide = c.set_of(ty);
+                wide.eq(ty).match({
+                    false => self.unsafe(c, wide),
+                    true  => decl_at(c.tree, n.decl).match({
+                        None    => Ok(true),
+                        Ok(dec) => self.declaration(c, ty, n, dec),
+                    }),
+                })
+            },
+        })
+    }
+
+    declaration = (
+        self :: @Self,
+        c :: Checker,
+        ty: TyId,
+        n: TyNamed,
+        dec: Decl
+    ) Res<bool, AllocError> {
+        dec.kind.match({
+            Struct(s) => self.fields(c, ty, n, s),
+            Enum(e)   => self.variants(c, n, e),
+            Alias(a)  => self.alias(c, n, a),
+            _         => Ok(true),
+        })
+    }
+
+    fields = (
+        self :: @Self,
+        c :: Checker,
+        ty: TyId,
+        n: TyNamed,
+        s: Struct
+    ) Res<bool, AllocError> {
+        mi    = n.decl.module.to_usize();
+        inst  = c.inst_of_named(n).try();
+        tmark = c.tvar_mark();
+        c.enter_struct_tvars(s, mi).try();
+        unsafe ::= false;
+        s.members.loop((h, m) {
+            unsafe = self.field(c, ty, mi, m, inst).try();
+            unsafe.then(() { h.break(); });
+        });
+        c.release_tvars(tmark).try();
+        Ok(unsafe)
+    }
+
+    field = (
+        self :: @Self,
+        c :: Checker,
+        self_ty: TyId,
+        mi: usize,
+        m: Member,
+        inst: Inst
+    ) Res<bool, AllocError> {
+        m.kind.match({
+            Field(f) => f.type.match({
+                None  => Ok(false),
+                Ok(_) => {
+                    declared = c.member_type(m, mi, self_ty).try();
+                    actual   = c.subst(declared, inst).try();
+                    self.unsafe(c, actual)
+                },
+            }),
+            _        => Ok(false),
+        })
+    }
+
+    variants = (self :: @Self, c :: Checker, n: TyNamed, e: Enum)
+               Res<bool, AllocError> {
+        mi    = n.decl.module.to_usize();
+        owner = c.owner_of(mi, e.name.text).try();
+        inst  = c.inst_of_named(n).try();
+        tmark = c.tvar_mark();
+        c.push_tparams(e.tparams, owner).try();
+        ctx = Ctx(mi, c.types.unknown().try());
+        unsafe ::= false;
+        e.variants.loop((h, v) {
+            unsafe = self.variant(c, v, ctx, inst).try();
+            unsafe.then(() { h.break(); });
+        });
+        c.release_tvars(tmark).try();
+        Ok(unsafe)
+    }
+
+    variant = (
+        self :: @Self,
+        c :: Checker,
+        v: Variant,
+        ctx: Ctx,
+        inst: Inst
+    ) Res<bool, AllocError> {
+        v.payload.match({
+            None  => Ok(false),
+            Ok(_) => {
+                declared = c.variant_payload(v, ctx).try();
+                actual   = c.subst(declared, inst).try();
+                self.unsafe(c, actual)
+            },
+        })
+    }
+
+    alias = (self :: @Self, c :: Checker, n: TyNamed, a: Alias)
+            Res<bool, AllocError> {
+        mi    = n.decl.module.to_usize();
+        owner = c.owner_of(mi, a.name.text).try();
+        inst  = c.inst_of_named(n).try();
+        tmark = c.tvar_mark();
+        c.push_tparams(a.tparams, owner).try();
+        ctx      = Ctx(mi, c.types.unknown().try());
+        declared = c.type_from_ast(a.target, ctx).try();
+        actual   = c.subst(declared, inst).try();
+        c.release_tvars(tmark).try();
+        self.unsafe(c, actual)
+    }
+}

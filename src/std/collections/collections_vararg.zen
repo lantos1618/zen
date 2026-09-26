@@ -1,0 +1,32 @@
+// A borrowed run of variadic arguments. The caller owns the storage, so a
+// vararg cannot escape the call. A vararg can be forwarded but cannot nest.
+
+Ptr = std.mem
+Range = std.core.range
+
+vararg*<T> = {
+    data: Ptr<T>,
+    len*: usize,
+
+    get* = (self: @Self, i: usize) Res<T> {
+        (i < self.len).match({
+            true  => Ok(self.data.read(i)),
+            false => None,
+        });
+    }
+
+    // Indexing traps when `i` is out of range.
+    index* = (self: @Self, i: usize) T {
+        self.len - i - 1;
+        self.data.read(i);
+    }
+
+    is_empty* = (self: @Self) bool { self.len == 0 }
+}
+
+vararg.impl(Range<T>, {
+    start: 0,
+    end: self.len,
+
+    at ::= (self: @Self, index: usize) Res<T> { self.get(index) }
+})

@@ -1,0 +1,20 @@
+// Immutable str values may be sent repeatedly. The mailbox owns the bytes, so
+// the receiver never borrows storage from the sender.
+
+Foo = {}
+
+Foo.impl(Actor, {
+    receive_msg = (self :: @Self, ctx: Context, data: str) {
+        ctx.env.out.println("actor has received {}", data)
+    }
+})
+
+Error = IoError | ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    greeting = "hello world!";
+    foo      = env.spawn(Foo()).try();
+    foo.receive_msg(greeting).try();
+    foo.receive_msg(greeting).try();
+    Ok(0);
+}

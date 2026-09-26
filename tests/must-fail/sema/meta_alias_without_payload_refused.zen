@@ -1,0 +1,21 @@
+// @meta(...).name rejects an alias whose target has no declaration payload.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Count = i64
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", @meta(x: Count).name);
+    Ok(0);
+}

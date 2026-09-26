@@ -1,0 +1,51 @@
+// CONSUME IN ONE ARM OF A LOOP'S GUARD, BREAK WITH IT: the moved
+// value leaves through h.break and the loop evaluates to Ok(that
+// value), unwrapped by the match on the loop expression. The id
+// discriminates the break VALUE from every iteration variable --
+// passes print 0 and 11, the broken value is 22 -- so a backend that
+// breaks with the loop counter or the item instead prints a wrong
+// but PLAUSIBLE number.
+//
+// the drop TIMELINE is the other half: each pass's fresh Buf dies at
+// its own pass end (drop 0, drop 11 BEFORE "kept"), while the kept
+// one dies only at main's exit, after "kept" -- its drop is the LAST
+// line. A backend that drops the break path's locals while spilling
+// the loop result prints `drop 22` early; one with no per-pass
+// cleanup prints nothing until the very end.
+//
+// spelled as `.match` DIRECTLY on the loop expression, the way
+// lex_byte.zen consumes its own loop: see LANE.md for what happens
+// when the loop's value is held in a binding first.
+
+Buf = {
+    env: Env,
+    id: i32,
+}
+
+Buf.impl(Drop, {
+    drop = (self :: @Self) () { self.env.out.println("drop {}", self.id) }
+})
+
+main = (env: Env) Res<i32, IoError> {
+    n ::= 0;
+    // <i32> is written because this loop WALKS NOTHING, so nothing but the
+    // break could fix its T -- and the backend settles a no-range loop's T
+    // to usize before it ever looks at the break (KNOWN GAP, not a settled
+    // rule: gen_c_shape.zen loop_element()'s no-range usize fallback;
+    // tests/corpus/loop-break/LANE.md records the same locus). Until
+    // break-driven settlement lands, the
+    // written targ is the supported spelling: with it this file's output
+    // is byte-identical to main.expected.
+    loop<i32>((h) {
+        f = Buf(env: env, id: n * 11);
+        (n == 2).match({
+            true  => h.break(f.id),
+            false => println("pass {}", f.id),
+        });
+        n = n + 1;
+    }).match({
+        Ok(k) => println("kept {}", k),
+        None  => println("nothing"),
+    });
+    Ok(0);
+}

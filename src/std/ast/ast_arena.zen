@@ -1,0 +1,278 @@
+// Compilation AST storage. Recursive node families use stable typed ids;
+// non-recursive records are stored by value. Modules and trivia share the same
+// allocation lifetime.
+
+Alloc, AllocError, Ptr, null_ptr = std.mem
+str = std.text
+Range = std.core
+Trivia, TriviaRun = std.ast.ast_span
+ExprId, TypeId, PatternId, BlockId, CBindingId = std.ast.ast_id
+Expr, Type, Pattern, Block, Module = std.ast.ast_node
+ModuleOrigin, CBinding = std.ast.ast_node
+CTypeBinding = std.ast.ast_node
+
+NODE_PAGE: usize = 256
+
+// Append-only paged storage for id-addressed nodes.
+NodeArena<T> = {
+    pages :: Vec<Ptr<T>>,
+    len :: usize = 0,
+    alloc: Alloc,
+
+    add = (self :: @Self, value: T) Res<(), AllocError> {
+        slot = self.len % NODE_PAGE;
+        (slot == 0).then(() {
+            page = self.alloc.realloc(null_ptr<T>(), NODE_PAGE).try();
+            self.pages.add(page).try();
+        });
+        page = self.pages.get(self.len / NODE_PAGE)
+            .ok_or(AllocError.OutOfMemory).try();
+        page.write(slot, value);
+        self.len = self.len + 1;
+        Ok(())
+    }
+
+    at = (self: @Self, i: usize) T {
+        self.pages.ptr().read(i / NODE_PAGE).read(i % NODE_PAGE)
+    }
+}
+
+NodeArena = <T>(a: Alloc) NodeArena<T> {
+    NodeArena(pages: a.Vec<Ptr<T>>(), alloc: a)
+}
+
+Ast* = {
+    modules :: Vec<Module>,
+    module_origins :: Vec<ModuleOrigin>,
+    c_bindings :: Vec<CBinding>,
+    exprs :: NodeArena<Expr>,
+    types :: NodeArena<Type>,
+    patterns :: NodeArena<Pattern>,
+    blocks :: NodeArena<Block>,
+
+    // Comments and blank lines in source order; nodes reference contiguous runs.
+    trivia :: Vec<Trivia>,
+
+    // Next id per family, counted in the id's width.
+    expr_count :: u32 = 0,
+    type_count :: u32 = 0,
+    pattern_count :: u32 = 0,
+    block_count :: u32 = 0,
+    c_binding_count :: u32 = 0,
+
+    alloc: Alloc,
+
+    // Nodes are immutable after insertion, so ids remain stable memo keys.
+
+    add_expr* = (self :: @Self, node: Expr) Res<ExprId, AllocError> {
+        id = ExprId(index: self.expr_count);
+        self.exprs.add(node).try();
+        self.expr_count = self.expr_count + 1;
+        Ok(id);
+    }
+
+    add_type* = (self :: @Self, node: Type) Res<TypeId, AllocError> {
+        id = TypeId(index: self.type_count);
+        self.types.add(node).try();
+        self.type_count = self.type_count + 1;
+        Ok(id);
+    }
+
+    add_pattern* = (self :: @Self, node: Pattern) Res<PatternId, AllocError> {
+        id = PatternId(index: self.pattern_count);
+        self.patterns.add(node).try();
+        self.pattern_count = self.pattern_count + 1;
+        Ok(id);
+    }
+
+    add_block* = (self :: @Self, node: Block) Res<BlockId, AllocError> {
+        id = BlockId(index: self.block_count);
+        self.blocks.add(node).try();
+        self.block_count = self.block_count + 1;
+        Ok(id);
+    }
+
+    add_module* = (self :: @Self, node: Module) Res<(), AllocError> {
+        self.modules.reserve(1).try();
+        self.module_origins.reserve(1).try();
+        self.module_origins.add(ModuleOrigin.Source).try();
+        self.modules.add(node)
+    }
+
+    // A C import is a module, not an attribute on each declaration. The
+    // loader supplies its headers once and every bodyless declaration in
+    // the module shares that origin.
+    add_c_module* = (self :: @Self, node: Module, binding: CBinding)
+                    Res<CBindingId, AllocError> {
+        id = CBindingId(index: self.c_binding_count);
+        self.modules.reserve(1).try();
+        self.module_origins.reserve(1).try();
+        self.c_bindings.reserve(1).try();
+        self.c_bindings.add(binding).try();
+        self.module_origins.add(ModuleOrigin.CBinding(id)).try();
+        self.modules.add(node).try();
+        self.c_binding_count = self.c_binding_count + 1;
+        Ok(id)
+    }
+
+    // Stale or out-of-range ids are compiler bugs and trap.
+
+    expr_at* = (self: @Self, id: ExprId) Expr {
+        i = id.index.to_usize();
+        (i >= self.exprs.len).then(() {
+            stale("expression", i, self.exprs.len);
+        });
+        self.exprs.at(i);
+    }
+
+    type_at* = (self: @Self, id: TypeId) Type {
+        i = id.index.to_usize();
+        (i >= self.types.len).then(() { stale("type", i, self.types.len); });
+        self.types.at(i);
+    }
+
+    pattern_at* = (self: @Self, id: PatternId) Pattern {
+        i = id.index.to_usize();
+        (i >= self.patterns.len).then(() {
+            stale("pattern", i, self.patterns.len);
+        });
+        self.patterns.at(i);
+    }
+
+    block_at* = (self: @Self, id: BlockId) Block {
+        i = id.index.to_usize();
+        (i >= self.blocks.len).then(() { stale("block", i, self.blocks.len); });
+        self.blocks.at(i);
+    }
+
+    module_count* = (self: @Self) usize { self.modules.len }
+
+    module_at* = (self: @Self, i: usize) Res<Module> { self.modules.get(i) }
+
+    module_origin_at* = (self: @Self, i: usize) Res<ModuleOrigin> {
+        self.module_origins.get(i)
+    }
+
+    c_binding_at* = (self: @Self, id: CBindingId) Res<CBinding> {
+        self.c_bindings.get(id.index.to_usize())
+    }
+
+    c_type_at* = (self: @Self, module: u32, decl: u32) Res<CTypeBinding> {
+        self.module_origin_at(module.to_usize()).match({
+            Ok(ModuleOrigin.CBinding(id)) => self.c_binding_at(id).try().c_type_in(decl),
+            _                             => None,
+        })
+    }
+
+    expr_ids* = (self: @Self) usize { self.exprs.len }
+    type_ids* = (self: @Self) usize { self.types.len }
+    pattern_ids* = (self: @Self) usize { self.patterns.len }
+    block_ids* = (self: @Self) usize { self.blocks.len }
+
+    trivia_count* = (self: @Self) usize { self.trivia.len }
+
+    exprs_each* = (self: @Self, body: (id: ExprId, node: Expr) ()) () {
+        id ::= ExprId(index: 0);
+        Range(0, self.exprs.len).loop((h, i) {
+            body(id, self.expr_at(id));
+            id = ExprId(index: id.index + 1);
+        });
+    }
+
+    types_each* = (self: @Self, body: (id: TypeId, node: Type) ()) () {
+        id ::= TypeId(index: 0);
+        Range(0, self.types.len).loop((h, i) {
+            body(id, self.type_at(id));
+            id = TypeId(index: id.index + 1);
+        });
+    }
+
+    // Collecting ids can allocate, while `types_each` has an infallible body.
+    types_where* = (self: @Self, keep: (node: Type) bool, out :: Vec<TypeId>)
+                   Res<(), AllocError> {
+        id ::= TypeId(index: 0);
+        Range(0, self.types.len).loop((h, i) {
+            keep(self.type_at(id)).then(() { out.add(id).try() });
+            id = TypeId(index: id.index + 1);
+        });
+        Ok(());
+    }
+
+    patterns_each* = (self: @Self, body: (id: PatternId, node: Pattern) ()) () {
+        id ::= PatternId(index: 0);
+        Range(0, self.patterns.len).loop((h, i) {
+            body(id, self.pattern_at(id));
+            id = PatternId(index: id.index + 1);
+        });
+    }
+
+    blocks_each* = (self: @Self, body: (id: BlockId, node: Block) ()) () {
+        id ::= BlockId(index: 0);
+        Range(0, self.blocks.len).loop((h, i) {
+            body(id, self.block_at(id));
+            id = BlockId(index: id.index + 1);
+        });
+    }
+
+    trivia_mark* = (self: @Self) usize { self.trivia.len }
+
+    add_trivia* = (self :: @Self, item: Trivia) Res<(), AllocError> {
+        self.trivia.add(item)
+    }
+
+    trivia_run* = (self: @Self, mark: usize) TriviaRun {
+        TriviaRun(at: mark, len: self.trivia.len - mark)
+    }
+
+    // `i` is relative to the run; invalid offsets and stale runs trap.
+    trivia_at* = (self: @Self, run: TriviaRun, i: usize) Trivia {
+        (i >= run.len).then(() { stale("trivia", i, run.len); });
+        at = run.at + i;
+        (at >= self.trivia.len).then(() {
+            stale("trivia", at, self.trivia.len);
+        });
+        self.trivia.ptr().read(at);
+    }
+}
+
+c_type_in = (binding: CBinding, decl: u32) Res<CTypeBinding> {
+    i = Range(0, binding.types.len).find((i) {
+        binding.types.get(i).match({
+            Ok(row) => row.match({ Opaque(raw) => raw.decl == decl }),
+            None    => false,
+        })
+    }).try();
+    binding.types.get(i)
+}
+
+// Report a stale id before trapping. Ast copies are snapshots, so consumers
+// must be constructed after the tree is complete.
+stale = (what: str, index: usize, len: usize) () {
+    println(
+        "ast: {} id {} is past the end of an arena holding {}",
+        what,
+        index,
+        len
+    );
+    println(
+        "  an Ast is a value, so a copy of one is a snapshot: a node added after"
+    );
+    println(
+        "  alloc.Checker(tree) or alloc.CBackend(tree, c) is not in the tree they hold"
+    );
+    len - len - 1;
+}
+
+Ast* = (a: Alloc) Ast {
+    Ast(
+        modules: a.Vec<Module>(),
+        module_origins: a.Vec<ModuleOrigin>(),
+        c_bindings: a.Vec<CBinding>(),
+        exprs: a.NodeArena<Expr>(),
+        types: a.NodeArena<Type>(),
+        patterns: a.NodeArena<Pattern>(),
+        blocks: a.NodeArena<Block>(),
+        trivia: a.Vec<Trivia>(),
+        alloc: a,
+    )
+}

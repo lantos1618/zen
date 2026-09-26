@@ -1,0 +1,409 @@
+// Lowers display through a `Sink`, allowing console output without allocating
+// A temporary `String`. The console record has runtime write slots and a null
+// Receiver because stdout is not a Zen-owned value.
+
+Member, Function = std.ast
+AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+TyId = sema.sema_ty
+Def = sema.sema_def
+sym_variant, RES_PATH = gen.gen_name
+CBackend = gen.gen_c.gen_c_state
+ctype, request_type = gen.gen_c.gen_c_type
+recv_inst = gen.gen_c.gen_c_mono
+Site, site_of, member_at = gen.gen_c.gen_c_member
+impl_member_of, by_arity = gen.gen_c.gen_c_impl
+by_ref = gen.gen_c.gen_c_arg
+method_sig, member_symbol = gen.gen_c.gen_c_member
+Slot, slots_of, thunk_param = gen.gen_c.gen_c_fat
+
+ConsoleStream = Stdout | Stderr
+
+DISPLAY_MEMBER: str = "toString"
+SINK_NAME: str = "Sink"
+SINK_WRITE: str = "write"
+SINK_WRITE_BYTE: str = "write_byte"
+
+// the call
+
+// `<the value>.toString(<the console>);` — `true` when written, `false`
+// when the type has no `toString`, which the caller diagnoses.
+console_display* = (be :: CBackend, ty: TyId, text: str)
+                   Res<bool, AllocError> {
+    be.stream_display(ty, text, Stdout)
+}
+
+stderr_console* = (be :: CBackend, ty: TyId, text: str)
+                  Res<bool, AllocError> {
+    be.stream_display(ty, text, Stderr)
+}
+
+stream_display = (be :: CBackend, ty: TyId, text: str, stream: ConsoleStream)
+                 Res<bool, AllocError> {
+    site_of(be, ty).try().match({
+        None  => Ok(false),
+        Ok(s) => be.display_at_site(ty, s, text, stream),
+    })
+}
+
+display_at_site = (
+    be     :: CBackend,
+    ty     : TyId,
+    s      : Site,
+    text   : str,
+    stream : ConsoleStream
+)
+                  Res<bool, AllocError> {
+    be.display_fn(s).try().match({
+        None  => Ok(false),
+        Ok(f) => be.write_display_call(ty, s, f, text, stream),
+    })
+}
+
+// The type's own `toString` first, then what an impl supplies — the
+// order `sema_supply.zen` states. Arity two: `Display` declares two
+// `toString`s, and only the sink-taking one can write into a console.
+display_fn = (be :: CBackend, s: Site) Res<Res<Function>, AllocError> {
+    found ::= be.alloc.Vec<Member>();
+    member_at(be, s, DISPLAY_MEMBER, found).try();
+    be.sink_form(found).match({
+        Ok(f) => Ok(Ok(f)),
+        None  => be.impl_member_of(s.decl, DISPLAY_MEMBER, 2),
+    })
+}
+
+sink_form = (be: CBackend, found: Vec<Member>) Res<Function> {
+    (found.len > 0).match({
+        false => None,
+        true  => member_function(by_arity(be, found, 2)),
+    })
+}
+
+member_function = (m: Res<Member>) Res<Function> {
+    m.match({
+        None    => None,
+        Ok(one) => one.kind.match({ Function(f) => Ok(f), _ => None }),
+    })
+}
+
+// `self: @Self` takes the receiver by value, matching `display.zen`:
+// `toString` writes a value out, it does not change it. A `::` receiver
+// needs an address this path lacks, so it is refused, not guessed at.
+write_display_call = (
+    be     :: CBackend,
+    ty     : TyId,
+    s      : Site,
+    f      : Function,
+    text   : str,
+    stream : ConsoleStream
+) Res<bool, AllocError> {
+    by_ref(f, 0).match({
+        true  => Ok(false),
+        false => be.with_console(ty, s, f, text, stream),
+    })
+}
+
+with_console = (
+    be     :: CBackend,
+    ty     : TyId,
+    s      : Site,
+    f      : Function,
+    text   : str,
+    stream : ConsoleStream
+)
+               Res<bool, AllocError> {
+    sink ::= be.alloc.String().try();
+    be.stream_sink(sink, stream).try().match({
+        false => Ok(false),
+        true  => be.emit_display(ty, s, f, text, sink.view()),
+    })
+}
+
+// The result is discarded here: `zg_print_bytes` cannot fail and a
+// console cannot fail to grow, so `println`'s value is unit. A buffer
+// sink needs the answer instead — see `sink_display` below.
+emit_display = (
+    be   :: CBackend,
+    ty   : TyId,
+    s    : Site,
+    f    : Function,
+    text : str,
+    sink : str
+) Res<bool, AllocError> {
+    call ::= be.alloc.String().try();
+    be.display_call(ty, s, f, text, sink, call).try();
+    be.fmt("(void){};\n", call.view()).try();
+    Ok(true);
+}
+
+// `<value>.toString(<sink>)` as an expression: `gen_c_sink.zen`'s `{}`
+// on a Display is this call with the door's buffer standing in for the
+// console. `false` when the type has no `toString`.
+sink_display* = (
+    be   :: CBackend,
+    ty   : TyId,
+    text : str,
+    sink : str,
+    out  :: String
+) Res<bool, AllocError> {
+    site_of(be, ty).try().match({
+        None  => Ok(false),
+        Ok(s) => be.sink_display_at(ty, s, text, sink, out),
+    })
+}
+
+sink_display_at = (
+    be   :: CBackend,
+    ty   : TyId,
+    s    : Site,
+    text : str,
+    sink : str,
+    out  :: String
+) Res<bool, AllocError> {
+    be.display_fn(s).try().match({
+        None  => Ok(false),
+        Ok(f) => be.sink_display_fn(ty, s, f, text, sink, out),
+    })
+}
+
+sink_display_fn = (
+    be   :: CBackend,
+    ty   : TyId,
+    s    : Site,
+    f    : Function,
+    text : str,
+    sink : str,
+    out  :: String
+)
+                  Res<bool, AllocError> {
+    by_ref(f, 0).match({
+        true  => Ok(false),
+        false => be.wrote_display(ty, s, f, text, sink, out),
+    })
+}
+
+wrote_display = (
+    be   :: CBackend,
+    ty   : TyId,
+    s    : Site,
+    f    : Function,
+    text : str,
+    sink : str,
+    out  :: String
+) Res<bool, AllocError> {
+    be.display_call(ty, s, f, text, sink, out).try();
+    Ok(true);
+}
+
+// The symbol, instantiation and queue entry `p.toString(sb)` would
+// produce, so the console and buffer paths agree on which function is meant.
+display_call = (
+    be   :: CBackend,
+    ty   : TyId,
+    s    : Site,
+    f    : Function,
+    text : str,
+    sink : str,
+    out  :: String
+) Res<(), AllocError> {
+    inst = be.recv_inst(ty).try();
+    sig ::= be.alloc.Vec<TyId>();
+    be.method_sig(ty, s.decl, f, s.decl.module.to_usize(), inst, sig).try();
+    sym = be.member_symbol(ty, s, DISPLAY_MEMBER, sig, inst).try();
+    out.fmt("{}({text}, ", sym.view()).try();
+    write_sink_arg(f, sink, out).try();
+    out.add(")")
+}
+
+// `out :: Sink` takes the record by address, and a C compound literal is
+// an lvalue holding the enclosing block's storage — so the console
+// outlives the call it is written into and nothing is copied.
+write_sink_arg = (f: Function, sink: str, out :: String)
+                 Res<(), AllocError> {
+    by_ref(f, 1).then(() { out.add("&").try() });
+    out.add(sink).try();
+    Ok(());
+}
+
+// the console, as a Sink
+// The slots are written here, not found: `Console.println` has no body
+// because the runtime is the implementation. A capability's floor is
+// the target language's; for C, that's `fwrite`.
+// The stream is part of the record. `println` hands toString a stdout
+// console and `errorln` a stderr one; the two records share the same
+// type but fill their slots from different families, so a Display value
+// narrated to stderr never lands a byte on stdout.
+
+stream_sink = (be :: CBackend, out :: String, stream: ConsoleStream)
+              Res<bool, AllocError> {
+    be.sink_ty().try().match({
+        None   => Ok(false),
+        Ok(ty) => be.write_console(ty, out, stream),
+    })
+}
+
+// `Sink` as the prelude exports it. Reached by declaration and not
+// through the caller's imports, because the record is the backend's: a
+// caller that wrote `println("{}", p)` never named it.
+sink_ty = (be :: CBackend) Res<Res<TyId>, AllocError> {
+    defs ::= be.alloc.Vec<Def>();
+    be.check.world.prelude_of(SINK_NAME, defs).try();
+    defs.get(0).match({
+        None  => Ok(None),
+        Ok(d) => be.sink_named(d),
+    })
+}
+
+sink_named = (be :: CBackend, d: Def) Res<Res<TyId>, AllocError> {
+    args ::= be.alloc.Vec<TyId>();
+    Ok(Ok(be.check.types.named(d.id, d.qname, d.name, args).try()));
+}
+
+// A slot with no runtime write leaves the whole record unavailable.
+// `gen_c_fat.zen` NULLs an unanswered slot, fine for an unused hook like
+// `Alloc.create` — but a console slot is called on the first `{}`, so a
+// NULL there would link and crash, worse than a diagnostic.
+write_console = (
+    be     :: CBackend,
+    ty     : TyId,
+    out    :: String,
+    stream : ConsoleStream
+)
+                Res<bool, AllocError> {
+    stream.match({
+        Stdout => be.need_print(),
+        Stderr => be.need_stderr(),
+    });
+    be.request_type(ty).try();
+    slots ::= be.alloc.Vec<Slot>();
+    be.slots_of(ty, slots).try();
+    body  ::= be.alloc.String().try();
+    known ::= slots.len > 0;
+    slots.loop((h, s) {
+        be.console_slot(s, body, stream).try().then(() { known = false; });
+    });
+    known.match({
+        false => Ok(false),
+        true  => be.finish_console(ty, body.view(), out),
+    })
+}
+
+finish_console = (be :: CBackend, ty: TyId, inits: str, out :: String)
+                 Res<bool, AllocError> {
+    rec ::= be.alloc.String().try();
+    be.ctype(ty, rec).try();
+    out.fmt("(({}){ .zg_self = NULL{inits} })", rec.view()).try();
+    Ok(true);
+}
+
+// `true` when this backend has no write for the slot.
+console_slot = (
+    be     :: CBackend,
+    s      : Slot,
+    out    :: String,
+    stream : ConsoleStream
+)
+               Res<bool, AllocError> {
+    console_body(s.name, stream).is_empty().match({
+        true  => Ok(true),
+        false => be.write_slot_init(s, out, stream),
+    })
+}
+
+write_slot_init = (
+    be     :: CBackend,
+    s      : Slot,
+    out    :: String,
+    stream : ConsoleStream
+)
+                  Res<bool, AllocError> {
+    name ::= be.alloc.String().try();
+    console_name(name, s.name, stream).try();
+    be.need_console_fn(s, name.view(), stream).try();
+    out.fmt(", .{} = {}", s.sym.view(), name.view()).try();
+    Ok(false);
+}
+
+// Named after the member it answers, so two requests for one slot share
+// one function — the same rule `gen_c_fat.zen`'s thunks follow.
+console_name = (
+    out    :: String,
+    member : str,
+    stream : ConsoleStream
+) Res<(), AllocError> {
+    prefix = stream.match({ Stdout => "zg_console_", Stderr => "zg_econsole_" });
+    out.fmt("{prefix}{member}")
+}
+
+// The one statement a stdout console slot is. Empty means this backend
+// has no write for that member of `Sink`.
+console_body = (member: str, stream: ConsoleStream) str {
+    member.eq(SINK_WRITE).match({
+        true  => stream.match({
+            Stdout => "zg_print_str(zg_a0);",
+            Stderr => "zg_eprint_str(zg_a0);",
+        }),
+        false => byte_body(member, stream),
+    })
+}
+
+// A byte has no `str` to point at — `io.zen` says why the floor is two
+// calls wide — so it is written from the parameter's own storage. One
+// byte, no copy and no buffer.
+byte_body = (member: str, stream: ConsoleStream) str {
+    member.eq(SINK_WRITE_BYTE).match({
+        true  => stream.match({
+            Stdout => "zg_print_bytes((const char *)&zg_a0, 1);",
+            Stderr => "zg_eprint_bytes((const char *)&zg_a0, 1);",
+        }),
+        false => "",
+    })
+}
+
+need_console_fn = (be :: CBackend, s: Slot, name: str, stream: ConsoleStream)
+                  Res<(), AllocError> {
+    be.need_thunk(name).try().match({
+        false => Ok(()),
+        true  => be.emit_console_fn(s, name, stream),
+    })
+}
+
+// A console cannot fail to grow and the print families cannot fail, so
+// the honest answer is `Ok` — a tag, no `()` payload storage. Head and
+// body carry no punctuation of their own, the shape `emit_thunk`
+// explains.
+// The stream is a parameter and the body is read through a selector on
+// it: the stdout and stderr records differ only in which family fills
+// their slots, so the emission stays one function and the bodies stay
+// beside their own records.
+emit_console_fn = (
+    be     :: CBackend,
+    s      : Slot,
+    name   : str,
+    stream : ConsoleStream
+)
+                   Res<(), AllocError> {
+    head ::= be.alloc.String().try();
+    be.console_head(s, name, head).try();
+    ok ::= be.alloc.String().try();
+    sym_variant(ok, RES_PATH, "Ok").try();
+    line = console_body(s.name, stream);
+    body ::= be.alloc.String().try();
+    body.fmt("    (void)zg_self;\n    {line}\n    return (").try();
+    be.ctype(s.ret, body).try();
+    body.fmt("){ .zg_tag = {} };\n", ok.view()).try();
+    owned ::= be.alloc.String().try();
+    owned.add(name).try();
+    be.add_function(owned, head, body)
+}
+
+console_head = (be :: CBackend, s: Slot, name: str, out :: String)
+               Res<(), AllocError> {
+    ret ::= be.alloc.String().try();
+    be.ctype(s.ret, ret).try();
+    out.fmt("{}{} {name}(void *zg_self", be.linkage(), ret.view()).try();
+    s.params.loop((h, i, p) { be.thunk_param(p, "a", i, out).try() });
+    out.add(")").try();
+    Ok(());
+}

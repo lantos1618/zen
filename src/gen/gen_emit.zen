@@ -1,0 +1,126 @@
+// Output buffering and stable ordering for backends. `Emit` owns its
+// `String`: read it through `view`, or take it with `into_string`.
+
+Alloc, AllocError = std.mem
+str, String = std.text
+Vec, Ordered, sort = std.collections
+Range = std.core
+
+INDENT: str = "    "
+
+Emit* = {
+    text :: String,
+    depth :: usize,
+
+    // The last byte written was `\n`: the next non-empty write indents
+    // first, and a blank line gets no indent.
+    fresh :: bool,
+
+    // writing
+
+    // Every `\n` in `s` ends a line, so a multi-line run indents each line.
+    bytes* = (self :: @Self, s: str) Res<(), AllocError> {
+        lines ::= s.split('\n');
+        self.run(lines.next().value_or("")).try();
+        loop((h) {
+            lines.next().match({
+                None     => h.break(),
+                Ok(rest) => { self.line().try(); self.run(rest).try(); },
+            });
+        });
+        Ok(())
+    }
+
+    // `s` holds no `\n`. Empty writes nothing, so a blank line stays blank.
+    run = (self :: @Self, s: str) Res<(), AllocError> {
+        (!s.is_empty()).then(() {
+            self.open_line().try();
+            self.text.add(s).try();
+        });
+        Ok(())
+    }
+
+    byte* = (self :: @Self, b: u8) Res<(), AllocError> {
+        (b == '\n').match({
+            true  => self.line(),
+            false => {
+                self.open_line().try();
+                self.text.add(b)
+            },
+        })
+    }
+
+    number* = (self :: @Self, v: usize) Res<(), AllocError> {
+        self.open_line().try();
+        self.text.write_usize(v)
+    }
+
+    // End the line. A blank line is `line` twice and gets no indent.
+    line* = (self :: @Self) Res<(), AllocError> {
+        self.text.add('\n').try();
+        self.fresh = true;
+        Ok(());
+    }
+
+    say* = (self :: @Self, s: str) Res<(), AllocError> {
+        self.bytes(s).try();
+        self.line()
+    }
+
+    open_line = (self :: @Self) Res<(), AllocError> {
+        self.fresh.then(() {
+            Range(0, self.depth).loop((h, i) {
+                self.text.add(INDENT).try();
+            });
+            self.fresh = false;
+        });
+        Ok(());
+    }
+
+    // depth
+
+    indent* = (self :: @Self) () { self.depth = self.depth + 1; }
+
+    // Saturates at zero: an unbalanced backend gets misindented C, not an
+    // aborted compilation.
+    dedent* = (self :: @Self) () {
+        (self.depth > 0).then(() { self.depth = self.depth - 1; });
+    }
+
+    // reading back
+
+    view* = (self: @Self) str { self.text.view() }
+
+    len* = (self: @Self) usize { self.text.len() }
+
+    // Takes the buffer; the Emit is not written again after this.
+    into_string* = (self: @Self) String { self.text }
+}
+
+Emit* = (a: Alloc) Res<Emit, AllocError> {
+    Ok(Emit(text: a.String().try(), depth: 0, fresh: true));
+}
+
+// Stable lexicographic permutation: values stay in their original vectors.
+order* = (a: Alloc, keys: Vec<String>) Res<Vec<usize>, AllocError> {
+    order(a, keys, (key) { key.view() })
+}
+
+order* = <T>(a: Alloc, keys: Vec<T>, key_of: (value: T) str)
+         Res<Vec<usize>, AllocError> {
+    keyed ::= a.Vec<KeyIndex>();
+    keys.loop((h, index, key) {
+        keyed.add(KeyIndex(key: key_of(key), index: index)).try();
+    });
+    keyed.sort(a).try();
+    indices ::= a.Vec<usize>();
+    indices.reserve(keys.len).try();
+    keyed.loop((entry) { indices.add(entry.index).try(); });
+    Ok(indices)
+}
+
+KeyIndex = { key: str, index: usize }
+
+KeyIndex.impl(Ordered, {
+    before = (self: @Self, other: @Self) bool { self.key.before(other.key) }
+})

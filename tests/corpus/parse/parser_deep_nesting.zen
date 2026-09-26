@@ -1,0 +1,76 @@
+// Deep nesting must produce one diagnostic rather than overflow the parser's
+// stack. Probes include a supported depth and two excessive depths. Refusals
+// are anchored at the outermost `(` so the reported location identifies the
+// full excessive run rather than an arbitrary inner frame.
+
+scan, Source = std.lex.lex
+Parser, MAX_DEPTH = std.parse.parser
+expr = std.parse.parse_expr
+Ast = std.ast.ast_arena
+ExprId = std.ast.ast_id
+
+// `((( .. 1 .. )))`, built rather than written out, which is the only
+// reason a 10,000-deep test is cheap enough to keep.
+//
+// Raw `String.add` speaks only `AllocError`: every write below grows one
+// in-memory buffer and reads no format grammar.
+nested = (alloc: Alloc, depth: usize) Res<str, AllocError> {
+    sb ::= alloc.String("").try();
+    Range(0, depth).loop((h, i) { sb.add("(").try(); });
+    sb.add("1").try();
+    Range(0, depth).loop((h, i) { sb.add(")").try(); });
+    Ok(sb.view());
+}
+
+node_name = (tree: Ast, id: ExprId) str {
+    tree.expr_at(id).kind.match({
+        Paren(_)   => "paren",
+        Unit       => "unit",
+        Literal(_) => "literal",
+        _          => "other",
+    });
+}
+
+run = (env: Env, alloc: Alloc, depth: usize) Res<(), WriteError> {
+    text  = nested(alloc, depth).try();
+    lexed = scan(alloc, Source(file: "t.zen", text: text)).try();
+    p ::= alloc.Parser(lexed);
+    p.drain().try();
+    id = p.expr().try();
+
+    // A parse that stopped still hands back a tree that can be WALKED.
+    // That is the point of a poison node: the parser gives up on
+    // reading further, not on producing something well formed, so a
+    // consumer never has to ask whether the tree it was handed exists.
+    println(
+        "depth {} lex {} parse {} node {}",
+        depth,
+        lexed.diags.len,
+        p.diags.len,
+        node_name(p.tree, id)
+    );
+    p.diags.get(0).match({
+        Ok(d) => println(
+            "  at {}:{} {}",
+            d.span.start.line,
+            d.span.start.col,
+            d.message
+        ),
+        None  => println("  no diagnostic"),
+    });
+    Ok(());
+}
+
+main = (env: Env) Res<i32, WriteError> {
+    alloc ::= env.mem.alloc();
+    println("limit {}", MAX_DEPTH);
+
+    // just inside the limit: an ordinary expression, nothing to say
+    run(env, alloc, 300).try();
+
+    // past it, and far past it. Both must produce exactly one
+    // diagnostic, anchored at column 1 — the outermost `(` of the run
+    run(env, alloc, 400).try();
+    run(env, alloc, 10000).try();
+    Ok(0);
+}

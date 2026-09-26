@@ -1,0 +1,39 @@
+// Filesystem paths are byte strings. Construction preserves bytes exactly;
+// validation belongs to the filesystem operation that consumes the path.
+
+Path* = {
+    text*: str,
+
+    parent* = (self: @Self) Res<Path> {
+        self.text.rfind('/').match({
+            None      => None,
+            Ok(slash) => Ok(Path(self.text.slice(0, slash))),
+        })
+    }
+
+    name* = (self: @Self) str { self.text.after_last('/') }
+
+    ext* = (self: @Self) Res<str> {
+        name = self.name();
+        name.rfind('.').match({
+            None       => None,
+            Ok(period) => Ok(name.slice(period + 1, name.len)),
+        })
+    }
+}
+
+// Build a borrowed path directly, or allocate a formatted path explicitly.
+// The formatted form can fail because it owns its resulting String.
+//     Path("src/main.zen")
+//     Path(a, "build/{}-{}/{}", os, arch, name).try()
+Path* = (text: str) Path { Path(text: text) }
+Path* = (a: Alloc, fmt: str, args: ...) Res<Path, AllocError>
+
+// Join two path fragments, adding `/` only when a non-empty `dir` lacks one.
+join_path* = (a: Alloc, dir: str, file: str) Res<String, AllocError> {
+    out ::= a.String().try();
+    out.add(dir).try();
+    (out.len() > 0 && !out.view().ends_with("/")).then(() { out.add('/').try(); });
+    out.add(file).try();
+    Ok(out)
+}

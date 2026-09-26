@@ -1,0 +1,15 @@
+// A closure-local binding shadows an outer name rather than becoming a write
+// through the capture record. `w` proves ordinary capture; the distinct 999
+// value proves `v` uses closure-local storage and leaves the outer value intact.
+
+main = (env: Env) Res<i32, IoError> {
+    v ::= 11;
+    w ::= 22;
+    @scope.defer(() {
+        println("read first {}", w * 10 + 1);
+        v ::= 999;
+        println("shadow {}", v);
+    });
+    println("body {} {}", v, w);
+    Ok(0);
+}

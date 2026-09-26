@@ -1,0 +1,447 @@
+// Recognise loop declarations by signature shape, describe their lambda
+// parameters, and settle their result type. A user function named `loop` is
+// not special.
+
+Ast, ExprId = std.ast
+Decl, Function, Param, TypeId = std.ast
+Access, Call, Span = std.ast
+Alloc, AllocError = std.mem
+Vec = std.collections
+str = std.text
+Range = std.core
+DeclId = sema.sema_id
+TyId = sema.sema_ty
+has_var = sema.sema_inst
+decl_at = sema.sema_def
+is_handle_ty = sema.sema_handle
+Ctx = sema.sema_check
+CBackend = gen.gen_c.gen_c_state
+
+ty_of = gen.gen_c.gen_c_expr
+range_element_type = gen.gen_c.gen_c_range
+result_element = gen.gen_c.gen_c_fold
+settle_res = gen.gen_c.gen_c_loop
+
+// A borrowed call argument view. UFCS contributes a leading receiver without
+// copying AST argument ids into an allocator-backed vector.
+LoopArgs* = {
+    call*: Call,
+    receiver*: Res<ExprId>,
+
+    len* = (self: @Self) usize {
+        self.call.args.len + self.receiver.match({ None => 0, Ok(_) => 1 })
+    }
+
+    get* = (self: @Self, index: usize) Res<ExprId> {
+        self.receiver.match({
+            None         => arg_value(self.call, index),
+            Ok(receiver) => (index == 0).match({
+                true  => Ok(receiver),
+                false => arg_value(self.call, index - 1),
+            }),
+        })
+    }
+
+    // One means the last argument. Missing tails never underflow an index.
+    from_end* = (self: @Self, distance: usize) Res<ExprId> {
+        (distance <= self.len()).match({
+            true  => self.get(self.len() - distance),
+            false => None,
+        })
+    }
+}
+
+// recognising the intrinsic
+
+// The header's shape, and never a module and a name: the six overloads
+// are one case, and anything written the same way joins them without a
+// second list to keep in step.
+is_loop_shape* = (be :: CBackend, f: Function) bool {
+    f.body.match({
+        Ok(_) => false,
+        None  => be.takes_handle(f.params),
+    })
+}
+
+// `-%`, Not `-`: an empty parameter list makes `len - 1` a usize
+// underflow, which traps and takes the compiler down. A bodyless
+// declaration with no parameters is not hypothetical — `null_ptr* =
+// <T>() Ptr<T>` is one, and it is asked this question the moment
+// anything lowers a call to it. Wrapping asks `get` for the index
+// before the start of an empty run, and `get` answers None, which is
+// the same answer "there is no last parameter" wanted anyway.
+takes_handle = (be :: CBackend, params: Vec<Param>) bool {
+    params.get(params.len -% 1).match({
+        None  => false,
+        Ok(p) => be.param_is_handle_body(p),
+    })
+}
+
+param_is_handle_body = (be :: CBackend, p: Param) bool {
+    p.type.match({
+        None    => false,
+        Ok(tid) => be.type_is_handle_body(tid),
+    })
+}
+
+type_is_handle_body = (be :: CBackend, tid: TypeId) bool {
+    be.tree.type_at(tid).kind.match({
+        Fn(ft) => be.first_is_handle(ft.params),
+        _      => false,
+    })
+}
+
+first_is_handle = (be :: CBackend, params: Vec<Param>) bool {
+    params.get(0).match({
+        None  => false,
+        Ok(p) => be.param_names_handle(p),
+    })
+}
+
+param_names_handle = (be :: CBackend, p: Param) bool {
+    p.type.match({
+        None    => false,
+        Ok(tid) => be.type_named(tid).eq("LoopHandle"),
+    })
+}
+
+type_named = (be :: CBackend, tid: TypeId) str {
+    be.tree.type_at(tid).kind.match({
+        Named(n) => n.name.text,
+        _        => "",
+    })
+}
+
+// The type a loop call evaluates to, when sema's own answer is open.
+// A binding declared at the header's `Res<q>` would be a C type that
+// every loop in the program shares. The range the call was handed is
+// what settles it: one that supplies no `at` walks its own index space,
+// so its element is `usize`, and one whose `at` an impl supplies hands
+// out what `at` returns. A shape with no range has no element to ask
+// for (`loop_element`) — there `want`, the type the context asked this
+// call to stand at, settles what it can, and the body's break sites
+// answer for what it leaves open (`broken_element_want`).
+loop_result_type* = (
+    be   :: CBackend,
+    id   : ExprId,
+    ctx  : Ctx,
+    got  : TyId,
+    want : TyId
+) Res<TyId, AllocError> {
+    be.loop_fn_at(id).match({
+        None  => Ok(got),
+        Ok(f) => be.settled_loop_type(id, ctx, got, want),
+    })
+}
+
+// The loop declaration this call resolved to, if it is one. Read off
+// sema's own answer — `resolved_call` records the `DeclId` overload
+// resolution picked, so seven declarations of `loop` arrive as a decision.
+loop_fn_at* = (be :: CBackend, id: ExprId) Res<Function> {
+    be.check.resolved_call(id).match({
+        None    => None,
+        Ok(did) => be.loop_fn_of(did),
+    })
+}
+
+loop_fn_of = (be :: CBackend, did: DeclId) Res<Function> {
+    decl_at(be.tree, did).match({
+        None  => None,
+        Ok(x) => be.loop_fn_decl(x),
+    })
+}
+
+loop_fn_decl = (be :: CBackend, x: Decl) Res<Function> {
+    x.kind.match({
+        Function(f) => be.keep_loop(f),
+        _           => None,
+    })
+}
+
+keep_loop = (be :: CBackend, f: Function) Res<Function> {
+    be.is_loop_shape(f).match({
+        true  => Ok(f),
+        false => None,
+    })
+}
+
+// The type a loop call evaluates to, when the call's own answer is
+// still open. `got` is what the lowering of the body produced; `want`
+// is the type the context asked this call to stand at — an annotated
+// binding's declared type, a parameter's, a return's. A binding
+// declared at the header's `Res<q>` would otherwise be a C type every
+// loop in the program shares.
+// The element comes from the shape: one handed a range walks what its
+// `at` returns (its index space when there is no `at`), and a shape
+// with no range has nothing to ask (`loop_element` answers None) —
+// there `want` settles what it concretely can, and the body's break
+// sites answer for what it leaves open (`broken_element_want`). An
+// expectation is a decision already made and outranks a reconstruction.
+settled_loop_type = (
+    be   :: CBackend,
+    id   : ExprId,
+    ctx  : Ctx,
+    got  : TyId,
+    want : TyId
+) Res<TyId, AllocError> {
+    elem = be.result_element(id, ctx).try();
+    elem.match({
+        None  => be.settle_res(
+            got,
+            be.broken_element_want(id, ctx, want).try()
+        ).try(),
+        Ok(t) => be.settle_res(got, t).try(),
+    })
+}
+
+// The element the loop walks: what the range hands out, or `None` for
+// the three shapes that take no range at all — the two that would
+// count an index space, and the one with no space to count. A range
+// that supplies no `at` walks its own index space, so `usize` is the
+// answer whenever there is a range to ask.
+loop_element* = (be :: CBackend, id: ExprId, ctx: Ctx)
+               Res<Res<TyId>, AllocError> {
+    usize_ty = be.check.types.prim("usize").try();
+    be.range_arg(id).match({
+        None  => Ok(None),
+        Ok(r) => be.arg_element(r, ctx, usize_ty),
+    })
+}
+
+arg_element = (be :: CBackend, r: ExprId, ctx: Ctx, usize_ty: TyId)
+              Res<Res<TyId>, AllocError> {
+    unknown = be.check.types.unknown().try();
+    rty     = be.ty_of(r, ctx, unknown).try();
+    got     = be.range_element_type(rty).try();
+    Ok(got.match({ Ok(t) => Ok(t), None => Ok(usize_ty) }))
+}
+
+// What the context declares decides, when it decides anything. A
+// no-range loop's `T` has two speakers: the context (`pick:
+// Res<usize> = loop(..)`) and the body's break sites. The context is
+// an annotation the author already wrote down, so it wins whenever it
+// names a concrete element — the decided-`usize` programs stay typed
+// exactly as main compiled them. The break arguments decide only what
+// the context leaves open (`r = loop((h){ h.break(-7) })`, #784):
+// they are read off the body (`broken_element`) and a negative literal
+// keeps its sign because nothing re-reads its bits through an unsigned
+// slot. An open payload (`Res<q>`) counts as undecided, not decided —
+// it is the word for a T nobody named yet. `usize` stands when nobody
+// spoke at all, the answer every no-range loop without a typed break
+// compiled against before this question was asked.
+broken_element_want* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
+                       Res<TyId, AllocError> {
+    be.check.types.at(want).match({
+        Res(r) => (be.check.is_unknown(r.value) || has_var(be.check, r.value))
+                  .match({
+            true  => be.broken_element(id, ctx),
+            false => Ok(r.value),
+        }),
+        _      => be.broken_element(id, ctx),
+    })
+}
+
+// The payload of the two shapes that walk nothing. `loop<T> = (body:
+// (h: LoopHandle) ()) Res<T>` and its `cond` sibling have no index
+// space and no item — the body's `h.break(v)` sites are the only thing
+// in the program that says what `T` is, so the answer is read off
+// them: the arguments' types, joined. Sema never walks a lambda body,
+// so an argument stands as written — `-7` at the family type `int`,
+// which reaches every integer payload the way it reaches every
+// parameter position (`literal_fits`) — and the join is `assignable`,
+// the one agreement a value passes anywhere else. Settling `usize`
+// here instead is how `h.break(-7)` read back 18446744073709551609
+// (#784): the bits survived, the sign did not, and annotating the
+// result could not rescue it because the expectation lost to this
+// same default.
+// Nothing broke with a value, or the sites disagree: the first site's
+// type stands, and a site that will not fit it is refused by the break
+// gate at emission (`break_value_fits`, gen_c_handle.zen) — one
+// mistake, one diagnostic, at the value that does not fit. `usize` is
+// the answer when no site spoke, the one every no-range loop without
+// a typed break compiled against before this question was asked.
+broken_element* = (be :: CBackend, id: ExprId, ctx: Ctx)
+                  Res<TyId, AllocError> {
+    span  = be.tree.expr_at(id).span;
+    spoke = be.join_break_args(span, ctx).try();
+    spoke.match({
+        None  => be.check.types.prim("usize").try(),
+        Ok(t) => Ok(t),
+    })
+}
+
+// The parsed tree is fixed during lowering. Index only syntax relevant to
+// loop result inference, retaining expression order for the first typed break.
+LoopSyntax* = {
+    breaks* :: Vec<ExprId>,
+    lambdas :: Vec<Span>,
+
+    has_body = (self: @Self, site: Span, call: Span) bool {
+        self.lambdas.find((body) {
+            site.inside(body) && body.inside(call)
+        }).match({ Ok(_) => true, None => false })
+    }
+}
+
+LoopSyntax* = (a: Alloc, tree: Ast) Res<LoopSyntax, AllocError> {
+    sites ::= LoopSyntax(breaks: a.Vec<ExprId>(), lambdas: a.Vec<Span>());
+    tree.exprs_each((id, node) {
+        node.kind.match({
+            Lambda(_)  => sites.lambdas.add(node.span).try(),
+            Call(call) => ((call.args.len > 0) && tree.expr_at(call.callee)
+                .kind.match({
+                    Access(access) => access.name.text.eq("break"),
+                    _              => false,
+                })).then(() { sites.breaks.add(id).try(); }),
+            _          => (),
+        });
+    });
+    Ok(sites)
+}
+
+// Preserve the existing syntactic containment rule and first typed result.
+// Every eligible break is still checked; memoization and diagnostics do not
+// depend on which break first supplies a type.
+join_break_args* = (be :: CBackend, span: Span, ctx: Ctx)
+                   Res<Res<TyId>, AllocError> {
+    sites = be.loop_sites().try();
+    got: Res<TyId> ::= None;
+    sites.breaks.loop((id) {
+        site = be.tree.expr_at(id).span;
+        (site.inside(span) && sites.has_body(site, span)).then(() {
+            one = be.break_arg_type(id, ctx).try();
+            got.match({ None => { got = one; }, Ok(_) => () });
+        });
+    });
+    Ok(got)
+}
+
+// Returns the payload type of a handle's `break` call. Bare breaks contribute
+// No type, and unrelated calls inside the loop are ignored.
+break_arg_type* = (be :: CBackend, x: ExprId, ctx: Ctx)
+                  Res<Res<TyId>, AllocError> {
+    unknown = be.check.types.unknown().try();
+    be.tree.expr_at(x).kind.match({
+        Call(c) => be.tree.expr_at(c.callee).kind.match({
+            Access(a) => {
+                base = be.ty_of(a.base, ctx, unknown).try();
+                be.check.is_handle_ty(base).match({
+                    false => Ok(None),
+                    true  => c.args.get(0).match({
+                        None  => Ok(None),
+                        Ok(a) => {
+                            t = be.ty_of(a.value, ctx, unknown).try();
+                            Ok(Ok(t));
+                        },
+                    }),
+                })
+            },
+            _         => Ok(None),
+        }),
+        _       => Ok(None),
+    })
+}
+
+// The range a loop call was handed: the receiver of `v.loop(body)`, or
+// the first written argument of `loop(v, body)` — "one call written two
+// ways, which is what UFCS means". A call with one argument is the
+// bodyless-range form and has none.
+range_arg* = (be :: CBackend, id: ExprId) Res<ExprId> {
+    be.tree.expr_at(id).kind.match({
+        Call(c) => be.call_range_arg(c),
+        _       => None,
+    })
+}
+
+call_range_arg = (be :: CBackend, c: Call) Res<ExprId> {
+    be.recv_of(c.callee).match({
+        Ok(r) => Ok(r),
+        None  => leading_arg(c),
+    })
+}
+
+recv_of* = (be :: CBackend, callee: ExprId) Res<ExprId> {
+    be.tree.expr_at(callee).kind.match({
+        Access(a) => Ok(a.base),
+        _         => None,
+    })
+}
+
+leading_arg = (c: Call) Res<ExprId> {
+    (c.args.len > 1).match({
+        false => None,
+        true  => arg_value(c, 0),
+    })
+}
+
+arg_value* = (c: Call, i: usize) Res<ExprId> {
+    c.args.get(i).match({ Ok(a) => Ok(a.value), None => None })
+}
+
+// which of the six
+// The six declarations differ in exactly these answers, and carrying
+// them as one value is what lets `lower_loop` read like the C it writes.
+
+Shape* = {
+    wants_index*: bool,
+    wants_value*: bool,
+    wants_acc*: bool,
+    // the body is the last argument; everything before it is a range,
+    // a condition, or a fold's seed
+    lead*: usize,
+}
+
+shape_of* = (be :: CBackend, f: Function) Res<Shape, AllocError> {
+    inner ::= be.alloc.Vec<Param>();
+    be.body_params(f, inner).try();
+    Ok(Shape(
+        wants_index: names_after_first(inner, "index"),
+        wants_value: names_after_first(inner, "value"),
+        wants_acc: names_after_first(inner, "acc"),
+        lead: f.params.len - 1
+    ));
+}
+
+body_params = (be :: CBackend, f: Function, out :: Vec<Param>)
+              Res<(), AllocError> {
+    f.params.get(f.params.len - 1).match({
+        None  => Ok(()),
+        Ok(p) => be.collect_fn_params(p, out),
+    })
+}
+
+collect_fn_params = (be :: CBackend, p: Param, out :: Vec<Param>)
+                    Res<(), AllocError> {
+    p.type.match({
+        None    => Ok(()),
+        Ok(tid) => be.copy_fn_params(tid, out),
+    })
+}
+
+copy_fn_params = (be :: CBackend, tid: TypeId, out :: Vec<Param>)
+                 Res<(), AllocError> {
+    be.tree.type_at(tid).kind.match({
+        Fn(ft) => add_params(ft.params, out),
+        _      => Ok(()),
+    })
+}
+
+add_params = (params: Vec<Param>, out :: Vec<Param>) Res<(), AllocError> {
+    params.loop((h, p) { out.add(p).try(); });
+    Ok(());
+}
+
+// `h` is parameter zero of every body and is not one of the three, so
+// the search starts at one. Written as a counted walk rather than
+// `find` over a slice because the first parameter is excluded and a
+// range starting at 1 says that plainly.
+names_after_first = (params: Vec<Param>, name: str) bool {
+    got ::= false;
+    Range(1, params.len).loop((h, i) {
+        params.get(i).match({
+            None  => (),
+            Ok(p) => p.name.text.eq(name).then(() { got = true; }),
+        });
+    });
+    got
+}

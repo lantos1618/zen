@@ -1,0 +1,242 @@
+// Children are ids rather than embedded values, which keeps recursive values
+// fixed-size. Arrays and objects each name a contiguous run in a side list.
+// Num stores its original lexeme because JSON accepts spellings that Zen
+// numeric literals do not, including exponents and negative zero.
+
+str, String = std.text
+Vec = std.collections
+Alloc, AllocError = std.mem
+Range = std.core
+hex_digit, HEX_BASE = std.core.byte
+
+JsonId* = { index*: usize }
+
+Run* = {
+    at*: usize,
+    len*: usize,
+}
+
+// Object keys are decoded before storage and lookup.
+Pair* = {
+    key*: str,
+    value*: JsonId,
+}
+
+Json* = Null
+      | Bool(bool)
+      | Num(str)      // the lexeme, verbatim
+      | Text(str)     // the decoded bytes
+      | Arr(Run)      // a run of `items`
+      | Obj(Run)      // a run of `pairs`
+
+// Owns JSON values and the contiguous child runs referenced by arrays/objects.
+Jsons* = {
+    nodes :: Vec<Json>,
+    items :: Vec<JsonId>,
+    pairs :: Vec<Pair>,
+
+    // An id outside this arena is a caller bug and traps through subtraction.
+    at* = (self: @Self, id: JsonId) Json {
+        self.nodes.len - id.index - 1;
+        self.nodes.get(id.index).match({
+            Ok(v) => v,
+            None  => Json.Null,
+        })
+    }
+
+    add* = (self :: @Self, v: Json) Res<JsonId, AllocError> {
+        id = JsonId(index: self.nodes.len);
+        self.nodes.add(v).try();
+        Ok(id);
+    }
+
+    add_items* = (self :: @Self, ids: Vec<JsonId>) Res<Run, AllocError> {
+        run = Run(at: self.items.len, len: ids.len);
+        ids.loop((h, id) { self.items.add(id).try(); });
+        Ok(run);
+    }
+
+    add_pairs* = (self :: @Self, ps: Vec<Pair>) Res<Run, AllocError> {
+        run = Run(at: self.pairs.len, len: ps.len);
+        ps.loop((h, p) { self.pairs.add(p).try(); });
+        Ok(run);
+    }
+
+    // The named member, if id is an object. Duplicate keys use the last value.
+    field* = (self: @Self, id: JsonId, name: str) Res<JsonId> {
+        self.at(id).match({
+            Obj(run) => self.scan(run, name),
+            _        => None,
+        })
+    }
+
+    scan = (self: @Self, run: Run, name: str) Res<JsonId> {
+        found ::= JsonId(index: 0);
+        have  ::= false;
+        Range(run.at, run.at + run.len).loop((h, i) {
+            p = self.pairs.get(i).value_or(Pair(key: "", value: JsonId(index: 0)));
+            p.key.eq(name).then(() {
+                found = p.value;
+                have  = true;
+            });
+        });
+        have.match({ true => Ok(found), false => None })
+    }
+
+    item* = (self: @Self, id: JsonId, i: usize) Res<JsonId> {
+        self.at(id).match({
+            Arr(run) => (i < run.len).match({
+                true  => self.items.get(run.at + i),
+                false => None,
+            }),
+            _        => None,
+        })
+    }
+
+    text* = (self: @Self, id: JsonId) Res<str> {
+        self.at(id).match({ Text(s) => Ok(s), _ => None })
+    }
+
+    // The named member's text: None when id is not an object, the member is
+    // absent, or it is not a string.
+    text_at* = (self: @Self, id: JsonId, name: str) Res<str> {
+        self.text(self.field(id, name).try())
+    }
+
+    // `text_at` with a fallback, the shape a wire reader wants when absent
+    // means empty rather than stop.
+    text_or* = (self: @Self, id: JsonId, name: str, fallback: str) str {
+        self.text_at(id, name).value_or(fallback)
+    }
+
+    whole_or* = (self: @Self, id: JsonId, name: str, fallback: usize) usize {
+        self.field(id, name).match({
+            Ok(member) => self.whole(member).value_or(fallback),
+            None       => fallback,
+        })
+    }
+
+    // Number of items when id is an array; anything else counts as empty.
+    count* = (self: @Self, id: JsonId) usize {
+        self.at(id).match({ Arr(run) => run.len, _ => 0 })
+    }
+
+    // A JSON number read as a non-negative integer. None unless the complete
+    // lexeme is decimal digits; signs, fractions, and exponents are rejected.
+    whole* = (self: @Self, id: JsonId) Res<usize> {
+        self.at(id).match({
+            Num(lex) => lex.parse_usize(),
+            _        => None,
+        })
+    }
+
+    // Write compact JSON while preserving array and object insertion order.
+    write* = (self: @Self, id: JsonId, out :: String) Res<(), AllocError> {
+        self.at(id).match({
+            Null     => out.add("null"),
+            Bool(b)  => out.add(b.match({ true => "true", false => "false" })),
+            Num(lex) => out.add(lex),
+            Text(s)  => write_text(s, out),
+            Arr(run) => self.write_items(run, out),
+            Obj(run) => self.write_pairs(run, out),
+        })
+    }
+
+    write_items = (self: @Self, run: Run, out :: String) Res<(), AllocError> {
+        items ::= arr(out).try();
+        Range(0, run.len).loop((h, i) {
+            items.next(out).try();
+            self.write(
+                self.items.get(run.at + i).value_or(JsonId(index: 0)),
+                out
+            ).try();
+        });
+        items.close(out)
+    }
+
+    write_pairs = (self: @Self, run: Run, out :: String) Res<(), AllocError> {
+        pairs ::= obj(out).try();
+        Range(0, run.len).loop((h, i) {
+            p = self.pairs.get(run.at + i).value_or(Pair(key: "", value: JsonId(index: 0)));
+            pairs.key(p.key, out).try();
+            self.write(p.value, out).try();
+        });
+        pairs.close(out)
+    }
+}
+
+Jsons* = (a: Alloc) Jsons {
+    Jsons(nodes: a.Vec<Json>(), items: a.Vec<JsonId>(), pairs: a.Vec<Pair>())
+}
+
+written* = () Res<(), AllocError> { Ok(()) }
+
+// Nest streams container punctuation without building an arena value. It
+// owns separator placement, key escaping, and the closing bracket.
+Nest* = {
+    said :: bool,
+    ends: u8,
+
+    next* = (self :: @Self, out :: String) Res<(), AllocError> {
+        owed      = self.said;
+        self.said = true;
+        owed.match({ true => out.add(','), false => written() })
+    }
+
+    key* = (self :: @Self, name: str, out :: String) Res<(), AllocError> {
+        self.next(out).try();
+        write_text(name, out).try();
+        out.add(':')
+    }
+
+    text* = (self :: @Self, name: str, v: str, out :: String)
+            Res<(), AllocError> {
+        self.key(name, out).try();
+        write_text(v, out)
+    }
+
+    close* = (self: @Self, out :: String) Res<(), AllocError> {
+        out.add(self.ends)
+    }
+}
+
+obj* = (out :: String) Res<Nest, AllocError> {
+    out.add('{').try();
+    Ok(Nest(said: false, ends: '}'));
+}
+
+arr* = (out :: String) Res<Nest, AllocError> {
+    out.add('[').try();
+    Ok(Nest(said: false, ends: ']'));
+}
+
+// Write a quoted JSON string. Quotes, backslashes, and control bytes are
+// escaped; slash and UTF-8 bytes above 127 pass through unchanged.
+write_text* = (s: str, out :: String) Res<(), AllocError> {
+    out.add('"').try();
+    Range(0, s.len).loop((h, i) {
+        s.index(i).escaped(out).try();
+    });
+    out.add('"')
+}
+
+// Controls without a short escape are written `\u00XX`.
+escaped = (b: u8, out :: String) Res<(), AllocError> {
+    b.match({
+        '"'  => out.add("\\\""),
+        '\\' => out.add("\\\\"),
+        '\n' => out.add("\\n"),
+        '\r' => out.add("\\r"),
+        '\t' => out.add("\\t"),
+        _    => (b < ' ').match({
+            true  => b.hex_escape(out),
+            false => out.add(b),
+        }),
+    })
+}
+
+hex_escape = (b: u8, out :: String) Res<(), AllocError> {
+    out.add("\\u00").try();
+    out.add(hex_digit(b / HEX_BASE)).try();
+    out.add(hex_digit(b % HEX_BASE))
+}

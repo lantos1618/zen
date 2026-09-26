@@ -1,0 +1,65 @@
+// Represented enums retain each variant's external discriminant. The final
+// payload supplies the integer domain, and the leading bar still distinguishes
+// a one-variant enum from an alias.
+
+scan, Source = std.lex
+Parser, module = std.parse
+Ast, Decl, ExprId = std.ast
+
+GrammarProbe = | Zero = 0 | Other = 7 | Raw(u8)
+
+SOURCE: str = "FrameType* = | Data = 0 | Headers = (1 + 1) | Unknown(u8)\nSolo = | Only = 7\nholder = () () { Local = | Low = 3 | High = 4 }\n"
+
+exact_text = (tree: Ast, id: ExprId) str {
+    tree.expr_at(id).kind.match({
+        Literal(l) => l.text,
+        Paren(_)   => "parenthesized",
+        _          => "other",
+    })
+}
+
+show = (tree: Ast, d: Decl) () {
+    d.kind.match({
+        Enum(e)     => {
+            println(
+                "enum {} variants {} leading {}",
+                e.name.text,
+                e.variants.len,
+                e.leading_bar.match({ Ok(_) => true, None => false })
+            );
+            e.variants.loop((h, v) {
+                value = v.discriminant.match({
+                    Ok(x) => exact_text(tree, x),
+                    None  => "none",
+                });
+                println(
+                    "  {} payload {} discriminant {}",
+                    v.name.text,
+                    v.payload.match({ Ok(_) => true, None => false }),
+                    value
+                );
+            });
+        },
+        Function(f) => f.body.match({
+            None    => println("function has no body"),
+            Ok(bid) => tree.block_at(bid).stmts.get(0).match({
+                None     => println("function body is empty"),
+                Ok(stmt) => stmt.kind.match({
+                    Decl(inner) => show(tree, inner),
+                    _           => println("nested item is not a declaration"),
+                }),
+            }),
+        }),
+        _           => println("not an enum"),
+    });
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    lexed = scan(a, Source(file: "represented.zen", text: SOURCE)).try();
+    p ::= a.Parser(lexed);
+    m = p.module("represented").try();
+    println("lex {} parse {}", lexed.diags.len, p.diags.len);
+    m.decls.loop((h, d) { show(p.tree, d) });
+    Ok(0);
+}

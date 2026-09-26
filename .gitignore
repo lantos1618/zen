@@ -1,3 +1,28 @@
-/target
-.DS_Store
-bin
+# Root outputs are anchored so `src/std/build` and `src/zen` stay visible.
+/build/
+/zen
+/zen-new
+/zen-asan
+/zen-ubsan
+/zen-fp
+/tests/bench/out/
+grammar/zen.so
+node_modules/
+__pycache__/
+*.pyc
+
+# seed/zen.c and grammar/src/parser.c are generated but committed.
+zen-new.c
+
+# Generated lane and gate scratch, never work product.
+/.fixpoint/
+/.fixloop/
+/.gate-tmp/
+/.verify/
+/.lane-tmp/
+/.hunt/
+/.scratch-holder/
+/.claude/scheduled_tasks.lock
+
+# Local linked checkouts are managed by git worktree.
+/.worktrees/

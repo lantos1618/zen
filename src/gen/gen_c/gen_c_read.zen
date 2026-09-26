@@ -1,0 +1,568 @@
+// Lower dot reads: nullary enum variants, type constants, and value fields.
+// Method calls remain in `gen_c_member`. Primitive fields use runtime-floor
+// names; declared fields use mangled names.
+
+ExprId, Decl, Struct, Member = std.ast
+Const, Access, Impl = std.ast
+AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+DeclId, ImplId = sema.sema_id
+TyId, TyNamed = sema.sema_ty
+Def, decl_at = sema.sema_def
+Ctx = sema.sema_check
+has_var* = sema.sema_inst
+alias_enum = sema.sema_denote
+impl_bound_type, bound_member_type = sema.sema_supply
+sym_member, sym_variant = gen.gen_name
+CBackend = gen.gen_c.gen_c_state
+unsupported = gen.gen_c.gen_c_report
+constructed, recv_inst = gen.gen_c.gen_c_mono
+enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
+ctype, struct_decl, has_storage = gen.gen_c.gen_c_type
+write_qname = gen.gen_c.gen_c_layout
+bind_text = gen.gen_c.gen_c_range
+expr, ty_of = gen.gen_c.gen_c_expr
+field_of = gen.gen_c.gen_c_type
+lower_const_value = gen.gen_c.gen_c_const
+
+// The base's resolved kind separates declaration reads from value fields.
+lower_access* = (
+    be   :: CBackend,
+    id   : ExprId,
+    a    : Access,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    be.base_decl(a.base, ctx).match({
+        Ok(ty) => be.write_variant_value(id, ty, want, a.name.text, out),
+        None   => be.lower_type_or_field(id, a, ctx, want, out),
+    })
+}
+
+// Type constants have no receiver storage and lower like module constants.
+lower_type_or_field = (
+    be   :: CBackend,
+    id   : ExprId,
+    a    : Access,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    be.type_const(a, ctx).try().match({
+        None     => be.lower_recv_const_or_field(id, a, ctx, want, out),
+        Ok(pair) => be.lower_const_value(id, pair.k, pair.d, want, out),
+    })
+}
+
+// Receiver syntax may name a type constant (`value.WIDTH`), so resolve it
+// before attempting a stored or computed field read.
+lower_recv_const_or_field = (
+    be   :: CBackend,
+    id   : ExprId,
+    a    : Access,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    be.recv_const(a, ctx).try().match({
+        None     => be.write_field_access(id, a, ctx, out),
+        Ok(pair) => be.lower_const_value(id, pair.k, pair.d, want, out),
+    })
+}
+
+// Resolve a constant in the defining module of the receiver's nominal type.
+recv_const = (be :: CBackend, a: Access, ctx: Ctx)
+             Res<Res<TypeConst>, AllocError> {
+    unknown = be.check.types.unknown().try();
+    rty     = be.ty_of(a.base, ctx, unknown).try();
+    be.check.types.at(rty).match({
+        Named(n) => be.named_recv_const(n, a.name.text),
+        _        => Ok(None),
+    })
+}
+
+named_recv_const = (be :: CBackend, n: TyNamed, name: str)
+                   Res<Res<TypeConst>, AllocError> {
+    found ::= be.alloc.Vec<Def>();
+    be.check.world.own_defs(n.decl.module.to_usize(), n.name, found).try();
+    hits ::= be.alloc.Vec<TypeConst>();
+    found.loop((h, d) {
+        same_decl(d, n).then(() {
+            be.collect_type_const(d, name, hits).try();
+        });
+    });
+    Ok(hits.get(0));
+}
+
+// Compare declaration identity; names need not be unique within a module.
+same_decl = (d: Def, n: TyNamed) bool {
+    d.id.module == n.decl.module && d.id.decl == n.decl.decl
+}
+
+// The declaration fixes the module used to lower the constant value.
+TypeConst* = {
+    k: Const,
+    d: Def,
+}
+
+type_const* = (be :: CBackend, a: Access, ctx: Ctx)
+             Res<Res<TypeConst>, AllocError> {
+    be.tree.expr_at(a.base).kind.match({
+        Name(n) => be.named_type_const(n.text, a.name.text, ctx),
+        _       => Ok(None),
+    })
+}
+
+named_type_const = (be :: CBackend, base: str, name: str, ctx: Ctx)
+                   Res<Res<TypeConst>, AllocError> {
+    be.slot_of(base).match({
+        Ok(_) => Ok(None),
+        None  => be.decl_const(base, name, ctx),
+    })
+}
+
+decl_const = (be :: CBackend, base: str, name: str, ctx: Ctx)
+             Res<Res<TypeConst>, AllocError> {
+    found ::= be.alloc.Vec<Def>();
+    be.check.world.defs_of(ctx.module, base, found).try();
+    hits ::= be.alloc.Vec<TypeConst>();
+    found.loop((h, d) { be.collect_type_const(d, name, hits).try() });
+    Ok(hits.get(0));
+}
+
+collect_type_const = (
+    be   :: CBackend,
+    d    : Def,
+    name : str,
+    out  :: Vec<TypeConst>
+) Res<(), AllocError> {
+    decl_at(be.tree, d.id).match({
+        None  => Ok(()),
+        Ok(x) => be.collect_decl_const(x, d, name, out),
+    })
+}
+
+collect_decl_const = (
+    be   :: CBackend,
+    x    : Decl,
+    d    : Def,
+    name : str,
+    out  :: Vec<TypeConst>
+) Res<(), AllocError> {
+    x.kind.match({
+        Struct(s) => collect_struct_const(s, d, name, out),
+        _         => Ok(()),
+    })
+}
+
+collect_struct_const = (
+    s    : Struct,
+    d    : Def,
+    name : str,
+    out  :: Vec<TypeConst>
+) Res<(), AllocError> {
+    s.members.loop((h, m) { keep_const(m, d, name, out).try() });
+    Ok(());
+}
+
+keep_const = (m: Member, d: Def, name: str, out :: Vec<TypeConst>)
+             Res<(), AllocError> {
+    m.kind.match({
+        Const(k) => keep_named_const(k, d, name, out),
+        _        => Ok(()),
+    })
+}
+
+keep_named_const = (k: Const, d: Def, name: str, out :: Vec<TypeConst>)
+                   Res<(), AllocError> {
+    k.name.text.eq(name).match({
+        false => Ok(()),
+        true  => out.add(TypeConst(k: k, d: d)),
+    })
+}
+
+base_decl* = (be :: CBackend, base: ExprId, ctx: Ctx) Res<TyId> {
+    be.tree.expr_at(base).kind.match({
+        Name(n) => be.enum_named(n.text, ctx),
+        _       => None,
+    })
+}
+
+enum_named = (be :: CBackend, text: str, ctx: Ctx) Res<TyId> {
+    be.slot_of(text).match({
+        Ok(_) => None,
+        None  => be.enum_def_named(text, ctx),
+    })
+}
+
+enum_def_named = (be :: CBackend, text: str, ctx: Ctx) Res<TyId> {
+    found ::= be.alloc.Vec<Def>();
+    be.check.world.defs_of(ctx.module, text, found).match({
+        Err(_) => None,
+        Ok(_)  => be.first_enum(found),
+    })
+}
+
+first_enum = (be :: CBackend, found: Vec<Def>) Res<TyId> {
+    found.get(0).match({
+        None  => None,
+        Ok(d) => be.enum_type_of(d),
+    })
+}
+
+// Enum aliases use sema's resolved target rather than repeating alias lookup.
+enum_type_of = (be :: CBackend, d: Def) Res<TyId> {
+    d.kind.match({
+        EnumDef  => intern_named(be, d),
+        AliasDef => be.check.alias_enum(d),
+        _        => None,
+    })
+}
+
+intern_named* = (be :: CBackend, d: Def) Res<TyId> {
+    be.constructed(d).match({
+        Err(_) => None,
+        Ok(id) => Ok(id),
+    })
+}
+
+// A nullary variant contains only its enum tag. Spell generic variants at the
+// destination's settled type so the literal and its storage share one C type.
+write_variant_value* = (
+    be      :: CBackend,
+    id      : ExprId,
+    ty      : TyId,
+    want    : TyId,
+    variant : str,
+    out     :: String
+) Res<(), AllocError> {
+    lit = be.nullary_ty(ty, want);
+    qname ::= be.alloc.String().try();
+    be.enum_qname(lit, qname).try();
+    cty ::= be.alloc.String().try();
+    be.ctype(lit, cty).try();
+    tag ::= be.alloc.String().try();
+    tag.sym_variant(qname.view(), variant).try();
+    out.fmt("({}){ .zg_tag = {} }", cty.view(), tag.view())
+}
+
+// Prefer a concrete expected application of the same enum declaration.
+// Otherwise let sema settle a bare generic head at its use site.
+nullary_ty* = (be :: CBackend, ty: TyId, want: TyId) TyId {
+    be.expected_enum(ty, want).match({
+        None  => be.check.nullary_settles(ty, want).match({
+            true  => want,
+            false => ty,
+        }),
+        Ok(t) => t,
+    })
+}
+
+expected_enum = (be :: CBackend, ty: TyId, want: TyId) Res<TyId> {
+    same = be.same_enum_decl(ty, want);
+    (same && be.check.has_var(want) == false).match({
+        true  => Ok(want),
+        false => None,
+    })
+}
+
+// Variant literals name declarations, not applications. Res is the built-in
+// enum shape; user enums carry nominal declaration identity in TyNamed.
+same_enum_decl = (be: CBackend, a: TyId, b: TyId) bool {
+    be.check.types.at(a).match({
+        Res(_)   => be.check.types.at(b).match({
+            Res(_) => true,
+            _      => false,
+        }),
+        Named(x) => be.check.types.at(b).match({
+            Named(y) => x.decl.eq(y.decl),
+            _        => false,
+        }),
+        _        => false,
+    })
+}
+
+enum_qname = (be :: CBackend, ty: TyId, out :: String) Res<(), AllocError> {
+    be.check.types.at(ty).match({
+        Named(n) => be.write_qname(out, n),
+        _        => Ok(()),
+    })
+}
+
+// Recover a field type from its receiver when a call in the dot chain prevents
+// the frame from carrying the answer. Declared fields take precedence over
+// impl-supplied computed fields; sema selects among multiple supplying impls.
+access_field_type* = (be :: CBackend, a: Access, ctx: Ctx, want: TyId)
+                     Res<TyId, AllocError> {
+    unknown = be.check.types.unknown().try();
+    rty     = be.ty_of(a.base, ctx, unknown).try();
+    be.field_of(rty, a.name.text).try().match({
+        Ok(t) => Ok(t),
+        None  => Ok(want),
+    })
+}
+
+write_field_access = (
+    be  :: CBackend,
+    id  : ExprId,
+    a   : Access,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    unknown = be.check.types.unknown().try();
+    rty     = be.ty_of(a.base, ctx, unknown).try();
+    found ::= be.alloc.Vec<Computed>();
+    be.supplied_fields(rty, a.name.text, found).try();
+    found.len.match({
+        0 => be.write_stored_field(a, rty, ctx, out),
+        1 => be.write_computed_field(a, rty, found, ctx, out),
+        _ => be.write_selected_field(id, a, rty, found, ctx, out),
+    })
+}
+
+// Use sema's selected bound; never choose an ambiguous supplying impl by order.
+write_selected_field = (
+    be    :: CBackend,
+    id    : ExprId,
+    a     : Access,
+    rty   : TyId,
+    found : Vec<Computed>,
+    ctx   : Ctx,
+    out   :: String
+)
+                       Res<(), AllocError> {
+    kept ::= be.alloc.Vec<Computed>();
+    be.check.supply_memo.get(id).match({
+        None  => Ok(()),
+        Ok(b) => keep_supplied_by(found, b, kept),
+    }).try();
+    kept.len.match({
+        1 => be.write_computed_field(a, rty, kept, ctx, out),
+        _ => be.unsupported(id, "a computed field two impls supply", out),
+    })
+}
+
+keep_supplied_by = (found: Vec<Computed>, b: TyId, kept :: Vec<Computed>)
+                   Res<(), AllocError> {
+    found.loop((h, cf) { keep_if_bound(cf, b, kept).try() });
+    Ok(());
+}
+
+// Kept separate because loop bindings do not resolve inside nested closures.
+keep_if_bound = (cf: Computed, b: TyId, kept :: Vec<Computed>)
+                Res<(), AllocError> {
+    cf.bound.eq(b).match({ true => kept.add(cf), false => Ok(()) })
+}
+
+write_stored_field = (
+    be  :: CBackend,
+    a   : Access,
+    rty : TyId,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    unknown = be.check.types.unknown().try();
+    fty     = be.field_of(rty, a.name.text).try().match({
+        Ok(t) => t,
+        None  => unknown,
+    });
+    be.has_storage(fty).match({
+        false => {
+            out.add("(").try();
+            expr(be, a.base, ctx, unknown, out).try();
+            out.add(", 0)")
+        },
+        true  => {
+            expr(be, a.base, ctx, unknown, out).try();
+            out.add(".").try();
+            field_name(be, rty, a.name.text, out)
+        },
+    })
+}
+
+// Context required to lower an impl-supplied computed field.
+Computed = {
+    value: ExprId,
+    decl: DeclId,
+    mi: usize,
+    ty: TyId,
+    bound: TyId,
+}
+
+supplied_fields = (
+    be   :: CBackend,
+    rty  : TyId,
+    name : str,
+    out  :: Vec<Computed>
+) Res<(), AllocError> {
+    be.check.types.at(rty).match({
+        Named(n) => be.named_supplied(n, rty, name, out),
+        _        => Ok(()),
+    })
+}
+
+named_supplied = (
+    be   :: CBackend,
+    n    : TyNamed,
+    rty  : TyId,
+    name : str,
+    out  :: Vec<Computed>
+) Res<(), AllocError> {
+    be.declares_own(n.decl, name).match({
+        true  => Ok(()),
+        false => be.impls_supplying(n, rty, name, out),
+    })
+}
+
+declares_own = (be: CBackend, id: DeclId, name: str) bool {
+    struct_decl(be, id).match({
+        Ok(s) => struct_has_member(s, name),
+        None  => false,
+    })
+}
+
+struct_has_member = (s: Struct, name: str) bool {
+    got ::= false;
+    s.members.loop((h, m) { m.named(name).then(() { got = true; }) });
+    got
+}
+
+// Supplying impls must be declared with the target type.
+impls_supplying = (
+    be   :: CBackend,
+    n    : TyNamed,
+    rty  : TyId,
+    name : str,
+    out  :: Vec<Computed>
+) Res<(), AllocError> {
+    ids ::= be.alloc.Vec<ImplId>();
+    be.check.world.impls_named(be.tree, n.name, ids).try();
+    ids.loop((h, i) { be.local_supplied(n, rty, i, name, out).try() });
+    Ok(());
+}
+
+local_supplied = (
+    be   :: CBackend,
+    n    : TyNamed,
+    rty  : TyId,
+    i    : ImplId,
+    name : str,
+    out  :: Vec<Computed>
+) Res<(), AllocError> {
+    (n.decl.module == i.decl.module).match({
+        false => Ok(()),
+        true  => be.supplied_in_impl(n, rty, i, name, out),
+    })
+}
+
+supplied_in_impl = (
+    be   :: CBackend,
+    n    : TyNamed,
+    rty  : TyId,
+    i    : ImplId,
+    name : str,
+    out  :: Vec<Computed>
+) Res<(), AllocError> {
+    be.check.world.impl_at(be.tree, i).match({
+        Ok(im) => be.impl_supplied_value(n, rty, im, name, out),
+        None   => Ok(()),
+    })
+}
+
+impl_supplied_value = (
+    be   :: CBackend,
+    n    : TyNamed,
+    rty  : TyId,
+    im   : Impl,
+    name : str,
+    out  :: Vec<Computed>
+)
+                      Res<(), AllocError> {
+    im.field_value(name).match({
+        None  => Ok(()),
+        Ok(v) => be.add_computed(n, rty, im, name, v, out),
+    })
+}
+
+add_computed = (
+    be   :: CBackend,
+    n    : TyNamed,
+    rty  : TyId,
+    im   : Impl,
+    name : str,
+    v    : ExprId,
+    out  :: Vec<Computed>
+) Res<(), AllocError> {
+    mi    = n.decl.module.to_usize();
+    bound = be.check.impl_bound_type(im, mi).try();
+    ty    = be.check.bound_member_type(bound, name, rty).try();
+    out.add(Computed(value: v, decl: n.decl, mi: mi, ty: ty, bound: bound))
+}
+
+// Evaluate the receiver once and bind it as `self` only while lowering the
+// supplied expression.
+write_computed_field = (
+    be    :: CBackend,
+    a     : Access,
+    rty   : TyId,
+    found : Vec<Computed>,
+    ctx   : Ctx,
+    out   :: String
+)
+                       Res<(), AllocError> {
+    found.get(0).match({
+        None   => Ok(()),
+        Ok(cf) => be.write_supplied_value(a, rty, cf, ctx, out),
+    })
+}
+
+write_supplied_value = (
+    be  :: CBackend,
+    a   : Access,
+    rty : TyId,
+    cf  : Computed,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    unknown = be.check.types.unknown().try();
+    recv ::= be.alloc.String().try();
+    expr(be, a.base, ctx, unknown, recv).try();
+    ictx = Ctx(
+        module: cf.mi,
+        ret: unknown,
+        has_ret: false,
+        self_ty: rty,
+        has_self: true
+    );
+    inst = be.recv_inst(rty).try();
+    held = be.inst;
+    be.enter_inst(inst);
+    mark  = be.enter_struct_tparams(cf.decl).try();
+    cmark = be.check.mark();
+    lmark = be.mark();
+    be.bind_text("self", rty, recv.view()).try();
+    expr(be, cf.value, ictx, cf.ty, out).try();
+    be.release(lmark).try();
+    be.check.release(cmark).try();
+    be.leave_tparams(mark).try();
+    be.enter_inst(held);
+    Ok(());
+}
+
+// `str` fields use the runtime ABI names; declared fields remain mangled.
+field_name = (be :: CBackend, rty: TyId, name: str, out :: String)
+             Res<(), AllocError> {
+    be.is_str(rty).match({
+        true  => out.add(name),
+        false => out.sym_member(name),
+    })
+}
+
+is_str* = (be :: CBackend, rty: TyId) bool {
+    be.check.types.at(rty).match({
+        Prim(p) => p.name.eq("str"),
+        _       => false,
+    })
+}

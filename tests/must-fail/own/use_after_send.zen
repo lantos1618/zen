@@ -1,0 +1,22 @@
+// A consumed message argument is unavailable to the sender even when message
+// lowering later rejects that payload type.
+
+Worker = {}
+
+Worker.impl(Actor, {
+    process = (self :: @Self, ctx: Context, data: Vec<u8>) {
+        ctx.env.out.println("got the buffer")
+    }
+})
+
+Error = AllocError | IoError | ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    alloc ::= env.mem.alloc();
+    buf ::= alloc.Vec<u8>();
+    buf.add(1).try();
+    worker = env.spawn(Worker()).try();
+    worker.process(consume buf).try();
+    buf.add(2).try();
+    Ok(0);
+}

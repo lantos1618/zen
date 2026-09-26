@@ -1,0 +1,887 @@
+Ast, ExprId, TypeId, Span, BlockId = std.ast
+nowhere = std.ast
+BinOp, Unary, Binary, Access = std.ast
+Alloc, AllocError = std.mem
+Vec, Map = std.collections
+str, String = std.text
+Range = std.core
+DeclId = sema.sema_id
+TyId, Types, ResForm, TyRes, TyNamed, TyArray = sema.sema_ty
+is_integer, is_float = sema.sema_ty
+World, ImportBinding = sema.sema_def
+module_display = sema.sema_def
+Diag, SemaFault, TypeFault = sema.sema_diag
+ExportFault = sema.sema_diag
+Inst, InstEdge = sema.sema_inst
+DiscriminantCall = sema.sema_discriminant
+VariantNameCall = sema.sema_variant_name
+NumericConversion = sema.sema_numeric
+OwnCheck, StoreEffects = sema.sema_store
+
+// One scoped name. Mutability feeds receiver/ownership checks, param feeds LSP
+// classification, and span identifies the original binding in diagnostics.
+Binding* = {
+    name*: str,
+    ty*: TyId,
+    mutable*: bool,
+    param*: bool,
+    span*: Span,
+}
+
+// Binders for the active @meta field walk. Parameter spans distinguish the
+// original binders from shadowing declarations; field is the current field.
+WalkBind* = {
+    h_name*: str,
+    h_span*: Span,
+    f_name*: str,
+    f_span*: Span,
+    field*: str,
+}
+
+// Query context not encoded in a node id: module, @Self, and enclosing return.
+// Closures inherit return context because try may return through their caller.
+Ctx* = {
+    module*: usize,
+    ret*: TyId,
+    has_ret*: bool,
+    self_ty*: TyId,
+    has_self*: bool,
+}
+
+// Parameter order includes the implicit receiver when one is present.
+CallSignature* = {
+    params*: Vec<TyId>,
+    receiver*: Res<ExprId>,
+}
+
+// One successful call check. Types can still mention the enclosing generic
+// parameters; specialization substitutes them without changing these facts.
+// All vectors borrow the checker's caller-chosen allocation lifetime.
+CheckedCall* = {
+    declaration*: Res<DeclId>,
+    member_provider*: Res<TyId>,
+    inst*: Inst,
+    result*: TyId,
+    signature*: Res<CallSignature>,
+    body*: Res<BlockId>,
+}
+
+// An absent entry has no recorded call check. In-progress and
+// rejected calls expose no selection, including after a contextual recheck.
+CallResolution* = Checking | Rejected | Checked(CheckedCall)
+
+Checker* = {
+    tree*: Ast,
+    world* :: World,
+    types* :: Types,
+    diags :: Vec<Diag>,
+
+    // Query results keyed by stable AST node ids.
+    expr_memo* :: Map<ExprId, TyId>,
+    type_memo* :: Map<TypeId, TyId>,
+    // Written types successfully resolved in any context during this check.
+    // This records classification only; it is never a cache of a Self type.
+    resolved_types :: Vec<bool>,
+    resolved_type_decls* :: Map<TypeId, DeclId>,
+
+    // Successful `@meta(name: Type).name` folds, keyed by the written type.
+    meta_memo* :: Map<TypeId, str>,
+
+    // Successful field-count folds, also keyed by the written type.
+    meta_count_memo* :: Map<TypeId, usize>,
+
+    // Field-walk calls and the names each call unrolls over.
+    meta_walks* :: Map<ExprId, Vec<str>>,
+
+    // Accesses that read the current field walk's `field.name`.
+    meta_name_reads* :: Map<ExprId, bool>,
+
+    // Calls that project `recv.at(field)` in a field walk.
+    meta_projs* :: Map<ExprId, bool>,
+
+    // Active field-walk binder. Nested walks are rejected.
+    walk_stack :: Vec<WalkBind>,
+
+    // Field currently lowered by the backend for an unrolled walk pass.
+    walk_now :: Vec<str>,
+
+    // Nonzero while a field-walk body is rechecked with per-field types.
+    meta_recheck :: usize,
+
+    // Bound or declaration that supplied a field read.
+    supply_memo* :: Map<ExprId, TyId>,
+
+    calls :: Map<ExprId, CallResolution>,
+
+    own_checks* :: Vec<OwnCheck>,
+    store_effects* :: StoreEffects,
+
+    // Validated standard numeric operations, keyed by declaration identity.
+    numeric_conversions* :: Map<DeclId, NumericConversion>,
+
+    // Compiler-provided represented-enum conversions.
+    discriminant_calls* :: Map<ExprId, DiscriminantCall>,
+
+    // Compiler-provided enum variant-name reflection.
+    variant_name_calls* :: Map<ExprId, VariantNameCall>,
+
+    // Name expressions that resolve to formal parameters.
+    param_memo* :: Map<ExprId, bool>,
+
+    // Access expressions used as a call's callee rather than as values.
+    callee_access* :: Map<ExprId, bool>,
+
+    // Contextual substitutions for lambda expressions, separate from calls.
+    lambda_insts :: Map<ExprId, Inst>,
+
+    // Instantiation edges in resolution order.
+    edges :: Vec<InstEdge>,
+
+    owner_now :: str = "",
+
+    set_memo* :: Map<TyId, TyId>,
+
+    raised :: Vec<TyId>,
+
+    // Scoped bindings share a flat stack; marks identify frame boundaries.
+    locals :: Vec<Binding>,
+
+    block_base :: usize,
+
+    tvars :: Vec<Binding>,
+    bounds :: Vec<Binding>,
+
+    alloc*: Alloc,
+
+    // -----------------------------------------------------------------
+    // what came out
+    // -----------------------------------------------------------------
+
+    saved_bindings* = (self: @Self) Res<Vec<Binding>, AllocError> {
+        self.locals.map(self.alloc, (binding) { binding })
+    }
+
+    use_bindings* = (self :: @Self, bindings: Vec<Binding>) () {
+        self.locals = bindings;
+    }
+
+    diag_count* = (self: @Self) usize { self.diags.len }
+
+    diag_at* = (self: @Self, i: usize) Res<Diag> { self.diags.get(i) }
+
+    type_store* = (self: @Self) Types { self.types }
+
+    // Observations survive later queries in contexts where the type is unknown.
+    type_was_resolved* = (self: @Self, id: TypeId) bool {
+        self.resolved_types.get(id.index.to_usize()).value_or(false)
+    }
+
+    note_resolved_type* = (self :: @Self, id: TypeId) Res<(), AllocError> {
+        index = id.index.to_usize();
+        (index >= self.resolved_types.len).then(() {
+            end = index + 1;
+            self.resolved_types.reserve(end - self.resolved_types.len).try();
+            loop(() { self.resolved_types.len < end }, (h) {
+                self.resolved_types.add(false).try();
+            });
+        });
+        // Growth initializes every slot before this indexed write.
+        self.resolved_types.ptr().write(index, true);
+        Ok(())
+    }
+
+    call_resolution* = (self: @Self, id: ExprId) Res<CallResolution> {
+        self.calls.get(id)
+    }
+
+    checked_call* = (self: @Self, id: ExprId) Res<CheckedCall> {
+        self.calls.get(id).try().match({
+            Checked(call) => Ok(call),
+            _             => None,
+        })
+    }
+
+    record_call* = (self :: @Self, id: ExprId, resolution: CallResolution)
+                   Res<(), AllocError> {
+        self.calls.set(id, resolution)
+    }
+
+    resolved_call* = (self: @Self, id: ExprId) Res<DeclId> {
+        self.checked_call(id).try().declaration
+    }
+
+    resolved_member_provider* = (self: @Self, id: ExprId) Res<TyId> {
+        self.checked_call(id).try().member_provider
+    }
+
+    mark_discriminant_call* = (
+        self :: @Self,
+        id   : ExprId,
+        call : DiscriminantCall
+    ) Res<(), AllocError> {
+        self.discriminant_calls.set(id, call)
+    }
+
+    discriminant_call_of* = (self: @Self, id: ExprId)
+                            Res<DiscriminantCall> {
+        self.discriminant_calls.get(id)
+    }
+
+    mark_variant_name_call* = (
+        self :: @Self,
+        id   : ExprId,
+        call : VariantNameCall
+    ) Res<(), AllocError> {
+        self.variant_name_calls.set(id, call)
+    }
+
+    variant_name_call_of* = (self: @Self, id: ExprId)
+                            Res<VariantNameCall> {
+        self.variant_name_calls.get(id)
+    }
+
+    // The text an `@meta(...).name` access folded to for this written
+    // type, if it folded. A miss means the ordinary lowering applies.
+    meta_str* = (self: @Self, t: TypeId) Res<str> {
+        self.meta_memo.get(t)
+    }
+
+    // The count an `@meta(...).fields().len` chain folded to. A miss
+    // means the ordinary lowering applies.
+    meta_count_of* = (self: @Self, t: TypeId) Res<usize> {
+        self.meta_count_memo.get(t)
+    }
+
+    // The field names an `@meta(..).fields().loop(..)` walk unrolls
+    // over, in declaration order, if the call is one. A miss means the
+    // ordinary lowering applies.
+    meta_walk_of* = (self: @Self, id: ExprId) Res<Vec<str>> {
+        self.meta_walks.get(id)
+    }
+
+    // Whether this access is a walk's `field.name` fold. Presence IS
+    // the answer; a miss means the ordinary member path.
+    meta_name_read* = (self: @Self, id: ExprId) bool {
+        self.meta_name_reads.get(id).match({ Ok(_) => true, None => false })
+    }
+
+    // Whether this call is a walk's `recv.at(field)` projection.
+    meta_proj* = (self: @Self, id: ExprId) bool {
+        self.meta_projs.get(id).match({ Ok(_) => true, None => false })
+    }
+
+    // The active walk's binder row, while sema checks a pass. A miss
+    // means no walk is being checked.
+    walk_row* = (self: @Self) Res<WalkBind> {
+        self.walk_stack.len.match({
+            0 => None,
+            n => self.walk_stack.get(n - 1),
+        })
+    }
+
+    push_walk* = (self :: @Self, b: WalkBind) Res<(), AllocError> {
+        self.walk_stack.add(b)
+    }
+
+    pop_walk* = (self :: @Self) () {
+        self.walk_stack.take(self.walk_stack.len - 1);
+    }
+
+    // The field the backend is lowering a pass for, pushed once per
+    // unrolled block. A miss means no walk is being lowered.
+    push_walk_now* = (self :: @Self, name: str) Res<(), AllocError> {
+        self.walk_now.add(name)
+    }
+
+    pop_walk_now* = (self :: @Self) () {
+        self.walk_now.take(self.walk_now.len - 1);
+    }
+
+    walk_field_now* = (self: @Self) Res<str> {
+        self.walk_now.len.match({
+            0 => None,
+            n => self.walk_now.get(n - 1),
+        })
+    }
+
+    // The re-check depth, as a predicate: true while a walk's body is
+    // being checked once per field, which is when `type_of` must not
+    // answer from the memo.
+    rechecking* = (self: @Self) bool { self.meta_recheck > 0 }
+
+    enter_recheck* = (self :: @Self) () {
+        self.meta_recheck = self.meta_recheck + 1;
+    }
+
+    leave_recheck* = (self :: @Self) () {
+        self.meta_recheck = self.meta_recheck - 1;
+    }
+
+
+    meta_count_type* = (self :: @Self) Res<TyId, AllocError> {
+        self.types.prim("usize")
+    }
+
+    resolved_inst* = (self: @Self, id: ExprId) Res<Inst> {
+        self.checked_call(id).match({
+            Ok(call) => {
+                (call.inst.len() > 0).ensure().try();
+                Ok(call.inst)
+            },
+            None     => self.lambda_insts.get(id),
+        })
+    }
+
+    record_lambda_inst* = (self :: @Self, id: ExprId, inst: Inst)
+                          Res<(), AllocError> {
+        self.lambda_insts.set(id, inst)
+    }
+
+    // The instantiation graph, as a listing. `sema_depth.zen` is the
+    // only reader and it needs every edge, which a keyed memo cannot
+    // hand back.
+    note_edge* = (self :: @Self, e: InstEdge) Res<(), AllocError> {
+        self.edges.add(e)
+    }
+
+    edge_count* = (self: @Self) usize { self.edges.len }
+
+    edge_at* = (self: @Self, i: usize) Res<InstEdge> { self.edges.get(i) }
+
+    // Whose body is being walked. `check_body` brackets one declaration
+    // with these, so an edge recorded in between knows its caller.
+    enter_owner* = (self :: @Self, owner: str) () { self.owner_now = owner; }
+
+    owner_of_body* = (self: @Self) str { self.owner_now }
+
+    modules* = (self: @Self) World { self.world }
+
+    // Every diagnostic, rendered, one per line.
+    render_diags* = (self: @Self, out :: String) Res<(), AllocError> {
+        self.diags.loop((h, d) {
+            d.render(self.types, out).try();
+            out.add("\n").try();
+        });
+        Ok(());
+    }
+
+    report* = (self :: @Self, file: str, span: Span, fault: SemaFault)
+              Res<(), AllocError> {
+        self.diags.add(Diag(file: file, span: span, fault: fault))
+    }
+
+    // `report` at the position's own file.
+    refuse* = (self :: @Self, span: Span, fault: SemaFault)
+              Res<(), AllocError> {
+        self.report(span.file, span, fault)
+    }
+
+
+    mark* = (self: @Self) usize { self.locals.len }
+
+    enter_block* = (self :: @Self) usize {
+        was             = self.block_base;
+        self.block_base = self.locals.len;
+        was
+    }
+
+    leave_block* = (self :: @Self, was: usize) () { self.block_base = was; }
+
+    lookup_here* = (self: @Self, name: str) Res<Binding> {
+        Range(self.block_base, self.locals.len).find((k) {
+            self.locals.get(k).match({
+                Ok(b) => b.name.eq(name),
+                None  => false,
+            })
+        }).match({
+            None  => None,
+            Ok(k) => self.locals.get(k),
+        })
+    }
+
+    // `param` marks a formal parameter; `param_memo` is why it is recorded.
+    bind* = (self :: @Self, name: str, ty: TyId, mutable: bool, param: bool)
+            Res<(), AllocError> {
+        self.bind_at(name, ty, mutable, param, nowhere())
+    }
+
+    bind_at* = (self :: @Self, name: str, ty: TyId, mutable: bool,
+                param: bool, span: Span) Res<(), AllocError> {
+        self.locals.add(Binding(
+            name: name,
+            ty: ty,
+            mutable: mutable,
+            param: param,
+            span: span
+        ))
+    }
+
+    // Drop every binding added since `mark`.
+    release* = (self :: @Self, mark: usize) Res<(), AllocError> {
+        self.locals.truncate(mark);
+        Ok(());
+    }
+
+    detach_locals* = (self :: @Self, mark: usize, saved :: Vec<Binding>)
+                     Res<(), AllocError> {
+        extra = self.locals.len - mark;
+        Range(0, extra).loop((h, i) {
+            self.locals.take(self.locals.len - 1).match({
+                Ok(b) => saved.add(b).try(),
+                None  => (),
+            });
+        });
+        Ok(());
+    }
+
+    // `saved` came off the top, so it goes back bottom-first.
+    reattach_locals* = (self :: @Self, saved: Vec<Binding>)
+                       Res<(), AllocError> {
+        n = saved.len;
+        Range(0, n).loop((h, i) {
+            saved.get(n - i - 1).match({
+                Ok(b) => self.locals.add(b).try(),
+                None  => (),
+            });
+        });
+        Ok(());
+    }
+
+
+    tvar_mark* = (self: @Self) usize { self.tvars.len }
+
+    push_tvar* = (self :: @Self, name: str, ty: TyId) Res<(), AllocError> {
+        self.tvars.add(Binding(name, ty))
+    }
+
+    release_tvars* = (self :: @Self, mark: usize) Res<(), AllocError> {
+        self.tvars.truncate(mark);
+        Ok(());
+    }
+
+    // The `T` of an enclosing `<T>`, innermost first. A type parameter
+    // shadows a declaration of the same name, as a local binding does.
+    lookup_tvar* = (self: @Self, name: str) Res<Binding> {
+        self.tvars.innermost(name)
+    }
+
+    // Bounds currently carry a spelling, so a proof must not combine bounds
+    // from distinct generic parameters that shadow one another.
+    unshadowed_tvar* = (self: @Self, name: str, ty: TyId) bool {
+        self.lookup_tvar(name).match({
+            None    => false,
+            Ok(now) => now.ty.eq(ty) && self.tvars.find((b) {
+                b.name.eq(name) && (b.ty.eq(ty) == false)
+            }).match({ Ok(_) => false, None => true }),
+        })
+    }
+
+    bound_mark* = (self: @Self) usize { self.bounds.len }
+
+    push_bound* = (self :: @Self, name: str, ty: TyId) Res<(), AllocError> {
+        self.bounds.add(Binding(name, ty))
+    }
+
+    release_bounds* = (self :: @Self, mark: usize) Res<(), AllocError> {
+        self.bounds.truncate(mark);
+        Ok(());
+    }
+
+    // A bound some generic in scope declared: the only question impl
+    // selection asks.
+    has_bound* = (self: @Self, ty: TyId) bool {
+        self.bounds.find((b) { b.ty.eq(ty) }).match({
+            Ok(_) => true,
+            None  => false,
+        })
+    }
+
+    // `bounds_of` asked as a predicate, so no allocation.
+    is_bounded* = (self: @Self, name: str) bool {
+        self.bounds.innermost(name).match({ Ok(_) => true, None => false })
+    }
+
+    // Every bound on one type parameter. `<K: Eq + Hash>` has two, and
+    // a member reachable through either is reachable through `K`.
+    bounds_of* = (self: @Self, name: str, out :: Vec<TyId>)
+                 Res<(), AllocError> {
+        self.bounds.loop((h, b) {
+            ty = b.ty;
+            b.name.eq(name).then(() { out.add(ty).try() });
+        });
+        Ok(());
+    }
+
+    // The innermost binding of `name`.
+    lookup* = (self: @Self, name: str) Res<Binding> {
+        self.locals.innermost(name)
+    }
+
+    // -----------------------------------------------------------------
+    // agreement
+    // -----------------------------------------------------------------
+
+    assignable* = (self: @Self, got: TyId, want: TyId) bool {
+        got.eq(want)
+            || self.is_unknown(got) || self.is_unknown(want)
+            || self.is_infer(got) || self.is_infer(want)
+            || self.literal_fits(got, want)
+            || self.set_assignable(got, want)
+            || self.res_assignable(got, want)
+            || self.array_assignable(got, want)
+            || self.uninstantiated(got, want)
+    }
+
+    array_assignable = (self: @Self, got: TyId, want: TyId) bool {
+        self.types.at(got).match({
+            Array(g) => self.array_fits(g, want),
+            _        => false,
+        })
+    }
+
+    array_fits = (self: @Self, g: TyArray, want: TyId) bool {
+        self.types.at(want).match({
+            Array(w) => (g.count == w.count) && self.assignable(g.elem, w.elem),
+            _        => false,
+        })
+    }
+
+    res_assignable = (self: @Self, got: TyId, want: TyId) bool {
+        self.types.at(got).match({
+            Res(g) => self.res_fits(g, want),
+            _      => false,
+        })
+    }
+
+    res_fits = (self: @Self, g: TyRes, want: TyId) bool {
+        self.types.at(want).match({
+            Res(w) => self.res_parts_fit(g, w),
+            _      => false,
+        })
+    }
+
+    res_parts_fit = (self: @Self, g: TyRes, w: TyRes) bool {
+        forms_fit(g.form, w.form)
+            && self.assignable(g.value, w.value)
+            && self.assignable(g.error, w.error)
+    }
+
+    // Unsubstituted variables agree until inference supplies a concrete type.
+    // Applications of the same declaration compare their arguments, while an
+    // application against a bare generic head remains undecided.
+    uninstantiated = (self: @Self, got: TyId, want: TyId) bool {
+        self.is_var(got) || self.is_var(want) || self.same_applied(got, want)
+    }
+
+    // One type, or two applications of one declaration. Asked on its own
+    // where assignability's other leniencies would be wrong — a poison
+    // type is not an impl of a bound.
+    same_type* = (self: @Self, a: TyId, b: TyId) bool {
+        a.eq(b) || self.uninstantiated(a, b)
+    }
+
+    same_applied = (self: @Self, got: TyId, want: TyId) bool {
+        self.types.at(got).match({
+            Named(g) => self.applied_to(g, want),
+            _        => false,
+        })
+    }
+
+    applied_to = (self: @Self, g: TyNamed, want: TyId) bool {
+        self.types.at(want).match({
+            Named(w) => g.decl.eq(w.decl) && self.args_agree(g.args, w.args),
+            _        => false,
+        })
+    }
+
+    // Applied types compare every argument. A concrete value cannot forget its
+    // arguments, but an expected bare generic head has no arguments to compare.
+    args_agree = (self: @Self, g: Vec<TyId>, w: Vec<TyId>) bool {
+        (g.len == w.len).match({
+            false => w.len == 0,
+            true  => self.every_arg_agrees(g, w),
+        })
+    }
+
+    every_arg_agrees = (self: @Self, g: Vec<TyId>, w: Vec<TyId>) bool {
+        Range(0, g.len).find((i) {
+            a = g.get(i).value_or(UNRESOLVED);
+            b = w.get(i).value_or(UNRESOLVED);
+            self.assignable(a, b) == false
+        }).match({ Ok(_) => false, None => true })
+    }
+
+    // -----------------------------------------------------------------
+    // what a body raises
+    // -----------------------------------------------------------------
+
+    raised_mark* = (self: @Self) usize { self.raised.len }
+
+    // Return the access represented by a member id, when available.
+    access_at* = (self: @Self, id: ExprId) Res<Access> {
+        node = self.tree.expr_at(id);
+        node.kind.match({
+            Access(a) => Ok(a),
+            _         => None,
+        })
+    }
+
+    raise* = (self :: @Self, e: TyId) Res<(), AllocError> {
+        self.raised.add(e)
+    }
+
+    // Move out every raised type recorded since `mark`.
+    take_raised* = (self :: @Self, mark: usize, out :: Vec<TyId>)
+                   Res<(), AllocError> {
+        Range(mark, self.raised.len).loop((h, i) {
+            out.add(self.raised.get(i).value_or(UNRESOLVED)).try();
+        });
+        self.raised.truncate(mark);
+        Ok(());
+    }
+
+    // The set a type stands for. A name declared `A | B` stands for the
+    // union of what its variants name; everything else stands for
+    // itself. `sema_union.zen` records the first kind.
+    set_of* = (self: @Self, id: TyId) TyId {
+        self.set_memo.get(id).match({
+            None    => id,
+            Ok(set) => set,
+        })
+    }
+
+    set_assignable = (self: @Self, got: TyId, want: TyId) bool {
+        wide = self.set_of(want);
+        self.types.at(wide).match({
+            Union(_) => self.types.set_within(self.set_of(got), wide),
+            _        => false,
+        })
+    }
+
+    literal_fits = (self: @Self, got: TyId, want: TyId) bool {
+        self.is_int_literal(got).match({
+            true  => is_integer(self.prim_name(want)),
+            false => self.float_fits(got, want),
+        })
+    }
+
+    float_fits = (self: @Self, got: TyId, want: TyId) bool {
+        self.is_float_literal(got) && is_float(self.prim_name(want))
+    }
+
+    // Report a mismatch unless `assignable` accepts the pair.
+    coerce* = (self :: @Self, file: str, span: Span, got: TyId, want: TyId,
+               name: str) Res<(), AllocError> {
+        self.assignable(got, want).match({
+            false => self.mismatch(file, span, got, want, name),
+            true  => Ok(()),
+        })
+    }
+
+    mismatch* = (self :: @Self, file: str, span: Span, got: TyId, want: TyId,
+                 name: str) Res<(), AllocError> {
+        self.report(
+            file,
+            span,
+            SemaFault.TypeMismatch(TypeFault(
+                name: name,
+                expected: want,
+                found: got
+            ))
+        )
+    }
+
+    // A nullary generic variant carries only its declaration. A written
+    // destination may supply its type arguments when both sides name that
+    // declaration; ordinary assignability does not invent them.
+    nullary_settles* = (self: @Self, got: TyId, want: TyId) bool {
+        self.types.at(got).match({
+            Named(g) => (g.args.len == 0) && self.types.at(want).match({
+                Named(w) => g.decl.eq(w.decl),
+                _        => false,
+            }),
+            _        => false,
+        })
+    }
+
+    check_not* = (self :: @Self, u: Unary, inner: TyId)
+                 Res<TyId, AllocError> {
+        want = self.types.bool_ty().try();
+        self.coerce(u.op_span.file, u.op_span, inner, want, "").try();
+        Ok(want);
+    }
+
+    check_logical* = (self :: @Self, b: Binary, lhs: TyId, rhs: TyId)
+                     Res<(), AllocError> {
+        is_logical(b.op).match({
+            false => Ok(()),
+            true  => self.logical_operands(b, lhs, rhs),
+        })
+    }
+
+    // The position is the operator token for both sides, as `check_not`
+    // puts it on the `!`: the operator is what demanded a bool.
+    logical_operands = (self :: @Self, b: Binary, lhs: TyId, rhs: TyId)
+                       Res<(), AllocError> {
+        want = self.types.bool_ty().try();
+        self.coerce(b.op_span.file, b.op_span, lhs, want, "").try();
+        self.coerce(b.op_span.file, b.op_span, rhs, want, "").try();
+        Ok(());
+    }
+
+    // -----------------------------------------------------------------
+    // asking a type what it is
+    // -----------------------------------------------------------------
+
+    is_unknown* = (self: @Self, id: TyId) bool {
+        self.types.at(id).match({ Unknown => true, _ => false })
+    }
+
+    is_infer* = (self: @Self, id: TyId) bool {
+        self.types.at(id).match({ Infer => true, _ => false })
+    }
+
+    is_var* = (self: @Self, id: TyId) bool {
+        self.types.at(id).match({ Var(_) => true, _ => false })
+    }
+
+    prim_name* = (self: @Self, id: TyId) str {
+        self.types.at(id).match({ Prim(p) => p.name, _ => "" })
+    }
+
+    is_literal_ty* = (self: @Self, id: TyId) bool {
+        self.is_int_literal(id) || self.is_float_literal(id)
+    }
+
+    is_int_literal = (self: @Self, id: TyId) bool {
+        self.prim_name(id).eq("int")
+    }
+
+    is_float_literal = (self: @Self, id: TyId) bool {
+        self.prim_name(id).eq("float")
+    }
+}
+
+Checker* = (a: Alloc, tree: Ast) Res<Checker, AllocError> {
+    c ::= Checker(
+        tree: tree,
+        world: a.World(tree).try(),
+        types: a.Types(),
+        diags: a.Vec<Diag>(),
+        expr_memo: a.Map<ExprId, TyId>(),
+        type_memo: a.Map<TypeId, TyId>(),
+        resolved_types: a.Vec<bool>(),
+        resolved_type_decls: a.Map<TypeId, DeclId>(),
+        meta_memo: a.Map<TypeId, str>(),
+        meta_count_memo: a.Map<TypeId, usize>(),
+        meta_walks: a.Map<ExprId, Vec<str>>(),
+        meta_name_reads: a.Map<ExprId, bool>(),
+        meta_projs: a.Map<ExprId, bool>(),
+        walk_stack: a.Vec<WalkBind>(),
+        walk_now: a.Vec<str>(),
+        meta_recheck: 0,
+        supply_memo: a.Map<ExprId, TyId>(),
+        calls: a.Map<ExprId, CallResolution>(),
+        own_checks: a.Vec<OwnCheck>(),
+        store_effects: a.StoreEffects(),
+        numeric_conversions: a.Map<DeclId, NumericConversion>(),
+        discriminant_calls: a.Map<ExprId, DiscriminantCall>(),
+        variant_name_calls: a.Map<ExprId, VariantNameCall>(),
+        param_memo: a.Map<ExprId, bool>(),
+        callee_access: a.Map<ExprId, bool>(),
+        lambda_insts: a.Map<ExprId, Inst>(),
+        edges: a.Vec<InstEdge>(),
+        set_memo: a.Map<TyId, TyId>(),
+        raised: a.Vec<TyId>(),
+        locals: a.Vec<Binding>(),
+        block_base: 0,
+        tvars: a.Vec<Binding>(),
+        bounds: a.Vec<Binding>(),
+        alloc: a,
+    );
+    c.check_import_gate().try();
+    Ok(c);
+}
+
+check_import_gate = (c :: Checker) Res<(), AllocError> {
+    blocked ::= c.alloc.Vec<ImportBinding>();
+    Range(0, c.world.count()).loop((h, mi) {
+        c.world.blocked_imports(c.tree, mi, blocked).try();
+    });
+    blocked.loop((h, b) { c.report_blocked(b).try() });
+    Ok(());
+}
+
+report_blocked = (c :: Checker, b: ImportBinding) Res<(), AllocError> {
+    c.report(
+        b.span.file,
+        b.span,
+        SemaFault.NotExported(ExportFault(
+            name: b.name,
+            module: module_display(b.module)
+        ))
+    )
+}
+
+// A context with no `@Self` and no enclosing Res; a caller fills in what
+// it knows.
+Ctx* = (module: usize, none: TyId) Ctx {
+    Ctx(
+        module: module,
+        ret: none,
+        has_ret: false,
+        self_ty: none,
+        has_self: false
+    )
+}
+
+UNRESOLVED* : TyId = TyId(index: 0)
+
+is_predicate* = (op: BinOp) bool {
+    op.match({
+        Equal => true, NotEqual => true,
+        Less => true, LessEq => true, Greater => true, GreaterEq => true,
+        And => true, Or => true,
+        _ => false,
+    })
+}
+
+is_logical* = (op: BinOp) bool {
+    op.match({ And => true, Or => true, _ => false })
+}
+
+forms_fit = (got: ResForm, want: ResForm) bool {
+    got.match({
+        Open    => true,
+        Absence => undecided_or(want, false),
+        Failure => undecided_or(want, true),
+    })
+}
+
+undecided_or = (f: ResForm, failure: bool) bool {
+    f.match({
+        Open    => true,
+        Failure => failure,
+        Absence => failure == false,
+    })
+}
+
+// A type-parameter or bound binding: immutable, and written nowhere.
+Binding = (name: str, ty: TyId) Binding {
+    Binding(name: name, ty: ty, mutable: false, param: false, span: nowhere())
+}
+
+// The last binding of `name`: an inner scope shadows an outer one.
+innermost = (v: Vec<Binding>, name: str) Res<Binding> {
+    n = v.len;
+    Range(0, n).find((k) {
+        v.get(n - k - 1).match({ Ok(b) => b.name.eq(name), None => false })
+    }).match({
+        None  => None,
+        Ok(k) => v.get(n - k - 1),
+    })
+}
+
+truncate*<T> = (v :: Vec<T>, len: usize) () {
+    loop(v.len > len, (h) { v.take(v.len - 1); });
+}

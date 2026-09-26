@@ -1,0 +1,44 @@
+// A MODULE ALIAS IS QUEUED, and that is the whole assertion.
+//
+// `tw = twice` is an `Alias` and not an `Import`: a single-segment
+// right-hand side is the same three tokens as `Alias = Shape`, and
+// grammar R1a reads it as the alias. So the driver's walk — which is
+// syntactic, because it runs before the name resolution that could tell
+// a type alias from a module alias — sees no import and, before this
+// test, never opened `twice.zen` at all.
+//
+// The fix is PROBE-THEN-ENQUEUE: a bare target is a candidate module,
+// and it is queued only when a file is actually there. An alias probe
+// stays silent on a miss because an alias may legitimately name a type;
+// a REAL import whose file is absent is a fault, anchored by `enqueue`'s
+// own probe at the import itself — never at the absent path.
+//
+// WHAT THE OUTPUT PROVES. `twice.zen` imports `std.mem`, and there is no
+// `std` under `src/twice` — so a driver that read the file reports the
+// import it could not follow at twice.zen:4:9, where the fix goes, and
+// a driver that never opened it reports nothing and exits 0. The
+// mistake is deliberate and it is the evidence.
+//
+// `twice.zen` also resolves from BOTH roots, which is what makes an
+// inner tree expressible at all: `twice` is `<folder>/<folder>.zen` from
+// the staged `src/` and `<root>/<name>.zen` from `src/twice`.
+//
+// `build` is called directly rather than through `main` because
+// `env.argv` is empty in the generated C — see the report.
+
+Alloc, AllocError = std.mem
+str = std.text
+BuildArgs = std.build
+build = zen
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    run(env, a, "src/twice").try();
+    Ok(0);
+}
+
+run = (env: Env, a: Alloc, root: str) Res<(), AllocError> {
+    code = build(env, a, BuildArgs(root: root, repeat: 1)).try();
+    println("{} -> {}", root, code);
+    Ok(());
+}

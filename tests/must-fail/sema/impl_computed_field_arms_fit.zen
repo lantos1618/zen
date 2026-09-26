@@ -1,0 +1,29 @@
+// An impl-supplied computed field must fit the bound's declared field type.
+
+
+
+
+
+
+
+
+
+Boxy = {
+    width: i32,
+    height: i32,
+}
+
+Square = {
+    side :: i32,
+}
+
+Square.impl(Boxy, {
+    width: self.side.match({ 0 => 0, _ => true }),
+    height: self.side,
+})
+
+main = (env: Env) Res<i32, AllocError> {
+    s = Square(side: 2);
+    println("{}", s.width);
+    Ok(0);
+}

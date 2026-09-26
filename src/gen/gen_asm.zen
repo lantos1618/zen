@@ -1,0 +1,17 @@
+// Assembly targets consume verified scalar IR without consulting the AST or
+// semantic checker. A target identifies its instruction set, object dialect,
+// operating system and calling ABI; it never selects the host implicitly.
+AllocError = std.mem
+String = std.text
+Program = gen.gen_ir
+
+// Implementations preserve ordered effects, control flow, checked arithmetic,
+// source-position traps and byte output. Machine instructions, register and
+// stack allocation, calling conventions and runtime linkage belong to the
+// concrete target. The caller verifies the program before emission.
+Target* = {
+    // The target carries caller-chosen allocation for output and scratch.
+    // Returned text borrows that allocation's lifetime. Emission neither
+    // publishes nor executes it.
+    emit* = (self: @Self, program: Program) Res<String, AllocError>
+}

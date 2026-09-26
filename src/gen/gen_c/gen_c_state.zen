@@ -1,0 +1,959 @@
+// Mutable state shared by C lowering modules. Worklists and emitted sets use
+// stable insertion data, then sort by mangled name before output. Per-function
+// locals and temporary counters are reset at each body boundary.
+
+Ast, ExprId, Span = std.ast
+str, String = std.text
+Alloc, AllocError = std.mem
+Vec, Map = std.collections
+Range = std.core
+DeclId = sema.sema_id
+TyId, Types = sema.sema_ty
+World, Def = sema.sema_def
+Checker = sema.sema_check
+Inst = sema.sema_inst
+CallEffects = gen.gen_c.gen_c_effect
+LoopSyntax = gen.gen_c.gen_c_shape
+Emit = gen.gen_emit
+GenDiag, GenFault = gen.gen_diag
+sym_gen = gen.gen_name
+LocalSlot, Closure, InlineReturn, LoopFrame, DropEntry, BlockFrame = gen.gen_c.gen_c_frame
+
+// A member queue entry carries its full receiver-inclusive signature because
+// neither a member name nor its arity uniquely identifies an overload.
+MethodRef* = {
+    self_ty*: TyId,
+    decl*: DeclId,   // the declaration that owns the member
+    name*: str,
+    sig*: Vec<TyId>, // declared parameter types, receiver included
+    qname*: str,
+
+}
+
+// Real declarations have source positions; generated adapters do not. Keep
+// that distinction rather than guessing an origin from a mangled name.
+FnOrigin* = Generated | Source(Span)
+
+// Saved while a lifted closure lowers with its own cleanup depth.
+Cleanup* = {
+    blocks*: Vec<BlockFrame>,
+    drops*: Vec<DropEntry>,
+    return_to*: Res<usize>,
+}
+
+EmittedFunction* = {
+    name*: String,
+    proto*: String,
+    body*: String,
+    origin*: FnOrigin,
+    unit*: usize,
+}
+ForeignFunction* = { name*: String, proto*: String }
+QueuedType* = { name*: String, id*: TyId, done* :: bool }
+
+QueuedFunction* = { definition*: Def, inst*: Inst }
+QueuedMethod* = { method*: MethodRef, inst*: Inst }
+
+CBackend* = {
+    tree*: Ast,
+    check* :: Checker,
+
+    // Lazily indexed loop syntax from the immutable parsed tree.
+    loop_syntax :: Res<LoopSyntax>,
+    call_effects*: CallEffects,
+
+    // Scratch output for the current function.
+    buf :: Emit,
+
+    diags :: Vec<GenDiag>,
+
+    // Types requiring a C definition, keyed by mangled name.
+    type_queue* :: Vec<QueuedType>,
+    type_lookup :: Map<str, usize>,
+
+    // Integer types requiring checked-arithmetic helpers.
+    helper_types* :: Vec<String>,
+
+    // Demand flags for independently emitted runtime families.
+    print_used :: bool,
+    stderr_used :: bool,
+    fbuf_used :: bool,
+    fs_used :: bool,
+    stdin_used :: bool,
+    env_used :: bool,
+    clock_used :: bool,
+    threads_used :: bool,
+
+    // Spawn capture records are heap-owned because the thread may outlive
+    // the spawning frame.
+    spawn_used :: bool,
+    spawn_envs :: Vec<String>,
+    spawn_sites :: usize,
+
+    // Actor definitions are buffered until the header/type section.
+    actor_used :: bool,
+    actor_defs :: Vec<String>,
+    actor_sites :: usize,
+
+    // Reachable free functions and methods waiting to be lowered.
+    fn_queue* :: Vec<QueuedFunction>,
+    m_queue* :: Vec<QueuedMethod>,
+    // Instantiation of the function currently being lowered.
+    inst* :: Inst,
+    fn_seen :: Vec<String>,
+    fn_lookup :: Map<str, bool>,
+    functions* :: Vec<EmittedFunction>,
+    // the unit the lowering is writing into right now
+    unit :: usize,
+    // Multi-unit output makes lowered functions externally visible.
+    externs :: bool,
+
+    // Parsed for compatibility; bodyless free functions are always foreign.
+    ffi* :: bool,
+    // Foreign symbols and prototypes, deduplicated by symbol.
+    foreign_functions* :: Vec<ForeignFunction>,
+
+    // Headers required by reachable C bindings.
+    c_headers* :: Vec<String>,
+
+    // per function
+    locals :: Vec<LocalSlot>,
+    declared :: Vec<String>,
+    // Active loop and block stacks, innermost last.
+    loops :: Vec<LoopFrame>,
+    blocks :: Vec<BlockFrame>,
+    drops :: Vec<DropEntry>,
+    scope_used :: bool,
+    // Captureless deferred closures still consume a site id, so
+    // `defer_env_ids` cannot be derived from the record count.
+    defer_envs :: Vec<String>,
+    defer_env_ids :: Vec<usize>,
+    defer_sites :: usize,
+    // Lambdas remain addressable after their lexical scope is rewound.
+    closures :: Vec<Closure>,
+    inline_returns :: Vec<InlineReturn>,
+    return_to* :: Res<usize>,
+    // Current inline depth.
+    depth* :: usize,
+    // First local belonging to the current inlined body.
+    floor* :: usize,
+    tmp* :: usize,
+
+    alloc*: Alloc,
+
+    diag_count* = (self: @Self) usize { self.diags.len }
+
+    diag_at* = (self: @Self, i: usize) Res<GenDiag> { self.diags.get(i) }
+
+    render_diags* = (self: @Self, out :: String) Res<(), AllocError> {
+        self.diags.loop((h, d) {
+            d.render(out).try();
+            out.add("\n").try();
+        });
+        Ok(());
+    }
+
+    report* = (self :: @Self, file: str, span: Span, fault: GenFault)
+              Res<(), AllocError> {
+        self.diags.add(GenDiag(file: file, span: span, fault: fault))
+    }
+
+    // Report at an expression's source span.
+    report_expr* = (self :: @Self, id: ExprId, fault: GenFault)
+                   Res<(), AllocError> {
+        node = self.tree.expr_at(id);
+        self.report(node.span.file, node.span, fault)
+    }
+
+    loop_sites* = (self :: @Self) Res<LoopSyntax, AllocError> {
+        self.loop_syntax.match({
+            Ok(sites) => Ok(sites),
+            None      => {
+                sites            = self.alloc.LoopSyntax(self.tree).try();
+                self.loop_syntax = Ok(sites);
+                Ok(sites)
+            },
+        })
+    }
+
+    types* = (self: @Self) Types { self.check.types }
+
+    world* = (self: @Self) World { self.check.world }
+
+    // Lookup keys borrow the immutable buffers owned by type_queue/fn_seen.
+    // Growing either outer Vec moves String records, not their byte buffers.
+    // The vectors retain insertion order; hashes never choose emission order.
+    // Mangled type names are injective and serve as worklist keys.
+    type_index* = (self: @Self, name: str) Res<usize> {
+        self.type_lookup.get(name)
+    }
+
+    queue_type* = (self :: @Self, name: String, id: TyId)
+                  Res<(), AllocError> {
+        index = self.type_queue.len;
+        key   = name.view();
+        self.type_lookup.get(key).match({
+            Ok(_) => Ok(()),
+            None  => {
+                self.type_queue.reserve(1).try();
+                self.type_lookup.set(key, index).try();
+                self.type_queue.add(QueuedType(name: name, id: id, done: false))
+            },
+        })
+    }
+
+    type_id_at* = (self: @Self, i: usize) Res<TyId> {
+        Ok(self.type_queue.get(i).try().id)
+    }
+
+    mark_done* = (self :: @Self, i: usize) Res<(), AllocError> {
+        row ::= self.type_queue.get(i).ok_or(AllocError.OutOfMemory).try();
+        row.done = true;
+        self.type_queue.set(i, row).ok_or(AllocError.OutOfMemory).try();
+        Ok(())
+    }
+
+    // Emit the complete checked-arithmetic family for each used primitive.
+    need_helpers* = (self :: @Self, prim: str) Res<(), AllocError> {
+        self.has_helpers(prim).match({
+            false => self.add_helpers(prim),
+            true  => Ok(()),
+        })
+    }
+
+    has_helpers = (self: @Self, prim: str) bool {
+        Range(0, self.helper_types.len).find((i) {
+            self.helper_types.get(i).match({
+                Ok(s) => s.view().eq(prim),
+                None  => false,
+            })
+        }).match({ Ok(_) => true, None => false })
+    }
+
+    add_helpers = (self :: @Self, prim: str) Res<(), AllocError> {
+        owned ::= self.alloc.String().try();
+        owned.add(prim).try();
+        self.helper_types.add(owned)
+    }
+
+    need_print* = (self :: @Self) () { self.print_used = true; }
+
+    uses_print* = (self: @Self) bool { self.print_used }
+
+    need_stderr* = (self :: @Self) () { self.stderr_used = true; }
+
+    uses_stderr* = (self: @Self) bool { self.stderr_used }
+
+    need_fbuf* = (self :: @Self) () { self.fbuf_used = true; }
+
+    uses_fbuf* = (self: @Self) bool { self.fbuf_used }
+
+    need_fs* = (self :: @Self) () { self.fs_used = true; }
+
+    uses_fs* = (self: @Self) bool { self.fs_used }
+
+    need_stdin* = (self :: @Self) () { self.stdin_used = true; }
+
+    uses_stdin* = (self: @Self) bool { self.stdin_used }
+
+    need_env* = (self :: @Self) () { self.env_used = true; }
+
+    uses_env* = (self: @Self) bool { self.env_used }
+
+    need_clock* = (self :: @Self) () { self.clock_used = true; }
+
+    uses_clock* = (self: @Self) bool { self.clock_used }
+
+    need_threads* = (self :: @Self) () { self.threads_used = true; }
+
+    uses_threads* = (self: @Self) bool { self.threads_used }
+
+    need_spawn* = (self :: @Self) () { self.spawn_used = true; }
+
+    uses_spawn* = (self: @Self) bool { self.spawn_used }
+
+    next_spawn* = (self :: @Self) usize {
+        self.spawn_sites = self.spawn_sites + 1;
+        self.spawn_sites
+    }
+
+    add_spawn_env* = (self :: @Self, text: String) Res<(), AllocError> {
+        self.spawn_envs.add(text)
+    }
+
+    spawn_env_count* = (self: @Self) usize { self.spawn_envs.len }
+
+    spawn_env_at* = (self: @Self, i: usize) Res<String> {
+        self.spawn_envs.get(i)
+    }
+
+    need_actor* = (self :: @Self) () { self.actor_used = true; }
+
+    uses_actor* = (self: @Self) bool { self.actor_used }
+
+    next_actor_site* = (self :: @Self) usize {
+        self.actor_sites = self.actor_sites + 1;
+        self.actor_sites
+    }
+
+    add_actor_def* = (self :: @Self, text: String) Res<(), AllocError> {
+        self.actor_defs.add(text)
+    }
+
+    actor_def_count* = (self: @Self) usize { self.actor_defs.len }
+
+    actor_def_at* = (self: @Self, i: usize) Res<String> {
+        self.actor_defs.get(i)
+    }
+
+    // Cleanup storage; `gen_c_own` owns destruction policy.
+    need_scope* = (self :: @Self) () { self.scope_used = true; }
+
+    uses_scope* = (self: @Self) bool { self.scope_used }
+
+    next_defer* = (self :: @Self) usize {
+        self.defer_sites = self.defer_sites + 1;
+        self.defer_sites
+    }
+
+    add_defer_env* = (self :: @Self, text: String, n: usize)
+                     Res<(), AllocError> {
+        self.defer_envs.add(text).try();
+        self.defer_env_ids.add(n).try();
+        Ok(());
+    }
+
+    defer_env_count* = (self: @Self) usize { self.defer_envs.len }
+
+    defer_env_at* = (self: @Self, i: usize) Res<String> {
+        self.defer_envs.get(i)
+    }
+
+    defer_env_id* = (self: @Self, i: usize) usize {
+        self.defer_env_ids.get(i).match({ Ok(n) => n, None => 0 })
+    }
+
+    open_block* = (self :: @Self, rec: usize) Res<(), AllocError> {
+        self.blocks.add(BlockFrame(mark: self.drops.len, rec: rec))
+    }
+
+    // Leaving a block forgets its bindings. The cleanup was written
+    // before this ran — closing the frame is bookkeeping, not an exit.
+    close_block* = (self :: @Self) Res<(), AllocError> {
+        self.blocks.take(self.blocks.len - 1).match({
+            None  => Ok(()),
+            Ok(f) => self.forget_drops(f.mark),
+        })
+    }
+
+    forget_drops = (self :: @Self, mark: usize) Res<(), AllocError> {
+        extra = self.drops.len - mark;
+        Range(0, extra).loop((h, i) {
+            self.drops.take(self.drops.len - 1);
+        });
+        Ok(());
+    }
+
+    block_depth* = (self: @Self) usize { self.blocks.len }
+
+    block_at* = (self: @Self, i: usize) Res<BlockFrame> { self.blocks.get(i) }
+
+    // The thunk door's save/restore, for the reason the `Cleanup`
+    // declaration gives. The locals stack is not part of it: the body's
+    // captures resolve through the caller's frame, so the caller's
+    // bindings stay readable while its cleanup is set aside.
+    hold_cleanup* = (self :: @Self) Res<Cleanup, AllocError> {
+        held           = Cleanup(
+            blocks: self.blocks,
+            drops: self.drops,
+            return_to: self.return_to
+        );
+        self.return_to = None;
+        self.blocks    = self.alloc.Vec<BlockFrame>();
+        self.drops     = self.alloc.Vec<DropEntry>();
+        Ok(held)
+    }
+
+    restore_cleanup* = (self :: @Self, held: Cleanup) () {
+        self.blocks    = held.blocks;
+        self.drops     = held.drops;
+        self.return_to = held.return_to;
+    }
+
+    drop_count* = (self: @Self) usize { self.drops.len }
+
+    drop_at* = (self: @Self, i: usize) Res<DropEntry> { self.drops.get(i) }
+
+    own_binding* = (self :: @Self, e: DropEntry) Res<(), AllocError> {
+        self.drops.add(e)
+    }
+
+    // Body-buffer operations keep Emit storage private to the backend.
+    write* = (self :: @Self, s: str) Res<(), AllocError> { self.buf.bytes(s) }
+
+    writeln* = (self :: @Self, s: str) Res<(), AllocError> { self.buf.say(s) }
+
+    // Format into the body buffer without an implicit newline.
+    fmt* = (self :: @Self, fmt: str, args: ...) Res<(), AllocError>
+
+    newline* = (self :: @Self) Res<(), AllocError> { self.buf.line() }
+
+    indent* = (self :: @Self) () { self.buf.indent(); }
+
+    dedent* = (self :: @Self) () { self.buf.dedent(); }
+
+    text* = (self: @Self) str { self.buf.view() }
+
+    // Emit one assignment statement.
+    set_line* = (self :: @Self, dst: str, value: str) Res<(), AllocError> {
+        self.fmt("{dst} = {value};\n")
+    }
+
+    // Start a fresh function body buffer.
+    open_buf* = (self :: @Self) Res<(), AllocError> {
+        self.buf = self.alloc.Emit().try();
+        Ok(());
+    }
+
+    // Detach the completed body and open its successor without copying.
+    // Deferred closures also use this to set an enclosing body aside and
+    // put it back after lowering their own C function.
+    take_buf* = (self :: @Self) Res<Emit, AllocError> {
+        held     = self.buf;
+        self.buf = self.alloc.Emit().try();
+        Ok(held);
+    }
+
+    put_buf* = (self :: @Self, held: Emit) () { self.buf = held; }
+
+    // Queue a function for lowering, once.
+    // The mangled symbol includes signature and instantiation and is the key.
+    need_function* = (self :: @Self, d: Def, inst: Inst, sym: str)
+                     Res<(), AllocError> {
+        self.seen_function(sym).match({
+            false => self.push_function(d, inst, sym),
+            true  => Ok(()),
+        })
+    }
+
+    seen_function = (self: @Self, sym: str) bool {
+        self.fn_lookup.get(sym).match({ Ok(_) => true, None => false })
+    }
+
+    // Record the compatibility FFI flag for this emission.
+    enable_ffi* = (self :: @Self) () { self.ffi = true; }
+
+    need_extern* = (self :: @Self, name: str, proto: String)
+                   Res<bool, AllocError> {
+        self.foreign_functions.find(
+            (entry) { entry.name.view().eq(name) }
+        ).match({
+            Ok(entry) => Ok(entry.proto.view().eq(proto.view())),
+            None      => {
+                owned ::= self.alloc.String().try();
+                owned.add(name).try();
+                self.foreign_functions.add(ForeignFunction(
+                    name: owned,
+                    proto: proto
+                )).try();
+                Ok(true)
+            },
+        })
+    }
+
+    need_c_header* = (self :: @Self, path: str, system: bool)
+                     Res<bool, AllocError> {
+        valid_c_header(path).match({
+            false => Ok(false),
+            true  => self.keep_c_header(path, system),
+        })
+    }
+
+    keep_c_header = (self :: @Self, path: str, system: bool)
+                    Res<bool, AllocError> {
+        line ::= self.alloc.String().try();
+        system.match({
+            true  => line.fmt("#include <{}>", path),
+            false => line.fmt("#include \"{}\"", path),
+        }).try();
+        Range(0, self.c_headers.len).find((i) {
+            self.c_headers.get(i).match({
+                Ok(h) => h.view().eq(line.view()),
+                None  => false,
+            })
+        }).match({
+            Ok(_) => Ok(true),
+            None  => { self.c_headers.add(line).try(); Ok(true) },
+        })
+    }
+
+    // Queue a member once using the shared emitted-symbol set.
+    need_method* = (self :: @Self, m: MethodRef, inst: Inst, sym: str)
+                   Res<(), AllocError> {
+        self.seen_function(sym).match({
+            false => self.push_method(m, inst, sym),
+            true  => Ok(()),
+        })
+    }
+
+    // Claim a generated thunk symbol without adding a declaration queue row.
+    need_thunk* = (self :: @Self, sym: str) Res<bool, AllocError> {
+        self.seen_function(sym).match({
+            true  => Ok(false),
+            false => self.claim_thunk(sym),
+        })
+    }
+
+    claim_thunk = (self :: @Self, sym: str) Res<bool, AllocError> {
+        self.remember(sym).try();
+        Ok(true);
+    }
+
+    push_method = (self :: @Self, m: MethodRef, inst: Inst, sym: str)
+                  Res<(), AllocError> {
+        self.m_queue.reserve(1).try();
+        self.remember(sym).try();
+        self.m_queue.add(QueuedMethod(method: m, inst: inst)).try();
+        Ok(());
+    }
+
+    push_function = (self :: @Self, d: Def, inst: Inst, sym: str)
+                    Res<(), AllocError> {
+        self.fn_queue.reserve(1).try();
+        self.remember(sym).try();
+        self.fn_queue.add(QueuedFunction(definition: d, inst: inst)).try();
+        Ok(());
+    }
+
+    remember = (self :: @Self, sym: str) Res<(), AllocError> {
+        owned ::= self.alloc.String().try();
+        owned.add(sym).try();
+        key = owned.view();
+        self.fn_seen.add(owned).try();
+        self.fn_lookup.set(key, true)
+    }
+
+    // Entering an instantiation is not a stack. A body is lowered to
+    // completion before the next queue entry is popped — a call inside
+    // it queues rather than recurses — so one field is the whole of the
+    // state, and clearing it is what makes a non-generic body see no
+    // substitution at all.
+    enter_inst* = (self :: @Self, inst: Inst) () { self.inst = inst; }
+
+    // One lowered function, held apart for C ordering and tagged as source or
+    // generated for the optional symbol map.
+    add_function* = (self :: @Self, name: String, proto: String,
+                     body: String) Res<(), AllocError> {
+        self.keep_function(name, proto, body, FnOrigin.Generated)
+    }
+
+    add_source_function* = (self :: @Self, name: String, proto: String,
+                            body: String, span: Span) Res<(), AllocError> {
+        self.keep_function(name, proto, body, FnOrigin.Source(span))
+    }
+
+    keep_function = (self :: @Self, name: String, proto: String,
+                     body: String, origin: FnOrigin) Res<(), AllocError> {
+        self.functions.add(EmittedFunction(
+            name: name,
+            proto: proto,
+            body: body,
+            origin: origin,
+            unit: self.unit
+        ))
+    }
+
+    // The unit every function kept from here on belongs to. Set once
+    // per body, by the one place that knows which module the body was
+    // declared in.
+    enter_unit* = (self :: @Self, mi: usize) () { self.unit = mi; }
+
+    // Splitting the program across files means a call can cross one, so
+    // nothing but `main` may keep internal linkage.
+    use_externs* = (self :: @Self) () { self.externs = true; }
+
+    // What goes in front of a function, prototype and definition alike.
+    linkage* = (self: @Self) str {
+        self.externs.match({
+            true  => "",
+            false => "static ",
+        })
+    }
+
+    // locals
+    //
+    // `mark` / `release` rather than a chain of frames, exactly as
+    // sema's scope stack is: entering a block records where the stack
+    // was, leaving it drops everything added since, and shadowing falls
+    // out of walking from the top down.
+
+    mark* = (self: @Self) usize { self.locals.len }
+
+    // Declaration expressions have no access to the construction site's frame.
+    hold_locals* = (self :: @Self) Vec<LocalSlot> {
+        held        = self.locals;
+        self.locals = self.alloc.Vec<LocalSlot>();
+        held
+    }
+
+    restore_locals* = (self :: @Self, held: Vec<LocalSlot>) () {
+        self.locals = held;
+    }
+
+    release* = (self :: @Self, mark: usize) Res<(), AllocError> {
+        extra = self.locals.len - mark;
+        Range(0, extra).loop((h, i) {
+            self.locals.take(self.locals.len - 1);
+        });
+        Ok(());
+    }
+
+    // Introduce a binding, and answer with the number its C name
+    // carries. Counting declarations rather than depth (header) is what
+    // makes it unique inside the function: two sibling blocks each
+    // binding `x` get 1 and 2.
+    declare* = (self :: @Self, name: str, ty: TyId, by_ref: bool)
+               Res<usize, AllocError> {
+        n = self.reserve(name).try();
+        self.publish(name, n, ty, by_ref).try();
+        Ok(n);
+    }
+
+    // A name is not in scope until its initialiser has been lowered, so
+    // the two halves of `declare` are separable: `reserve` takes the
+    // number the C name carries, `publish` is what makes the name
+    // Resolve to that slot. `gen_c_stmt.declare_local` is the one caller
+    // that needs them apart, because `k: i32 ::= k + 1` shadowing an
+    // outer `k` read the slot it was declaring — the initialiser's `k`
+    // must still mean the binding it is shadowing.
+    reserve* = (self :: @Self, name: str) Res<usize, AllocError> {
+        n = self.declared_count(name) + 1;
+        owned ::= self.alloc.String().try();
+        owned.add(name).try();
+        self.declared.add(owned).try();
+        Ok(n);
+    }
+
+    publish* = (self :: @Self, name: str, n: usize, ty: TyId, by_ref: bool)
+               Res<(), AllocError> {
+        self.locals.add(LocalSlot(
+            name: name,
+            index: n,
+            ty: ty,
+            by_ref: by_ref,
+            handle: 0,
+            closure: 0
+        )).try();
+        Ok(());
+    }
+
+    // Bind a name to a lambda. Like a handle, it has no C storage: what
+    // the name means is a body to inline, and the index is where it is
+    // kept.
+    declare_closure* = (self :: @Self, name: str, cl: Closure)
+                       Res<(), AllocError> {
+        self.closures.add(cl).try();
+        self.locals.add(LocalSlot(
+            name: name,
+            index: 0,
+            ty: cl.ret,
+            by_ref: false,
+            handle: 0,
+            closure: self.closures.len
+        )).try();
+        Ok(());
+    }
+
+    closure_at* = (self: @Self, i: usize) Res<Closure> {
+        self.closures.get(i - 1)
+    }
+
+    // rewinding, for an inlined body
+    //
+    // `release` drops bindings; this moves them aside and puts them
+    // back. A closure is lowered in the frame it was written in, which
+    // is below the callee's own parameters — and those parameters are
+    // still live afterwards, so they cannot be dropped.
+
+    detach* = (self :: @Self, mark: usize, saved :: Vec<LocalSlot>)
+              Res<(), AllocError> {
+        extra = self.locals.len - mark;
+        Range(0, extra).loop((h, i) {
+            self.locals.take(self.locals.len - 1).match({
+                Ok(s) => saved.add(s).try(),
+                None  => (),
+            });
+        });
+        Ok(());
+    }
+
+    // `saved` came off the top, so it goes back bottom-first.
+    reattach* = (self :: @Self, saved: Vec<LocalSlot>) Res<(), AllocError> {
+        n = saved.len;
+        Range(0, n).loop((h, i) {
+            saved.get(n - i - 1).match({
+                Ok(s) => self.locals.add(s).try(),
+                None  => (),
+            });
+        });
+        Ok(());
+    }
+
+    // Select the lexical function that a non-local exit must leave.
+    enter_return* = (self :: @Self, target: Res<usize>) () {
+        self.return_to = target;
+    }
+
+    open_inline_return* = (self :: @Self, result: str) Res<usize, AllocError> {
+        label = self.fresh_name("ret").try();
+        index = self.inline_returns.len;
+        self.inline_returns.add(InlineReturn(
+            result: result,
+            label: label.view(),
+            depth: self.block_depth()
+        )).try();
+        Ok(index)
+    }
+
+    // Only ids issued by open_inline_return belong to this function's ledger.
+    inline_return* = (self: @Self, index: usize) InlineReturn {
+        self.inline_returns.len - index - 1;
+        self.inline_returns.ptr().read(index)
+    }
+
+    return_depth* = (self: @Self) usize {
+        self.return_to.match({
+            None      => 0,
+            Ok(index) => self.inline_return(index).depth,
+        })
+    }
+
+    note_inline_return* = (self :: @Self, index: usize) () {
+        target ::= self.inline_return(index);
+        target.note_use();
+        self.inline_returns.set(index, target);
+    }
+
+    finish_inline_return* = (self :: @Self, index: usize) Res<(), AllocError> {
+        target = self.inline_return(index);
+        target.used.then(() { self.fmt("{}: ;\n", target.label).try(); });
+        Ok(())
+    }
+
+    // Lower what follows as a different function's body, beginning at
+    // `floor`. Written the way `enter_inst` is — the caller holds the
+    // old value and hands it back — because the two are always entered
+    // and left together.
+    enter_frame* = (self :: @Self, floor: usize) () { self.floor = floor; }
+
+    enter_call* = (self :: @Self) () { self.depth = self.depth + 1; }
+
+    leave_call* = (self :: @Self) () { self.depth = self.depth - 1; }
+
+    // Bind `h` to the loop it came from. A handle has no C storage and
+    // no declaration is written for it: what the name means is a pair
+    // of labels, and `depth` is where to read them.
+    declare_handle* = (self :: @Self, name: str, ty: TyId, depth: usize)
+                      Res<(), AllocError> {
+        self.locals.add(LocalSlot(
+            name: name,
+            index: 0,
+            ty: ty,
+            by_ref: false,
+            handle: depth,
+            closure: 0
+        ))
+    }
+
+    // the loop stack
+    //
+    // A stack and not a field: `range.loop((h, r) { r.loop((g, c) { .. }) })`
+    // has two loops open at once, and `h.break` in the inner body must
+    // reach the outer one's labels rather than the innermost.
+
+    push_loop* = (self :: @Self, frame: LoopFrame) Res<(), AllocError> {
+        self.loops.add(frame)
+    }
+
+    pop_loop* = (self :: @Self) Res<(), AllocError> {
+        self.loops.take(self.loops.len - 1).match({
+            Ok(_) => Ok(()),
+            None  => Err(AllocError.OutOfMemory),
+        })
+    }
+
+    loop_depth* = (self: @Self) usize { self.loops.len }
+
+    // The frame a handle names. `depth` is 1-based, so it is also the
+    // count of loops that were open when the handle was bound.
+    loop_frame* = (self: @Self, depth: usize) Res<LoopFrame> {
+        self.loops.get(depth - 1)
+    }
+
+    // A next call may target an enclosing loop through a captured handle.
+    // Record its target on the live frame, not the caller's copied snapshot.
+    note_next* = (self :: @Self, label: usize) () {
+        self.loops.loop((h, index, frame) {
+            (frame.cnt == label).then(() {
+                marked ::= frame;
+                marked.note_next();
+                self.loops.set(index, marked);
+                h.break();
+            });
+        });
+    }
+
+    // A captured handle can break an enclosing loop. Mark the live target
+    // before its label is considered at completion.
+    note_break* = (self :: @Self, label: usize) () {
+        self.loops.loop((h, index, frame) {
+            (frame.brk == label).then(() {
+                marked ::= frame;
+                marked.note_break();
+                self.loops.set(index, marked);
+                h.break();
+            });
+        });
+    }
+
+    declared_count = (self: @Self, name: str) usize {
+        n ::= 0;
+        self.declared.loop((h, s) {
+            s.view().eq(name).then(() { n = n + 1; });
+        });
+        n
+    }
+
+    // The innermost binding of `name`, or nothing. Walks from the top,
+    // which is the only thing the ordering of this stack is for.
+    slot_of* = (self: @Self, name: str) Res<LocalSlot> {
+        n = self.locals.len;
+        Range(0, n).find((k) {
+            self.locals.get(n - k - 1).match({
+                Ok(b) => b.name.eq(name),
+                None  => false,
+            })
+        }).match({
+            None  => None,
+            Ok(k) => self.locals.get(n - k - 1),
+        })
+    }
+
+    // Bound in the body being lowered. `slot_of` answers for the whole
+    // stack, which spans the caller of an inlined body — and the
+    // caller's bindings are another function's, whatever they are
+    // spelled.
+    bound_in_frame* = (self: @Self, name: str) bool {
+        Range(self.floor, self.locals.len).find((k) {
+            self.locals.get(k).match({
+                Ok(b) => b.name.eq(name),
+                None  => false,
+            })
+        }).match({ Ok(_) => true, None => false })
+    }
+
+    // Everything a function's frame holds, dropped between functions.
+    // The temporary counter is reset here and nowhere else.
+    reset_frame* = (self :: @Self) Res<(), AllocError> {
+        self.release(0).try();
+        extra = self.declared.len;
+        Range(0, extra).loop((h, i) {
+            self.declared.take(self.declared.len - 1);
+        });
+        open = self.loops.len;
+        Range(0, open).loop((h, i) {
+            self.loops.take(self.loops.len - 1);
+        });
+        held = self.closures.len;
+        Range(0, held).loop((h, i) {
+            self.closures.take(self.closures.len - 1);
+        });
+        self.forget_drops(0).try();
+        nested = self.blocks.len;
+        Range(0, nested).loop((h, i) {
+            self.blocks.take(self.blocks.len - 1);
+        });
+        self.inline_returns.truncate(0);
+        self.return_to = None;
+        self.depth     = 0;
+        self.floor     = 0;
+        self.tmp       = 0;
+        Ok(());
+    }
+
+    next_tmp* = (self :: @Self) usize {
+        self.tmp = self.tmp + 1;
+        self.tmp
+    }
+
+    fresh_name* = (self :: @Self, stem: str) Res<String, AllocError> {
+        name ::= self.alloc.String().try();
+        sym_gen(name, stem, self.next_tmp()).try();
+        Ok(name)
+    }
+}
+
+valid_c_header = (path: str) bool {
+    (path.len > 0) && Range(0, path.len).find((i) {
+        b = path.index(i);
+        !(b.is_alnum() || b.is_in(['/', '.', '_', '-', '+']))
+    }).match({ Ok(_) => false, None => true })
+}
+
+// `alloc.CBackend(tree, check)` — a ufcs function whose first parameter
+// is an Alloc, beside the type it builds, exactly as `Vec`, `Map`,
+// `Ast`, `Types` and `Checker` are.
+CBackend* = (a: Alloc, tree: Ast, check: Checker) Res<CBackend, AllocError> {
+    Ok(CBackend(
+        tree: tree,
+        check: check,
+        loop_syntax: None,
+        call_effects: a.CallEffects(tree).try(),
+        buf: a.Emit().try(),
+        diags: a.Vec<GenDiag>(),
+        type_queue: a.Vec<QueuedType>(),
+        type_lookup: a.Map<str, usize>(),
+        helper_types: a.Vec<String>(),
+        print_used: false,
+        stderr_used: false,
+        fbuf_used: false,
+        fs_used: false,
+        stdin_used: false,
+        env_used: false,
+        clock_used: false,
+        threads_used: false,
+        spawn_used: false,
+        spawn_envs: a.Vec<String>(),
+        spawn_sites: 0,
+        actor_used: false,
+        actor_defs: a.Vec<String>(),
+        actor_sites: 0,
+        scope_used: false,
+        defer_envs: a.Vec<String>(),
+        defer_env_ids: a.Vec<usize>(),
+        defer_sites: 0,
+        fn_queue: a.Vec<QueuedFunction>(),
+        m_queue: a.Vec<QueuedMethod>(),
+        inst: a.Inst(),
+        fn_seen: a.Vec<String>(),
+        fn_lookup: a.Map<str, bool>(),
+        functions: a.Vec<EmittedFunction>(),
+        unit: 0,
+        externs: false,
+        ffi: false,
+        foreign_functions: a.Vec<ForeignFunction>(),
+        c_headers: a.Vec<String>(),
+        locals: a.Vec<LocalSlot>(),
+        declared: a.Vec<String>(),
+        loops: a.Vec<LoopFrame>(),
+        blocks: a.Vec<BlockFrame>(),
+        drops: a.Vec<DropEntry>(),
+        closures: a.Vec<Closure>(),
+        inline_returns: a.Vec<InlineReturn>(),
+        return_to: None,
+        depth: 0,
+        floor: 0,
+        tmp: 0,
+        alloc: a,
+    ));
+}

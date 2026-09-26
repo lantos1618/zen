@@ -1,0 +1,409 @@
+// Side-effect-free lookahead for ambiguous token sequences.
+//
+// Each query scans to a matching delimiter and inspects the next live
+// token. None advances the parser or records diagnostics. Trivia tokens
+// stay in the stream, so scans step with `live_at`.
+
+TokenKind, is_trivia = std.parse.parse_token
+Parser = std.parse.parser
+
+ValueShape* = StructValue
+    | EnumValue
+    | FnValue
+    | PathValue
+    | AliasValue
+    | ExprValue
+
+// First non-trivia token index at or after `from`.
+live_at = (p :: Parser, from: usize) usize {
+    out ::= p.tokens_len();
+    Range(from, p.tokens_len()).loop((h, k) {
+        (!p.token_kind_at(k).is_trivia()).then(() {
+            out = k;
+            h.break();
+        });
+    });
+    out;
+}
+
+live_kind = (p :: Parser, from: usize) TokenKind {
+    p.token_kind_at(p.live_at(from))
+}
+
+// A parenthesized group starts a lambda when a block or return type follows.
+// Another `(` is treated as a call; declaration values handle unit returns
+// separately in `fn_value_after`.
+lambda_ahead* = (p :: Parser) bool {
+    after = p.live_kind(p.group_end_at(p.at));
+    after == TokenKind.BraceOpen || after.ret_start()
+}
+
+ret_start = (kind: TokenKind) bool {
+    kind.starts_type_kind() && !kind.is_in([TokenKind.Lt, TokenKind.ParenOpen])
+}
+
+fn_value_after = (kind: TokenKind) bool {
+    kind.is_in([TokenKind.BraceOpen, TokenKind.ParenOpen]) || kind.ret_start()
+}
+
+starts_type* = (p :: Parser) bool { p.peek().kind.starts_type_kind() }
+
+starts_type_kind = (kind: TokenKind) bool {
+    kind.match({
+        Ident       => true,
+        AtSelf      => true,
+        Ellipsis    => true,
+        BracketOpen => true,
+        ParenOpen   => true,
+        Lt          => true,
+        _           => false,
+    });
+}
+
+// A `[` here opens a fixed array type applied to arguments if it holds
+// exactly two items — an element type and a length — and a `(`
+// follows. Anything else is an array literal.
+fixed_array_ahead* = (p :: Parser) bool {
+    j = p.group_end_at(p.at);
+    p.live_kind(j) == TokenKind.ParenOpen && p.group_items_at(p.at, j) == 2
+}
+
+// A `<` opens type arguments only when its matching `>` is followed by `(`;
+// otherwise it is a comparison.
+targs_ahead* = (p :: Parser) bool {
+    j = p.angles_end_at(p.at);
+    (j > p.at) && p.live_kind(j) == TokenKind.ParenOpen
+}
+
+// Index after a balanced group; stream length when it is unclosed.
+// Results are memoized because the ambiguous-grammar lookahead asks for the
+// same suffix once per candidate shape. Zero is the not-yet-scanned sentinel.
+group_end_at* = (p :: Parser, from: usize) usize {
+    cached = p.group_ends.get(from).match({ Ok(out) => out, None => 0 });
+    (cached > 0).match({
+        true  => cached,
+        false => {
+            depth ::= 0;
+            out   ::= p.tokens_len();
+            Range(from, p.tokens_len()).loop((h, k) {
+                depth = p.token_kind_at(k).delim_step(depth);
+                (depth == 0).then(() { out = k + 1; h.break() });
+            });
+            // A missing cache slot only loses memoization, never syntax data.
+            p.group_ends.set(from, out).match({ Ok(_) => (), _ => () });
+            out
+        },
+    });
+}
+
+// Index after a balanced angle group. Return `from` when a token invalidates
+// the type-argument interpretation.
+angles_end_at = (p :: Parser, from: usize) usize {
+    depth ::= 0;
+    out   ::= from;
+    Range(from, p.tokens_len()).loop((h, k) {
+        kind = p.token_kind_at(k);
+        kind.angle_stop().match({
+            true  => { out = from; h.break(); },
+            false => {
+                depth = kind.angle_step(depth);
+                (depth == 0).then(() { out = k + 1; h.break() });
+            },
+        });
+    });
+    out;
+}
+
+// Number of comma-separated top-level items in a group.
+group_items_at = (p :: Parser, from: usize, to: usize) usize {
+    depth  ::= 0;
+    commas ::= 0;
+    empty  ::= true;
+    Range(from + 1, to - 1).loop((h, k) {
+        kind = p.token_kind_at(k);
+        (kind == TokenKind.Comma && depth == 0).then(
+            () { commas = commas + 1; }
+        );
+        (!kind.is_trivia()).then(() { empty = false; });
+        depth = kind.delim_step(depth);
+    });
+    empty.match({
+        true  => 0,
+        false => commas + 1,
+    });
+}
+
+// Unmatched closers clamp at depth zero.
+delim_step* = (kind: TokenKind, depth: usize) usize {
+    kind.match({
+        ParenOpen    => depth + 1,
+        BracketOpen  => depth + 1,
+        BraceOpen    => depth + 1,
+        ParenClose   => depth.down(),
+        BracketClose => depth.down(),
+        BraceClose   => depth.down(),
+        _            => depth,
+    });
+}
+
+angle_step = (kind: TokenKind, depth: usize) usize {
+    kind.match({
+        Lt => depth + 1,
+        Gt => depth.down(),
+        _  => depth,
+    });
+}
+
+angle_stop = (kind: TokenKind) bool {
+    kind.is_in([
+        TokenKind.Semicolon,
+        TokenKind.BraceOpen,
+        TokenKind.BraceClose,
+        TokenKind.Eof,
+    ])
+}
+
+down = (d: usize) usize {
+    (d == 0).match({
+        true  => 0,
+        false => d - 1,
+    });
+}
+
+value_shape* = (p :: Parser, module_level: bool) ValueShape {
+    p.peek().kind.match({
+        BraceOpen => ValueShape.StructValue,
+        Bar       => ValueShape.EnumValue,
+        ParenOpen => p.paren_shape(),
+        Lt        => p.angle_shape(),
+        Ident     => p.ident_shape(module_level),
+        _         => ValueShape.ExprValue,
+    });
+}
+
+paren_shape = (p :: Parser) ValueShape {
+    p.live_kind(p.group_end_at(p.at)).fn_value_after().match({
+        true  => ValueShape.FnValue,
+        false => ValueShape.ExprValue,
+    });
+}
+
+angle_shape = (p :: Parser) ValueShape {
+    j = p.angles_end_at(p.at);
+    (j > p.at && p.live_kind(j) == TokenKind.ParenOpen).match({
+        true  => ValueShape.FnValue,
+        false => ValueShape.ExprValue,
+    });
+}
+
+ident_shape = (p :: Parser, module_level: bool) ValueShape {
+    p.bar_after(p.at).match({
+        true  => ValueShape.EnumValue,
+        false => module_level.match({
+            true  => p.path_or_alias(),
+            false => ValueShape.ExprValue,
+        }),
+    });
+}
+
+// A plain enum places `|` after the payload; a represented enum places an
+// integer expression between `=` and that bar. `|` is not an expression
+// operator, so the first top-level bar decides.
+variant_bar_at = (p :: Parser, from: usize) bool {
+    kind = p.token_kind_at(from);
+    kind == TokenKind.Bar
+        || (kind == TokenKind.Eq && p.discriminant_bar_after(p.live_at(
+            from + 1
+        )))
+}
+
+discriminant_bar_after = (p :: Parser, from: usize) bool {
+    depth   ::= 0;
+    found   ::= false;
+    running ::= from < p.tokens_len();
+    Range(from, p.tokens_len()).loop((h, k) {
+        running.then(() {
+            kind = p.token_kind_at(k);
+            (depth == 0 && kind == TokenKind.Bar).match({
+                true  => { found = true; running = false; h.break(); },
+                false => kind.is_in([
+                    TokenKind.Semicolon,
+                    TokenKind.BraceClose,
+                    TokenKind.Eof,
+                ]).match({
+                    true  => { running = false; h.break(); },
+                    false => { depth = kind.delim_step(depth); },
+                }),
+            });
+        });
+    });
+    found;
+}
+
+path_or_alias = (p :: Parser) ValueShape {
+    j       ::= p.live_at(p.at + 1);
+    dotted  ::= false;
+    running ::= p.token_kind_at(j) == TokenKind.Dot;
+    running.loop((h) {
+        dotted  = true;
+        j       = p.live_at(p.live_at(j + 1) + 1);
+        running = p.token_kind_at(j) == TokenKind.Dot;
+    });
+    (p.token_kind_at(j) == TokenKind.Lt).then(() {
+        j = p.live_at(p.angles_end_at(j));
+    });
+    p.closes_value(j).match({
+        false => ValueShape.ExprValue,
+        true  => dotted.match({
+            true  => ValueShape.PathValue,
+            false => ValueShape.AliasValue,
+        }),
+    });
+}
+
+closes_value = (p :: Parser, j: usize) bool {
+    !p.token_kind_at(j).continues_expr()
+}
+
+continues_expr = (kind: TokenKind) bool {
+    kind.match({
+        Dot         => true,
+        ParenOpen   => true,
+        BracketOpen => true,
+        Lt          => true,
+        Star        => true,
+        Plus        => true,
+        Minus       => true,
+        Slash       => true,
+        Percent     => true,
+        PlusWrap    => true,
+        MinusWrap   => true,
+        StarWrap    => true,
+        EqEq        => true,
+        BangEq      => true,
+        Gt          => true,
+        LtEq        => true,
+        GtEq        => true,
+        AmpAmp      => true,
+        BarBar      => true,
+        _           => false,
+    });
+}
+
+// Whether a body item begins a nested declaration rather than a binding.
+decl_head_ahead* = (p :: Parser) bool {
+    p.at_kind(TokenKind.Ident) && p.head_shape_ahead()
+}
+
+// `*` is an export marker only when a binder follows it; otherwise it is
+// multiplication. `:` inside a body is a binding, except the typed enum head
+// that `enum_decl` rejects.
+head_shape_ahead = (p :: Parser) bool {
+    j ::= p.live_at(p.at + 1);
+    (p.token_kind_at(j) == TokenKind.Star).then(() { j = p.live_at(j + 1); });
+    after = p.token_kind_at(j);
+    after.match({
+        Lt    => p.generic_head_ahead(j),
+        Colon => p.typed_enum_head_ahead(j),
+        _     => p.assign_head_ahead(after, j),
+    });
+}
+
+// Keep a typed enum-shaped declaration intact so `enum_decl` can reject the
+// obsolete annotation at its name instead of misreading it as a statement.
+typed_enum_head_ahead = (p :: Parser, colon: usize) bool {
+    binder  ::= p.tokens_len();
+    running ::= true;
+    Range(p.live_at(colon + 1), p.tokens_len()).loop((h, k) {
+        running.then(() {
+            kind = p.token_kind_at(k);
+            kind.match({
+                Eq           => { binder = k; running = false; h.break(); },
+                ColonColonEq => { running = false; h.break(); },
+                Semicolon    => { running = false; h.break(); },
+                BraceOpen    => { running = false; h.break(); },
+                BraceClose   => { running = false; h.break(); },
+                Eof          => { running = false; h.break(); },
+                _            => (),
+            });
+        });
+    });
+    (binder < p.tokens_len()).match({
+        false => false,
+        true  => {
+            value = p.live_at(binder + 1);
+            kind  = p.token_kind_at(value);
+            kind == TokenKind.Bar || p.declares_enum(value, kind)
+        },
+    })
+}
+
+generic_head_ahead = (p :: Parser, j: usize) bool {
+    k = p.angles_end_at(j);
+    (k > j) && p.live_kind(k).assigns()
+}
+
+assign_head_ahead = (p :: Parser, after: TokenKind, j: usize) bool {
+    after.assigns() && p.declares_value(p.live_at(j + 1))
+}
+
+assigns = (kind: TokenKind) bool {
+    kind.is_in([TokenKind.Eq, TokenKind.ColonColonEq])
+}
+
+declares_value = (p :: Parser, j: usize) bool {
+    kind = p.token_kind_at(j);
+    kind.is_in([TokenKind.BraceOpen, TokenKind.Bar])
+        || p.declares_fn(j, kind)
+        || p.declares_enum(j, kind)
+}
+
+declares_fn = (p :: Parser, j: usize, kind: TokenKind) bool {
+    (kind == TokenKind.ParenOpen).match({
+        true  => p.live_kind(p.group_end_at(j)).fn_value_after(),
+        false => kind == TokenKind.Lt && p.live_kind(p.angles_end_at(
+            j
+        )).fn_value_after(),
+    });
+}
+
+declares_enum = (p :: Parser, j: usize, kind: TokenKind) bool {
+    kind == TokenKind.Ident && p.bar_after(j)
+}
+
+bar_after = (p :: Parser, j: usize) bool {
+    k ::= p.live_at(j + 1);
+    (p.token_kind_at(k) == TokenKind.ParenOpen).then(() {
+        k = p.live_at(p.group_end_at(k));
+    });
+    p.variant_bar_at(k)
+}
+
+// Whether a return type begins here rather than the next member head.
+ret_ahead* = (p :: Parser) bool {
+    p.peek().kind.starts_type_kind() && !p.member_head_ahead()
+}
+
+// Recognize a member head through its optional export/type parameters and
+// required binder.
+member_head_ahead = (p :: Parser) bool {
+    p.at_kind(TokenKind.Ident) && p.binder_after_head()
+}
+
+binder_after_head = (p :: Parser) bool {
+    j ::= p.live_at(p.at + 1);
+    (p.token_kind_at(j) == TokenKind.Star).then(() { j = p.live_at(j + 1); });
+    (p.token_kind_at(j) == TokenKind.Lt).then(() {
+        j = p.live_at(p.angles_end_at(j));
+    });
+    p.token_kind_at(j).binds();
+}
+
+binds = (kind: TokenKind) bool {
+    kind.is_in([
+        TokenKind.Colon,
+        TokenKind.ColonColon,
+        TokenKind.Eq,
+        TokenKind.ColonColonEq,
+    ])
+}

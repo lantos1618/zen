@@ -1,0 +1,57 @@
+// Stable coordinates for AST values stored inside module and declaration Vecs.
+// They provide Eq + Hash identity for sema memos without using addresses.
+
+Eq, Hash, Hasher = std.core
+
+MIX : u64 = 1099511628211
+
+// A top-level declaration: `Ast.modules[module].decls[decl]`.
+DeclId* = {
+    module*: u32,
+    decl*: u32,
+}
+
+MemberId* = {
+    module*: u32,
+    decl*: u32,
+    member*: u32,
+}
+
+ImplId* = {
+    decl*: DeclId,
+}
+
+DeclId.impl(Eq, {
+    eq ::= (self: @Self, other: @Self) bool {
+        (self.module == other.module) && (self.decl == other.decl)
+    }
+})
+
+DeclId.impl(Hash, {
+    hash = (self: @Self, hasher :: Hasher) u64 {
+        (self.module.to_u64() *% MIX) +% self.decl.to_u64()
+    }
+})
+
+MemberId.impl(Eq, {
+    eq ::= (self: @Self, other: @Self) bool {
+        (self.module == other.module)
+            && (self.decl == other.decl)
+            && (self.member == other.member)
+    }
+})
+
+MemberId.impl(Hash, {
+    hash = (self: @Self, hasher :: Hasher) u64 {
+        (((self.module.to_u64() *% MIX) +% self.decl.to_u64()) *% MIX)
+            +% self.member.to_u64()
+    }
+})
+
+ImplId.impl(Eq, {
+    eq ::= (self: @Self, other: @Self) bool { self.decl.eq(other.decl) }
+})
+
+ImplId.impl(Hash, {
+    hash = (self: @Self, hasher :: Hasher) u64 { self.decl.hash(hasher) }
+})

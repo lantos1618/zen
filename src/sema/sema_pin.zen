@@ -1,0 +1,52 @@
+Expr, Span = std.ast
+Checker = sema.sema_check
+SemaFault, CaptureFault = sema.sema_diag
+Own = sema.sema_own
+
+// A capture that forbids every later move of a binding: the binding, and
+// where the capture was written.
+Pin* = {
+    root*: usize,
+    span*: Span,
+}
+
+pin_captured* = (c :: Checker, o :: Own, node: Expr, text: str)
+                Res<(), AllocError> {
+    o.find_var(text).match({
+        None  => Ok(()),
+        Ok(i) => ((i < o.escaped) && o.owned_at(i)).match({
+            false => Ok(()),
+            true  => o.pinned.add(Pin(root: i, span: node.span)),
+        }),
+    })
+}
+
+// The first capture is where the binding stopped being movable.
+first_pin = (o: Own, root: usize) Res<Pin> {
+    o.pinned.find((p) { p.root == root })
+}
+
+refuse_pinned* = (c :: Checker, o :: Own, span: Span, text: str)
+                 Res<(), AllocError> {
+    o.find_var(text).match({
+        None  => Ok(()),
+        Ok(i) => c.refuse_pinned_at(o, span, i),
+    })
+}
+
+refuse_pinned_at* = (c :: Checker, o :: Own, span: Span, root: usize)
+                    Res<(), AllocError> {
+    o.first_pin(root).match({
+        None    => Ok(()),
+        Ok(pin) => c.place_name(o, pin.root, "").match({
+            Err(_)    => Ok(()),
+            Ok(place) => c.refuse(
+                span,
+                SemaFault.ConsumedByCapture(CaptureFault(
+                    place: place,
+                    at: pin.span
+                ))
+            ),
+        }),
+    })
+}

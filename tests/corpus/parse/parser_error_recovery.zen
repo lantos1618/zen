@@ -1,0 +1,39 @@
+// tests/corpus/parse/parser_error_recovery.zen
+// One syntax error does not become fifty.
+//
+// The missing `=` in `Point` must produce one diagnostic anchored at `{`.
+// Recovery must then continue far enough to parse the following declarations.
+
+scan, Source = std.lex.lex
+Parser, module = std.parse
+Decl = std.ast.ast_node
+
+SOURCE: str = "Point { x: i32 }\nmain = () i32 { 0 }\nOther { }\nlast = () i32 { 1 }\n"
+
+name_of = (d: Decl) str {
+    d.kind.match({
+        Struct(s)   => s.name.text,
+        Function(f) => f.name.text,
+        Enum(e)     => e.name.text,
+        Alias(a)    => a.name.text,
+        Const(c)    => c.name.text,
+        Impl(i)     => i.target.text,
+        Import(_)   => "import",
+    });
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+    lexed = scan(alloc, Source(file: "t.zen", text: SOURCE)).try();
+    p ::= alloc.Parser(lexed);
+    m = p.module("t").try();
+
+    println("lex {}", lexed.diags.len);
+    println("parse {}", p.diags.len);
+    p.diags.loop((h, d) {
+        println("  {}:{} {}", d.span.start.line, d.span.start.col, d.message);
+    });
+    println("decls {}", m.decls.len);
+    m.decls.loop((h, d) { println("  {}", name_of(d)) });
+    Ok(0);
+}

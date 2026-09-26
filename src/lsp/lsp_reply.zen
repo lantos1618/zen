@@ -1,0 +1,408 @@
+// Reads JSON-RPC message fields and writes response envelopes and
+// capabilities. A message without an `id` is a notification and gets no
+// response.
+
+str, String = std.text
+Alloc, AllocError = std.mem
+Jsons, JsonId, write_text, written, obj, arr, Nest,
+    JsonFault, to_json = std.json
+write_bool = std.json.json_meta
+write_legend = lsp.lsp_colour
+
+// Absent fields read as "" / 0 / the enclosing value.
+Decoded* = {
+    tree: Jsons,
+    request: JsonId,
+    id*: Res<JsonId>,
+
+    valid* = (self: @Self) bool {
+        self.string_at(self.request, "jsonrpc").eq("2.0")
+            && self.text_at(
+                self.request,
+                "method"
+            ).match({ Ok(name) => !name.is_empty(), None => false })
+            && self.id.match({
+                None   => true,
+                Ok(id) => self.tree.at(id).match({
+                    Null => true, Text(_) => true,
+                    Num(value) => value.parse_i64().match({ Ok(_) => true, None => false }),
+                    _          => false,
+                }),
+            })
+    }
+
+    valid_params* = (self: @Self) bool {
+        request_of(self.method()).match({
+            Initialize => true, Shutdown => true, Unknown => true,
+            _ => self.query_params().match({ Ok(_) => true, None => false }),
+        })
+    }
+
+    query_params = (self: @Self) Res<()> {
+        uri = self.text_at(self.param("textDocument"), "uri").try();
+        (!uri.is_empty()).ensure().try();
+        self.method().is_in(["textDocument/hover", "textDocument/definition", "textDocument/completion"]).then(() {
+            self.valid_position(self.param("position")).try();
+        });
+        self.method().eq("textDocument/codeAction").then(() {
+            range = self.param("range");
+            self.valid_position(self.field(range, "start").try()).try();
+            self.valid_position(self.field(range, "end").try()).try();
+        });
+        Ok(())
+    }
+
+    valid_position = (self: @Self, value: JsonId) Res<()> {
+        self.tree.whole(self.field(value, "line").try()).try();
+        self.tree.whole(self.field(value, "character").try()).try();
+        Ok(())
+    }
+
+    method* = (self: @Self) str { self.string_at(self.request, "method") }
+
+    params* = (self: @Self) JsonId { self.field_at(self.request, "params") }
+
+    param* = (self: @Self, name: str) JsonId {
+        self.field_at(self.params(), name)
+    }
+
+    field* = (self: @Self, value: JsonId, name: str) Res<JsonId> {
+        self.tree.field(value, name)
+    }
+
+    array_size* = (self: @Self, value: JsonId) Res<usize> {
+        self.tree.at(value).match({ Arr(run) => Ok(run.len), _ => None })
+    }
+
+    field_at* = (self: @Self, value: JsonId, name: str) JsonId {
+        self.tree.field(value, name).match({ None => value, Ok(v) => v })
+    }
+
+    string_at* = (self: @Self, value: JsonId, name: str) str {
+        self.tree.field(value, name).match({
+            None  => "",
+            Ok(v) => self.tree.text(v).match({ Ok(s) => s, None => "" }),
+        })
+    }
+
+    text_at* = (self: @Self, value: JsonId, name: str) Res<str> {
+        self.tree.text(self.field(value, name).try())
+    }
+
+    version_at* = (self: @Self, value: JsonId) Res<i64> {
+        self.tree.at(self.field(value, "version").try()).match({
+            Num(number) => number.parse_i64(), _ => None,
+        })
+    }
+
+    opened* = (self: @Self) Res<BufferChange> {
+        doc = self.param("textDocument");
+        uri = self.text_at(doc, "uri").try();
+        (!uri.is_empty()).ensure().try();
+        text = self.text_at(doc, "text").try();
+        self.valid_version(doc).ensure().try();
+        Ok(BufferChange(uri: uri, text: text, version: self.version_at(doc)))
+    }
+
+    changed* = (self: @Self, text: str, version: Res<i64>) Res<BufferChange> {
+        doc = self.param("textDocument");
+        uri = self.text_at(doc, "uri").try();
+        self.valid_version(doc).ensure().try();
+        next = self.version_at(doc);
+        version.match({
+            None         => true,
+            Ok(previous) => next.match({ Ok(v) => v > previous, None => false }),
+        }).ensure().try();
+        edits = self.param("contentChanges");
+        count = self.array_size(edits).try();
+        result   ::= text;
+        i: usize ::= 0;
+        loop(() { i < count }, (h) {
+            edit = self.item_at(edits, i).try();
+            self.field(
+                edit,
+                "range"
+            ).match({ None => true, Ok(_) => false }).ensure().try();
+            result = self.text_at(edit, "text").try();
+            i      = i + 1;
+        });
+        Ok(BufferChange(uri: uri, text: result, version: next))
+    }
+
+    valid_version = (self: @Self, doc: JsonId) bool {
+        self.field(doc, "version").match({
+            None  => true,
+            Ok(_) => self.version_at(
+                doc
+            ).match({ Ok(_) => true, None => false }),
+        })
+    }
+
+    number_at* = (self: @Self, value: JsonId, name: str) usize {
+        self.tree.field(value, name).match({
+            None  => 0,
+            Ok(v) => self.tree.whole(v).match({ Ok(n) => n, None => 0 }),
+        })
+    }
+
+    item_at* = (self: @Self, value: JsonId, i: usize) Res<JsonId> {
+        self.tree.item(value, i)
+    }
+}
+
+BufferChange* = {
+    uri*: str,
+    text*: str,
+    version*: Res<i64>,
+}
+
+Decoded* = (tree: Jsons, request: JsonId) Decoded {
+    Decoded(tree: tree, request: request, id: tree.field(request, "id"))
+}
+
+RequestTurn* = {
+    temporary: Alloc,
+    response :: String,
+
+    alloc* = (self: @Self) Alloc { self.temporary }
+
+    is_empty* = (self: @Self) bool { self.response.is_empty() }
+
+    view* = (self: @Self) str { self.response.view() }
+
+    result* = (self :: @Self, request: Decoded, body: str)
+              Res<(), AllocError> {
+        request.id.match({
+            None    => written(),
+            Ok(rid) => {
+                reply ::= self.head(request.tree, rid).try();
+                reply.key("result", self.response).try();
+                self.response.add(body).try();
+                reply.close(self.response)
+            },
+        })
+    }
+
+    failed* = (self :: @Self, request: Decoded, code: RpcFault, why: str)
+              Res<(), AllocError> {
+        request.id.match({
+            None    => written(),
+            Ok(rid) => {
+                reply ::= self.head(request.tree, rid).try();
+                self.finish_error(reply, code, why)
+            },
+        })
+    }
+
+    invalid_request* = (self :: @Self) Res<(), AllocError> {
+        reply ::= self.envelope().try();
+        self.response.add("null").try();
+        self.finish_error(
+            reply,
+            RpcFault.InvalidRequest,
+            "invalid JSON-RPC request"
+        )
+    }
+
+    parse_error* = (self :: @Self, f: JsonFault) Res<(), AllocError> {
+        reply ::= self.envelope().try();
+        self.response.add("null").try();
+        why ::= self.temporary.String().try();
+        why.add(f.fault_text()).try();
+        f.fault_at().match({
+            None  => written(),
+            Ok(i) => { why.add(" at byte ").try(); why.write_usize(i) },
+        }).try();
+        self.finish_error(reply, RpcFault.ParseError, why.view())
+    }
+
+    envelope = (self :: @Self) Res<Nest, AllocError> {
+        reply ::= obj(self.response).try();
+        reply.text("jsonrpc", "2.0", self.response).try();
+        reply.key("id", self.response).try();
+        Ok(reply)
+    }
+
+    head = (self :: @Self, tree: Jsons, rid: JsonId) Res<Nest, AllocError> {
+        reply ::= self.envelope().try();
+        tree.write(rid, self.response).try();
+        Ok(reply)
+    }
+
+    finish_error = (self :: @Self, reply :: Nest, code: RpcFault, why: str)
+                   Res<(), AllocError> {
+        reply.key("error", self.response).try();
+        encoded ::= RpcError(code: code.rpc_code(), message: why)
+            .to_json(self.temporary).try();
+        self.response.add(encoded.view()).try();
+        reply.close(self.response)
+    }
+}
+
+RequestTurn* = (temporary: Alloc) Res<RequestTurn, AllocError> {
+    Ok(RequestTurn(temporary: temporary, response: temporary.String().try()))
+}
+
+fault_at = (f: JsonFault) Res<usize> {
+    f.match({
+        Unexpected(i) => Ok(i),
+        Truncated(i)  => Ok(i),
+        BadEscape(i)  => Ok(i),
+        BadNumber(i)  => Ok(i),
+        TooDeep(i)    => Ok(i),
+        Trailing(i)   => Ok(i),
+        NoMemory      => None,
+    })
+}
+
+fault_text = (f: JsonFault) str {
+    f.match({
+        Unexpected(_) => "unexpected byte",
+        Truncated(_)  => "the document ended inside a value",
+        BadEscape(_)  => "bad escape",
+        BadNumber(_)  => "not a JSON number",
+        TooDeep(_)    => "nested too deeply",
+        Trailing(_)   => "trailing bytes after the value",
+        NoMemory      => "out of memory",
+    })
+}
+
+RpcError = {
+    code: i32,
+    message: str,
+}
+
+ServerInfo = {
+    name: str,
+    version: str,
+}
+
+// Scalar capability values are typed. The two string arrays and the dynamic
+// semantic legend use the streaming writer, which owns JSON punctuation.
+ServerCapabilities = {
+    textDocumentSync: usize = 1,
+    hoverProvider: bool = true,
+    definitionProvider: bool = true,
+    documentSymbolProvider: bool = true,
+    documentFormattingProvider: bool = true,
+    completionTrigger: str = ".",
+    codeActionKind: str = "quickfix",
+    semanticTokensFull: bool = true,
+
+    write = (self: @Self, out :: String) Res<(), AllocError> {
+        caps ::= obj(out).try();
+        caps.key("textDocumentSync", out).try();
+        out.write_usize(self.textDocumentSync).try();
+        caps.key("hoverProvider", out).try();
+        write_bool(out, self.hoverProvider).try();
+        caps.key("definitionProvider", out).try();
+        write_bool(out, self.definitionProvider).try();
+        caps.key("documentSymbolProvider", out).try();
+        write_bool(out, self.documentSymbolProvider).try();
+        caps.key("documentFormattingProvider", out).try();
+        write_bool(out, self.documentFormattingProvider).try();
+        caps.key("completionProvider", out).try();
+        StringListOption(name: "triggerCharacters", value: self.completionTrigger).write(out).try();
+        caps.key("codeActionProvider", out).try();
+        StringListOption(name: "codeActionKinds", value: self.codeActionKind).write(out).try();
+        caps.key("semanticTokensProvider", out).try();
+        semantic ::= obj(out).try();
+        semantic.key("legend", out).try();
+        write_legend(out).try();
+        semantic.key("full", out).try();
+        write_bool(out, self.semanticTokensFull).try();
+        semantic.close(out).try();
+        caps.close(out)
+    }
+}
+
+StringListOption = {
+    name: str,
+    value: str,
+
+    write = (self: @Self, out :: String) Res<(), AllocError> {
+        option ::= obj(out).try();
+        option.key(self.name, out).try();
+        values ::= arr(out).try();
+        values.next(out).try();
+        write_text(self.value, out).try();
+        values.close(out).try();
+        option.close(out)
+    }
+}
+
+write_capabilities* = (a: Alloc, out :: String) Res<(), AllocError> {
+    result ::= obj(out).try();
+    result.key("capabilities", out).try();
+    ServerCapabilities().write(out).try();
+    result.key("serverInfo", out).try();
+    info ::= ServerInfo(name: "zen", version: "0").to_json(a).try();
+    out.add(info.view()).try();
+    result.close(out)
+}
+
+SEMANTIC_TOKENS: str = "textDocument/semanticTokens/full"
+
+Request* = Initialize
+    | Shutdown
+    | Hover
+    | Definition
+    | Outline
+    | Completion
+    | Colour
+    | Format
+    | Action
+    | Unknown
+
+request_of* = (method: str) Request {
+    found: Res<Request> = loop<Request>((h) {
+        method.eq("textDocument/hover").then(() { h.break(Request.Hover) });
+        method.eq("textDocument/definition").then(() { h.break(Request.Definition) });
+        method.eq("textDocument/completion").then(() { h.break(Request.Completion) });
+        method.eq("textDocument/documentSymbol").then(() { h.break(Request.Outline) });
+        method.eq(SEMANTIC_TOKENS).then(() { h.break(Request.Colour) });
+        method.eq("textDocument/formatting").then(() { h.break(Request.Format) });
+        method.eq("textDocument/codeAction").then(() { h.break(Request.Action) });
+        method.eq("initialize").then(() { h.break(Request.Initialize) });
+        method.eq("shutdown").then(() { h.break(Request.Shutdown) });
+        h.break(Request.Unknown);
+    });
+    found.match({
+        Ok(one) => one,
+        None    => Request.Unknown,
+    });
+}
+
+Notice* = DidOpen | DidChange | DidClose | DidChangeWatched | Ignored
+
+notice_of* = (method: str) Notice {
+    found: Res<Notice> = loop<Notice>((h) {
+        method.eq("textDocument/didOpen").then(() { h.break(Notice.DidOpen) });
+        method.eq("textDocument/didChange").then(() { h.break(Notice.DidChange) });
+        method.eq("textDocument/didClose").then(() { h.break(Notice.DidClose) });
+        method.eq("workspace/didChangeWatchedFiles").then(() {
+            h.break(Notice.DidChangeWatched)
+        });
+        h.break(Notice.Ignored);
+    });
+    found.match({
+        Ok(one) => one,
+        None    => Notice.Ignored,
+    });
+}
+
+RpcFault* = InvalidRequest
+    | ParseError
+    | MethodNotFound
+    | InvalidParams
+    | NotInitialized
+
+rpc_code = (f: RpcFault) i32 {
+    f.match({
+        InvalidRequest => -32600,
+        ParseError     => -32700,
+        MethodNotFound => -32601,
+        InvalidParams  => -32602,
+        NotInitialized => -32002,
+    })
+}

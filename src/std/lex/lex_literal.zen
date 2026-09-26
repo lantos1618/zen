@@ -1,0 +1,238 @@
+// Strings, characters, escapes and numbers. Invalid spellings are rejected
+// rather than reinterpreted (`010` is not octal and `"\q"` is not `"q"`).
+// Recoverable faults may still emit a token; unterminated or unrepresentable
+// literals do not.
+
+Lexer = std.lex.lex_state
+Pos, TokenKind = std.lex.lex_token
+LexFault = std.lex.lex_diag
+is_escape, escape_value = std.lex.lex_byte
+Alloc, AllocError = std.mem
+str = std.text
+
+LiteralError* = OutOfMemory | IncompleteEscape(usize) | UnknownEscape(usize)
+
+// Byte length of an unquoted, lexer-validated literal body or format fragment.
+// Each Zen escape denotes one byte; counting needs no decoded allocation.
+literal_byte_len* = (raw: str) usize {
+    count: usize ::= 0;
+    at: usize    ::= 0;
+    loop(() { at < raw.len }, (h) {
+        count = count + 1;
+        at    = at + (raw[at] == '\\').match({ true => 2, false => 1 });
+    });
+    count
+}
+
+// Decode an unquoted Zen literal body or format fragment. Plain bytes borrow
+// raw; escaped bytes borrow storage allocated through a. JSON uses a different
+// vocabulary and must keep its own decoder. Error offsets name the backslash.
+decode_literal* = (raw: str, a: Alloc) Res<str, LiteralError> {
+    raw.find('\\').match({
+        None      => Ok(raw),
+        Ok(first) => {
+            out ::= a.String().try(LiteralError.OutOfMemory);
+            out.add(raw.slice(0, first)).try(LiteralError.OutOfMemory);
+            at: usize ::= first;
+            loop(() { at < raw.len }, (h) {
+                byte ::= raw[at];
+                (byte == '\\').then(() {
+                    slash = at;
+                    at    = at + 1;
+                    (at < raw.len).ensure(LiteralError.IncompleteEscape(
+                        slash
+                    )).try();
+                    byte = raw[at].escape_value()
+                        .ok_or(LiteralError.UnknownEscape(slash)).try();
+                });
+                out.add(byte).try(LiteralError.OutOfMemory);
+                at = at + 1;
+            });
+            Ok(out.view())
+        },
+    })
+}
+
+// String line/end faults are anchored at the opening quote.
+string* = (lx :: Lexer) Res<(), AllocError> {
+    from = lx.cur.pos();
+    lx.cur.bump();
+    loop((h) {
+        lx.cur.peek().match({
+            None     => { lx.report(
+                LexFault.UnterminatedString,
+                from
+            ).try(); h.break(); },
+            Ok('\n') => { lx.report(
+                LexFault.StringSpansLine,
+                from
+            ).try(); h.break(); },
+            Ok('\\') => {
+                reported = lx.escape().try();
+                (lx.cur.is_done() && reported).then(() { h.break(); });
+            },
+            Ok('"')  => { lx.cur.bump(); lx.emit(
+                TokenKind.Str,
+                from
+            ).try(); h.break(); },
+            Ok(_)    => { lx.cur.bump(); },
+        });
+    });
+    Ok(());
+}
+
+// Character literals contain exactly one byte, not one Unicode code point.
+character* = (lx :: Lexer) Res<(), AllocError> {
+    from = lx.cur.pos();
+    lx.cur.bump();
+    lx.cur.peek().match({
+        None     => lx.report(LexFault.UnterminatedChar, from),
+        Ok('\n') => lx.report(LexFault.CharSpansLine, from),
+        Ok('\'') => { lx.cur.bump(); lx.report(LexFault.EmptyChar, from) },
+        Ok('\\') => {
+            reported = lx.escape().try();
+            (lx.cur.is_done() && reported).match({
+                true  => Ok(()),
+                false => lx.close_char(from),
+            })
+        },
+        Ok(_)    => { lx.cur.bump(); lx.close_char(from) },
+    });
+}
+
+close_char = (lx :: Lexer, from: Pos) Res<(), AllocError> {
+    lx.cur.at_byte('\'').match({
+        true  => { lx.cur.bump(); lx.emit(TokenKind.Char, from) },
+        false => lx.overlong_char(from),
+    });
+}
+
+// Resynchronize at the closing quote or the end of the line.
+overlong_char = (lx :: Lexer, from: Pos) Res<(), AllocError> {
+    lx.cur.bump_while((b) { (b != '\'') && (b != '\n') });
+    lx.cur.peek().match({
+        Ok('\'') => { lx.cur.bump(); lx.report(LexFault.CharTooLong, from) },
+        Ok(_)    => lx.report(LexFault.CharSpansLine, from),
+        None     => lx.report(LexFault.UnterminatedChar, from),
+    });
+}
+
+// Consume one escape. Returns true when a fault was reported; at end of input
+// the caller must then not report its own. Newlines are left for the
+// enclosing literal to diagnose.
+escape = (lx :: Lexer) Res<bool, AllocError> {
+    from = lx.cur.pos();
+    lx.cur.bump();
+    lx.cur.peek().match({
+        None     => { lx.report(LexFault.UnterminatedEscape, from).try(); Ok(true) },
+        // Newlines are not escapable and Zen has no line continuation. Keep
+        // LF, or the CR of CRLF, for the caller to report as a literal that
+        // spans a line. A lone CR remains an ordinary unknown escape.
+        Ok('\n') => Ok(false),
+        Ok('\r') => lx.cur.at_byte(1, '\n').match({
+            true  => Ok(false),
+            false => { lx.cur.bump(); lx.report(LexFault.UnknownEscape, from).try(); Ok(true) },
+        }),
+        Ok(b)    => {
+            lx.cur.bump();
+            is_escape(b).match({
+                false => { lx.report(LexFault.UnknownEscape, from).try(); Ok(true) },
+                true  => Ok(false),
+            })
+        },
+    });
+}
+
+// Integers are decimal or `0x` hexadecimal. Floats are decimal. Neither form
+// accepts separators or type suffixes.
+number* = (lx :: Lexer) Res<(), AllocError> {
+    from = lx.cur.pos();
+    lx.is_hex_prefix().match({
+        true  => lx.hex_number(from),
+        false => lx.decimal_number(from),
+    })
+}
+
+is_hex_prefix = (lx: Lexer) bool {
+    lx.cur.at_byte('0')
+        && (lx.cur.at_byte(1, 'x') || lx.cur.at_byte(1, 'X'))
+}
+
+hex_number = (lx :: Lexer, from: Pos) Res<(), AllocError> {
+    lx.cur.bump();
+    lx.cur.bump();
+    digits_at = lx.cur.pos();
+    lx.cur.bump_while((b) { b.is_hex_digit() });
+    digits = lx.since(digits_at);
+    (digits.len > 0).match({
+        false => {
+            lx.cur.bump_while((b) { b.is_ident_cont() });
+            lx.report(LexFault.HexNeedsDigit, from)
+        },
+        true  => {
+            lx.suffix().try();
+            lx.emit_int(digits.parse_u64_radix(16), from)
+        },
+    })
+}
+
+decimal_number = (lx :: Lexer, from: Pos) Res<(), AllocError> {
+    lx.cur.bump_while((b) { b.is_digit() });
+    whole = lx.since(from);
+
+    has_leading_zero(whole).match({
+        true  => lx.report(LexFault.LeadingZero, from),
+        false => Ok(()),
+    }).try();
+
+    is_float = lx.fraction().try();
+
+    lx.suffix().try();
+
+    is_float.match({
+        true  => lx.emit(TokenKind.Float, from),
+        false => lx.emit_int(whole.parse_u64(), from),
+    });
+}
+
+// `1.` and `1.x` are faults; a number is never an Int followed by Dot.
+fraction = (lx :: Lexer) Res<bool, AllocError> {
+    lx.cur.at_byte('.').match({
+        true  => lx.after_dot(),
+        false => Ok(false),
+    });
+}
+
+after_dot = (lx :: Lexer) Res<bool, AllocError> {
+    dot           = lx.cur.pos();
+    digit_follows = lx.cur.peek(
+        1
+    ).match({ Ok(b) => b.is_digit(), None => false });
+    lx.cur.bump();
+    digit_follows.match({
+        false => lx.report(LexFault.FloatNeedsDigit, dot),
+        true  => Ok(()),
+    }).try();
+    lx.cur.bump_while((b) { b.is_digit() });
+    Ok(digit_follows);
+}
+
+// Identifier bytes glued to a number (`1abc`, `0xffg`) are a fault.
+suffix = (lx :: Lexer) Res<(), AllocError> {
+    at = lx.cur.pos();
+    lx.cur.bump_while((b) { b.is_ident_cont() });
+    (lx.cur.pos().offset > at.offset).match({
+        true  => lx.report(LexFault.SuffixOnNumber, at),
+        false => Ok(()),
+    });
+}
+
+// Values beyond u64 produce a fault and no token.
+emit_int = (lx :: Lexer, value: Res<u64>, from: Pos) Res<(), AllocError> {
+    value.match({
+        Ok(v) => lx.emit(TokenKind.Int(v), from),
+        None  => lx.report(LexFault.IntegerOutOfRange, from),
+    });
+}
+
+has_leading_zero = (whole: str) bool { (whole.len > 1) && (whole[0] == '0') }

@@ -1,0 +1,177 @@
+// Compile-time `{}` formatting. The format language has no width, precision,
+// or positional indices:
+//
+//   {}      a hole. The next argument, written through its toString.
+//   {name}  a named hole resolved in the caller's scope; it consumes no
+//           positional argument.
+//   {{      a literal `{`. `}}` is a literal `}`, so `{{}}` writes `{}`.
+//   {       followed by anything else is a literal brace. A lone `}` is
+//           also literal.
+//
+// A named hole contains an identifier, not an expression; `{p.x}` and
+// `{f()}` are invalid. Formatting is expanded at the call site, so invalid
+// holes and argument counts are compile errors.
+// Byte writes do not interpret braces: String.add("]}}") writes two closing
+// braces, while String.fmt("]}}") writes one.
+
+str = std.text.text_str
+Sink, WriteError = std.core.io
+
+// One format step. `literal` borrows a slice of the format string.
+FmtStep* = {
+    literal*: str,     // bytes to write verbatim. May be empty
+    hole*: bool,       // does a hole follow the run?
+    name*: str,        // the hole's name; empty when the hole is `{}`
+    bad*: bool,        // the run stopped at a `{` that opened no hole
+    next*: usize,      // start of the next step; f.len when spent
+}
+
+FmtWhat* = Byte           // an ordinary byte: the literal run goes on
+         | Hole           // `{}`, filled by the next argument
+         | Pair           // `{{` or `}}`: the run keeps ONE of the two
+         | Named(str)     // `{name}`, filled by that name's binding
+         | NoName         // a `{` that meant a hole and closed on nothing
+
+FmtAt* = {
+    what*: FmtWhat,
+    keep*: usize,     // one past the last byte the run before this keeps
+    next*: usize,     // where the walk resumes
+}
+
+// Only `Byte` continues the current literal chunk.
+ends_run* = (at: FmtAt) bool {
+    at.what.match({ Byte => false, _ => true })
+}
+
+// Named holes carry their own value; only positional holes consume arguments.
+arguments_taken* = (what: FmtWhat) usize {
+    what.match({ Hole => 1, _ => 0 })
+}
+
+// Classify one byte position in [i, end), with end bounded by raw.len.
+// Source-language escapes belong to the caller; ordinary bytes advance by one.
+fmt_at* = (raw: str, i: usize, end: usize) FmtAt {
+    is_hole(raw, i, end).match({
+        true  => FmtAt(what: FmtWhat.Hole, keep: i, next: i + 2),
+        false => at_no_hole(raw, i, end),
+    })
+}
+
+// Doubled braces are literal escapes.
+at_no_hole = (raw: str, i: usize, end: usize) FmtAt {
+    is_doubled_brace(raw, i, end).match({
+        true  => FmtAt(what: FmtWhat.Pair, keep: i + 1, next: i + 2),
+        false => at_no_pair(raw, i, end),
+    })
+}
+
+// A named hole accepts an identifier, not an arbitrary expression.
+at_no_pair = (raw: str, i: usize, end: usize) FmtAt {
+    opens_name(raw, i, end).match({
+        false => FmtAt(what: FmtWhat.Byte, keep: i, next: i + 1),
+        true  => at_ident(raw, i, end, ident_end(raw, i + 1, end)),
+    })
+}
+
+at_ident = (raw: str, i: usize, end: usize, j: usize) FmtAt {
+    ((j < end) && raw.index(j) == '}').match({
+        true  => FmtAt(
+            what: FmtWhat.Named(raw.slice(i + 1, j)),
+            keep: i,
+            next: j + 1
+        ),
+        false => FmtAt(what: FmtWhat.NoName, keep: i, next: i + 1),
+    })
+}
+
+is_hole = (raw: str, i: usize, end: usize) bool {
+    (i + 1 < end) && raw.index(i) == '{' && raw.index(i + 1) == '}'
+}
+
+is_doubled_brace = (raw: str, i: usize, end: usize) bool {
+    (i + 1 < end) && raw.index(i) == raw.index(i + 1)
+        && (raw.index(i) == '{' || raw.index(i) == '}')
+}
+
+opens_name = (raw: str, i: usize, end: usize) bool {
+    (i + 1 < end) && raw.index(i) == '{'
+        && raw.index(i + 1).is_ident_start()
+}
+
+// Use the language's identifier predicates for named holes.
+ident_end = (raw: str, from: usize, end: usize) usize {
+    j ::= from;
+    loop(() { (j < end) && raw.index(j).is_ident_cont() }, (h) {
+        j = j + 1;
+    });
+    j
+}
+
+break_at = (f: str, from: usize) Res<FmtAt> {
+    i ::= from;
+    found: Res<FmtAt> = loop<FmtAt>(() { i < f.len }, (h) {
+        at = f.fmt_at(i, f.len);
+        at.ends_run().then(() { h.break(at) });
+        i = i + 1;
+    });
+    found
+}
+
+// Call repeatedly with `step.next` until `next == f.len`.
+fmt_next* = (f: str, from: usize) FmtStep {
+    f.break_at(from).match({
+        None   => f.rest_step(from),
+        Ok(at) => f.step_at(from, at),
+    })
+}
+
+step_at = (f: str, from: usize, at: FmtAt) FmtStep {
+    FmtStep(
+        literal: f.slice(from, at.keep),
+        hole: at.what.match({ Hole => true, Named(_) => true, _ => false }),
+        name: at.what.match({ Named(name) => name, _ => "" }),
+        bad: at.what.match({ NoName => true, _ => false }),
+        next: at.next,
+    )
+}
+
+rest_step = (f: str, from: usize) FmtStep {
+    FmtStep(
+        literal: f.slice(from, f.len),
+        hole: false,
+        name: "",
+        bad: false,
+        next: f.len
+    )
+}
+
+// Arguments are type-directed and expanded at the call site.
+fmt* = (out :: Sink, fmt: str, args: ...) Res<(), WriteError>
+
+// Decimal without separators.
+add_u64* = (out :: Sink, v: u64) Res<(), WriteError> {
+    (v >= 10).then(() { out.add_u64(v / 10).try() });
+    out.write_byte((v % 10).digit());
+}
+
+add_i64* = (out :: Sink, v: i64) Res<(), WriteError> {
+    (v < 0).then(() { out.write_byte('-').try() });
+    // Keeping the value non-positive handles i64.MIN without negating it.
+    out.add_digits((v < 0).match({ true => v, false => 0 - v }));
+}
+
+add_digits = (out :: Sink, v: i64) Res<(), WriteError> {
+    (v <= -10).then(() { out.add_digits(v / 10).try() });
+    out.write_byte((0 - (v % 10)).digit());
+}
+
+add_bool* = (out :: Sink, v: bool) Res<(), WriteError> {
+    v.match({
+        true  => out.write("true"),
+        false => out.write("false"),
+    });
+}
+
+// Uses C `%g`: six significant digits, exponent notation when selected by
+// `%g`, and the C spellings for non-finite values.
+add_f64* = (out :: Sink, v: f64) Res<(), WriteError>

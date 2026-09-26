@@ -1,0 +1,23 @@
+// Breaking a mapped callback stops its traversal and preserves earlier values.
+// The nested callback must keep the handle bound to the enclosing range loop.
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+
+    head = Range(0, 6).map(alloc, (h, index, value) {
+        (index == 3).then(() { h.break(); });
+        value * 10
+    }).try();
+
+    println("len {}", head.len);
+    head.loop((h, n) {
+        println("{}", n);
+    });
+
+    all = Range(0, 4).map(alloc, (h, index, value) {
+        value + 1
+    }).try();
+    println("all {}", all.len);
+
+    Ok(0);
+}

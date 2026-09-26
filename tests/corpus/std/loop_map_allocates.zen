@@ -1,0 +1,15 @@
+// Mapping collects transformed values in caller-chosen storage.
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+
+    doubled = Range(1, 4).map(alloc, (h, index, value) {
+        value * 2
+    }).try();
+
+    println("len {}", doubled.len);
+    doubled.loop((h, n) {
+        println("{}", n);
+    });
+    Ok(0);
+}

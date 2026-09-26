@@ -1,0 +1,224 @@
+// Lowers indexing and answers its result type. `Ptr<T>` uses unchecked C
+// Subscripting because it carries no length; other receivers dispatch to their
+// Declared or supplied `index` member, which owns any bounds policy.
+
+ExprId, Member, Function, Index = std.ast
+AllocError = std.mem
+Vec = std.collections
+String = std.text
+TyId = sema.sema_ty
+Ctx = sema.sema_check
+Inst = sema.sema_inst
+self_ctx = sema.sema_member
+CBackend = gen.gen_c.gen_c_state
+unsupported = gen.gen_c.gen_c_report
+sub_with, any_open, recv_inst, inst_open = gen.gen_c.gen_c_mono
+enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
+is_ptr_named, declared_ret = gen.gen_c.gen_c_type
+expr, ty_of = gen.gen_c.gen_c_expr
+has_call = gen.gen_c.gen_c_expr
+write_arg, write_arg_at = gen.gen_c.gen_c_arg
+Site, site_of, member_at = gen.gen_c.gen_c_member
+bodied_fn, impl_member = gen.gen_c.gen_c_impl
+method_sig, member_symbol = gen.gen_c.gen_c_member
+array_of, write_array_index = gen.gen_c.gen_c_array
+
+lower_index* = (
+    be  :: CBackend,
+    id  : ExprId,
+    ix  : Index,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    unknown = be.check.types.unknown().try();
+    rty     = be.ty_of(ix.base, ctx, unknown).try();
+    be.array_of(rty).match({
+        Ok(a) => be.write_array_index(ix, rty, a, ctx, out),
+        None  => be.index_not_array(id, ix, rty, ctx, out),
+    })
+}
+
+index_not_array = (
+    be  :: CBackend,
+    id  : ExprId,
+    ix  : Index,
+    rty : TyId,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    be.is_raw_ptr(rty).match({
+        true  => be.write_subscript(ix, ctx, out),
+        false => be.index_through_member(id, ix, rty, ctx, out),
+    })
+}
+
+// What `s[i]` evaluates to, needed before anything is written: the
+// element of a raw pointer, or the return type of the declared
+// `index`.
+index_type* = (be :: CBackend, ix: Index, ctx: Ctx, want: TyId)
+              Res<TyId, AllocError> {
+    unknown = be.check.types.unknown().try();
+    rty     = be.ty_of(ix.base, ctx, unknown).try();
+    be.array_of(rty).match({
+        Ok(a) => Ok(a.elem),
+        None  => be.not_array_index_type(rty, want),
+    })
+}
+
+not_array_index_type = (be :: CBackend, rty: TyId, want: TyId)
+                       Res<TyId, AllocError> {
+    be.is_raw_ptr(rty).match({
+        true  => Ok(ptr_element(be, rty, want)),
+        false => be.member_index_type(rty, want),
+    })
+}
+
+ptr_element = (be :: CBackend, rty: TyId, want: TyId) TyId {
+    be.check.types.at(rty).match({
+        Named(n) => n.args.get(0).match({ Ok(t) => t, None => want }),
+        _        => want,
+    })
+}
+
+member_index_type = (be :: CBackend, rty: TyId, want: TyId)
+                    Res<TyId, AllocError> {
+    site_of(be, rty).try().match({
+        None  => Ok(want),
+        Ok(s) => be.site_index_type(rty, s, want),
+    })
+}
+
+site_index_type = (be :: CBackend, rty: TyId, s: Site, want: TyId)
+                  Res<TyId, AllocError> {
+    found ::= be.alloc.Vec<Member>();
+    member_at(be, s, "index", found).try();
+    bodied_fn(found).match({
+        Ok(f) => be.index_ret(rty, s, f),
+        None  => Ok(want),
+    })
+}
+
+index_ret = (be :: CBackend, rty: TyId, s: Site, f: Function)
+            Res<TyId, AllocError> {
+    sctx     = be.check.self_ctx(s.decl.module.to_usize(), rty).try();
+    mark     = be.enter_struct_tparams(s.decl).try();
+    declared = be.declared_ret(f, sctx).try();
+    be.leave_tparams(mark).try();
+    inst = be.recv_inst(rty).try();
+    be.sub_with(declared, inst)
+}
+
+is_raw_ptr = (be :: CBackend, rty: TyId) bool {
+    be.check.types.at(rty).match({
+        Named(n) => is_ptr_named(n),
+        _        => false,
+    })
+}
+
+write_subscript = (be :: CBackend, ix: Index, ctx: Ctx, out :: String)
+                  Res<(), AllocError> {
+    unknown = be.check.types.unknown().try();
+    counter = be.check.types.prim("usize").try();
+    base ::= be.alloc.String().try();
+    expr(be, ix.base, ctx, unknown, base).try();
+    idx ::= be.alloc.String().try();
+    expr(be, ix.index, ctx, counter, idx).try();
+    out.fmt("({})[{}]", base.view(), idx.view())
+}
+
+index_through_member = (
+    be  :: CBackend,
+    id  : ExprId,
+    ix  : Index,
+    rty : TyId,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    site_of(be, rty).try().match({
+        None  => be.no_index(id, out),
+        Ok(s) => be.index_member(id, ix, rty, s, ctx, out),
+    })
+}
+
+// The type's own `index`, then what an impl supplies — the order
+// `sema_supply.zen` states.
+index_member = (
+    be  :: CBackend,
+    id  : ExprId,
+    ix  : Index,
+    rty : TyId,
+    s   : Site,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    found ::= be.alloc.Vec<Member>();
+    member_at(be, s, "index", found).try();
+    bodied_fn(found).match({
+        Ok(f) => be.write_index_call(id, ix, rty, s, f, ctx, out),
+        None  => be.supplied_index(id, ix, rty, s, ctx, out),
+    })
+}
+
+supplied_index = (
+    be  :: CBackend,
+    id  : ExprId,
+    ix  : Index,
+    rty : TyId,
+    s   : Site,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    be.impl_member(s.decl, "index").try().match({
+        Ok(f) => be.write_index_call(id, ix, rty, s, f, ctx, out),
+        None  => be.no_index(id, out),
+    })
+}
+
+no_index = (be :: CBackend, id: ExprId, out :: String)
+           Res<(), AllocError> {
+    be.unsupported(id, "an index on a type that declares no `index`", out)
+}
+
+write_index_call = (
+    be  :: CBackend,
+    id  : ExprId,
+    ix  : Index,
+    rty : TyId,
+    s   : Site,
+    f   : Function,
+    ctx : Ctx,
+    out :: String
+)
+                   Res<(), AllocError> {
+    inst = be.recv_inst(rty).try();
+    mi   = s.decl.module.to_usize();
+    sig ::= be.alloc.Vec<TyId>();
+    be.method_sig(rty, s.decl, f, mi, inst, sig).try();
+    (be.inst_open(inst) || be.any_open(sig)).match({
+        true  => be.unsupported(
+            id,
+            "an index on a receiver whose type arguments nothing settles",
+            out
+        ),
+        false => be.emit_index_call(ix, rty, s, f, sig, inst, ctx, out),
+    })
+}
+
+emit_index_call = (
+    be   :: CBackend,
+    ix   : Index,
+    rty  : TyId,
+    s    : Site,
+    f    : Function,
+    sig  : Vec<TyId>,
+    inst : Inst,
+    ctx  : Ctx,
+    out  :: String
+) Res<(), AllocError> {
+    sym = be.member_symbol(rty, s, "index", sig, inst).try();
+    base ::= be.alloc.String().try();
+    be.write_arg_at(ix.base, 0, be.has_call(ix.index), f, sig, ctx, base).try();
+    idx ::= be.alloc.String().try();
+    be.write_arg(ix.index, 1, f, sig, ctx, idx).try();
+    out.fmt("{}({}, {})", sym.view(), base.view(), idx.view())
+}

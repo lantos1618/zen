@@ -1,0 +1,6 @@
+// A Drop value is destroyed exactly once at scope exit, in reverse declaration
+// order and after the block's defers. Passing one borrows it; `consume` moves it.
+Drop* = {
+    // Required implementation. Scope exit may call it on an immutable binding.
+    drop* = (self :: @Self) ()
+}

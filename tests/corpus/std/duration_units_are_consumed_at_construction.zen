@@ -1,0 +1,53 @@
+// The unit is not part of a Duration. `seconds(60)` and
+// `minutes(1)` are the SAME VALUE, which is the whole argument for
+// five constructors over an enum: as variants they would be two
+// values that must compare equal, and every operation would begin by
+// normalising to the representation this struct simply has.
+// ONE import for the type. `millis_of`, `count_in`, `unit_of`, `add`
+// and `sub` all take a Duration first, so they travel with it — "a type
+// travels with its methods, its impls, and the exported UFCS functions
+// whose first parameter is that type". Listing them was my mistake, not
+// the language's.
+//
+// The CONSTRUCTORS are the exception, and it is a real one: `seconds`
+// takes a u64, so it travels with u64 and not with Duration. See
+// DESIGN.md — this is what associated functions are for, and gen_c does
+// not lower them yet.
+Duration = std.core.time
+seconds, minutes, millis, micros, nanos = std.core.time
+Unit, suffix = std.core.time
+
+main = (env: Env) Res<i32, ArgError> {
+    a = seconds(60);
+    b = minutes(1);
+    println("{}", a.ns == b.ns);
+
+    // one accessor per constructor, and they truncate
+    d = millis(1500);
+    println("{}", d.seconds_of());
+    println("{}", d.millis_of());
+    println("{}", micros(1500).millis_of());
+
+    // ufcs: the constructor travels with u64, its first parameter
+    n: u64 = 2;
+    println("{}", n.seconds().nanos_of());
+
+    // sub is a Res because a Duration is unsigned: a shorter span
+    // minus a longer one has no answer, and that is an absence
+    seconds(1).sub(seconds(3)).match({
+        Ok(_) => println("negative"),
+        None  => println("no answer"),
+    });
+    // and the unit IS an enum -- where the distinction survives, which
+    // is at display time: a caller matches on `unit_of` to pick a
+    // suffix, and nothing had to store it
+    show(d);
+    show(seconds(90));
+    show(nanos(5));
+    Ok(0);
+}
+
+show = (self: Duration) () {
+    u = self.unit_of();
+    println("{}{}", self.count_in(u), suffix(u));
+}

@@ -1,0 +1,45 @@
+// Trusted hostname verification, rejected mismatch and owned close on loopback.
+
+TlsStream, TlsError = std.net.tls
+
+// tests/run.py replaces this after binding its private TLS listener.
+HARNESS_PORT* : u16 = 0
+
+is_x = (buf: Vec<u8>, n: usize) bool {
+    n == 1 && buf.ptr().read(0) == 'x'
+}
+
+main = (env: Env) Res<(), AllocError> {
+    alloc = env.mem.alloc();
+    TlsStream.connect(alloc, "localhost", HARNESS_PORT).match({
+        Ok(s)  => {
+            empty ::= alloc.Vec<u8>();
+            s.read(empty, 0).match({
+                Ok(n)  => (n != 0).then(
+                    () { println("zero read was not zero") }
+                ),
+                Err(_) => println("zero read failed"),
+            });
+            reply ::= alloc.Vec<u8>();
+            s.read(reply, 1).match({
+                Ok(n)  => (!is_x(reply, n)).then(() { println("wrong TLS reply") }),
+                Err(_) => println("TLS read failed"),
+            });
+            s.close();
+            s.close();
+            println("verified and closed");
+        },
+        Err(_) => println("trusted hostname failed"),
+    });
+    TlsStream.connect(alloc, "127.0.0.1", HARNESS_PORT).match({
+        Ok(s)  => {
+            s.close();
+            println("mismatched hostname accepted");
+        },
+        Err(e) => e.match({
+            TlsFailed => println("mismatched hostname rejected"),
+            _         => println("mismatch failed before TLS"),
+        }),
+    });
+    Ok(())
+}

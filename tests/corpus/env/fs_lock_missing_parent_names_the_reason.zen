@@ -1,0 +1,19 @@
+// Locking a path whose parent is absent must preserve the native `NotFound`
+// reason through the generated error-tag chain. An ordinal mismatch can
+// silently turn it into another FsError variant.
+
+FsError = std.env
+
+main = (env: Env) Res<i32, FsError> {
+    got ::= env.fs.lock("no/such/dir/x.lock");
+    got.match({
+        Ok(_)            => println("missing parent: unexpected ok"),
+        Err(NotFound)    => println("missing parent: not-found"),
+        Err(Exists)      => println("missing parent: wrong reason"),
+        Err(Denied)      => println("missing parent: wrong reason"),
+        Err(IsDir)       => println("missing parent: wrong reason"),
+        Err(Failed)      => println("missing parent: wrong reason"),
+        Err(OutOfMemory) => println("missing parent: wrong reason"),
+    });
+    Ok(0);
+}

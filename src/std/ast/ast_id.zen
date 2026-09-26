@@ -1,0 +1,61 @@
+// Distinct source-ordered arena indices for mutually recursive AST families.
+// u32 converts losslessly both to usize for lookup and u64 for hashing.
+
+Eq, Hash, Hasher = std.core.core
+
+ExprId* = { index*: u32 }
+
+TypeId* = { index*: u32 }
+
+PatternId* = { index*: u32 }
+
+BlockId* = { index*: u32 }
+
+// A loader-owned C binding descriptor. Modules keep this id in their
+// origin row; source modules never mint one.
+CBindingId* = { index*: u32 }
+
+// Arena ids support memoization keys. Their dense index is also their hash.
+ExprId.impl(Eq, {
+    eq ::= (self: @Self, other: @Self) bool { self.index == other.index }
+})
+
+ExprId.impl(Hash, {
+    hash = (self: @Self, hasher :: Hasher) u64 {
+        hasher.write_u64(self.index.to_u64());
+        hasher.finish()
+    }
+})
+
+TypeId.impl(Eq, {
+    eq ::= (self: @Self, other: @Self) bool { self.index == other.index }
+})
+
+TypeId.impl(Hash, {
+    hash = (self: @Self, hasher :: Hasher) u64 {
+        hasher.write_u64(self.index.to_u64());
+        hasher.finish()
+    }
+})
+
+PatternId.impl(Eq, {
+    eq ::= (self: @Self, other: @Self) bool { self.index == other.index }
+})
+
+PatternId.impl(Hash, {
+    hash = (self: @Self, hasher :: Hasher) u64 {
+        hasher.write_u64(self.index.to_u64());
+        hasher.finish()
+    }
+})
+
+BlockId.impl(Eq, {
+    eq ::= (self: @Self, other: @Self) bool { self.index == other.index }
+})
+
+BlockId.impl(Hash, {
+    hash = (self: @Self, hasher :: Hasher) u64 {
+        hasher.write_u64(self.index.to_u64());
+        hasher.finish()
+    }
+})

@@ -1,0 +1,16 @@
+// A generic variant constructor returns the instantiated enum. A payload-free
+// variant instead takes its instantiation from the expected type.
+
+Opt<T> = Some(T) | None
+
+pick = (o: Opt<i32>) i32 {
+    o.match({ Some(v) => v, None => 0 })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    x = Opt.Some(41);
+    println("{}", pick(x));
+    none: Opt<i32> = Opt.None;
+    println("{}", pick(none));
+    Ok(0);
+}

@@ -1,0 +1,64 @@
+// Backend diagnostics. Semantic errors are reported before this layer;
+// these faults describe source forms or types that code generation could not
+// translate, plus the backend's explicit reachability bound.
+
+Span = std.ast.ast_span
+str, String = std.text
+AllocError = std.mem
+
+GenFault* = Unsupported(str)     // a node form this backend does not lower yet
+          | Unresolved(str)      // a name with no declaration behind it
+          | Ambiguous(str)       // a name with more than one, and no overload rule
+          | Untyped(str)         // sema returned no type and context supplied none
+          | Unspellable(str)     // a type with no C spelling yet
+          | Overrun(usize)       // more functions reachable than the backend's bound
+
+GenDiag* = {
+    file*: str,
+    span*: Span,
+    fault*: GenFault,
+
+    // Writes `file:line:col: message` and the detail, without a trailing
+    // newline.
+    render* = (self: @Self, out :: String) Res<(), AllocError> {
+        out.fmt(
+            "{}:{}: {}",
+            self.file,
+            self.span.start,
+            self.fault.message()
+        ).try();
+        self.fault.detail(out)
+    }
+}
+
+// The fixed sentence prefix; `detail` writes the payload after it.
+message = (fault: GenFault) str {
+    fault.match({
+        Unsupported(_) => "codegen does not lower this yet:",
+        Unresolved(_)  => "codegen cannot resolve",
+        Ambiguous(_)   => "codegen found more than one declaration of",
+        Untyped(_)     => "codegen has no type for",
+        Unspellable(_) => "codegen cannot spell the type",
+        Overrun(_)     => "codegen reached its bound on the functions one program may lower:",
+    })
+}
+
+detail = (fault: GenFault, out :: String) Res<(), AllocError> {
+    fault.match({
+        Unsupported(w) => out.write_quoted(w),
+        Unresolved(w)  => out.write_quoted(w),
+        Ambiguous(w)   => out.write_quoted(w),
+        Untyped(w)     => out.write_quoted(w),
+        Unspellable(w) => out.write_quoted(w),
+        Overrun(n)     => out.write_bound(n),
+    })
+}
+
+write_quoted = (out :: String, w: str) Res<(), AllocError> {
+    out.fmt(" `{w}`")
+}
+
+write_bound = (out :: String, n: usize) Res<(), AllocError> {
+    out.add(" gen_c_decl.MAX_FUNCTIONS = ").try();
+    out.write_usize(n)
+}

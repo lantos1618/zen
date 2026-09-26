@@ -1,0 +1,709 @@
+// Inline non-escaping closures without a function pointer or closure record.
+// The callee's parameters live above the caller frame; invoking a closure
+// rewinds both local-scope stacks to its lexical home, so free names remain
+// hygienic. Its saved caller context also makes `.try()` return from the
+// function where the lambda was written. `inline_ret` settles the call before
+// emission; an unresolved generic return is refused instead of guessed.
+
+ExprId, BlockId, Lambda, Param, TypeId, Paren = std.ast
+Function, Access, Call = std.ast
+AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+Range = std.core
+DeclId = sema.sema_id
+TyId, TyFn = sema.sema_ty
+Def = sema.sema_def
+Ctx, Binding = sema.sema_check
+Inst, has_var, owner_of = sema.sema_inst
+self_ctx = sema.sema_member
+sym_local, sym_gen = gen.gen_name
+CBackend = gen.gen_c.gen_c_state
+LocalSlot, Closure = gen.gen_c.gen_c_frame
+unsupported, unresolved = gen.gen_c.gen_c_report
+has_body = gen.gen_c.gen_c_impl
+handle_depth = gen.gen_c.gen_c_handle
+inst_at, settled_inst, sub, sub_with = gen.gen_c.gen_c_mono
+enter_tparams, leave_tparams, enter_struct_tparams = gen.gen_c.gen_c_mono
+declarator, is_unit, write_none = gen.gen_c.gen_c_type
+expr = gen.gen_c.gen_c_expr
+Dest, block = gen.gen_c.gen_c_stmt
+plain_ctx, body_ctx, self_body_ctx, ref_declarator = gen.gen_c.gen_c_decl
+write_address = gen.gen_c.gen_c_arg
+arguments, param_types, call_bindings, inline_ret = gen.gen_c.gen_c_settle
+compose, settle_params, settled = gen.gen_c.gen_c_settle
+method_inst = gen.gen_c.gen_c_mono
+
+// A bound on how deep inlining goes, and a diagnostic at it rather than
+// a walk that does not terminate. A recursive function taking a lambda
+// would otherwise unfold forever.
+INLINE_DEPTH* : usize = 12
+
+// recognising
+
+spelled_lambda* = (be: CBackend, id: ExprId) Res<Lambda> {
+    be.tree.expr_at(id).kind.match({
+        Lambda(l) => Ok(l),
+        Paren(p)  => be.spelled_lambda(p.inner),
+        _         => None,
+    })
+}
+
+// A body to inline, and a lambda written at the call site to inline it
+// for.
+inlines* = (be: CBackend, c: Call, f: Function) bool {
+    has_body(f) && be.takes_lambda(c)
+}
+
+takes_lambda* = (be: CBackend, c: Call) bool {
+    got ::= false;
+    c.args.loop((h, a) {
+        be.is_lambda(a.value).then(() { got = true; h.break(); });
+    });
+    got
+}
+
+is_lambda* = (be: CBackend, id: ExprId) bool {
+    be.spelled_lambda(id).match({ Ok(_) => true, None => false })
+}
+
+// A function that takes a body is never emitted: a `(v: T) bool`
+// parameter has no C spelling, so there is no symbol to write and no
+// way to pass one — it exists only inlined at its call sites, which is
+// what `loop_iter.zen`'s no-closure-record claim means for a function
+// that is not `loop`.
+takes_closure* = (be: CBackend, f: Function) bool {
+    got ::= false;
+    f.params.loop((h, p) {
+        be.param_is_fn(p).then(() { got = true; h.break(); });
+    });
+    got
+}
+
+param_is_fn = (be: CBackend, p: Param) bool {
+    p.type.match({ Ok(t) => be.type_is_fn(t), None => false })
+}
+
+type_is_fn = (be: CBackend, t: TypeId) bool {
+    be.tree.type_at(t).kind.match({ Fn(_) => true, _ => false })
+}
+
+closure_slot* = (be :: CBackend, name: str) Res<LocalSlot> {
+    be.slot_of(name).match({
+        Ok(s) => keep_closure(s),
+        None  => None,
+    })
+}
+
+keep_closure = (s: LocalSlot) Res<LocalSlot> {
+    s.is_closure().match({ true => Ok(s), false => None })
+}
+
+// inlining a callee: a free function, or one reached through ufcs
+
+inline_call* = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    d    : Def,
+    f    : Function,
+    recv : Res<ExprId>,
+    ctx  : Ctx,
+    out  :: String
+)
+               Res<(), AllocError> {
+    (be.depth > INLINE_DEPTH).match({
+        true  => be.unsupported(id, "an inlining that does not terminate", out),
+        false => be.inline_free(id, c, d, f, recv, ctx, out),
+    })
+}
+
+inline_free = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    d    : Def,
+    f    : Function,
+    recv : Res<ExprId>,
+    ctx  : Ctx,
+    out  :: String
+)
+              Res<(), AllocError> {
+    mi   = d.id.module.to_usize();
+    dctx = be.plain_ctx(mi);
+    raw  = be.inst_at(id).try();
+    inst = be.settled_inst(f.tparams, d.qname, raw).try();
+    mark = be.enter_tparams(f.tparams, d.qname).try();
+    argv ::= be.alloc.Vec<ExprId>();
+    be.arguments(c, recv, argv).try();
+    raws ::= be.alloc.Vec<TyId>();
+    be.param_types(f, dctx, inst, raws).try();
+    extra ::= be.alloc.Inst();
+    be.call_bindings(argv, raws, ctx, extra).try();
+    ret  = be.inline_ret(f, dctx, inst, extra, argv, ctx).try();
+    full = be.compose(inst, extra).try();
+    ptys ::= be.alloc.Vec<TyId>();
+    be.settle_params(raws, extra, ptys).try();
+    bctx    = body_ctx(be, mi, ret);
+    lowered = InlineExpansion(
+        id: id,
+        f: f,
+        argv: argv,
+        ptys: ptys,
+        ret: ret,
+        body_ctx: bctx,
+        inst: full,
+        caller_ctx: ctx,
+    ).run(be, out);
+    be.leave_tparams(mark).try();
+    lowered
+}
+
+// inlining a member
+// A method is an ordinary function whose first parameter is the
+// receiver, so this is the same shape with `@Self` bound and the type's
+// parameters in scope rather than the function's own.
+
+inline_method* = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    a    : Access,
+    rty  : TyId,
+    decl : DeclId,
+    f    : Function,
+    ctx  : Ctx,
+    out  :: String
+)
+                 Res<(), AllocError> {
+    (be.depth > INLINE_DEPTH).match({
+        true  => be.unsupported(id, "an inlining that does not terminate", out),
+        false => be.inline_member(id, c, a, rty, decl, f, ctx, out),
+    })
+}
+
+inline_member = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    a    : Access,
+    rty  : TyId,
+    decl : DeclId,
+    f    : Function,
+    ctx  : Ctx,
+    out  :: String
+)
+                Res<(), AllocError> {
+    mi    = decl.module.to_usize();
+    sctx  = be.check.self_ctx(mi, rty).try();
+    inst  = be.method_inst(id, c, rty, decl, f, ctx).try();
+    mark  = be.enter_struct_tparams(decl).try();
+    owner = owner_of(be.check, mi, f.name.text).try();
+    be.enter_tparams(f.tparams, owner).try();
+    argv ::= be.alloc.Vec<ExprId>();
+    be.arguments(c, Ok(a.base), argv).try();
+    raws ::= be.alloc.Vec<TyId>();
+    be.param_types(f, sctx, inst, raws).try();
+    extra ::= be.alloc.Inst();
+    be.call_bindings(argv, raws, ctx, extra).try();
+    ret  = be.inline_ret(f, sctx, inst, extra, argv, ctx).try();
+    full = be.compose(inst, extra).try();
+    ptys ::= be.alloc.Vec<TyId>();
+    be.settle_params(raws, extra, ptys).try();
+    bctx    = be.self_body_ctx(mi, ret, rty, true);
+    lowered = InlineExpansion(
+        id: id,
+        f: f,
+        argv: argv,
+        ptys: ptys,
+        ret: ret,
+        body_ctx: bctx,
+        inst: full,
+        caller_ctx: ctx,
+    ).run(be, out);
+    be.leave_tparams(mark).try();
+    lowered
+}
+
+// Settled source and type facts for one inline expansion. They are complete at
+// the end of call settlement and remain fixed until the emitted value is
+// delivered. Backend state and output enter only at that delivery boundary.
+InlineExpansion = {
+    id: ExprId,
+    f: Function,
+    argv: Vec<ExprId>,
+    ptys: Vec<TyId>,
+    ret: TyId,
+    body_ctx: Ctx,
+    inst: Inst,
+    caller_ctx: Ctx,
+
+    run = (self: @Self, be :: CBackend, out :: String)
+          Res<(), AllocError> {
+        loop((h) {
+            has_var(be.check, self.ret).then(() {
+                be.unsupported(
+                    self.id,
+                    "a generic call whose type arguments nothing settles",
+                    out
+                ).try();
+                h.break();
+            });
+
+            self.f.body.match({
+                None    => { out.add("0").try(); h.break(); },
+                Ok(blk) => {
+                    result ::= be.alloc.String().try();
+                    keeps = wants_value(be, self.ret);
+                    keeps.then(() {
+                        be.open_temp(self.ret, result).try();
+                    });
+
+                    // Parameters are above the caller frame. A closure records
+                    // both marks so its body can return to its lexical home.
+                    lmark = be.mark();
+                    cmark = be.check.mark();
+                    Range(0, self.f.params.len).loop((h, i) {
+                        self.f.params.get(i).match({
+                            None  => (),
+                            Ok(p) => {
+                                unknown = be.check.types.unknown().try();
+                                pty     = self.ptys.get(i).match({
+                                    Ok(t) => t,
+                                    None  => unknown,
+                                });
+                                self.argv.get(i).match({
+                                    None      => bind_absent(be, p, pty).try(),
+                                    Ok(value) => InlineSite(
+                                        param: p,
+                                        value: value,
+                                        ty: pty,
+                                        home: lmark,
+                                        check_home: cmark,
+                                        ctx: self.caller_ctx,
+                                    ).bind(be).try(),
+                                });
+                            },
+                        });
+                    });
+
+                    held  = be.inst;
+                    floor = be.floor;
+                    be.enter_inst(self.inst);
+                    be.enter_frame(lmark);
+                    be.enter_call();
+                    held_return = be.return_to;
+                    target      = be.open_inline_return(result.view()).try();
+                    be.enter_return(Ok(target));
+                    lowered = block(
+                        be,
+                        blk,
+                        self.body_ctx,
+                        self.ret,
+                        dest_of(keeps, result.view())
+                    );
+                    be.enter_return(held_return);
+                    be.leave_call();
+                    be.enter_frame(floor);
+                    be.enter_inst(held);
+                    be.release(lmark).try();
+                    be.check.release(cmark).try();
+                    lowered.try();
+                    be.finish_inline_return(target).try();
+                    be.write_result(keeps, result.view(), out).try();
+                    h.break();
+                },
+            });
+        });
+        Ok(())
+    }
+}
+
+bind_absent = (be :: CBackend, p: Param, ty: TyId) Res<(), AllocError> {
+    n = be.declare(p.name.text, ty, p.mutable).try();
+    be.check.bind(p.name.text, ty, p.mutable, true).try();
+    cname ::= be.alloc.String().try();
+    sym_local(cname, p.name.text, n).try();
+    line ::= be.alloc.String().try();
+    p.mutable.match({
+        true  => be.ref_declarator(ty, cname.view(), line),
+        false => be.declarator(ty, cname.view(), line),
+    }).try();
+    zero ::= be.alloc.String().try();
+    be.write_none(ty, zero).try();
+    p.mutable.match({
+        true  => be.fmt("{} = &({});\n", line.view(), zero.view()),
+        false => be.fmt("{} = {};\n", line.view(), zero.view()),
+    })
+}
+
+// Facts born when one settled argument meets its parameter. Lambda and value
+// binding consume the same site, so neither path relays the expansion again.
+InlineSite = {
+    param: Param,
+    value: ExprId,
+    ty: TyId,
+    home: usize,
+    check_home: usize,
+    ctx: Ctx,
+
+    bind = (self: @Self, be :: CBackend) Res<(), AllocError> {
+        be.spelled_lambda(self.value).match({
+            // A lambda has no C storage; its parameter names the body and
+            // lexical frame captured here.
+            Ok(l) => {
+                ptys ::= be.alloc.Vec<TyId>();
+                ret      = be.fn_parts(self.ty, ptys).try();
+                raw      = be.inst_at(self.value).try();
+                captured = be.compose(raw, be.inst).try();
+                be.declare_closure(
+                    self.param.name.text,
+                    Closure(
+                        lam: l,
+                        ptys: ptys,
+                        ret: ret,
+                        home: self.home,
+                        check_home: self.check_home,
+                        floor: be.floor,
+                        inst: captured,
+                        ctx: self.ctx,
+                        return_to: be.return_to,
+                    )
+                )
+            },
+            // A value is lowered before its parameter can shadow a caller
+            // name, then declared in the callee frame.
+            None  => {
+                text ::= be.alloc.String().try();
+                self.param.mutable.match({
+                    true  => be.write_address(
+                        self.value,
+                        self.ctx,
+                        self.ty,
+                        text
+                    ),
+                    false => expr(be, self.value, self.ctx, self.ty, text),
+                }).try();
+                n = be.declare(
+                    self.param.name.text,
+                    self.ty,
+                    self.param.mutable
+                ).try();
+                be.check.bind(
+                    self.param.name.text,
+                    self.ty,
+                    self.param.mutable,
+                    true
+                ).try();
+                cname ::= be.alloc.String().try();
+                sym_local(cname, self.param.name.text, n).try();
+                line ::= be.alloc.String().try();
+                self.param.mutable.match({
+                    true  => be.ref_declarator(self.ty, cname.view(), line),
+                    false => be.declarator(self.ty, cname.view(), line),
+                }).try();
+                be.fmt("{} = {};\n", line.view(), text.view())
+            },
+        })
+    }
+}
+
+// A call with no storage still writes something where the expression
+// goes, or the `(void)(..)` a discarded statement wraps it in does not
+// parse — the same `0` the four report helpers write.
+write_result = (be :: CBackend, keeps: bool, result: str, out :: String)
+               Res<(), AllocError> {
+    keeps.match({
+        true  => out.add(result),
+        false => out.add("0"),
+    })
+}
+
+dest_of = (keeps: bool, result: str) Dest {
+    keeps.match({ true => Dest.Into(result), false => Dest.Discard })
+}
+
+wants_value = (be :: CBackend, ret: TyId) bool {
+    (be.is_unit(ret) == false) && (be.check.is_unknown(ret) == false)
+        && (has_var(be.check, ret) == false)
+}
+
+open_temp = (be :: CBackend, ret: TyId, result :: String)
+            Res<(), AllocError> {
+    sym_gen(result, "n", be.next_tmp()).try();
+    line ::= be.alloc.String().try();
+    be.declarator(ret, result.view(), line).try();
+    be.fmt("{};\n", line.view())
+}
+
+fn_parts = (be :: CBackend, pty: TyId, ptys :: Vec<TyId>)
+           Res<TyId, AllocError> {
+    be.check.types.at(pty).match({
+        Fn(ft) => copy_fn_types(ft, ptys),
+        _      => be.check.types.unknown(),
+    })
+}
+
+copy_fn_types = (ft: TyFn, ptys :: Vec<TyId>) Res<TyId, AllocError> {
+    ft.params.loop((h, t) { ptys.add(t).try() });
+    Ok(ft.ret);
+}
+
+// calling a closure
+// Arguments are lowered at the invocation before both lexical stacks rewind.
+
+lower_closure_call* = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    s    : LocalSlot,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+)
+                      Res<(), AllocError> {
+    be.closure_at(s.closure).match({
+        Ok(cl) => be.run_closure(id, c, cl, ctx, want, out),
+        None   => unresolved(be, id, s.name, out),
+    })
+}
+
+run_closure = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    cl   : Closure,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    (be.depth > INLINE_DEPTH).match({
+        true  => be.unsupported(id, "an inlining that does not terminate", out),
+        false => be.run_lambda(id, c, cl, ctx, want, out),
+    })
+}
+
+run_lambda = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    cl   : Closure,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    inst  = be.inst_at(id).try();
+    full  = be.compose(cl.inst, inst).try();
+    ready = be.instantiate_closure(cl, full).try();
+    argt ::= be.alloc.Vec<String>();
+    hnd  ::= be.alloc.Vec<usize>();
+    be.lower_args(c, ready, ctx, argt, hnd).try();
+
+    ret = be.closure_ret(ready, want).try();
+    result ::= be.alloc.String().try();
+    keeps = wants_value(be, ret);
+    keeps.then(() { be.open_temp(ret, result).try(); });
+
+    saved ::= be.alloc.Vec<LocalSlot>();
+    be.detach(ready.home, saved).try();
+    csaved ::= be.alloc.Vec<Binding>();
+    be.check.detach_locals(ready.check_home, csaved).try();
+    held = be.inst;
+    be.enter_inst(ready.inst);
+
+    lmark = be.mark();
+    cmark = be.check.mark();
+    be.bind_lambda_params(ready, argt, hnd).try();
+    // Rewind to the lexical frame, including its declaration floor, so a
+    // captured assignment remains a store rather than a shadow declaration.
+    floor = be.floor;
+    be.enter_frame(ready.floor);
+    held_return = be.return_to;
+    be.enter_return(ready.return_to);
+    be.enter_call();
+    lowered = block(
+        be,
+        ready.lam.body,
+        ready.ctx,
+        ret,
+        dest_of(keeps, result.view())
+    );
+    be.enter_return(held_return);
+    be.leave_call();
+    be.enter_frame(floor);
+    be.release(lmark).try();
+    be.check.release(cmark).try();
+
+    be.enter_inst(held);
+    be.check.reattach_locals(csaved).try();
+    be.reattach(saved).try();
+    lowered.try();
+    be.write_result(keeps, result.view(), out)
+}
+
+instantiate_closure = (be :: CBackend, cl: Closure, inst: Inst)
+                      Res<Closure, AllocError> {
+    ptys ::= be.alloc.Vec<TyId>();
+    cl.ptys.loop((h, ty) {
+        done = be.sub(be.sub_with(ty, inst).try()).try();
+        ptys.add(done).try();
+    });
+    ret = be.sub(be.sub_with(cl.ret, inst).try()).try();
+    Ok(Closure(
+        lam: cl.lam,
+        ptys: ptys,
+        ret: ret,
+        home: cl.home,
+        check_home: cl.check_home,
+        floor: cl.floor,
+        inst: inst,
+        ctx: cl.ctx,
+        return_to: cl.return_to,
+    ))
+}
+
+// The closure's declared return type, or the expectation at the call
+// when the declaration left it open. `then`'s `f: () T` is the second
+// case: `T` is settled by the lambda's own body, and the payload the
+// result is being written into is where that answer arrives.
+closure_ret = (be :: CBackend, cl: Closure, want: TyId)
+              Res<TyId, AllocError> {
+    settled(be, cl.ret).match({
+        true  => Ok(cl.ret),
+        false => be.want_or_unit(want),
+    })
+}
+
+want_or_unit = (be :: CBackend, want: TyId) Res<TyId, AllocError> {
+    settled(be, want).match({
+        true  => Ok(want),
+        false => be.check.types.prim("()"),
+    })
+}
+
+lower_args = (
+    be   :: CBackend,
+    c    : Call,
+    cl   : Closure,
+    ctx  : Ctx,
+    argt :: Vec<String>,
+    hnd  :: Vec<usize>
+) Res<(), AllocError> {
+    Range(0, c.args.len).loop((h, i) {
+        be.lower_one_arg(c, cl, i, ctx, argt, hnd).try();
+    });
+    Ok(());
+}
+
+lower_one_arg = (
+    be   :: CBackend,
+    c    : Call,
+    cl   : Closure,
+    i    : usize,
+    ctx  : Ctx,
+    argt :: Vec<String>,
+    hnd  :: Vec<usize>
+)
+                Res<(), AllocError> {
+    c.args.get(i).match({
+        Ok(a) => be.lower_arg_value(a.value, cl, i, ctx, argt, hnd),
+        None  => Ok(()),
+    })
+}
+
+// A forwarded LoopHandle is its source loop's label depth, not a copied value.
+// Resolve that depth while the source loop is still innermost.
+lower_arg_value = (
+    be    :: CBackend,
+    value : ExprId,
+    cl    : Closure,
+    i     : usize,
+    ctx   : Ctx,
+    argt  :: Vec<String>,
+    hnd   :: Vec<usize>
+)
+                  Res<(), AllocError> {
+    depth = be.handle_depth(value);
+    hnd.add(depth).try();
+    unknown = be.check.types.unknown().try();
+    want    = cl.ptys.get(i).match({ Ok(t) => t, None => unknown });
+    text ::= be.alloc.String().try();
+    (depth == 0).then(() { expr(be, value, ctx, want, text).try(); });
+    argt.add(text)
+}
+
+bind_lambda_params = (
+    be   :: CBackend,
+    cl   : Closure,
+    argt : Vec<String>,
+    hnd  : Vec<usize>
+) Res<(), AllocError> {
+    Range(0, cl.lam.params.len).loop((h, i) {
+        be.bind_lambda_param(cl, argt, hnd, i).try();
+    });
+    Ok(());
+}
+
+bind_lambda_param = (
+    be   :: CBackend,
+    cl   : Closure,
+    argt : Vec<String>,
+    hnd  : Vec<usize>,
+    i    : usize
+) Res<(), AllocError> {
+    cl.lam.params.get(i).match({
+        Ok(p) => be.bind_lambda_named(cl, argt, hnd, i, p),
+        None  => Ok(()),
+    })
+}
+
+bind_lambda_named = (
+    be   :: CBackend,
+    cl   : Closure,
+    argt : Vec<String>,
+    hnd  : Vec<usize>,
+    i    : usize,
+    p    : Param
+)
+                    Res<(), AllocError> {
+    unknown = be.check.types.unknown().try();
+    ty      = cl.ptys.get(i).match({ Ok(t) => t, None => unknown });
+    depth   = hnd.get(i).match({ Ok(d) => d, None => 0 });
+    (depth == 0).match({
+        false => be.bind_passed_handle(p, ty, depth),
+        true  => be.bind_copied_arg(argt, i, p, ty),
+    })
+}
+
+bind_passed_handle = (be :: CBackend, p: Param, ty: TyId, depth: usize)
+                     Res<(), AllocError> {
+    be.declare_handle(p.name.text, ty, depth).try();
+    be.check.bind(p.name.text, ty, false, true).try();
+    Ok(());
+}
+
+bind_copied_arg = (
+    be   :: CBackend,
+    argt : Vec<String>,
+    i    : usize,
+    p    : Param,
+    ty   : TyId
+) Res<(), AllocError> {
+    argt.get(i).match({
+        Ok(s) => be.declare_bound(p, ty, s.view()),
+        None  => Ok(()),
+    })
+}
+
+declare_bound = (be :: CBackend, p: Param, ty: TyId, text: str)
+                Res<(), AllocError> {
+    n = be.declare(p.name.text, ty, false).try();
+    be.check.bind(p.name.text, ty, false, true).try();
+    cname ::= be.alloc.String().try();
+    sym_local(cname, p.name.text, n).try();
+    line ::= be.alloc.String().try();
+    be.declarator(ty, cname.view(), line).try();
+    be.fmt("{} = {text};\n", line.view())
+}
+
+// What an inlined call evaluates to: `gen_c_settle.zen`, `inline_ret`.

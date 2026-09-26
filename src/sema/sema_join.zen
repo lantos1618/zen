@@ -1,0 +1,129 @@
+AllocError = std.mem
+TyId, TyRes, is_failure = sema.sema_ty
+Checker = sema.sema_check
+
+join* = (c :: Checker, a: TyId, b: TyId) Res<TyId, AllocError> {
+    c.is_unknown(a).match({
+        true  => Ok(b),
+        false => c.keep_or_settle(a, b),
+    })
+}
+
+keep_or_settle = (c :: Checker, a: TyId, b: TyId) Res<TyId, AllocError> {
+    (c.open_res(a) && (c.is_unknown(b) == false)).match({
+        true  => c.settled_res(a, b),
+        false => c.settle_reversed(a, b),
+    })
+}
+
+// Arm order is not a type fact, so the join is tried both ways.
+settle_reversed = (c :: Checker, a: TyId, b: TyId) Res<TyId, AllocError> {
+    (c.open_res(b) && (c.is_unknown(a) == false)).match({
+        true  => c.settled_res(b, a),
+        false => c.settled_literal(a, b),
+    })
+}
+
+// A literal is not a settled match type, so a concrete compatible arm
+// supplies its context (the same collapse used by `check_literal`).
+settled_literal = (c :: Checker, a: TyId, b: TyId) Res<TyId, AllocError> {
+    (c.is_literal_ty(a) && c.concrete(b) && c.assignable(a, b)).match({
+        true  => Ok(b),
+        false => c.literal_reversed(a, b),
+    })
+}
+
+literal_reversed = (c :: Checker, a: TyId, b: TyId) Res<TyId, AllocError> {
+    (c.is_literal_ty(b) && c.concrete(a) && c.assignable(b, a)).match({
+        true  => Ok(a),
+        false => c.merged_or_first(a, b),
+    })
+}
+
+concrete = (c: Checker, id: TyId) bool {
+    (c.unsettled(id) || c.is_var(id)) == false
+}
+
+settled_res = (c :: Checker, a: TyId, b: TyId) Res<TyId, AllocError> {
+    c.types.at(b).match({
+        Res(rb) => c.settled_form(a, b, rb),
+        _       => Ok(b),
+    })
+}
+
+settled_form = (c :: Checker, a: TyId, b: TyId, rb: TyRes)
+               Res<TyId, AllocError> {
+    c.unsettled(rb.value).match({
+        false => Ok(b),
+        true  => c.carried_value(a, b, rb),
+    })
+}
+
+carried_value = (c :: Checker, a: TyId, b: TyId, rb: TyRes)
+                Res<TyId, AllocError> {
+    c.open_value(a).match({
+        None  => Ok(b),
+        Ok(v) => c.at_form(v, rb),
+    })
+}
+
+at_form = (c :: Checker, value: TyId, rb: TyRes) Res<TyId, AllocError> {
+    rb.form.match({
+        Absence => c.types.res_absence(value),
+        Failure => c.types.res_failure(value, rb.error),
+        Open    => c.types.res_open(value),
+    })
+}
+
+merged_or_first = (c :: Checker, a: TyId, b: TyId) Res<TyId, AllocError> {
+    c.types.at(a).match({
+        Res(ra) => c.merge_against(a, b, ra),
+        _       => Ok(a),
+    })
+}
+
+merge_against = (c :: Checker, a: TyId, b: TyId, ra: TyRes)
+                Res<TyId, AllocError> {
+    c.types.at(b).match({
+        Res(rb) => c.merge_failures(a, ra, rb),
+        _       => Ok(a),
+    })
+}
+
+merge_failures = (c :: Checker, a: TyId, ra: TyRes, rb: TyRes)
+                 Res<TyId, AllocError> {
+    (is_failure(ra.form) && is_failure(rb.form) && ra.value.eq(rb.value)
+     && (c.unsettled(ra.error) == false)
+     && (c.unsettled(rb.error) == false)).match({
+        false => Ok(a),
+        true  => c.merged_failure(ra, rb),
+    })
+}
+
+merged_failure = (c :: Checker, ra: TyRes, rb: TyRes) Res<TyId, AllocError> {
+    set = c.types.merge(ra.error, rb.error).try();
+    c.types.res_failure(ra.value, set)
+}
+
+// The payload an open `Res` carries, when it carries a settled one.
+open_value = (c: Checker, id: TyId) Res<TyId> {
+    c.types.at(id).match({
+        Res(r) => c.keep_settled(r.value),
+        _      => None,
+    })
+}
+
+keep_settled = (c: Checker, value: TyId) Res<TyId> {
+    c.unsettled(value).match({ true => None, false => Ok(value) })
+}
+
+unsettled = (c: Checker, id: TyId) bool {
+    c.is_unknown(id) || c.is_infer(id)
+}
+
+open_res = (c: Checker, id: TyId) bool {
+    c.types.at(id).match({
+        Res(r) => r.form.match({ Open => true, _ => false }),
+        _      => false,
+    })
+}

@@ -1,0 +1,711 @@
+Expr, Type, TypeId, Access, Meta, Alias, Call, Struct = std.ast
+ExprId, Lambda, Param, Span = std.ast
+AllocError = std.mem
+Vec = std.collections
+str = std.text
+TyId = sema.sema_ty
+Checker, Ctx, WalkBind = sema.sema_check
+SemaFault, NameFault, TypeFault = sema.sema_diag
+Def, decl_at = sema.sema_def
+type_from_ast, alias_target_of, type_decl = sema.sema_denote
+Found, base_of, members_of = sema.sema_member
+block_type, type_of = sema.sema_type
+
+// A standalone @meta expression is unsupported; report once and return poison.
+meta_type* = (c :: Checker, node: Expr, ctx: Ctx) Res<TyId, AllocError> {
+    c.meta_refused(node)
+}
+
+meta_access* = (c :: Checker, ac: Access, ctx: Ctx)
+               Res<TyId, AllocError> {
+    target = c.tree.expr_at(ac.base);
+    target.kind.match({
+        Meta(m) => c.meta_form(target, m, ac, ctx),
+        _       => c.types.unknown(),
+    })
+}
+
+// The `@meta(T).fields()` call under an access: its `@meta` node.
+fields_meta = (c: Checker, base: ExprId) Res<Expr> {
+    c.tree.expr_at(base).kind.match({
+        Call(k) => (k.args.len == 0).match({
+            false => None,
+            true  => c.tree.expr_at(k.callee).kind.match({
+                Access(f) => f.name.text.eq("fields").match({
+                    false => None,
+                    true  => {
+                        target = c.tree.expr_at(f.base);
+                        target.kind.match({ Meta(_) => Ok(target), _ => None })
+                    },
+                }),
+                _         => None,
+            }),
+        }),
+        _       => None,
+    })
+}
+
+// The written type of a `@meta(T)` node; a `@meta(value)` has none.
+meta_type_of = (node: Expr) Res<TypeId> {
+    node.kind.match({
+        Meta(m) => m.type,
+        _       => None,
+    })
+}
+
+// `fields().len` once `is_count_chain` has vouched for the shape.
+meta_len_chain* = (c :: Checker, ac: Access, ctx: Ctx)
+                  Res<TyId, AllocError> {
+    c.fields_meta(ac.base).match({
+        None       => c.types.unknown(),
+        Ok(target) => target.meta_type_of().match({
+            None  => c.meta_refused(target),
+            Ok(t) => c.meta_count_fold(target, t, ctx),
+        }),
+    })
+}
+
+// The name fold accepts only the typed form with no runtime value.
+meta_form = (
+    c      :: Checker,
+    target : Expr,
+    m      : Meta,
+    ac     : Access,
+    ctx    : Ctx
+) Res<TyId, AllocError> {
+    m.value.match({
+        Ok(_) => c.meta_refused(target),
+        None  => ac.name.text.eq("name").match({
+            false => c.meta_refused(target),
+            true  => m.type.match({
+                None  => c.meta_refused(target),
+                Ok(t) => c.meta_fold(target, t, ctx),
+            }),
+        }),
+    })
+}
+
+// Resolve the written type in the caller context so @Self remains contextual.
+// Its TypeId is the memo key.
+meta_fold = (c :: Checker, target: Expr, t: TypeId, ctx: Ctx)
+            Res<TyId, AllocError> {
+    ty = c.type_from_ast(t, ctx).try();
+    c.is_unknown(ty).match({
+        true  => c.types.unknown(),
+        false => c.tree.type_at(t).kind.match({
+            Named(n) => c.written_decl(n.name.text, target, t, ty, ctx),
+            _        => c.resolved_decl(target, t, ty),
+        }),
+    })
+}
+
+// Field counts use a separate usize memo keyed by the written TypeId.
+meta_count_fold = (c :: Checker, target: Expr, t: TypeId, ctx: Ctx)
+                  Res<TyId, AllocError> {
+    ty = c.type_from_ast(t, ctx).try();
+    c.is_unknown(ty).match({
+        true  => c.types.unknown(),
+        false => c.tree.type_at(t).kind.match({
+            Named(n) => c.counted_decl(n.name.text, target, t, ty, ctx),
+            _        => c.resolved_count(target, t, ty),
+        }),
+    })
+}
+
+counted_decl = (
+    c      :: Checker,
+    name   : str,
+    target : Expr,
+    t      : TypeId,
+    ty     : TyId,
+    ctx    : Ctx
+) Res<TyId, AllocError> {
+    c.world.first_def_of(ctx.module, name).try().match({
+        None  => c.resolved_count(target, t, ty),
+        Ok(d) => decl_at(c.tree, d.id).match({
+            None  => c.resolved_count(target, t, ty),
+            Ok(x) => x.kind.match({
+                Struct(s) => c.counted_record(t, s),
+                Alias(a)  => c.counted_alias(a, d, target, t),
+                _         => c.meta_refused(target),
+            }),
+        }),
+    })
+}
+
+count_fields = (s: Struct) usize {
+    n ::= 0;
+    s.members.loop((h, m) {
+        m.kind.match({
+            Field(_) => { n = n + 1; },
+            _        => (),
+        });
+    });
+    n
+}
+
+counted_record = (c :: Checker, key: TypeId, s: Struct)
+                 Res<TyId, AllocError> {
+    c.meta_count_memo.set(key, s.count_fields()).try();
+    c.meta_count_type()
+}
+
+counted_alias = (c :: Checker, al: Alias, owner: Def, target: Expr, t: TypeId)
+                Res<TyId, AllocError> {
+    ty = c.alias_target_of(al, owner).try();
+    c.resolved_count(target, t, ty)
+}
+
+resolved_count = (c :: Checker, target: Expr, t: TypeId, ty: TyId)
+                 Res<TyId, AllocError> {
+    c.struct_of_type(ty).match({
+        Ok(s) => c.counted_record(t, s),
+        None  => c.meta_refused(target),
+    })
+}
+
+struct_of_type = (c: Checker, ty: TyId) Res<Struct> {
+    c.type_decl(ty).match({
+        None  => None,
+        Ok(x) => x.kind.match({ Struct(s) => Ok(s), _ => None }),
+    })
+}
+
+// A struct's or enum's declared name.
+nominal_name = (c: Checker, ty: TyId) Res<str> {
+    c.type_decl(ty).match({
+        None  => None,
+        Ok(x) => x.kind.match({
+            Struct(s) => Ok(s.name.text),
+            Enum(e)   => Ok(e.name.text),
+            _         => None,
+        }),
+    })
+}
+
+// A written alias reports its own name, once its target is a struct or enum.
+written_decl = (
+    c      :: Checker,
+    name   : str,
+    target : Expr,
+    t      : TypeId,
+    ty     : TyId,
+    ctx    : Ctx
+) Res<TyId, AllocError> {
+    c.world.first_def_of(ctx.module, name).try().match({
+        None  => c.resolved_decl(target, t, ty),
+        Ok(d) => decl_at(c.tree, d.id).match({
+            None  => c.resolved_decl(target, t, ty),
+            Ok(x) => x.kind.match({
+                Struct(s) => c.meta_record(t, s.name.text),
+                Enum(e)   => c.meta_record(t, e.name.text),
+                Alias(a)  => c.written_alias(a, d, target, t),
+                _         => c.meta_refused(target),
+            }),
+        }),
+    })
+}
+
+written_alias = (c :: Checker, al: Alias, owner: Def, target: Expr, t: TypeId)
+                Res<TyId, AllocError> {
+    ty = c.alias_target_of(al, owner).try();
+    c.nominal_name(ty).match({
+        Ok(_) => c.meta_record(t, al.name.text),
+        None  => c.meta_refused(target),
+    })
+}
+
+meta_record = (c :: Checker, key: TypeId, name: str) Res<TyId, AllocError> {
+    c.meta_memo.set(key, name).try();
+    c.types.str_ty()
+}
+
+resolved_decl = (c :: Checker, target: Expr, t: TypeId, ty: TyId)
+                Res<TyId, AllocError> {
+    c.nominal_name(ty).match({
+        Ok(n) => c.meta_record(t, n),
+        None  => c.meta_refused(target),
+    })
+}
+
+meta_refused* = (c :: Checker, node: Expr) Res<TyId, AllocError> {
+    c.report(
+        node.span.file,
+        node.span,
+        SemaFault.MetaNotImplemented(NameFault(name: ""))
+    ).try();
+    c.types.unknown()
+}
+
+is_count_chain* = (c :: Checker, ac: Access) bool {
+    ac.name.text.eq("len") && c.fields_meta(ac.base).match({
+        Ok(target) => target.meta_type_of().match({ Ok(_) => true, None => false }),
+        None       => false,
+    })
+}
+
+WalkName* = WalkNone | WalkHandle | WalkField
+
+walk_name* = (c: Checker, text: str) WalkName {
+    c.walk_row().match({
+        None  => WalkName.WalkNone,
+        Ok(r) => c.lookup(text).match({
+            None  => WalkName.WalkNone,
+            Ok(b) => span_eq(b.span, r.h_span).match({
+                true  => WalkName.WalkHandle,
+                false => span_eq(b.span, r.f_span).match({
+                    true  => WalkName.WalkField,
+                    false => WalkName.WalkNone,
+                }),
+            }),
+        }),
+    })
+}
+
+span_eq = (a: Span, b: Span) bool {
+    a.file.eq(b.file)
+        && (a.start.line == b.start.line)
+        && (a.start.col == b.start.col)
+        && (a.end.line == b.end.line)
+        && (a.end.col == b.end.col)
+}
+
+meta_name_fold* = (c :: Checker, id: ExprId, node: Expr, ac: Access)
+                  Res<TyId, AllocError> {
+    ac.name.text.eq("name").match({
+        true  => {
+            c.meta_name_reads.set(id, true).try();
+            c.types.str_ty()
+        },
+        false => c.meta_refused(node),
+    })
+}
+
+MetaCall* = Answered(TyId) | Ordinary
+
+meta_member_call* = (
+    c    :: Checker,
+    id   : ExprId,
+    node : Expr,
+    call : Call,
+    ac   : Access,
+    ctx  : Ctx
+) Res<MetaCall, AllocError> {
+    c.is_walk_chain(call, ac).match({
+        true  => {
+            ty = c.meta_walk_chain(id, node, call, ac, ctx).try();
+            Ok(MetaCall.Answered(ty))
+        },
+        false => c.walk_call_or_ordinary(id, node, call, ac, ctx),
+    })
+}
+
+walk_call_or_ordinary = (
+    c    :: Checker,
+    id   : ExprId,
+    node : Expr,
+    call : Call,
+    ac   : Access,
+    ctx  : Ctx
+) Res<MetaCall, AllocError> {
+    c.tree.expr_at(ac.base).kind.match({
+        Name(n) => c.walk_name(n.text).match({
+            WalkHandle => c.walk_verb(node, call, ac),
+            WalkField  => {
+                // `field.f(..)`: the binder is a comptime term with
+                // no members
+                ty = c.meta_refused(node).try();
+                Ok(MetaCall.Answered(ty))
+            },
+            WalkNone   => c.walk_proj_or_ordinary(id, node, call, ac, ctx),
+        }),
+        _       => c.walk_proj_or_ordinary(id, node, call, ac, ctx),
+    })
+}
+
+// A field-walk handle supports only zero-argument `break` and `next`.
+walk_verb = (c :: Checker, node: Expr, call: Call, ac: Access)
+            Res<MetaCall, AllocError> {
+    verb = ac.name.text.eq("break") || ac.name.text.eq("next");
+    (verb && (call.args.len == 0)).match({
+        true  => {
+            unit = c.types.unit().try();
+            Ok(MetaCall.Answered(unit))
+        },
+        false => {
+            ty = c.meta_refused(node).try();
+            Ok(MetaCall.Answered(ty))
+        },
+    })
+}
+
+walk_proj_or_ordinary = (
+    c    :: Checker,
+    id   : ExprId,
+    node : Expr,
+    call : Call,
+    ac   : Access,
+    ctx  : Ctx
+) Res<MetaCall, AllocError> {
+    c.is_projection(call, ac).match({
+        false => Ok(MetaCall.Ordinary),
+        true  => {
+            ty = c.meta_projection(id, node, ac, ctx).try();
+            Ok(MetaCall.Answered(ty))
+        },
+    })
+}
+
+is_projection = (c :: Checker, call: Call, ac: Access) bool {
+    (ac.name.text.eq("at") && (call.args.len == 1)).match({
+        false => false,
+        true  => call.args.get(0).match({
+            None  => false,
+            Ok(a) => c.tree.expr_at(a.value).kind.match({
+                Name(n) => c.walk_name(n.text).match({
+                    WalkField => true,
+                    _         => false,
+                }),
+                _       => false,
+            }),
+        }),
+    })
+}
+
+meta_projection = (
+    c    :: Checker,
+    id   : ExprId,
+    node : Expr,
+    ac   : Access,
+    ctx  : Ctx
+) Res<TyId, AllocError> {
+    c.walk_row().match({
+        None  => c.types.unknown(),
+        Ok(r) => c.project_field(id, node, ac, r.field, ctx),
+    })
+}
+
+project_field = (
+    c     :: Checker,
+    id    : ExprId,
+    node  : Expr,
+    ac    : Access,
+    fname : str,
+    ctx   : Ctx
+) Res<TyId, AllocError> {
+    b = base_of(c, ac.base, ctx).try();
+    b.is_type.match({
+        true  => c.meta_refused(node),
+        false => {
+            found ::= c.alloc.Vec<Found>();
+            c.members_of(b.ty, fname, found).try();
+            found.get(0).match({
+                None  => c.no_projection(node, fname, b.ty),
+                Ok(f) => c.project_found(id, node, f),
+            })
+        },
+    })
+}
+
+no_projection = (c :: Checker, node: Expr, fname: str, ty: TyId)
+                Res<TyId, AllocError> {
+    poison = c.types.unknown().try();
+    c.report(
+        node.span.file,
+        node.span,
+        SemaFault.NoSuchField(TypeFault(
+            name: fname,
+            expected: poison,
+            found: ty
+        ))
+    ).try();
+    c.types.unknown()
+}
+
+project_found = (c :: Checker, id: ExprId, node: Expr, f: Found)
+                Res<TyId, AllocError> {
+    c.projectable(f).match({
+        false => c.meta_refused(node),
+        true  => {
+            c.meta_projs.set(id, true).try();
+            Ok(f.ty)
+        },
+    })
+}
+
+projectable = (c: Checker, f: Found) bool {
+    (f.computed || f.constant).match({
+        true  => false,
+        false => c.types.at(f.ty).match({ Fn(_) => false, _ => true }),
+    })
+}
+
+walk_projection_type* = (c :: Checker, id: ExprId, ctx: Ctx)
+                        Res<Res<TyId>, AllocError> {
+    c.walk_field_now().match({
+        None      => Ok(None),
+        Ok(fname) => c.meta_projs.get(id).match({
+            None  => Ok(None),
+            Ok(_) => c.reproject(id, fname, ctx),
+        }),
+    })
+}
+
+reproject = (c :: Checker, id: ExprId, fname: str, ctx: Ctx)
+            Res<Res<TyId>, AllocError> {
+    node = c.tree.expr_at(id);
+    node.kind.match({
+        Call(k) => c.tree.expr_at(k.callee).kind.match({
+            Access(a) => {
+                rty = c.type_of(a.base, ctx).try();
+                got = c.field_type_of(rty, fname).try();
+                c.expr_memo.set(id, got).try();
+                Ok(Ok(got))
+            },
+            _         => Ok(None),
+        }),
+        _       => Ok(None),
+    })
+}
+
+field_type_of = (c :: Checker, rty: TyId, fname: str)
+                Res<TyId, AllocError> {
+    found ::= c.alloc.Vec<Found>();
+    c.members_of(rty, fname, found).try();
+    found.get(0).match({
+        Ok(f) => Ok(f.ty),
+        None  => c.types.unknown(),
+    })
+}
+
+// A walk nested in a walk is refused.
+meta_walk_chain = (
+    c    :: Checker,
+    id   : ExprId,
+    node : Expr,
+    call : Call,
+    ac   : Access,
+    ctx  : Ctx
+) Res<TyId, AllocError> {
+    c.walk_row().match({
+        Ok(_) => c.meta_refused(node),
+        None  => c.fields_meta(ac.base).match({
+            None       => c.meta_refused(node),
+            Ok(target) => target.meta_type_of().match({
+                None  => c.meta_refused(target),
+                Ok(t) => c.walk_typed(id, target, call, t, ctx),
+            }),
+        }),
+    })
+}
+
+walk_typed = (
+    c      :: Checker,
+    id     : ExprId,
+    target : Expr,
+    call   : Call,
+    t      : TypeId,
+    ctx    : Ctx
+) Res<TyId, AllocError> {
+    call.args.get(0).match({
+        None  => c.meta_refused(target),
+        Ok(a) => c.tree.expr_at(a.value).kind.match({
+            Lambda(lam) => c.walk_with_body(id, target, t, lam, ctx),
+            _           => c.meta_refused(target),
+        }),
+    })
+}
+
+walk_with_body = (
+    c      :: Checker,
+    id     : ExprId,
+    target : Expr,
+    t      : TypeId,
+    lam    : Lambda,
+    ctx    : Ctx
+) Res<TyId, AllocError> {
+    ty = c.type_from_ast(t, ctx).try();
+    names ::= c.alloc.Vec<str>();
+    c.walk_fields_of(target, t, ty, ctx, names).try().match({
+        false => c.types.unknown(),
+        true  => {
+            c.meta_walks.set(id, names).try();
+            c.walk_check(lam, names, ctx).try();
+            c.types.unit()
+        },
+    })
+}
+
+walk_fields_of = (
+    c      :: Checker,
+    target : Expr,
+    t      : TypeId,
+    ty     : TyId,
+    ctx    : Ctx,
+    out    :: Vec<str>
+) Res<bool, AllocError> {
+    c.is_unknown(ty).match({
+        true  => Ok(false),
+        false => c.tree.type_at(t).kind.match({
+            Named(n) => c.walked_decl(n.name.text, target, ty, ctx, out),
+            _        => c.resolved_walk(target, ty, out),
+        }),
+    })
+}
+
+walked_decl = (
+    c      :: Checker,
+    name   : str,
+    target : Expr,
+    ty     : TyId,
+    ctx    : Ctx,
+    out    :: Vec<str>
+) Res<bool, AllocError> {
+    c.world.first_def_of(ctx.module, name).try().match({
+        None  => c.resolved_walk(target, ty, out),
+        Ok(d) => decl_at(c.tree, d.id).match({
+            None  => c.resolved_walk(target, ty, out),
+            Ok(x) => x.kind.match({
+                Struct(s) => c.walk_struct(s, out),
+                Alias(a)  => c.walked_alias(a, d, target, out),
+                _         => c.walk_refused(target),
+            }),
+        }),
+    })
+}
+
+walked_alias = (
+    c      :: Checker,
+    al     : Alias,
+    owner  : Def,
+    target : Expr,
+    out    :: Vec<str>
+) Res<bool, AllocError> {
+    ty = c.alias_target_of(al, owner).try();
+    c.resolved_walk(target, ty, out)
+}
+
+resolved_walk = (c :: Checker, target: Expr, ty: TyId, out :: Vec<str>)
+                Res<bool, AllocError> {
+    c.struct_of_type(ty).match({
+        Ok(s) => c.walk_struct(s, out),
+        None  => c.walk_refused(target),
+    })
+}
+
+walk_struct = (c :: Checker, s: Struct, out :: Vec<str>)
+              Res<bool, AllocError> {
+    c.walk_collect(s, out).try();
+    Ok(true)
+}
+
+walk_refused = (c :: Checker, target: Expr) Res<bool, AllocError> {
+    c.meta_refused(target).try();
+    Ok(false)
+}
+
+walk_collect = (c :: Checker, s: Struct, out :: Vec<str>)
+               Res<(), AllocError> {
+    s.members.loop((h, m) {
+        m.kind.match({
+            Field(f) => out.add(f.name.text).try(),
+            _        => (),
+        });
+    });
+    Ok(())
+}
+
+// Typecheck one pass per field. Recheck bypasses stale memo reads while writes
+// remain available to backend lowering. Empty structs perform no passes.
+walk_check = (c :: Checker, lam: Lambda, names: Vec<str>, ctx: Ctx)
+             Res<(), AllocError> {
+    unknown = c.types.unknown().try();
+    c.enter_recheck();
+    names.loop((h, fname) {
+        c.walk_pass(lam, fname, unknown, ctx).try();
+    });
+    c.leave_recheck();
+    Ok(())
+}
+
+walk_pass = (
+    c       :: Checker,
+    lam     : Lambda,
+    fname   : str,
+    unknown : TyId,
+    ctx     : Ctx
+) Res<(), AllocError> {
+    lam.params.get(0).match({
+        None   => Ok(()),
+        Ok(p0) => lam.params.get(1).match({
+            None   => Ok(()),
+            Ok(p1) => c.walk_pass_with(lam, p0, p1, fname, unknown, ctx),
+        }),
+    })
+}
+
+walk_pass_with = (
+    c       :: Checker,
+    lam     : Lambda,
+    p0      : Param,
+    p1      : Param,
+    fname   : str,
+    unknown : TyId,
+    ctx     : Ctx
+) Res<(), AllocError> {
+    c.push_walk(WalkBind(
+        h_name: p0.name.text,
+        h_span: p0.name.span,
+        f_name: p1.name.text,
+        f_span: p1.name.span,
+        field: fname
+    )).try();
+    mark = c.mark();
+    c.bind_at(p0.name.text, unknown, p0.mutable, true, p0.name.span).try();
+    c.bind_at(p1.name.text, unknown, p1.mutable, true, p1.name.span).try();
+    c.block_type(lam.body, ctx).try();
+    c.release(mark).try();
+    c.pop_walk();
+    Ok(())
+}
+
+is_walk_chain = (c :: Checker, call: Call, ac: Access) bool {
+    ac.name.text.eq("loop")
+        && (call.args.len == 1)
+        && c.walk_body_arg(call)
+        && c.fields_meta(ac.base).match({
+            Ok(target) => target.meta_type_of().match({ Ok(_) => true, None => false }),
+            None       => false,
+        })
+}
+
+// A field-walk body is an inline, unannotated two-parameter lambda with no type
+// parameters or written return type.
+walk_body_arg = (c :: Checker, call: Call) bool {
+    call.args.get(0).match({
+        None  => false,
+        Ok(a) => c.tree.expr_at(a.value).kind.match({
+            Lambda(lam) => c.walk_lambda_shape(lam),
+            _           => false,
+        }),
+    })
+}
+
+walk_lambda_shape = (c :: Checker, lam: Lambda) bool {
+    shape = (lam.params.len == 2)
+        && (lam.tparams.len == 0)
+        && lam.ret.match({ None => true, Ok(_) => false });
+    shape.match({
+        false => false,
+        true  => lam.params.get(0).match({
+            None   => false,
+            Ok(p0) => lam.params.get(1).match({
+                None   => false,
+                Ok(p1) => p0.type.match({
+                    Ok(_) => false,
+                    None  => p1.type.match({ Ok(_) => false, None => true }),
+                }),
+            }),
+        }),
+    })
+}

@@ -1,0 +1,13 @@
+// A whole program in one module: the smallest root a build can be
+// pointed at, which is what this test is measuring the ENTRY PROBE
+// against. It imports nothing, so the walk queues exactly one unit and
+// the code that comes back is about finding the file and nothing else.
+//
+// A program of MORE than one module is `build_puts_every_module_in_one
+// _tree` beside this, and it is a different question.
+
+Answer* = {
+    n*: i32,
+}
+
+answer* = () i32 { 42 }

@@ -1,0 +1,306 @@
+// Lower module-level values and decide whether a value may be safely inlined
+// at each use. Frame-local name lookup remains in `gen_c_expr`.
+
+ExprId, Decl, Const = std.ast
+Literal, Binary, Unary, Access, Call, Name, ArrayLit, FixedArray = std.ast
+AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+TyId = sema.sema_ty
+Def, decl_at = sema.sema_def
+Ctx = sema.sema_check
+CBackend = gen.gen_c.gen_c_state
+unresolved, unsupported = gen.gen_c.gen_c_report
+expr = gen.gen_c.gen_c_expr
+base_decl, type_const, TypeConst = gen.gen_c.gen_c_read
+intern_named, write_variant_value = gen.gen_c.gen_c_read
+plain_ctx = gen.gen_c.gen_c_decl
+is_null_ptr = gen.gen_c.gen_c_ptr
+selected_def = gen.gen_c.gen_c_call
+
+// Module constants are inlined at each use and therefore admit only C constant
+// Expressions. Calls are rejected because they would run once per use rather
+// Than once for the declaration.
+lower_global_value* = (
+    be   :: CBackend,
+    id   : ExprId,
+    text : str,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    found ::= be.alloc.Vec<Def>();
+    be.check.world.defs_of(ctx.module, text, found).try();
+    found.get(0).match({
+        None  => be.lower_variant_value(id, text, want, ctx, out),
+        Ok(d) => be.lower_def_value(id, d, text, want, out),
+    })
+}
+
+// A bare variant: `Once` where a visible enum declares it.
+// The enum comes from the same walk sema used to type the node, asked
+// in the same order — a declaration first, the variant only when
+// nothing else answered. Two walks that disagreed would emit a tag from
+// one enum into a value of another, which C accepts and nothing catches.
+// A bare nullary variant name (`None` where a visible enum declares it)
+// Is typed at the declaration's own reading, and that is the one thing
+// this path cannot spell for a generic enum: `constructed` interns
+// `Opt<Var>`, whose C name mangles the free parameter. The context's
+// expectation is asked first, through `nullary_ty`'s rule — an
+// annotation, a call argument's settled parameter, or a return position
+// all arrive here as `want` — and only a miss falls back to the bare
+// reading, whose layout is identical whenever it is spelled at all.
+// The type AST of `Opt<i32>` written anywhere in the program is asked
+// afresh (never memoized against another position's answer): its
+// arguments resolve in this module, so the id it interns is exactly the
+// one every other `Opt<i32>` in the program already carries.
+lower_variant_value = (
+    be   :: CBackend,
+    id   : ExprId,
+    text : str,
+    want : TyId,
+    ctx  : Ctx,
+    out  :: String
+) Res<(), AllocError> {
+    found ::= be.alloc.Vec<Def>();
+    be.check.world.variant_defs(be.tree, ctx.module, text, found).try();
+    found.get(0).match({
+        None  => unresolved(be, id, text, out),
+        Ok(d) => be.lower_bare_variant(id, d, text, want, out),
+    })
+}
+
+lower_bare_variant = (
+    be   :: CBackend,
+    id   : ExprId,
+    d    : Def,
+    text : str,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    intern_named(be, d).match({
+        None   => unresolved(be, id, text, out),
+        Ok(ty) => be.write_variant_value(id, ty, want, text, out),
+    })
+}
+
+lower_def_value = (
+    be   :: CBackend,
+    id   : ExprId,
+    d    : Def,
+    text : str,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    d.kind.match({
+        ConstDef => be.lower_const(id, d, text, want, out),
+        _        => unresolved(be, id, text, out),
+    })
+}
+
+lower_const = (
+    be   :: CBackend,
+    id   : ExprId,
+    d    : Def,
+    text : str,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    decl_at(be.tree, d.id).match({
+        None  => unresolved(be, id, text, out),
+        Ok(x) => be.lower_const_decl(id, x, d, text, want, out),
+    })
+}
+
+lower_const_decl = (
+    be   :: CBackend,
+    id   : ExprId,
+    x    : Decl,
+    d    : Def,
+    text : str,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    x.kind.match({
+        Const(k) => be.lower_const_value(id, k, d, want, out),
+        _        => unresolved(be, id, text, out),
+    })
+}
+
+// The constant's declared type wins over the context's: `USAGE: str` is
+// a `str` wherever it is read, and a literal takes its width from the
+// declaration that named it.
+lower_const_value* = (
+    be   :: CBackend,
+    id   : ExprId,
+    k    : Const,
+    d    : Def,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    dctx = be.plain_ctx(d.id.module.to_usize());
+    ty   = k.type.match({
+        Ok(t) => be.check.type_from_ast(t, dctx),
+        None  => Ok(want),
+    }).try();
+    be.is_pure_value(k.value, dctx).match({
+        false => be.unsupported(
+            id,
+            "a constant whose value names a function or reads a frame",
+            out
+        ),
+        true  => expr(be, k.value, dctx, ty, out),
+    })
+}
+
+// Written twice without anyone being able to tell: a literal can; so
+// can an operator over things that can, and so can a construction of
+// them — a compound literal names no function and reads nothing. A
+// call to anything else cannot.
+// A name is asked exactly what `lower_name` asks, in the order it asks
+// it: a frame slot first (refused — the use site this default is
+// emitted at is not in that frame), then `None` (admitted — `Res` is
+// structural and its constructors answer to no declaration walk), then
+// the module-level question `lower_global_value` runs. The gate and the
+// lowering are one question asked twice; that they cannot drift is the
+// whole reason this arm reads as it does.
+is_pure_value* = (be :: CBackend, id: ExprId, ctx: Ctx) bool {
+    be.tree.expr_at(id).kind.match({
+        Literal(_)    => true,
+        Unit          => true,
+        Unary(u)      => be.is_pure_value(u.operand, ctx),
+        Binary(b)     => be.is_pure_pair(b, ctx),
+        Call(c)       => be.is_pure_call(id, c, ctx),
+        Access(a)     => be.is_pure_access(a, ctx),
+        Name(n)       => be.is_pure_name(n.text, ctx),
+        Array(a)      => be.pure_elems(a.elems, ctx),
+        FixedArray(a) => be.pure_elems(a.elems, ctx),
+        _             => false,
+    })
+}
+
+pure_elems = (be :: CBackend, elems: Vec<ExprId>, ctx: Ctx) bool {
+    pure ::= true;
+    elems.loop((h, elem) {
+        (be.is_pure_value(elem, ctx) == false).then(() {
+            pure = false;
+            h.break();
+        });
+    });
+    pure
+}
+
+is_pure_name = (be :: CBackend, text: str, ctx: Ctx) bool {
+    text.eq("None").match({
+        true  => true,
+        false => be.slot_of(text).match({
+            Ok(_) => false,
+            None  => be.global_is_pure_name(text, ctx),
+        }),
+    })
+}
+
+global_is_pure_name = (be :: CBackend, text: str, ctx: Ctx) bool {
+    found ::= be.alloc.Vec<Def>();
+    be.check.world.defs_of(ctx.module, text, found).match({
+        Err(_) => false,
+        Ok(_)  => found.get(0).match({
+            Ok(d) => d.kind.match({ ConstDef => true, _ => false }),
+            None  => be.variant_is_pure_name(text, ctx),
+        }),
+    })
+}
+
+variant_is_pure_name = (be :: CBackend, text: str, ctx: Ctx) bool {
+    found ::= be.alloc.Vec<Def>();
+    be.check.world.variant_defs(be.tree, ctx.module, text, found).match({
+        Err(_) => false,
+        Ok(_)  => found.get(0).match({ Ok(_) => true, None => false }),
+    })
+}
+
+// A nullary variant and a constant on a type are both values of a
+// Declaration: neither names a function and neither reads a frame, so
+// both can be written wherever they are read. A field access cannot —
+// it reads a receiver.
+is_pure_access = (be :: CBackend, a: Access, ctx: Ctx) bool {
+    be.base_decl(a.base, ctx).match({
+        Ok(_) => true,
+        None  => be.has_type_const(a, ctx),
+    })
+}
+
+has_type_const = (be :: CBackend, a: Access, ctx: Ctx) bool {
+    be.type_const(a, ctx).match({
+        Err(_) => false,
+        Ok(r)  => found_const(r),
+    })
+}
+
+found_const = (r: Res<TypeConst>) bool {
+    r.match({ Ok(_) => true, None => false })
+}
+
+is_pure_pair = (be :: CBackend, b: Binary, ctx: Ctx) bool {
+    be.is_pure_value(b.lhs, ctx) && be.is_pure_value(b.rhs, ctx)
+}
+
+// A call is pure only when its callee names a type: `TyId(index: 0)` is
+// a compound literal, `first_of(v)` is a function this use site would
+// run. The question is asked of the declaration and not of the spelling,
+// which is the same question `gen_c_call.zen` asks to decide between the
+// two readings of one node.
+// `null_ptr<T>()` is the one call that is not one. It has no body —
+// `gen_c_ptr.zen` is its body, and what that body writes is `((T *)NULL)`,
+// a constant naming nothing. So the licence is `is_null_ptr` asked of the
+// Same resolved declaration `gen_c_call.call_or_floor` asks it of: one
+// spelling of "this call is a null pointer literal", so the gate and the
+// lowering cannot drift into disagreeing about which calls are constants.
+is_pure_call = (be :: CBackend, id: ExprId, c: Call, ctx: Ctx) bool {
+    selected = be.check.call_resolution(id).match({
+        None           => be.callee_def(c.callee, ctx),
+        Ok(resolution) => resolution.match({
+            Checked(_) => be.selected_def(id),
+            _          => None,
+        }),
+    });
+    selected.match({
+        None  => false,
+        Ok(d) => be.pure_callee(c, d, ctx),
+    })
+}
+
+pure_callee = (be :: CBackend, c: Call, d: Def, ctx: Ctx) bool {
+    is_struct_def(d).match({
+        true  => be.pure_args(c, ctx),
+        false => is_null_ptr(d.name),
+    })
+}
+
+pure_args = (be :: CBackend, c: Call, ctx: Ctx) bool {
+    every ::= true;
+    c.args.loop((h, a) {
+        impure = be.is_pure_value(a.value, ctx) == false;
+        impure.then(() { every = false; });
+    });
+    every
+}
+
+callee_def = (be :: CBackend, callee: ExprId, ctx: Ctx) Res<Def> {
+    be.tree.expr_at(callee).kind.match({
+        Name(n) => be.def_named(n.text, ctx),
+        _       => None,
+    })
+}
+
+def_named = (be :: CBackend, text: str, ctx: Ctx) Res<Def> {
+    found ::= be.alloc.Vec<Def>();
+    be.check.world.defs_of(ctx.module, text, found).match({
+        Err(_) => None,
+        Ok(_)  => found.get(0),
+    })
+}
+
+is_struct_def = (d: Def) bool {
+    d.kind.match({ StructDef => true, _ => false })
+}

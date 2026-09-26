@@ -1,0 +1,454 @@
+Decl, Function, TParam, Span = std.ast
+AllocError = std.mem
+Vec = std.collections
+str = std.text
+Range = std.core
+DeclId = sema.sema_id
+TyId = sema.sema_ty
+Def, decl_at = sema.sema_def
+Checker, Ctx, UNRESOLVED = sema.sema_check
+tparam_vars, push_tparams = sema.sema_inst
+satisfies_bound = sema.sema_bound
+can_hoist = sema.sema_hoist
+type_from_ast, param_type = sema.sema_denote
+pack_elem, pack_slot = sema.sema_vararg
+
+// A free-function candidate for a call, with its signature resolved in
+// its declaring module.
+Cand* = {
+    id*: DeclId,
+    name*: str,
+    owner*: str,
+    params*: Vec<TyId>,
+    ret*: TyId,
+    tvars*: Vec<TyId>,
+    tbounds*: Vec<TBound>,
+    generic*: bool,
+    span*: Span,
+}
+
+// One bound on one type parameter; `<K: Eq + Hash>` yields two.
+TBound* = {
+    name*: str,
+    bound*: TyId,
+}
+
+// One argument as resolution sees it. A lambda's `ty` is poison until a
+// signature settles it; only its arity takes part in the pick.
+Actual* = {
+    ty*: TyId,
+    is_lambda*: bool,
+    arity*: usize,
+    named*: bool,
+    span*: Span,
+}
+
+// Candidate collection.
+
+// A dot includes exported UFCS functions travelling with the receiver type;
+// ordinary calls remain limited to declarations visible in their module.
+travelled_cands* = (
+    c    :: Checker,
+    name : str,
+    recv : Res<TyId>,
+    out  :: Vec<Cand>
+) Res<(), AllocError> {
+    recv.match({
+        Ok(rty) => c.travelled_of(name, rty, out),
+        None    => Ok(()),
+    })
+}
+
+travelled_of = (c :: Checker, name: str, rty: TyId, out :: Vec<Cand>)
+               Res<(), AllocError> {
+    defs ::= c.alloc.Vec<Def>();
+    c.world.exported_named(name, defs).try();
+    defs.loop((h, d) { c.travelled_def(d, rty, out).try() });
+    Ok(());
+}
+
+travelled_def = (c :: Checker, d: Def, rty: TyId, out :: Vec<Cand>)
+                Res<(), AllocError> {
+    c.tree.decl_at(d.id).match({
+        None    => Ok(()),
+        Ok(dec) => dec.kind.match({
+            Function(f) => c.keep_travelled(
+                c.make_cand(d, dec, f).try(),
+                rty,
+                out
+            ),
+            _           => Ok(()),
+        }),
+    }).try();
+    Ok(())
+}
+
+keep_travelled = (c :: Checker, k: Cand, rty: TyId, out :: Vec<Cand>)
+                 Res<(), AllocError> {
+    takes = c.takes_receiver(k, rty).try();
+    (takes && (out.has_cand(k.id) == false)).match({
+        true  => out.add(k),
+        false => Ok(()),
+    })
+}
+
+takes_receiver = (c :: Checker, k: Cand, rty: TyId) Res<bool, AllocError> {
+    k.params.get(0).match({
+        None  => Ok(false),
+        Ok(t) => c.is_tvar(t).match({
+            true  => Ok(true),
+            false => c.satisfies_bound(rty, t),
+        }),
+    })
+}
+
+has_cand = (out: Vec<Cand>, id: DeclId) bool {
+    out.find((k) { k.id.eq(id) }).match({ Ok(_) => true, None => false })
+}
+
+cands_of* = (c :: Checker, mi: usize, name: str, out :: Vec<Cand>)
+            Res<(), AllocError> {
+    defs ::= c.alloc.Vec<Def>();
+    c.world.defs_of(mi, name, defs).try();
+    defs.loop((h, d) { c.cand_of(d, out).try() });
+    Ok(());
+}
+
+exported_cands* = (c :: Checker, mi: usize, name: str, out :: Vec<Cand>)
+                  Res<(), AllocError> {
+    defs ::= c.alloc.Vec<Def>();
+    c.world.exported_defs(mi, name, defs).try();
+    defs.loop((h, d) { c.cand_of(d, out).try() });
+    Ok(())
+}
+
+cand_of = (c :: Checker, d: Def, out :: Vec<Cand>) Res<(), AllocError> {
+    c.tree.decl_at(d.id).match({
+        Ok(dec) => dec.kind.match({
+            Function(f) => out.add(c.make_cand(d, dec, f).try()),
+            _           => Ok(()),
+        }),
+        None    => Ok(()),
+    }).try();
+    Ok(());
+}
+
+// The signature resolves in its declaring module, under its own type
+// parameters.
+make_cand = (c :: Checker, d: Def, dec: Decl, f: Function)
+            Res<Cand, AllocError> {
+    mark   = c.tvar_mark();
+    poison = c.types.unknown().try();
+    ctx    = Ctx(d.id.module.to_usize(), poison);
+    c.push_tparams(f.tparams, d.qname).try();
+    tvs ::= c.alloc.Vec<TyId>();
+    c.tparam_vars(f.tparams, d.qname, tvs).try();
+    ptys ::= c.alloc.Vec<TyId>();
+    f.params.loop((h, p) { ptys.add(c.param_type(p, ctx).try()).try() });
+    rty = f.ret.match({
+        Ok(r) => c.type_from_ast(r, ctx),
+        None  => c.types.prim("()"),
+    }).try();
+    tbs ::= c.alloc.Vec<TBound>();
+    c.collect_bounds(f, ctx, tbs).try();
+    c.release_tvars(mark).try();
+    Ok(Cand(
+        id: d.id,
+        name: d.name,
+        owner: d.qname,
+        params: ptys,
+        ret: rty,
+        tvars: tvs,
+        tbounds: tbs,
+        generic: f.tparams.len > 0,
+        span: dec.span
+    ))
+}
+
+collect_bounds* = (c :: Checker, f: Function, ctx: Ctx, out :: Vec<TBound>)
+                  Res<(), AllocError> {
+    f.tparams.loop((h, tp) { c.tparam_bounds(tp, ctx, out).try() });
+    Ok(());
+}
+
+tparam_bounds* = (c :: Checker, tp: TParam, ctx: Ctx, out :: Vec<TBound>)
+                 Res<(), AllocError> {
+    text = tp.name.text;
+    tp.bounds.loop((h, b) {
+        out.add(TBound(name: text, bound: c.type_from_ast(b, ctx).try())).try();
+    });
+    Ok(());
+}
+
+// Signature matching.
+
+// Named arguments supply construction or impl fields; function arguments are
+// positional, so a named actual matches no function candidate.
+matches* = (c :: Checker, cand: Cand, actuals: Vec<Actual>)
+           Res<bool, AllocError> {
+    actuals.find((a) { a.named }).match({
+        Ok(_) => Ok(false),
+        None  => c.by_arity(cand, actuals),
+    })
+}
+
+by_arity = (c :: Checker, cand: Cand, actuals: Vec<Actual>)
+           Res<bool, AllocError> {
+    c.is_variadic(cand).match({
+        true  => c.variadic_matches(cand, actuals),
+        false => c.fixed_matches(cand, actuals),
+    })
+}
+
+fixed_matches = (c :: Checker, cand: Cand, actuals: Vec<Actual>)
+                Res<bool, AllocError> {
+    c.fixed_arity_fits(cand.params, actuals.len, 0).match({
+        false => Ok(false),
+        true  => c.each_fits(cand.params, actuals, actuals.len, 0),
+    })
+}
+
+// A bare `...` makes arity a minimum and leaves its tail type-directed. A
+// vararg<T> tail additionally checks every swallowed actual against T.
+variadic_matches = (c :: Checker, cand: Cand, actuals: Vec<Actual>)
+                   Res<bool, AllocError> {
+    c.types.pack_slot(cand.params).match({
+        None     => c.marker_matches(cand, actuals),
+        Ok(slot) => c.pack_sig_fits(cand.params, actuals, 0, slot),
+    })
+}
+
+marker_matches = (c :: Checker, cand: Cand, actuals: Vec<Actual>)
+                 Res<bool, AllocError> {
+    fixed = cand.params.len - 1;
+    (actuals.len >= fixed).match({
+        false => Ok(false),
+        true  => c.each_fits(cand.params, actuals, fixed, 0),
+    })
+}
+
+// Shared pack matching. off is zero for free calls and one when parameter zero
+// is a receiver. A receiver path cannot fit a signature containing only a pack.
+pack_sig_fits = (
+    c       :: Checker,
+    ps      : Vec<TyId>,
+    actuals : Vec<Actual>,
+    off     : usize,
+    slot    : usize
+) Res<bool, AllocError> {
+    (slot < off).match({
+        true  => Ok(false),
+        false => c.pack_arity_fits(ps, actuals, off, slot - off),
+    })
+}
+
+pack_arity_fits = (
+    c       :: Checker,
+    ps      : Vec<TyId>,
+    actuals : Vec<Actual>,
+    off     : usize,
+    fixed   : usize
+) Res<bool, AllocError> {
+    (actuals.len >= fixed).match({
+        false => Ok(false),
+        true  => c.prefix_then_pack(ps, actuals, off, fixed),
+    })
+}
+
+prefix_then_pack = (
+    c       :: Checker,
+    ps      : Vec<TyId>,
+    actuals : Vec<Actual>,
+    off     : usize,
+    fixed   : usize
+) Res<bool, AllocError> {
+    prefix = c.each_fits(ps, actuals, fixed, off).try();
+    tail   = c.pack_tail_fits(actuals, fixed, ps.ty_at(fixed + off)).try();
+    Ok(prefix && tail);
+}
+
+// A vararg slot accepts a run of elements or one compatible vararg forwarded
+// unchanged.
+pack_tail_fits = (
+    c       :: Checker,
+    actuals : Vec<Actual>,
+    fixed   : usize,
+    pack    : TyId
+) Res<bool, AllocError> {
+    c.pack_forwarded(actuals, fixed, pack).try().match({
+        true  => Ok(true),
+        false => c.spread_fits(actuals, fixed, c.pack_element_of(pack)),
+    })
+}
+
+pack_forwarded = (c :: Checker, actuals: Vec<Actual>, fixed: usize, pack: TyId)
+            Res<bool, AllocError> {
+    (actuals.len == fixed + 1).match({
+        false => Ok(false),
+        true  => c.fits_at_ty(actuals, fixed, pack),
+    })
+}
+
+spread_fits = (c :: Checker, actuals: Vec<Actual>, fixed: usize, elem: TyId)
+              Res<bool, AllocError> {
+    ok ::= true;
+    Range(fixed, actuals.len).loop((h, i) {
+        got = c.fits_at_ty(actuals, i, elem).try();
+        ok  = ok && got;
+    });
+    Ok(ok);
+}
+
+pack_element_of = (c: Checker, pack: TyId) TyId {
+    c.types.pack_elem(pack).value_or(pack)
+}
+
+fits_at_ty = (c :: Checker, actuals: Vec<Actual>, i: usize, want: TyId)
+             Res<bool, AllocError> {
+    actuals.get(i).match({
+        Ok(a) => c.fits(a, want),
+        None  => Ok(false),
+    })
+}
+
+is_variadic = (c: Checker, cand: Cand) bool {
+    (cand.params.len > 0)
+        && c.tail_swallows(cand.params.ty_at(cand.params.len - 1))
+}
+
+tail_swallows* = (c: Checker, tail: TyId) bool {
+    c.prim_name(tail).eq("...")
+        || c.types.pack_elem(tail).match({ Ok(_) => true, None => false })
+}
+
+// Actual `i` against parameter `i + off` for every `i` below `n`. `find`
+// takes a `bool` predicate and `fits` can fail, so every pair is checked.
+each_fits = (
+    c       :: Checker,
+    ps      : Vec<TyId>,
+    actuals : Vec<Actual>,
+    n       : usize,
+    off     : usize
+) Res<bool, AllocError> {
+    ok ::= true;
+    Range(0, n).loop((h, i) {
+        got = c.fits_at_ty(actuals, i, ps.ty_at(i + off)).try();
+        ok  = ok && got;
+    });
+    Ok(ok);
+}
+
+fits = (c :: Checker, a: Actual, p: TyId) Res<bool, AllocError> {
+    a.is_lambda.match({
+        true  => Ok(c.closure_fits(p, a.arity)),
+        false => c.value_fits(a, p),
+    })
+}
+
+value_fits = (c :: Checker, a: Actual, p: TyId) Res<bool, AllocError> {
+    (c.assignable(a.ty, p) || c.can_hoist(a.ty, p)).match({
+        true  => Ok(true),
+        false => c.satisfies_bound(a.ty, p),
+    })
+}
+
+// Methods use the same signature fit as UFCS candidates, offset by receiver
+// parameter zero.
+recv_sig_fits* = (c :: Checker, ps: Vec<TyId>, actuals: Vec<Actual>)
+                 Res<bool, AllocError> {
+    c.sig_fits(ps, actuals, 1)
+}
+
+// Function parameters are positional. A named argument cannot become a
+// positional one merely because its value has the expected type.
+signature_matches* = (
+    c       :: Checker,
+    ps      : Vec<TyId>,
+    actuals : Vec<Actual>,
+    off     : usize
+) Res<bool, AllocError> {
+    actuals.find((a) { a.named }).match({
+        Ok(_) => Ok(false),
+        None  => c.sig_fits(ps, actuals, off),
+    })
+}
+
+sig_fits* = (
+    c       :: Checker,
+    ps      : Vec<TyId>,
+    actuals : Vec<Actual>,
+    off     : usize
+) Res<bool, AllocError> {
+    c.types.pack_slot(ps).match({
+        None     => c.marker_or_fixed_fits(ps, actuals, off),
+        Ok(slot) => c.pack_sig_fits(ps, actuals, off, slot),
+    })
+}
+
+marker_or_fixed_fits = (
+    c       :: Checker,
+    ps      : Vec<TyId>,
+    actuals : Vec<Actual>,
+    off     : usize
+) Res<bool, AllocError> {
+    marker = (ps.len > off) && c.prim_name(ps.ty_at(ps.len - 1)).eq("...");
+    marker.match({
+        true  => c.marker_sig_fits(ps, actuals, off),
+        false => c.fixed_arity_fits(ps, actuals.len, off).match({
+            false => Ok(false),
+            true  => c.each_fits(ps, actuals, actuals.len, off),
+        }),
+    })
+}
+
+marker_sig_fits = (
+    c       :: Checker,
+    ps      : Vec<TyId>,
+    actuals : Vec<Actual>,
+    off     : usize
+) Res<bool, AllocError> {
+    fixed = ps.len - off - 1;
+    (actuals.len >= fixed).match({
+        false => Ok(false),
+        true  => c.each_fits(ps, actuals, fixed, off),
+    })
+}
+
+closure_fits = (c: Checker, p: TyId, arity: usize) bool {
+    c.types.at(p).match({
+        Fn(f)  => f.params.len == arity,
+        Var(_) => true,
+        _      => false,
+    })
+}
+
+// A trailing `Res<T>` is an optional parameter. Omission never crosses a
+// required parameter, and a failure-bearing `Res<T, E>` remains required.
+fixed_arity_fits* = (
+    c        : Checker,
+    params   : Vec<TyId>,
+    supplied : usize,
+    off      : usize
+) bool {
+    used = supplied + off;
+    (used <= params.len) && c.omittable_tail(params, used)
+}
+
+omittable_tail* = (c: Checker, params: Vec<TyId>, from: usize) bool {
+    Range(from, params.len).find((i) {
+        c.omittable(params.ty_at(i)) == false
+    }).match({ Ok(_) => false, None => true })
+}
+
+omittable* = (c: Checker, ty: TyId) bool {
+    c.types.at(ty).match({
+        Res(r) => r.form.match({ Absence => true, _ => false }),
+        _      => false,
+    })
+}
+
+is_tvar* = (c: Checker, id: TyId) bool { c.is_var(id) }
+
+ty_at* = (v: Vec<TyId>, i: usize) TyId {
+    v.get(i).value_or(UNRESOLVED)
+}

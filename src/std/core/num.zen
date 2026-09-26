@@ -1,0 +1,191 @@
+// Primitive numeric bounds, widths, conversions, and equality impls.
+// Arithmetic traps on overflow; `+%`, `-%`, and `*%` wrap.
+
+Eq = std.core.eq
+Res, Ok, None = std.core.result
+
+i8* = {
+    MIN*: i8 = -128,
+    MAX*: i8 = 127,
+    BITS*: usize = 8,
+}
+
+i16* = {
+    MIN*: i16 = -32768,
+    MAX*: i16 = 32767,
+    BITS*: usize = 16,
+}
+
+i32* = {
+    MIN*: i32 = -2147483648,
+    MAX*: i32 = 2147483647,
+    BITS*: usize = 32,
+}
+
+i64* = {
+    MIN*: i64 = -9223372036854775808,
+    MAX*: i64 = 9223372036854775807,
+    BITS*: usize = 64,
+}
+
+u8* = {
+    MIN*: u8 = 0,
+    MAX*: u8 = 255,
+    BITS*: usize = 8,
+}
+
+u16* = {
+    MIN*: u16 = 0,
+    MAX*: u16 = 65535,
+    BITS*: usize = 16,
+}
+
+u32* = {
+    MIN*: u32 = 0,
+    MAX*: u32 = 4294967295,
+    BITS*: usize = 32,
+}
+
+u64* = {
+    MIN*: u64 = 0,
+    MAX*: u64 = 18446744073709551615,
+    BITS*: usize = 64,
+}
+
+// usize follows the target pointer width. Current supported architectures are
+// 64-bit; a 32-bit target must change this declaration and backend metadata
+// together.
+usize* = {
+    MIN*: usize = 0,
+    MAX*: usize = 18446744073709551615,
+    BITS*: usize = 64,
+}
+
+// Float MIN is the most negative finite value, not the smallest positive
+// normal value.
+
+f32* = {
+    MIN*: f32 = -340282346638528859811704183484516925440.0,
+    MAX*: f32 = 340282346638528859811704183484516925440.0,
+    BITS*: usize = 32,
+}
+
+f64* = {
+    MIN*: f64 = -179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368.0,
+    MAX*: f64 = 179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368.0,
+    BITS*: usize = 64,
+}
+
+// Compiler-provided conversions: sema_numeric validates these declarations
+// and records their operations; gen_c_num supplies the C implementation.
+// Bodyless numeric declarations in other modules are rejected.
+//
+// Lossless widening conversions.
+to_u16* = (self: u8) u16
+to_u32* = (self: u8) u32
+to_u64* = (self: u8) u64
+to_u32* = (self: u16) u32
+to_u64* = (self: u16) u64
+to_u64* = (self: u32) u64
+to_usize* = (self: u32) usize
+
+// usize is currently 64-bit. u64-to-usize is omitted because it would narrow
+// on a future 32-bit target.
+to_u64* = (self: usize) u64
+to_usize* = (self: u8) usize
+to_usize* = (self: u16) usize
+
+to_i16* = (self: i8) i16
+to_i32* = (self: i8) i32
+to_i64* = (self: i8) i64
+to_i32* = (self: i16) i32
+to_i64* = (self: i16) i64
+to_i64* = (self: i32) i64
+
+to_i32* = (self: u8) i32
+to_i64* = (self: u8) i64
+to_i64* = (self: u16) i64
+to_i64* = (self: u32) i64
+
+to_f64* = (self: i32) f64
+to_f64* = (self: f32) f64
+
+// Checked conversions evaluate the receiver once and return None when its
+// value does not fit. They never truncate, wrap, saturate, or allocate.
+to_u8* = (self: usize) Res<u8>
+to_u8* = (self: u32) Res<u8>
+to_u16* = (self: u64) Res<u16>
+to_usize* = (self: u64) Res<usize>
+to_i32* = (self: u64) Res<i32>
+to_i32* = (self: i64) Res<i32>
+
+// C int follows the native ABI; both directions check the destination range.
+to_c_int* = (self: i32) Res<c_int>
+to_i32* = (self: c_int) Res<i32>
+
+min* = (self: usize, other: usize) usize {
+    (self < other).match({ true => self, false => other })
+}
+
+// 2^self; ordinary usize overflow traps.
+pow2* = (self: usize) usize {
+    power ::= 1;
+    i     ::= 0;
+    (i < self).loop((h) {
+        power = power * 2;
+        i     = i + 1;
+    });
+    power;
+}
+
+ToU16* = { widen_u16* = (self: @Self) u16 }
+ToU32* = { widen_u32* = (self: @Self) u32 }
+ToU64* = { widen_u64* = (self: @Self) u64 }
+ToUsize* = { widen_usize* = (self: @Self) usize }
+ToI16* = { widen_i16* = (self: @Self) i16 }
+ToI32* = { widen_i32* = (self: @Self) i32 }
+ToI64* = { widen_i64* = (self: @Self) i64 }
+ToF64* = { widen_f64* = (self: @Self) f64 }
+
+u8.impl(ToU16, { widen_u16 = to_u16 })
+u8.impl(ToU32, { widen_u32 = to_u32 })
+u8.impl(ToU64, { widen_u64 = to_u64 })
+u8.impl(ToI32, { widen_i32 = to_i32 })
+u8.impl(ToI64, { widen_i64 = to_i64 })
+
+u16.impl(ToU32, { widen_u32 = to_u32 })
+u16.impl(ToU64, { widen_u64 = to_u64 })
+u16.impl(ToI64, { widen_i64 = to_i64 })
+
+u32.impl(ToU64, { widen_u64 = to_u64 })
+u32.impl(ToUsize, { widen_usize = to_usize })
+u32.impl(ToI64, { widen_i64 = to_i64 })
+
+usize.impl(ToU64, { widen_u64 = to_u64 })
+
+u8.impl(ToUsize, { widen_usize = to_usize })
+
+u16.impl(ToUsize, { widen_usize = to_usize })
+
+i8.impl(ToI16, { widen_i16 = to_i16 })
+i8.impl(ToI32, { widen_i32 = to_i32 })
+i8.impl(ToI64, { widen_i64 = to_i64 })
+
+i16.impl(ToI32, { widen_i32 = to_i32 })
+i16.impl(ToI64, { widen_i64 = to_i64 })
+
+i32.impl(ToI64, { widen_i64 = to_i64 })
+i32.impl(ToF64, { widen_f64 = to_f64 })
+
+f32.impl(ToF64, { widen_f64 = to_f64 })
+
+i8.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
+i16.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
+i32.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
+i64.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
+
+u8.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
+u16.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
+u32.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
+u64.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
+usize.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })

@@ -1,0 +1,230 @@
+// Lower fold loops with one automatic accumulator.
+//
+// The seed initializes the accumulator, each iteration writes the body value
+// back, normal completion returns `Ok(acc)`, and `h.break(value)` jumps past
+// that result. The accumulator type is the seed/result payload, not the walked
+// element type.
+
+ExprId, Lambda, Function, Call = std.ast
+AllocError = std.mem
+str, String = std.text
+TyId = sema.sema_ty
+Ctx = sema.sema_check
+sym_member, sym_variant, RES_PATH = gen.gen_name
+CBackend = gen.gen_c.gen_c_state
+LoopFrame = gen.gen_c.gen_c_frame
+unsupported = gen.gen_c.gen_c_report
+
+ctype, declarator, res_value = gen.gen_c.gen_c_type
+ty_of = gen.gen_c.gen_c_expr
+Dest, deliver = gen.gen_c.gen_c_stmt
+lower_walk, settle_res, bind_element = gen.gen_c.gen_c_loop
+Shape, LoopArgs, shape_of, loop_element, loop_fn_at = gen.gen_c.gen_c_shape
+arg_value = gen.gen_c.gen_c_shape
+has_var = sema.sema_inst
+literal_default = sema.sema_ty
+
+// One automatic accumulator, or no accumulator for non-fold loop shapes.
+Fold* = {
+    cell*: str,
+    ty*: TyId,
+    has*: bool,
+}
+
+no_fold* = (be :: CBackend) Res<Fold, AllocError> {
+    unknown = be.check.types.unknown().try();
+    Ok(Fold(cell: "", ty: unknown, has: false));
+}
+
+// A fold seeds its local before the first pass and produces a result.
+lower_fold* = (
+    be   :: CBackend,
+    id   : ExprId,
+    sh   : Shape,
+    args : LoopArgs,
+    lam  : Lambda,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+)
+             Res<(), AllocError> {
+    args.from_end(2).match({
+        None  => be.unsupported(id, "a fold with no seed", out),
+        Ok(s) => be.lower_seeded(id, sh, args, s, lam, ctx, want, out),
+    })
+}
+
+lower_seeded = (
+    be   :: CBackend,
+    id   : ExprId,
+    sh   : Shape,
+    args : LoopArgs,
+    seed : ExprId,
+    lam  : Lambda,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    aty = be.acc_type(seed, ctx, want).try();
+    has_var(be.check, aty).match({
+        true  => be.unsupported(
+            id,
+            "a fold whose accumulator type nothing settles",
+            out
+        ),
+        false => be.lower_with_acc(
+            id,
+            sh,
+            args,
+            seed,
+            aty,
+            lam,
+            ctx,
+            want,
+            out
+        ),
+    })
+}
+
+// The seed determines the accumulator type; an expected Res payload is the
+// fallback while the seed remains unsettled.
+acc_type = (be :: CBackend, seed: ExprId, ctx: Ctx, want: TyId)
+           Res<TyId, AllocError> {
+    unknown = be.check.types.unknown().try();
+    got     = be.ty_of(seed, ctx, unknown).try();
+    be.settled_acc(got, want)
+}
+
+settled_acc = (be :: CBackend, got: TyId, want: TyId)
+              Res<TyId, AllocError> {
+    (be.check.is_unknown(got) || has_var(be.check, got)).match({
+        false => Ok(got),
+        true  => be.res_value(want).match({ Ok(value) => Ok(value), None => Ok(want) }),
+    })
+}
+
+lower_with_acc = (
+    be   :: CBackend,
+    id   : ExprId,
+    sh   : Shape,
+    args : LoopArgs,
+    seed : ExprId,
+    aty  : TyId,
+    lam  : Lambda,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    cell ::= be.fresh_name("a").try();
+    decl ::= be.alloc.String().try();
+    be.declarator(aty, cell.view(), decl).try();
+    be.fmt("{};\n", decl.view()).try();
+    be.deliver(seed, ctx, aty, Dest.Into(cell.view())).try();
+    settled = be.settle_res(want, aty).try();
+    be.lower_walk(
+        id,
+        sh,
+        args,
+        lam,
+        ctx,
+        settled,
+        Fold(cell: cell.view(), ty: aty, has: true),
+        out
+    )
+}
+
+// The accumulator parameter follows the index/value parameters selected by
+// the declared loop shape.
+bind_acc* = (be :: CBackend, sh: Shape, lam: Lambda, fold: Fold)
+           Res<(), AllocError> {
+    fold.has.match({
+        false => Ok(()),
+        true  => be.bind_element(lam, acc_slot(sh), fold.cell, fold.ty),
+    })
+}
+
+acc_slot = (sh: Shape) usize {
+    1 + sh.wants_index.match({ true => 1, false => 0 })
+      + sh.wants_value.match({ true => 1, false => 0 })
+}
+
+// A fold evaluates to `Res<A>`, where the seed supplies `A`.
+result_element* = (be :: CBackend, id: ExprId, ctx: Ctx)
+                 Res<Res<TyId>, AllocError> {
+    be.seed_arg(id).match({
+        None  => be.loop_element(id, ctx),
+        Ok(s) => be.seed_element(s, ctx),
+    })
+}
+
+seed_element = (be :: CBackend, seed: ExprId, ctx: Ctx)
+               Res<Res<TyId>, AllocError> {
+    unknown = be.check.types.unknown().try();
+    t       = be.ty_of(seed, ctx, unknown).try();
+    // Materialize a literal seed at its family's default concrete type.
+    settled = be.check.is_literal_ty(t).match({
+        true  => be.check.types.prim(literal_default(be.check.prim_name(
+            t
+        ))).try(),
+        false => t,
+    });
+    Ok(Ok(settled));
+}
+
+// Read the seed from the resolved fold declaration, not argument count;
+// loop(cond, body) also has two arguments.
+seed_arg = (be :: CBackend, id: ExprId) Res<ExprId> {
+    be.loop_fn_at(id).match({
+        None  => None,
+        Ok(f) => be.fold_seed(id, f),
+    })
+}
+
+fold_seed = (be :: CBackend, id: ExprId, f: Function) Res<ExprId> {
+    be.is_fold(f).match({
+        false => None,
+        true  => be.seed_before_body(id),
+    })
+}
+
+is_fold = (be :: CBackend, f: Function) bool {
+    be.shape_of(f).match({ Ok(sh) => sh.wants_acc, Err(_) => false })
+}
+
+seed_before_body = (be :: CBackend, id: ExprId) Res<ExprId> {
+    be.tree.expr_at(id).kind.match({
+        Call(c) => be.call_seed(c),
+        _       => None,
+    })
+}
+
+call_seed = (be :: CBackend, c: Call) Res<ExprId> {
+    arg_value(c, c.args.len -% 2)
+}
+
+// Normal completion changes the result temporary from None to Ok(acc).
+write_fold_result* = (be :: CBackend, st: LoopFrame, fold: Fold)
+                     Res<(), AllocError> {
+    (fold.has && st.has_result).match({
+        false => Ok(()),
+        true  => be.write_ok_acc(st, fold),
+    })
+}
+
+write_ok_acc = (be :: CBackend, st: LoopFrame, fold: Fold)
+               Res<(), AllocError> {
+    cty ::= be.alloc.String().try();
+    be.ctype(st.ty, cty).try();
+    tag ::= be.alloc.String().try();
+    sym_variant(tag, RES_PATH, "Ok").try();
+    mem ::= be.alloc.String().try();
+    sym_member(mem, "Ok").try();
+    be.fmt(
+        "{} = ({}){ .zg_tag = {}, .zg_data.{} = {} };\n",
+        st.result,
+        cty.view(),
+        tag.view(),
+        mem.view(),
+        fold.cell
+    )
+}

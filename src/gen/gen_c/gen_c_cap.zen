@@ -1,0 +1,483 @@
+// C implementations of bodiless capability methods. Memory capability
+// lowering initializes the private ArenaState representation at its allocation
+// boundary; other capability floors remain in their subject-specific files.
+
+ExprId, Function, Access, Call = std.ast
+AllocError = std.mem
+str, String = std.text
+TyId, TyNamed = sema.sema_ty
+Ctx = sema.sema_check
+sym_member, sym_gen = gen.gen_name
+CBackend = gen.gen_c.gen_c_state
+unsupported = gen.gen_c.gen_c_report
+sub = gen.gen_c.gen_c_mono
+ctype, request_type, declared_ret, field_of, pointee = gen.gen_c.gen_c_type
+expr = gen.gen_c.gen_c_expr
+arg_text = gen.gen_c.gen_c_arg
+temp, payload_type = gen.gen_c.gen_c_flow
+write_assign_ok, write_assign_err = gen.gen_c.gen_c_flow
+close_else, close_brace, open_null_test = gen.gen_c.gen_c_flow
+lower_probe, lower_write, lower_read, lower_remove, lower_lock, lower_unlock = gen.gen_c.gen_c_fs
+lower_mkdir, lower_cwd = gen.gen_c.gen_c_fs
+lower_stdin_read = gen.gen_c.gen_c_stdin
+lower_env_var = gen.gen_c.gen_c_env
+lower_env_args = gen.gen_c.gen_c_args
+lower_console_print, lower_console_flush, is_console_print = gen.gen_c.gen_c_print
+is_defer, lower_defer = gen.gen_c.gen_c_scope
+write_position = gen.gen_c.gen_c_op
+lower_clock_read = gen.gen_c.gen_c_clock
+lower_sleep, lower_spawn, lower_join = gen.gen_c.gen_c_threads
+lower_actor_spawn, lower_actor_stop, lower_actor_join = gen.gen_c.gen_c_actor
+
+// Classification is closed and travels with MethodKind into lowering,
+// so receiver ownership and an overloaded name such as `read` are
+// decided once rather than reconstructed by a second boolean chain.
+CapabilityKind* = NotCapability
+    | MemAlloc
+    | MemPage
+    | MemRelease
+    | FsWrite
+    | FsRead
+    | FsCwd
+    | FsLock
+    | FsRemove
+    | FsMkdir
+    | FsProbe
+    | LockUnlock
+    | EnvVar
+    | EnvArgs
+    | ActorSpawn
+    | ActorStop
+    | ActorJoin
+    | ClockRead
+    | ThreadsSleep
+    | ThreadsSpawn
+    | ThreadsJoin
+    | ConsolePrint
+    | ConsoleFlush
+    | StdinRead
+    | ScopeDefer
+
+// All source facts for one classified capability call. They are resolved
+// together in gen_c_member and remain fixed until lowering has emitted the
+// call's value. Backend state and the destination stay explicit mutable
+// borrows at that execution boundary.
+CapabilityCall* = {
+    kind: CapabilityKind,
+    id: ExprId,
+    call: Call,
+    access: Access,
+    receiver_ty: TyId,
+    module: usize,
+    function: Function,
+    ctx: Ctx,
+    want: TyId,
+
+    lower = (self: @Self, be :: CBackend, out :: String)
+            Res<(), AllocError> {
+        id  = self.id;
+        c   = self.call;
+        a   = self.access;
+        rty = self.receiver_ty;
+        ctx = self.ctx;
+        self.kind.match({
+            ScopeDefer    => be.lower_defer(id, c, a, ctx, out),
+            ActorSpawn    => be.lower_actor_spawn(id, c, a, rty, ctx, out),
+            ActorStop     => be.lower_actor_stop(a, rty, ctx, out),
+            ActorJoin     => be.lower_actor_join(a, rty, ctx, out),
+            ThreadsJoin   => be.lower_join(id, c, a, rty, self.want, ctx, out),
+            NotCapability => be.unsupported(
+                id,
+                "an unclassified capability",
+                out
+            ),
+            _             => {
+                ret = self.return_type(be).try();
+                be.request_type(ret).try();
+                self.lower_typed(be, ret, out)
+            },
+        })
+    }
+
+    lower_typed = (self: @Self, be :: CBackend, ret: TyId,
+                   out :: String) Res<(), AllocError> {
+        id  = self.id;
+        c   = self.call;
+        a   = self.access;
+        rty = self.receiver_ty;
+        ctx = self.ctx;
+        self.kind.match({
+            MemAlloc     => be.lower_alloc(id, a, rty, ret, ctx, out),
+            MemPage      => be.lower_page(id, c, ret, ctx, out),
+            MemRelease   => be.lower_release(c, ctx, out),
+            FsWrite      => be.lower_write(id, c, ret, ctx, out),
+            FsRead       => {
+                aty = self.parameter_type(be).try();
+                be.lower_read(id, c, ret, aty, ctx, out)
+            },
+            FsCwd        => {
+                aty = self.parameter_type(be).try();
+                be.lower_cwd(id, c, ret, aty, ctx, out)
+            },
+            FsLock       => be.lower_lock(id, c, ret, ctx, out),
+            FsRemove     => be.lower_remove(id, c, ret, ctx, out),
+            FsMkdir      => be.lower_mkdir(id, c, ret, ctx, out),
+            FsProbe      => be.lower_probe(c, a.name.text, ctx, out),
+            LockUnlock   => be.lower_unlock(id, c, a, rty, ret, ctx, out),
+            EnvVar       => be.lower_env_var(c, ret, ctx, out),
+            EnvArgs      => be.lower_env_args(
+                self.id,
+                c,
+                a,
+                rty,
+                ret,
+                ctx,
+                out
+            ),
+            ClockRead    => be.lower_clock_read(c, a.name.text, ret, ctx, out),
+            ThreadsSleep => be.lower_sleep(c, ret, ctx, out),
+            ThreadsSpawn => be.lower_spawn(id, c, ret, ctx, out),
+            ConsolePrint => lower_console_print(
+                be,
+                c,
+                a.name.text,
+                ret,
+                ctx,
+                out
+            ),
+            ConsoleFlush => lower_console_flush(be, ret, out),
+            StdinRead    => {
+                aty = self.parameter_type(be).try();
+                be.lower_stdin_read(id, c, ret, aty, ctx, out)
+            },
+            _            => be.unsupported(
+                id,
+                "an unlowerable capability kind",
+                out
+            ),
+        })
+    }
+
+    parameter_type = (self: @Self, be :: CBackend)
+                     Res<TyId, AllocError> {
+        sctx = be.check.self_ctx(self.module, self.receiver_ty).try();
+        self.function.params.get(1).match({
+            None  => be.check.types.unknown(),
+            Ok(p) => be.check.param_type(p, sctx),
+        })
+    }
+
+    // Read the declared return with @Self bound in its declaring module.
+    return_type = (self: @Self, be :: CBackend) Res<TyId, AllocError> {
+        sctx     = be.check.self_ctx(self.module, self.receiver_ty).try();
+        declared = be.declared_ret(self.function, sctx).try();
+        sub(be, declared)
+    }
+}
+
+capability_kind* = (be :: CBackend, rty: TyId, name: str) CapabilityKind {
+    owner                      = owner_of(be, rty);
+    found: Res<CapabilityKind> = loop<CapabilityKind>((h) {
+        (owner.eq("Mem") && name.eq("alloc")).then(() { h.break(MemAlloc) });
+        (owner.eq("Mem") && name.eq("page")).then(() { h.break(MemPage) });
+        (owner.eq("Mem") && name.eq("release")).then(() { h.break(MemRelease) });
+        (owner.eq("Fs") && name.eq("write")).then(() { h.break(FsWrite) });
+        (owner.eq("Fs") && name.eq("read")).then(() { h.break(FsRead) });
+        (owner.eq("Fs") && name.eq("cwd")).then(() { h.break(FsCwd) });
+        (owner.eq("Fs") && name.eq("lock")).then(() { h.break(FsLock) });
+        (owner.eq("Fs") && name.eq("remove")).then(() { h.break(FsRemove) });
+        (owner.eq("Fs") && name.eq("mkdir")).then(() { h.break(FsMkdir) });
+        (owner.eq("Fs") && name.is_in(["exists", "is_dir"])).then(() {
+            h.break(FsProbe)
+        });
+        (owner.eq("Lock") && name.eq("unlock")).then(() { h.break(LockUnlock) });
+        (owner.eq("Env") && name.eq("var")).then(() { h.break(EnvVar) });
+        (owner.eq("Env") && name.eq("args")).then(() { h.break(EnvArgs) });
+        (owner.eq("Env") && name.eq("spawn")).then(() {
+            h.break(ActorSpawn)
+        });
+        (owner.eq("Ref") && name.eq("stop")).then(() {
+            h.break(ActorStop)
+        });
+        (owner.eq("Ref") && name.eq("join")).then(() {
+            h.break(ActorJoin)
+        });
+        (owner.eq("Clock") && name.is_in(["since_start", "unix"])).then(() {
+            h.break(ClockRead)
+        });
+        (owner.eq("Threads") && name.eq("sleep")).then(() {
+            h.break(ThreadsSleep)
+        });
+        (owner.eq("Threads") && name.eq("spawn")).then(() {
+            h.break(ThreadsSpawn)
+        });
+        (owner.eq("Thread") && name.eq("join")).then(() {
+            h.break(ThreadsJoin)
+        });
+        (owner.eq("Console") && is_console_print(name)).then(() {
+            h.break(ConsolePrint)
+        });
+        (owner.eq("Console") && name.eq("flush")).then(() {
+            h.break(ConsoleFlush)
+        });
+        (owner.eq("Stdin") && name.eq("read")).then(() { h.break(StdinRead) });
+        be.is_defer(rty, name).then(() { h.break(ScopeDefer) });
+        h.break(NotCapability);
+    });
+    found.value_or(NotCapability)
+}
+
+owner_of = (be :: CBackend, rty: TyId) str {
+    be.check.types.at(rty).match({
+        Named(n) => capability_owner(be, n),
+        _        => "",
+    })
+}
+
+capability_owner = (be :: CBackend, n: TyNamed) str {
+    module = be.check.world.module_name(n.decl);
+    ((n.name.eq("Mem") && module.eq("std.mem.mem_arena"))
+        || (n.name.is_in(["Fs", "Lock", "Env", "Clock", "Threads", "Thread", "Console", "Stdin"]) && module.eq("std.env.env"))
+        || (n.name.eq("Ref") && module.eq("std.actor.actor_core")))
+        .then(() { n.name }).value_or("")
+}
+
+lower_capability* = (be :: CBackend, call: CapabilityCall, out :: String)
+                    Res<(), AllocError> {
+    call.lower(be, out)
+}
+
+// `env.mem.alloc()` — where an arena comes from
+// An `ArenaState` on the C heap, an `Arena` holding its address. The
+// arena owns that state cell as well as its pages; `Arena.drop` releases
+// both after every non-owning Alloc handle has gone out of scope.
+
+lower_alloc = (
+    be  :: CBackend,
+    id  : ExprId,
+    a   : Access,
+    rty : TyId,
+    ret : TyId,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    be.field_of(ret, "state").try().match({
+        None    => be.unsupported(id, "an Arena with no state field", out),
+        Ok(pty) => be.with_state(id, a, rty, ret, pty, ctx, out),
+    })
+}
+
+with_state = (
+    be  :: CBackend,
+    id  : ExprId,
+    a   : Access,
+    rty : TyId,
+    ret : TyId,
+    pty : TyId,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    be.pointee(pty).match({
+        None     => be.unsupported(
+            id,
+            "an Arena whose state is not a pointer",
+            out
+        ),
+        Ok(cell) => be.write_arena(a, rty, ret, pty, cell, ctx, out),
+    })
+}
+
+write_arena = (
+    be   :: CBackend,
+    a    : Access,
+    rty  : TyId,
+    ret  : TyId,
+    pty  : TyId,
+    cell : TyId,
+    ctx  : Ctx,
+    out  :: String
+) Res<(), AllocError> {
+    recv ::= be.alloc.String().try();
+    expr(be, a.base, ctx, rty, recv).try();
+    tmp ::= be.alloc.String().try();
+    sym_gen(tmp, "t", be.next_tmp()).try();
+    be.declare_temp(pty, tmp.view()).try();
+    be.write_malloc(tmp.view(), cell, "").try();
+    be.write_oom_guard(a, tmp.view()).try();
+    be.set_field(tmp.view(), cell, "mem", recv.view()).try();
+    be.set_field(tmp.view(), cell, "head", "NULL").try();
+    be.set_field(tmp.view(), cell, "next", "0").try();
+    cty ::= be.alloc.String().try();
+    be.ctype(ret, cty).try();
+    state ::= be.alloc.String().try();
+    state.sym_member("state").try();
+    out.fmt("(({}){ .{} = {} })", cty.view(), state.view(), tmp.view())
+}
+
+write_malloc = (be :: CBackend, tmp: str, cell: TyId, extra: str)
+               Res<(), AllocError> {
+    cty ::= be.alloc.String().try();
+    be.ctype(cell, cty).try();
+    be.fmt("{tmp} = ({} *)malloc(sizeof({}){extra});\n", cty.view(), cty.view())
+}
+
+// Arena creation has no error channel, so allocation failure traps.
+write_oom_guard = (be :: CBackend, a: Access, tmp: str)
+                  Res<(), AllocError> {
+    pos ::= be.alloc.String().try();
+    be.write_position(a.name.span.file, a.name.span, pos).try();
+    be.fmt("if (!{tmp}) zg_trap({}, \"out of memory\");\n", pos.view())
+}
+
+// One field of the freshly-made state, and nothing at all when the
+// declaration has no such field: std owns the shape, so a field it
+// drops is a line this file stops writing rather than a diagnostic.
+set_field = (be :: CBackend, tmp: str, cell: TyId, name: str, value: str)
+            Res<(), AllocError> {
+    be.field_of(cell, name).try().match({
+        None  => Ok(()),
+        Ok(_) => be.write_arrow_set(tmp, name, value),
+    })
+}
+
+write_arrow_set = (be :: CBackend, tmp: str, name: str, value: str)
+                  Res<(), AllocError> {
+    sym ::= be.alloc.String().try();
+    sym_member(sym, name).try();
+    be.fmt("{tmp}->{} = {value};\n", sym.view())
+}
+
+// `mem.page(size, prev)` — where a page comes from
+// One run of `sizeof(Page) + size` bytes, with the `Page` header
+// written into its own first bytes. The header costs no second
+// allocation, which is what lets an arena describe a page without
+// owning memory it has not been given yet.
+
+lower_page = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    ret : TyId,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    be.payload_type(ret, "Ok").match({
+        None    => be.unsupported(
+            id,
+            "Mem.page must return a Res<Ptr<Page>, E>",
+            out
+        ),
+        Ok(pty) => be.page_cell(id, c, ret, pty, ctx, out),
+    })
+}
+
+page_cell = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    ret : TyId,
+    pty : TyId,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    be.pointee(pty).match({
+        None     => be.unsupported(
+            id,
+            "Mem.page must return a Res<Ptr<Page>, E>",
+            out
+        ),
+        Ok(cell) => be.write_page(c, ret, cell, ctx, out),
+    })
+}
+
+write_page = (
+    be   :: CBackend,
+    c    : Call,
+    ret  : TyId,
+    cell : TyId,
+    ctx  : Ctx,
+    out  :: String
+) Res<(), AllocError> {
+    usize_ty = be.check.types.prim("usize").try();
+    cty ::= be.alloc.String().try();
+    be.ctype(cell, cty).try();
+    size ::= be.alloc.String().try();
+    be.arg_text(c, 0, usize_ty, ctx, size).try();
+    prev ::= be.alloc.String().try();
+    be.prev_text(c, ctx, prev).try();
+    szt = be.temp(usize_ty, "t").try();
+    raw ::= be.alloc.String().try();
+    sym_gen(raw, "t", be.next_tmp()).try();
+    be.fmt("unsigned char *{};\n", raw.view()).try();
+    dst = be.temp(ret, "t").try();
+    be.set_line(szt.view(), size.view()).try();
+    be.write_page_malloc(raw.view(), cty.view(), szt.view()).try();
+    be.open_null_test(raw.view()).try();
+    be.write_assign_err(ret, "OutOfMemory", dst.view()).try();
+    be.close_else().try();
+    be.write_page_header(
+        raw.view(),
+        cty.view(),
+        cell,
+        szt.view(),
+        prev.view()
+    ).try();
+    be.write_page_ok(ret, cty.view(), raw.view(), dst.view()).try();
+    be.close_brace().try();
+    out.add(dst.view())
+}
+
+write_page_malloc = (be :: CBackend, raw: str, cty: str, szt: str)
+                    Res<(), AllocError> {
+    be.fmt("{raw} = (unsigned char *)malloc(sizeof({cty}) + {szt});\n")
+}
+
+// The three fields of the header, written through the raw pointer:
+// `base` is the first byte past the header, which is what makes the
+// page describe itself.
+write_page_header = (
+    be   :: CBackend,
+    raw  : str,
+    cty  : str,
+    cell : TyId,
+    szt  : str,
+    prev : str
+) Res<(), AllocError> {
+    cast ::= be.alloc.String().try();
+    cast.fmt("(({cty} *){raw})").try();
+    base ::= be.alloc.String().try();
+    base.fmt("({raw} + sizeof({cty}))").try();
+    be.set_field(cast.view(), cell, "prev", prev).try();
+    be.set_field(cast.view(), cell, "base", base.view()).try();
+    be.set_field(cast.view(), cell, "size", szt).try();
+    Ok(());
+}
+
+write_page_ok = (be :: CBackend, ret: TyId, cty: str, raw: str, dst: str)
+                Res<(), AllocError> {
+    value ::= be.alloc.String().try();
+    value.fmt("({cty} *){raw}").try();
+    be.write_assign_ok(ret, value.view(), dst).try();
+    Ok(());
+}
+
+// `mem.release(page)` — one `free`, and the unit value every other
+// void-returning lowering writes.
+lower_release = (be :: CBackend, c: Call, ctx: Ctx, out :: String)
+                Res<(), AllocError> {
+    unknown = be.check.types.unknown().try();
+    page ::= be.alloc.String().try();
+    be.arg_text(c, 0, unknown, ctx, page).try();
+    be.fmt("free((void *)({}));\n", page.view()).try();
+    out.add("0")
+}
+
+// The `prev` argument, or a null pointer when the call left it out.
+prev_text = (be :: CBackend, c: Call, ctx: Ctx, out :: String)
+            Res<(), AllocError> {
+    unknown = be.check.types.unknown().try();
+    c.args.get(1).match({
+        None  => out.add("NULL"),
+        Ok(a) => expr(be, a.value, ctx, unknown, out),
+    })
+}

@@ -1,0 +1,115 @@
+// `zen fmt`: read, format, compare or write explicitly named files.
+
+Alloc, AllocError = std.mem
+str = std.text
+FsError, fs_message = std.env
+
+scan, Source = std.lex
+render = fmt
+
+FmtJob = zen.zen_cli
+
+// A file can fail to format, or differ when running in check mode.
+Outcome = Same | Wrote | Differs | Failed
+
+// One run; the tallies become the exit code.
+Fmt = {
+    env: Env,
+    alloc: Alloc,
+
+    // Check mode reports differences without writing files.
+    check: bool,
+
+    // Files that cannot be read or safely formatted.
+    faults :: usize = 0,
+
+    // Files that check mode found unformatted.
+    unformatted :: usize = 0,
+
+    one = (self :: @Self, path: str) Res<(), AllocError> {
+        self.route(path).try().match({
+            Failed  => { self.faults = self.faults + 1; },
+            Differs => { self.unformatted = self.unformatted + 1; },
+            _       => (),
+        });
+        Ok(());
+    }
+
+    route = (self: @Self, path: str) Res<Outcome, AllocError> {
+        self.env.fs.is_dir(path).match({
+            true  => {
+                println(
+                    "{}: is a directory — zen fmt takes files (see `make fmt`)",
+                    path
+                );
+                Ok(Outcome.Failed)
+            },
+            false => self.env.fs.read(self.alloc, path).match({
+                Err(e)   => self.fs_fault(path, e),
+                Ok(text) => self.format_text(path, text.view()),
+            }),
+        })
+    }
+
+    fs_fault = (self: @Self, path: str, e: FsError) Res<Outcome, AllocError> {
+        println("{}: {}", path, fs_message(e));
+        Ok(Outcome.Failed)
+    }
+
+    format_text = (self: @Self, path: str, text: str) Res<Outcome, AllocError> {
+        outcome: Res<Outcome> = loop<Outcome>((h) {
+            lexed = scan(self.alloc, Source(file: path, text: text)).try();
+            // Lexical faults invalidate the spans the formatter would print from.
+            (!lexed.is_clean()).then(() {
+                lexed.diags.loop((d) { d.say(); });
+                h.break(Outcome.Failed);
+            });
+            out = render(self.alloc, lexed).try();
+            (out.diags.len > 0).then(() {
+                out.diags.loop((d) { d.say(); });
+                h.break(Outcome.Failed);
+            });
+            // Never write output that changed the token stream.
+            (!out.faithful).then(() {
+                println(
+                    "{}: zen fmt would have changed this file's tokens — left alone",
+                    path
+                );
+                println("  that is a bug in src/fmt/, not in the file");
+                h.break(Outcome.Failed);
+            });
+            text.eq(out.text.view()).then(() { h.break(Outcome.Same); });
+            self.check.then(() {
+                println("{}", path);
+                h.break(Outcome.Differs);
+            });
+            self.env.fs.write(path, out.text.view()).match({
+                Ok(_)  => h.break(Outcome.Wrote),
+                Err(e) => h.break(self.fs_fault(path, e).try()),
+            });
+        });
+        Ok(outcome.value_or(Outcome.Failed))
+    }
+
+    // Successful runs stay quiet; the exit code reflects the tally.
+    verdict = (self: @Self, files: usize) Res<i32, AllocError> {
+        (self.unformatted > 0).then(() {
+            println(
+                "zen fmt: {} of {} files are not formatted",
+                self.unformatted,
+                files
+            );
+        });
+        ((self.unformatted + self.faults) == 0).match({
+            true  => Ok(0),
+            false => Ok(1),
+        })
+    }
+}
+
+format* = (env: Env, alloc: Alloc, job: FmtJob) Res<i32, AllocError> {
+    run ::= Fmt(env: env, alloc: alloc, check: job.check);
+    paths = job.paths(alloc).try();
+    paths.loop((h, path) { run.one(path).try() });
+    run.verdict(paths.len)
+}

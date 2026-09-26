@@ -1,0 +1,38 @@
+// A final nested block supplies the enclosing block's value in plain, Res, try,
+// and lambda contexts. A nested block in statement position remains unit.
+
+AllocError = std.mem
+
+inner  = () Res<i32, AllocError> { Ok(11) }
+
+apply  = <T>(f: () T) T { f() }
+
+nested = () i32 { { 11 } }
+
+lifted = () Res<i32, AllocError> { { 11 } }
+
+tried  = () Res<i32, AllocError> { { inner().try() } }
+
+main = (env: Env) Res<i32, AllocError> {
+    println("nested {}", nested());
+
+    lifted().match({
+        Ok(v)  => println("lifted {}", v),
+        Err(_) => println("lifted err"),
+    });
+
+    tried().match({
+        Ok(v)  => println("tried {}", v),
+        Err(_) => println("tried err"),
+    });
+
+    lambda: i32 = apply(() { { 42 } });
+    println("lambda {}", lambda);
+
+    {
+        held = 7;
+        println("statement {}", held);
+    }
+
+    Ok(0);
+}

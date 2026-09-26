@@ -1,0 +1,883 @@
+// Lowers the bodyless, type-directed format door on any Sink. The call is
+// expanded at its source because a variadic parameter has no C spelling.
+// This shares the format walk with `gen_c_fmt`; it remains separate because
+// sink writes preserve `WriteError` while allocation answers `AllocError`.
+// Primitive writers are resolved in the door's module. Only `add_f64` is a
+// backend intrinsic; integer and boolean spelling remains library-owned.
+
+ExprId, Decl, Function, Param, Call = std.ast
+Literal, TypeId = std.ast
+AllocError = std.mem
+literal_byte_len = std.lex
+Vec = std.collections
+str, String = std.text
+Range = std.core
+TyId = sema.sema_ty
+Def, decl_at = sema.sema_def
+Ctx = sema.sema_check
+Inst = sema.sema_inst
+param_type = sema.sema_denote
+satisfies_bound = sema.sema_bound
+sym_fn, sym_gen, sym_variant, RES_PATH = gen.gen_name
+GenFault = gen.gen_diag
+CBackend = gen.gen_c.gen_c_state
+unsupported = gen.gen_c.gen_c_report
+ctype = gen.gen_c.gen_c_type
+is_c_integer, is_signed = gen.gen_c.gen_c_type
+expr, ty_of, named_hole, write_c_literal = gen.gen_c.gen_c_expr
+declare_temp, is_variant, payload_type = gen.gen_c.gen_c_flow
+write_assign_err = gen.gen_c.gen_c_flow
+signature_of = gen.gen_c.gen_c_call
+recv_arg, arg_value, by_ref = gen.gen_c.gen_c_arg
+body_end, cast_of = gen.gen_c.gen_c_print
+FmtAt, ends_run, arguments_taken = std.text.text_fmt
+source_fmt_at = gen.gen_c.gen_c_print
+report_in_format, NOT_A_HOLE = gen.gen_c.gen_c_print
+HOLE_WITHOUT_ARGUMENT, ARGUMENT_WITHOUT_HOLE = gen.gen_c.gen_c_print
+slot_call = gen.gen_c.gen_c_bound
+fat_value = gen.gen_c.gen_c_fat
+sink_display = gen.gen_c.gen_c_display
+
+// recognising the door
+
+// These names are part of one lowering contract, not incidental spellings:
+// `fmt` is the bodyless format door and `write` is a Sink's raw byte floor.
+// Keep them here so format-door discovery and floor selection cannot drift.
+FORMAT_DOOR*: str = "fmt"
+SINK_FLOOR*: str = "write"
+
+// The bodyless `fmt(out :: Sink, fmt: str, args: ...)`; `::` distinguishes
+// the writable sink from ordinary three-parameter functions.
+is_sink_door* = (be: CBackend, d: Def, f: Function) bool {
+    d.name.eq(FORMAT_DOOR) && be.sink_door_shape(f)
+}
+
+// The door's shape with the name held out, because the member form has
+// no `Def` to read a name off — `s.fmt(..)` carries its name in the
+// access. Stated once so the two forms cannot drift into recognising
+// different declarations.
+sink_door_shape* = (be: CBackend, f: Function) bool {
+    bodyless(f) && (f.params.len == 3) && by_ref(f, 0)
+        && be.last_is_variadic(f)
+}
+
+bodyless* = (f: Function) bool {
+    f.body.match({ Ok(_) => false, None => true })
+}
+
+// Guard the unsigned subtraction here, not only at a particular caller.
+last_is_variadic* = (be: CBackend, f: Function) bool {
+    (f.params.len == 0).match({
+        true  => false,
+        false => be.tail_is_variadic(f, f.params.len - 1),
+    })
+}
+
+tail_is_variadic = (be: CBackend, f: Function, i: usize) bool {
+    f.params.get(i).match({
+        None  => false,
+        Ok(p) => be.variadic_param(p),
+    })
+}
+
+variadic_param = (be: CBackend, p: Param) bool {
+    p.type.match({
+        None  => false,
+        Ok(t) => be.variadic_type(t),
+    })
+}
+
+variadic_type = (be: CBackend, t: TypeId) bool {
+    be.tree.type_at(t).kind.match({ Variadic => true, _ => false })
+}
+
+// Buffer formatting needs the free door's declaration so primitive writers
+// stay resolved in the format module. Find the exported door by its name and
+// shape; a member call reaches this declaration through ordinary UFCS.
+door_decl = (be :: CBackend) Res<Res<Def>, AllocError> {
+    found ::= be.alloc.Vec<Def>();
+    be.check.world.exported_named(FORMAT_DOOR, found).try();
+    kept ::= be.alloc.Vec<Def>();
+    found.loop((h, x) { be.keep_door(x, kept).try() });
+    Ok(kept.get(0));
+}
+
+keep_door = (be :: CBackend, x: Def, out :: Vec<Def>) Res<(), AllocError> {
+    be.door_fn(x).match({
+        None  => Ok(()),
+        Ok(g) => be.keep_shaped(g, x, out),
+    })
+}
+
+keep_shaped = (be :: CBackend, g: Function, x: Def, out :: Vec<Def>)
+              Res<(), AllocError> {
+    be.sink_door_shape(g).match({
+        true  => out.add(x),
+        false => Ok(()),
+    })
+}
+
+// The `Function` a `Def` declares, and `None` when it declares anything
+// else.
+door_fn = (be :: CBackend, d: Def) Res<Function> {
+    decl_at(be.tree, d.id).match({
+        None    => None,
+        Ok(dec) => decl_fn(dec),
+    })
+}
+
+decl_fn = (dec: Decl) Res<Function> {
+    dec.kind.match({ Function(g) => Ok(g), _ => None })
+}
+
+// Reuse the sink walk for an existing String buffer. `fat_value` presents
+// that buffer as the door's Sink; failures jump to the allocating caller's
+// label because the two doors expose different error types.
+
+BufferCall = {
+    id: ExprId,
+    c: Call,
+    addr: str,
+    cty: TyId,
+    fail: usize,
+    recv: Res<ExprId>,
+    ctx: Ctx,
+
+    at_decl = (self: @Self, be :: CBackend, d: Def) Res<bool, AllocError> {
+        be.door_fn(d).match({ None => Ok(false), Ok(f) => self.into(be, d, f) })
+    }
+
+    into = (self: @Self, be :: CBackend, d: Def, f: Function) Res<bool, AllocError> {
+        ret = declared_type(be, d, f.ret).try();
+        sty = be.sink_type(d, f).try();
+        sink ::= be.alloc.String().try();
+        be.buffer_sink(self.addr, self.cty, sty, sink).try();
+        tmp ::= be.fresh_name("t").try();
+        be.declare_temp(ret, tmp.view()).try();
+        be.write_ok(ret, tmp.view()).try();
+        p = Piece(
+            sink: sink.view(),
+            sty: sty,
+            floor: "",
+            tmp: tmp.view(),
+            done: self.fail,
+            id: self.id,
+            module: d.id.module.to_usize(),
+            rty: self.cty,
+            ret: ret
+        );
+        fmt_arg(self.c, self.recv).match({
+            None      => Ok(()),
+            Ok(first) => write_pieces(
+                be,
+                self.c,
+                first,
+                fmt_index(self.recv) + 1,
+                p,
+                self.ctx
+            ),
+        }).try();
+        Ok(true)
+    }
+}
+
+lower_pieces_into* = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    addr : str,
+    cty  : TyId,
+    fail : usize,
+    recv : Res<ExprId>,
+    ctx  : Ctx
+)
+                     Res<bool, AllocError> {
+    site ::= BufferCall(
+        id: id,
+        c: c,
+        addr: addr,
+        cty: cty,
+        fail: fail,
+        recv: recv,
+        ctx: ctx
+    );
+    be.door_decl().try().match({
+        None  => Ok(false),
+        Ok(d) => site.at_decl(be, d),
+    })
+}
+
+buffer_sink = (
+    be   :: CBackend,
+    addr : str,
+    cty  : TyId,
+    sty  : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    value ::= be.alloc.String().try();
+    be.fat_value(addr, cty, sty, value).try();
+    sym_gen(out, "t", be.next_tmp()).try();
+    be.declare_temp(sty, out.view()).try();
+    be.set_line(out.view(), value.view())
+}
+
+SinkValue = { id: ExprId, ty: TyId, text: str }
+
+Piece* = {
+    sink: str,
+    sty: TyId,
+    floor: str,
+    tmp*: str,
+    done*: usize,
+    id: ExprId,
+    module: usize,
+    rty: TyId,
+    ret: TyId,
+
+    write_typed = (self: @Self, be :: CBackend, a: ExprId, ty: TyId,
+                   text: str) Res<(), AllocError> {
+        v = SinkValue(id: a, ty: ty, text: text);
+        call ::= be.alloc.String().try();
+        self.value_call(be, ty, text, call).try().match({
+            true  => self.write_guarded(be, call.view()),
+            false => self.write_wider(be, v),
+        })
+    }
+
+    value_call = (self: @Self, be :: CBackend, ty: TyId, text: str,
+                  out :: String) Res<bool, AllocError> {
+        prim = be.check.prim_name(ty);
+        prim.eq("str").match({
+            true  => self.sink_write(be, text, out),
+            false => self.wider_call(be, ty, prim, text, out),
+        })
+    }
+
+    wider_call = (self: @Self, be :: CBackend, ty: TyId, prim: str,
+                  text: str, out :: String) Res<bool, AllocError> {
+        self.floor.is_empty().match({
+            true  => self.scalar_call(be, ty, prim, text, out),
+            false => Ok(false),
+        })
+    }
+
+    write_wider = (self: @Self, be :: CBackend, v: SinkValue)
+                   Res<(), AllocError> {
+        self.floor.is_empty().match({
+            true  => self.unsupported(be, v.id, self.hole_fault()),
+            false => self.through_sink(be, v),
+        })
+    }
+
+    through_sink = (self: @Self, be :: CBackend, v: SinkValue)
+                   Res<(), AllocError> {
+        be.door_decl().try().match({
+            None  => self.unsupported(be, v.id, self.hole_fault()),
+            Ok(d) => self.sink_at_door(be, v, d),
+        })
+    }
+
+    sink_at_door = (self: @Self, be :: CBackend, v: SinkValue, d: Def)
+                   Res<(), AllocError> {
+        be.door_fn(d).match({
+            None  => self.unsupported(be, v.id, self.hole_fault()),
+            Ok(f) => self.sink_over_receiver(be, v, d, f),
+        })
+    }
+
+    sink_over_receiver = (self: @Self, be :: CBackend, v: SinkValue,
+                          d: Def, f: Function)
+                          Res<(), AllocError> {
+        sty  = be.sink_type(d, f).try();
+        wret = declared_type(be, d, f.ret).try();
+        self.wider_is_sound(be, sty).try().match({
+            false => self.unsupported(be, v.id, self.hole_fault()),
+            true  => self.write_through_sink(be, v, d, sty, wret),
+        })
+    }
+
+    wider_is_sound = (self: @Self, be :: CBackend, sty: TyId)
+                     Res<bool, AllocError> {
+        be.check.satisfies_bound(self.rty, sty).try().match({
+            false => Ok(false),
+            true  => Ok(be.names_out_of_memory(self.ret)),
+        })
+    }
+
+    write_through_sink = (self: @Self, be :: CBackend, v: SinkValue,
+                          d: Def, sty: TyId, wret: TyId)
+                          Res<(), AllocError> {
+        rec ::= be.alloc.String().try();
+        be.buffer_sink(self.sink, self.rty, sty, rec).try();
+        wtmp ::= be.fresh_name("t").try();
+        be.declare_temp(wret, wtmp.view()).try();
+        q = Piece(
+            sink: rec.view(),
+            sty: sty,
+            floor: "",
+            tmp: wtmp.view(),
+            done: self.done,
+            id: self.id,
+            module: d.id.module.to_usize(),
+            rty: sty,
+            ret: wret
+        );
+        call ::= be.alloc.String().try();
+        q.value_call(be, v.ty, v.text, call).try().match({
+            false => q.unsupported(be, v.id, q.hole_fault()),
+            true  => self.wider_guarded(be, call.view(), wtmp.view()),
+        })
+    }
+
+    wider_guarded = (self: @Self, be :: CBackend, call: str, wtmp: str)
+                    Res<(), AllocError> {
+        be.set_line(wtmp, call).try();
+        tag ::= be.alloc.String().try();
+        sym_variant(tag, RES_PATH, "Ok").try();
+        be.fmt("if ({wtmp}.zg_tag != {}) {\n", tag.view()).try();
+        be.indent();
+        be.write_assign_err(self.ret, "OutOfMemory", self.tmp).try();
+        be.write_goto(self.done).try();
+        be.dedent();
+        be.writeln("}").try();
+        Ok(())
+    }
+
+    hole_fault = (self: @Self) str {
+        self.floor.is_empty().match({
+            true  => "formatting a value of this type",
+            false => "a format hole on this door that is not a str",
+        })
+    }
+
+    scalar_call = (self: @Self, be :: CBackend, ty: TyId, prim: str,
+                   text: str, out :: String) Res<bool, AllocError> {
+        writer_of(prim).is_empty().match({
+            true  => be.sink_display(ty, text, self.sink, out),
+            false => self.writer_call(
+                be,
+                writer_of(prim),
+                cast_of(prim),
+                text,
+                out
+            ),
+        })
+    }
+
+    sink_write = (self: @Self, be :: CBackend, text: str, out :: String)
+                 Res<bool, AllocError> {
+        self.floor.is_empty().match({
+            true  => self.slot_write(be, text, out),
+            false => self.floor_write(text, out),
+        })
+    }
+
+    floor_write = (self: @Self, text: str, out :: String)
+                  Res<bool, AllocError> {
+        out.fmt("{}({}, {})", self.floor, self.sink, text).try();
+        Ok(true)
+    }
+
+    slot_write = (self: @Self, be :: CBackend, text: str, out :: String)
+                 Res<bool, AllocError> {
+        args ::= be.alloc.String(", {text}").try();
+        be.slot_call(self.sink, self.sty, "write", args.view(), 1, out)
+            .try().match({ None => Ok(false), Ok(_) => Ok(true) })
+    }
+
+    writer_call = (self: @Self, be :: CBackend, name: str, cast: str,
+                   text: str, out :: String) Res<bool, AllocError> {
+        be.module_decl(self.module, name).try().match({
+            None  => Ok(false),
+            Ok(w) => be.door_fn(w).match({
+                None  => Ok(false),
+                Ok(g) => bodyless(g).match({
+                    true  => self.write_intrinsic_call(be, cast, text, out),
+                    false => self.write_writer_call(be, w, cast, text, out),
+                }),
+            }),
+        })
+    }
+
+    write_intrinsic_call = (self: @Self, be :: CBackend, cast: str, text: str,
+                            out :: String) Res<bool, AllocError> {
+        be.need_fbuf();
+        bytes ::= be.alloc.String(
+            "(zg_str){{ (unsigned char *)zg_f64_scratch, (size_t)snprintf(zg_f64_scratch, sizeof zg_f64_scratch, \"%g\", {}({})) }}",
+            cast,
+            text
+        ).try();
+        self.sink_write(be, bytes.view(), out)
+    }
+
+    write_writer_call = (self: @Self, be :: CBackend, w: Def, cast: str,
+                         text: str, out :: String) Res<bool, AllocError> {
+        sym ::= be.alloc.String().try();
+        be.call_symbol(w, sym).try();
+        out.fmt("{}(&{}, {}({}))", sym.view(), self.sink, cast, text).try();
+        Ok(true)
+    }
+
+    write_guarded = (self: @Self, be :: CBackend, call: str)
+                    Res<(), AllocError> {
+        be.set_line(self.tmp, call).try();
+        be.write_jump_unless_ok(self.tmp, self.done)
+    }
+
+    unsupported = (self: @Self, be :: CBackend, id: ExprId, what: str)
+                  Res<(), AllocError> {
+        be.report_expr(id, GenFault.Unsupported(what))
+    }
+}
+
+// The source call and destination are invariant during one format walk.
+SinkWalk = {
+    c: Call,
+    p: Piece,
+    ctx: Ctx,
+
+    write = (self: @Self, be :: CBackend, first: ExprId, used: usize)
+            Res<(), AllocError> {
+        raw = format_of(be, first);
+        (raw.len == 0).match({
+            true  => self.write_values(be, first, used),
+            false => self.walk_format(be, first, raw, used),
+        })
+    }
+
+    write_values = (self: @Self, be :: CBackend, first: ExprId, used: usize)
+                   Res<(), AllocError> {
+        self.write_value(be, first).try();
+        self.write_rest(be, used)
+    }
+
+    walk_format = (self: @Self, be :: CBackend, id: ExprId, raw: str,
+                   used0: usize) Res<(), AllocError> {
+        end = body_end(raw);
+        start ::= 1;
+        used  ::= used0;
+        i     ::= 1;
+        loop(i < end, (h) {
+            at = source_fmt_at(raw, i, end);
+            at.ends_run().then(() {
+                self.write_chunk(be, raw, start, at.keep).try();
+                self.write_what(be, id, at, used).try();
+                used  = used + at.what.arguments_taken();
+                start = at.next;
+            });
+            i = at.next;
+        });
+        self.write_chunk(be, raw, start, end).try();
+        self.write_surplus(be, used)
+    }
+
+    write_what = (self: @Self, be :: CBackend, id: ExprId, at: FmtAt,
+                  used: usize) Res<(), AllocError> {
+        at.what.match({
+            Hole     => self.write_hole(be, id, at, used),
+            Named(n) => self.write_named(be, id, at, n),
+            NoName   => report_in_format(
+                be,
+                id,
+                at,
+                GenFault.Unsupported(NOT_A_HOLE)
+            ),
+            _        => Ok(()),
+        })
+    }
+
+    write_named = (self: @Self, be :: CBackend, id: ExprId, at: FmtAt,
+                   name: str) Res<(), AllocError> {
+        text ::= be.alloc.String().try();
+        be.named_hole(name, text).try().match({
+            None  => report_in_format(be, id, at, GenFault.Unresolved(name)),
+            Ok(t) => self.p.write_typed(be, id, t, text.view()),
+        })
+    }
+
+    write_hole = (self: @Self, be :: CBackend, id: ExprId, at: FmtAt,
+                  used: usize) Res<(), AllocError> {
+        arg_value(self.c, used).match({
+            None  => report_in_format(
+                be,
+                id,
+                at,
+                GenFault.Unsupported(HOLE_WITHOUT_ARGUMENT)
+            ),
+            Ok(a) => self.write_value(be, a),
+        })
+    }
+
+    write_surplus = (self: @Self, be :: CBackend, used: usize)
+                    Res<(), AllocError> {
+        (used < self.c.args.len).match({
+            false => Ok(()),
+            true  => arg_value(self.c, used).match({
+                None   => Ok(()),
+                Ok(id) => be.report_expr(
+                    id,
+                    GenFault.Unsupported(ARGUMENT_WITHOUT_HOLE)
+                ),
+            }),
+        })
+    }
+
+    write_rest = (self: @Self, be :: CBackend, used: usize)
+                 Res<(), AllocError> {
+        Range(used, self.c.args.len).loop((h, i) {
+            arg_value(self.c, i).match({
+                None  => Ok(()),
+                Ok(a) => self.write_value(be, a),
+            }).try();
+        });
+        Ok(())
+    }
+
+    write_chunk = (self: @Self, be :: CBackend, raw: str, start: usize,
+                   stop: usize) Res<(), AllocError> {
+        (stop > start).match({
+            false => Ok(()),
+            true  => self.write_literal(be, raw.slice(start, stop)),
+        })
+    }
+
+    write_literal = (self: @Self, be :: CBackend, piece: str)
+                    Res<(), AllocError> {
+        text ::= be.alloc.String("(zg_str){{ (unsigned char *)").try();
+        text.write_c_literal(piece).try();
+        text.fmt(", {}u }}", piece.literal_byte_len()).try();
+        call ::= be.alloc.String().try();
+        self.p.sink_write(be, text.view(), call).try().match({
+            false => self.p.unsupported(be, self.p.id, "a sink with no write"),
+            true  => self.p.write_guarded(be, call.view()),
+        })
+    }
+
+    write_value = (self: @Self, be :: CBackend, a: ExprId)
+                  Res<(), AllocError> {
+        unknown = be.check.types.unknown().try();
+        ty      = be.ty_of(a, self.ctx, unknown).try();
+        text ::= be.alloc.String().try();
+        expr(be, a, self.ctx, ty, text).try();
+        self.p.write_typed(be, a, ty, text.view())
+    }
+}
+
+// One door owns the source call and checker context for its whole expansion.
+DoorCall = {
+    id: ExprId,
+    c: Call,
+    d: Def,
+    f: Function,
+    recv: Res<ExprId>,
+    ctx: Ctx,
+
+    lower = (self: @Self, be :: CBackend, out :: String) Res<(), AllocError> {
+        ret = declared_type(be, self.d, self.f.ret).try();
+        sty = be.sink_type(self.d, self.f).try();
+        sink ::= be.alloc.String().try();
+        be.write_sink_temp(self.c, self.recv, sty, self.ctx, sink).try().match({
+            false => be.unsupported(self.id, "a format door with no sink", out),
+            true  => self.write(be, ret, sty, sink.view(), out),
+        })
+    }
+
+    write = (self: @Self, be :: CBackend, ret: TyId, sty: TyId, sink: str,
+             out :: String) Res<(), AllocError> {
+        tmp ::= be.fresh_name("t").try();
+        be.declare_temp(ret, tmp.view()).try();
+        be.write_ok(ret, tmp.view()).try();
+        p = Piece(
+            sink: sink,
+            sty: sty,
+            floor: "",
+            tmp: tmp.view(),
+            done: be.next_tmp(),
+            id: self.id,
+            module: self.d.id.module.to_usize(),
+            rty: sty,
+            ret: ret
+        );
+        fmt_arg(self.c, self.recv).match({
+            None      => Ok(()),
+            Ok(first) => write_pieces(
+                be,
+                self.c,
+                first,
+                fmt_index(self.recv) + 1,
+                p,
+                self.ctx
+            ),
+        }).try();
+        be.write_done(p.done).try();
+        out.add(p.tmp)
+    }
+}
+
+lower_sink_door* = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    d    : Def,
+    f    : Function,
+    recv : Res<ExprId>,
+    ctx  : Ctx,
+    out  :: String
+) Res<(), AllocError> {
+    site ::= DoorCall(id: id, c: c, d: d, f: f, recv: recv, ctx: ctx);
+    site.lower(be, out)
+}
+
+// The door's declared return and its declared sink, read in the door's
+// Own module. Neither names a type parameter, so there is nothing to
+// substitute.
+declared_type = (be :: CBackend, d: Def, t: Res<TypeId>)
+                Res<TyId, AllocError> {
+    t.match({
+        Ok(x) => be.check.type_from_ast(x, door_ctx(d)),
+        None  => be.check.types.unknown(),
+    })
+}
+
+sink_type = (be :: CBackend, d: Def, f: Function) Res<TyId, AllocError> {
+    f.params.get(0).match({
+        None  => be.check.types.unknown(),
+        Ok(p) => be.check.param_type(p, door_ctx(d)),
+    })
+}
+
+door_ctx = (d: Def) Ctx {
+    Ctx(
+        module: d.id.module.to_usize(),
+        ret: TyId(index: 0),
+        has_ret: false,
+        self_ty: TyId(index: 0),
+        has_self: false
+    )
+}
+
+// Spill once so every write has a stable place whose address C can take.
+write_sink_temp = (
+    be   :: CBackend,
+    c    : Call,
+    recv : Res<ExprId>,
+    sty  : TyId,
+    ctx  : Ctx,
+    out  :: String
+) Res<bool, AllocError> {
+    recv_arg(c, recv).match({
+        None  => Ok(false),
+        Ok(a) => be.spill_sink(a, sty, ctx, out),
+    })
+}
+
+spill_sink = (
+    be  :: CBackend,
+    a   : ExprId,
+    sty : TyId,
+    ctx : Ctx,
+    out :: String
+) Res<bool, AllocError> {
+    code ::= be.alloc.String().try();
+    expr(be, a, ctx, sty, code).try();
+    sym_gen(out, "t", be.next_tmp()).try();
+    be.declare_temp(sty, out.view()).try();
+    be.set_line(out.view(), code.view()).try();
+    Ok(true);
+}
+
+// `zg_tN = (Res){ .zg_tag = Ok };` — the answer a door with no failing
+// write gives, written first so that falling off the end is `Ok` and
+// only a failure has to say anything.
+write_ok* = (be :: CBackend, ret: TyId, tmp: str) Res<(), AllocError> {
+    cty ::= be.alloc.String().try();
+    be.ctype(ret, cty).try();
+    tag ::= be.alloc.String().try();
+    sym_variant(tag, RES_PATH, "Ok").try();
+    be.fmt("{tmp} = ({}){{ .zg_tag = {} }};\n", cty.view(), tag.view())
+}
+
+fmt_arg = (c: Call, recv: Res<ExprId>) Res<ExprId> {
+    arg_value(c, fmt_index(recv))
+}
+
+fmt_index = (recv: Res<ExprId>) usize {
+    recv.match({ Ok(_) => 0, None => 1 })
+}
+
+// `gen_c_print` owns format classification; this file only changes the
+// destination from the console to a Sink.
+
+write_pieces* = (
+    be    :: CBackend,
+    c     : Call,
+    first : ExprId,
+    used0 : usize,
+    p     : Piece,
+    ctx   : Ctx
+) Res<(), AllocError> {
+    walk = SinkWalk(c: c, p: p, ctx: ctx);
+    walk.write(be, first, used0)
+}
+
+// The raw source slice of a string literal, quotes included, and the
+// empty string when the argument is not one. A format is read at
+// Compile time, so a computed one is not a format at all — it is the
+// first value, and `out.add(s)` writes `s`.
+format_of = (be: CBackend, id: ExprId) str {
+    be.tree.expr_at(id).kind.match({
+        Literal(l) => literal_format(l),
+        _          => "",
+    })
+}
+
+literal_format = (l: Literal) str {
+    l.kind.match({ Str => l.text, _ => "" })
+}
+
+names_out_of_memory = (be :: CBackend, ret: TyId) bool {
+    be.payload_type(ret, "Err").match({
+        None    => false,
+        Ok(ety) => be.is_variant(ety, "OutOfMemory"),
+    })
+}
+
+// The record, a temporary at the sink door's answer for the write to
+// land in, and then `value_call` again — with a piece that is the sink
+// door's in every field, so a `u8` reaches `add_u64` and a `Display`
+// reaches its `toString` by the one set of rules.
+writer_of = (prim: str) str {
+    prim.eq("bool").match({
+        true  => "add_bool",
+        false => number_writer(prim),
+    })
+}
+
+// Both float widths use the backend-owned f64 writer; double represents
+// every f32 exactly.
+number_writer = (prim: str) str {
+    is_float(prim).match({
+        true  => "add_f64",
+        false => integer_writer(prim),
+    })
+}
+
+integer_writer = (prim: str) str {
+    is_c_integer(prim).match({
+        false => "",
+        true  => signed_writer(prim),
+    })
+}
+
+signed_writer = (prim: str) str {
+    is_signed(prim).match({ true => "add_i64", false => "add_u64" })
+}
+
+// Bytes into whichever floor this door was opened on.
+module_fn = (be :: CBackend, mi: usize, name: str)
+            Res<Res<Def>, AllocError> {
+    found ::= be.alloc.Vec<Def>();
+    be.check.world.defs_of(mi, name, found).try();
+    kept ::= be.alloc.Vec<Def>();
+    found.loop((h, x) { be.keep_bodied(x, kept).try() });
+    Ok(kept.get(0));
+}
+
+// Includes bodyless backend intrinsics such as `add_f64`.
+module_decl = (be :: CBackend, mi: usize, name: str)
+              Res<Res<Def>, AllocError> {
+    found ::= be.alloc.Vec<Def>();
+    be.check.world.defs_of(mi, name, found).try();
+    kept ::= be.alloc.Vec<Def>();
+    found.loop((h, x) { be.keep_fn(x, kept).try() });
+    Ok(kept.get(0));
+}
+
+keep_fn = (be :: CBackend, x: Def, out :: Vec<Def>)
+          Res<(), AllocError> {
+    decl_at(be.tree, x.id).match({
+        None    => Ok(()),
+        Ok(dec) => keep_fn_decl(dec, x, out),
+    })
+}
+
+keep_fn_decl = (dec: Decl, x: Def, out :: Vec<Def>)
+               Res<(), AllocError> {
+    dec.kind.match({
+        Function(_) => out.add(x),
+        _           => Ok(()),
+    })
+}
+
+keep_bodied = (be :: CBackend, x: Def, out :: Vec<Def>)
+              Res<(), AllocError> {
+    decl_at(be.tree, x.id).match({
+        None    => Ok(()),
+        Ok(dec) => keep_bodied_decl(dec, x, out),
+    })
+}
+
+keep_bodied_decl = (dec: Decl, x: Def, out :: Vec<Def>)
+                   Res<(), AllocError> {
+    dec.kind.match({
+        Function(fn) => keep_bodied_fn(fn, x, out),
+        _            => Ok(()),
+    })
+}
+
+keep_bodied_fn = (fn: Function, x: Def, out :: Vec<Def>)
+                 Res<(), AllocError> {
+    bodyless(fn).match({
+        true  => Ok(()),
+        false => out.add(x),
+    })
+}
+
+// the symbol, and the short circuit that keeps a failure visible
+
+// The symbol of a plain, non-generic function, queued so the walk
+// reaches its body: "was this already emitted" and "what do I call"
+// have to be the same question.
+call_symbol* = (be :: CBackend, d: Def, out :: String)
+               Res<(), AllocError> {
+    sig  ::= be.alloc.Vec<TyId>();
+    inst ::= be.alloc.Inst();
+    be.signature_of(d, inst, sig).try();
+    sym ::= be.alloc.String().try();
+    sym_fn(sym, be.check.types, be.check.world, d.qname, sig, inst).try();
+    be.need_function(d, inst, sym.view()).try();
+    out.add(sym.view())
+}
+
+// `if (zg_tN.zg_tag != Ok) { goto done; }`
+write_jump_unless_ok* = (be :: CBackend, tmp: str, done: usize)
+                        Res<(), AllocError> {
+    tag ::= be.alloc.String().try();
+    sym_variant(tag, RES_PATH, "Ok").try();
+    be.fmt("if ({tmp}.zg_tag != {}) {\n", tag.view()).try();
+    be.indent();
+    be.write_goto(done).try();
+    be.dedent();
+    be.writeln("}").try();
+    Ok(());
+}
+
+write_goto* = (be :: CBackend, done: usize) Res<(), AllocError> {
+    name = be.done_name(done).try();
+    be.fmt("goto {};\n", name.view())
+}
+
+// The done label of a Res cleanup, beside the goto that jumps to it --
+// `f<n>: ;`. A loop's break label is a different thing with a stem and a
+// number (`gen_c_loop.zen`'s write_label); this one has exactly one name,
+// which is why it is not that function.
+write_done* = (be :: CBackend, done: usize) Res<(), AllocError> {
+    name = be.done_name(done).try();
+    be.fmt("{}: ;\n", name.view())
+}
+
+done_name = (be :: CBackend, done: usize) Res<String, AllocError> {
+    name ::= be.alloc.String().try();
+    sym_gen(name, "f", done).try();
+    Ok(name)
+}

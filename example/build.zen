@@ -1,0 +1,78 @@
+// Build files are Zen programs. The mutable Builder records the target graph.
+
+Budget, Builder, BuildError, Function, Package = std.build
+Bencher, Tester = std.test
+seconds = std.core.time
+
+// Packages are hash-locked values; `zen add json` can add this declaration.
+json_pkg = Package(
+    url: "https://github.com/zen-pkgs/json",
+    version: "0.3.1",
+    hash: "sha256:9f2a...",
+)
+
+build = (b :: Builder) Res<(), BuildError> {
+
+    // Target-specific configuration is ordinary Zen control flow.
+    lib_paths = b.os.match({
+        Macos   => ["/opt/homebrew/lib"],
+        Linux   => ["/usr/local/lib"],
+        Windows => ["C:/sodium/lib"],
+    });
+
+    // Target constructors return Res, so failures propagate through the build.
+    json = b.add("json", json_pkg).try();
+
+    // Lib.src is the Zen binding; libs and paths describe the linker input.
+    libsodium = b.lib("libsodium", {
+        src: Path("src/sodium.zen"),
+        libs: ["sodium"],
+        paths: lib_paths,
+    }).try();
+
+    // Extern compiles C sources alongside the Zen tree.
+    extern_add = b.extern("extern_add", {
+        src: Path("src/extern_add.c"),
+        libs: [],
+        paths: [],
+    }).try();
+
+    ext = b.os.match({
+        Windows => ".exe",
+        _       => "",
+    });
+
+    // A target may import only from the dependencies declared here.
+    b.exe("example", {
+        src: Path("src/main.zen"),
+        deps: [json, libsodium, extern_add],
+        out: Ok(
+            Path(b.alloc, "build/{}-{}/example{}", b.os, b.arch, ext).try()
+        ),
+    }).try();
+
+    // Bench discovery uses the same walk with a Bencher filter.
+    benches ::= b.alloc.Vec<Function>();
+    b.module(Path("src")).functions(b.alloc).try().loop((h, f) {
+        (f.params.len == 1 && f.params.get(0).try().type == Bencher)
+            .then(() { benches.add(f).try() });
+    });
+
+    // Allocation budgets are deterministic; timing uses a rolling median.
+    b.bench("example_bench", {
+        benches: benches,
+        budgets: [
+            Budget(
+                name: "shape_format",
+                ns_op: 400,
+                allocs_op: 1,
+                bytes_op: 64
+            ),
+        ],
+    }).try();
+
+    // The build also carries its own time budget.
+    b.budget(seconds(60));
+
+    Ok(());
+}

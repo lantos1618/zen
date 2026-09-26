@@ -1,0 +1,1178 @@
+// Lower resolved calls, construction-shaped calls, and structural `Res`
+// constructors. Recorded sema choices are authoritative. Deferred member
+// constants and contextual bodies without a recorded choice retain candidate lookup.
+
+ExprId = std.ast
+Decl, Function = std.ast
+Access, Call, Arg = std.ast
+Param, TypeId = std.ast
+ModuleOrigin, CBinding, CBindingId = std.ast
+AllocError = std.mem
+DeclId = sema.sema_id
+satisfies_bound = sema.sema_bound
+materialize_literal = gen.gen_c.gen_c_mono
+Vec = std.collections
+str, String = std.text
+Range = std.core
+TyId, TyRes = sema.sema_ty
+Def, decl_at = sema.sema_def
+Ctx = sema.sema_check
+Inst = sema.sema_inst
+type_from_ast = sema.sema_denote
+pack_slot, pack_elem = sema.sema_vararg
+sym_member, sym_variant, sym_fn = gen.gen_name
+RES_PATH = gen.gen_name
+CBackend = gen.gen_c.gen_c_state
+unsupported, unresolved, untyped, ambiguous = gen.gen_c.gen_c_report
+sub_with, any_open, inst_at = gen.gen_c.gen_c_mono
+settled_inst, inst_open, enter_tparams, leave_tparams = gen.gen_c.gen_c_mono
+complete_inst = gen.gen_c.gen_c_infer
+ctype, is_unit, has_storage, c_prim, spellable, declared_ret = gen.gen_c.gen_c_type
+write_none = gen.gen_c.gen_c_type
+lower_numeric = gen.gen_c.gen_c_num
+expr, ty_of, want_of = gen.gen_c.gen_c_expr
+value_held, holds = gen.gen_c.gen_c_expr
+Dest, deliver = gen.gen_c.gen_c_stmt
+is_print, lower_print = gen.gen_c.gen_c_print
+lower_dot_call = gen.gen_c.gen_c_member
+lower_loop = gen.gen_c.gen_c_loop
+is_loop_shape = gen.gen_c.gen_c_shape
+inlines, inline_call, closure_slot = gen.gen_c.gen_c_inline
+is_null_ptr, lower_null_ptr = gen.gen_c.gen_c_ptr
+lower_closure_call = gen.gen_c.gen_c_inline
+construct = gen.gen_c.gen_c_build
+is_format_door, lower_format_door = gen.gen_c.gen_c_fmt
+is_json_door, lower_json_door = gen.gen_c.gen_c_json
+recv_arg, arg_value, write_arg_at = gen.gen_c.gen_c_arg
+call_callee = sema.sema_call
+omittable = sema.sema_cand
+
+// Resolve and emit one source call. The site owns source identity, receiver,
+// and context; backend services remain borrowed method parameters.
+CallSite = {
+    id: ExprId,
+    c: Call,
+    recv: Res<ExprId>,
+    ctx: Ctx,
+
+    resolve = (self: @Self, be :: CBackend, name: str, want: TyId,
+               out :: String) Res<(), AllocError> {
+        be.check.call_resolution(self.id).match({
+            Ok(resolution) => resolution.match({
+                Rejected   => be.unsupported(
+                    self.id,
+                    "a rejected semantic call",
+                    out
+                ),
+                Checking   => be.unresolved(self.id, name, out),
+                Checked(_) => self.selected(be, name, want, out),
+            }),
+            None           => self.unselected(be, name, want, out),
+        })
+    }
+
+    selected = (self: @Self, be :: CBackend, name: str, want: TyId,
+                out :: String) Res<(), AllocError> {
+        be.check.resolved_call(self.id).match({
+            Ok(_) => be.selected_def(self.id).match({
+                Ok(d) => self.lower(be, d, want, out),
+                None  => be.unresolved(self.id, name, out),
+            }),
+            None  => self.unselected(be, name, want, out),
+        })
+    }
+
+    // Member constants and context-dependent generic bodies can reach lowering
+    // before sema records a selection. Keep their existing lookup boundary;
+    // an existing selection never reaches this path, even if it is invalid.
+    unselected = (self: @Self, be :: CBackend, name: str, want: TyId,
+                  out :: String) Res<(), AllocError> {
+        found ::= be.alloc.Vec<Def>();
+        be.check.world.defs_of(self.ctx.module, name, found).try();
+        self.add_travelled(be, name, found).try();
+        self.only(be, name, found, want, out)
+    }
+
+    // Use the same travelled-function pool as sema. Dot form reads the
+    // receiver; free UFCS form reads argument zero.
+    add_travelled = (self: @Self, be :: CBackend, name: str,
+                     found :: Vec<Def>) Res<(), AllocError> {
+        self.recv.match({
+            Ok(r) => {
+                unknown = be.check.types.unknown().try();
+                raw     = be.ty_of(r, self.ctx, unknown).try();
+                rty     = be.materialize_literal(raw).try();
+                be.travelled_for_type(name, rty, found)
+            },
+            None  => self.c.args.get(0).match({
+                None  => Ok(()),
+                Ok(a) => be.travelled_for(name, a.value, self.ctx, found),
+            }),
+        })
+    }
+
+    // Without a sema selection, only a singleton candidate set is callable.
+    only = (self: @Self, be :: CBackend, name: str, found: Vec<Def>,
+            dest: TyId, out :: String) Res<(), AllocError> {
+        found.len.match({
+            0 => be.unresolved(self.id, name, out),
+            1 => self.lower(
+                be,
+                found.get(0).ok_or(AllocError.OutOfMemory).try(),
+                dest,
+                out
+            ),
+            _ => be.ambiguous(self.id, name, out),
+        })
+    }
+
+    lower = (self: @Self, be :: CBackend, d: Def, want: TyId,
+             out :: String) Res<(), AllocError> {
+        d.kind.match({
+            FunctionDef => self.lower_resolved(be, d, want, out),
+            StructDef   => be.construct(self.id, self.c, d, self.ctx, out),
+            _           => be.unsupported(
+                self.id,
+                "a call to something that is not a function",
+                out
+            ),
+        })
+    }
+
+    lower_resolved = (self: @Self, be :: CBackend, d: Def, want: TyId,
+                      out :: String) Res<(), AllocError> {
+        decl_at(be.tree, d.id).match({
+            None  => be.unsupported(
+                self.id,
+                "a call to something that is not a plain function",
+                out
+            ),
+            Ok(x) => self.lower_decl(be, d, x, want, out),
+        })
+    }
+
+    lower_decl = (self: @Self, be :: CBackend, d: Def, x: Decl,
+                  want: TyId, out :: String) Res<(), AllocError> {
+        x.kind.match({
+            Function(f) => self.lower_fn(be, d, f, want, out),
+            _           => be.unsupported(
+                self.id,
+                "a call to something that is not a plain function",
+                out
+            ),
+        })
+    }
+
+    lower_fn = (self: @Self, be :: CBackend, d: Def, f: Function,
+                dest: TyId, out :: String) Res<(), AllocError> {
+        decided = be.check.is_unknown(dest).match({
+            false => Ok(dest),
+            true  => be.want_of(self.id, self.ctx),
+        }).try();
+        be.is_loop_shape(f).match({
+            true  => be.lower_loop(
+                self.id,
+                self.c,
+                f,
+                self.recv,
+                self.ctx,
+                decided,
+                out
+            ),
+            false => self.inline_or_call(be, d, f, out),
+        })
+    }
+
+    inline_or_call = (self: @Self, be :: CBackend, d: Def, f: Function,
+                      out :: String) Res<(), AllocError> {
+        be.inlines(self.c, f).match({
+            true  => be.inline_call(
+                self.id,
+                self.c,
+                d,
+                f,
+                self.recv,
+                self.ctx,
+                out
+            ),
+            false => self.floor_or_call(be, d, f, out),
+        })
+    }
+
+    floor_or_call = (self: @Self, be :: CBackend, d: Def, f: Function,
+                     out :: String) Res<(), AllocError> {
+        is_null_ptr(d.name).match({
+            true  => be.lower_null_ptr(
+                self.id,
+                be.want_of(self.id, self.ctx).try(),
+                out
+            ),
+            false => self.json_or_format(be, d, f, out),
+        })
+    }
+
+    json_or_format = (self: @Self, be :: CBackend, d: Def, f: Function,
+                      out :: String) Res<(), AllocError> {
+        is_json_door(d, f).match({
+            true  => lower_json_door(
+                be,
+                self.id,
+                self.c,
+                d,
+                self.recv,
+                self.ctx,
+                out
+            ),
+            false => self.format_or_call(be, d, f, out),
+        })
+    }
+
+    format_or_call = (self: @Self, be :: CBackend, d: Def, f: Function,
+                      out :: String) Res<(), AllocError> {
+        be.is_format_door(d, f).match({
+            true  => be.lower_format_door(
+                self.id,
+                self.c,
+                d,
+                f,
+                self.recv,
+                self.ctx,
+                out
+            ),
+            false => self.convert_or_call(be, d, f, out),
+        })
+    }
+
+    convert_or_call = (self: @Self, be :: CBackend, d: Def, f: Function,
+                       out :: String) Res<(), AllocError> {
+        be.check.numeric_conversions.get(d.id).match({
+            None          => self.plain_or_foreign(be, d, f, out),
+            Ok(operation) => recv_arg(self.c, self.recv).match({
+                None      => be.unsupported(
+                    self.id,
+                    "a numeric conversion without its operand",
+                    out
+                ),
+                Ok(value) => be.lower_numeric(value, operation, self.ctx, out),
+            }),
+        })
+    }
+
+    plain_or_foreign = (self: @Self, be :: CBackend, d: Def, f: Function,
+                        out :: String) Res<(), AllocError> {
+        bodyless(f).match({
+            true  => self.foreign(be, d, f, out),
+            false => self.signature(be, d, f, out),
+        })
+    }
+
+    foreign = (self: @Self, be :: CBackend, d: Def, f: Function,
+               out :: String) Res<(), AllocError> {
+        plain(f).match({
+            false => be.unsupported(
+                self.id,
+                "a generic function has no single foreign symbol",
+                out
+            ),
+            true  => {
+                inst ::= be.alloc.Inst();
+                sig  ::= be.alloc.Vec<TyId>();
+                be.signature_of(d, inst, sig).try().match({
+                    false => be.unsupported(
+                        self.id,
+                        "a foreign function whose parameters have no written type",
+                        out
+                    ),
+                    true  => self.foreign_at(be, d, f, sig, out),
+                })
+            },
+        })
+    }
+
+    foreign_at = (self: @Self, be :: CBackend, d: Def, f: Function,
+                  sig: Vec<TyId>, out :: String) Res<(), AllocError> {
+        ret = be.foreign_ret(d, f).try();
+        be.foreign_types_spellable(ret, sig).match({
+            false => be.unsupported(
+                self.id,
+                "a foreign function with a type C cannot spell",
+                out
+            ),
+            true  => ForeignCall(site: self, def: d, fn: f, sig: sig, ret: ret)
+                .write(be, out),
+        })
+    }
+
+    signature = (self: @Self, be :: CBackend, d: Def, f: Function,
+                 out :: String) Res<(), AllocError> {
+        raw     = be.inst_at(self.id).try();
+        settled = be.settled_inst(f.tparams, d.qname, raw).try();
+        inst    = be.complete_inst(
+            self.c,
+            d,
+            f,
+            settled,
+            self.recv,
+            self.ctx
+        ).try();
+        sig ::= be.alloc.Vec<TyId>();
+        be.signature_of(d, inst, sig).try().match({
+            false => be.unsupported(self.id, be.plain_fault(d), out),
+            true  => self.settled(be, d, f, sig, inst, out),
+        })
+    }
+
+    settled = (self: @Self, be :: CBackend, d: Def, f: Function,
+               sig: Vec<TyId>, inst: Inst, out :: String)
+              Res<(), AllocError> {
+        (be.inst_open(inst) || be.any_open(sig)).match({
+            true  => be.unsupported(
+                self.id,
+                "a generic call whose type arguments nothing settles",
+                out
+            ),
+            false => self.reachable(be, d, f, sig, inst, out),
+        })
+    }
+
+    reachable = (self: @Self, be :: CBackend, d: Def, f: Function,
+                 sig: Vec<TyId>, inst: Inst, out :: String)
+                Res<(), AllocError> {
+        sym ::= be.alloc.String().try();
+        sym_fn(sym, be.check.types, be.check.world, d.qname, sig, inst).try();
+        be.need_function(d, inst, sym.view()).try();
+        self.emit(be, f, sig, sym.view(), out)
+    }
+
+    // A UFCS receiver occupies signature slot zero. It is held whenever a
+    // later argument still has a call to run.
+    write_receiver = (self: @Self, be :: CBackend, f: Function,
+                      sig: Vec<TyId>, out :: String)
+                     Res<usize, AllocError> {
+        self.recv.match({
+            None     => Ok(0),
+            Ok(base) => {
+                hold = be.holds(self.c, 0, 1);
+                be.write_arg_at(base, 0, hold, f, sig, self.ctx, out).try();
+                Ok(1)
+            },
+        })
+    }
+
+    emit = (self: @Self, be :: CBackend, f: Function, sig: Vec<TyId>,
+            sym: str, out :: String) Res<(), AllocError> {
+        out.fmt("{sym}(").try();
+        first = self.write_receiver(be, f, sig, out).try();
+        CallArgs(c: self.c, f: f, sig: sig, first: first, ctx: self.ctx).write(be, out).try();
+        out.add(")").try();
+        Ok(())
+    }
+}
+
+// A bare call name follows visible language precedence: a local closure wins,
+// `Ok` and `Err` construct the destination `Res`, a declared `println` shadows
+// print sugar, and every other name uses ordinary resolution.
+NamedCallSite = {
+    site: CallSite,
+    name: str,
+    want: TyId,
+
+    lower = (self: @Self, be :: CBackend, out :: String)
+            Res<(), AllocError> {
+        be.closure_slot(self.name).match({
+            Ok(s) => be.lower_closure_call(
+                self.site.id,
+                self.site.c,
+                s,
+                self.site.ctx,
+                self.want,
+                out
+            ),
+            None  => self.named(be, out),
+        })
+    }
+
+    named = (self: @Self, be :: CBackend, out :: String)
+            Res<(), AllocError> {
+        is_res_ctor(self.name).match({
+            true  => self.lower_res(be, out),
+            false => self.sugar_or_plain(be, out),
+        })
+    }
+
+    lower_res = (self: @Self, be :: CBackend, out :: String)
+                Res<(), AllocError> {
+        be.check.types.at(self.want).match({
+            Res(r) => self.write_res(be, r, out),
+            _      => be.untyped(self.site.id, self.name, out),
+        })
+    }
+
+    write_res = (self: @Self, be :: CBackend, r: TyRes, out :: String)
+                Res<(), AllocError> {
+        payload = self.name.eq("Ok").match({
+            true => r.value, false => r.error,
+        });
+        self.site.c.args.get(0).match({
+            None  => be.write_res_tagged(self.want, self.name, out),
+            Ok(a) => be.write_res_payload(
+                self.site.id,
+                self.want,
+                self.name,
+                a.value,
+                payload,
+                self.site.ctx,
+                out
+            ),
+        })
+    }
+
+    sugar_or_plain = (self: @Self, be :: CBackend, out :: String)
+                     Res<(), AllocError> {
+        be.is_sugar(self.name, self.site.ctx).try().match({
+            true  => be.lower_print(self.site.c, self.name, self.site.ctx, out),
+            false => self.site.resolve(be, self.name, self.want, out),
+        })
+    }
+}
+
+// The immutable facts shared by one direct argument emission. They become a
+// phase only after the receiver has decided `first`; backend and destination
+// remain borrowed by each write.
+CallArgs = {
+    c: Call,
+    f: Function,
+    sig: Vec<TyId>,
+    first: usize,
+    ctx: Ctx,
+
+    write = (self: @Self, be :: CBackend, out :: String)
+            Res<(), AllocError> {
+        pack_slot(be.types(), self.sig).match({
+            None     => self.write_written(be, out),
+            Ok(slot) => self.write_to_pack(be, slot, out),
+        })
+    }
+
+    write_written = (self: @Self, be :: CBackend, out :: String)
+                    Res<(), AllocError> {
+        written ::= self.first > 0;
+        unknown = be.check.types.unknown().try();
+        self.c.args.loop((h, i, a) {
+            pos = i + self.first;
+            ty  = self.sig.get(pos).match({ Ok(t) => t, None => unknown });
+            be.has_storage(ty).match({
+                false => be.deliver(a.value, self.ctx, ty, Dest.Discard),
+                true  => {
+                    written.then(() { out.add(", ").try() });
+                    hold = be.holds(self.c, pos, self.first);
+                    be.write_arg_at(
+                        a.value,
+                        pos,
+                        hold,
+                        self.f,
+                        self.sig,
+                        self.ctx,
+                        out
+                    ).try();
+                    written = true;
+                    Ok(())
+                },
+            }).try();
+        });
+        Range(self.first + self.c.args.len, self.sig.len).loop((h, i) {
+            be.check.omittable(self.sig.ty_at(i)).then(() {
+                written.then(() { out.add(", ").try() });
+                self.write_omitted(be, i, out).try();
+                written = true;
+            });
+        });
+        Ok(())
+    }
+
+    write_omitted = (self: @Self, be :: CBackend, i: usize, out :: String)
+                    Res<(), AllocError> {
+        ty = self.sig.ty_at(i);
+        self.f.params.get(i).match({
+            Ok(p) => p.mutable.match({
+                false => be.write_none(ty, out),
+                true  => {
+                    out.add("&(").try();
+                    be.write_none(ty, out).try();
+                    out.add(")")
+                },
+            }),
+            None  => be.write_none(ty, out),
+        })
+    }
+
+    // Fixed arguments precede one packed C argument. Erased fixed values are
+    // still evaluated, but do not consume a comma or a C parameter slot.
+    write_to_pack = (self: @Self, be :: CBackend, slot: usize,
+                     out :: String) Res<(), AllocError> {
+        written ::= self.first > 0;
+        unknown = be.check.types.unknown().try();
+        self.c.args.loop((h, i, a) {
+            pos = i + self.first;
+            (pos < slot).then(() {
+                ty = self.sig.get(pos).match({ Ok(t) => t, None => unknown });
+                be.has_storage(ty).match({
+                    false => be.deliver(a.value, self.ctx, ty, Dest.Discard),
+                    true  => {
+                        written.then(() { out.add(", ").try() });
+                        hold = be.holds(self.c, pos, self.first);
+                        be.write_arg_at(
+                            a.value,
+                            pos,
+                            hold,
+                            self.f,
+                            self.sig,
+                            self.ctx,
+                            out
+                        ).try();
+                        written = true;
+                        Ok(())
+                    },
+                }).try();
+            });
+        });
+        written.then(() { out.add(", ").try() });
+        pack = self.sig.get(slot).match({
+            Ok(t) => t,
+            None  => TyId(index: 0),
+        });
+        self.write_pack(be, slot, pack, out)
+    }
+
+    write_pack = (self: @Self, be :: CBackend, slot: usize, pack: TyId,
+                  out :: String) Res<(), AllocError> {
+        self.is_forwarded(be, slot, pack).try().match({
+            true  => self.write_forwarded(be, slot, pack, out),
+            false => self.write_spread(be, slot, pack, out),
+        })
+    }
+
+    is_forwarded = (self: @Self, be :: CBackend, slot: usize, pack: TyId)
+                   Res<bool, AllocError> {
+        ((self.c.args.len + self.first) == (slot + 1)).match({
+            false => Ok(false),
+            true  => self.pack_typed_arg(be, slot, pack),
+        })
+    }
+
+    pack_typed_arg = (self: @Self, be :: CBackend, slot: usize, pack: TyId)
+                     Res<bool, AllocError> {
+        arg_value(self.c, slot - self.first).match({
+            None  => Ok(false),
+            Ok(v) => self.same_as_pack(be, v, pack),
+        })
+    }
+
+    same_as_pack = (self: @Self, be :: CBackend, v: ExprId, pack: TyId)
+                   Res<bool, AllocError> {
+        got = be.ty_of(v, self.ctx, pack).try();
+        Ok(got.eq(pack));
+    }
+
+    write_forwarded = (self: @Self, be :: CBackend, slot: usize,
+                       pack: TyId, out :: String) Res<(), AllocError> {
+        arg_value(self.c, slot - self.first).match({
+            None  => Ok(()),
+            Ok(v) => be.expr(v, self.ctx, pack, out),
+        })
+    }
+
+    write_spread = (self: @Self, be :: CBackend, slot: usize, pack: TyId,
+                    out :: String) Res<(), AllocError> {
+        out.add("(").try();
+        be.ctype(pack, out).try();
+        out.add(")").try();
+        ((self.c.args.len + self.first) == slot).match({
+            true  => out.add("{ 0 }"),
+            false => self.write_run(be, slot, pack, out),
+        })
+    }
+
+    write_run = (self: @Self, be :: CBackend, slot: usize, pack: TyId,
+                 out :: String) Res<(), AllocError> {
+        elem = pack_elem(be.types(), pack).match({ Ok(t) => t, None => pack });
+        out.add("{ .").try();
+        sym_member(out, "data").try();
+        out.add(" = (").try();
+        be.ctype(elem, out).try();
+        out.add("[]){ ").try();
+        self.write_pack_elems(be, slot, elem, out).try();
+        out.add(" }, .").try();
+        sym_member(out, "len").try();
+        out.add(" = ").try();
+        out.write_usize(self.c.args.len + self.first - slot).try();
+        out.add("u }").try();
+        Ok(())
+    }
+
+    write_pack_elems = (self: @Self, be :: CBackend, slot: usize,
+                        elem: TyId, out :: String) Res<(), AllocError> {
+        self.c.args.loop((h, i, a) {
+            pos = i + self.first;
+            (pos >= slot).then(() {
+                (pos > slot).then(() { out.add(", ").try() });
+                hold = be.holds(self.c, pos, self.first);
+                be.value_held(a.value, self.ctx, elem, hold, out).try();
+            });
+        });
+        Ok(())
+    }
+}
+
+// A bodyless declaration after its C signature has been settled.
+ForeignCall = {
+    site: CallSite,
+    def: Def,
+    fn: Function,
+    sig: Vec<TyId>,
+    ret: TyId,
+
+    write = (self: @Self, be :: CBackend, out :: String)
+            Res<(), AllocError> {
+        be.tree.module_origin_at(self.def.id.module.to_usize()).match({
+            Ok(ModuleOrigin.CBinding(id)) => self.from_binding(be, id, out),
+            _                             => self.raw(be, out),
+        })
+    }
+
+    raw = (self: @Self, be :: CBackend, out :: String)
+          Res<(), AllocError> {
+        proto ::= be.alloc.String().try();
+        be.foreign_proto(
+            self.def.name,
+            self.fn,
+            self.ret,
+            self.sig,
+            proto
+        ).try();
+        be.need_extern(self.def.name, proto).try().match({
+            false => be.unsupported(
+                self.site.id,
+                "one foreign symbol declared with more than one signature",
+                out
+            ),
+            true  => self.site.emit(be, self.fn, self.sig, self.def.name, out),
+        })
+    }
+
+    from_binding = (self: @Self, be :: CBackend, id: CBindingId,
+                    out :: String) Res<(), AllocError> {
+        be.tree.c_binding_at(id).match({
+            None    => be.bad_c_binding(
+                self.site.id,
+                "a C binding module has no binding metadata",
+                out
+            ),
+            Ok(raw) => self.binding(be, raw, out),
+        })
+    }
+
+    binding = (self: @Self, be :: CBackend, raw: CBinding, out :: String)
+              Res<(), AllocError> {
+        (raw.headers.len == 0).match({
+            true  => be.bad_c_binding(
+                self.site.id,
+                "a C binding module has no headers",
+                out
+            ),
+            false => self.headers(be, raw, out),
+        })
+    }
+
+    headers = (self: @Self, be :: CBackend, raw: CBinding, out :: String)
+              Res<(), AllocError> {
+        valid ::= true;
+        raw.headers.loop((h, header) {
+            be.need_c_header(header.path, header.system).try().match({
+                true  => (),
+                false => { valid = false; },
+            });
+        });
+        valid.match({
+            true  => self.site.emit(be, self.fn, self.sig, self.def.name, out),
+            false => be.bad_c_binding(
+                self.site.id,
+                "a C binding header path contains a byte that cannot appear in an include name",
+                out
+            ),
+        })
+    }
+}
+
+// `Res` values
+
+res_value* = (
+    be      :: CBackend,
+    id      : ExprId,
+    want    : TyId,
+    variant : str,
+    out     :: String
+) Res<(), AllocError> {
+    be.check.types.at(want).match({
+        Res(_) => be.write_res_tagged(want, variant, out),
+        _      => be.untyped(id, variant, out),
+    })
+}
+
+write_res_tagged = (be :: CBackend, want: TyId, variant: str, out :: String)
+                   Res<(), AllocError> {
+    cty ::= be.alloc.String().try();
+    be.ctype(want, cty).try();
+    tag ::= be.alloc.String().try();
+    tag.sym_variant(RES_PATH, variant).try();
+    out.fmt("({}){ .zg_tag = {} }", cty.view(), tag.view())
+}
+
+// Unit payloads occupy no C member but are still evaluated for effects.
+// Hoisting reuses this constructor to keep one `Res` layout decision.
+write_res_payload* = (
+    be      :: CBackend,
+    id      : ExprId,
+    want    : TyId,
+    variant : str,
+    value   : ExprId,
+    payload : TyId,
+    ctx     : Ctx,
+    out     :: String
+)
+                     Res<(), AllocError> {
+    be.is_unit(payload).match({
+        false => Ok(()),
+        true  => be.run_for_effect(value, payload, ctx),
+    }).try();
+    cty ::= be.alloc.String().try();
+    be.ctype(want, cty).try();
+    out.fmt("({}){ .zg_tag = ", cty.view()).try();
+    out.sym_variant(RES_PATH, variant).try();
+    be.is_unit(payload).match({
+        true  => Ok(()),
+        false => be.write_payload_init(variant, value, payload, ctx, out),
+    }).try();
+    out.add(" }").try();
+    Ok(());
+}
+
+run_for_effect = (be :: CBackend, value: ExprId, payload: TyId, ctx: Ctx)
+                 Res<(), AllocError> {
+    be.writes_nothing(value).match({
+        true  => Ok(()),
+        false => be.deliver(value, ctx, payload, Dest.Discard),
+    })
+}
+
+writes_nothing = (be: CBackend, value: ExprId) bool {
+    be.tree.expr_at(value).kind.match({ Unit => true, _ => false })
+}
+
+write_payload_init = (
+    be      :: CBackend,
+    variant : str,
+    value   : ExprId,
+    payload : TyId,
+    ctx     : Ctx,
+    out     :: String
+)
+                     Res<(), AllocError> {
+    out.add(", .zg_data.").try();
+    out.sym_member(variant).try();
+    out.add(" = ").try();
+    be.expr(value, ctx, payload, out).try();
+    Ok(());
+}
+
+// Dispatch bare names, dot calls, and indirect callable values.
+lower_call* = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    call_callee(be.tree, c).kind.match({
+        Name(n)   => NamedCallSite(site: CallSite(id: id, c: c, recv: None, ctx: ctx), name: n.text, want: want).lower(be, out),
+        Access(a) => be.lower_dot_call(id, c, a, ctx, want, out),
+        _         => be.lower_indirect(id, c, ctx, out),
+    })
+}
+
+// A callee that is neither a name nor a dot: lower the expression, then
+// call through it. The callee's type says how many arguments it takes
+// and what they are, so a callee sema couldn't type is reported rather
+// than called with a guessed signature.
+lower_indirect = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    unknown = be.check.types.unknown().try();
+    fty     = be.ty_of(c.callee, ctx, unknown).try();
+    be.check.types.at(fty).match({
+        Fn(f) => be.write_indirect(c, f.params, ctx, out),
+        _     => be.unsupported(
+            id,
+            "a call through a value that is not a function",
+            out
+        ),
+    })
+}
+
+write_indirect = (
+    be     :: CBackend,
+    c      : Call,
+    params : Vec<TyId>,
+    ctx    : Ctx,
+    out    :: String
+) Res<(), AllocError> {
+    unknown = be.check.types.unknown().try();
+    // Materialize the indirect callee before any argument. C otherwise leaves
+    // the callee and argument evaluation order unspecified.
+    be.holdable(c.callee).match({
+        true  => be.value_held(c.callee, ctx, unknown, true, out).try(),
+        false => be.expr(c.callee, ctx, unknown, out).try(),
+    });
+    out.add("(").try();
+    c.args.loop((h, i, a) {
+        (i > 0).then(() { out.add(", ").try() });
+        hold = be.holds(c, i, 0);
+        be.write_indirect_arg(a, i, hold, params, ctx, out).try();
+    });
+    Range(c.args.len, params.len).loop((h, i) {
+        be.check.omittable(params.ty_at(i)).then(() {
+            (i > 0).then(() { out.add(", ").try() });
+            be.write_none(params.ty_at(i), out).try();
+        });
+    });
+    out.add(")").try();
+    Ok(());
+}
+
+// A callee that is a value has a `TyFn` and no `Param` list, so there is
+// no `::` to read: a function type carries types and not binding
+// markers. Everything goes by value, which is what a `TyFn` means.
+write_indirect_arg = (
+    be     :: CBackend,
+    a      : Arg,
+    i      : usize,
+    hold   : bool,
+    params : Vec<TyId>,
+    ctx    : Ctx,
+    out    :: String
+) Res<(), AllocError> {
+    want = params.get(i).match({ Ok(t) => t, None => TyId(index: 0) });
+    be.value_held(a.value, ctx, want, hold, out)
+}
+
+is_sugar = (be :: CBackend, name: str, ctx: Ctx) Res<bool, AllocError> {
+    is_print(name).match({
+        false => Ok(false),
+        true  => be.undeclared(name, ctx),
+    })
+}
+
+undeclared = (be :: CBackend, name: str, ctx: Ctx) Res<bool, AllocError> {
+    found ::= be.alloc.Vec<Def>();
+    be.check.world.defs_of(ctx.module, name, found).try();
+    Ok(found.len == 0);
+}
+
+is_res_ctor* = (name: str) bool { name.eq("Ok") || name.eq("Err") }
+
+// `recv` is the receiver a UFCS call reached this name through — "a free
+// function whose first param is the type is callable as a method", so
+// the receiver is argument zero and there is no second mechanism.
+// `None` is the ordinary `f(a)`.
+lower_plain_call* = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    name : str,
+    recv : Res<ExprId>,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+)
+                    Res<(), AllocError> {
+    s = CallSite(id: id, c: c, recv: recv, ctx: ctx);
+    s.resolve(be, name, want, out)
+}
+
+travelled_for = (
+    be    :: CBackend,
+    name  : str,
+    r     : ExprId,
+    ctx   : Ctx,
+    found :: Vec<Def>
+) Res<(), AllocError> {
+    unknown = be.check.types.unknown().try();
+    rty     = be.ty_of(r, ctx, unknown).try();
+    be.travelled_for_type(name, rty, found)
+}
+
+travelled_for_type = (
+    be    :: CBackend,
+    name  : str,
+    rty   : TyId,
+    found :: Vec<Def>
+) Res<(), AllocError> {
+    defs ::= be.alloc.Vec<Def>();
+    be.check.world.exported_named(name, defs).try();
+    defs.loop((h, d) { be.keep_travelled(d, rty, found).try() });
+    Ok(());
+}
+
+keep_travelled = (be :: CBackend, d: Def, rty: TyId, found :: Vec<Def>)
+                 Res<(), AllocError> {
+    dup = has_def(found, d.id);
+    dup.match({
+        true  => Ok(()),
+        false => be.add_receiving(d, rty, found),
+    })
+}
+
+add_receiving = (be :: CBackend, d: Def, rty: TyId, found :: Vec<Def>)
+                Res<(), AllocError> {
+    be.receives(d, rty).try().match({
+        true  => found.add(d),
+        false => Ok(()),
+    })
+}
+
+// Whether the receiver is this declaration's first parameter, read off the
+// declared type. A declaration-owned type variable is a universal extension;
+// it travels only under the requested function name and ordinary overload
+// matching settles it to the concrete receiver.
+receives = (be :: CBackend, d: Def, rty: TyId) Res<bool, AllocError> {
+    inst ::= be.alloc.Inst();
+    sig  ::= be.alloc.Vec<TyId>();
+    ok = be.signature_of(d, inst, sig).try();
+    ok.match({ false => Ok(false), true => be.first_is(sig, rty) })
+}
+
+// Match the same concrete-or-bound receiver relation used by sema.
+first_is = (be :: CBackend, sig: Vec<TyId>, rty: TyId)
+           Res<bool, AllocError> {
+    sig.get(0).match({
+        None  => Ok(false),
+        Ok(t) => be.check.is_var(t).match({
+            true  => Ok(true),
+            false => satisfies_bound(be.check, rty, t),
+        }),
+    })
+}
+
+// Candidate membership and retrieval use one declaration-id search.
+has_def = (found: Vec<Def>, id: DeclId) bool {
+    def_with_id(found, id).match({ Ok(_) => true, None => false })
+}
+
+def_with_id = (found: Vec<Def>, want: DeclId) Res<Def> {
+    Range(0, found.len).find((i) {
+        found.get(i).match({ Ok(d) => d.id.eq(want), None => false })
+    }).match({
+        Ok(i) => found.get(i),
+        None  => None,
+    })
+}
+
+// The checked declaration is authoritative even when its name travelled
+// through an import or receiver. Module definition rows preserve declaration
+// order but omit imports and impls, so search the stable coordinate, not a row
+// offset or another visible candidate set.
+selected_def* = (be: CBackend, id: ExprId) Res<Def> {
+    selected = be.check.resolved_call(id).try();
+    table    = be.check.world.table_at(selected.module.to_usize()).try();
+    from: usize ::= 0;
+    to: usize   ::= table.defs.len;
+    loop(() { from < to }, (h) {
+        middle = from + (to - from) / 2;
+        (table.defs.ptr().read(middle).id.decl < selected.decl).match({
+            true  => { from = middle + 1; },
+            false => { to = middle; },
+        });
+    });
+    found = table.defs.get(from).try();
+    found.id.eq(selected).ensure().try();
+    Ok(found)
+}
+
+write_extern* = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    d    : Def,
+    f    : Function,
+    sig  : Vec<TyId>,
+    recv : Res<ExprId>,
+    ctx  : Ctx,
+    out  :: String
+) Res<(), AllocError> {
+    s = CallSite(id: id, c: c, recv: recv, ctx: ctx);
+    s.foreign_at(be, d, f, sig, out)
+}
+
+bad_c_binding = (be :: CBackend, id: ExprId, why: str, out :: String)
+                Res<(), AllocError> {
+    be.unsupported(id, why, out)
+}
+
+foreign_ret = (be :: CBackend, d: Def, f: Function)
+              Res<TyId, AllocError> {
+    be.declared_ret(
+        f,
+        Ctx(
+            module: d.id.module.to_usize(),
+            ret: TyId(index: 0),
+            has_ret: false,
+            self_ty: TyId(index: 0),
+            has_self: false
+        )
+    )
+}
+
+foreign_types_spellable = (be: CBackend, ret: TyId, sig: Vec<TyId>) bool {
+    be.spellable(ret) && Range(0, sig.len).find((i) {
+        sig.get(i).match({
+            Ok(t) => !be.spellable(t),
+            None  => true,
+        })
+    }).match({ Ok(_) => false, None => true })
+}
+
+foreign_proto = (
+    be   :: CBackend,
+    name : str,
+    f    : Function,
+    ret  : TyId,
+    sig  : Vec<TyId>,
+    out  :: String
+) Res<(), AllocError> {
+    out.add("extern ").try();
+    be.ctype(ret, out).try();
+    out.fmt(" {name}(").try();
+    (f.params.len == 0).match({
+        true  => out.add("void"),
+        false => be.foreign_params(f, sig, out),
+    }).try();
+    out.add(")")
+}
+
+foreign_params = (be :: CBackend, f: Function, sig: Vec<TyId>, out :: String)
+                 Res<(), AllocError> {
+    f.params.loop((h, i, p) {
+        (i > 0).then(() { out.add(", ").try() });
+        ty = sig.get(i).match({ Ok(t) => t, None => TyId(index: 0) });
+        be.ctype(ty, out).try();
+        (p.mutable).then(() { out.add(" *").try() });
+    });
+    Ok(())
+}
+
+bodyless = (f: Function) bool {
+    f.body.match({ Ok(_) => false, None => true })
+}
+
+// Which of the things a callee can be that this backend does not lower.
+plain_fault = (be :: CBackend, d: Def) str {
+    decl_at(be.tree, d.id).match({
+        None  => "a call to something that is not a plain function",
+        Ok(x) => decl_fault(x),
+    })
+}
+
+decl_fault = (x: Decl) str {
+    x.kind.match({
+        Function(_) => "a call to a function whose parameters have no written type",
+        _           => "a call to something that is not a plain function",
+    })
+}
+
+// Read declared parameter types at one instantiation. Type parameters must be
+// in scope while their AST spellings are resolved.
+signature_of* = (be :: CBackend, d: Def, inst: Inst, sig :: Vec<TyId>)
+                Res<bool, AllocError> {
+    decl_at(be.tree, d.id).match({
+        None  => Ok(false),
+        Ok(x) => x.kind.match({
+            Function(f) => be.params_into(d, f, inst, sig),
+            _           => Ok(false),
+        }),
+    })
+}
+
+params_into = (
+    be   :: CBackend,
+    d    : Def,
+    f    : Function,
+    inst : Inst,
+    sig  :: Vec<TyId>
+) Res<bool, AllocError> {
+    mark = be.enter_tparams(f.tparams, d.qname).try();
+    ok   = be.collect_params(d, f.params, inst, sig).try();
+    be.leave_tparams(mark).try();
+    Ok(ok);
+}
+
+plain* = (f: Function) bool { f.tparams.len == 0 }
+
+collect_params = (
+    be     :: CBackend,
+    d      : Def,
+    params : Vec<Param>,
+    inst   : Inst,
+    sig    :: Vec<TyId>
+) Res<bool, AllocError> {
+    ctx = Ctx(
+        module: d.id.module.to_usize(),
+        ret: TyId(index: 0),
+        has_ret: false,
+        self_ty: TyId(index: 0),
+        has_self: false
+    );
+    params.loop((h, p) {
+        p.type.match({
+            Ok(t) => be.add_param(t, ctx, inst, sig),
+            None  => Ok(()),
+        }).try();
+    });
+    Ok(sig.len == params.len);
+}
+
+// The declared type, then the instantiation. One substitution, not two:
+// a declared parameter mentions only the callee's parameters, and
+// `settled_inst` already put the caller's answers into the arguments —
+// what comes out is already in the caller's terms.
+add_param = (
+    be   :: CBackend,
+    t    : TypeId,
+    ctx  : Ctx,
+    inst : Inst,
+    sig  :: Vec<TyId>
+) Res<(), AllocError> {
+    declared = be.check.type_from_ast(t, ctx).try();
+    sig.add(be.sub_with(declared, inst).try())
+}
+
+// The arguments, from signature position `first` on: as written, or with
+// the tail gathered into one `vararg<T>` value. one dispatch, read here
+// and by the method path (`gen_c_member.zen`'s `emit_method_call`) — a pack
+// built the same way whichever spelling reached it, which is the same
+// reason `pack_sig_fits` is one function in sema.
+write_call_args* = (
+    be    :: CBackend,
+    c     : Call,
+    first : usize,
+    f     : Function,
+    sig   : Vec<TyId>,
+    ctx   : Ctx,
+    out   :: String
+) Res<(), AllocError> {
+    CallArgs(c: c, f: f, sig: sig, first: first, ctx: ctx).write(be, out)
+}

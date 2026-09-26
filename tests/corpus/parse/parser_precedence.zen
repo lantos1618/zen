@@ -1,0 +1,104 @@
+// tests/corpus/parse/parser_precedence.zen
+// The parser's precedence table, one operator pair per case.
+//
+// The prec_*.zen files beside this one assert what an expression
+// EVALUATES to, which catches a wrong table only where the two
+// readings differ numerically. This asserts the TREE, so `a + b +% c`
+// grouping the wrong way is visible even where both readings compute
+// the same number.
+//
+// DESIGN.md states no precedence at all; grammar.js D1 settled it as
+// C-like with every binary operator left-associative, and `+%` at
+// exactly the precedence of `+`. That is what is gated here.
+
+scan, Source = std.lex.lex
+Parser, expr = std.parse
+Ast = std.ast.ast_arena
+ExprId = std.ast.ast_id
+BinOp, UnOp = std.ast.ast_node
+
+op_name = (op: BinOp) str {
+    op.match({
+        Add       => "+",
+        Sub       => "-",
+        Mul       => "*",
+        Div       => "/",
+        Rem       => "%",
+        AddWrap   => "+%",
+        SubWrap   => "-%",
+        MulWrap   => "*%",
+        Equal     => "==",
+        NotEqual  => "!=",
+        Less      => "<",
+        LessEq    => "<=",
+        Greater   => ">",
+        GreaterEq => ">=",
+        And       => "&&",
+        Or        => "||",
+    });
+}
+
+un_name = (op: UnOp) str {
+    op.match({
+        Not  => "!",
+        Neg  => "neg",
+        Addr => "&",
+    });
+}
+
+// One node per line, prefixed by its depth. Deliberately not an
+// indented tree: a depth number is exact where leading spaces in an
+// `.expected` file are easy to get wrong by one.
+show = (env: Env, tree: Ast, id: ExprId, depth: usize) () {
+    e = tree.expr_at(id);
+    e.kind.match({
+        Literal(l) => println("{} {}", depth, l.text),
+        Name(n)    => println("{} {}", depth, n.text),
+        Paren(pn)  => {
+            println("{} paren", depth);
+            show(env, tree, pn.inner, depth + 1);
+        },
+        Unary(u)   => {
+            println("{} {}", depth, un_name(u.op));
+            show(env, tree, u.operand, depth + 1);
+        },
+        Binary(b)  => {
+            println("{} {}", depth, op_name(b.op));
+            show(env, tree, b.lhs, depth + 1);
+            show(env, tree, b.rhs, depth + 1);
+        },
+        Access(a)  => {
+            println("{} .{}", depth, a.name.text);
+            show(env, tree, a.base, depth + 1);
+        },
+        _          => println("{} ?", depth),
+    });
+}
+
+run = (env: Env, alloc: Alloc, text: str) Res<(), AllocError> {
+    println("== {}", text);
+    lexed = scan(alloc, Source(file: "t.zen", text: text)).try();
+    p ::= alloc.Parser(lexed);
+    p.drain().try();
+    id = p.expr().try();
+    show(env, p.tree, id, 0);
+    println("lex {} parse {}", lexed.diags.len, p.diags.len);
+    Ok(());
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+
+    run(env, alloc, "2 + 3 * 4").try();          // `*` binds tighter
+    run(env, alloc, "1 - 2 - 3").try();          // left-associative
+    run(env, alloc, "1 + 2 +% 3").try();         // `+%` sits at `+`
+    run(env, alloc, "1 + 2 *% 3").try();         // `*%` sits at `*`
+    run(env, alloc, "6 / 3 % 2").try();          // `/` and `%` are one level
+    run(env, alloc, "a == b && c").try();        // comparison over `&&`
+    run(env, alloc, "a && b || c").try();        // `&&` over `||`
+    run(env, alloc, "a < b + 1").try();          // additive over comparison
+    run(env, alloc, "(2 + 3) * 4").try();        // parens override, and survive
+    run(env, alloc, "-a + b").try();             // unary over binary
+    run(env, alloc, "!x.ready").try();           // postfix over unary
+    Ok(0);
+}

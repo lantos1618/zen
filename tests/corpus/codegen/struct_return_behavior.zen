@@ -1,0 +1,57 @@
+// A behavior cannot return a value to its sender. Request/response carries
+// the reply address, and the response is another message. This exercises a
+// large value copied into the worker mailbox and a struct copied into the
+// receiver mailbox. One sender preserves order, so the output is stable.
+
+Big = {
+    a: i64,
+    b: i64,
+    c: i64,
+    d: i64,
+    e: i64,
+    f: i64,
+    g: i64,
+    h: i64
+}
+
+Report = {
+    total: i64,
+    count: i64
+}
+
+Sink = {}
+
+Sink.impl(Actor, {
+    done = (self :: @Self, ctx: Context, r: Report) {
+        println("report {} {}", r.total, r.count)
+    }
+})
+
+Worker = {}
+
+Worker.impl(Actor, {
+    tally = (self :: @Self, ctx: Context, v: Big, reply: Ref<Sink>) {
+        reply.done(Report(
+            total: v.a + v.b + v.c + v.d + v.e + v.f + v.g + v.h,
+            count: 8
+        )).match({ Ok(_) => (), Err(_) => () })
+    }
+})
+
+Error = AllocError | ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    sink   = env.spawn(Sink()).try();
+    worker = env.spawn(Worker()).try();
+
+    worker.tally(
+        Big(a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8),
+        sink
+    ).try();
+    worker.tally(
+        Big(a: 2, b: 2, c: 2, d: 2, e: 2, f: 2, g: 2, h: 2),
+        sink
+    ).try();
+
+    Ok(0);
+}

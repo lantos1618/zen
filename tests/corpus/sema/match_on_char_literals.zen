@@ -1,0 +1,31 @@
+// Character-literal patterns compare scalar values and fall through to `_`
+// on near misses. Escaped newline, tab, quote, and backslash cases also pin
+// decoded string length by printing each input byte beside its classification.
+
+classify = (b: u8) str {
+    b.match({
+        'a'  => "letter-a",
+        'z'  => "letter-z",
+        '0'  => "digit-zero",
+        '\n' => "newline",
+        '\t' => "tab",
+        '\\' => "backslash",
+        '\'' => "quote",
+        '"'  => "double-quote",
+        ' '  => "space",
+        _    => "other",
+    })
+}
+
+show = (s: str) () {
+    Range(0, s.len).loop((h, i) {
+        println("{} {}", s[i], classify(s[i]));
+    });
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    show("az0");
+    show("\n\t\\'\" ");
+    show("b\r1");
+    Ok(0);
+}

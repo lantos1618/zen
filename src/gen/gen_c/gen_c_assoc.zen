@@ -1,0 +1,299 @@
+// Lower `Type.name(..)` and `module.name(..)` calls. Type-qualified methods
+// take their receiver as an explicit argument. Both calling forms use the
+// same qualified symbols and queued definitions.
+
+ExprId, Member = std.ast
+Function, Access, Call = std.ast
+AllocError = std.mem
+Vec = std.collections
+String = std.text
+TyId = sema.sema_ty
+Ctx = sema.sema_check
+Actual, sig_fits = sema.sema_cand
+Inst = sema.sema_inst
+Def, decl_at = sema.sema_def
+module_named_by = sema.sema_module
+sym_fn = gen.gen_name
+CBackend = gen.gen_c.gen_c_state
+unsupported = gen.gen_c.gen_c_report
+any_open, recv_inst, inst_open = gen.gen_c.gen_c_mono
+signature_of, plain, write_extern, write_call_args = gen.gen_c.gen_c_call
+write_arg_at = gen.gen_c.gen_c_arg
+holds = gen.gen_c.gen_c_expr
+construct = gen.gen_c.gen_c_build
+Site, site_of, member_at, method_sig, call_actuals = gen.gen_c.gen_c_member
+member_symbol = gen.gen_c.gen_c_member
+by_arity, kept_or_arity, has_body, impl_member_at = gen.gen_c.gen_c_impl
+
+// Lower a call whose base was resolved as a type or module. `false` leaves
+// non-associated members to the caller without producing a second diagnostic.
+lower_assoc_call* = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    a   : Access,
+    ty  : TyId,
+    ctx : Ctx,
+    out :: String
+)
+                    Res<bool, AllocError> {
+    be.check.module_named_by(ty).match({
+        Ok(mi) => be.lower_module_call(id, c, a, mi, ctx, out),
+        None   => be.lower_type_assoc(id, c, a, ty, ctx, out),
+    })
+}
+
+lower_type_assoc = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    a   : Access,
+    ty  : TyId,
+    ctx : Ctx,
+    out :: String
+)
+                   Res<bool, AllocError> {
+    site_of(be, ty).try().match({
+        None  => Ok(false),
+        Ok(s) => AssocSite(
+            id: id,
+            call: c,
+            access: a,
+            site: s,
+            ctx: ctx,
+        ).lower(be, out),
+    })
+}
+
+// Module-qualified lookup uses only exports from the module named by the base.
+lower_module_call = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    a   : Access,
+    mi  : usize,
+    ctx : Ctx,
+    out :: String
+)
+                    Res<bool, AllocError> {
+    found ::= be.alloc.Vec<Def>();
+    be.check.world.exported_defs(mi, a.name.text, found).try();
+    found.get(0).match({
+        None  => Ok(false),
+        Ok(d) => be.lower_module_def(id, c, d, ctx, out),
+    })
+}
+
+lower_module_def = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    d   : Def,
+    ctx : Ctx,
+    out :: String
+) Res<bool, AllocError> {
+    d.kind.match({
+        FunctionDef => be.lower_module_fn(id, c, d, ctx, out),
+        StructDef   => be.module_construct(id, c, d, ctx, out),
+        _           => Ok(false),
+    })
+}
+
+module_construct = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    d   : Def,
+    ctx : Ctx,
+    out :: String
+) Res<bool, AllocError> {
+    construct(be, id, c, d, ctx, out).try();
+    Ok(true);
+}
+
+lower_module_fn = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    d   : Def,
+    ctx : Ctx,
+    out :: String
+) Res<bool, AllocError> {
+    decl_at(be.tree, d.id).match({
+        None  => Ok(false),
+        Ok(x) => x.kind.match({
+            Function(f) => be.module_fn_decl(id, c, d, f, ctx, out),
+            _           => Ok(false),
+        }),
+    })
+}
+
+// Module qualification changes lookup, not argument scope. Only plain calls
+// are emitted here; the general free-call pipeline depends on caller lookup.
+module_fn_decl = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    d   : Def,
+    f   : Function,
+    ctx : Ctx,
+    out :: String
+) Res<bool, AllocError> {
+    inst ::= be.alloc.Inst();
+    sig  ::= be.alloc.Vec<TyId>();
+    read = be.signature_of(d, inst, sig).try();
+    (read && plain(f)).match({
+        false => be.refuse_module_fn(id, out),
+        true  => has_body(f).match({
+            true  => be.write_module_call(c, d, f, sig, inst, ctx, out),
+            false => {
+                be.write_extern(id, c, d, f, sig, None, ctx, out).try();
+                Ok(true)
+            },
+        }),
+    })
+}
+
+refuse_module_fn = (be :: CBackend, id: ExprId, out :: String)
+                   Res<bool, AllocError> {
+    be.unsupported(
+        id,
+        "a generic or bodiless function reached through a module",
+        out
+    ).try();
+    Ok(true);
+}
+
+write_module_call = (
+    be   :: CBackend,
+    c    : Call,
+    d    : Def,
+    f    : Function,
+    sig  : Vec<TyId>,
+    inst : Inst,
+    ctx  : Ctx,
+    out  :: String
+)
+                    Res<bool, AllocError> {
+    sym ::= be.alloc.String().try();
+    sym_fn(sym, be.check.types, be.check.world, d.qname, sig, inst).try();
+    be.need_function(d, inst, sym.view()).try();
+    out.fmt("{}(", sym.view()).try();
+    be.write_call_args(c, 0, f, sig, ctx, out).try();
+    out.add(")").try();
+    Ok(true);
+}
+
+// One resolved type-associated call, from member lookup through emission.
+// `Site` already owns the receiver type; carrying a second `TyId` here would
+// allow lookup and symbol emission to disagree about the receiver.
+AssocSite = {
+    id: ExprId,
+    call: Call,
+    access: Access,
+    site: Site,
+    ctx: Ctx,
+
+    lower = (self: @Self, be :: CBackend, out :: String)
+            Res<bool, AllocError> {
+        found ::= be.alloc.Vec<Member>();
+        member_at(be, self.site, self.access.name.text, found).try();
+        be.impl_member_at(self.site.decl, self.access.name.text, found).try();
+        kept ::= be.alloc.Vec<Member>();
+        found.loop((h, member) {
+            member.kind.match({
+                Function(_) => kept.add(member),
+                _           => Ok(()),
+            }).try();
+        });
+        actuals ::= be.alloc.Vec<Actual>();
+        be.call_actuals(self.call, self.ctx, actuals).try();
+        fitting ::= be.alloc.Vec<Member>();
+        kept.loop((h, member) {
+            self.keep_fitting(be, member, actuals, fitting).try();
+        });
+        be.kept_or_arity(fitting, kept, self.call.args.len).match({
+            None       => Ok(false),
+            Ok(member) => self.lower_member(be, member, out),
+        })
+    }
+
+    keep_fitting = (
+        self    : @Self,
+        be      :: CBackend,
+        member  : Member,
+        actuals : Vec<Actual>,
+        out     :: Vec<Member>
+    ) Res<(), AllocError> {
+        member.kind.match({
+            Function(f) => {
+                inst = be.recv_inst(self.site.ty).try();
+                sig ::= be.alloc.Vec<TyId>();
+                be.method_sig(
+                    self.site.ty,
+                    self.site.decl,
+                    f,
+                    self.site.decl.module.to_usize(),
+                    inst,
+                    sig
+                ).try();
+                be.check.sig_fits(sig, actuals, 0).try()
+                    .then(() { out.add(member).try() });
+                Ok(())
+            },
+            _           => Ok(()),
+        })
+    }
+
+    lower_member = (self: @Self, be :: CBackend, member: Member,
+                    out :: String) Res<bool, AllocError> {
+        member.kind.match({
+            Function(f) => self.write(be, f, out),
+            _           => Ok(false),
+        })
+    }
+
+    write = (self: @Self, be :: CBackend, f: Function, out :: String)
+            Res<bool, AllocError> {
+        inst = be.recv_inst(self.site.ty).try();
+        sig ::= be.alloc.Vec<TyId>();
+        be.method_sig(
+            self.site.ty,
+            self.site.decl,
+            f,
+            self.site.decl.module.to_usize(),
+            inst,
+            sig
+        ).try();
+        (be.inst_open(inst) || be.any_open(sig)).match({
+            true  => self.refuse_open(be, out),
+            false => self.emit(be, f, sig, inst, out),
+        })
+    }
+
+    // A receiverless call cannot infer type arguments from a receiver.
+    refuse_open = (self: @Self, be :: CBackend, out :: String)
+                  Res<bool, AllocError> {
+        be.unsupported(
+            self.id,
+            "an associated function whose type arguments nothing settles",
+            out
+        ).try();
+        Ok(true)
+    }
+
+    emit = (self: @Self, be :: CBackend, f: Function, sig: Vec<TyId>,
+            inst: Inst, out :: String) Res<bool, AllocError> {
+        sym = be.member_symbol(
+            self.site.ty,
+            self.site,
+            self.access.name.text,
+            sig,
+            inst
+        ).try();
+        out.fmt("{}(", sym.view()).try();
+        be.write_call_args(self.call, 0, f, sig, self.ctx, out).try();
+        out.add(")").try();
+        Ok(true)
+    }
+}

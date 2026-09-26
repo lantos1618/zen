@@ -1,0 +1,311 @@
+// Cached workspace check shared by diagnostics and semantic queries.
+// Values retained in `cur` are owned by `arena` and die on rebuild.
+
+str, String, dup = std.text
+Vec, Map = std.collections
+Alloc, AllocError, Arena = std.mem
+Range = std.core
+Span = std.ast.ast_span
+Note = std.parse.parse_diag
+Checker = sema.sema_check
+message, write_detail = sema.sema_diag
+Build, check_workspace = zen.zen_build
+Classed = lsp.lsp_colour
+classify = lsp.lsp_names
+uri_at, path_of = lsp.lsp_uri
+written = std.json
+relative_to, anchored_path = zen.zen_path
+
+Spot* = {
+    uri*: str,
+    message*: str,
+    span*: Span,
+    note*: Res<Note>,
+}
+
+same_spot = (left: Spot, right: Spot) bool {
+    left.uri.eq(right.uri) && left.message.eq(right.message)
+        && left.span.start.line == right.span.start.line
+        && left.span.start.col == right.span.start.col
+        && left.span.end.line == right.span.end.line
+        && left.span.end.col == right.span.end.col
+}
+
+copy_into = (spot: Spot, a: Alloc) Res<Spot, AllocError> {
+    note = spot.note.match({
+        None      => None,
+        Ok(value) => Ok(Note(
+            message: value.message.dup(a).try(),
+            span: value.span.copy_into(a).try()
+        )),
+    });
+    Ok(Spot(
+        uri: spot.uri.dup(a).try(),
+        message: spot.message.dup(a).try(),
+        span: spot.span.copy_into(a).try(),
+        note: note
+    ))
+}
+
+copy_into = (span: Span, a: Alloc) Res<Span, AllocError> {
+    Ok(Span(file: span.file.dup(a).try(), start: span.start, end: span.end))
+}
+
+Inner = {
+    root: str,          // the compilation root, copied into the arena
+    entry: str,         // the open document, relative to the root
+    directory: Res<str>,
+    b: Build,
+    c: Checker,
+    spots: Vec<Spot>,   // every diagnostic of the build, in report order
+    classed :: Map<str, Vec<Classed>>,
+}
+
+Built* = {
+    arena :: Arena,
+
+    cur :: Res<Inner>,
+
+    stale :: bool = false,
+
+    matches* = (self: @Self, root: str, entry: str) bool {
+        self.stale.match({
+            true  => false,
+            false => self.cur.match({
+                None  => false,
+                Ok(i) => i.root.eq(root) && i.entry.eq(entry),
+            }),
+        })
+    }
+
+    ensure* = (self :: @Self, env: Env, root: str, entry: str,
+               uris: Vec<str>, docs: Map<str, str>) Res<(), AllocError> {
+        self.matches(root, entry).match({
+            true  => written(),
+            false => self.rebuild(env, root, entry, uris, docs),
+        })
+    }
+
+    invalidate* = (self :: @Self) () { self.stale = true; }
+
+    rebuild = (self :: @Self, env: Env, root: str, entry: str,
+               uris: Vec<str>, docs: Map<str, str>) Res<(), AllocError> {
+        // A refused rebuild must not expose values owned by the old arena.
+        self.cur   = None;
+        self.stale = true;
+        fresh ::= env.mem.alloc();
+        // Source selection may borrow the previous snapshot.
+        kept_root  = root.dup(fresh).try();
+        kept_entry = entry.dup(fresh).try();
+        self.arena.drop();
+        self.arena = consume fresh;
+
+        over ::= self.arena.Map<str, str>();
+        uris.loop((h, u) {
+            docs.get(u).match({
+                None     => written(),
+                Ok(text) => {
+                    over.set(path_of(self.arena, u).try(), text).try();
+                    Ok(())
+                },
+            }).try();
+        });
+
+        checked = check_workspace(
+            env,
+            self.arena,
+            kept_root,
+            kept_entry,
+            over
+        ).try();
+        spots ::= self.arena.Vec<Spot>();
+        checked.b.parse_spots(self.arena, kept_root, spots).try();
+        checked.c.sema_spots(self.arena, kept_root, spots).try();
+        // A diagnostic for an open buffer keeps the client's URI spelling,
+        // even when module discovery removed redundant path components.
+        directory: Res<str> = env.fs.cwd(self.arena).match({
+            Ok(path) => Ok(path.view()),
+            Err(_)   => None,
+        });
+        directory.match({
+            Ok(path) => spots.restore_uris(self.arena, path, uris).try(),
+            None     => (),
+        });
+        classed ::= self.arena.Map<str, Vec<Classed>>();
+
+        self.cur   = Ok(Inner(
+            root: kept_root,
+            entry: kept_entry,
+            directory: directory,
+            b: checked.b,
+            c: checked.c,
+            spots: spots,
+            classed: classed
+        ));
+        self.stale = false;
+        Ok(());
+    }
+
+    covers* = (self: @Self, a: Alloc, path: str) Res<bool, AllocError> {
+        self.stale.match({
+            true  => Ok(false),
+            false => self.cur.match({
+                None      => Ok(false),
+                Ok(inner) => {
+                    file = inner.source_file(a, path).try();
+                    Ok(Range(0, inner.b.tree.module_count()).find((index) {
+                        inner.b.tree.module_at(index).match({
+                            None => false, Ok(module) => module.span.file.eq(
+                                file
+                            ),
+                        })
+                    }).match({ Ok(_) => true, None => false }))
+                },
+            }),
+        })
+    }
+
+    checker* = (self: @Self) Res<Checker> {
+        self.cur.match({ None => None, Ok(i) => Ok(i.c) })
+    }
+
+    root* = (self: @Self) str {
+        self.cur.match({ None => "", Ok(i) => i.root })
+    }
+
+    source_file* = (self: @Self, a: Alloc, path: str)
+                   Res<str, AllocError> {
+        self.cur.match({
+            None  => Ok(path),
+            Ok(i) => i.source_file(a, path),
+        })
+    }
+
+    spots* = (self: @Self) Res<Vec<Spot>> {
+        self.cur.match({ None => None, Ok(i) => Ok(i.spots) })
+    }
+
+    // Snapshot text before another build retires this arena. Shared import
+    // graphs may contribute the same diagnostic more than once.
+    append_spots* = (self: @Self, a: Alloc, into :: Vec<Spot>) Res<(), AllocError> {
+        self.spots().match({
+            None      => written(),
+            Ok(found) => {
+                found.loop((spot) {
+                    into.find((old) { old.same_spot(spot) }).match({
+                        Ok(_) => written(),
+                        None  => into.add(spot.copy_into(a).try()),
+                    }).try();
+                });
+                written()
+            },
+        })
+    }
+
+    classed_for* = (self :: @Self, a: Alloc, uri: str)
+                   Res<Vec<Classed>, AllocError> {
+        self.cur.match({
+            None  => Ok(a.Vec<Classed>()),
+            Ok(i) => (i.b.diag_count() == 0 && i.c.diag_count() == 0).match({
+                false => Ok(a.Vec<Classed>()),
+                true  => {
+                    file = i.source_file(a, path_of(a, uri).try()).try();
+                    i.classed.get(file).match({
+                        Ok(rows) => Ok(rows),
+                        None     => {
+                            rows = classify(self.arena, i.c, file).try();
+                            key  = file.dup(self.arena).try();
+                            i.classed.set(key, rows).try();
+                            self.cur = Ok(i);
+                            Ok(rows)
+                        },
+                    })
+                },
+            }),
+        })
+    }
+}
+
+source_file = (inner: Inner, a: Alloc, path: str) Res<str, AllocError> {
+    inner.directory.match({
+        None          => Ok(relative_to(inner.root, path)),
+        Ok(directory) => Ok(relative_to(
+            inner.b.root,
+            anchored_path(a, directory, path).try()
+        )),
+    })
+}
+
+restore_uris = (spots :: Vec<Spot>, a: Alloc, directory: str, uris: Vec<str>)
+               Res<(), AllocError> {
+    paths ::= a.Map<str, str>();
+    uris.loop((uri) {
+        paths.set(
+            anchored_path(a, directory, path_of(a, uri).try()).try(),
+            uri
+        ).try();
+    });
+    spots.loop((h, index, spot) {
+        path = anchored_path(a, directory, path_of(a, spot.uri).try()).try();
+        paths.get(path).match({
+            None    => (),
+            Ok(uri) => {
+                spots.set(
+                    index,
+                    Spot(
+                        uri: uri,
+                        message: spot.message,
+                        span: spot.span,
+                        note: spot.note
+                    )
+                );
+            },
+        });
+    });
+    Ok(())
+}
+
+Built.impl(Drop, {
+    drop = (self :: @Self) () { self.arena.drop(); }
+})
+
+Built* = (env: Env) Built {
+    Built(arena: env.mem.alloc(), cur: None)
+}
+
+parse_spots = (b: Build, a: Alloc, root: str, spots :: Vec<Spot>)
+              Res<(), AllocError> {
+    Range(0, b.diag_count()).loop((h, i) {
+        b.diag_at(i).match({
+            None  => written(),
+            Ok(d) => spots.add(Spot(
+                uri: uri_at(a, root, d.span.file).try(),
+                message: d.message,
+                span: d.span,
+                note: d.note
+            )),
+        }).try();
+    });
+    Ok(());
+}
+
+sema_spots = (c: Checker, a: Alloc, root: str, spots :: Vec<Spot>)
+             Res<(), AllocError> {
+    Range(0, c.diag_count()).loop((h, i) {
+        c.diag_at(i).match({
+            None  => written(),
+            Ok(d) => {
+                said ::= a.String().try();
+                said.add(message(d.fault)).try();
+                write_detail(d.fault, c.types, said).try();
+                spots.add(Spot(
+                    uri: uri_at(a, root, d.file).try(),
+                    message: said.view(),
+                    span: d.span,
+                    note: None
+                ))
+            },
+        }).try();
+    });
+    Ok(());
+}

@@ -1,0 +1,6 @@
+// Explicit allocation, arenas, and raw pointer operations.
+AllocError*, Alloc* = std.mem.mem_alloc
+
+Arena*, Mem*, Page* = std.mem.mem_arena
+
+Ptr*, null_ptr* = std.mem.mem_ptr

@@ -1,0 +1,13 @@
+// A match used directly as a comparison operand is lowered at the joined arm
+// type, not at the comparison's bool result type. These cases cover matches
+// on both sides and scrutinees whose type differs from the arm result.
+
+main = (env: Env) Res<i32, AllocError> {
+    a = true.match({ true => 2, false => 102 });
+    println("bound {}", a);
+    println("operand {}", true.match({ true => 2, false => 102 }) > 1);
+    println("sharp {}", true.match({ true => 300, false => 102 }) > 299);
+    println("int-scrutinee {}", (1 == 1).match({ true => 7, false => 9 }) > 1);
+    println("rhs {}", 1 < true.match({ true => 90, false => 1 }));
+    Ok(0);
+}

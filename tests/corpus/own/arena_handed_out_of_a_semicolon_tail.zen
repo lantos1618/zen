@@ -1,0 +1,20 @@
+// An arena returned from a semicolon-terminated match arm outlives the arm.
+// Growing a new Vec proves its allocator state remains live.
+
+Error = AllocError | IoError
+
+main = (env: Env) Res<i32, Error> {
+    ar ::= true.match({
+        true  => {
+            a ::= env.mem.alloc();
+            v ::= a.Vec<i32>();
+            Range<i32>(0, 100).loop((h, n) { v.add(n).try(); });
+            a;
+        },
+        false => env.mem.alloc(),
+    });
+    w  ::= ar.Vec<i32>();
+    Range<i32>(0, 200).loop((h, n) { w.add(n * 2).try(); });
+    println("len {}", w.len);
+    Ok(0);
+}

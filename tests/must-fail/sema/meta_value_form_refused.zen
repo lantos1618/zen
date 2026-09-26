@@ -1,0 +1,22 @@
+// The unsupported `@meta(value)` form produces one semantic diagnostic.
+//
+// The diagnostic belongs to semantic analysis. Once the expression is
+// refused, its poison type must prevent a secondary backend complaint about
+// printing or member access.
+//
+// This fixture also asserts the diagnostic location by line and column. Keep
+// the program below on its existing lines unless its expectation is updated
+// with it.
+//
+// The location is the `@meta` token itself, not the argument, `.name`, or the
+// enclosing statement. That span tells the user which unsupported operation
+// to remove without blaming an otherwise valid operand.
+// The expected source position is therefore line 20, column 19.
+
+Point = { x: i64, y: i64 }
+
+main = (env: Env) Res<i32, AllocError> {
+    p = Point(x: 1, y: 2);
+    println("{}", @meta(p).name);
+    Ok(0);
+}

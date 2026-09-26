@@ -1,0 +1,83 @@
+// Zen evaluates call arguments left to right. C does not specify an
+// evaluation order, so the backend must sequence side effects before it
+// writes the final C call.
+//
+// `tick` is the whole point: it ANSWERS a different value each time, so
+// a wrong order is a wrong number and not merely a wrong print order.
+// Every line below is a `.` between two digits rather than one integer,
+// because 012 and 12 are the same integer and the leading tick would go
+// unread.
+//
+// The four shapes are the four places arguments are written:
+// a plain call, a call nested in a call, a method's receiver against its
+// own arguments, and an argument list that mixes a call with a value.
+//
+// The aliased case makes receiver ordering observable. A by-reference
+// receiver must remain the caller's place; copying it into a temporary
+// would hide mutations from the caller.
+
+Counter = {
+    n :: i32,
+
+    tick = (self :: @Self) i32 {
+        was    = self.n;
+        self.n = self.n + 1;
+        was;
+    }
+
+    join = (self :: @Self, a: i32, b: i32) str {
+        (a == 0).match({
+            true  => (b == 1).match({ true => "ok", false => "REORDERED" }),
+            false => "REORDERED",
+        });
+    }
+
+    show = (self :: @Self, a: i32, b: i32) i32 { self.n * 100 + a * 10 + b; }
+}
+
+three = (a: i32, b: i32, c: i32) str {
+    ((a == 0) && (b == 1) && (c == 2)).match({
+        true  => "ok",
+        false => "REORDERED",
+    });
+}
+
+two = (a: i32, b: i32) i32 { a * 10 + b; }
+
+main = (env: Env) Res<i32, AllocError> {
+    // a plain call: three ticks, in the order they are written
+    a ::= Counter(n: 0);
+    println("plain {}", three(a.tick(), a.tick(), a.tick()));
+
+    // a call nested in a call: the inner one is still an argument, and
+    // the arguments around it keep their places
+    b ::= Counter(n: 0);
+    println("nested {}", two(two(b.tick(), b.tick()), b.tick()));
+
+    // a RECEIVER runs before the arguments written after it
+    c ::= Counter(n: 0);
+    r ::= Counter(n: 0);
+    println("method {}", r.join(c.tick(), c.tick()));
+
+    // an ALIASED receiver, the ticks going through the SAME object: the
+    // receiver is the caller's own PLACE (`::`), so show reads n only
+    // after both ticks have landed — 201, and 110 if the pair ever
+    // swapped. A by-value receiver here is refused at the call site
+    // (must-fail/sema/by_value_receiver_snapshotted_by_argument), since
+    // the copy would freeze the read before both ticks and print 001.
+    e ::= Counter(n: 0);
+    println("aliased {}", e.show(e.tick(), e.tick()));
+
+    // a :: receiver MUTATED by its callee stays the caller's own object:
+    // never a copy, whatever holding happens around it — the read after
+    // the call answers 7 only if both ticks landed on f
+    f ::= Counter(n: 5);
+    println("bymut {}", f.join(f.tick(), f.tick()));
+    println("seen {}", f.n);
+
+    // a call beside a plain value: the value is read where it is
+    // written, so the tick that comes first is the one on the left
+    d ::= Counter(n: 0);
+    println("mixed {}", two(d.tick(), d.tick()));
+    Ok(0);
+}

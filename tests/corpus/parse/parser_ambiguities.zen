@@ -1,0 +1,102 @@
+// tests/corpus/parse/parser_ambiguities.zen
+// The three readings a token sequence has, and which one wins.
+//
+// TESTING.md names all three, and DESIGN.md resolves all three. This
+// asserts the resolution rather than restating it:
+//
+//   `Alias = Shape` VERSUS A ONE-VARIANT ENUM. The leading bar
+//   decides, and it is why the parser needs no lookahead: without it
+//   `AllocError = OutOfMemory` and `Alias = Shape` are the same three
+//   tokens. `Alias` arrives as an Alias, `| Circle` as an Enum whose
+//   `leading_bar` is present, and `Circle | Square` as an Enum whose
+//   `leading_bar` is not.
+//
+//   `A.impl(B, {..})` IN STATEMENT POSITION. A call-shaped thing that
+//   declares. It is `DeclKind.Impl` and never a `Call`.
+//
+//   `[i32, 4](2, 3, 5, 7)` AS A TYPE APPLIED TO ARGUMENTS. Two items
+//   in the brackets and a `(` behind them; `[0, 1, 2]` has three items
+//   and is an ordinary literal.
+//
+// And two more the same fork produces: a function with a body against
+// a signature without one (DESIGN.md's `= sig` / `= sig {..}` table),
+// and a dotted path, which is an import rather than a member access.
+
+scan, Source = std.lex.lex
+Parser, module = std.parse
+Ast = std.ast.ast_arena
+Decl, Form = std.ast.ast_node
+ExprId = std.ast.ast_id
+
+SOURCE: str = "Shape = Circle | Square\nAlias = Shape\nOnly = | Circle\nCircle.impl(Rect, { width: 2.0 })\nprimes = [i32, 4](2, 3, 5, 7)\nsmall = [0, 1, 2]\nadd = (a: i32, b: i32) i32 { a }\nsig = (a: i32) i32\nRes, Ok = std.core.result\njson = pkg.json\n"
+
+form_name = (f: Form) str {
+    f.match({
+        Required => "required",
+        Sealed   => "sealed",
+        Default  => "default",
+        Hook     => "hook",
+    });
+}
+
+value_kind = (env: Env, tree: Ast, id: ExprId) str {
+    tree.expr_at(id).kind.match({
+        FixedArray(_) => "fixed-array",
+        Array(_)      => "array-literal",
+        Call(_)       => "call",
+        Literal(_)    => "literal",
+        Name(_)       => "name",
+        Access(_)     => "access",
+        _             => "other",
+    });
+}
+
+show = (env: Env, tree: Ast, d: Decl) () {
+    d.kind.match({
+        Alias(a)    => println("alias {}", a.name.text),
+        Enum(e)     => e.leading_bar.match({
+            Ok(_) => println(
+                "enum {} bar variants {}",
+                e.name.text,
+                e.variants.len
+            ),
+            None  => println(
+                "enum {} nobar variants {}",
+                e.name.text,
+                e.variants.len
+            ),
+        }),
+        Struct(s)   => println("struct {}", s.name.text),
+        Impl(i)     => println(
+            "impl {} members {}",
+            i.target.text,
+            i.members.len
+        ),
+        Function(f) => println(
+            "function {} {}",
+            f.name.text,
+            form_name(f.form)
+        ),
+        Import(i)   => println(
+            "import names {} segments {}",
+            i.names.len,
+            i.module.segments.len
+        ),
+        Const(c)    => println(
+            "const {} = {}",
+            c.name.text,
+            value_kind(env, tree, c.value)
+        ),
+    });
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+    lexed = scan(alloc, Source(file: "t.zen", text: SOURCE)).try();
+    p ::= alloc.Parser(lexed);
+    m = p.module("t").try();
+    println("lex {} parse {}", lexed.diags.len, p.diags.len);
+    println("decls {}", m.decls.len);
+    m.decls.loop((h, d) { show(env, p.tree, d) });
+    Ok(0);
+}

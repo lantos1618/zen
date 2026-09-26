@@ -1,0 +1,136 @@
+Expr, Access, Span, TypeId, Named = std.ast
+Alias, Function = std.ast
+AllocError = std.mem
+Vec = std.collections
+str = std.text
+DeclId = sema.sema_id
+TyId = sema.sema_ty
+Def, decl_at, module_display = sema.sema_def
+SemaFault, ExportFault = sema.sema_diag
+Checker, Ctx = sema.sema_check
+def_type, decl_as_type = sema.sema_type
+signature_type = sema.sema_denote
+
+// The module a base names, when the base is an alias for one.
+module_named_by* = (c :: Checker, ty: TyId) Res<usize> {
+    c.types.at(ty).match({
+        Named(n) => c.alias_module(n.decl),
+        _        => None,
+    })
+}
+
+alias_module* = (c :: Checker, id: DeclId) Res<usize> {
+    decl_at(c.tree, id).match({
+        None  => None,
+        Ok(x) => x.kind.match({
+            Alias(al) => c.alias_target(al, id),
+            _         => None,
+        }),
+    })
+}
+
+alias_target = (c :: Checker, al: Alias, id: DeclId) Res<usize> {
+    (al.tparams.len == 0).match({
+        false => None,
+        true  => c.alias_target_type(al.target, id),
+    })
+}
+
+alias_target_type = (c :: Checker, t: TypeId, id: DeclId) Res<usize> {
+    c.tree.type_at(t).kind.match({
+        Named(n) => c.module_for_target(n, id),
+        _        => None,
+    })
+}
+
+module_for_target = (c :: Checker, n: Named, id: DeclId) Res<usize> {
+    table = c.world.table_at(id.module.to_usize()).try();
+    table.defs.find((d) { d.name.eq(n.name.text) }).match({
+        // The alias itself does not shadow its module target. A different
+        // declaration with that name still has ordinary local precedence.
+        Ok(_) => table.defs.find((d) {
+            d.name.eq(n.name.text) && d.id.eq(id) == false
+        }).match({
+            Ok(_) => None,
+            None  => c.target_module(n),
+        }),
+        None  => c.world.defines(id.module.to_usize(), n.name.text).match({
+            true  => None,
+            false => c.target_module(n),
+        }),
+    })
+}
+
+target_module = (c :: Checker, n: Named) Res<usize> {
+    (n.args.len == 0).match({
+        false => None,
+        true  => c.world.index_of(n.name.text),
+    })
+}
+
+// A module has no value. Reported at the use: the same binding read
+// through a qualifier is legal.
+module_not_a_value* = (c :: Checker, span: Span, name: str, mi: usize)
+                     Res<TyId, AllocError> {
+    c.report(
+        span.file,
+        span,
+        SemaFault.ModuleNotAValue(ExportFault(
+            name: name,
+            module: module_display(c.world.name_at(mi))
+        ))
+    ).try();
+    c.types.unknown()
+}
+
+module_access* = (c :: Checker, node: Expr, ac: Access, mi: usize)
+                Res<TyId, AllocError> {
+    found ::= c.alloc.Vec<Def>();
+    c.world.exported_defs(mi, ac.name.text, found).try();
+    found.get(0).match({
+        None  => c.not_exported(ac, mi),
+        Ok(d) => c.module_def_type(d),
+    })
+}
+
+module_def_type = (c :: Checker, d: Def) Res<TyId, AllocError> {
+    d.kind.match({
+        FunctionDef => c.module_fn_type(d),
+        StructDef   => c.module_ctor_type(d),
+        _           => c.def_type(d),
+    })
+}
+
+module_ctor_type = (c :: Checker, d: Def) Res<TyId, AllocError> {
+    ty = c.decl_as_type(d).try();
+    params ::= c.alloc.Vec<TyId>();
+    c.types.fn_ty(params, ty)
+}
+
+module_fn_type = (c :: Checker, d: Def) Res<TyId, AllocError> {
+    decl_at(c.tree, d.id).match({
+        None  => c.types.unknown(),
+        Ok(x) => x.kind.match({
+            Function(f) => c.decl_fn_type(d, f),
+            _           => c.types.unknown(),
+        }),
+    })
+}
+
+decl_fn_type = (c :: Checker, d: Def, f: Function) Res<TyId, AllocError> {
+    poison = c.types.unknown().try();
+    c.signature_type(f, Ctx(d.id.module.to_usize(), poison))
+}
+
+not_exported = (c :: Checker, ac: Access, mi: usize)
+              Res<TyId, AllocError> {
+    c.report(
+        ac.name.span.file,
+        ac.name.span,
+        SemaFault.NotExported(ExportFault(
+            name: ac.name.text,
+            module: module_display(c.world.name_at(mi))
+        ))
+    ).try();
+    c.types.unknown()
+}

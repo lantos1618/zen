@@ -1,0 +1,43 @@
+// Token-opening byte classes. General ASCII predicates live on u8;
+// punctuation is classified separately by lex_punct.
+
+ByteClass* =
+      Space      // skipped; never a token
+    | Slash      // `//`, `/*`, or `/`; lex_scan peeks one byte to decide
+    | Quote
+    | Apos
+    | Digit
+    | Letter     // an identifier's first byte, `_` included
+    | At         // the `@` namespace; lex_scan validates the name
+    | Other      // punctuation, or a byte that begins no token
+
+// Valid single-byte escapes. Unknown escapes are lexical errors.
+is_escape* = (b: u8) bool {
+    b.escape_value().match({ Ok(_) => true, None => false })
+}
+
+// The lexer and literal consumers share Zen's exact escape vocabulary.
+escape_value* = (b: u8) Res<u8> {
+    b.match({
+        'n' => Ok('\n'), 't' => Ok('\t'), 'r' => Ok('\r'),
+        'v' => Ok('\v'), 'f' => Ok('\f'), '0' => Ok('\0'),
+        '\\' => Ok('\\'), '\'' => Ok('\''), '"' => Ok('"'),
+        _ => None,
+    })
+}
+
+// The guards are disjoint, so their order is free. The loop always breaks;
+// its Res is the language's shape for a guard chain, not a reachable path.
+class_of* = (b: u8) ByteClass {
+    found: Res<ByteClass> = loop<ByteClass>((h) {
+        b.is_space().then(() { h.break(ByteClass.Space) });
+        b.is_digit().then(() { h.break(ByteClass.Digit) });
+        b.is_ident_start().then(() { h.break(ByteClass.Letter) });
+        (b == '/').then(() { h.break(ByteClass.Slash) });
+        (b == '"').then(() { h.break(ByteClass.Quote) });
+        (b == '\'').then(() { h.break(ByteClass.Apos) });
+        (b == '@').then(() { h.break(ByteClass.At) });
+        h.break(ByteClass.Other);
+    });
+    found.match({ Ok(one) => one, None => ByteClass.Other });
+}

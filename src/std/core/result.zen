@@ -1,0 +1,65 @@
+// Res<T> represents optional presence. Res<T, E> represents failure with a
+// reason. A bare success value may lift to Ok; None and Err remain explicit.
+
+Res*<T> = Ok(T) | None
+
+Res*<T, E> = Ok(T) | Err(E)
+
+// A bare T lifts to Ok when exactly one variant carries T:
+//
+//   Foo = { bar: Res<i32> }
+//   foo = Foo(bar: 32)      // equivalent to Ok(32)
+
+// `.try()` is intrinsic. It unwraps Ok or returns None/Err from the enclosing
+// function. The enclosing return type must be compatible; use `ok_or` before
+// propagating None into a result that requires an error value. `.try()` may
+// cross a non-escaping closure but not an escaping one.
+
+// Convert absence to a named error.
+ok_or* = <T, E>(r: Res<T>, reason: E) Res<T, E> {
+    r.match({
+        Ok(value) => Ok(value),
+        None      => Err(reason),
+    });
+}
+
+// Return the success or a caller-provided fallback.
+value_or* = <T>(r: Res<T>, fallback: T) T {
+    r.match({ Ok(value) => value, None => fallback })
+}
+
+// Preserve a success and transform only the failure.
+map_err* = <T, E, F>(r: Res<T, E>, f: (error: E) F) Res<T, F> {
+    r.match({
+        Ok(value)  => Ok(value),
+        Err(error) => Err(f(error)),
+    });
+}
+
+replace_err* = <T, E, F>(r: Res<T, E>, reason: F) Res<T, F> {
+    r.map_err((_) { reason })
+}
+
+// Run `f` on a present value; absence passes through. This is the
+// one-sided match whose None arm is empty, and a map when `f` answers
+// something. It would be `then`, overloading the bool form by receiver
+// type, but the backend does not yet resolve two generic free functions
+// of one name.
+when_ok* = <T, U>(r: Res<T>, f: (value: T) U) Res<U> {
+    r.match({
+        Ok(value) => Ok(f(value)),
+        None      => None,
+    });
+}
+
+// Discard a result whose failure the caller has decided not to act on: a
+// best-effort flush, a log line on a path that is already failing. A bare
+// expression statement would discard it too, but silently.
+ignore* = <T, E>(r: Res<T, E>) () {
+    r.match({ Ok(_) => (), Err(_) => () });
+}
+
+// Forget the reason: a Res<T, E> becomes a Res<T>, so `value_or` applies.
+without_err* = <T, E>(r: Res<T, E>) Res<T> {
+    r.match({ Ok(value) => Ok(value), Err(_) => None })
+}

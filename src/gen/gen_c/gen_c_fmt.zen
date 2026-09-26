@@ -1,0 +1,222 @@
+// Lowers `alloc.String(fmt, args...)`: make the empty String, then use
+// the shared sink-door walk to fill it. The walk remains in gen_c_sink;
+// only its WriteError-to-AllocError failure arm belongs here.
+
+ExprId, Function, Call = std.ast
+AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+TyId = sema.sema_ty
+Def, decl_at = sema.sema_def
+Ctx = sema.sema_check
+Inst = sema.sema_inst
+sym_member = gen.gen_name
+GenFault = gen.gen_diag
+CBackend = gen.gen_c.gen_c_state
+unsupported = gen.gen_c.gen_c_report
+expr = gen.gen_c.gen_c_expr
+declare_temp = gen.gen_c.gen_c_flow
+signature_of = gen.gen_c.gen_c_call
+recv_arg = gen.gen_c.gen_c_arg
+write_assign_err = gen.gen_c.gen_c_flow
+is_sink_door, lower_sink_door, bodyless = gen.gen_c.gen_c_sink
+last_is_variadic, call_symbol, lower_pieces_into = gen.gen_c.gen_c_sink
+write_jump_unless_ok, write_goto, write_done = gen.gen_c.gen_c_sink
+
+// Values that remain unchanged while one allocating door is lowered.
+// Keeping them together prevents the private lowering chain from
+// repeating six independent parameters.
+FormatCall = {
+    id: ExprId,
+    c: Call,
+    d: Def,
+    f: Function,
+    recv: Res<ExprId>,
+    ctx: Ctx,
+}
+
+is_format_door* = (be: CBackend, d: Def, f: Function) bool {
+    be.is_alloc_door(d, f) || be.is_sink_door(d, f)
+}
+
+is_alloc_door = (be: CBackend, d: Def, f: Function) bool {
+    d.name.eq("String") && bodyless(f) && (f.params.len == 3)
+        && be.last_is_variadic(f)
+}
+
+lower_format_door* = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    d    : Def,
+    f    : Function,
+    recv : Res<ExprId>,
+    ctx  : Ctx,
+    out  :: String
+) Res<(), AllocError> {
+    site = FormatCall(id: id, c: c, d: d, f: f, recv: recv, ctx: ctx);
+    be.is_sink_door(d, f).match({
+        true  => be.lower_sink_door(id, c, d, f, recv, ctx, out),
+        false => be.lower_alloc_door(site, out),
+    })
+}
+
+lower_alloc_door = (
+    be   :: CBackend,
+    site : FormatCall,
+    out  :: String
+) Res<(), AllocError> {
+    be.empty_form(site.d).try().match({
+        None  => be.unsupported(
+            site.id,
+            "a format door with no empty form",
+            out
+        ),
+        Ok(e) => be.lower_with_empty(site, e, out),
+    })
+}
+
+// Find the one-parameter String constructor in the door's own module.
+empty_form = (be :: CBackend, d: Def) Res<Res<Def>, AllocError> {
+    found ::= be.alloc.Vec<Def>();
+    be.check.world.defs_of(d.id.module.to_usize(), "String", found).try();
+    kept ::= be.alloc.Vec<Def>();
+    found.loop((h, x) { be.keep_empty(x, kept).try() });
+    Ok(kept.get(0));
+}
+
+keep_empty = (be :: CBackend, x: Def, out :: Vec<Def>)
+             Res<(), AllocError> {
+    decl_at(be.tree, x.id).match({
+        None    => Ok(()),
+        Ok(dec) => dec.kind.match({
+            Function(fn) => (
+                (fn.params.len == 1) && (bodyless(fn) == false)
+            ).match({
+                false => Ok(()),
+                true  => out.add(x),
+            }),
+            _            => Ok(()),
+        }),
+    })
+}
+
+lower_with_empty = (
+    be   :: CBackend,
+    site : FormatCall,
+    e    : Def,
+    out  :: String
+) Res<(), AllocError> {
+    ret = be.door_return(site.d, site.f).try();
+    be.check.types.at(ret).match({
+        Res(r) => be.write_door(site, e, r.value, ret, out),
+        _      => be.unsupported(
+            site.id,
+            "a format door that does not return a Res",
+            out
+        ),
+    })
+}
+
+door_return = (be :: CBackend, d: Def, f: Function) Res<TyId, AllocError> {
+    dctx = Ctx(
+        module: d.id.module.to_usize(),
+        ret: TyId(index: 0),
+        has_ret: false,
+        self_ty: TyId(index: 0),
+        has_self: false
+    );
+    f.ret.match({
+        Ok(t) => be.check.type_from_ast(t, dctx),
+        None  => be.check.types.unknown(),
+    })
+}
+
+write_door = (
+    be   :: CBackend,
+    site : FormatCall,
+    e    : Def,
+    buf  : TyId,
+    ret  : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    tmp ::= be.fresh_name("t").try();
+    be.declare_temp(ret, tmp.view()).try();
+    done = be.next_tmp();
+    be.write_empty_call(site, e, ret, tmp.view()).try();
+    be.write_jump_unless_ok(tmp.view(), done).try();
+    be.write_buffer_pieces(site, buf, ret, tmp.view(), done).try();
+    be.write_done(done).try();
+    out.add(tmp.view())
+}
+
+write_empty_call = (
+    be   :: CBackend,
+    site : FormatCall,
+    e    : Def,
+    ret  : TyId,
+    tmp  : str
+) Res<(), AllocError> {
+    line ::= be.alloc.String("{tmp} = ").try();
+    be.call_symbol(e, line).try();
+    line.fmt("(").try();
+    recv_arg(site.c, site.recv).match({
+        None  => Ok(()),
+        Ok(a) => be.write_alloc(e, a, site.ctx, line),
+    }).try();
+    be.fmt("{});\n", line.view())
+}
+
+write_alloc = (be :: CBackend, e: Def, a: ExprId, ctx: Ctx, out :: String)
+              Res<(), AllocError> {
+    sig  ::= be.alloc.Vec<TyId>();
+    inst ::= be.alloc.Inst();
+    be.signature_of(e, inst, sig).try();
+    unknown = be.check.types.unknown().try();
+    want    = sig.get(0).match({ Ok(t) => t, None => unknown });
+    expr(be, a, ctx, want, out)
+}
+
+write_buffer_pieces = (
+    be   :: CBackend,
+    site : FormatCall,
+    buf  : TyId,
+    ret  : TyId,
+    tmp  : str,
+    done : usize
+) Res<(), AllocError> {
+    addr ::= be.alloc.String("&({tmp}.zg_data.").try();
+    addr.sym_member("Ok").try();
+    addr.fmt(")").try();
+    fail  = be.next_tmp();
+    wrote = be.lower_pieces_into(
+        site.id,
+        site.c,
+        addr.view(),
+        buf,
+        fail,
+        site.recv,
+        site.ctx
+    ).try();
+    wrote.match({
+        false => be.report_expr(
+            site.id,
+            GenFault.Unsupported("a format door with no sink")
+        ),
+        true  => be.write_failure_arm(ret, tmp, fail, done),
+    })
+}
+
+// String writes can fail here only by growing, so the sink door's
+// failure becomes AllocError.OutOfMemory on the failing path.
+write_failure_arm = (
+    be   :: CBackend,
+    ret  : TyId,
+    tmp  : str,
+    fail : usize,
+    done : usize
+) Res<(), AllocError> {
+    be.write_goto(done).try();
+    be.write_done(fail).try();
+    be.write_assign_err(ret, "OutOfMemory", tmp)
+}

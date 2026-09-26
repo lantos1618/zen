@@ -1,0 +1,187 @@
+Expr, ExprId = std.ast
+Struct, Member, Function = std.ast
+Call, Access, Index, Name, Paren, Field, Const = std.ast
+AllocError = std.mem
+str = std.text
+TyId, TyNamed = sema.sema_ty
+decl_at = sema.sema_def
+Checker, Ctx = sema.sema_check
+SemaFault, NameFault = sema.sema_diag
+Own, path_root, place_type = sema.sema_own
+
+check_receiver* = (c :: Checker, o :: Own, k: Call, ctx: Ctx)
+                  Res<(), AllocError> {
+    c.tree.expr_at(k.callee).kind.match({
+        Access(a) => c.check_method_call(o, a, k),
+        _         => Ok(()),
+    })
+}
+
+check_method_call = (c :: Checker, o :: Own, a: Access, k: Call)
+                    Res<(), AllocError> {
+    c.path_root(o, a.base).match({
+        None     => Ok(()),
+        Ok(root) => c.wants_mutable(
+            c.place_type(o, a.base),
+            a.name.text
+        ).match({
+            true  => c.require_mutable(o, a),
+            false => c.check_snapshotted(o, k, root),
+        }),
+    })
+}
+
+// The diagnostic points at the receiver, not the method name.
+require_mutable = (c :: Checker, o :: Own, a: Access) Res<(), AllocError> {
+    c.place_mutable(o, a.base).match({
+        true  => Ok(()),
+        false => c.refuse(
+            c.tree.expr_at(a.base).span,
+            SemaFault.NeedsMutableReceiver(NameFault(name: a.name.text))
+        ),
+    })
+}
+
+// A by-value receiver is copied before an argument call writes its root.
+check_snapshotted = (c :: Checker, o :: Own, k: Call, root: usize)
+                    Res<(), AllocError> {
+    k.args.loop((h, arg) {
+        c.snapshotted(o, arg.value, root).match({
+            None     => Ok(()),
+            Ok(name) => c.refuse(
+                c.tree.expr_at(arg.value).span,
+                SemaFault.SnapshottedReceiver(NameFault(name: name))
+            ),
+        }).try()
+    });
+    Ok(());
+}
+
+// The method name when `arg` is a mutating call on `root`.
+snapshotted = (c :: Checker, o :: Own, arg: ExprId, root: usize) Res<str> {
+    c.tree.expr_at(arg).kind.match({
+        Call(k) => c.tree.expr_at(k.callee).kind.match({
+            Access(a) => c.path_root(o, a.base).match({
+                None  => None,
+                Ok(i) => ((i == root)
+                    && c.wants_mutable(c.place_type(o, a.base), a.name.text))
+                    .match({ true => Ok(a.name.text), false => None }),
+            }),
+            _         => None,
+        }),
+        _       => None,
+    })
+}
+
+place_mutable = (c :: Checker, o :: Own, id: ExprId) bool {
+    node = c.tree.expr_at(id);
+    node.kind.match({
+        Name(n)   => o.var_mutable(n.text),
+        Paren(p)  => c.place_mutable(o, p.inner),
+        Access(a) => c.place_mutable(o, a.base)
+            && c.field_mutable(c.place_type(o, a.base), a.name.text),
+        _         => true,
+    })
+}
+
+check_write_place* = (c :: Checker, o :: Own, id: ExprId)
+                     Res<(), AllocError> {
+    node = c.tree.expr_at(id);
+    node.kind.match({
+        Access(_) => c.refuse_immutable_link(o, node, id),
+        Index(_)  => c.refuse_immutable_link(o, node, id),
+        _         => Ok(()),
+    })
+}
+
+refuse_immutable_link = (c :: Checker, o :: Own, node: Expr, id: ExprId)
+                        Res<(), AllocError> {
+    c.immutable_link(o, id).match({
+        None   => Ok(()),
+        Ok(nm) => c.refuse_link(o, node, nm),
+    })
+}
+
+refuse_link = (c :: Checker, o :: Own, node: Expr, nm: str)
+              Res<(), AllocError> {
+    (nm.eq("self") && (o.method.len > 0)).match({
+        true  => c.refuse(
+            node.span,
+            SemaFault.NeedsMutableReceiver(NameFault(name: o.method))
+        ),
+        false => c.refuse(
+            node.span,
+            SemaFault.ImmutableWrite(NameFault(name: nm))
+        ),
+    })
+}
+
+// The first immutable link on the path to `id`, named.
+immutable_link = (c :: Checker, o :: Own, id: ExprId) Res<str> {
+    node = c.tree.expr_at(id);
+    node.kind.match({
+        Name(n)   => o.var_mutable(n.text).match({ true => None, false => Ok(n.text) }),
+        Paren(p)  => c.immutable_link(o, p.inner),
+        Index(x)  => c.immutable_link(o, x.base),
+        Access(a) => c.immutable_link(o, a.base).match({
+            Ok(nm) => Ok(nm),
+            None   => c.field_link(c.place_type(o, a.base), a.name.text),
+        }),
+        _         => None,
+    })
+}
+
+field_link = (c: Checker, ty: TyId, name: str) Res<str> {
+    c.field_mutable(ty, name).match({ true => None, false => Ok(name) })
+}
+
+wants_mutable = (c: Checker, ty: TyId, name: str) bool {
+    c.own_member(ty, name).match({
+        None  => false,
+        Ok(m) => m.receiver_is_mutable(),
+    })
+}
+
+receiver_is_mutable = (m: Member) bool {
+    m.kind.match({
+        Function(f) => f.params.get(0).match({
+            None  => false,
+            Ok(p) => p.name.text.eq("self") && p.mutable,
+        }),
+        _           => false,
+    })
+}
+
+field_mutable = (c: Checker, ty: TyId, name: str) bool {
+    c.own_member(ty, name).match({
+        None  => true,
+        Ok(m) => m.kind.match({
+            Field(f)    => f.mutable,
+            Const(k)    => k.mutable,
+            Function(_) => true,
+        }),
+    })
+}
+
+own_member* = (c: Checker, ty: TyId, name: str) Res<Member> {
+    c.types.at(ty).match({
+        Named(n) => c.named_member(n, name),
+        _        => None,
+    })
+}
+
+named_member = (c: Checker, n: TyNamed, name: str) Res<Member> {
+    c.world.member_rows(n.decl, name).match({
+        None     => None,
+        Ok(rows) => c.tree.decl_at(n.decl).match({
+            None  => None,
+            Ok(d) => d.kind.match({
+                Struct(st) => rows.get(0).match({
+                    None  => None,
+                    Ok(i) => st.members.get(i),
+                }),
+                _          => None,
+            }),
+        }),
+    })
+}

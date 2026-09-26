@@ -1,0 +1,29 @@
+// A consumed Lock remains held in the callee and is released exactly once at
+// that frame's exit, allowing the caller to acquire it again afterward.
+
+FsError = std.env
+Lock = std.env
+
+swallow = (env: Env, l: Lock) Res<i32, FsError> {
+    kept ::= consume l;
+    println("in swallow");
+    env.fs.lock("move.lock").match({
+        Ok(_)            => println("released too early"),
+        Err(Exists)      => println("still held"),
+        Err(NotFound)    => println("wrong reason"),
+        Err(Denied)      => println("wrong reason"),
+        Err(IsDir)       => println("wrong reason"),
+        Err(Failed)      => println("wrong reason"),
+        Err(OutOfMemory) => println("wrong reason"),
+    });
+    Ok(0)
+}
+
+main = (env: Env) Res<i32, FsError> {
+    first ::= env.fs.lock("move.lock").try();
+    println("held");
+    swallow(env, consume first);
+    again ::= env.fs.lock("move.lock").try();
+    println("relocked");
+    Ok(0)
+}

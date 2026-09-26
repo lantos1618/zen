@@ -1,0 +1,219 @@
+Expr, ExprId, Bind, Access = std.ast
+AllocError = std.mem
+str = std.text
+TyId, TyArray, literal_default = sema.sema_ty
+Checker, Ctx, Binding = sema.sema_check
+SemaFault, NameFault, PairFault = sema.sema_diag
+computed_member, writable_member = sema.sema_member
+check_literal = sema.sema_trap
+const_def = sema.sema_const
+check_arms, check_arms_agree = sema.sema_hoist
+type_of = sema.sema_type
+type_from_ast = sema.sema_denote
+settle_variant_at = sema.sema_apply
+refuse_handle_value = sema.sema_handle
+
+bind_stmt* = (c :: Checker, b: Bind, ctx: Ctx) Res<TyId, AllocError> {
+    got = c.type_of(b.value, ctx).try();
+    c.refuse_handle_value(b.value, got).try();
+    want    = c.check_rebound(b).try().match({
+        true  => c.types.unknown(),
+        false => c.bind_want(b, got, ctx),
+    }).try();
+    settled = c.settle_variant_at(b.value, got, want, ctx).try();
+    c.check_assign(b, settled, want, ctx).try();
+    c.bind_target(b, want, ctx).try();
+    c.types.prim("()")
+}
+
+// Only plain `=` with no written type can mean a write. Mutable or explicitly
+// typed forms always declare.
+plain_write = (b: Bind) bool {
+    written = b.type.match({ Ok(_) => true, None => false });
+    (b.mutable == false) && (written == false)
+}
+
+// The existing binding a plain-name write targets. This predicate must
+// stay identical to the backend's store classification.
+assign_binding = (c :: Checker, b: Bind) Res<Binding> {
+    plain_write(b).match({
+        false => None,
+        true  => c.tree.expr_at(b.target).kind.match({
+            Name(n) => c.lookup(n.text),
+            _       => None,
+        }),
+    })
+}
+
+// A second immutable `=` binding of one name in the same block; both
+// sites are reported. `lookup_here` leaves shadowing in nested blocks legal.
+check_rebound = (c :: Checker, b: Bind) Res<bool, AllocError> {
+    c.rebound_of(b).match({
+        None    => Ok(false),
+        Ok(old) => c.report_rebound(b, old),
+    })
+}
+
+rebound_of = (c :: Checker, b: Bind) Res<Binding> {
+    plain_write(b).match({
+        false => None,
+        true  => c.tree.expr_at(b.target).kind.match({
+            Name(n) => settled_binding(c.lookup_here(n.text)),
+            _       => None,
+        }),
+    })
+}
+
+// A mutable first binding is writable and therefore not a rebound fault.
+settled_binding = (found: Res<Binding>) Res<Binding> {
+    found.match({
+        Ok(old) => old.mutable.match({ true => None, false => Ok(old) }),
+        None    => None,
+    })
+}
+
+report_rebound = (c :: Checker, b: Bind, old: Binding)
+                 Res<bool, AllocError> {
+    target = c.tree.expr_at(b.target);
+    c.refuse(
+        target.span,
+        SemaFault.Rebound(PairFault(
+            name: old.name,
+            first: old.span,
+            second: target.span,
+        ))
+    ).try();
+    Ok(true);
+}
+
+bind_want = (c :: Checker, b: Bind, got: TyId, ctx: Ctx)
+             Res<TyId, AllocError> {
+    b.type.match({
+        Ok(t) => c.type_from_ast(t, ctx),
+        None  => c.assign_binding(b).match({
+            Ok(old) => c.store_want(old.ty, got),
+            None    => c.place_want(b.target, got, ctx),
+        }),
+    })
+}
+
+store_want = (c :: Checker, old: TyId, got: TyId) Res<TyId, AllocError> {
+    (c.is_literal_ty(old) && c.assignable(old, got)).match({
+        true  => Ok(got),
+        false => Ok(old),
+    })
+}
+
+place_want = (c :: Checker, id: ExprId, got: TyId, ctx: Ctx)
+              Res<TyId, AllocError> {
+    c.tree.expr_at(id).kind.match({
+        Name(_) => c.settled_array(got),
+        _       => c.type_of(id, ctx),
+    })
+}
+
+settled_array* = (c :: Checker, ty: TyId) Res<TyId, AllocError> {
+    c.types.at(ty).match({
+        Array(a) => c.settled_elem(ty, a),
+        _        => Ok(ty),
+    })
+}
+
+settled_elem = (c :: Checker, ty: TyId, a: TyArray) Res<TyId, AllocError> {
+    elem = c.is_literal_ty(a.elem).match({
+        true  => c.types.prim(literal_default(c.prim_name(a.elem))),
+        false => c.settled_array(a.elem),
+    }).try();
+    elem.eq(a.elem).match({
+        true  => Ok(ty),
+        false => c.types.array(elem, a.count),
+    })
+}
+
+check_assign = (c :: Checker, b: Bind, got: TyId, want: TyId, ctx: Ctx)
+               Res<(), AllocError> {
+    node = c.tree.expr_at(b.value);
+    (c.assignable(got, want) || c.nullary_settles(got, want)).match({
+        true  => Ok(()),
+        false => c.mismatch(node.span.file, node.span, got, want, ""),
+    }).try();
+    // `literal_fits` accepts every integer literal for every integer
+    // type; the value is checked against the width here.
+    c.check_literal(b.value, want).try();
+    c.written_want(b, want).try();
+    Ok(());
+}
+
+written_want = (c :: Checker, b: Bind, want: TyId) Res<(), AllocError> {
+    b.type.match({
+        Ok(_) => c.check_arms(b.value, want),
+        None  => c.check_arms_agree(b.value),
+    })
+}
+
+bind_target = (c :: Checker, b: Bind, ty: TyId, ctx: Ctx)
+              Res<(), AllocError> {
+    target = c.tree.expr_at(b.target);
+    target.kind.match({
+        Name(n)   => c.bind_name(b, n.text, target, ty, ctx),
+        Access(a) => c.assign_access(target, a, ctx),
+        _         => Ok(()),
+    }).try();
+    Ok(());
+}
+
+// A write introduces no binding; a plain `=` on no local is a fresh
+// binding unless a module constant already owns the name.
+bind_name = (
+    c      :: Checker,
+    b      : Bind,
+    name   : str,
+    target : Expr,
+    ty     : TyId,
+    ctx    : Ctx
+)
+           Res<(), AllocError> {
+    c.assign_binding(b).match({
+        Ok(_) => Ok(()),
+        None  => c.fresh_or_refused(b, name, target, ty, ctx),
+    })
+}
+
+fresh_or_refused = (
+    c      :: Checker,
+    b      : Bind,
+    name   : str,
+    target : Expr,
+    ty     : TyId,
+    ctx    : Ctx
+)
+                   Res<(), AllocError> {
+    plain_write(b).match({
+        false => c.bind_at(name, ty, b.mutable, false, target.span),
+        true  => c.const_def(name, ctx).try().match({
+            Ok(_) => c.refuse(
+                target.span,
+                SemaFault.ImmutableWrite(NameFault(name: name))
+            ),
+            None  => c.bind_at(name, ty, b.mutable, false, target.span),
+        }),
+    })
+}
+
+// `c.width = 5` on an impl-supplied field: there is nothing to assign
+// into.
+assign_access = (c :: Checker, target: Expr, a: Access, ctx: Ctx)
+                Res<(), AllocError> {
+    c.writable_member(a, ctx).try();
+    c.computed_member(a, ctx).try().match({
+        true  => c.no_storage(target, a),
+        false => Ok(()),
+    })
+}
+
+no_storage = (c :: Checker, target: Expr, a: Access) Res<(), AllocError> {
+    c.refuse(
+        target.span,
+        SemaFault.ComputedFieldAssign(NameFault(name: a.name.text))
+    )
+}

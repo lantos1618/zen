@@ -1,0 +1,17 @@
+// Passing an array of structs by value transfers a complete private copy whose
+// element type comes from the parameter. Consuming the caller's binding makes
+// accidental reference aliasing observable.
+
+Point = { x: i32, y: i32 }
+
+span = (pair: [Point, 2]) i64 {
+    pair.loop((h, p) { println("in {}", p.x + p.y); });
+    pair[1].x.to_i64() - pair[0].y.to_i64()
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    mine: [Point, 2] = [Point(x: 5, y: 1), Point(x: 3, y: 1)];
+    got ::= span(consume mine);
+    println("got {}", got);
+    Ok(0);
+}

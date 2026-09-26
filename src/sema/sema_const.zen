@@ -1,0 +1,332 @@
+Expr, ExprId, Binary, BinOp, Literal = std.ast
+Unary, Access, Paren, Name, Const = std.ast
+AllocError = std.mem
+Vec = std.collections
+str = std.text
+TyId = sema.sema_ty
+SemaFault, NameFault = sema.sema_diag
+Def, decl_at = sema.sema_def
+Checker, Ctx = sema.sema_check
+
+I64_MAX* : i64 = 9223372036854775807
+I64_MIN* : i64 = -9223372036854775807 - 1
+
+// The largest magnitude whose square fits an i64; products outside it are
+// not folded.
+FOLD_LIMIT* : i64 = 2147483647
+
+counted_array* = (c :: Checker, elem: TyId, id: ExprId, ctx: Ctx)
+                Res<TyId, AllocError> {
+    c.count_int(id, ctx).try().match({
+        Ok(v) => (v < 0).match({
+            true  => c.negative_array_count(id),
+            false => c.types.array(elem, len_of(v)),
+        }),
+        None  => c.count_refused(id),
+    })
+}
+
+negative_array_count = (c :: Checker, id: ExprId)
+                       Res<TyId, AllocError> {
+    node = c.tree.expr_at(id);
+    c.report(
+        node.span.file,
+        node.span,
+        SemaFault.NegativeArrayCount(NameFault(name: written_count(node)))
+    ).try();
+    c.types.unknown()
+}
+
+count_refused = (c :: Checker, id: ExprId) Res<TyId, AllocError> {
+    node = c.tree.expr_at(id);
+    c.report(
+        node.span.file,
+        node.span,
+        SemaFault.CountNotComptime(NameFault(name: written_count(node)))
+    ).try();
+    c.types.unknown()
+}
+
+written_count = (node: Expr) str {
+    node.kind.match({
+        Name(n) => n.text,
+        _       => "",
+    })
+}
+
+count_int = (c :: Checker, id: ExprId, ctx: Ctx) Res<Res<i64>, AllocError> {
+    c.const_int(id).match({
+        Ok(v) => Ok(Ok(v)),
+        None  => c.count_through_name(id, ctx),
+    })
+}
+
+count_through_name = (c :: Checker, id: ExprId, ctx: Ctx)
+                     Res<Res<i64>, AllocError> {
+    c.tree.expr_at(id).kind.match({
+        Name(n) => c.count_of_const(n.text, ctx),
+        _       => Ok(None),
+    })
+}
+
+count_of_const = (c :: Checker, text: str, ctx: Ctx)
+                 Res<Res<i64>, AllocError> {
+    c.const_def(text, ctx).try().match({
+        None  => Ok(None),
+        Ok(d) => Ok(c.count_of_def(d)),
+    })
+}
+
+count_of_def = (c: Checker, d: Def) Res<i64> {
+    decl_at(c.tree, d.id).match({
+        None  => None,
+        Ok(x) => x.kind.match({
+            Const(k) => c.const_int(k.value),
+            _        => None,
+        }),
+    })
+}
+
+const_def* = (c :: Checker, text: str, ctx: Ctx) Res<Res<Def>, AllocError> {
+    found ::= c.alloc.Vec<Def>();
+    c.lookup(text).match({
+        Ok(_) => (),
+        None  => c.world.defs_of(ctx.module, text, found).try(),
+    });
+    Ok(found.get(0).match({
+        None  => None,
+        Ok(d) => d.kind.match({ ConstDef => Ok(d), _ => None }),
+    }));
+}
+
+// `i64` to `usize` by decimal digits; there is no narrowing conversion.
+// Negatives floor at zero, so callers test the sign first.
+len_of* = (v: i64) usize {
+    (v <= 0).match({
+        true  => 0,
+        false => len_of(v / 10) * 10 + last_digit(v),
+    })
+}
+
+last_digit = (v: i64) usize {
+    (v % 10).match({
+        0 => 0, 1 => 1, 2 => 2, 3 => 3, 4 => 4,
+        5 => 5, 6 => 6, 7 => 7, 8 => 8, _ => 9,
+    })
+}
+
+FOLD_DEPTH: usize = 256
+
+// The integer this expression provably is; absence for anything reached
+// through a binding.
+const_int* = (c: Checker, id: ExprId) Res<i64> {
+    c.const_within(id, FOLD_DEPTH)
+}
+
+const_within = (c: Checker, id: ExprId, left: usize) Res<i64> {
+    (left == 0).match({
+        true  => None,
+        false => c.const_node(c.tree.expr_at(id), left - 1),
+    })
+}
+
+const_node = (c: Checker, node: Expr, left: usize) Res<i64> {
+    node.kind.match({
+        Literal(l) => const_literal(l),
+        Paren(p)   => c.const_within(p.inner, left),
+        Unary(u)   => c.const_unary(u, left),
+        Binary(b)  => c.const_binary(b, left),
+        Access(a)  => c.const_prim_const(a),
+        _          => None,
+    })
+}
+
+const_literal* = (l: Literal) Res<i64> {
+    l.kind.match({
+        Int => l.integer.match({
+            Ok(value) => magnitude_i64(value),
+            None      => l.text.parse_i64(),
+        }),
+        _   => None,
+    })
+}
+
+// `u64` to `i64` by decimal digits; there is no narrowing conversion.
+magnitude_i64 = (value: u64) Res<i64> {
+    (value > 9223372036854775807).match({
+        true  => None,
+        false => Ok(magnitude_i64_open(value)),
+    })
+}
+
+magnitude_i64_open = (value: u64) i64 {
+    (value < 10).match({
+        true  => last_magnitude_digit(value),
+        false => magnitude_i64_open(value / 10) * 10
+            + last_magnitude_digit(value % 10),
+    })
+}
+
+last_magnitude_digit = (value: u64) i64 {
+    value.match({
+        0 => 0, 1 => 1, 2 => 2, 3 => 3, 4 => 4,
+        5 => 5, 6 => 6, 7 => 7, 8 => 8, _ => 9,
+    })
+}
+
+// Whether a positive integer literal fits a fixed-width integer type; the
+// upper half of u64's domain, which `fits(i64, ..)` cannot name.
+fits_magnitude* = (value: u64, name: str) Res<bool> {
+    name.match({
+        "i8"    => Ok(value <= 127),
+        "u8"    => Ok(value <= 255),
+        "i16"   => Ok(value <= 32767),
+        "u16"   => Ok(value <= 65535),
+        "i32"   => Ok(value <= 2147483647),
+        "u32"   => Ok(value <= 4294967295),
+        "i64"   => Ok(value <= 9223372036854775807),
+        "u64"   => Ok(true),
+        "usize" => Ok(true),
+        _       => None,
+    })
+}
+
+const_unary = (c: Checker, u: Unary, left: usize) Res<i64> {
+    u.op.match({
+        Neg => c.negate(u.operand, left),
+        _   => None,
+    })
+}
+
+negate = (c: Checker, id: ExprId, left: usize) Res<i64> {
+    c.const_within(id, left).match({
+        None  => None,
+        Ok(v) => Ok(0 - v),
+    })
+}
+
+const_binary = (c: Checker, b: Binary, left: usize) Res<i64> {
+    c.const_within(b.lhs, left).match({
+        None  => None,
+        Ok(x) => c.const_rhs(b, x, left),
+    })
+}
+
+const_rhs = (c: Checker, b: Binary, x: i64, left: usize) Res<i64> {
+    c.const_within(b.rhs, left).match({
+        None  => None,
+        Ok(y) => fold(b.op, x, y),
+    })
+}
+
+// `i32.MAX/MIN/BITS` only when the base is the primitive's own name, not
+// a binding of that type.
+const_prim_const = (c: Checker, a: Access) Res<i64> {
+    base = c.tree.expr_at(a.base);
+    base.kind.match({
+        Name(n) => prim_const_value(n.text, a.name.text),
+        _       => None,
+    })
+}
+
+prim_const_value = (type_name: str, member: str) Res<i64> {
+    member.match({
+        "MAX"  => max_of(type_name),
+        "MIN"  => min_of(type_name),
+        "BITS" => bits_of(type_name),
+        _      => None,
+    })
+}
+
+// Arithmetic that answers None instead of overflowing.
+fold* = (op: BinOp, x: i64, y: i64) Res<i64> {
+    op.match({
+        Add => add_i64(x, y),
+        Sub => sub_i64(x, y),
+        Mul => mul_i64(x, y),
+        _   => None,
+    })
+}
+
+add_i64 = (x: i64, y: i64) Res<i64> {
+    safe = (y >= 0).match({
+        true  => x <= I64_MAX - y,
+        false => x >= I64_MIN - y,
+    });
+    safe.match({ true => Ok(x + y), false => None })
+}
+
+sub_i64 = (x: i64, y: i64) Res<i64> {
+    safe = (y >= 0).match({
+        true  => x >= I64_MIN + y,
+        false => x <= I64_MAX + y,
+    });
+    safe.match({ true => Ok(x - y), false => None })
+}
+
+mul_i64 = (x: i64, y: i64) Res<i64> {
+    (small(x) && small(y)).match({
+        true  => Ok(x * y),
+        false => None,
+    })
+}
+
+small = (v: i64) bool { (v <= FOLD_LIMIT) && (v >= 0 - FOLD_LIMIT) }
+
+fits* = (v: i64, name: str) Res<bool> {
+    min_of(name).match({
+        None   => None,
+        Ok(lo) => max_of(name).match({
+            None   => None,
+            Ok(hi) => Ok((v >= lo) && (v <= hi)),
+        }),
+    })
+}
+
+// u64 and usize ceilings are the folder's own (i64), not the type's.
+max_of = (name: str) Res<i64> {
+    name.match({
+        "i8"    => Ok(127),
+        "i16"   => Ok(32767),
+        "i32"   => Ok(2147483647),
+        "i64"   => Ok(I64_MAX),
+        "u8"    => Ok(255),
+        "u16"   => Ok(65535),
+        "u32"   => Ok(4294967295),
+        "u64"   => Ok(I64_MAX),
+        "usize" => Ok(I64_MAX),
+        _       => None,
+    })
+}
+
+min_of* = (name: str) Res<i64> {
+    name.match({
+        "i8"    => Ok(0 - 128),
+        "i16"   => Ok(0 - 32768),
+        "i32"   => Ok(0 - 2147483648),
+        "i64"   => Ok(I64_MIN),
+        "u8"    => Ok(0),
+        "u16"   => Ok(0),
+        "u32"   => Ok(0),
+        "u64"   => Ok(0),
+        "usize" => Ok(0),
+        _       => None,
+    })
+}
+
+bits_of = (name: str) Res<i64> {
+    name.match({
+        "i8"    => Ok(8),
+        "u8"    => Ok(8),
+        "i16"   => Ok(16),
+        "u16"   => Ok(16),
+        "i32"   => Ok(32),
+        "u32"   => Ok(32),
+        "f32"   => Ok(32),
+        "i64"   => Ok(64),
+        "u64"   => Ok(64),
+        "usize" => Ok(64),
+        "f64"   => Ok(64),
+        _       => None,
+    })
+}

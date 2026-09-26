@@ -1,0 +1,782 @@
+// Owns LSP session state and routes one decoded JSON-RPC message at a time.
+// Full-sync document contents are retained as an in-memory build overlay.
+
+str, String = std.text
+Vec, Map = std.collections
+Range = std.core
+Alloc, AllocError, Arena = std.mem
+Checker = sema.sema_check
+Jsons, JsonId, written, read = std.json
+frame_at, write_frame, write_fault = lsp.lsp_frame
+hover_at, hover_in, hover_with = lsp.lsp_hover
+definition_at, definition_in, definition_with = lsp.lsp_def
+symbols_at, write_symbols = lsp.lsp_symbol
+write_edits = lsp.lsp_fmt
+Item, MemberCache, complete_at, complete_shared, write_items = lsp.lsp_compl
+write_tokens = lsp.lsp_colour
+Diagnostics, Shared = lsp.lsp_diag
+write_actions = lsp.lsp_action
+SourceRoot = zen.zen_path
+join_path = std.core.path
+Position = lsp.lsp_pos
+Decoded, RequestTurn, write_capabilities = lsp.lsp_reply
+RpcFault, request_of, notice_of = lsp.lsp_reply
+path_of = lsp.lsp_uri
+Document = lsp.lsp_document
+
+Server* = {
+    a: Alloc,
+
+    env: Env,
+
+    docs_arena :: Arena,
+
+    // Session-backed view; construction must choose the initial workspace.
+    workspace :: str,
+
+    docs :: Map<str, str>,
+    buffers :: Vec<Document>,
+
+    open :: Vec<str>,
+
+    notes :: Diagnostics,
+
+    members :: MemberCache,
+
+    ready :: bool,
+    stopping :: bool,
+    exiting :: bool,
+
+    stopped* = (self: @Self) bool { self.exiting }
+
+    exit_status* = (self: @Self) i32 { self.stopping.match({ true => 0, false => 1 }) }
+
+    completion_builds* = (self: @Self) usize { self.members.builds }
+
+    one* = (self :: @Self, t: Alloc, body: str, out :: String)
+           Res<(), AllocError> {
+        tree ::= t.Jsons();
+        turn ::= t.RequestTurn().try();
+        read(t, tree, body).match({
+            Err(f)  => turn.parse_error(f),
+            Ok(req) => self.route(tree, req, turn),
+        }).try();
+        turn.is_empty().match({
+            true  => written(),
+            false => write_frame(turn.view(), out),
+        })
+    }
+
+    route = (self :: @Self, tree: Jsons, req: JsonId, turn :: RequestTurn)
+            Res<(), AllocError> {
+        request = Decoded(tree, req);
+        request.valid().match({
+            false => turn.invalid_request(),
+            true  => request.id.match({
+                None  => self.notified(request),
+                Ok(_) => self.requested(request, turn),
+            }),
+        })
+    }
+
+    requested = (self :: @Self, request: Decoded, turn :: RequestTurn)
+                Res<(), AllocError> {
+        method = request.method();
+        self.stopping.match({
+            true  => turn.failed(
+                request,
+                RpcFault.InvalidRequest,
+                "the server has shut down"
+            ),
+            false => (self.ready || method.eq("initialize")).match({
+            false => turn.failed(
+                request,
+                RpcFault.NotInitialized,
+                "the server has not been initialized"
+            ),
+            true  => self.answered(request, turn),
+        }),
+        })
+    }
+
+    answered = (self :: @Self, request: Decoded, turn :: RequestTurn)
+               Res<(), AllocError> {
+        request.valid_params().match({
+            false => turn.failed(
+                request,
+                RpcFault.InvalidParams,
+                "invalid document query parameters"
+            ),
+            true  => self.dispatched(request, turn),
+        })
+    }
+
+    dispatched = (self :: @Self, request: Decoded, turn :: RequestTurn)
+                 Res<(), AllocError> {
+        request_of(request.method()).match({
+            Initialize => self.ready.match({
+                true  => turn.failed(
+                    request,
+                    RpcFault.InvalidRequest,
+                    "already initialized"
+                ),
+                false => self.initialized(request, turn),
+            }),
+            Shutdown   => {
+                self.stopping = true;
+                turn.result(request, "null")
+            },
+            Hover      => self.hovered(request, turn),
+            Definition => self.defined(request, turn),
+            Outline    => self.outlined(request, turn),
+            Completion => self.completed(request, turn),
+            Colour     => self.coloured(request, turn),
+            Format     => self.formatted(request, turn),
+            Action     => self.acted(request, turn),
+            Unknown    => self.unknown(request, turn),
+        })
+    }
+
+    configure_roots = (self :: @Self, request: Decoded) Res<bool, AllocError> {
+        entries ::= self.a.Vec<SourceRoot>();
+        options            = request.field(
+            request.params(),
+            "initializationOptions"
+        );
+        named: Res<JsonId> = options.match({
+            None      => None,
+            Ok(value) => request.field(value, "sourceRoots"),
+        });
+        roots              = named.value_or(JsonId(index: 0));
+        size: Res<usize>   = named.match({ None => Ok(0), Ok(value) => request.array_size(value) });
+        valid ::= size.match({ Ok(_) => true, None => false });
+        count = size.value_or(0);
+        i: usize ::= 0;
+        loop(() { valid && i < count }, (h) {
+            request.item_at(roots, i).match({
+                None     => { valid = false; h.break(); },
+                Ok(item) => {
+                    path  = request.string_at(item, "path");
+                    root  = request.string_at(item, "root");
+                    valid = valid && workspace_path(path, false)
+                        && workspace_path(
+                            root,
+                            true
+                        ) && !self.workspace.is_empty();
+                    valid.then(() {
+                        full_path = join_path(
+                            self.a,
+                            self.workspace,
+                            path
+                        ).try().view();
+                        full_root = root.eq(".").match({
+                            true  => self.workspace,
+                            false => join_path(
+                                self.a,
+                                self.workspace,
+                                root
+                            ).try().view(),
+                        });
+                        entries.loop((entry) {
+                            entry.path.eq(full_path).then(() { valid = false; });
+                        });
+                        entries.add(SourceRoot(
+                            path: full_path,
+                            root: full_root
+                        )).try();
+                    });
+                    i = i + 1;
+                    (!valid).then(() { h.break(); });
+                },
+            });
+        });
+        valid.then(() {
+            self.notes.set_roots(entries);
+            self.members.set_roots(entries);
+        });
+        Ok(valid)
+    }
+
+    initialized = (self :: @Self, request: Decoded,
+                   turn :: RequestTurn) Res<(), AllocError> {
+        self.members.invalidate();
+        self.workspace = path_of(
+            self.a,
+            request.string_at(request.params(), "rootUri")
+        ).try();
+        loop(() { self.workspace.len > 1 && self.workspace.ends_with(
+            "/"
+        ) }, (h) {
+            self.workspace = self.workspace.slice(0, self.workspace.len - 1);
+        });
+        self.configure_roots(request).try().match({
+            false => turn.failed(
+                request,
+                RpcFault.InvalidParams,
+                "sourceRoots requires workspace-relative path/root mappings without parent traversal"
+            ),
+            true  => {
+                self.ready = true;
+                caps ::= turn.alloc().String().try();
+                write_capabilities(turn.alloc(), caps).try();
+                turn.result(request, caps.view())
+            },
+        })
+    }
+
+    unknown = (self :: @Self, request: Decoded,
+               turn :: RequestTurn) Res<(), AllocError> {
+        why ::= turn.alloc().String().try();
+        why.add("method not found: ").try();
+        why.add(request.method()).try();
+        turn.failed(request, RpcFault.MethodNotFound, why.view())
+    }
+
+    notified = (self :: @Self, request: Decoded) Res<(), AllocError> {
+        request.method().eq("exit").match({
+            true  => { self.exiting = true; written() },
+            false => (self.ready && !self.stopping).match({
+                false => written(),
+                true  => notice_of(request.method()).match({
+                    DidOpen          => self.opened(request),
+                    DidChange        => self.changed(request),
+                    DidClose         => self.closed(request),
+                    DidChangeWatched => self.watched(request),
+                    Ignored          => written(),
+                }),
+            }),
+        })
+    }
+
+    // A change to a file the client has not opened stales the build.
+    watched = (self :: @Self, request: Decoded) Res<(), AllocError> {
+        changes = request.param("changes");
+        i     ::= 0;
+        stale ::= false;
+        more  ::= true;
+        loop(more, (h) {
+            request.item_at(changes, i).match({
+                None       => { more = false; },
+                Ok(change) => {
+                    uri = request.string_at(change, "uri");
+                    self.docs.get(uri).match({
+                        None  => { stale = true; },
+                        Ok(_) => (),
+                    });
+                    i = i + 1;
+                },
+            });
+        });
+        (stale && self.open.len > 0).then(() {
+            self.members.invalidate();
+            self.notes.invalidate();
+        });
+        written()
+    }
+
+    opened = (self :: @Self, request: Decoded) Res<(), AllocError> {
+        request.opened().match({
+            None       => written(),
+            Ok(change) => self.stored(change.uri, change.text, change.version),
+        })
+    }
+
+    changed = (self :: @Self, request: Decoded) Res<(), AllocError> {
+        uri = request.string_at(request.param("textDocument"), "uri");
+        self.buffers.find((buffer) { buffer.uri.eq(uri) }).match({
+            None     => written(),
+            Ok(held) => request.changed(held.text, held.version).match({
+                None       => written(),
+                Ok(change) => self.stored(
+                    change.uri,
+                    change.text,
+                    change.version
+                ),
+            }),
+        })
+    }
+
+    closed = (self :: @Self, request: Decoded) Res<(), AllocError> {
+        uri = request.string_at(request.param("textDocument"), "uri");
+        self.buffer_index(uri).match({
+            None   => written(),
+            Ok(at) => {
+                self.refresh_docs(Ok(at)).try();
+                self.members.invalidate();
+                self.notes.invalidate();
+                self.retire(at);
+                written()
+            },
+        })
+    }
+
+    buffer_index = (self: @Self, uri: str) Res<usize> {
+        Range(0, self.buffers.len).find((at) {
+            self.buffers.get(at).match({ None => false, Ok(doc) => doc.uri.eq(uri) })
+        })
+    }
+
+    stored = (self :: @Self, uri: str, text: str, version: Res<i64>)
+             Res<(), AllocError> {
+        previous = self.buffer_index(uri);
+        changed  = self.docs.get(uri).match({ None => true, Ok(old) => !old.eq(text) });
+        changed.match({
+            false => previous.match({
+                None   => written(),
+                Ok(at) => self.buffers.take(at).match({
+                    None     => written(),
+                    Ok(held) => {
+                        held.revise(version);
+                        self.buffers.add(consume held)
+                    },
+                }),
+            }),
+            true  => {
+                self.buffers.reserve(1).try();
+                fresh ::= self.env.Document(uri, text, version).try();
+                self.members.changed(fresh.path);
+                self.notes.invalidate();
+                self.buffers.add(consume fresh).try();
+                self.refresh_docs(previous).match({
+                    Err(error) => {
+                        self.retire(self.buffers.len - 1);
+                        Err(error)
+                    },
+                    Ok(_)      => {
+                        previous.match({ None => (), Ok(at) => self.retire(
+                            at
+                        ) });
+                        written()
+                    },
+                })
+            },
+        })
+    }
+
+    retire = (self :: @Self, at: usize) () {
+        self.buffers.take(at).match({
+            None         => (),
+            Ok(document) => { retired = consume document; },
+        });
+    }
+
+    // Only descriptors are rebuilt. Other documents keep their own text arenas.
+    refresh_docs = (self :: @Self, excluded: Res<usize>) Res<(), AllocError> {
+        fresh_arena ::= self.env.mem.alloc();
+        docs        ::= fresh_arena.Map<str, str>();
+        uris        ::= fresh_arena.Vec<str>();
+        self.buffers.loop((h, index, buffer) {
+            excluded.match({ None => true, Ok(at) => index != at }).then(() {
+                docs.set(buffer.uri, buffer.text).try();
+                uris.add(buffer.uri).try();
+            });
+        });
+        self.docs_arena.drop();
+        self.docs_arena = consume fresh_arena;
+        self.docs       = docs;
+        self.open       = uris;
+        written()
+    }
+
+    settled* = (self :: @Self, t: Alloc, out :: String) Res<(), AllocError> {
+        self.stopping.match({
+            true  => written(),
+            false => self.notes.settled(
+                self.env,
+                self.workspace,
+                self.open,
+                self.docs,
+                t,
+                out
+            ),
+        })
+    }
+
+    unopened = (self :: @Self, request: Decoded,
+                turn :: RequestTurn)
+               Res<(), AllocError> {
+        turn.failed(
+            request,
+            RpcFault.InvalidParams,
+            "no open document for that uri"
+        )
+    }
+
+    hovered = (self :: @Self, request: Decoded, turn :: RequestTurn)
+              Res<(), AllocError> {
+        t         = turn.alloc();
+        uri       = request.string_at(request.param("textDocument"), "uri");
+        where     = request.param("position");
+        line      = request.number_at(where, "line");
+        character = request.number_at(where, "character");
+        self.docs.get(uri).match({
+            None     => self.unopened(request, turn),
+            Ok(text) => {
+                body ::= t.String().try();
+                self.workspace.is_empty().match({
+                    true  => {
+                        qa ::= self.env.mem.alloc();
+                        hover_at(qa, uri, text, line, character).try().write(qa, body)
+                    },
+                    false => self.shared_hover(
+                        t,
+                        uri,
+                        text,
+                        line,
+                        character,
+                        body
+                    ),
+                }).try();
+                turn.result(request, body.view())
+            },
+        })
+    }
+
+    coloured = (self :: @Self, request: Decoded,
+                turn :: RequestTurn) Res<(), AllocError> {
+        t   = turn.alloc();
+        uri = request.string_at(request.param("textDocument"), "uri");
+        self.docs.get(uri).match({
+            None     => self.unopened(request, turn),
+            Ok(text) => {
+                body ::= t.String().try();
+                (!self.workspace.is_empty()).then(() {
+                    self.build_for(path_of(t, uri).try(), t).try();
+                });
+                names = self.notes.classes_for(t, uri).try();
+                write_tokens(t, uri, text, names, body).try();
+                turn.result(request, body.view())
+            },
+        })
+    }
+
+    build_for = (self :: @Self, path: str, t: Alloc) Res<Shared, AllocError> {
+        self.notes.shared(
+            self.env,
+            self.workspace,
+            self.open,
+            self.docs,
+            path,
+            t
+        )
+    }
+
+    shared_hover = (self :: @Self, t: Alloc, uri: str, text: str,
+                    line: usize, character: usize, body :: String)
+                   Res<(), AllocError> {
+        path = path_of(t, uri).try();
+        sh   = self.build_for(path, t).try();
+        sh.c.match({
+            None  => {
+                qa ::= self.env.mem.alloc();
+                hover_in(
+                    self.env,
+                    qa,
+                    self.workspace,
+                    path,
+                    text,
+                    line,
+                    character
+                )
+                    .try()
+                    .write(qa, body)
+            },
+            Ok(c) => hover_with(c, t, sh.file, text, line, character)
+                .try()
+                .write(t, body),
+        })
+    }
+
+    defined = (self :: @Self, request: Decoded, turn :: RequestTurn)
+              Res<(), AllocError> {
+        t         = turn.alloc();
+        uri       = request.string_at(request.param("textDocument"), "uri");
+        where     = request.param("position");
+        line      = request.number_at(where, "line");
+        character = request.number_at(where, "character");
+        self.docs.get(uri).match({
+            None     => self.unopened(request, turn),
+            Ok(text) => {
+                body ::= t.String().try();
+                self.workspace.is_empty().match({
+                    true  => {
+                        qa ::= self.env.mem.alloc();
+                        definition_at(qa, uri, text, line, character)
+                            .try()
+                            .write(qa, body)
+                    },
+                    false => self.write_definition(
+                        t,
+                        uri,
+                        text,
+                        line,
+                        character,
+                        body
+                    ),
+                }).try();
+                turn.result(request, body.view())
+            },
+        })
+    }
+
+    write_definition = (self :: @Self, t: Alloc, uri: str, text: str,
+                        line: usize, character: usize, body :: String)
+                       Res<(), AllocError> {
+        path = path_of(t, uri).try();
+        sh   = self.build_for(path, t).try();
+        sh.c.match({
+            None  => {
+                qa ::= self.env.mem.alloc();
+                definition_in(self.env, qa, self.workspace, path, uri, text, line, character).try().write(qa, body)
+            },
+            Ok(c) => definition_with(self.env, c, t, sh.root, self.docs, uri, text, sh.file, line, character).try().write(t, body),
+        })
+    }
+
+    outlined = (self :: @Self, request: Decoded,
+                turn :: RequestTurn) Res<(), AllocError> {
+        t   = turn.alloc();
+        uri = request.string_at(request.param("textDocument"), "uri");
+        self.docs.get(uri).match({
+            None     => self.unopened(request, turn),
+            Ok(text) => {
+                syms = symbols_at(t, text).try();
+                body ::= t.String().try();
+                write_symbols(t, uri, text, syms, body).try();
+                turn.result(request, body.view())
+            },
+        })
+    }
+
+    formatted = (self :: @Self, request: Decoded,
+                 turn :: RequestTurn) Res<(), AllocError> {
+        t   = turn.alloc();
+        uri = request.string_at(request.param("textDocument"), "uri");
+        self.docs.get(uri).match({
+            None     => self.unopened(request, turn),
+            Ok(text) => {
+                body ::= t.String().try();
+                write_edits(t, text, body).try();
+                turn.result(request, body.view())
+            },
+        })
+    }
+
+    acted = (self :: @Self, request: Decoded, turn :: RequestTurn)
+            Res<(), AllocError> {
+        t     = turn.alloc();
+        uri   = request.string_at(request.param("textDocument"), "uri");
+        range = request.param("range");
+        first = request.field_at(range, "start");
+        last  = request.field_at(range, "end");
+        self.docs.get(uri).match({
+            None     => self.unopened(request, turn),
+            Ok(text) => {
+                body ::= t.String().try();
+                self.workspace.is_empty().match({
+                    true  => body.add("[]"),
+                    false => self.shared_actions(
+                        t,
+                        uri,
+                        text,
+                        Position(
+                            line: request.number_at(first, "line"),
+                            character: request.number_at(first, "character")
+                        ),
+                        Position(
+                            line: request.number_at(last, "line"),
+                            character: request.number_at(last, "character")
+                        ),
+                        body
+                    ),
+                }).try();
+                turn.result(request, body.view())
+            },
+        })
+    }
+
+    shared_actions = (self :: @Self, t: Alloc, uri: str, text: str,
+                      from: Position, upto: Position, body :: String)
+                     Res<(), AllocError> {
+        path = path_of(t, uri).try();
+        sh   = self.build_for(path, t).try();
+        sh.c.match({
+            None  => body.add("[]"),
+            Ok(c) => write_actions(c, t, sh.file, text, uri, from, upto, body),
+        })
+    }
+
+    completed = (self :: @Self, request: Decoded,
+                 turn :: RequestTurn) Res<(), AllocError> {
+        t         = turn.alloc();
+        uri       = request.string_at(request.param("textDocument"), "uri");
+        where     = request.param("position");
+        line      = request.number_at(where, "line");
+        character = request.number_at(where, "character");
+        self.docs.get(uri).match({
+            None     => self.unopened(request, turn),
+            Ok(text) => {
+                body ::= t.String().try();
+                self.workspace.is_empty().match({
+                    true  => {
+                        qa    ::= self.env.mem.alloc();
+                        items ::= qa.Vec<Item>();
+                        cached = self.members.complete(
+                            self.env,
+                            qa,
+                            self.workspace,
+                            path_of(t, uri).try(),
+                            text,
+                            self.docs,
+                            line,
+                            character,
+                            items
+                        ).try();
+                        (!cached).then(() {
+                            complete_at(qa, text, line, character, items).try();
+                        });
+                        items.sort();
+                        write_items(qa, items, body)
+                    },
+                    false => self.write_completion(
+                        t,
+                        uri,
+                        text,
+                        line,
+                        character,
+                        body
+                    ),
+                }).try();
+                turn.result(request, body.view())
+            },
+        })
+    }
+
+    write_completion = (self :: @Self, t: Alloc, uri: str, text: str,
+                        line: usize, character: usize, body :: String)
+                       Res<(), AllocError> {
+        path = path_of(t, uri).try();
+        sh   = self.build_for(path, t).try();
+        done = sh.c.match({
+            None  => false,
+            Ok(c) => self.shared_completion(
+                c,
+                t,
+                sh.file,
+                text,
+                line,
+                character,
+                body
+            ).try(),
+        });
+        done.match({
+            true  => written(),
+            false => self.patched_completion(
+                t,
+                path,
+                text,
+                line,
+                character,
+                body
+            ),
+        })
+    }
+
+    shared_completion = (self :: @Self, c: Checker, t: Alloc, file: str,
+                         text: str, line: usize, character: usize,
+                         body :: String) Res<bool, AllocError> {
+        items ::= t.Vec<Item>();
+        done = complete_shared(c, t, file, text, line, character, items).try();
+        done.match({
+            false => written(),
+            true  => {
+                items.sort();
+                write_items(t, items, body)
+            },
+        }).try();
+        Ok(done);
+    }
+
+    patched_completion = (self :: @Self, t: Alloc, path: str, text: str,
+                          line: usize, character: usize, body :: String)
+                         Res<(), AllocError> {
+        items ::= t.Vec<Item>();
+        self.members.complete(
+            self.env,
+            t,
+            self.workspace,
+            path,
+            text,
+            self.docs,
+            line,
+            character,
+            items
+        ).try();
+        items.sort();
+        write_items(t, items, body)
+    }
+}
+
+Server.impl(Drop, {
+    drop = (self :: @Self) () {
+        self.members.drop();
+        self.notes.drop();
+        self.docs_arena.drop();
+        self.buffers.clear();
+    }
+})
+
+Server* = (a: Alloc, env: Env) Server {
+    docs_arena ::= env.mem.alloc();
+    server_with_docs(a, env, consume docs_arena)
+}
+
+server_with_docs = (a: Alloc, env: Env, docs_arena :: Arena) Server {
+    docs = docs_arena.Map<str, str>();
+    Server(
+        a: a,
+        env: env,
+        docs_arena: consume docs_arena,
+        workspace: "",
+        docs: docs,
+        buffers: a.Vec<Document>(),
+        open: a.Vec<str>(),
+        notes: env.Diagnostics(),
+        members: env.MemberCache(),
+        ready: false,
+        stopping: false,
+        exiting: false
+    )
+}
+
+serve* = (s :: Server, input: str, out :: String) Res<(), AllocError> {
+    at    ::= 0;
+    going ::= true;
+    loop(() { going && !s.stopped() && at < input.len }, (h) {
+        frame_at(input, at).match({
+            Err(f) => {
+                going = false;
+                f.write_fault(out).try();
+                out.add("\n").try();
+            },
+            Ok(fr) => { at = fr.next; s.one(s.a, fr.body, out).try(); },
+        });
+    });
+    s.settled(s.a, out)
+}
+
+// A mapping is bounded to this workspace; separators cannot smuggle an
+// absolute path or parent traversal into source-root selection.
+workspace_path = (path: str, allow_current: bool) bool {
+    (allow_current && path.eq(".")).match({
+        true  => true,
+        false => {
+            valid ::= !path.is_empty() && !path.starts_with("/")
+                && !path.ends_with("/") && !path.contains("\\") && !path.contains(":");
+            path.split('/').loop((part) {
+                (part.is_empty() || part.eq(".") || part.eq("..")).then(() { valid = false; });
+            });
+            valid
+        },
+    })
+}

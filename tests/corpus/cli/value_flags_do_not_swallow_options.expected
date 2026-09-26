@@ -1,0 +1,9 @@
+usage `--entry`
+usage `-o`
+usage `--emit-c-dir`
+usage `--std`
+usage `--symbol-map`
+usage `--repeat`
+usage `--permute`
+usage `--backend`
+build root=src entry=main.zen out=out.c symbols=out.sym ffi=true

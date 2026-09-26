@@ -1,0 +1,105 @@
+// Long files are review prompts, not build failures. Line count can reveal a
+// mixed subject, but formatter layout and cohesive tables also make files long.
+// The gate fails only when it cannot perform the review: no inputs or an
+// unreadable file.
+
+Alloc, AllocError = std.mem
+str = std.text
+Vec = std.collections
+Range = std.core
+FsError = std.env
+
+Over = {
+    rel*: str,
+    lines*: usize,
+}
+
+REVIEW: usize = 500
+LOUD: usize = 800
+
+main = (env: Env) Res<i32, AllocError> {
+    (env.argv.len < 2).match({
+        true  => no_files(),
+        false => run(env, env.mem.alloc()),
+    })
+}
+
+no_files = () Res<i32, AllocError> {
+    println("line_cap: no files given — this gate is checking nothing.");
+    Ok(2);
+}
+
+run = (env: Env, alloc: Alloc) Res<i32, AllocError> {
+    review ::= alloc.Vec<Over>();
+    loud   ::= alloc.Vec<Over>();
+    unread ::= 0;
+
+    Range(1, env.argv.len).loop((h, i) {
+        rel = arg(env, i);
+        env.fs.read(alloc, rel).match({
+            Err(e)   => {
+                unread = unread + 1;
+                println("line_cap: {}: {}", rel, fs_word(e));
+            },
+            Ok(text) => {
+                n = lines_in(text.view());
+                (n > LOUD).match({
+                    true  => loud.add(Over(rel: rel, lines: n)).try(),
+                    false => (n > REVIEW).then(() {
+                        review.add(Over(rel: rel, lines: n)).try();
+                    }),
+                });
+            },
+        });
+    });
+
+    review.loop((h, o) { note(o, REVIEW); });
+    loud.loop((h, o) { note(o, LOUD); });
+    println(
+        "line_cap: {} over {}, {} over {} (review notes only)",
+        review.len,
+        REVIEW,
+        loud.len,
+        LOUD
+    );
+    (unread > 0).match({ true => Ok(2), false => Ok(0) })
+}
+
+note = (o: Over, threshold: usize) () {
+    println(
+        "note: {}: {} lines, over {} — check subjects, dependency edges, and parameter bundles",
+        o.rel,
+        o.lines,
+        threshold
+    );
+}
+
+lines_in = (text: str) usize {
+    n ::= 0;
+    Range(0, text.len).loop((h, i) {
+        (text.index(i) == '\n').then(() { n = n + 1; });
+    });
+    ends_open(text).match({ true => n + 1, false => n })
+}
+
+ends_open = (text: str) bool {
+    (text.len == 0).match({
+        true  => false,
+        false => !(text.index(text.len - 1) == '\n'),
+    })
+}
+
+arg = (env: Env, i: usize) str {
+    env.argv.get(i).match({ Ok(s) => s, None => "" })
+}
+
+fs_word = (e: FsError) str {
+    e.match({
+        NotFound    => "not found",
+        Denied      => "denied",
+        IsDir       => "is a directory",
+        Exists      => "already locked",
+        Failed      => "could not be read",
+        OutOfMemory => "out of memory",
+    })
+}

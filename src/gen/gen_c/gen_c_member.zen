@@ -1,0 +1,1085 @@
+// What a call through a dot is.
+// gen_c_call owns f(a); this file owns variants, declared members, and exported
+// UFCS functions reached as x.f(a). Sema supplies type/member facts and this
+// lowering reuses the checker's signature-fit predicate when selecting a
+// declaration. Member symbols include the qualified receiver type.
+
+ExprId, Decl, Struct, Member = std.ast
+Function, Param, Access, Call, Arg = std.ast
+Lambda = std.ast
+AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+Range = std.core
+DeclId = sema.sema_id
+TyId, TyNamed, TyFn, Prim = sema.sema_ty
+Def, decl_at = sema.sema_def
+Ctx = sema.sema_check
+Inst = sema.sema_inst
+Found, base_of, members_of, self_ctx = sema.sema_member
+Actual = sema.sema_cand
+recv_sig_fits, ty_at, tail_swallows = sema.sema_cand
+Case, cases_of, find_case = sema.sema_case
+is_case = sema.sema_case
+sym_fn, sym_member, sym_variant, qualify = gen.gen_name
+CBackend, MethodRef = gen.gen_c.gen_c_state
+unsupported, unresolved = gen.gen_c.gen_c_report
+sub, sub_with, any_open, recv_inst, inst_open = gen.gen_c.gen_c_mono
+method_inst = gen.gen_c.gen_c_mono
+materialize_literal = gen.gen_c.gen_c_mono
+owner_of = sema.sema_inst
+enter_tparams, enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
+ctype, is_unit = gen.gen_c.gen_c_type
+expr, ty_of, want_of = gen.gen_c.gen_c_expr
+has_call, holds = gen.gen_c.gen_c_expr
+unsettled = gen.gen_c.gen_c_mono
+lower_plain_call, write_call_args = gen.gen_c.gen_c_call
+write_arg, write_arg_at = gen.gen_c.gen_c_arg
+handle_depth, lower_handle_call = gen.gen_c.gen_c_handle
+inlines, inline_method = gen.gen_c.gen_c_inline
+is_ptr_member, lower_ptr_member = gen.gen_c.gen_c_ptr
+lower_create, alloc_raw = gen.gen_c.gen_c_alloc
+CapabilityCall, CapabilityKind, capability_kind, lower_capability = gen.gen_c.gen_c_cap
+is_fat = gen.gen_c.gen_c_fat
+lower_fat_call = gen.gen_c.gen_c_bound
+lower_assoc_call = gen.gen_c.gen_c_assoc
+lower_meta_walk, lower_meta_proj = gen.gen_c.gen_c_meta
+sink_door_shape = gen.gen_c.gen_c_sink
+is_floor_door, lower_floor_door = gen.gen_c.gen_c_floor
+by_arity, bodied_fn, impl_member, kept_or_arity = gen.gen_c.gen_c_impl
+has_body = gen.gen_c.gen_c_impl
+impl_member_at = gen.gen_c.gen_c_impl
+alias_of = gen.gen_c.gen_c_impl
+generic_enum = gen.gen_c.gen_c_impl
+ref_of_actor, lower_actor_send = gen.gen_c.gen_c_actor
+lower_discriminant_call = gen.gen_c.gen_c_discriminant
+lower_variant_name_call = gen.gen_c.gen_c_variant_name
+
+// the entry point
+
+// One parsed dot call. Its syntax stays fixed while receiver and member
+// resolution add facts around it.
+Dot = {
+    id: ExprId,
+    c: Call,
+    a: Access,
+}
+
+// Loop handles are recognised by name before receiver resolution because a
+// handle is control flow, not a value. `want` can settle the handle payload.
+lower_dot_call* = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    a    : Access,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    // Meta walks and projections are sema-marked compile-time operations;
+    // neither may fall through to ordinary dot-call resolution.
+    be.check.meta_walk_of(id).match({
+        Ok(names) => be.lower_meta_walk(id, c, names, ctx, out),
+        None      => be.check.meta_proj(id).match({
+            true  => be.lower_meta_proj(id, a, ctx, want, out),
+            false => be.check.discriminant_call_of(id).match({
+                Ok(kind) => be.lower_discriminant_call(
+                    id,
+                    c,
+                    a,
+                    kind,
+                    ctx,
+                    out
+                ),
+                None     => be.check.variant_name_call_of(id).match({
+                    Ok(kind) => be.lower_variant_name_call(a, kind, ctx, out),
+                    None     => be.lower_marked_dot(id, c, a, ctx, want, out),
+                }),
+            }),
+        }),
+    })
+}
+
+lower_marked_dot = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    a    : Access,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    // Valid meta calls are folded by sema. Any remaining meta receiver is an
+    // Invalid form and has no runtime lowering.
+    be.tree.expr_at(a.base).kind.match({
+        Meta(_) => Ok(()),
+        _       => {
+            depth = be.handle_depth(a.base);
+            (depth > 0).match({
+                true  => be.lower_handle_call(id, c, a, depth, ctx, out),
+                false => be.lower_resolved_dot(
+                    Dot(id: id, c: c, a: a),
+                    ctx,
+                    want,
+                    out
+                ),
+            })
+        },
+    })
+}
+
+lower_resolved_dot = (
+    be   :: CBackend,
+    d    : Dot,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+)
+                     Res<(), AllocError> {
+    be.check.checked_call(d.id).match({
+        Ok(checked) => checked.declaration.match({
+            Ok(_) => {
+                receiver = checked.signature.match({
+                    None => Ok(d.a.base), Ok(signature) => signature.receiver,
+                });
+                be.lower_plain_call(
+                    d.id,
+                    d.c,
+                    d.a.name.text,
+                    receiver,
+                    ctx,
+                    want,
+                    out
+                )
+            },
+            None  => be.lower_unselected_dot(d, ctx, want, out),
+        }),
+        None        => be.lower_unselected_dot(d, ctx, want, out),
+    })
+}
+
+// Receiver lookup is needed for member calls and deferred contexts. A checked
+// free declaration above must never be replaced by a same-named member.
+lower_unselected_dot = (
+    be   :: CBackend,
+    d    : Dot,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+)
+                       Res<(), AllocError> {
+    b = be.check.base_of(d.a.base, ctx).try();
+    b.is_type.match({
+        true  => be.lower_static_call(d, b.ty, ctx, want, out),
+        false => be.lower_receiver_call(d, ctx, want, out),
+    })
+}
+
+// Lowers a payload variant such as `Shape.Circle(c)` as a compound literal.
+// The call's settled type supplies generic arguments; the base declaration
+// Supplies the variant name. Non-variant associated calls are handled by
+// `gen_c_assoc`.
+
+lower_static_call = (
+    be   :: CBackend,
+    d    : Dot,
+    ty   : TyId,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+)
+                    Res<(), AllocError> {
+    be.check.is_case(ty, d.a.name.text).try().match({
+        true  => be.write_variant_call(d, ty, ctx, out),
+        false => be.lower_assoc_call(d.id, d.c, d.a, ty, ctx, out).try().match({
+            true  => Ok(()),
+            false => be.unsupported(
+                d.id,
+                "a call on a type that is not a variant",
+                out
+            ),
+        }),
+    })
+}
+
+// What to spell the compound literal as: what the call's own node says
+// sema answered, substituted at the generic function emission currently
+// being lowered. Sema checks a generic body once, so its memo can still say
+// `Opt<T>` while this queued body is the `T = i32` or `T = str` copy.
+// Falling back to the bare `base` is only sound after that substitution still
+// leaves the answer open.
+case_ty = (be :: CBackend, d: Dot, base: TyId, ctx: Ctx)
+          Res<TyId, AllocError> {
+    raw = be.check.type_of(d.id, ctx).try();
+    got = sub(be, raw).try();
+    be.check.types.at(got).match({
+        Named(_) => Ok(unsettled(be, got).match({
+            true  => base,
+            false => got,
+        })),
+        _        => Ok(base),
+    })
+}
+
+write_variant_call = (be :: CBackend, d: Dot, ty: TyId, ctx: Ctx, out :: String)
+                     Res<(), AllocError> {
+    cases ::= be.alloc.Vec<Case>();
+    be.check.cases_of(ty, cases).try();
+    find_case(cases, d.a.name.text).match({
+        None   => unresolved(be, d.id, d.a.name.text, out),
+        Ok(cs) => {
+            lit = be.case_ty(d, ty, ctx).try();
+            be.write_case_value(d.c, lit, cs, ctx, out)
+        },
+    })
+}
+
+// A unit payload takes no member: a void member is illegal C, which is
+// the same rule `Ok(())` obeys.
+write_case_value = (
+    be  :: CBackend,
+    c   : Call,
+    ty  : TyId,
+    cs  : Case,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    qname = be.type_qname(ty).try();
+    cty ::= be.alloc.String().try();
+    be.ctype(ty, cty).try();
+    out.fmt("({}){ .zg_tag = ", cty.view()).try();
+    out.sym_variant(qname.view(), cs.name).try();
+    be.no_payload(c, cs).match({
+        true  => Ok(()),
+        false => be.write_payload_arg(c, cs, ctx, out),
+    }).try();
+    out.add(" }").try();
+    Ok(());
+}
+
+no_payload = (be :: CBackend, c: Call, cs: Case) bool {
+    (cs.has_payload == false) || be.is_unit(cs.payload) || (c.args.len == 0)
+}
+
+write_payload_arg = (be :: CBackend, c: Call, cs: Case, ctx: Ctx, out :: String)
+                    Res<(), AllocError> {
+    out.add(", .zg_data.").try();
+    out.sym_member(cs.name).try();
+    out.add(" = ").try();
+    c.args.get(0).match({
+        None  => out.add("0"),
+        Ok(a) => expr(be, a.value, ctx, cs.payload, out),
+    })
+}
+
+// `x.f(a)` — the receiver's declaration first, then an impl, then UFCS.
+// The first two are overload sets resolved on types and arity.
+
+lower_receiver_call = (
+    be   :: CBackend,
+    d    : Dot,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+)
+                      Res<(), AllocError> {
+    unknown = be.check.types.unknown().try();
+    raw     = be.ty_of(d.a.base, ctx, unknown).try();
+    rty     = be.materialize_literal(sub(be, raw).try()).try();
+    be.ref_of_actor(rty).try().match({
+        Ok(actor) => (d.a.name.text.eq("stop")
+            || d.a.name.text.eq("join")).match({
+            true  => be.lower_receiver_site(d, rty, ctx, want, out),
+            false => be.lower_actor_send(d.id, d.c, d.a, rty, actor, ctx, out),
+        }),
+        None      => be.lower_receiver_site(d, rty, ctx, want, out),
+    })
+}
+
+lower_receiver_site = (
+    be   :: CBackend,
+    d    : Dot,
+    rty  : TyId,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    site_of(be, rty).try().match({
+        None  => be.lower_ufcs(d, rty, ctx, want, out),
+        Ok(s) => be.with_site(d, s, ctx, want, out),
+    })
+}
+
+with_site = (
+    be   :: CBackend,
+    d    : Dot,
+    s    : Site,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+)
+            Res<(), AllocError> {
+    own ::= be.alloc.Vec<Member>();
+    member_at(be, s, d.a.name.text, own).try();
+    be.pick_member(d.c, s, own, ctx).try().match({
+        Ok(m) => be.declared_member(d, s, m, ctx, want, out),
+        None  => be.supplied_or_ufcs(d, s, ctx, want, out),
+    })
+}
+
+supplied_or_ufcs = (
+    be   :: CBackend,
+    d    : Dot,
+    s    : Site,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+)
+                   Res<(), AllocError> {
+    found ::= be.alloc.Vec<Member>();
+    be.impl_member_at(s.decl, d.a.name.text, found).try();
+    be.pick_member(d.c, s, found, ctx).try().match({
+        Ok(m) => be.supplied_or_refused(d, s, m, ctx, want, out),
+        None  => be.lower_ufcs(d, s.ty, ctx, want, out),
+    })
+}
+
+// The member is there and resolved; whether it can be emitted is a
+// second question, and a generic enum target is the one target the mono
+// path cannot carry — see `gen_c_impl.generic_enum`.
+supplied_or_refused = (
+    be   :: CBackend,
+    d    : Dot,
+    s    : Site,
+    m    : Member,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    be.generic_enum(s.decl).match({
+        true  => be.unsupported(
+            d.id,
+            "a call to a member an impl supplies on a generic enum",
+            out
+        ),
+        false => supplied_member(be, d, s, m, ctx, want, out),
+    })
+}
+
+// A declared member that is not a function is a field holding one, what
+// a fat value's slot is. Calling through it is the general form — lower
+// the callee, then call it — and is not written yet.
+declared_member = (
+    be   :: CBackend,
+    d    : Dot,
+    s    : Site,
+    m    : Member,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    m.kind.match({
+        Function(f) => be.lower_method(d, s, f, ctx, want, out),
+        _           => be.unsupported(
+            d.id,
+            "a call through a function-valued field",
+            out
+        ),
+    })
+}
+
+// An impl cannot supply a field, so anything but a function here is a
+// name the dot reaches some other way.
+supplied_member = (
+    be   :: CBackend,
+    d    : Dot,
+    s    : Site,
+    m    : Member,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    m.kind.match({
+        Function(f) => be.lower_method(d, s, f, ctx, want, out),
+        _           => be.lower_ufcs(d, s.ty, ctx, want, out),
+    })
+}
+
+// Select overloaded members by declared parameter types and arity. A single
+// member needs only the arity check.
+
+pick_member = (be :: CBackend, c: Call, s: Site, found: Vec<Member>, ctx: Ctx)
+              Res<Res<Member>, AllocError> {
+    be.member_that_fits(c, s, found, ctx)
+}
+
+// The first that fits, and arity when none does — both halves the
+// checker's. `pick_fitting` takes the first because "two members
+// accepting the same call is an error at the declaration"; `by_arity_ret`
+// falls back where `fits` cannot answer, on an unsettled receiver or a
+// variadic signature.
+member_that_fits = (
+    be    :: CBackend,
+    c     : Call,
+    s     : Site,
+    found : Vec<Member>,
+    ctx   : Ctx
+)
+                   Res<Res<Member>, AllocError> {
+    actuals ::= be.alloc.Vec<Actual>();
+    be.call_actuals(c, ctx, actuals).try();
+    kept ::= be.alloc.Vec<Member>();
+    found.loop((h, m) { be.keep_fits(m, s, actuals, kept).try() });
+    Ok(be.kept_or_arity(kept, found, c.args.len + 1));
+}
+
+// A named helper rather than a `.then` inside the loop body: a loop
+// binding read inside a nested closure does not resolve.
+keep_fits = (
+    be      :: CBackend,
+    m       : Member,
+    s       : Site,
+    actuals : Vec<Actual>,
+    kept    :: Vec<Member>
+) Res<(), AllocError> {
+    m.kind.match({
+        Function(f) => be.keep_if_fits(m, f, s, actuals, kept),
+        _           => Ok(()),
+    })
+}
+
+// Use the resolved method signature here because the same signature later
+// determines the emitted symbol.
+keep_if_fits = (
+    be      :: CBackend,
+    m       : Member,
+    f       : Function,
+    s       : Site,
+    actuals : Vec<Actual>,
+    kept    :: Vec<Member>
+) Res<(), AllocError> {
+    inst = be.recv_inst(s.ty).try();
+    sig  = s.signature(be, f, inst).try();
+    be.check.recv_sig_fits(sig, actuals).try()
+        .then(() { kept.add(m).try() });
+    Ok(())
+}
+
+call_actuals* = (be :: CBackend, c: Call, ctx: Ctx, out :: Vec<Actual>)
+               Res<(), AllocError> {
+    c.args.loop((h, x) { out.add(be.arg_actual(x, ctx).try()).try() });
+    Ok(());
+}
+
+// What resolution reads off an argument, and no more. A lambda has no
+// type until a signature settles it — "a closure's type is its full
+// signature" — so a candidate is tested against its parameter count,
+// the part a call site sees without inferring anything.
+arg_actual = (be :: CBackend, x: Arg, ctx: Ctx) Res<Actual, AllocError> {
+    unknown = be.check.types.unknown().try();
+    be.spelled_lambda(x.value).match({
+        Ok(l) => Ok(Actual(
+            ty: unknown,
+            is_lambda: true,
+            arity: l.params.len,
+            named: false,
+            span: x.span
+        )),
+        None  => Ok(Actual(
+            ty: be.ty_of(x.value, ctx, unknown).try(),
+            is_lambda: false,
+            arity: 0,
+            named: false,
+            span: x.span
+        )),
+    })
+}
+
+// Identifies the declaration and qualified symbol path that own a receiver's
+// Members. Primitive receivers use their prelude declaration as the site.
+
+Site* = {
+    ty*: TyId,
+    decl*: DeclId,
+    qname*: str,
+    generic*: bool,
+
+    // Resolve the receiver's member signature without introducing member
+    // type parameters; overload selection and equality use this.
+    signature = (self: @Self, be :: CBackend, f: Function, inst: Inst)
+                Res<Vec<TyId>, AllocError> {
+        sig ::= be.alloc.Vec<TyId>();
+        be.method_sig(
+            self.ty,
+            self.decl,
+            f,
+            self.decl.module.to_usize(),
+            inst,
+            sig
+        ).try();
+        Ok(sig)
+    }
+
+    // A generic call resolves written parameter types with the member's
+    // type parameters in scope and the exact owner bound by its Inst.
+    call_signature = (self: @Self, be :: CBackend, f: Function, inst: Inst)
+                     Res<Vec<TyId>, AllocError> {
+        f.tparams.len.eq(0).match({
+            true  => self.signature(be, f, inst),
+            false => {
+                sig ::= be.alloc.Vec<TyId>();
+                owner = owner_of(
+                    be.check,
+                    self.decl.module.to_usize(),
+                    f.name.text
+                ).try();
+                be.generic_method_sig(
+                    self.ty,
+                    self.decl,
+                    f,
+                    self.decl.module.to_usize(),
+                    owner,
+                    inst,
+                    sig
+                ).try();
+                Ok(sig)
+            },
+        })
+    }
+}
+
+site_of* = (be :: CBackend, rty: TyId) Res<Res<Site>, AllocError> {
+    be.check.types.at(rty).match({
+        Named(n) => named_site(be, rty, n),
+        Prim(p)  => be.prim_site(rty, p.name),
+        _        => Ok(None),
+    })
+}
+
+named_site = (
+    be  :: CBackend,
+    rty : TyId,
+    n   : TyNamed
+) Res<Res<Site>, AllocError> {
+    qname ::= be.alloc.String().try();
+    qualify(qname, be.check.world.module_name(n.decl), n.name).try();
+    Ok(Ok(Site(
+        ty: rty,
+        decl: n.decl,
+        qname: qname.view(),
+        generic: n.args.len > 0
+    )));
+}
+
+prim_site = (be :: CBackend, rty: TyId, name: str) Res<Res<Site>, AllocError> {
+    defs ::= be.alloc.Vec<Def>();
+    be.check.world.prelude_of(name, defs).try();
+    defs.get(0).match({
+        None  => Ok(None),
+        Ok(d) => Ok(Ok(Site(
+            ty: rty,
+            decl: d.id,
+            qname: d.qname,
+            generic: false
+        ))),
+    })
+}
+
+// The qualified name of a type, for a variant symbol.
+type_qname = (be :: CBackend, ty: TyId) Res<String, AllocError> {
+    out ::= be.alloc.String().try();
+    be.check.types.at(ty).match({
+        Named(n) => qualify(out, be.check.world.module_name(n.decl), n.name),
+        _        => Ok(()),
+    }).try();
+    Ok(out)
+}
+
+// The member of `s` called `name`, when its declaration has one.
+member_at* = (be :: CBackend, s: Site, name: str, out :: Vec<Member>)
+             Res<(), AllocError> {
+    decl_at(be.tree, s.decl).match({
+        None  => Ok(()),
+        Ok(d) => struct_member(d, name, out),
+    }).try();
+    Ok(());
+}
+
+struct_member = (d: Decl, name: str, out :: Vec<Member>) Res<(), AllocError> {
+    d.kind.match({
+        Struct(st) => keep_named(st, name, out),
+        _          => Ok(()),
+    })
+}
+
+keep_named = (st: Struct, name: str, out :: Vec<Member>) Res<(), AllocError> {
+    st.members.loop((h, m) {
+        m.named(name).then(() { out.add(m).try() });
+    });
+    Ok(());
+}
+
+// a member the type declares
+
+// An ordinary method after candidate selection and generic inference have
+// settled one immutable set of facts. Backend services and the output buffer
+// remain borrowed by emission; they are not call-site state.
+MethodCallSite = {
+    dot: Dot,
+    site: Site,
+    function: Function,
+    inst: Inst,
+    sig: Vec<TyId>,
+    ctx: Ctx,
+
+    emit = (self: @Self, be :: CBackend, out :: String)
+           Res<(), AllocError> {
+        (be.inst_open(self.inst) || be.any_open(self.sig)).match({
+            true  => be.unsupported(
+                self.dot.id,
+                "a method on a receiver whose type arguments nothing settles",
+                out
+            ),
+            false => self.write(be, out),
+        })
+    }
+
+    // The receiver is argument zero; written arguments start at one and use
+    // the shared free-call packer so variadic methods have one packing rule.
+    write = (self: @Self, be :: CBackend, out :: String)
+            Res<(), AllocError> {
+        sym = be.member_symbol(
+            self.site.ty,
+            self.site,
+            self.dot.a.name.text,
+            self.sig,
+            self.inst
+        ).try();
+        args ::= be.alloc.String().try();
+        hold = be.holds(self.dot.c, 0, 1);
+        be.write_arg_at(
+            self.dot.a.base,
+            0,
+            hold,
+            self.function,
+            self.sig,
+            self.ctx,
+            args
+        ).try();
+        be.write_call_args(
+            self.dot.c,
+            1,
+            self.function,
+            self.sig,
+            self.ctx,
+            args
+        ).try();
+        out.fmt("{}({})", sym.view(), args.view())
+    }
+}
+
+// Which of seven kinds a method call is, decided once. A variant carries
+// what deciding it computed, so that value is built in the branch that
+// needs it and threaded nowhere else.
+MethodKind = Inlined
+    | PtrMember(TyId)
+    | Cap(CapabilityKind)
+    | AllocCreate
+    | FloorDoor
+    | FatSlot
+    | Ordinary
+
+// Classifies method calls in precedence order: inlined bodies, pointer
+// Primitives, capability floors, format doors, dynamic bound slots, then
+// Ordinary statically resolved members.
+method_kind = (be :: CBackend, d: Dot, s: Site, f: Function, ctx: Ctx)
+              Res<MethodKind, AllocError> {
+    name                   = d.a.name.text;
+    found: Res<MethodKind> = loop<MethodKind>((h) {
+        be.inlines(d.c, f).then(() { h.break(MethodKind.Inlined) });
+        be.is_ptr_member(s.ty, name).then(() {
+            h.break(MethodKind.PtrMember(be.want_of(d.id, ctx).try()))
+        });
+        kind = be.capability_kind(s.ty, name);
+        kind.match({
+            NotCapability => (),
+            _             => h.break(MethodKind.Cap(kind)),
+        });
+        be.alloc_raw(s.ty, name).try().match({
+            None  => (),
+            Ok(_) => h.break(MethodKind.AllocCreate),
+        });
+        be.is_floor_door(name, f).then(() { h.break(MethodKind.FloorDoor) });
+        be.is_fat_slot(s.ty, f).then(() { h.break(MethodKind.FatSlot) });
+        h.break(MethodKind.Ordinary);
+    });
+    Ok(found.match({
+        Ok(k) => k,
+        None  => MethodKind.Ordinary,
+    }));
+}
+
+is_fat_slot = (be: CBackend, rty: TyId, f: Function) bool {
+    be.is_fat(rty) && (has_body(f) == false)
+}
+
+lower_method = (
+    be   :: CBackend,
+    d    : Dot,
+    s    : Site,
+    f    : Function,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+)
+               Res<(), AllocError> {
+    be.method_kind(d, s, f, ctx).try().match({
+        Inlined      => be.inline_method(
+            d.id,
+            d.c,
+            d.a,
+            s.ty,
+            s.decl,
+            f,
+            ctx,
+            out
+        ),
+        PtrMember(w) => be.lower_ptr_member(d.id, d.c, d.a, s.ty, ctx, w, out),
+        Cap(kind)    => be.lower_capability(
+            CapabilityCall(
+                kind: kind,
+                id: d.id,
+                call: d.c,
+                access: d.a,
+                receiver_ty: s.ty,
+                module: s.decl.module.to_usize(),
+                function: f,
+                ctx: ctx,
+                want: want,
+            ),
+            out
+        ),
+        AllocCreate  => be.lower_create(
+            d.id,
+            d.c,
+            d.a,
+            s.ty,
+            ctx,
+            out
+        ).try().match({
+            true  => Ok(()),
+            false => be.unsupported(d.id, "an allocator create intrinsic", out),
+        }),
+        FloorDoor    => be.lower_floor_door(
+            d.id,
+            d.c,
+            d.a,
+            s.ty,
+            s,
+            f,
+            ctx,
+            out
+        ),
+        FatSlot      => be.lower_fat_call(d.id, d.c, d.a, s.ty, s, f, ctx, out),
+        Ordinary     => has_body(f).match({
+            false => be.unsupported(
+                d.id,
+                "a call to a member with no body",
+                out
+            ),
+            true  => be.settle_method_call(d, s, f, ctx).try().emit(be, out),
+        }),
+    })
+}
+
+// Instantiation and signature are born together once an ordinary method
+// candidate has won. Intrinsics settle through their specialised lowerers.
+settle_method_call = (
+    be  :: CBackend,
+    d   : Dot,
+    s   : Site,
+    f   : Function,
+    ctx : Ctx
+) Res<MethodCallSite, AllocError> {
+    inst = be.method_inst(d.id, d.c, s.ty, s.decl, f, ctx).try();
+    sig  = s.call_signature(be, f, inst).try();
+    Ok(MethodCallSite(
+        dot: d,
+        site: s,
+        function: f,
+        inst: inst,
+        sig: sig,
+        ctx: ctx
+    ))
+}
+
+// The symbol and the queue entry are written together. Seven lowerings
+// reach a member by name, and an entry built differently from the symbol
+// written beside it is a call to a function nothing defines.
+member_symbol* = (
+    be   :: CBackend,
+    ty   : TyId,
+    s    : Site,
+    name : str,
+    sig  : Vec<TyId>,
+    inst : Inst
+) Res<String, AllocError> {
+    qname ::= be.alloc.String().try();
+    qualify(qname, s.qname, name).try();
+    sym ::= be.alloc.String().try();
+    sym_fn(sym, be.check.types, be.check.world, qname.view(), sig, inst).try();
+    be.need_method(
+        MethodRef(
+            self_ty: ty,
+            decl: s.decl,
+            name: name,
+            sig: sig,
+            qname: qname.view()
+        ),
+        inst,
+        sym.view()
+    ).try();
+    Ok(sym);
+}
+
+// The declared parameter types of a member function, resolved in the
+// module that declares it with `@Self` bound to the receiver, so
+// `(self: @Self, i: usize)` reads as a function of the receiver rather
+// than a name nothing binds. with the type's parameters bound, then
+// substituted: `Vec<T>.add` declares `(self :: @Self, v: T)` and `T`
+// Becomes the receiver's own argument in that position.
+method_sig* = (
+    be   :: CBackend,
+    rty  : TyId,
+    decl : DeclId,
+    f    : Function,
+    mi   : usize,
+    inst : Inst,
+    sig  :: Vec<TyId>
+) Res<(), AllocError> {
+    sctx = be.check.self_ctx(mi, rty).try();
+    mark = be.enter_struct_tparams(decl).try();
+    f.params.loop(
+        (h, p) { sig.add(be.method_param(p, sctx, inst).try()).try() }
+    );
+    be.leave_tparams(mark).try();
+    Ok(());
+}
+
+// `method_sig` deliberately does not introduce member type parameters: many
+// existing callers describe non-generic and erased bound slots. A call or a
+// queued generic body supplies the exact owner its Inst binds and uses this
+// narrower form.
+generic_method_sig* = (
+    be    :: CBackend,
+    rty   : TyId,
+    decl  : DeclId,
+    f     : Function,
+    mi    : usize,
+    owner : str,
+    inst  : Inst,
+    sig   :: Vec<TyId>
+) Res<(), AllocError> {
+    sctx = be.check.self_ctx(mi, rty).try();
+    mark = be.enter_struct_tparams(decl).try();
+    be.enter_tparams(f.tparams, owner).try();
+    f.params.loop(
+        (h, p) { sig.add(be.method_param(p, sctx, inst).try()).try() }
+    );
+    be.leave_tparams(mark).try();
+    Ok(())
+}
+
+method_param = (
+    be   :: CBackend,
+    p    : Param,
+    sctx : Ctx,
+    inst : Inst
+) Res<TyId, AllocError> {
+    declared = be.check.param_type(p, sctx).try();
+    be.sub_with(declared, inst)
+}
+
+// Lowers compiler-generated member calls through the same static resolution
+// Path as source calls. Equality uses this path to dispatch through `Eq`.
+
+lower_eq_call* = (
+    be  :: CBackend,
+    lhs : ExprId,
+    rhs : ExprId,
+    rty : TyId,
+    ctx : Ctx,
+    out :: String
+) Res<bool, AllocError> {
+    site_of(be, rty).try().match({
+        None  => Ok(false),
+        Ok(s) => be.eq_fn(s).try().match({
+            None  => Ok(false),
+            Ok(f) => be.write_eq(lhs, rhs, s, f, ctx, out),
+        }),
+    })
+}
+
+// The type's own `eq` first, then what an impl supplies — the order
+// `sema_supply.zen` states, and for its reason.
+eq_fn = (be :: CBackend, s: Site) Res<Res<Function>, AllocError> {
+    found ::= be.alloc.Vec<Member>();
+    member_at(be, s, "eq", found).try();
+    bodied_fn(found).match({
+        Ok(f) => Ok(Ok(f)),
+        None  => be.impl_member(s.decl, "eq"),
+    })
+}
+
+write_eq = (
+    be  :: CBackend,
+    lhs : ExprId,
+    rhs : ExprId,
+    s   : Site,
+    f   : Function,
+    ctx : Ctx,
+    out :: String
+) Res<bool, AllocError> {
+    inst = be.recv_inst(s.ty).try();
+    sig  = s.signature(be, f, inst).try();
+    (be.inst_open(inst) || be.any_open(sig)).match({
+        true  => Ok(false),
+        false => be.emit_eq(lhs, rhs, s, f, sig, inst, ctx, out),
+    })
+}
+
+emit_eq = (
+    be   :: CBackend,
+    lhs  : ExprId,
+    rhs  : ExprId,
+    s    : Site,
+    f    : Function,
+    sig  : Vec<TyId>,
+    inst : Inst,
+    ctx  : Ctx,
+    out  :: String
+) Res<bool, AllocError> {
+    sym = be.member_symbol(s.ty, s, "eq", sig, inst).try();
+    l ::= be.alloc.String().try();
+    be.write_arg_at(lhs, 0, be.has_call(rhs), f, sig, ctx, l).try();
+    r ::= be.alloc.String().try();
+    be.write_arg(rhs, 1, f, sig, ctx, r).try();
+    out.fmt("{}({}, {})", sym.view(), l.view(), r.view()).try();
+    Ok(true);
+}
+
+// ufcs
+// "A free function whose first param is the type is callable as a
+// method." The receiver becomes argument zero and there is no second
+// mechanism — which is why `lower_plain_call` takes a receiver at all.
+
+// `alloc.create<T>()` is asked about first, and only here at the end:
+// declared on `Alloc` with no body and supplied by no impl, so by the
+// time this runs both the receiver's declaration and its impls have
+// been searched and missed — which lets a type declaring a `create` of
+// its own still win.
+lower_ufcs = (
+    be   :: CBackend,
+    d    : Dot,
+    rty  : TyId,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+)
+             Res<(), AllocError> {
+    be.lower_create(d.id, d.c, d.a, rty, ctx, out).try().match({
+        true  => Ok(()),
+        false => be.ufcs_or_impl(d, rty, ctx, want, out),
+    })
+}
+
+ufcs_or_impl = (
+    be   :: CBackend,
+    d    : Dot,
+    rty  : TyId,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+)
+               Res<(), AllocError> {
+    be.reaches(rty, d.a.name.text, d.c.args.len + 1).try().match({
+        true  => be.impl_alias(d, rty, ctx, want, out),
+        false => be.lower_plain_call(
+            d.id,
+            d.c,
+            d.a.name.text,
+            Ok(d.a.base),
+            ctx,
+            want,
+            out
+        ),
+    })
+}
+
+// An impl member that is another function — `widen_u32 = to_u32` in
+// std.core.num — lowers as the very call the alias names, so the two
+// spellings cannot disagree. Anything else meets the refusal.
+impl_alias = (
+    be   :: CBackend,
+    d    : Dot,
+    rty  : TyId,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+)
+             Res<(), AllocError> {
+    site_of(be, rty).try().match({
+        None  => be.unsupported(d.id, "a call to an impl-supplied member", out),
+        Ok(s) => be.alias_of(s.decl, d.a.name.text).try().match({
+            Ok(t) => be.lower_plain_call(
+                d.id,
+                d.c,
+                t,
+                Ok(d.a.base),
+                ctx,
+                want,
+                out
+            ),
+            None  => be.unsupported(
+                d.id,
+                "a call to an impl-supplied member",
+                out
+            ),
+        }),
+    });
+}
+
+// At this call's arity, and not the name alone: `Box` declares
+// `grow(self)` while a free `grow(b, by)` travels with the type, and
+// matching on the name refused `b.grow(10)` as unimplemented.
+reaches = (be :: CBackend, rty: TyId, name: str, arity: usize)
+          Res<bool, AllocError> {
+    found ::= be.alloc.Vec<Found>();
+    be.check.members_of(rty, name, found).try();
+    Ok(be.any_at_arity(found, arity));
+}
+
+any_at_arity = (be: CBackend, found: Vec<Found>, arity: usize) bool {
+    Range(0, found.len).find((i) {
+        found.get(i).match({
+            Ok(f) => be.fn_takes_args(f.ty, arity),
+            None  => false,
+        })
+    }).match({ Ok(_) => true, None => false })
+}
+
+// A `Found` carries a type and not a declaration, so the arity is the
+// resolved signature's, and `...` is a minimum here for the reason
+// `gen_c_impl.zen`'s `fn_takes` gives.
+fn_takes_args = (be: CBackend, ty: TyId, arity: usize) bool {
+    be.check.types.at(ty).match({
+        Fn(f) => (f.params.len == arity) || be.variadic_takes(f, arity),
+        _     => false,
+    })
+}
+
+variadic_takes = (be: CBackend, f: TyFn, arity: usize) bool {
+    (f.params.len > 0)
+        && be.check.tail_swallows(ty_at(f.params, f.params.len - 1))
+        && ((arity + 1) >= f.params.len)
+}

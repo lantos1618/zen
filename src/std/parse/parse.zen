@@ -1,0 +1,7 @@
+// Public parser surface. Parser owns the AST and collected diagnostics.
+Diag*, Note* = std.parse.parse_diag
+
+Parser* = std.parse.parser
+
+module* = std.parse.parse_decl
+expr* = std.parse.parse_expr

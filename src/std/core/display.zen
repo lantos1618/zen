@@ -1,0 +1,18 @@
+// Display values write into a caller-owned Sink. The Alloc overload derives an
+// owned String from the same representation.
+
+Alloc = std.mem
+String = std.text
+Sink, WriteError = std.core.io
+
+Display* = {
+    dump* ::= (self: @Self, out :: Sink) Res<(), WriteError>
+
+    toString* ::= (self: @Self, out :: Sink) Res<(), WriteError>
+
+    toString* = (self: @Self, a: Alloc) Res<String, WriteError> {
+        sb ::= a.String().try();
+        self.toString(sb).try();
+        Ok(sb);
+    }
+}

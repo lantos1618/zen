@@ -1,0 +1,332 @@
+Decl, Struct, Enum, TParam, Span = std.ast
+Alloc, AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+Range = std.core
+TyId, TyNamed, TyRes, TyFn, TyArray, ResForm = sema.sema_ty
+decl_at = sema.sema_def
+Checker = sema.sema_check
+
+Inst* = {
+    vars :: Vec<TyId>,
+    args :: Vec<TyId>,
+
+    // Zero is the empty substitution every non-generic declaration is
+    // lowered under.
+    len* = (self: @Self) usize { self.vars.len }
+
+    // Parameters and their substitutions remain in declaration order.
+    var_at* = (self: @Self, i: usize) Res<TyId> { self.vars.get(i) }
+
+    arg_at* = (self: @Self, i: usize) Res<TyId> { self.args.get(i) }
+
+    // First binding wins: `<T>(a: T, b: T)` against `(i32, i32)` binds `T`
+    // once, and a disagreeing second argument is a coercion mismatch.
+    bind* = (self :: @Self, v: TyId, arg: TyId) Res<(), AllocError> {
+        self.bound(v).match({
+            true  => Ok(()),
+            false => self.push(v, arg),
+        })
+    }
+
+    push = (self :: @Self, v: TyId, arg: TyId) Res<(), AllocError> {
+        self.vars.add(v).try();
+        self.args.add(arg).try();
+        Ok(());
+    }
+
+    bound* = (self: @Self, v: TyId) bool {
+        self.lookup(v).match({ Ok(_) => true, None => false })
+    }
+
+    // `None` means unbound; a binding to poison is still a binding.
+    lookup* = (self: @Self, v: TyId) Res<TyId> {
+        n = self.vars.len;
+        Range(0, n).find((k) {
+            self.vars.get(k).match({ Ok(x) => x.eq(v), None => false })
+        }).match({
+            None  => None,
+            Ok(k) => self.args.get(k),
+        })
+    }
+
+    // What `v` became, or `v` itself when unbound.
+    arg_for* = (self: @Self, v: TyId) TyId { self.lookup(v).value_or(v) }
+}
+
+InstEdge* = {
+    from_owner*: str,
+    to_owner*: str,
+    to_name*: str,
+    // the callee's own `Ty.Var`s and what this call gave them, both in
+    // declaration order, so the pair is a substitution
+    to_tvars*: Vec<TyId>,
+    args*: Vec<TyId>,
+    span*: Span,
+}
+
+// An empty instantiation allocates nothing, so construction cannot fail.
+Inst* = (a: Alloc) Inst {
+    Inst(vars: a.Vec<TyId>(), args: a.Vec<TyId>())
+}
+
+subst* = (c :: Checker, ty: TyId, inst: Inst) Res<TyId, AllocError> {
+    (inst.len() == 0).match({
+        true  => Ok(ty),
+        false => c.subst_kind(ty, inst),
+    })
+}
+
+subst_kind = (c :: Checker, ty: TyId, inst: Inst) Res<TyId, AllocError> {
+    c.types.at(ty).match({
+        Var(_)   => Ok(inst.arg_for(ty)),
+        Named(n) => c.subst_named(n, ty, inst),
+        Res(r)   => c.subst_res(r, ty, inst),
+        Fn(f)    => c.subst_fn(f, ty, inst),
+        Union(u) => c.subst_union(u.members, ty, inst),
+        Array(a) => c.subst_array(a, ty, inst),
+        _        => Ok(ty),
+    })
+}
+
+subst_array = (c :: Checker, a: TyArray, ty: TyId, inst: Inst)
+              Res<TyId, AllocError> {
+    elem = c.subst(a.elem, inst).try();
+    elem.eq(a.elem).match({
+        true  => Ok(ty),
+        false => c.types.array(elem, a.count),
+    })
+}
+
+subst_named = (c :: Checker, n: TyNamed, ty: TyId, inst: Inst)
+              Res<TyId, AllocError> {
+    (n.args.len == 0).match({
+        true  => Ok(ty),
+        false => c.rebuild_named(n, inst),
+    })
+}
+
+rebuild_named = (c :: Checker, n: TyNamed, inst: Inst)
+                Res<TyId, AllocError> {
+    args ::= c.alloc.Vec<TyId>();
+    c.subst_list(n.args, inst, args).try();
+    qname = c.owner_of(n.decl.module.to_usize(), n.name).try();
+    c.types.named(n.decl, qname, n.name, args)
+}
+
+subst_res = (c :: Checker, r: TyRes, ty: TyId, inst: Inst)
+            Res<TyId, AllocError> {
+    value = c.subst(r.value, inst).try();
+    error = c.subst(r.error, inst).try();
+    (value.eq(r.value) && error.eq(r.error)).match({
+        true  => Ok(ty),
+        false => c.rebuild_res(value, error, r.form),
+    })
+}
+
+rebuild_res = (c :: Checker, value: TyId, error: TyId, form: ResForm)
+              Res<TyId, AllocError> {
+    form.match({
+        Absence => c.types.res_absence(value),
+        Failure => c.types.res_failure(value, error),
+        Open    => c.types.res_open(value),
+    })
+}
+
+subst_fn = (c :: Checker, f: TyFn, ty: TyId, inst: Inst)
+           Res<TyId, AllocError> {
+    params ::= c.alloc.Vec<TyId>();
+    c.subst_list(f.params, inst, params).try();
+    ret = c.subst(f.ret, inst).try();
+    c.types.fn_ty(params, ret)
+}
+
+// `union_ty` canonicalises, so two parameters substituted to one type
+// collapse as they would when written by hand.
+subst_union = (c :: Checker, members: Vec<TyId>, ty: TyId, inst: Inst)
+              Res<TyId, AllocError> {
+    parts ::= c.alloc.Vec<TyId>();
+    c.subst_list(members, inst, parts).try();
+    c.types.union_ty(parts)
+}
+
+subst_list* = (c :: Checker, src: Vec<TyId>, inst: Inst, out :: Vec<TyId>)
+              Res<(), AllocError> {
+    src.loop((h, t) { out.add(c.subst(t, inst).try()).try() });
+    Ok(());
+}
+
+has_var* = (c: Checker, ty: TyId) bool {
+    c.types.at(ty).match({
+        Var(_)   => true,
+        Named(n) => c.any_has_var(n.args),
+        Res(r)   => c.has_var(r.value) || c.has_var(r.error),
+        Fn(f)    => c.any_has_var(f.params) || c.has_var(f.ret),
+        Union(u) => c.any_has_var(u.members),
+        Array(a) => c.has_var(a.elem),
+        _        => false,
+    })
+}
+
+any_has_var = (c: Checker, list: Vec<TyId>) bool {
+    list.find((t) { c.has_var(t) }).match({ Ok(_) => true, None => false })
+}
+
+tparam_vars* = (
+    c       :: Checker,
+    tparams : Vec<TParam>,
+    owner   : str,
+    out     :: Vec<TyId>
+) Res<(), AllocError> {
+    tparams.loop((h, tp) {
+        out.add(c.types.var(tp.name.text, owner).try()).try();
+    });
+    Ok(());
+}
+
+// A struct's or enum's type parameters as `Ty.Var`s, in declaration order.
+decl_tparam_vars* = (c :: Checker, d: Decl, owner: str, out :: Vec<TyId>)
+                    Res<(), AllocError> {
+    d.kind.match({
+        Struct(s) => c.tparam_vars(s.tparams, owner, out),
+        Enum(e)   => c.tparam_vars(e.tparams, owner, out),
+        _         => Ok(()),
+    })
+}
+
+push_tparams* = (c :: Checker, tparams: Vec<TParam>, owner: str)
+                Res<(), AllocError> {
+    tparams.loop((h, tp) {
+        text = tp.name.text;
+        c.push_tvar(text, c.types.var(text, owner).try()).try();
+    });
+    Ok(());
+}
+
+owner_of* = (c :: Checker, mi: usize, name: str) Res<str, AllocError> {
+    out ::= c.alloc.String("{}.{name}", c.module_name(mi)).try();
+    Ok(out.view());
+}
+
+module_name* = (c: Checker, mi: usize) str {
+    c.world.table_at(mi).match({ Ok(t) => t.name, None => "" })
+}
+
+inst_of_named* = (c :: Checker, n: TyNamed) Res<Inst, AllocError> {
+    inst ::= c.alloc.Inst();
+    (n.args.len > 0).match({
+        false => Ok(()),
+        true  => c.fill_from_decl(n, inst),
+    }).try();
+    Ok(inst);
+}
+
+fill_from_decl = (c :: Checker, n: TyNamed, inst :: Inst)
+                 Res<(), AllocError> {
+    c.tree.decl_at(n.decl).match({
+        None  => Ok(()),
+        Ok(d) => {
+            owner = c.owner_of(n.decl.module.to_usize(), n.name).try();
+            vars ::= c.alloc.Vec<TyId>();
+            c.decl_tparam_vars(d, owner, vars).try();
+            c.zip(vars, n.args, inst)
+        },
+    })
+}
+
+// Bind each parameter to the argument in its position; a shorter
+// argument list binds what it can and leaves the rest unbound.
+zip* = (c :: Checker, vars: Vec<TyId>, args: Vec<TyId>, inst :: Inst)
+       Res<(), AllocError> {
+    vars.loop((h, i, v) {
+        args.get(i).match({
+            None  => Ok(()),
+            Ok(t) => inst.bind(v, t),
+        }).try();
+    });
+    Ok(());
+}
+
+unify* = (c :: Checker, param: TyId, actual: TyId, inst :: Inst)
+         Res<(), AllocError> {
+    c.types.at(param).match({
+        Var(_)   => c.bind_actual(param, actual, inst),
+        Named(n) => c.unify_named(n, actual, inst),
+        Res(r)   => c.unify_res(r, actual, inst),
+        Fn(f)    => c.unify_fn(f, actual, inst),
+        Array(a) => c.unify_array(a, actual, inst),
+        _        => Ok(()),
+    })
+}
+
+unify_array = (c :: Checker, a: TyArray, actual: TyId, inst :: Inst)
+              Res<(), AllocError> {
+    c.types.at(actual).match({
+        Array(b) => (a.count == b.count).match({
+            true  => c.unify(a.elem, b.elem, inst),
+            false => Ok(()),
+        }),
+        _        => Ok(()),
+    })
+}
+
+bind_actual = (c :: Checker, param: TyId, actual: TyId, inst :: Inst)
+              Res<(), AllocError> {
+    c.usable_actual(actual).match({
+        false => Ok(()),
+        true  => inst.bind(param, actual),
+    })
+}
+
+usable_actual = (c: Checker, actual: TyId) bool {
+    (c.is_unknown(actual) == false) && (c.is_infer(actual) == false)
+}
+
+// Only applications of the same declaration unify their arguments.
+unify_named = (c :: Checker, n: TyNamed, actual: TyId, inst :: Inst)
+              Res<(), AllocError> {
+    c.types.at(actual).match({
+        Named(m) => n.decl.eq(m.decl).match({
+            false => Ok(()),
+            true  => c.unify_list(n.args, m.args, inst),
+        }),
+        _        => Ok(()),
+    })
+}
+
+unify_res = (c :: Checker, r: TyRes, actual: TyId, inst :: Inst)
+            Res<(), AllocError> {
+    c.types.at(actual).match({
+        Res(s) => {
+            c.unify(r.value, s.value, inst).try();
+            c.unify(r.error, s.error, inst)
+        },
+        _      => Ok(()),
+    })
+}
+
+unify_fn = (c :: Checker, f: TyFn, actual: TyId, inst :: Inst)
+           Res<(), AllocError> {
+    c.types.at(actual).match({
+        Fn(g) => {
+            c.unify_list(f.params, g.params, inst).try();
+            c.unify(f.ret, g.ret, inst)
+        },
+        _     => Ok(()),
+    })
+}
+
+unify_list* = (
+    c       :: Checker,
+    params  : Vec<TyId>,
+    actuals : Vec<TyId>,
+    inst    :: Inst
+) Res<(), AllocError> {
+    params.loop((h, i, p) {
+        actuals.get(i).match({
+            None  => Ok(()),
+            Ok(a) => c.unify(p, a, inst),
+        }).try();
+    });
+    Ok(());
+}

@@ -1,0 +1,18 @@
+find: Ok(2)
+rfind: Ok(4)
+after_last: leaf leaf 0
+miss: None
+substring: Ok(1)
+substring edges: 0 true false
+contains: true false
+starts: true false
+ends: true false
+trim: len=3 a=true b=true
+trim_start: len=5
+trim_end: len=5
+blank: None
+eq_ic: true false
+pieces: 3
+p0/p1/p2: true true true
+tail_pieces: 1
+tail_p0_is_end: true

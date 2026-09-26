@@ -1,0 +1,721 @@
+// Builds a bound used as a value: receiver pointer plus one function
+// pointer per method. Ordinary impl calls remain static; this record is
+// built only when the value's static type is the bound.
+// Generic slots erase pointer elements to bytes and carry element size. a
+// Typed thunk converts each slot call because casting function pointers is
+// Undefined C behavior.
+
+ExprId, Decl, Struct, Member = std.ast
+Function, Param, TParam = std.ast
+AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+Range = std.core
+TyId, TyNamed = sema.sema_ty
+decl_at = sema.sema_def
+Ctx = sema.sema_check
+Inst, has_var = sema.sema_inst
+self_ctx = sema.sema_member
+param_type = sema.sema_denote
+sym_member, sym_fn, sym_gen, qualify = gen.gen_name
+USR, GEN = gen.gen_name
+CBackend, MethodRef = gen.gen_c.gen_c_state
+sub_with, intern_var, recv_inst = gen.gen_c.gen_c_mono
+enter_tparams, leave_tparams, enter_struct_tparams = gen.gen_c.gen_c_mono
+ctype, declarator, is_unit, request_type, declared_ret = gen.gen_c.gen_c_type
+is_ptr_named = gen.gen_c.gen_c_type
+ty_of = gen.gen_c.gen_c_expr
+init_temp = gen.gen_c.gen_c_flow
+Site, site_of, member_at = gen.gen_c.gen_c_member
+impl_member, bodied_fn = gen.gen_c.gen_c_impl
+write_cast = gen.gen_c.gen_c_bound
+
+// which structs these are
+
+// One question about shape and nothing else: a struct that declares at
+// least one function member and no storage. A storage field has no
+// function pointer to carry, so a struct with one is a concrete type
+// even when an impl supplies fields for it.
+is_fat* = (be: CBackend, ty: TyId) bool {
+    be.fat_decl(ty).match({ Ok(_) => true, None => false })
+}
+
+// The declaration behind a fat type, when it is one.
+fat_decl* = (be: CBackend, ty: TyId) Res<Struct> {
+    be.types().at(ty).match({
+        Named(n) => be.fat_named(n),
+        _        => None,
+    })
+}
+
+fat_named = (be: CBackend, n: TyNamed) Res<Struct> {
+    decl_at(be.tree, n.decl).match({
+        None  => None,
+        Ok(d) => fat_struct(d),
+    })
+}
+
+fat_struct = (d: Decl) Res<Struct> {
+    d.kind.match({
+        Struct(s) => behaviour_only(s),
+        _         => None,
+    })
+}
+
+behaviour_only = (s: Struct) Res<Struct> {
+    ((behaviour_count(s) > 0) && (storage_count(s) == 0)).match({
+        true  => Ok(s),
+        false => None,
+    })
+}
+
+behaviour_count = (s: Struct) usize {
+    n ::= 0;
+    s.members.loop((h, m) { is_behaviour(m).then(() { n = n + 1; }) });
+    n
+}
+
+storage_count = (s: Struct) usize {
+    n ::= 0;
+    s.members.loop((h, m) { is_storage(m).then(() { n = n + 1; }) });
+    n
+}
+
+is_behaviour = (m: Member) bool {
+    m.kind.match({ Function(_) => true, _ => false })
+}
+
+is_storage = (m: Member) bool {
+    m.kind.match({ Field(_) => true, _ => false })
+}
+
+// the slots
+// One slot per declared member, in declaration order: determinism, and
+// two programs' records compiled to the same shape.
+
+Slot* = {
+    name*: str,
+    f*: Function,
+    sym*: String,         // the C member name this slot answers to
+    params*: Vec<TyId>,   // erased, the receiver excluded
+    ret*: TyId,           // erased
+    elems*: usize,        // type parameters the erasure dropped
+}
+
+slots_of* = (be :: CBackend, ty: TyId, out :: Vec<Slot>)
+            Res<(), AllocError> {
+    be.fat_decl(ty).match({
+        None  => Ok(()),
+        Ok(s) => be.collect_slots(ty, s, out),
+    })
+}
+
+collect_slots = (be :: CBackend, ty: TyId, s: Struct, out :: Vec<Slot>)
+                Res<(), AllocError> {
+    s.members.loop((h, m) { be.collect_slot(ty, m, out).try() });
+    Ok(());
+}
+
+collect_slot = (be :: CBackend, ty: TyId, m: Member, out :: Vec<Slot>)
+               Res<(), AllocError> {
+    m.kind.match({
+        Function(f) => be.add_slot(ty, f, out),
+        _           => Ok(()),
+    })
+}
+
+add_slot = (be :: CBackend, ty: TyId, f: Function, out :: Vec<Slot>)
+           Res<(), AllocError> {
+    site_of(be, ty).try().match({
+        None  => Ok(()),
+        Ok(s) => be.add_slot_at(ty, s, f, out),
+    })
+}
+
+// A member's own type parameters are what erasure erases, so they are
+// resolved to the byte type here rather than left open: `Ptr<T>` in the
+// declaration is `Ptr<u8>` in the slot.
+add_slot_at = (
+    be  :: CBackend,
+    ty  : TyId,
+    s   : Site,
+    f   : Function,
+    out :: Vec<Slot>
+) Res<(), AllocError> {
+    owner ::= be.alloc.String().try();
+    qualify(owner, s.qname, f.name.text).try();
+    sctx = be.check.self_ctx(s.decl.module.to_usize(), ty).try();
+    mark = be.enter_struct_tparams(s.decl).try();
+    be.enter_tparams(f.tparams, owner.view()).try();
+    erase ::= be.alloc.Inst();
+    be.erase_tparams(f, owner.view(), erase).try();
+    carry_inst(be.recv_inst(ty).try(), erase).try();
+    params ::= be.alloc.Vec<TyId>();
+    be.erased_params(f, sctx, erase, params).try();
+    ret = be.erased_ret(f, sctx, erase).try();
+    be.leave_tparams(mark).try();
+    sym = be.slot_sym(f, out).try();
+    out.add(Slot(
+        name: f.name.text,
+        f: f,
+        sym: sym,
+        params: params,
+        ret: ret,
+        elems: f.tparams.len
+    )).try();
+    Ok(());
+}
+
+// The bound's own arguments, carried into the same substitution the
+// erasure uses: a `Bound<i32>`'s members are read at `i32` for the same
+// reason a `Vec<i32>`'s are.
+carry_inst = (from: Inst, out :: Inst) Res<(), AllocError> {
+    Range(0, from.len()).loop((h, i) { carry_one(from, i, out).try() });
+    Ok(());
+}
+
+carry_one = (from: Inst, i: usize, out :: Inst) Res<(), AllocError> {
+    from.var_at(i).match({
+        None  => Ok(()),
+        Ok(v) => carry_bound(from, i, v, out),
+    })
+}
+
+carry_bound = (from: Inst, i: usize, v: TyId, out :: Inst)
+              Res<(), AllocError> {
+    from.arg_at(i).match({
+        None  => Ok(()),
+        Ok(t) => out.bind(v, t),
+    })
+}
+
+erase_tparams = (be :: CBackend, f: Function, owner: str, out :: Inst)
+                Res<(), AllocError> {
+    byte = be.check.types.prim("u8").try();
+    f.tparams.loop((h, tp) { be.erase_one(tp, owner, byte, out).try() });
+    Ok(());
+}
+
+erase_one = (
+    be    :: CBackend,
+    tp    : TParam,
+    owner : str,
+    byte  : TyId,
+    out   :: Inst
+) Res<(), AllocError> {
+    out.bind(intern_var(be.check, tp.name.text, owner).try(), byte)
+}
+
+erased_params = (
+    be    :: CBackend,
+    f     : Function,
+    sctx  : Ctx,
+    erase : Inst,
+    out   :: Vec<TyId>
+) Res<(), AllocError> {
+    f.params.loop((h, i, p) {
+        be.erased_param(p, i, sctx, erase, out).try();
+    });
+    Ok(());
+}
+
+// The receiver is `void *` in the record, so it takes no slot
+// parameter of its own.
+erased_param = (
+    be    :: CBackend,
+    p     : Param,
+    i     : usize,
+    sctx  : Ctx,
+    erase : Inst,
+    out   :: Vec<TyId>
+) Res<(), AllocError> {
+    (i == 0).match({
+        true  => Ok(()),
+        false => be.add_erased(p, sctx, erase, out),
+    })
+}
+
+add_erased = (
+    be    :: CBackend,
+    p     : Param,
+    sctx  : Ctx,
+    erase : Inst,
+    out   :: Vec<TyId>
+) Res<(), AllocError> {
+    declared = be.check.param_type(p, sctx).try();
+    out.add(be.sub_with(declared, erase).try())
+}
+
+erased_ret = (be :: CBackend, f: Function, sctx: Ctx, erase: Inst)
+             Res<TyId, AllocError> {
+    declared = be.declared_ret(f, sctx).try();
+    be.sub_with(declared, erase)
+}
+
+// A bound may declare two members of one name — resolution is on
+// arity — so the second one takes a numbered C name. Counted over the
+// slots already collected, which is declaration order.
+slot_sym = (be :: CBackend, f: Function, out: Vec<Slot>)
+           Res<String, AllocError> {
+    sym ::= be.alloc.String().try();
+    sym_member(sym, f.name.text).try();
+    n = same_named(out, f.name.text);
+    (n > 0).match({
+        false => Ok(()),
+        true  => number_sym(sym, n + 1),
+    }).try();
+    Ok(sym);
+}
+
+number_sym = (sym :: String, n: usize) Res<(), AllocError> {
+    sym.add("_").try();
+    sym.write_usize(n).try();
+    Ok(());
+}
+
+same_named = (out: Vec<Slot>, name: str) usize {
+    n ::= 0;
+    out.loop((h, s) { s.name.eq(name).then(() { n = n + 1; }) });
+    n
+}
+
+// the record, as C
+
+// `<ret> (*<slot>)(void *, <the member's own parameters>, size_t ..)`.
+// The trailing `size_t`s are the element sizes the erasure dropped, one
+// per type parameter, and the receiver is `void *` because a record
+// serves every impl at once.
+slot_field* = (be :: CBackend, s: Slot, out :: String)
+              Res<(), AllocError> {
+    be.ctype(s.ret, out).try();
+    out.fmt(" (*{})(void *", s.sym.view()).try();
+    s.params.loop((h, p) { be.slot_param(p, out).try() });
+    Range(0, s.elems).loop((h, i) { out.add(", size_t").try() });
+    out.add(");").try();
+    Ok(());
+}
+
+slot_param = (be :: CBackend, p: TyId, out :: String) Res<(), AllocError> {
+    out.add(", ").try();
+    be.ctype(p, out).try();
+    Ok(());
+}
+
+// Every type a slot spells needs a definition, but none constrains
+// definition order: a slot is a function pointer, not by-value
+// containment. Feeding these to the dependency walk would make `Eq`
+// depend on `Eq` and report a by-value cycle that is not there.
+request_slots* = (be :: CBackend, ty: TyId) Res<(), AllocError> {
+    be.is_fat(ty).match({
+        false => Ok(()),
+        true  => be.request_slot_types(ty),
+    })
+}
+
+request_slot_types = (be :: CBackend, ty: TyId) Res<(), AllocError> {
+    slots ::= be.alloc.Vec<Slot>();
+    be.slots_of(ty, slots).try();
+    slots.loop((h, s) { be.request_slot(s).try() });
+    Ok(());
+}
+
+request_slot = (be :: CBackend, s: Slot) Res<(), AllocError> {
+    s.params.loop((h, p) { be.request_if_real(p).try() });
+    be.request_if_real(s.ret).try();
+    Ok(());
+}
+
+request_if_real = (be :: CBackend, t: TyId) Res<(), AllocError> {
+    (be.is_unit(t) || has_var(be.check, t)).match({
+        true  => Ok(()),
+        false => be.request_named_only(t),
+    })
+}
+
+request_named_only = (be :: CBackend, t: TyId) Res<(), AllocError> {
+    be.types().at(t).match({
+        Named(_) => be.request_type(t),
+        Res(_)   => be.request_type(t),
+        _        => Ok(()),
+    })
+}
+
+// building one
+
+// `((Alloc){ .zg_self = (void *)&a, .zu_mraw = zg_v.., .. })` — the
+// header's record, built on the stack. The receiver must outlive it,
+// which is the ordinary rule for any pointer stored in anything.
+fat_value* = (
+    be   :: CBackend,
+    addr : str,
+    cty  : TyId,
+    tty  : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    be.request_type(tty).try();
+    slots ::= be.alloc.Vec<Slot>();
+    be.slots_of(tty, slots).try();
+    rec ::= be.alloc.String().try();
+    be.ctype(tty, rec).try();
+    out.fmt("(({}){ .zg_self = (void *){addr}", rec.view()).try();
+    slots.loop((h, s) { be.slot_init(s, cty, out).try() });
+    out.add(" })").try();
+    Ok(());
+}
+
+// A slot no impl answers is NULL rather than a symbol nothing defines.
+// `Alloc.create` is such a member for an arena: declared as a hook, not
+// supplied, and never called — a null there is honest where a dangling
+// name would not link.
+slot_init = (be :: CBackend, s: Slot, cty: TyId, out :: String)
+            Res<(), AllocError> {
+    out.fmt(", .{} = ", s.sym.view()).try();
+    be.thunk_for(s, cty).try().match({
+        None     => out.add("NULL"),
+        Ok(name) => out.add(name.view()),
+    })
+}
+
+// the thunk
+
+// The shim the header names, or nothing when the impl supplies no
+// answer.
+thunk_for = (be :: CBackend, s: Slot, cty: TyId)
+            Res<Res<String>, AllocError> {
+    site_of(be, cty).try().match({
+        None   => Ok(None),
+        Ok(cs) => be.thunk_at_site(s, cty, cs),
+    })
+}
+
+// The type's own member first, then what an impl supplies — the order
+// `sema_supply.zen` states, and for its reason.
+thunk_at_site = (be :: CBackend, s: Slot, cty: TyId, cs: Site)
+                Res<Res<String>, AllocError> {
+    found ::= be.alloc.Vec<Member>();
+    member_at(be, cs, s.name, found).try();
+    bodied_fn(found).match({
+        Ok(f) => write_thunk(be, s, cty, cs, f),
+        None  => be.supplied_thunk(s, cty, cs),
+    })
+}
+
+supplied_thunk = (be :: CBackend, s: Slot, cty: TyId, cs: Site)
+                 Res<Res<String>, AllocError> {
+    be.impl_member(cs.decl, s.name).try().match({
+        None  => Ok(None),
+        Ok(f) => write_thunk(be, s, cty, cs, f),
+    })
+}
+
+write_thunk = (be :: CBackend, s: Slot, cty: TyId, cs: Site, f: Function)
+              Res<Res<String>, AllocError> {
+    qname ::= be.alloc.String().try();
+    qualify(qname, cs.qname, s.name).try();
+    inst ::= be.alloc.Inst();
+    be.erase_tparams(f, qname.view(), inst).try();
+    carry_inst(be.recv_inst(cty).try(), inst).try();
+    sig ::= be.alloc.Vec<TyId>();
+    be.real_sig(cty, cs, f, qname.view(), inst, sig).try();
+    sym ::= be.alloc.String().try();
+    sym_fn(sym, be.check.types, be.check.world, qname.view(), sig, inst).try();
+    be.need_method(
+        MethodRef(
+            self_ty: cty,
+            decl: cs.decl,
+            name: s.name,
+            sig: sig,
+            qname: qname.view()
+        ),
+        inst,
+        sym.view()
+    ).try();
+    name ::= be.alloc.String().try();
+    thunk_name(name, sym.view()).try();
+    be.need_thunk(name.view()).try().match({
+        false => Ok(()),
+        true  => be.emit_thunk(s, cty, f, sig, sym.view(), name.view()),
+    }).try();
+    Ok(Ok(name));
+}
+
+// The impl function's own parameter types, at the erased instantiation:
+// what the shim actually calls.
+real_sig = (
+    be    :: CBackend,
+    cty   : TyId,
+    cs    : Site,
+    f     : Function,
+    owner : str,
+    inst  : Inst,
+    out   :: Vec<TyId>
+) Res<(), AllocError> {
+    sctx = be.check.self_ctx(cs.decl.module.to_usize(), cty).try();
+    mark = be.enter_struct_tparams(cs.decl).try();
+    be.enter_tparams(f.tparams, owner).try();
+    f.params.loop((h, p) { be.add_real(p, sctx, inst, out).try() });
+    be.leave_tparams(mark).try();
+    Ok(());
+}
+
+add_real = (
+    be   :: CBackend,
+    p    : Param,
+    sctx : Ctx,
+    inst : Inst,
+    out  :: Vec<TyId>
+) Res<(), AllocError> {
+    declared = be.check.param_type(p, sctx).try();
+    out.add(be.sub_with(declared, inst).try())
+}
+
+// `zg_v` and the function's own symbol without its `zu_`: the name is a
+// pure function of the target, which is what makes two requests for one
+// shim one shim.
+thunk_name = (out :: String, sym: str) Res<(), AllocError> {
+    out.fmt("{}v{}", GEN, sym.slice(USR.len, sym.len))
+}
+
+// A lowered function is held as a head with no punctuation and a body
+// that is only statements — the shape the emitter expects. `gen_c_decl.zen`
+// writes the `;`/braces, so a thunk that carried either would get a
+// second one.
+emit_thunk = (
+    be   :: CBackend,
+    s    : Slot,
+    cty  : TyId,
+    f    : Function,
+    sig  : Vec<TyId>,
+    sym  : str,
+    name : str
+) Res<(), AllocError> {
+    head ::= be.alloc.String().try();
+    be.thunk_head(s, name, head).try();
+    body ::= be.alloc.String().try();
+    be.thunk_body(s, cty, f, sig, sym, body).try();
+    owned ::= be.alloc.String().try();
+    owned.add(name).try();
+    be.add_function(owned, head, body)
+}
+
+thunk_head = (be :: CBackend, s: Slot, name: str, out :: String)
+             Res<(), AllocError> {
+    ret ::= be.alloc.String().try();
+    be.ctype(s.ret, ret).try();
+    out.fmt("{}{} {name}(void *zg_self", be.linkage(), ret.view()).try();
+    s.params.loop((h, i, p) { be.thunk_param(p, "a", i, out).try() });
+    Range(0, s.elems).loop((h, i) { be.thunk_param(be.size_ty(), "e", i, out).try() });
+    out.add(")").try();
+    Ok(());
+}
+
+size_ty = (be :: CBackend) TyId {
+    be.check.types.prim("usize").match({ Ok(t) => t, Err(_) => TyId(index: 0) })
+}
+
+thunk_param* = (be :: CBackend, p: TyId, stem: str, i: usize, out :: String)
+              Res<(), AllocError> {
+    out.add(", ").try();
+    nm ::= be.alloc.String().try();
+    sym_gen(nm, stem, i).try();
+    be.declarator(p, nm.view(), out).try();
+    Ok(());
+}
+
+// `self :: @Self` takes the receiver by reference, so the shim hands
+// the pointer straight through; `self: @Self` takes it by value and the
+// shim dereferences. Every `Alloc` member is `:` — an allocator is a
+// handle and allocating never writes the handle's own bytes — and the
+// rule is read off the impl rather than assumed.
+thunk_body = (
+    be  :: CBackend,
+    s   : Slot,
+    cty : TyId,
+    f   : Function,
+    sig : Vec<TyId>,
+    sym : str,
+    out :: String
+)
+             Res<(), AllocError> {
+    call ::= be.alloc.String().try();
+    call.fmt("{sym}(").try();
+    be.thunk_recv(cty, f, call).try();
+    s.params.loop((h, i, p) { be.thunk_arg(s, sig, i, call).try() });
+    call.add(")").try();
+    out.add("    ").try();
+    be.is_unit(s.ret).match({
+        true  => Ok(()),
+        false => out.add("return "),
+    }).try();
+    out.fmt("{};\n", call.view())
+}
+
+thunk_recv = (be :: CBackend, cty: TyId, f: Function, out :: String)
+             Res<(), AllocError> {
+    recv_by_ref(f).match({
+        true  => out.add("("),
+        false => out.add("(*("),
+    }).try();
+    be.ctype(cty, out).try();
+    out.add(" *)zg_self").try();
+    recv_by_ref(f).match({
+        true  => Ok(()),
+        false => out.add(")"),
+    }).try();
+    Ok(());
+}
+
+recv_by_ref = (f: Function) bool {
+    f.params.get(0).match({ Ok(p) => p.mutable, None => false })
+}
+
+// A count beside an erased pointer is an element count, but the impl
+// this shim calls was compiled for bytes. The size erasure dropped is
+// the argument that puts it back — the multiplication happens here and
+// nowhere else, so a call site never has to know the rule.
+thunk_arg = (
+    be  :: CBackend,
+    s   : Slot,
+    sig : Vec<TyId>,
+    i   : usize,
+    out :: String
+) Res<(), AllocError> {
+    out.add(", ").try();
+    nm ::= be.alloc.String().try();
+    sym_gen(nm, "a", i).try();
+    be.scales(s, i).match({
+        true  => be.scaled_arg(nm.view(), out),
+        false => be.cast_arg(s, sig, i, nm.view(), out),
+    })
+}
+
+scales = (be: CBackend, s: Slot, i: usize) bool {
+    (s.elems > 0) && (i > 0) && be.is_count(s, i) && be.is_run(s, i - 1)
+}
+
+is_count = (be: CBackend, s: Slot, i: usize) bool {
+    s.params.get(i).match({ Ok(t) => be.is_usize(t), None => false })
+}
+
+is_usize = (be: CBackend, t: TyId) bool {
+    be.types().at(t).match({ Prim(p) => p.name.eq("usize"), _ => false })
+}
+
+is_run = (be: CBackend, s: Slot, i: usize) bool {
+    s.params.get(i).match({ Ok(t) => be.is_pointer(t), None => false })
+}
+
+is_pointer* = (be: CBackend, t: TyId) bool {
+    be.types().at(t).match({ Named(n) => is_ptr_named(n), _ => false })
+}
+
+scaled_arg = (be :: CBackend, nm: str, out :: String) Res<(), AllocError> {
+    e0 ::= be.alloc.String().try();
+    sym_gen(e0, "e", 0).try();
+    out.fmt("({nm} * {})", e0.view())
+}
+
+// The impl was compiled at the byte type, so its parameter is normally
+// the slot's own. Where the two differ it is a pointer and a cast is
+// the whole conversion.
+cast_arg = (
+    be  :: CBackend,
+    s   : Slot,
+    sig : Vec<TyId>,
+    i   : usize,
+    nm  : str,
+    out :: String
+) Res<(), AllocError> {
+    want = sig.get(i + 1).match({ Ok(t) => t, None => TyId(index: 0) });
+    got  = s.params.get(i).match({ Ok(t) => t, None => TyId(index: 0) });
+    (want.eq(got) || (be.is_pointer(want) == false)).match({
+        true  => out.add(nm),
+        false => be.write_cast(nm, want, out),
+    })
+}
+
+// a concrete value reaching a slot whose type is the bound
+
+// Only where the destination's static type is a bound and the value's
+// own type is not — at an argument, at a field, at a return, one rule
+// and three sites.
+needs_fat* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
+             Res<bool, AllocError> {
+    be.is_fat(want).match({
+        false => Ok(false),
+        true  => be.value_is_concrete(id, ctx, want),
+    })
+}
+
+value_is_concrete = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
+                    Res<bool, AllocError> {
+    unknown = be.check.types.unknown().try();
+    got     = be.ty_of(id, ctx, unknown).try();
+    Ok(be.is_concrete(got) && (got.eq(want) == false));
+}
+
+is_concrete = (be: CBackend, ty: TyId) bool {
+    is_named(be, ty) && (be.is_fat(ty) == false) && (has_var(be.check, ty) == false)
+}
+
+is_named = (be: CBackend, ty: TyId) bool {
+    be.types().at(ty).match({ Named(_) => true, _ => false })
+}
+
+// The value at its own type, then the record over its address.
+write_fat_value* = (
+    be   :: CBackend,
+    code : str,
+    cty  : TyId,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    addr ::= be.alloc.String().try();
+    be.address_of(code, cty, addr).try();
+    be.fat_value(addr.view(), cty, want, out)
+}
+
+// The receiver's address, without copying it where that would move the
+// storage the record points at.
+address_of* = (be :: CBackend, code: str, cty: TyId, out :: String)
+             Res<(), AllocError> {
+    is_place(code).match({
+        true  => write_amp(code, out),
+        false => be.spill_address(code, cty, out),
+    })
+}
+
+write_amp = (code: str, out :: String) Res<(), AllocError> {
+    out.fmt("&({code})")
+}
+
+spill_address = (be :: CBackend, code: str, cty: TyId, out :: String)
+                Res<(), AllocError> {
+    tmp ::= be.init_temp(cty, "t", code).try();
+    out.fmt("&{}", tmp.view())
+}
+
+// A C place is a name, a field hop, a dereference or an index — never a
+// call, the one thing whose address may not be taken. A call is
+// recognised by an open paren following a name, which `(*p).x` is not.
+// Conservative in the safe direction: unrecognised text gets a
+// temporary, correct at the cost of one copy.
+is_place = (code: str) bool {
+    (code.len > 0) && place_bytes(code) && (has_call(code) == false)
+}
+
+place_bytes = (code: str) bool {
+    Range(0, code.len).find((i) {
+        is_place_byte(code.index(i)) == false
+    }).match({ Ok(_) => false, None => true })
+}
+
+is_place_byte = (b: u8) bool {
+    b.is_ident_cont() || b.is_in(['.', '-', '>', '[', ']', '*', '(', ')'])
+}
+
+has_call = (code: str) bool {
+    Range(1, code.len).find((i) {
+        (code.index(i) == '(') && code.index(i - 1).is_ident_cont()
+    }).match({ Ok(_) => true, None => false })
+}

@@ -1,0 +1,546 @@
+// AST declarations, types, expressions, patterns, and statements. Each node
+// family uses the same wrapper-and-kind shape:
+//
+//     Expr = { kind: ExprKind, span, leading, trailing }
+//     ExprKind = Call(Call) | Binary(Binary) | ..
+//
+// Common source data lives on the wrapper; variant data lives in the kind.
+// Child nodes are stored as typed arena ids rather than by value.
+
+Span, Ident, QualifiedName, TriviaRun = std.ast.ast_span
+ExprId, TypeId, PatternId, BlockId, CBindingId = std.ast.ast_id
+Alloc, AllocError = std.mem
+
+// `+ - *` trap on overflow; `+% -% *%` wrap.
+BinOp* = Add
+    | Sub
+    | Mul
+    | Div
+    | Rem
+    | AddWrap
+    | SubWrap
+    | MulWrap
+    | Equal
+    | NotEqual
+    | Less
+    | LessEq
+    | Greater
+    | GreaterEq
+    | And
+    | Or
+
+// Unary `!`, `-`, and address-of `&`.
+UnOp* = Not | Neg | Addr
+
+// Method forms. Export (`*`) is stored on the member.
+//     Required   `= sig`        impl must provide it
+//     Sealed     `= sig {..}`   provided, cannot be overridden
+//     Default    `::= sig {..}` provided, impl may rebind it
+//     Hook       `::= sig`      optional, impl may provide it
+//
+// A top-level function with a body also uses Sealed.
+Form* = Required | Sealed | Default | Hook
+
+LiteralKind* = Int | Float | Str | Char | Bool
+
+// `text` is the raw source slice, including quotes and escapes. `integer`
+// is the lexer's value of an Int literal, decimal or hexadecimal.
+Literal* = {
+    kind*: LiteralKind,
+    text*: str,
+    integer* :: Res<u64> = None,
+}
+
+Type* = {
+    kind*: TypeKind,
+    span*: Span,
+    leading*: TriviaRun,
+    trailing*: TriviaRun,
+}
+
+// `Unit` is `()`, `SelfType` is `@Self`, `Infer` is `_`, and `Variadic` is
+// `...`.
+TypeKind* = Named(Named)
+    | Union(Union)
+    | Fn(FnType)
+    | Array(ArrayType)
+    | Unit
+    | SelfType
+    | Infer
+    | Variadic
+
+Named* = {
+    name*: Ident,
+    args*: Vec<TypeId>,
+}
+
+// Anonymous structural union. Members are stored flat.
+Union* = {
+    members*: Vec<TypeId>,
+}
+
+// Function type such as `(a: i32, b: i32) i32`. Parameter names do not
+// participate in type identity.
+FnType* = {
+    tparams*: Vec<TParam>,
+    params*: Vec<Param>,
+    params_span*: Span,
+    ret*: TypeId,
+}
+
+// Fixed-array count is a comptime expression.
+ArrayType* = {
+    elem*: TypeId,
+    count*: ExprId,
+}
+
+Pattern* = {
+    kind*: PatternKind,
+    span*: Span,
+    leading*: TriviaRun,
+    trailing*: TriviaRun,
+}
+
+// Sema resolves whether a pattern name is a value or binder.
+PatternKind* = Name(PatName)
+    | Destructure(Destructure)
+    | Wild
+    | Literal(Literal)
+
+PatName* = {
+    name*: QualifiedName,
+}
+
+// A destructure binder is itself a pattern, preserving `Unit` versus `Unit(_)`.
+Destructure* = {
+    name*: QualifiedName,
+    binder*: PatternId,
+}
+
+Expr* = {
+    kind*: ExprKind,
+    span*: Span,
+    leading*: TriviaRun,
+    trailing*: TriviaRun,
+}
+
+ExprKind* = Name(Name)
+    | Literal(Literal)
+    | Unit
+    | SelfType
+    | Scope
+    | Meta(Meta)
+    | Paren(Paren)
+    | Array(ArrayLit)
+    | FixedArray(FixedArray)
+    | Lambda(Lambda)
+    | Call(Call)
+    | Match(Match)
+    | Try(Try)
+    | Record(Record)
+    | Access(Access)
+    | Index(Index)
+    | Unary(Unary)
+    | Binary(Binary)
+    | Consume(Consume)
+    | Block(BlockId)
+
+// Bare identifier text; the enclosing Expr carries its span.
+Name* = {
+    text*: str,
+}
+
+// Parentheses are retained explicitly so formatting preserves grouping.
+Paren* = {
+    inner*: ExprId,
+}
+
+// `[0, 1, 2]`
+ArrayLit* = {
+    elems*: Vec<ExprId>,
+}
+
+// `[i32, 4](2, 3, 5, 7)`: a fixed-array type applied to its elements. Not
+// a Call, so the reading is decided at the `(`.
+FixedArray* = {
+    type*: TypeId,
+    elems*: Vec<ExprId>,
+    args_span*: Span,
+}
+
+// Lambda parameter types may be inferred from the expected function type.
+Lambda* = {
+    tparams*: Vec<TParam>,
+    params*: Vec<Param>,
+    params_span*: Span,
+    ret*: Res<TypeId>,
+    body*: BlockId,
+}
+
+// `f(a, b)`, `alloc.Vec<i32>()`, `Point(x: 3, y: 4)`.
+Call* = {
+    callee*: ExprId,
+    targs*: Vec<TypeId>,
+    args*: Vec<Arg>,
+    args_span*: Span,
+}
+
+// `name` is present for named arguments such as `x: 3`.
+Arg* = {
+    name*: Res<Ident>,
+    value*: ExprId,
+    span*: Span,
+    leading*: TriviaRun,
+    trailing*: TriviaRun,
+}
+
+// `(n == 0).match({ true => .., false => .. })`. `name_span` is the `match`
+// token: exhaustiveness diagnostics point there and the formatter locates
+// `.match(` by it.
+Match* = {
+    scrutinee*: ExprId,
+    name_span*: Span,
+    arms*: Vec<Arm>,
+    arms_span*: Span,
+}
+
+// `pattern => expr`. `arrow_span` is the `=>`; the formatter aligns arms on it.
+Arm* = {
+    pattern*: PatternId,
+    arrow_span*: Span,
+    body*: ExprId,
+    span*: Span,
+    leading*: TriviaRun,
+    trailing*: TriviaRun,
+}
+
+// `.try()` intrinsic. name_span identifies `try` rather than its operand.
+Try* = {
+    operand*: ExprId,
+    name_span*: Span,
+    // Empty propagates; a value replaces; a one-argument lambda maps.
+    error*: Res<ExprId>,
+}
+
+// Brace record literal or impl body.
+Record* = {
+    entries*: Vec<Member>,
+}
+
+// Member access such as `p.x`, `Shape.Unit`, or `alloc.Vec`.
+Access* = {
+    base*: ExprId,
+    name*: Ident,
+}
+
+// `buf[i]`. `op_span` identifies the `[` for diagnostics.
+Index* = {
+    base*: ExprId,
+    index*: ExprId,
+    op_span*: Span,
+}
+
+// `op_span` identifies the operator token for diagnostics.
+Unary* = {
+    op*: UnOp,
+    op_span*: Span,
+    operand*: ExprId,
+}
+
+Binary* = {
+    op*: BinOp,
+    op_span*: Span,
+    lhs*: ExprId,
+    rhs*: ExprId,
+}
+
+// Explicit move checked by the capability system.
+Consume* = {
+    operand*: ExprId,
+}
+
+// `@meta(n)` or `@meta(self: @Self)`. Exactly one payload form is present.
+Meta* = {
+    value*: Res<ExprId>,
+    name*: Res<Ident>,
+    type*: Res<TypeId>,
+}
+
+// A statement span includes its terminating `;`; its expression span does not.
+Stmt* = {
+    kind*: StmtKind,
+    span*: Span,
+    leading*: TriviaRun,
+    trailing*: TriviaRun,
+}
+
+// Declarations may be nested and do not take a semicolon.
+StmtKind* = Bind(Bind) | Expr(ExprStmt) | Decl(Decl) | Block(BlockId)
+
+// `x = e;`, `x ::= e;`, `x: T = e;`, `self.len = self.len + 1;`. The target
+// is an expression: a member and an index are binding targets too.
+Bind* = {
+    target*: ExprId,
+    type*: Res<TypeId>,
+    mutable*: bool,
+    value*: ExprId,
+}
+
+ExprStmt* = {
+    expr*: ExprId,
+}
+
+// `value` is the trailing expression written without a semicolon. Sema may
+// also settle a semicolon-terminated tail as the block value.
+Block* = {
+    stmts*: Vec<Stmt>,
+    value*: Res<ExprId>,
+    span*: Span,
+    leading*: TriviaRun,
+    trailing*: TriviaRun,
+}
+
+Decl* = {
+    kind*: DeclKind,
+    span*: Span,
+    leading*: TriviaRun,
+    trailing*: TriviaRun,
+}
+
+// Imports remain interleaved with declarations in source order.
+DeclKind* = Struct(Struct)
+    | Enum(Enum)
+    | Alias(Alias)
+    | Function(Function)
+    | Impl(Impl)
+    | Import(Import)
+    | Const(Const)
+
+// `body_span` includes a struct's braces for faithful formatting.
+Struct* = {
+    name*: Ident,
+    exported*: bool,
+    tparams*: Vec<TParam>,
+    members*: Vec<Member>,
+    body_span*: Span,
+
+    has_field* = (self: @Self, name: str) bool {
+        self.members.find((m) {
+            m.kind.match({
+                Field(f) => f.name.text.eq(name),
+                _        => false,
+            })
+        }).match({ Ok(_) => true, None => false })
+    }
+}
+
+// leading_bar preserves one-variant enum syntax for formatting.
+Enum* = {
+    name*: Ident,
+    exported*: bool,
+    tparams*: Vec<TParam>,
+    variants*: Vec<Variant>,
+    leading_bar*: Res<Span>,
+}
+
+// A variant accepts at most one type payload and one external discriminant.
+Variant* = {
+    name*: Ident,
+    payload*: Res<TypeId>,
+    discriminant*: Res<ExprId>,
+    span*: Span,
+    leading*: TriviaRun,
+    trailing*: TriviaRun,
+}
+
+Alias* = {
+    name*: Ident,
+    exported*: bool,
+    tparams*: Vec<TParam>,
+    target*: TypeId,
+}
+
+// `area* = (c: Circle) f64 { .. }`, `then* = <T>(b: bool, f: () T) Res<T>`.
+// `form` records `=` versus `::=`; `body` records whether `{ .. }` followed.
+// Required and Hook carry no body. A lambda may omit `ret`, but a declaration
+// must write one.
+Function* = {
+    name*: Ident,
+    exported*: bool,
+    form*: Form,
+    tparams*: Vec<TParam>,
+    params*: Vec<Param>,
+    params_span*: Span,
+    ret*: Res<TypeId>,
+    body*: Res<BlockId>,
+}
+
+Impl* = {
+    target*: Ident,
+    bound*: TypeId,
+    members*: Vec<Member>,
+    body_span*: Span,
+
+    // Only explicitly supplied values count; required fields have no value.
+    field_value* = (self: @Self, name: str) Res<ExprId> {
+        member = self.members.find((m) {
+            m.named(name) && m.kind.match({
+                Field(f) => f.value.match({ Ok(_) => true, None => false }),
+                _        => false,
+            })
+        }).try();
+        member.kind.match({ Field(f) => f.value, _ => None })
+    }
+
+    // Required members and optional hooks without bodies are not definitions.
+    bodied_fn* = (self: @Self, name: str) Res<Function> {
+        member = self.members.find((m) {
+            m.named(name) && m.kind.match({
+                Function(f) => f.body.match({ Ok(_) => true, None => false }),
+                _           => false,
+            })
+        }).try();
+        member.kind.match({ Function(f) => Ok(f), _ => None })
+    }
+}
+
+// Starred import bindings are re-exported.
+Import* = {
+    names*: Vec<ImportName>,
+    module*: QualifiedName,
+}
+
+ImportName* = {
+    name*: Ident,
+    exported*: bool,
+    span*: Span,
+    leading*: TriviaRun,
+    trailing*: TriviaRun,
+}
+
+Const* = {
+    name*: Ident,
+    exported*: bool,
+    mutable*: bool,
+    type*: Res<TypeId>,
+    value*: ExprId,
+}
+
+Member* = {
+    kind*: MemberKind,
+    span*: Span,
+    leading*: TriviaRun,
+    trailing*: TriviaRun,
+
+    name* = (self: @Self) Ident {
+        self.kind.match({
+            Field(f)    => f.name,
+            Const(c)    => c.name,
+            Function(f) => f.name,
+        })
+    }
+
+    named* = (self: @Self, n: str) bool {
+        self.name().text.eq(n)
+    }
+
+    exported* = (self: @Self) bool {
+        self.kind.match({
+            Field(f)    => f.exported,
+            Const(c)    => c.exported,
+            Function(f) => f.exported,
+        })
+    }
+
+    mutable* = (self: @Self) bool {
+        self.kind.match({
+            Field(f)    => f.mutable,
+            Const(c)    => c.mutable,
+            Function(_) => false,
+        })
+    }
+}
+
+// The Field/Const split is syntactic: in a struct body, `name: T = value`
+// (immutable) is a constant and `name :: T = value` (mutable) is a field
+// with a default. In an impl body or record literal `name: value` supplies
+// a field, so Const does not appear there.
+MemberKind* = Field(Field) | Const(Const) | Function(Function)
+
+// `width: f64`, `len* :: usize = 0`, and — in an impl or record —
+// `width: self.radius * 2.0`, where type is absent because the field
+// being satisfied already has one.
+Field* = {
+    name*: Ident,
+    exported*: bool,
+    mutable*: bool,
+    type*: Res<TypeId>,
+    value*: Res<ExprId>,
+}
+
+// `mutable` is the ordinary binding marker, including on `self`.
+// `type` is absent only in a closure.
+Param* = {
+    name*: Ident,
+    mutable*: bool,
+    type*: Res<TypeId>,
+    span*: Span,
+    leading*: TriviaRun,
+    trailing*: TriviaRun,
+
+    // Source separator between this parameter's name and type.
+    binder* = (self: @Self) str {
+        self.mutable.match({ true => " :: ", false => ": " })
+    }
+}
+
+// Generic type parameter and its conjunctive bounds.
+TParam* = {
+    name*: Ident,
+    bounds*: Vec<TypeId>,
+    span*: Span,
+    leading*: TriviaRun,
+    trailing*: TriviaRun,
+}
+
+// The raw headers behind a loader-created C binding module. `system`
+// selects `<path>` over `"path"`; the path carries no C syntax.
+CHeader* = {
+    path*: str,
+    system*: bool,
+}
+
+COpaque* = {
+    decl*: u32,
+    spelling*: str,
+}
+
+CTypeBinding* = | Opaque(COpaque)
+
+CBinding* = {
+    headers*: Vec<CHeader>,
+    types*: Vec<CTypeBinding>,
+}
+
+ModuleOrigin* = Source | CBinding(CBindingId)
+
+// `name` is the dotted module path (`std.core.result`); the source file is
+// `span.file`. `trailing` holds an end-of-file comment.
+Module* = {
+    name*: str,
+    decls*: Vec<Decl>,
+    span*: Span,
+    leading*: TriviaRun,
+    trailing*: TriviaRun,
+
+    functions* = (self: @Self, a: Alloc) Res<Vec<Function>, AllocError> {
+        found ::= a.Vec<Function>();
+        self.decls.loop((h, d) {
+            d.kind.match({
+                Function(f) => found.add(f),
+                _           => Ok(()),
+            }).try();
+        });
+        Ok(found);
+    }
+}

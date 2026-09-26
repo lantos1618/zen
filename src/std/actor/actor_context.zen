@@ -1,0 +1,11 @@
+Env = std.env
+Alloc = std.mem
+
+Context* = {
+    env*: Env,
+    alloc*: Alloc,
+}
+
+Receive*<T> = {
+    receive* = (self :: @Self, ctx: Context, message: T) ()
+}

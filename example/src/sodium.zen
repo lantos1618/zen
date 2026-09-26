@@ -1,0 +1,6 @@
+// Zen declarations for the libsodium target configured by build.zen.
+// Foreign declarations are omitted until the language can represent them.
+// The intended surface is:
+//
+//     randombytes_buf* = (buf: [u8]) ()
+//     crypto_generichash* = (out :: [u8], in: [u8]) i32

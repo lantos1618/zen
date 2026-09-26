@@ -1,0 +1,279 @@
+// Writes LSP semantic tokens: UTF-16 lengths, positions relative to the
+// preceding token. The legend order in `write_legend` must match `index_of`.
+// A name the checker classified overrides the lexer's colour for an `Ident`.
+
+str, String = std.text
+Vec, Ordered = std.collections
+Alloc, AllocError = std.mem
+scan, Source, Token, TokenKind = std.lex
+write_text, written, obj, arr, Nest = std.json
+utf16_step_at, utf16_units, zero_based = lsp.lsp_pos
+
+// Variant names are the protocol spelling; indices stay explicit below.
+Colour* = keyword
+    | string
+    | number
+    | comment
+    | operator
+    | variable
+    | type
+    | function
+    | parameter
+
+index_of* = (colour: Colour) usize {
+    colour.match({
+        keyword   => 0,
+        string    => 1,
+        number    => 2,
+        comment   => 3,
+        operator  => 4,
+        variable  => 5,
+        type      => 6,
+        function  => 7,
+        parameter => 8,
+    })
+}
+
+write_legend* = (out :: String) Res<(), AllocError> {
+    legend ::= obj(out).try();
+    legend.key("tokenTypes", out).try();
+    types ::= arr(out).try();
+    Colour.keyword.listed(types, out).try();
+    Colour.string.listed(types, out).try();
+    Colour.number.listed(types, out).try();
+    Colour.comment.listed(types, out).try();
+    Colour.operator.listed(types, out).try();
+    Colour.variable.listed(types, out).try();
+    Colour.type.listed(types, out).try();
+    Colour.function.listed(types, out).try();
+    Colour.parameter.listed(types, out).try();
+    types.close(out).try();
+    legend.key("tokenModifiers", out).try();
+    modifiers ::= arr(out).try();
+    modifiers.close(out).try();
+    legend.close(out)
+}
+
+listed = (colour: Colour, types :: Nest, out :: String)
+         Res<(), AllocError> {
+    types.next(out).try();
+    write_text(colour.variant_name(), out)
+}
+
+colour_of* = (kind: TokenKind) Res<Colour> {
+    kind.match({
+        Ident        => Ok(Colour.variable),
+        Int(_)       => Ok(Colour.number),
+        Float        => Ok(Colour.number),
+        Str          => Ok(Colour.string),
+        Char         => Ok(Colour.string),
+        True         => Ok(Colour.keyword),
+        False        => Ok(Colour.keyword),
+        Consume      => Ok(Colour.keyword),
+        AtSelf       => Ok(Colour.keyword),
+        AtMeta       => Ok(Colour.keyword),
+        AtScope      => Ok(Colour.keyword),
+        LineComment  => Ok(Colour.comment),
+        BlockComment => Ok(Colour.comment),
+        ParenOpen    => None,
+        ParenClose   => None,
+        BracketOpen  => None,
+        BracketClose => None,
+        BraceOpen    => None,
+        BraceClose   => None,
+        Comma        => None,
+        Semicolon    => None,
+        Dot          => None,
+        Ellipsis     => Ok(Colour.operator),
+        Colon        => None,
+        ColonColon   => Ok(Colour.operator),
+        ColonColonEq => Ok(Colour.operator),
+        Eq           => Ok(Colour.operator),
+        EqEq         => Ok(Colour.operator),
+        Arrow        => Ok(Colour.operator),
+        Bang         => Ok(Colour.operator),
+        BangEq       => Ok(Colour.operator),
+        Lt           => Ok(Colour.operator),
+        LtEq         => Ok(Colour.operator),
+        Gt           => Ok(Colour.operator),
+        GtEq         => Ok(Colour.operator),
+        Amp          => Ok(Colour.operator),
+        AmpAmp       => Ok(Colour.operator),
+        Bar          => Ok(Colour.operator),
+        BarBar       => Ok(Colour.operator),
+        Plus         => Ok(Colour.operator),
+        PlusWrap     => Ok(Colour.operator),
+        Minus        => Ok(Colour.operator),
+        MinusWrap    => Ok(Colour.operator),
+        Star         => Ok(Colour.operator),
+        StarWrap     => Ok(Colour.operator),
+        Slash        => Ok(Colour.operator),
+        Percent      => Ok(Colour.operator),
+        Eof          => None,
+    })
+}
+
+Painter = {
+    line :: usize,
+    character :: usize,
+
+    source_at :: usize,
+    source_units :: usize,
+
+    put = (self :: @Self, line: usize, character: usize, length: usize,
+           colour: Colour, runs :: Nest, out :: String) Res<(), AllocError> {
+        runs.next(out).try();
+        delta_line      = line - self.line;
+        delta_character = (delta_line == 0).match({
+            true  => character - self.character,
+            false => character,
+        });
+        out.write_usize(delta_line).try();
+        out.add(",").try();
+        out.write_usize(delta_character).try();
+        out.add(",").try();
+        out.write_usize(length).try();
+        out.add(",").try();
+        out.write_usize(colour.index_of()).try();
+        out.add(",0").try();
+        self.line      = line;
+        self.character = character;
+        Ok(());
+    }
+
+    paint = (self :: @Self, text: str, token: Token, colour: Colour,
+             runs :: Nest, out :: String) Res<(), AllocError> {
+        stop = token.span.end.offset;
+        from      ::= token.span.start.offset;
+        line      ::= token.span.start.line.zero_based();
+        character ::= self.character_at(text, from);
+        loop(from < stop, (h) {
+            upto = text.newline_in(from, stop);
+            self.run(text, line, character, from, upto, colour, runs, out)
+                .try();
+            from      = upto + 1;
+            line      = line + 1;
+            character = 0;
+        });
+        Ok(());
+    }
+
+    character_at = (self :: @Self, text: str, upto: usize) usize {
+        loop(self.source_at < upto, (h) {
+            (text.index(self.source_at) == '\n').match({
+                true  => {
+                    self.source_at    = self.source_at + 1;
+                    self.source_units = 0;
+                },
+                false => {
+                    step              = utf16_step_at(text, self.source_at);
+                    self.source_at    = self.source_at + step.bytes;
+                    self.source_units = self.source_units + step.units;
+                },
+            });
+        });
+        self.source_units
+    }
+
+    run = (self :: @Self, text: str, line: usize, character: usize,
+           from: usize, upto: usize, colour: Colour, runs :: Nest,
+           out :: String)
+          Res<(), AllocError> {
+        (upto > from).match({
+            true  => self.put(
+                line,
+                character,
+                utf16_units(text, from, upto),
+                colour,
+                runs,
+                out
+            ),
+            false => written(),
+        })
+    }
+}
+
+Classed* = {
+    line*: usize,
+    col*: usize,
+    colour*: Colour,
+
+    starts_before = (self: @Self, line: usize, col: usize) bool {
+        self.line < line || (self.line == line && self.col < col)
+    }
+
+    starts_at = (self: @Self, line: usize, col: usize) bool {
+        self.line == line && self.col == col
+    }
+}
+
+Classed.impl(Ordered, {
+    before = (self: @Self, other: @Self) bool {
+        self.line < other.line
+            || (self.line == other.line && self.col < other.col)
+    }
+})
+
+// `names` is sorted; binary search for the entry starting at `line:col`.
+classed_at = (names: Vec<Classed>, line: usize, col: usize) Res<Classed> {
+    lo ::= 0;
+    hi ::= names.len;
+    loop(lo < hi, (h) {
+        mid = (lo + hi) / 2;
+        names.get(mid).match({
+            None   => (),
+            Ok(cl) => cl.starts_before(line, col).match({
+                true  => { lo = mid + 1; },
+                false => { hi = mid; },
+            }),
+        });
+    });
+    names.get(lo).match({
+        None   => None,
+        Ok(cl) => cl.starts_at(line, col).match({
+            true  => Ok(cl),
+            false => None,
+        }),
+    })
+}
+
+write_tokens* = (
+    a     : Alloc,
+    name  : str,
+    text  : str,
+    names : Vec<Classed>,
+    out   :: String
+) Res<(), AllocError> {
+    lexed = scan(a, Source(file: name, text: text)).try();
+    painter ::= Painter(line: 0, character: 0, source_at: 0, source_units: 0);
+    answer  ::= obj(out).try();
+    answer.key("data", out).try();
+    data ::= arr(out).try();
+    lexed.tokens.loop((h, token) {
+        token.kind.colour_of().match({
+            None    => written(),
+            Ok(one) => painter.paint(
+                text,
+                token,
+                token.settled(one, names),
+                data,
+                out
+            ),
+        }).try();
+    });
+    data.close(out).try();
+    answer.close(out)
+}
+
+settled = (token: Token, lexical: Colour, names: Vec<Classed>) Colour {
+    token.kind.match({
+        Ident => names.classed_at(
+            token.span.start.line,
+            token.span.start.col
+        ).match({
+            None    => lexical,
+            Ok(one) => one.colour,
+        }),
+        _     => lexical,
+    })
+}

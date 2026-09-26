@@ -1,0 +1,355 @@
+// Emits C `main`, adapting `argc`/`argv` to `Env` and a Zen `Res` to the
+// Process exit status. It is emitted after all Zen declarations.
+
+Function, TypeId = std.ast
+AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+TyId, TyRes = sema.sema_ty
+Def, decl_at = sema.sema_def
+Ctx = sema.sema_check
+Inst = sema.sema_inst
+Emit = gen.gen_emit
+sym_fn, sym_member, sym_variant, RES_PATH = gen.gen_name
+CBackend = gen.gen_c.gen_c_state
+emit_actor_globals, write_actor_shutdown = gen.gen_c.gen_c_actor
+ctype, is_c_integer, write_zero = gen.gen_c.gen_c_type
+field_of = gen.gen_c.gen_c_type
+plain_ctx, return_type = gen.gen_c.gen_c_decl
+
+emit_main* = (be :: CBackend, mi: usize, out :: Emit) Res<(), AllocError> {
+    found ::= be.alloc.Vec<Def>();
+    be.check.world.own_defs(mi, "main", found).try();
+    found.get(0).match({
+        None  => Ok(()),
+        Ok(d) => be.write_main(d, out),
+    })
+}
+
+// One ladder, not two: "is this def in the tree" and "is what it names
+// a function" are two questions about one lookup, so they answer as one.
+write_main = (be :: CBackend, d: Def, out :: Emit) Res<(), AllocError> {
+    be.emit_actor_globals(out).try();
+    decl_at(be.tree, d.id).match({
+        None  => Ok(()),
+        Ok(x) => x.kind.match({
+            Function(f) => be.write_entry(d, f, out),
+            _           => Ok(()),
+        }),
+    })
+}
+
+write_entry = (be :: CBackend, d: Def, f: Function, out :: Emit)
+              Res<(), AllocError> {
+    mi  = d.id.module.to_usize();
+    ret = be.return_type(f, be.plain_ctx(mi)).try();
+    sig ::= be.alloc.Vec<TyId>();
+    be.signature(f, mi, sig).try();
+    rows ::= be.alloc.Vec<TyId>();
+    be.argv_rows(sig, rows).try();
+    call  ::= be.alloc.String().try();
+    empty ::= be.alloc.Inst();
+    sym_fn(call, be.check.types, be.check.world, d.qname, sig, empty).try();
+    args ::= be.alloc.String().try();
+    be.write_entry_args(sig, args).try();
+    call.fmt("({})", args.view()).try();
+    rows.get(0).match({
+        None  => Ok(()),
+        Ok(v) => be.emit_argv_vec(v, out),
+    }).try();
+    out.say(main_head(rows.len > 0)).try();
+    out.indent();
+    rows.get(0).match({
+        None    => Ok(()),
+        Ok(vec) => be.write_argv_local(vec, out),
+    }).try();
+    be.write_exit(ret, call.view(), rows.len > 0, out).try();
+    out.dedent();
+    out.say("}").try();
+    Ok(());
+}
+
+// `main` takes `argc`/`argv` when something reads them, `void`
+// otherwise — an unused parameter is a warning on a conforming compiler.
+main_head = (wants_argv: bool) str {
+    wants_argv.match({
+        true  => "int main(int argc, char **argv) {",
+        false => "int main(void) {",
+    })
+}
+
+// The signature again, without binding anything: `emit_main` runs after
+// every frame is reset, and the symbol must match the prototype's.
+signature = (be :: CBackend, f: Function, mi: usize, sig :: Vec<TyId>)
+            Res<(), AllocError> {
+    ctx = be.plain_ctx(mi);
+    f.params.loop((h, p) {
+        p.type.match({
+            Ok(t) => be.add_sig(t, ctx, sig),
+            None  => Ok(()),
+        }).try();
+    });
+    Ok(());
+}
+
+add_sig = (be :: CBackend, t: TypeId, ctx: Ctx, sig :: Vec<TyId>)
+          Res<(), AllocError> {
+    sig.add(be.check.type_from_ast(t, ctx).try())
+}
+
+// Build `Env` with the argv value supplied by the C runtime. Other entry
+// parameters receive their type's zero value.
+write_entry_args = (be :: CBackend, sig: Vec<TyId>, out :: String)
+                   Res<(), AllocError> {
+    sig.loop((h, i, t) {
+        (i > 0).then(() { out.add(", ").try() });
+        be.write_entry_arg(t, out).try();
+    });
+    Ok(());
+}
+
+write_entry_arg = (be :: CBackend, t: TyId, out :: String)
+                  Res<(), AllocError> {
+    be.argv_field(t).try().match({
+        None  => be.write_zero(t, out),
+        Ok(_) => be.write_env_value(t, out),
+    })
+}
+
+write_env_value = (be :: CBackend, t: TyId, out :: String)
+                  Res<(), AllocError> {
+    cty ::= be.alloc.String().try();
+    be.ctype(t, cty).try();
+    mem ::= be.alloc.String().try();
+    mem.sym_member("argv").try();
+    out.fmt("(({}){ .{} = zg_argv })", cty.view(), mem.view())
+}
+
+// The `Vec<str>` an `argv` field holds, when the parameter has one.
+// Asked of the type, not the name: a struct qualifies by carrying the
+// rows, and a program with no `Env` simply has no such parameter.
+argv_field = (be :: CBackend, t: TyId) Res<Res<TyId>, AllocError> {
+    be.field_of(t, "argv")
+}
+
+argv_rows = (be :: CBackend, sig: Vec<TyId>, out :: Vec<TyId>)
+            Res<(), AllocError> {
+    sig.loop((h, t) {
+        be.argv_field(t).try().match({
+            None  => Ok(()),
+            Ok(v) => out.add(v),
+        }).try();
+    });
+    Ok(());
+}
+
+// `zg_argv_vec`: written here (not `gen_c_runtime.zen`) because it
+// names the mangled `Vec<str>`, not a name until a program asks for one.
+// Rows borrow the process-lifetime strings the C runtime owns. The one
+// `malloc` is the row array; generated main keeps its Vec in `zg_argv`
+// and frees that array after Zen main returns.
+// The `Vec`'s allocator stays zero, so growing `env.argv` would fault —
+// nobody grows argv, and the alternative is handing `main`'s arena to a
+// value built before any arena exists.
+
+emit_argv_vec = (be :: CBackend, v: TyId, out :: Emit)
+                Res<(), AllocError> {
+    cty ::= be.alloc.String().try();
+    be.ctype(v, cty).try();
+    head ::= be.alloc.String().try();
+    head.fmt(
+        "static {} zg_argv_vec(int argc, char **argv) {",
+        cty.view()
+    ).try();
+    out.say(head.view()).try();
+    out.indent();
+    be.write_empty_rows(v, out).try();
+    out.say(
+        "zg_str *rows = (zg_str *)malloc((size_t)argc * sizeof *rows);"
+    ).try();
+    be.write_rows_guard(v, out).try();
+    out.say("for (int i = 0; i < argc; i++) {").try();
+    out.indent();
+    out.say("rows[i].data = (unsigned char *)argv[i];").try();
+    out.say("rows[i].len = strlen(argv[i]);").try();
+    out.dedent();
+    out.say("}").try();
+    be.write_filled_rows(v, out).try();
+    out.dedent();
+    out.say("}").try();
+    out.line().try();
+    Ok(());
+}
+
+write_argv_local = (be :: CBackend, v: TyId, out :: Emit)
+                   Res<(), AllocError> {
+    cty ::= be.alloc.String().try();
+    be.ctype(v, cty).try();
+    line ::= be.alloc.String().try();
+    line.fmt("{} zg_argv = zg_argv_vec(argc, argv);", cty.view()).try();
+    out.say(line.view())
+}
+
+write_empty_rows = (be :: CBackend, v: TyId, out :: Emit)
+                   Res<(), AllocError> {
+    lit ::= be.alloc.String().try();
+    write_vec_literal(be, v, "0", "0", lit).try();
+    line ::= be.alloc.String().try();
+    line.fmt("if (argc <= 0) return {};", lit.view()).try();
+    out.say(line.view())
+}
+
+write_rows_guard = (be :: CBackend, v: TyId, out :: Emit)
+                   Res<(), AllocError> {
+    lit ::= be.alloc.String().try();
+    write_vec_literal(be, v, "0", "0", lit).try();
+    line ::= be.alloc.String().try();
+    line.fmt("if (!rows) return {};", lit.view()).try();
+    out.say(line.view())
+}
+
+write_filled_rows = (be :: CBackend, v: TyId, out :: Emit)
+                    Res<(), AllocError> {
+    lit ::= be.alloc.String().try();
+    write_vec_literal(be, v, "rows", "(size_t)argc", lit).try();
+    line ::= be.alloc.String().try();
+    line.fmt("return {};", lit.view()).try();
+    out.say(line.view())
+}
+
+// `(Vec<str>){ .data = <d>, .len = <n>, .capacity = <n> }`. Allocator
+// field left out, so C zeroes it (see note above).
+write_vec_literal = (
+    be   :: CBackend,
+    v    : TyId,
+    data : str,
+    n    : str,
+    out  :: String
+) Res<(), AllocError> {
+    cty ::= be.alloc.String().try();
+    be.ctype(v, cty).try();
+    d ::= be.alloc.String().try();
+    d.sym_member("data").try();
+    l ::= be.alloc.String().try();
+    l.sym_member("len").try();
+    c ::= be.alloc.String().try();
+    c.sym_member("capacity").try();
+    out.fmt(
+        "({}){ .{} = {data}, .{} = {n}, .{} = {n} }",
+        cty.view(),
+        d.view(),
+        l.view(),
+        c.view()
+    )
+}
+
+// `Ok(0)` from main exits 0 — the corpus rests on it. A `Res` whose Ok
+// payload is an integer becomes the exit code; anything not `Ok` exits 1.
+write_exit = (
+    be       :: CBackend,
+    ret      : TyId,
+    call     : str,
+    has_argv : bool,
+    out      :: Emit
+) Res<(), AllocError> {
+    be.check.types.at(ret).match({
+        Res(r) => be.write_res_exit(r, ret, call, has_argv, out),
+        _      => be.write_plain_exit(ret, call, has_argv, out),
+    })
+}
+
+write_res_exit = (
+    be       :: CBackend,
+    r        : TyRes,
+    ret      : TyId,
+    call     : str,
+    has_argv : bool,
+    out      :: Emit
+) Res<(), AllocError> {
+    cty ::= be.alloc.String().try();
+    be.ctype(ret, cty).try();
+    line ::= be.alloc.String().try();
+    line.fmt("{} zg_r = {call};", cty.view()).try();
+    out.say(line.view()).try();
+    be.write_argv_drop(has_argv, out).try();
+    be.write_actor_shutdown(out).try();
+    tag ::= be.alloc.String().try();
+    sym_variant(tag, RES_PATH, "Ok").try();
+    code ::= be.alloc.String().try();
+    be.write_ok_value(r, code).try();
+    guard ::= be.alloc.String().try();
+    guard.fmt(
+        "if (zg_r.zg_tag == {}) return {};",
+        tag.view(),
+        code.view()
+    ).try();
+    out.say(guard.view()).try();
+    out.say("return 1;").try();
+    Ok(());
+}
+
+write_ok_value = (be :: CBackend, r: TyRes, out :: String)
+                 Res<(), AllocError> {
+    is_c_integer(be.check.prim_name(r.value)).match({
+        true  => write_ok_payload(out),
+        false => out.add("0"),
+    })
+}
+
+write_ok_payload = (out :: String) Res<(), AllocError> {
+    out.add("(int)zg_r.zg_data.").try();
+    out.sym_member("Ok").try();
+    Ok(());
+}
+
+write_plain_exit = (
+    be       :: CBackend,
+    ret      : TyId,
+    call     : str,
+    has_argv : bool,
+    out      :: Emit
+) Res<(), AllocError> {
+    is_c_integer(be.check.prim_name(ret)).match({
+        true  => be.write_int_exit(call, has_argv, out),
+        false => be.write_void_exit(ret, call, has_argv, out),
+    })
+}
+
+write_int_exit = (be :: CBackend, call: str, has_argv: bool, out :: Emit)
+                 Res<(), AllocError> {
+    line ::= be.alloc.String().try();
+    line.fmt("int zg_code = (int){call};").try();
+    out.say(line.view()).try();
+    be.write_argv_drop(has_argv, out).try();
+    be.write_actor_shutdown(out).try();
+    out.say("return zg_code;")
+}
+
+write_void_exit = (
+    be       :: CBackend,
+    ret      : TyId,
+    call     : str,
+    has_argv : bool,
+    out      :: Emit
+) Res<(), AllocError> {
+    out.bytes(call).try();
+    out.say(";").try();
+    be.write_argv_drop(has_argv, out).try();
+    be.write_actor_shutdown(out).try();
+    out.say("return 0;").try();
+    Ok(());
+}
+
+write_argv_drop = (be :: CBackend, has_argv: bool, out :: Emit)
+                  Res<(), AllocError> {
+    has_argv.match({
+        false => Ok(()),
+        true  => {
+            data ::= be.alloc.String().try();
+            data.sym_member("data").try();
+            line ::= be.alloc.String().try();
+            line.fmt("free((void *)zg_argv.{});", data.view()).try();
+            out.say(line.view())
+        },
+    })
+}

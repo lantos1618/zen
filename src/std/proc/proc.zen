@@ -1,0 +1,188 @@
+// `run_argv` captures stdout and stderr; `run_argv_inherit` leaves stdin,
+// stdout, and stderr connected to the parent. Both execute an argument vector
+// directly, so metacharacters in arguments have no shell meaning. The vector
+// must name a program at index zero and cannot contain embedded NUL bytes.
+// `run` executes its command through `/bin/sh -c`.
+
+Alloc, AllocError, Ptr, null_ptr = std.mem
+str, String, str_at = std.text
+Vec = std.collections
+Res, ok_or, Sink, WriteError = std.core
+
+zg_proc_run = (
+    cwd      : str,
+    cmd      : str,
+    code_out : Ptr<i32>,
+    out_buf  : Ptr<Ptr<u8>>,
+    out_len  : Ptr<usize>,
+    err_buf  : Ptr<Ptr<u8>>,
+    err_len  : Ptr<usize>
+) i32
+
+zg_proc_run_argv = (
+    cwd      : str,
+    argv     : Ptr<str>,
+    argc     : usize,
+    code_out : Ptr<i32>,
+    out_buf  : Ptr<Ptr<u8>>,
+    out_len  : Ptr<usize>,
+    err_buf  : Ptr<Ptr<u8>>,
+    err_len  : Ptr<usize>
+) i32
+
+zg_proc_run_argv_inherit = (
+    cwd      : str,
+    argv     : Ptr<str>,
+    argc     : usize,
+    code_out : Ptr<i32>
+) i32
+
+zg_proc_stream_start = (cwd: str, argv: Ptr<str>, argc: usize) Ptr<()>
+zg_proc_stream_next = (
+    handle : Ptr<()>,
+    buf    : Ptr<u8>,
+    cap    : usize,
+    count  : Ptr<usize>
+) i32
+zg_proc_stream_wait = (handle: Ptr<()>, code: Ptr<i32>) i32
+zg_proc_stream_close = (handle: Ptr<()>) ()
+
+free = (p: Ptr<()>) ()
+
+ProcError* = SpawnFailed | WaitFailed | ReadFailed
+ProcStreamError* = ProcError | AllocError | IoError
+
+ProcOutput* = {
+    code*: i32,
+    out*:  String,
+    err*:  String,
+}
+
+proc_error = (rc: i32) ProcError {
+    rc.match({
+        1 => SpawnFailed,
+        2 => WaitFailed,
+        _ => ReadFailed,
+    })
+}
+
+string_from_c = (a: Alloc, p: Ptr<u8>, n: usize) Res<String, ProcError> {
+    @scope.defer(() { free(p.to<()>()) });
+    s ::= a.String().try(ProcError.ReadFailed);
+    view = str_at(p, n);
+    s.add(view).try(ProcError.ReadFailed);
+    Ok(s);
+}
+
+// Out-parameters for one capturing run; the C side fills them.
+Capture = {
+    code  : Ptr<i32>,
+    out   : Ptr<Ptr<u8>>,
+    out_n : Ptr<usize>,
+    err   : Ptr<Ptr<u8>>,
+    err_n : Ptr<usize>,
+
+    reserve = (a: Alloc) Res<Capture, ProcError> {
+        code ::= a.create<i32>().try(ProcError.ReadFailed);
+        code.write(0, 0);
+        out ::= a.create<Ptr<u8>>().try(ProcError.ReadFailed);
+        out.write(0, null_ptr<u8>());
+        out_n ::= a.create<usize>().try(ProcError.ReadFailed);
+        out_n.write(0, 0);
+        err ::= a.create<Ptr<u8>>().try(ProcError.ReadFailed);
+        err.write(0, null_ptr<u8>());
+        err_n ::= a.create<usize>().try(ProcError.ReadFailed);
+        err_n.write(0, 0);
+        Ok(Capture(code: code, out: out, out_n: out_n, err: err, err_n: err_n))
+    }
+
+    // Both C buffers are freed whichever copy fails.
+    result = (self: @Self, a: Alloc, rc: i32) Res<ProcOutput, ProcError> {
+        (rc == 0).ensure(rc.proc_error()).try();
+        out_p = self.out.read(0);
+        err_p = self.err.read(0);
+        string_from_c(a, out_p, self.out_n.read(0)).match({
+            Err(e)    => {
+                free(err_p.to<()>());
+                Err(e)
+            },
+            Ok(out_s) => string_from_c(a, err_p, self.err_n.read(0)).match({
+                Err(e)    => Err(e),
+                Ok(err_s) => Ok(ProcOutput(
+                    code: self.code.read(0),
+                    out:  out_s,
+                    err:  err_s
+                )),
+            }),
+        })
+    }
+}
+
+Process* = {
+    run* = (self: @Self, a: Alloc, cwd: str, cmd: str) Res<ProcOutput, ProcError> {
+        slots = Capture.reserve(a).try();
+        rc    = zg_proc_run(
+            cwd,
+            cmd,
+            slots.code,
+            slots.out,
+            slots.out_n,
+            slots.err,
+            slots.err_n
+        );
+        slots.result(a, rc)
+    }
+
+    run_argv* = (self: @Self, a: Alloc, cwd: str, argv: Vec<str>)
+                Res<ProcOutput, ProcError> {
+        slots = Capture.reserve(a).try();
+        rc    = zg_proc_run_argv(
+            cwd,
+            argv.ptr(),
+            argv.len,
+            slots.code,
+            slots.out,
+            slots.out_n,
+            slots.err,
+            slots.err_n
+        );
+        slots.result(a, rc)
+    }
+
+    // Stream both pipes to borrowed sinks as bytes arrive. Sink failure stops
+    // and reaps the child. Returned status preserves the child's exit code.
+    run_argv_into* = <O: Sink, E: Sink>(self: @Self, a: Alloc, cwd: str,
+                                      argv: Vec<str>, out :: O, err :: E)
+                      Res<i32, ProcStreamError> {
+        bytes ::= a.Vec<u8>();
+        bytes.reserve(4096).try();
+        count  = a.create<usize>().try();
+        code   = a.create<i32>().try();
+        handle = zg_proc_stream_start(cwd, argv.ptr(), argv.len);
+        (!handle.is_null()).ensure(ProcError.SpawnFailed).try();
+        @scope.defer(() { zg_proc_stream_close(handle); });
+        done ::= false;
+        loop(!done, (h) {
+            channel = zg_proc_stream_next(handle, bytes.ptr(), 4096, count);
+            (channel >= 0).ensure(ProcError.ReadFailed).try();
+            chunk = str_at(bytes.ptr(), count.read(0));
+            channel.match({
+                0 => { done = true; },
+                1 => out.write(chunk).try(),
+                _ => err.write(chunk).try(),
+            });
+        });
+        rc = zg_proc_stream_wait(handle, code);
+        (rc == 0).ensure(rc.proc_error()).try();
+        Ok(code.read(0))
+    }
+
+    run_argv_inherit* = (self: @Self, a: Alloc, cwd: str, argv: Vec<str>)
+                        Res<i32, ProcError> {
+        code ::= a.create<i32>().try(ProcError.ReadFailed);
+        code.write(0, 0);
+        rc = zg_proc_run_argv_inherit(cwd, argv.ptr(), argv.len, code);
+        (rc == 0).ensure(rc.proc_error()).try();
+        Ok(code.read(0))
+    }
+}

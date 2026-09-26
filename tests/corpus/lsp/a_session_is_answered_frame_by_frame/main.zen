@@ -1,0 +1,243 @@
+// Drive serve as a library and print escaped CR/LF bytes so the expectation
+// covers transport framing as well as JSON. The session covers, in order:
+//
+//   - a request before `initialize` is refused with -32002
+//   - `initialize` answers capabilities, and the gate opens
+//   - `initialized` is a notification and gets NO frame back
+//   - `didOpen` fills the overlay
+//   - hover on a name answers its type AND its range, in wire
+//     coordinates — which puts `lsp_pos.zen` in the loop
+//   - hover where no expression is answers `null`, not an error
+//   - hover on a uri never opened is -32602, not `null`
+//   - `didChange` replaces the whole buffer (Full sync), and the next
+//     hover answers about the NEW text
+//   - an unimplemented method is refused BY NAME with -32601
+//   - a request id that is a STRING is echoed as a string
+//   - malformed JSON is -32700 and names the byte
+//   - a frame whose header is unreadable stops the session and says so
+//
+// Hover positions use zero-based LSP wire coordinates.
+
+str, String = std.text
+Alloc, AllocError = std.mem
+Range = std.core
+Server, serve = lsp.lsp_serve
+write_frame = lsp.lsp_frame
+write_text = std.json
+uri_at = lsp.lsp_uri
+
+// The same one-line module `sema_zen` uses, so a changed hover answer
+// has two possible causes and they are easy to tell apart.
+//
+// Byte 29 is the `a` of `a + b` and byte 31 is the `+`; byte 36 is the
+// newline, which is past every expression on the line.
+DOC*: str = "add = (a: i32, b: i32) i32 { a + b }\n"
+
+// The replacement buffer. `a` is a `bool` here rather than an `i32`, so
+// a hover at the same kind of place answers a DIFFERENT type — which is
+// what proves the overlay was replaced rather than merely written to.
+// Byte 33 is the `a` of `a || b`.
+DOC2*: str = "pick = (a: bool, b: bool) bool { a || b }\n"
+
+URI*: str = "file:///a.zen"
+
+// Requests.
+
+open_doc = (a: Alloc, text: str, into :: String) Res<(), AllocError> {
+    body ::= a.String().try();
+    body.add(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///a.zen\",\"text\":"
+    ).try();
+    write_text(text, body).try();
+    body.add("}}}").try();
+    write_frame(body.view(), into)
+}
+
+// Full sync carries the whole replacement buffer and no range.
+change_doc = (a: Alloc, text: str, into :: String) Res<(), AllocError> {
+    body ::= a.String().try();
+    body.add(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file:///a.zen\"},\"contentChanges\":[{\"text\":"
+    ).try();
+    write_text(text, body).try();
+    body.add("}]}}").try();
+    write_frame(body.view(), into)
+}
+
+hover = (
+    a         : Alloc,
+    id        : usize,
+    uri       : str,
+    line      : usize,
+    character : usize,
+    into      :: String
+) Res<(), AllocError> {
+    body ::= a.String().try();
+    body.add("{\"jsonrpc\":\"2.0\",\"id\":").try();
+    body.write_usize(id).try();
+    body.add(
+        ",\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":"
+    ).try();
+    write_text(uri, body).try();
+    body.add("},\"position\":{\"line\":").try();
+    body.write_usize(line).try();
+    body.add(",\"character\":").try();
+    body.write_usize(character).try();
+    body.add("}}}").try();
+    write_frame(body.view(), into)
+}
+
+// Reading the answers.
+
+// The reply stream, with the framing made readable and NOT altered: a
+// real newline is inserted where one frame ends and the next begins, so
+// the `.expected` is one line per frame instead of one line per
+// session. Everything a server actually wrote is still spelled out —
+// `\r` and `\n` are escapes in this rendering, so the four bytes of a
+// header terminator are visible as four.
+show = (label: str, bytes: str, a: Alloc) Res<(), AllocError> {
+    out ::= a.String().try();
+    Range(0, bytes.len).loop((h, i) {
+        breaking(bytes, i, out).try();
+        visible(bytes.index(i), out).try();
+        after_header(bytes, i, out).try();
+    });
+    println("{}:", label);
+    println("{}", out.view());
+    Ok(());
+}
+
+// A frame starts here, and it is not the first.
+breaking = (bytes: str, i: usize, out :: String) Res<(), AllocError> {
+    (i > 0 && spells(bytes, i, "Content-Length: ")).match({
+        true  => out.add('\n'),
+        false => Ok(()),
+    })
+}
+
+// The `\r\n\r\n` that ends a header block just finished.
+after_header = (bytes: str, i: usize, out :: String) Res<(), AllocError> {
+    (i >= 3 && spells(bytes, i - 3, "\r\n\r\n")).match({
+        true  => out.add('\n'),
+        false => Ok(()),
+    })
+}
+
+spells = (bytes: str, at: usize, word: str) bool {
+    same ::= at + word.len <= bytes.len;
+    Range(0, word.len).loop((h, i) {
+        same = same && bytes.index(at + i) == word.index(i);
+    });
+    same;
+}
+
+visible = (b: u8, out :: String) Res<(), AllocError> {
+    (b == '\r').match({
+        true  => out.add("\\r"),
+        false => (b == '\n').match({
+            true  => out.add("\\n"),
+            false => out.add(b),
+        }),
+    })
+}
+
+// --- the session -----------------------------------------------------
+
+// ONE `serve` CALL FOR THE WHOLE SESSION, so the frame WALKER is
+// exercised too: a server that answered the first message and then lost
+// its place in the stream would pass a one-frame test and fail this one.
+session = (env: Env, a: Alloc) Res<(), AllocError> {
+    s     ::= a.Server(env);
+    input ::= a.String().try();
+
+    // before initialize, which the protocol answers -32002
+    write_frame(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"textDocument/hover\",\"params\":{}}",
+        input
+    ).try();
+
+    write_frame(
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"initialize\",\"params\":{\"rootUri\":\"file:///w\"}}",
+        input
+    ).try();
+    write_frame(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}",
+        input
+    ).try();
+
+    open_doc(a, DOC, input).try();
+
+    hover(a, 3, URI, 0, 29, input).try();   // the `a` of `a + b`
+    hover(a, 4, URI, 0, 31, input).try();   // the `+`: no leaf covers it
+    hover(a, 5, URI, 0, 36, input).try();   // past every expression
+
+    hover(a, 6, "file:///never-opened.zen", 0, 0, input).try();
+
+    change_doc(a, DOC2, input).try();
+    hover(a, 7, URI, 0, 33, input).try();   // the `a` of `a || b`: bool
+
+    // refused by name, and the name is in the message
+    write_frame(
+        "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"textDocument/references\",\"params\":{}}",
+        input
+    ).try();
+
+    // an id that is a string is echoed AS a string
+    write_frame(
+        "{\"jsonrpc\":\"2.0\",\"id\":\"nine\",\"method\":\"shutdown\"}",
+        input
+    ).try();
+    write_frame("{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}", input).try();
+
+    out ::= a.String().try();
+    serve(s, input.view(), out).try();
+    show("session", out.view(), a)
+}
+
+// A separate call, because a malformed frame ENDS a session — see
+// `serve`'s header for why framing cannot recover — and ending the one
+// above would hide everything after it.
+broken = (env: Env, a: Alloc, label: str, input: str) Res<(), AllocError> {
+    s   ::= a.Server(env);
+    out ::= a.String().try();
+    serve(s, input, out).try();
+    show(label, out.view(), a)
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+    (!uri_at(alloc, "/", "a.zen").try().eq(URI)).then(() {
+        println("root-level document URI changed");
+    });
+    session(env, alloc).try();
+
+    // A well-framed message whose BODY is not JSON. The frame is fine,
+    // so a reply is possible, and the client is told which byte: `01`
+    // is two numbers in JSON's grammar exactly as it is in Zen's.
+    broken(env, alloc, "bad json", "Content-Length: 8\r\n\r\n{\"a\":01}").try();
+
+    // A body that is valid JSON and then some. `Content-Length` and the
+    // sender disagree, which is the failure that would otherwise
+    // desynchronise every later frame.
+    broken(env, alloc, "two values", "Content-Length: 5\r\n\r\n{} {}").try();
+
+    // Headers that never end.
+    broken(env, alloc, "no blank line", "Content-Length: 2\r\n{}").try();
+
+    // A header block with no Content-Length in it.
+    broken(env, alloc, "no length", "Content-Type: x\r\n\r\n{}").try();
+
+    // A Content-Length longer than the bytes that followed.
+    broken(env, alloc, "short body", "Content-Length: 99\r\n\r\n{}").try();
+
+    // Extra headers, and a header name in the wrong case. Both are
+    // legal and both must be read — a client sending `content-length`
+    // is not sending a malformed message.
+    broken(
+        env,
+        alloc,
+        "odd headers",
+        "Content-Type: application/vscode-jsonrpc\r\ncontent-length:  37  \r\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"x\"}"
+    ).try();
+    Ok(0);
+}

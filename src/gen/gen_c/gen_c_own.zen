@@ -1,0 +1,517 @@
+// Emits cleanup for normal block completion, `.try()` returns, and loop jumps.
+// Defers run LIFO before drops; drops run in reverse declaration order.
+// `@scope` and lifted defer thunks borrow their enclosing block and cannot
+// Escape it. Drop is not recursively synthesized for fields or elements.
+
+Expr, ExprId, BlockId, Block, Stmt, Bind = std.ast
+Decl, Member, Function = std.ast
+Impl, Call, Access, Match, Binary, Try = std.ast
+AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+Range = std.core
+DeclId, ImplId = sema.sema_id
+TyId = sema.sema_ty
+sym_local, sym_gen = gen.gen_name
+CBackend = gen.gen_c.gen_c_state
+decl_name = gen.gen_c.gen_c_impl
+DropEntry, BlockFrame = gen.gen_c.gen_c_frame
+recv_inst = gen.gen_c.gen_c_mono
+Site, site_of, method_sig, member_symbol = gen.gen_c.gen_c_member
+
+// entering and leaving a block
+
+// A block opening. Its defer record is declared here, before its first
+// statement, so a closure registered by that statement has somewhere
+// to land. Only a block that writes `@scope` gets one; storage is
+// automatic, so re-entering the block (a loop's next pass) starts from
+// an empty stack.
+enter_block* = (be :: CBackend, id: BlockId) Res<(), AllocError> {
+    rec = be.block_record(id).try();
+    be.open_block(rec)
+}
+
+// The declared return type settles both match arms, including the
+// unconstrained Ok literal in the no-record case.
+block_record = (be :: CBackend, id: BlockId) Res<usize, AllocError> {
+    be.writes_scope(id).match({
+        false => Ok(0),
+        true  => be.open_record(),
+    })
+}
+
+open_record = (be :: CBackend) Res<usize, AllocError> {
+    be.need_scope();
+    n = be.next_tmp();
+    name ::= be.alloc.String().try();
+    sym_gen(name, "b", n).try();
+    be.fmt("zg_scope {};\n{}.zg_n = 0;\n", name.view(), name.view()).try();
+    Ok(n);
+}
+
+// A block leaving by its own closing brace. `keep` is a binding the
+// block is handing out, and "" when it is handing out nothing.
+leave_block* = (be :: CBackend, keep: str) Res<(), AllocError> {
+    (be.block_depth() == 0).match({
+        true  => Ok(()),
+        false => be.run_frame(be.block_depth() - 1, keep),
+    }).try();
+    be.close_block()
+}
+
+// Every block from the innermost out to `depth`: what a non-local exit
+// leaves behind, written before the jump that skips the closing braces.
+// Frames are not popped: lowering still stands inside those blocks with
+// statements left to write, and the `}` will run this again for the
+// path that falls through to it.
+unwind_to* = (be :: CBackend, depth: usize, keep: str)
+             Res<(), AllocError> {
+    n = be.block_depth();
+    (n > depth).match({
+        false => Ok(()),
+        true  => be.unwind_frames(depth, n, keep),
+    })
+}
+
+unwind_frames = (be :: CBackend, depth: usize, n: usize, keep: str)
+                Res<(), AllocError> {
+    Range(0, n - depth).loop((h, k) {
+        be.run_frame(n - 1 - k, keep).try();
+    });
+    Ok(());
+}
+
+// One block leaving, and the only place that says what that means.
+run_frame = (be :: CBackend, i: usize, keep: str) Res<(), AllocError> {
+    be.block_at(i).match({
+        None  => Ok(()),
+        Ok(f) => be.run_cleanup(f, i, keep),
+    })
+}
+
+run_cleanup = (be :: CBackend, f: BlockFrame, i: usize, keep: str)
+              Res<(), AllocError> {
+    (f.rec > 0).match({
+        false => Ok(()),
+        true  => be.run_defers(f.rec),
+    }).try();
+    be.unwind_drops(f.mark, be.frame_end(i), keep)
+}
+
+// Where this block's drops stop: the next block's mark, or the end.
+frame_end = (be :: CBackend, i: usize) usize {
+    be.block_at(i + 1).match({
+        Ok(f) => f.mark,
+        None  => be.drop_count(),
+    })
+}
+
+run_defers = (be :: CBackend, rec: usize) Res<(), AllocError> {
+    name ::= be.alloc.String().try();
+    sym_gen(name, "b", rec).try();
+    be.fmt("zg_scope_run(&{});\n", name.view())
+}
+
+// Reverse declaration order, for the reason the file header gives.
+unwind_drops = (be :: CBackend, mark: usize, end: usize, keep: str)
+               Res<(), AllocError> {
+    (end > mark).match({
+        false => Ok(()),
+        true  => be.drop_range(mark, end, keep),
+    })
+}
+
+drop_range = (be :: CBackend, mark: usize, end: usize, keep: str)
+             Res<(), AllocError> {
+    Range(0, end - mark).loop((h, k) {
+        be.drop_at(end - 1 - k).match({
+            None  => Ok(()),
+            Ok(e) => be.drop_unless_kept(e, keep),
+        }).try();
+    });
+    Ok(());
+}
+
+// A binding the block is handing out is left alone: undropped leaks,
+// but dropping it is a use-after-free — only one is recoverable.
+drop_unless_kept = (be :: CBackend, e: DropEntry, keep: str)
+                   Res<(), AllocError> {
+    e.name.eq(keep).match({
+        true  => Ok(()),
+        false => be.write_drop(e),
+    })
+}
+
+// what a drop is
+
+// Register a binding for scope exit, if its type impls Drop.
+// Only a binding, never a temporary, never a parameter — "passing a
+// Drop value to a parameter is a borrow, not a move" — and never a
+// match arm's payload binder, which names part of a value somebody
+// else still owns.
+note_drop* = (be :: CBackend, name: str, index: usize, ty: TyId)
+             Res<(), AllocError> {
+    be.has_drop(ty).try().match({
+        false => Ok(()),
+        true  => own_binding(be, name, index, ty),
+    })
+}
+
+own_binding = (be :: CBackend, name: str, index: usize, ty: TyId)
+              Res<(), AllocError> {
+    live = be.open_live_flag().try();
+    be.own_binding(DropEntry(name: name, index: index, ty: ty, live: live))
+}
+
+// The `int` that says whether this binding still owns its value.
+// Every tracked binding gets one, even if this program never moves it:
+// "is this name consumed anywhere" can't be answered per function (a
+// body reaches the backend inlined into its caller's frame), so the
+// choice is a program-wide scan or over-approximating — and
+// over-approximating costs an `int` the C compiler folds, while
+// under-approximating costs a double free.
+open_live_flag = (be :: CBackend) Res<usize, AllocError> {
+    n = be.next_tmp();
+    name ::= be.alloc.String().try();
+    sym_gen(name, "o", n).try();
+    be.fmt("int {} = 1;\n", name.view()).try();
+    Ok(n);
+}
+
+// `consume x` — x is somebody else's now, so this frame must not drop
+// it. The nearest tracked binding of that name wins, which is the same
+// one `slot_of` would have found — and only that one: clearing every
+// entry with the name disarms the drop of an outer binding the inner
+// shadow stood in front of, and that value leaks at scope exit.
+release_binding* = (be :: CBackend, name: str) Res<(), AllocError> {
+    n = be.drop_count();
+    Range(0, n).find((k) {
+        be.drop_at(n - k - 1).match({
+            Ok(e) => e.name.eq(name),
+            None  => false,
+        })
+    }).match({
+        None  => Ok(()),
+        Ok(k) => be.drop_at(n - k - 1).match({
+            None  => Ok(()),
+            Ok(e) => be.clear_if_named(e, name),
+        }),
+    }).try();
+    Ok(());
+}
+
+clear_if_named = (be :: CBackend, e: DropEntry, name: str)
+                 Res<(), AllocError> {
+    (e.name.eq(name) && (e.live > 0)).match({
+        false => Ok(()),
+        true  => be.write_clear(e.live),
+    })
+}
+
+write_clear = (be :: CBackend, live: usize) Res<(), AllocError> {
+    name ::= be.alloc.String().try();
+    sym_gen(name, "o", live).try();
+    be.fmt("{} = 0;\n", name.view())
+}
+
+// Store-side mirror of release_binding: replacing a Drop value destroys the
+// displaced generation before arming the replacement.
+// A name names one storage: the nearest tracked entry, the same one
+// release_binding answers through, and the entry carries the index and
+// type its own registration used. An inner shadow's store must not
+// reach past its own binding, and a parameter -- never registered,
+// because passing a Drop value to it is a borrow -- finds no entry and
+// gains none: a store onto a borrow must not teach the frame to drop
+// somebody else's value at scope exit.
+// The entry fires behind its own live flag, so a slot whose value a
+// `consume` already moved out emits nothing here; the flag is then
+// killed, because one retirement is all a generation gets -- without
+// that, the retired entry would fire again at scope exit, over the new
+// value. note_drop arms a fresh one for the value landing now: `a =
+// consume b` onto a moved-out binding is the legal face of sema's
+// `revive`, and the swap test's scope-exit drops hang on exactly this
+// re-arm.
+displace* = (be :: CBackend, name: str) Res<(), AllocError> {
+    n = be.drop_count();
+    Range(0, n).find((k) {
+        be.drop_at(n - k - 1).match({
+            Ok(e) => e.name.eq(name),
+            None  => false,
+        })
+    }).match({
+        None  => Ok(()),
+        Ok(k) => be.drop_at(n - k - 1).match({
+            None  => Ok(()),
+            Ok(e) => be.displace_one(e),
+        }),
+    }).try();
+    Ok(());
+}
+
+// Drop through the entry's own machinery -- write_drop already knows
+// the guarded shape -- kill the flag, and register the successor.
+displace_one = (be :: CBackend, e: DropEntry) Res<(), AllocError> {
+    be.write_drop(e).try();
+    be.write_clear(e.live).try();
+    be.note_drop(e.name, e.index, e.ty).try()
+}
+
+has_drop* = (be :: CBackend, ty: TyId) Res<bool, AllocError> {
+    site_of(be, ty).try().match({
+        None  => Ok(false),
+        Ok(s) => be.site_has_drop(s),
+    })
+}
+
+site_has_drop = (be :: CBackend, s: Site) Res<bool, AllocError> {
+    be.drop_fn(s.decl).try().match({
+        None  => Ok(false),
+        Ok(_) => Ok(true),
+    })
+}
+
+write_drop = (be :: CBackend, e: DropEntry) Res<(), AllocError> {
+    site_of(be, e.ty).try().match({
+        None  => Ok(()),
+        Ok(s) => be.drop_through(e, s),
+    })
+}
+
+drop_through = (be :: CBackend, e: DropEntry, s: Site)
+               Res<(), AllocError> {
+    be.drop_fn(s.decl).try().match({
+        None  => Ok(()),
+        Ok(f) => be.guarded_drop(e, s, f),
+    })
+}
+
+// The flag is the whole of "exactly once" on a value that is moved on
+// one path and not another: cleared at the move, tested at every exit.
+guarded_drop = (be :: CBackend, e: DropEntry, s: Site, f: Function)
+               Res<(), AllocError> {
+    (e.live == 0).match({
+        true  => be.call_drop(e, s, f),
+        false => be.flagged_drop(e, s, f),
+    })
+}
+
+flagged_drop = (be :: CBackend, e: DropEntry, s: Site, f: Function)
+               Res<(), AllocError> {
+    flag ::= be.alloc.String().try();
+    sym_gen(flag, "o", e.live).try();
+    be.fmt("if ({}) {\n", flag.view()).try();
+    be.indent();
+    be.call_drop(e, s, f).try();
+    be.dedent();
+    be.writeln("}").try();
+    Ok(());
+}
+
+// The compiler-inserted call is exempt from the receiver rule. `drop`
+// is declared `(self :: @Self)` and scope exit runs it on `:` bindings
+// too, "because destroying a value is not mutating it through a
+// binding" — so the address is taken whatever the binding was written
+// as.
+call_drop = (be :: CBackend, e: DropEntry, s: Site, f: Function)
+            Res<(), AllocError> {
+    inst = be.recv_inst(e.ty).try();
+    sig ::= be.alloc.Vec<TyId>();
+    be.method_sig(e.ty, s.decl, f, s.decl.module.to_usize(), inst, sig).try();
+    sym = be.member_symbol(e.ty, s, "drop", sig, inst).try();
+    be.write_drop_call(e, sym.view(), by_address(f))
+}
+
+by_address = (f: Function) bool {
+    f.params.get(0).match({
+        Ok(p) => p.mutable,
+        None  => true,
+    })
+}
+
+write_drop_call = (be :: CBackend, e: DropEntry, sym: str, addr: bool)
+                  Res<(), AllocError> {
+    name ::= be.alloc.String().try();
+    sym_local(name, e.name, e.index).try();
+    be.fmt("{}({}{});\n", sym, ampersand(addr), name.view())
+}
+
+ampersand = (addr: bool) str {
+    addr.match({ true => "&", false => "" })
+}
+
+// The `drop` a `T.impl(Drop, { .. })` supplies, or nothing.
+// The trait is part of the question, not decoration: a type may
+// declare its own method named `drop` (`Emit` could), and running that
+// at scope exit would call something the program never asked for. Only
+// an impl of Drop counts — the same test the reference backend makes.
+drop_fn* = (be :: CBackend, decl: DeclId) Res<Res<Function>, AllocError> {
+    ids ::= be.alloc.Vec<ImplId>();
+    be.check.world.impls_named(be.tree, be.decl_name(decl), ids).try();
+    found ::= be.alloc.Vec<Function>();
+    ids.loop((h, i) { be.collect_drop(decl, i, found).try() });
+    Ok(found.get(0));
+}
+
+// An impl lives in the module that declares its target, so a same-named
+// type elsewhere is never confused for this one.
+collect_drop = (
+    be    :: CBackend,
+    decl  : DeclId,
+    i     : ImplId,
+    found :: Vec<Function>
+) Res<(), AllocError> {
+    (decl.module == i.decl.module).match({
+        false => Ok(()),
+        true  => be.drop_in_impl(i, found),
+    })
+}
+
+drop_in_impl = (be :: CBackend, i: ImplId, found :: Vec<Function>)
+               Res<(), AllocError> {
+    be.check.world.impl_at(be.tree, i).match({
+        None   => Ok(()),
+        Ok(im) => be.keep_drop_member(im, found),
+    })
+}
+
+keep_drop_member = (be :: CBackend, im: Impl, found :: Vec<Function>)
+                   Res<(), AllocError> {
+    be.bounds_drop(im).match({
+        false => Ok(()),
+        true  => scan_drop_members(im, found),
+    })
+}
+
+// One question per pass, two spellings: `sema_drop.zen`'s
+// bound_named_drop asks this of a Checker. Kept in step by hand until
+// the layers share a helper.
+bounds_drop = (be :: CBackend, im: Impl) bool {
+    be.tree.type_at(im.bound).kind.match({
+        Named(n) => n.name.text.eq("Drop"),
+        _        => false,
+    })
+}
+
+// Same ladder as `gen_c_range.zen`'s add_bodied_fn, same `add_if_bodied`
+// below. One collects a Drop impl's `drop`, the other an impl's
+// supplied function; the meaning differs per layer.
+scan_drop_members = (im: Impl, found :: Vec<Function>)
+                    Res<(), AllocError> {
+    im.members.loop((h, m) { keep_bodied_drop(m, found).try() });
+    Ok(());
+}
+
+keep_bodied_drop = (m: Member, found :: Vec<Function>)
+                   Res<(), AllocError> {
+    m.named("drop").match({
+        false => Ok(()),
+        true  => add_bodied(m, found),
+    })
+}
+
+add_bodied = (m: Member, found :: Vec<Function>) Res<(), AllocError> {
+    m.kind.match({
+        Function(f) => add_if_bodied(f, found),
+        _           => Ok(()),
+    })
+}
+
+add_if_bodied = (f: Function, found :: Vec<Function>)
+                Res<(), AllocError> {
+    f.body.match({
+        None  => Ok(()),
+        Ok(_) => found.add(f),
+    })
+}
+
+// Reports whether this block itself writes `@scope`. Nested blocks and lambda
+// Bodies own independent scope records and are not searched.
+
+writes_scope* = (be :: CBackend, id: BlockId) bool {
+    blk = be.tree.block_at(id);
+    got ::= blk.value.match({
+        Ok(e) => be.expr_writes_scope(e),
+        None  => false,
+    });
+    blk.stmts.loop((h, s) { got = got || be.stmt_writes_scope(s); });
+    got
+}
+
+stmt_writes_scope = (be :: CBackend, s: Stmt) bool {
+    s.kind.match({
+        Expr(e)  => be.expr_writes_scope(e.expr),
+        Bind(b)  => be.expr_writes_scope(b.value),
+        Block(_) => false,
+        Decl(_)  => false,
+    })
+}
+
+expr_writes_scope = (be :: CBackend, id: ExprId) bool {
+    be.tree.expr_at(id).kind.match({
+        Scope         => true,
+        Paren(p)      => be.expr_writes_scope(p.inner),
+        Unary(u)      => be.expr_writes_scope(u.operand),
+        Binary(b)     => be.binary_writes_scope(b),
+        Access(a)     => be.expr_writes_scope(a.base),
+        Index(x)      => be.expr_writes_scope(x.base)
+                             || be.expr_writes_scope(x.index),
+        Try(t)        => be.expr_writes_scope(t.operand)
+                             || be.opt_writes_scope(t.error),
+        Consume(x)    => be.expr_writes_scope(x.operand),
+        Call(c)       => be.call_writes_scope(c),
+        Match(m)      => be.match_writes_scope(m),
+        Array(a)      => be.elems_write_scope(a.elems),
+        FixedArray(a) => be.elems_write_scope(a.elems),
+        _             => false,
+    })
+}
+
+opt_writes_scope = (be :: CBackend, id: Res<ExprId>) bool {
+    id.match({
+        Ok(e) => be.expr_writes_scope(e),
+        None  => false,
+    })
+}
+
+// Walk an unbounded left-nested binary chain iteratively to avoid consuming the
+// Host C stack.
+binary_writes_scope = (be :: CBackend, b: Binary) bool {
+    got   ::= false;
+    down  ::= b;
+    going ::= true;
+    going.loop((h) {
+        got   = got || be.expr_writes_scope(down.rhs);
+        next  = be.binary_below(down.lhs);
+        going = next.match({ None => false, Ok(_) => true });
+        down  = next.match({ None => down, Ok(inner) => inner });
+    });
+    got || be.expr_writes_scope(down.lhs)
+}
+
+binary_below = (be :: CBackend, id: ExprId) Res<Binary> {
+    be.tree.expr_at(id).kind.match({
+        Binary(b) => Ok(b),
+        _         => None,
+    })
+}
+
+call_writes_scope = (be :: CBackend, c: Call) bool {
+    got ::= be.expr_writes_scope(c.callee);
+    c.args.loop((h, a) { got = got || be.expr_writes_scope(a.value); });
+    got
+}
+
+// Same shape as `call_writes_scope`, different fact: a call's args are
+// Values the callee receives, a match's arms are branches only one of
+// which runs. Merging them would hide that asymmetry.
+match_writes_scope = (be :: CBackend, m: Match) bool {
+    got ::= be.expr_writes_scope(m.scrutinee);
+    m.arms.loop((h, a) { got = got || be.expr_writes_scope(a.body); });
+    got
+}
+
+elems_write_scope = (be :: CBackend, elems: Vec<ExprId>) bool {
+    got ::= false;
+    elems.loop((h, e) { got = got || be.expr_writes_scope(e); });
+    got
+}

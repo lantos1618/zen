@@ -1,0 +1,96 @@
+// Converts editor URIs and filesystem paths with caller-owned decoded text.
+str, String, dup = std.text
+Map = std.collections
+Alloc, AllocError = std.mem
+hex_value, hex_digit = std.core.byte
+Range = std.core
+
+FILE_SCHEME*: str = "file://"
+REMOTE_SCHEME: str = "vscode-remote://"
+
+// Relative file:// spellings are retained for embedded compiler clients.
+// VS Code remote authorities identify the connection, not the local path.
+path_of* = (a: Alloc, uri: str) Res<str, AllocError> {
+    raw   = uri.starts_with(FILE_SCHEME).match({
+        true  => uri.slice(FILE_SCHEME.len, uri.len),
+        false => uri.starts_with(REMOTE_SCHEME).match({
+            true  => {
+                tail = uri.slice(REMOTE_SCHEME.len, uri.len);
+                tail.find('/').match({ Ok(at) => tail.slice(at, tail.len), None => uri })
+            },
+            false => uri,
+        }),
+    });
+    local = raw.starts_with("localhost/").match({
+        true => raw.slice("localhost".len, raw.len), false => raw,
+    });
+    (uri.starts_with(FILE_SCHEME) || uri.starts_with(REMOTE_SCHEME)).match({
+        false => uri.dup(a),
+        true  => decoded_path(a, local),
+    })
+}
+
+decoded_path = (a: Alloc, raw: str) Res<str, AllocError> {
+    out       ::= a.String().try();
+    at: usize ::= 0;
+    loop(() { at < raw.len }, (h) {
+        byte    = raw[at];
+        decoded = escaped_at(raw, at);
+        decoded.match({
+            Ok(value) => { out.add(value).try(); at = at + 3; },
+            None      => { out.add(byte).try(); at = at + 1; },
+        });
+    });
+    Ok(out.view())
+}
+
+escaped_at = (raw: str, at: usize) Res<u8> {
+    (raw[at] == '%' && at + 2 < raw.len).ensure().try();
+    high  = raw[at + 1].hex_value().try();
+    low   = raw[at + 2].hex_value().try();
+    value = high * 16 + low;
+    (value != 0).ensure().try();
+    Ok(value)
+}
+
+uri_at* = (a: Alloc, root: str, rel: str) Res<str, AllocError> {
+    out ::= a.String().try();
+    out.add(FILE_SCHEME).try();
+    (!rel.starts_with("/")).then(() {
+        root.write_path(out).try();
+        (!root.ends_with("/")).then(() { out.add('/').try(); });
+    });
+    rel.write_path(out).try();
+    Ok(out.view())
+}
+
+write_path = (path: str, out :: String) Res<(), AllocError> {
+    Range(0, path.len).loop((at) {
+        byte = path[at];
+        (byte.is_alpha() || byte.is_digit() || byte.is_in([
+            '/', '-', '.', '_', '~', ':'
+        ])).match({
+            true  => out.add(byte),
+            false => {
+                out.add('%').try();
+                out.add((byte / 16).hex_digit().to_upper()).try();
+                out.add((byte % 16).hex_digit().to_upper())
+            },
+        }).try();
+    });
+    Ok(())
+}
+
+doc_text* = (env: Env, a: Alloc, docs: Map<str, str>, uri: str) str {
+    docs.get(uri).match({
+        Ok(text) => text,
+        None     => path_of(a, uri).match({
+            Ok(path) => disk_text(env, a, path),
+            Err(_)   => "",
+        }),
+    })
+}
+
+disk_text* = (env: Env, a: Alloc, path: str) str {
+    env.fs.read(a, path).match({ Ok(text) => text.view(), Err(_) => "" })
+}

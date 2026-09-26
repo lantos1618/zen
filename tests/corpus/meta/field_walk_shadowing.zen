@@ -1,0 +1,23 @@
+// Meta-walk binders are identified by declaration, not spelling. A local
+// `field` and nested loop handle `h` therefore shadow the walk binders without
+// changing the outer walk after their scopes end.
+
+Row = {
+    n: i64,
+    tag: str,
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    r = Row(n: 5, tag: "t");
+    @meta(row: Row).fields().loop((h, field) {
+        {
+            field ::= 41;
+            println("shadow {}", field);
+        }
+        Range(0, 2).loop((h, i) {
+            println("inner {}", i);
+        });
+        println("outer {}={}", field.name, r.at(field));
+    });
+    Ok(0);
+}

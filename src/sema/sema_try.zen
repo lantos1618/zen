@@ -1,0 +1,326 @@
+ExprId, Span, Lambda, Paren, Param = std.ast
+AllocError = std.mem
+Vec = std.collections
+TyId, TyRes, ResForm = sema.sema_ty
+SemaFault, TypeFault = sema.sema_diag
+Checker, Ctx = sema.sema_check
+type_of = sema.sema_type
+block_type = sema.sema_type
+param_type, type_from_ast = sema.sema_denote
+push_tparams, module_name = sema.sema_inst
+
+try_type* = (
+    c       :: Checker,
+    at      : Span,
+    operand : ExprId,
+    error   : Res<ExprId>,
+    ctx     : Ctx
+)
+           Res<TyId, AllocError> {
+    got = c.type_of(operand, ctx).try();
+    c.types.at(got).match({
+        Res(r) => c.try_res(at, r, got, error, ctx),
+        _      => c.try_not_res(at, got, ctx),
+    })
+}
+
+try_not_res = (c :: Checker, at: Span, got: TyId, ctx: Ctx)
+              Res<TyId, AllocError> {
+    // poison: no second diagnostic
+    c.is_unknown(got).match({
+        false => c.try_needs_res(at, got),
+        true  => Ok(got),
+    })
+}
+
+try_needs_res = (c :: Checker, at: Span, got: TyId)
+                Res<TyId, AllocError> {
+    want = c.types.unknown().try();
+    c.report(
+        at.file,
+        at,
+        SemaFault.TryNeedsRes(TypeFault(name: "", expected: want, found: got))
+    ).try();
+    c.types.unknown()
+}
+
+try_res = (
+    c     :: Checker,
+    at    : Span,
+    r     : TyRes,
+    got   : TyId,
+    error : Res<ExprId>,
+    ctx   : Ctx
+)
+          Res<TyId, AllocError> {
+    ctx.has_ret.match({
+        false => c.try_outside_res(at, got),
+        true  => c.try_into(at, r, got, error, ctx),
+    })
+}
+
+try_outside_res = (c :: Checker, at: Span, got: TyId)
+                  Res<TyId, AllocError> {
+    want = c.types.unknown().try();
+    c.report(
+        at.file,
+        at,
+        SemaFault.TryOutsideRes(TypeFault(name: "", expected: want, found: got))
+    ).try();
+    // The primary fault owns this expression. Poison prevents the enclosing
+    // return check from reporting the same mistake again as a type mismatch.
+    c.types.unknown()
+}
+
+// The enclosing function returns a Res; which one decides whether this
+// propagation is legal at all.
+try_into = (
+    c     :: Checker,
+    at    : Span,
+    r     : TyRes,
+    got   : TyId,
+    error : Res<ExprId>,
+    ctx   : Ctx
+)
+           Res<TyId, AllocError> {
+    c.types.at(ctx.ret).match({
+        Res(want) => error.match({
+            Ok(e) => c.try_transform(at, e, r, want, got, ctx),
+            None  => c.try_merge(at, r, want, got),
+        }),
+        _         => c.try_outside_res(at, got),
+    })
+}
+
+// A value replaces the source error; a one-parameter lambda maps it.
+try_transform = (
+    c    :: Checker,
+    at   : Span,
+    id   : ExprId,
+    r    : TyRes,
+    want : TyRes,
+    got  : TyId,
+    ctx  : Ctx
+) Res<TyId, AllocError> {
+    both_failures(r.form, want.form).match({
+        false => c.try_transform_needs_failure(at, got, ctx.ret, r.value),
+        true  => c.try_transform_expr(id, r.error, want.error, r.value, ctx),
+    })
+}
+
+try_transform_needs_failure = (
+    c     :: Checker,
+    at    : Span,
+    got   : TyId,
+    want  : TyId,
+    value : TyId
+) Res<TyId, AllocError> {
+    c.report(
+        at.file,
+        at,
+        SemaFault.TryArgNeedsErr(TypeFault(
+            name: "",
+            expected: want,
+            found: got
+        ))
+    ).try();
+    Ok(value)
+}
+
+try_transform_expr = (
+    c     :: Checker,
+    id    : ExprId,
+    from  : TyId,
+    into  : TyId,
+    value : TyId,
+    ctx   : Ctx
+) Res<TyId, AllocError> {
+    c.try_lambda_at(id).match({
+        Ok(l) => c.try_mapper(id, l, from, into, ctx).try(),
+        None  => {
+            node   = c.tree.expr_at(id);
+            actual = c.type_of(id, ctx).try();
+            c.coerce(node.span.file, node.span, actual, into, "").try();
+        },
+    });
+    Ok(value)
+}
+
+try_lambda_at = (c: Checker, id: ExprId) Res<Lambda> {
+    c.tree.expr_at(id).kind.match({
+        Lambda(l) => Ok(l),
+        Paren(p)  => c.try_lambda_at(p.inner),
+        _         => None,
+    })
+}
+
+try_mapper = (
+    c    :: Checker,
+    id   : ExprId,
+    l    : Lambda,
+    from : TyId,
+    into : TyId,
+    ctx  : Ctx
+) Res<(), AllocError> {
+    (l.params.len == 1).match({
+        false => c.try_mapper_arity(id, l, from, into),
+        true  => c.check_try_mapper(l, from, into, ctx),
+    })
+}
+
+try_mapper_arity = (
+    c    :: Checker,
+    id   : ExprId,
+    l    : Lambda,
+    from : TyId,
+    into : TyId
+) Res<(), AllocError> {
+    expected_params ::= c.alloc.Vec<TyId>();
+    expected_params.add(from).try();
+    expected = c.types.fn_ty(expected_params, into).try();
+    hole     = c.types.infer().try();
+    actual_params ::= c.alloc.Vec<TyId>();
+    l.params.loop((h, p) { actual_params.add(hole).try() });
+    actual = c.types.fn_ty(actual_params, hole).try();
+    node   = c.tree.expr_at(id);
+    c.mismatch(node.span.file, node.span, actual, expected, "")
+}
+
+check_try_mapper = (
+    c    :: Checker,
+    l    : Lambda,
+    from : TyId,
+    into : TyId,
+    ctx  : Ctx
+) Res<(), AllocError> {
+    smark = c.mark();
+    tmark = c.tvar_mark();
+    c.push_tparams(l.tparams, module_name(c, ctx.module)).try();
+    l.params.get(0).match({
+        Ok(p) => c.bind_try_mapper_param(p, from, ctx),
+        None  => Ok(()),
+    }).try();
+    actual = c.block_type(l.body, ctx).try();
+    body   = c.tree.block_at(l.body);
+    c.coerce(body.span.file, body.span, actual, into, "").try();
+    l.ret.match({
+        Ok(t) => {
+            declared = c.type_from_ast(t, ctx).try();
+            c.coerce(body.span.file, body.span, declared, into, "").try();
+        },
+        None  => (),
+    });
+    c.release_tvars(tmark).try();
+    c.release(smark).try();
+    Ok(())
+}
+
+bind_try_mapper_param = (c :: Checker, p: Param, from: TyId, ctx: Ctx)
+                        Res<(), AllocError> {
+    p.type.match({
+        Ok(_) => {
+            declared = c.param_type(p, ctx).try();
+            c.coerce(p.span.file, p.span, from, declared, p.name.text).try();
+        },
+        None  => (),
+    });
+    c.bind(p.name.text, from, p.mutable, true).try();
+    Ok(())
+}
+
+try_merge = (c :: Checker, at: Span, r: TyRes, want: TyRes, got: TyId)
+            Res<TyId, AllocError> {
+    // A None never becomes an Err; `.ok_or(..)` names the reason.
+    absence_into_failure(r.form, want.form).match({
+        true  => c.try_absence(at, got, r.value, want.error),
+        false => c.try_set(at, r, want),
+    })
+}
+
+// `expected` is the enclosing function's Res, built with its failure set.
+try_absence = (c :: Checker, at: Span, got: TyId, value: TyId, err: TyId)
+              Res<TyId, AllocError> {
+    want = c.types.res_failure(value, err).try();
+    c.report(
+        at.file,
+        at,
+        SemaFault.TryAbsenceIntoFailure(TypeFault(
+            name: "",
+            expected: want,
+            found: got
+        ))
+    ).try();
+    Ok(value)
+}
+
+try_set = (c :: Checker, at: Span, r: TyRes, want: TyRes)
+          Res<TyId, AllocError> {
+    both_failures(r.form, want.form).match({
+        true  => c.try_contained(at, r, want),
+        false => c.try_into_absence(at, r, want),
+    })
+}
+
+try_into_absence = (c :: Checker, at: Span, r: TyRes, want: TyRes)
+                   Res<TyId, AllocError> {
+    failure_into_absence(r.form, want.form).match({
+        true  => c.try_no_conversion(at, r, want),
+        false => Ok(r.value),
+    })
+}
+
+failure_into_absence = (got: ResForm, want: ResForm) bool {
+    got.match({
+        Failure => want.match({ Absence => true, _ => false }),
+        _       => false,
+    })
+}
+
+absence_into_failure = (got: ResForm, want: ResForm) bool {
+    got.match({
+        Absence => want.match({ Failure => true, _ => false }),
+        _       => false,
+    })
+}
+
+both_failures = (got: ResForm, want: ResForm) bool {
+    got.match({
+        Failure => want.match({ Failure => true, _ => false }),
+        _       => false,
+    })
+}
+
+try_contained = (c :: Checker, at: Span, r: TyRes, want: TyRes)
+                Res<TyId, AllocError> {
+    c.is_infer(want.error).match({
+        true  => c.try_raises(r),
+        false => c.try_declared(at, r, want),
+    })
+}
+
+try_raises = (c :: Checker, r: TyRes) Res<TyId, AllocError> {
+    c.raise(c.set_of(r.error)).try();
+    Ok(r.value);
+}
+
+try_declared = (c :: Checker, at: Span, r: TyRes, want: TyRes)
+               Res<TyId, AllocError> {
+    c.types.set_within(c.set_of(r.error), c.set_of(want.error)).match({
+        false => c.try_no_conversion(at, r, want),
+        true  => Ok(r.value),
+    })
+}
+
+try_no_conversion = (c :: Checker, at: Span, r: TyRes, want: TyRes)
+                    Res<TyId, AllocError> {
+    c.report(
+        at.file,
+        at,
+        SemaFault.NoErrorConversion(TypeFault(
+            name: "",
+            expected: want.error,
+            found: r.error
+        ))
+    ).try();
+    Ok(r.value)
+}

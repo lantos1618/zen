@@ -1,0 +1,22 @@
+// Writable allocator-backed data cannot be shared with an actor. A future
+// isolated-graph transfer may accept `consume buf`; this unconsumed reference
+// must always be rejected.
+
+Worker = {}
+
+Worker.impl(Actor, {
+    process = (self :: @Self, ctx: Context, data: Vec<u8>) {
+        ctx.env.out.println("got the buffer")
+    }
+})
+
+Error = AllocError | IoError | ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    alloc ::= env.mem.alloc();
+    buf ::= alloc.Vec<u8>();
+    buf.add(1).try();
+    worker = env.spawn(Worker()).try();
+    worker.process(buf).try();
+    Ok(0);
+}

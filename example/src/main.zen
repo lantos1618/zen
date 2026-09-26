@@ -1,0 +1,95 @@
+// example/src/main.zen
+// A compact tour of values, formatting, ownership, and actors.
+
+Circle = {
+    radius: f64,
+}
+
+// ufcs: a free function whose first parameter is Circle, so it
+// travels with Circle when imported and calls like a method
+area* = (c: Circle) f64 {
+    c.radius * c.radius * 3.14159
+}
+
+Rect = {
+    width: f64,
+    height: f64,
+}
+
+// sum types use `|`. payload variants carry a type
+Shape = Circle(Circle) | Rect(Rect) | Unit
+
+Shape.impl(Display, {
+    // the outlined toString: pretty output for {}. dump stays
+    // available for free alongside it
+    // out is a Sink, not a String: println hands over the console it
+    // already holds, so printing allocates nothing. writing into a
+    // String is the same call with a different sink behind it
+    toString ::= (self: @Self, out :: Sink) Res<(), WriteError> {
+        self.match({
+            Circle(circle) => out.fmt("circle: {}", circle.radius),
+            Rect(rect)     => out.fmt("rect: {} {}", rect.width, rect.height),
+            Unit           => out.fmt("unit"),
+        });
+    }
+})
+
+Error = AllocError | IoError | ActorStartError | ActorError
+
+// main receives the capability root. it is NOT named self: main
+// is not a method on Env. println finds the Env by type
+main = (env: Env) Res<i32, Error> {
+    // arena: page authority comes from Env, nothing ambient. the
+    // Arena is Drop, so everything it handed out frees at once
+    // when it leaves scope. the Alloc handle it gives is copied
+    // freely, because a handle is not a Drop value
+    alloc ::= env.mem.alloc();
+
+    shapes ::= alloc.Vec<Shape>();
+    shapes.add(Shape.Circle(Circle(radius: 1.0))).try();
+    shapes.add(Shape.Rect(Rect(width: 2.0, height: 3.0))).try();
+    shapes.add(Shape.Unit).try();
+
+    // {} routes through Shape's Display impl without allocating an
+    // intermediate String.
+    shapes.loop((h, s) {
+        println("{}", s);
+    });
+
+    // fold: 0 seeds acc, the loop evaluates to the final acc.
+    // stack array, by-value acc, capture-free body — this
+    // compiles to a plain for-loop and allocates nothing
+    sum: i32 = [0, 1, 2].loop(0, (h, i, v, acc: i32) {
+        acc + v
+    }).value_or(0);
+    println("sum {}", sum);
+
+    // arithmetic traps on overflow. want wrapping? say so
+    wrapped = i32.MAX +% 1;
+    println("wrapped {}", wrapped);
+
+    // Calling a behavior on Ref enqueues a message. This actor handles the
+    // three messages in send order on its worker.
+    foo = env.spawn(Printer()).try();
+    Range(0, 3).loop((h, v) {
+        foo.say("hello world!").try();
+    });
+
+    foo.stop();
+
+    Ok(0);
+}
+
+Printer = {}
+
+Printer.impl(Actor, {
+    started ::= (self :: @Self, ctx: Context) () { println("printer started") }
+    stopped ::= (self :: @Self, ctx: Context) () { println("printer stopped") }
+
+    // a behavior. its parameters are sendable by definition, so
+    // nothing marks them: the constraint is on the argument, and
+    // it is checked at the send
+    say = (self :: @Self, ctx: Context, data: str) () {
+        println("printer got {}", data)
+    }
+})

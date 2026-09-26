@@ -1,0 +1,26 @@
+// Creates checked state for one standalone buffer. Build-backed queries use
+// zen_build's checked workspace owner directly.
+
+str = std.text
+Alloc, AllocError = std.mem
+scan, Source = std.lex
+Parser = std.parse
+Ast = std.ast
+Checker = sema.sema_check
+check_all = sema.sema_decl
+
+parse_standalone* = (a: Alloc, name: str, text: str) Res<Parser, AllocError> {
+    tree ::= a.Ast();
+    lexed = scan(a, Source(file: name, text: text)).try();
+    Ok(a.Parser(lexed, tree));
+}
+
+check_standalone* = (a: Alloc, name: str, text: str)
+                    Res<Checker, AllocError> {
+    p ::= parse_standalone(a, name, text).try();
+    m = p.module("doc").try();
+    p.tree.add_module(m).try();
+    c ::= a.Checker(p.tree).try();
+    check_all(c).try();
+    Ok(c);
+}

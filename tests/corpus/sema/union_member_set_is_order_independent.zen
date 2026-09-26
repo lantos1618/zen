@@ -1,0 +1,21 @@
+// Nested union members must flatten independently of query order.
+// `bump` must remain a method and `also` must remain below `main`: those
+// positions force `Error` to be queried before `WriteError` is otherwise
+// settled and make the ordering invariant observable.
+
+Error = AllocError | WriteError
+
+Box = {
+    n: i32,
+
+    bump* = (self: @Self) Res<i32, WriteError> { Ok(self.n + 1) },
+}
+
+main = (env: Env) Res<i32, Error> {
+    b = Box(n: 41);
+    println("{}", b.bump().try());
+    println("{}", also(b).try());
+    Ok(0);
+}
+
+also = (b: Box) Res<i32, Error> { Ok(b.bump().try() + 1) }

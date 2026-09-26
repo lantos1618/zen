@@ -1,0 +1,77 @@
+Vec = std.collections
+AllocError = std.mem
+Block, Stmt, ExprStmt, Match, Arm, ExprId = std.ast
+TyId = sema.sema_ty
+Checker = sema.sema_check
+SemaFault, TypeFault = sema.sema_diag
+
+// A statement whose value nothing reads is refused when the expression
+// is a pure read: a literal, a name, a member, or a match over those.
+check_statement* = (
+    c     :: Checker,
+    block : Block,
+    i     : usize,
+    n     : usize,
+    s     : Stmt,
+    ty    : TyId
+) Res<(), AllocError> {
+    is_tail(block, i, n).match({
+        true  => Ok(()),
+        false => c.check_discarded(s, ty),
+    })
+}
+
+is_tail = (block: Block, i: usize, n: usize) bool {
+    block.value.match({ Ok(_) => false, None => i + 1 == n })
+}
+
+check_discarded = (c :: Checker, s: Stmt, ty: TyId) Res<(), AllocError> {
+    s.kind.match({
+        Expr(e) => c.discarded_expr(s, e, ty),
+        _       => Ok(()),
+    })
+}
+
+discarded_expr = (c :: Checker, s: Stmt, e: ExprStmt, ty: TyId)
+                 Res<(), AllocError> {
+    (c.statement_value(ty) && c.pure_read(e.expr)).match({
+        true  => c.report_discarded(s, ty),
+        false => Ok(()),
+    })
+}
+
+statement_value = (c: Checker, ty: TyId) bool {
+    c.types.at(ty).match({
+        Prim(p) => p.name.eq("()") == false,
+        Unknown => false,
+        Infer   => false,
+        Var(_)  => false,
+        _       => true,
+    })
+}
+
+pure_read = (c :: Checker, id: ExprId) bool {
+    node = c.tree.expr_at(id);
+    node.kind.match({
+        Literal(_) => true,
+        Name(_)    => true,
+        Access(a)  => c.pure_read(a.base),
+        Paren(p)   => c.pure_read(p.inner),
+        Match(m)   => c.pure_read(m.scrutinee) && c.pure_arms(m.arms),
+        Meta(_)    => true,
+        _          => false,
+    })
+}
+
+pure_arms = (c :: Checker, arms: Vec<Arm>) bool {
+    arms.find((a) { c.pure_read(a.body) == false })
+        .match({ Ok(_) => false, None => true })
+}
+
+report_discarded = (c :: Checker, s: Stmt, ty: TyId) Res<(), AllocError> {
+    unit = c.types.prim("()").try();
+    c.refuse(
+        s.span,
+        SemaFault.DiscardedValue(TypeFault(name: "", expected: unit, found: ty))
+    )
+}

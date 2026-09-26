@@ -1,0 +1,27 @@
+// An escaping thread closure cannot capture an already-consumed binding.
+// The sibling escaping_closure_captured_consumed checks capture before consume.
+
+Buf = {
+    id: i32,
+}
+
+Buf.impl(Drop, {
+    drop = (self :: @Self) () { /* nothing to release: id is bytes */ }
+})
+
+Error = AllocError | IoError | ThreadError
+
+main = (env: Env) Res<i32, Error> {
+    alloc ::= env.mem.alloc();
+    f = Buf(id: 1);
+    g = consume f;
+    t = env.threads.spawn(alloc, () Res<i32, ThreadError> {
+        Ok(f.id);
+    }).try();
+    t.join().match({
+        Ok(v)  => println("{}", v),
+        Err(e) => println("thread failed: {}", e),
+    });
+    println("{}", g.id);
+    Ok(0);
+}

@@ -1,0 +1,22 @@
+// MUST FAIL: a bare `self` parameter with no type. DESIGN.md:223 — "There is no
+// implicit receiver. A method is a UFCS function whose first parameter happens to be
+// named `self`, and that parameter is written out like every other one — a name and
+// a type, never bare." The legal forms are `self: @Self` and `self :: @Self`.
+//
+// CAVEAT: if bare closure parameters are legal (DESIGN.md:1233 `(h, i, v, acc: i32)`)
+// then `(self) usize { self.len }` is a closure with an inferred parameter and an
+// explicit return type — the shape DESIGN.md:1206 uses for
+// `() Res<i32, ThreadError> { .. }` — and this file parses. Ambiguity A-CLO.
+
+len* = (self) usize {
+    self.len
+}
+
+// A `main` because tests/run.py builds this file as a ROOT, and law 2 makes
+// a root without one a diagnostic of its own — which the self-hosted compiler
+// reports and then stops on, so the rejection under test is never reached.
+// This file arrived from tests/parse/errors/, where nothing but tree-sitter
+// ever read it and no root was needed.
+main = (env: Env) Res<i32, ArgError> {
+    Ok(0);
+}

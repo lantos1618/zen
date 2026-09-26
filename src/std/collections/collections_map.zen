@@ -1,0 +1,179 @@
+// Insertion-ordered hash map. Dense entries preserve iteration order; a
+// separate open-addressed index narrows lookups before Eq confirms a key.
+
+Alloc, AllocError = std.mem
+Range = std.core.range
+Vec = std.collections.collections_vec
+LoopHandle = std.core.loop.loop_handle
+
+// Slots store one-based entry positions; zero marks an empty slot.
+SLOT_EMPTY: usize = 0
+
+// Small maps scan their dense entries. Larger maps keep the probe table below
+// 75% load and grow geometrically.
+SLOTS_MIN: usize = 8
+LOAD_NUM: usize = 3
+LOAD_DEN: usize = 4
+SMALL_MAX: usize = 6
+
+Entry<K, V> = {
+    hash: u64,
+    key: K,
+    value: V,
+}
+
+Map*<K: Eq + Hash, V> = {
+    entries :: Vec<Entry<K, V>>,
+
+    // Empty or power-of-two probe table.
+    slots :: Vec<usize>,
+
+    alloc: Alloc,
+
+    set* = (self :: @Self, key: K, value: V) Res<(), AllocError> {
+        h: u64 = key.hash(Hasher());
+        entry  = Entry(hash: h, key: key, value: value);
+        self.index_of(h, key).match({
+            Ok(i) => self.entries.set(i, entry).ok_or(AllocError.OutOfMemory),
+            None  => self.insert(entry),
+        })
+    }
+
+    get* = (self: @Self, key: K) Res<V> {
+        h: u64 = key.hash(Hasher());
+        i      = self.index_of(h, key).try();
+        e      = self.entries.get(i).try();
+        Ok(e.value);
+    }
+
+    len* = (self: @Self) usize { self.entries.len }
+
+    // Walk key/value pairs in insertion order without allocating.
+    pairs* = (self: @Self, body: (
+        h     : LoopHandle,
+        key   : K,
+        value : V
+    ) ()) () {
+        self.entries.loop((h, e) {
+            body(h, e.key, e.value);
+        });
+    }
+
+    place = (self :: @Self, s: usize, entry: Entry<K, V>) Res<(), AllocError> {
+        held = self.slots.get(s).ok_or(AllocError.OutOfMemory).try();
+        (held > SLOT_EMPTY).match({
+            true  => self.entries.set(held - 1, entry).ok_or(AllocError.OutOfMemory),
+            false => self.append(s, entry),
+        });
+    }
+
+    append = (self :: @Self, s: usize, entry: Entry<K, V>) Res<(), AllocError> {
+        self.entries.add(entry).try();
+        self.slots.set(s, self.entries.len).ok_or(AllocError.OutOfMemory);
+    }
+
+    insert = (self :: @Self, entry: Entry<K, V>) Res<(), AllocError> {
+        self.reserve().try();
+        (self.slots.len == 0).match({
+            true  => self.entries.add(entry),
+            false => {
+                s = self.settle(entry.hash, entry.key)
+                    .ok_or(AllocError.OutOfMemory).try();
+                self.place(s, entry);
+            },
+        })
+    }
+
+    index_of = (self: @Self, h: u64, key: K) Res<usize> {
+        (self.slots.len == 0).match({
+            true  => Range(0, self.entries.len).find((i) {
+                self.confirms(i, h, key)
+            }),
+            false => {
+                s    = self.settle(h, key).try();
+                held = self.slots.get(s).try();
+                (held > SLOT_EMPTY).match({
+                    true  => Ok(held - 1),
+                    false => None,
+                })
+            },
+        });
+    }
+
+    settle = (self: @Self, h: u64, key: K) Res<usize> {
+        (self.slots.len > 0).match({
+            true  => self.walk(h, key, self.slots.len),
+            false => None,
+        });
+    }
+
+    walk = (self: @Self, h: u64, key: K, n: usize) Res<usize> {
+        start = (h % n.to_u64()).to_usize().try();
+        k     = Range(0, n).find((step) { self.settles((start + step) % n, h, key) }).try();
+        Ok((start + k) % n);
+    }
+
+    settles = (self: @Self, s: usize, h: u64, key: K) bool {
+        self.slots.get(s).match({
+            None  => false,
+            Ok(v) => (v > SLOT_EMPTY).match({
+                true  => self.confirms(v - 1, h, key),
+                false => true,
+            }),
+        });
+    }
+
+    confirms = (self: @Self, i: usize, h: u64, key: K) bool {
+        self.entries.get(i).match({
+            None  => false,
+            Ok(e) => (e.hash == h) && e.key.eq(key),
+        });
+    }
+
+    reserve = (self :: @Self) Res<(), AllocError> {
+        want = self.entries.len + 1;
+        (self.slots.len == 0).match({
+            true  => (want > SMALL_MAX).match({
+                true  => self.rehash(),
+                false => Ok(()),
+            }),
+            false => (want * LOAD_DEN > self.slots.len * LOAD_NUM).match({
+                true  => self.rehash(),
+                false => Ok(()),
+            }),
+        });
+    }
+
+    rehash = (self :: @Self) Res<(), AllocError> {
+        n          = (self.slots.len == 0).match({
+            true  => SLOTS_MIN * 2,
+            false => self.slots.len * 2,
+        });
+        self.slots = self.alloc.empty_slots(n).try();
+        self.refill();
+    }
+
+    refill = (self :: @Self) Res<(), AllocError> {
+        Range(0, self.entries.len).loop((h, i) { self.relink(i).try(); });
+        Ok(());
+    }
+
+    relink = (self :: @Self, i: usize) Res<(), AllocError> {
+        e = self.entries.get(i).ok_or(AllocError.OutOfMemory).try();
+        s = self.settle(e.hash, e.key).ok_or(AllocError.OutOfMemory).try();
+        self.slots.set(s, i + 1).ok_or(AllocError.OutOfMemory);
+    }
+}
+
+// Build a fresh empty index so allocation failure cannot partially clear the
+// existing one.
+empty_slots = (a: Alloc, n: usize) Res<Vec<usize>, AllocError> {
+    fresh ::= a.Vec<usize>();
+    fresh.reserve(n).try();
+    Range(0, n).loop((h, i) { fresh.add(SLOT_EMPTY).try(); });
+    Ok(fresh);
+}
+
+Map* = <K: Eq + Hash, V>(a: Alloc) Map<K, V> {
+    Map(entries: a.Vec<Entry<K, V>>(), slots: a.Vec<usize>(), alloc: a)
+}

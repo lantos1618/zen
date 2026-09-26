@@ -1,0 +1,14 @@
+// A non-escaping handle for the enclosing loop. The compiler supplies these
+// intrinsic operations; a handle may be passed into the loop body but cannot
+// be stored, returned, or captured by an escaping closure.
+
+LoopHandle* = {
+    // Skip the rest of this iteration.
+    next* = (self: @Self) ()
+
+    // End the loop with `None`.
+    break* = (self: @Self) ()
+
+    // End the loop with `Ok(value)`.
+    break*<T> = (self: @Self, value: T) ()
+}

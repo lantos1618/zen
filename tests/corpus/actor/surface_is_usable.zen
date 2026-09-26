@@ -1,0 +1,39 @@
+// Spawn supplies Context, behavior calls enqueue work, and stop drains the
+// accepted turns before the actor's stopped lifecycle hook runs.
+
+Printer = {
+    tag: u64,
+}
+
+Printer.impl(Actor, {
+    started = (self :: @Self, ctx: Context) {
+        ctx.env.out.println("printer {} started", self.tag)
+    }
+
+    answer = (self :: @Self, ctx: Context, n: u64) {
+        values ::= ctx.alloc.Vec<u64>();
+        values.add(n + 10).match({
+            Err(_) => (),
+            Ok(_)  => values.get(0).match({
+                None         => (),
+                Ok(answered) => {
+                    ctx.env.out.println("arena answered {}", answered);
+                },
+            }),
+        });
+    }
+
+    stopped = (self :: @Self, ctx: Context) {
+        ctx.env.out.println("printer {} stopped", self.tag)
+    }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    printer = env.spawn(Printer(tag: 7)).try();
+    printer.answer(41).try();
+    printer.stop();
+    printer.join();
+    Ok(0);
+}

@@ -1,0 +1,130 @@
+// Converts between Zen's 1-based byte columns and LSP's 0-based UTF-16
+// positions. Out-of-range positions clamp to valid line boundaries.
+
+str = std.text
+Range = std.core
+Pos, Span = std.ast.ast_span
+codepoint_at, UTF8_MIN_4 = std.text.text_utf8
+
+Position* = {
+    line*: usize,
+    character*: usize,
+}
+
+TextRange* = {
+    start*: Position,
+    end*: Position,
+}
+
+LineRun* = {
+    start*: usize,
+    end*: usize,
+
+    // Byte offset of 1-based `col`, clamped to the run.
+    target_of = (self: @Self, col: usize) usize {
+        offset = zero_based(col);
+        self.start + (offset > self.end - self.start).match({
+            true  => self.end - self.start,
+            false => offset,
+        })
+    }
+    // Byte offset of a UTF-16 column, clamped to this line.
+    byte_offset* = (self: @Self, text: str, character: usize) usize {
+        at    ::= self.start;
+        units ::= 0;
+        loop(() { at < self.end && units < character }, (h) {
+            step = utf16_step_at(text, at);
+            ((units + step.units) > character).then(() { h.break(); });
+            at    = at + step.bytes;
+            units = units + step.units;
+        });
+        at
+    }
+
+    utf16_column = (self: @Self, text: str, col: usize) usize {
+        target = self.target_of(col);
+        at    ::= self.start;
+        units ::= 0;
+        loop(() { at < target }, (h) {
+            step = utf16_step_at(text, at);
+            ((at + step.bytes) > target).then(() { h.break(); });
+            at    = at + step.bytes;
+            units = units + step.units;
+        });
+        units
+    }
+
+}
+
+run_of* = (text: str, line: usize) LineRun {
+    at   ::= 0;
+    seen ::= 0;
+    (line > 0).then(() {
+        Range(0, text.len).loop((h, i) {
+            (text.index(i) == '\n').then(() {
+                seen = seen + 1;
+                at   = i + 1;
+                (seen == line).then(() { h.break(); });
+            });
+        });
+    });
+    (seen < line).match({
+        true  => LineRun(start: text.len, end: text.len),
+        false => LineRun(start: at, end: text.newline_in(at, text.len)),
+    })
+}
+
+zero_based* = (line: usize) usize {
+    (line == 0).match({ true => 0, false => line - 1 })
+}
+
+Utf16Step* = {
+    units*: usize,
+    bytes*: usize,
+}
+
+utf16_step_at* = (text: str, at: usize) Utf16Step {
+    text.codepoint_at(at).match({
+        Err(_) => Utf16Step(units: 1, bytes: 1),
+        Ok(c)  => (c.value < UTF8_MIN_4).match({
+            true  => Utf16Step(units: 1, bytes: c.len),
+            false => Utf16Step(units: 2, bytes: c.len),
+        }),
+    })
+}
+
+source_position* = (text: str, line: usize, character: usize) Pos {
+    run = run_of(text, line);
+    Pos(line: line + 1, col: run.byte_offset(text, character) - run.start + 1)
+}
+
+lsp_position* = (text: str, p: Pos) Position {
+    line = zero_based(p.line);
+    run  = run_of(text, line);
+    Position(line: line, character: run.utf16_column(text, p.col))
+}
+
+text_range* = (text: str, span: Span) TextRange {
+    TextRange(
+        start: lsp_position(text, span.start),
+        end: lsp_position(text, span.end)
+    )
+}
+
+whole_range* = (text: str) TextRange {
+    TextRange(
+        start: Position(line: 0, character: 0),
+        end: Position(line: text.count("\n") + 1, character: 0)
+    )
+}
+
+utf16_units* = (text: str, from: usize, upto: usize) usize {
+    at    ::= from;
+    units ::= 0;
+    loop(at < upto, (h) {
+        step  = utf16_step_at(text, at);
+        at    = at + step.bytes;
+        units = units + step.units;
+    });
+    units;
+}

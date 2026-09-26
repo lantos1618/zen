@@ -1,0 +1,25 @@
+// Deferred until allocator-backed isolated graphs can move into the receiver's
+// arena. Consuming removes the sender's binding, but Vec still needs a deep
+// ownership transfer rather than a shallow pointer copy.
+
+Worker = {}
+
+Worker.impl(Actor, {
+    process = (self :: @Self, ctx: Context, data: Vec<u8>) {
+        data.get(0).match({
+            Ok(b) => ctx.env.out.println("got {}", b),
+            None  => ctx.env.out.println("got an empty buffer"),
+        });
+    }
+})
+
+Error = AllocError | IoError | ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    alloc ::= env.mem.alloc();
+    buf   ::= alloc.Vec<u8>();
+    buf.add(7).try();
+    worker = env.spawn(Worker()).try();
+    worker.process(consume buf).try();
+    Ok(0);
+}

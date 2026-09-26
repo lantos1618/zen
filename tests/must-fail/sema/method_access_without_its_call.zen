@@ -1,0 +1,25 @@
+// A method access is not its return value; the call must be written.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+main = (env: Env) Res<i32, AllocError> {
+    a = env.mem.alloc();
+    s ::= String(a, "hello").try();
+    n ::= 0;
+    Range(0, s.len).loop((h, i) { n = n + 1; });
+    println("iterations={} (want 5)", n);
+    Ok(0);
+}

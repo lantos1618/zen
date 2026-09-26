@@ -1,0 +1,22 @@
+// Sema and codegen must resolve a bare variant to the same visible enum.
+// Two enums share names at different tag indices so choosing the wrong owner
+// changes the matched arm while still producing valid C.
+
+Tag, Echo, One, Two, Three = tags.tags
+
+main = (env: Env) Res<i32, IoError> {
+    t: Tag  = Two;
+    e: Echo = Echo.Two;
+
+    t.match({
+        One   => println("tag one"),
+        Two   => println("tag two"),
+        Three => println("tag three"),
+    });
+    e.match({
+        Two   => println("echo two"),
+        Three => println("echo three"),
+        One   => println("echo one"),
+    });
+    Ok(0);
+}

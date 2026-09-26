@@ -1,0 +1,452 @@
+// Lower struct construction to a C compound literal. Sema supplies the
+// instantiated type; field designators preserve Zen's named-argument model.
+
+ExprId, Decl, Struct, Member = std.ast
+Call, Arg = std.ast
+AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+TyId, is_prim = sema.sema_ty
+Def, decl_at = sema.sema_def
+Ctx = sema.sema_check
+Inst, tparam_vars, has_var = sema.sema_inst
+sym_member = gen.gen_name
+CBackend = gen.gen_c.gen_c_state
+unsupported = gen.gen_c.gen_c_report
+constructed, recv_inst, intern_named = gen.gen_c.gen_c_mono
+unify, arg_type, enter_tparams, leave_tparams = gen.gen_c.gen_c_mono
+ctype, field_type, request_type, has_storage = gen.gen_c.gen_c_type
+expr, ty_of = gen.gen_c.gen_c_expr
+is_pure_value = gen.gen_c.gen_c_const
+holds, value_held = gen.gen_c.gen_c_expr
+Call = std.ast
+
+construct* = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    d   : Def,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    ty = be.construct_type(id, d, ctx).try();
+    be.request_type(ty).try();
+    decl_at(be.tree, d.id).match({
+        None  => be.unsupported(id, "a construction of an unknown type", out),
+        Ok(x) => be.construct_decl(id, c, x, d, ty, ctx, out),
+    })
+}
+
+// Prefer sema's instantiated answer; a declaration alone may still contain
+// open type parameters.
+construct_type = (be :: CBackend, id: ExprId, d: Def, ctx: Ctx)
+                 Res<TyId, AllocError> {
+    unknown = be.check.types.unknown().try();
+    got     = be.ty_of(id, ctx, unknown).try();
+    be.check.is_unknown(got).match({
+        false => Ok(got),
+        true  => be.constructed(d),
+    })
+}
+
+construct_decl = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    x   : Decl,
+    d   : Def,
+    ty  : TyId,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    x.kind.match({
+        Struct(s) => be.construct_struct(id, c, s, d, ty, ctx, out),
+        _         => be.unsupported(id, "a construction of a non-struct", out),
+    })
+}
+
+// Refuse a generic construction only when its storage layout remains open.
+construct_struct = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    s   : Struct,
+    d   : Def,
+    ty  : TyId,
+    ctx : Ctx,
+    out :: String
+)
+                   Res<(), AllocError> {
+    named = be.prim_named(s, ty).try();
+    built = be.settle_construction(c, s, d, named, ctx).try();
+    be.layout_open(s, d, built).try().match({
+        true  => be.unsupported(
+            id,
+            "a construction whose type arguments nothing settles",
+            out
+        ),
+        false => write_literal(be, c, s, d, built, ctx, out),
+    })
+}
+
+// Infer still-open type arguments by matching supplied values to fields.
+settle_construction = (
+    be  :: CBackend,
+    c   : Call,
+    s   : Struct,
+    d   : Def,
+    ty  : TyId,
+    ctx : Ctx
+) Res<TyId, AllocError> {
+    has_var(be.check, ty).match({
+        false => Ok(ty),
+        true  => be.inferred_construction(c, s, d, ty, ctx),
+    })
+}
+
+inferred_construction = (
+    be  :: CBackend,
+    c   : Call,
+    s   : Struct,
+    d   : Def,
+    ty  : TyId,
+    ctx : Ctx
+) Res<TyId, AllocError> {
+    dctx = be.decl_ctx_of(d);
+    mark = be.enter_tparams(s.tparams, d.qname).try();
+    empty ::= be.alloc.Inst();
+    found ::= be.alloc.Inst();
+    c.args.loop((h, i, a) {
+        be.unify_field(a, i, s, empty, dctx, ctx, found).try();
+    });
+    be.leave_tparams(mark).try();
+    be.rebuilt_type(d, s, found, ty)
+}
+
+unify_field = (
+    be    :: CBackend,
+    a     : Arg,
+    i     : usize,
+    s     : Struct,
+    empty : Inst,
+    dctx  : Ctx,
+    ctx   : Ctx,
+    out   :: Inst
+) Res<(), AllocError> {
+    fields   = Storage(decl: s, inst: empty, ctx: dctx);
+    name     = fields.field_name(be, a, i).try();
+    declared = fields.ty_of(be, name);
+    unknown  = be.check.types.unknown().try();
+    actual   = be.arg_type(a.value, ctx, unknown).try();
+    unify(be, declared, actual, out)
+}
+
+// Keep the original type when an argument leaves any parameter unsettled.
+rebuilt_type = (be :: CBackend, d: Def, s: Struct, found: Inst, ty: TyId)
+               Res<TyId, AllocError> {
+    vars ::= be.alloc.Vec<TyId>();
+    tparam_vars(be.check, s.tparams, d.qname, vars).try();
+    args ::= be.alloc.Vec<TyId>();
+    vars.loop((h, v) { keep_arg(found, v, args).try() });
+    (args.len == vars.len).match({
+        false => Ok(ty),
+        true  => intern_named(be.check, d, args),
+    })
+}
+
+keep_arg = (found: Inst, v: TyId, out :: Vec<TyId>) Res<(), AllocError> {
+    found.lookup(v).match({
+        None  => Ok(()),
+        Ok(t) => out.add(t),
+    })
+}
+
+// Prelude declarations of primitive names use the primitive C layout.
+prim_named = (be :: CBackend, s: Struct, ty: TyId) Res<TyId, AllocError> {
+    is_prim(s.name.text).match({
+        false => Ok(ty),
+        true  => be.check.types.prim(s.name.text),
+    })
+}
+
+// Primitive fields use floor names; declared fields use mangled names.
+designator = (be :: CBackend, ty: TyId, name: str, out :: String)
+             Res<(), AllocError> {
+    be.is_prim_ty(ty).match({
+        true  => out.add(name),
+        false => out.sym_member(name),
+    })
+}
+
+is_prim_ty = (be :: CBackend, ty: TyId) bool {
+    be.check.types.at(ty).match({ Prim(_) => true, _ => false })
+}
+
+// Open parameters are harmless when no stored field depends on them. Read
+// fields with the struct's own parameters in scope before deciding.
+layout_open = (be :: CBackend, s: Struct, d: Def, ty: TyId)
+    Res<bool, AllocError> {
+    dctx  = be.decl_ctx_of(d);
+    dinst = be.recv_inst(ty).try();
+    mark  = be.enter_tparams(s.tparams, d.qname).try();
+    got ::= false;
+    s.members.loop((h, m) {
+        be.field_type(m, dctx, dinst).match({
+            None    => (),
+            Ok(fty) => has_var(be.check, fty).then(() { got = true; }),
+        });
+    });
+    be.leave_tparams(mark).try();
+    Ok(got);
+}
+
+// Empty calls still pass through initialisation because fields may declare
+// non-zero defaults.
+write_literal = (
+    be  :: CBackend,
+    c   : Call,
+    s   : Struct,
+    d   : Def,
+    ty  : TyId,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    cty ::= be.alloc.String().try();
+    be.ctype(ty, cty).try();
+    out.fmt("({})", cty.view()).try();
+    write_initialisers(be, c, s, d, ty, ctx, out).try();
+    Ok(());
+}
+
+write_initialisers = (
+    be  :: CBackend,
+    c   : Call,
+    s   : Struct,
+    d   : Def,
+    ty  : TyId,
+    ctx : Ctx,
+    out :: String
+)
+                     Res<(), AllocError> {
+    dctx  = be.decl_ctx_of(d);
+    mark  = be.enter_tparams(s.tparams, d.qname).try();
+    dinst = be.recv_inst(ty).try();
+    init  = Initialisers(
+        call: c,
+        fields: Storage(decl: s, inst: dinst, ctx: dctx),
+        ty: ty,
+        call_ctx: ctx,
+    );
+    init.write(be, out).try();
+    be.leave_tparams(mark).try();
+    Ok(());
+}
+
+// Field lookup at one receiver instantiation. Methods and constants do not
+// occupy positional-constructor slots.
+Storage = {
+    decl: Struct,
+    inst: Inst,
+    ctx: Ctx,
+
+    field_name = (self: @Self, be :: CBackend, a: Arg, i: usize)
+                 Res<str, AllocError> {
+        a.name.match({
+            None  => self.name_at(be, i),
+            Ok(n) => Ok(n.text),
+        })
+    }
+
+    name_at = (self: @Self, be :: CBackend, i: usize)
+              Res<str, AllocError> {
+        name ::= "";
+        seen ::= 0;
+        self.decl.members.loop((h, m) {
+            self.is_stored(be, m).then(() {
+                (seen == i).then(() { name = m.name().text; });
+                seen = seen + 1;
+            });
+        });
+        Ok(name)
+    }
+
+    is_stored = (self: @Self, be :: CBackend, m: Member) bool {
+        be.field_type(m, self.ctx, self.inst).match({
+            Ok(t) => be.has_storage(t),
+            None  => false,
+        })
+    }
+
+    has_named = (self: @Self, be :: CBackend, name: str) bool {
+        got ::= false;
+        self.decl.members.loop((h, m) {
+            (m.named(name) && self.is_stored(be, m))
+                .then(() { got = true; });
+        });
+        got
+    }
+
+    // Field types include receiver substitution and provide literal width.
+    ty_of = (self: @Self, be :: CBackend, name: str) TyId {
+        found ::= TyId(index: 0);
+        self.decl.members.loop((h, m) {
+            m.named(name).then(() {
+                found = be.field_type(m, self.ctx, self.inst).match({
+                    Ok(t) => t,
+                    None  => TyId(index: 0),
+                });
+            });
+        });
+        found
+    }
+}
+
+// Context shared by every field written into one compound literal. Defaults
+// use `fields.ctx`; supplied values use `call_ctx`.
+Initialisers = {
+    call: Call,
+    fields: Storage,
+    ty: TyId,
+    call_ctx: Ctx,
+
+    write = (self: @Self, be :: CBackend, out :: String)
+            Res<(), AllocError> {
+        out.add("{ ").try();
+        seen: usize ::= 0;
+        self.call.args.loop((h, i, a) {
+            hold = be.holds(self.call, i, 0);
+            seen = seen + self.supplied(be, a, i, hold, seen, out).try();
+        });
+        seen = seen + self.defaults(be, seen, out).try();
+        (seen == 0).then(() { out.add("0").try() });
+        out.add(" }")
+    }
+
+    defaults = (self: @Self, be :: CBackend, seen: usize, out :: String)
+               Res<usize, AllocError> {
+        wrote ::= 0;
+        self.fields.decl.members.loop((h, m) {
+            wrote = wrote + self.default_one(be, m, seen + wrote, out).try();
+        });
+        Ok(wrote)
+    }
+
+    default_one = (self: @Self, be :: CBackend, m: Member, seen: usize,
+                   out :: String) Res<usize, AllocError> {
+        name = m.name().text;
+        (self.fields.is_stored(be, m) && !self.supplies(be, name)).match({
+            false => Ok(0),
+            true  => self.member_default(be, m, name, seen, out),
+        })
+    }
+
+    member_default = (self: @Self, be :: CBackend, m: Member, name: str,
+                      seen: usize, out :: String) Res<usize, AllocError> {
+        declared_value(m).match({
+            None  => Ok(0),
+            Ok(v) => self.write_default(be, v, name, seen, out),
+        })
+    }
+
+    write_default = (self: @Self, be :: CBackend, v: ExprId, name: str,
+                     seen: usize, out :: String) Res<usize, AllocError> {
+        (seen > 0).then(() { out.add(", ").try() });
+        des ::= be.alloc.String().try();
+        be.designator(self.ty, name, des).try();
+        out.fmt(".{} = ", des.view()).try();
+        self.default_value(be, v, name, out).try();
+        Ok(1)
+    }
+
+    // Defaults use the constructed type's substitutions, not the caller's.
+    // Restore the caller on either success or allocation failure so supplied
+    // arguments and subsequent expressions keep their own generic context.
+    default_value = (self: @Self, be :: CBackend, v: ExprId, name: str,
+                     out :: String) Res<(), AllocError> {
+        caller = be.inst;
+        locals = be.hold_locals();
+        floor  = be.floor;
+        be.enter_frame(0);
+        be.enter_inst(self.fields.inst);
+        emitted = be.is_pure_value(v, self.fields.ctx).match({
+            false => be.unsupported(
+                v,
+                "a field default that names a function or reads a frame",
+                out
+            ),
+            true  => expr(
+                be,
+                v,
+                self.fields.ctx,
+                self.fields.ty_of(be, name),
+                out
+            ),
+        });
+        be.enter_inst(caller);
+        be.restore_locals(locals);
+        be.enter_frame(floor);
+        emitted
+    }
+
+    supplies = (self: @Self, be :: CBackend, name: str) bool {
+        got ::= false;
+        self.call.args.loop((h, i, a) {
+            self.arg_supplies(be, a, i, name).then(() { got = true; });
+        });
+        got
+    }
+
+    arg_supplies = (self: @Self, be :: CBackend, a: Arg, i: usize,
+                    name: str) bool {
+        self.fields.field_name(be, a, i).match({
+            Err(_) => false,
+            Ok(n)  => n.eq(name),
+        })
+    }
+
+    supplied = (self: @Self, be :: CBackend, a: Arg, i: usize, hold: bool,
+                seen: usize, out :: String) Res<usize, AllocError> {
+        name = self.fields.field_name(be, a, i).try();
+        self.fields.has_named(be, name).match({
+            false => Ok(0),
+            true  => self.designated(be, a, name, hold, seen, out),
+        })
+    }
+
+    designated = (self: @Self, be :: CBackend, a: Arg, name: str,
+                  hold: bool, seen: usize, out :: String)
+                 Res<usize, AllocError> {
+        (seen > 0).then(() { out.add(", ").try() });
+        self.write_one(be, a, name, hold, out).try();
+        Ok(1)
+    }
+
+    write_one = (self: @Self, be :: CBackend, a: Arg, name: str,
+                 hold: bool, out :: String) Res<(), AllocError> {
+        des ::= be.alloc.String().try();
+        be.designator(self.ty, name, des).try();
+        out.fmt(".{} = ", des.view()).try();
+        want = self.fields.ty_of(be, name);
+        be.value_held(a.value, self.call_ctx, want, hold, out)
+    }
+}
+
+// Both field-like AST forms store their optional declared value here.
+declared_value = (m: Member) Res<ExprId> {
+    m.kind.match({
+        Field(f) => f.value,
+        Const(k) => k.value,
+        _        => None,
+    })
+}
+
+// Defaults and field types are resolved in the declaring module.
+decl_ctx_of = (be :: CBackend, d: Def) Ctx {
+    Ctx(
+        module: d.id.module.to_usize(),
+        ret: TyId(index: 0),
+        has_ret: false,
+        self_ty: TyId(index: 0),
+        has_self: false
+    )
+}

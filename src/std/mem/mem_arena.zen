@@ -1,0 +1,146 @@
+// Arena allocation backed by page authority. An Arena owns its page chain and
+// releases it as a unit on drop; copied Alloc handles own nothing and mutate
+// the shared ArenaState behind the handle. Individual frees are intentionally
+// no-ops, and abandoned reallocations remain live until arena drop.
+
+Alloc, AllocError = std.mem.mem_alloc
+Ptr = std.mem.mem_ptr
+
+PAGE_BYTES: usize = 65536
+
+// Each run stores its byte length immediately before the returned pointer so
+// realloc can recover the old size.
+HEADER_BYTES: usize = usize.BITS / 8
+
+ALIGN_MAX: usize = 16
+
+// `align` is a non-zero power of two.
+align_up = (offset: usize, align: usize) usize {
+    raised = offset + align - 1;
+    raised - (raised % align)
+}
+
+Page* = {
+    prev: Ptr<Page>,
+    base: Ptr<u8>,    // first byte this page hands out
+    size: usize,      // bytes available from base
+}
+
+ArenaState = {
+    mem: Mem,           // page authority; an arena never has ambient access
+    head :: Ptr<Page>,  // the page currently being handed out of
+    next :: usize,      // bytes used in that page
+}
+
+Arena* = {
+    state: Ptr<ArenaState>,
+
+    bump = (self: @Self, s: ArenaState, size: usize, align: usize) Res<Ptr<u8>, AllocError> {
+        page  = s.head.read(0);
+        slot  = s.next.align_up(HEADER_BYTES);
+        start = (slot + HEADER_BYTES).align_up(align);
+        (start + size <= page.size).match({
+            true  => {
+                self.state.write(
+                    0,
+                    ArenaState(mem: s.mem, head: s.head, next: start + size)
+                );
+                run = page.base.offset(start);
+                run.back(HEADER_BYTES).to<usize>().write(0, size);
+                Ok(run)
+            },
+            false => self.chain(size, align),
+        });
+    }
+
+    chain = (self: @Self, size: usize, align: usize) Res<Ptr<u8>, AllocError> {
+        s     = self.state.read(0);
+        want  = HEADER_BYTES + align + size;
+        bytes = (want > PAGE_BYTES).match({
+            true  => want,
+            false => PAGE_BYTES,
+        });
+        page  = s.mem.page(bytes, s.head).try();
+        self.state.write(0, ArenaState(mem: s.mem, head: page, next: 0));
+        self.raw(size, align)
+    }
+
+    // Grow only the most recent run in place.
+    extend_latest = (self: @Self, src: Ptr<u8>, old: usize, want: usize) bool {
+        old > 0 && want > old && self.extend_nonempty(src, old, want)
+    }
+
+    extend_nonempty = (self: @Self, src: Ptr<u8>, old: usize, want: usize) bool {
+        s      = self.state.read(0);
+        page   = s.head.read(0);
+        latest = src.offset(old).same(page.base.offset(s.next));
+        fits   = s.next + (want - old) <= page.size;
+        (latest && fits).then(() {
+            src.back(HEADER_BYTES).to<usize>().write(0, want);
+            self.state.write(
+                0,
+                ArenaState(mem: s.mem, head: s.head, next: s.next + want - old)
+            );
+        });
+        latest && fits
+    }
+}
+
+Arena.impl(Alloc, {
+    raw = (self: @Self, size: usize, align: usize) Res<Ptr<u8>, AllocError> {
+        s = self.state.read(0);
+        s.head.is_null().match({
+            true  => self.chain(size, align),
+            false => self.bump(s, size, align),
+        });
+    }
+
+    // Grow the latest run in place when possible. Otherwise allocate and copy;
+    // a null source is a fresh allocation and must not be passed to memcpy,
+    // even when the requested copy length is zero.
+    realloc = <T>(self: @Self, p: Ptr<T>, count: usize) Res<Ptr<T>, AllocError> {
+        src  = p.to<u8>();
+        want = p.bytes(count);
+        old  = src.is_null().match({
+            true  => 0,
+            false => src.back(HEADER_BYTES).to<usize>().read(0),
+        });
+        self.extend_latest(src, old, want).match({
+            true  => Ok(p),
+            false => {
+                keep = (old > want).match({ true => want, false => old });
+                dst  = self.raw(want, ALIGN_MAX).try();
+                (keep > 0).match({
+                    true  => dst.copy_from(src, keep),
+                    false => (),
+                });
+                Ok(dst.to<T>())
+            },
+        })
+    }
+
+    free = <T>(self: @Self, p: Ptr<T>) () {}
+})
+
+// Drop consumes the Arena owner and releases its page chain exactly once.
+Arena.impl(Drop, {
+    drop = (self :: @Self) () {
+        s = self.state.read(0);
+        page ::= s.head;
+        loop(!page.is_null(), (h) {
+            // Read the link before releasing: the header lives in the page.
+            prev = page.read(0).prev;
+            s.mem.release(page);
+            page = prev;
+        });
+        s.mem.release(self.state);
+    }
+})
+
+Mem* = {
+    alloc* = (self: @Self) Arena
+
+    page* = (self: @Self, size: usize, prev: Ptr<Page>) Res<Ptr<Page>, AllocError>
+
+    release* = <T>(self: @Self, region: Ptr<T>) ()
+}

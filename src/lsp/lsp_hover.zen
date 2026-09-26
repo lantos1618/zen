@@ -1,0 +1,493 @@
+// Renders settled types or independently validated written annotations.
+// Without either source of evidence, the hover has `found` set to false.
+
+str, String = std.text
+Vec = std.collections
+Range = std.core
+Alloc, AllocError = std.mem
+Ast, Decl, ExprId, Member, TypeId, Span, Function, TriviaRun = std.ast
+Variant = std.ast
+Checker = sema.sema_check
+TyId, TyNamed, Prim = sema.sema_ty
+Def, decl_at = sema.sema_def
+source_position, lsp_position, Position, TextRange = lsp.lsp_pos
+run_of, zero_based = lsp.lsp_pos
+Tell, told_at = std.ast.ast_named
+check_standalone = lsp.lsp_query
+check_build = zen.zen_build
+to_json = std.json
+
+Hover* = {
+    found*: bool,
+    shown*: str,
+    start*: Position,
+    end*: Position,
+
+    // `null` when nothing was found, else a plaintext MarkupContent.
+    write* = (self: @Self, a: Alloc, out :: String) Res<(), AllocError> {
+        self.found.match({
+            false => out.add("null"),
+            true  => {
+                encoded ::= HoverResult(contents: MarkupContent(kind: "plaintext", value: self.shown), range: TextRange(start: self.start, end: self.end)).to_json(a).try();
+                out.add(encoded.view())
+            },
+        })
+    }
+}
+
+MarkupContent = {
+    kind: str,
+    value: str,
+}
+
+HoverResult = {
+    contents: MarkupContent,
+    range: TextRange,
+}
+
+hover_at* = (a: Alloc, name: str, text: str, line: usize, character: usize)
+            Res<Hover, AllocError> {
+    c ::= check_standalone(a, name, text).try();
+    pos = source_position(text, line, character);
+    c.said(a, text, told_at(c.tree, name, pos))
+}
+
+hover_in* = (
+    env       : Env,
+    a         : Alloc,
+    workspace : str,
+    path      : str,
+    text      : str,
+    line      : usize,
+    character : usize
+) Res<Hover, AllocError> {
+    checked = check_build(env, a, workspace, path, text).try();
+    pos     = source_position(text, line, character);
+    checked.c.said(a, text, told_at(checked.c.tree, checked.rel, pos))
+}
+
+hover_with* = (
+    c         : Checker,
+    a         : Alloc,
+    rel       : str,
+    text      : str,
+    line      : usize,
+    character : usize
+) Res<Hover, AllocError> {
+    pos = source_position(text, line, character);
+    c.said(a, text, told_at(c.tree, rel, pos))
+}
+
+no_type = () Hover {
+    Hover(
+        found: false,
+        shown: "",
+        start: Position(line: 0, character: 0),
+        end: Position(line: 0, character: 0)
+    )
+}
+
+said = (c: Checker, a: Alloc, text: str, t: Tell) Res<Hover, AllocError> {
+    out ::= a.String().try();
+    t.match({
+        Nothing     => Ok(no_type()),
+        Sig(f)      => wired(
+            text,
+            f.name.span,
+            c.write_decl_sig(f, out).try(),
+            out
+        ),
+        OfType(ta)  => wired(
+            text,
+            ta.span,
+            c.write_written_ty(ta.id, text, out).try(),
+            out
+        ),
+        OfValue(v)  => wired(text, v.span, c.write_val(v.id, out).try(), out),
+        Imported(_) => Ok(no_type()),
+    })
+}
+
+wired = (text: str, span: Span, known: bool, out :: String)
+        Res<Hover, AllocError> {
+    Ok(Hover(
+        found: known,
+        shown: out.view(),
+        start: lsp_position(text, span.start),
+        end: lsp_position(text, span.end)
+    ));
+}
+
+// The bool each writer returns is whether every type it wrote was settled.
+write_written_ty = (c: Checker, id: TypeId, text: str, out :: String)
+                   Res<bool, AllocError> {
+    c.type_memo.get(id).match({
+        None     => c.write_observed_type(id, text, out),
+        Ok(memo) => c.poison_free(memo).match({
+            true  => c.write_ty_named(memo, out),
+            false => c.write_observed_type(id, text, out),
+        }),
+    })
+}
+
+// Self-dependent annotations have no context-free type memo. Show the
+// validated written spelling rather than an arbitrary instantiation's type.
+write_observed_type = (c: Checker, id: TypeId, text: str, out :: String)
+                      Res<bool, AllocError> {
+    c.observed_type(id).match({
+        false => Ok(false),
+        true  => {
+            span  = c.tree.type_at(id).span;
+            start = run_of(text, zero_based(span.start.line));
+            end   = run_of(text, zero_based(span.end.line));
+            from  = start.start + zero_based(span.start.col);
+            upto  = end.start + zero_based(span.end.col);
+            (from <= upto && upto <= text.len).match({
+                false => Ok(false),
+                true  => { out.add(text.slice(from, upto)).try(); Ok(true) },
+            })
+        },
+    })
+}
+
+observed_type = (c: Checker, id: TypeId) bool {
+    c.type_was_resolved(id).match({
+        false => false,
+        true  => c.tree.type_at(id).kind.match({
+            Named(n) => n.args.find(
+                (arg) { !c.observed_type(arg) }
+            ).match({ None => true, Ok(_) => false }),
+            SelfType => true,
+            Unit     => true,
+            _        => false,
+        }),
+    })
+}
+
+write_ty = (c: Checker, id: TypeId, out :: String) Res<bool, AllocError> {
+    c.type_memo.get(id).match({
+        None     => Ok(false),
+        Ok(memo) => c.write_ty_id(memo, out),
+    })
+}
+
+// A written type shows its declaration; a primitive shows its prelude members.
+write_ty_named = (c: Checker, id: TyId, out :: String) Res<bool, AllocError> {
+    c.poison_free(id).match({
+        false => Ok(false),
+        true  => c.types.at(id).match({
+            Prim(p)  => c.write_prim(id, p, out),
+            Named(n) => c.write_named(id, n, out),
+            _        => { c.types.write_name(id, out).try(); Ok(true) },
+        }),
+    })
+}
+
+// A value shows its declaration only for a named type.
+write_ty_value = (c: Checker, id: TyId, out :: String) Res<bool, AllocError> {
+    c.poison_free(id).match({
+        false => Ok(false),
+        true  => c.types.at(id).match({
+            Named(n) => c.write_named(id, n, out),
+            _        => { c.types.write_name(id, out).try(); Ok(true) },
+        }),
+    })
+}
+
+write_named = (c: Checker, id: TyId, n: TyNamed, out :: String)
+              Res<bool, AllocError> {
+    c.types.write_name(id, out).try();
+    decl_at(c.tree, n.decl).match({
+        None   => Ok(true),
+        Ok(dd) => { c.write_decl_note(dd, WHOLE_SHAPE, out).try(); Ok(true) },
+    })
+}
+
+write_prim = (c: Checker, id: TyId, p: Prim, out :: String)
+             Res<bool, AllocError> {
+    c.types.write_name(id, out).try();
+    defs ::= c.alloc.Vec<Def>();
+    c.world.prelude_of(p.name, defs).try();
+    defs.get(0).match({
+        None  => Ok(true),
+        Ok(d) => {
+            c.write_prelude_note(d, out).try();
+            Ok(true)
+        },
+    })
+}
+
+write_prelude_note = (c: Checker, d: Def, out :: String) Res<(), AllocError> {
+    decl_at(c.tree, d.id).match({
+        None   => Ok(()),
+        Ok(dd) => c.write_decl_note(dd, EXPORTED_ONLY, out),
+    })
+}
+
+write_decl_note = (c: Checker, dd: Decl, all: bool, out :: String)
+                  Res<(), AllocError> {
+    doc = doc_block(c.alloc, c.tree, dd.leading).try();
+    (doc.len > 0).then(() {
+        out.add(" — ").try();
+        out.add(doc).try();
+    });
+    note ::= ShapeNote(
+        check: c,
+        joined: joiner(doc),
+        all: all,
+        started: false,
+        names: c.alloc.Vec<str>(),
+        scratch: c.alloc.String().try()
+    );
+    note.write(dd, out)
+}
+
+EXPORTED_ONLY: bool = false
+
+WHOLE_SHAPE: bool = true
+
+// A declaration note owns its formatting state. Member names are retained
+// only to collapse overloads; one scratch buffer handles incomplete signatures.
+// Prefixes are written lazily so hidden or empty shapes add no punctuation.
+ShapeNote = {
+    check: Checker,
+    joined: str,
+    all: bool,
+    started :: bool,
+    names :: Vec<str>,
+    scratch :: String,
+
+    write = (self :: @Self, dd: Decl, out :: String) Res<(), AllocError> {
+        dd.kind.match({
+            Struct(s) => {
+                s.members.loop((h, m) { self.member(m, out).try(); });
+                Ok(())
+            },
+            Enum(e)   => self.variants(e.variants, out),
+            _         => Ok(()),
+        })
+    }
+
+    member = (self :: @Self, m: Member, out :: String) Res<(), AllocError> {
+        m.kind.match({
+            Field(f)    => (self.all || f.exported).match({
+                true  => self.typed(f.name.text, f.type, out),
+                false => Ok(()),
+            }),
+            Const(k)    => (self.all || k.exported).match({
+                true  => self.typed(k.name.text, k.type, out),
+                false => Ok(()),
+            }),
+            Function(f) => self.function(f, out),
+        })
+    }
+
+    separate = (self :: @Self, out :: String) Res<(), AllocError> {
+        self.started.match({
+            true  => out.add(", "),
+            false => {
+                out.add(self.joined).try();
+                out.add("members: ").try();
+                self.started = true;
+                Ok(())
+            },
+        })
+    }
+
+    typed = (self :: @Self, name: str, ty: Res<TypeId>, out :: String)
+            Res<(), AllocError> {
+        self.separate(out).try();
+        out.add(name).try();
+        self.type_suffix(ty, ": ", "", out)
+    }
+
+    // The type writer cannot emit a partial type: validate before adding the
+    // punctuation, then write straight to the destination without scratch text.
+    type_suffix = (
+        self: @Self,
+        ty: Res<TypeId>,
+        before: str,
+        after: str,
+        out :: String
+    ) Res<(), AllocError> {
+        ty.match({
+            None   => Ok(()),
+            Ok(id) => self.check.type_memo.get(id).match({
+                None     => Ok(()),
+                Ok(memo) => {
+                    self.check.poison_free(memo).then(() {
+                        out.add(before).try();
+                        self.check.types.write_name(memo, out).try();
+                        out.add(after).try();
+                    });
+                    Ok(())
+                },
+            }),
+        })
+    }
+
+    // Arity overloads share a name; the first visible declaration is shown.
+    function = (self :: @Self, f: Function, out :: String)
+               Res<(), AllocError> {
+        (self.all || f.exported).then(() {
+            self.names.find((name) { name.eq(f.name.text) }).match({
+                Ok(_) => Ok(()),
+                None  => {
+                    self.names.add(f.name.text).try();
+                    self.scratch.clear();
+                    whole = self.check.write_decl_sig(f, self.scratch).try();
+                    self.separate(out).try();
+                    whole.match({
+                        true  => out.add(self.scratch.view()),
+                        false => out.add(f.name.text),
+                    })
+                },
+            }).try();
+        });
+        Ok(())
+    }
+
+    variants = (self :: @Self, vs: Vec<Variant>, out :: String)
+               Res<(), AllocError> {
+        vs.loop((h, i, v) {
+            out.add((i == 0).match({
+                true  => self.joined,
+                false => " | ",
+            })).try();
+            out.add(v.name.text).try();
+            self.type_suffix(v.payload, "(", ")", out).try();
+        });
+        Ok(());
+    }
+}
+
+joiner = (doc: str) str {
+    (doc.len == 0).match({
+        true  => " — ",
+        false => doc.ended().match({ true => " ", false => "; " }),
+    })
+}
+
+// The doc is the line comments after the last blank line, joined by spaces,
+// cut at the first sentence-ending line.
+doc_block = (a: Alloc, tree: Ast, run: TriviaRun) Res<str, AllocError> {
+    doc ::= a.String().try();
+    Range(after_last_blank(tree, run), run.len).loop((h, i) {
+        doc.view().ended().then(() { h.break(); });
+        piece = tree.trivia_at(run, i);
+        piece.kind.match({
+            LineComment => add_doc_line(comment_text(piece.text), doc).try(),
+            _           => (),
+        });
+    });
+    Ok(doc.view());
+}
+
+ended = (doc: str) bool {
+    (doc.len > 0) && doc.index(doc.len - 1).is_in(['.', '!', '?'])
+}
+
+after_last_blank = (tree: Ast, run: TriviaRun) usize {
+    from ::= 0;
+    Range(0, run.len).loop((h, i) {
+        tree.trivia_at(run, i).kind.match({
+            Blank => { from = i + 1; },
+            _     => (),
+        });
+    });
+    from;
+}
+
+add_doc_line = (line: str, doc :: String) Res<(), AllocError> {
+    (line.len > 0).then(() {
+        (doc.len() > 0).then(() { doc.add(" ").try() });
+        doc.add(line).try();
+    });
+    Ok(());
+}
+
+comment_text = (text: str) str {
+    from ::= 0;
+    loop(
+        () { from < text.len && text.index(from) == '/' },
+        (h) { from = from + 1; }
+    );
+    loop(
+        () { from < text.len && text.index(from) == ' ' },
+        (h) { from = from + 1; }
+    );
+    text.slice(from, text.len);
+}
+
+write_val = (c: Checker, e: ExprId, out :: String) Res<bool, AllocError> {
+    c.expr_memo.get(e).match({
+        None     => Ok(false),
+        Ok(memo) => c.write_ty_value(memo, out),
+    })
+}
+
+write_ty_id = (c: Checker, id: TyId, out :: String) Res<bool, AllocError> {
+    c.poison_free(id).match({
+        false => Ok(false),
+        true  => { c.types.write_name(id, out).try(); Ok(true) },
+    })
+}
+
+poison_free = (c: Checker, id: TyId) bool {
+    c.types.at(id).match({
+        Unknown   => false,
+        Res(r)    => c.poison_free(r.value) && c.poison_free(r.error),
+        Named(n)  => c.all_poison_free(n.args),
+        Fn(f)     => c.poison_free(f.ret) && c.all_poison_free(f.params),
+        Union(u)  => c.all_poison_free(u.members),
+        Array(ar) => c.poison_free(ar.elem),
+        _         => true,
+    })
+}
+
+all_poison_free = (c: Checker, ids: Vec<TyId>) bool {
+    ids.find((id) { !c.poison_free(id) }).match({
+        Ok(_) => false,
+        None  => true,
+    })
+}
+
+write_decl_sig = (c: Checker, f: Function, out :: String)
+                 Res<bool, AllocError> {
+    out.add(f.name.text).try();
+    out.add(" = ").try();
+    f.write_tparams(out).try();
+    out.add("(").try();
+    whole ::= true;
+    f.params.loop((h, i, prm) {
+        (i > 0).then(() { out.add(", ").try() });
+        out.add(prm.name.text).try();
+        out.add(prm.binder()).try();
+        whole = c.write_opt_ty(prm.type, out).try() && whole;
+    });
+    out.add(") ").try();
+    Ok(c.write_opt_ty(f.ret, out).try() && whole);
+}
+
+write_tparams = (f: Function, out :: String) Res<(), AllocError> {
+    (f.tparams.len == 0).match({
+        true  => Ok(()),
+        false => {
+            out.add("<").try();
+            f.tparams.loop((h, i, tparam) {
+                (i > 0).then(() { out.add(", ").try() });
+                out.add(tparam.name.text).try();
+            });
+            out.add(">").try();
+            Ok(())
+        },
+    })
+}
+
+write_opt_ty = (c: Checker, t: Res<TypeId>, out :: String)
+               Res<bool, AllocError> {
+    t.match({
+        None   => Ok(false),
+        Ok(id) => c.write_ty(id, out),
+    })
+}

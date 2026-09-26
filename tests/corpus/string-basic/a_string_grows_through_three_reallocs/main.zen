@@ -1,0 +1,25 @@
+// tests/corpus/string-basic/a_string_grows_through_three_reallocs/main.zen
+// Exercise every growth boundary and verify bytes survive realloc.
+
+Error = AllocError | WriteError
+
+main = (env: Env) Res<i32, Error> {
+    alloc ::= env.mem.alloc();
+    sb    ::= alloc.String().try();
+
+    // Cross the first two allocations and exactly fill the third.
+    Range<u8>(0, 8).loop((h, i) { sb.add('a' + i).try(); });
+    println("at-8 {} {}", sb.len(), sb.view());
+
+    // The 8-to-16 doubling, with the old eight bytes preserved.
+    sb.add('i').try();
+    println("at-9 {} {}", sb.len(), sb.view());
+
+    // across two more doublings: 16 bytes more, ending at 26 in a
+    // capacity-32 buffer with room to spare
+    Range<u8>(9, 26).loop((h, i) { sb.add('A' + i - 9).try(); });
+    println("at-26 {} {}", sb.len(), sb.view());
+    println("not-empty {}", sb.is_empty());
+
+    Ok(0);
+}

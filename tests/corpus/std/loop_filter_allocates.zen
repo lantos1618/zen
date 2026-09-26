@@ -1,0 +1,20 @@
+// Filtering keeps matching values in order; no matches yields an empty Vec.
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+
+    evens = Range(0, 6).filter(alloc, (value) {
+        value % 2 == 0
+    }).try();
+
+    evens.loop((h, n) {
+        println("{}", n);
+    });
+
+    nothing = Range(0, 6).filter(alloc, (value) {
+        value > 99
+    }).try();
+
+    println("len {}", nothing.len);
+    Ok(0);
+}

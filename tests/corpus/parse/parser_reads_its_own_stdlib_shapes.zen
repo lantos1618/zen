@@ -1,0 +1,20 @@
+// Parse representative stdlib shapes through std.parse itself: comments in
+// lookahead, unit-returning signatures, generic members, and `<` expressions.
+
+scan, Source = std.lex.lex
+Parser, module = std.parse
+
+SOURCE: str = "Handle = {\n    next* = (self: @Self) ()\n    stop* = (self: @Self) ()\n}\nKind =\n      Ident            // a comment between variants\n    | Int(u64)         // and another, after a payload\n    | Eof\nPtr*<T> = {\n    write* = (self: @Self, i: usize, v: T) ()\n    free*  ::= <U>(self: @Self) ()\n}\nat = (f: str, i: usize) bool {\n    (i + 1) < f.len;\n}\n"
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+    lexed = scan(alloc, Source(file: "t.zen", text: SOURCE)).try();
+    p ::= alloc.Parser(lexed);
+    m = p.module("t").try();
+
+    // the whole assertion: every shape above is legal Zen, so a parser
+    // that reads its own stdlib reports nothing and finds all four
+    println("lex {} parse {}", lexed.diags.len, p.diags.len);
+    println("decls {}", m.decls.len);
+    Ok(0);
+}

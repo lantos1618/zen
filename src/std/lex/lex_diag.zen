@@ -1,0 +1,57 @@
+// Lexical faults and their fixed messages. A Diag is a collected value, not
+// an Err; its span marks the bytes to fix. Messages allocate nothing.
+
+Span = std.lex.lex_token
+str = std.text
+
+LexFault* =
+      UnterminatedString       // end of file inside "..."
+    | StringSpansLine          // a newline inside "..."
+    | UnterminatedChar         // end of file inside '...'
+    | CharSpansLine            // a newline inside '...'
+    | EmptyChar                // ''
+    | CharTooLong              // 'ab', 'é'
+    | UnknownEscape            // \q
+    | UnterminatedEscape       // end of file after a backslash
+    | UnterminatedComment      // end of file inside /* ...
+    | LeadingZero              // 010
+    | HexNeedsDigit            // 0x
+    | FloatNeedsDigit          // 12.
+    | SuffixOnNumber           // 1abc, 0xffg
+    | IntegerOutOfRange        // exceeds u64
+    | UnknownAtName            // @foo
+    | MisplacedBom             // a byte-order mark past offset 0
+    | StrayByte                // a byte that begins no token
+
+Diag* = {
+    file*: str,
+    fault*: LexFault,
+    span*: Span,
+
+    // The terminal form, `file:line:col: message`.
+    say* = (self: @Self) () {
+        println("{}:{}: {}", self.file, self.span.start, message(self.fault));
+    }
+}
+
+message* = (fault: LexFault) str {
+    fault.match({
+        UnterminatedString  => "unterminated string literal: end of file before the closing quote",
+        StringSpansLine     => "unterminated string literal: a string literal does not span lines",
+        UnterminatedChar    => "unterminated character literal: end of file before the closing quote",
+        CharSpansLine       => "unterminated character literal: a character literal does not span lines",
+        EmptyChar           => "empty character literal: a character literal holds exactly one byte",
+        CharTooLong         => "a character literal holds exactly one byte; this one holds more",
+        UnknownEscape       => "unknown escape sequence: the escapes are \\n \\t \\r \\v \\f \\0 \\\\ \\' \\\"",
+        UnterminatedEscape  => "unterminated escape sequence: end of file after the backslash",
+        UnterminatedComment => "unterminated block comment: end of file before `*/`",
+        LeadingZero         => "a decimal literal has no leading zero, and Zen has no octal",
+        HexNeedsDigit       => "a hexadecimal integer needs a digit after `0x`",
+        FloatNeedsDigit     => "a float literal needs a digit after the `.`",
+        SuffixOnNumber      => "an identifier may not start with a digit, and a number carries no suffix",
+        IntegerOutOfRange   => "integer literal out of range: the widest integer type is u64",
+        UnknownAtName       => "the `@` namespace is exactly `@Self`, `@meta`, `@scope`",
+        MisplacedBom        => "a byte-order mark is stripped only at the start of a file",
+        StrayByte           => "unexpected character: it begins no Zen token",
+    });
+}

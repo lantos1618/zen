@@ -1,0 +1,531 @@
+Span = std.ast.ast_span
+str, String = std.text
+AllocError = std.mem
+TyId, Types = sema.sema_ty
+
+// Something the program named, or failed to.
+NameFault* = { name*: str }
+
+// A name and the module that does not export it.
+ExportFault* = { name*: str, module*: str }
+
+// A place and the capture site that keeps it alive.
+CaptureFault* = {
+    place*: str,
+    at*: Span,
+}
+
+// Two types that had to agree and did not. `expected` is what the
+// context demanded, `found` is what the expression is.
+TypeFault* = {
+    name*: str,
+    expected*: TyId,
+    found*: TyId,
+}
+
+// Two conflicting declaration positions.
+PairFault* = {
+    name*: str,
+    first*: Span,
+    second*: Span,
+}
+
+// Every semantic fault has a distinct corrective message below.
+SemaFault* =
+    // resolution
+      UndefinedName(NameFault)         // no binding of this name is in scope
+    | NotExported(ExportFault)         // the name exists; `*` does not
+    | NotWritable(ExportFault)         // `*` on a field grants reading, never writing
+    | ModuleNotAValue(ExportFault)     // a module is a namespace, not a value
+    | NoSuchField(TypeFault)           // the type has no member of that name
+    | MemberNeedsValue(TypeFault)      // a union's member IS a type, so naming it alone writes no value
+    | Rebound(PairFault)               // a second `=` binding of one name in one block
+
+    // types
+    | TypeMismatch(TypeFault)          // expected X, found Y
+    | ArmsDisagree(TypeFault)          // the arms of one match are not one type
+    | DiscardedValue(TypeFault)        // a statement's value nothing reads
+    | NotCallable(TypeFault)           // the callee is not a function
+    | MethodNotValue(TypeFault)        // the name is a method, and the call is missing
+    | LiteralOutOfRange(TypeFault)     // the family fits, the value does not
+    | ActorPayload(NameFault)          // payload storage cannot cross a mailbox
+    | InvalidNumericConversion(NameFault)
+    | InvalidEnumRepresentation(NameFault)
+    | InvalidEnumDiscriminant(NameFault)
+    | DuplicateEnumDiscriminant(PairFault)
+    | CatchAllConstruction(NameFault)
+
+    // overloading
+    | NoOverload(NameFault)            // no candidate of that arity or those types
+    | InvalidInstantiation(NameFault)   // written or inferred type arguments do not fit
+    | DuplicateSignature(PairFault)    // param names are not identity
+    | AmbiguousOverload(PairFault)     // two signatures accept the same call
+
+    // impls and bounds
+    | ImplMissingField(NameFault)      // an impl supplies every field, or it is not one
+    | CtorMissingField(NameFault)      // a required field the construction never named
+    | CtorNamesNoMember(TypeFault)     // an argument naming a member the type does not declare
+    | CtorSurplusArgument(TypeFault)   // a positional argument with no storage seat
+    | ResSurplusArgument(NameFault)    // `Ok`/`Err` hold one value, and a second has no seat
+    | CtorNamesConstant(TypeFault)     // an argument naming a constant, which is not storage
+    | DuplicateField(PairFault)        // a struct declares one storage name twice
+    | OrphanImpl(ExportFault)          // only the target's own module is ever consulted
+    | AmbiguousMember(PairFault)       // two impls, no bound in scope to choose
+    | BoundNotSatisfied(TypeFault)     // no impl of the bound
+    | EqNeedsImpl(TypeFault)           // `==` dispatches to `Eq`, and there is none
+    | InvalidOperator(TypeFault)       // these operands are outside the built-in operator's domain
+    | ComputedFieldAssign(NameFault)   // no storage, so nothing to assign into
+    | ComputedFieldAddress(NameFault)  // no storage, so no address exists
+
+    // Res, and the failure model
+    | TryOutsideRes(TypeFault)         // nowhere to return the failure to
+    | TryNeedsRes(TypeFault)           // `.try()` on something that is not a Res
+    | TryAbsenceIntoFailure(TypeFault) // a None never becomes an Err
+    | TryArgNeedsErr(TypeFault)         // `.try(arg)` maps an Err, not None
+    | NoErrorConversion(TypeFault)     // there is no From
+    | InferredSetExported(NameFault)   // an exported function writes its error set
+    | HoistAmbiguous(TypeFault)        // two variants carry the type
+    | HoistNotSuccess(NameFault)       // only success lifts
+
+    // vararg — the pack's one legal position, and its one type argument
+    | VarargNotLast(NameFault)         // a pack borrows the caller's frame
+    | VarargElement(NameFault)         // a run of T, and never a run of runs
+
+    // match
+    | NotExhaustive(NameFault)         // names the first case left uncovered
+    | UnreachableArm(NameFault)        // every value it matches is covered above
+    | NotACase(NameFault)              // an upper-case arm name that is no variant and no constant
+    | ConstPattern(NameFault)          // a binder spelled like a constant matches everything
+
+    // the failure model, proved
+    | ProvenOverflow(NameFault)        // a trap the compiler can prove will fire
+    | ProvenDivideByZero(NameFault)
+    | ProvenIndexOutOfBounds(NameFault)
+
+    // termination
+    | InfiniteSize(NameFault)          // a field cycle with no indirection
+    | InstantiationDepth(NameFault)    // the instantiation set is infinite
+
+    // comptime
+    | MetaNotImplemented(NameFault)    // every `@meta` form but `.name`
+    | CountNotComptime(NameFault)      // an array's count folds, or it is refused
+    | NegativeArrayCount(NameFault)    // a fixed-array count folded below zero
+    | ComptimeBudget(NameFault)        // the evaluator's step budget ran out
+
+    // ownership
+    | ConsumedUse(NameFault)           // a place that was moved out of
+    | NeedsMutableReceiver(NameFault)  // a `::` method reached through `:`
+    | ImmutableWrite(NameFault)        // a write through a `:` link of the path
+    | SnapshottedReceiver(NameFault)   // a `::` argument call aliases a by-value receiver
+    | PartiallyMoved(NameFault)        // a hole reaches the drop
+    | ConsumeNotAPlace(NameFault)      // an element index is not a place
+    | ConsumeThroughHandle(NameFault)  // move only what this frame owns
+    | CopyOfDropValue(NameFault)       // `g = f` would drop twice
+    | ScopeEscapes(NameFault)          // `@scope` left its block
+    | ExplicitDropBorrow(NameFault)
+    | ArenaInvalidated(NameFault)
+    | ArenaStored(NameFault)           // local storage escaped through a parameter
+    | ArenaEscapes(NameFault)          // a view outlived the arena behind it
+    | HandleNotAValue(NameFault)       // a loop handle names its loop, it is not a value
+    | ConsumedByCapture(CaptureFault)  // a capture outlives the consume
+
+Diag* = {
+    file*: str,
+    span*: Span,
+    fault*: SemaFault,
+
+    // `file:line:col: message`, then the fault's own detail.
+    render* = (self: @Self, types: Types, out :: String)
+              Res<(), AllocError> {
+        out.fmt("{}:{}: {}", self.file, self.span.start, message(self.fault))
+            .try();
+        self.fault.write_detail(types, out).try();
+        Ok(());
+    }
+}
+
+message* = (fault: SemaFault) str {
+    fault.match({
+        UndefinedName(_)             => "undefined name: no binding of this name is in scope",
+        NotExported(_)               => "a name crosses a module boundary only with `*`",
+        NotWritable(_)               => "`*` on a field means readable outside the module: mutation goes through exported methods",
+        ModuleNotAValue(_)           => "a module is only usable qualified",
+        NoSuchField(_)               => "a member is resolved on the receiver's type, so a name declared on another type is not a candidate",
+        MemberNeedsValue(_)          => "a union's member is the type it names, so the member alone is not a value",
+        TypeMismatch(_)              => "type mismatch",
+        ArmsDisagree(_)              => "match arms disagree: every arm produces the match's value, and nothing here decides which type that is",
+        DiscardedValue(_)            => "discarded value",
+        NotCallable(_)               => "this is not a function, so it cannot be called",
+        MethodNotValue(_)            => "a method is a value only when the call is written: `s.len` names the function, `s.len()` reads it",
+        LiteralOutOfRange(_)         => "out of range: a literal's type comes from its context, and the context here cannot hold it",
+        ActorPayload(_)              => "actor message payload is not transferable: owned allocator-backed graphs need receiver-arena transfer",
+        InvalidEnumRepresentation(_) => "a represented enum's final payload catch-all must use a fixed-width integer type",
+        InvalidEnumDiscriminant(_)   => "invalid enum discriminant: every known variant needs one unique compile-time integer; one payload catch-all may appear last",
+        DuplicateEnumDiscriminant(_) => "duplicate enum discriminant: decoding one integer must select exactly one variant",
+        CatchAllConstruction(_)      => "a represented enum's catch-all is constructed only by `from_discriminant`, which preserves the canonical known variants",
+        NoOverload(_)                => "no overload matches: resolution is on declared parameter types and arity",
+        InvalidNumericConversion(_)  => "bodyless numeric conversion requires a supported std.core.num signature; import the shared conversion or provide a function body",
+        InvalidInstantiation(_)      => "invalid generic instantiation: type arguments must match the declaration and every use of one parameter must agree",
+        DuplicateSignature(_)        => "duplicate signature: parameter names are documentation, not identity",
+        AmbiguousOverload(_)         => "ambiguous overload: these two signatures accept the same call",
+        ImplMissingField(_)          => "impl is missing field",
+        CtorMissingField(_)          => "construction is missing a required field",
+        CtorNamesNoMember(_)         => "construction names no member: every argument must name a field of the type, so a name it does not declare is not an argument to discard",
+        CtorSurplusArgument(_)       => "construction has a surplus positional argument",
+        ResSurplusArgument(_)        => "a Res constructor carries one value, so a second argument is evaluated and then dropped:",
+        CtorNamesConstant(_)         => "construction names a constant: a construction names fields, and the constant keeps its one value per type",
+        DuplicateField(_)            => "duplicate field declaration: a struct has one storage slot per name",
+        OrphanImpl(_)                => "an impl lives in the module that declares its target, so there are no orphan impls: one written anywhere else is never consulted",
+        AmbiguousMember(_)           => "ambiguous: two impls supply this name and no bound in scope selects one",
+        BoundNotSatisfied(_)         => "bound not satisfied: this type has no impl of the bound, so it has none of the fields the bound promises",
+        EqNeedsImpl(_)               => "`==` needs an `Eq`: equality dispatches to the impl, so write one or compare the parts",
+        InvalidOperator(_)           => "operator is not defined for these operands: arithmetic and ordering require numbers; remainder and wrapping require integers",
+        ComputedFieldAssign(_)       => "cannot assign to a computed field: an impl-supplied field has no storage, so there is nothing to assign into",
+        ComputedFieldAddress(_)      => "cannot take the address of a computed field: there is no storage, so no address exists",
+        TryOutsideRes(_)             => "`.try()` in a function that does not return Res: try unwraps Ok or returns the failure from the enclosing function, so there must be somewhere to return it to",
+        TryNeedsRes(_)               => "`.try()` needs a Res",
+        TryAbsenceIntoFailure(_)     => "a None never becomes an Err: name the reason with `.ok_or(..)` first",
+        TryArgNeedsErr(_)            => "`.try(error)` and `.try((error) { mapped })` require both the operand and enclosing function to carry an Err",
+        NoErrorConversion(_)         => "no implicit error conversion: this failure cannot propagate into the declared set, so widen the declaration — there is no From",
+        InferredSetExported(_)       => "inferred error set on an exported function: `*` means this name crosses a module boundary, so its type is written, not inferred",
+        HoistAmbiguous(_)            => "cannot be hoisted: hoisting fires only when exactly one variant carries the type, so write the variant out",
+        HoistNotSuccess(_)           => "only success lifts into Res: failure stays visible, so this must be written out",
+        VarargNotLast(_)             => "a vararg is only ever a function's last parameter: the pack borrows the caller's frame, so anywhere it could outlive the call it would dangle",
+        VarargElement(_)             => "a vararg writes exactly one element type, and it is never itself a vararg: `vararg<T>` is a run of T, and no call site could build a run of runs",
+        NotExhaustive(_)             => "match is not exhaustive: cover every case or write `_` — match is exhaustive in every position",
+        UnreachableArm(_)            => "unreachable match arm: every value it could match is already covered above",
+        NotACase(_)                  => "no variant of the scrutinee and no constant in scope has this name: a pattern binds, so this arm matches every value — a variant is spelled as declared, or this was meant to be `_`",
+        ConstPattern(_)              => "a pattern binds, it never compares: a bare name in a pattern is a fresh binding, so this arm matches every value",
+        ProvenOverflow(_)            => "integer overflow: a trap the compiler can prove will fire is a compile error",
+        ProvenDivideByZero(_)        => "divide by zero: a trap the compiler can prove will fire is a compile error",
+        ProvenIndexOutOfBounds(_)    => "index out of bounds: a trap the compiler can prove will fire is a compile error",
+        InfiniteSize(_)              => "infinite size: the field cycle never reaches an indirection, so the layout does not terminate (`Ptr<T>` is the finite form)",
+        InstantiationDepth(_)        => "instantiation depth exceeded: the type argument keeps widening, so the instantiation set is infinite",
+        MetaNotImplemented(_)        => "`@meta` is not implemented yet for this operation",
+        CountNotComptime(_)          => "an array count must be a compile-time constant: use a literal or a constant name",
+        NegativeArrayCount(_)        => "an array count cannot be negative: fixed-array lengths are zero or greater",
+        ComptimeBudget(_)            => "comptime evaluation ran out of steps: the evaluator is budgeted so the build fails rather than hangs — docs/design_meta.md",
+        ConsumedUse(_)               => "use after move:",
+        NeedsMutableReceiver(_)      => "the receiver is immutable:",
+        ImmutableWrite(_)            => "cannot write through an immutable binding:",
+        SnapshottedReceiver(_)       => "an argument call writes the place this call's by-value receiver was copied from:",
+        Rebound(_)                   => "a name is bound once per block: the first binding is still live here, and `=` on it is neither a fresh binding nor a write — declare it `::=` to assign to it, or give the second one its own name",
+        PartiallyMoved(_)            => "a partial move reaches the drop:",
+        ConsumeNotAPlace(_)          => "cannot consume an array element: the index is a runtime value, so which element is dead is not a fact the compiler holds",
+        ConsumeThroughHandle(_)      => "cannot consume through a handle: you may only move what this frame owns, and a bitwise copy of a handle would be left pointing at a dead value",
+        CopyOfDropValue(_)           => "cannot copy a Drop value: drop runs exactly once, so two live names for one value would drop it twice — construct a second one, or write `consume`",
+        ScopeEscapes(_)              => "@scope may not escape: it names the enclosing block, so it may be passed inward but never stored in a struct, returned, or captured by an escaping closure",
+        ExplicitDropBorrow(_)        => "explicit destruction requires an owned value: use `(consume owner).drop()` to transfer cleanup responsibility",
+        ArenaInvalidated(_)          => "use after arena destruction: the backing allocation owner was explicitly dropped",
+        ArenaStored(_)               => "a value backed by an arena this body made may not be stored through a borrowed parameter: the arena is dropped when this body ends — take the allocation owner as a parameter",
+        ArenaEscapes(_)              => "a value backed by an arena this body made may not be returned: the arena is dropped at the end of this body, so the caller would read freed pages — take the arena as a parameter, or move it into the value you return",
+        HandleNotAValue(_)           => "a loop handle is not a value: it names the loop it came from and has no storage, so only `h.break(..)` and `h.next()` may read it",
+        ConsumedByCapture(_)         => "consume after capture:",
+    });
+}
+
+write_detail* = (fault: SemaFault, types: Types, out :: String)
+                Res<(), AllocError> {
+    fault.match({
+        UndefinedName(f)             => out.write_name(f),
+        NotExported(f)               => out.write_export(f),
+        NotWritable(f)               => out.write_unwritable(f),
+        ModuleNotAValue(f)           => out.write_module(f),
+        NoOverload(f)                => out.write_name(f),
+        InvalidInstantiation(f)      => out.write_name(f),
+        InvalidNumericConversion(f)  => out.write_name(f),
+        ImplMissingField(f)          => out.write_missing(f),
+        CtorMissingField(f)          => out.write_ctor_missing(f),
+        CtorNamesNoMember(f)         => out.write_member(types, f),
+        CtorSurplusArgument(f)       => out.write_ctor_surplus(types, f),
+        ResSurplusArgument(f)        => out.write_name(f),
+        CtorNamesConstant(f)         => out.write_ctor_constant(types, f),
+        OrphanImpl(f)                => out.write_orphan(f),
+        Rebound(f)                   => out.write_pair(f),
+        ComputedFieldAssign(f)       => out.write_name(f),
+        ComputedFieldAddress(f)      => out.write_name(f),
+        InferredSetExported(f)       => out.write_name(f),
+        HoistNotSuccess(f)           => out.write_name(f),
+        VarargNotLast(f)             => out.write_name(f),
+        VarargElement(f)             => out.write_name(f),
+        NotExhaustive(f)             => out.write_name(f),
+        UnreachableArm(f)            => out.write_name(f),
+        NotACase(f)                  => out.write_name(f),
+        ConstPattern(f)              => out.write_const_pattern(f),
+        ProvenOverflow(f)            => out.write_name(f),
+        ProvenDivideByZero(f)        => out.write_name(f),
+        ProvenIndexOutOfBounds(f)    => out.write_name(f),
+        InstantiationDepth(f)        => out.write_name(f),
+        MetaNotImplemented(f)        => out.write_name(f),
+        CountNotComptime(f)          => out.write_name(f),
+        NegativeArrayCount(f)        => out.write_name(f),
+        ComptimeBudget(f)            => out.write_name(f),
+        InfiniteSize(f)              => out.write_name(f),
+        ConsumeNotAPlace(f)          => out.write_name(f),
+        ConsumeThroughHandle(f)      => out.write_name(f),
+        CopyOfDropValue(f)           => out.write_name(f),
+        ScopeEscapes(f)              => out.write_name(f),
+        ExplicitDropBorrow(f)        => out.write_name(f),
+        ArenaInvalidated(f)          => out.write_name(f),
+        ArenaStored(f)               => out.write_name(f),
+        ArenaEscapes(f)              => out.write_name(f),
+        HandleNotAValue(f)           => out.write_name(f),
+
+        ConsumedUse(f)               => out.write_place(
+            f,
+            " was consumed, and a binding is dead from the move onwards"
+        ),
+        NeedsMutableReceiver(f)      => out.write_place(
+            f,
+            " needs a mutable receiver, so every link from the binding to it must permit the write"
+        ),
+        ImmutableWrite(f)            => out.write_place(
+            f,
+            " is declared `:`, so it is set at construction and never reassigned — `::` is what permits a write"
+        ),
+        SnapshottedReceiver(f)       => out.write_place(
+            f,
+            " writes the same place through a `::` method, so the write lands in the copy — hoist this call to a local, or declare the receiver `::`"
+        ),
+        PartiallyMoved(f)            => out.write_place(
+            f,
+            " is partially moved, so the drop has a hole: move the whole value or none of it"
+        ),
+        ConsumedByCapture(f)         => out.write_capture(f),
+
+        NoSuchField(f)               => out.write_member(types, f),
+        MemberNeedsValue(f)          => out.write_needs_value(types, f),
+        EqNeedsImpl(f)               => out.write_needs_eq(types, f),
+        InvalidOperator(f)           => out.write_operator_types(types, f),
+        DiscardedValue(f)            => out.write_discarded(types, f),
+        TypeMismatch(f)              => out.write_types(types, f),
+        ArmsDisagree(f)              => out.write_arms(types, f),
+        NotCallable(f)               => out.write_types(types, f),
+        MethodNotValue(f)            => out.write_method_value(types, f),
+        BoundNotSatisfied(f)         => out.write_types(types, f),
+        TryOutsideRes(f)             => out.write_types(types, f),
+        TryNeedsRes(f)               => out.write_types(types, f),
+        TryAbsenceIntoFailure(f)     => out.write_types(types, f),
+        TryArgNeedsErr(f)            => out.write_types(types, f),
+        NoErrorConversion(f)         => out.write_types(types, f),
+        HoistAmbiguous(f)            => out.write_types(types, f),
+        LiteralOutOfRange(f)         => out.write_literal(types, f),
+        ActorPayload(f)              => out.write_name(f),
+        InvalidEnumRepresentation(f) => out.write_name(f),
+        InvalidEnumDiscriminant(f)   => out.write_name(f),
+        DuplicateEnumDiscriminant(f) => out.write_pair(f),
+        CatchAllConstruction(f)      => out.write_name(f),
+
+        DuplicateSignature(f)        => out.write_pair(f),
+        DuplicateField(f)            => out.write_pair(f),
+        AmbiguousOverload(f)         => out.write_pair(f),
+        AmbiguousMember(f)           => out.write_pair(f),
+    }).try();
+    Ok(());
+}
+
+write_name = (out :: String, f: NameFault) Res<(), AllocError> {
+    out.quote(f.name)
+}
+
+write_ctor_missing = (out :: String, f: NameFault) Res<(), AllocError> {
+    out.quote(f.name).try();
+    out.add(
+        ": a field with no default and no Res is required, and one left out is a zero nobody wrote"
+    )
+}
+
+write_ctor_constant = (out :: String, types: Types, f: TypeFault)
+                      Res<(), AllocError> {
+    found ::= types.name_of(f.found).try();
+    out.fmt(
+        " `{}` is a constant of `{}`: write `{}.{}` to read it, or `{} :: {}` for the field a construction may supply",
+        f.name,
+        found.view(),
+        found.view(),
+        f.name,
+        f.name,
+        found.view()
+    ).try();
+    Ok(())
+}
+
+write_missing = (out :: String, f: NameFault) Res<(), AllocError> {
+    out.quote(f.name).try();
+    out.add(
+        ": an impl supplies a value for every field the bound declares"
+    ).try();
+    Ok(());
+}
+
+write_const_pattern = (out :: String, f: NameFault) Res<(), AllocError> {
+    out.fmt(
+        " — `{}` names a constant in scope: compare it with `==`, or rename the binder",
+        f.name
+    ).try();
+    Ok(());
+}
+
+write_orphan = (out :: String, f: ExportFault) Res<(), AllocError> {
+    out.fmt(
+        ": {} is declared in module {}, so the impl belongs there",
+        f.name,
+        f.module
+    ).try();
+    Ok(());
+}
+
+write_member = (out :: String, types: Types, f: TypeFault)
+                Res<(), AllocError> {
+    found ::= types.name_of(f.found).try();
+    out.fmt(": no `{}` on `{}`", f.name, found.view()).try();
+    Ok(());
+}
+
+write_ctor_surplus = (out :: String, types: Types, f: TypeFault)
+                      Res<(), AllocError> {
+    found ::= types.name_of(f.found).try();
+    out.fmt(": `{}` has no storage seat left", found.view()).try();
+    Ok(())
+}
+
+write_method_value = (out :: String, types: Types, f: TypeFault)
+                     Res<(), AllocError> {
+    sig ::= types.name_of(f.found).try();
+    out.fmt(
+        " — `{}` is a method with signature `{}`: write the call, `{}()`",
+        f.name,
+        sig.view(),
+        f.name
+    ).try();
+    Ok(());
+}
+
+write_needs_value = (out :: String, types: Types, f: TypeFault)
+                    Res<(), AllocError> {
+    found   ::= types.name_of(f.found).try();
+    carried ::= types.name_of(f.expected).try();
+    out.fmt(
+        " — `{}.{}` carries a value of type `{}`: write `{}.{}(e)`",
+        found.view(),
+        f.name,
+        carried.view(),
+        found.view(),
+        f.name
+    ).try();
+    Ok(());
+}
+
+write_needs_eq = (out :: String, types: Types, f: TypeFault)
+                 Res<(), AllocError> {
+    found ::= types.name_of(f.found).try();
+    out.fmt(" — `{}` has none", found.view()).try();
+    Ok(());
+}
+
+write_discarded = (out :: String, types: Types, f: TypeFault)
+                  Res<(), AllocError> {
+    found ::= types.name_of(f.found).try();
+    out.fmt(
+        ": `{}` is computed and read by nothing — bind it, or delete the statement",
+        found.view()
+    ).try();
+    Ok(());
+}
+
+// Ownership diagnostics read as a sentence with the place as its subject.
+write_place = (out :: String, f: NameFault, tail: str) Res<(), AllocError> {
+    out.fmt(" {}{}", f.name, tail).try();
+    Ok(());
+}
+
+write_capture = (out :: String, f: CaptureFault) Res<(), AllocError> {
+    out.fmt(" {} was consumed by a closure that captured it", f.place).try();
+    out.add(" — the capture keeps it alive here: ").try();
+    out.write_at(f.at).try();
+    Ok(());
+}
+
+write_export = (out :: String, f: ExportFault) Res<(), AllocError> {
+    out.fmt(": {} is not exported by module {}", f.name, f.module).try();
+    Ok(());
+}
+
+write_unwritable = (out :: String, f: ExportFault) Res<(), AllocError> {
+    out.fmt(": {} is not writable outside module {}", f.name, f.module).try();
+    Ok(());
+}
+
+write_module = (out :: String, f: ExportFault) Res<(), AllocError> {
+    out.fmt(
+        ": `{}` names module `{}`, so write `{}.<name>`",
+        f.name,
+        f.module,
+        f.name
+    ).try();
+    Ok(());
+}
+
+// Match-arm disagreement has no expected type; contrast this arm with those
+// above it instead.
+write_arms = (out :: String, types: Types, f: TypeFault)
+             Res<(), AllocError> {
+    found ::= types.name_of(f.found).try();
+    above ::= types.name_of(f.expected).try();
+    out.fmt(
+        " — this arm is `{}`, the arms above are `{}`",
+        found.view(),
+        above.view()
+    ).try();
+    Ok(());
+}
+
+write_types = (out :: String, types: Types, f: TypeFault)
+              Res<(), AllocError> {
+    expected ::= types.name_of(f.expected).try();
+    found    ::= types.name_of(f.found).try();
+    out.quote(f.name).try();
+    out.fmt(": expected {}, found {}", expected.view(), found.view()).try();
+    Ok(());
+}
+
+write_operator_types = (out :: String, types: Types, f: TypeFault)
+                       Res<(), AllocError> {
+    left  ::= types.name_of(f.expected).try();
+    right ::= types.name_of(f.found).try();
+    f.expected.eq(f.found).match({
+        true  => out.fmt(" — `{}`", left.view()),
+        false => out.fmt(" — `{}` and `{}`", left.view(), right.view()),
+    }).try();
+    Ok(())
+}
+
+// Include source text only when the rejected value is a direct literal.
+write_literal = (out :: String, types: Types, f: TypeFault)
+                Res<(), AllocError> {
+    text = f.name;
+    out.add(": literal").try();
+    (text.len > 0).then(() { out.fmt(" {}", text).try() });
+    expected ::= types.name_of(f.expected).try();
+    out.fmt(" does not fit {}", expected.view()).try();
+    Ok(());
+}
+
+// The two declarations may be in different files.
+write_pair = (out :: String, f: PairFault) Res<(), AllocError> {
+    out.quote(f.name).try();
+    out.add(": ").try();
+    out.write_at(f.first).try();
+    out.add(" and ").try();
+    out.write_at(f.second).try();
+    Ok(());
+}
+
+write_at = (out :: String, span: Span) Res<(), AllocError> {
+    out.fmt("{}:{}", span.file, span.start)
+}
+
+quote = (out :: String, name: str) Res<(), AllocError> {
+    (name.len > 0).then(() { out.fmt(" `{}`", name).try() });
+    Ok(());
+}

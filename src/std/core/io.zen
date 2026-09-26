@@ -1,0 +1,13 @@
+IoError* = Closed          // the sink is gone: a closed pipe, a dropped socket
+          | Full           // no room: a fixed buffer, a full disk
+          | Invalid        // the bytes are not what this sink accepts
+          | Interrupted    // retryable; the write made no progress
+
+// Formatting may fail in the sink or while growing an intermediate buffer.
+WriteError* = IoError | AllocError
+
+// Byte-oriented output used by formatting.
+Sink* = {
+    write* = (self :: @Self, bytes: str) Res<(), WriteError>
+    write_byte* = (self :: @Self, b: u8) Res<(), WriteError>
+}

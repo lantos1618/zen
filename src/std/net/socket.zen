@@ -1,0 +1,277 @@
+// Owns one POSIX socket and closes it on drop.
+
+Alloc, AllocError, Ptr, null_ptr = std.mem
+str, String, str_at = std.text
+Res = std.core
+Drop = std.core
+Vec = std.collections
+
+// Known Linux ABI codes; foreign records and calls retain their integer layout.
+AddressFamily = | Unspecified = 0 | Ipv6 = 10 | Unknown(i32)
+SocketKind = | Stream = 1 | Unknown(i32)
+InternetProtocol = | Tcp = 6 | Unknown(i32)
+
+// These values are combinable flags or a buffer capacity, not discriminants.
+SOCK_CLOEXEC: i32 = 524288
+MSG_NOSIGNAL: i32 = 16384
+NI_MAXHOST: u32 = 1025
+NI_NUMERICHOST: i32 = 1
+
+// Linux/POSIX addrinfo ABI used by getaddrinfo, connect, and getnameinfo.
+AddrInfo = {
+    flags: i32,
+    family: i32,
+    socktype: i32,
+    protocol: i32,
+    address_len: u32,
+    address: Ptr<u8>,
+    canonical_name: Ptr<u8>,
+    next: Ptr<AddrInfo>,
+}
+
+socket = (domain: i32, kind: i32, protocol: i32) i32
+connect = (fd: i32, address: Ptr<u8>, address_len: u32) i32
+send = (fd: i32, bytes: Ptr<u8>, len: usize, flags: i32) usize
+recv = (fd: i32, bytes: Ptr<u8>, len: usize, flags: i32) usize
+close = (fd: i32) i32
+getaddrinfo = (
+    host    : Ptr<u8>,
+    service : Ptr<u8>,
+    hints   : Ptr<AddrInfo>,
+    answer  : Ptr<Ptr<AddrInfo>>
+) i32
+freeaddrinfo = (answer: Ptr<AddrInfo>) ()
+getnameinfo = (
+    address     : Ptr<u8>,
+    address_len : u32,
+    host        : Ptr<u8>,
+    host_len    : u32,
+    service     : Ptr<u8>,
+    service_len : u32,
+    flags       : i32
+) i32
+
+SocketFault* = ConnectFault | WriteFault | ReadFault | PeerClosed
+
+ResolvedAddr* = {
+    ip*: String,
+    is_v6*: bool,
+}
+
+// A borrowed descriptor; Socket alone closes it. Raw IO takes this receiver
+// rather than attaching to every i32.
+SocketFd* = {
+    raw: i32,
+
+    raw_handle* = (self: @Self) i32 { self.raw }
+
+    // One OS send; send(bytes) repeats it until every byte is sent.
+    send* = (
+        self  : @Self,
+        bytes : Ptr<u8>,
+        len   : usize,
+        flags : i32
+    ) Res<usize, SocketFault> {
+        n = send(self.raw, bytes, len, flags);
+        (n == usize.MAX).match({
+            true  => Err(SocketFault.WriteFault),
+            false => Ok(n),
+        })
+    }
+
+    send* = (self: @Self, bytes: str) Res<(), SocketFault> {
+        sent ::= 0;
+        loop(sent < bytes.len, (h) {
+            n = self.send(
+                bytes.ptr().offset(sent),
+                bytes.len - sent,
+                MSG_NOSIGNAL
+            ).try();
+            (n == 0).match({
+                true  => Err(SocketFault.PeerClosed).try(),
+                false => { sent = sent + n; },
+            });
+        });
+        Ok(())
+    }
+
+    recv* = (
+        self  : @Self,
+        bytes : Ptr<u8>,
+        len   : usize,
+        flags : i32
+    ) Res<usize, SocketFault> {
+        n = recv(self.raw, bytes, len, flags);
+        (n == usize.MAX).match({
+            true  => Err(SocketFault.ReadFault),
+            false => Ok(n),
+        })
+    }
+
+    recv* = (self: @Self, bytes: Ptr<u8>, len: usize)
+            Res<usize, SocketFault> {
+        self.recv(bytes, len, 0)
+    }
+}
+
+hints = (a: Alloc, fault: SocketFault) Res<Vec<AddrInfo>, SocketFault> {
+    out ::= a.Vec<AddrInfo>();
+    out.add(AddrInfo(
+        flags: 0,
+        family: AddressFamily.Unspecified.discriminant(),
+        socktype: SocketKind.Stream.discriminant(),
+        protocol: InternetProtocol.Tcp.discriminant(),
+        address_len: 0,
+        address: null_ptr<u8>(),
+        canonical_name: null_ptr<u8>(),
+        next: null_ptr<AddrInfo>()
+    )).try(fault);
+    Ok(out)
+}
+
+addresses = (
+    a            : Alloc,
+    host         : Ptr<u8>,
+    service      : Ptr<u8>,
+    alloc_fault  : SocketFault,
+    lookup_fault : SocketFault
+)
+            Res<Vec<Ptr<AddrInfo>>, SocketFault> {
+    spec   ::= hints(a, alloc_fault).try();
+    answer ::= a.Vec<Ptr<AddrInfo>>();
+    answer.add(null_ptr<AddrInfo>()).try(alloc_fault);
+    (getaddrinfo(host, service, spec.ptr(), answer.ptr()) == 0).match({
+        false => Err(lookup_fault),
+        true  => answer.ptr().read(0).is_null().match({
+            true  => Err(lookup_fault),
+            false => Ok(answer),
+        }),
+    })
+}
+
+resolve_addr* = (a: Alloc, host: str) Res<ResolvedAddr, SocketFault> {
+    host_c ::= host.c_text(a).try(SocketFault.ReadFault);
+    run    ::= addresses(
+        a,
+        host_c.ptr(),
+        null_ptr<u8>(),
+        SocketFault.ReadFault,
+        SocketFault.ConnectFault
+    ).try();
+    head = run.ptr().read(0);
+    @scope.defer(() { freeaddrinfo(head) });
+
+    info = head.read(0);
+    bytes ::= a.Vec<u8>();
+    bytes.reserve(NI_MAXHOST.to_usize()).try(SocketFault.ReadFault);
+    rc = getnameinfo(
+        info.address,
+        info.address_len,
+        bytes.ptr(),
+        NI_MAXHOST,
+        null_ptr<u8>(),
+        0,
+        NI_NUMERICHOST
+    );
+    (rc == 0).match({
+        false => Err(SocketFault.ReadFault),
+        true  => {
+            n ::= 0;
+            loop(() { n < NI_MAXHOST.to_usize() && bytes.ptr().read(
+                n
+            ) != 0 }, (h) {
+                n = n + 1;
+            });
+            ip ::= a.String().try(SocketFault.ReadFault);
+            ip.add(str_at(bytes.ptr(), n)).try(SocketFault.ReadFault);
+            Ok(ResolvedAddr(
+                ip: ip,
+                is_v6: info.family == AddressFamily.Ipv6.discriminant()
+            ))
+        },
+    })
+}
+
+Socket* = {
+    raw: i32,
+    open :: bool = true,
+
+    tcp_connect* = (a: Alloc, host: str, port: u16)
+                   Res<Socket, SocketFault> {
+        host_c ::= host.c_text(a).try(SocketFault.ConnectFault);
+        port_text = a.String("{}", port).try(SocketFault.ConnectFault);
+        port_c ::= port_text.view().c_text(a).try(SocketFault.ConnectFault);
+        run    ::= addresses(
+            a,
+            host_c.ptr(),
+            port_c.ptr(),
+            SocketFault.ConnectFault,
+            SocketFault.ConnectFault
+        ).try();
+        head = run.ptr().read(0);
+        @scope.defer(() { freeaddrinfo(head) });
+
+        // Socket descriptors can outlive calls that spawn child processes.
+        // Close-on-exec keeps those children from inheriting the connection.
+        raw ::= -1;
+        at  ::= head;
+        loop(() { !at.is_null() && raw < 0 }, (h) {
+            info      = at.read(0);
+            candidate = socket(
+                info.family,
+                info.socktype + SOCK_CLOEXEC,
+                info.protocol
+            );
+            (candidate >= 0).then(() {
+                (connect(
+                    candidate,
+                    info.address,
+                    info.address_len
+                ) == 0).match({
+                    true  => { raw = candidate; },
+                    false => { close(candidate); },
+                });
+            });
+            at = info.next;
+        });
+        (raw < 0).match({
+            true  => Err(SocketFault.ConnectFault),
+            false => Ok(Socket(raw: raw)),
+        })
+    }
+
+    // Borrow the descriptor without transferring close ownership.
+    handle* = (self: @Self) SocketFd { SocketFd(raw: self.raw) }
+
+    write* = (self: @Self, bytes: str) Res<(), SocketFault> {
+        self.open.ensure(SocketFault.PeerClosed).try();
+        self.handle().send(bytes)
+    }
+
+    read* = (self: @Self, buf :: Vec<u8>, n: usize)
+            Res<usize, SocketFault> {
+        self.open.ensure(SocketFault.PeerClosed).try();
+        (n == 0).match({
+            true  => Ok(0),
+            false => {
+                buf.reserve(n).try(SocketFault.ReadFault);
+                got = self.handle().recv(buf.ptr(), n).try();
+                (got == 0).match({
+                    true  => Err(SocketFault.PeerClosed),
+                    false => Ok(got),
+                })
+            },
+        })
+    }
+
+    close* = (self :: @Self) () {
+        self.open.then(() {
+            self.open = false;
+            close(self.raw);
+        });
+    }
+}
+
+Socket.impl(Drop, {
+    drop = (self :: @Self) () { self.close() }
+})

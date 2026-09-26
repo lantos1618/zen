@@ -1,0 +1,23 @@
+// DNS policy over the same raw POSIX address lookup used by Socket.
+
+Alloc = std.mem
+Res = std.core
+ResolvedAddr, SocketFault, resolve_addr = std.net.socket
+
+DnsError* = NotFound | Failed
+
+DnsAddr* = {
+    ip*: String,
+    is_v6*: bool,
+}
+
+resolve* = (a: Alloc, host: str) Res<DnsAddr, DnsError> {
+    resolve_addr(a, host).match({
+        Ok(found)         => {
+            is_v6 = found.is_v6;
+            Ok(DnsAddr(ip: consume found.ip, is_v6: is_v6))
+        },
+        Err(ConnectFault) => Err(DnsError.NotFound),
+        Err(_)            => Err(DnsError.Failed),
+    })
+}

@@ -1,0 +1,36 @@
+// Map length and insertion-order pair iteration:
+//   - len on a fresh map is 0
+//   - pairs over a fresh map runs the body ZERO times -- a walk that
+//     reached into the index instead of the rows would print here
+//   - an overwrite rewrites a row where it sits, so len counts KEYS
+//     and not sets: four sets over three keys is 3, not 4
+//   - the walk hands out each key WITH ITS OWN value. key and value
+//     are printed on one line, so a walk that yielded every key but
+//     paired it with the wrong row -- or with grace's pre-overwrite
+//     45 -- fails where a keys-only check would pass
+//
+// Overwriting a key updates it in place and does not change iteration order.
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+    m     ::= alloc.Map<str, i32>();
+
+    println("empty len {}", m.len());
+    m.pairs((h, k, v) {
+        println("empty walk reached {} {}", k, v);
+    });
+
+    m.set("ada", 36).try();
+    m.set("grace", 45).try();
+    m.set("alan", 41).try();
+    println("len {}", m.len());
+
+    // the same key a second time: rewritten, not appended
+    m.set("grace", 46).try();
+    println("len after overwrite {}", m.len());
+
+    m.pairs((h, k, v) {
+        println("{} {}", k, v);
+    });
+    Ok(0);
+}

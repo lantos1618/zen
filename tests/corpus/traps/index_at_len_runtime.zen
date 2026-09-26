@@ -1,0 +1,25 @@
+// tests/corpus/traps/index_at_len_runtime.zen
+// THE BOUNDARY THE RUNTIME CHECK IS ACTUALLY ABOUT: an index equal to
+// the length. `must-fail/traps/index_at_len` writes that index as a
+// literal, so the compiler proves it and the runtime helper never runs —
+// which leaves `i >= len` and `i > len` indistinguishable there, and an
+// off-by-one that reads one element past the end has no diagnostic and a
+// plausible value.
+//
+// This test hides the exact boundary index behind the environment; only
+// index 4 separates `i >= len` from the incorrect `i > len` check.
+
+// main must name an error type. a trap never lifts into Res:
+// it aborts the process
+Error = Overflow | DivideByZero | OutOfBounds
+
+main = (env: Env) Res<i32, Error> {
+    primes   = [i32, 4](2, 3, 5, 7);
+    i: usize = env.var("ZEN_TRAP_NEVER_SET").match({
+        Ok(_) => 0,
+        None  => 4,
+    });
+    v        = primes[i];
+    println("{}", v);
+    Ok(0);
+}

@@ -1,0 +1,605 @@
+// Answers completion requests. After a dot the buffer is re-checked with the
+// partial name replaced by `DUMMY`, so the base expression has a type; the
+// member answer is cached per patched buffer.
+
+str, String, dup = std.text
+Vec, Map, Ordered = std.collections
+Alloc, AllocError, Arena = std.mem
+Range = std.core
+ExprId, Access, Member, Impl, Ident, nowhere = std.ast
+module_index_of = std.ast.ast_named
+Checker = sema.sema_check
+TyId, TyNamed = sema.sema_ty
+Def, DefKind, decl_at = sema.sema_def
+Found, members_of, first_hidden = sema.sema_member
+Case, cases_of = sema.sema_case
+def_type = sema.sema_type
+ImplId = sema.sema_id
+run_of = lsp.lsp_pos
+check_standalone = lsp.lsp_query
+check_workspace = zen.zen_build
+root_for, relative_to = zen.zen_path
+path_of = lsp.lsp_uri
+SourceRoot = zen.zen_path
+obj, arr, Nest, written, to_json = std.json
+KEYWORD_COUNT, keyword_at = std.lex
+
+// Protocol values belong to the kind; convert only when writing JSON.
+CompletionKind* = | Method = 2
+    | Function = 3
+    | Field = 5
+    | Class = 7       // LSP has no type-alias completion kind.
+    | Enum = 13
+    | Keyword = 14
+    | EnumMember = 20
+    | Constant = 21
+    | Struct = 22
+
+Item* = {
+    label*: str,
+    kind*: CompletionKind,
+
+    write = (self: @Self, a: Alloc, offers :: Nest, out :: String)
+            Res<(), AllocError> {
+        offers.next(out).try();
+        encoded ::= CompletionItem(label: self.label, kind: self.kind.discriminant()).to_json(a).try();
+        out.add(encoded.view())
+    }
+}
+
+Item.impl(Ordered, {
+    before = (self: @Self, other: @Self) bool { self.label.before(other.label) }
+})
+
+DUMMY: str = "zen_wip"
+
+Trigger = {
+    text: str,
+    prefix: str,
+    dot: bool,
+}
+
+MemberAnswer = {
+    workspace : str,
+    path      : str,
+    patched   : str,
+    items     : Vec<Item>,
+}
+
+MemberCache* = {
+    roots :: Res<Vec<SourceRoot>> = None,
+
+    set_roots* = (self :: @Self, roots: Vec<SourceRoot>) () {
+        self.roots = Ok(roots);
+        self.invalidate();
+    }
+
+    arena :: Arena,
+    cur   :: Res<MemberAnswer>,
+    stale :: bool = false,
+    builds* :: usize = 0,
+
+    invalidate* = (self :: @Self) () { self.stale = true; }
+
+    // The patched document is part of the key; other buffers are dependencies.
+    changed* = (self :: @Self, path: str) () {
+        self.cur.when_ok((answer) {
+            (!answer.path.eq(path)).then(() { self.invalidate(); });
+        });
+    }
+
+    complete* = (
+        self      :: @Self,
+        env       : Env,
+        a         : Alloc,
+        workspace : str,
+        path      : str,
+        text      : str,
+        docs      : Map<str, str>,
+        line      : usize,
+        character : usize,
+        out       :: Vec<Item>
+    ) Res<bool, AllocError> {
+        trig = trigger_at(a, text, line, character).try();
+        trig.dot.match({
+            false => Ok(false),
+            true  => {
+                self.matches(workspace, path, trig.text).match({
+                    true  => written(),
+                    false => self.refill(env, workspace, path, trig.text, docs),
+                }).try();
+                self.filtered(trig.prefix, out).try();
+                Ok(true)
+            },
+        })
+    }
+
+    matches = (self: @Self, workspace: str, path: str, patched: str) bool {
+        self.stale.match({
+            true  => false,
+            false => self.cur.match({
+                None     => false,
+                Ok(have) => have.workspace.eq(workspace)
+                    && have.path.eq(path)
+                    && have.patched.eq(patched),
+            }),
+        })
+    }
+
+    refill = (self :: @Self, env: Env, workspace: str, path: str,
+              patched: str, docs: Map<str, str>) Res<(), AllocError> {
+        qa    ::= env.mem.alloc();
+        found ::= qa.Vec<Item>();
+        workspace.is_empty().match({
+            true  => {
+                c ::= check_standalone(qa, "doc", patched).try();
+                c.items_from(
+                    qa,
+                    "doc",
+                    Trigger(text: patched, prefix: "", dot: true),
+                    found
+                )
+            },
+            false => {
+                root = root_for(env, qa, workspace, path, self.roots);
+                rel  = relative_to(root, path);
+                overlay ::= qa.Map<str, str>();
+                docs.pairs((h, uri, text) {
+                    overlay.set(path_of(qa, uri).try(), text).try();
+                });
+                overlay.set(path, patched).try();
+                checked = check_workspace(env, qa, root, rel, overlay).try();
+                checked.c.items_from(
+                    qa,
+                    rel,
+                    Trigger(text: patched, prefix: "", dot: true),
+                    found
+                )
+            },
+        }).try();
+
+        fresh_arena ::= env.mem.alloc();
+        kept_items  ::= fresh_arena.Vec<Item>();
+        found.loop((h, item) {
+            kept_items.add(Item(
+                label: item.label.dup(fresh_arena).try(),
+                kind: item.kind
+            )).try();
+        });
+        fresh = MemberAnswer(
+            workspace: workspace.dup(fresh_arena).try(),
+            path: path.dup(fresh_arena).try(),
+            patched: patched.dup(fresh_arena).try(),
+            items: kept_items
+        );
+
+        self.arena.drop();
+        self.arena  = consume fresh_arena;
+        self.cur    = Ok(fresh);
+        self.stale  = false;
+        self.builds = self.builds + 1;
+        Ok(())
+    }
+
+    filtered = (self: @Self, prefix: str, out :: Vec<Item>)
+               Res<(), AllocError> {
+        self.cur.match({
+            None       => written(),
+            Ok(answer) => {
+                answer.items.loop((h, item) {
+                    item.label.starts_with(prefix).then(() {
+                        out.add(item).try();
+                    });
+                });
+                Ok(())
+            },
+        })
+    }
+}
+
+MemberCache.impl(Drop, {
+    drop = (self :: @Self) () { self.arena.drop(); }
+})
+
+MemberCache* = (env: Env) MemberCache {
+    MemberCache(arena: env.mem.alloc(), cur: None)
+}
+
+complete_at* = (
+    a         : Alloc,
+    text      : str,
+    line      : usize,
+    character : usize,
+    out       :: Vec<Item>
+) Res<(), AllocError> {
+    trig = trigger_at(a, text, line, character).try();
+    c ::= check_standalone(a, "doc", trig.text).try();
+    c.items_from(a, "doc", trig, out)
+}
+
+complete_shared* = (
+    c         : Checker,
+    a         : Alloc,
+    rel       : str,
+    text      : str,
+    line      : usize,
+    character : usize,
+    out       :: Vec<Item>
+)
+                   Res<bool, AllocError> {
+    trig = trigger_at(a, text, line, character).try();
+    trig.dot.match({
+        true  => Ok(false),
+        false => { c.items_from(a, rel, trig, out).try(); Ok(true) },
+    })
+}
+
+items_from = (
+    c    : Checker,
+    a    : Alloc,
+    file : str,
+    trig : Trigger,
+    out  :: Vec<Item>
+) Res<(), AllocError> {
+    completion ::= Completion(c: c, a: a, file: file);
+    completion.add(trig, out)
+}
+
+trigger_at = (a: Alloc, text: str, line: usize, character: usize)
+             Res<Trigger, AllocError> {
+    run    = run_of(text, line);
+    offset = run.byte_offset(text, character);
+    from ::= offset;
+    loop(() { from > 0 && text.index(from - 1).is_ident_cont() }, (h) {
+        from = from - 1;
+    });
+    upto ::= offset;
+    loop(() { upto < text.len && text.index(upto).is_ident_cont() }, (h) {
+        upto = upto + 1;
+    });
+    (from > 0 && text.index(from - 1) == '.').match({
+        true  => patched(a, text, from, offset, upto),
+        false => Ok(Trigger(
+            text: text,
+            prefix: text.slice(from, upto),
+            dot: false
+        )),
+    })
+}
+
+patched = (a: Alloc, text: str, from: usize, offset: usize, upto: usize)
+          Res<Trigger, AllocError> {
+    s ::= a.String().try();
+    s.add(text.slice(0, from)).try();
+    s.add(DUMMY).try();
+    s.add(text.slice(upto, text.len)).try();
+    Ok(Trigger(text: s.view(), prefix: text.slice(from, offset), dot: true));
+}
+
+no_access = () Access {
+    Access(base: ExprId(index: 0), name: Ident(text: "", span: nowhere()))
+}
+
+member_names = (ms: Vec<Member>, cands :: Vec<Item>) Res<(), AllocError> {
+    ms.loop((h, m) {
+        kind = m.kind.match({
+            Field(_)    => CompletionKind.Field,
+            Const(_)    => CompletionKind.Constant,
+            Function(_) => CompletionKind.Method,
+        });
+        cands.add(Item(label: m.name().text, kind: kind)).try();
+    });
+    Ok(());
+}
+
+// `Completion` discovers candidates; `Offers` filters and deduplicates them.
+Completion = {
+    c    : Checker,
+    a    : Alloc,
+    file : str,
+
+    add = (self :: @Self, trig: Trigger, out :: Vec<Item>)
+          Res<(), AllocError> {
+        trig.dot.match({
+            true  => self.member_items(trig.prefix, out),
+            false => {
+                offers ::= self.offers(trig.prefix, out).try();
+                offers.scope_items().try();
+                offers.append_to(out)
+            },
+        })
+    }
+
+    member_items = (self :: @Self, prefix: str, out :: Vec<Item>)
+                   Res<(), AllocError> {
+        self.access_named(DUMMY).match({
+            None   => written(),
+            Ok(ac) => self.base_items(ac, prefix, out),
+        })
+    }
+
+    access_named = (self: @Self, name: str) Res<Access> {
+        eid  ::= ExprId(index: 0);
+        hit  ::= false;
+        best ::= no_access();
+        Range(0, self.c.tree.expr_ids()).loop((h, i) {
+            self.c.tree.expr_at(eid).kind.match({
+                Access(ac) => ac.name.text.eq(name).match({
+                    true  => { best = ac; hit = true; },
+                    false => (),
+                }),
+                _          => (),
+            });
+            eid = ExprId(index: eid.index + 1);
+        });
+        hit.match({ true => Ok(best), false => None })
+    }
+
+    base_items = (self :: @Self, ac: Access, prefix: str,
+                  out :: Vec<Item>) Res<(), AllocError> {
+        self.c.expr_memo.get(ac.base).match({
+            Ok(ty) => self.items_of_type(ty, prefix, out),
+            None   => self.c.tree.expr_at(ac.base).kind.match({
+                Name(n) => self.named_base_items(n.text, prefix, out),
+                _       => written(),
+            }),
+        })
+    }
+
+    named_base_items = (self :: @Self, base: str, prefix: str,
+                        out :: Vec<Item>) Res<(), AllocError> {
+        module_index_of(self.c.tree, self.file).match({
+            None   => written(),
+            Ok(mi) => {
+                defs ::= self.a.Vec<Def>();
+                self.c.world.defs_of(mi, base, defs).try();
+                defs.get(0).match({
+                    None  => written(),
+                    Ok(d) => self.items_of_type(
+                        self.c.def_type(d).try(),
+                        prefix,
+                        out
+                    ),
+                })
+            },
+        })
+    }
+
+    items_of_type = (self :: @Self, ty: TyId, prefix: str,
+                     out :: Vec<Item>) Res<(), AllocError> {
+        self.c.is_unknown(ty).match({
+            true  => written(),
+            false => self.known_type_items(ty, prefix, out),
+        })
+    }
+
+    known_type_items = (self :: @Self, ty: TyId, prefix: str,
+                        out :: Vec<Item>) Res<(), AllocError> {
+        offers ::= self.offers(prefix, out).try();
+        cases  ::= self.a.Vec<Case>();
+        self.c.cases_of(ty, cases).try();
+        cases.loop((h, cs) {
+            offers.offer(cs.name, CompletionKind.EnumMember).try();
+        });
+        cands ::= self.a.Vec<Item>();
+        self.collect_members(ty, cands).try();
+        cands.loop((h, cand) { offers.offer_member(ty, cand).try(); });
+        offers.append_to(out)
+    }
+
+    collect_members = (self: @Self, ty: TyId, cands :: Vec<Item>)
+                      Res<(), AllocError> {
+        self.c.types.at(ty).match({
+            Named(n) => self.collect_named(n, cands),
+            Prim(p)  => self.collect_prim(p.name, cands),
+            _        => written(),
+        })
+    }
+
+    collect_named = (self: @Self, n: TyNamed, cands :: Vec<Item>)
+                    Res<(), AllocError> {
+        decl_at(self.c.tree, n.decl).match({
+            None  => written(),
+            Ok(d) => d.kind.match({
+                Struct(s) => s.members.member_names(cands),
+                _         => written(),
+            }),
+        }).try();
+        self.collect_impls(n, cands)
+    }
+
+    collect_impls = (self: @Self, n: TyNamed, cands :: Vec<Item>)
+                    Res<(), AllocError> {
+        self.c.world.table_at(n.decl.module.to_usize()).match({
+            None  => written(),
+            Ok(t) => {
+                t.impls.loop(
+                    (h, iid) { self.collect_impl(n.name, iid, cands).try() }
+                );
+                Ok(())
+            },
+        })
+    }
+
+    collect_impl = (self: @Self, name: str, iid: ImplId,
+                    cands :: Vec<Item>) Res<(), AllocError> {
+        decl_at(self.c.tree, iid.decl).match({
+            None  => written(),
+            Ok(d) => d.kind.match({
+                Impl(im) => im.target.text.eq(name).match({
+                    true  => im.members.member_names(cands),
+                    false => written(),
+                }),
+                _        => written(),
+            }),
+        })
+    }
+
+    collect_prim = (self: @Self, name: str, cands :: Vec<Item>)
+                   Res<(), AllocError> {
+        defs ::= self.a.Vec<Def>();
+        self.c.world.prelude_of(name, defs).try();
+        defs.get(0).match({
+            None  => written(),
+            Ok(d) => decl_at(self.c.tree, d.id).match({
+                None   => written(),
+                Ok(dd) => dd.kind.match({
+                    Struct(s) => s.members.member_names(cands),
+                    _         => written(),
+                }),
+            }),
+        })
+    }
+
+    offers = (self: @Self, prefix: str, out :: Vec<Item>)
+             Res<Offers, AllocError> {
+        seen ::= self.a.Map<str, bool>();
+        out.loop((h, item) { seen.set(item.label, true).try(); });
+        Ok(Offers(
+            completion: self,
+            prefix: prefix,
+            seen: seen,
+            items: self.a.Vec<Item>()
+        ))
+    }
+}
+
+Offers = {
+    completion : Completion,
+    prefix     : str,
+    seen       :: Map<str, bool>,
+    items      :: Vec<Item>,
+
+    scope_items = (self :: @Self) Res<(), AllocError> {
+        module_index_of(self.completion.c.tree, self.completion.file).match({
+            None   => written(),
+            Ok(mi) => {
+                Range(0, self.completion.c.world.count()).loop((h, table) {
+                    self.table_names(mi, table).try();
+                });
+                Ok(())
+            },
+        }).try();
+        self.keyword_items()
+    }
+
+    table_names = (self :: @Self, mi: usize, table: usize)
+                  Res<(), AllocError> {
+        self.completion.c.world.table_at(table).match({
+            None   => written(),
+            Ok(tb) => {
+                tb.defs.loop((h, d) { self.offer_global(mi, d.name).try() });
+                tb.imports.loop((h, b) { self.offer_global(mi, b.name).try() });
+                Ok(())
+            },
+        })
+    }
+
+    offer_global = (self :: @Self, mi: usize, name: str)
+                   Res<(), AllocError> {
+        (name.starts_with(self.prefix) && !self.known(name)).match({
+            false => written(),
+            true  => {
+                defs ::= self.completion.a.Vec<Def>();
+                self.completion.c.world.defs_of(mi, name, defs).try();
+                defs.get(0).match({
+                    None  => written(),
+                    Ok(d) => self.remember(Item(
+                        label: name,
+                        kind: d.kind.global_kind()
+                    )),
+                })
+            },
+        })
+    }
+
+    keyword_items = (self :: @Self) Res<(), AllocError> {
+        Range(0, KEYWORD_COUNT).loop((h, i) {
+            keyword_at(i).match({
+                Ok(keyword) => self.offer(
+                    keyword.text,
+                    CompletionKind.Keyword
+                ).try(),
+                None        => (),
+            });
+        });
+        Ok(())
+    }
+
+    offer_member = (self :: @Self, ty: TyId, cand: Item)
+                   Res<(), AllocError> {
+        self.visible(ty, cand.label).match({
+            Err(e)    => Err(e),
+            Ok(true)  => self.offer(cand.label, cand.kind),
+            Ok(false) => written(),
+        })
+    }
+
+    visible = (self: @Self, ty: TyId, name: str)
+              Res<bool, AllocError> {
+        found ::= self.completion.a.Vec<Found>();
+        self.completion.c.members_of(ty, name, found).try();
+        (found.len == 0).match({
+            true  => Ok(false),
+            false => module_index_of(
+                self.completion.c.tree,
+                self.completion.file
+            ).match({
+                None   => Ok(true),
+                Ok(mi) => Ok(first_hidden(found, mi).match({
+                    Ok(_) => false,
+                    None  => true,
+                })),
+            }),
+        })
+    }
+
+    offer = (self :: @Self, label: str, kind: CompletionKind)
+            Res<(), AllocError> {
+        (label.starts_with(self.prefix) && !self.known(label)).match({
+            true  => self.remember(Item(label: label, kind: kind)),
+            false => written(),
+        })
+    }
+
+    remember = (self :: @Self, item: Item) Res<(), AllocError> {
+        self.items.add(item).try();
+        self.seen.set(item.label, true)
+    }
+
+    append_to = (self: @Self, out :: Vec<Item>) Res<(), AllocError> {
+        self.items.loop((h, item) { out.add(item).try(); });
+        Ok(())
+    }
+
+    known = (self: @Self, label: str) bool {
+        self.seen.get(label).match({ Ok(_) => true, None => false })
+    }
+}
+
+global_kind = (k: DefKind) CompletionKind {
+    k.match({
+        StructDef   => CompletionKind.Struct,
+        EnumDef     => CompletionKind.Enum,
+        AliasDef    => CompletionKind.Class,
+        FunctionDef => CompletionKind.Function,
+        ConstDef    => CompletionKind.Constant,
+    })
+}
+
+CompletionItem = {
+    label: str,
+    kind: u64,
+}
+
+write_items* = (a: Alloc, items: Vec<Item>, out :: String)
+               Res<(), AllocError> {
+    list ::= obj(out).try();
+    list.key("isIncomplete", out).try();
+    out.add("false").try();
+    list.key("items", out).try();
+    offers ::= arr(out).try();
+    items.loop((h, it) { it.write(a, offers, out).try(); });
+    offers.close(out).try();
+    list.close(out)
+}

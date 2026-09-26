@@ -1,0 +1,36 @@
+// A by-value struct return preserves both words of its borrowed str field.
+// The backing arena outlives the builder frame.
+
+Carry = {
+    text: str,
+    n: usize,
+}
+
+make_carry = (
+    alloc : Alloc,
+    base  : str,
+    tag   : str,
+    reps  : usize
+) Res<Carry, AllocError> {
+    sb ::= alloc.String(base).try();
+    Range(0, reps).loop((h, k) {
+        sb.fmt("{},", tag).try();
+    });
+    Ok(Carry(text: sb.view(), n: sb.len()))
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+
+    c1 = make_carry(alloc, "abcdef", "xy", 3).try();
+    println("len {} n {}", c1.text.len, c1.n);
+    println("head |{}|", c1.text.slice(0, 6));
+    println("tail |{}|", c1.text.slice(7, c1.text.len));
+
+    // the empty base: len 0 crossing the return must stay 0, and the
+    // zero-length slice must print nothing between the bars
+    c2 = make_carry(alloc, "", "q", 2).try();
+    println("empty |{}| {}", c2.text.slice(0, 0), c2.text.len);
+
+    Ok(0);
+}

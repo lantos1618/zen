@@ -1,0 +1,670 @@
+// `zen build`: the five phases, wired together.
+//
+//     read -> lex -> parse -> check -> emit
+//
+// Read failures become diagnostics so the module walk can continue. Import
+// paths determine the module tree without directory enumeration. Every module
+// is parsed into one shared Ast, making ids unique across the program.
+
+Alloc, AllocError = std.mem
+str, String = std.text
+Vec, Map = std.collections
+Range, Path = std.core
+FsError, fs_message = std.env
+
+Ast = std.ast.ast_arena
+Module, Alias, Named = std.ast.ast_node
+Pos, Span, QualifiedName = std.ast.ast_span
+
+message = std.lex.lex
+Diag, diag = std.parse.parse_diag
+
+scan, Source, Lexed = std.lex.lex
+Parser, module = std.parse.parse
+Checker, check_all = sema.sema
+PRELUDE = sema.sema
+check_module_graph = sema.sema
+Def = sema.sema
+Generation, Layout = gen.gen
+
+BuildArgs, Emission, Permutation = std.build
+
+slash_for, under = zen.zen_path
+unit_at, candidate, joined, relative_to = zen.zen_path
+root_for, std_root_for, SourceRoot, anchored_path = zen.zen_path
+ENTRY, entry_of = zen.zen_path
+Unit = zen.zen_path
+
+Publisher = zen.zen_write
+
+// One build: the phase inputs and the fault tally that becomes the exit code.
+Build* = {
+    env*: Env,
+    alloc*: Alloc,
+    root*: str,
+    // Directory containing `std/`; empty preserves root-relative lookup.
+    std_root* :: str = "",
+
+    faults* :: usize = 0,
+    units* :: usize = 0,
+
+    ffi :: bool = false,
+
+    enable_ffi* = (self :: @Self) () { self.ffi = true; }
+
+    // Lex and parse diagnostics in discovery order. Semantic diagnostics stay
+    // on Checker because rendering them requires its type store.
+    diags* :: Vec<Diag>,
+
+    permute* :: Permutation = Permutation.Natural,
+
+    walk_order* = (self :: @Self, order: Permutation) () {
+        self.permute = order;
+    }
+
+    set_std_root* = (self :: @Self, path: str) () {
+        self.std_root = path;
+    }
+
+    // Explicit stdlib root, falling back to the compilation root.
+    std_base = (self: @Self) str {
+        self.std_root.is_empty().match({
+            true  => self.root,
+            false => self.std_root,
+        })
+    }
+
+    // Keep an external stdlib's module identity rooted at `std`.
+    root_for_path = (self: @Self, path: str) str {
+        (self.std_root.len > 0 && path.under(self.std_root)
+            && relative_to(self.std_root, path).starts_with("std/")).match({
+            true  => self.std_root,
+            false => self.root,
+        })
+    }
+
+    // Open editor buffers keyed by path; command-line builds leave this empty.
+    overlay* :: Map<str, str>,
+
+    // Opt-in borrowed source views for tools that need the exact parsed bytes.
+    // The compilation allocator still owns disk buffers; overlays keep their
+    // caller's lifetime. Ordinary builds do not allocate this index.
+    sources* :: Res<Map<str, str>> = None,
+
+    capture_sources* = (self :: @Self) () {
+        self.sources = Ok(self.alloc.Map<str, str>());
+    }
+
+    keep_source = (self :: @Self, file: str, text: str) Res<(), AllocError> {
+        self.sources.match({
+            None      => Ok(()),
+            Ok(saved) => {
+                texts ::= saved;
+                texts.set(file, text).try();
+                self.sources = Ok(texts);
+                Ok(())
+            },
+        })
+    }
+
+    // Language-server builds collect diagnostics without writing to stdout.
+    speaking* :: bool = true,
+
+    // Root-relative entry path, for the `missing_main` diagnostic.
+    entry_rel* :: str = "",
+
+    // One program-wide tree. Finish parsing before constructing Checker,
+    // which receives a snapshot of this value.
+    tree* :: Ast,
+
+    // -----------------------------------------------------------------
+    // the walk
+    // -----------------------------------------------------------------
+
+    // Breadth first from the entry. `seen` is queue and set; the index walks
+    // it while it grows.
+    walk* = (self :: @Self, entry: Unit) Res<(), AllocError> {
+        seen ::= self.alloc.Vec<Unit>();
+        self.entry_rel = entry.rel;
+        seen.add(entry).try();
+        self.seed_prelude(seen).try();
+        i ::= 0;
+        loop(i < seen.len, (h) {
+            u = seen.get(i).match({ Ok(v) => v, None => entry });
+            i = i + 1;
+            self.front(u, seen).try();
+        });
+        Ok(());
+    }
+
+    // Probe the implicit `std.core` import. Roots without a stdlib are valid
+    // and simply have no prelude.
+    seed_prelude = (self :: @Self, seen :: Vec<Unit>) Res<(), AllocError> {
+        flat = self.dotted_path(PRELUDE, false).try();
+        self.env.fs.exists(flat).match({
+            true  => self.queue(flat, seen),
+            false => self.seed_prelude_folder(seen),
+        })
+    }
+
+    seed_prelude_folder = (self :: @Self, seen :: Vec<Unit>)
+                          Res<(), AllocError> {
+        nest = self.dotted_path(PRELUDE, true).try();
+        self.env.fs.exists(nest).match({
+            true  => self.queue(nest, seen),
+            false => Ok(()),
+        })
+    }
+
+    // Resolve the prelude's dotted constant without an import AST node.
+    dotted_path = (self: @Self, dotted: str, folder: bool)
+                  Res<str, AllocError> {
+        base = self.std_base();
+        out ::= self.alloc.String("{}/", base).try();
+        Range(0, dotted.len).loop((h, i) {
+            out.add(slash_for(dotted.index(i))).try();
+        });
+        folder.then(() { out.fmt("/{}", dotted.after_last('.')).try() });
+        out.add(".zen").try();
+        Ok(out.view());
+    }
+
+    front = (self :: @Self, u: Unit, seen :: Vec<Unit>) Res<(), AllocError> {
+        self.read(u.path).match({
+            None     => Ok(()),
+            Ok(text) => self.lex_it(u, text, seen),
+        })
+    }
+
+    // Editor overlay takes precedence over disk contents.
+    read = (self :: @Self, path: str) Res<str> {
+        self.overlay.get(path).match({
+            Ok(text) => Ok(text),
+            None     => self.read_disk(path),
+        })
+    }
+
+    // Borrow the read buffer because lexer and parser spans refer into it.
+    read_disk = (self :: @Self, path: str) Res<str> {
+        self.env.fs.read(self.alloc, path).match({
+            Ok(text) => Ok(text.view()),
+            Err(e)   => self.fs_fault(path, e),
+        })
+    }
+
+    // Record read failures for both CLI output and LSP diagnostics. Missing
+    // imports use the import span; direct reads use the file's first position.
+    fs_fault = (self :: @Self, path: str, e: FsError) Res<str> {
+        self.faults = self.faults + 1;
+        self.speaking.then(() { println("{}: {}", path, fs_message(e)); });
+        at = Span(
+            file: relative_to(self.root, path),
+            start: Pos(line: 1, col: 1),
+            end: Pos(line: 1, col: 1),
+        );
+        // The read failure is still counted if retaining its detail fails.
+        self.diags.add(diag(fs_message(e), at)).match({
+            Ok(_)  => (),
+            Err(_) => (),
+        });
+        None;
+    }
+
+    // Retain each diagnostic and optionally report it in discovery order.
+    report = (self :: @Self, d: Diag) Res<(), AllocError> {
+        at          = self.diags.len;
+        self.faults = self.faults + 1;
+        self.diags.add(d).try();
+        self.diags.get(at).match({
+            Ok(held) => self.speaking.then(() { held.say(); }),
+            None     => (),
+        });
+        Ok(());
+    }
+
+    // Files with lexical faults are reported without invoking the parser.
+    lex_it = (self :: @Self, u: Unit, text: str, seen :: Vec<Unit>)
+             Res<(), AllocError> {
+        self.keep_source(u.rel, text).try();
+        // Tokens live only through this parse; a per-module arena returns them.
+        scratch ::= self.env.mem.alloc();
+        lexed = scan(scratch, Source(file: u.rel, text: text)).try();
+        lexed.is_clean().match({
+            false => self.lex_faults(lexed),
+            true  => self.parse_it(u, lexed, seen),
+        })
+    }
+
+    // Lexer faults become parse diagnostics so `diags` has one shape. The
+    // span is rebuilt by hand: no file can name both `lex.Span` and
+    // `ast.Span` (`parser.zen:span_of` is the same conversion).
+    lex_faults = (self :: @Self, lexed: Lexed) Res<(), AllocError> {
+        lexed.diags.loop((h, d) {
+            at = Span(
+                file: d.file,
+                start: Pos(line: d.span.start.line, col: d.span.start.col),
+                end: Pos(line: d.span.end.line, col: d.span.end.col),
+            );
+            self.report(diag(message(d.fault), at)).try();
+        });
+        Ok(());
+    }
+
+    // Parse each module into the shared tree. The entry is module zero.
+    parse_it = (self :: @Self, u: Unit, lexed: Lexed, seen :: Vec<Unit>)
+               Res<(), AllocError> {
+        p ::= self.alloc.Parser(lexed, self.tree);
+        m = p.module(u.name).try();
+        p.diags.loop((h, d) { self.report(d).try(); });
+        p.tree.add_module(m).try();
+        self.tree  = p.tree;
+        self.units = self.units + 1;
+        self.imports_of(m, seen).try();
+        Ok(());
+    }
+
+    // Queue imports and module-alias candidates in the configured walk order.
+    imports_of = (self :: @Self, m: Module, seen :: Vec<Unit>)
+                 Res<(), AllocError> {
+        Range(0, m.decls.len).loop((h, i) {
+            m.decls.get(self.permute.index(m.decls.len, i)).match({
+                None  => Ok(()),
+                Ok(d) => d.kind.match({
+                    Import(im) => self.enqueue(im.module, seen),
+                    Alias(al)  => self.alias_of(al, seen),
+                    _          => Ok(()),
+                }),
+            }).try();
+        });
+        Ok(());
+    }
+
+    enqueue = (self :: @Self, q: QualifiedName, seen :: Vec<Unit>)
+              Res<(), AllocError> {
+        // Empty recovery segments were already diagnosed by the parser.
+        q.segments.find((s) { s.text.is_empty() }).match({
+            Ok(_) => Ok(()),
+            None  => {
+                base   = self.import_root(q);
+                flat   = joined(self.alloc, base, q, false).try();
+                folder = joined(self.alloc, base, q, true).try();
+                self.import_path(flat, folder).match({
+                    Ok(path) => {
+                        self.queue(path, seen).try();
+                        self.folder_root(path, seen)
+                    },
+                    None     => self.missing_import(q, flat, folder),
+                })
+            },
+        })
+    }
+
+    // Only `std.*` resolves against the optional stdlib root.
+    import_root = (self :: @Self, q: QualifiedName) str {
+        first = q.segment_at(0);
+        first.eq("std").match({
+            true  => self.std_base(),
+            false => self.root,
+        })
+    }
+
+    // Resolve flat or folder module forms, checking the editor overlay first.
+    import_path = (self :: @Self, flat: str, folder: str) Res<str> {
+        self.overlay.get(flat).match({
+            Ok(_) => Ok(flat),
+            None  => self.import_path_disk(flat, folder),
+        })
+    }
+
+    import_path_disk = (self :: @Self, flat: str, folder: str) Res<str> {
+        self.env.fs.exists(flat).match({
+            true  => Ok(flat),
+            false => self.import_path_folder(folder),
+        })
+    }
+
+    import_path_folder = (self :: @Self, folder: str) Res<str> {
+        self.overlay.get(folder).match({
+            Ok(_) => Ok(folder),
+            None  => self.env.fs.exists(folder).match({
+                true  => Ok(folder),
+                false => None,
+            }),
+        })
+    }
+
+    // Anchor a missing module at the import site and name both probed paths.
+    missing_import = (self :: @Self, q: QualifiedName, flat: str, folder: str)
+                     Res<(), AllocError> {
+        why ::= self.alloc.String().try();
+        why.fmt(
+            "{}: tried `{}` and `{}`",
+            fs_message(FsError.NotFound),
+            relative_to(self.root, flat),
+            relative_to(self.root, folder)
+        ).try();
+        self.report(diag(why.view(), q.span))
+    }
+
+    // Queue a nested module's folder root so starred exports make sibling UFCS
+    // candidates visible. A folder root does not enqueue itself again.
+    folder_root = (self :: @Self, path: str, seen :: Vec<Unit>)
+                  Res<(), AllocError> {
+        parent = Path(path).parent().value_or(Path(""));
+        (parent.text.len > self.root.len).match({
+            false => Ok(()),
+            true  => self.queue_folder_root(parent.text, path, seen),
+        })
+    }
+
+    // Probed, not required: a folder with no root file is the module
+    // graph's diagnostic, not this import's.
+    queue_folder_root = (self :: @Self, dir: str, path: str, seen :: Vec<Unit>)
+                        Res<(), AllocError> {
+        root_file ::= self.alloc.String(
+            "{}/{}.zen",
+            dir,
+            Path(dir).name()
+        ).try();
+        skip = root_file.view().eq(path)
+            || !self.env.fs.exists(root_file.view());
+        skip.match({
+            true  => Ok(()),
+            false => self.queue(root_file.view(), seen),
+        })
+    }
+
+    // Deduplicate modules by resolved path rather than import spelling.
+    queue = (self :: @Self, path: str, seen :: Vec<Unit>)
+            Res<(), AllocError> {
+        seen.find((u) { u.path.eq(path) }).match({
+            Ok(_) => Ok(()),
+            None  => self.queue_fresh(path, seen),
+        })
+    }
+
+    queue_fresh = (self :: @Self, path: str, seen :: Vec<Unit>)
+                  Res<(), AllocError> {
+        seen.add(unit_at(self.alloc, self.root_for_path(path), path).try())
+    }
+
+    // Before sema, a bare alias target may name a module; probe it without
+    // turning a missing candidate into an import fault.
+    alias_of = (self :: @Self, al: Alias, seen :: Vec<Unit>)
+               Res<(), AllocError> {
+        self.tree.type_at(al.target).kind.match({
+            Named(n) => self.alias_named(n, seen),
+            _        => Ok(()),
+        })
+    }
+
+    // `Vec<u8>` names no module: a module path takes no type arguments.
+    alias_named = (self :: @Self, n: Named, seen :: Vec<Unit>)
+                  Res<(), AllocError> {
+        (n.args.len == 0).match({
+            false => Ok(()),
+            true  => self.probe(n.name.text, seen),
+        })
+    }
+
+    probe = (self :: @Self, name: str, seen :: Vec<Unit>)
+            Res<(), AllocError> {
+        u = candidate(self.env, self.alloc, self.root, name).try();
+        self.env.fs.exists(u.path).match({
+            false => Ok(()),
+            true  => self.queue(u.path, seen),
+        })
+    }
+
+    // -----------------------------------------------------------------
+    // check
+    // -----------------------------------------------------------------
+
+    // Build and check a workspace for an in-process reader without emitting
+    // code or writing diagnostics to stdout.
+    whole* = (self :: @Self, named: str, docs: Map<str, str>)
+             Res<Checker, AllocError> {
+        entry = entry_of(self.env, self.alloc, self.root, named).try();
+        self.whole(entry, docs)
+    }
+
+    whole* = (self :: @Self, entry: Unit, docs: Map<str, str>)
+             Res<Checker, AllocError> {
+        self.overlay  = docs;
+        self.speaking = false;
+        self.walk(entry).try();
+        self.checked()
+    }
+
+    checked* = (self :: @Self) Res<Checker, AllocError> {
+        c ::= self.alloc.Checker(self.tree).try();
+        c.check_all().try();
+        Ok(c);
+    }
+
+    // Check and emission share one Checker so backend types are never
+    // re-derived. No parsed units means an earlier phase already diagnosed why.
+    back_end* = (self :: @Self, job: BuildArgs) Res<(), AllocError> {
+        (self.units == 0).match({
+            true  => Ok(()),
+            false => self.check_tree(job),
+        })
+    }
+
+    // check_all owns declaration scope and traversal order.
+    check_tree = (self :: @Self, job: BuildArgs) Res<(), AllocError> {
+        c      ::= self.checked().try();
+        report ::= self.alloc.String("").try();
+        c.render_diags(report).try();
+        // Graph checks cover self-imports and cross-module constant cycles.
+        n           = c.diag_count()
+          + check_module_graph(self.alloc, self.tree, c.world, report).try();
+        self.faults = self.faults + n;
+        (n > 0).then(() { println("{}", report.view()); });
+        absent      = self.main_check(c, job).try();
+        self.faults = self.faults + absent;
+        // Any earlier phase fault suppresses emission of a poisoned tree.
+        (self.faults == 0).then(() { self.emit(c, job).try(); });
+        Ok(());
+    }
+
+    // A syntax fragment is not checked again for a missing entry point.
+    main_check = (self :: @Self, c :: Checker, job: BuildArgs)
+                 Res<usize, AllocError> {
+        (self.faults == 0).match({
+            false => Ok(0),
+            true  => self.missing_main(c, job),
+        })
+    }
+
+    // Emitted programs require main in module zero itself. Check-only library
+    // builds do not.
+    missing_main = (self :: @Self, c :: Checker, job: BuildArgs)
+                   Res<usize, AllocError> {
+        job.emission.match({
+            Check => Ok(0),
+            _     => self.root_declares_main(c),
+        })
+    }
+
+    root_declares_main = (self :: @Self, c :: Checker) Res<usize, AllocError> {
+        found ::= self.alloc.Vec<Def>();
+        c.world.own_defs(0, ENTRY, found).try();
+        (found.len > 0).match({
+            true  => Ok(0),
+            false => self.no_main(),
+        })
+    }
+
+    // Reported at 1:1: the fault is the file, not a place in it.
+    no_main = (self :: @Self) Res<usize, AllocError> {
+        println(
+            "{}:1:1: no `{}`: law 2 makes `main = (env: Env) Res<i32, E>` where a program starts, and this root declares none",
+            self.entry_rel,
+            ENTRY
+        );
+        Ok(1);
+    }
+
+    // -----------------------------------------------------------------
+    // emit
+    // -----------------------------------------------------------------
+
+    // Called only after all frontend and graph checks succeed. Generation
+    // owns backend state; Publisher owns the requested destinations.
+    emit = (self :: @Self, c :: Checker, job: BuildArgs) Res<(), AllocError> {
+        job.emits().then(() {
+            generation = Generation(
+                alloc: self.alloc,
+                mem: self.env.mem,
+                tree: self.tree,
+                check: c,
+                backend: job.backend,
+                entry: 0,
+                layout: job.emission.match({
+                    Directory(_) => Layout.Modules,
+                    _            => Layout.Single,
+                }),
+                ffi: self.ffi,
+                symbols: !job.symbol_map.is_empty()
+            );
+            publisher  = Publisher(
+                env: self.env,
+                emission: job.emission,
+                symbol_map: job.symbol_map
+            );
+            report ::= self.alloc.String().try();
+            faults      = generation.emit(report, (artifact) {
+                publisher.write(artifact)
+            }).try();
+            self.faults = self.faults + faults;
+            (!report.view().is_empty()).then(
+                () { println("{}", report.view()); }
+            );
+        });
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------
+
+    // tests/run.py reads this final count to enforce diagnostic sidecars.
+    tally* = (self: @Self) () {
+        (self.faults > 0).then(
+            () { println("zen: {} diagnostic(s)", self.faults); }
+        );
+    }
+
+    diag_count* = (self: @Self) usize { self.diags.len }
+
+    diag_at* = (self: @Self, i: usize) Res<Diag> { self.diags.get(i) }
+
+    // 0 when clean, 1 otherwise: one code answers "did this produce a program".
+    code* = (self: @Self) i32 {
+        (self.faults == 0).match({
+            true  => 0,
+            false => 1,
+        })
+    }
+}
+
+Build* = (a: Alloc, env: Env, root: str) Build {
+    Build(
+        env: env,
+        alloc: a,
+        root: root,
+        tree: a.Ast(),
+        diags: a.Vec<Diag>(),
+        overlay: a.Map<str, str>()
+    )
+}
+
+WorkspaceCheck* = {
+    b*: Build,
+    c*: Checker,
+}
+
+check_workspace* = (
+    env   : Env,
+    a     : Alloc,
+    root  : str,
+    entry : str,
+    docs  : Map<str, str>
+) Res<WorkspaceCheck, AllocError> {
+    env.fs.cwd(a).match({
+        Ok(directory) => check_workspace_at(
+            env,
+            a,
+            directory.view(),
+            root,
+            entry,
+            docs
+        ),
+        Err(error)    => {
+            b ::= a.Build(env, root);
+            b.speaking = false;
+            b.fs_fault(entry, error);
+            c = b.checked().try();
+            Ok(WorkspaceCheck(b: b, c: c))
+        },
+    })
+}
+
+check_workspace_at = (
+    env       : Env,
+    a         : Alloc,
+    directory : str,
+    root      : str,
+    entry     : str,
+    docs      : Map<str, str>
+) Res<WorkspaceCheck, AllocError> {
+    absolute_root = anchored_path(a, directory, root).try();
+    b ::= a.Build(env, absolute_root);
+    std_root = std_root_for(env, a);
+    std_marker ::= a.String("{}/std/std.zen", absolute_root).try();
+    local_std = env.fs.exists(std_marker.view());
+    std_base  = local_std.match({
+        true  => absolute_root,
+        false => std_root.is_empty().match({
+            true  => "",
+            false => anchored_path(a, directory, std_root).try(),
+        }),
+    });
+    // A workspace can be the selected stdlib root itself. Treating that as
+    // a separate root double-anchors std/* paths and duplicates diagnostics.
+    (!std_base.is_empty() && !std_base.eq(absolute_root)).then(() {
+        b.set_std_root(std_base);
+    });
+    over ::= a.Map<str, str>();
+    docs.pairs((h, path, text) {
+        over.set(anchored_path(a, directory, path).try(), text).try();
+    });
+    path = anchored_path(a, absolute_root, entry).try();
+    unit = entry.is_empty().match({
+        true  => entry_of(env, a, absolute_root, entry).try(),
+        false => unit_at(a, absolute_root, path).try(),
+    });
+    c    = b.whole(unit, over).try();
+    Ok(WorkspaceCheck(b: b, c: c))
+}
+
+CheckedBuild* = {
+    root*: str,
+    rel*: str,
+    c*: Checker,
+}
+
+check_build* = (
+    env       : Env,
+    a         : Alloc,
+    workspace : str,
+    path      : str,
+    text      : str,
+    mappings  : Res<Vec<SourceRoot>>
+) Res<CheckedBuild, AllocError> {
+    root = root_for(env, a, workspace, path, mappings);
+    rel  = relative_to(root, path);
+    docs ::= a.Map<str, str>();
+    docs.set(path, text).try();
+    checked = check_workspace(env, a, root, rel, docs).try();
+    Ok(CheckedBuild(root: root, rel: rel, c: checked.c));
+}

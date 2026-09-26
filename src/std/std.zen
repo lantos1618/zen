@@ -1,0 +1,59 @@
+// Public standard-library surface. Names absent from these starred re-exports
+// remain module-private. `std.core` is also auto-imported as the prelude.
+
+Res*, Ok*, Err*, None*, ok_or*, value_or*, map_err*, replace_err*, then*, ensure*, bool* = std.core
+ignore*, without_err*, when_ok*, Rng* = std.core
+Drop*, Scope* = std.core
+i8*, i16*, i32*, i64* = std.core
+u8*, u16*, u32*, u64*, usize* = std.core
+f32*, f64* = std.core
+loop*, find*, filter*, map*, LoopHandle*, Range* = std.core
+Eq*, Hash*, Hasher*, Display* = std.core
+IoError*, WriteError*, Sink*, Path*, join_path*, Duration* = std.core
+
+// the allocator, and the law: no Alloc parameter, no allocation.
+// Ptr and null_ptr are the raw floor everything above stands on
+AllocError*, Alloc*, Arena*, Mem*, Ptr*, null_ptr* = std.mem
+
+// str is borrowed bytes; String is owned, growable, and IS the Vec
+str*, String*, replace_once*, dup*, truncate_with*,
+    parse_i32*, parse_i64*, parse_u16*, parse_usize* = std.text
+
+// Entry has no star: collections are sealed
+Vec*, Map*, OutOfBounds* = std.collections
+
+// typed command-line declaration and scanning
+Spec*, Item*, Options*, Args*, options*, is_flag*, is_word*, arg_at*, OPTIONS_END* = std.cli
+ValueType*, ParameterKind*, CliValue*, DiagnosticKind*, Diagnostic* = std.cli
+Parameter*, Match*, Matches*, Command*, command* = std.cli
+
+// JSON values are read in an arena. Nest writes dynamic document shapes;
+// to_json encodes typed records with the same escaping and number writers.
+JsonId*, Run*, Pair*, Json*, Jsons*,
+    write_text*, written*, Nest*, obj*, arr*,
+    JsonFault*, MAX_NESTING*, Reader*, read*, to_json* = std.json
+
+// the capability root. all authority flows from the Env main receives
+Env*, Console*, Stdin*, Fs*, FsError*, fs_message*, Lock*,
+    Net*, ArgError* = std.env
+Threads*, Thread*, ThreadError* = std.env
+ProcError*, ProcOutput*, Process* = std.proc
+
+// networking: TCP/TLS/DNS floors and the HTTP/1.1 client built on them
+HttpClient*, HttpResponse*, HttpResponseMeta*, HttpError* = std.net.http
+H2Client*, H2Response*, H2Error*, H2StreamError*, H2Head*, H2Chunk*,
+    MAX_SEND*, h2_chunk*, post_once* =
+    std.net.http2
+TcpStream*, TcpError* = std.net.tcp
+TlsStream*, TlsError* = std.net.tls
+DnsAddr*, DnsError*, resolve* = std.net.dns
+
+TestError*, Tester*, Bencher*, BenchStats* = std.test
+
+BuildError*, BuildFault*, Package*, Builder*, Budget* = std.build
+Os*, Arch*, Abi*, StableName*, Target*, Dep*, Exe*, Lib*, Extern*, CImport* = std.build
+Test*, Bench* = std.build
+Codegen*, Emission*, Permutation*, BuildArgs*, ProjectArgs*, BuildFlags*, BuildFlag*, BuildArgFault* = std.build
+
+// actors: address, turn context, receive protocol, send and start refusal
+Actor*, Ref*, ActorError*, ActorStartError*, Context*, Receive* = std.actor

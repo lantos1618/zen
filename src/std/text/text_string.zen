@@ -1,0 +1,132 @@
+// Owned, growable text backed by Vec<u8>. `view` borrows the buffer; any later
+// `add` or `fmt` may reallocate it, so callers take a fresh view after writing.
+
+Vec = std.collections.collections
+Alloc, AllocError = std.mem.mem
+str, str_at = std.text.text_str
+Sink, WriteError = std.core.io
+Range = std.core.range
+
+String* = {
+    data :: Vec<u8>,
+
+    // Expanded at the call site; reports this buffer's allocation floor.
+    fmt* = (self :: @Self, fmt: str, args: ...) Res<(), AllocError>
+
+    // Borrows the buffer until the next potentially growing write.
+    view* = (self: @Self) str { str_at(self.data.ptr(), self.data.len) }
+
+    len* = (self: @Self) usize { self.data.len }
+
+    is_empty* = (self: @Self) bool { self.data.len == 0 }
+
+    // Discard the text while retaining its allocation for the next write.
+    clear* = (self :: @Self) () { self.data.clear(); }
+
+    // Appends bytes verbatim; braces have no format meaning.
+    add* = (self :: @Self, s: str) Res<(), AllocError> {
+        self.data.add_all(s.ptr(), s.len)
+    }
+
+    add* = (self :: @Self, b: u8) Res<(), AllocError> { self.data.add(b) }
+
+    // Decimal, most significant digit first, no separators.
+    write_usize* = (self :: @Self, value: usize) Res<(), AllocError> {
+        (value >= 10).then(() { self.write_usize(value / 10).try() });
+        self.add((value % 10).digit())
+    }
+
+    // Exactly `digits` lowercase hexadecimal digits, zero-padded on the left.
+    // More than sixteen digits traps while constructing the divisor.
+    write_hex_fixed* = (
+        self   :: @Self,
+        value  : u64,
+        digits : usize
+    ) Res<(), AllocError> {
+        place: u64 ::= 1;
+        Range(1, digits).loop((h, i) { place = place * 16; });
+        Range(0, digits).loop((h, i) {
+            self.add(((value / place) % 16).hex_digit()).try();
+            place = place / 16;
+        });
+        Ok(())
+    }
+}
+
+// Sink for the `{}` door; only the AllocError member of WriteError can occur.
+String.impl(Sink, {
+    write = (self :: @Self, bytes: str) Res<(), WriteError> {
+        self.add(bytes).try();
+        Ok(());
+    }
+
+    write_byte = (self :: @Self, b: u8) Res<(), WriteError> {
+        self.add(b).try();
+        Ok(());
+    }
+})
+
+String* = (a: Alloc) Res<String, AllocError> { Ok(String(data: a.Vec<u8>())) }
+
+// Allocating format form, `a.String("{}", x)`; expanded at the call site into
+// the empty form followed by `fmt`.
+String* = (a: Alloc, fmt: str, args: ...) Res<String, AllocError>
+
+// The bytes a C string parameter expects: the source followed by one NUL.
+// The returned Vec owns the storage, so its pointer stays valid across the
+// foreign call.
+c_text* = (self: str, a: Alloc) Res<Vec<u8>, AllocError> {
+    out ::= a.Vec<u8>();
+    out.reserve(self.len + 1).try();
+    out.add_all(self.ptr(), self.len).try();
+    out.add(0).try();
+    Ok(out)
+}
+
+// Allocate a copy with the first matching byte run replaced. A miss returns
+// an unchanged owned copy; an empty needle inserts at the first boundary.
+replace_once* = (
+    self        : str,
+    a           : Alloc,
+    needle      : str,
+    replacement : str
+) Res<String, AllocError> {
+    self.find(needle).match({
+        None   => a.String("{}", self),
+        Ok(at) => a.String(
+            "{}{}{}",
+            self.slice(0, at),
+            replacement,
+            self.slice(at + needle.len, self.len)
+        ),
+    })
+}
+
+// Duplicate borrowed bytes into an arena. Empty text has no backing run to
+// own, so it can remain the canonical empty borrow.
+dup* = (self: str, a: Alloc) Res<str, AllocError> {
+    self.is_empty().match({
+        true  => Ok(""),
+        false => {
+            out = a.String("{}", self).try();
+            Ok(out.view())
+        },
+    })
+}
+
+// Keep at most `limit` leading bytes and append `suffix` when bytes were
+// removed. `str` is byte text, so this does not claim a UTF-8 boundary.
+truncate_with* = (
+    self   : str,
+    a      : Alloc,
+    limit  : usize,
+    suffix : str
+) Res<str, AllocError> {
+    (self.len <= limit).match({
+        true  => Ok(self),
+        false => {
+            out = a.String("{}{}", self.slice(0, limit), suffix).try();
+            Ok(out.view())
+        },
+    })
+}

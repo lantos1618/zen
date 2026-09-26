@@ -1,0 +1,7 @@
+// `@scope` refers to the enclosing lexical block. A Scope may be passed to a
+// helper but cannot be stored, returned, or captured by an escaping closure.
+// Deferred closures run in LIFO order before owned values are dropped. Each
+// block permits at most 32 registrations.
+Scope* = {
+    defer* = (self: @Self, f: () ()) ()
+}

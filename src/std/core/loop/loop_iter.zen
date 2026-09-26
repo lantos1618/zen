@@ -1,0 +1,59 @@
+// The callback parameter list selects the loop form. Bodiless forms lower
+// directly; value-only traversal delegates to the handle form. No form allocates.
+
+LoopHandle = std.core.loop.loop_handle
+Range      = std.core.range
+Res        = std.core.result
+
+// Repeat until the body calls h.break().
+loop*<T> = (body: (h: LoopHandle) ()) Res<T>
+
+// Repeat with a zero-based pass index.
+loop*<T> = (body: (h: LoopHandle, index: usize) ()) Res<T>
+
+// Test the condition before each pass.
+loop*<T> = (cond: () bool, body: (h: LoopHandle) ()) Res<T>
+
+// Re-read a boolean place before each pass. Use the closure overload when
+// computing the condition needs more than one expression.
+loop*<T> = (cond: bool, body: (h: LoopHandle) ()) Res<T>
+
+// Iterate values, optionally with a zero-based pass index.
+loop*<R: Range<T>, T> = (range: R, body: (
+    h     : LoopHandle,
+    index : usize,
+    value : T
+) ()) Res<T>
+loop*<R: Range<T>, T> = (range: R, body: (h: LoopHandle, value: T) ()) Res<T>
+
+// Visit every value without a handle. Natural completion returns None.
+loop*<R: Range<T>, T> = (range: R, body: (value: T) ()) Res<T> {
+    range.loop((h, value) { body(value) })
+}
+
+// Fold from init. Natural completion returns the final accumulator;
+// h.break(value) returns that value instead.
+loop*<R: Range<T>, T, A> = (range: R, init: A, body: (
+    h     : LoopHandle,
+    index : usize,
+    value : T,
+    acc   : A
+) A) Res<A>
+
+// Fold values without requesting an index or loop handle.
+loop*<R: Range<T>, T, A> = (
+    range : R,
+    init  : A,
+    body  : (value: T, acc: A) A
+) Res<A> {
+    range.loop(init, (h, index, value, acc) { body(value, acc) })
+}
+
+// Fold with explicit early completion or skipping.
+loop*<R: Range<T>, T, A> = (range: R, init: A, body: (
+    h     : LoopHandle,
+    value : T,
+    acc   : A
+) A) Res<A> {
+    range.loop(init, (h, index, value, acc) { body(h, value, acc) })
+}

@@ -1,0 +1,49 @@
+// Output destinations belong to the driver. The generator publishes borrowed
+// artifacts one at a time after lowering has succeeded.
+
+AllocError = std.mem
+str = std.text
+Emission = std.build
+Artifact = gen.gen
+fs_message = std.env
+
+Publisher* = {
+    env*: Env,
+    emission*: Emission,
+    symbol_map*: str,
+
+    write* = (self: @Self, artifact: Artifact) Res<usize, AllocError> {
+        artifact.kind.match({
+            Symbols => self.file(
+                self.symbol_map,
+                artifact.text,
+                "--symbol-map"
+            ),
+            Source  => self.source(artifact),
+        })
+    }
+
+    source = (self: @Self, artifact: Artifact) Res<usize, AllocError> {
+        self.emission.match({
+            Check          => Ok(0),
+            Stdout         => { println("{}", artifact.text); Ok(0) },
+            File(path)     => self.file(path, artifact.text, "-o"),
+            Directory(dir) => {
+                scratch ::= self.env.mem.alloc();
+                path = scratch.String("{}/{}", dir, artifact.name).try();
+                self.file(path.view(), artifact.text, "--emit-c-dir")
+            },
+        })
+    }
+
+    file = (self: @Self, path: str, text: str, option: str)
+           Res<usize, AllocError> {
+        self.env.fs.write(path, text).match({
+            Ok(_)  => Ok(0),
+            Err(e) => {
+                println("{} {}: {}", option, path, fs_message(e));
+                Ok(1)
+            },
+        })
+    }
+}

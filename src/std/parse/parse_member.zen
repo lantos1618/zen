@@ -1,0 +1,395 @@
+// Members, parameters, type parameters, and the function value they compose.
+//
+// Member nodes are shared by struct, impl, and record bodies. Struct bodies
+// write member types; impl and record bodies supply values. The binder and
+// whether the body is typed determine field, constant, or method syntax.
+
+AllocError = std.mem
+Span, Ident = std.ast.ast_span
+TypeId, ExprId, BlockId = std.ast.ast_id
+Member, MemberKind, Field, Const, Param, TParam, Function, Form = std.ast.ast_node
+TokenKind = std.parse.parse_token
+Parser = std.parse.parser
+expr = std.parse.parse_expr
+type, written_type = std.parse.parse_type
+ret_ahead = std.parse.parse_lookahead
+body_block = std.parse.parse_stmt
+
+// Commas between body members are optional.
+struct_members* = (p :: Parser, out :: Vec<Member>) Res<Span, AllocError> {
+    p.member_list(out, true)
+}
+
+// The `{ .. }` of `A.impl(B, {..})` and of a construction argument.
+record_body* = (p :: Parser, out :: Vec<Member>) Res<Span, AllocError> {
+    p.member_list(out, false)
+}
+
+member_list = (
+    p     :: Parser,
+    out   :: Vec<Member>,
+    typed : bool
+) Res<Span, AllocError> {
+    start = p.here();
+    open  = p.here_span();
+    p.expect(TokenKind.BraceOpen, "expected `{` to open a body").try();
+    running ::= !p.at_kind(TokenKind.BraceClose) && !p.at_eof();
+    running.loop((h) {
+        before = p.at;
+        out.add(p.one_member(typed).try()).try();
+        running = !p.at_kind(
+            TokenKind.BraceClose
+        ) && !p.at_eof() && p.at > before;
+    });
+    p.expect_close(
+        TokenKind.BraceClose,
+        "unclosed `{`: this body is never closed",
+        open
+    ).try();
+    Ok(p.span_from(start));
+}
+
+one_member = (p :: Parser, typed: bool) Res<Member, AllocError> {
+    m        = p.open();
+    name     = p.ident("expected a member name").try();
+    exported = p.eat(TokenKind.Star).try();
+    tparams ::= p.alloc.Vec<TParam>();
+    p.at_kind(TokenKind.Lt).then(() { p.type_params(tparams).try(); });
+    kind = p.member_kind(name, exported, tparams, typed).try();
+    end  = p.prev_end;
+    span = p.span_from(m.start);
+    p.eat(TokenKind.Comma).try();
+    Ok(Member(
+        kind: kind,
+        span: span,
+        leading: m.leading,
+        trailing: p.claim_trailing(end),
+    ));
+}
+
+member_kind = (
+    p        :: Parser,
+    name     : Ident,
+    exported : bool,
+    tparams  : Vec<TParam>,
+    typed    : bool
+) Res<MemberKind, AllocError> {
+    p.peek().kind.match({
+        Colon        => p.after_colon(name, exported, tparams, typed, false),
+        ColonColon   => p.after_colon(name, exported, tparams, typed, true),
+        Eq           => p.after_assign(name, exported, tparams, false, typed),
+        ColonColonEq => p.after_assign(name, exported, tparams, true, typed),
+        _            => {
+            p.error(
+                "expected `:`, `::`, `=` or `::=` after a member's name"
+            ).try();
+            Ok(MemberKind.Field(Field(
+                name: name,
+                exported: exported,
+                mutable: false,
+                type: None,
+                value: None,
+            )));
+        },
+    });
+}
+
+// `typed` distinguishes declarations from record entries, whose syntax overlaps.
+after_colon = (
+    p        :: Parser,
+    name     : Ident,
+    exported : bool,
+    tparams  : Vec<TParam>,
+    typed    : bool,
+    mutable  : bool
+) Res<MemberKind, AllocError> {
+    p.bump().try();
+    typed.match({
+        true  => p.typed_member(name, exported, mutable),
+        false => p.supplied_member(name, exported, mutable),
+    });
+}
+
+// A typed immutable member with a value is a constant; mutable members and
+// members without values remain fields.
+typed_member = (
+    p        :: Parser,
+    name     : Ident,
+    exported : bool,
+    mutable  : bool
+) Res<MemberKind, AllocError> {
+    t     = p.type().try();
+    value = p.eat(TokenKind.Eq).try().match({
+        true  => p.member_value(),
+        false => Ok(None),
+    }).try();
+    p.field_or_const(name, exported, mutable, t, value);
+}
+
+field_or_const = (
+    p        :: Parser,
+    name     : Ident,
+    exported : bool,
+    mutable  : bool,
+    t        : TypeId,
+    value    : Res<ExprId>
+) Res<MemberKind, AllocError> {
+    constant: Res<ExprId> = mutable.match({
+        true  => None,
+        false => value,
+    });
+    constant.match({
+        Ok(v) => Ok(MemberKind.Const(Const(
+            name: name,
+            exported: exported,
+            mutable: false,
+            type: Ok(t),
+            value: v,
+        ))),
+        None  => Ok(MemberKind.Field(Field(
+            name: name,
+            exported: exported,
+            mutable: mutable,
+            type: Ok(t),
+            value: value,
+        ))),
+    });
+}
+
+// Record entries accept either `:` or `=` before their value.
+supplied_member = (
+    p        :: Parser,
+    name     : Ident,
+    exported : bool,
+    mutable  : bool
+) Res<MemberKind, AllocError> {
+    value = p.expr().try();
+    Ok(MemberKind.Field(Field(
+        name: name,
+        exported: exported,
+        mutable: mutable,
+        type: None,
+        value: Ok(value),
+    )));
+}
+
+after_assign = (
+    p          :: Parser,
+    name       : Ident,
+    exported   : bool,
+    tparams    : Vec<TParam>,
+    rebindable : bool,
+    typed      : bool
+) Res<MemberKind, AllocError> {
+    p.bump().try();
+    p.fn_member_ahead().match({
+        true  => p.fn_member(name, exported, tparams, rebindable),
+        false => typed.match({
+            true  => p.no_type_member(name, exported, rebindable),
+            false => p.supplied_member(name, exported, rebindable),
+        }),
+    });
+}
+
+// Consume the value so recovery resumes at the next member.
+no_type_member = (
+    p          :: Parser,
+    name       : Ident,
+    exported   : bool,
+    rebindable : bool
+) Res<MemberKind, AllocError> {
+    p.error_at(
+        "a member of a struct body writes its type: `x: i32`, or `x :: T = v` for a default",
+        name.span
+    ).try();
+    value = p.expr().try();
+    Ok(MemberKind.Field(Field(
+        name: name,
+        exported: exported,
+        mutable: rebindable,
+        type: None,
+        value: Ok(value),
+    )));
+}
+
+fn_member_ahead = (p :: Parser) bool {
+    p.at_kind(TokenKind.Lt) || p.at_kind(TokenKind.ParenOpen)
+}
+
+fn_member = (
+    p          :: Parser,
+    name       : Ident,
+    exported   : bool,
+    tparams    : Vec<TParam>,
+    rebindable : bool
+) Res<MemberKind, AllocError> {
+    f = p.fn_value(name, exported, tparams, rebindable).try();
+    Ok(MemberKind.Function(f));
+}
+
+member_value = (p :: Parser) Res<Res<ExprId>, AllocError> {
+    v = p.expr().try();
+    Ok(Ok(v));
+}
+
+// `Name<T> = (..)` and `Name = <T>(..)` both place `T` on the function.
+fn_value* = (
+    p          :: Parser,
+    name       : Ident,
+    exported   : bool,
+    tparams    : Vec<TParam>,
+    rebindable : bool
+) Res<Function, AllocError> {
+    own ::= p.alloc.Vec<TParam>();
+    p.at_kind(TokenKind.Lt).then(() { p.type_params(own).try(); });
+    ps ::= p.alloc.Vec<Param>();
+    span = p.params_list(ps).try();
+    p.typed_params(ps).try();
+    ret  = p.ret_ahead().match({
+        true  => p.written_type(),
+        false => Ok(None),
+    }).try();
+    body = p.at_kind(TokenKind.BraceOpen).match({
+        true  => p.fn_body(),
+        false => Ok(None),
+    }).try();
+    Ok(Function(
+        name: name,
+        exported: exported,
+        form: form_of(rebindable, body),
+        tparams: (tparams.len == 0).match({
+            true  => own,
+            false => tparams,
+        }),
+        params: ps,
+        params_span: span,
+        ret: ret,
+        body: body,
+    ));
+}
+
+typed_params = (p :: Parser, ps: Vec<Param>) Res<(), AllocError> {
+    ps.loop((h, param) {
+        param.type.match({
+            Ok(_) => (),
+            None  => p.error_at(
+                "a declaration's parameter needs a type: only a closure infers its parameter types",
+                param.span
+            ).try(),
+        });
+    });
+    Ok(());
+}
+
+fn_body = (p :: Parser) Res<Res<BlockId>, AllocError> {
+    b = p.body_block().try();
+    Ok(Ok(b));
+}
+
+form_of = (rebindable: bool, body: Res<BlockId>) Form {
+    rebindable.match({
+        true  => body.match({
+            Ok(_) => Form.Default,
+            None  => Form.Hook,
+        }),
+        false => body.match({
+            Ok(_) => Form.Sealed,
+            None  => Form.Required,
+        }),
+    });
+}
+
+// The parameter-list span includes both parentheses.
+params_list* = (p :: Parser, out :: Vec<Param>) Res<Span, AllocError> {
+    start = p.here();
+    open  = p.here_span();
+    p.expect(
+        TokenKind.ParenOpen,
+        "expected `(` to open a parameter list"
+    ).try();
+    // A non-name ends the list so an unclosed `(` is diagnosed at its opener.
+    running ::= p.at_kind(TokenKind.Ident);
+    running.loop((h) {
+        before = p.at;
+        out.add(p.one_param().try()).try();
+        running = p.at_kind(TokenKind.Ident) && !p.at_eof() && p.at > before;
+    });
+    p.expect_close(
+        TokenKind.ParenClose,
+        "unclosed `(`: this parameter list is never closed",
+        open
+    ).try();
+    Ok(p.span_from(start));
+}
+
+// Parameter types may be omitted only where a closure can infer them;
+// declarations validate them in `typed_params`.
+one_param = (p :: Parser) Res<Param, AllocError> {
+    m       = p.open();
+    name    = p.ident("expected a parameter name").try();
+    mutable = p.at_kind(TokenKind.ColonColon);
+    t       = (p.at_kind(TokenKind.Colon) || mutable).match({
+        true  => p.param_type(),
+        false => Ok(None),
+    }).try();
+    end     = p.prev_end;
+    span    = p.span_from(m.start);
+    p.eat(TokenKind.Comma).try();
+    Ok(Param(
+        name: name,
+        mutable: mutable,
+        type: t,
+        span: span,
+        leading: m.leading,
+        trailing: p.claim_trailing(end),
+    ));
+}
+
+param_type = (p :: Parser) Res<Res<TypeId>, AllocError> {
+    p.bump().try();
+    p.written_type();
+}
+
+// Type-parameter bounds are joined with `+`; `|` is reserved for unions.
+type_params* = (p :: Parser, out :: Vec<TParam>) Res<(), AllocError> {
+    open = p.here_span();
+    p.expect(TokenKind.Lt, "expected `<` to open a type parameter list").try();
+    running ::= !p.at_kind(TokenKind.Gt) && !p.at_eof();
+    running.loop((h) {
+        before = p.at;
+        out.add(p.one_tparam().try()).try();
+        running = !p.at_kind(TokenKind.Gt) && !p.at_eof() && p.at > before;
+    });
+    p.expect_close(
+        TokenKind.Gt,
+        "unclosed `<`: this type parameter list is never closed",
+        open
+    ).try();
+    Ok(());
+}
+
+one_tparam = (p :: Parser) Res<TParam, AllocError> {
+    m    = p.open();
+    name = p.ident("expected a type parameter name").try();
+    bounds ::= p.alloc.Vec<TypeId>();
+    p.eat(TokenKind.Colon).try().then(() { p.type_bounds(bounds).try(); });
+    end  = p.prev_end;
+    span = p.span_from(m.start);
+    p.eat(TokenKind.Comma).try();
+    Ok(TParam(
+        name: name,
+        bounds: bounds,
+        span: span,
+        leading: m.leading,
+        trailing: p.claim_trailing(end),
+    ));
+}
+
+type_bounds = (p :: Parser, out :: Vec<TypeId>) Res<(), AllocError> {
+    out.add(p.type().try()).try();
+    loop(p.at_kind(TokenKind.Plus), (h) {
+        p.bump().try();
+        out.add(p.type().try()).try();
+    });
+    Ok(());
+}

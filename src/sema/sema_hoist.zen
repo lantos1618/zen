@@ -1,0 +1,440 @@
+Expr, ExprId, Block, BlockId, Stmt, Call, Arg, Span = std.ast
+Match = std.ast
+AllocError = std.mem
+Vec = std.collections
+str = std.text
+TyId, TyRes = sema.sema_ty
+SemaFault, NameFault, TypeFault = sema.sema_diag
+Checker, Ctx = sema.sema_check
+Found, members_of = sema.sema_member
+storage_seat_name = sema.sema_supply
+check_literal = sema.sema_trap
+refuse_handle_value = sema.sema_handle
+type_of = sema.sema_type
+
+can_hoist* = (c: Checker, got: TyId, want: TyId) bool {
+    c.types.at(want).match({
+        Res(r) => c.countable(r)
+                    && c.assignable(got, r.value)
+                    && (c.carries_failure(got, r) == false),
+        _      => false,
+    })
+}
+
+hoist_check = (c :: Checker, file: str, span: Span, got: TyId, want: TyId)
+               Res<(), AllocError> {
+    c.assignable(got, want).match({
+        true  => Ok(()),
+        false => c.hoist_into(file, span, got, want),
+    })
+}
+
+hoist_into = (c :: Checker, file: str, span: Span, got: TyId, want: TyId)
+             Res<(), AllocError> {
+    c.types.at(want).match({
+        Res(r) => c.hoist_into_res(file, span, got, want, r),
+        _      => Ok(()),
+    })
+}
+
+hoist_into_res = (
+    c    :: Checker,
+    file : str,
+    span : Span,
+    got  : TyId,
+    want : TyId,
+    r    : TyRes
+) Res<(), AllocError> {
+    c.countable(r).match({
+        false => Ok(()),
+        true  => c.count_carriers(file, span, got, want, r),
+    })
+}
+
+count_carriers = (
+    c    :: Checker,
+    file : str,
+    span : Span,
+    got  : TyId,
+    want : TyId,
+    r    : TyRes
+) Res<(), AllocError> {
+    ok  = c.assignable(got, r.value);
+    err = c.carries_failure(got, r);
+    (ok && err).match({
+        true  => c.two_readings(file, span, got, want),
+        false => c.lone_failure(file, span, err),
+    })
+}
+
+lone_failure = (c :: Checker, file: str, span: Span, err: bool)
+               Res<(), AllocError> {
+    err.match({
+        true  => c.failure_never_lifts(file, span),
+        false => Ok(()),
+    })
+}
+
+// A `Res` whose success payload is unsettled cannot be counted.
+countable = (c: Checker, r: TyRes) bool { c.settled(r.value) }
+
+carries_failure = (c: Checker, got: TyId, r: TyRes) bool {
+    r.form.match({
+        Failure => c.settled(r.error) && c.assignable(got, r.error),
+        Absence => false,
+        Open    => false,
+    })
+}
+
+settled = (c: Checker, t: TyId) bool {
+    (c.is_var(t) || c.is_infer(t) || c.is_unknown(t)) == false
+}
+
+two_readings = (c :: Checker, file: str, span: Span, got: TyId, want: TyId)
+               Res<(), AllocError> {
+    c.report(
+        file,
+        span,
+        SemaFault.HoistAmbiguous(TypeFault(
+            name: "",
+            expected: want,
+            found: got
+        ))
+    )
+}
+
+failure_never_lifts = (c :: Checker, file: str, span: Span)
+                      Res<(), AllocError> {
+    c.report(file, span, SemaFault.HoistNotSuccess(NameFault(name: "Err")))
+}
+
+check_return* = (c :: Checker, body: BlockId, ctx: Ctx, got: TyId)
+                Res<(), AllocError> {
+    blk = c.tree.block_at(body);
+    c.tail_expr(blk).match({
+        None  => Ok(()),
+        Ok(e) => c.tail_fits(blk, e, got, ctx.ret),
+    })
+}
+
+tail_fits = (c :: Checker, blk: Block, id: ExprId, got: TyId, want: TyId)
+            Res<(), AllocError> {
+    c.return_fits(blk, id, got, want).try();
+    c.value_was_asked_for(blk, got, want).match({
+        false => Ok(()),
+        true  => c.check_arms(id, want),
+    })
+}
+
+return_fits = (c :: Checker, blk: Block, id: ExprId, got: TyId, want: TyId)
+              Res<(), AllocError> {
+    node = c.tree.expr_at(id);
+    c.assignable(got, want).match({
+        true  => c.check_literal(id, want),
+        false => c.refuse_return(blk, node, got, want),
+    })
+}
+
+refuse_return = (
+    c    :: Checker,
+    blk  : Block,
+    node : Expr,
+    got  : TyId,
+    want : TyId
+) Res<(), AllocError> {
+    c.types.at(want).match({
+        Res(r) => c.res_return(blk, node, got, want, r),
+        _      => c.wrong_return(blk, node, got, want),
+    })
+}
+
+res_return = (
+    c    :: Checker,
+    blk  : Block,
+    node : Expr,
+    got  : TyId,
+    want : TyId,
+    r    : TyRes
+) Res<(), AllocError> {
+    c.types.at(got).match({
+        Res(_) => c.wrong_return(blk, node, got, want),
+        _      => c.lift_or_refuse(blk, node, got, want, r),
+    })
+}
+
+lift_or_refuse = (
+    c    :: Checker,
+    blk  : Block,
+    node : Expr,
+    got  : TyId,
+    want : TyId,
+    r    : TyRes
+) Res<(), AllocError> {
+    c.hoist_into_res(node.span.file, node.span, got, want, r).try();
+    (c.lands_somewhere(got, r) || (node.was_written() == false)).match({
+        true  => Ok(()),
+        false => c.wrong_return(blk, node, got, want),
+    })
+}
+
+was_written = (node: Expr) bool {
+    (node.span.start.line != node.span.end.line)
+        || (node.span.start.col != node.span.end.col)
+}
+
+lands_somewhere = (c: Checker, got: TyId, r: TyRes) bool {
+    c.assignable(got, r.value) || c.carries_failure(got, r)
+}
+
+wrong_return = (c :: Checker, blk: Block, node: Expr, got: TyId, want: TyId)
+               Res<(), AllocError> {
+    c.value_was_asked_for(blk, got, want).match({
+        false => Ok(()),
+        true  => c.coerce(node.span.file, node.span, got, want, ""),
+    })
+}
+
+value_was_asked_for = (c: Checker, blk: Block, got: TyId, want: TyId) bool {
+    (c.unit_ty(want) == false)
+        && (blk.written_value() || (c.unit_ty(got) == false))
+}
+
+written_value = (blk: Block) bool {
+    blk.value.match({ Ok(_) => true, None => false })
+}
+
+unit_ty = (c: Checker, t: TyId) bool { c.prim_name(t).eq("()") }
+
+hoist_at* = (c :: Checker, id: ExprId, got: TyId, want: TyId)
+           Res<(), AllocError> {
+    node = c.tree.expr_at(id);
+    c.hoist_check(node.span.file, node.span, got, want)
+}
+
+// The block's value, with or without its closing `;`; a trailing block
+// statement supplies its own tail. Walk that chain without growing the stack
+// or copying the checker at each level of a recovered nested block.
+tail_expr* = (c: Checker, blk: Block) Res<ExprId> {
+    current             ::= blk;
+    result: Res<ExprId> ::= None;
+    walking             ::= true;
+    loop(() { walking }, (h) {
+        current.value.match({
+            Ok(e) => { result = Ok(e); walking = false; },
+            None  => current.last_stmt().match({
+                None  => { walking = false; },
+                Ok(s) => s.kind.match({
+                    Expr(e)  => { result = Ok(e.expr); walking = false; },
+                    Block(b) => { current = c.tree.block_at(b); },
+                    _        => { walking = false; },
+                }),
+            }),
+        });
+    });
+    result
+}
+
+last_stmt = (blk: Block) Res<Stmt> {
+    (blk.stmts.len > 0).match({
+        false => None,
+        true  => blk.stmts.get(blk.stmts.len - 1),
+    })
+}
+
+check_arms* = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
+    c.arms_owe(id, want, Blame.Position)
+}
+
+check_arms_agree* = (c :: Checker, id: ExprId) Res<(), AllocError> {
+    c.expr_memo.get(id).match({
+        None       => Ok(()),
+        Ok(joined) => c.arms_owe(id, joined, Blame.Arms),
+    })
+}
+
+Blame* = Position | Arms
+
+arms_owe = (c :: Checker, id: ExprId, want: TyId, blame: Blame)
+           Res<(), AllocError> {
+    node = c.tree.expr_at(id);
+    node.kind.match({
+        Match(m) => c.arms_within(m, want, blame),
+        _        => Ok(()),
+    })
+}
+
+// A nested match's arms are the values, as in `literal_within`.
+arms_within = (c :: Checker, m: Match, want: TyId, blame: Blame)
+              Res<(), AllocError> {
+    m.arms.loop((h, a) { c.arm_within(a.body, want, blame).try() });
+    Ok(());
+}
+
+arm_within = (c :: Checker, id: ExprId, want: TyId, blame: Blame)
+             Res<(), AllocError> {
+    node = c.tree.expr_at(id);
+    node.kind.match({
+        Match(m) => c.arms_within(m, want, blame),
+        _        => c.arm_fits(id, node, want, blame),
+    })
+}
+
+arm_fits = (c :: Checker, id: ExprId, node: Expr, want: TyId, blame: Blame)
+           Res<(), AllocError> {
+    c.expr_memo.get(id).match({
+        None    => Ok(()),
+        Ok(got) => c.arm_agrees(node, got, want, blame),
+    })
+}
+
+arm_agrees = (c :: Checker, node: Expr, got: TyId, want: TyId, blame: Blame)
+             Res<(), AllocError> {
+    c.assignable(got, want).match({
+        true  => Ok(()),
+        false => c.refuse_arm(node, got, want, blame),
+    })
+}
+
+refuse_arm = (c :: Checker, node: Expr, got: TyId, want: TyId, blame: Blame)
+             Res<(), AllocError> {
+    c.types.at(want).match({
+        Res(r) => c.arm_into_res(node, got, want, r, blame),
+        _      => c.arm_refused(node, got, want, blame),
+    })
+}
+
+arm_into_res = (
+    c     :: Checker,
+    node  : Expr,
+    got   : TyId,
+    want  : TyId,
+    r     : TyRes,
+    blame : Blame
+) Res<(), AllocError> {
+    c.types.at(got).match({
+        Res(_) => c.arm_refused(node, got, want, blame),
+        _      => c.hoist_into_res(node.span.file, node.span, got, want, r),
+    })
+}
+
+arm_refused = (c :: Checker, node: Expr, got: TyId, want: TyId, blame: Blame)
+              Res<(), AllocError> {
+    blame.match({
+        Position => c.coerce(node.span.file, node.span, got, want, ""),
+        Arms     => c.arms_disagree(node, got, want),
+    })
+}
+
+arms_disagree = (c :: Checker, node: Expr, got: TyId, want: TyId)
+                Res<(), AllocError> {
+    c.report(
+        node.span.file,
+        node.span,
+        SemaFault.ArmsDisagree(TypeFault(name: "", expected: want, found: got))
+    )
+}
+
+check_ctor_fields* = (c :: Checker, call: Call, ty: TyId, ctx: Ctx)
+                     Res<(), AllocError> {
+    call.args.loop((h, i, a) { c.check_ctor_field(a, i, ty, ctx).try() });
+    Ok(());
+}
+
+check_ctor_field = (c :: Checker, a: Arg, i: usize, ty: TyId, ctx: Ctx)
+                   Res<(), AllocError> {
+    a.name.match({
+        None   => c.check_positional_field(a, i, ty, ctx),
+        Ok(nm) => c.check_named_field(a, nm.span, nm.text, ty, ctx),
+    })
+}
+
+check_positional_field = (
+    c   :: Checker,
+    a   : Arg,
+    i   : usize,
+    ty  : TyId,
+    ctx : Ctx
+) Res<(), AllocError> {
+    name = c.storage_seat_name(ty, i).try();
+    name.eq("").match({
+        true  => Ok(()),
+        false => c.check_named_field(a, a.span, name, ty, ctx),
+    })
+}
+
+check_named_field = (
+    c    :: Checker,
+    a    : Arg,
+    at   : Span,
+    name : str,
+    ty   : TyId,
+    ctx  : Ctx
+)
+                    Res<(), AllocError> {
+    found ::= c.alloc.Vec<Found>();
+    c.members_of(ty, name, found).try();
+    found.get(0).match({
+        None  => c.ctor_no_member(a, name, ty),
+        Ok(f) => c.ctor_field_or_constant(a, f, name, at, ty, ctx),
+    })
+}
+
+ctor_no_member = (c :: Checker, a: Arg, name: str, ty: TyId)
+                 Res<(), AllocError> {
+    poison = c.types.unknown().try();
+    c.report(
+        a.span.file,
+        a.span,
+        SemaFault.CtorNamesNoMember(TypeFault(
+            name: name,
+            expected: poison,
+            found: ty,
+        ))
+    )
+}
+
+ctor_field_or_constant = (
+    c    :: Checker,
+    a    : Arg,
+    f    : Found,
+    name : str,
+    at   : Span,
+    ty   : TyId,
+    ctx  : Ctx
+) Res<(), AllocError> {
+    f.constant.match({
+        true  => c.ctor_names_constant(a, name, at, ty, ctx),
+        false => c.field_fits(a, f.ty, ctx),
+    })
+}
+
+ctor_names_constant = (
+    c    :: Checker,
+    a    : Arg,
+    name : str,
+    at   : Span,
+    ty   : TyId,
+    ctx  : Ctx
+)
+                      Res<(), AllocError> {
+    c.report(
+        a.span.file,
+        at,
+        SemaFault.CtorNamesConstant(TypeFault(
+            name: name,
+            expected: c.type_of(a.value, ctx).try(),
+            found: ty,
+        ))
+    )
+}
+
+// A field is a typed slot: check lifting, assignability, match arms, literal
+// range, and whether the value is a non-storable loop handle.
+field_fits = (c :: Checker, a: Arg, want: TyId, ctx: Ctx)
+             Res<(), AllocError> {
+    got = c.type_of(a.value, ctx).try();
+    c.refuse_handle_value(a.value, got).try();
+    c.hoist_at(a.value, got, want).try();
+    c.check_literal(a.value, want).try();
+    c.check_arms(a.value, want)
+}

@@ -1,0 +1,432 @@
+// Range recognition and pass lowering. Concrete Range values store start/end;
+// bound implementations supply start/end expressions and optionally at. None
+// from at ends the walk. Bounds are recognized structurally, and synthesized
+// at calls inline the impl body with parameters bound to emitted C text.
+
+ExprId = std.ast
+Function = std.ast
+Impl = std.ast
+AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+DeclId, ImplId = sema.sema_id
+TyId, TyNamed, TyArray, Prim = sema.sema_ty
+Def = sema.sema_def
+Ctx = sema.sema_check
+self_ctx = sema.sema_member
+impl_bound_type = sema.sema_supply
+sym_local, sym_member, sym_variant = gen.gen_name
+RES_PATH = gen.gen_name
+CBackend = gen.gen_c.gen_c_state
+declarator, declared_ret, struct_decl, res_value, is_res = gen.gen_c.gen_c_type
+intern_res_open, recv_inst, sub_with = gen.gen_c.gen_c_mono
+enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
+Dest, block, deliver = gen.gen_c.gen_c_stmt
+array_of = gen.gen_c.gen_c_array
+
+// A range that stores its bounds.
+
+// Whether this declaration physically stores both bounds. This structural
+// question also recognizes the Range declaration in small compiler fixtures
+// that intentionally build no prelude world.
+supplies_bounds* = (be :: CBackend, rty: TyId) bool {
+    be.has_field(rty, "start") && be.has_field(rty, "end")
+}
+
+has_field = (be :: CBackend, rty: TyId, name: str) bool {
+    be.check.types.at(rty).match({
+        Named(n) => be.decl_has_field(n.decl, name),
+        _        => false,
+    })
+}
+
+decl_has_field = (be :: CBackend, decl: DeclId, name: str) bool {
+    struct_decl(be, decl).match({
+        None  => false,
+        Ok(s) => s.has_field(name),
+    })
+}
+
+// A real impl outranks coincidentally stored names because it may supply an
+// `at` hook. The concrete Range declaration has no impl and takes the direct
+// stored-bound path.
+uses_stored_bounds* = (be :: CBackend, rty: TyId)
+                      Res<bool, AllocError> {
+    be.supplies_bounds(rty).match({
+        false => Ok(false),
+        true  => be.range_impl(rty).try().match({
+            None  => Ok(true),
+            Ok(_) => Ok(false),
+        }),
+    })
+}
+
+// A range whose impl supplies computed bounds and an optional at function.
+
+RangeImpl* = {
+    decl*: DeclId,
+    mi*: usize,
+    start*: ExprId,
+    end*: ExprId,
+    at*: Res<Function>,
+}
+
+range_impl* = (be :: CBackend, rty: TyId) Res<Res<RangeImpl>, AllocError> {
+    be.check.types.at(rty).match({
+        Named(n) => be.named_range_impl(n),
+        Prim(p)  => be.primitive_range_impl(p),
+        _        => Ok(None),
+    })
+}
+
+// Primitive impls live on the prelude declaration of their spelling, just as
+// ordinary member lookup and bound checking already define. Range lowering
+// must use that same ownership rule: `str.impl(Range<u8>, ..)` is not less of
+// an impl merely because `str` has a built-in C representation.
+primitive_range_impl = (be :: CBackend, p: Prim)
+                       Res<Res<RangeImpl>, AllocError> {
+    defs ::= be.alloc.Vec<Def>();
+    be.check.world.prelude_of(p.name, defs).try();
+    defs.get(0).match({
+        None    => Ok(None),
+        Ok(def) => be.named_range_impl(TyNamed(
+            decl: def.id,
+            name: p.name,
+            args: be.alloc.Vec<TyId>()
+        )),
+    })
+}
+
+named_range_impl = (be :: CBackend, n: TyNamed)
+                   Res<Res<RangeImpl>, AllocError> {
+    ids ::= be.alloc.Vec<ImplId>();
+    be.check.world.impls_named(be.tree, n.name, ids).try();
+    found: Res<RangeImpl> = loop((done) {
+        ids.loop((h, i) {
+            // Only impls in the type's declaring module belong to the type.
+            (n.decl.module == i.decl.module).then(() {
+                be.check.world.impl_at(be.tree, i).match({
+                    None   => (),
+                    Ok(im) => be.range_candidate(n, im).try().match({
+                        None          => (),
+                        Ok(candidate) => done.break(candidate),
+                    }),
+                });
+            });
+        });
+        done.break();
+    });
+    Ok(found)
+}
+
+range_candidate = (be :: CBackend, n: TyNamed, im: Impl)
+                  Res<Res<RangeImpl>, AllocError> {
+    mi    = n.decl.module.to_usize();
+    bound = be.check.impl_bound_type(im, mi).try();
+    be.supplies_bounds(bound).match({
+        false => Ok(None),
+        true  => Ok(range_fields(n.decl, mi, im)),
+    })
+}
+
+// Missing bounds leave this impl ineligible, so declaration-order search
+// continues. A bodiless at hook is optional and does not produce a pass call.
+range_fields = (decl: DeclId, mi: usize, im: Impl) Res<RangeImpl> {
+    start = im.field_value("start").try();
+    end   = im.field_value("end").try();
+    Ok(RangeImpl(
+        decl: decl,
+        mi: mi,
+        start: start,
+        end: end,
+        at: im.bodied_fn("at")
+    ))
+}
+
+// Pass type shared by loop typing, lowering, and range-bound settlement.
+
+// The `Res<T>` a pass of this range produces: a `usize` that cannot
+// miss for a range walking its own index space, and whatever `at`
+// returns — `None` included — for one an impl supplies.
+range_pass_type* = (be :: CBackend, rty: TyId) Res<Res<TyId>, AllocError> {
+    be.array_of(rty).match({
+        Ok(a) => be.array_pass(a),
+        None  => be.stored_or_supplied_pass(rty),
+    })
+}
+
+// A fixed array's pass cannot miss. Its `at` is the bounds-checked index
+// and the counter never leaves the count, so a pass is always the
+// element — which is what lets the walk carry no `Res` per pass and stay
+// a plain C for-loop. The `Res` here is the loop's own answer, not the
+// pass's.
+array_pass = (be :: CBackend, a: TyArray) Res<Res<TyId>, AllocError> {
+    got = intern_res_open(be.check, a.elem).try();
+    Ok(Ok(got));
+}
+
+stored_or_supplied_pass = (be :: CBackend, rty: TyId)
+                          Res<Res<TyId>, AllocError> {
+    be.uses_stored_bounds(rty).try().match({
+        true  => be.index_pass(),
+        false => be.impl_pass(rty),
+    })
+}
+
+index_pass = (be :: CBackend) Res<Res<TyId>, AllocError> {
+    usize_ty = be.check.types.prim("usize").try();
+    got      = intern_res_open(be.check, usize_ty).try();
+    Ok(Ok(got));
+}
+
+impl_pass = (be :: CBackend, rty: TyId) Res<Res<TyId>, AllocError> {
+    be.range_impl(rty).try().match({
+        None   => Ok(None),
+        Ok(ri) => be.at_pass(rty, ri),
+    })
+}
+
+// An impl supplying no `at` walks its own index space, which is exactly
+// what `range.zen` says the hook being optional means.
+at_pass = (be :: CBackend, rty: TyId, ri: RangeImpl)
+          Res<Res<TyId>, AllocError> {
+    ri.at.match({
+        None  => be.index_pass(),
+        Ok(f) => be.at_ret(rty, ri, f),
+    })
+}
+
+// `at`'s declared return type with `@Self` bound to the receiver and
+// the type's parameters in scope, then the receiver's own arguments
+// substituted in — the same three steps `method_sig` takes for a
+// parameter, because `at` is a member of the receiver.
+at_ret = (be :: CBackend, rty: TyId, ri: RangeImpl, f: Function)
+         Res<Res<TyId>, AllocError> {
+    sctx     = be.check.self_ctx(ri.mi, rty).try();
+    inst     = be.recv_inst(rty).try();
+    mark     = be.enter_struct_tparams(ri.decl).try();
+    declared = be.declared_ret(f, sctx).try();
+    be.leave_tparams(mark).try();
+    got = be.sub_with(declared, inst).try();
+    Ok(be.keep_res(got));
+}
+
+keep_res = (be :: CBackend, got: TyId) Res<TyId> {
+    be.check.types.at(got).match({
+        Res(_) => Ok(got),
+        _      => None,
+    })
+}
+
+// The element itself — the `Ok` payload of what a pass produces.
+range_element_type* = (be :: CBackend, rty: TyId)
+                      Res<Res<TyId>, AllocError> {
+    got = be.range_pass_type(rty).try();
+    Ok(got.match({
+        Ok(t) => be.res_value(t),
+        None  => None,
+    }));
+}
+
+// The impl's `self`, bound to the range temporary. An ordinary local
+// holding a copy: the walk reads the range and never writes it, so
+// there is nothing to write through and no address to take.
+// Bind the impl receiver only while lowering its expressions so it cannot
+// shadow an enclosing self in the loop body.
+bind_self = (be :: CBackend, ri: RangeImpl, rty: TyId, rng: str)
+            Res<(), AllocError> {
+    be.bind_text(be.self_name(ri), rty, rng)
+}
+
+// What the impl calls its receiver. Read off `at`'s own first parameter
+// rather than assumed to be `self`, because `start: self.len` and
+// `at ::= (self: @Self, ..)` name it in one place and the declaration
+// is that place.
+self_name = (be :: CBackend, ri: RangeImpl) str {
+    ri.at.match({ Ok(f) => first_param_name(f), None => "self" })
+}
+
+first_param_name = (f: Function) str {
+    f.params.get(0).match({ Ok(p) => p.name.text, None => "self" })
+}
+
+// A name bound to C text rather than to an expression node: `self` is a
+// temporary this file wrote and the counter is a local it declared, and
+// neither of them is an AST node to lower.
+bind_text* = (be :: CBackend, name: str, ty: TyId, text: str)
+            Res<(), AllocError> {
+    n = be.declare(name, ty, false).try();
+    be.check.bind(name, ty, false, false).try();
+    cname ::= be.alloc.String().try();
+    sym_local(cname, name, n).try();
+    decl ::= be.alloc.String().try();
+    be.declarator(ty, cname.view(), decl).try();
+    be.fmt("{} = {text};\n", decl.view())
+}
+
+// `start: 0` and `end: self.len`, evaluated in the module that wrote
+// the impl with `@Self` bound to the receiver and the receiver's own
+// type arguments in force.
+supplied_bound* = (
+    be     :: CBackend,
+    ri     : RangeImpl,
+    rty    : TyId,
+    value  : ExprId,
+    target : str,
+    rng    : str
+) Res<(), AllocError> {
+    usize_ty = be.check.types.prim("usize").try();
+    ictx     = be.impl_ctx(ri, usize_ty, rty);
+    inst     = be.recv_inst(rty).try();
+    held     = be.inst;
+    be.enter_inst(inst);
+    mark  = be.enter_struct_tparams(ri.decl).try();
+    cmark = be.check.mark();
+    lmark = be.mark();
+    // The range has already been evaluated into rng. Literal bounds need
+    // its type context, but no runtime receiver copy to evaluate their value.
+    (be.literal_bound(value) == false).then(() {
+        be.bind_self(ri, rty, rng).try();
+    });
+    be.deliver(value, ictx, usize_ty, Dest.Into(target)).try();
+    be.release(lmark).try();
+    be.check.release(cmark).try();
+    be.leave_tparams(mark).try();
+    be.enter_inst(held);
+    Ok(());
+}
+
+literal_bound = (be: CBackend, value: ExprId) bool {
+    be.tree.expr_at(value).kind.match({
+        Literal(_) => true,
+        Paren(p)   => be.literal_bound(p.inner),
+        _          => false,
+    })
+}
+
+// A body in the impl's module with `@Self` bound. `self_body_ctx` says
+// the same thing for a member function; it is three fields, and reading
+// them out of `gen_c_decl.zen` would point this file at the one that
+// already points back at it.
+impl_ctx = (be :: CBackend, ri: RangeImpl, ret: TyId, self_ty: TyId) Ctx {
+    Ctx(
+        module: ri.mi,
+        ret: ret,
+        has_ret: is_res(be, ret),
+        self_ty: self_ty,
+        has_self: true
+    )
+}
+
+// One pass: `at(i)`, and the tag that ends the walk.
+// `value` is left holding the C text of the `Ok` payload, which is what
+// `run_body` binds the body's second parameter to. A range with no `at`
+// hands out its own index, and then the counter is the payload.
+take_pass* = (
+    be      :: CBackend,
+    ri      : RangeImpl,
+    rty     : TyId,
+    pass    : TyId,
+    counter : str,
+    rng     : str,
+    value   :: String
+)
+            Res<(), AllocError> {
+    ri.at.match({
+        None  => value.add(counter),
+        Ok(f) => be.run_at(ri, rty, pass, f, counter, rng, value),
+    })
+}
+
+run_at = (
+    be      :: CBackend,
+    ri      : RangeImpl,
+    rty     : TyId,
+    pass    : TyId,
+    f       : Function,
+    counter : str,
+    rng     : str,
+    value   :: String
+)
+         Res<(), AllocError> {
+    tmp  ::= be.fresh_name("a").try();
+    decl ::= be.alloc.String().try();
+    be.declarator(pass, tmp.view(), decl).try();
+    be.fmt("{};\n", decl.view()).try();
+    be.inline_at(ri, rty, pass, f, counter, rng, tmp.view()).try();
+    be.write_pass_guard(tmp.view()).try();
+    value.fmt("{}.zg_data.", tmp.view()).try();
+    sym_member(value, "Ok")
+}
+
+// The `at` body, in the frame the loop is being written into. Its two
+// parameters are C text this file already wrote, so they are bound
+// directly rather than lowered from arguments that do not exist.
+inline_at = (
+    be      :: CBackend,
+    ri      : RangeImpl,
+    rty     : TyId,
+    pass    : TyId,
+    f       : Function,
+    counter : str,
+    rng     : str,
+    tmp     : str
+)
+            Res<(), AllocError> {
+    usize_ty = be.check.types.prim("usize").try();
+    ictx     = be.impl_ctx(ri, pass, rty);
+    inst     = be.recv_inst(rty).try();
+    held     = be.inst;
+    be.enter_inst(inst);
+    mark  = be.enter_struct_tparams(ri.decl).try();
+    cmark = be.check.mark();
+    lmark = be.mark();
+    be.bind_self(ri, rty, rng).try();
+    be.bind_index_param(f, usize_ty, counter).try();
+    be.enter_call();
+    be.run_at_body(f, ictx, pass, tmp).try();
+    be.leave_call();
+    be.release(lmark).try();
+    be.check.release(cmark).try();
+    be.leave_tparams(mark).try();
+    be.enter_inst(held);
+    Ok(());
+}
+
+// Parameter one of `at`. Parameter zero is the receiver and is already
+// bound for the whole walk.
+bind_index_param = (
+    be       :: CBackend,
+    f        : Function,
+    usize_ty : TyId,
+    counter  : str
+) Res<(), AllocError> {
+    f.params.get(1).match({
+        None  => Ok(()),
+        Ok(p) => be.bind_text(p.name.text, usize_ty, counter),
+    })
+}
+
+run_at_body = (be :: CBackend, f: Function, ictx: Ctx, pass: TyId, tmp: str)
+              Res<(), AllocError> {
+    f.body.match({
+        None    => Ok(()),
+        Ok(blk) => {
+            held_return = be.return_to;
+            target      = be.open_inline_return(tmp).try();
+            be.enter_return(Ok(target));
+            lowered = block(be, blk, ictx, pass, Dest.Into(tmp));
+            be.enter_return(held_return);
+            lowered.try();
+            be.finish_inline_return(target)
+        },
+    })
+}
+
+// The guard is emitted directly in the walk's while body. Missing an element
+// completes iteration naturally, so a fold still publishes its accumulator.
+write_pass_guard = (be :: CBackend, tmp: str) Res<(), AllocError> {
+    tag ::= be.alloc.String().try();
+    sym_variant(tag, RES_PATH, "Ok").try();
+    be.fmt("if ({tmp}.zg_tag != {}) { break; }\n", tag.view())
+}

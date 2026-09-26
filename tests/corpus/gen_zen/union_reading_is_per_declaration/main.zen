@@ -1,0 +1,54 @@
+// `A | B` is a union only when every variant in the declaration names a
+// type; otherwise the entire declaration is a nominal enum. The distinction
+// affects generated layout rather than runtime output, so this test inspects C.
+
+Alloc, AllocError = std.mem
+str, String = std.text
+Vec = std.collections
+Source, scan = std.lex
+Parser = std.parse.parser
+module = std.parse.parse_decl
+Ast = std.ast.ast_arena
+Checker = sema.sema_check
+Emit = gen.gen_emit
+CBackend, emit_program = gen.gen_c
+
+// `Kind` is NOMINAL: Ident and Arrow name nothing, so the declaration is
+// an enum and `Payload` is a bare tag like the other two.
+//
+// `Either` is a UNION: every variant names a type, so each carries a
+// value of it — `Either.Left(..)` records WHICH Left, where tag-only it
+// would record only that there was one.
+PROGRAM : str = "Payload = { n: i32 }\nLeft = { a: i32 }\nRight = { b: i32 }\nKind = Ident | Payload | Arrow\nEither = Left | Right\nmain = (env: i32) Res<i32> { k = Kind.Payload; e = Either.Left(Left(a: 1)); Ok(0) }\n"
+
+emit = (a: Alloc, text: str, faults :: String) Res<String, AllocError> {
+    lexed = scan(a, Source(file: "main.zen", text: text)).try();
+    p ::= a.Parser(lexed);
+    m = p.module("main").try();
+    p.tree.add_module(m).try();
+    chk ::= a.Checker(p.tree).try();
+    be  ::= a.CBackend(p.tree, chk).try();
+    out ::= a.Emit().try();
+    be.emit_program(0, out).try();
+    be.render_diags(faults).try();
+    kept ::= a.String().try();
+    kept.add(out.view()).try();
+    Ok(kept);
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc  ::= env.mem.alloc();
+    faults ::= alloc.String().try();
+    c = emit(alloc, PROGRAM, faults).try();
+
+    println("nothing was refused: {}", faults.is_empty());
+
+    // A nominal enum variant carries no type merely because the names match.
+    println("Kind carries no Payload: {}", c.view().count("zu_m7Payload") == 0);
+
+    // Every Either variant names a type, so both payload fields are present.
+    println("Either carries Left: {}", c.view().count("zu_m4Left") > 0);
+    println("Either carries Right: {}", c.view().count("zu_m5Right") > 0);
+
+    Ok(0);
+}

@@ -1,0 +1,495 @@
+// Backend monomorphisation. Each distinct type-argument list gets one C symbol.
+// This reads sema's instantiation, re-enters declaration type parameters while
+// reading written types, and rejects open types before mangling. Inst entries
+// remain in declaration order for deterministic names.
+
+Decl, Enum, Struct, TParam, ExprId, Call, Function = std.ast
+AllocError = std.mem
+Vec = std.collections
+str = std.text
+Range = std.core
+DeclId = sema.sema_id
+TyId, TyNamed, TyRes, literal_default = sema.sema_ty
+Def, decl_at = sema.sema_def
+Checker, Ctx = sema.sema_check
+Inst, subst, has_var, inst_of_named, owner_of = sema.sema_inst
+tparam_vars = sema.sema_inst
+self_ctx = sema.sema_member
+CBackend = gen.gen_c.gen_c_state
+ty_of = gen.gen_c.gen_c_expr
+
+// The type a declaration names, applied to `args`.
+intern_named* = (c :: Checker, d: Def, args: Vec<TyId>)
+                Res<TyId, AllocError> {
+    c.types.named(d.id, d.qname, d.name, args)
+}
+
+// One type parameter of a declaration, as the `Ty.Var` sema interned.
+intern_var* = (c :: Checker, name: str, owner: str) Res<TyId, AllocError> {
+    c.types.var(name, owner)
+}
+
+// `Res<T>` — the one-argument form every loop word returns. Interned
+// here, like the two above, so a caller makes one hop.
+intern_res_open* = (c :: Checker, value: TyId) Res<TyId, AllocError> {
+    c.types.res_open(value)
+}
+
+// The type a construction builds, at this emission's instantiation.
+// `Vec(data: .., cap: 0)` inside `Vec<T>`'s own constructor builds a
+// `Vec<T>`, not a bare `Vec` — sema records exactly that, so the
+// backend must agree or intern two different types under one name.
+// The declaration's own parameters go in; the instantiation being
+// lowered turns them into what this emission is at.
+constructed* = (be :: CBackend, d: Def) Res<TyId, AllocError> {
+    args ::= be.alloc.Vec<TyId>();
+    decl_vars(be.check, d, args).try();
+    raw = intern_named(be.check, d, args).try();
+    sub(be, raw)
+}
+
+decl_vars = (c :: Checker, d: Def, out :: Vec<TyId>) Res<(), AllocError> {
+    decl_at(c.tree, d.id).match({
+        None  => Ok(()),
+        Ok(x) => decl_vars_of(c, d, x, out),
+    })
+}
+
+decl_vars_of = (c :: Checker, d: Def, x: Decl, out :: Vec<TyId>)
+               Res<(), AllocError> {
+    decl_tparams_of(c, d, x, out)
+}
+
+// The type parameters a declaration reads: struct or enum, in
+// declaration order. An enum's variants carry its parameters exactly as
+// a struct's fields do (`Opt<T> = Some(T)`).
+decl_tparams_of = (c :: Checker, d: Def, x: Decl, out :: Vec<TyId>)
+                  Res<(), AllocError> {
+    x.kind.match({
+        Struct(s) => c.tparam_vars(s.tparams, d.qname, out),
+        Enum(e)   => c.tparam_vars(e.tparams, d.qname, out),
+        _         => Ok(()),
+    })
+}
+
+// Returns the declaration at its own generic parameters, such as `Vec<T>`.
+// Sema memos remain generic and backend reads substitute the current concrete
+// Instantiation without writing it back into the shared memo.
+open_named* = (be :: CBackend, decl: DeclId) Res<Res<TyId>, AllocError> {
+    decl_at(be.tree, decl).match({
+        None  => Ok(None),
+        Ok(x) => be.open_named_decl(decl, x),
+    })
+}
+
+open_named_decl = (be :: CBackend, decl: DeclId, x: Decl)
+                  Res<Res<TyId>, AllocError> {
+    x.kind.match({
+        Struct(s) => be.open_struct_named(decl, s),
+        Enum(e)   => be.open_enum_named(decl, e),
+        _         => Ok(None),
+    })
+}
+
+open_enum_named = (be :: CBackend, decl: DeclId, e: Enum)
+                  Res<Res<TyId>, AllocError> {
+    owner = owner_of(be.check, decl.module.to_usize(), e.name.text).try();
+    args ::= be.alloc.Vec<TyId>();
+    tparam_vars(be.check, e.tparams, owner, args).try();
+    Ok(Ok(named_at(be.check, decl, owner, e.name.text, args).try()));
+}
+
+open_struct_named = (be :: CBackend, decl: DeclId, s: Struct)
+                    Res<Res<TyId>, AllocError> {
+    owner = owner_of(be.check, decl.module.to_usize(), s.name.text).try();
+    args ::= be.alloc.Vec<TyId>();
+    tparam_vars(be.check, s.tparams, owner, args).try();
+    Ok(Ok(named_at(be.check, decl, owner, s.name.text, args).try()));
+}
+
+named_at = (
+    c     :: Checker,
+    decl  : DeclId,
+    qname : str,
+    name  : str,
+    args  : Vec<TyId>
+) Res<TyId, AllocError> {
+    c.types.named(decl, qname, name, args)
+}
+
+// reading the answer back
+
+// What this call instantiated its callee at — the header's first
+// bullet, at the site.
+inst_at* = (be :: CBackend, id: ExprId) Res<Inst, AllocError> {
+    be.check.resolved_inst(id).match({
+        Ok(i) => Ok(i),
+        None  => Ok(be.alloc.Inst()),
+    })
+}
+
+// The instantiation a generic receiver carries: `Vec<GenDiag>` binds
+// `Vec`'s own `T`, which is what makes `v.add(x)` a call on the row type
+// the receiver actually holds.
+recv_inst* = (be :: CBackend, rty: TyId) Res<Inst, AllocError> {
+    be.check.types.at(rty).match({
+        Named(n) => be.check.inst_of_named(n),
+        _        => Ok(be.alloc.Inst()),
+    })
+}
+
+// A method's instantiation is the receiver's parameters plus the parameters
+// the method declares. Complete checked substitutions are authoritative;
+// only missing or open bindings require structural inference.
+method_inst* = (
+    be   :: CBackend,
+    id   : ExprId,
+    call : Call,
+    rty  : TyId,
+    decl : DeclId,
+    f    : Function,
+    ctx  : Ctx
+)
+              Res<Inst, AllocError> {
+    inst ::= be.recv_inst(rty).try();
+    owner = owner_of(be.check, decl.module.to_usize(), f.name.text).try();
+    complete ::= f.tparams.len == 0;
+    // Callback annotations may settle a parameter before an untyped literal.
+    // Preserve checked choices in the caller's current instantiation; only
+    // missing or still-open bindings need inference below.
+    be.check.resolved_inst(id).match({
+        None        => (),
+        Ok(checked) => {
+            complete = true;
+            f.tparams.loop((parameter) {
+                variable = intern_var(
+                    be.check,
+                    parameter.name.text,
+                    owner
+                ).try();
+                checked.lookup(variable).match({
+                    None    => { complete = false; },
+                    Ok(raw) => {
+                        actual = be.sub(raw).try();
+                        be.unsettled(actual).match({
+                            true  => { complete = false; },
+                            false => { inst.bind(variable, actual).try(); },
+                        });
+                    },
+                });
+            });
+        },
+    });
+    (!complete).then(() {
+        // Written arguments belong to the caller's scope. Resolve them before
+        // introducing the callee's equally named parameters, then let structural
+        // inference fill only variables the explicit list did not bind.
+        call.targs.loop((h, i, written) {
+            f.tparams.get(i).match({
+                None       => (),
+                Ok(tparam) => {
+                    v   = intern_var(be.check, tparam.name.text, owner).try();
+                    got = be.check.type_from_ast(written, ctx).try();
+                    inst.bind(v, sub(be, got).try()).try();
+                },
+            });
+        });
+        mark = be.enter_struct_tparams(decl).try();
+        be.enter_tparams(f.tparams, owner).try();
+        sctx = be.check.self_ctx(decl.module.to_usize(), rty).try();
+        f.params.loop((h, i, p) {
+            (i > 0).then(() {
+                call.args.get(i - 1).match({
+                    None       => (),
+                    Ok(actual) => {
+                        declared = be.check.param_type(p, sctx).try();
+                        got      = be.arg_type(
+                            actual.value,
+                            ctx,
+                            declared
+                        ).try();
+                        be.unify(declared, sub(be, got).try(), inst).try();
+                    },
+                });
+            });
+        });
+        f.tparams.loop((h, tp) {
+            v = intern_var(be.check, tp.name.text, owner).try();
+            (!inst.bound(v)).then(() { inst.bind(v, v).try() });
+        });
+        be.leave_tparams(mark).try();
+    });
+    // Method literals need the same concrete defaults as free-call literals
+    // before their type selects an impl or becomes part of a C symbol.
+    settled ::= be.recv_inst(rty).try();
+    f.tparams.loop((tp) { be.settle_one(tp, owner, inst, settled).try(); });
+    Ok(settled)
+}
+
+// substituting
+
+// A type read out of sema, in terms of the instantiation being lowered.
+// Every type the backend reads goes through here: sema checks a generic
+// body exactly once, generically (`open_named` above), so the backend
+// is the one that knows this emission is the `i32` one.
+sub* = (be :: CBackend, ty: TyId) Res<TyId, AllocError> {
+    subst(be.check, ty, be.inst)
+}
+
+// The same, against an instantiation that is not the current one: a call
+// site substitutes into the callee's declared types, which are in the
+// callee's parameters and not in the caller's.
+sub_with* = (be :: CBackend, ty: TyId, inst: Inst) Res<TyId, AllocError> {
+    subst(be.check, ty, inst)
+}
+
+// "Is this type still open", asked of every empty slot and not only of
+// A free parameter.
+// `gen_name.tcode` writes one letter — `q` — for a `Var`, `Infer`, and
+// `Unknown` alike, since none of the three names a type C could be
+// handed. `has_var` asks about the first only, because it was written for
+// symbol collision between two instantiations — narrower than "can this
+// be spelled". `Res<Ptr<Unknown>, E>` is the gap: no `Var` in it, so
+// `has_var` says settled, but a temporary declared at it is a C struct
+// with an unresolved element `cc` rejects.
+// The walk is `sema_inst.has_var`'s, one variant wider; here and not
+// beside it because the reason is a backend one — what has a C
+// spelling — and sema has no stake in it.
+unsettled* = (be: CBackend, ty: TyId) bool {
+    be.types().at(ty).match({
+        Var(_)   => true,
+        Infer    => true,
+        Unknown  => true,
+        Named(n) => be.any_unsettled(n.args),
+        Res(r)   => unsettled(be, r.value) || unsettled(be, r.error),
+        Fn(f)    => be.any_unsettled(f.params) || unsettled(be, f.ret),
+        Union(u) => be.any_unsettled(u.members),
+        Array(a) => unsettled(be, a.elem),
+        _        => false,
+    })
+}
+
+any_unsettled = (be: CBackend, list: Vec<TyId>) bool {
+    Range(0, list.len).find((i) {
+        list.get(i).match({ Ok(t) => unsettled(be, t), None => false })
+    }).match({ Ok(_) => true, None => false })
+}
+
+// `find` and not a loop: the answer is a `bool`, and the first open
+// type is enough.
+any_open* = (be: CBackend, sig: Vec<TyId>) bool {
+    Range(0, sig.len).find((i) {
+        sig.get(i).match({ Ok(t) => has_var(be.check, t), None => false })
+    }).match({ Ok(_) => true, None => false })
+}
+
+// A free argument mangles to `q`, so two instantiations would be one
+// symbol — the fault the header names, asked where there is a call to
+// point at.
+inst_open* = (be: CBackend, inst: Inst) bool {
+    Range(0, inst.len()).find((i) {
+        inst.arg_at(i).match({ Ok(t) => has_var(be.check, t), None => true })
+    }).match({ Ok(_) => true, None => false })
+}
+
+// The call's instantiation, in the caller's terms.
+// Sema records what the callee's parameters became, and inside a
+// generic body that's often the caller's parameter: `Vec<T>.add`
+// calling `alloc.realloc<T>(..)` instantiates `realloc` at `T`, concrete
+// only once the enclosing emission says which `T`. Each argument is put
+// through the instantiation being lowered, giving a list every reader
+// can mangle.
+// Rebuilt rather than edited because an `Inst` is a value a memo holds:
+// sema's copy must not change because a backend read it. A parameter
+// the call left free is bound to itself, keeping the list's length — a
+// shorter list would make two instantiations one symbol.
+settled_inst* = (
+    be      :: CBackend,
+    tparams : Vec<TParam>,
+    owner   : str,
+    inst    : Inst
+) Res<Inst, AllocError> {
+    out ::= be.alloc.Inst();
+    tparams.loop((h, tp) { be.settle_one(tp, owner, inst, out).try() });
+    Ok(out);
+}
+
+settle_one = (
+    be    :: CBackend,
+    tp    : TParam,
+    owner : str,
+    inst  : Inst,
+    out   :: Inst
+) Res<(), AllocError> {
+    v = intern_var(be.check, tp.name.text, owner).try();
+    inst.lookup(v).match({
+        None  => out.bind(v, v),
+        Ok(t) => be.settle_bound(v, t, out),
+    })
+}
+
+settle_bound = (be :: CBackend, v: TyId, t: TyId, out :: Inst)
+               Res<(), AllocError> {
+    arg = sub(be, t).try();
+    out.bind(v, be.materialize_literal(arg).try())
+}
+
+// A literal family is useful while sema looks for context, but every generic
+// instantiation that reaches C needs one concrete identity. Keep recorded and
+// backend-inferred bindings on the same language defaults.
+materialize_literal* = (be :: CBackend, t: TyId) Res<TyId, AllocError> {
+    be.check.is_literal_ty(t).match({
+        true  => be.check.types.prim(literal_default(be.check.prim_name(
+            t
+        ))).try(),
+        false => Ok(t),
+    })
+}
+
+// what the arguments say a parameter became
+// Calls in deferred defaults or context-dependent bodies can lack complete
+// checked substitutions. Their arguments supply the remaining bindings.
+// Structural and total: a declared type mentioning no parameter binds
+// nothing, and a shape that doesn't line up binds nothing rather than
+// guessing — the caller checks afterwards that every parameter came out
+// bound. first binding wins (`Inst.bind`'s own rule), so
+// `<T>(a: T, b: T)` against two different types is a mismatch someone
+// else reports, not a silent rebind.
+
+unify* = (be :: CBackend, declared: TyId, actual: TyId, out :: Inst)
+         Res<(), AllocError> {
+    be.check.types.at(declared).match({
+        Var(_)   => out.bind(declared, actual),
+        Named(n) => unify_named(be, n, actual, out),
+        Res(r)   => unify_res(be, r, actual, out),
+        _        => Ok(()),
+    })
+}
+
+unify_named = (be :: CBackend, n: TyNamed, actual: TyId, out :: Inst)
+              Res<(), AllocError> {
+    be.check.types.at(actual).match({
+        Named(m) => unify_args(be, n.args, m.args, out),
+        _        => Ok(()),
+    })
+}
+
+unify_args = (be :: CBackend, ds: Vec<TyId>, ts: Vec<TyId>, out :: Inst)
+             Res<(), AllocError> {
+    (ds.len == ts.len).match({
+        false => Ok(()),
+        true  => be.unify_each(ds, ts, out),
+    })
+}
+
+unify_each = (be :: CBackend, ds: Vec<TyId>, ts: Vec<TyId>, out :: Inst)
+             Res<(), AllocError> {
+    ds.loop((h, i, d) { unify_at(be, d, ts, i, out).try() });
+    Ok(());
+}
+
+unify_at = (be :: CBackend, d: TyId, ts: Vec<TyId>, i: usize, out :: Inst)
+           Res<(), AllocError> {
+    ts.get(i).match({
+        None  => Ok(()),
+        Ok(t) => unify(be, d, t, out),
+    })
+}
+
+unify_res = (be :: CBackend, r: TyRes, actual: TyId, out :: Inst)
+            Res<(), AllocError> {
+    be.check.types.at(actual).match({
+        Res(q) => unify_res_parts(be, r, q, out),
+        _      => Ok(()),
+    })
+}
+
+unify_res_parts = (be :: CBackend, r: TyRes, q: TyRes, out :: Inst)
+                  Res<(), AllocError> {
+    unify(be, r.value, q.value, out).try();
+    unify(be, r.error, q.error, out).try();
+    Ok(());
+}
+
+// The type of an argument as the backend knows it. A local is declared
+// in the backend's scope and not in sema's — `gen_c_stmt.declare_local`
+// writes no binding into the checker — so a bare name is answered from
+// the frame that declared it, and everything else from `ty_of`.
+arg_type* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
+            Res<TyId, AllocError> {
+    be.local_type(id).match({
+        Ok(t) => Ok(t),
+        None  => be.ty_of(id, ctx, want),
+    })
+}
+
+local_type = (be :: CBackend, id: ExprId) Res<TyId> {
+    be.tree.expr_at(id).kind.match({
+        Name(n) => be.slot_ty(n.text),
+        _       => None,
+    })
+}
+
+slot_ty = (be :: CBackend, name: str) Res<TyId> {
+    be.slot_of(name).match({
+        Ok(s) => Ok(s.ty),
+        None  => None,
+    })
+}
+
+// putting the parameters back in scope
+// The header's second bullet, at the site: `type_from_ast` reads a
+// Written type, meaningless unless `T` is bound — so the pair goes
+// around the smallest span that reads one.
+
+enter_tparams* = (be :: CBackend, tparams: Vec<TParam>, owner: str)
+                 Res<usize, AllocError> {
+    mark = be.check.tvar_mark();
+    tparams.loop((h, tp) { be.enter_one(tp, owner).try() });
+    Ok(mark);
+}
+
+enter_one = (be :: CBackend, tp: TParam, owner: str) Res<(), AllocError> {
+    text = tp.name.text;
+    be.check.push_tvar(text, intern_var(be.check, text, owner).try())
+}
+
+leave_tparams* = (be :: CBackend, mark: usize) Res<(), AllocError> {
+    be.check.release_tvars(mark)
+}
+
+// The type parameters a struct declares, in scope for its members. The
+// owner is built by sema's one builder, because `Var` is interned on it
+// and a parameter bound here has to be the same type sema bound.
+enter_struct_tparams* = (be :: CBackend, decl: DeclId)
+                        Res<usize, AllocError> {
+    mark = be.check.tvar_mark();
+    decl_at(be.tree, decl).match({
+        None  => Ok(()),
+        Ok(d) => be.enter_decl_tparams(decl, d),
+    }).try();
+    Ok(mark);
+}
+
+enter_decl_tparams = (be :: CBackend, decl: DeclId, d: Decl)
+                     Res<(), AllocError> {
+    d.kind.match({
+        Struct(s) => be.enter_struct_of(decl, s),
+        Enum(e)   => be.enter_enum_of(decl, e),
+        _         => Ok(()),
+    })
+}
+
+enter_enum_of = (be :: CBackend, decl: DeclId, e: Enum)
+                Res<(), AllocError> {
+    owner = owner_of(be.check, decl.module.to_usize(), e.name.text).try();
+    e.tparams.loop((h, tp) { be.enter_one(tp, owner).try() });
+    Ok(());
+}
+
+enter_struct_of = (be :: CBackend, decl: DeclId, s: Struct)
+                  Res<(), AllocError> {
+    owner = owner_of(be.check, decl.module.to_usize(), s.name.text).try();
+    s.tparams.loop((h, tp) { be.enter_one(tp, owner).try() });
+    Ok(());
+}

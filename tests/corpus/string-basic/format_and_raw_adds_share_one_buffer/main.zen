@@ -1,0 +1,31 @@
+// Formatted text, raw strings, and raw bytes append to one buffer in order.
+// Formatting after raw writes must preserve the prefix and count every byte.
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+    sb    ::= alloc.String().try();
+
+    println("empty {} {}", sb.len(), sb.is_empty());
+
+    // the format door with an integer hole
+    sb.fmt("one={} ", 1).try();
+    println("after-add {} [{}]", sb.len(), sb.view());
+
+    // the same format door with str holes
+    sb.fmt("two={} three={}", "2", "3").try();
+    println("after-fmt {} [{}]", sb.len(), sb.view());
+
+    // the two raw add overloads: bytes verbatim, no format meaning
+    sb.add("+4").try();
+    sb.add('!').try();
+    println("after-raw {} [{}]", sb.len(), sb.view());
+
+    // an empty append is legal and changes nothing but proves the
+    // loop-over-zero-bytes path runs
+    sb.add("").try();
+    println("still {} {}", sb.len(), sb.is_empty());
+
+    sb.fmt(" {} is {}", "ada", 36).try();
+    println("after-mixed {} [{}]", sb.len(), sb.view());
+    Ok(0);
+}

@@ -1,0 +1,31 @@
+// One-sided conditional. `then` returns Ok(value) when true and None when
+// false, so it composes with `.try()`, `ok_or`, and `.match`:
+//
+//   (n > 0).then(() { n * 2 }).ok_or(Error.NotPositive).try();
+//
+Eq = std.core.eq
+
+then* = <T>(b: bool, f: () T) Res<T> {
+    b.match({
+        true  => Ok(f()),
+        false => None,
+    });
+}
+
+// A precondition without a failure reason composes with optional results.
+ensure* = (b: bool) Res<()> {
+    b.match({ true => Ok(()), false => None })
+}
+
+// A named failure keeps the caller's error type.
+ensure* = <E>(b: bool, reason: E) Res<(), E> {
+    b.match({
+        true  => Ok(()),
+        false => Err(reason),
+    });
+}
+
+// `true` or `false`; a `.match` on it is always exhaustive.
+bool* = {}
+
+bool.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })

@@ -1,0 +1,503 @@
+Alloc, AllocError = std.mem
+Vec, Map = std.collections
+str, String = std.text
+Eq, Hash, Hasher, Range = std.core
+DeclId = sema.sema_id
+
+// Index into Types. u32 supports lossless indexing and hashing conversions.
+TyId* = { index*: u32 }
+
+TyId.impl(Eq, {
+    eq ::= (self: @Self, other: @Self) bool { self.index == other.index }
+})
+
+TyId.impl(Hash, {
+    hash = (self: @Self, hasher :: Hasher) u64 { self.index.to_u64() }
+})
+
+// Built-in scalars have no nominal declaration identity.
+Prim* = { name*: str }
+
+// The primitive set is closed by the language.
+is_prim* = (name: str) bool {
+    fixed_integer(name)
+        || c_integer(name)
+        || is_float(name)
+        || name.is_in(["c_char", "bool", "str", "()"])
+}
+
+is_integer* = (name: str) bool {
+    fixed_integer(name)
+}
+
+// Integers whose width is a Zen language property. C ABI integers are
+// intentionally absent: their width follows the selected C target.
+fixed_integer = (name: str) bool {
+    name.is_in(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize"])
+}
+
+c_integer* = (name: str) bool {
+    name.is_in([
+        "c_schar", "c_uchar", "c_short", "c_ushort", "c_int", "c_uint",
+        "c_long", "c_ulong", "c_longlong", "c_ulonglong"
+    ])
+}
+
+is_float* = (name: str) bool { name.eq("f32") || name.eq("f64") }
+
+literal_default* = (name: str) str {
+    name.eq("int").match({ true => "i32", false => "f64" })
+}
+
+TyNamed* = {
+    decl*: DeclId,
+    name*: str,
+    args*: Vec<TyId>,
+}
+
+TyFn* = {
+    params*: Vec<TyId>,
+    ret*: TyId,
+}
+
+// Error sets are flat, sorted, and deduplicated. A single member collapses to
+// that member rather than creating a union type.
+TyUnion* = {
+    members*: Vec<TyId>,
+}
+
+// Fixed arrays carry their element and count in the type; no runtime length is
+// stored beside the bytes.
+TyArray* = {
+    elem*: TyId,
+    count*: usize,
+}
+
+TyVar* = {
+    name*: str,
+    owner*: str,
+}
+
+ResForm* = Absence | Failure | Open
+
+res_arity* = (form: ResForm) usize {
+    form.match({ Failure => 2, Absence => 1, Open => 1 })
+}
+
+is_failure* = (form: ResForm) bool {
+    form.match({ Failure => true, Absence => false, Open => false })
+}
+
+TyRes* = {
+    value*: TyId,
+    error*: TyId,
+    form*: ResForm,
+}
+
+Ty* = Prim(Prim)
+    | Res(TyRes)
+    | Named(TyNamed)
+    | Fn(TyFn)
+    | Union(TyUnion)
+    | Array(TyArray)
+    | Var(TyVar)
+    | Infer
+    | Unknown
+
+Types* = {
+    kinds :: Vec<Ty>,
+    keys :: Vec<String>,
+    by_key :: Map<str, TyId>,
+    count :: u32,
+    alloc: Alloc,
+
+    // -----------------------------------------------------------------
+    // reading
+    // -----------------------------------------------------------------
+
+    // Traps on an id this store never handed out.
+    at* = (self: @Self, id: TyId) Ty {
+        i = id.index.to_usize();
+        self.kinds.len - i - 1;
+        self.kinds.ptr().read(i);
+    }
+
+    kind_at* = (self: @Self, i: usize) Ty {
+        self.kinds.len - i - 1;
+        self.kinds.ptr().read(i);
+    }
+
+    // The intern key. Internal identity, not a name to show anyone.
+    key_at* = (self: @Self, id: TyId) str {
+        i = id.index.to_usize();
+        self.keys.len - i - 1;
+        self.keys.ptr().read(i).view();
+    }
+
+    count_of* = (self: @Self) u32 { self.count }
+
+
+    intern* = (self :: @Self, key: str, kind: Ty) Res<TyId, AllocError> {
+        // `None` first: the match takes its type from its first arm.
+        self.by_key.get(key).match({
+            None   => self.fresh(key, kind),
+            Ok(id) => Ok(id),
+        })
+    }
+
+    // Only `intern` calls this, after a miss.
+    fresh = (self :: @Self, key: str, kind: Ty) Res<TyId, AllocError> {
+        id = TyId(index: self.count);
+        owned ::= self.alloc.String().try();
+        owned.add(key).try();
+        // The map borrows the owned key so scratch buffers may be released.
+        stable = owned.view();
+        self.keys.add(owned).try();
+        self.kinds.add(kind).try();
+        self.by_key.set(stable, id).try();
+        self.count = self.count + 1;
+        Ok(id);
+    }
+
+    // -----------------------------------------------------------------
+    // the constructors
+    // -----------------------------------------------------------------
+
+    // The key is the name; no declaration can shadow a primitive.
+    prim* = (self :: @Self, name: str) Res<TyId, AllocError> {
+        self.intern(name, Ty.Prim(Prim(name: name)))
+    }
+
+    unit* = (self :: @Self) Res<TyId, AllocError> { self.prim("()") }
+
+    bool_ty* = (self :: @Self) Res<TyId, AllocError> { self.prim("bool") }
+
+    str_ty* = (self :: @Self) Res<TyId, AllocError> { self.prim("str") }
+
+    // The hole, and the poison. Neither carries anything, so both are
+    // interned under a name no source can spell.
+    infer* = (self :: @Self) Res<TyId, AllocError> { self.intern(
+        "_",
+        Ty.Infer
+    ) }
+
+    unknown* = (self :: @Self) Res<TyId, AllocError> { self.intern(
+        "?",
+        Ty.Unknown
+    ) }
+
+    named* = (self :: @Self, decl: DeclId, qname: str, name: str, args: Vec<TyId>)
+             Res<TyId, AllocError> {
+        is_prim(name).match({
+            true  => self.prim(name),
+            false => self.declared(decl, qname, name, args),
+        })
+    }
+
+    declared = (self :: @Self, decl: DeclId, qname: str, name: str,
+                args: Vec<TyId>) Res<TyId, AllocError> {
+        key ::= self.alloc.String().try();
+        key.add(qname).try();
+        self.write_args(key, args).try();
+        self.intern(
+            key.view(),
+            Ty.Named(TyNamed(decl: decl, name: name, args: args))
+        )
+    }
+
+    // `Res<T>` — absence, carrying no reason because there is none.
+    res_absence* = (self :: @Self, value: TyId) Res<TyId, AllocError> {
+        unit = self.prim("()").try();
+        self.res_form(value, unit, ResForm.Absence)
+    }
+
+    // `Res<T, E>` — failure, with the set a caller can act on.
+    res_failure* = (self :: @Self, value: TyId, error: TyId)
+                   Res<TyId, AllocError> {
+        self.res_form(value, error, ResForm.Failure)
+    }
+
+    // What a bare `Ok(x)` is before an expectation settles it.
+    res_open* = (self :: @Self, value: TyId) Res<TyId, AllocError> {
+        hole = self.infer().try();
+        self.res_form(value, hole, ResForm.Open)
+    }
+
+    res_form = (self :: @Self, value: TyId, error: TyId, form: ResForm)
+               Res<TyId, AllocError> {
+        mark = form.match({
+            Absence => "?",
+            Failure => "!",
+            Open    => "~",
+        });
+        key ::= self.alloc.String().try();
+        key.fmt("Res{mark}{},{}", self.key_at(value), self.key_at(error)).try();
+        self.intern(
+            key.view(),
+            Ty.Res(TyRes(value: value, error: error, form: form))
+        )
+    }
+
+    // The array count is part of the intern key.
+    array* = (self :: @Self, elem: TyId, count: usize)
+             Res<TyId, AllocError> {
+        n ::= self.alloc.String().try();
+        n.write_usize(count).try();
+        key ::= self.alloc.String().try();
+        key.fmt("[{};{}]", self.key_at(elem), n.view()).try();
+        self.intern(key.view(), Ty.Array(TyArray(elem: elem, count: count)))
+    }
+
+    // A type variable, nominal on its owner as well as its name.
+    var* = (self :: @Self, name: str, owner: str) Res<TyId, AllocError> {
+        key ::= self.alloc.String().try();
+        key.fmt("%{name}@{owner}").try();
+        self.intern(key.view(), Ty.Var(TyVar(name: name, owner: owner)))
+    }
+
+    // Parameter names are not part of the type.
+    fn_ty* = (self :: @Self, params: Vec<TyId>, ret: TyId) Res<TyId, AllocError> {
+        key ::= self.alloc.String().try();
+        key.add("(").try();
+        params.loop((h, p) { key.fmt("{},", self.key_at(p)).try() });
+        key.fmt(")->{}", self.key_at(ret)).try();
+        self.intern(key.view(), Ty.Fn(TyFn(params: params, ret: ret)))
+    }
+
+
+    // `A | B`, from members in any order, any nesting, with repetition:
+    // flattens, sorts, dedupes, and collapses a set of one to its member.
+    union_ty* = (self :: @Self, members: Vec<TyId>) Res<TyId, AllocError> {
+        flat ::= self.alloc.Vec<TyId>();
+        self.flatten_into(flat, members).try();
+        canon = self.sort_unique(flat).try();
+        canon.len.match({
+            0 => self.prim("()"),
+            1 => canon.get(0).match({ None => self.unknown(), Ok(m) => Ok(m) }),
+            _ => self.build_union(canon),
+        })
+    }
+
+    // `.try()` propagation: the callee's set merged into the caller's.
+    merge* = (self :: @Self, a: TyId, b: TyId) Res<TyId, AllocError> {
+        both ::= self.alloc.Vec<TyId>();
+        both.add(a).try();
+        both.add(b).try();
+        self.union_ty(both)
+    }
+
+    set_has* = (self: @Self, set: TyId, member: TyId) bool {
+        self.at(set).match({
+            Union(u) => member.is_in(u.members),
+            Var(_)   => true,
+            _        => set.eq(member),
+        })
+    }
+
+    set_within* = (self: @Self, narrow: TyId, wide: TyId) bool {
+        self.at(narrow).match({
+            Union(u) => self.all_within(u.members, wide),
+            Var(_)   => true,
+            _        => self.set_has(wide, narrow),
+        })
+    }
+
+    // The members of a set; a set of one lists its member.
+    members_of* = (self: @Self, set: TyId, out :: Vec<TyId>) Res<(), AllocError> {
+        self.at(set).match({
+            Union(u) => self.copy_members(out, u.members),
+            _        => out.add(set),
+        }).try();
+        Ok(());
+    }
+
+    // Named so both `members_of` arms have one type: a bare `loop`
+    // yields `Res<T>`.
+    copy_members = (self: @Self, out :: Vec<TyId>, members: Vec<TyId>)
+                   Res<(), AllocError> {
+        members.loop((h, m) { out.add(m).try() });
+        Ok(());
+    }
+
+
+    write_name* = (self: @Self, id: TyId, out :: String) Res<(), AllocError> {
+        self.at(id).match({
+            Prim(p)  => out.add(p.name),
+            Var(v)   => out.add(v.name),
+            Infer    => out.add("_"),
+            Unknown  => out.add("<unknown>"),
+            Named(n) => self.write_named(n, out),
+            Res(r)   => self.write_res(r, out),
+            Fn(f)    => self.write_fn(f, out),
+            Union(u) => self.write_union(u, out),
+            Array(a) => self.write_array(a, out),
+        }).try();
+        Ok(());
+    }
+
+    // Allocates a fresh String.
+    name_of* = (self: @Self, id: TyId) Res<String, AllocError> {
+        out ::= self.alloc.String().try();
+        self.write_name(id, out).try();
+        Ok(out);
+    }
+
+    // -----------------------------------------------------------------
+    // writing names and keys
+    // -----------------------------------------------------------------
+
+    write_res = (self: @Self, r: TyRes, out :: String) Res<(), AllocError> {
+        out.add("Res<").try();
+        self.write_name(r.value, out).try();
+        r.form.match({
+            Failure => self.write_res_error(r, out),
+            Absence => Ok(()),
+            Open    => Ok(()),
+        }).try();
+        out.add(">").try();
+        Ok(());
+    }
+
+    write_res_error = (self: @Self, r: TyRes, out :: String) Res<(), AllocError> {
+        out.add(", ").try();
+        self.write_name(r.error, out).try();
+        Ok(());
+    }
+
+    write_named = (self: @Self, n: TyNamed, out :: String) Res<(), AllocError> {
+        out.add(n.name).try();
+        (n.args.len > 0).then(() { self.write_arg_names(n.args, out).try() });
+        Ok(());
+    }
+
+    write_arg_names = (self: @Self, args: Vec<TyId>, out :: String)
+                      Res<(), AllocError> {
+        out.add("<").try();
+        args.loop((h, i, a) {
+            (i > 0).then(() { out.add(", ").try() });
+            self.write_name(a, out).try();
+        });
+        out.add(">").try();
+        Ok(());
+    }
+
+    write_fn = (self: @Self, f: TyFn, out :: String) Res<(), AllocError> {
+        out.add("(").try();
+        f.params.loop((h, i, p) {
+            (i > 0).then(() { out.add(", ").try() });
+            self.write_name(p, out).try();
+        });
+        out.add(") ").try();
+        self.write_name(f.ret, out).try();
+        Ok(());
+    }
+
+    // `[i32, 4]`, the source spelling.
+    write_array = (self: @Self, a: TyArray, out :: String)
+                  Res<(), AllocError> {
+        out.add("[").try();
+        self.write_name(a.elem, out).try();
+        out.add(", ").try();
+        out.write_usize(a.count).try();
+        out.add("]").try();
+        Ok(());
+    }
+
+    write_union = (self: @Self, u: TyUnion, out :: String) Res<(), AllocError> {
+        u.members.loop((h, i, m) {
+            (i > 0).then(() { out.add(" | ").try() });
+            self.write_name(m, out).try();
+        });
+        Ok(());
+    }
+
+    write_args = (self: @Self, key :: String, args: Vec<TyId>)
+                 Res<(), AllocError> {
+        (args.len > 0).then(() { self.write_args_run(key, args).try() });
+        Ok(());
+    }
+
+    write_args_run = (self: @Self, key :: String, args: Vec<TyId>)
+                     Res<(), AllocError> {
+        key.add("<").try();
+        args.loop((h, a) { key.fmt("{},", self.key_at(a)).try() });
+        key.add(">").try();
+        Ok(());
+    }
+
+    build_union = (self :: @Self, canon: Vec<TyId>) Res<TyId, AllocError> {
+        key ::= self.alloc.String().try();
+        canon.loop((h, m) { key.fmt("{}|", self.key_at(m)).try() });
+        self.intern(key.view(), Ty.Union(TyUnion(members: canon)))
+    }
+
+    // A nested union contributes its members.
+    flatten_into = (self: @Self, out :: Vec<TyId>, members: Vec<TyId>)
+                   Res<(), AllocError> {
+        members.loop((h, m) {
+            self.at(m).match({
+                Union(u) => self.flatten_into(out, u.members),
+                _        => out.add(m),
+            }).try();
+        });
+        Ok(());
+    }
+
+    // Insertion sort, deduplicated.
+    sort_unique = (self: @Self, src: Vec<TyId>) Res<Vec<TyId>, AllocError> {
+        out ::= self.alloc.Vec<TyId>();
+        src.loop((h, id) {
+            // The fallible arm first so the match retains AllocError.
+            id.is_in(out).match({
+                false => self.insert_ordered(out, id),
+                true  => Ok(()),
+            }).try();
+        });
+        Ok(out);
+    }
+
+    // Append, then walk the new element down to its place.
+    insert_ordered = (self: @Self, out :: Vec<TyId>, id: TyId)
+                     Res<(), AllocError> {
+        out.add(id).try();
+        n = out.len;
+        Range(1, n).loop((h, k) {
+            j    = n - k;
+            prev = out.get(j - 1).value_or(id);
+            cur  = out.get(j).value_or(id);
+            self.before(cur, prev).then(() {
+                put(out, j - 1, cur).try();
+                put(out, j, prev).try();
+            });
+        });
+        Ok(());
+    }
+
+    // Lexicographic order on intern keys: stable across runs, unlike
+    // id order.
+    before = (self: @Self, a: TyId, b: TyId) bool {
+        self.key_at(a).before(self.key_at(b))
+    }
+
+    all_within = (self: @Self, members: Vec<TyId>, wide: TyId) bool {
+        members.find((m) { self.set_has(wide, m) == false })
+            .match({ Ok(_) => false, None => true })
+    }
+}
+
+Types* = (a: Alloc) Types {
+    Types(
+        kinds: a.Vec<Ty>(),
+        keys: a.Vec<String>(),
+        by_key: a.Map<str, TyId>(),
+        count: 0,
+        alloc: a,
+    )
+}
+
+put = (out :: Vec<TyId>, i: usize, v: TyId) Res<(), AllocError> {
+    out.set(i, v).match({
+        None  => Err(AllocError.OutOfMemory),
+        Ok(_) => Ok(()),
+    })
+}

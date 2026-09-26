@@ -1,0 +1,80 @@
+Alloc, AllocError = std.mem
+Range = std.core
+Vec = std.collections
+str = std.text
+Cli, cli = zen
+Emission = std.build
+
+main = (env: Env) Res<i32, AllocError> {
+    a     ::= env.mem.alloc();
+    flags ::= a.Vec<str>();
+    flags.add("--entry").try();
+    flags.add("-o").try();
+    flags.add("--emit-c-dir").try();
+    flags.add("--std").try();
+    flags.add("--symbol-map").try();
+    flags.add("--repeat").try();
+    flags.add("--permute").try();
+    flags.add("--backend").try();
+
+    Range(0, flags.len).loop((h, i) {
+        next = (i == 0).match({ true => "--emit-c", false => "--ffi" });
+        flag = flags.get(i).match({ Ok(s) => s, None => "" });
+        show(env, missing(a, flag, next).try()).try();
+    });
+    show(env, valid(a).try()).try();
+    Ok(0);
+}
+
+missing = (a: Alloc, flag: str, next: str) Res<Vec<str>, AllocError> {
+    argv ::= a.Vec<str>();
+    argv.add("zen").try();
+    argv.add("build").try();
+    argv.add("src").try();
+    argv.add(flag).try();
+    argv.add(next).try();
+    Ok(argv);
+}
+
+valid = (a: Alloc) Res<Vec<str>, AllocError> {
+    argv ::= a.Vec<str>();
+    argv.add("zen").try();
+    argv.add("build").try();
+    argv.add("--ffi").try();
+    argv.add("--symbol-map").try();
+    argv.add("out.sym").try();
+    argv.add("--entry").try();
+    argv.add("main.zen").try();
+    argv.add("-o").try();
+    argv.add("out.c").try();
+    argv.add("src").try();
+    argv.add("--emit-c").try();
+    Ok(argv);
+}
+
+show = (env: Env, argv: Vec<str>) Res<(), AllocError> {
+    a ::= env.mem.alloc();
+    cli(env, a, argv).try().match({
+        Build(j)                 => j.emission.match({
+            File(out) => println(
+                "build root={} entry={} out={} symbols={} ffi={}",
+                j.root,
+                j.entry,
+                out,
+                j.symbol_map,
+                j.ffi
+            ),
+            _         => println("unexpected emission"),
+        }),
+        Project(j)               => println("project {} {}", j.root, j.target),
+        Run(j)                   => println("run {} {}", j.root, j.target),
+        Usage(w)                 => println("usage `{}`", w),
+        UnavailableBackend(name) => println("unavailable backend {}", name),
+        Missing(f)               => println("missing `{}`", f),
+        Fmt(_)                   => println("fmt"),
+        Test(_)                  => println("test"),
+        Later(n)                 => println("later {}", n),
+        Version(v)               => println("version {}", v),
+    });
+    Ok(())
+}

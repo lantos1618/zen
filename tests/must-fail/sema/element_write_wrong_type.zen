@@ -1,0 +1,13 @@
+// An element is storage too. `buf[i] = e` is the same statement shape as
+// `p.x = e` and had the same hole: with no written type the value was
+// checked against itself, so the element type was never consulted.
+//
+// The message names the element type, which the two toolchains once
+// inferred differently for a bare `[1, 2, 3]` — `int` the literal type,
+// or `i32` — so this asserted only `str`. They agree since
+// `corpus/sema/array_literal_element_settles`, so it asserts both.
+main* = (env: Env) i32 {
+    buf ::= [1, 2, 3];
+    buf[0] = "not an int";
+    0
+}

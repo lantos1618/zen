@@ -1,0 +1,310 @@
+// Lowers `h.break` and `h.next` as jumps to loop-frame labels, including the
+// Cleanup for every exited block. Handles have no C storage; their bindings
+// Record loop depth and are resolved by name.
+
+ExprId, Access, Call = std.ast
+AllocError = std.mem
+str, String = std.text
+TyId = sema.sema_ty
+Ctx = sema.sema_check
+literal_overflows = sema.sema_trap
+sym_member, sym_variant = gen.gen_name
+RES_PATH = gen.gen_name
+CBackend = gen.gen_c.gen_c_state
+LoopFrame = gen.gen_c.gen_c_frame
+GenFault = gen.gen_diag
+unsupported = gen.gen_c.gen_c_report
+ctype, is_unit = gen.gen_c.gen_c_type
+expr = gen.gen_c.gen_c_expr
+bare_name = gen.gen_c.gen_c_stmt
+write_label = gen.gen_c.gen_c_loop
+unwind_to = gen.gen_c.gen_c_own
+
+// the two verbs — the same jump `.try()` is, one frame down
+
+// The base has to be a bare name bound to a handle: a handle is not a
+// value, so there is nothing else it could be reached through.
+handle_depth* = (be :: CBackend, base: ExprId) usize {
+    be.tree.expr_at(base).kind.match({
+        Name(n) => be.slot_handle(n.text),
+        _       => 0,
+    })
+}
+
+slot_handle = (be :: CBackend, name: str) usize {
+    be.slot_of(name).match({
+        Ok(s) => s.handle,
+        None  => 0,
+    })
+}
+
+lower_handle_call* = (
+    be    :: CBackend,
+    id    : ExprId,
+    c     : Call,
+    a     : Access,
+    depth : usize,
+    ctx   : Ctx,
+    out   :: String
+)
+                     Res<(), AllocError> {
+    be.loop_frame(depth).match({
+        None   => be.unsupported(
+            id,
+            "a loop handle used outside its loop",
+            out
+        ),
+        Ok(fr) => be.handle_verb(id, c, a.name.text, fr, ctx, out),
+    })
+}
+
+handle_verb = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    name : str,
+    fr   : LoopFrame,
+    ctx  : Ctx,
+    out  :: String
+)
+              Res<(), AllocError> {
+    name.eq("next").match({
+        true  => be.leave_pass(fr, out),
+        false => be.handle_break(id, c, name, fr, ctx, out),
+    })
+}
+
+// `h.next()` leaves this iteration's block. Every exit is a scope exit,
+// and a `goto` jumps over the closing brace the cleanup would run at —
+// so this iteration's defers and drops run here instead. Nothing is
+// handed out of a pass that ends this way, so there is nothing to keep.
+leave_pass = (be :: CBackend, fr: LoopFrame, out :: String)
+             Res<(), AllocError> {
+    be.unwind_to(fr.depth, "").try();
+    be.note_next(fr.cnt);
+    be.jump_to("cnt", fr.cnt, out)
+}
+
+handle_break = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    name : str,
+    fr   : LoopFrame,
+    ctx  : Ctx,
+    out  :: String
+)
+               Res<(), AllocError> {
+    name.eq("break").match({
+        false => be.unsupported(
+            id,
+            "a loop handle has only `break` and `next`",
+            out
+        ),
+        true  => be.write_break(id, c, fr, ctx, out),
+    })
+}
+
+// `h.break(v)` writes the loop's value before it jumps, and `h.break()`
+// leaves it as the `None` the loop opened with — which is what makes
+// "the loop evaluates to `h.break(value)`" true without a second exit.
+write_break = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    fr  : LoopFrame,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    ((c.args.len > 0) && (fr.has_result == false)).match({
+        true  => be.unsupported(
+            id,
+            "a loop whose value type nothing settles, broken with a value",
+            out
+        ),
+        false => Ok(()),
+    }).try();
+    // A break value must fit the loop frame's settled payload: the walked
+    // element or fold accumulator. The handle has no ordinary value type, so
+    // this is where the argument and frame payload meet.
+    ((c.args.len > 0) && (fr.has_result)).match({
+        false => Ok(()),
+        true  => be.break_fits(id, c, fr, ctx),
+    }).try();
+    (fr.has_result && (c.args.len > 0)).match({
+        false => Ok(()),
+        true  => be.write_break_value(c, fr, ctx),
+    }).try();
+    // The value is written before the cleanup, and the cleanup before
+    // the jump: the result lands in storage outside the loop, so it
+    // survives the drops.
+    be.unwind_to(fr.depth, be.break_keep(c)).try();
+    be.note_break(fr.brk);
+    be.jump_to("brk", fr.brk, out)
+}
+
+// A binding handed out of the loop by `h.break(x)` is not this pass's
+// to destroy. Only a bare name can be one — anything larger has been
+// copied into the result by now.
+break_keep = (be :: CBackend, c: Call) str {
+    c.args.get(0).match({
+        None  => "",
+        Ok(a) => be.bare_name(a.value),
+    })
+}
+
+// The break argument against the loop's own payload, the rule
+// `write_break`'s comment states. `assignable` is the one gate a value
+// passes at every other position a type is expected — literals fit their
+// family, poison and holes agree with everything, and an unsubstituted
+// parameter reaches any instantiation — so a legal break cannot fail it
+// (`find`'s `h.break(value)` breaks with the element itself; std's
+// `text_utf8` breaks with `usize` literals over a `usize` walk). What
+// fails it is exactly what the slot could not hold.
+break_fits = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    fr  : LoopFrame,
+    ctx : Ctx
+) Res<(), AllocError> {
+    c.args.get(0).match({
+        None  => Ok(()),
+        Ok(a) => be.break_value_fits(a.value, fr, ctx, id),
+    })
+}
+
+break_value_fits = (
+    be    :: CBackend,
+    value : ExprId,
+    fr    : LoopFrame,
+    ctx   : Ctx,
+    id    : ExprId
+) Res<(), AllocError> {
+    payload = ok_payload(be, fr.ty).try();
+    unknown = be.check.types.unknown().try();
+    got     = be.ty_of(value, ctx, unknown).try();
+    be.check.assignable(got, payload).match({
+        true  => be.break_literal_fits(value, payload),
+        false => be.break_type_fault(id, got, payload),
+    })
+}
+
+// A literal fits its numeric family but must also fit the payload width. This
+// keeps ordinary inferred literals legal without allowing silent truncation.
+break_literal_fits = (be :: CBackend, value: ExprId, payload: TyId)
+                     Res<(), AllocError> {
+    be.check.literal_overflows(value, payload).match({
+        false => Ok(()),
+        true  => be.break_range_fault(value, payload),
+    })
+}
+
+// The position is the literal the author has to change, which is not
+// the `h.break` that carries it — `sema_trap.out_of_range` puts its
+// caret in the same place for the same reason.
+break_range_fault = (be :: CBackend, value: ExprId, payload: TyId)
+                    Res<(), AllocError> {
+    want ::= be.name_of_or(payload).try();
+    what ::= be.alloc.String(
+        "h.break(v) is not free to choose its type: the loop's own T is "
+    ).try();
+    what.add(want.view()).try();
+    what.add(", and this literal does not fit it").try();
+    be.report_expr(value, GenFault.Unsupported(what.view()))
+}
+
+// One sentence, both types named. `name_of` spells a type as the
+// program wrote it; the sentence goes out through `Unsupported` because
+// that fault is "this position cannot hold what was handed to it" —
+// there is deliberately no second copy of sema's TypeMismatch here.
+break_type_fault = (
+    be      :: CBackend,
+    id      : ExprId,
+    got     : TyId,
+    payload : TyId
+) Res<(), AllocError> {
+    want  ::= be.name_of_or(payload).try();
+    found ::= be.name_of_or(got).try();
+    what  ::= be.alloc.String(
+        "h.break(v) is not free to choose its type: the loop's own T is "
+    ).try();
+    what.add(want.view()).try();
+    what.add(", broken with ").try();
+    what.add(found.view()).try();
+    be.report_expr(id, GenFault.Unsupported(what.view()))
+}
+
+// A type nobody can name yet reads as `?`, never as an empty string:
+// the diagnostic still has to say something stood where the payload
+// belongs.
+name_of_or = (be :: CBackend, ty: TyId) Res<String, AllocError> {
+    be.check.types.name_of(ty).match({
+        Ok(n) => Ok(n),
+        _     => be.alloc.String("?"),
+    })
+}
+
+write_break_value = (be :: CBackend, c: Call, fr: LoopFrame, ctx: Ctx)
+                    Res<(), AllocError> {
+    c.args.get(0).match({
+        None  => Ok(()),
+        Ok(a) => be.assign_ok(a.value, fr, ctx),
+    })
+}
+
+assign_ok = (be :: CBackend, value: ExprId, fr: LoopFrame, ctx: Ctx)
+            Res<(), AllocError> {
+    payload = ok_payload(be, fr.ty).try();
+    cty ::= be.alloc.String().try();
+    be.ctype(fr.ty, cty).try();
+    tag ::= be.alloc.String().try();
+    sym_variant(tag, RES_PATH, "Ok").try();
+    line ::= be.alloc.String().try();
+    line.fmt(
+        "{} = ({}){ .zg_tag = {}",
+        fr.result,
+        cty.view(),
+        tag.view()
+    ).try();
+    be.is_unit(payload).match({
+        true  => Ok(()),
+        false => write_ok_payload(be, value, payload, ctx, line),
+    }).try();
+    line.add(" };").try();
+    be.writeln(line.view())
+}
+
+write_ok_payload = (
+    be      :: CBackend,
+    value   : ExprId,
+    payload : TyId,
+    ctx     : Ctx,
+    line    :: String
+) Res<(), AllocError> {
+    mem ::= be.alloc.String().try();
+    sym_member(mem, "Ok").try();
+    line.fmt(", .zg_data.{} = ", mem.view()).try();
+    // Lower the node at its own type. The enclosing Res<T> initializer then
+    // converts to the frame payload without changing signed-literal reading.
+    expr(be, value, ctx, payload, line).try();
+    Ok(());
+}
+
+ok_payload = (be :: CBackend, ty: TyId) Res<TyId, AllocError> {
+    be.check.types.at(ty).match({
+        Res(r) => Ok(r.value),
+        _      => be.check.types.prim("()"),
+    })
+}
+
+// A jump is a statement and the call it came from is an expression, so
+// the `goto` goes to the buffer and a `0` goes where the value would
+// have been. Nothing reads that `0`: control has already left.
+jump_to = (be :: CBackend, stem: str, n: usize, out :: String)
+          Res<(), AllocError> {
+    be.write("goto ").try();
+    be.write_label(stem, n).try();
+    be.writeln(";").try();
+    out.add("0")
+}

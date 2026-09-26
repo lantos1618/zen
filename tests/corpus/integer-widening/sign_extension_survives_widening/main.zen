@@ -1,0 +1,20 @@
+// Lossless signed widening sign-extends negative values at every source and
+// target width. MIN constants exercise the isolated sign bit.
+
+main = (env: Env) Res<i32, AllocError> {
+    a: i8 = -5;
+    println("{}", a.to_i64());
+
+    b: i8 = i8.MIN;
+    println("{}", b.to_i16());
+    println("{}", b.to_i32());
+    println("{}", b.to_i64());
+
+    c: i16 = i16.MIN;
+    println("{}", c.to_i32());
+    println("{}", c.to_i64());
+
+    d: i32 = i32.MIN;
+    println("{}", d.to_i64());
+    Ok(0);
+}

@@ -1,0 +1,578 @@
+// Infer generic results settled only by call arguments.
+//
+// Ordinary arguments bind matching parameters, lambda return types bind type
+// variables in declared closure results, and range bounds can supply an
+// element type. Query and lowering share `inline_ret` so instantiated result
+// types agree.
+
+ExprId, Lambda, Param = std.ast
+Decl, Function, Access, Call = std.ast
+AllocError = std.mem
+Vec = std.collections
+str = std.text
+Range = std.core
+TyId, TyRes = sema.sema_ty
+Def, decl_at = sema.sema_def
+Ctx = sema.sema_check
+tail_expr = sema.sema_hoist
+Inst, has_var = sema.sema_inst
+param_type, type_from_ast = sema.sema_denote
+CBackend = gen.gen_c.gen_c_state
+sub_with, inst_at, settled_inst, materialize_literal = gen.gen_c.gen_c_mono
+enter_tparams, leave_tparams = gen.gen_c.gen_c_mono
+declared_ret = gen.gen_c.gen_c_type
+ty_of = gen.gen_c.gen_c_expr
+selected_def = gen.gen_c.gen_c_call
+plain_ctx = gen.gen_c.gen_c_decl
+range_element_type = gen.gen_c.gen_c_range
+inlines = gen.gen_c.gen_c_inline
+recv_of = gen.gen_c.gen_c_shape
+
+// The receiver, if a ufcs call arrived through one, and then the
+// written arguments: `range.find(p)` and `find(range, p)` are one call
+// written two ways.
+arguments* = (be :: CBackend, c: Call, recv: Res<ExprId>, argv :: Vec<ExprId>)
+            Res<(), AllocError> {
+    recv.match({
+        Ok(r) => argv.add(r),
+        None  => Ok(()),
+    }).try();
+    c.args.loop((h, a) { argv.add(a.value).try() });
+    Ok(());
+}
+
+// The declared parameter types, at this call's instantiation. Through
+// `param_type` and not `type_from_ast`, because `self :: @Self` is a
+// written type only that query knows how to answer.
+param_types* = (
+    be   :: CBackend,
+    f    : Function,
+    dctx : Ctx,
+    inst : Inst,
+    ptys :: Vec<TyId>
+) Res<(), AllocError> {
+    f.params.loop((h, p) { be.add_param_type(p, dctx, inst, ptys).try() });
+    Ok(());
+}
+
+add_param_type = (
+    be   :: CBackend,
+    p    : Param,
+    dctx : Ctx,
+    inst : Inst,
+    ptys :: Vec<TyId>
+) Res<(), AllocError> {
+    declared = be.check.param_type(p, dctx).try();
+    ptys.add(be.sub_with(declared, inst).try())
+}
+
+// what the call evaluates to
+
+inline_ret* = (
+    be    :: CBackend,
+    f     : Function,
+    dctx  : Ctx,
+    inst  : Inst,
+    extra :: Inst,
+    argv  : Vec<ExprId>,
+    ctx   : Ctx
+)
+             Res<TyId, AllocError> {
+    declared = be.declared_ret(f, dctx).try();
+    got      = be.sub_with(be.sub_with(declared, inst).try(), extra).try();
+    has_var(be.check, got).match({
+        false => Ok(got),
+        true  => be.range_element(got, argv, ctx, extra),
+    })
+}
+
+// Bind variables supplied by ordinary arguments or lambda return types.
+call_bindings* = (
+    be    :: CBackend,
+    argv  : Vec<ExprId>,
+    ptys  : Vec<TyId>,
+    ctx   : Ctx,
+    extra :: Inst
+) Res<(), AllocError> {
+    Range(0, argv.len).loop((h, i) {
+        be.settle_from_arg_at(i, argv, ptys, ctx, extra).try();
+    });
+    Ok(());
+}
+
+settle_from_arg_at = (
+    be    :: CBackend,
+    i     : usize,
+    argv  : Vec<ExprId>,
+    ptys  : Vec<TyId>,
+    ctx   : Ctx,
+    extra :: Inst
+)
+                     Res<(), AllocError> {
+    argv.get(i).match({
+        Ok(v) => be.settle_from_arg(v, i, ptys, ctx, extra),
+        None  => Ok(()),
+    })
+}
+
+settle_from_arg = (
+    be    :: CBackend,
+    value : ExprId,
+    i     : usize,
+    ptys  : Vec<TyId>,
+    ctx   : Ctx,
+    extra :: Inst
+)
+                  Res<(), AllocError> {
+    be.spelled_lambda(value).match({
+        Ok(l) => be.settle_from_body(l, i, ptys, ctx, extra),
+        None  => be.settle_from_value(value, i, ptys, ctx, extra),
+    })
+}
+
+// A parameter written as a bare type parameter takes its argument's own
+// type. Only a bare one: anything deeper is unification, and sema owns
+// that.
+settle_from_value = (
+    be    :: CBackend,
+    value : ExprId,
+    i     : usize,
+    ptys  : Vec<TyId>,
+    ctx   : Ctx,
+    extra :: Inst
+)
+                    Res<(), AllocError> {
+    ptys.get(i).match({
+        Ok(t) => be.settle_bare(value, t, ctx, extra),
+        None  => Ok(()),
+    })
+}
+
+settle_bare = (
+    be    :: CBackend,
+    value : ExprId,
+    t     : TyId,
+    ctx   : Ctx,
+    extra :: Inst
+) Res<(), AllocError> {
+    be.keep_var(t).match({
+        Ok(v) => be.bind_arg_type(value, v, ctx, extra),
+        None  => Ok(()),
+    })
+}
+
+// An open generic argument still supplies its named type; only an unknown
+// argument leaves the variable unsettled.
+bind_arg_type = (
+    be    :: CBackend,
+    value : ExprId,
+    v     : TyId,
+    ctx   : Ctx,
+    extra :: Inst
+) Res<(), AllocError> {
+    unknown = be.check.types.unknown().try();
+    got     = be.ty_of(value, ctx, unknown).try();
+    be.check.is_unknown(got).match({
+        true  => Ok(()),
+        false => extra.bind(v, be.materialize_literal(got).try()),
+    })
+}
+
+// The declared parameter types with this call's own answers in them.
+settle_params* = (
+    be    :: CBackend,
+    raws  : Vec<TyId>,
+    extra : Inst,
+    ptys  :: Vec<TyId>
+) Res<(), AllocError> {
+    raws.loop((h, t) { ptys.add(be.sub_with(t, extra).try()).try() });
+    Ok(());
+}
+
+// Compose call-site and inferred answers into the instantiation used to lower
+// the body. Self-bound placeholders are replaced here when an answer exists.
+compose* = (be :: CBackend, inst: Inst, extra: Inst) Res<Inst, AllocError> {
+    full ::= be.alloc.Inst();
+    Range(0, inst.len()).loop((h, i) { be.carry(inst, extra, i, full).try() });
+    Range(0, extra.len()).loop((h, i) { carry_extra(extra, i, full).try() });
+    Ok(full);
+}
+
+carry = (be :: CBackend, inst: Inst, extra: Inst, i: usize, full :: Inst)
+        Res<(), AllocError> {
+    inst.var_at(i).match({
+        Ok(v) => be.carry_arg(inst, extra, i, v, full),
+        None  => Ok(()),
+    })
+}
+
+carry_arg = (
+    be    :: CBackend,
+    inst  : Inst,
+    extra : Inst,
+    i     : usize,
+    v     : TyId,
+    full  :: Inst
+) Res<(), AllocError> {
+    inst.arg_at(i).match({
+        Ok(a) => full.bind(v, be.sub_with(a, extra).try()),
+        None  => Ok(()),
+    })
+}
+
+// A parameter the callee's own list does not mention — one named only
+// inside another's bound, which is how the whole loop family is written.
+carry_extra = (extra: Inst, i: usize, full :: Inst) Res<(), AllocError> {
+    extra.var_at(i).match({
+        Ok(v) => bind_extra(extra, i, v, full),
+        None  => Ok(()),
+    })
+}
+
+bind_extra = (extra: Inst, i: usize, v: TyId, full :: Inst)
+             Res<(), AllocError> {
+    extra.arg_at(i).match({
+        Ok(a) => full.bind(v, a),
+        None  => Ok(()),
+    })
+}
+
+settle_from_body = (
+    be    :: CBackend,
+    l     : Lambda,
+    i     : usize,
+    ptys  : Vec<TyId>,
+    ctx   : Ctx,
+    extra :: Inst
+) Res<(), AllocError> {
+    be.lambda_ret_is_open(l, ctx).try().match({
+        true  => Ok(()),
+        false => be.ret_var(i, ptys).match({
+            Ok(v) => be.bind_body_type(l, v, i, ptys, ctx, extra),
+            None  => Ok(()),
+        }),
+    })
+}
+
+lambda_ret_is_open = (be :: CBackend, l: Lambda, ctx: Ctx)
+                     Res<bool, AllocError> {
+    l.ret.match({
+        None    => Ok(false),
+        Ok(ret) => Ok(has_var(
+            be.check,
+            be.check.type_from_ast(ret, ctx).try()
+        )),
+    })
+}
+
+// The closure's declared return type, when it is a bare type parameter.
+// Only a bare one: `Res<T>` in that position would need unification, and
+// nothing in this tree writes it.
+ret_var = (be :: CBackend, i: usize, ptys: Vec<TyId>) Res<TyId> {
+    ptys.get(i).match({
+        Ok(t) => be.fn_ret_var(t),
+        None  => None,
+    })
+}
+
+fn_ret_var = (be :: CBackend, t: TyId) Res<TyId> {
+    be.check.types.at(t).match({
+        Fn(ft) => be.keep_var(ft.ret),
+        _      => None,
+    })
+}
+
+keep_var = (be :: CBackend, t: TyId) Res<TyId> {
+    be.check.types.at(t).match({
+        Var(_) => Ok(t),
+        _      => None,
+    })
+}
+
+// Read a closure body with parameter types supplied by the declared signature.
+// These temporary type bindings are rewound before C storage is declared.
+bind_body_type = (
+    be    :: CBackend,
+    l     : Lambda,
+    v     : TyId,
+    i     : usize,
+    ptys  : Vec<TyId>,
+    ctx   : Ctx,
+    extra :: Inst
+)
+                 Res<(), AllocError> {
+    cmark = be.check.mark();
+    lmark = be.mark();
+    be.peek_params(l, i, ptys).try();
+    got = be.lambda_value_type(l, ctx).try();
+    be.release(lmark).try();
+    be.check.release(cmark).try();
+    extra.bind(v, be.materialize_literal(got).try())
+}
+
+peek_params = (be :: CBackend, l: Lambda, i: usize, ptys: Vec<TyId>)
+              Res<(), AllocError> {
+    ptys.get(i).match({
+        None  => Ok(()),
+        Ok(t) => be.peek_fn_params(l, t),
+    })
+}
+
+peek_fn_params = (be :: CBackend, l: Lambda, t: TyId) Res<(), AllocError> {
+    be.check.types.at(t).match({
+        Fn(ft) => be.peek_each_param(l, ft.params),
+        _      => Ok(()),
+    })
+}
+
+peek_each_param = (be :: CBackend, l: Lambda, params: Vec<TyId>)
+                  Res<(), AllocError> {
+    Range(0, l.params.len).loop((h, i) {
+        be.peek_param_at(l, params, i).try();
+    });
+    Ok(());
+}
+
+peek_param_at = (be :: CBackend, l: Lambda, params: Vec<TyId>, i: usize)
+                Res<(), AllocError> {
+    l.params.get(i).match({
+        None  => Ok(()),
+        Ok(p) => be.peek_param_named(p, params, i),
+    })
+}
+
+// A parameter whose type is still open says nothing, and binding it to
+// one would answer a later question with a `Var`. Left unbound, the
+// name simply does not resolve and the body answers `()`.
+peek_param_named = (be :: CBackend, p: Param, params: Vec<TyId>, i: usize)
+                   Res<(), AllocError> {
+    params.get(i).match({
+        None  => Ok(()),
+        Ok(t) => be.peek_declare(p.name.text, t),
+    })
+}
+
+peek_declare = (be :: CBackend, name: str, ty: TyId) Res<(), AllocError> {
+    settled(be, ty).match({
+        false => Ok(()),
+        true  => be.declare_peek_slot(name, ty),
+    })
+}
+
+declare_peek_slot = (be :: CBackend, name: str, ty: TyId)
+                    Res<(), AllocError> {
+    be.declare(name, ty, false).try();
+    be.check.bind(name, ty, false, false).try();
+    Ok(());
+}
+
+// Use sema's tail-expression rule for both terminated and unterminated block
+// tails. An unsettled or absent tail evaluates to unit.
+lambda_value_type = (be :: CBackend, l: Lambda, ctx: Ctx)
+                    Res<TyId, AllocError> {
+    unit = be.check.types.prim("()").try();
+    blk  = be.tree.block_at(l.body);
+    be.check.tail_expr(blk).match({
+        Ok(e) => be.value_or_unit(e, ctx, unit),
+        None  => Ok(unit),
+    })
+}
+
+value_or_unit = (be :: CBackend, e: ExprId, ctx: Ctx, unit: TyId)
+                Res<TyId, AllocError> {
+    unknown = be.check.types.unknown().try();
+    got     = be.ty_of(e, ctx, unknown).try();
+    settled(be, got).match({ true => Ok(got), false => Ok(unit) })
+}
+
+settled* = (be :: CBackend, t: TyId) bool {
+    (be.check.is_unknown(t) == false) && (has_var(be.check, t) == false)
+}
+
+// `find<R: Range<T>, T>` names `T` only inside another parameter's
+// Bound, and the range is what answers — `gen_c_loop.zen`'s rule, said
+// about a call rather than about a loop.
+range_element = (
+    be    :: CBackend,
+    got   : TyId,
+    argv  : Vec<ExprId>,
+    ctx   : Ctx,
+    extra :: Inst
+) Res<TyId, AllocError> {
+    argv.get(0).match({
+        Ok(r) => element_of(be, got, r, ctx, extra),
+        None  => Ok(got),
+    })
+}
+
+// A `Vec` answers this too, and with its own element rather than with
+// an index: `range_element_type` is the one query, so `v.find(p)` and
+// `v.loop(body)` cannot disagree about what `T` is.
+element_of = (be :: CBackend, got: TyId, r: ExprId, ctx: Ctx, extra :: Inst)
+             Res<TyId, AllocError> {
+    unknown = be.check.types.unknown().try();
+    rty     = be.ty_of(r, ctx, unknown).try();
+    elem    = be.range_element_type(rty).try();
+    elem.match({
+        Ok(t) => be.walk_elements(got, t, extra),
+        None  => Ok(got),
+    })
+}
+
+walk_elements = (be :: CBackend, got: TyId, elem: TyId, extra :: Inst)
+                Res<TyId, AllocError> {
+    be.check.types.at(got).match({
+        Res(rs) => be.index_res(got, rs, elem, extra),
+        _       => Ok(got),
+    })
+}
+
+index_res = (be :: CBackend, got: TyId, rs: TyRes, elem: TyId, extra :: Inst)
+            Res<TyId, AllocError> {
+    be.keep_var(rs.value).match({
+        Ok(v) => be.usize_bound(got, v, elem, extra),
+        None  => Ok(got),
+    })
+}
+
+usize_bound = (
+    be    :: CBackend,
+    got   : TyId,
+    v     : TyId,
+    elem  : TyId,
+    extra :: Inst
+) Res<TyId, AllocError> {
+    extra.bind(v, elem).try();
+    be.sub_with(got, extra)
+}
+
+// the body, in the caller's frame
+
+// what an inlined call evaluates to, asked before it is lowered
+// `ty_of` has to answer for a match scrutinee before the scrutinee is
+// written, and sema's answer for `Range(0, n).find(p)` is the open
+// `Res<T>` the header names. This is `inline_free`'s own computation
+// asked as a query, for the reason the header gives.
+
+inline_result_type* = (be :: CBackend, id: ExprId, ctx: Ctx, got: TyId)
+                      Res<TyId, AllocError> {
+    be.tree.expr_at(id).kind.match({
+        Call(c) => be.call_result(id, c, ctx, got),
+        _       => Ok(got),
+    })
+}
+
+call_result = (be :: CBackend, id: ExprId, c: Call, ctx: Ctx, got: TyId)
+              Res<TyId, AllocError> {
+    be.callee_name(c).match({
+        Ok(n) => be.named_result(id, c, n, ctx, got),
+        None  => Ok(got),
+    })
+}
+
+// A bare name, or the name after a dot: `find(range, p)` and
+// `range.find(p)` are one call written two ways, and only the second
+// carries a receiver.
+callee_name = (be :: CBackend, c: Call) Res<str> {
+    be.tree.expr_at(c.callee).kind.match({
+        Name(n)   => Ok(n.text),
+        Access(a) => Ok(a.name.text),
+        _         => None,
+    })
+}
+
+named_result = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    name : str,
+    ctx  : Ctx,
+    got  : TyId
+) Res<TyId, AllocError> {
+    be.check.resolved_call(id).match({
+        Ok(_) => be.selected_def(id).match({
+            Ok(d) => be.def_result(id, c, d, ctx, got),
+            None  => Ok(got),
+        }),
+        None  => {
+            found ::= be.alloc.Vec<Def>();
+            be.check.world.defs_of(ctx.module, name, found).try();
+            sole_of(found).match({
+                Ok(d) => be.def_result(id, c, d, ctx, got),
+                None  => Ok(got),
+            })
+        },
+    })
+}
+
+sole_of = (found: Vec<Def>) Res<Def> {
+    (found.len == 1).match({ true => found.get(0), false => None })
+}
+
+def_result = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    d   : Def,
+    ctx : Ctx,
+    got : TyId
+) Res<TyId, AllocError> {
+    decl_at(be.tree, d.id).match({
+        Ok(x) => be.decl_result(id, c, d, x, ctx, got),
+        None  => Ok(got),
+    })
+}
+
+decl_result = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    d   : Def,
+    x   : Decl,
+    ctx : Ctx,
+    got : TyId
+) Res<TyId, AllocError> {
+    x.kind.match({
+        Function(f) => be.fn_result(id, c, d, f, ctx, got),
+        _           => Ok(got),
+    })
+}
+
+fn_result = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    d   : Def,
+    f   : Function,
+    ctx : Ctx,
+    got : TyId
+) Res<TyId, AllocError> {
+    be.inlines(c, f).match({
+        false => Ok(got),
+        true  => be.computed_result(id, c, d, f, ctx),
+    })
+}
+
+computed_result = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    d   : Def,
+    f   : Function,
+    ctx : Ctx
+) Res<TyId, AllocError> {
+    mi   = d.id.module.to_usize();
+    dctx = be.plain_ctx(mi);
+    raw  = be.inst_at(id).try();
+    inst = be.settled_inst(f.tparams, d.qname, raw).try();
+    mark = be.enter_tparams(f.tparams, d.qname).try();
+    argv ::= be.alloc.Vec<ExprId>();
+    be.arguments(c, be.recv_of(c.callee), argv).try();
+    raws ::= be.alloc.Vec<TyId>();
+    be.param_types(f, dctx, inst, raws).try();
+    extra ::= be.alloc.Inst();
+    be.call_bindings(argv, raws, ctx, extra).try();
+    ret = be.inline_ret(f, dctx, inst, extra, argv, ctx).try();
+    be.leave_tparams(mark).try();
+    Ok(ret);
+}

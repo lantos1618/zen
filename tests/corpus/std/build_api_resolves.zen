@@ -1,0 +1,54 @@
+// The public std.build API resolves and its plain-data types preserve values.
+// Distinct field and variant values make layout or default-value regressions
+// observable, including Exe.out's default None.
+
+Builder, Module, Function = std.build
+Budget, Package, Dep, Exe, Os, Arch, BuildFault, BuildError = std.build
+Vec = std.collections
+
+main = (env: Env) Res<i32, BuildError> {
+    alloc ::= env.mem.alloc();
+
+    p = Package(
+        url: "https://example.test/json",
+        version: "1.4.2",
+        hash: "b7c9"
+    );
+    println("{} {} {}", p.url, p.version, p.hash);
+
+    bud = Budget(name: "parse", ns_op: 125000, allocs_op: 3, bytes_op: 4096);
+    println("{} {} {} {}", bud.name, bud.ns_op, bud.allocs_op, bud.bytes_op);
+
+    deps ::= alloc.Vec<Dep>();
+    deps.add(Dep(name: "json")).try();
+    deps.add(Dep(name: "http")).try();
+    deps.get(1).match({
+        Ok(d) => println("deps {} {}", deps.len, d.name),
+        None  => println("deps {} missing", deps.len),
+    });
+
+    Os.Linux.match({
+        Macos   => println("macos"),
+        Linux   => println("linux"),
+        Windows => println("windows"),
+    });
+    Arch.Arm64.match({
+        X86_64 => println("x86_64"),
+        Arm64  => println("arm64"),
+    });
+    BuildFault.HashMismatch.match({
+        NotFound        => println("not found"),
+        FetchFailed     => println("fetch failed"),
+        VersionConflict => println("version conflict"),
+        HashMismatch    => println("hash mismatch"),
+    });
+
+    e = Exe(src: Path("app/main.zen"), deps: alloc.Vec<Dep>());
+    println("exe {}", e.src.text);
+    e.out.match({
+        Ok(o) => println("out {}", o.text),
+        None  => println("out absent"),
+    });
+
+    Ok(0);
+}

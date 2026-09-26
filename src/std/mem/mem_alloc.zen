@@ -1,0 +1,23 @@
+// Explicit allocation interface. Anything that allocates receives an Alloc,
+// so allocation is visible in the signature.
+//
+// Alloc is a copied handle containing its receiver and operations. The owner
+// behind the handle controls lifetime and cleanup.
+
+Ptr = std.mem.mem_ptr
+
+AllocError* = | OutOfMemory
+
+// Allocator interface implemented by arenas, fixed buffers, or foreign heaps.
+Alloc* = {
+    raw* = (self: @Self, size: usize, align: usize) Res<Ptr<u8>, AllocError>
+
+    // Resize to `count` elements. A null pointer requests fresh storage.
+    realloc* = <T>(self: @Self, p: Ptr<T>, count: usize) Res<Ptr<T>, AllocError>
+
+    // Optional release hook. Arenas may defer reclamation until arena drop.
+    free* ::= <T>(self: @Self, p: Ptr<T>) ()
+
+    create* ::= <T>(self: @Self) Res<Ptr<T>, AllocError>
+
+}

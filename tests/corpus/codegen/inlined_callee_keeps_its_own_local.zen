@@ -1,0 +1,25 @@
+// An inlined callee's locals remain distinct from same-named caller locals;
+// stores still target bindings in the callee and closure frames that own them.
+
+apply = <T>(gate: bool, thing: () T) Res<T> {
+    held ::= 77;
+    held = held + 1;
+    println("callee {}", held);
+    gate.match({
+        true  => Ok(thing()),
+        false => None,
+    });
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    held = 7;
+    println("before {}", held);
+    apply(true, () { println("closure {}", held) });
+    println("after {}", held);
+
+    n ::= 0;
+    (n == 0).then(() { n = n + 1; });
+    println("store {}", n);
+
+    Ok(0);
+}

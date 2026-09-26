@@ -1,0 +1,237 @@
+// Lowers a bodyless `fmt` member through the receiver's `add(str)` or `write`
+// byte floor. The floor must return the same result type as `fmt`, because this
+// path performs no error conversion. Format parsing and hole dispatch are
+// shared with `gen_c_sink`; this file selects and invokes the concrete writer.
+
+ExprId, Function, Param, Member, Call, Access = std.ast
+AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+TyId = sema.sema_ty
+Ctx = sema.sema_check
+Inst = sema.sema_inst
+self_ctx = sema.sema_member
+type_from_ast, param_type = sema.sema_denote
+CBackend = gen.gen_c.gen_c_state
+unsupported = gen.gen_c.gen_c_report
+declare_temp = gen.gen_c.gen_c_flow
+arg_value, write_arg, by_ref = gen.gen_c.gen_c_arg
+Site, member_at, method_sig, member_symbol = gen.gen_c.gen_c_member
+recv_inst, inst_open, any_open = gen.gen_c.gen_c_mono
+Piece, write_pieces, write_ok, write_done = gen.gen_c.gen_c_sink
+bodyless, sink_door_shape = gen.gen_c.gen_c_sink
+FORMAT_DOOR, SINK_FLOOR = gen.gen_c.gen_c_sink
+
+RAW_FLOOR: str = "add"
+
+// Recognize the same signature used by the general sink formatter.
+is_floor_door* = (be: CBackend, name: str, f: Function) bool {
+    name.eq(FORMAT_DOOR) && be.sink_door_shape(f)
+}
+
+// The receiver's own byte writer: which member, and its declaration.
+Floor = {
+    name: str,
+    fn: Function,
+}
+
+lower_floor_door* = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    a   : Access,
+    rty : TyId,
+    s   : Site,
+    f   : Function,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    sctx = be.check.self_ctx(s.decl.module.to_usize(), rty).try();
+    ret  = be.answer_of(f, sctx).try();
+    be.floor_of(s, sctx, ret).try().match({
+        None  => be.unsupported(id, "a format door with no byte floor", out),
+        Ok(w) => be.open_floor(id, c, a, rty, s, w, ret, ctx, out),
+    })
+}
+
+// `add(str)` first, then `write`. `add` is overloaded for raw strings and
+// bytes, so `floor_shape`'s exact `str` parameter check is load-bearing;
+// lookup by name alone could select the byte writer. Both names exist for
+// one job and a type may declare both: a String's `add(str)` answers
+// `AllocError` and its `write` is the `Sink` impl's, answering
+// `WriteError` — so the order matters, and the answer test below is what
+// makes it safe either way.
+floor_of = (be :: CBackend, s: Site, sctx: Ctx, ret: TyId)
+           Res<Res<Floor>, AllocError> {
+    be.named_floor(s, sctx, ret, RAW_FLOOR).try().match({
+        Ok(w) => Ok(Ok(w)),
+        None  => be.named_floor(s, sctx, ret, SINK_FLOOR),
+    })
+}
+
+named_floor = (be :: CBackend, s: Site, sctx: Ctx, ret: TyId, name: str)
+              Res<Res<Floor>, AllocError> {
+    found ::= be.alloc.Vec<Member>();
+    member_at(be, s, name, found).try();
+    kept ::= be.alloc.Vec<Floor>();
+    found.loop((h, m) { be.keep_floor(sctx, ret, name, m, kept).try() });
+    Ok(kept.get(0));
+}
+
+keep_floor = (
+    be   :: CBackend,
+    sctx : Ctx,
+    ret  : TyId,
+    name : str,
+    m    : Member,
+    out  :: Vec<Floor>
+) Res<(), AllocError> {
+    m.kind.match({
+        Function(g) => be.keep_floor_fn(sctx, ret, name, g, out),
+        _           => Ok(()),
+    })
+}
+
+// Require a by-reference `str` writer with a body and the same result type.
+keep_floor_fn = (
+    be   :: CBackend,
+    sctx : Ctx,
+    ret  : TyId,
+    name : str,
+    g    : Function,
+    out  :: Vec<Floor>
+) Res<(), AllocError> {
+    be.floor_shape(g, sctx).try().match({
+        false => Ok(()),
+        true  => be.keep_if_answers(sctx, ret, name, g, out),
+    })
+}
+
+floor_shape = (be :: CBackend, g: Function, sctx: Ctx)
+              Res<bool, AllocError> {
+    ((bodyless(g) == false) && (g.params.len == 2) && by_ref(g, 0)).match({
+        false => Ok(false),
+        true  => be.takes_str(g, sctx),
+    })
+}
+
+takes_str = (be :: CBackend, g: Function, sctx: Ctx) Res<bool, AllocError> {
+    g.params.get(1).match({
+        None  => Ok(false),
+        Ok(p) => be.param_is_str(p, sctx),
+    })
+}
+
+param_is_str = (be :: CBackend, p: Param, sctx: Ctx) Res<bool, AllocError> {
+    ty = be.check.param_type(p, sctx).try();
+    Ok(be.check.prim_name(ty).eq("str"));
+}
+
+keep_if_answers = (
+    be   :: CBackend,
+    sctx : Ctx,
+    ret  : TyId,
+    name : str,
+    g    : Function,
+    out  :: Vec<Floor>
+) Res<(), AllocError> {
+    got = be.answer_of(g, sctx).try();
+    (got.index == ret.index).match({
+        false => Ok(()),
+        true  => out.add(Floor(name: name, fn: g)),
+    })
+}
+
+// A member's declared return, resolved with `@Self` bound to the
+// receiver — the door's and the floor's are read the same way, so
+// comparing them compares two answers and not two spellings.
+answer_of = (be :: CBackend, g: Function, sctx: Ctx) Res<TyId, AllocError> {
+    g.ret.match({
+        Ok(t) => be.check.type_from_ast(t, sctx),
+        None  => be.check.types.unknown(),
+    })
+}
+
+// the expansion
+
+// A temporary at the door's own answer, `Ok` until a write says
+// otherwise, and a label every failing write jumps to — the sink door's
+// shape, with the floor's symbol where the record's slot would be.
+open_floor = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    a   : Access,
+    rty : TyId,
+    s   : Site,
+    w   : Floor,
+    ret : TyId,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    inst = be.recv_inst(rty).try();
+    sig ::= be.alloc.Vec<TyId>();
+    be.method_sig(rty, s.decl, w.fn, s.decl.module.to_usize(), inst, sig).try();
+    (be.inst_open(inst) || be.any_open(sig)).match({
+        true  => be.unsupported(
+            id,
+            "a format door on a receiver whose type arguments nothing settles",
+            out
+        ),
+        false => be.write_floor_door(
+            id,
+            c,
+            a,
+            rty,
+            s,
+            w,
+            ret,
+            sig,
+            inst,
+            ctx,
+            out
+        ),
+    })
+}
+
+write_floor_door = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    a    : Access,
+    rty  : TyId,
+    s    : Site,
+    w    : Floor,
+    ret  : TyId,
+    sig  : Vec<TyId>,
+    inst : Inst,
+    ctx  : Ctx,
+    out  :: String
+) Res<(), AllocError> {
+    sym = be.member_symbol(rty, s, w.name, sig, inst).try();
+    recv ::= be.alloc.String().try();
+    be.write_arg(a.base, 0, w.fn, sig, ctx, recv).try();
+    tmp ::= be.fresh_name("t").try();
+    be.declare_temp(ret, tmp.view()).try();
+    be.write_ok(ret, tmp.view()).try();
+    p = Piece(
+        sink: recv.view(),
+        sty: be.check.types.unknown().try(),
+        floor: sym.view(),
+        tmp: tmp.view(),
+        done: be.next_tmp(),
+        id: id,
+        module: s.decl.module.to_usize(),
+        rty: rty,
+        ret: ret
+    );
+    // The receiver is not an argument here, so the format is argument
+    // zero and the values start at one — the member form of the sink
+    // door counts the same way.
+    arg_value(c, 0).match({
+        None      => Ok(()),
+        Ok(first) => write_pieces(be, c, first, 1, p, ctx),
+    }).try();
+    be.write_done(p.done).try();
+    out.add(p.tmp)
+}

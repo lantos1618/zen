@@ -1,0 +1,186 @@
+// C lowering and runtime floor for the `env.in` stdin capability.
+// Runtime error ordinals are mapped to `IoError` by variant name, so the
+// Source declaration may reorder its variants safely.
+
+ExprId = std.ast
+Call = std.ast
+AllocError = std.mem
+str, String = std.text
+TyId = sema.sema_ty
+Ctx = sema.sema_check
+sym_member = gen.gen_name
+Emit = gen.gen_emit
+CBackend = gen.gen_c.gen_c_state
+ctype, request_type = gen.gen_c.gen_c_type
+declare_temp = gen.gen_c.gen_c_flow
+comment = gen.gen_c.gen_c_runtime
+close_else, close_brace, open_rc_test = gen.gen_c.gen_c_flow
+arg_text = gen.gen_c.gen_c_arg
+write_assign_ok, write_assign_err = gen.gen_c.gen_c_flow
+
+// The floor: `fread` on `stdin`, emitted only when a program reads one —
+// an uncalled `static` is a warning.
+// It allocates nothing (`Stdin.read` has no `Alloc`): it fills spare
+// capacity the caller reserved, asking for more than the room is `Full`,
+// and it reads exactly `n` bytes because C cannot ask a stream its
+// length. `fread` answers 0 for both end of input and error, so
+// `ferror` separates them and only the error becomes an `Err`. The
+// `fflush` before blocking keeps a request/response server over two
+// pipes from deadlocking on a block-buffered stdout.
+emit_stdin* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+    be.uses_stdin().match({
+        false => Ok(()),
+        true  => write_stdin(out),
+    })
+}
+
+write_stdin = (out :: Emit) Res<(), AllocError> {
+    comment(
+        out,
+        "IoError, by ordinal, in the order std.core.io declares it"
+    ).try();
+    out.say("#define ZG_IO_OK 0").try();
+    out.say("#define ZG_IO_CLOSED 1").try();
+    out.say("#define ZG_IO_FULL 2").try();
+    out.line().try();
+    comment(
+        out,
+        "at most n bytes onto the end of a run of cap bytes holding len"
+    ).try();
+    out.say(
+        "static int zg_stdin_read(unsigned char *base, size_t len, size_t cap,"
+    ).try();
+    out.say("                         size_t n, size_t *got) {").try();
+    out.indent();
+    out.say("*got = 0;").try();
+    out.say("if (n > cap - len) return ZG_IO_FULL;").try();
+    out.say("if (n == 0) return ZG_IO_OK;").try();
+    out.say("fflush(stdout);").try();
+    out.say("*got = fread(base + len, 1, n, stdin);").try();
+    out.say("if (*got == 0 && ferror(stdin)) return ZG_IO_CLOSED;").try();
+    out.say("return ZG_IO_OK;").try();
+    out.dedent();
+    out.say("}").try();
+    out.line().try();
+    Ok(());
+}
+
+// The lowering: `env.in.read(buf, n)`
+// The buffer arrives by address: the parameter is written `::` — the
+// callee writes the caller's own bytes — and here the callee is the C
+// floor, so this file takes the address itself. It also writes a
+// `Vec`'s fields, the same licence `lower_alloc` takes with an
+// `ArenaState`: the bytes enter the program here, so the one place
+// that knows the shape is the place they are born. `len` is the one
+// field written back; nothing is allocated, as the floor says why.
+
+lower_stdin_read* = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    ret : TyId,
+    aty : TyId,
+    ctx : Ctx,
+    out :: String
+)
+                   Res<(), AllocError> {
+    be.need_stdin();
+    be.request_type(aty).try();
+    usize_ty = be.check.types.prim("usize").try();
+    i32_ty   = be.check.types.prim("i32").try();
+    buf  ::= be.fresh_name("t").try();
+    want ::= be.fresh_name("t").try();
+    got  ::= be.fresh_name("t").try();
+    rc   ::= be.fresh_name("t").try();
+    dst  ::= be.fresh_name("t").try();
+    be.declare_pointer(aty, buf.view()).try();
+    be.declare_temp(usize_ty, want.view()).try();
+    be.declare_temp(usize_ty, got.view()).try();
+    be.declare_temp(i32_ty, rc.view()).try();
+    be.declare_temp(ret, dst.view()).try();
+    be.hold_buffer(c, aty, ctx, buf.view()).try();
+    be.hold_count(c, usize_ty, ctx, want.view()).try();
+    be.write_stdin_call(rc.view(), buf.view(), want.view(), got.view()).try();
+    be.open_rc_test(rc.view()).try();
+    be.io_chain(ret, rc.view(), dst.view()).try();
+    be.close_else().try();
+    be.advance_len(buf.view(), got.view()).try();
+    be.write_assign_ok(ret, got.view(), dst.view()).try();
+    be.close_brace().try();
+    out.add(dst.view())
+}
+
+// `<ctype> *<name>;` — a temporary the ordinary declarer cannot write,
+// because a pointer to a Zen type is not itself a Zen type here.
+declare_pointer = (be :: CBackend, ty: TyId, name: str)
+                  Res<(), AllocError> {
+    cty ::= be.alloc.String().try();
+    be.ctype(ty, cty).try();
+    be.fmt("{} *{name};\n", cty.view())
+}
+
+hold_buffer = (be :: CBackend, c: Call, aty: TyId, ctx: Ctx, buf: str)
+              Res<(), AllocError> {
+    arg ::= be.alloc.String().try();
+    be.arg_text(c, 0, aty, ctx, arg).try();
+    value ::= be.alloc.String().try();
+    value.fmt("&({})", arg.view()).try();
+    be.set_line(buf, value.view())
+}
+
+hold_count = (be :: CBackend, c: Call, usize_ty: TyId, ctx: Ctx, want: str)
+             Res<(), AllocError> {
+    value ::= be.alloc.String().try();
+    be.arg_text(c, 1, usize_ty, ctx, value).try();
+    be.set_line(want, value.view())
+}
+
+write_stdin_call = (be :: CBackend, rc: str, buf: str, want: str, got: str)
+                   Res<(), AllocError> {
+    data ::= be.alloc.String().try();
+    arrow(buf, "data", data).try();
+    len ::= be.alloc.String().try();
+    arrow(buf, "len", len).try();
+    cap ::= be.alloc.String().try();
+    arrow(buf, "capacity", cap).try();
+    be.fmt(
+        "{rc} = zg_stdin_read((unsigned char *){}, {}, {}, {want}, &{got});\n",
+        data.view(),
+        len.view(),
+        cap.view()
+    )
+}
+
+// The bytes that arrived are now part of the buffer, and this is the one
+// field the floor does not write: a `len` bumped inside the C would be a
+// second place that knows what a `Vec` is.
+advance_len = (be :: CBackend, buf: str, got: str) Res<(), AllocError> {
+    len ::= be.alloc.String().try();
+    arrow(buf, "len", len).try();
+    be.fmt("{} = {} + {got};\n", len.view(), len.view())
+}
+
+arrow = (ptr: str, name: str, out :: String) Res<(), AllocError> {
+    out.fmt("{ptr}->").try();
+    out.sym_member(name)
+}
+
+// The two failures a byte-counted read has, and no more: the room was
+// too small, or the stream broke. end of input is neither — it is `Ok(0)`
+// — so there is no third arm and nothing here reports it. The names are
+// `IoError`'s and the test is on the runtime's own macro.
+io_chain = (be :: CBackend, ret: TyId, rc: str, dst: str)
+           Res<(), AllocError> {
+    be.open_full_test(rc).try();
+    be.write_assign_err(ret, "Full", dst).try();
+    be.close_else().try();
+    be.write_assign_err(ret, "Closed", dst).try();
+    be.close_brace().try();
+    Ok(());
+}
+
+open_full_test = (be :: CBackend, rc: str) Res<(), AllocError> {
+    be.fmt("if ({rc} == ZG_IO_FULL) {\n").try();
+    be.indent();
+    Ok(());
+}

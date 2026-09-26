@@ -1,0 +1,41 @@
+// Zen evaluates operator operands left to right, while C leaves many operand
+// orders unspecified. Side-effecting operands make the guarantee observable.
+//
+// The same Counter as its sibling: tick ANSWERS a different value each
+// time, so a wrong order is a wrong number and not a wrong print order.
+//
+// The shapes are where operand order is observable: two calls in one
+// arithmetic chain, a call against a plain value, and a comparison --
+// which lowers at its own level (`comparison_level`) rather than through
+// the trap helpers the first two go through.
+
+Counter = {
+    n :: i32,
+
+    tick = (self :: @Self) i32 {
+        was    = self.n;
+        self.n = self.n + 1;
+        was;
+    }
+}
+
+two = (a: i32, b: i32) i32 { a * 10 + b; }
+
+main = (env: Env) Res<i32, AllocError> {
+    // one chain, two ticks: left to right answers 1, right to left 10
+    a ::= Counter(n: 0);
+    println("chain {}", a.tick() * 10 + a.tick());
+
+    // an operand beside a plain value keeps its place
+    b ::= Counter(n: 0);
+    println("mixed {}", b.tick() + b.n * 100);
+
+    // a comparison's operands run in the order they are written
+    c ::= Counter(n: 0);
+    println("eq {}", c.tick() == c.n);
+
+    // The plain left read must happen before the calling right operand.
+    d ::= Counter(n: 0);
+    println("rhs {}", d.n + d.tick());
+    Ok(0);
+}

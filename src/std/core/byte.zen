@@ -1,0 +1,126 @@
+// ASCII byte predicates and conversions. UTF-8 codepoint operations live in
+// std.text.text_utf8.
+DIGIT_ZERO* : u8 = '0'
+DIGIT_NINE  : u8 = '9'
+LOWER_A     : u8 = 'a'
+LOWER_F     : u8 = 'f'
+LOWER_Z     : u8 = 'z'
+UPPER_A     : u8 = 'A'
+UPPER_F     : u8 = 'F'
+UPPER_Z     : u8 = 'Z'
+
+CASE_GAP    : u8 = 32
+
+ASCII_MAX   : u8 = 127
+
+HEX_BASE*   : u8 = 16
+
+is_ascii* = (b: u8) bool { b <= ASCII_MAX }
+
+is_digit* = (b: u8) bool { b >= DIGIT_ZERO && b <= DIGIT_NINE }
+
+is_lower* = (b: u8) bool { b >= LOWER_A && b <= LOWER_Z }
+
+is_upper* = (b: u8) bool { b >= UPPER_A && b <= UPPER_Z }
+
+is_alpha* = (b: u8) bool { b.is_lower() || b.is_upper() }
+
+is_alnum* = (b: u8) bool { b.is_alpha() || b.is_digit() }
+
+// Includes vertical-tab and form-feed.
+is_space* = (b: u8) bool { b.is_in([' ', '\t', '\n', '\r', '\v', '\f']) }
+
+is_ident_start* = (b: u8) bool { b.is_alpha() || b == '_' }
+
+is_ident_cont*  = (b: u8) bool { b.is_alnum() || b == '_' }
+
+is_hex_digit* = (b: u8) bool {
+    b.is_digit() || (b >= LOWER_A && b <= LOWER_F) || (b >= UPPER_A && b <= UPPER_F)
+}
+
+// None for a non-decimal byte.
+digit_value* = (b: u8) Res<u8> {
+    b.is_digit().match({
+        true  => Ok(b - DIGIT_ZERO),
+        false => None,
+    });
+}
+
+// Encode a decimal digit as ASCII; values outside 0..9 trap.
+digit* = (n: u8) u8 {
+    9 - n;
+    DIGIT_ZERO + n
+}
+
+digit* = (n: u64) u8 {
+    n.match({
+        0 => '0', 1 => '1', 2 => '2', 3 => '3', 4 => '4',
+        5 => '5', 6 => '6', 7 => '7', 8 => '8', 9 => '9',
+        _ => { n - 10; '0' },
+    })
+}
+
+digit* = (n: i64) u8 {
+    n.match({
+        0 => '0', 1 => '1', 2 => '2', 3 => '3', 4 => '4',
+        5 => '5', 6 => '6', 7 => '7', 8 => '8', 9 => '9',
+        _ => { (n < 0).match({ true => n - 1, false => 9 - n }); '0' },
+    })
+}
+
+digit* = (n: usize) u8 {
+    n.match({
+        0 => '0', 1 => '1', 2 => '2', 3 => '3', 4 => '4',
+        5 => '5', 6 => '6', 7 => '7', 8 => '8', 9 => '9',
+        _ => { 9 - n; '0' },
+    })
+}
+
+// Decode one ASCII hexadecimal digit.
+hex_value* = (b: u8) Res<u8> {
+    found: Res<u8> = loop<u8>((h) {
+        b.is_digit().then(() { h.break(b - DIGIT_ZERO) });
+        (b >= LOWER_A && b <= LOWER_F).then(() { h.break(b - LOWER_A + 10) });
+        (b >= UPPER_A && b <= UPPER_F).then(() { h.break(b - UPPER_A + 10) });
+        h.break();
+    });
+    found;
+}
+
+// ASCII bytes outside A-Z are unchanged.
+to_lower* = (b: u8) u8 {
+    b.is_upper().match({
+        true  => b + CASE_GAP,
+        false => b,
+    });
+}
+
+to_upper* = (b: u8) u8 {
+    b.is_lower().match({
+        true  => b - CASE_GAP,
+        false => b,
+    });
+}
+
+// Encode a nibble as lowercase ASCII; values above 15 trap.
+hex_digit* = (nibble: u8) u8 {
+    HEX_BASE - nibble - 1;
+    (nibble < 10).match({
+        true  => DIGIT_ZERO + nibble,
+        false => LOWER_A + nibble - 10,
+    });
+}
+
+hex_digit* = (nibble: u64) u8 {
+    nibble.match({
+        0 => '0', 1 => '1', 2 => '2', 3 => '3',
+        4 => '4', 5 => '5', 6 => '6', 7 => '7',
+        8 => '8', 9 => '9', 10 => 'a', 11 => 'b',
+        12 => 'c', 13 => 'd', 14 => 'e', 15 => 'f',
+        _ => { 15 - nibble; '0' },
+    })
+}
+
+hex_usize* = (b: u8) Res<usize> {
+    b.hex_value().match({ Ok(v) => Ok(v.to_usize()), None => None })
+}

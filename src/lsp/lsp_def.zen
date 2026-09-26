@@ -1,0 +1,362 @@
+// Resolves definition locations from semantic-checker memos. A position with
+// no settled declaration returns a target whose `found` field is false.
+
+str, String = std.text
+Vec, Map = std.collections
+Alloc, AllocError = std.mem
+ExprId, TypeId, Span, Pos, Access, QualifiedName = std.ast
+nowhere = std.ast
+Checker = sema.sema_check
+TyId = sema.sema_ty
+Def, decl_at, dotted = sema.sema_def
+def_type = sema.sema_type
+DeclId = sema.sema_id
+Found, members_of, first_found = sema.sema_member
+source_position, lsp_position, Position, TextRange = lsp.lsp_pos
+path_of, uri_at, doc_text, disk_text = lsp.lsp_uri
+told_at, module_index_of = std.ast.ast_named
+check_standalone = lsp.lsp_query
+check_build = zen.zen_build
+to_json = std.json
+
+Target* = {
+    found*: bool,
+    uri*: str,
+    start*: Position,
+    end*: Position,
+
+    // `null` when nothing was found, else a Location.
+    write* = (self: @Self, a: Alloc, out :: String) Res<(), AllocError> {
+        self.found.match({
+            false => out.add("null"),
+            true  => {
+                encoded ::= Location(uri: self.uri, range: TextRange(start: self.start, end: self.end)).to_json(a).try();
+                out.add(encoded.view())
+            },
+        })
+    }
+}
+
+Location = {
+    uri: str,
+    range: TextRange,
+}
+
+Defn* = {
+    found*: bool,
+    span*: Span,
+}
+
+definition_at* = (
+    a         : Alloc,
+    uri       : str,
+    text      : str,
+    line      : usize,
+    character : usize
+) Res<Target, AllocError> {
+    c ::= check_standalone(a, uri, text).try();
+    seek = Seek(c: c, a: a, file: uri);
+    d    = seek.sought(source_position(text, line, character)).try();
+    Ok(Target(
+        found: d.found,
+        uri: uri,
+        start: lsp_position(text, d.span.start),
+        end: lsp_position(text, d.span.end)
+    ));
+}
+
+definition_in* = (
+    env       : Env,
+    a         : Alloc,
+    workspace : str,
+    path      : str,
+    uri       : str,
+    text      : str,
+    line      : usize,
+    character : usize
+)
+                 Res<Target, AllocError> {
+    checked = check_build(env, a, workspace, path, text).try();
+    seek    = Seek(c: checked.c, a: a, file: checked.rel);
+    d       = seek.sought(source_position(text, line, character)).try();
+    DefinitionSource(env: env, alloc: a, root: checked.root, docs: None, uri: uri, text: text, rel: checked.rel).place(d)
+}
+
+definition_with* = (
+    env       : Env,
+    c         : Checker,
+    a         : Alloc,
+    root      : str,
+    docs      : Map<str, str>,
+    uri       : str,
+    text      : str,
+    rel       : str,
+    line      : usize,
+    character : usize
+)
+                   Res<Target, AllocError> {
+    seek = Seek(c: c, a: a, file: rel);
+    d    = seek.sought(source_position(text, line, character)).try();
+    DefinitionSource(env: env, alloc: a, root: root, docs: Ok(docs), uri: uri, text: text, rel: rel).place(d)
+}
+
+// Source buffers for one definition response. Foreign spans use the open
+// overlay when present, then disk; local spans use the querying buffer.
+DefinitionSource = {
+    env: Env,
+    alloc: Alloc,
+    root: str,
+    docs: Res<Map<str, str>>,
+    uri: str,
+    text: str,
+    rel: str,
+
+    place = (self: @Self, definition: Defn) Res<Target, AllocError> {
+        definition.found.match({
+            false => Ok(no_target()),
+            true  => self.wire(definition.span),
+        })
+    }
+
+    wire = (self: @Self, span: Span) Res<Target, AllocError> {
+        same  = span.file.eq(self.rel);
+        uri   = same.match({
+            true  => self.uri,
+            false => uri_at(self.alloc, self.root, span.file).try(),
+        });
+        bytes = same.match({
+            true  => self.text,
+            false => self.docs.match({
+                None        => disk_text(
+                    self.env,
+                    self.alloc,
+                    path_of(self.alloc, uri).try()
+                ),
+                Ok(overlay) => doc_text(self.env, self.alloc, overlay, uri),
+            }),
+        });
+        Ok(Target(
+            found: true,
+            uri: uri,
+            start: lsp_position(bytes, span.start),
+            end: lsp_position(bytes, span.end)
+        ))
+    }
+}
+
+// One definition lookup: the checker, the allocator for scratch, and the
+// file the position is in.
+Seek = {
+    c    : Checker,
+    a    : Alloc,
+    file : str,
+
+    sought = (self: @Self, p: Pos) Res<Defn, AllocError> {
+        module = self.import_module_defn(p).try();
+        module.found.match({
+            true  => Ok(module),
+            false => told_at(self.c.tree, self.file, p).match({
+                Nothing     => no_defn(),
+                Sig(f)      => defn_of(f.name.span),
+                OfType(ta)  => self.type_defn(ta.id),
+                OfValue(v)  => self.value_defn(v.id, p),
+                Imported(n) => self.global_defn(n.text),
+            }),
+        })
+    }
+
+    module_index = (self: @Self) Res<usize> {
+        module_index_of(self.c.tree, self.file)
+    }
+
+    import_module_defn = (self: @Self, p: Pos) Res<Defn, AllocError> {
+        found ::= no_defn().try();
+        self.module_index().match({
+            None     => (),
+            Ok(from) => self.c.tree.module_at(from).match({
+                None    => (),
+                Ok(src) => src.decls.loop((h, d) {
+                    d.kind.match({
+                        Import(im) => im.module.span.covers(self.file, p).then(() {
+                            found = self.module_defn(im.module).try();
+                        }),
+                        _          => (),
+                    });
+                }),
+            }),
+        });
+        Ok(found)
+    }
+
+    module_defn = (self: @Self, q: QualifiedName) Res<Defn, AllocError> {
+        name = dotted(self.a, q).try();
+        self.c.world.index_of(name).match({
+            None     => no_defn(),
+            Ok(into) => self.c.tree.module_at(into).match({
+                None    => no_defn(),
+                Ok(dst) => defn_of(Span(
+                    file: dst.span.file,
+                    start: dst.span.start,
+                    end: dst.span.start
+                )),
+            }),
+        })
+    }
+
+    type_defn = (self: @Self, id: TypeId) Res<Defn, AllocError> {
+        self.c.type_memo.get(id).match({
+            None     => self.observed_type_defn(id),
+            Ok(memo) => self.c.types.at(memo).match({
+                Named(n) => self.decl_defn(n.decl),
+                Res(_)   => self.global_defn("Res"),
+                Unknown  => self.observed_type_defn(id),
+                _        => no_defn(),
+            }),
+        })
+    }
+
+    observed_type_defn = (self: @Self, id: TypeId) Res<Defn, AllocError> {
+        self.c.resolved_type_decls.get(id).match({
+            None     => no_defn(),
+            Ok(decl) => self.decl_defn(decl),
+        })
+    }
+
+    value_defn = (self: @Self, id: ExprId, p: Pos) Res<Defn, AllocError> {
+        e = self.c.tree.expr_at(id);
+        e.span.covers(self.file, p).match({
+            false => no_defn(),
+            true  => e.kind.match({
+                Name(n)    => self.called_decl(id).match({
+                    Ok(did) => self.decl_defn(did),
+                    None    => self.global_defn(n.text),
+                }),
+                Access(ac) => self.access_defn(id, ac, p),
+                _          => no_defn(),
+            }),
+        })
+    }
+
+    global_defn = (self: @Self, text: str) Res<Defn, AllocError> {
+        self.first_def(text).try().match({
+            None  => no_defn(),
+            Ok(d) => self.decl_defn(d.id),
+        })
+    }
+
+    // The first definition `name` resolves to from this file.
+    first_def = (self: @Self, name: str) Res<Res<Def>, AllocError> {
+        self.module_index().match({
+            None   => Ok(None),
+            Ok(mi) => {
+                found ::= self.a.Vec<Def>();
+                self.c.world.defs_of(mi, name, found).try();
+                Ok(found.get(0))
+            },
+        })
+    }
+
+    access_defn = (self: @Self, id: ExprId, ac: Access, p: Pos)
+                  Res<Defn, AllocError> {
+        ac.name.span.covers(self.file, p).match({
+            false => no_defn(),
+            true  => self.called_decl(id).match({
+                Ok(did) => self.decl_defn(did),
+                None    => self.member_defn(ac),
+            }),
+        })
+    }
+
+    member_defn = (self: @Self, ac: Access) Res<Defn, AllocError> {
+        self.c.expr_memo.get(ac.base).match({
+            Ok(ty) => self.found_defn(ty, ac.name.text),
+            None   => self.c.tree.expr_at(ac.base).kind.match({
+                Name(n) => self.typed_base_defn(n.text, ac.name.text),
+                _       => no_defn(),
+            }),
+        })
+    }
+
+    typed_base_defn = (self: @Self, base: str, name: str)
+                      Res<Defn, AllocError> {
+        self.first_def(base).try().match({
+            None  => no_defn(),
+            Ok(d) => self.variant_defn(d, name).match({
+                Ok(span) => defn_of(span),
+                None     => self.found_defn(self.c.def_type(d).try(), name),
+            }),
+        })
+    }
+
+    variant_defn = (self: @Self, d: Def, name: str) Res<Span> {
+        decl_at(self.c.tree, d.id).match({
+            None   => None,
+            Ok(dd) => dd.kind.match({
+                Enum(e) => e.variants.find((v) { v.name.text.eq(name) }).match({
+                    None  => None,
+                    Ok(v) => Ok(v.name.span),
+                }),
+                _       => None,
+            }),
+        })
+    }
+
+    found_defn = (self: @Self, ty: TyId, name: str) Res<Defn, AllocError> {
+        found ::= self.a.Vec<Found>();
+        self.c.members_of(ty, name, found).try();
+        first_found(found).match({
+            None  => no_defn(),
+            Ok(f) => defn_of(f.span),
+        })
+    }
+
+    // The declaration a call through expression `id` resolved to.
+    called_decl = (self: @Self, id: ExprId) Res<DeclId> {
+        found: Res<DeclId> = loop((done) {
+            self.c.tree.exprs_each((eid, expr) {
+                expr.kind.match({
+                    Call(call) => (call.callee.index == id.index).then(() {
+                        self.c.resolved_call(eid).match({
+                            None     => (),
+                            Ok(decl) => done.break(decl),
+                        });
+                    }),
+                    _          => (),
+                });
+            });
+            done.break();
+        });
+        found
+    }
+
+    decl_defn = (self: @Self, id: DeclId) Res<Defn, AllocError> {
+        decl_at(self.c.tree, id).match({
+            None  => no_defn(),
+            Ok(d) => d.kind.match({
+                Struct(s)   => defn_of(s.name.span),
+                Enum(e)     => defn_of(e.name.span),
+                Alias(x)    => defn_of(x.name.span),
+                Function(f) => defn_of(f.name.span),
+                Const(k)    => defn_of(k.name.span),
+                _           => no_defn(),
+            }),
+        })
+    }
+}
+
+defn_of = (span: Span) Res<Defn, AllocError> {
+    Ok(Defn(found: true, span: span))
+}
+
+no_defn = () Res<Defn, AllocError> {
+    Ok(Defn(found: false, span: nowhere()))
+}
+
+no_target = () Target {
+    Target(
+        found: false,
+        uri: "",
+        start: Position(line: 0, character: 0),
+        end: Position(line: 0, character: 0)
+    )
+}

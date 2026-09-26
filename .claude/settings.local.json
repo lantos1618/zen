@@ -1,0 +1,6 @@
+{
+  "teammateMode": "auto",
+  "worktree": {
+    "baseRef": "head"
+  }
+}

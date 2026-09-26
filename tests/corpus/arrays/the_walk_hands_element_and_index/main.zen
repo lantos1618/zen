@@ -1,0 +1,22 @@
+// A fixed-array walk hands the body both the index and the element. The
+// weighted sum and per-item output make swapping those values visible.
+//
+// The weights make every plausible mix-up land on its own wrong number:
+// hand the body the counter as the value (0,1,2,3) and the total is 14;
+// hand it the element as the index (10,20,30,40) and it is 200. Only the
+// true pairing also prints 200 -- which is why the body prints i beside
+// v as well: neither half can be right alone, and any single-slot slip
+// lands on its own row of the walk.
+//
+// The explicit usize element type keeps index arithmetic homogeneous.
+
+main = (env: Env) Res<i32, AllocError> {
+    xs = [usize, 4](10, 20, 30, 40);
+    total ::= 0;
+    xs.loop((h, i, v) {
+        total = total + i * v;
+        println("{} {}", i, v);
+    });
+    println("{}", total);
+    Ok(0);
+}

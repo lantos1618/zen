@@ -1,0 +1,938 @@
+// Reachability-driven declaration lowering and translation-unit assembly.
+// Bodies are lowered first so they can discover required types and helpers;
+// emitted definitions and prototypes are then sorted by mangled name.
+
+Decl, Function, Param, Span = std.ast
+BlockId, Struct, Enum, Member = std.ast
+AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+Range = std.core
+TyId = sema.sema_ty
+Def, decl_at = sema.sema_def
+Ctx = sema.sema_check
+Inst = sema.sema_inst
+owner_of = sema.sema_inst
+param_type = sema.sema_denote
+self_ctx = sema.sema_member
+ty_at = sema.sema_cand
+Emit, order = gen.gen_emit
+sym_fn, sym_local = gen.gen_name
+GenFault = gen.gen_diag
+CBackend, MethodRef, FnOrigin = gen.gen_c.gen_c_state
+LocalSlot = gen.gen_c.gen_c_frame
+sub, enter_tparams, leave_tparams = gen.gen_c.gen_c_mono
+open_named = gen.gen_c.gen_c_mono
+enter_struct_tparams = gen.gen_c.gen_c_mono
+signature_of = gen.gen_c.gen_c_call
+ctype, declarator, spellable, is_unit, has_storage, is_res = gen.gen_c.gen_c_type
+declared_ret = gen.gen_c.gen_c_type
+closure_storage = gen.gen_c.gen_c_report
+emit_types = gen.gen_c.gen_c_layout
+Dest, block = gen.gen_c.gen_c_stmt
+takes_closure = gen.gen_c.gen_c_inline
+impl_member_at, by_arity, kept_or_arity = gen.gen_c.gen_c_impl
+method_sig, generic_method_sig = gen.gen_c.gen_c_member
+emit_main = gen.gen_c.gen_c_main
+emit_banner, emit_floor, emit_helpers, emit_print, emit_stderr = gen.gen_c.gen_c_runtime
+emit_fs, emit_scope, emit_scope_floor = gen.gen_c.gen_c_runtime
+emit_stdin = gen.gen_c.gen_c_stdin
+emit_env = gen.gen_c.gen_c_env
+emit_clock = gen.gen_c.gen_c_clock
+emit_threads, emit_spawn_envs = gen.gen_c.gen_c_threads
+emit_actor_floor, emit_actor_defs = gen.gen_c.gen_c_actor
+
+// Bound the reachable set by functions lowered. Crossing it reports Overrun
+// instead of silently emitting an incomplete translation unit.
+MAX_FUNCTIONS* : usize = 8192
+
+// The whole translation unit for the program rooted at module `mi`.
+emit_program* = (be :: CBackend, mi: usize, out :: Emit)
+                Res<(), AllocError> {
+    be.lower_program(mi).try();
+    be.emit_prelude(out).try();
+    be.emit_protos(out).try();
+    be.emit_bodies(out).try();
+    be.emit_main(mi, out).try();
+    Ok(());
+}
+
+// The lowering, with nothing assembled. Its own name because a
+// multi-file emission runs it once and then assembles many files off
+// the one result — the walk is over the whole program either way.
+lower_program* = (be :: CBackend, mi: usize) Res<(), AllocError> {
+    be.seed(mi).try();
+    drain(be)
+}
+
+// Everything a translation unit needs above its first prototype. The
+// top of the single file, and the top of `zen.h` when there are many.
+emit_prelude = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+    be.emit_c_headers(out).try();
+    emit_banner(out).try();
+    emit_floor(out).try();
+    emit_scope_floor(be, out).try();
+    emit_fs(be, out).try();
+    be.emit_stdin(out).try();
+    be.emit_env(out).try();
+    be.emit_clock(out).try();
+    be.emit_threads(out).try();
+    be.emit_actor_floor(out).try();
+    emit_print(be, out).try();
+    emit_stderr(be, out).try();
+    emit_helpers(be, out).try();
+    be.emit_types(out).try();
+    // After the types, because a capture record names them, and before
+    // the prototypes, because a `Scope` parameter is a `zg_scope *`.
+    // The spawned closure's heap record obeys the same ordering for the
+    // same reason.
+    be.emit_spawn_envs(out).try();
+    be.emit_actor_defs(out).try();
+    emit_scope(be, out).try();
+    Ok(());
+}
+
+emit_c_headers = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+    Range(0, be.c_headers.len).loop((h, i) {
+        be.c_headers.get(i).match({
+            None       => Ok(()),
+            Ok(header) => out.say(header.view()),
+        }).try();
+    });
+    (be.c_headers.len > 0).then(() { out.line().try() });
+    Ok(())
+}
+
+// Seed each concrete root declaration in source order. Overload lookup uses
+// the same Def identities as call resolution; generic functions and functions
+// with body parameters are reached through their call sites instead.
+seed = (be :: CBackend, mi: usize) Res<(), AllocError> {
+    be.tree.module_at(mi).match({
+        None       => Ok(()),
+        Ok(module) => {
+            module.decls.loop((decl) {
+                be.root_function(decl).match({
+                    None         => (),
+                    Ok(function) => {
+                        be.seed_overloads(mi, function.name.text).try();
+                    },
+                });
+            });
+            Ok(())
+        },
+    })
+}
+
+root_function = (be: CBackend, decl: Decl) Res<Function> {
+    function = decl.kind.match({
+        Function(value) => Ok(value),
+        _               => None,
+    }).try();
+    (function.tparams.len == 0 && !be.takes_closure(function)).ensure().try();
+    Ok(function)
+}
+
+seed_overloads = (be :: CBackend, mi: usize, name: str) Res<(), AllocError> {
+    found ::= be.alloc.Vec<Def>();
+    be.check.world.own_defs(mi, name, found).try();
+    // A concrete overload's name also finds its generic siblings. Only
+    // concrete functions can be queued without a call's instantiation.
+    found.loop((definition) {
+        function: Res<Function> = decl_at(be.tree, definition.id).match({
+            None     => None,
+            Ok(decl) => be.root_function(decl),
+        });
+        function.match({
+            None  => (),
+            Ok(_) => { be.seed_root(definition).try(); },
+        });
+    });
+    Ok(())
+}
+
+// The symbol is built the same way a call site builds it, because the
+// queue's identity is the symbol: a root queued under one name and
+// called under another would be emitted twice.
+seed_root = (be :: CBackend, d: Def) Res<(), AllocError> {
+    inst ::= be.alloc.Inst();
+    sig  ::= be.alloc.Vec<TyId>();
+    be.signature_of(d, inst, sig).try();
+    sym ::= be.alloc.String().try();
+    sym_fn(sym, be.check.types, be.check.world, d.qname, sig, inst).try();
+    be.need_function(d, inst, sym.view())
+}
+
+// Interleaves free-function and member queues until both reach a fixpoint.
+// `MAX_FUNCTIONS` bounds the reachable set and turns exhaustion into a
+// Diagnostic rather than incomplete output.
+drain = (be :: CBackend) Res<(), AllocError> {
+    fi ::= 0;
+    mi ::= 0;
+    loop(be.more(fi, mi), (h) {
+        (fi < be.fn_queue.len).then(() {
+            be.lower_queued(fi).try();
+            fi = fi + 1;
+        });
+        (mi < be.m_queue.len).then(() {
+            be.lower_queued_method(mi).try();
+            mi = mi + 1;
+        });
+    });
+    be.report_overrun(fi, mi).try();
+    Ok(());
+}
+
+// Something left to lower, and room left to lower it in.
+more = (be :: CBackend, fi: usize, mi: usize) bool {
+    ((fi + mi) < MAX_FUNCTIONS)
+        && ((fi < be.fn_queue.len) || (mi < be.m_queue.len))
+}
+
+// Report an exhausted bound rather than leaving unresolved calls in emitted C.
+report_overrun = (be :: CBackend, fi: usize, mi: usize) Res<(), AllocError> {
+    (fi < be.fn_queue.len).then(() { be.overrun_at_fn(fi).try() });
+    ((fi >= be.fn_queue.len) && (mi < be.m_queue.len)).then(() {
+        be.overrun_at_method(mi).try()
+    });
+    Ok(());
+}
+
+// Reported at the first thing that was not lowered, which is the only
+// position that tells a reader anything: it is where the walk stopped.
+overrun_at_fn = (be :: CBackend, fi: usize) Res<(), AllocError> {
+    be.fn_queue.get(fi).match({
+        None  => Ok(()),
+        Ok(d) => be.report(
+            d.definition.span.file,
+            d.definition.span,
+            GenFault.Overrun(MAX_FUNCTIONS)
+        ),
+    }).try();
+    Ok(());
+}
+
+overrun_at_method = (be :: CBackend, mi: usize) Res<(), AllocError> {
+    be.m_queue.get(mi).match({
+        None  => Ok(()),
+        Ok(m) => be.overrun_at_decl(m.method),
+    }).try();
+    Ok(());
+}
+
+// A member has no `Def` of its own, so its position is its owning
+// declaration's — the same `DeclId` the queue entry already carries.
+overrun_at_decl = (be :: CBackend, m: MethodRef) Res<(), AllocError> {
+    decl_at(be.tree, m.decl).match({
+        None  => Ok(()),
+        Ok(x) => be.report(
+            x.span.file,
+            x.span,
+            GenFault.Overrun(MAX_FUNCTIONS)
+        ),
+    }).try();
+    Ok(());
+}
+
+// The instantiation is entered before the body and not inside it. Every
+// type the lowering reads is substituted through `be.inst`, so the one
+// place that knows which emission this is has to be the one that sets
+// it — and a queue entry carries the instantiation precisely so the
+// symbol above the body is the symbol the call site wrote.
+lower_queued = (be :: CBackend, i: usize) Res<(), AllocError> {
+    queued = be.fn_queue.get(i).ok_or(AllocError.OutOfMemory).try();
+    be.enter_inst(queued.inst);
+    be.lower_def(queued.definition)
+}
+
+lower_queued_method = (be :: CBackend, i: usize) Res<(), AllocError> {
+    queued = be.m_queue.get(i).ok_or(AllocError.OutOfMemory).try();
+    be.enter_inst(queued.inst);
+    be.lower_method_ref(queued.method)
+}
+
+lower_def = (be :: CBackend, d: Def) Res<(), AllocError> {
+    decl_at(be.tree, d.id).match({
+        None  => Ok(()),
+        Ok(x) => be.lower_decl(d, x),
+    }).try();
+    Ok(());
+}
+
+lower_decl = (be :: CBackend, d: Def, x: Decl) Res<(), AllocError> {
+    x.kind.match({
+        Function(f) => be.lower_function(d, x, f),
+        _           => Ok(()),
+    })
+}
+
+// one function
+
+// A declaration with no body — `Required` or `Hook` — has nothing to
+// lower and is not a fault.
+lower_function = (be :: CBackend, d: Def, x: Decl, f: Function)
+                 Res<(), AllocError> {
+    f.body.match({
+        None    => Ok(()),
+        Ok(blk) => be.lower_body(d, x, f, blk),
+    })
+}
+
+// The type parameters are in scope for the whole body, not just the
+// signature: a local written `v: T` is a written type like any other,
+// and `T` means nothing unless bound. What each one became is
+// `be.inst`, set by the queue entry.
+lower_body = (be :: CBackend, d: Def, x: Decl, f: Function, blk: BlockId)
+             Res<(), AllocError> {
+    mi   = d.id.module.to_usize();
+    ctx  = be.plain_ctx(mi);
+    mark = be.enter_tparams(f.tparams, d.qname).try();
+    be.lower_shape(f, blk, d.qname, d.name, d.span, ctx, ctx.self_ty, mi).try();
+    be.leave_tparams(mark).try();
+    Ok(());
+}
+
+// one member function
+// "A method is a UFCS function whose first parameter happens to be
+// named `self`" — so it goes through the same shape, with `@Self` bound
+// and a qualified name carrying the type rather than the module.
+
+lower_method_ref = (be :: CBackend, m: MethodRef) Res<(), AllocError> {
+    decl_at(be.tree, m.decl).match({
+        None  => Ok(()),
+        Ok(x) => be.method_in_decl(m, x),
+    })
+}
+
+// An enum carries members the way a struct does — `Color.impl(Coloured,
+// { rgb = (self: @Self) rgb<u8> { .. } })` is the encoding for values on
+// variants — but it declares none of its own (a variant is not a
+// member), so everything it answers is what an impl supplies.
+method_in_decl = (be :: CBackend, m: MethodRef, x: Decl)
+                 Res<(), AllocError> {
+    x.kind.match({
+        Struct(s) => be.method_member(m, s),
+        Enum(_)   => be.supplied_member(m),
+        _         => Ok(()),
+    })
+}
+
+// The type's own members first, then what an impl supplies — same order
+// `sema_supply.zen` states: a member the declaration writes is never
+// contested, one an impl supplies is reached only when the declaration
+// has none. and at the signature the call site resolved — same rule
+// `pick_member` reads a receiver's members by: a name naming two members
+// names neither on its own.
+method_member = (be :: CBackend, m: MethodRef, s: Struct)
+                Res<(), AllocError> {
+    found ::= be.alloc.Vec<Member>();
+    s.members.loop((h, mem) {
+        mem.named(m.name).then(() { found.add(mem).try() });
+    });
+    be.by_sig(m, found).try().match({
+        None    => supplied_member(be, m),
+        Ok(mem) => be.method_body(m, mem),
+    })
+}
+
+supplied_member = (be :: CBackend, m: MethodRef) Res<(), AllocError> {
+    found ::= be.alloc.Vec<Member>();
+    be.impl_member_at(m.decl, m.name, found).try();
+    be.by_sig(m, found).try().match({
+        None    => Ok(()),
+        Ok(mem) => be.method_body(m, mem),
+    })
+}
+
+// Selects the member whose declared signature matches the queued symbol.
+// Arity is sufficient only when the name has one candidate.
+by_sig = (be :: CBackend, m: MethodRef, found: Vec<Member>)
+         Res<Res<Member>, AllocError> {
+    (found.len < 2).match({
+        true  => Ok(by_arity(be, found, m.sig.len)),
+        false => be.member_with_sig(m, found),
+    })
+}
+
+// Arity when no signature matches, because not every queue entry's
+// signature was built by `method_sig`: `gen_c_fat.zen` erases a slot's
+// type parameters before mangling, so a thunk's entry names types this
+// comparison cannot reproduce. Falling back leaves every entry that
+// resolves today resolving the same way.
+member_with_sig = (be :: CBackend, m: MethodRef, found: Vec<Member>)
+                  Res<Res<Member>, AllocError> {
+    kept ::= be.alloc.Vec<Member>();
+    found.loop((h, mem) { be.keep_same_sig(m, mem, kept).try() });
+    Ok(be.kept_or_arity(kept, found, m.sig.len));
+}
+
+// A named helper rather than a `.then` inside the loop body: a loop
+// binding read inside a nested closure does not resolve.
+keep_same_sig = (
+    be   :: CBackend,
+    m    : MethodRef,
+    mem  : Member,
+    kept :: Vec<Member>
+) Res<(), AllocError> {
+    mem.kind.match({
+        Function(f) => be.keep_if_same_sig(m, mem, f, kept),
+        _           => Ok(()),
+    })
+}
+
+// `be.inst` and not an empty one: the queue entry's instantiation was
+// entered before this body was reached, and it is the same `Inst` the
+// call site substituted its own signature through.
+keep_if_same_sig = (
+    be   :: CBackend,
+    m    : MethodRef,
+    mem  : Member,
+    f    : Function,
+    kept :: Vec<Member>
+) Res<(), AllocError> {
+    sig ::= be.alloc.Vec<TyId>();
+    f.tparams.len.eq(0).match({
+        true  => be.method_sig(
+            m.self_ty,
+            m.decl,
+            f,
+            m.decl.module.to_usize(),
+            be.inst,
+            sig
+        ),
+        false => {
+            owner = be.method_tparam_owner(
+                f,
+                m.decl.module.to_usize(),
+                m.qname
+            ).try();
+            be.generic_method_sig(
+                m.self_ty,
+                m.decl,
+                f,
+                m.decl.module.to_usize(),
+                owner,
+                be.inst,
+                sig
+            )
+        },
+    }).try();
+    same_tys(sig, m.sig).match({
+        true  => kept.add(mem),
+        false => Ok(()),
+    })
+}
+
+same_tys = (a: Vec<TyId>, b: Vec<TyId>) bool {
+    (a.len == b.len) && Range(0, a.len).find((i) {
+        ty_at(a, i).eq(ty_at(b, i)) == false
+    }).match({ Ok(_) => false, None => true })
+}
+
+method_body = (be :: CBackend, m: MethodRef, mem: Member)
+              Res<(), AllocError> {
+    mem.kind.match({
+        Function(f) => be.method_fn(m, mem, f),
+        _           => Ok(()),
+    })
+}
+
+method_fn = (be :: CBackend, m: MethodRef, mem: Member, f: Function)
+            Res<(), AllocError> {
+    f.body.match({
+        None    => Ok(()),
+        Ok(blk) => be.method_shape(m, mem, f, blk),
+    })
+}
+
+// The type's parameters and not the member's: "a method of `Vec<T>` is
+// generic in `T` whether or not it declares any of its own", so what a
+// member body names is the declaration it lives in.
+method_shape = (
+    be  :: CBackend,
+    m   : MethodRef,
+    mem : Member,
+    f   : Function,
+    blk : BlockId
+) Res<(), AllocError> {
+    mi      = m.decl.module.to_usize();
+    self_ty = be.method_self(m).try();
+    ctx     = be.check.self_ctx(mi, self_ty).try();
+    mark    = be.enter_struct_tparams(m.decl).try();
+    // And the member's own, under the member's qualified name: an impl
+    // reached through a bound's erased slot is emitted at the byte type,
+    // and `T` in its body means nothing unless the same owner that bound
+    // it in the queue entry binds it again here.
+    owner = be.method_tparam_owner(f, mi, m.qname).try();
+    be.enter_tparams(f.tparams, owner).try();
+    be.lower_shape(f, blk, m.qname, m.name, mem.span, ctx, self_ty, mi).try();
+    be.leave_tparams(mark).try();
+    Ok(());
+}
+
+method_tparam_owner = (be :: CBackend, f: Function, mi: usize, queued: str)
+                      Res<str, AllocError> {
+    ordinary = owner_of(be.check, mi, f.name.text).try();
+    f.tparams.get(0).match({
+        None   => Ok(ordinary),
+        Ok(tp) => {
+            v = be.check.types.var(tp.name.text, ordinary).try();
+            be.inst.bound(v).match({
+                true  => Ok(ordinary),
+                false => Ok(queued),
+            })
+        },
+    })
+}
+
+// `@Self` for a generic receiver is the declaration's own type; for
+// every other receiver it's the one the call site reached. The
+// distinction is exactly where the memo can be wrong: a receiver with
+// no arguments has one emission and nothing to confuse, and `str`'s
+// receiver is a primitive no declaration's name interns to.
+method_self = (be :: CBackend, m: MethodRef) Res<TyId, AllocError> {
+    be.generic_recv(m.self_ty).match({
+        false => Ok(m.self_ty),
+        true  => be.open_self(m),
+    })
+}
+
+generic_recv = (be: CBackend, ty: TyId) bool {
+    be.check.types.at(ty).match({ Named(n) => n.args.len > 0, _ => false })
+}
+
+open_self = (be :: CBackend, m: MethodRef) Res<TyId, AllocError> {
+    be.open_named(m.decl).try().match({
+        None  => Ok(m.self_ty),
+        Ok(t) => Ok(t),
+    })
+}
+
+// the shape both go through
+// `sctx` is the context a signature is read in — a free function's has
+// no `@Self` and a member's binds it to the receiver — and everything
+// else is the same question asked of the same nodes.
+
+lower_shape = (
+    be      :: CBackend,
+    f       : Function,
+    blk     : BlockId,
+    qname   : str,
+    name    : str,
+    span    : Span,
+    sctx    : Ctx,
+    self_ty : TyId,
+    mi      : usize
+)
+              Res<(), AllocError> {
+    ret = be.return_type(f, sctx).try();
+    // Before the body, because lowering a body keeps thunks as well as
+    // the function itself and they belong in the same file.
+    be.enter_unit(mi);
+    be.reset_frame().try();
+    be.check.release(0).try();
+    sig   ::= be.alloc.Vec<TyId>();
+    proto ::= be.alloc.String().try();
+    bind_params(be, f, sctx, sig).try();
+    be.write_proto(qname, name, span, f, ret, sig, proto).try();
+    be.open_buf().try();
+    be.write_body(blk, mi, ret, self_ty, sctx.has_self).try();
+    be.keep(qname, sig, proto, span).try();
+    Ok(());
+}
+
+// Written, then substituted: `Vec<T>.get` returns `Res<T>` and this
+// emission is the one that knows which `T`.
+return_type* = (be :: CBackend, f: Function, ctx: Ctx)
+              Res<TyId, AllocError> {
+    declared = be.declared_ret(f, ctx).try();
+    sub(be, declared)
+}
+
+// A context with a module and nothing else: no `@Self`, no enclosing
+// `Res`. The one a signature is read in, since a signature has no
+// enclosing function of its own.
+plain_ctx* = (be :: CBackend, mi: usize) Ctx {
+    Ctx(
+        module: mi,
+        ret: TyId(index: 0),
+        has_ret: false,
+        self_ty: TyId(index: 0),
+        has_self: false
+    )
+}
+
+// The context a body is lowered in. `ret` and `has_ret` are what
+// `.try()` answers to: "the enclosing function must return a
+// compatible Res".
+body_ctx* = (be :: CBackend, mi: usize, ret: TyId) Ctx {
+    Ctx(
+        module: mi,
+        ret: ret,
+        has_ret: is_res(be, ret),
+        self_ty: TyId(index: 0),
+        has_self: false
+    )
+}
+
+// The same, for a member function: `@Self` stays bound while the body
+// is walked, because a method's body names it as freely as its
+// signature does.
+self_body_ctx* = (
+    be       :: CBackend,
+    mi       : usize,
+    ret      : TyId,
+    self_ty  : TyId,
+    has_self : bool
+) Ctx {
+    Ctx(
+        module: mi,
+        ret: ret,
+        has_ret: is_res(be, ret),
+        self_ty: self_ty,
+        has_self: has_self
+    )
+}
+
+// Parameters are declared in the backend's scope and in sema's, in
+// that order, because the C name a parameter gets is the one the
+// prototype has to print and the type it has is the one `type_of` must
+// answer with.
+bind_params = (be :: CBackend, f: Function, ctx: Ctx, sig :: Vec<TyId>)
+              Res<(), AllocError> {
+    f.params.loop((h, p) {
+        bind_param(be, p, ctx, sig).try();
+    });
+    Ok(());
+}
+
+// `param_type` resolves `@Self`. C declarations use the current concrete
+// Instantiation, while sema keeps the generic declared type in its node memo;
+// Backend reads apply `be.inst` through `ty_of`.
+bind_param = (be :: CBackend, p: Param, ctx: Ctx, sig :: Vec<TyId>)
+             Res<(), AllocError> {
+    declared = be.check.param_type(p, ctx).try();
+    ty       = sub(be, declared).try();
+    sig.add(ty).try();
+    be.declare(p.name.text, ty, p.mutable).try();
+    be.check.bind(p.name.text, declared, p.mutable, true).try();
+    Ok(());
+}
+
+// `<linkage><ret> <symbol>(<params>)`. Static when the translation unit
+// is the whole program, since then nothing but C's own `main` needs
+// external linkage. A multi-file emission drops it: `be.linkage()` is
+// the one place either answer is spelled.
+write_proto = (
+    be    :: CBackend,
+    qname : str,
+    name  : str,
+    span  : Span,
+    f     : Function,
+    ret   : TyId,
+    sig   : Vec<TyId>,
+    out   :: String
+)
+              Res<(), AllocError> {
+    be.check_spellable(name, span, ret, sig).try();
+    out.add(be.linkage()).try();
+    be.ctype(ret, out).try();
+    out.add(" ").try();
+    sym_fn(out, be.check.types, be.check.world, qname, sig, be.inst).try();
+    out.add("(").try();
+    be.write_params(f, sig, out).try();
+    out.add(")").try();
+    Ok(());
+}
+
+write_params = (be :: CBackend, f: Function, sig: Vec<TyId>, out :: String)
+               Res<(), AllocError> {
+    (f.params.len == 0).match({
+        true  => out.add("void"),
+        false => be.write_param_list(f, sig, out),
+    })
+}
+
+write_param_list = (
+    be  :: CBackend,
+    f   : Function,
+    sig : Vec<TyId>,
+    out :: String
+) Res<(), AllocError> {
+    written ::= false;
+    unknown = be.check.types.unknown().try();
+    f.params.loop((h, i, p) {
+        ty = sig.get(i).match({ Ok(t) => t, None => unknown });
+        be.has_storage(ty).then(() {
+            written.then(() { out.add(", ").try() });
+            be.write_param(p, i, sig, out).try();
+            written = true;
+        });
+    });
+    (written == false).then(() { out.add("void").try() });
+    Ok(());
+}
+
+// A `::` parameter is declared as a pointer — see `ref_declarator`.
+write_param = (
+    be  :: CBackend,
+    p   : Param,
+    i   : usize,
+    sig : Vec<TyId>,
+    out :: String
+) Res<(), AllocError> {
+    ty = sig.get(i).match({ Ok(t) => t, None => TyId(index: 0) });
+    name ::= be.alloc.String().try();
+    be.slot_index(p.name.text, p.name.span, name).try();
+    p.mutable.match({
+        false => be.declarator(ty, name.view(), out),
+        true  => be.ref_declarator(ty, name.view(), out),
+    })
+}
+
+// A `::` parameter holds the address of its argument, inlined or not:
+// the body writes the caller's own bytes and every read of the name is
+// a dereference, which is what `LocalSlot.by_ref` records.
+ref_declarator* = (be :: CBackend, ty: TyId, name: str, out :: String)
+                  Res<(), AllocError> {
+    be.ctype(ty, out).try();
+    out.fmt(" *{name}")
+}
+
+slot_index = (be :: CBackend, name: str, span: Span, out :: String)
+             Res<(), AllocError> {
+    be.slot_of(name).match({
+        Ok(s) => be.write_param_slot(name, span, s, out),
+        None  => sym_local(out, name, 1),
+    })
+}
+
+write_param_slot* = (
+    be   :: CBackend,
+    name : str,
+    span : Span,
+    s    : LocalSlot,
+    out  :: String
+) Res<(), AllocError> {
+    be.closure_storage(span, s, "a lambda-holding parameter").try().match({
+        true  => sym_local(out, name, s.index),
+        false => sym_local(out, name, 1),
+    })
+}
+
+// A type with no C spelling is reported once, at the signature, rather
+// than at every use of the parameter it belongs to.
+check_spellable = (
+    be   :: CBackend,
+    name : str,
+    span : Span,
+    ret  : TyId,
+    sig  : Vec<TyId>
+) Res<(), AllocError> {
+    be.report_unspellable(name, span, ret).try();
+    sig.loop((h, t) { be.report_unspellable(name, span, t).try() });
+    Ok(());
+}
+
+report_unspellable = (be :: CBackend, name: str, span: Span, t: TyId)
+                     Res<(), AllocError> {
+    be.spellable(t).match({
+        true  => Ok(()),
+        false => be.report(span.file, span, GenFault.Unspellable(name)),
+    })
+}
+
+// The statements, indented, and no braces: the braces belong to the
+// prototype the body is emitted under, and writing them in one place
+// is what keeps the two from disagreeing. A unit-returning function
+// discards its value; everything else returns one.
+write_body = (
+    be       :: CBackend,
+    blk      : BlockId,
+    mi       : usize,
+    ret      : TyId,
+    self_ty  : TyId,
+    has_self : bool
+) Res<(), AllocError> {
+    ctx = be.self_body_ctx(mi, ret, self_ty, has_self);
+    be.indent();
+    block(be, blk, ctx, ret, be.destination(ret)).try();
+    Ok(());
+}
+
+destination = (be :: CBackend, ret: TyId) Dest {
+    be.is_unit(ret).match({
+        true  => Dest.Discard,
+        false => Dest.Return,
+    })
+}
+
+keep = (be :: CBackend, qname: str, sig: Vec<TyId>, proto: String, span: Span)
+       Res<(), AllocError> {
+    name ::= be.alloc.String().try();
+    sym_fn(name, be.check.types, be.check.world, qname, sig, be.inst).try();
+    text = be.take_buf().try().into_string();
+    be.add_source_function(name, proto, text, span)
+}
+
+// assembly
+
+// Paths are root-relative like diagnostics; escaping keeps one record per row.
+render_symbol_map* = (be :: CBackend, out :: String) Res<(), AllocError> {
+    out.add("zen-symbol-map-v1\n").try();
+    out.add("symbol\tfile\tline\tcolumn\n").try();
+    seq = order(be.alloc, be.functions, (entry) { entry.name.view() }).try();
+    seq.loop((h, i) { be.write_symbol_at(i, out).try() });
+    Ok(());
+}
+
+write_symbol_at = (be :: CBackend, i: usize, out :: String)
+                  Res<(), AllocError> {
+    entry = be.functions.get(i).ok_or(AllocError.OutOfMemory).try();
+    entry.origin.match({
+        Generated    => Ok(()),
+        Source(span) => write_symbol_row(entry.name.view(), span, out),
+    })
+}
+
+write_symbol_row = (symbol: str, span: Span, out :: String)
+                   Res<(), AllocError> {
+    write_map_field(symbol, out).try();
+    out.add('\t').try();
+    write_map_field(span.file, out).try();
+    out.add('\t').try();
+    out.write_usize(span.start.line).try();
+    out.add('\t').try();
+    out.write_usize(span.start.col).try();
+    out.add('\n')
+}
+
+write_map_field = (text: str, out :: String) Res<(), AllocError> {
+    Range(0, text.len).loop((h, i) {
+        text.index(i).match({
+            '\\' => out.add("\\\\"),
+            '\t' => out.add("\\t"),
+            '\n' => out.add("\\n"),
+            '\r' => out.add("\\r"),
+            b    => out.add(b),
+        }).try();
+    });
+    Ok(());
+}
+
+emit_protos = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+    externs = order(
+        be.alloc,
+        be.foreign_functions,
+        (entry) { entry.name.view() }
+    ).try();
+    externs.loop((h, i) {
+        entry = be.foreign_functions.get(i).ok_or(AllocError.OutOfMemory).try();
+        write_proto_line(out, entry.proto).try();
+    });
+    seq = order(be.alloc, be.functions, (entry) { entry.name.view() }).try();
+    seq.loop((h, i) {
+        entry = be.functions.get(i).ok_or(AllocError.OutOfMemory).try();
+        write_proto_line(out, entry.proto).try();
+    });
+    out.line().try();
+    Ok(());
+}
+
+write_proto_line = (out :: Emit, proto: String) Res<(), AllocError> {
+    out.bytes(proto.view()).try();
+    out.say(";").try();
+    Ok(());
+}
+
+emit_bodies = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+    seq = order(be.alloc, be.functions, (entry) { entry.name.view() }).try();
+    seq.loop((h, i) {
+        be.write_body_at(out, i).try();
+    });
+    Ok(());
+}
+
+write_body_at = (be :: CBackend, out :: Emit, i: usize)
+                Res<(), AllocError> {
+    entry = be.functions.get(i).ok_or(AllocError.OutOfMemory).try();
+    out.bytes(entry.proto.view()).try();
+    out.say(" {").try();
+    out.bytes(entry.body.view()).try();
+    out.say("}").try();
+    out.line().try();
+    Ok(());
+}
+
+// The same program, in one file per module. Nothing here re-lowers:
+// `lower_program` has already run; a unit is a
+// selection from the one sorted list of functions, so the bytes of a
+// body do not depend on which file it lands in. `emit_program` above
+// stays the interface for single-file mode.
+
+// The one header, included by every unit: the prelude, and a prototype
+// for every function in the program. A prototype above every body is
+// what already lets the bodies be sorted by name rather than by
+// dependency, so this file is the single-file top with the bodies cut
+// off it.
+emit_header* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+    out.say("#ifndef ZEN_H").try();
+    out.say("#define ZEN_H").try();
+    out.line().try();
+    be.emit_prelude(out).try();
+    be.emit_protos(out).try();
+    out.say("#endif").try();
+    Ok(());
+}
+
+// Completed module selection: body indices retain the global mangled-name
+// order. Empty modules remain represented so the entry can still emit main.
+ModuleBodies* = {
+    unit*: usize,
+    functions*: Vec<usize>,
+}
+
+group_bodies* = (be: CBackend) Res<Vec<ModuleBodies>, AllocError> {
+    groups ::= be.alloc.Vec<ModuleBodies>();
+    Range(0, be.tree.module_count()).loop((h, unit) {
+        groups.add(ModuleBodies(
+            unit: unit,
+            functions: be.alloc.Vec<usize>()
+        )).try();
+    });
+    seq = order(be.alloc, be.functions, (entry) { entry.name.view() }).try();
+    seq.loop((h, index) {
+        unit = be.functions.get(index).ok_or(AllocError.OutOfMemory).try().unit;
+        groups.get(unit).match({
+            None      => (),
+            Ok(group) => {
+                functions ::= group.functions;
+                functions.add(index).try();
+                groups.set(
+                    unit,
+                    ModuleBodies(unit: unit, functions: functions)
+                );
+            },
+        });
+    });
+    Ok(groups)
+}
+
+// Each body is visited once across all units, after the single grouping pass.
+emit_unit* = (
+    be    :: CBackend,
+    root  : usize,
+    group : ModuleBodies,
+    out   :: Emit
+)
+             Res<(), AllocError> {
+    out.say("#include \"zen.h\"").try();
+    out.line().try();
+    group.functions.loop((h, index) {
+        be.write_body_at(out, index).try();
+    });
+    (group.unit == root).match({
+        false => Ok(()),
+        true  => be.emit_main(root, out),
+    }).try();
+    Ok(());
+}

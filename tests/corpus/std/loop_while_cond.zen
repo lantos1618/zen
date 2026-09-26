@@ -1,0 +1,24 @@
+// tests/corpus/std/loop_while_cond.zen
+// Both concise condition forms are tested before every pass. A boolean
+// expression is re-evaluated, and UFCS on a flag re-reads the flag after the
+// body mutates it. The closure form remains for conditions needing a block.
+
+main = (env: Env) Res<i32, AllocError> {
+    n ::= 0;
+    loop(n < 3, (h) {
+        println("n {}", n);
+        n = n + 1;
+    });
+    println("done {}", n);
+
+    never ::= 0;
+    loop(never > 0, (h) {
+        never = never + 1;
+        println("body ran");
+    });
+    println("never {}", never);
+
+    running ::= true;
+    running.loop((h) { running = false; });
+    Ok(0);
+}

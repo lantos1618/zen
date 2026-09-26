@@ -1,0 +1,60 @@
+// Mutable state for one lex pass. Tokens and diagnostics derive spans from the
+// same Cursor, and the caller supplies allocation for both result Vecs.
+
+Pos, Span, Token, TokenKind, Source = std.lex.lex_token
+Diag, LexFault = std.lex.lex_diag
+Cursor, cursor_at = std.lex.lex_cursor
+Alloc, AllocError = std.mem
+Vec = std.collections
+
+Lexer* = {
+    source: Source,
+    cur* :: Cursor,
+    tokens* :: Vec<Token>,
+    diags* :: Vec<Diag>,
+
+    // Emit a token spanning `from` to the cursor.
+    emit* = (self :: @Self, kind: TokenKind, from: Pos) Res<(), AllocError> {
+        self.tokens.add(Token(kind: kind, span: self.span_from(from)));
+    }
+
+    // Report a fault spanning `from` to the cursor. `from` is where the fix
+    // belongs, not where the scanner noticed: an unterminated string is
+    // reported at its opening quote.
+    report* = (self :: @Self, fault: LexFault, from: Pos) Res<(), AllocError> {
+        self.diags.add(Diag(
+            file: self.source.file,
+            fault: fault,
+            span: self.span_from(from)
+        ));
+    }
+
+    span_from* = (self: @Self, from: Pos) Span {
+        Span(start: from, end: self.cur.pos());
+    }
+
+    // The source bytes from `from` to the cursor.
+    since* = (self: @Self, from: Pos) str {
+        self.source.text_in(self.span_from(from))
+    }
+}
+
+// Construct as `alloc.Lexer(source)`.
+Lexer* = (alloc: Alloc, source: Source) Lexer {
+    Lexer(
+        source: source,
+        cur: cursor_at(source.text),
+        tokens: alloc.Vec<Token>(),
+        diags: alloc.Vec<Diag>(),
+    );
+}
+
+// Result of one lex pass. `tokens` is complete even when `diags` is not
+// empty, so a driver can report every fault of a file in one run.
+Lexed* = {
+    source*: Source,
+    tokens*: Vec<Token>,
+    diags*: Vec<Diag>,
+
+    is_clean* = (self: @Self) bool { self.diags.len == 0 }
+}

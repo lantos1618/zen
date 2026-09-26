@@ -1,0 +1,322 @@
+Expr, ExprId, Binary, Literal = std.ast
+Unary, Paren, Index, Match, ArrayLit = std.ast
+AllocError = std.mem
+str = std.text
+TyId, TyArray, is_integer = sema.sema_ty
+SemaFault, NameFault, TypeFault = sema.sema_diag
+Checker = sema.sema_check
+const_int, const_literal, fits, fits_magnitude, fold = sema.sema_const
+len_of, min_of = sema.sema_const
+check_binary* = (c :: Checker, b: Binary, ty: TyId) Res<(), AllocError> {
+    b.op.match({
+        Div => c.check_divisor(b, ty),
+        Rem => c.check_divisor(b, ty),
+        Add => c.check_overflow(b, ty),
+        Sub => c.check_overflow(b, ty),
+        Mul => c.check_overflow(b, ty),
+        _   => Ok(()),
+    })
+}
+
+check_divisor = (c :: Checker, b: Binary, ty: TyId) Res<(), AllocError> {
+    c.const_int(b.rhs).match({
+        None  => Ok(()),
+        Ok(d) => c.divisor_is(b, ty, d),
+    })
+}
+
+divisor_is = (c :: Checker, b: Binary, ty: TyId, d: i64)
+             Res<(), AllocError> {
+    (d == 0).match({
+        true  => c.divide_by_zero(b),
+        false => c.min_over_minus_one(b, ty, d),
+    })
+}
+
+divide_by_zero = (c :: Checker, b: Binary) Res<(), AllocError> {
+    c.refuse(b.op_span, SemaFault.ProvenDivideByZero(NameFault(name: "0")))
+}
+
+// `i32.MIN / -1` is overflow, not division by zero.
+min_over_minus_one = (c :: Checker, b: Binary, ty: TyId, d: i64)
+                     Res<(), AllocError> {
+    (d == 0 - 1).match({
+        true  => c.check_min_numerator(b, ty),
+        false => Ok(()),
+    })
+}
+
+check_min_numerator = (c :: Checker, b: Binary, ty: TyId)
+                      Res<(), AllocError> {
+    c.const_int(b.lhs).match({
+        None  => Ok(()),
+        Ok(n) => c.numerator_is_min(b, ty, n),
+    })
+}
+
+// `min_of` declines a non-integer name, which proves nothing.
+numerator_is_min = (c :: Checker, b: Binary, ty: TyId, n: i64)
+                   Res<(), AllocError> {
+    name = c.prim_name(ty);
+    min_of(name).match({
+        None   => Ok(()),
+        Ok(lo) => (n == lo).match({
+            true  => c.overflow(b, name),
+            false => Ok(()),
+        }),
+    })
+}
+
+check_overflow = (c :: Checker, b: Binary, ty: TyId) Res<(), AllocError> {
+    c.const_int(b.lhs).match({
+        None  => Ok(()),
+        Ok(x) => c.with_lhs(b, ty, x),
+    })
+}
+
+with_lhs = (c :: Checker, b: Binary, ty: TyId, x: i64) Res<(), AllocError> {
+    c.const_int(b.rhs).match({
+        None  => Ok(()),
+        Ok(y) => c.with_both(b, ty, x, y),
+    })
+}
+
+with_both = (c :: Checker, b: Binary, ty: TyId, x: i64, y: i64)
+            Res<(), AllocError> {
+    fold(b.op, x, y).match({
+        None  => Ok(()),
+        Ok(v) => c.check_fits(b, ty, v),
+    })
+}
+
+check_fits = (c :: Checker, b: Binary, ty: TyId, v: i64)
+             Res<(), AllocError> {
+    name = c.prim_name(ty);
+    fits(v, name).match({
+        None      => Ok(()),
+        Ok(false) => c.overflow(b, name),
+        Ok(true)  => Ok(()),
+    })
+}
+
+// The position is the operator token, where a runtime trap prints.
+overflow = (c :: Checker, b: Binary, name: str) Res<(), AllocError> {
+    c.refuse(b.op_span, SemaFault.ProvenOverflow(NameFault(name: name)))
+}
+
+// The literal's own type is always `int`; only `want` matters.
+check_literal* = (c :: Checker, id: ExprId, want: TyId)
+                 Res<(), AllocError> {
+    is_integer(c.prim_name(want)).match({
+        true  => c.literal_within(id, want),
+        false => c.elements_within(id, want),
+    })
+}
+
+element_agrees* = (c :: Checker, id: ExprId, elem: TyId)
+                  Res<(), AllocError> {
+    node = c.tree.expr_at(id);
+    c.expr_memo.get(id).match({
+        None    => Ok(()),
+        Ok(got) => c.coerce(node.span.file, node.span, got, elem, ""),
+    })
+}
+
+elements_within = (c :: Checker, id: ExprId, want: TyId)
+                  Res<(), AllocError> {
+    c.types.at(want).match({
+        Array(a) => c.array_elements(id, a),
+        _        => Ok(()),
+    })
+}
+
+array_elements = (c :: Checker, id: ExprId, a: TyArray) Res<(), AllocError> {
+    c.tree.expr_at(id).kind.match({
+        Array(lit) => c.elem_literals(lit, a.elem),
+        Match(m)   => c.arm_arrays(m, a),
+        Paren(p)   => c.array_elements(p.inner, a),
+        Block(b)   => {
+            c.tree.block_at(b).value.when_ok((value) {
+                c.array_elements(value, a).try();
+            });
+            Ok(())
+        },
+        _          => Ok(()),
+    })
+}
+
+arm_arrays = (c :: Checker, m: Match, a: TyArray) Res<(), AllocError> {
+    m.arms.loop((h, arm) { c.array_elements(arm.body, a).try() });
+    Ok(());
+}
+
+elem_literals = (c :: Checker, lit: ArrayLit, elem: TyId)
+                Res<(), AllocError> {
+    lit.elems.loop((h, i, e) {
+        (i > 0).then(() { c.element_agrees(e, elem).try() });
+        c.check_literal(e, elem).try();
+    });
+    Ok(());
+}
+
+literal_within = (c :: Checker, id: ExprId, want: TyId)
+                 Res<(), AllocError> {
+    node = c.tree.expr_at(id);
+    node.kind.match({
+        Match(m) => c.arm_literals(m, want),
+        Paren(p) => c.const_int(id).match({
+            Ok(value) => c.value_within(id, want, value),
+            None      => c.literal_within(p.inner, want),
+        }),
+        Block(b) => {
+            c.tree.block_at(b).value.when_ok((value) {
+                c.literal_within(value, want).try();
+            });
+            Ok(())
+        },
+        _        => c.folded_within(id, want),
+    })
+}
+
+arm_literals = (c :: Checker, m: Match, want: TyId) Res<(), AllocError> {
+    m.arms.loop((h, a) { c.literal_within(a.body, want).try(); });
+    Ok(());
+}
+
+folded_within = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
+    c.const_int(id).match({
+        None  => c.unfoldable_within(id, want),
+        Ok(v) => c.value_within(id, want, v),
+    })
+}
+
+unfoldable_within = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
+    c.tree.expr_at(id).kind.match({
+        Literal(l) => c.literal_kind_within(id, l, want),
+        _          => Ok(()),
+    })
+}
+
+literal_kind_within = (c :: Checker, id: ExprId, l: Literal, want: TyId)
+                      Res<(), AllocError> {
+    name = c.prim_name(want);
+    l.kind.match({
+        Int => l.integer.match({
+            None      => c.out_of_range(id, want),
+            Ok(value) => fits_magnitude(value, name).match({
+                Ok(true)  => Ok(()),
+                Ok(false) => c.out_of_range(id, want),
+                None      => c.out_of_range(id, want),
+            }),
+        }),
+        _   => Ok(()),
+    })
+}
+
+value_within = (c :: Checker, id: ExprId, want: TyId, v: i64)
+               Res<(), AllocError> {
+    fits(v, c.prim_name(want)).match({
+        None      => Ok(()),
+        Ok(false) => c.out_of_range(id, want),
+        Ok(true)  => Ok(()),
+    })
+}
+
+// The position is the literal the author has to change, which for a
+// negated one is the `-` and not the digits after it.
+out_of_range = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
+    node  = c.tree.expr_at(id);
+    found = c.types.prim("int").try();
+    name  = c.written_literal(node).try();
+    c.refuse(
+        node.span,
+        SemaFault.LiteralOutOfRange(TypeFault(
+            name: name,
+            expected: want,
+            found: found
+        ))
+    )
+}
+
+literal_overflows* = (c: Checker, id: ExprId, want: TyId) bool {
+    c.literal_int(c.tree.expr_at(id)).match({
+        None  => false,
+        Ok(v) => fits(v, c.prim_name(want)).match({
+            None      => false,
+            Ok(false) => true,
+            Ok(true)  => false,
+        }),
+    })
+}
+
+written_literal = (c: Checker, node: Expr) Res<str, AllocError> {
+    node.kind.match({
+        Literal(l) => Ok(l.text),
+        Paren(p)   => c.written_literal(c.tree.expr_at(p.inner)),
+        Unary(u)   => {
+            digits ::= c.written_literal(c.tree.expr_at(u.operand)).try();
+            out    ::= c.alloc.String().try();
+            out.add("-").try();
+            out.add(digits).try();
+            Ok(out.view())
+        },
+        _          => Ok(""),
+    })
+}
+
+literal_int = (c: Checker, node: Expr) Res<i64> {
+    node.kind.match({
+        Literal(l) => const_literal(l),
+        Paren(p)   => c.literal_int(c.tree.expr_at(p.inner)),
+        Unary(u)   => c.literal_neg(u),
+        _          => None,
+    })
+}
+
+literal_neg = (c: Checker, u: Unary) Res<i64> {
+    u.op.match({
+        Neg => c.negate_literal(u.operand),
+        _   => None,
+    })
+}
+
+negate_literal = (c: Checker, id: ExprId) Res<i64> {
+    c.literal_int(c.tree.expr_at(id)).match({
+        None  => None,
+        Ok(v) => Ok(0 - v),
+    })
+}
+
+check_index* = (c :: Checker, node: Expr, x: Index, a: TyArray)
+               Res<(), AllocError> {
+    c.const_int(x.index).match({
+        None  => Ok(()),
+        Ok(i) => c.index_within(node, x, i, a.count),
+    })
+}
+
+// Negative index tested separately: `len_of` floors at zero, so `-1`
+// would arrive as 0 and pass. `zg_idx_s` makes the same split at runtime.
+index_within = (c :: Checker, node: Expr, x: Index, i: i64, count: usize)
+               Res<(), AllocError> {
+    ((i < 0) || (len_of(i) >= count)).match({
+        false => Ok(()),
+        true  => c.out_of_bounds(node, x),
+    })
+}
+
+// Points at the whole index expression, not the `[` a runtime trap
+// prints: a compile error can point at what the author must change.
+out_of_bounds = (c :: Checker, node: Expr, x: Index) Res<(), AllocError> {
+    c.refuse(
+        node.span,
+        SemaFault.ProvenIndexOutOfBounds(NameFault(name: c.written_index(x)))
+    )
+}
+
+written_index = (c: Checker, x: Index) str {
+    c.tree.expr_at(x.index).kind.match({
+        Literal(l) => l.text,
+        _          => "",
+    })
+}

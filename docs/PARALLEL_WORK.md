@@ -9,13 +9,12 @@ build directory when comparing compiler configurations or source snapshots.
 
 | Command or variable | Purpose |
 | --- | --- |
-| `make dev-build` | Build a compiler in `build/dev/zen` with its own generated C, objects, and incremental state. |
+| `make dev-build` | Build a compiler in `build/dev/zen` with its own generated C and output executable. |
 | `make dev-check` | Build that compiler, then run the selected corpus tests. |
 | `make dev-run` | Run tests with an existing compiler; perform no build. |
 | `DEV_DIR=build/lanes/parser` | Give a worker its own build artifacts and compiler. |
 | `DEV_ZEN=/path/to/zen` | Select the compiler output/input explicitly; defaults to `DEV_DIR/zen`. |
-| `ROOT=/path/to/source` | Select the compiler sources to bootstrap. |
-| `J=4` | Limit C compilation workers for a build. |
+| `J=4` | Default test/fixpoint workers; project compilation is serial. |
 | `TEST_J=4` | Limit test workers; defaults to `J`. |
 | `FILTER='corpus/parse/*'` | Select test IDs by glob; an omitted filter selects the whole corpus. |
 | `TEST_ARGS='--timings'` | Forward extra runner options, including repeated filters, shards, and timing reports. |
@@ -82,24 +81,26 @@ make dev-check DEV_DIR=build/lanes/loops FILTER='corpus/loop-basic/*' J=4 TEST_J
 make dev-check DEV_DIR=build/lanes/meta FILTER='corpus/meta/*' J=4 TEST_J=4
 ```
 
-Choose worker counts across all concurrent processes. Two builds with `J=4`
-can run eight C compilations at once; test workers also launch native tools.
+Choose worker counts across all concurrent processes. Each project build
+runs one native compilation at a time; test workers also launch native tools.
 A lane's build and test steps run sequentially. Measure before giving every
 lane all available CPUs.
 
 Artifact isolation does not isolate source edits. On a shared checkout, assign
 non-overlapping file ownership and finish the source batch before building.
 For independent revisions, use separate worktrees/checkouts containing the
-intended changes. `ROOT` can select a source snapshot, but the committed seed,
-native process floor, test fixtures, and test standard library still come from
-the checkout running the command.
+intended changes. Each checkout supplies its own build graph, compiler source,
+committed seed, test fixtures, and standard library.
 
 The development variables affect `dev-*` targets only. Canonical `make build`
 and `make verify` continue to use `./zen` and their existing gate directories.
 Do not point different build directories at the same `DEV_ZEN`, rebuild a lane
 while its tests are running, or run `make clean` while workers use `build/`.
 
-## Validation measurements
+## Historical validation measurements
+
+These measurements used the retired Python incremental driver. They do not
+describe the current Zen project builder.
 
 On September 6, 2026, two `dev-build` processes bootstrapped the full compiler
 from one isolated source snapshot into separate temporary lane directories.

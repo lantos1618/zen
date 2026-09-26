@@ -1,0 +1,121 @@
+// The process ABI floor exposes POSIX operations. Process state, ownership,
+// argument preparation and stream coordination live in std.proc.
+AllocError = std.mem
+Emit = gen.gen_emit
+CBackend = gen.gen_c.gen_c_state
+
+uses_proc = (be: CBackend) bool {
+    be.foreign_functions.find(
+        (f) { f.name.view().starts_with("zg_os_proc_") }
+    ).match({ Ok(_) => true, None => false })
+}
+
+emit_proc_features* = (be: CBackend, out :: Emit) Res<(), AllocError> {
+    be.uses_proc().then(() {
+        out.say("#ifndef _GNU_SOURCE").try();
+        out.say("#define _GNU_SOURCE").try();
+        out.say("#endif").try();
+    });
+    Ok(())
+}
+
+emit_proc* = (be: CBackend, out :: Emit) Res<(), AllocError> {
+    be.uses_proc().then(() { write_proc(out).try(); });
+    Ok(())
+}
+
+write_proc = (out :: Emit) Res<(), AllocError> {
+    out.say("#include <errno.h>").try();
+    out.say("#include <fcntl.h>").try();
+    out.say("#include <poll.h>").try();
+    out.say("#include <signal.h>").try();
+    out.say("#include <spawn.h>").try();
+    out.say("#include <sys/wait.h>").try();
+    out.say("#include <unistd.h>").try();
+    out.say("extern char **environ;").try();
+    out.say("").try();
+    out.say(
+        "/* Only platform layouts, constants and system calls live in this floor. */"
+    ).try();
+    out.say("static int32_t zg_os_proc_pipe(int32_t *fds) {").try();
+    out.say("    int p[2];").try();
+    out.say("#ifdef __APPLE__").try();
+    out.say("    if (pipe(p)) return -1;").try();
+    out.say(
+        "    if (fcntl(p[0], F_SETFD, FD_CLOEXEC) < 0 || fcntl(p[1], F_SETFD, FD_CLOEXEC) < 0) {"
+    ).try();
+    out.say("        close(p[0]); close(p[1]); return -1;").try();
+    out.say("    }").try();
+    out.say("#else").try();
+    out.say("    if (pipe2(p, O_CLOEXEC)) return -1;").try();
+    out.say("#endif").try();
+    out.say("    fds[0] = p[0]; fds[1] = p[1];").try();
+    out.say("    return 0;").try();
+    out.say("}").try();
+    out.say(
+        "static void zg_os_proc_close(int32_t fd) { if (fd >= 0) close(fd); }"
+    ).try();
+    out.say(
+        "static int32_t zg_os_proc_spawn(uint8_t *cwd, uint8_t **argv, int32_t out, int32_t err, int32_t *pid) {"
+    ).try();
+    out.say("    posix_spawn_file_actions_t fa;").try();
+    out.say("    pid_t child;").try();
+    out.say("    int rc = posix_spawn_file_actions_init(&fa);").try();
+    out.say("    if (rc) return rc;").try();
+    out.say(
+        "    if (cwd) rc = posix_spawn_file_actions_addchdir_np(&fa, (char *)cwd);"
+    ).try();
+    out.say(
+        "    if (!rc && out >= 0) rc = posix_spawn_file_actions_adddup2(&fa, out, STDOUT_FILENO);"
+    ).try();
+    out.say(
+        "    if (!rc && err >= 0) rc = posix_spawn_file_actions_adddup2(&fa, err, STDERR_FILENO);"
+    ).try();
+    out.say(
+        "    if (!rc) rc = posix_spawnp(&child, (char *)argv[0], &fa, NULL, (char *const *)argv, environ);"
+    ).try();
+    out.say("    posix_spawn_file_actions_destroy(&fa);").try();
+    out.say("    if (!rc) *pid = (int32_t)child;").try();
+    out.say("    return rc;").try();
+    out.say("}").try();
+    out.say(
+        "/* Readiness bits preserve HUP so Zen can drain remaining bytes before EOF. */"
+    ).try();
+    out.say("static int32_t zg_os_proc_poll(int32_t out, int32_t err) {").try();
+    out.say(
+        "    struct pollfd fds[2] = {{out, POLLIN, 0}, {err, POLLIN, 0}};"
+    ).try();
+    out.say("    int rc = poll(fds, 2, -1);").try();
+    out.say("    if (rc < 0) return errno == EINTR ? -2 : -1;").try();
+    out.say(
+        "    if ((fds[0].revents | fds[1].revents) & POLLNVAL) return -1;"
+    ).try();
+    out.say(
+        "    return (fds[0].revents ? 1 : 0) | (fds[1].revents ? 2 : 0);"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "static int32_t zg_os_proc_read(int32_t fd, uint8_t *buf, size_t cap, size_t *count) {"
+    ).try();
+    out.say("    ssize_t n = read(fd, buf, cap);").try();
+    out.say(
+        "    if (n < 0) return errno == EINTR ? -2 : -1; *count = (size_t)n; return n > 0 ? 1 : 0;"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "static int32_t zg_os_proc_wait(int32_t pid, int32_t *code) {"
+    ).try();
+    out.say("    int status;").try();
+    out.say(
+        "    if (waitpid((pid_t)pid, &status, 0) < 0) return errno == EINTR ? -2 : -1;"
+    ).try();
+    out.say(
+        "    *code = WIFEXITED(status) ? WEXITSTATUS(status) : WIFSIGNALED(status) ? 128 + WTERMSIG(status) : 127;"
+    ).try();
+    out.say("    return 0;").try();
+    out.say("}").try();
+    out.say(
+        "static void zg_os_proc_kill(int32_t pid) { kill((pid_t)pid, SIGKILL); }"
+    ).try();
+    Ok(())
+}

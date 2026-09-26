@@ -160,7 +160,6 @@ CRASH_MARKERS = (
 # Link only native floors named by generated C; keep libraries after sources.
 NATIVE_FLOORS: tuple[tuple[bytes, tuple[Path, ...], tuple[str, ...]], ...] = (
     (b"SSL_", (), ("-lssl", "-lcrypto")),
-    (b"zg_proc_", (REPO_ROOT / "src/std/proc/proc.c",), ()),
 )
 
 
@@ -1193,7 +1192,8 @@ def native_link_args(out_c: Path) -> list[str]:
     sources: list[str] = []
     libraries: list[str] = []
     for symbol, needed_sources, needed_libraries in NATIVE_FLOORS:
-        if symbol not in generated:
+        if not any(line.startswith(b"extern ") and b" " + symbol in line
+                   for line in generated.splitlines()):
             continue
         for source in needed_sources:
             if not source.is_file():
@@ -1778,6 +1778,11 @@ SELF_CHECK_CASES: list[tuple[str, str, str, int | None, bool, str]] = [
 
 NATIVE_LINK_CASES: list[tuple[str, bytes, tuple[str, ...]]] = [
     (
+        "openssl-string-literal-is-not-a-link-dependency",
+        b'const char *name = "SSL_read_ex"; int main(void) { return 0; }\n',
+        (),
+    ),
+    (
         "hello-world-has-no-native-or-openssl-dependency",
         b"int main(void) { return 0; }\n",
         (),
@@ -1793,9 +1798,9 @@ NATIVE_LINK_CASES: list[tuple[str, bytes, tuple[str, ...]]] = [
         ("-lssl", "-lcrypto"),
     ),
     (
-        "proc-reference-selects-only-proc",
-        b"extern void zg_proc_run(void); void f(void) { zg_proc_run(); }\n",
-        (str(REPO_ROOT / "src/std/proc/proc.c"),),
+        "generated-proc-floor-needs-no-extra-link-argument",
+        b"static void zg_os_proc_close(int fd) {} void f(void) { zg_os_proc_close(0); }\n",
+        (),
     ),
 ]
 

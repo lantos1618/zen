@@ -1,0 +1,8 @@
+// Raw native callback boundary. Only a named, nongeneric free function with
+// explicit scalar/pointer parameters and result can be used. No closure state
+// is captured; native APIs should receive an explicit user-data pointer.
+// The caller is responsible for the native signature, thread rules, and the
+// lifetime of any user-data storage retained by the native API.
+Ptr = std.mem
+
+callback*<F> = (function: F) Ptr<()>

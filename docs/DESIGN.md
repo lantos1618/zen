@@ -27,7 +27,20 @@ src/std/...            // the stdlib specified below. ~34 modules.
 
 # How the compiler gets built
 
-The bootstrap was a throwaway: **Python + a tree-sitter grammar → the real compiler → `gen_c` → the generated C ships as stage 0.** It is deleted; `make bootstrap` needs only a C compiler, while the tree-sitter grammar remains for editors and LSP. `make build` adds a Python 3 orchestration script to reuse unchanged artifacts; it does not implement any language rules.
+The original Python frontend bootstrap is retired. The maintained build path is
+**C compiler → committed `seed/zen.c` → seed Zen executes `build.zen` → `./zen`**.
+`make build` and `make bootstrap` use the same path. Make owns only compiling the
+seed; the Zen project builder owns the source graph, C generation, native tool
+invocation, and publication. An existing `./zen` can run `./zen build .` to build
+its own replacement. The compiler target has no unconditional network/TLS link
+dependencies. Python remains a test tool, not a compiler build orchestrator.
+
+Native project builds currently rebuild targets rather than maintaining the
+retired Python incremental cache. They lock their generated workspace, link to
+a candidate beside the requested executable, and rename after success. A failed
+frontend or native command preserves the previous executable, including one
+currently running. Inherited lock descriptors keep the workspace protected if
+a C compiler outlives the Zen driver.
 
 **The grammar is written first, not extracted later.** It is the stage-0 artifact anyway, and writing the rules rather than more examples is what surfaces the ambiguities — the first one already found is that `Alias = Shape` is indistinguishable from a one-variant enum unless the grammar says which.
 
@@ -500,6 +513,14 @@ copy if needed. The method blocks the calling thread, and child-side buffering
 still controls when bytes enter the pipes. Buffered `run` and `run_argv` use
 the same pipe-drainage implementation.
 
+`std.proc` implements argument validation, NUL-terminated argument storage,
+capture buffers, stream scheduling, and child cleanup in Zen using the caller's
+allocator. The C backend emits a small POSIX ABI floor for pipe creation,
+spawn file actions, polling, reading, waiting, and signalling. Platform types
+and constants remain in that floor; emitted C links without a separate process
+runtime source. macOS uses `pipe` plus close-on-exec flags, while Linux uses
+`pipe2` for atomic close-on-exec setup.
+
 `env.threads.every(alloc, milliseconds, target)` runs a `Tick` receiver on one
 worker thread. Returning false from `target.tick()` stops the worker; callers
 must `join<i32>()` before releasing captured resources. A target may send actor
@@ -531,6 +552,64 @@ str*, String* = std.text.string     // types travel with their methods and impls
 A folder root is then just a file of starred bindings, which is why re-export is what makes folders work — and why the prelude can span several files instead of being one enormous one.
 
 ---
+
+# Explicit native bindings
+
+Native functions can be declared in a Zen namespace associated with a system
+header:
+
+```groovy fragment
+C* = c.bind("unistd.h", {
+    getpid* = () c_int
+    close* = (fd: c_int) c_int
+})
+```
+
+A call such as `C.getpid()` is checked against the Zen signature and lowers to
+`getpid()` with `#include <unistd.h>`. There is no generated forwarding wrapper
+or duplicate native prototype. The C compiler sees the actual header. Bindings
+can live in ordinary Zen modules and be imported by name (for example,
+`C, VERSION = posix` when `posix.zen` exports both). Library and framework linking remains a project build
+dependency; the header expression does not infer link flags.
+
+An optional second literal selects a native symbol independently of the Zen
+member name: `c.bind("stdlib.h", "abs", { absolute* = (v: c_int) c_int })`.
+This form calls the symbol through a function-pointer cast with the declared
+signature. Every member of that namespace targets the same symbol. This is
+useful for runtime dispatch such as Objective-C's `objc_msgSend`, but the author
+must supply the correct ABI for every call, including platform-specific return
+conventions. A cast does not prove ABI compatibility or ownership safety.
+
+These are explicit declarations, not automatic C header parsing. The binding
+namespace cannot be constructed as a runtime object. Its body accepts only
+non-generic function signatures without bodies. Constants,
+opaque native type declarations, C record layout, and automatic header imports
+are not implemented by this syntax. An inline binding expression passed to
+`b.lib` is also not implemented: put bindings in a Zen module and declare build
+dependencies separately. The current implementation validates header and symbol
+names when a call is emitted; unused bindings do not cause includes.
+
+`std.native.callback` exposes a named Zen function to a native callback API:
+
+```groovy fragment
+callback = std.native
+compare = (left: Ptr<()>, right: Ptr<()>) i32 {
+    left.to<i32>().read(0) - right.to<i32>().read(0)
+}
+// Pass callback(compare) to a native function-pointer parameter.
+```
+
+It returns a raw `Ptr<()>` containing the function address. The C backend accepts
+only one named, nongeneric free function with a body, explicitly typed immutable
+scalar or pointer parameters, and a scalar, pointer, or unit result. It rejects
+capturing lambdas, local function values, aggregates (including `str`), and
+capability values. A native callback has no hidden `Env` or closure context;
+use the native API's explicit user-data pointer. The caller must supply the
+correct native signature and keep referenced storage alive until the native API
+has stopped invoking it. Thread affinity and synchronization remain the
+caller's responsibility. Raw function/data pointer conversion uses the native
+C toolchain convention supported by the POSIX targets, not a portable ISO C
+guarantee. Objective-C blocks and automatic closure capture are separate features.
 
 # Comptime and `@meta`
 

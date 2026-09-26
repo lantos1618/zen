@@ -164,15 +164,90 @@ decl_value = (
     head = p.head_name(names);
     (names.len > 1).match({
         true  => p.import_decl(m, names),
-        false => p.value_shape(module_level).match({
+        false => p.native_binding_ahead().match({
+            true  => {
+                annotated = written.match({ Ok(_) => true, None => false });
+                (mutable || annotated).then(() {
+                    p.error(
+                        "a native namespace uses an untyped immutable declaration"
+                    ).try();
+                });
+                p.native_binding(m, head, tparams)
+            },
+            false => p.value_shape(module_level).match({
             StructValue => p.struct_decl(m, head, tparams),
             EnumValue   => p.enum_decl(m, head, tparams, written),
             FnValue     => p.fn_decl(m, head, tparams, mutable),
             PathValue   => p.import_decl(m, names),
             AliasValue  => p.alias_decl(m, head, tparams),
             ExprValue   => p.const_decl(m, head, written, mutable),
+            }),
         }),
     });
+}
+
+// A header binding is a namespace of explicitly written native signatures.
+native_binding_ahead = (p: Parser) bool {
+    p.at_text("c") && p.peek_n(1).kind == TokenKind.Dot
+        && p.text(p.peek_n(2)).eq("bind") && p.peek_n(3).kind == TokenKind.ParenOpen
+}
+
+native_text = (p :: Parser) Res<str, AllocError> {
+    token = p.peek();
+    (token.kind == TokenKind.Str).match({
+        false => { p.error("expected a literal native header or symbol name").try(); Ok("") },
+        true  => {
+            raw = p.text(token);
+            p.bump().try();
+            Ok(raw.slice(1, raw.len - 1))
+        },
+    })
+}
+
+native_binding = (p :: Parser, m: Mark, head: ImportName, tparams: Vec<TParam>)
+                 Res<Decl, AllocError> {
+    p.bump().try(); p.bump().try(); p.bump().try();
+    open = p.here_span();
+    p.bump().try();
+    header = p.native_text().try();
+    p.expect(TokenKind.Comma, "expected comma after native header").try();
+    symbol: Res<str> = p.at_kind(TokenKind.Str).match({
+        true  => {
+            value = p.native_text().try();
+            p.expect(
+                TokenKind.Comma,
+                "expected comma after native symbol"
+            ).try();
+            Ok(value)
+        },
+        false => None,
+    });
+    body_start       = p.here();
+    members ::= p.alloc.Vec<Member>();
+    p.struct_members(members).try();
+    body_span = p.span_from(body_start);
+    members.loop((member) {
+        valid = member.kind.match({
+            Function(f) => f.body.match({ None => f.tparams.len == 0, Ok(_) => false }),
+            _           => false,
+        });
+        (!valid).then(() {
+            p.error_at(
+                "native bindings require non-generic function signatures without bodies",
+                member.span
+            ).try();
+        });
+    });
+    (tparams.len > 0).then(
+        () { p.error("native binding namespaces cannot be generic").try(); }
+    );
+    p.eat(TokenKind.Comma).try();
+    p.expect_close(TokenKind.ParenClose, "unclosed native binding", open).try();
+    p.add_decl(DeclKind.Struct(Struct(
+        name: head.name, exported: head.exported, tparams: tparams,
+        members: members, body_span: body_span,
+        native_header: Ok(header), native_symbol: symbol,
+    )), m)
 }
 
 head_name = (p: Parser, names: Vec<ImportName>) ImportName {

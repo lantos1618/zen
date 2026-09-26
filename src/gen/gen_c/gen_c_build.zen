@@ -60,7 +60,14 @@ construct_decl = (
     out :: String
 ) Res<(), AllocError> {
     x.kind.match({
-        Struct(s) => be.construct_struct(id, c, s, d, ty, ctx, out),
+        Struct(s) => s.native_header.match({
+            Ok(_) => be.unsupported(
+                id,
+                "constructing a native binding namespace",
+                out
+            ),
+            None  => be.construct_struct(id, c, s, d, ty, ctx, out),
+        }),
         _         => be.unsupported(id, "a construction of a non-struct", out),
     })
 }

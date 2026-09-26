@@ -8,7 +8,6 @@ Map, Vec = std.collections
 
 BuildArgs, ProjectArgs, Emission, Target, Os, Arch, Abi, Dep, Codegen = std.build
 Build = zen.zen_build
-run_once = zen.zen_run
 entry_of, holds_build_zen = zen.zen_path
 BuildPlan, ExeNode, plan = zen.zen_build_plan
 
@@ -34,7 +33,9 @@ project_present = (env: Env, a: Alloc, job: ProjectArgs, action: Action)
     (checked.diag_count() > 0).then(() { println("{}", report.view()); });
     (build.faults > 0 || checked.diag_count() > 0).match({
         true  => Ok(1),
-        false => plan(a, build.tree, checked, host_target()).match({
+        false => host_target(env, a).try().match({
+            None       => { println("zen: cannot identify a supported native host"); Ok(1) },
+            Ok(target) => plan(a, build.tree, checked, target).match({
             Err(OutOfMemory)              => Err(AllocError.OutOfMemory),
             Err(Refused(Unsupported(at))) => {
                 println(
@@ -50,12 +51,35 @@ project_present = (env: Env, a: Alloc, job: ProjectArgs, action: Action)
                 Ok(1)
             },
             Ok(planned)                   => Project(env: env, a: a, job: job, planned: planned).execute(action),
+            }),
         }),
     })
 }
 
-host_target = () Target {
-    Target(os: Os.Linux, arch: Arch.X86_64, abi: Abi.Gnu)
+// Detect the machine executing the compiler, rather than assuming Linux/x86.
+host_target = (env: Env, a: Alloc) Res<Res<Target>, AllocError> {
+    argv ::= a.Vec<str>();
+    argv.add("uname").try();
+    argv.add("-sm").try();
+    host       = env.proc.run_argv(a, "", argv).match({
+        Ok(result) => (result.code == 0).match({ true => result.out.view(), false => "" }),
+        Err(_)     => "",
+    });
+    known_os   = host.starts_with("Darwin ") || host.starts_with("Linux ");
+    known_arch = host.contains("x86_64") || host.contains("arm64") || host.contains("aarch64");
+    (known_os && known_arch).match({
+        false => Ok(None),
+        true  => {
+            os   = host.starts_with(
+                "Darwin "
+            ).match({ true => Os.Macos, false => Os.Linux });
+            arch = host.contains(
+                "x86_64"
+            ).match({ true => Arch.X86_64, false => Arch.Arm64 });
+            abi  = os.match({ Macos => Abi.Darwin, _ => Abi.Gnu });
+            Ok(Ok(Target(os: os, arch: arch, abi: abi)))
+        },
+    })
 }
 
 // An empty selection means `zen build` builds every executable. `zen run`
@@ -92,6 +116,15 @@ Project = {
     planned: BuildPlan,
 
     execute = (self: @Self, action: Action) Res<i32, AllocError> {
+        overridden = self.env.var("ZEN_BUILD_OUTPUT").value_or("");
+        ambiguous  = !overridden.is_empty() && self.job.target.is_empty() && self.planned.exes.len != 1;
+        ambiguous.match({
+            true  => { println("zen: ZEN_BUILD_OUTPUT requires one selected executable"); Ok(1) },
+            false => self.execute_action(action),
+        })
+    }
+
+    execute_action = (self: @Self, action: Action) Res<i32, AllocError> {
         action.match({
             Test => self.run_tests(),
             _    => self.execute_exes(action),
@@ -249,20 +282,57 @@ Project = {
     build_native = (self: @Self, exe: ExeNode, extension: str)
                    Res<Res<String>, AllocError> {
         output    = self.output_path(exe).try();
-        generated = self.a.String("{}.{}", output.view(), extension).try();
-        self.ensure_parent(generated.view()).try().match({
-            false => Ok(None),
-            true  => self.compile_exe(exe, generated.view()).try().match({
-                false => Ok(None),
-                true  => self.ensure_parent(output.view()).try().match({
-                    false => Ok(None),
-                    true  => self.link_exe(exe, generated.view(), output.view())
-                        .try().match({
-                        true  => Ok(Ok(output)),
-                        false => Ok(None),
-                    }),
-                }),
+        workspace = self.project_path(self.env.var("ZEN_BUILD_DIR").value_or("build")).try();
+        generated = self.a.String(
+            "{}/.zen/{}/program.{}",
+            workspace.view(),
+            exe.name,
+            extension
+        ).try();
+        lock_path = self.a.String("{}.lock", generated.view()).try();
+        ready     = self.ensure_parent(generated.view()).try() && self.ensure_parent(output.view()).try();
+        (!ready || self.env.fs.is_dir(output.view())).match({
+            true  => { println("zen: cannot publish executable `{}`", output.view()); Ok(None) },
+            false => self.env.fs.lock(lock_path.view()).match({
+                Err(_)    => { println("zen: build workspace is locked or unavailable"); Ok(None) },
+                Ok(guard) => {
+                    // Bind an owned local so scope exit releases the lock.
+                    held ::= guard;
+                    self.build_locked(exe, generated.view(), output)
+                },
             }),
+        })
+    }
+
+    // Link beside the destination, then rename only a successful candidate.
+    // The inherited workspace lock also covers a compiler surviving its parent.
+    build_locked = (self: @Self, exe: ExeNode, generated: str, output: String)
+                   Res<Res<String>, AllocError> {
+        candidate = self.a.String("{}.zen-next", output.view()).try();
+        self.env.fs.remove(candidate.view()).match({
+            Err(_) => { println("zen: cannot clear build candidate"); Ok(None) },
+            Ok(_)  => {
+                @scope.defer(
+                    () { self.env.fs.remove(candidate.view()).ignore(); }
+                );
+                symbols             = self.env.var("ZEN_SYMBOL_MAP").value_or("");
+                result: Res<String> = loop<String>((done) {
+                    (!symbols.is_empty()).then(() {
+                        (!self.ensure_parent(symbols).try()).then(() { done.break(); });
+                    });
+                    (!self.compile_exe(exe, generated).try()).then(() { done.break(); });
+                    (!self.link_exe(exe, generated, candidate.view()).try()).then(() { done.break(); });
+                    argv ::= self.a.Vec<str>();
+                    argv.add("mv").try();
+                    argv.add("-f").try();
+                    argv.add(candidate.view()).try();
+                    argv.add(output.view()).try();
+                    self.run_captured(argv).try().match({
+                        true => done.break(output), false => done.break(),
+                    });
+                });
+                Ok(result)
+            },
         })
     }
 
@@ -287,15 +357,51 @@ Project = {
             backend: exe.spec.backend,
             entry: entry,
             std_root: self.job.std_root,
+            symbol_map: self.env.var("ZEN_SYMBOL_MAP").value_or(""),
             ffi: true
         );
-        Ok(run_once(self.env, self.a, args).try() == 0)
+        compiler ::= self.a.Build(self.env, root);
+        compiler.set_std_root(self.job.std_root);
+        compiler.enable_ffi();
+        exe.spec.deps.loop((dep) {
+            self.planned.libs.find((lib) { lib.name.eq(dep.name) }).match({
+                None    => (),
+                Ok(lib) => {
+                    path = self.project_path(lib.spec.src.text).try();
+                    compiler.register_library(lib.name, path.view()).try();
+                },
+            });
+        });
+        compiler.walk(entry_of(self.env, self.a, root, entry).try()).try();
+        compiler.back_end(args).try();
+        compiler.tally();
+        Ok(compiler.code() == 0)
     }
 
     link_exe = (self: @Self, exe: ExeNode, generated: str, output: str)
                Res<bool, AllocError> {
         argv ::= self.a.Vec<str>();
-        argv.add("cc").try();
+        compiler = self.env.var("CC").value_or("cc");
+        valid_cc = self.append_command(compiler, argv).try() && argv.len > 0;
+        flag_words ::= self.a.Vec<str>();
+        valid_flags = self.append_command(
+            self.env.var("CFLAGS").value_or(""),
+            flag_words
+        ).try();
+        (!valid_cc || !valid_flags || (!exe.spec.language.eq("c") && !exe.spec.language.eq("objective-c"))).match({
+            true  => { println("zen: invalid CC or CFLAGS command words"); Ok(false) },
+            false => self.link_command(
+                exe,
+                generated,
+                output,
+                argv,
+                flag_words
+            ),
+        })
+    }
+
+    link_command = (self: @Self, exe: ExeNode, generated: str, output: str, argv :: Vec<str>, flags: Vec<str>)
+                   Res<bool, AllocError> {
         argv.add(exe.spec.optimize.match({
             "size"  => "-Oz",
             "debug" => "-O0",
@@ -316,12 +422,69 @@ Project = {
             argv.add("-Wl,--gc-sections").try();
         });
         exe.spec.strip.then(() { argv.add("-s").try(); });
+        flags.loop((flag) { argv.add(flag).try(); });
+        exe.spec.backend.match({
+            C => {
+                argv.add("-x").try();
+                argv.add(exe.spec.language).try();
+            },
+            _ => (),
+        });
         argv.add(generated).try();
         exe.spec.deps.loop((h, dep) { self.add_dep(dep.name, argv).try(); });
         self.add_std_floors(generated, argv).try();
+        exe.spec.frameworks.match({
+            None      => (),
+            Ok(names) => names.loop((name) {
+                argv.add("-framework").try();
+                argv.add(name).try();
+            }),
+        });
         argv.add("-o").try();
         argv.add(output).try();
         self.run_captured(argv)
+    }
+
+    // CC/CFLAGS use quoted command words, never shell evaluation.
+    append_command = (self: @Self, text: str, argv :: Vec<str>) Res<bool, AllocError> {
+        word      ::= self.a.String().try();
+        quote: u8 ::= 0;
+        escaped   ::= false;
+        started   ::= false;
+        Range(0, text.len).loop((i) {
+            byte = text.index(i);
+            escaped.match({
+                true  => { word.add(byte).try(); escaped = false; },
+                false => {
+                    (byte == 92 && quote != 39).match({
+                        true  => { escaped = true; started = true; },
+                        false => (quote != 0).match({
+                            true  => (byte == quote).match({
+                                true  => { quote = 0; },
+                                false => word.add(byte).try(),
+                            }),
+                            false => (byte == 39 || byte == 34).match({
+                                true  => { quote = byte; started = true; },
+                                false => (byte == 32 || byte == 9 || byte == 10).match({
+                                    true  => started.then(() {
+                                        argv.add(word.view()).try();
+                                        word    = self.a.String().try();
+                                        started = false;
+                                    }),
+                                    false => { word.add(
+                                        byte
+                                    ).try(); started = true; },
+                                }),
+                            }),
+                        }),
+                    });
+                },
+            });
+        });
+        (started && quote == 0 && !escaped).then(
+            () { argv.add(word.view()).try(); }
+        );
+        Ok(quote == 0 && !escaped)
     }
 
     add_dep = (self: @Self, name: str, argv :: Vec<str>)
@@ -382,15 +545,11 @@ Project = {
         self.env.fs.read(self.a, generated).match({
             Err(_)     => Ok(()),
             Ok(source) => {
-                source.view().contains("zg_proc_").then(() {
-                    proc_c = join_path(
-                        self.a,
-                        self.job.std_root,
-                        "std/proc/proc.c"
-                    ).try();
-                    argv.add(proc_c.view()).try();
+                tls ::= false;
+                source.view().split('\n').loop((line) {
+                    (line.starts_with("extern ") && line.contains(" SSL_")).then(() { tls = true; });
                 });
-                source.view().contains("SSL_").then(() {
+                tls.then(() {
                     argv.add("-lssl").try();
                     argv.add("-lcrypto").try();
                 });
@@ -459,6 +618,15 @@ Project = {
     }
 
     output_path = (self: @Self, exe: ExeNode) Res<String, AllocError> {
+        self.env.var("ZEN_BUILD_OUTPUT").match({
+            Ok(path) => path.is_empty().match({
+                true => self.declared_output(exe), false => self.project_path(path),
+            }),
+            None     => self.declared_output(exe),
+        })
+    }
+
+    declared_output = (self: @Self, exe: ExeNode) Res<String, AllocError> {
         exe.spec.out.match({
             Ok(path) => self.project_path(path.text),
             None     => self.a.String(

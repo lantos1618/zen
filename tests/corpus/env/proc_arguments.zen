@@ -1,0 +1,64 @@
+// Arguments stay literal, cwd is applied by spawn, and invalid inputs fail.
+Process, ProcError = std.proc
+
+spawn_failed = <T>(result: Res<T, ProcError>) bool {
+    result.match({ Ok(_) => false, Err(e) => e.match({ SpawnFailed => true, _ => false }) })
+}
+
+main = (env: Env) Res<(), AllocError> {
+    a = env.mem.alloc();
+    env.proc.run(a, "", "printf '%s' \"$0\"").match({
+        Ok(value) => println("shell {}", value.out.view()),
+        Err(_)    => println("unexpected failure"),
+    });
+    argv ::= a.Vec<str>();
+    argv.add("/bin/sh").try();
+    argv.add("-c").try();
+    argv.add("printf '%s' \"$1\"; printf error >&2; exit 7").try();
+    argv.add("sh").try();
+    argv.add("a b;$HOME").try();
+    result = env.proc.run_argv(a, "", argv);
+    result.match({
+        Ok(value) => println(
+            "{} {} {}",
+            value.code,
+            value.out.view(),
+            value.err.view()
+        ),
+        Err(_)    => println("unexpected failure"),
+    });
+    println(
+        "bad cwd {}",
+        spawn_failed(env.proc.run_argv(a, "/zen-no-such-directory", argv))
+    );
+    argv.clear();
+    argv.add("/zen-no-such-executable").try();
+    println("missing {}", spawn_failed(env.proc.run_argv(a, "", argv)));
+    argv.clear();
+    argv.add("").try();
+    println("empty program {}", spawn_failed(env.proc.run_argv(a, "", argv)));
+    argv.clear();
+    argv.add("/bin/sh").try();
+    argv.add("-c").try();
+    argv.add("kill -TERM $$").try();
+    env.proc.run_argv_inherit(a, "", argv).match({
+        Ok(code) => println("signal {}", code),
+        Err(_)   => println("unexpected failure"),
+    });
+    argv.set(2, "test -d . && exit 9");
+    env.proc.run_argv_inherit(a, "/", argv).match({
+        Ok(code) => println("cwd {}", code),
+        Err(_)   => println("unexpected failure"),
+    });
+    bad ::= a.String("printf ignored").try();
+    bad.add(0).try();
+    bad.add("tail").try();
+    println("nul command {}", spawn_failed(env.proc.run(a, "", bad.view())));
+    println(
+        "nul cwd {}",
+        spawn_failed(env.proc.run_argv_inherit(a, bad.view(), argv))
+    );
+    argv.set(0, bad.view());
+    println("nul argv {}", spawn_failed(env.proc.run_argv(a, "", argv)));
+    Ok(())
+}

@@ -46,6 +46,7 @@ is_json_door, lower_json_door = gen.gen_c.gen_c_json
 recv_arg, arg_value, write_arg_at = gen.gen_c.gen_c_arg
 call_callee = sema.sema_call
 omittable = sema.sema_cand
+is_native_callback, lower_native_callback = gen.gen_c.gen_c_callback
 
 // Resolve and emit one source call. The site owns source identity, receiver,
 // and context; backend services remain borrowed method parameters.
@@ -184,6 +185,14 @@ CallSite = {
     }
 
     inline_or_call = (self: @Self, be :: CBackend, d: Def, f: Function,
+                      out :: String) Res<(), AllocError> {
+        is_native_callback(d).match({
+            true  => be.lower_native_callback(self.id, self.c, self.ctx, out),
+            false => self.inline_or_floor(be, d, f, out),
+        })
+    }
+
+    inline_or_floor = (self: @Self, be :: CBackend, d: Def, f: Function,
                       out :: String) Res<(), AllocError> {
         be.inlines(self.c, f).match({
             true  => be.inline_call(

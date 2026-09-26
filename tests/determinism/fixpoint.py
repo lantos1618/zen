@@ -89,7 +89,7 @@ def main() -> int:
             second.mkdir()
             execute([str(zen), 'build', str(source), '--emit-c-dir', str(first)])
             expected = emission(first)
-            sources = sorted(first.glob('*.c')) + [source / 'std/proc/proc.c']
+            sources = sorted(first.glob('*.c'))
             objects = [work / f'unit-{i}.o' for i in range(len(sources))]
             commands = [cache + cc + flags + ['-c', str(src), '-o', str(obj)]
                         for src, obj in zip(sources, objects)]

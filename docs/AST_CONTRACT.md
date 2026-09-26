@@ -140,6 +140,25 @@ its header paths and foreign type metadata. That metadata is separate from
 written syntax. Header-owned opaque types can be used through pointers; their
 C layout must not be invented from a Zen record.
 
+## Explicit native namespaces
+
+A source declaration `C = c.bind("unistd.h", { getpid* = () c_int })`
+uses a `DeclKind.Struct` namespace with `Struct.native_header = Ok("unistd.h")`.
+Its members are ordinary `MemberKind.Function` signatures. The parser rejects
+function bodies, generic functions, data members, and generic namespaces here.
+`Struct.native_symbol` is `None` for direct calls, or the literal second
+argument in `c.bind("header.h", "symbol", { ... })`. Both optional fields default
+to `None` for ordinary structs. The formatter preserves the binding expression.
+
+This source form does not create a `CBindingId` or parse a C header. Argument
+checking uses the written Zen signatures. The C backend includes the requested
+system header when lowering a used call and emits the member name directly.
+An explicit symbol override instead emits a function-pointer cast using the
+written signature and calls that symbol. Header and override names are
+validated during that lowering. All members in an override namespace refer to
+the same native symbol, allowing distinct ABI signatures for a runtime dispatch
+entry point. The binding author is responsible for that ABI agreement.
+
 ## Arena behavior
 
 Nodes are appended once and never mutated. Transformations create new nodes and

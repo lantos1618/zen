@@ -16,8 +16,9 @@ PROFILE_CFLAGS ?= -O2 -std=c99 -g -fno-omit-frame-pointer
 SYMBOL_MAP ?=
 PY      ?= python3
 ROOT    ?= src
+ZEN_STD ?= $(CURDIR)/src
 
-# Development lanes isolate generated C, objects, manifests, and the compiler.
+# Development lanes isolate generated C and the compiler output.
 # Canonical build/verify paths remain fixed; lane variables affect dev-* only.
 DEV_DIR ?= build/dev
 DEV_ZEN ?= $(DEV_DIR)/zen
@@ -27,18 +28,12 @@ TEST_ARGS ?=
 TEST_RESULTS ?= build/test-results
 TEST_CACHE_ARGS ?= --result-cache "$(TEST_RESULTS)"
 
-# HOW MANY C COMPILERS AT ONCE. `cc -O2` is superlinear in a translation
-# unit's size, and the backend's own output is the extreme case: the
-# 110,451-line single unit took 70.4s where the SAME code, emitted one
-# file per module and compiled with -j16, took 8.4s. That ratio is why
-# `--emit-c-dir` exists. Lower it on a small box.
+# Worker count for tests and the split-C fixpoint gate. The Zen project
+# builder currently compiles each native target as one translation unit.
 J       ?= $(shell nproc 2>/dev/null || echo 4)
 
-# ccache WHEN IT IS INSTALLED, and nothing to install or configure when
-# it is not. It only ever helps a `-c` compile: a command that compiles
-# AND LINKS is uncacheable, which is why no recipe below spells both on
-# one line -- that single fact is what made ccache report
-# "Uncacheable calls: 4/4" for every build this project ever ran.
+# Optional ccache for the seed, tests, and split-C verification. Project
+# builds currently compile and link together and do not use object caching.
 # `make CACHE=` turns it off.
 CACHE   ?= $(shell command -v ccache 2>/dev/null)
 ZCC      = $(CACHE) $(CC)
@@ -51,24 +46,41 @@ ZCC      = $(CACHE) $(CC)
 
 all: check
 
-## build: bootstrap from the committed C seed, rebuilding only changed inputs.
-## Content hashes cover Zen sources, native dependencies, toolchain and flags.
-## C emission and linking must succeed before ./zen is atomically replaced.
-## `make clean build` discards the incremental state for a fresh bootstrap.
-build: seed/zen.c
-	$(PY) scripts/build.py --root "$(ROOT)" --cc "$(CC)" --cache "$(CACHE)" \
-	  --cflags="$(CFLAGS)" --jobs "$(J)" $(if $(strip $(SYMBOL_MAP)),--symbol-map "$(SYMBOL_MAP)")
+# Only this first C compilation is outside Zen. Every compiler-source build
+# thereafter is the ordinary Zen project command reading the root build.zen.
+BOOTSTRAP_ZEN := build/bootstrap/zen-seed
 
-## check: incremental build and cached tests; the default development command.
+$(BOOTSTRAP_ZEN): seed/zen.c Makefile
+	@mkdir -p "$(@D)"
+	@set -eu; object="$@.o.$$$$"; candidate="$@.tmp.$$$$"; \
+	  trap 'rm -f "$$object" "$$candidate"' EXIT; \
+	  $(ZCC) $(CFLAGS) -c seed/zen.c -o "$$object"; \
+	  $(CC) "$$object" -o "$$candidate"; \
+	  mv -f "$$candidate" "$@"
+
+## build: seed compiler executes build.zen and atomically publishes ./zen.
+## Requires a C compiler and POSIX shell tools; Python is only used by tests.
+build: export CC := $(CC)
+build: export CFLAGS := $(CFLAGS)
+build: export ZEN_SYMBOL_MAP := $(SYMBOL_MAP)
+build dev-build profile: export ZEN_STD := $(ZEN_STD)
+build: $(BOOTSTRAP_ZEN)
+	@test "$(ROOT)" = src || { echo 'build.zen owns the compiler source entry; ROOT overrides are unsupported'; exit 1; }
+	$(BOOTSTRAP_ZEN) build .
+
+## check: self-hosted build and cached tests; the default development command.
 ## FILTER selects test IDs; TEST_ARGS='--no-result-cache' forces execution.
 check: build
 	$(PY) tests/run.py --zen ./zen --cc "$(CC)" --cc-cache "$(CACHE)" --jobs "$(TEST_J)" \
 	  $(TEST_CACHE_ARGS) $(if $(strip $(FILTER)),--filter "$(FILTER)") $(TEST_ARGS)
 
-## dev-build: build an isolated compiler; choose one DEV_DIR per worker.
-dev-build: seed/zen.c
-	$(PY) scripts/build.py --root "$(ROOT)" --build-dir "$(DEV_DIR)" --output "$(DEV_ZEN)" \
-	  --cc "$(CC)" --cache "$(CACHE)" --cflags="$(CFLAGS)" --jobs "$(J)"
+## dev-build: the same build.zen graph with isolated artifacts and output.
+dev-build: export CC := $(CC)
+dev-build: export CFLAGS := $(CFLAGS)
+dev-build: export ZEN_BUILD_DIR := $(DEV_DIR)
+dev-build: export ZEN_BUILD_OUTPUT := $(DEV_ZEN)
+dev-build: $(BOOTSTRAP_ZEN)
+	$(BOOTSTRAP_ZEN) build .
 
 ## dev-check: build the development compiler, then run FILTER-selected tests.
 ## TEST_J controls test workers; TEST_ARGS forwards runner options such as timings.
@@ -80,9 +92,11 @@ dev-check dev-run:
 	$(PY) tests/run.py --zen "$(DEV_ZEN)" --cc "$(CC)" --cc-cache "$(CACHE)" --jobs "$(TEST_J)" \
 	  $(TEST_CACHE_ARGS) $(if $(strip $(FILTER)),--filter "$(FILTER)") $(TEST_ARGS)
 
-## buildcheck: real-C cache invalidation and atomic publication regressions.
-buildcheck:
-	CC="$(CC)" $(PY) tests/quality/build_incremental.py
+## buildcheck: native project builds, toolchain settings and atomic publication.
+buildcheck: build
+	$(PY) tests/quality/build_selfhost.py --zen ./zen
+	$(PY) tests/quality/native_bindings.py --zen ./zen
+	$(PY) tests/quality/native_callbacks.py --zen ./zen
 
 ## runnercheck: selection/report checks and optional real-C cache regressions.
 runnercheck:
@@ -105,17 +119,8 @@ editors/vscode/node_modules/.zen-dependencies: editors/vscode/package.json edito
 	npm ci --prefix editors/vscode --include=dev --no-audit --no-fund
 	@touch $@
 
-## bootstrap: full seed/source bootstrap using only a C compiler and shell tools.
-## This bypasses incremental state. Publish ./zen after both stages succeed.
-bootstrap: seed/zen.c
-	@mkdir -p build/bootstrap/obj
-	$(ZCC) $(CFLAGS) -c seed/zen.c -o build/bootstrap/obj/seed.o
-	$(ZCC) $(CFLAGS) -c src/std/proc/proc.c -o build/bootstrap/obj/proc.o
-	$(CC) build/bootstrap/obj/seed.o build/bootstrap/obj/proc.o -o build/bootstrap/zen-seed
-	rm -rf build/bootstrap/c && mkdir -p build/bootstrap/c
-	build/bootstrap/zen-seed build $(ROOT) --emit-c-dir build/bootstrap/c
-	ls build/bootstrap/c/*.c | xargs -P $(J) -I{} $(ZCC) $(CFLAGS) -c {} -o {}.o
-	$(CC) build/bootstrap/c/*.o build/bootstrap/obj/proc.o -o zen-new && mv zen-new zen
+## bootstrap: build from the C seed through build.zen, with no existing ./zen.
+bootstrap: build
 
 ## seed: regenerate AND stage, in one target. never two commands —
 ## commit-then-regenerate ships a seed one change stale, and only a
@@ -372,8 +377,7 @@ fmt: build
 asan: seed/zen.c
 	@mkdir -p build/obj
 	$(ZCC) -std=c99 -O1 -g -fsanitize=address,leak -c seed/zen.c -o build/obj/seed-asan.o
-	$(ZCC) -std=c99 -O1 -g -fsanitize=address,leak -c src/std/proc/proc.c -o build/obj/proc-asan.o
-	$(CC) -fsanitize=address,leak build/obj/seed-asan.o build/obj/proc-asan.o -o zen-asan
+	$(CC) -fsanitize=address,leak build/obj/seed-asan.o -o zen-asan
 	tests/bench/asan.sh ./zen-asan
 
 ## ubsan: the compiler under UndefinedBehaviorSanitizer. A signed-overflow
@@ -381,8 +385,7 @@ asan: seed/zen.c
 ubsan: seed/zen.c
 	@mkdir -p build/obj
 	$(ZCC) -std=c99 -O1 -g -fno-omit-frame-pointer -fsanitize=undefined -fno-sanitize-recover=undefined -c seed/zen.c -o build/obj/seed-ubsan.o
-	$(ZCC) -std=c99 -O1 -g -fno-omit-frame-pointer -fsanitize=undefined -fno-sanitize-recover=undefined -c src/std/proc/proc.c -o build/obj/proc-ubsan.o
-	$(CC) -fsanitize=undefined -fno-sanitize-recover=undefined build/obj/seed-ubsan.o build/obj/proc-ubsan.o -o zen-ubsan
+	$(CC) -fsanitize=undefined -fno-sanitize-recover=undefined build/obj/seed-ubsan.o -o zen-ubsan
 	tests/bench/ubsan.sh ./zen-ubsan
 
 ## leak: valgrind's answer to the same question. definite leaks only --
@@ -391,13 +394,14 @@ ubsan: seed/zen.c
 leak: profile
 	tests/bench/leak.sh ./zen-fp
 
-## profile: -O2 keeps samples representative; -g and frame pointers make them
-## readable and walkable. The symbol map names the Zen source behind each
-## mangled native frame. Separate objects leave ordinary ./zen untouched.
-profile: SYMBOL_MAP := build/zen.symbols.tsv
-profile: build
-	ls build/c/*.c | xargs -P $(J) -I{} $(ZCC) $(PROFILE_CFLAGS) -c {} -o {}.profile.o
-	$(CC) build/c/*.c.profile.o build/obj/proc.o -o zen-fp
+## profile: build.zen produces an isolated compiler with native debug frames.
+profile: export CC := $(CC)
+profile: export CFLAGS := $(PROFILE_CFLAGS)
+profile: export ZEN_BUILD_OUTPUT := zen-fp
+profile: export ZEN_BUILD_DIR := build/profile
+profile: export ZEN_SYMBOL_MAP := build/zen.symbols.tsv
+profile: $(BOOTSTRAP_ZEN)
+	$(BOOTSTRAP_ZEN) build .
 
 ## clean: remove all build products, generated compiler outputs, and test outputs.
 clean:

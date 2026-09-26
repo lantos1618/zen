@@ -6,7 +6,8 @@ ExprId, Member = std.ast
 Function, Access, Call = std.ast
 AllocError = std.mem
 Vec = std.collections
-String = std.text
+Range = std.core
+str, String = std.text
 TyId = sema.sema_ty
 Ctx = sema.sema_check
 Actual, sig_fits = sema.sema_cand
@@ -19,6 +20,8 @@ unsupported = gen.gen_c.gen_c_report
 any_open, recv_inst, inst_open = gen.gen_c.gen_c_mono
 signature_of, plain, write_extern, write_call_args = gen.gen_c.gen_c_call
 write_arg_at = gen.gen_c.gen_c_arg
+ctype = gen.gen_c.gen_c_type
+want_of = gen.gen_c.gen_c_expr
 holds = gen.gen_c.gen_c_expr
 construct = gen.gen_c.gen_c_build
 Site, site_of, member_at, method_sig, call_actuals = gen.gen_c.gen_c_member
@@ -284,6 +287,62 @@ AssocSite = {
 
     emit = (self: @Self, be :: CBackend, f: Function, sig: Vec<TyId>,
             inst: Inst, out :: String) Res<bool, AllocError> {
+        header = decl_at(be.tree, self.site.decl).match({
+            Ok(decl) => decl.kind.match({ Struct(raw) => raw.native_header, _ => None }),
+            None     => None,
+        });
+        header.match({
+            Ok(path) => self.emit_native(be, f, sig, path, out),
+            None     => self.emit_zen(be, f, sig, inst, out),
+        })
+    }
+
+    emit_native = (self: @Self, be :: CBackend, f: Function, sig: Vec<TyId>,
+                   header: str, out :: String) Res<bool, AllocError> {
+        valid  = be.need_c_header(header, true).try();
+        symbol = decl_at(be.tree, self.site.decl).match({
+            Ok(decl) => decl.kind.match({ Struct(raw) => raw.native_symbol, _ => None }),
+            None     => None,
+        });
+        (!valid || has_body(f)).match({
+            true  => be.unsupported(
+                self.id,
+                "an invalid native header binding",
+                out
+            ),
+            false => symbol.match({
+                None     => out.add(f.name.text),
+                Ok(name) => name.is_identifier().match({
+                    false => be.unsupported(
+                        self.id,
+                        "an invalid native symbol name",
+                        out
+                    ),
+                    true  => {
+                        // An explicit symbol override requests a typed ABI call.
+                        // This supports APIs such as objc_msgSend without wrappers.
+                        ret = be.want_of(self.id, self.ctx).try();
+                        out.add("((").try();
+                        be.ctype(ret, out).try();
+                        out.add(" (*)(").try();
+                        Range(0, sig.len).loop((i) {
+                            (i > 0).then(() { out.add(", ").try(); });
+                            sig.get(i).match({ Ok(t) => be.ctype(t, out), None => Ok(()) }).try();
+                        });
+                        (sig.len == 0).then(() { out.add("void").try(); });
+                        out.fmt(")){})", name)
+                    },
+                }),
+            }),
+        }).try();
+        out.add("(").try();
+        be.write_call_args(self.call, 0, f, sig, self.ctx, out).try();
+        out.add(")").try();
+        Ok(true)
+    }
+
+    emit_zen = (self: @Self, be :: CBackend, f: Function, sig: Vec<TyId>,
+                inst: Inst, out :: String) Res<bool, AllocError> {
         sym = be.member_symbol(
             self.site.ty,
             self.site,

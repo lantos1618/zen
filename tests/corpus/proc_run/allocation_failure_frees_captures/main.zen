@@ -1,4 +1,5 @@
-// Fail the first allocation after the five native result slots are ready.
+// Sweep allocation failures through argument preparation, pipe setup and
+// output capture. Every failed run must leave the next process runnable.
 
 FailAfter = {
     base: Alloc,
@@ -37,16 +38,24 @@ FailAfter.impl(Alloc, {
 main = (env: Env) Res<(), AllocError> {
     alloc ::= env.mem.alloc();
     left  ::= alloc.Vec<usize>();
-    left.add(5).try();
+    left.add(0).try();
     failing = FailAfter(base: alloc, left: left.ptr());
-
-    env.proc.run(failing, "", "printf out; printf err >&2").match({
-        Ok(_)  => println("allocation unexpectedly succeeded"),
-        Err(e) => e.match({
-            ReadFailed  => println("allocation failed"),
-            SpawnFailed => println("spawn failed"),
-            WaitFailed  => println("wait failed"),
-        }),
+    errors    ::= false;
+    completed ::= false;
+    valid     ::= true;
+    Range(0, 32).loop((budget) {
+        left.ptr().write(0, budget);
+        env.proc.run(failing, "", "printf out; printf err >&2").match({
+            Ok(value) => {
+                completed = true;
+                valid     = valid && value.code == 0 && value.out.view().eq("out") && value.err.view().eq("err");
+            },
+            Err(e)    => {
+                errors = true;
+                valid  = valid && e.match({ ReadFailed => true, _ => false });
+            },
+        });
     });
+    println("allocation failures {} completion {}", errors && valid, completed);
     Ok(())
 }

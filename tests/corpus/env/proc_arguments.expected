@@ -1,0 +1,10 @@
+shell sh
+7 a b;$HOME error
+bad cwd true
+missing true
+empty program true
+signal 143
+cwd 9
+nul command true
+nul cwd true
+nul argv true

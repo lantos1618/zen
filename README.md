@@ -64,13 +64,26 @@ owned chunk directly to its decoder without copying it through a `String`.
 ## Building
 
 ```sh
-make             # incremental build and cached test results
+make             # self-hosted build and cached test results
 make check       # same fast development check; FILTER selects tests
-make build       # incremental build; C compiler and Python 3
-make bootstrap   # fresh bootstrap; needs only a C compiler
+make build       # C seed -> Zen executes build.zen -> ./zen
+make bootstrap   # same seed bootstrap; no installed Zen or Python needed
 make test        # source gates and the corpus, with cached passing results
 make verify      # all required gates; fresh test execution and full fixpoint
 ```
+
+The compiler's own target lives in `build.zen`. Make only compiles the committed
+C seed into `build/bootstrap/zen-seed`; that executable runs `build .` and builds
+`./zen` through the ordinary Zen project builder. Once built, `./zen build .`
+rebuilds the compiler itself. No Python build driver or OpenSSL library is
+required for this path; Python and Node remain test-tool dependencies.
+
+Project builds currently regenerate and compile their targets on each invocation.
+The retired Python incremental cache is not used. Native outputs are linked to
+sibling candidates and atomically replaced only after success. `CC` and `CFLAGS`
+accept quoted command words without shell evaluation. `ZEN_BUILD_OUTPUT` selects
+an isolated output for a single target; `ZEN_BUILD_DIR` isolates generated files.
+`make dev-build` and `make profile` use that same project path.
 
 Use `make check TEST_ARGS='--no-result-cache'` to force fresh development
 tests. After a compiler source batch, `make -j1 seed verify` regenerates the

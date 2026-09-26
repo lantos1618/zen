@@ -39,6 +39,7 @@ emit_fs, emit_scope, emit_scope_floor = gen.gen_c.gen_c_runtime
 emit_stdin = gen.gen_c.gen_c_stdin
 emit_env = gen.gen_c.gen_c_env
 emit_clock = gen.gen_c.gen_c_clock
+emit_proc_features, emit_proc = gen.gen_c.gen_c_proc
 emit_threads, emit_spawn_envs = gen.gen_c.gen_c_threads
 emit_actor_floor, emit_actor_defs = gen.gen_c.gen_c_actor
 
@@ -68,9 +69,11 @@ lower_program* = (be :: CBackend, mi: usize) Res<(), AllocError> {
 // Everything a translation unit needs above its first prototype. The
 // top of the single file, and the top of `zen.h` when there are many.
 emit_prelude = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+    be.emit_proc_features(out).try();
     be.emit_c_headers(out).try();
     emit_banner(out).try();
     emit_floor(out).try();
+    be.emit_proc(out).try();
     emit_scope_floor(be, out).try();
     emit_fs(be, out).try();
     be.emit_stdin(out).try();

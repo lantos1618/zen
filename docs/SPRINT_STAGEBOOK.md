@@ -7,8 +7,29 @@ history.
 
 ## Current state — resume here
 
-**Checkpoint:** `REVIEW-INTEGRATION`
-**Status:** Reviewed the accumulated changes on `main` at `f6662bf44`.
+**Checkpoint:** `NATIVE-VOICE-LIBRARIES`
+**Status:** Header-backed native bindings now include `std.native.callback` for
+explicitly typed nongeneric scalar/pointer functions. The callback gate executes
+real libc qsort and rejects unsupported captures and ABI shapes. The final
+compiler passes the 194-unit/seed fixpoint. `make -j1 seed verify` regenerates
+the seed and passes source lint (one existing warning), then stops at the
+unavailable `npx` grammar prerequisite. This is not aggregate repository-green.
+
+Sibling projects now separate macOS capture/windowing (`zen-macos`), FFT/WAV
+processing (`zen-audio`), direct native Parakeet inference (`zen-parakeet`), an
+optional Whisper CLI adapter (`zen-whisper`), and application composition
+(`zen-tui`). No Python inference layer or handwritten C forwarding shim is used
+in the selected Parakeet path. External Apple/NVIDIA libraries remain native
+runtime dependencies. Git excludes downloaded SDKs, model weights, and audio.
+Focused evidence is in ignored `build/source_health/voice/` and sibling build
+validation notes. `docs/LIBRARIES.md` records dependency and ownership boundaries.
+
+Earlier proc/memory C emitters are not yet converted to the new binding API.
+SIMD vector types, automatic C record import, a package resolver, custom GPU
+glyph rendering, and terminal emulation remain future work.
+
+**Previous checkpoint:** `REVIEW-INTEGRATION`
+**Previous status:** Reviewed the accumulated changes on `main` at `f6662bf44`.
 Executable tests use `Builder.exe_test(Exe)` consistently in the planner,
 fixtures, and maintained documentation. Parser memoization now falls back to
 scanning when cache allocation is incomplete. The repeated-build test holds
@@ -69,8 +90,9 @@ in-progress project-test lane is either green or has a written blocker.
 
 ### S1 — Build publication and repeatable build — build agent
 
-**Files:** `scripts/build.py`, its focused tests, and only build-specific
-Makefile changes coordinated with integration.
+**Files:** `src/zen/zen_project.zen`, `tests/quality/build_selfhost.py`, the root
+`build.zen`, and build-specific Makefile changes coordinated with integration.
+The Python incremental driver was retired at `ZEN-SELF-BUILD`.
 
 **Work:** verify temporary output, successful execution, and one atomic rename;
 eliminate overlapping publication paths. Add a repeated-build regression and
@@ -212,3 +234,11 @@ stagebook after the integration run.
 | S0-BASELINE | 2026-09-25 | Ledger created; dirty tree observed | `main` `2bab4016d`; `git status --short` | Integration agent runs baseline commands |
 
 | REVIEW-INTEGRATION | 2026-09-25 | Reviewed batch; fresh aggregate passed | `make -j1 seed verify J=8 TEST_J=8`; 1347 passed, 0 failed, 1 deferred | Resume unresolved stages from the current checkpoint |
+
+| PROC-ZEN-MIGRATION | 2026-09-26 | Process runtime moved to Zen; macOS focused checks and fixpoint pass; aggregate blocked | Local uncommitted changes; `make -j1 seed verify`; 7 process / 8 project tests; 193-unit fixpoint; full corpus 1329 passed, 19 failed, 1 deferred | Resolve recorded platform/toolchain limits before claiming aggregate green |
+
+| ZEN-SELF-BUILD | 2026-09-26 | Root build graph now builds the compiler in Zen; Python driver retired | `make -j1 seed verify` built/staged seed then stopped at missing npx; direct `./zen build .`; 7 self-build and 8 project tests | Restore aggregate test prerequisites; see local self-build check report |
+
+| NATIVE-BINDINGS-MACOS | 2026-09-26 | Header-backed bindings, library imports, and native SDK app integrated | 13 binding tests; app build and 30 Metal frames; aggregate blocked by missing npx; final fixpoint in local report | Migrate standard native modules; extend app rendering and async pipeline |
+
+| NATIVE-VOICE-LIBRARIES | 2026-09-26 | Native callbacks and separate audio/model libraries integrated | 194-unit/seed fixpoint; native binding/callback gates; aggregate blocked at missing npx | Continue library ergonomics and native type import; consult voice validation report |

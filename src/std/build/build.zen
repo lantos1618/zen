@@ -104,6 +104,8 @@ Exe* = {
 
     backend* :: Codegen = Codegen.C,
     optimize* :: str = "speed",
+    language* :: str = "c",
+    frameworks* :: Res<Vec<str>> = None,
     strip* :: bool = false,
 
     // None selects build/{os}-{arch}/{name}, with .js for JavaScript.

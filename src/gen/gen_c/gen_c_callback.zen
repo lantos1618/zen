@@ -1,0 +1,145 @@
+// A native callback is the address of an ordinary concrete Zen function.
+// Reject closures and non-C value layouts instead of manufacturing an ABI.
+ExprId, Call, Function = std.ast
+AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+TyId = sema.sema_ty
+Def, decl_at = sema.sema_def
+Ctx = sema.sema_check
+Inst = sema.sema_inst
+CBackend = gen.gen_c.gen_c_state
+unsupported = gen.gen_c.gen_c_report
+signature_of = gen.gen_c.gen_c_call
+declared_ret, spellable, is_unit = gen.gen_c.gen_c_type
+sym_fn = gen.gen_name
+
+is_native_callback* = (d: Def) bool {
+    d.qname.eq("std.native.callback") || d.qname.eq("std.native.native.callback")
+}
+
+lower_native_callback* = (
+    be   :: CBackend,
+    id   : ExprId,
+    call : Call,
+    ctx  : Ctx,
+    out  :: String
+) Res<(), AllocError> {
+    candidate = be.callback_definition(call, ctx).try();
+    candidate.match({
+        None  => be.unsupported(
+            id,
+            "a native callback must name one nongeneric free function with an explicit C scalar/pointer signature and body",
+            out
+        ),
+        Ok(d) => be.emit_callback(id, d, out),
+    })
+}
+
+callback_definition = (be :: CBackend, call: Call, ctx: Ctx)
+                      Res<Res<Def>, AllocError> {
+    found ::= be.alloc.Vec<Def>();
+    name = call.args.get(0).match({
+        None    => "",
+        Ok(arg) => be.tree.expr_at(arg.value).kind.match({
+            Name(n) => n.text,
+            _       => "",
+        }),
+    });
+    (call.args.len == 1 && name.len > 0 && be.slot_of(
+        name
+    ).match({ Ok(_) => false, None => true })).match({
+        false => Ok(None),
+        true  => {
+            be.check.world.defs_of(ctx.module, name, found).try();
+            Ok((found.len == 1).match({ true => found.get(0), false => None }))
+        },
+    })
+}
+
+emit_callback = (be :: CBackend, id: ExprId, d: Def, out :: String)
+                Res<(), AllocError> {
+    function: Res<Function> = decl_at(be.tree, d.id).match({
+        None     => None,
+        Ok(decl) => decl.kind.match({ Function(f) => Ok(f), _ => None }),
+    });
+    function.match({
+        None  => be.unsupported(
+            id,
+            "a native callback must name a free function",
+            out
+        ),
+        Ok(f) => be.callback_signature(id, d, f, out),
+    })
+}
+
+callback_signature = (
+    be  :: CBackend,
+    id  : ExprId,
+    d   : Def,
+    f   : Function,
+    out :: String
+) Res<(), AllocError> {
+    valid = f.tparams.len == 0 && f.body.match({ Ok(_) => true, None => false }) &&
+        f.ret.match({ Ok(_) => true, None => false }) &&
+        f.params.find(
+            (p) { p.mutable || p.type.match({ Ok(_) => false, None => true }) }
+        ).match({ Ok(_) => false, None => true });
+    valid.match({
+        false => be.unsupported(
+            id,
+            "a native callback needs a nongeneric function body and explicit immutable C scalar/pointer parameters and result",
+            out
+        ),
+        true  => be.callback_abi(id, d, f, out),
+    })
+}
+
+callback_abi = (
+    be  :: CBackend,
+    id  : ExprId,
+    d   : Def,
+    f   : Function,
+    out :: String
+) Res<(), AllocError> {
+    inst ::= be.alloc.Inst();
+    sig  ::= be.alloc.Vec<TyId>();
+    be.signature_of(d, inst, sig).try();
+    ctx   = Ctx(
+        module: d.id.module.to_usize(),
+        ret: TyId(index: 0),
+        has_ret: false,
+        self_ty: TyId(index: 0),
+        has_self: false
+    );
+    ret   = be.declared_ret(f, ctx).try();
+    valid = be.callback_type(ret) && sig.find((t) { !be.callback_type(t) || be.is_unit(t) }).match({ Ok(_) => false, None => true });
+    valid.match({
+        false => be.unsupported(
+            id,
+            "a native callback cannot use aggregate, closure, or capability values in its C ABI",
+            out
+        ),
+        true  => {
+            sym ::= be.alloc.String().try();
+            sym_fn(
+                sym,
+                be.check.types,
+                be.check.world,
+                d.qname,
+                sig,
+                inst
+            ).try();
+            be.need_function(d, inst, sym.view()).try();
+            out.fmt("((void *)&{})", sym.view())
+        },
+    })
+}
+
+callback_type = (be: CBackend, ty: TyId) bool {
+    be.check.types.at(ty).match({
+        Prim(p)  => !p.name.eq("str") && be.spellable(ty),
+        Named(n) => n.name.eq("Ptr") && be.spellable(ty),
+        _        => false,
+    })
+}

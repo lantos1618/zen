@@ -1,188 +1,233 @@
-// `run_argv` captures stdout and stderr; `run_argv_inherit` leaves stdin,
-// stdout, and stderr connected to the parent. Both execute an argument vector
-// directly, so metacharacters in arguments have no shell meaning. The vector
-// must name a program at index zero and cannot contain embedded NUL bytes.
-// `run` executes its command through `/bin/sh -c`.
-
+// Process policy lives in Zen. The C backend emits only the POSIX ABI floor.
+// Argument vectors execute directly; `run` explicitly uses /bin/sh -c.
 Alloc, AllocError, Ptr, null_ptr = std.mem
-str, String, str_at = std.text
+str, String, str_at, c_text = std.text
 Vec = std.collections
 Res, ok_or, Sink, WriteError = std.core
 
-zg_proc_run = (
-    cwd      : str,
-    cmd      : str,
-    code_out : Ptr<i32>,
-    out_buf  : Ptr<Ptr<u8>>,
-    out_len  : Ptr<usize>,
-    err_buf  : Ptr<Ptr<u8>>,
-    err_len  : Ptr<usize>
+zg_os_proc_pipe = (fds: Ptr<i32>) i32
+zg_os_proc_close = (fd: i32) ()
+zg_os_proc_spawn = (
+    cwd  : Ptr<u8>,
+    argv : Ptr<Ptr<u8>>,
+    out  : i32,
+    err  : i32,
+    pid  : Ptr<i32>
 ) i32
-
-zg_proc_run_argv = (
-    cwd      : str,
-    argv     : Ptr<str>,
-    argc     : usize,
-    code_out : Ptr<i32>,
-    out_buf  : Ptr<Ptr<u8>>,
-    out_len  : Ptr<usize>,
-    err_buf  : Ptr<Ptr<u8>>,
-    err_len  : Ptr<usize>
-) i32
-
-zg_proc_run_argv_inherit = (
-    cwd      : str,
-    argv     : Ptr<str>,
-    argc     : usize,
-    code_out : Ptr<i32>
-) i32
-
-zg_proc_stream_start = (cwd: str, argv: Ptr<str>, argc: usize) Ptr<()>
-zg_proc_stream_next = (
-    handle : Ptr<()>,
-    buf    : Ptr<u8>,
-    cap    : usize,
-    count  : Ptr<usize>
-) i32
-zg_proc_stream_wait = (handle: Ptr<()>, code: Ptr<i32>) i32
-zg_proc_stream_close = (handle: Ptr<()>) ()
-
-free = (p: Ptr<()>) ()
+zg_os_proc_poll = (out: i32, err: i32) i32
+zg_os_proc_read = (fd: i32, buf: Ptr<u8>, cap: usize, count: Ptr<usize>) i32
+zg_os_proc_wait = (pid: i32, code: Ptr<i32>) i32
+zg_os_proc_kill = (pid: i32) ()
 
 ProcError* = SpawnFailed | WaitFailed | ReadFailed
 ProcStreamError* = ProcError | AllocError | IoError
+ProcOutput* = { code*: i32, out*: String, err*: String }
 
-ProcOutput* = {
-    code*: i32,
-    out*:  String,
-    err*:  String,
-}
+// Storage comes from the caller's allocator and survives through spawn.
+Arguments = {
+    cwd: Ptr<u8>,
+    argv: Vec<Ptr<u8>>,
 
-proc_error = (rc: i32) ProcError {
-    rc.match({
-        1 => SpawnFailed,
-        2 => WaitFailed,
-        _ => ReadFailed,
-    })
-}
-
-string_from_c = (a: Alloc, p: Ptr<u8>, n: usize) Res<String, ProcError> {
-    @scope.defer(() { free(p.to<()>()) });
-    s ::= a.String().try(ProcError.ReadFailed);
-    view = str_at(p, n);
-    s.add(view).try(ProcError.ReadFailed);
-    Ok(s);
-}
-
-// Out-parameters for one capturing run; the C side fills them.
-Capture = {
-    code  : Ptr<i32>,
-    out   : Ptr<Ptr<u8>>,
-    out_n : Ptr<usize>,
-    err   : Ptr<Ptr<u8>>,
-    err_n : Ptr<usize>,
-
-    reserve = (a: Alloc) Res<Capture, ProcError> {
-        code ::= a.create<i32>().try(ProcError.ReadFailed);
-        code.write(0, 0);
-        out ::= a.create<Ptr<u8>>().try(ProcError.ReadFailed);
-        out.write(0, null_ptr<u8>());
-        out_n ::= a.create<usize>().try(ProcError.ReadFailed);
-        out_n.write(0, 0);
-        err ::= a.create<Ptr<u8>>().try(ProcError.ReadFailed);
-        err.write(0, null_ptr<u8>());
-        err_n ::= a.create<usize>().try(ProcError.ReadFailed);
-        err_n.write(0, 0);
-        Ok(Capture(code: code, out: out, out_n: out_n, err: err, err_n: err_n))
+    prepare = (a: Alloc, cwd: str, args: Vec<str>) Res<Arguments, ProcError> {
+        (args.len > 0).ensure(ProcError.SpawnFailed).try();
+        first = args.get(0).ok_or(ProcError.SpawnFailed).try();
+        (first.len > 0 && !cwd.contains(0)).ensure(ProcError.SpawnFailed).try();
+        argv ::= a.Vec<Ptr<u8>>();
+        args.loop((h, arg) {
+            (!arg.contains(0)).ensure(ProcError.SpawnFailed).try();
+            bytes = arg.c_text(a).try(ProcError.ReadFailed);
+            argv.add(bytes.ptr()).try(ProcError.ReadFailed);
+        });
+        argv.add(null_ptr<u8>()).try(ProcError.ReadFailed);
+        dir ::= null_ptr<u8>();
+        (cwd.len > 0).then(() {
+            bytes = cwd.c_text(a).try(ProcError.ReadFailed);
+            dir   = bytes.ptr();
+        });
+        Ok(Arguments(cwd: dir, argv: argv))
     }
+}
 
-    // Both C buffers are freed whichever copy fails.
-    result = (self: @Self, a: Alloc, rc: i32) Res<ProcOutput, ProcError> {
-        (rc == 0).ensure(rc.proc_error()).try();
-        out_p = self.out.read(0);
-        err_p = self.err.read(0);
-        string_from_c(a, out_p, self.out_n.read(0)).match({
-            Err(e)    => {
-                free(err_p.to<()>());
-                Err(e)
-            },
-            Ok(out_s) => string_from_c(a, err_p, self.err_n.read(0)).match({
-                Err(e)    => Err(e),
-                Ok(err_s) => Ok(ProcOutput(
-                    code: self.code.read(0),
-                    out:  out_s,
-                    err:  err_s
-                )),
-            }),
+wait_for = (pid: i32, code: Ptr<i32>) Res<(), ProcError> {
+    rc ::= zg_os_proc_wait(pid, code);
+    loop(rc == -2, (h) { rc = zg_os_proc_wait(pid, code); });
+    (rc == 0).ensure(ProcError.WaitFailed)
+}
+
+Child = { pid :: i32, out_fd :: i32, err_fd :: i32, next :: i32 }
+
+// The deferred cleanup and stream operations share this state. Reaping sets
+// pid to -1 before cleanup, so a completed child's PID can never be killed.
+Stream = {
+    child: Ptr<Child>,
+    code: Ptr<i32>,
+
+    open = (a: Alloc, args: Arguments) Res<Stream, ProcError> {
+        child = a.create<Child>().try(ProcError.ReadFailed);
+        child.write(0, Child(pid: -1, out_fd: -1, err_fd: -1, next: 0));
+        code   = a.create<i32>().try(ProcError.ReadFailed);
+        stream = Stream(child: child, code: code);
+        stream.spawn(a, args).match({
+            Ok(_)  => Ok(stream),
+            Err(e) => { stream.close(); Err(e) },
         })
     }
+
+    spawn = (self: @Self, a: Alloc, args: Arguments) Res<(), ProcError> {
+        pipes = a.realloc<i32>(null_ptr<i32>(), 4).try(ProcError.ReadFailed);
+        Range(0, 4).loop((i) { pipes.write(i, -1); });
+        @scope.defer(() {
+            zg_os_proc_close(pipes.read(1));
+            zg_os_proc_close(pipes.read(3));
+        });
+        (zg_os_proc_pipe(pipes) == 0).ensure(ProcError.SpawnFailed).try();
+        child ::= self.child.read(0);
+        child.out_fd = pipes.read(0);
+        self.child.write(0, child);
+        (zg_os_proc_pipe(pipes.offset(2)) == 0).ensure(ProcError.SpawnFailed).try();
+        child.err_fd = pipes.read(2);
+        self.child.write(0, child);
+        rc = zg_os_proc_spawn(
+            args.cwd,
+            args.argv.ptr(),
+            pipes.read(1),
+            pipes.read(3),
+            self.code
+        );
+        (rc == 0).ensure(ProcError.SpawnFailed).try();
+        child.pid = self.code.read(0);
+        self.child.write(0, child);
+        Ok(())
+    }
+
+    // 0 is EOF; 1 and 2 identify stdout and stderr. Rotate the first pipe
+    // inspected so a continuously readable stdout cannot starve stderr.
+    next = (self: @Self, bytes: Ptr<u8>, cap: usize, count: Ptr<usize>)
+           Res<i32, ProcError> {
+        child ::= self.child.read(0);
+        count.write(0, 0);
+        channel ::= 0;
+        loop(child.out_fd >= 0 || child.err_fd >= 0, (h) {
+            ready ::= zg_os_proc_poll(child.out_fd, child.err_fd);
+            loop(
+                ready == -2,
+                (retry) { ready = zg_os_proc_poll(child.out_fd, child.err_fd); }
+            );
+            (ready >= 0).ensure(ProcError.ReadFailed).try();
+            Range(0, 2).loop((turn) {
+                i      = (turn == 0).match({ true => child.next, false => 1 - child.next });
+                fd     = (i == 0).match({ true => child.out_fd, false => child.err_fd });
+                active = (i == 0).match({ true => ready % 2 == 1, false => ready >= 2 });
+                (channel == 0 && fd >= 0 && active).then(() {
+                    n ::= zg_os_proc_read(fd, bytes, cap, count);
+                    loop(
+                        n == -2,
+                        (retry) { n = zg_os_proc_read(fd, bytes, cap, count); }
+                    );
+                    (n >= 0).ensure(ProcError.ReadFailed).try();
+                    (n > 0).match({
+                        true  => {
+                            channel    = i + 1;
+                            child.next = 1 - i;
+                        },
+                        false => {
+                            zg_os_proc_close(fd);
+                            (i == 0).match({ true => { child.out_fd = -1; }, false => { child.err_fd = -1; } });
+                        },
+                    });
+                    self.child.write(0, child);
+                });
+            });
+            (channel > 0).then(() { h.break(); });
+        });
+        Ok(channel)
+    }
+
+    wait = (self: @Self) Res<i32, ProcError> {
+        child ::= self.child.read(0);
+        wait_for(child.pid, self.code).try();
+        child.pid = -1;
+        self.child.write(0, child);
+        Ok(self.code.read(0))
+    }
+
+    close = (self: @Self) () {
+        child = self.child.read(0);
+        zg_os_proc_close(child.out_fd);
+        zg_os_proc_close(child.err_fd);
+        (child.pid >= 0).then(() {
+            zg_os_proc_kill(child.pid);
+            wait_for(child.pid, self.code).ignore();
+        });
+        self.child.write(0, Child(pid: -1, out_fd: -1, err_fd: -1, next: 0));
+    }
+}
+
+capture_error = (e: ProcStreamError) ProcError {
+    e.match({
+        SpawnFailed => ProcError.SpawnFailed,
+        WaitFailed  => ProcError.WaitFailed,
+        _           => ProcError.ReadFailed,
+    })
 }
 
 Process* = {
     run* = (self: @Self, a: Alloc, cwd: str, cmd: str) Res<ProcOutput, ProcError> {
-        slots = Capture.reserve(a).try();
-        rc    = zg_proc_run(
-            cwd,
-            cmd,
-            slots.code,
-            slots.out,
-            slots.out_n,
-            slots.err,
-            slots.err_n
-        );
-        slots.result(a, rc)
+        argv ::= a.Vec<str>();
+        argv.add("/bin/sh").try(ProcError.ReadFailed);
+        argv.add("-c").try(ProcError.ReadFailed);
+        argv.add(cmd).try(ProcError.ReadFailed);
+        // Preserve the shell command name exposed through $0.
+        argv.add("sh").try(ProcError.ReadFailed);
+        self.run_argv(a, cwd, argv)
     }
 
-    run_argv* = (self: @Self, a: Alloc, cwd: str, argv: Vec<str>)
-                Res<ProcOutput, ProcError> {
-        slots = Capture.reserve(a).try();
-        rc    = zg_proc_run_argv(
-            cwd,
-            argv.ptr(),
-            argv.len,
-            slots.code,
-            slots.out,
-            slots.out_n,
-            slots.err,
-            slots.err_n
-        );
-        slots.result(a, rc)
+    run_argv* = (self: @Self, a: Alloc, cwd: str, argv: Vec<str>) Res<ProcOutput, ProcError> {
+        out ::= a.String().try(ProcError.ReadFailed);
+        err ::= a.String().try(ProcError.ReadFailed);
+        self.run_argv_into(a, cwd, argv, out, err).match({
+            Ok(code) => Ok(ProcOutput(code: code, out: out, err: err)),
+            Err(e)   => Err(e.capture_error()),
+        })
     }
 
-    // Stream both pipes to borrowed sinks as bytes arrive. Sink failure stops
-    // and reaps the child. Returned status preserves the child's exit code.
+    // Sink failure closes both pipes, kills the child and reaps it.
     run_argv_into* = <O: Sink, E: Sink>(self: @Self, a: Alloc, cwd: str,
                                       argv: Vec<str>, out :: O, err :: E)
                       Res<i32, ProcStreamError> {
+        args = Arguments.prepare(a, cwd, argv).try();
         bytes ::= a.Vec<u8>();
         bytes.reserve(4096).try();
         count  = a.create<usize>().try();
-        code   = a.create<i32>().try();
-        handle = zg_proc_stream_start(cwd, argv.ptr(), argv.len);
-        (!handle.is_null()).ensure(ProcError.SpawnFailed).try();
-        @scope.defer(() { zg_proc_stream_close(handle); });
+        stream = Stream.open(a, args).try();
+        @scope.defer(() { stream.close(); });
         done ::= false;
         loop(!done, (h) {
-            channel = zg_proc_stream_next(handle, bytes.ptr(), 4096, count);
-            (channel >= 0).ensure(ProcError.ReadFailed).try();
-            chunk = str_at(bytes.ptr(), count.read(0));
+            channel = stream.next(bytes.ptr(), 4096, count).try();
+            chunk   = str_at(bytes.ptr(), count.read(0));
             channel.match({
                 0 => { done = true; },
                 1 => out.write(chunk).try(),
                 _ => err.write(chunk).try(),
             });
         });
-        rc = zg_proc_stream_wait(handle, code);
-        (rc == 0).ensure(rc.proc_error()).try();
-        Ok(code.read(0))
+        code = stream.wait().try();
+        Ok(code)
     }
 
-    run_argv_inherit* = (self: @Self, a: Alloc, cwd: str, argv: Vec<str>)
-                        Res<i32, ProcError> {
-        code ::= a.create<i32>().try(ProcError.ReadFailed);
-        code.write(0, 0);
-        rc = zg_proc_run_argv_inherit(cwd, argv.ptr(), argv.len, code);
-        (rc == 0).ensure(rc.proc_error()).try();
-        Ok(code.read(0))
+    run_argv_inherit* = (self: @Self, a: Alloc, cwd: str, argv: Vec<str>) Res<i32, ProcError> {
+        args = Arguments.prepare(a, cwd, argv).try();
+        pid  = a.create<i32>().try(ProcError.ReadFailed);
+        code = a.create<i32>().try(ProcError.ReadFailed);
+        rc   = zg_os_proc_spawn(args.cwd, args.argv.ptr(), -1, -1, pid);
+        (rc == 0).ensure(ProcError.SpawnFailed).try();
+        wait_for(pid.read(0), code).match({
+            Ok(_)  => Ok(code.read(0)),
+            Err(e) => {
+                zg_os_proc_kill(pid.read(0));
+                wait_for(pid.read(0), code).ignore();
+                Err(e)
+            },
+        })
     }
 }

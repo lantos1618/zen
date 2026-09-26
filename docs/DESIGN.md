@@ -553,6 +553,23 @@ A folder root is then just a file of starred bindings, which is why re-export is
 
 ---
 
+# Scalar mathematics
+
+`std.math` exports `cos`, `sin`, `sqrt`, `log10`, and `round` for `f64`.
+Trigonometric inputs use radians; `round` resolves halfway values away from
+zero. These operations allocate nothing and preserve the native math library's
+NaN/infinity behavior for domain and range errors. They do not return `Res`.
+
+```groovy fragment
+cos, sin, sqrt = std.math
+magnitude = sqrt(real * real + imaginary * imaginary);
+```
+
+The current backend uses private header-backed `math.h` declarations inside
+`std.math`. Application libraries import this standard API instead of repeating
+native declarations. Targets with a separate math library must link `m` in
+the executable build dependencies. This scalar API does not add SIMD types.
+
 # Explicit native bindings
 
 Native functions can be declared in a Zen namespace associated with a system

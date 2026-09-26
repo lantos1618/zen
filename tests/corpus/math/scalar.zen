@@ -1,0 +1,16 @@
+cos, sin, sqrt, log10, round = std.math
+near = (left: f64, right: f64) bool {
+    difference = left - right;
+    difference > -0.000000001 && difference < 0.000000001
+}
+main = () i32 {
+    valid = near(cos(0.0), 1.0)
+        && near(sin(1.5707963267948966), 1.0)
+        && near(cos(3.141592653589793), -1.0)
+        && near(sqrt(2.0), 1.4142135623730951)
+        && near(log10(1000.0), 3.0)
+        && round(2.5) == 3.0 && round(-2.5) == -3.0;
+    nan   = sqrt(-1.0);
+    println("scalar math: {}", valid && (nan != nan));
+    valid.match({true => (nan != nan).match({true => 0, false => 1}), false => 1})
+}

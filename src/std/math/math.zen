@@ -1,0 +1,17 @@
+// Scalar f64 mathematics. Angles are radians. The native implementation follows
+// the platform math library's IEEE-754 behavior, including NaN/infinity for
+// domain/range errors. No allocation or conversion of errors into Res.
+Native = c.bind("math.h", {
+    cos* = (angle: f64) f64
+    sin* = (angle: f64) f64
+    sqrt* = (value: f64) f64
+    log10* = (value: f64) f64
+    round* = (value: f64) f64
+})
+
+cos* = (angle: f64) f64 { Native.cos(angle) }
+sin* = (angle: f64) f64 { Native.sin(angle) }
+sqrt* = (value: f64) f64 { Native.sqrt(value) }
+log10* = (value: f64) f64 { Native.log10(value) }
+// Halfway values round away from zero.
+round* = (value: f64) f64 { Native.round(value) }

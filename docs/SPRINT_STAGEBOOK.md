@@ -15,6 +15,13 @@ compiler passes the 194-unit/seed fixpoint. `make -j1 seed verify` regenerates
 the seed and passes source lint (one existing warning), then stops at the
 unavailable `npx` grammar prerequisite. This is not aggregate repository-green.
 
+Follow-up: `std.math` now owns scalar f64 cos/sin/sqrt/log10/round APIs;
+sibling audio/window/app libraries import them instead of duplicating math.h
+bindings. Scalar numerical/NaN/rounding and FFT tests pass; app rebuild passes.
+Fresh source emission matches the existing compiler seed byte-for-byte, so this
+standard-library-only addition does not require seed regeneration. Source lint:
+1348 cases, zero errors, one existing warning.
+
 Sibling projects now separate macOS capture/windowing (`zen-macos`), FFT/WAV
 processing (`zen-audio`), direct native Parakeet inference (`zen-parakeet`), an
 optional Whisper CLI adapter (`zen-whisper`), and application composition

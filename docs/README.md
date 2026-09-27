@@ -35,11 +35,10 @@ the language, implementation stages, source style, and verification rules.
 - `SOURCE_HEALTH_JUDGE.md` is the prompt contract for that external review.
 
 Output paths above are relative to the repository root. `build/` is ignored:
-generate these artifacts locally and do not commit them. The tracked
-`docs/SOURCE_HEALTH.md`, `docs/ZEN_SIGNATURES.md`, and `docs/source_health/`
-files remain historical snapshots; the scripts no longer update them by default.
-Keep durable review decisions in maintained documentation. Regenerate measured
-content instead of editing it by hand.
+generate these artifacts locally and do not commit them. Historical snapshots
+and external review transcripts are available in Git history. Keep durable
+review decisions in maintained documentation, and regenerate measurements
+instead of editing them by hand.
 
 Generate an inventory and a local round, choosing a new round label:
 

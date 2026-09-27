@@ -4,7 +4,8 @@ This audit asks one question of every Zen source declaration:
 
 > Is this behavior owned by the value, phase, or domain where it is written?
 
-The original evidence is the historical [ZEN_SIGNATURES.md](ZEN_SIGNATURES.md).
+The original signature inventory is preserved in Git history. Regenerate a
+current inventory with `python3 scripts/zen_signature_inventory.py`.
 That audit covered the body-free declaration surface of all 227 files below
 `src`: 7,202 top-level declarations, including private declarations, imports, constants,
 types, functions, and `impl`s. `scripts/zen_signature_inventory.py` uses Zen's

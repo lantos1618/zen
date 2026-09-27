@@ -27,6 +27,5 @@ achieved merely because automated checks pass.
 
 Generate source-health reports, signature inventories, round snapshots,
 external reviews, and source context packs only in ignored
-`build/source_health/`; do not commit generated review artifacts. The tracked
-copies in `docs/` are historical snapshots. Keep durable decisions in maintained
-documentation rather than refreshing those snapshots.
+`build/source_health/`; do not commit generated review artifacts. Keep durable
+decisions in maintained documentation; Git history preserves prior snapshots.

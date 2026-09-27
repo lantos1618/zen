@@ -1,0 +1,69 @@
+// Unknown schema keys must be inspectable without serializing or reparsing.
+// Nested objects exercise side-list offsets; duplicates retain stored order.
+Jsons, JsonFault, read = std.json
+
+main = (env: Env) Res<(), JsonFault> {
+    a = env.mem.alloc();
+    tree ::= a.Jsons();
+    root = read(
+        a,
+        tree,
+        "{\"nested\":{\"inner\":1},\"dup\":2,\"dup\":3,\"empty\":{},\"array\":[],\"scalar\":null,\"esc\\u0061ped\":4}"
+    ).try();
+    println("members: {}", tree.member_count(root));
+    Range(0, tree.member_count(root)).loop((i) {
+        tree.member(root, i).match({
+            Ok(pair) => println("key {}: {}", i, pair.key),
+            None     => println("missing member"),
+        });
+    });
+    tree.field(root, "nested").match({
+        Ok(nested) => {
+            println("nested members: {}", tree.member_count(nested));
+            tree.member(nested, 0).match({
+                Ok(pair) => println("nested key: {}", pair.key),
+                None     => println("missing nested member"),
+            });
+            println(
+                "nested end refused: {}",
+                tree.member(nested, 1).match({ None => true, Ok(_) => false })
+            );
+        },
+        None       => println("missing nested object"),
+    });
+    tree.field(root, "dup").match({
+        Ok(value) => println(
+            "last duplicate: {}",
+            tree.whole(value).value_or(0)
+        ),
+        None      => println("missing duplicate"),
+    });
+    ["empty", "array", "scalar"].loop((name) {
+        tree.field(root, name).match({
+            Ok(value) => {
+                println("{} members: {}", name, tree.member_count(value));
+                println(
+                    "{} refused: {}",
+                    name,
+                    tree.member(
+                        value,
+                        0
+                    ).match({ None => true, Ok(_) => false })
+                );
+            },
+            None      => println("missing field"),
+        });
+    });
+    println(
+        "end refused: {}",
+        tree.member(root, 7).match({ None => true, Ok(_) => false })
+    );
+    println(
+        "huge index refused: {}",
+        tree.member(
+            root,
+            18446744073709551615
+        ).match({ None => true, Ok(_) => false })
+    );
+    Ok(())
+}

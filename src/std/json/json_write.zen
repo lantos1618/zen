@@ -62,6 +62,22 @@ Jsons* = {
         Ok(run);
     }
 
+    // Inspect object members in stored order, including duplicate keys. These
+    // operations allocate nothing; returned keys borrow this tree's storage.
+    // Non-objects have no members. Invalid ids follow at's trapping contract.
+    member_count* = (self: @Self, id: JsonId) usize {
+        self.at(id).match({ Obj(run) => run.len, _ => 0 })
+    }
+    member* = (self: @Self, id: JsonId, index: usize) Res<Pair> {
+        self.at(id).match({
+            Obj(run) => {
+                (index < run.len).ensure().try();
+                self.pairs.get(run.at + index)
+            },
+            _        => None,
+        })
+    }
+
     // The named member, if id is an object. Duplicate keys use the last value.
     field* = (self: @Self, id: JsonId, name: str) Res<JsonId> {
         self.at(id).match({

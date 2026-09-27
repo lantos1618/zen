@@ -11,6 +11,12 @@ Heap = c.bind("stdlib.h", {
 })
 HEADER_BYTES*: usize = 16
 Block = { next :: Ptr<Block>, capacity: usize }
+// Immutable, pointer-free telemetry value. Obtain it only while owning the
+// pool or holding its external lock; copies remain valid after pool mutation.
+PoolStats* = {
+    live_bytes*: usize, cached_bytes*: usize, owned_bytes*: usize,
+    peak_bytes*: usize, cached_blocks*: usize, allocations*: usize, reuses*: usize,
+}
 Pool* = {
     head :: Ptr<Block> = null_ptr<Block>(),
     cached* :: usize = 0,
@@ -20,6 +26,17 @@ Pool* = {
     allocations* :: usize = 0,
     reuses* :: usize = 0,
 
+    snapshot* = (self: @Self) PoolStats {
+        PoolStats(
+            live_bytes: self.owned - self.cached,
+            cached_bytes: self.cached,
+            owned_bytes: self.owned,
+            peak_bytes: self.peak,
+            cached_blocks: self.cached_blocks,
+            allocations: self.allocations,
+            reuses: self.reuses
+        )
+    }
     take* = (self :: @Self, bytes: usize) Ptr<u8> {
         result   ::= null_ptr<u8>();
         previous ::= null_ptr<Block>();

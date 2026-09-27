@@ -65,3 +65,6 @@ static void *failure_malloc(size_t n) { return n == 273 ? NULL : malloc(n); }
     execute('storage', storage)
     if args.ubsan:
         execute('storage-ubsan', storage, ('-fsanitize=undefined',))
+    (work / 'main.zen').write_text((ROOT / 'tests/library/pool-alloc/snapshot_actor.zen').read_text())
+    subprocess.run([str(args.zen.resolve()), 'build', str(work), '--emit-c', '-o', str(work / 'snapshot-actor.c')], env=env, check=True, timeout=120)
+    execute('snapshot-actor', (work / 'snapshot-actor.c').read_text(), ('-pthread',))

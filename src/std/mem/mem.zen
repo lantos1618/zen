@@ -5,4 +5,4 @@ Arena*, Mem*, Page* = std.mem.mem_arena
 
 Ptr*, null_ptr* = std.mem.mem_ptr
 
-Pool*, PoolAlloc*, PoolPolicy* = std.mem.mem_pool
+Pool*, PoolAlloc*, PoolPolicy*, PoolStats* = std.mem.mem_pool

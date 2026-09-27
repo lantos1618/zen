@@ -70,3 +70,16 @@ and teardown. Negative controls remove the realloc copy and remove native OOM
 injection. `--sanitize` additionally runs AddressSanitizer/UndefinedBehaviorSanitizer;
 its runtime must be available on the host. This is a focused gate, not proof of
 arbitrary pointer/lifetime safety or full compiler verification.
+
+## Telemetry snapshots
+
+`Pool.snapshot() -> PoolStats` copies `live_bytes`, `cached_bytes`, `owned_bytes`,
+`peak_bytes`, `cached_blocks`, `allocations`, and `reuses` into immutable scalar
+fields. Byte counts include block headers; `live_bytes = owned_bytes - cached_bytes`.
+Snapshots allocate nothing and contain no pointers. They remain valid after the
+pool changes or closes and can be sent as actor messages for metrics encoding.
+
+Read a snapshot while owning the pool or holding its external lock. The method
+does not make concurrent access to pool state safe; consumers of the returned
+value no longer need that lock. Peak/allocation/reuse counters are cumulative for
+the pool's lifetime, including after `close` empties its cache.

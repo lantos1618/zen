@@ -1,0 +1,128 @@
+// Bounded statistics over nonnegative finite measurements, in caller-chosen units.
+Alloc, AllocError, Ptr, null_ptr = std.mem
+Range = std.core.range
+
+Summary* = {
+    count*: usize,
+    mean*: f64,
+    p50*: f64,
+    p95*: f64,
+    p99*: f64,
+    max*: f64,
+}
+
+// Latest-capacity rolling window. Storage belongs to the supplied allocator;
+// keep its owner alive and do not mutate copies or access one window concurrently.
+// Recording is O(1). Summarizing sorts a preallocated copy in O(n log n), leaving
+// recording order intact. Neither operation allocates after creation.
+Samples* = {
+    values: Ptr<f64>,
+    scratch: Ptr<f64>,
+    capacity: usize,
+    count :: usize,
+    next :: usize,
+
+    create* = (alloc: Alloc, capacity: usize) Res<Samples, AllocError> {
+        (capacity <= usize.MAX / 8).ensure(AllocError.OutOfMemory).try();
+        values  = (capacity > 0).match({
+            true  => alloc.realloc<f64>(null_ptr<f64>(), capacity).try(),
+            false => null_ptr<f64>(),
+        });
+        scratch = (capacity > 0).match({
+            true  => alloc.realloc<f64>(null_ptr<f64>(), capacity).map_err((error) {
+                alloc.free(values);
+                error
+            }).try(),
+            false => null_ptr<f64>(),
+        });
+        Ok(Samples(
+            values: values,
+            scratch: scratch,
+            capacity: capacity,
+            count: 0,
+            next: 0
+        ))
+    }
+
+    // Refused measurements leave the window unchanged. Zero-capacity windows
+    // refuse every record; zero itself is a valid measurement.
+    record* = (self :: @Self, value: f64) bool {
+        accepted = self.capacity > 0 && value >= 0.0 && value - value == 0.0;
+        accepted.then(() {
+            self.values.write(self.next, value);
+            self.next = (self.next + 1) % self.capacity;
+            (self.count < self.capacity).then(
+                () { self.count = self.count + 1; }
+            );
+        });
+        accepted
+    }
+
+    clear* = (self :: @Self) () {
+        self.count = 0;
+        self.next  = 0;
+    }
+
+    // None means no samples. Percentiles use nearest rank: sorted[ceil(p*n)-1].
+    // In small windows p95/p99 can both equal the maximum; no interpolation.
+    summary* = (self :: @Self) Res<Summary> {
+        (self.count > 0).ensure().try();
+        self.scratch.copy_from(self.values, self.count);
+        self.sort();
+        mean ::= 0.0;
+        seen ::= 0.0;
+        Range(0, self.count).loop((i) {
+            seen = seen + 1.0;
+            mean = mean + (self.scratch.read(i) - mean) / seen;
+        });
+        Ok(Summary(
+            count: self.count,
+            mean: mean,
+            p50: self.percentile(50),
+            p95: self.percentile(95),
+            p99: self.percentile(99),
+            max: self.scratch.read(self.count - 1)
+        ))
+    }
+
+    percentile = (self: @Self, percent: usize) f64 {
+        // Split before multiplication so even a large count cannot overflow.
+        rank = (self.count / 100) * percent + ((self.count % 100) * percent + 99) / 100;
+        self.scratch.read(rank - 1)
+    }
+
+    sort = (self: @Self) () {
+        root ::= self.count / 2;
+        loop(() { root > 0 }, (h) {
+            root = root - 1;
+            self.sift(root, self.count);
+        });
+        end ::= self.count;
+        loop(() { end > 1 }, (h) {
+            end   = end - 1;
+            first = self.scratch.read(0);
+            self.scratch.write(0, self.scratch.read(end));
+            self.scratch.write(end, first);
+            self.sift(0, end);
+        });
+    }
+
+    sift = (self: @Self, start: usize, end: usize) () {
+        root ::= start;
+        loop(() { root < end / 2 }, (h) {
+            child ::= root * 2 + 1;
+            (child + 1 < end && self.scratch.read(child) < self.scratch.read(child + 1)).then(() {
+                child = child + 1;
+            });
+            (self.scratch.read(root) < self.scratch.read(child)).match({
+                true  => {
+                    value = self.scratch.read(root);
+                    self.scratch.write(root, self.scratch.read(child));
+                    self.scratch.write(child, value);
+                    root = child;
+                },
+                false => h.break(),
+            });
+        });
+    }
+}

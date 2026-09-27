@@ -1,0 +1,41 @@
+Samples, Summary = std.stats
+sqrt, log10 = std.math
+
+main = (env: Env) Res<i32, AllocError> {
+    a = env.mem.alloc();
+    samples ::= Samples.create(a, 100).try();
+    valid   ::= samples.summary().match({ None => true, Ok(_) => false });
+    // Descending input exercises heap construction; rank 95 of 100 is 95.
+    Range<i32>(0, 100).loop((i) { valid = samples.record((100 - i).to_f64()) && valid; });
+    valid = samples.summary().match({
+        Ok(s) => s.count == 100 && s.mean == 50.5 && s.p50 == 50.0 && s.p95 == 95.0 && s.p99 == 99.0 && s.max == 100.0,
+        None  => false,
+    }) && valid;
+    // Repeated summaries cannot change recording order. The oldest value is 100.
+    ignored = samples.summary();
+    valid   = samples.record(1000.0) && valid;
+    valid   = samples.summary().match({
+        Ok(s) => s.count == 100 && s.mean > 59.49 && s.mean < 59.51 && s.p50 == 50.0 && s.p95 == 95.0 && s.p99 == 99.0 && s.max == 1000.0,
+        None  => false,
+    }) && valid;
+    valid   = !samples.record(-1.0) && !samples.record(sqrt(-1.0)) && !samples.record(-log10(0.0)) && !samples.record(log10(0.0)) && valid;
+    samples.clear();
+    valid = samples.summary().match({ None => true, Ok(_) => false }) && valid;
+    valid = samples.record(0.0) && valid;
+    valid = samples.summary().match({
+        Ok(s) => s.count == 1 && s.mean == 0.0 && s.p50 == 0.0 && s.p95 == 0.0 && s.p99 == 0.0 && s.max == 0.0,
+        None  => false,
+    }) && valid;
+    small ::= Samples.create(a, 3).try();
+    Range<i32>(0, 20).loop((i) { valid = small.record(i.to_f64()) && valid; });
+    valid = small.summary().match({
+        Ok(s) => s.count == 3 && s.mean == 18.0 && s.p50 == 18.0 && s.p95 == 19.0 && s.p99 == 19.0 && s.max == 19.0,
+        None  => false,
+    }) && valid;
+    empty ::= Samples.create(a, 0).try();
+    valid = !empty.record(
+        1.0
+    ) && empty.summary().match({ None => true, Ok(_) => false }) && valid;
+    println("rolling statistics {}", valid);
+    Ok(valid.match({ true => 0, false => 1 }))
+}

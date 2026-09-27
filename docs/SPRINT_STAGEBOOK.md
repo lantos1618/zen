@@ -22,6 +22,13 @@ Fresh source emission matches the existing compiler seed byte-for-byte, so this
 standard-library-only addition does not require seed regeneration. Source lint:
 1348 cases, zero errors, one existing warning.
 
+Follow-up: `std.stats` now provides caller-allocated bounded rolling samples,
+nearest-rank p50/p95/p99, mean and maximum. Two focused corpus regressions pass,
+including allocation budgets and failing controls for nonfinite admission and
+unexpected allocation. This standard-library addition uses the existing compiler;
+no compiler rebuild or seed regeneration is claimed. The five pre-existing
+opaque-type draft files remain uncommitted and outside this change.
+
 Sibling projects now separate macOS capture/windowing (`zen-macos`), FFT/WAV
 processing (`zen-audio`), direct native Parakeet inference (`zen-parakeet`), an
 optional Whisper CLI adapter (`zen-whisper`), and application composition

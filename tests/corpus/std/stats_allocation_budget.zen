@@ -1,0 +1,75 @@
+Samples, Summary = std.stats
+
+Budget = {
+    base: Alloc,
+    calls: Ptr<usize>,
+    limit: usize,
+    releases: Ptr<usize>,
+
+    accepts = (self: @Self) bool {
+        current = self.calls.read(0);
+        self.calls.write(0, current + 1);
+        current < self.limit
+    }
+}
+
+Budget.impl(Alloc, {
+    raw = (self: @Self, size: usize, align: usize) Res<Ptr<u8>, AllocError> {
+        self.accepts().ensure(AllocError.OutOfMemory).try();
+        self.base.raw(size, align)
+    }
+    realloc = <T>(self: @Self, ptr: Ptr<T>, count: usize) Res<Ptr<T>, AllocError> {
+        self.accepts().ensure(AllocError.OutOfMemory).try();
+        self.base.realloc(ptr, count)
+    }
+    free = <T>(self: @Self, ptr: Ptr<T>) () {
+        (!ptr.is_null()).then(() {
+            self.releases.write(0, self.releases.read(0) + 1);
+        });
+        self.base.free(ptr);
+    }
+})
+
+main = (env: Env) Res<i32, AllocError> {
+    a        = env.mem.alloc();
+    calls    = a.realloc<usize>(null_ptr<usize>(), 1).try();
+    releases = a.realloc<usize>(null_ptr<usize>(), 1).try();
+    releases.write(0, 0);
+    calls.write(0, 0);
+    budget = Budget(base: a, calls: calls, releases: releases, limit: 2);
+    samples ::= Samples.create(budget, 120).try();
+    valid   ::= calls.read(0) == 2;
+    Range(0, 1000).loop((i) {
+        valid = samples.record(2.0) && valid;
+        valid = samples.summary().match({
+            Ok(s) => s.mean == 2.0 && s.p50 == 2.0 && s.p95 == 2.0 && s.p99 == 2.0 && s.max == 2.0,
+            None  => false,
+        }) && valid;
+    });
+    samples.clear();
+    valid = calls.read(0) == 2 && releases.read(0) == 0 && valid;
+    Range(0, 2).loop((limit) {
+        calls.write(0, 0);
+        releases.write(0, 0);
+        valid = Samples.create(
+            Budget(base: a, calls: calls, releases: releases, limit: limit),
+            10
+        ).match({
+            Err(_) => true,
+            Ok(_)  => false,
+        }) && valid;
+        valid = releases.read(0) == limit && valid;
+    });
+    calls.write(0, 0);
+    empty ::= Samples.create(
+        Budget(base: a, calls: calls, releases: releases, limit: 0),
+        0
+    ).try();
+    valid = calls.read(0) == 0 && !empty.record(1.0) && valid;
+    valid = Samples.create(
+        a,
+        usize.MAX
+    ).match({ Err(_) => true, Ok(_) => false }) && valid;
+    println("statistics allocation budget {}", valid);
+    Ok(valid.match({ true => 0, false => 1 }))
+}

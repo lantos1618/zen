@@ -53,7 +53,7 @@ def main():
                 built = invoke(['cc', '-std=c99', str(output), '-o', str(work / 'program')])
                 if fixture.stem in {'fallback-range', 'scalar-mismatch'}:
                     assert built.returncode != 0, 'C accepted an invalid native ABI declaration'
-                    expected = '_range' if fixture.stem == 'fallback-range' else 'native record scalar field type mismatch'
+                    expected = '_range' if fixture.stem == 'fallback-range' else 'zg_native_scalar_field_type_mismatch'
                     assert expected in built.stderr, built.stderr
                     print(f'PASS {fixture.stem} (target C ABI check)')
                     continue

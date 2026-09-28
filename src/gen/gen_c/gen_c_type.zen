@@ -205,7 +205,7 @@ native_scalar_contract = (
 ) Res<(), AllocError> {
     line ::= be.alloc.String().try();
     line.fmt(
-        "_Static_assert(__builtin_types_compatible_p(__typeof__((({} *)0)->{}), {}), \"native record scalar field type mismatch\");",
+        "extern char zg_native_scalar_field_type_mismatch[__builtin_types_compatible_p(__typeof__((({} *)0)->{}), {}) ? 1 : -1];",
         spelling,
         field,
         scalar

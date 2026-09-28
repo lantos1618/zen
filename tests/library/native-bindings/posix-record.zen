@@ -1,0 +1,7 @@
+// Strict C99 must expose POSIX records even without process/env operations.
+Info = c.record("netdb.h", "struct addrinfo", { ai_flags: i32 })
+C = c.bind("netdb.h", { NI_MAXHOST: i32 })
+main = () i32 {
+    value = Info(ai_flags: 0);
+    (C.NI_MAXHOST > 0).match({true => value.ai_flags, false => 1})
+}

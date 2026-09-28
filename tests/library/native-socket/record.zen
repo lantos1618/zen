@@ -1,0 +1,29 @@
+Record = c.record("probe.h", "struct fixture_record", {
+    value: i32,
+    pointer: Ptr<u8>,
+})
+Native = c.bind("probe.h", {
+    FIXTURE_MAGIC*: i32 = 42
+    FIXTURE_ENUM*: i32
+    FIXTURE_MISSING*: i32 = 827
+    fixture_verify* = (records: Ptr<Record>) i32
+    probe_check* = (yes: i32) ()
+})
+main = (env: Env) Res<(), AllocError> {
+    a = env.mem.alloc();
+    records ::= a.Vec<Record>();
+    records.add(Record(value: 71, pointer: null_ptr<u8>())).try();
+    records.add(Record(value: 72, pointer: null_ptr<u8>())).try();
+    (Native.FIXTURE_MAGIC == 734).match({ true => {}, false => Native.probe_check(
+        0
+    ) });
+    (Native.FIXTURE_ENUM == 913 && Native.FIXTURE_MISSING == 827).match({ true => {}, false => Native.probe_check(
+        0
+    ) });
+    Native.probe_check(Native.fixture_verify(records.ptr()));
+    (records.ptr().read(1).value == 123).match({ true => {}, false => Native.probe_check(0) });
+    println(
+        "PASS record layout, hidden initialization, pointer stride and header constant"
+    );
+    Ok(())
+}

@@ -1,0 +1,11 @@
+main = () i32 {
+    negative: i64 = -1;
+    zero: i64 = 0;
+    high: i64 = 9223372036854775807;
+    low: i64 = -9223372036854775807 - 1;
+    a = negative.to_usize().match({None => true, Ok(_) => false});
+    b = low.to_usize().match({None => true, Ok(_) => false});
+    c = zero.to_usize().match({None => false, Ok(n) => n == 0});
+    d = high.to_usize().match({None => false, Ok(n) => n == 9223372036854775807});
+    (a && b && c && d).match({true => 0, false => 1})
+}

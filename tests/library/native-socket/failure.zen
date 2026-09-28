@@ -1,0 +1,62 @@
+Socket, resolve_addr = std.net.socket
+Native = c.bind("probe.h", {
+    probe_check* = (yes: i32) ()
+    probe_fds* = () i32
+    probe_addr_balance* = () i32
+})
+HOST: str = "HARNESS_HOST"
+REFUSED_PORT: u16 = 0
+check = (yes: bool) () { (!yes).then(() { Native.probe_check(0); }); }
+FailAlloc = {
+    base: Alloc,
+    remaining: Ptr<usize>,
+    refused: Ptr<bool>,
+    take = (self: @Self) bool {
+        left = self.remaining.read(0);
+        (left == 0).match({
+            true  => { self.refused.write(0, true); false },
+            false => { self.remaining.write(0, left - 1); true },
+        })
+    }
+}
+FailAlloc.impl(Alloc, {
+    raw = (self: @Self, size: usize, align: usize) Res<Ptr<u8>, AllocError> {
+        self.take().match({ true => self.base.raw(size, align), false => Err(AllocError.OutOfMemory) })
+    }
+    realloc = <T>(self: @Self, p: Ptr<T>, count: usize) Res<Ptr<T>, AllocError> {
+        self.take().match({ true => self.base.realloc(p, count), false => Err(AllocError.OutOfMemory) })
+    }
+})
+main = (env: Env) Res<(), AllocError> {
+    a = env.mem.alloc();
+    remaining ::= a.Vec<usize>(); remaining.add(0).try();
+    refused ::= a.Vec<bool>(); refused.add(false).try();
+    failing  = FailAlloc(
+        base: a,
+        remaining: remaining.ptr(),
+        refused: refused.ptr()
+    );
+    baseline = Native.probe_fds();
+    successful ::= false;
+    failed     ::= 0;
+    Range(0, 32).loop((allowance) {
+        remaining.ptr().write(0, allowance);
+        refused.ptr().write(0, false);
+        resolve_addr(failing, HOST).match({
+            Ok(_)  => { check(!refused.ptr().read(0)); successful = true; },
+            Err(_) => { check(refused.ptr().read(0)); failed = failed + 1; },
+        });
+        check(Native.probe_addr_balance() == 0);
+        remaining.ptr().write(0, allowance);
+        refused.ptr().write(0, false);
+        Socket.tcp_connect(failing, HOST, REFUSED_PORT).match({ Ok(_) => check(false), Err(_) => {} });
+        check(
+            Native.probe_addr_balance() == 0 && Native.probe_fds() == baseline
+        );
+    });
+    check(successful && failed > 0);
+    println(
+        "PASS allocator failure sweep, addrinfo cleanup and descriptor cleanup"
+    );
+    Ok(())
+}

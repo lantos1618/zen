@@ -17,6 +17,7 @@ type_from_ast = sema.sema_denote
 union_reading = sema.sema_union
 sym_type, sym_variant, RES_PATH = gen.gen_name
 CBackend = gen.gen_c.gen_c_state
+GenFault = gen.gen_diag
 Inst = sema.sema_inst
 sub_with, enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
 intern_named = gen.gen_c.gen_c_mono
@@ -27,10 +28,9 @@ request_slots = gen.gen_c.gen_c_fat
 // The C spelling of a type, written into `out`. Requests the type as a
 // side effect, because anything spelled is something that needs a
 // definition.
-// It never reports: a spelling is wanted at a dozen sites, each with a
-// better position than this one. `spellable` is asked first, and `int`
-// is what an unspellable type becomes so the C still parses around the
-// diagnostic.
+// Ordinary types are checked by `spellable` at their use site. Native
+// records also validate their explicit header contract here. Invalid
+// types fall back to `int` so C remains parseable around the diagnostic.
 ctype* = (be :: CBackend, id: TyId, out :: String) Res<(), AllocError> {
     be.types().at(id).match({
         Prim(p)  => out.add(c_prim(p.name)),
@@ -103,9 +103,124 @@ maybe_scope = (be :: CBackend, id: TyId, n: TyNamed, out :: String)
 // the surrounding C parseable without inventing a struct definition.
 maybe_named_ctype = (be :: CBackend, id: TyId, n: TyNamed, out :: String)
                     Res<(), AllocError> {
-    be.foreign_binding(n).match({
-        Ok(_) => out.add("int"),
-        None  => be.named_ctype(id, out),
+    be.native_record_decl(n).match({
+        Ok(s) => be.write_native_record(n, s, out),
+        None  => be.foreign_binding(n).match({
+            Ok(_) => out.add("int"),
+            None  => be.named_ctype(id, out),
+        }),
+    })
+}
+
+// Header-owned records use the platform compiler's layout and field spelling.
+native_record_decl = (be: CBackend, n: TyNamed) Res<Struct> {
+    be.struct_decl(n.decl).match({
+        Ok(s) => s.native_record.match({ true => Ok(s), false => None }),
+        None  => None,
+    })
+}
+
+is_native_record* = (be: CBackend, id: TyId) bool {
+    be.types().at(id).match({
+        Named(n) => be.native_record_decl(
+            n
+        ).match({ Ok(_) => true, None => false }),
+        _        => false,
+    })
+}
+
+native_record_spelling = (name: str) bool {
+    name.is_identifier() || (name.starts_with("struct ")
+        && name.slice(7, name.len).is_identifier())
+}
+
+write_native_record = (be :: CBackend, n: TyNamed, s: Struct, out :: String)
+                      Res<(), AllocError> {
+    spelling = s.native_symbol.value_or("");
+    header   = s.native_header.value_or("");
+    valid ::= native_record_spelling(spelling) && s.tparams.len == 0;
+    (!be.need_c_header(header, true).try()).then(() { valid = false; });
+    ctx  = be.decl_ctx(n);
+    inst = be.decl_inst(n).try();
+    s.members.loop((h, m) {
+        field_ok = be.field_type(m, ctx, inst).match({
+            Ok(t) => be.native_record_field(t),
+            None  => false,
+        });
+        (!field_ok).then(() { valid = false; });
+    });
+    valid.match({
+        true  => {
+            be.native_record_contract(s, ctx, inst, spelling).try();
+            out.add(spelling)
+        },
+        false => {
+            be.report(
+                s.name.span.file,
+                s.name.span,
+                GenFault.Unspellable(
+                    "invalid native record: expected a safe header type and scalar or pointer fields"
+                )
+            ).try();
+            out.add("int")
+        },
+    })
+}
+
+// A wrong scalar annotation can turn a field borrow into an oversized write.
+// Ask the target compiler to prove exact scalar type compatibility before any
+// generated Zen function may take that address. Pointer pointee contracts stay
+// explicit FFI responsibilities; walking them here would recurse on self links.
+native_record_contract = (
+    be       :: CBackend,
+    s        : Struct,
+    ctx      : Ctx,
+    inst     : Inst,
+    spelling : str
+) Res<(), AllocError> {
+    be.need_c_header("stdint.h", true).try();
+    be.need_c_header("stddef.h", true).try();
+    be.need_c_header("stdbool.h", true).try();
+    s.members.loop((h, m) {
+        be.field_type(m, ctx, inst).match({
+            Ok(t) => be.types().at(t).match({
+                Prim(p) => be.native_scalar_contract(
+                    spelling,
+                    m.name().text,
+                    c_prim(p.name)
+                ),
+                _       => Ok(()),
+            }),
+            None  => Ok(()),
+        }).try();
+    });
+    Ok(())
+}
+
+native_scalar_contract = (
+    be       :: CBackend,
+    spelling : str,
+    field    : str,
+    scalar   : str
+) Res<(), AllocError> {
+    line ::= be.alloc.String().try();
+    line.fmt(
+        "_Static_assert(__builtin_types_compatible_p(__typeof__((({} *)0)->{}), {}), \"native record scalar field type mismatch\");",
+        spelling,
+        field,
+        scalar
+    ).try();
+    be.c_headers.find((item) { item.view().eq(line.view()) }).match({
+        Ok(_) => Ok(()),
+        None  => be.c_headers.add(line),
+    })
+}
+
+native_record_field = (be: CBackend, id: TyId) bool {
+    be.types().at(id).match({
+        Prim(p)  => c_prim_known(p.name) && !p.name.eq("str") && !p.name.eq("()"),
+        Named(n) => is_ptr_named(n),
+        _        => false,
     })
 }
 
@@ -305,11 +420,10 @@ request_type* = (be :: CBackend, id: TyId) Res<(), AllocError> {
     })
 }
 
-// A `Scope` has no definition to queue: the record behind the pointer
-// is the runtime's, and queueing the declaration would emit the `defer`
-// Field `maybe_scope` refuses to spell.
+// Runtime scopes and header-owned native types already have definitions.
+// Queueing them would synthesize a competing Zen storage layout.
 request_defined = (be :: CBackend, id: TyId) Res<(), AllocError> {
-    (be.is_scope_type(id) || be.is_foreign_opaque(id)).match({
+    (be.is_scope_type(id) || be.is_foreign_opaque(id) || be.is_native_record(id)).match({
         true  => Ok(()),
         false => be.queue_definition(id),
     })

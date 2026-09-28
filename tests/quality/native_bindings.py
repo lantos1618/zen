@@ -46,6 +46,8 @@ main = () i32 {
 ''')
         generated = output.read_text()
         self.assertIn("#include <stdlib.h>", generated)
+        self.assertLess(generated.index("#define _GNU_SOURCE"),
+                        generated.index("#include <stdlib.h>"))
         self.assertNotRegex(generated, r"\bextern\b[^\n]*\b(?:malloc|free)\s*\(")
         self.assertNotIn("zg_os_", generated)
         self.assertEqual(self.run_c(directory, output).returncode, 0)
@@ -171,8 +173,9 @@ main = () i32 { (C.getpid() > 0).match({true => 0, false => 1}) }
             'main = () i32 { value = C(); 0 }\n', False)
         self.assertIn("constructing a native binding namespace", result.stdout + result.stderr)
 
-    def test_rejects_bodies_generic_and_data_members(self):
-        for member in ('f* = () i32 { 1 }', 'f*<T> = (value: T) T', 'value: i32'):
+    def test_rejects_bodies_generic_and_unsupported_data_members(self):
+        for member in ('f* = () i32 { 1 }', 'f*<T> = (value: T) T',
+                       'value:: i32', 'value: str'):
             with self.subTest(member=member):
                 _, _, result = self.compile('C = c.bind("stdlib.h", { ' + member + ' })\nmain = () i32 { 0 }\n', False)
                 self.assertIn("native bindings require", result.stdout)

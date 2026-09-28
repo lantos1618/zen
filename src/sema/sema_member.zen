@@ -7,7 +7,7 @@ str = std.text
 DeclId = sema.sema_id
 TyId, TyNamed, TyFn, Prim = sema.sema_ty
 Def, DefKind, decl_at, module_display = sema.sema_def
-SemaFault, TypeFault, PairFault = sema.sema_diag
+SemaFault, TypeFault, PairFault, NameFault = sema.sema_diag
 ExportFault = sema.sema_diag
 Checker, Ctx, Binding = sema.sema_check
 Inst, subst, inst_of_named, owner_of, push_tparams = sema.sema_inst
@@ -414,9 +414,29 @@ writable_member* = (c :: Checker, ac: Access, ctx: Ctx)
 
 written_from = (c :: Checker, ac: Access, f: Found, ctx: Ctx)
                Res<(), AllocError> {
-    ((f.computed == false) && (f.module != ctx.module)).match({
-        true  => c.not_writable(ac, f),
-        false => Ok(()),
+    c.native_constant(f).match({
+        true  => c.report(
+            ac.name.span.file,
+            ac.name.span,
+            SemaFault.ImmutableWrite(NameFault(name: ac.name.text))
+        ),
+        false => ((f.computed == false) && (f.module != ctx.module)).match({
+            true  => c.not_writable(ac, f),
+            false => Ok(()),
+        }),
+    })
+}
+
+native_constant = (c: Checker, f: Found) bool {
+    f.constant && c.types.at(f.decl_owner).match({
+        Named(n) => c.tree.decl_at(n.decl).match({
+            Ok(d) => d.kind.match({
+                Struct(s) => !s.native_record && s.native_header.match({Ok(_) => true, None => false}),
+                _         => false,
+            }),
+            None  => false,
+        }),
+        _        => false,
     })
 }
 
@@ -734,7 +754,16 @@ struct_members = (
             rows.loop((h, i) {
                 s.members.get(i).match({
                     None  => Ok(()),
-                    Ok(m) => c.add_own(m, name, mi, ty, poison, inst, out),
+                    Ok(m) => c.add_own(
+                        m,
+                        name,
+                        mi,
+                        ty,
+                        poison,
+                        inst,
+                        !s.native_record && s.native_header.match({ Ok(_) => true, None => false }),
+                        out
+                    ),
                 }).try();
             });
             c.release_tvars(tmark).try();
@@ -752,14 +781,15 @@ enter_struct_tvars* = (c :: Checker, s: Struct, mi: usize)
 }
 
 add_own = (
-    c      :: Checker,
-    m      : Member,
-    name   : str,
-    mi     : usize,
-    ty     : TyId,
-    poison : TyId,
-    inst   : Inst,
-    out    :: Vec<Found>
+    c                :: Checker,
+    m                : Member,
+    name             : str,
+    mi               : usize,
+    ty               : TyId,
+    poison           : TyId,
+    inst             : Inst,
+    native_constants : bool,
+    out              :: Vec<Found>
 )
           Res<(), AllocError> {
     declared = c.member_type(m, mi, ty).try();
@@ -769,6 +799,7 @@ add_own = (
         computed: false,
         constant: m.kind.match({
             Const(_) => true,
+            Field(_) => native_constants,
             _        => false,
         }),
         mutable: m.mutable(),

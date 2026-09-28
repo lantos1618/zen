@@ -15,7 +15,7 @@ CBackend = gen.gen_c.gen_c_state
 unsupported = gen.gen_c.gen_c_report
 constructed, recv_inst, intern_named = gen.gen_c.gen_c_mono
 unify, arg_type, enter_tparams, leave_tparams = gen.gen_c.gen_c_mono
-ctype, field_type, request_type, has_storage = gen.gen_c.gen_c_type
+ctype, field_type, request_type, has_storage, is_native_record = gen.gen_c.gen_c_type
 expr, ty_of = gen.gen_c.gen_c_expr
 is_pure_value = gen.gen_c.gen_c_const
 holds, value_held = gen.gen_c.gen_c_expr
@@ -61,11 +61,14 @@ construct_decl = (
 ) Res<(), AllocError> {
     x.kind.match({
         Struct(s) => s.native_header.match({
-            Ok(_) => be.unsupported(
-                id,
-                "constructing a native binding namespace",
-                out
-            ),
+            Ok(_) => s.native_record.match({
+                true  => be.construct_struct(id, c, s, d, ty, ctx, out),
+                false => be.unsupported(
+                    id,
+                    "constructing a native binding namespace",
+                    out
+                ),
+            }),
             None  => be.construct_struct(id, c, s, d, ty, ctx, out),
         }),
         _         => be.unsupported(id, "a construction of a non-struct", out),
@@ -179,7 +182,7 @@ prim_named = (be :: CBackend, s: Struct, ty: TyId) Res<TyId, AllocError> {
 // Primitive fields use floor names; declared fields use mangled names.
 designator = (be :: CBackend, ty: TyId, name: str, out :: String)
              Res<(), AllocError> {
-    be.is_prim_ty(ty).match({
+    (be.is_prim_ty(ty) || be.is_native_record(ty)).match({
         true  => out.add(name),
         false => out.sym_member(name),
     })

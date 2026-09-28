@@ -1,0 +1,3 @@
+# Source review tooling uses Language(path, name), retained in this release.
+# The compiler/build runtime itself has no Python package dependencies.
+tree-sitter==0.21.3

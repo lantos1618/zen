@@ -99,6 +99,18 @@ JavaScript backend execution tests. Verification also uses Node for the grammar
 and editor checks; CI installs Node 20 explicitly. A missing Node executable is
 reported as a test failure; JavaScript execution is not silently skipped.
 
+The review-tool gate needs the pinned Python package in `tests/requirements.txt`.
+For an isolated local verification environment:
+
+```sh
+python3 -m venv build/verify-python
+source build/verify-python/bin/activate
+python -m pip install -r tests/requirements.txt
+make verify
+```
+
+CI installs these dependencies explicitly; they are not compiler runtime dependencies.
+
 [Code generation](docs/BACKENDS.md) describes the C, JavaScript, and assembly
 backends and the runnable `example/backends` project.
 

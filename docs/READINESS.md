@@ -17,8 +17,10 @@ queue. This is a single-owner, single-thread API, not a concurrent registry.
 
 `add(fd, slot, Interest.Read|Write)` registers an arbitrary usize identity;
 `modify` changes that identity/interest, and `remove` unregisters a descriptor.
-Only one interest is enabled at a time. Closing a watched descriptor removes its
-kernel registration. Callers must track add versus modify: duplicate add and
+Only one interest is enabled at a time. Explicitly remove a registration before
+closing a descriptor when duplicates can exist: Linux epoll tracks the underlying
+open file description, so closing one descriptor may leave events active until
+all duplicates are closed. Callers must track add versus modify: duplicate add and
 missing modify/remove behavior follows the platform (kqueue can upsert; epoll
 rejects duplicate add). A failing kqueue change may have applied one filter before
 another fails: close/unregister the watched descriptor before reuse. Registration
@@ -51,3 +53,10 @@ checks real socketpair read/write readiness, level triggering, identities, inter
 changes, unregister, timeout, signal interruption, EOF, invalid arguments,
 close-on-exec and explicit/Drop cleanup. A corrupted slot expectation must fail.
 EOF/error readiness is not a guarantee of a successful subsequent read or write.
+
+The focused UBSan suite and negative control passed on macOS arm64 and Linux
+x86_64 for implementation `b283fc2d` on 2026-09-28. The HTTP consumer migration
+also passed its complete HTTP/1, TLS, disconnect and experimental HTTP/2 suites
+(including UBSan) on both platforms. A normal `build.zen` consumer with the
+explicit CFLAGS include directory passed on macOS. These are focused library
+and consumer checks, not a fresh complete compiler `make verify` result.

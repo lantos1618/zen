@@ -32,6 +32,13 @@ class ParallelRunnerTests(unittest.TestCase):
         )]
         self.collection = runner.Collection(tests=self.tests)
 
+    def test_math_header_links_libm_only_when_reachable(self):
+        source = self.root / "math.c"
+        source.write_text("#include <math.h>\nint main(void) { return 0; }\n")
+        self.assertEqual(runner.native_link_args(source), ["-lm"])
+        source.write_text('const char *name = "math.h";\n')
+        self.assertEqual(runner.native_link_args(source), [])
+
     def make_test(self, tid):
         source = self.root / (tid.replace("/", "_") + ".zen")
         return runner.Test(tid, tid.split("/")[0], "fixture", source, source,

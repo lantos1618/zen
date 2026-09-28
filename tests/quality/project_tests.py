@@ -4,6 +4,8 @@ import argparse
 import os
 from pathlib import Path
 import subprocess
+import shutil
+import sys
 import tempfile
 import unittest
 
@@ -46,6 +48,20 @@ class ProjectTests(unittest.TestCase):
         self.assertNotIn("not ok", selected.stdout)
         local = self.run_zen("test", "first")
         self.assertEqual(local.returncode, 0, local.stdout + local.stderr)
+
+    def test_std_math_links_without_project_native_dependency(self):
+        self.write("math.zen", 'sqrt = std.math\nmain = () i32 { (sqrt(9.0) == 3.0).match({ true => 0, false => 1 }) }\n')
+        self.build_file('b.exe_test("math", {src: Path("math.zen"), deps: [], optimize: "debug"}).try();')
+        checker = self.root / "check-math-link"
+        checker.write_text(f"#!{sys.executable}\nimport os, sys\n"
+                           'if "-lm" not in sys.argv: raise SystemExit("missing math library")\n'
+                           f"os.execv({shutil.which('cc')!r}, [{shutil.which('cc')!r}, *sys.argv[1:]])\n")
+        checker.chmod(0o755)
+        result = subprocess.run([str(ZEN), "test", "math"], cwd=self.root,
+            env={**os.environ, "ZEN_STD": str(ROOT / "src"), "CC": str(checker)},
+            capture_output=True, text=True, timeout=90)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("zen test: 1 passed, 0 failed", result.stdout)
 
     def test_empty_and_unknown_selections_fail(self):
         self.build_file('b.exe("app", {src: Path("pass.zen"), deps: []}).try();')

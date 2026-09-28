@@ -231,7 +231,7 @@ gate = ./zen build tests/gates --entry $(1).zen --emit-c -o build/gates/$(1).c \
 ##     @$(call nonempty,cap,$(ROOT) -name '*.zen' -print0 | LC_ALL=C sort -z); \
 ##       build/gates/line_cap "$${files[@]}"
 define nonempty
-mapfile -d '' files < <(find $(2)) && test $${#files[@]} -gt 0 || { echo "$(1): found no .zen files — this gate is checking nothing" >&2; exit 2; }
+files=(); while IFS= read -r -d '' file; do files+=("$$file"); done < <(find $(2)); test $${#files[@]} -gt 0 || { echo "$(1): found no .zen files — this gate is checking nothing" >&2; exit 2; }
 endef
 
 ## cap: a structural-review prompt. Long files print notes but do not fail:

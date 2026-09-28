@@ -56,6 +56,12 @@ The native application libraries and app are separate sibling repositories.
 Their setup, threading contracts and measured performance are documented there,
 with shared ownership boundaries in [LIBRARIES.md](LIBRARIES.md).
 
+`std.net.readiness` now provides caller-allocated, level-triggered kqueue/epoll
+readiness with explicit EINTR and native-error results. Focused UBSan checks
+and the negative slot control pass on macOS and Linux. Full aggregate
+verification remains pending. Actor mailbox scheduling is unchanged. See
+[READINESS.md](READINESS.md) for ownership and platform semantics.
+
 ## Unfinished work
 
 - Preserve the paused opaque-type draft in the separate primary checkout.

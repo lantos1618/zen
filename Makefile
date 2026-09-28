@@ -157,6 +157,7 @@ verify: warnings nativecheck test fmt determinism fixpoint differential runtimec
 nativecheck: build
 	$(PY) tests/library/native-bindings/run.py --zen ./zen
 	$(PY) tests/library/native-socket/run.py --zen ./zen --ubsan
+	$(PY) tests/library/readiness/run.py --zen ./zen --ubsan
 
 .PHONY: poolcheck
 poolcheck: build

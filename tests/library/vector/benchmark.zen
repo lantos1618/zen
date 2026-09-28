@@ -1,0 +1,45 @@
+// Benchmark driver and reference are Zen, just like the optimized kernels.
+// Mutate an input each iteration to prevent hoisting a repeated pure call.
+squared_distance, dot = std.math.vector
+Ptr, null_ptr = std.mem
+scalar = (a: Ptr<f64>, b: Ptr<f64>, count: usize) f64 {
+    total ::= 0.0;
+    Range(0, count).loop((i) {
+        difference = a.read(i) - b.read(i);
+        total      = total + difference * difference;
+    });
+    total
+}
+main = (env: Env) Res<i32, AllocError> {
+    arena = env.mem.alloc();
+    left  = arena.realloc<f64>(null_ptr<f64>(), 704).try();
+    right = arena.realloc<f64>(null_ptr<f64>(), 704).try();
+    Range(0, 704).loop((i) {
+        n = i.to_u64().to_i32().match({Ok(v) => v.to_f64(), None => 0.0});
+        left.write(i, n * 0.125); right.write(i, n * 0.2);
+    });
+    checksum: f64 ::= 0.0;
+    Range(0, 5).loop((trial) {
+        left.write(0, 0.0);
+        start = env.clock.since_start().ns;
+        Range(0, 100000).loop((i) {
+            left.write(0, left.read(0) + 0.000001);
+            checksum = checksum + scalar(left, right, 704);
+        });
+        elapsed = env.clock.since_start().ns - start;
+        left.write(0, 0.0);
+        vector_start = env.clock.since_start().ns;
+        Range(0, 100000).loop((i) {
+            left.write(0, left.read(0) + 0.000001);
+            checksum = checksum + squared_distance(left, right, 704);
+        });
+        vector_elapsed = env.clock.since_start().ns - vector_start;
+        println(
+            "704 f64 values: scalar {} ns/call, std {} ns/call",
+            elapsed / 100000,
+            vector_elapsed / 100000
+        );
+    });
+    println("Consumed checksum: {}", checksum);
+    Ok(0)
+}

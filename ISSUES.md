@@ -21,6 +21,15 @@ faster than the code does.
 
 ## INBOX — paste below this line
 
+**Deep constant folding exceeds the macOS stack at -O0.**
+`tests/corpus/own/deep_binary_callback_provenance.zen` is expected to print
+`lex 0 parse 0` and `sema 0`. The unoptimized native executable instead exits
+139; the crash report identifies recursion through sema_const.const_within,
+const_node and const_binary. The prior compiler/library pair reproduces it with
+the same C flags, while its -O2 control passes. This remains a correctness
+failure, not a waived ownership-corpus pass.
+
+
 **Reflection-based project test discovery remains unimplemented.**
 `Tester.expect` and generic `Tester.expect_eq` have executable bodies in
 `src/std/test/test.zen`. The remaining gap is `Module.functions`, registration

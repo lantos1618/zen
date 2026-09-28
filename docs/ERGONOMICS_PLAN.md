@@ -358,6 +358,30 @@ GCC 933 and Clang 963 without suppression. Boundary controls reproduced the
 previous unsupported-radix acceptance and LSP length overflows; formatter and
 CLI declaration comparisons preserved diagnostics and first-error precedence.
 
+## Memory and concurrency acceptance criteria
+
+Allocator and actor safety requires executable failure-path evidence, not only
+successful workloads or clean API shapes. Keep these invariants at their owners:
+
+- Allocators reject unrepresentable byte counts and header arithmetic before
+  native allocation. A successful allocation covers the requested bytes and
+  alignment; refused growth preserves the original allocation and contents.
+- Container growth preserves those guarantees through length addition,
+  capacity selection, relocation and self-aliasing operations.
+- Consuming a resource transfers cleanup responsibility exactly once. Failed
+  actor creation must release the value even before a worker exists.
+- Actor admission, stop and join must preserve accepted-message ownership,
+  bounded storage and reclamation under concurrent producers and observers.
+  Refusal is explicit; successful enqueue does not mean processing completed.
+
+Permanent gates combine boundary inputs, allocation refusal at each relevant
+stage, destructor/allocation counters, sanitizer runs and deliberately broken
+controls. Stress tests exercise schedules but do not prove race freedom; raw
+pointer lifetime and allocator-region enforcement still have known limitations.
+Performance claims require repeated measurements after correctness checks,
+including allocation counts, peak/live storage and tail latency under contention.
+Do not trade these invariants for an unmeasured throughput improvement.
+
 ## The ownership contract to build around
 
 A function can already accept an Alloc and return a String allocated through

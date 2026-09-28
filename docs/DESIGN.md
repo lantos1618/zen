@@ -414,11 +414,21 @@ This is **shallow**: `::` means the method writes the receiver's *own bytes*, an
 
 That is not a nicety, it is what makes the system consistent. `Vec.alloc` is a `:` field, and `Vec.grow` calls `self.alloc.realloc(..)` through it. If `realloc` demanded `:: Alloc`, that call would be illegal and every collection would need a mutable allocator field — the shallowness would buy nothing. It compiles precisely because `realloc` writes the arena, not the handle. Same reason `foo.receive_msg(..)` is legal on a `foo = env.spawn(..).try()`.
 
-The test, when a signature is unclear: **would a bitwise copy of the receiver see the change?** If yes, the change was to its own bytes and the method is `::`. If the copy sees it too — because both point at the same thing — the method is `:`.
+The test, when a signature is unclear: **does the method write the receiver's own fields, or storage reached through a handle?** Writing the receiver's own fields requires `::`; a copy made before the call retains the old fields. Writing shared pointee storage can use `:`; copies of the handle observe that shared storage change. `:` therefore does not mean purity or deep immutability.
 
 It is not inferred from the body. An inferred receiver requirement changes when the body changes, so adding one `self.x = ..` would silently break callers in other modules. Explicit keeps it a promise instead of a consequence.
 
 **`consume` moves.** The compiler calls `drop` exactly once, so `g = f` on a `Drop` type cannot copy — both would drop. There is no `Clone` trait: want a second one, construct a second one.
+
+Copying `Ptr.read` and `Ptr.copy_from` operations reject values containing inline
+`Drop` owners, including generic instances checked during lowering. Consequently,
+`Vec.get`, `require`, and value iteration cannot duplicate those owners. A raw
+`Ptr.take(index)` transfers an initialized slot without clearing its bytes; the
+caller must retire or overwrite that slot before another read or destruction.
+`Vec.take` manages that retirement and compacts the initialized prefix. This is
+not a checked raw-pointer lifetime or aliasing system. Factories may still return
+fresh owners. LSP document queries use owner-free views whose lifetime ends when
+the corresponding document is retired.
 
 Three consequences worth stating, because each one is a place the rule looks like it bites and does not:
 

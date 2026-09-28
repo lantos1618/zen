@@ -325,6 +325,11 @@ Struct* = {
     body_span*: Span,
     native_header* :: Res<str> = None,
     native_symbol* :: Res<str> = None,
+    // An opaque declaration supplies identity without a storage layout.
+    // These fields describe its pointee spelling, not a c.bind namespace.
+    opaque* :: bool = false,
+    opaque_header* :: Res<str> = None,
+    opaque_spelling* :: Res<str> = None,
 
     has_field* = (self: @Self, name: str) bool {
         self.members.find((m) {

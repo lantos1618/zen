@@ -411,7 +411,13 @@ write_page = (
     be.fmt("unsigned char *{};\n", raw.view()).try();
     dst = be.temp(ret, "t").try();
     be.set_line(szt.view(), size.view()).try();
-    be.write_page_malloc(raw.view(), cty.view(), szt.view()).try();
+    header = be.temp(usize_ty, "page_header").try();
+    be.fmt(
+        "{} = (sizeof({}) + 15u) & ~(size_t)15u;\n",
+        header.view(),
+        cty.view()
+    ).try();
+    be.write_page_malloc(raw.view(), header.view(), szt.view()).try();
     be.open_null_test(raw.view()).try();
     be.write_assign_err(ret, "OutOfMemory", dst.view()).try();
     be.close_else().try();
@@ -420,33 +426,37 @@ write_page = (
         cty.view(),
         cell,
         szt.view(),
-        prev.view()
+        prev.view(),
+        header.view()
     ).try();
     be.write_page_ok(ret, cty.view(), raw.view(), dst.view()).try();
     be.close_brace().try();
     out.add(dst.view())
 }
 
-write_page_malloc = (be :: CBackend, raw: str, cty: str, szt: str)
+write_page_malloc = (be :: CBackend, raw: str, header: str, szt: str)
                     Res<(), AllocError> {
-    be.fmt("{raw} = (unsigned char *)malloc(sizeof({cty}) + {szt});\n")
+    be.fmt(
+        "{raw} = ({szt} > SIZE_MAX - {header}) ? NULL : (unsigned char *)malloc({header} + {szt});\n"
+    )
 }
 
 // The three fields of the header, written through the raw pointer:
 // `base` is the first byte past the header, which is what makes the
 // page describe itself.
 write_page_header = (
-    be   :: CBackend,
-    raw  : str,
-    cty  : str,
-    cell : TyId,
-    szt  : str,
-    prev : str
+    be     :: CBackend,
+    raw    : str,
+    cty    : str,
+    cell   : TyId,
+    szt    : str,
+    prev   : str,
+    header : str
 ) Res<(), AllocError> {
     cast ::= be.alloc.String().try();
     cast.fmt("(({cty} *){raw})").try();
     base ::= be.alloc.String().try();
-    base.fmt("({raw} + sizeof({cty}))").try();
+    base.fmt("({raw} + {header})").try();
     be.set_field(cast.view(), cell, "prev", prev).try();
     be.set_field(cast.view(), cell, "base", base.view()).try();
     be.set_field(cast.view(), cell, "size", szt).try();

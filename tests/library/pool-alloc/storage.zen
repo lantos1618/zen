@@ -1,0 +1,53 @@
+Pool, HEADER_BYTES = std.mem.mem_pool
+Ptr, null_ptr = std.mem
+main = (env: Env) Res<i32, AllocError> {
+    pool ::= Pool();
+    first = pool.take(64);
+    (!first.is_null()).ensure(AllocError.OutOfMemory).try();
+    first.write(63, 42);
+    live = pool.snapshot();
+    (live.live_bytes == 64 + HEADER_BYTES && live.cached_bytes == 0 && live.owned_bytes == live.live_bytes).ensure(AllocError.OutOfMemory).try();
+    pool.give(first, 1048576, 65536, 64);
+    Range(0, 10000).loop((i) {
+        pointer = pool.take(64);
+        (pointer.same(first) && pointer.read(63) == 42).ensure(AllocError.OutOfMemory).try();
+        pool.give(pointer, 1048576, 65536, 64);
+    });
+    (pool.allocations == 1 && pool.reuses == 10000 && pool.cached == 64 + HEADER_BYTES && pool.cached_blocks == 1).ensure(
+        AllocError.OutOfMemory
+    ).try();
+    before = pool.owned;
+    pool.take(usize.MAX).is_null().ensure(AllocError.OutOfMemory).try();
+    (pool.owned == before).ensure(AllocError.OutOfMemory).try();
+    cached = pool.snapshot();
+    (cached.live_bytes == 0 && cached.cached_bytes == 64 + HEADER_BYTES && cached.cached_blocks == 1 && cached.allocations == 1 && cached.reuses == 10000 && cached.peak_bytes == cached.owned_bytes).ensure(AllocError.OutOfMemory).try();
+    pool.close(); pool.close();
+    closed = pool.snapshot();
+    (closed.live_bytes == 0 && closed.cached_bytes == 0 && closed.owned_bytes == 0 && closed.cached_blocks == 0 && closed.peak_bytes == cached.peak_bytes).ensure(AllocError.OutOfMemory).try();
+    (live.live_bytes == 64 + HEADER_BYTES && live.cached_bytes == 0 && live.reuses == 0 && cached.cached_blocks == 1 && cached.reuses == 10000).ensure(AllocError.OutOfMemory).try();
+    (pool.owned == 0 && pool.cached == 0 && pool.cached_blocks == 0).ensure(
+        AllocError.OutOfMemory
+    ).try();
+    a      = env.mem.alloc();
+    blocks = a.realloc<Ptr<u8>>(null_ptr<Ptr<u8>>(), 65).try();
+    Range(0, 65).loop((i) { pointer = pool.take(32); (!pointer.is_null()).ensure(AllocError.OutOfMemory).try(); blocks.write(i, pointer); });
+    Range(0, 65).loop((i) { pool.give(blocks.read(i), 1048576, 65536, 64); });
+    (pool.cached_blocks == 64 && pool.owned == 64 * (32 + HEADER_BYTES)).ensure(
+        AllocError.OutOfMemory
+    ).try();
+    pool.close();
+    Range(0, 64).loop((i) { pointer = pool.take(32768); (!pointer.is_null()).ensure(AllocError.OutOfMemory).try(); blocks.write(i, pointer); });
+    Range(0, 64).loop((i) { pool.give(blocks.read(i), 1048576, 65536, 64); });
+    (pool.cached_blocks == 31 && pool.cached == 31 * (32768 + HEADER_BYTES) && pool.owned == pool.cached).ensure(
+        AllocError.OutOfMemory
+    ).try();
+    pool.close();
+    large = pool.take(65537);
+    (!large.is_null()).ensure(AllocError.OutOfMemory).try();
+    pool.give(large, 1048576, 65536, 64);
+    (pool.owned == 0 && pool.cached == 0).ensure(AllocError.OutOfMemory).try();
+    println(
+        "PASS: 10000 warm reuse operations, exact capacity, metadata accounting, cache count/byte bounds, oversized rejection and complete teardown"
+    );
+    Ok(0)
+}

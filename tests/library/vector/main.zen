@@ -1,0 +1,30 @@
+dot, squared_distance = std.math.vector
+Ptr, null_ptr = std.mem
+main = (env: Env) Res<i32, AllocError> {
+    a = env.mem.alloc();
+    x = a.realloc<f64>(null_ptr<f64>(), 1026).try();
+    y = a.realloc<f64>(null_ptr<f64>(), 1026).try();
+    Range(0, 1026).loop((i) {
+        n = i.to_u64().to_i32().match({Ok(v) => v.to_f64(), None => 0.0});
+        x.write(i, n * 0.25 - 10.0); y.write(i, n * 0.5 + 2.0);
+    });
+    good ::= dot(null_ptr<f64>(), null_ptr<f64>(), 0) == 0.0;
+    good = good && squared_distance(null_ptr<f64>(), null_ptr<f64>(), 0) == 0.0;
+    Range(0, 1025).loop((count) {
+        expected_dot ::= 0.0; expected_distance ::= 0.0;
+        Range(0, count).loop((i) {
+            left = x.read(i + 1); right = y.read(i + 1);
+            expected_dot = expected_dot + left * right;
+            d            = left - right; expected_distance = expected_distance + d * d;
+        });
+        good = good && dot(x.offset(1), y.offset(1), count) == expected_dot;
+        good = good && squared_distance(
+            x.offset(1),
+            y.offset(1),
+            count
+        ) == expected_distance;
+        good = good && squared_distance(x, x, count) == 0.0;
+    });
+    println("bulk math: zero, all tails, offset pointers, aliasing: {}", good);
+    Ok(good.match({true => 0, false => 1}))
+}

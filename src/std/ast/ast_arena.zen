@@ -188,14 +188,15 @@ Ast* = {
     }
 
     // Collecting ids can allocate, while `types_each` has an infallible body.
-    types_where* = (self: @Self, keep: (node: Type) bool, out :: Vec<TypeId>)
-                   Res<(), AllocError> {
-        id ::= TypeId(index: 0);
+    types_where* = (self: @Self, alloc: Alloc, keep: (node: Type) bool)
+                   Res<Vec<TypeId>, AllocError> {
+        out ::= alloc.Vec<TypeId>();
+        id  ::= TypeId(index: 0);
         Range(0, self.types.len).loop((h, i) {
             keep(self.type_at(id)).then(() { out.add(id).try() });
             id = TypeId(index: id.index + 1);
         });
-        Ok(());
+        Ok(out);
     }
 
     patterns_each* = (self: @Self, body: (id: PatternId, node: Pattern) ()) () {

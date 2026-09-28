@@ -164,7 +164,17 @@ decl_value = (
     head = p.head_name(names);
     (names.len > 1).match({
         true  => p.import_decl(m, names),
-        false => p.native_binding_ahead().match({
+        false => p.opaque_ahead().match({
+            true  => {
+                annotated = written.match({ Ok(_) => true, None => false });
+                (mutable || annotated || tparams.len > 0).then(() {
+                    p.error(
+                        "an opaque type uses an untyped immutable declaration without type parameters"
+                    ).try();
+                });
+                p.opaque_decl(m, head, tparams)
+            },
+            false => p.native_binding_ahead().match({
             true  => {
                 annotated = written.match({ Ok(_) => true, None => false });
                 (mutable || annotated).then(() {
@@ -183,7 +193,60 @@ decl_value = (
             ExprValue   => p.const_decl(m, head, written, mutable),
             }),
         }),
+        }),
     });
+}
+
+opaque_ahead = (p: Parser) bool {
+    p.at_text("opaque") || (p.at_text("c") && p.peek_n(1).kind == TokenKind.Dot
+        && p.text(p.peek_n(2)).eq("opaque") && p.peek_n(3).kind == TokenKind.ParenOpen)
+}
+
+opaque_decl = (p :: Parser, m: Mark, head: ImportName, tparams: Vec<TParam>)
+              Res<Decl, AllocError> {
+    start = p.here();
+    header: Res<str>   ::= None;
+    spelling: Res<str> ::= None;
+    p.at_text("opaque").match({
+        true  => p.bump().try(),
+        false => {
+            p.bump().try(); p.bump().try(); p.bump().try();
+            open = p.here_span();
+            p.bump().try();
+            path = p.native_text().try();
+            p.expect(
+                TokenKind.Comma,
+                "expected comma between opaque header and C type name"
+            ).try();
+            name = p.native_text().try();
+            (!path.valid_opaque_header()).then(() {
+                p.error(
+                    "an opaque header must be a nonempty safe include path"
+                ).try();
+            });
+            (!name.is_identifier()).then(() {
+                p.error("an opaque C type name must be one identifier").try();
+            });
+            p.eat(TokenKind.Comma).try();
+            p.expect_close(
+                TokenKind.ParenClose,
+                "unclosed opaque type binding",
+                open
+            ).try();
+            header   = Ok(path);
+            spelling = Ok(name);
+        },
+    });
+    p.add_decl(DeclKind.Struct(Struct(
+        name: head.name, exported: head.exported, tparams: tparams,
+        members: p.alloc.Vec<Member>(), body_span: p.span_from(start),
+        opaque: true, opaque_header: header, opaque_spelling: spelling,
+    )), m)
+}
+
+valid_opaque_header = (path: str) bool {
+    path.len > 0 && !path.contains(0) && !path.contains('\n') && !path.contains('\r')
+        && !path.contains('"') && !path.contains('<') && !path.contains('>') && !path.contains('\\')
 }
 
 // A header binding is a namespace of explicitly written native signatures.

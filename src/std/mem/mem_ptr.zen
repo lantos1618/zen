@@ -4,7 +4,12 @@
 Ptr*<T> = {
     addr: usize,
 
+    // Copy an element. Values containing Drop owners cannot be copied.
     read* = (self: @Self, index: usize) T
+
+    // Transfer an initialized slot. The caller must retire or overwrite the
+    // source slot before reading or dropping it again; no bytes are cleared.
+    take* = (self: @Self, index: usize) T
     write* = (self: @Self, index: usize, value: T) ()
 
     // Move by `count` elements, not bytes.

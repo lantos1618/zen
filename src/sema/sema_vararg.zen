@@ -55,8 +55,7 @@ last_param = (f: Function) Res<Param> {
 // all mentions and all legal final-parameter positions before comparing them.
 
 check_varargs* = (c :: Checker) Res<(), AllocError> {
-    found ::= c.alloc.Vec<TypeId>();
-    c.tree.types_where((node) { node.written_pack() }, found).try();
+    found = c.tree.types_where(c.alloc, (node) { node.written_pack() }).try();
     (found.len == 0).match({
         true  => Ok(()),
         false => c.check_mentions(found),
@@ -71,8 +70,7 @@ written_pack = (node: Type) bool {
 }
 
 check_mentions = (c :: Checker, found: Vec<TypeId>) Res<(), AllocError> {
-    tails ::= c.alloc.Vec<TypeId>();
-    c.collect_tails(tails).try();
+    tails = c.collect_tails().try();
     found.loop((h, t) { c.check_mention(t, tails).try() });
     Ok(());
 }
@@ -118,14 +116,15 @@ report_pack = (c :: Checker, t: TypeId, fault: SemaFault) Res<(), AllocError> {
     c.report(node.span.file, node.span, fault)
 }
 
-collect_tails = (c :: Checker, out :: Vec<TypeId>) Res<(), AllocError> {
+collect_tails = (c: Checker) Res<Vec<TypeId>, AllocError> {
+    out ::= c.alloc.Vec<TypeId>();
     Range(0, c.tree.module_count()).loop((h, mi) {
         c.tree.module_at(mi).match({
             Ok(m) => m.module_tails(out),
             None  => Ok(()),
         }).try();
     });
-    Ok(());
+    Ok(out);
 }
 
 module_tails = (m: Module, out :: Vec<TypeId>) Res<(), AllocError> {

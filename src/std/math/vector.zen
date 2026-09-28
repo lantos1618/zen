@@ -1,0 +1,40 @@
+// Portable bulk f64 math. Independent accumulators permit backend SIMD without
+// native vector types or platform bindings. Reduction order differs from a
+// scalar left fold; results are not promised bit-for-bit identical.
+Ptr = std.mem
+
+// Both pointers must cover count readable elements (null is allowed at zero).
+// Inputs may overlap. No allocation; no extra alignment requirement.
+dot* = (a: Ptr<f64>, b: Ptr<f64>, count: usize) f64 {
+    x0 ::= 0.0; x1 ::= 0.0; x2 ::= 0.0; x3 ::= 0.0;
+    i: usize ::= 0;
+    blocks = count / 4;
+    Range(0, blocks).loop((block) {
+        x0 = x0 + a.read(i) * b.read(i);
+        x1 = x1 + a.read(i + 1) * b.read(i + 1);
+        x2 = x2 + a.read(i + 2) * b.read(i + 2);
+        x3 = x3 + a.read(i + 3) * b.read(i + 3);
+        i  = i + 4;
+    });
+    result ::= (x0 + x1) + (x2 + x3);
+    Range(i, count).loop((j) { result = result + a.read(j) * b.read(j); });
+    result
+}
+
+squared_distance* = (a: Ptr<f64>, b: Ptr<f64>, count: usize) f64 {
+    x0 ::= 0.0; x1 ::= 0.0; x2 ::= 0.0; x3 ::= 0.0;
+    i: usize ::= 0;
+    blocks = count / 4;
+    Range(0, blocks).loop((block) {
+        d0 = a.read(i) - b.read(i);
+        d1 = a.read(i + 1) - b.read(i + 1);
+        d2 = a.read(i + 2) - b.read(i + 2);
+        d3 = a.read(i + 3) - b.read(i + 3);
+        x0 = x0 + d0 * d0; x1 = x1 + d1 * d1;
+        x2 = x2 + d2 * d2; x3 = x3 + d3 * d3;
+        i = i + 4;
+    });
+    result ::= (x0 + x1) + (x2 + x3);
+    Range(i, count).loop((j) { d = a.read(j) - b.read(j); result = result + d * d; });
+    result
+}

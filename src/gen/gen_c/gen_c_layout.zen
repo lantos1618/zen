@@ -600,9 +600,13 @@ write_struct_or_fat = (
     id   : TyId
 )
                       Res<(), AllocError> {
-    be.is_fat(id).match({
-        true  => be.write_fat_def(out, name, id),
-        false => be.write_struct_def(out, name, s, ctx, inst),
+    s.opaque.match({
+        // The typedef pass already emitted this nominal incomplete type.
+        true  => Ok(()),
+        false => be.is_fat(id).match({
+            true  => be.write_fat_def(out, name, id),
+            false => be.write_struct_def(out, name, s, ctx, inst),
+        }),
     })
 }
 

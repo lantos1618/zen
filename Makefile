@@ -113,7 +113,8 @@ projectcheck: build
 
 ## editorcheck: compile the extension and execute its nonempty lifecycle suites.
 editorcheck: editors/vscode/node_modules/.zen-dependencies
-	$(PY) tests/quality/editor_check.py
+	node --test tests/quality/test_editor_check.cjs
+	node tests/quality/editor_check.cjs
 
 editors/vscode/node_modules/.zen-dependencies: editors/vscode/package.json editors/vscode/package-lock.json
 	npm ci --prefix editors/vscode --include=dev --no-audit --no-fund
@@ -151,10 +152,25 @@ lspcheck: build
 ## are built once per invocation, then formatting and determinism inspect the
 ## same compiler that ran the test suite.
 verify: override TEST_CACHE_ARGS := --result-cache "$(TEST_RESULTS)" --refresh-result-cache
-verify: test fmt determinism fixpoint differential runtimecheck ownershipcheck warnings ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck
+verify: test fmt determinism fixpoint differential runtimecheck ownershipcheck actorcheck poolcheck warnings ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck
+
+.PHONY: poolcheck
+poolcheck: build
+	$(PY) tests/quality/pool_alloc.py --zen ./zen --ubsan
+	ZEN="$(CURDIR)/zen" ZEN_STD="$(CURDIR)/src" $(PY) tests/library/allocation-limits/run.py
+
+.PHONY: actorcheck
+actorcheck: build
+	$(PY) tests/quality/actor_admission.py --zen ./zen
+	$(PY) tests/quality/actor_join.py --zen ./zen
+	$(PY) tests/quality/actor_spawn_drop.py --zen ./zen
+	$(PY) tests/quality/page_allocation.py --zen ./zen
+	$(PY) tests/quality/actor_storage.py --zen ./zen
+	$(PY) tests/quality/actor_contention.py --zen ./zen
 
 .PHONY: ownershipcheck
 ownershipcheck: build
+	$(PY) tests/quality/ownership_lookup.py --zen ./zen
 	$(PY) tests/quality/ownership_sanitizers.py --zen ./zen --cc "$(CC)"
 
 ## fixpoint: rebuilding the whole compiler preserves C and reproduces the seed.
@@ -173,6 +189,7 @@ differential: build
 	$(PY) -m unittest discover -s tests/quality -p 'test_differential_controls.py'
 
 runtimecheck: build
+	$(PY) tests/quality/comparison_operands.py --zen ./zen
 	$(PY) tests/bench/runtime/run.py --zen ./zen --cc "$(CC)" \
 	  --out build/source_health/runtime-check --quick --enforce-map-budget
 

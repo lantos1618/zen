@@ -1,3 +1,5 @@
+HEADER_BYTES = std.mem.mem_pool
+MAX_MESSAGES, MAX_MESSAGE_BYTES = std.actor.actor_limits
 // C lowering for std.actor. Each actor owns one worker thread and one
 // bounded mailbox. Senders only enqueue; the worker is the sole caller of
 // lifecycle and behavior methods, so actor state is never entered twice.
@@ -193,7 +195,15 @@ write_actor_floor = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     out.say("#endif").try();
     out.say("#include <pthread.h>").try();
     out.line().try();
-    out.say("#define ZG_ACTOR_CAPACITY 64u").try();
+    out.bytes("#define ZG_ACTOR_CAPACITY ").try();
+    out.number(MAX_MESSAGES).try();
+    out.say("u").try();
+    out.bytes("#define ZG_ACTOR_BYTE_CAPACITY ").try();
+    out.number(MAX_MESSAGE_BYTES).try();
+    out.say("u").try();
+    out.bytes("#define ZG_ACTOR_STORAGE_OVERHEAD ").try();
+    out.number(HEADER_BYTES).try();
+    out.say("u").try();
     out.say("typedef struct zg_actor zg_actor;").try();
     out.say("typedef struct zg_actor_msg zg_actor_msg;").try();
     out.say("typedef struct zg_actor_slice zg_actor_slice;").try();
@@ -201,6 +211,7 @@ write_actor_floor = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     out.say("struct zg_actor_msg {").try();
     out.say("    zg_actor_msg *next;").try();
     out.say("    zg_actor_turn turn;").try();
+    out.say("    size_t bytes;").try();
     out.say("    unsigned char data[];").try();
     out.say("};").try();
     out.say("struct zg_actor_slice {").try();
@@ -213,11 +224,17 @@ write_actor_floor = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     out.say("    pthread_t thread;").try();
     out.say("    pthread_mutex_t lock;").try();
     out.say("    pthread_cond_t wake;").try();
+    out.say("    pthread_cond_t joined_wake;").try();
     out.say("    zg_actor_msg *head;").try();
     out.say("    zg_actor_msg *tail;").try();
     out.say("    size_t count;").try();
+    out.say("    size_t bytes;").try();
     out.say("    int open;").try();
     out.say("    int joined;").try();
+    out.say("    int joining;").try();
+    out.say("    void *storage;").try();
+    out.say("    void *(*take)(void *, size_t);").try();
+    out.say("    void (*give)(void *, void *);").try();
     out.say("    void *state;").try();
     out.say("    void *context;").try();
     out.say("    void (*started)(zg_actor *);").try();
@@ -259,10 +276,13 @@ write_actor_worker = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     out.say("        zg_actor_msg *m = a->head;").try();
     out.say("        a->head = m->next;").try();
     out.say("        if (!a->head) a->tail = NULL;").try();
-    out.say("        a->count--;").try();
+
     out.say("        pthread_mutex_unlock(&a->lock);").try();
     out.say("        m->turn(a, m->data);").try();
-    out.say("        free(m);").try();
+    out.say("        pthread_mutex_lock(&a->lock);").try();
+    out.say("        a->count--; a->bytes -= m->bytes;").try();
+    out.say("        a->give(a->storage, m);").try();
+    out.say("        pthread_mutex_unlock(&a->lock);").try();
     out.say("        pthread_mutex_lock(&zg_actor_registry_lock);").try();
     out.say("        zg_actor_pending--;").try();
     out.say(
@@ -282,14 +302,34 @@ write_actor_send_floor = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     out.say(
         "static int zg_actor_send(zg_actor *a, zg_actor_turn turn, const void *data, size_t size, const zg_actor_slice *slices, size_t slice_count) {"
     ).try();
-    out.say("    size_t extra = 0;").try();
+    // Keep registry-before-mailbox order through allocation and enqueue.
+    // This conservative first step avoids a reservation/shutdown lifetime race.
+    out.say("    pthread_mutex_lock(&zg_actor_registry_lock);").try();
+    out.say("    pthread_mutex_lock(&a->lock);").try();
+    out.say("    int result = 2;").try();
+    out.say("    if (!a->open) { result = 1; goto reject; }").try();
+    out.say("    if (a->count >= ZG_ACTOR_CAPACITY) goto reject;").try();
+    out.say("    size_t total = sizeof(zg_actor_msg);").try();
+    out.say("    if (size > ZG_ACTOR_BYTE_CAPACITY - total) goto reject;").try();
+    out.say("    total += size;").try();
+    out.say("    for (size_t i = 0; i < slice_count; i++) {").try();
     out.say(
-        "    for (size_t i = 0; i < slice_count; i++) extra += slices[i].len;"
+        "        if (slices[i].len > ZG_ACTOR_BYTE_CAPACITY - total) goto reject;"
+    ).try();
+    out.say("        total += slices[i].len;").try();
+    out.say("    }").try();
+    out.say(
+        "    if (total > ZG_ACTOR_BYTE_CAPACITY - ZG_ACTOR_STORAGE_OVERHEAD) goto reject;"
+    ).try();
+    out.say("    size_t charged = total + ZG_ACTOR_STORAGE_OVERHEAD;").try();
+    out.say(
+        "    if (charged > ZG_ACTOR_BYTE_CAPACITY - a->bytes) goto reject;"
     ).try();
     out.say(
-        "    zg_actor_msg *m = (zg_actor_msg *)malloc(sizeof(*m) + size + extra);"
+        "    zg_actor_msg *m = (zg_actor_msg *)a->take(a->storage, total);"
     ).try();
-    out.say("    if (!m) return 2;").try();
+    out.say("    if (!m) goto reject;").try();
+    out.say("    m->bytes = charged;").try();
     out.say("    m->next = NULL;").try();
     out.say("    m->turn = turn;").try();
     out.say("    if (size) memcpy(m->data, data, size);").try();
@@ -307,25 +347,21 @@ write_actor_send_floor = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     ).try();
     out.say("        tail += slices[i].len;").try();
     out.say("    }").try();
-    // Registry before mailbox is the one lock order. Shutdown holds the
-    // registry while closing mailboxes, so taking them in the opposite order
-    // here could deadlock a final send against process teardown.
-    out.say("    pthread_mutex_lock(&zg_actor_registry_lock);").try();
-    out.say("    pthread_mutex_lock(&a->lock);").try();
-    out.say(
-        "    if (!a->open) { pthread_mutex_unlock(&a->lock); pthread_mutex_unlock(&zg_actor_registry_lock); free(m); return 1; }"
-    ).try();
-    out.say(
-        "    if (a->count >= ZG_ACTOR_CAPACITY) { pthread_mutex_unlock(&a->lock); pthread_mutex_unlock(&zg_actor_registry_lock); free(m); return 2; }"
-    ).try();
+    // The mailbox lock makes empty-to-nonempty publication atomic with wait.
+    // Queued work already keeps the worker runnable; signal only the transition.
+    out.say("    int was_empty = (a->head == NULL);").try();
     out.say("    if (a->tail) a->tail->next = m; else a->head = m;").try();
     out.say("    a->tail = m;").try();
-    out.say("    a->count++;").try();
+    out.say("    a->count++; a->bytes += charged;").try();
     out.say("    zg_actor_pending++;").try();
-    out.say("    pthread_cond_signal(&a->wake);").try();
+    out.say("    if (was_empty) pthread_cond_signal(&a->wake);").try();
     out.say("    pthread_mutex_unlock(&a->lock);").try();
     out.say("    pthread_mutex_unlock(&zg_actor_registry_lock);").try();
     out.say("    return 0;").try();
+    out.say("reject:").try();
+    out.say("    pthread_mutex_unlock(&a->lock);").try();
+    out.say("    pthread_mutex_unlock(&zg_actor_registry_lock);").try();
+    out.say("    return result;").try();
     out.say("}").try();
     out.line().try();
     Ok(())
@@ -339,15 +375,18 @@ write_actor_start_floor = (be :: CBackend, out :: Emit) Res<(), AllocError> {
         "    if (pthread_cond_init(&a->wake, NULL) != 0) { pthread_mutex_destroy(&a->lock); return 1; }"
     ).try();
     out.say(
-        "    a->head = NULL; a->tail = NULL; a->count = 0; a->open = 1;"
+        "    if (pthread_cond_init(&a->joined_wake, NULL) != 0) { pthread_cond_destroy(&a->wake); pthread_mutex_destroy(&a->lock); return 1; }"
+    ).try();
+    out.say(
+        "    a->head = NULL; a->tail = NULL; a->count = 0; a->bytes = 0; a->open = 1;"
     ).try();
     out.say("    pthread_mutex_lock(&zg_actor_registry_lock);").try();
     out.say(
-        "    if (zg_actor_shutting_down) { pthread_mutex_unlock(&zg_actor_registry_lock); pthread_cond_destroy(&a->wake); pthread_mutex_destroy(&a->lock); return 2; }"
+        "    if (zg_actor_shutting_down) { pthread_mutex_unlock(&zg_actor_registry_lock); pthread_cond_destroy(&a->joined_wake); pthread_cond_destroy(&a->wake); pthread_mutex_destroy(&a->lock); return 2; }"
     ).try();
     out.say("    zg_actor_pending++;").try();
     out.say(
-        "    if (pthread_create(&a->thread, NULL, zg_actor_worker, a) != 0) { zg_actor_pending--; pthread_mutex_unlock(&zg_actor_registry_lock); pthread_cond_destroy(&a->wake); pthread_mutex_destroy(&a->lock); return 2; }"
+        "    if (pthread_create(&a->thread, NULL, zg_actor_worker, a) != 0) { zg_actor_pending--; pthread_mutex_unlock(&zg_actor_registry_lock); pthread_cond_destroy(&a->joined_wake); pthread_cond_destroy(&a->wake); pthread_mutex_destroy(&a->lock); return 2; }"
     ).try();
     out.say("    a->next = zg_actor_registry;").try();
     out.say("    zg_actor_registry = a;").try();
@@ -366,11 +405,35 @@ write_actor_stop_floor = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     out.say("    pthread_cond_signal(&a->wake);").try();
     out.say("    pthread_mutex_unlock(&a->lock);").try();
     out.say("}").try();
+    // Join has multiple callers but exactly one pthread_join owner. The
+    // worker cannot wait for itself: self-join returns without marking joined.
+    // Join waiters have a separate condition so they cannot steal worker wakeups.
     out.say("static void zg_actor_join(zg_actor *a) {").try();
-    out.say("    if (!a || a->joined) return;").try();
-    out.say("    pthread_join(a->thread, NULL);").try();
-    out.say("    a->joined = 1;").try();
+    out.say("    if (!a) return;").try();
+    out.say("    pthread_mutex_lock(&a->lock);").try();
+    out.say(
+        "    if (a->joined || pthread_equal(pthread_self(), a->thread)) {"
+    ).try();
+    out.say("        pthread_mutex_unlock(&a->lock); return;").try();
+    out.say("    }").try();
+    out.say(
+        "    while (a->joining && !a->joined) pthread_cond_wait(&a->joined_wake, &a->lock);"
+    ).try();
+    out.say(
+        "    if (a->joined) { pthread_mutex_unlock(&a->lock); return; }"
+    ).try();
+    out.say("    a->joining = 1;").try();
+    out.say("    pthread_mutex_unlock(&a->lock);").try();
+    out.say("    int result = pthread_join(a->thread, NULL);").try();
+    out.say("    pthread_mutex_lock(&a->lock);").try();
+    out.say("    if (result == 0) a->joined = 1;").try();
+    out.say("    a->joining = 0;").try();
+    out.say("    pthread_cond_broadcast(&a->joined_wake);").try();
+    out.say("    pthread_mutex_unlock(&a->lock);").try();
     out.say("}").try();
+    // Process teardown requires external actor callers to be quiescent. Ref
+    // addresses are not pinned across shutdown; concurrent per-actor joins must
+    // finish before the registry and actor storage are destroyed.
     out.say("static void zg_actor_shutdown(void) {").try();
     out.say("    pthread_mutex_lock(&zg_actor_registry_lock);").try();
     out.say("    zg_actor_shutting_down = 1;").try();
@@ -384,7 +447,10 @@ write_actor_stop_floor = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     out.say("    pthread_mutex_unlock(&zg_actor_registry_lock);").try();
     out.say("    while (list) {").try();
     out.say("        zg_actor *next = list->next;").try();
-    out.say("        if (!list->joined) pthread_join(list->thread, NULL);").try();
+    out.say("        zg_actor_join(list);").try();
+    // Never destroy synchronization or free storage for an unjoined worker.
+    out.say("        if (!list->joined) abort();").try();
+    out.say("        pthread_cond_destroy(&list->joined_wake);").try();
     out.say("        pthread_cond_destroy(&list->wake);").try();
     out.say("        pthread_mutex_destroy(&list->lock);").try();
     out.say("        free(list);").try();
@@ -908,14 +974,81 @@ write_actor_record = (
     be.ctype(layout.context_ty, c).try();
     ar ::= be.alloc.String().try();
     be.ctype(layout.arena_ty, ar).try();
+    storage = be.mailbox_type().try();
+    be.request_type(storage).try();
+    storage_c ::= be.alloc.String().try();
+    be.ctype(storage, storage_c).try();
     text ::= be.alloc.String().try();
     text.fmt(
-        "typedef struct {name} {{ zg_actor zg_base; {} zg_state; {} zg_ctx; {} zg_arena; }} {name};",
+        "typedef struct {name} {{ zg_actor zg_base; {} zg_state; {} zg_ctx; {} zg_arena; {} zg_storage; }} {name};",
         a.view(),
         c.view(),
-        ar.view()
+        ar.view(),
+        storage_c.view()
     ).try();
-    be.add_actor_def(text)
+    be.add_actor_def(text).try();
+    be.write_mailbox_bridge(name, storage, storage_c.view())
+}
+
+mailbox_type = (be :: CBackend) Res<TyId, AllocError> {
+    be.named_type_at(
+        "MailboxStorage",
+        "std.actor.actor_storage.MailboxStorage"
+    ).try().match({
+        Ok(ty) => Ok(ty),
+        None   => Err(AllocError.OutOfMemory),
+    })
+}
+mailbox_symbol = (
+    be      :: CBackend,
+    storage : TyId,
+    name    : str
+) Res<String, AllocError> {
+    be.behavior_of(storage, name).try().match({
+        Ok(hit) => be.behavior_symbol(storage, hit),
+        None    => Err(AllocError.OutOfMemory),
+    })
+}
+write_mailbox_bridge = (
+    be        :: CBackend,
+    record    : str,
+    storage   : TyId,
+    storage_c : str
+) Res<(), AllocError> {
+    ["take", "give"].loop((h, operation) {
+        symbol = be.mailbox_symbol(storage, operation).try();
+        name  ::= be.alloc.String("{record}_storage_{operation}").try();
+        proto ::= be.alloc.String().try();
+        body  ::= be.alloc.String().try();
+        operation.eq("take").match({
+            true  => {
+                proto.fmt(
+                    "{}void *{}(void *raw, size_t bytes)",
+                    be.linkage(),
+                    name.view()
+                ).try();
+                body.fmt(
+                    "    return (void *){}(({} *)raw, bytes);\n",
+                    symbol.view(),
+                    storage_c
+                ).try();
+            },
+            false => {
+                proto.fmt(
+                    "{}void {}(void *raw, void *block)",
+                    be.linkage(),
+                    name.view()
+                ).try();
+                body.fmt(
+                    "    {}(({} *)raw, (unsigned char *)block);\n",
+                    symbol.view(),
+                    storage_c
+                ).try();
+            },
+        });
+        be.add_function(name, proto, body).try();
+    });
+    Ok(())
 }
 
 write_started_callback = (be :: CBackend, n: usize, rec: str, actor: TyId)
@@ -996,6 +1129,12 @@ write_stopped_callback = (
         None    => Ok(()),
         Ok(sym) => body.fmt("    (void)({}(&zg_self->zg_state));\n", sym.view()),
     }).try();
+    storage       = be.mailbox_type().try();
+    close_storage = be.mailbox_symbol(storage, "close").try();
+    body.fmt(
+        "    (void)({}(&zg_self->zg_storage));\n",
+        close_storage.view()
+    ).try();
     be.drop_symbol(arena).try().match({
         None    => Ok(()),
         Ok(sym) => body.fmt("    (void)({}(&zg_self->zg_arena));\n", sym.view()),
@@ -1036,9 +1175,11 @@ write_spawn_value = (be :: CBackend, lifecycle: ActorLifecycle)
             actor_code
         ),
     }).try();
+    actor = be.temp(spawn.actor_ty, "actor_value").try();
+    be.set_line(actor.view(), actor_code.view()).try();
     state_c ::= be.alloc.String().try();
     be.ctype(layout.state_ty, state_c).try();
-    cell        ::= be.fresh_name("actor").try();
+    cell        ::= be.fresh_name("actor_instance").try();
     arena_state ::= be.fresh_name("actor_state").try();
     status      ::= be.fresh_name("actor_status").try();
     be.fmt(
@@ -1059,6 +1200,10 @@ write_spawn_value = (be :: CBackend, lifecycle: ActorLifecycle)
     be.fmt("if (!{} || !{}) {{\n", cell.view(), arena_state.view()).try();
     be.indent();
     be.fmt("free({});\nfree({});\n", cell.view(), arena_state.view()).try();
+    be.drop_symbol(spawn.actor_ty).try().match({
+        None       => Ok(()),
+        Ok(symbol) => be.fmt("(void)({}(&{}));\n", symbol.view(), actor.view()),
+    }).try();
     be.write_assign_err(spawn.result_ty, "OutOfMemory", dst.view()).try();
     be.dedent();
     be.writeln("} else {").try();
@@ -1068,7 +1213,7 @@ write_spawn_value = (be :: CBackend, lifecycle: ActorLifecycle)
         cell.view(),
         arena_state.view(),
         env.view(),
-        actor_code.view()
+        actor.view()
     ).try();
     be.fmt(
         "int {} = zg_actor_start(&{}->zg_base);\n",
@@ -1169,12 +1314,20 @@ init_actor_fields = (
         context_alloc.view(),
         alloc_value.view()
     ).try();
+    storage = be.mailbox_type().try();
+    storage_c ::= be.alloc.String().try();
+    be.ctype(storage, storage_c).try();
+    be.fmt("{cell}->zg_storage = ({}){{0}};\n", storage_c.view()).try();
+    be.fmt("{cell}->zg_base.storage = &{cell}->zg_storage;\n").try();
+    be.fmt("{cell}->zg_base.take = {}_storage_take;\n", lifecycle.record).try();
+    be.fmt("{cell}->zg_base.give = {}_storage_give;\n", lifecycle.record).try();
     be.fmt("{cell}->zg_state = {actor};\n").try();
     be.fmt("{cell}->zg_base.state = &{cell}->zg_state;\n").try();
     be.fmt("{cell}->zg_base.context = &{cell}->zg_ctx;\n").try();
     be.fmt("{cell}->zg_base.started = {};\n", lifecycle.started).try();
     be.fmt("{cell}->zg_base.stopped = {};\n", lifecycle.stopped).try();
     be.fmt("{cell}->zg_base.joined = 0;\n").try();
+    be.fmt("{cell}->zg_base.joining = 0;\n").try();
     Ok(())
 }
 

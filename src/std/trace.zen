@@ -1,0 +1,32 @@
+// Single-owner bounded completed spans. Borrowed names must outlive the buffer.
+// No clock, network, global state or allocation in record(). Not thread-safe.
+Ptr, null_ptr = std.mem
+Span* = { id*: u64, parent*: u64, name*: str, start_ns*: u64, end_ns*: u64, failed*: bool }
+Buffer* = {
+    spans: Ptr<Span>, capacity: usize, count* :: usize, dropped* :: usize,
+    create* = (a: Alloc, capacity: usize) Res<Buffer, AllocError> {
+        (capacity <= usize.MAX / 128).ensure(AllocError.OutOfMemory).try();
+        spans = (capacity > 0).match({true => a.realloc<Span>(
+            null_ptr<Span>(),
+            capacity
+        ).try(), false => null_ptr<Span>()});
+        Ok(Buffer(spans: spans, capacity: capacity, count: 0, dropped: 0))
+    }
+    record* = (self :: @Self, span: Span) bool {
+        valid = span.id > 0 && span.id != span.parent && span.end_ns >= span.start_ns && span.name.len > 0;
+        (valid && self.count < self.capacity).match({
+            true  => { self.spans.write(
+                self.count,
+                span
+            ); self.count = self.count + 1; true },
+            false => { (self.dropped < usize.MAX).then(
+                () { self.dropped = self.dropped + 1; }
+            ); false },
+        })
+    }
+    at* = (self: @Self, index: usize) Res<Span> {
+        (index < self.count).match({true => Ok(self.spans.read(
+            index
+        )), false => None})
+    }
+}

@@ -103,9 +103,34 @@ maybe_scope = (be :: CBackend, id: TyId, n: TyNamed, out :: String)
 // the surrounding C parseable without inventing a struct definition.
 maybe_named_ctype = (be :: CBackend, id: TyId, n: TyNamed, out :: String)
                     Res<(), AllocError> {
-    be.foreign_binding(n).match({
-        Ok(_) => out.add("int"),
-        None  => be.named_ctype(id, out),
+    be.is_opaque_type(id).match({
+        true  => out.add("int"),
+        false => be.named_ctype(id, out),
+    })
+}
+
+source_opaque = (be: CBackend, n: TyNamed) Res<Struct> {
+    decl_at(be.tree, n.decl).try().kind.match({
+        Struct(s) => s.opaque.match({ true => Ok(s), false => None }),
+        _         => None,
+    })
+}
+
+is_opaque_type* = (be: CBackend, id: TyId) bool {
+    be.types().at(id).match({
+        Named(n) => be.foreign_binding(n).match({
+            Ok(_) => true,
+            None  => be.source_opaque(n).match({Ok(_) => true, None => false}),
+        }),
+        _        => false,
+    })
+}
+
+// Identity, not the short name, gives std.mem.Opaque its erased void pointee.
+is_erased_opaque* = (be: CBackend, id: TyId) bool {
+    be.types().at(id).match({
+        Named(n) => n.name.eq("Opaque") && be.world().module_name(n.decl).eq("std.mem.mem_ptr") && be.is_opaque_type(id),
+        _        => false,
     })
 }
 
@@ -155,9 +180,30 @@ elem_ctype = (be :: CBackend, t: TyId, out :: String) Res<(), AllocError> {
     be.types().at(t).match({
         Named(n) => be.foreign_binding(n).match({
             Ok(raw) => be.write_opaque_ptr(raw, out),
-            None    => be.write_elem_ctype(t, out),
+            None    => be.source_opaque(n).match({
+                Ok(s) => be.write_source_opaque_ptr(t, s, out),
+                None  => be.write_elem_ctype(t, out),
+            }),
         }),
         _        => be.write_elem_ctype(t, out),
+    })
+}
+
+write_source_opaque_ptr = (be :: CBackend, id: TyId, s: Struct, out :: String)
+                          Res<(), AllocError> {
+    be.is_erased_opaque(id).match({
+        true  => out.add("void *"),
+        false => s.opaque_header.match({
+            Ok(header) => {
+                be.need_c_header(header, true).try();
+                out.add(s.opaque_spelling.value_or("int")).try();
+                out.add(" *")
+            },
+            None       => {
+                be.named_ctype(id, out).try();
+                out.add(" *")
+            },
+        }),
     })
 }
 
@@ -210,7 +256,10 @@ named_spellable = (be: CBackend, n: TyNamed) bool {
             Ok(t) => be.pointer_element_spellable(t),
             None  => true,
         }),
-        false => be.foreign_binding(n).match({ Ok(_) => false, None => true }),
+        false => be.foreign_binding(n).match({
+            Ok(_) => false,
+            None  => be.source_opaque(n).match({Ok(_) => false, None => true}),
+        }),
     })
 }
 
@@ -218,7 +267,10 @@ pointer_element_spellable = (be: CBackend, id: TyId) bool {
     be.types().at(id).match({
         Named(n) => be.foreign_binding(n).match({
             Ok(raw) => raw.spelling.is_identifier(),
-            None    => be.spellable(id),
+            None    => be.source_opaque(n).match({
+                Ok(s) => s.opaque_spelling.match({Ok(name) => name.is_identifier(), None => true}),
+                None  => be.spellable(id),
+            }),
         }),
         _        => be.spellable(id),
     })
@@ -309,9 +361,19 @@ request_type* = (be :: CBackend, id: TyId) Res<(), AllocError> {
 // is the runtime's, and queueing the declaration would emit the `defer`
 // Field `maybe_scope` refuses to spell.
 request_defined = (be :: CBackend, id: TyId) Res<(), AllocError> {
-    (be.is_scope_type(id) || be.is_foreign_opaque(id)).match({
+    (be.is_scope_type(id) || be.is_foreign_opaque(id) || be.is_erased_opaque(id) || be.is_header_opaque(id)).match({
         true  => Ok(()),
         false => be.queue_definition(id),
+    })
+}
+
+is_header_opaque = (be: CBackend, id: TyId) bool {
+    be.types().at(id).match({
+        Named(n) => be.source_opaque(n).match({
+            Ok(s) => s.opaque_header.match({Ok(_) => true, None => false}),
+            None  => false,
+        }),
+        _        => false,
     })
 }
 

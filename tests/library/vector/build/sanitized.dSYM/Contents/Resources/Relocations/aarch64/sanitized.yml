@@ -1,0 +1,5 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     '/Users/lyndon/zen-dev/zen/tests/library/vector/build/sanitized'
+relocations:     []
+...

@@ -4,7 +4,7 @@
 // no-ops, and abandoned reallocations remain live until arena drop.
 
 Alloc, AllocError = std.mem.mem_alloc
-Ptr = std.mem.mem_ptr
+Ptr, null_ptr = std.mem.mem_ptr
 
 PAGE_BYTES: usize = 65536
 
@@ -36,10 +36,13 @@ Arena* = {
     state: Ptr<ArenaState>,
 
     bump = (self: @Self, s: ArenaState, size: usize, align: usize) Res<Ptr<u8>, AllocError> {
+        (s.next <= usize.MAX - HEADER_BYTES * 2 - ALIGN_MAX).ensure(
+            AllocError.OutOfMemory
+        ).try();
         page  = s.head.read(0);
         slot  = s.next.align_up(HEADER_BYTES);
         start = (slot + HEADER_BYTES).align_up(align);
-        (start + size <= page.size).match({
+        (start <= page.size && size <= page.size - start).match({
             true  => {
                 self.state.write(
                     0,
@@ -74,12 +77,16 @@ Arena* = {
         s      = self.state.read(0);
         page   = s.head.read(0);
         latest = src.offset(old).same(page.base.offset(s.next));
-        fits   = s.next + (want - old) <= page.size;
+        fits   = s.next <= page.size && want - old <= page.size - s.next;
         (latest && fits).then(() {
             src.back(HEADER_BYTES).to<usize>().write(0, want);
             self.state.write(
                 0,
-                ArenaState(mem: s.mem, head: s.head, next: s.next + want - old)
+                ArenaState(
+                    mem: s.mem,
+                    head: s.head,
+                    next: s.next + (want - old)
+                )
             );
         });
         latest && fits
@@ -88,6 +95,10 @@ Arena* = {
 
 Arena.impl(Alloc, {
     raw = (self: @Self, size: usize, align: usize) Res<Ptr<u8>, AllocError> {
+        (align > 0 && align <= ALIGN_MAX && ALIGN_MAX % align == 0).ensure(
+            AllocError.OutOfMemory
+        ).try();
+        (size <= usize.MAX - null_ptr<Page>().bytes(1).align_up(ALIGN_MAX) - HEADER_BYTES - align).ensure(AllocError.OutOfMemory).try();
         s = self.state.read(0);
         s.head.is_null().match({
             true  => self.chain(size, align),
@@ -99,6 +110,10 @@ Arena.impl(Alloc, {
     // a null source is a fresh allocation and must not be passed to memcpy,
     // even when the requested copy length is zero.
     realloc = <T>(self: @Self, p: Ptr<T>, count: usize) Res<Ptr<T>, AllocError> {
+        element = p.bytes(1);
+        (element == 0 || count <= usize.MAX / element).ensure(
+            AllocError.OutOfMemory
+        ).try();
         src  = p.to<u8>();
         want = p.bytes(count);
         old  = src.is_null().match({

@@ -1,0 +1,130 @@
+Ast, Type, TypeKind, TypeId, nowhere, no_trivia = std.ast
+scan, Source = std.lex
+Parser, module = std.parse
+Checker = sema.sema_check
+check_varargs = sema.sema_vararg
+
+Probe = { backing: Alloc, calls: Ptr<usize>, fail: usize }
+Probe.impl(Alloc, {
+    raw = (self: @Self, size: usize, align: usize) Res<Ptr<u8>, AllocError> {
+        call = self.calls.read(0);
+        self.calls.write(0, call + 1);
+        (call != self.fail).ensure(AllocError.OutOfMemory).try();
+        self.backing.raw(size, align)
+    }
+    realloc = <T>(self: @Self, ptr: Ptr<T>, count: usize) Res<Ptr<T>, AllocError> {
+        call = self.calls.read(0);
+        self.calls.write(0, call + 1);
+        (call != self.fail).ensure(AllocError.OutOfMemory).try();
+        self.backing.realloc(ptr, count)
+    }
+})
+
+selected = (node: Type) bool { node.kind.match({ Unit => true, _ => false }) }
+
+// The prior shared-output implementation provides a like-for-like budget control.
+append_selected = (tree: Ast, out :: Vec<TypeId>) Res<(), AllocError> {
+    id ::= TypeId(index: 0);
+    Range(0, tree.type_ids()).loop((h, i) {
+        selected(tree.type_at(id)).then(() { out.add(id).try(); });
+        id = TypeId(index: id.index + 1);
+    });
+    Ok(())
+}
+
+check_types = (a: Alloc) Res<(), AllocError> {
+    calls = a.realloc<usize>(null_ptr<usize>(), 1).try();
+    calls.write(0, 0);
+    probe = Probe(backing: a, calls: calls, fail: usize.MAX);
+    tree ::= a.Ast();
+    empty = tree.types_where(probe, (node) { selected(node) }).try();
+    (empty.len == 0 && calls.read(0) == 0).ensure(AllocError.OutOfMemory).try();
+    Range(0, 513).loop((i) {
+        tree.add_type(Type(
+            kind: (i % 2 == 0).match({ true => TypeKind.Unit, false => TypeKind.Infer }),
+            span: nowhere(),
+            leading: no_trivia(),
+            trailing: no_trivia()
+        )).try();
+    });
+    absent = tree.types_where(probe, (node) { false }).try();
+    (absent.len == 0 && calls.read(0) == 0).ensure(AllocError.OutOfMemory).try();
+    found = tree.types_where(probe, (node) { selected(node) }).try();
+    (found.len == 257 && calls.read(0) == 10).ensure(AllocError.OutOfMemory).try();
+    found.loop(
+        (h, i, id) { (id.index.to_usize() == i * 2).ensure(
+            AllocError.OutOfMemory
+        ).try(); }
+    );
+    calls.write(0, 0);
+    baseline ::= probe.Vec<TypeId>();
+    append_selected(tree, baseline).try();
+    (baseline.len == found.len && calls.read(0) == 10).ensure(AllocError.OutOfMemory).try();
+    baseline.loop((h, i, id) {
+        (id.index == found.get(i).ok_or(AllocError.OutOfMemory).try().index)
+            .ensure(AllocError.OutOfMemory).try();
+    });
+    Range(0, 10).loop((failure) {
+        calls.write(0, 0);
+        refused = tree.types_where(
+            Probe(backing: a, calls: calls, fail: failure),
+            (node) { selected(node) }
+        )
+            .match({ Err(_) => true, Ok(_) => false });
+        (refused && calls.read(0) == failure + 1).ensure(AllocError.OutOfMemory).try();
+    });
+    calls.write(0, 0);
+    again = tree.types_where(probe, (node) { selected(node) }).try();
+    (again.len == found.len && calls.read(0) == 10 && tree.type_ids() == 513)
+        .ensure(AllocError.OutOfMemory).try();
+    println(
+        "PASS: returned ids preserve order across pages; zero allocation empty selection; exact growth budget; all ten allocation refusals propagate"
+    );
+    Ok(())
+}
+
+check_packs = (a: Alloc, text: str, errors: usize) Res<(), AllocError> {
+    lexed = scan(a, Source(file: "packs.zen", text: text)).try();
+    parser ::= a.Parser(lexed);
+    parsed = parser.module("packs").try();
+    (lexed.diags.len == 0 && parser.diags.len == 0).ensure(
+        AllocError.OutOfMemory
+    ).try();
+    parser.tree.add_module(parsed).try();
+    calls = a.realloc<usize>(null_ptr<usize>(), 1).try();
+    calls.write(0, 0);
+    probe = Probe(backing: a, calls: calls, fail: usize.MAX);
+    check_tree(probe, parser.tree, errors).try();
+    allocations = calls.read(0);
+    Range(0, allocations).loop((failure) {
+        calls.write(0, 0);
+        refused = check_tree(
+            Probe(backing: a, calls: calls, fail: failure),
+            parser.tree,
+            errors
+        )
+            .match({ Err(_) => true, Ok(_) => false });
+        (refused && calls.read(0) == failure + 1).ensure(AllocError.OutOfMemory).try();
+    });
+    Ok(())
+}
+
+check_tree = (alloc: Alloc, tree: Ast, errors: usize) Res<(), AllocError> {
+    checker ::= alloc.Checker(tree).try();
+    checker.check_varargs().try();
+    (checker.diag_count() == errors).ensure(AllocError.OutOfMemory).try();
+    Ok(())
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a = env.mem.alloc();
+    check_types(a).try();
+    check_packs(a, "plain = (x: i32) () {}", 0).try();
+    check_packs(a, "valid = (x: i32, xs: vararg<i32>) () {}", 0).try();
+    check_packs(a, "invalid = (xs: vararg<i32>, x: i32) () {}", 1).try();
+    check_packs(a, "invalid = (xs: vararg<vararg<i32>>) () {}", 2).try();
+    println(
+        "PASS: vararg positional and element diagnostics; returned collection failure propagation"
+    );
+    Ok(0)
+}

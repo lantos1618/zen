@@ -1,0 +1,13 @@
+Owner = { id: i32 }
+Owner.impl(Drop, { drop = (self :: @Self) () { println("drop {}", self.id); } })
+main = (env: Env) Res<i32, AllocError> {
+    values ::= env.mem.alloc().Vec<Owner>();
+    first  ::= Owner(id: 1);
+    second ::= Owner(id: 2);
+    values.add(consume first).try();
+    values.add(consume second).try();
+    value = values.take(0).ok_or(AllocError.OutOfMemory).try();
+    values.clear();
+    println("taken {}", value.id);
+    Ok(0)
+}

@@ -1,0 +1,12 @@
+Builder, BuildError = std.build
+build = (b :: Builder) Res<(), BuildError> {
+    b.exe(
+        "check",
+        {src: Path("main.zen"), deps: [], out: Ok(Path("build/check"))}
+    ).try();
+    b.exe(
+        "benchmark",
+        {src: Path("benchmark.zen"), deps: [], out: Ok(Path("build/benchmark"))}
+    ).try();
+    Ok(())
+}

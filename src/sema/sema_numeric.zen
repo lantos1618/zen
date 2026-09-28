@@ -11,6 +11,8 @@ Def, decl_at = sema.sema_def
 param_type, ret_type = sema.sema_denote
 SemaFault, NameFault = sema.sema_diag
 
+IntegerBitOperation* = { name*: str, word*: TyId }
+
 NarrowTarget* = U8 | U16 | Usize | I32 | CInt
 ConversionKind* = Widen | Checked(NarrowTarget)
 
@@ -184,7 +186,9 @@ integer_bit_signature = (
     d : Def,
     f : Function
 ) Res<(), AllocError> {
-    f.name.text.is_in(["bit_xor", "rotate_right"]).match({
+    f.name.text.is_in([
+        "bit_xor", "bit_and", "rotate_right", "shift_right"
+    ]).match({
         false => Ok(()),
         true  => {
             (c.world.module_name(d.id).eq("std.core.num") && f.exported
@@ -200,13 +204,17 @@ integer_bit_signature = (
                     at     = c.param_type(a, ctx).try();
                     bt     = c.param_type(b, ctx).try();
                     rt     = c.ret_type(f, ctx).try();
-                    second = f.name.text.eq(
-                        "bit_xor"
-                    ).match({ true => "u64", false => "usize" });
-                    (!a.mutable && !b.mutable && c.prim_name(at).eq("u64")
-                        && c.prim_name(bt).eq(second) && c.prim_name(rt).eq("u64")).match({
+                    word   = c.prim_name(at);
+                    second = f.name.text.is_in([
+                        "bit_xor", "bit_and"
+                    ]).match({true => word, false => "usize"});
+                    (!a.mutable && !b.mutable && word.is_in(["u32", "u64"])
+                        && c.prim_name(bt).eq(second) && c.prim_name(rt).eq(word)).match({
                         false => c.invalid_numeric(d),
-                        true  => c.integer_bits.set(d.id, f.name.text),
+                        true  => c.integer_bits.set(
+                            d.id,
+                            IntegerBitOperation(name: f.name.text, word: at)
+                        ),
                     })
                 },
             })

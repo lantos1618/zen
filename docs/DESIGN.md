@@ -1814,13 +1814,17 @@ main = (env: Env) Res<i32, Error> {
 
 ## Unsigned bit operations
 
-`std.core.num` exports `bit_xor(self: u64, other: u64) u64` and
-`rotate_right(self: u64, count: usize) u64`. Both support normal free-function
-and receiver-call syntax. Rotation reduces the count modulo 64; zero and
-multiples of 64 preserve the input. These operations do not allocate and are
-compiler primitives supported by the C backend, with unsigned C lowering rather than a crypto-library
-binding. Operands evaluate once in source order. Only validated exported,
-nongeneric, immutable-parameter declarations with these exact signatures in
-`std.core.num` acquire primitive behavior. User functions with bodies may use
-the same names normally. This initial surface is u64-only; it does not add
-new operators, cryptographic primitives, or a constant-time compiler guarantee.
+`std.core.num` exports `bit_xor(self: W, other: W) W`,
+`bit_and(self: W, other: W) W`, `rotate_right(self: W, count: usize) W`,
+and `shift_right(self: W, count: usize) W` for unsigned words W = u32 or u64.
+All support free-function and receiver-call syntax. Binary operands must use
+the same word type. Rotation reduces the count modulo the word width; zero
+and width multiples preserve the input. Logical right shift fills with zero;
+counts greater than or equal to the width return zero (including usize.MAX).
+The C backend guards shifts and masks rotation counts to avoid undefined C shifts.
+
+These allocation-free compiler primitives evaluate operands once in source
+order. Only validated exported, nongeneric, immutable-parameter declarations
+with these exact signatures in `std.core.num` acquire primitive behavior.
+User functions with bodies may use the same names normally. This adds no
+new operator syntax, crypto dependency or constant-time compiler guarantee.

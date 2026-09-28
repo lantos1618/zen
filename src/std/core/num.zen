@@ -194,3 +194,11 @@ usize.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
 // Compiler-native unsigned bit operations. Rotation counts are modulo 64.
 bit_xor* = (self: u64, other: u64) u64
 rotate_right* = (self: u64, count: usize) u64
+
+// Logical shifts saturate to zero at or above the word width.
+bit_xor* = (self: u32, other: u32) u32
+bit_and* = (self: u32, other: u32) u32
+bit_and* = (self: u64, other: u64) u64
+rotate_right* = (self: u32, count: usize) u32
+shift_right* = (self: u32, count: usize) u32
+shift_right* = (self: u64, count: usize) u64

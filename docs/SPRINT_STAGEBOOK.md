@@ -5,6 +5,24 @@ Completed execution logs, previous checkpoints and review transcripts live in
 Git history. Architecture and library contracts belong in [LIBRARIES.md](LIBRARIES.md),
 [DESIGN.md](DESIGN.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Current checkpoint: native TLS integer and byte floor (2026-09-28)
+
+The isolated `native-tls-bits` branch extends validated std.core.num primitives
+with u32 XOR/AND/rotate-right/logical-right-shift and u64 AND/logical-right-shift.
+Logical shifts at or beyond the width return zero; rotations reduce modulo
+width. Operands are held once in source order. `std.bytes` adds borrowed bounded
+reader/writer cursors with 1–8-byte endian operations and transactional failure.
+The native zen-crypto TLS client consumes these generic std helpers.
+
+Seven integer-bit corpus/contract cases and the byte cursor corpus pass.
+UBSan and deliberate wrong-XOR, wrong-AND, wrong-shift, swapped-endian and
+removed-overflow-check controls pass their expected failure checks. Compiler
+fixpoint passes: all 194 generated C units, zen.h and the regenerated seed match.
+`make -j1 seed verify` again stops at the pre-existing Mac warning gate (Apple
+Clang invoked as gcc: 7,081 warnings versus the GCC budget of 315). The gate
+was not relaxed. A fresh full corpus run and Linux CI remain separate checks;
+this checkpoint does not claim the aggregate verify target passed.
+
 ## Current checkpoint: native u64 bit operations (2026-09-28)
 
 The isolated crypto-numeric branch adds identity-validated `std.core.num`

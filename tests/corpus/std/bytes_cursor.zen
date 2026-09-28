@@ -1,0 +1,147 @@
+// Independent byte patterns, then round trips; failure must be transactional.
+ByteReader, ByteWriter, ByteError = std.bytes
+
+invalid = <T>(result: Res<T, ByteError>) bool {
+    result.match({Err(e) => e.match({Invalid => true, _ => false}), _ => false})
+}
+truncated = <T>(result: Res<T, ByteError>) bool {
+    result.match({Err(e) => e.match({Truncated => true, _ => false}), _ => false})
+}
+
+main = (env: Env) Res<(), AllocError> {
+    a    = env.mem.alloc();
+    data = a.realloc<u8>(null_ptr<u8>(), 16).try();
+    widths ::= true;
+    Range(1, 9).loop((width) {
+        value: u64 ::= 0;
+        Range(1, width + 1).loop((i) { value = value * 256 + i.to_u64(); });
+        ByteWriter.open(data, 16).match({
+            Err(_)      => { widths = false; },
+            Ok(initial) => {
+                writer ::= initial;
+                widths = writer.write_be(
+                    value,
+                    width
+                ).match({Ok(_) => true, _ => false}) && widths;
+                widths = writer.written() == width && writer.remaining() == 16 - width && widths;
+                Range(0, width).loop((i) { widths = data.read(i).to_usize() == i + 1 && widths; });
+                widths = writer.write_le(
+                    value,
+                    width
+                ).match({Ok(_) => true, _ => false}) && widths;
+                Range(0, width).loop((i) { widths = data.read(width + i).to_usize() == width - i && widths; });
+                ByteReader.open(data, width * 2).match({
+                    Err(_)    => { widths = false; },
+                    Ok(start) => {
+                        reader ::= start;
+                        widths = reader.read_be(
+                            width
+                        ).match({Ok(v) => v, _ => 0}) == value && widths;
+                        widths = reader.read_le(
+                            width
+                        ).match({Ok(v) => v, _ => 0}) == value && widths;
+                        widths = reader.remaining() == 0 && reader.consumed() == width * 2 && widths;
+                    },
+                });
+            },
+        });
+    });
+    println("widths 1..8 bytes and values: {}", widths);
+    full ::= false;
+    ByteWriter.open(data, 8).match({
+        Err(_)    => (),
+        Ok(start) => {
+            writer ::= start;
+            full = writer.write_be(
+                u64.MAX,
+                8
+            ).match({Ok(_) => true, _ => false});
+            Range(0, 8).loop((i) { full = data.read(i) == 255 && full; });
+            ByteReader.open(data, 8).match({
+                Err(_)    => { full = false; },
+                Ok(begin) => { reader ::= begin; full = reader.read_le(
+                    8
+                ).match({Ok(v) => v, _ => 0}) == u64.MAX && full; },
+            });
+        },
+    });
+    println("full u64: {}", full);
+    Range(0, 16).loop((i) { data.write(i, 173); });
+    refused ::= true;
+    ByteWriter.open(data, 8).match({
+        Err(_)    => { refused = false; },
+        Ok(start) => {
+            writer ::= start;
+            refused = invalid(writer.write_be(0, 0)) && invalid(writer.write_le(0, 9)) && refused;
+            refused = invalid(writer.write_be(256, 1)) && invalid(writer.write_le(65536, 2)) && refused;
+            refused = writer.written() == 0 && writer.remaining() == 8 && refused;
+            Range(0, 16).loop((i) { refused = data.read(i) == 173 && refused; });
+            refused = writer.write_be(
+                1,
+                1
+            ).match({Ok(_) => true, _ => false}) && refused;
+            refused = truncated(writer.write_be(0, 8)) && refused;
+            refused = writer.written() == 1 && writer.remaining() == 7 && data.read(
+                0
+            ) == 1 && refused;
+            Range(1, 16).loop((i) { refused = data.read(i) == 173 && refused; });
+        },
+    });
+    ByteReader.open(data, 1).match({
+        Err(_)    => { refused = false; },
+        Ok(start) => {
+            reader ::= start;
+            refused = invalid(reader.read_be(0)) && invalid(reader.read_le(9)) && refused;
+            refused = truncated(reader.read_be(2)) && truncated(reader.take(usize.MAX)) && refused;
+            refused = reader.consumed() == 0 && reader.read_be(
+                1
+            ).match({Ok(v) => v, _ => 0}) == 1 && refused;
+            refused = truncated(reader.read_le(
+                1
+            )) && reader.consumed() == 1 && refused;
+        },
+    });
+    println("invalid overflow truncation are transactional: {}", refused);
+    empty ::= invalid(ByteReader.open(null_ptr<u8>(), 1)) && invalid(ByteWriter.open(null_ptr<u8>(), 1));
+    ByteReader.open(null_ptr<u8>(), 0).match({
+        Err(_)    => { empty = false; },
+        Ok(start) => {
+            reader ::= start;
+            empty = reader.remaining() == 0 && truncated(reader.read_be(1)) && invalid(reader.read_le(0)) && empty;
+            reader.take(0).match({
+                Err(_)   => { empty = false; },
+                Ok(view) => { empty = view.len == 0 && view.ptr().is_null() && reader.consumed() == 0 && empty; },
+            });
+        },
+    });
+    ByteWriter.open(null_ptr<u8>(), 0).match({
+        Err(_)    => { empty = false; },
+        Ok(start) => {
+            writer ::= start;
+            empty = truncated(writer.write_be(0, 1)) && invalid(writer.write_le(0, 0)) && writer.written() == 0 && empty;
+        },
+    });
+    println("null empty and invalid nonempty: {}", empty);
+    data.write(0, 97); data.write(1, 98); data.write(2, 99);
+    borrowed ::= false;
+    ByteReader.open(data, 3).match({
+        Err(_)    => (),
+        Ok(start) => {
+            reader ::= start;
+            reader.take(2).match({
+                Err(_)   => (),
+                Ok(view) => {
+                    borrowed = view.eq("ab") && reader.consumed() == 2;
+                    data.write(0, 122);
+                    borrowed = view.eq("zb") && reader.take(1).match({Ok(v) => v, _ => ""}).eq("c") && borrowed;
+                    borrowed = reader.take(
+                        0
+                    ).match({Ok(v) => v, _ => "bad"}).len == 0 && reader.remaining() == 0 && borrowed;
+                },
+            });
+        },
+    });
+    println("take borrows and advances: {}", borrowed);
+    a.free(data);
+    Ok(())
+}

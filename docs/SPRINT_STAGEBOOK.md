@@ -19,7 +19,12 @@ binding tests and IPv4/IPv6 socket/allocator-failure checks under UBSan. Grammar
 accepted 1,373 valid files and rejected all 24 invalid fixtures. The final
 `make -j1 seed verify` corpus result was 1,344 passed, 10 failed, 1 deferred.
 It stopped at the corpus, so later aggregate gates are not claimed complete.
-Linux verification is pending on draft PR #5, stacked on actor PR #4.
+The Linux socket run passed 1,354 corpus cases with one deferred case, native
+networking and actor/allocator checks. Merge preparation then removed unused
+arithmetic helpers, fixed warning regressions and made scalar ABI assertions
+C99-compatible. Final compiler fixpoint and focused runtime checks pass locally.
+CI now installs the pinned review-tool dependency from tests/requirements.txt;
+full verification of the prepared PRs #3–#5 is pending.
 
 `std.math` owns scalar f64 mathematics. `std.stats` owns caller-allocated bounded
 rolling samples and nearest-rank summaries. Focused numerical, allocation-budget
@@ -38,9 +43,10 @@ with shared ownership boundaries in [LIBRARIES.md](LIBRARIES.md).
 - Resolve the remaining macOS corpus failures: Linux-specific backend/path
   expectations, `/proc` fixture, Clang nesting limits and TLS linking. Check
   Linux CI before claiming portability verified on both operating systems.
-- The parent actor PR's Linux gate reached a generated-C warning-budget failure
-  (317 vs allowed 315). Investigate full diagnostic logs; do not raise the budget
-  solely to make the gate green.
+- Linux warning checks now pass at GCC315 and Clang320 for the seed, with the
+  Clang budget lowered after removing 24 unused arithmetic helpers. The later
+  review-tool dependency failure is fixed in the workflow; confirm the full CI
+  rerun before merging. No warning class or test gate was disabled.
 - The historical 92-case soundness hunt still needs its original inputs and
   case-by-case classification. Parser memoization alone does not prove linear
   scaling for all incomplete nested inputs.

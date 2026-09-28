@@ -4,6 +4,10 @@
 HTTP and actor scheduling. Import `Readiness`, `Interest`, `WaitResult` and
 `ReadinessError` from that module. Compile emitted C with `-I src/std/net` from
 this compiler checkout so its `zen_readiness.h` ABI adapter is available.
+For a native `build.zen` project, the equivalent tested invocation is
+`ZEN_STD=/path/to/compiler/src CFLAGS=-I/path/to/compiler/src/std/net zen build .`.
+Automatic standard-library native-header lookup is not yet implemented; a plain
+import without this native include configuration is not a complete build setup.
 
 `Readiness.open(alloc, capacity)` uses the caller allocator for an aligned native
 event buffer and creates a close-on-exec queue descriptor. Capacity must be

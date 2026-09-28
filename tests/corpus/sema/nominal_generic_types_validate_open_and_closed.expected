@@ -1,1 +1,5 @@
-nominal generic types validate
+open some 17
+open none 43
+closed 17
+payload 29
+none

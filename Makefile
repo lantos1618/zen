@@ -15,6 +15,7 @@ CFLAGS  ?= -O2 -std=c99
 PROFILE_CFLAGS ?= -O2 -std=c99 -g -fno-omit-frame-pointer
 SYMBOL_MAP ?=
 PY      ?= python3
+TREE_SITTER ?= npx tree-sitter
 ROOT    ?= src
 ZEN_STD ?= $(CURDIR)/src
 
@@ -122,14 +123,12 @@ editors/vscode/node_modules/.zen-dependencies: editors/vscode/package.json edito
 ## bootstrap: build from the C seed through build.zen, with no existing ./zen.
 bootstrap: build
 
-## seed: regenerate AND stage, in one target. never two commands —
-## commit-then-regenerate ships a seed one change stale, and only a
-## full feature test catches it. Depends on `build`, not `zen`: there
+## seed: regenerate from the just-built compiler, leaving Git staging to the caller.
+## Depends on `build`, not `zen`: there
 ## is no `zen` rule — `build` is what produces ./zen, and a name with
 ## no rule fails after `make clean` and goes stale while it exists.
 seed: build
 	./zen build $(ROOT) --emit-c -o seed/zen.c
-	git add seed/zen.c
 
 ## test: the corpus, must-fail and example suites, against the built ./zen.
 ##
@@ -161,9 +160,11 @@ nativecheck: build
 .PHONY: poolcheck
 poolcheck: build
 	$(PY) tests/quality/pool_alloc.py --zen ./zen --ubsan
+	ZEN="$(CURDIR)/zen" ZEN_STD="$(CURDIR)/src" $(PY) tests/library/allocation-limits/run.py
 
 .PHONY: ownershipcheck
 ownershipcheck: build
+	$(PY) tests/quality/ownership_lookup.py --zen ./zen
 	$(PY) tests/quality/ownership_sanitizers.py --zen ./zen --cc "$(CC)"
 
 ## fixpoint: rebuilding the whole compiler preserves C and reproduces the seed.
@@ -182,6 +183,7 @@ differential: build
 	$(PY) -m unittest discover -s tests/quality -p 'test_differential_controls.py'
 
 runtimecheck: build
+	$(PY) tests/quality/comparison_operands.py --zen ./zen
 	$(PY) tests/bench/runtime/run.py --zen ./zen --cc "$(CC)" \
 	  --out build/source_health/runtime-check --quick --enforce-map-budget
 
@@ -318,10 +320,10 @@ lextile: build
 parse: grammar
 	@$(call nonempty,parse,$(ROOT) example tests/corpus -name '*.zen' -print0); \
 	  files+=(build.zen); \
-	  cd grammar && npx tree-sitter parse --quiet --stat -l "$$(pwd)/zen.so" --lang-name zen "$${files[@]/#/../}"
+	  cd grammar && $(TREE_SITTER) parse --quiet --stat -l "$$(pwd)/zen.so" --lang-name zen "$${files[@]/#/../}"
 	@$(call nonempty,parse-errors,tests/parse/errors -name '*.zen' -print0); \
 	  cd grammar; \
-	  set +e; report="$$(npx tree-sitter parse --quiet --stat -l "$$(pwd)/zen.so" --lang-name zen "$${files[@]/#/../}" 2>&1)"; rc=$$?; set -e; \
+	  set +e; report="$$($(TREE_SITTER) parse --quiet --stat -l "$$(pwd)/zen.so" --lang-name zen "$${files[@]/#/../}" 2>&1)"; rc=$$?; set -e; \
 	  printf '%s\n' "$$report"; \
 	  test $$rc -eq 1; \
 	  grep -Fq "Total parses: $${#files[@]}; successful parses: 0; failed parses: $${#files[@]};" <<<"$$report"
@@ -342,7 +344,7 @@ determinism: build
 grammar: grammar/zen.so
 
 grammar/zen.so: grammar/grammar.js grammar/tree-sitter.json
-	cd grammar && npx tree-sitter generate --abi 14
+	cd grammar && $(TREE_SITTER) generate --abi 14
 	@mkdir -p build/obj
 	$(ZCC) -fPIC -I grammar/src -c grammar/src/parser.c -o build/obj/grammar-parser.o
 	$(CC) -shared -o grammar/zen.so build/obj/grammar-parser.o
@@ -435,8 +437,11 @@ help:
 
 .PHONY: actorcheck tracecheck
 actorcheck: build
+	$(PY) tests/quality/actor_shutdown.py --zen ./zen
 	$(PY) tests/quality/actor_admission.py --zen ./zen
 	$(PY) tests/quality/actor_join.py --zen ./zen
+	$(PY) tests/quality/actor_spawn_drop.py --zen ./zen
+	$(PY) tests/quality/page_allocation.py --zen ./zen
 	$(PY) tests/quality/actor_storage.py --zen ./zen
 	$(PY) tests/quality/actor_contention.py --zen ./zen
 

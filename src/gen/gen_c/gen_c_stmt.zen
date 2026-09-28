@@ -478,6 +478,9 @@ declare_local = (be :: CBackend, name: str, b: Bind, ty: TyId, ctx: Ctx)
             be.deliver(b.value, ctx, ty, Dest.Into(cname.view()))
         },
     }).try();
+    (name.eq("_") && be.has_storage(ty)).then(() {
+        be.fmt("(void){};\n", cname.view()).try();
+    });
     be.publish(name, n, ty, false).try();
     be.note_drop(name, n, ty).try();
     Ok(());

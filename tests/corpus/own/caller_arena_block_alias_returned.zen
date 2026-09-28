@@ -11,5 +11,7 @@ main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
     text = word(alloc, "ab").try();
     println("{}", text);
+    empty = word(alloc, "").try();
+    println("{}", empty);
     Ok(0)
 }

@@ -5,11 +5,13 @@ word = (env: Env, letters: str) Res<str, AllocError> {
     buf.add(letters).try();
     output ::= Box(value: "safe");
     output.value = buf.view();
-    (letters.len > 0).match({ true => { output.value = "safe"; }, false => { output.value = "safe"; } });
+    (letters.len > 0).match({ true => { output.value = "safe"; }, false => { output.value = "also safe"; } });
     Ok(output.value)
 }
 main = (env: Env) Res<i32, AllocError> {
     text = word(env, "ab").try();
     println("{}", text);
+    empty = word(env, "").try();
+    println("{}", empty);
     Ok(0)
 }

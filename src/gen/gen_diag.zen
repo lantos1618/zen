@@ -11,6 +11,7 @@ GenFault* = Unsupported(str)     // a node form this backend does not lower yet
           | Ambiguous(str)       // a name with more than one, and no overload rule
           | Untyped(str)         // sema returned no type and context supplied none
           | Unspellable(str)     // a type with no C spelling yet
+          | CopyFromPointer(str)
           | Overrun(usize)       // more functions reachable than the backend's bound
 
 GenDiag* = {
@@ -34,23 +35,25 @@ GenDiag* = {
 // The fixed sentence prefix; `detail` writes the payload after it.
 message = (fault: GenFault) str {
     fault.match({
-        Unsupported(_) => "codegen does not lower this yet:",
-        Unresolved(_)  => "codegen cannot resolve",
-        Ambiguous(_)   => "codegen found more than one declaration of",
-        Untyped(_)     => "codegen has no type for",
-        Unspellable(_) => "codegen cannot spell the type",
-        Overrun(_)     => "codegen reached its bound on the functions one program may lower:",
+        CopyFromPointer(_) => "cannot copy a Drop owner through Ptr; use take to transfer an initialized slot:",
+        Unsupported(_)     => "codegen does not lower this yet:",
+        Unresolved(_)      => "codegen cannot resolve",
+        Ambiguous(_)       => "codegen found more than one declaration of",
+        Untyped(_)         => "codegen has no type for",
+        Unspellable(_)     => "codegen cannot spell the type",
+        Overrun(_)         => "codegen reached its bound on the functions one program may lower:",
     })
 }
 
 detail = (fault: GenFault, out :: String) Res<(), AllocError> {
     fault.match({
-        Unsupported(w) => out.write_quoted(w),
-        Unresolved(w)  => out.write_quoted(w),
-        Ambiguous(w)   => out.write_quoted(w),
-        Untyped(w)     => out.write_quoted(w),
-        Unspellable(w) => out.write_quoted(w),
-        Overrun(n)     => out.write_bound(n),
+        CopyFromPointer(w) => out.write_quoted(w),
+        Unsupported(w)     => out.write_quoted(w),
+        Unresolved(w)      => out.write_quoted(w),
+        Ambiguous(w)       => out.write_quoted(w),
+        Untyped(w)         => out.write_quoted(w),
+        Unspellable(w)     => out.write_quoted(w),
+        Overrun(n)         => out.write_bound(n),
     })
 }
 

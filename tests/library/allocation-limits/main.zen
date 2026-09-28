@@ -1,0 +1,63 @@
+Refuse = { calls: Ptr<usize> }
+Refuse.impl(Alloc, {
+    raw = (self: @Self, size: usize, align: usize) Res<Ptr<u8>, AllocError> { Err(
+        AllocError.OutOfMemory
+    ) }
+    realloc = <T>(self: @Self, p: Ptr<T>, count: usize) Res<Ptr<T>, AllocError> {
+        self.calls.write(0, count);
+        Err(AllocError.OutOfMemory)
+    }
+})
+Fault = { backing: Alloc, fail: Ptr<usize> }
+Fault.impl(Alloc, {
+    raw = (self: @Self, size: usize, align: usize) Res<Ptr<u8>, AllocError> {
+        (self.fail.read(0) == 0).ensure(AllocError.OutOfMemory).try();
+        self.backing.raw(size, align)
+    }
+    realloc = <T>(self: @Self, p: Ptr<T>, count: usize) Res<Ptr<T>, AllocError> {
+        (self.fail.read(0) == 0).ensure(AllocError.OutOfMemory).try();
+        self.backing.realloc(p, count)
+    }
+})
+main = (env: Env) Res<i32, AllocError> {
+    a = env.mem.alloc();
+    Range(0, 5).loop((i) {
+        align = i.match({0 => 1, 1 => 2, 2 => 4, 3 => 8, _ => 16});
+        a.raw(8, align).try();
+    });
+    Range(0, 4).loop((i) {
+        align = i.match({0 => 0, 1 => 3, 2 => 32, _ => usize.MAX});
+        a.raw(8, align).match({Ok(_) => { Err(AllocError.OutOfMemory).try(); }, Err(_) => ()});
+    });
+    count = usize.MAX / 8 + 1;
+    a.realloc<u64>(null_ptr<u64>(), count).match({Ok(_) => { Err(AllocError.OutOfMemory).try(); }, Err(_) => ()});
+    p = a.realloc<u64>(null_ptr<u64>(), 2).try();
+    p.write(0, 42); p.write(1, 73);
+    a.realloc(p, count).match({Ok(_) => { Err(AllocError.OutOfMemory).try(); }, Err(_) => ()});
+    a.realloc<u8>(p.to<u8>(), usize.MAX).match({Ok(_) => { Err(AllocError.OutOfMemory).try(); }, Err(_) => ()});
+    a.raw(usize.MAX - usize.BITS / 8 - 16, 16).match({Ok(_) => { Err(AllocError.OutOfMemory).try(); }, Err(_) => ()});
+    a.raw(usize.MAX, 16).match({Ok(_) => { Err(AllocError.OutOfMemory).try(); }, Err(_) => ()});
+    (p.read(0) == 42 && p.read(1) == 73).ensure(AllocError.OutOfMemory).try();
+    next = a.realloc(p, 3).try();
+    (next.same(p) && next.read(0) == 42 && next.read(1) == 73).ensure(AllocError.OutOfMemory).try();
+    blocker = a.realloc<u64>(null_ptr<u64>(), 1).try(); blocker.write(0, 876);
+    a.realloc(next, count).match({Ok(_) => { Err(AllocError.OutOfMemory).try(); }, Err(_) => ()});
+    a.realloc<u8>(next.to<u8>(), usize.MAX).match({Ok(_) => { Err(AllocError.OutOfMemory).try(); }, Err(_) => ()});
+    moved = a.realloc(next, 4).try();
+    (!moved.same(next) && moved.read(0) == 42 && moved.read(1) == 73 && blocker.read(0) == 876).ensure(AllocError.OutOfMemory).try();
+    v ::= a.Vec<u64>(); v.add(99).try();
+    v.reserve(usize.MAX).match({Ok(_) => { Err(AllocError.OutOfMemory).try(); }, Err(_) => ()});
+    v.add_all(null_ptr<u64>(), usize.MAX).match({Ok(_) => { Err(AllocError.OutOfMemory).try(); }, Err(_) => ()});
+    (v.len == 1 && v.get(0).ok_or(AllocError.OutOfMemory).try() == 99).ensure(AllocError.OutOfMemory).try();
+    v.add(100).try();
+    (v.len == 2 && v.get(1).ok_or(AllocError.OutOfMemory).try() == 100).ensure(AllocError.OutOfMemory).try();
+    calls = a.realloc<usize>(null_ptr<usize>(), 1).try(); calls.write(0, 0);
+    refusing = Refuse(calls: calls);
+    huge ::= refusing.Vec<u8>();
+    huge.reserve(usize.MAX).match({Ok(_) => { Err(AllocError.OutOfMemory).try(); }, Err(_) => ()});
+    (calls.read(0) == usize.MAX && huge.len == 0).ensure(AllocError.OutOfMemory).try();
+    println(
+        "PASS: allocation overflow refusals preserve storage and allow retry"
+    );
+    Ok(0)
+}

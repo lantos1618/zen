@@ -37,7 +37,10 @@ decode_chunk = (a: Alloc, chunk: H2Chunk) Res<(), JsonFault> {
     decoder ::= a.Decoder().try();
     events  ::= a.Vec<JsonEvent>();
     decoder.feed(chunk, events).try();
-    decoder.finish(events)
+    decoder.finish(events).try();
+    println("decoded events {}", events.len);
+    events.get(0).match({ Ok(event) => event.match({ Null => println("decoded null"), _ => println("wrong JSON event") }), None => println("missing JSON event") });
+    Ok(())
 }
 
 main = (env: Env) Res<(), Error> {
@@ -51,5 +54,6 @@ main = (env: Env) Res<(), Error> {
     decode_chunk(alloc, h2_chunk("null").try()).try();
     receiver.receive(h2_chunk("hello").try()).try();
     receiver.stop();
+    receiver.join();
     Ok(())
 }

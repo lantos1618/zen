@@ -22,7 +22,7 @@ Position = lsp.lsp_pos
 Decoded, RequestTurn, write_capabilities = lsp.lsp_reply
 RpcFault, request_of, notice_of = lsp.lsp_reply
 path_of = lsp.lsp_uri
-Document = lsp.lsp_document
+Document, Documents = lsp.lsp_document
 
 Server* = {
     a: Alloc,
@@ -35,7 +35,7 @@ Server* = {
     workspace :: str,
 
     docs :: Map<str, str>,
-    buffers :: Vec<Document>,
+    buffers :: Documents,
 
     open :: Vec<str>,
 
@@ -283,7 +283,7 @@ Server* = {
 
     changed = (self :: @Self, request: Decoded) Res<(), AllocError> {
         uri = request.string_at(request.param("textDocument"), "uri");
-        self.buffers.find((buffer) { buffer.uri.eq(uri) }).match({
+        self.buffers.views.find((buffer) { buffer.uri.eq(uri) }).match({
             None     => written(),
             Ok(held) => request.changed(held.text, held.version).match({
                 None       => written(),
@@ -311,8 +311,8 @@ Server* = {
     }
 
     buffer_index = (self: @Self, uri: str) Res<usize> {
-        Range(0, self.buffers.len).find((at) {
-            self.buffers.get(at).match({ None => false, Ok(doc) => doc.uri.eq(uri) })
+        Range(0, self.buffers.views.len).find((at) {
+            self.buffers.views.get(at).match({ None => false, Ok(doc) => doc.uri.eq(uri) })
         })
     }
 
@@ -339,7 +339,7 @@ Server* = {
                 self.buffers.add(consume fresh).try();
                 self.refresh_docs(previous).match({
                     Err(error) => {
-                        self.retire(self.buffers.len - 1);
+                        self.retire(self.buffers.views.len - 1);
                         Err(error)
                     },
                     Ok(_)      => {
@@ -365,7 +365,7 @@ Server* = {
         fresh_arena ::= self.env.mem.alloc();
         docs        ::= fresh_arena.Map<str, str>();
         uris        ::= fresh_arena.Vec<str>();
-        self.buffers.loop((h, index, buffer) {
+        self.buffers.views.loop((h, index, buffer) {
             excluded.match({ None => true, Ok(at) => index != at }).then(() {
                 docs.set(buffer.uri, buffer.text).try();
                 uris.add(buffer.uri).try();
@@ -739,7 +739,7 @@ server_with_docs = (a: Alloc, env: Env, docs_arena :: Arena) Server {
         docs_arena: consume docs_arena,
         workspace: "",
         docs: docs,
-        buffers: a.Vec<Document>(),
+        buffers: a.Documents(),
         open: a.Vec<str>(),
         notes: env.Diagnostics(),
         members: env.MemberCache(),

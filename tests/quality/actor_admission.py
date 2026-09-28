@@ -54,6 +54,8 @@ static void *producer(void *raw) {
 }
 int main(void) {
     zg_actor a={0}; test_storage(&a); pthread_mutex_init(&a.lock,NULL); a.open=1;
+    assert(zg_actor_send(&a,noop,NULL,0,NULL,0)==1);
+    zg_actor_registry=&a; /* Registered admission fixture without a worker. */
     zg_actor_slice huge={0,0,(const unsigned char*)1,SIZE_MAX};
     int before=allocations;
     assert(zg_actor_send(&a,noop,NULL,0,&huge,1)==2);
@@ -69,6 +71,7 @@ int main(void) {
     assert(zg_actor_send(&a,noop,NULL,0,NULL,0)==2);
     assert(a.count==0 && a.bytes==0); denied=0;
     pthread_mutex_destroy(&a.lock);
+    zg_actor_registry=NULL;
     zg_actor *live=calloc(1,sizeof(*live)); test_storage(live); assert(zg_actor_start(live)==0);
     assert(zg_actor_send(live,blocked,NULL,0,NULL,0)==0);
     pthread_mutex_lock(&gate); while(!entered)pthread_cond_wait(&changed,&gate); pthread_mutex_unlock(&gate);

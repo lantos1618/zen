@@ -1,12 +1,23 @@
-// Type and temporary names must not share the C ordinary-identifier namespace.
-First = {}
-Second = {}
-First.impl(Actor, { ping = (self :: @Self, ctx: Context) {} })
-Second.impl(Actor, { ping = (self :: @Self, ctx: Context) {} })
+// Distinct actor types retain distinct C names and dispatch their own handlers.
+// Joining the first actor before sending to the second fixes output order.
+First = { value: i32 }
+Second = { value: i32 }
+First.impl(Actor, { ping = (self :: @Self, ctx: Context) { println(
+    "first {}",
+    self.value
+); } })
+Second.impl(Actor, { ping = (self :: @Self, ctx: Context) { println(
+    "second {}",
+    self.value
+); } })
 main = (env: Env) Res<i32, ActorStartError | ActorError> {
-    first  = env.spawn(First()).try();
-    second = env.spawn(Second()).try();
-    first.ping().try(); second.ping().try();
-    first.stop(); second.stop(); first.join(); second.join();
+    first  = env.spawn(First(value: 17)).try();
+    second = env.spawn(Second(value: 29)).try();
+    first.ping().try();
+    first.stop();
+    first.join();
+    second.ping().try();
+    second.stop();
+    second.join();
     Ok(0)
 }

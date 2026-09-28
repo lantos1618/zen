@@ -8,6 +8,19 @@ member_type, enter_struct_tvars, named_as = sema.sema_member
 Inst, inst_of_named, subst, push_tparams, owner_of = sema.sema_inst
 variant_payload = sema.sema_case
 type_from_ast = sema.sema_denote
+is_drop_type = sema.sema_drop
+
+PayloadPolicy = ActorMessage | OwningCopy
+
+// Copying inline fields duplicates their owners; pointer/allocator handles
+// remain copyable because they do not own their pointees.
+contains_drop* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
+    walk ::= PayloadWalk(
+        seen: c.alloc.Vec<TyId>(),
+        policy: PayloadPolicy.OwningCopy
+    );
+    walk.unsafe(c, ty)
+}
 
 // Actor messages are copied into a mailbox. A primitive value owns no graph,
 // while allocator-backed containers, pointers, and functions do. Named
@@ -19,7 +32,10 @@ actor_payload_unsafe* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
         // not receive slice descriptors and retain the sender's pointer.
         Prim(_) => Ok(false),
         _       => {
-            walk ::= PayloadWalk(seen: c.alloc.Vec<TyId>());
+            walk ::= PayloadWalk(
+                seen: c.alloc.Vec<TyId>(),
+                policy: PayloadPolicy.ActorMessage
+            );
             walk.unsafe(c, ty)
         },
     })
@@ -30,6 +46,11 @@ actor_payload_unsafe* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
 // caller's semantic state, not a copied checker stored in this traversal.
 PayloadWalk = {
     seen :: Vec<TyId>,
+    policy: PayloadPolicy,
+
+    actor_message = (self: @Self) bool {
+        self.policy.match({ ActorMessage => true, OwningCopy => false })
+    }
 
     unsafe = (self :: @Self, c :: Checker, ty: TyId)
              Res<bool, AllocError> {
@@ -45,9 +66,9 @@ PayloadWalk = {
     fresh = (self :: @Self, c :: Checker, ty: TyId)
             Res<bool, AllocError> {
         c.types.at(ty).match({
-            Prim(p)  => Ok(p.name.eq("str")),
-            Fn(_)    => Ok(true),
-            Var(_)   => Ok(true),
+            Prim(p)  => Ok(self.actor_message() && p.name.eq("str")),
+            Fn(_)    => Ok(self.actor_message()),
+            Var(_)   => Ok(self.actor_message()),
             Infer    => Ok(false),
             Unknown  => Ok(false),
             Array(a) => (a.count == 0).match({
@@ -75,16 +96,24 @@ PayloadWalk = {
 
     named = (self :: @Self, c :: Checker, ty: TyId, n: TyNamed)
             Res<bool, AllocError> {
+        (!self.actor_message() && c.is_drop_type(ty).try()).match({
+            true  => Ok(true),
+            false => self.named_fields(c, ty, n),
+        })
+    }
+
+    named_fields = (self :: @Self, c :: Checker, ty: TyId, n: TyNamed)
+                   Res<bool, AllocError> {
         (c.named_as(n, "String", "std.text.text_string")
             || c.named_as(n, "Vec", "std.collections.collections_vec")
             || c.named_as(n, "Ptr", "std.mem.mem_ptr")).match({
-            true  => Ok(true),
+            true  => Ok(self.actor_message()),
             false => {
                 wide = c.set_of(ty);
                 wide.eq(ty).match({
                     false => self.unsafe(c, wide),
                     true  => decl_at(c.tree, n.decl).match({
-                        None    => Ok(true),
+                        None    => Ok(self.actor_message()),
                         Ok(dec) => self.declaration(c, ty, n, dec),
                     }),
                 })
@@ -103,7 +132,7 @@ PayloadWalk = {
             Struct(s) => self.fields(c, ty, n, s),
             Enum(e)   => self.variants(c, n, e),
             Alias(a)  => self.alias(c, n, a),
-            _         => Ok(true),
+            _         => Ok(self.actor_message()),
         })
     }
 

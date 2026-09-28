@@ -420,6 +420,21 @@ It is not inferred from the body. An inferred receiver requirement changes when 
 
 **`consume` moves.** The compiler calls `drop` exactly once, so `g = f` on a `Drop` type cannot copy — both would drop. There is no `Clone` trait: want a second one, construct a second one.
 
+Copying `Ptr.read` and `Ptr.copy_from` operations reject values containing inline
+`Drop` owners, including generic instances checked during lowering. Consequently,
+`Vec.get`, `require`, and value iteration cannot duplicate those owners. A raw
+`Ptr.take(index)` transfers an initialized slot without clearing its bytes; the
+caller must retire or overwrite that slot before another read or destruction.
+`Vec.take` manages that retirement and compacts the initialized prefix. This is
+not a checked raw-pointer lifetime or aliasing system. Factories may still return
+fresh owners. LSP document queries use owner-free views whose lifetime ends when
+the corresponding document is retired.
+
+Owning collection storage remains an unchecked boundary: borrowed insertion,
+replacement destruction and refusal cleanup do not yet satisfy this contract.
+The maintained failing cases are in `tests/library/ownership-storage`; owning
+lookup checks must not be presented as end-to-end container ownership safety.
+
 Three consequences worth stating, because each one is a place the rule looks like it bites and does not:
 
 - **A handle is not a `Drop` value.** `Alloc` is an interface, so an `Alloc` value is a fat value pointing at an arena. The *arena* is `Drop`; the handle is two words and copies freely. That is why `Vec` can store `alloc: Alloc` by value and why `fill(alloc, v)` is not an illegal copy.
@@ -1299,8 +1314,14 @@ and an incompatible already-typed argument is still rejected.
 //
 // Deep val/iso sendability and unique `consume` handoff are still owed.
 //
-// Callers may stop and join a Ref. Runtime shutdown drains and stops
-// known actors; automatic full quiescence remains stage-5 work.
+// Callers may stop and join a Ref. Concurrent join callers pin the actor
+// record; shutdown drains accepted work, closes workers, waits for pins and
+// detaches the registry before freeing records. Concurrent/repeated shutdown
+// waits for the same completion. Retired Ref operations check registration
+// before dereferencing: sends report Closed; stop/join return. Message data
+// preserves the allocator's 16-byte alignment.
+// Records are retained until runtime shutdown, including stopped actors.
+// This does not provide bounded actor churn or checked raw-pointer lifetimes.
 
 ActorError* = Closed | Full
 

@@ -1,3 +1,4 @@
-monotonic advances: true
+monotonic ordered: true
+clock advances: true
 same read twice: true
 unix near harness: true

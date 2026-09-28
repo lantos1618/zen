@@ -65,8 +65,16 @@ write_proc = (out :: Emit) Res<(), AllocError> {
     out.say("    int rc = posix_spawn_file_actions_init(&fa);").try();
     out.say("    if (rc) return rc;").try();
     out.say(
+        "#if defined(__APPLE__) && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 260000"
+    ).try();
+    out.say(
+        "    if (cwd) rc = posix_spawn_file_actions_addchdir(&fa, (char *)cwd);"
+    ).try();
+    out.say("#else").try();
+    out.say(
         "    if (cwd) rc = posix_spawn_file_actions_addchdir_np(&fa, (char *)cwd);"
     ).try();
+    out.say("#endif").try();
     out.say(
         "    if (!rc && out >= 0) rc = posix_spawn_file_actions_adddup2(&fa, out, STDOUT_FILENO);"
     ).try();

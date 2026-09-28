@@ -21,6 +21,28 @@ faster than the code does.
 
 ## INBOX — paste below this line
 
+**Local TLS loopback verification still times out.**
+`tests/corpus/net/tls_connect` compiles with the installed OpenSSL include/library
+paths and an explicit runtime rpath, but the program exceeds the 20-second
+harness limit on macOS. The saved pre-strengthening fixture reproduces the same
+timeout; the HTTP/2 actor fixture passes with corrected linking. Logs are in
+`build/source_health/jev-test-review/baseline-tls-rpath.log` and
+`execution-after.log`. Keep this as a failed gate; do not weaken hostname
+verification, remove the mismatch case, or claim this transport verified.
+
+**Owning collection storage does not yet have a complete transfer contract.**
+Confirmed with a Drop owner that prints its id: `v.add(owner); v.clear()`
+accepts a borrowed owner and destroys it twice. Inserting `consume first`, then
+`v.set(0, consume second); v.clear()` destroys only second, losing first.
+`v.set(0, consume owner)` on an empty Vec destroys neither value. Raw slot
+extraction fixed owning lookup, but does not fix storage ownership or cleanup
+on admission failure. Maintained reproducers are in `tests/library/ownership-storage`
+(replace, borrow, invalid-set).
+The repair needs a checked transfer requirement across generic/helper calls
+and failure cleanup. Merely dropping every value parameter is incorrect:
+ordinary parameters are borrowed. Do not describe owning collections as safe
+until rejection, replacement and allocation/index-failure controls pass.
+
 **Reflection-based project test discovery remains unimplemented.**
 `Tester.expect` and generic `Tester.expect_eq` have executable bodies in
 `src/std/test/test.zen`. The remaining gap is `Module.functions`, registration

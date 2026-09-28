@@ -13,5 +13,7 @@ word = (env: Env, letters: str) Res<str, AllocError> {
 main = (env: Env) Res<i32, AllocError> {
     a = word(env, "ab").try();
     println("{}", a);
+    empty = word(env, "").try();
+    println("{}", empty);
     Ok(0)
 }

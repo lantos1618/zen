@@ -1,0 +1,6 @@
+main = () {
+    empty = str(data: null_ptr<u8>(), len: 0);
+    view  = empty.slice(0, 0);
+    println("empty {}", view.len);
+    empty.split(',').loop((part) { println("part {}", part.len); });
+}

@@ -20,18 +20,19 @@ Observe.impl(Sink, {
 
 main = (env: Env) Res<i32, ProcStreamError> {
     a ::= env.mem.alloc();
-    marker = a.String("/tmp/zen-stream-{}", env.clock.unix().ns).try();
-    @scope.defer(() { env.fs.remove(marker.view()).ignore(); });
+    // The harness gives each case a private working directory.
+    marker: str = "stream-observed";
+    @scope.defer(() { env.fs.remove(marker).ignore(); });
     script = a.String(
         "printf early; i=0; while [ ! -f '{}' ] && [ $i -lt 200 ]; do sleep 0.01; i=$((i+1)); done; [ -f '{}' ] || exit 99; printf late; printf error >&2; exit 7",
-        marker.view(),
-        marker.view()
+        marker,
+        marker
     ).try();
     argv ::= a.Vec<str>();
     argv.add("/bin/sh").try();
     argv.add("-c").try();
     argv.add(script.view()).try();
-    out ::= Observe(env: env, marker: marker.view(), text: a.String().try());
+    out ::= Observe(env: env, marker: marker, text: a.String().try());
     err ::= a.String().try();
     code = env.proc.run_argv_into(a, "", argv, out, err).try();
     env.out.println("{} {} {}", code, out.text.view(), err.view()).try();

@@ -22,8 +22,12 @@ fi
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/zen-ubsan.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 
-if ! nm -D "$ZEN_UBSAN" 2>/dev/null | grep -Eq '__ubsan_handle_'; then
-    if ! nm "$ZEN_UBSAN" 2>/dev/null | grep -Eq '__ubsan_handle_'; then
+# Read the complete symbol table before searching it. grep -q can close a pipe
+# early, making nm fail with SIGPIPE under pipefail despite a matching hook.
+if ! nm -D "$ZEN_UBSAN" >"$WORK/symbols" 2>/dev/null ||
+        ! grep -Eq '__ubsan_handle_' "$WORK/symbols"; then
+    if ! nm "$ZEN_UBSAN" >"$WORK/symbols" 2>/dev/null ||
+            ! grep -Eq '__ubsan_handle_' "$WORK/symbols"; then
         echo "ubsan.sh: $ZEN_UBSAN has no UBSan runtime hook" >&2
         exit 2
     fi
@@ -34,7 +38,8 @@ if [ ! -f "$CANARY/main.c" ] || [ ! -f "$CANARY/main.reports" ]; then
     echo "ubsan.sh: tests/bench/ubsan_canary is missing its source or report contract" >&2
     exit 2
 fi
-mapfile -t WANT < <(
+WANT=()
+while IFS= read -r report; do WANT+=("$report"); done < <(
     grep -v '^[[:space:]]*#' "$CANARY/main.reports" |
         grep -v '^[[:space:]]*$'
 )

@@ -9,9 +9,13 @@ S2 = { next: S3 }
 S1 = { next: S2 }
 S0 = { next: S1 }
 
-touch = (value: S0) i32 { 17 }
+touch = (
+    value : S0
+) i32 { value.next.next.next.next.next.next.next.next.next.value }
 
 main = (env: Env) Res<i32> {
-    println("closed ten type layers");
+    first  = S0(S1(S2(S3(S4(S5(S6(S7(S8(S9(17))))))))));
+    second = S0(S1(S2(S3(S4(S5(S6(S7(S8(S9(91))))))))));
+    println("deep {} {}", touch(first), touch(second));
     Ok(0)
 }

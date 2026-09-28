@@ -51,9 +51,10 @@ Vec*<T> = {
 
     // Move an element out and close its slot; the caller owns the value.
     take* = (self :: @Self, i: usize) Res<T> {
-        value = self.get(i).try();
+        (i < self.len).ensure().try();
+        value = self.data.take(i);
         Range(i + 1, self.len).loop((h, j) {
-            self.data.write(j - 1, self.data.read(j));
+            self.data.write(j - 1, self.data.take(j));
         });
         self.len = self.len - 1;
         Ok(consume value);
@@ -62,17 +63,20 @@ Vec*<T> = {
     clear* = (self :: @Self) () {
         loop(self.len > 0, (h) {
             self.take(self.len - 1).match({
-                Ok(value) => { dropped = consume value; },
+                Ok(value) => { _ = consume value; },
                 None      => (),
             });
         });
     }
 
     reserve* = (self :: @Self, n: usize) Res<(), AllocError> {
+        (n <= usize.MAX - self.len).ensure(AllocError.OutOfMemory).try();
         want = self.len + n;
         (want <= self.capacity).match({
             true  => Ok(()),
-            false => self.reallocate(want * 2),
+            false => self.reallocate(
+                (want <= usize.MAX / 2).match({true => want * 2, false => want})
+            ),
         })
     }
 
@@ -81,6 +85,7 @@ Vec*<T> = {
     // lie wholly within this Vec's initialized prefix; that run remains
     // supported even when reallocation moves storage.
     add_all* = (self :: @Self, source: Ptr<T>, count: usize) Res<(), AllocError> {
+        (count <= usize.MAX - self.len).ensure(AllocError.OutOfMemory).try();
         (count > 0).then(() {
             at                = self.len;
             alias: Res<usize> = (at + count > self.capacity).match({
@@ -99,9 +104,10 @@ Vec*<T> = {
     }
 
     grow = (self :: @Self) Res<(), AllocError> {
+        (self.capacity < usize.MAX).ensure(AllocError.OutOfMemory).try();
         self.reallocate((self.capacity == 0).match({
             true  => 1,
-            false => self.capacity * 2,
+            false => (self.capacity <= usize.MAX / 2).match({true => self.capacity * 2, false => usize.MAX}),
         }))
     }
 

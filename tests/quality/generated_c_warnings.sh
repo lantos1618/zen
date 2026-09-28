@@ -95,35 +95,47 @@ check_artifact() {
         "$compiler" "$artifact" "$actual"
 }
 
+# Executable names are not compiler identities: macOS /usr/bin/gcc is Clang.
+compiler_family() {
+    local macros
+    macros="$("$1" -dM -E -x c /dev/null)" || fail "cannot identify compiler $1"
+    if grep -q '__clang__' <<<"$macros"; then
+        printf '%s\n' clang
+    elif grep -q '__GNUC__' <<<"$macros"; then
+        printf '%s\n' gcc
+    else
+        fail "unsupported compiler $1"
+    fi
+}
+
 declare -a jobs=()
 declare -a job_names=()
-for compiler in gcc clang; do
+declare -a families=()
+for requested in gcc clang; do
+    if [[ "$requested" == gcc ]]; then binary="$gcc_bin"; else binary="$clang_bin"; fi
+    compiler="$(compiler_family "$binary")"
+    [[ "$compiler" == "$requested" ]] || printf 'generated-c-warnings: %s identifies as %s\n' "$binary" "$compiler"
+    duplicate=0
+    for family in "${families[@]+"${families[@]}"}"; do
+        [[ "$family" != "$compiler" ]] || duplicate=1
+    done
+    [[ "$duplicate" == 0 ]] || continue
+    families+=("$compiler")
     compiler_flags=()
-    if [[ "$compiler" == gcc ]]; then
-        binary="$gcc_bin"
-    else
-        binary="$clang_bin"
-        compiler_flags=("${clang_warning_flags[@]}")
-    fi
+    [[ "$compiler" != clang ]] || compiler_flags=("${clang_warning_flags[@]}")
     check_positive_control "$compiler" "$binary"
     for artifact in seed emitted; do
-        if [[ "$artifact" == seed ]]; then
-            input="$repo_root/seed/zen.c"
-        else
-            input="$work_dir/emitted.c"
-        fi
+        if [[ "$artifact" == seed ]]; then input="$repo_root/seed/zen.c"; else input="$work_dir/emitted.c"; fi
         LC_ALL=C "$binary" "${warning_flags[@]}" ${compiler_flags[@]+"${compiler_flags[@]}"} "$input" \
             >"$work_dir/$compiler-$artifact.log" 2>&1 &
         jobs+=("$!")
         job_names+=("$compiler $artifact")
     done
 done
-
 for index in "${!jobs[@]}"; do
     wait "${jobs[$index]}" || fail "${job_names[$index]} did not compile cleanly"
 done
-
-check_artifact gcc seed
-check_artifact clang seed
-check_artifact gcc emitted
-check_artifact clang emitted
+for compiler in "${families[@]}"; do
+    check_artifact "$compiler" seed
+    check_artifact "$compiler" emitted
+done

@@ -1,6 +1,7 @@
 // One independently retired editor buffer. Views expire when this owner drops.
 str, dup = std.text
-Arena, AllocError = std.mem
+Arena, Alloc, AllocError = std.mem
+Vec = std.collections
 path_of = lsp.lsp_uri
 
 Document* = {
@@ -35,4 +36,44 @@ document_in = (arena :: Arena, uri: str, text: str, version: Res<i64>)
         text: kept_text,
         version: version
     ))
+}
+
+// A view owns no arena and expires when its document is retired.
+DocumentView* = { uri*: str, text*: str, version*: Res<i64> }
+
+// Owners and their views share an index. Reserve both buffers before adding
+// an owner; removing a document removes its view before handing ownership out.
+Documents* = {
+    owners :: Vec<Document>,
+    views* :: Vec<DocumentView>,
+
+    reserve* = (self :: @Self, count: usize) Res<(), AllocError> {
+        self.owners.reserve(count).try();
+        self.views.reserve(count)
+    }
+
+    add* = (self :: @Self, document: Document) Res<(), AllocError> {
+        self.reserve(1).try();
+        view = DocumentView(
+            uri: document.uri,
+            text: document.text,
+            version: document.version
+        );
+        self.owners.add(consume document).try();
+        self.views.add(view)
+    }
+
+    take* = (self :: @Self, index: usize) Res<Document> {
+        self.views.take(index).try();
+        self.owners.take(index)
+    }
+
+    clear* = (self :: @Self) () {
+        self.views.clear();
+        self.owners.clear();
+    }
+}
+
+Documents* = (a: Alloc) Documents {
+    Documents(owners: a.Vec<Document>(), views: a.Vec<DocumentView>())
 }

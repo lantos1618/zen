@@ -9,6 +9,16 @@ open = <T: Shape>(box: Box<T>, maybe: Maybe<T>) Box<T> { box }
 closed = (box: Box<Shape>) Box<Shape> { box }
 
 main = (env: Env) Res<i32, AllocError> {
-    println("nominal generic types validate");
+    box                = Box<Shape>(value: Shape(width: 17));
+    some: Maybe<Shape> = Maybe.Some(Shape(width: 29));
+    none: Maybe<Shape> = Maybe.None;
+    println("open some {}", open(box, some).value.width);
+    println(
+        "open none {}",
+        open(Box<Shape>(value: Shape(width: 43)), none).value.width
+    );
+    println("closed {}", closed(box).value.width);
+    some.match({ Some(value) => println("payload {}", value.width), None => println("missing payload") });
+    none.match({ Some(_) => println("unexpected payload"), None => println("none") });
     Ok(0)
 }

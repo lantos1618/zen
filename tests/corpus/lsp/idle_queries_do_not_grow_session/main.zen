@@ -3,6 +3,14 @@ Server = lsp.lsp_serve
 Alloc, AllocError, Ptr = std.mem
 str = std.text
 Range = std.core
+to_json = std.json
+
+Request<T> = { jsonrpc: str, id: i32, method: str, params: T }
+Notification<T> = { jsonrpc: str, method: str, params: T }
+InitializeParams = { rootUri: str }
+DocumentParams<T> = { textDocument: T }
+OpenDocument = { uri: str, text: str, version: i32 }
+DocumentIdentifier = { uri: str }
 
 Counting = { backing: Alloc, calls: Ptr<usize> }
 Counting.impl(Alloc, {
@@ -16,37 +24,45 @@ Counting.impl(Alloc, {
     }
 })
 
-turn = (env: Env, server :: Server, message: str) Res<(), AllocError> {
+turn = <T>(env: Env, server :: Server, request: T) Res<(), AllocError> {
     temporary ::= env.mem.alloc();
-    output    ::= temporary.String().try();
-    server.one(temporary, message, output).try();
+    message = request.to_json(temporary).try();
+    output ::= temporary.String().try();
+    server.one(temporary, message.view(), output).try();
     server.settled(temporary, output)
 }
 
 main = (env: Env) Res<i32, AllocError> {
     arena ::= env.mem.alloc();
-    calls = arena.raw(8, 8).try().to<usize>();
+    calls = arena.create<usize>().try();
     calls.write(0, 0);
     counted = Counting(backing: arena, calls: calls);
     server ::= counted.Server(env);
-    turn(
-        env,
-        server,
-        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":\"file://.\"}}"
-    ).try();
-    turn(
-        env,
-        server,
-        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file://src/app/app.zen\",\"text\":\"value* = () i32 { missing }\",\"version\":1}}}"
-    ).try();
+    turn(env, server, Request<InitializeParams>(
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: InitializeParams(rootUri: "file://."),
+    )).try();
+    turn(env, server, Notification<DocumentParams<OpenDocument>>(
+        jsonrpc: "2.0",
+        method: "textDocument/didOpen",
+        params: DocumentParams<OpenDocument>(textDocument: OpenDocument(
+            uri: "file://src/app/app.zen",
+            text: "value* = () i32 { missing }",
+            version: 1,
+        )),
+    )).try();
+    query  = Request<DocumentParams<DocumentIdentifier>>(
+        jsonrpc: "2.0",
+        id: 2,
+        method: "textDocument/documentSymbol",
+        params: DocumentParams<DocumentIdentifier>(textDocument: DocumentIdentifier(
+            uri: "file://src/app/app.zen",
+        )),
+    );
     before = calls.read(0);
-    Range(0, 100).loop((i) {
-        turn(
-            env,
-            server,
-            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/documentSymbol\",\"params\":{\"textDocument\":{\"uri\":\"file://src/app/app.zen\"}}}"
-        ).try();
-    });
+    Range(0, 100).loop((i) { turn(env, server, query).try(); });
     println("session allocations {}", calls.read(0) - before);
     Ok(0)
 }

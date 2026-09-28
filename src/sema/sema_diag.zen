@@ -120,6 +120,7 @@ SemaFault* =
     | PartiallyMoved(NameFault)        // a hole reaches the drop
     | ConsumeNotAPlace(NameFault)      // an element index is not a place
     | ConsumeThroughHandle(NameFault)  // move only what this frame owns
+    | CopyFromPointer(NameFault)
     | CopyOfDropValue(NameFault)       // `g = f` would drop twice
     | ScopeEscapes(NameFault)          // `@scope` left its block
     | ExplicitDropBorrow(NameFault)
@@ -213,6 +214,7 @@ message* = (fault: SemaFault) str {
         PartiallyMoved(_)            => "a partial move reaches the drop:",
         ConsumeNotAPlace(_)          => "cannot consume an array element: the index is a runtime value, so which element is dead is not a fact the compiler holds",
         ConsumeThroughHandle(_)      => "cannot consume through a handle: you may only move what this frame owns, and a bitwise copy of a handle would be left pointing at a dead value",
+        CopyFromPointer(_)           => "cannot copy a Drop owner through Ptr: use take to transfer an initialized slot",
         CopyOfDropValue(_)           => "cannot copy a Drop value: drop runs exactly once, so two live names for one value would drop it twice — construct a second one, or write `consume`",
         ScopeEscapes(_)              => "@scope may not escape: it names the enclosing block, so it may be passed inward but never stored in a struct, returned, or captured by an escaping closure",
         ExplicitDropBorrow(_)        => "explicit destruction requires an owned value: use `(consume owner).drop()` to transfer cleanup responsibility",
@@ -263,6 +265,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         InfiniteSize(f)              => out.write_name(f),
         ConsumeNotAPlace(f)          => out.write_name(f),
         ConsumeThroughHandle(f)      => out.write_name(f),
+        CopyFromPointer(f)           => out.write_name(f),
         CopyOfDropValue(f)           => out.write_name(f),
         ScopeEscapes(f)              => out.write_name(f),
         ExplicitDropBorrow(f)        => out.write_name(f),

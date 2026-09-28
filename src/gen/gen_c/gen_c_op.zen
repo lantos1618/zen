@@ -580,7 +580,7 @@ operand_rung = (be :: CBackend, id: ExprId, b: Binary, ctx: Ctx, want: TyId)
 // What `lower_binary` will lower this level's operands at: `bool` for
 // the two short-circuiting operators, which take their type from the
 // operator and not from what they were given; a comparison's operands'
-// own reading (`comparison_level` below); everything else the operands'
+// own reading; everything else the operands'
 // joined type with `want` as the last resort.
 level_type = (be :: CBackend, b: Binary, ctx: Ctx, want: TyId)
              Res<TyId, AllocError> {
@@ -593,30 +593,9 @@ level_type = (be :: CBackend, b: Binary, ctx: Ctx, want: TyId)
 plain_level = (be :: CBackend, b: Binary, ctx: Ctx, want: TyId)
               Res<TyId, AllocError> {
     is_comparison(b.op).match({
-        true  => be.comparison_level(b, ctx, want),
+        // The expected bool describes the comparison result, never its operands.
+        true  => be.operand_answer(b, ctx, be.check.types.unknown().try()),
         false => be.operand_type(b, ctx, want),
-    })
-}
-
-// Comparison operands use their own settled types; `want` describes the bool
-// result and must not determine operand storage. When sema has no operand type,
-// the contextual type is only a fallback, and an unsettled spilling form is
-// refused rather than assigned a guessed width.
-comparison_level = (be :: CBackend, b: Binary, ctx: Ctx, want: TyId)
-                   Res<TyId, AllocError> {
-    lhs = sub(be, be.check.type_of(b.lhs, ctx).try()).try();
-    be.usable(lhs).match({
-        true  => Ok(lhs),
-        false => be.comparison_rhs(b, ctx, want),
-    })
-}
-
-comparison_rhs = (be :: CBackend, b: Binary, ctx: Ctx, want: TyId)
-                 Res<TyId, AllocError> {
-    rhs = sub(be, be.check.type_of(b.rhs, ctx).try()).try();
-    be.check.is_unknown(rhs).match({
-        true  => Ok(want),
-        false => Ok(rhs),
     })
 }
 

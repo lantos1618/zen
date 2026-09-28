@@ -22,17 +22,16 @@ elapsed = (from: Duration, to: Duration) Res<Duration> {
 
 main = (env: Env) Res<i32, AllocError> {
     d1 = env.clock.since_start();
+    env.threads.sleep(1);
     d2 = env.clock.since_start();
     u1 = env.clock.unix();
 
-    // monotonic: two spans of the same clock compare by their ns — a
-    // later read is never smaller than an earlier one, so the span
-    // between two reads always answers, and it fits inside d1's own
-    // count: the process has not been up longer than its first read
-    println("monotonic advances: {}", elapsed(d1, d2).match({
-        Ok(span) => span.ns < d1.ns,
-        None     => false,
+    // Equal consecutive reads are legal; scheduling delay has no upper bound.
+    println("monotonic ordered: {}", elapsed(d1, d2).match({
+        Ok(_) => true,
+        None  => false,
     }));
+    println("clock advances: {}", d2.ns > d1.ns);
     println("same read twice: {}", elapsed(d2, d2).match({
         Ok(span) => span.ns == 0,
         None     => false,

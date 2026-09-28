@@ -120,25 +120,90 @@ FOLD_DEPTH: usize = 256
 // The integer this expression provably is; absence for anything reached
 // through a binding.
 const_int* = (c: Checker, id: ExprId) Res<i64> {
-    c.const_within(id, FOLD_DEPTH)
+    stack ::= FoldStack(
+        nodes: [ExprId, FOLD_DEPTH](),
+        phases: [u8, FOLD_DEPTH](),
+        values: [i64, FOLD_DEPTH](),
+        count: 1,
+        result: None
+    );
+    stack.nodes[0] = id;
+    loop(stack.count > 0, (h) { stack.step(c); });
+    stack.result
 }
 
-const_within = (c: Checker, id: ExprId, left: usize) Res<i64> {
-    (left == 0).match({
-        true  => None,
-        false => c.const_node(c.tree.expr_at(id), left - 1),
-    })
-}
+// Explicit continuations keep the native stack bounded even at -O0. The
+// existing expression-depth budget applies equally to both binary operands.
+FoldStack = {
+    nodes :: [ExprId, FOLD_DEPTH],
+    phases :: [u8, FOLD_DEPTH],
+    values :: [i64, FOLD_DEPTH],
+    count :: usize,
+    result :: Res<i64>,
 
-const_node = (c: Checker, node: Expr, left: usize) Res<i64> {
-    node.kind.match({
-        Literal(l) => const_literal(l),
-        Paren(p)   => c.const_within(p.inner, left),
-        Unary(u)   => c.const_unary(u, left),
-        Binary(b)  => c.const_binary(b, left),
-        Access(a)  => c.const_prim_const(a),
-        _          => None,
-    })
+    finish = (self :: @Self, result: Res<i64>) () {
+        self.result = result;
+        self.count  = self.count - 1;
+    }
+
+    descend = (self :: @Self, id: ExprId) () {
+        (self.count == FOLD_DEPTH).match({
+            true  => { self.result = None; },
+            false => {
+                self.nodes[self.count]  = id;
+                self.phases[self.count] = 0;
+                self.count              = self.count + 1;
+            },
+        });
+    }
+
+    step = (self :: @Self, c: Checker) () {
+        at   = self.count - 1;
+        node = c.tree.expr_at(self.nodes[at]);
+        node.kind.match({
+            Literal(l) => self.finish(const_literal(l)),
+            Access(a)  => self.finish(c.const_prim_const(a)),
+            Paren(p)   => (self.phases[at] == 0).match({
+                true  => { self.phases[at] = 1; self.descend(p.inner); },
+                false => self.finish(self.result),
+            }),
+            Unary(u)   => u.op.match({
+                Neg => (self.phases[at] == 0).match({
+                    true  => { self.phases[at] = 1; self.descend(u.operand); },
+                    false => self.finish(
+                        self.result.match({None => None, Ok(v) => sub_i64(
+                            0,
+                            v
+                        )})
+                    ),
+                }),
+                _   => self.finish(None),
+            }),
+            Binary(b)  => self.binary(at, b),
+            _          => self.finish(None),
+        });
+    }
+
+    binary = (self :: @Self, at: usize, b: Binary) () {
+        self.phases[at].match({
+            0 => { self.phases[at] = 1; self.descend(b.lhs); },
+            1 => self.result.match({
+                None      => self.finish(None),
+                Ok(value) => {
+                    self.values[at] = value;
+                    self.phases[at] = 2;
+                    self.descend(b.rhs);
+                },
+            }),
+            _ => self.finish(
+                self.result.match({None => None, Ok(value) => fold(
+                    b.op,
+                    self.values[at],
+                    value
+                )})
+            ),
+        });
+    }
 }
 
 const_literal* = (l: Literal) Res<i64> {
@@ -188,34 +253,6 @@ fits_magnitude* = (value: u64, name: str) Res<bool> {
         "u64"   => Ok(true),
         "usize" => Ok(true),
         _       => None,
-    })
-}
-
-const_unary = (c: Checker, u: Unary, left: usize) Res<i64> {
-    u.op.match({
-        Neg => c.negate(u.operand, left),
-        _   => None,
-    })
-}
-
-negate = (c: Checker, id: ExprId, left: usize) Res<i64> {
-    c.const_within(id, left).match({
-        None  => None,
-        Ok(v) => Ok(0 - v),
-    })
-}
-
-const_binary = (c: Checker, b: Binary, left: usize) Res<i64> {
-    c.const_within(b.lhs, left).match({
-        None  => None,
-        Ok(x) => c.const_rhs(b, x, left),
-    })
-}
-
-const_rhs = (c: Checker, b: Binary, x: i64, left: usize) Res<i64> {
-    c.const_within(b.rhs, left).match({
-        None  => None,
-        Ok(y) => fold(b.op, x, y),
     })
 }
 

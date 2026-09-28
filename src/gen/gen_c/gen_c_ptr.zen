@@ -15,6 +15,8 @@ ctype, request_type = gen.gen_c.gen_c_type
 write_qname = gen.gen_c.gen_c_layout
 expr = gen.gen_c.gen_c_expr
 Dest, deliver = gen.gen_c.gen_c_stmt
+contains_drop = sema.sema_copy
+GenFault = gen.gen_diag
 
 // recognising
 
@@ -34,7 +36,7 @@ named_ptr = (be :: CBackend, rty: TyId) bool {
 
 ptr_verb = (name: str) bool {
     name.is_in([
-        "read", "write", "offset", "back", "bytes", "copy_from", "to",
+        "read", "take", "write", "offset", "back", "bytes", "copy_from", "to",
         "is_null", "same"
     ])
 }
@@ -64,7 +66,7 @@ PtrTypeSite = {
 
     resolve = (self: @Self, be :: CBackend) Res<TyId, AllocError> {
         et = be.elem_of(self.rty).try();
-        self.name.eq("read").match({
+        self.name.is_in(["read", "take"]).match({
             true  => Ok(et),
             false => self.after_read(be),
         })
@@ -142,7 +144,7 @@ PtrUnitPolicy = PtrLower | PtrRefuse | PtrZero
 ptr_unit_policy = (be: CBackend, et: TyId, name: str) PtrUnitPolicy {
     be.is_unit(et).match({
         false => PtrUnitPolicy.PtrLower,
-        true  => name.is_in(["read", "write", "offset", "back"]).match({
+        true  => name.is_in(["read", "take", "write", "offset", "back"]).match({
             true  => PtrUnitPolicy.PtrRefuse,
             false => name.is_in(["bytes", "copy_from"]).match({
                 true  => PtrUnitPolicy.PtrZero,
@@ -162,7 +164,7 @@ PtrCall = {
 
     lower = (self: @Self, be :: CBackend, out :: String)
             Res<(), AllocError> {
-        self.site.name.eq("read").match({
+        self.site.name.is_in(["read", "take"]).match({
             true  => self.read(be, out),
             false => self.after_read(be, out),
         })
@@ -348,6 +350,30 @@ lower_ptr_member* = (
 }
 
 lower_ptr_call = (
+    be   :: CBackend,
+    id   : ExprId,
+    c    : Call,
+    a    : Access,
+    rty  : TyId,
+    et   : TyId,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    copying = a.name.text.is_in(["read", "copy_from"]);
+    (copying && be.check.contains_drop(et).try()).match({
+        true  => {
+            be.report_expr(
+                id,
+                GenFault.CopyFromPointer(be.check.types.key_at(et))
+            ).try();
+            out.add("0")
+        },
+        false => be.emit_ptr_call(id, c, a, rty, et, ctx, want, out),
+    })
+}
+
+emit_ptr_call = (
     be   :: CBackend,
     id   : ExprId,
     c    : Call,

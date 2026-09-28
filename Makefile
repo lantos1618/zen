@@ -151,7 +151,7 @@ lspcheck: build
 ## are built once per invocation, then formatting and determinism inspect the
 ## same compiler that ran the test suite.
 verify: override TEST_CACHE_ARGS := --result-cache "$(TEST_RESULTS)" --refresh-result-cache
-verify: warnings test fmt determinism fixpoint differential runtimecheck ownershipcheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck
+verify: warnings test fmt determinism fixpoint differential runtimecheck ownershipcheck actorcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck
 
 .PHONY: poolcheck
 poolcheck: build
@@ -427,3 +427,13 @@ clean-all: clean
 
 help:
 	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## //'
+
+.PHONY: actorcheck tracecheck
+actorcheck: build
+	$(PY) tests/quality/actor_admission.py --zen ./zen
+	$(PY) tests/quality/actor_join.py --zen ./zen
+	$(PY) tests/quality/actor_storage.py --zen ./zen
+	$(PY) tests/quality/actor_contention.py --zen ./zen
+
+tracecheck: build
+	$(PY) tests/library/trace/run.py --zen ./zen

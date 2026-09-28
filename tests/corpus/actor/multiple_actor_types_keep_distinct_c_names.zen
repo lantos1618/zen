@@ -1,0 +1,12 @@
+// Type and temporary names must not share the C ordinary-identifier namespace.
+First = {}
+Second = {}
+First.impl(Actor, { ping = (self :: @Self, ctx: Context) {} })
+Second.impl(Actor, { ping = (self :: @Self, ctx: Context) {} })
+main = (env: Env) Res<i32, ActorStartError | ActorError> {
+    first  = env.spawn(First()).try();
+    second = env.spawn(Second()).try();
+    first.ping().try(); second.ping().try();
+    first.stop(); second.stop(); first.join(); second.join();
+    Ok(0)
+}

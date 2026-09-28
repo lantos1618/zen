@@ -1,0 +1,12 @@
+Probe = c.bind("probe.h", { exercise* = () () })
+Worker = {}
+Packet = { producer: usize, sequence: usize }
+Worker.impl(Actor, { receive = (self :: @Self, ctx: Context, value: Packet) () {} })
+main = (env: Env) Res<i32, ActorStartError | ActorError> {
+    worker = env.spawn(Worker()).try();
+    worker.receive(Packet(0, 0)).try();
+    Probe.exercise();
+    worker.stop();
+    worker.join();
+    Ok(0)
+}

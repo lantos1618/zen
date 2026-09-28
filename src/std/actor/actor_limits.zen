@@ -1,0 +1,5 @@
+// Runtime admission policy, shared with the C backend. Counts include the
+// executing message. Bytes include runtime headers, typed fields and copied
+// str/slice payloads; native allocations inside a behavior are outside this cap.
+MAX_MESSAGES*: usize = 64
+MAX_MESSAGE_BYTES*: usize = 33554432

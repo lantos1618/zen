@@ -138,7 +138,7 @@ negate_checked = (
 ) Res<(), AllocError> {
     pos ::= be.alloc.String().try();
     be.write_position(node.span.file, u.op_span, pos).try();
-    be.need_helpers(prim).try();
+    be.need_helpers(prim, "sub").try();
     out.fmt("zg_sub_{prim}(0, ").try();
     expr(be, u.operand, ctx, ty, out).try();
     out.fmt(", {})", pos.view()).try();
@@ -456,7 +456,7 @@ call_helper = (
 
 open_helper = (be :: CBackend, b: Binary, prim: str, out :: String)
               Res<(), AllocError> {
-    be.need_helpers(prim).try();
+    be.need_helpers(prim, helper_stem(b.op)).try();
     out.fmt("zg_{}_{prim}(", helper_stem(b.op))
 }
 

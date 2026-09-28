@@ -79,3 +79,37 @@ numeric_fits = (be :: CBackend, value: str, source: str, target: NarrowTarget)
         false => be.fmt("(uintmax_t){} <= (uintmax_t){}", value, maximum),
     })
 }
+
+// Hold both inputs in source order: rotation references each more than once.
+// Mask both shift counts so zero and multiples of 64 never shift by 64.
+lower_integer_bits* = (
+    be        :: CBackend,
+    left      : ExprId,
+    right     : ExprId,
+    operation : str,
+    ctx       : Ctx,
+    out       :: String
+) Res<(), AllocError> {
+    lt = be.check.types.prim("u64").try();
+    rt = be.check.types.prim(
+        operation.eq("bit_xor").match({ true => "u64", false => "usize" })
+    ).try();
+    lc ::= be.alloc.String().try();
+    be.expr(left, ctx, lt, lc).try();
+    lv = be.temp(lt, "bits").try();
+    be.set_line(lv.view(), lc.view()).try();
+    rc ::= be.alloc.String().try();
+    be.expr(right, ctx, rt, rc).try();
+    rv = be.temp(rt, "bits").try();
+    be.set_line(rv.view(), rc.view()).try();
+    operation.eq("bit_xor").match({
+        true  => out.fmt("({} ^ {})", lv.view(), rv.view()),
+        false => out.fmt(
+            "(({} >> ({} & 63u)) | ({} << ((64u - ({} & 63u)) & 63u)))",
+            lv.view(),
+            rv.view(),
+            lv.view(),
+            rv.view()
+        ),
+    })
+}

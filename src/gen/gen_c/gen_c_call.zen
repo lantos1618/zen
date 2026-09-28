@@ -29,7 +29,7 @@ settled_inst, inst_open, enter_tparams, leave_tparams = gen.gen_c.gen_c_mono
 complete_inst = gen.gen_c.gen_c_infer
 ctype, is_unit, has_storage, c_prim, spellable, declared_ret = gen.gen_c.gen_c_type
 write_none = gen.gen_c.gen_c_type
-lower_numeric = gen.gen_c.gen_c_num
+lower_numeric, lower_integer_bits = gen.gen_c.gen_c_num
 expr, ty_of, want_of = gen.gen_c.gen_c_expr
 value_held, holds = gen.gen_c.gen_c_expr
 Dest, deliver = gen.gen_c.gen_c_stmt
@@ -255,7 +255,7 @@ CallSite = {
     convert_or_call = (self: @Self, be :: CBackend, d: Def, f: Function,
                        out :: String) Res<(), AllocError> {
         be.check.numeric_conversions.get(d.id).match({
-            None          => self.plain_or_foreign(be, d, f, out),
+            None          => self.bits_or_call(be, d, f, out),
             Ok(operation) => recv_arg(self.c, self.recv).match({
                 None      => be.unsupported(
                     self.id,
@@ -264,6 +264,19 @@ CallSite = {
                 ),
                 Ok(value) => be.lower_numeric(value, operation, self.ctx, out),
             }),
+        })
+    }
+
+    bits_or_call = (self: @Self, be :: CBackend, d: Def, f: Function,
+                    out :: String) Res<(), AllocError> {
+        be.check.integer_bits.get(d.id).match({
+            None          => self.plain_or_foreign(be, d, f, out),
+            Ok(operation) => {
+                left         = recv_arg(self.c, self.recv).ok_or(AllocError.OutOfMemory).try();
+                index: usize = self.recv.match({ Ok(_) => 0, None => 1 });
+                right        = arg_value(self.c, index).ok_or(AllocError.OutOfMemory).try();
+                be.lower_integer_bits(left, right, operation, self.ctx, out)
+            },
         })
     }
 

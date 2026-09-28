@@ -53,7 +53,7 @@ source_numeric_declaration = (c :: Checker, d: Def) Res<(), AllocError> {
             Function(f) => f.body.match({
                 Ok(_) => Ok(()),
                 None  => conversion_name(f.name.text).match({
-                    None       => Ok(()),
+                    None       => c.integer_bit_signature(d, f),
                     Ok(target) => c.numeric_signature(d, f, target),
                 }),
             }),
@@ -176,4 +176,40 @@ invalid_numeric = (c :: Checker, d: Def) Res<(), AllocError> {
         d.span,
         SemaFault.InvalidNumericConversion(NameFault(name: d.name))
     )
+}
+
+// Bit operations are compiler-owned only after validating their declaration.
+integer_bit_signature = (
+    c :: Checker,
+    d : Def,
+    f : Function
+) Res<(), AllocError> {
+    f.name.text.is_in(["bit_xor", "rotate_right"]).match({
+        false => Ok(()),
+        true  => {
+            (c.world.module_name(d.id).eq("std.core.num") && f.exported
+                && f.params.len == 2 && f.tparams.len == 0).match({
+                false => c.invalid_numeric(d),
+                true  => {
+                    a      = f.params.get(0).ok_or(AllocError.OutOfMemory).try();
+                    b      = f.params.get(1).ok_or(AllocError.OutOfMemory).try();
+                    ctx    = Ctx(
+                        d.id.module.to_usize(),
+                        c.types.unknown().try()
+                    );
+                    at     = c.param_type(a, ctx).try();
+                    bt     = c.param_type(b, ctx).try();
+                    rt     = c.ret_type(f, ctx).try();
+                    second = f.name.text.eq(
+                        "bit_xor"
+                    ).match({ true => "u64", false => "usize" });
+                    (!a.mutable && !b.mutable && c.prim_name(at).eq("u64")
+                        && c.prim_name(bt).eq(second) && c.prim_name(rt).eq("u64")).match({
+                        false => c.invalid_numeric(d),
+                        true  => c.integer_bits.set(d.id, f.name.text),
+                    })
+                },
+            })
+        },
+    })
 }

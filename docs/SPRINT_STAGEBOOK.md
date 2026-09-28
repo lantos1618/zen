@@ -5,6 +5,27 @@ Completed execution logs, previous checkpoints and review transcripts live in
 Git history. Architecture and library contracts belong in [LIBRARIES.md](LIBRARIES.md),
 [DESIGN.md](DESIGN.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Current checkpoint: native u64 bit operations (2026-09-28)
+
+The isolated crypto-numeric branch adds identity-validated `std.core.num`
+`u64.bit_xor` and `u64.rotate_right` primitives on the public main base.
+The C backend evaluates operands once in order and masks both rotation shifts.
+Seven focused tests pass, including signature refusal, high bits, zero and
+wrapped counts, free/receiver calls, operand order and short-circuit guards.
+The executable bit-vector fixture passes UBSan; deliberate XOR-to-OR and
+rotate-right-to-left generated-C mutations fail its output oracle. Five existing
+numeric conversion tests pass. Fresh fixpoint validation confirms all 194 C
+units, `zen.h`, and the regenerated checked-in seed are byte-identical.
+
+`make -j1 seed verify` was attempted but stops at the warning gate on this Mac:
+`gcc` is Apple Clang, which the main branch's gate treats as GCC. The exact
+command reports 7,067 warnings for pristine main and 7,081 for this change,
+against the GCC budget of 315. With Clang's intended diagnostic flags, both
+pristine main and this change report the same 321 warnings (the recorded Clang
+budget is 320), with no added diagnostic after stripping source line numbers.
+The warning budgets and gate were not changed. Later aggregate gates are not
+claimed passed. Logs and generated fault controls remain in ignored build paths.
+
 ## Current checkpoint: portable native sockets
 
 Header-backed bindings now support typed integer constants, optional macro

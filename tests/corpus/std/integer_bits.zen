@@ -1,0 +1,41 @@
+bit_xor, rotate_right = std.core.num
+
+once = (calls :: i32, value: u64) u64 {
+    calls = calls + 1;
+    value
+}
+
+count_once = (calls :: i32) usize {
+    calls = calls + 1;
+    // The receiver must run before the count expression.
+    (calls == 4).match({ true => 65, false => 0 })
+}
+
+main = () () {
+    value: u64 = 81985529216486895;
+    high: u64  = 9223372036854775808;
+    println(
+        "xor: {} {} {}",
+        value.bit_xor(u64.MAX),
+        high.bit_xor(1),
+        value.bit_xor(value)
+    );
+    println(
+        "rotate: {} {} {} {} {} {}",
+        value.rotate_right(0),
+        value.rotate_right(64),
+        value.rotate_right(65),
+        value.rotate_right(usize.MAX),
+        high.rotate_right(1),
+        value.rotate_right(32)
+    );
+    calls: i32 ::= 0;
+    result = once(calls, 1).bit_xor(once(calls, 3));
+    println("once: {} {}", result, calls);
+    rotated = once(calls, 8).rotate_right(count_once(calls));
+    println("rotate once: {} {}", rotated, calls);
+    skipped = false && once(calls, 1).bit_xor(once(calls, 2)) == 3;
+    taken   = true || once(calls, 8).rotate_right(count_once(calls)) == 4;
+    println("guards: {} {} {}", skipped, taken, calls);
+    println("free: {} {}", bit_xor(high, 1), rotate_right(high, 63));
+}

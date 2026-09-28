@@ -54,6 +54,12 @@ QueuedType* = { name*: String, id*: TyId, done* :: bool }
 QueuedFunction* = { definition*: Def, inst*: Inst }
 QueuedMethod* = { method*: MethodRef, inst*: Inst }
 
+// Requested arithmetic operations retain their primitive identity.
+ArithmeticHelper* = {
+    prim*: str,
+    op*: str,
+}
+
 CBackend* = {
     tree*: Ast,
     check* :: Checker,
@@ -73,6 +79,7 @@ CBackend* = {
 
     // Integer types requiring checked-arithmetic helpers.
     helper_types* :: Vec<String>,
+    helper_ops* :: Vec<ArithmeticHelper>,
 
     // Demand flags for independently emitted runtime families.
     print_used :: bool,
@@ -213,11 +220,28 @@ CBackend* = {
         Ok(())
     }
 
-    // Emit the complete checked-arithmetic family for each used primitive.
-    need_helpers* = (self :: @Self, prim: str) Res<(), AllocError> {
-        self.has_helpers(prim).match({
-            false => self.add_helpers(prim),
+    // Keep primitive ordering stable while requesting only operations used.
+    need_helpers* = (self :: @Self, prim: str, op: str) Res<(), AllocError> {
+        self.has_helper(prim, op).match({
             true  => Ok(()),
+            false => {
+                // Primitive names and operation stems belong to the backend's
+                // type arena or static operator table for its full lifetime.
+                self.helper_ops.add(ArithmeticHelper(prim: prim, op: op)).try();
+                self.has_helpers(prim).match({
+                    false => self.add_helpers(prim),
+                    true  => Ok(()),
+                })
+            },
+        })
+    }
+
+    has_helper* = (self: @Self, prim: str, op: str) bool {
+        self.helper_ops.find(
+            (item) { item.prim.eq(prim) && item.op.eq(op) }
+        ).match({
+            Ok(_) => true,
+            None  => false,
         })
     }
 
@@ -914,6 +938,7 @@ CBackend* = (a: Alloc, tree: Ast, check: Checker) Res<CBackend, AllocError> {
         type_queue: a.Vec<QueuedType>(),
         type_lookup: a.Map<str, usize>(),
         helper_types: a.Vec<String>(),
+        helper_ops: a.Vec<ArithmeticHelper>(),
         print_used: false,
         stderr_used: false,
         fbuf_used: false,

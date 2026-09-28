@@ -32,6 +32,13 @@ class ParallelRunnerTests(unittest.TestCase):
         )]
         self.collection = runner.Collection(tests=self.tests)
 
+    def test_math_header_links_libm_only_when_reachable(self):
+        source = self.root / "math.c"
+        source.write_text("#include <math.h>\nint main(void) { return 0; }\n")
+        self.assertEqual(runner.native_link_args(source), ["-lm"])
+        source.write_text('const char *name = "math.h";\n')
+        self.assertEqual(runner.native_link_args(source), [])
+
     def make_test(self, tid):
         source = self.root / (tid.replace("/", "_") + ".zen")
         return runner.Test(tid, tid.split("/")[0], "fixture", source, source,
@@ -375,6 +382,11 @@ class NativeCacheTests(unittest.TestCase):
 
 
 class ResultCacheTests(unittest.TestCase):
+    UNTRACKED_NATIVE_ENV = (
+        "LD_PRELOAD", "LD_LIBRARY_PATH", "GCC_EXEC_PREFIX", "COMPILER_PATH",
+        "CCACHE_PREFIX", "CPATH", "C_INCLUDE_PATH", "LIBRARY_PATH",
+    )
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="zen-verdict-check-")
         self.addCleanup(self.temporary.cleanup)
@@ -614,7 +626,12 @@ class ResultCacheTests(unittest.TestCase):
         floor = self.root / "native.c"
         floor.write_text("native floor one")
         tool = runner.Toolchain("fixture", [str(compiler)])
-        with patch.object(runner, "__file__", str(harness)), \
+        # The baseline deliberately models a tracked toolchain, independent of
+        # loader/search paths injected by setup-python or a developer shell.
+        tracked_env = {key: value for key, value in os.environ.items()
+                       if key not in self.UNTRACKED_NATIVE_ENV}
+        with patch.dict(os.environ, tracked_env, clear=True), \
+             patch.object(runner, "__file__", str(harness)), \
              patch.object(runner, "NATIVE_FLOORS", ((b"probe", (floor,), ()),)):
             cache = runner.ResultCache(self.args.result_cache, tool, self.args)
             baseline = cache.identity
@@ -640,6 +657,21 @@ class ResultCacheTests(unittest.TestCase):
             # Executable scripts can have arbitrary undeclared dependencies.
             compiler.write_text("#!/bin/sh\nexec /bin/true\n")
             self.assertIsNone(cache.context())
+
+    def test_untracked_native_environment_bypasses_before_toolchain_probes(self):
+        self.context.stop()
+        tool = runner.Toolchain("fixture", ["unused"], src_root=self.sources)
+        tracked_env = {key: value for key, value in os.environ.items()
+                       if key not in self.UNTRACKED_NATIVE_ENV}
+        for name in self.UNTRACKED_NATIVE_ENV:
+            with self.subTest(name=name), \
+                 patch.dict(os.environ, tracked_env, clear=True), \
+                 patch.dict(os.environ, {name: "/untracked/toolchain"}), \
+                 patch.object(runner.platform, "system", return_value="Linux"), \
+                 patch.object(runner.shutil, "which", side_effect=AssertionError(
+                     "untracked environment reached native toolchain probes")):
+                cache = runner.ResultCache(self.args.result_cache, tool, self.args)
+                self.assertIsNone(cache.identity)
 
     @unittest.skipUnless(shutil.which("cc") and shutil.which("nm"), "requires native toolchain")
     def test_unknown_clock_and_process_symbols_bypass_verdict_cache(self):

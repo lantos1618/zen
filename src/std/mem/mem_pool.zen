@@ -1,0 +1,176 @@
+// Reusable raw blocks. The caller serializes operations and returns every live
+// block before close. Cache limits include headers; live blocks remain owned
+// until give. This pool owns no arena and must not be copied while in use.
+// Supported C targets have malloc alignment of at least 16 bytes. The 16-byte
+// prefix preserves that alignment; take rejects a target where Block exceeds it.
+// The byte cache limit includes metadata; the block limit counts payload bytes.
+Ptr, null_ptr = std.mem.mem_ptr
+Heap = c.bind("stdlib.h", {
+    malloc = (bytes: usize) Ptr<u8>
+    free = (pointer: Ptr<u8>) ()
+})
+HEADER_BYTES*: usize = 16
+Block = { next :: Ptr<Block>, capacity: usize }
+// Immutable, pointer-free telemetry value. Obtain it only while owning the
+// pool or holding its external lock; copies remain valid after pool mutation.
+PoolStats* = {
+    live_bytes*: usize, cached_bytes*: usize, owned_bytes*: usize,
+    peak_bytes*: usize, cached_blocks*: usize, allocations*: usize, reuses*: usize,
+}
+Pool* = {
+    head :: Ptr<Block> = null_ptr<Block>(),
+    cached* :: usize = 0,
+    cached_blocks* :: usize = 0,
+    owned* :: usize = 0,
+    peak* :: usize = 0,
+    allocations* :: usize = 0,
+    reuses* :: usize = 0,
+
+    snapshot* = (self: @Self) PoolStats {
+        PoolStats(
+            live_bytes: self.owned - self.cached,
+            cached_bytes: self.cached,
+            owned_bytes: self.owned,
+            peak_bytes: self.peak,
+            cached_blocks: self.cached_blocks,
+            allocations: self.allocations,
+            reuses: self.reuses
+        )
+    }
+    take* = (self :: @Self, bytes: usize) Ptr<u8> {
+        result   ::= null_ptr<u8>();
+        previous ::= null_ptr<Block>();
+        current  ::= self.head;
+        loop(!current.is_null() && result.is_null(), (h) {
+            block = current.read(0);
+            (block.capacity == bytes).match({
+                true  => {
+                    previous.is_null().match({
+                        true  => { self.head = block.next; },
+                        false => { prior ::= previous.read(0); prior.next = block.next; previous.write(0, prior); },
+                    });
+                    self.cached        = self.cached - block.capacity - HEADER_BYTES;
+                    self.cached_blocks = self.cached_blocks - 1;
+                    (self.reuses < usize.MAX).then(
+                        () { self.reuses = self.reuses + 1; }
+                    );
+                    result = current.to<u8>().offset(HEADER_BYTES);
+                },
+                false => { previous = current; current = block.next; },
+            });
+        });
+        result.is_null().then(() {
+            (null_ptr<Block>().bytes(1) <= HEADER_BYTES && bytes <= usize.MAX - HEADER_BYTES).then(() {
+                total = bytes + HEADER_BYTES;
+                (total <= usize.MAX - self.owned).then(() {
+                    raw = Heap.malloc(total);
+                    (!raw.is_null()).then(() {
+                        raw.to<Block>().write(
+                            0,
+                            Block(next: null_ptr<Block>(), capacity: bytes)
+                        );
+                        self.owned = self.owned + total;
+                        (self.owned > self.peak).then(
+                            () { self.peak = self.owned; }
+                        );
+                        (self.allocations < usize.MAX).then(
+                            () { self.allocations = self.allocations + 1; }
+                        );
+                        result = raw.offset(HEADER_BYTES);
+                    });
+                });
+            });
+        });
+        result
+    }
+    give* = (self :: @Self, pointer: Ptr<u8>, cache_limit: usize, block_limit: usize, count_limit: usize) () {
+        (!pointer.is_null()).then(() {
+            raw    = pointer.back(HEADER_BYTES);
+            header = raw.to<Block>();
+            block ::= header.read(0);
+            total = block.capacity + HEADER_BYTES;
+            keep  = self.cached_blocks < count_limit && block.capacity <= block_limit && self.cached <= cache_limit && total <= cache_limit - self.cached;
+            keep.match({
+                true  => {
+                    block.next = self.head; header.write(0, block);
+                    self.head = header; self.cached = self.cached + total;
+                    self.cached_blocks = self.cached_blocks + 1;
+                },
+                false => { self.owned = self.owned - total; Heap.free(raw); },
+            });
+        });
+    }
+    close* = (self :: @Self) () {
+        loop(!self.head.is_null(), (h) {
+            current            = self.head;
+            block              = current.read(0);
+            self.head          = block.next;
+            total              = block.capacity + HEADER_BYTES;
+            self.cached        = self.cached - total;
+            self.cached_blocks = self.cached_blocks - 1;
+            self.owned         = self.owned - total;
+            Heap.free(current.to<u8>());
+        });
+    }
+}
+
+// Explicit cache policy. Zero limits disable caching; no actor policy is hidden
+// in this reusable allocator. cache_bytes includes headers; block_bytes is
+// the maximum cached payload size.
+PoolPolicy* = { cache_bytes*: usize, block_bytes*: usize, blocks*: usize }
+
+// A borrowed Alloc adapter: this adapter value must stay alive at a stable
+// address while any Alloc handle refers to it. Pool storage must outlive all copied
+// adapters, Alloc handles, and every allocation. Calls must be externally serialized.
+// Only pass pointers allocated by this pool to realloc/free; close the Pool
+// after returning all outstanding blocks. The adapter never owns or drops it.
+// raw(0, alignment) returns a non-null freeable zero-capacity block. Shrinking
+// (including to zero) retains the existing capacity; only free releases it.
+// Supported alignment requests are 1, 2, 4, 8 and 16 bytes.
+PoolAlloc* = { pool: Ptr<Pool>, policy: PoolPolicy }
+Alloc, AllocError = std.mem.mem_alloc
+PoolAlloc.impl(Alloc, {
+    raw = (self: @Self, size: usize, align: usize) Res<Ptr<u8>, AllocError> {
+        (!self.pool.is_null() && align > 0 && align <= HEADER_BYTES && HEADER_BYTES % align == 0).ensure(
+            AllocError.OutOfMemory
+        ).try();
+        state ::= self.pool.read(0);
+        pointer = state.take(size);
+        self.pool.write(0, state);
+        (!pointer.is_null()).ensure(AllocError.OutOfMemory).try();
+        Ok(pointer)
+    }
+    realloc = <T>(self: @Self, pointer: Ptr<T>, count: usize) Res<Ptr<T>, AllocError> {
+        element = pointer.bytes(1);
+        (element == 0 || count <= usize.MAX / element).ensure(
+            AllocError.OutOfMemory
+        ).try();
+        want   = pointer.bytes(count);
+        source = pointer.to<u8>();
+        old    = source.is_null().match({true => 0, false => source.back(HEADER_BYTES).to<Block>().read(0).capacity});
+        (!source.is_null() && old >= want).match({
+            true  => Ok(pointer),
+            false => {
+                // Failure leaves source live and unchanged. Only hand the old
+                // block back after the replacement and its contents exist.
+                destination = self.raw(want, HEADER_BYTES).try();
+                keep        = (old < want).match({true => old, false => want});
+                (keep > 0).then(() { destination.copy_from(source, keep); });
+                self.free(pointer);
+                Ok(destination.to<T>())
+            },
+        })
+    }
+    free = <T>(self: @Self, pointer: Ptr<T>) () {
+        (!pointer.is_null() && !self.pool.is_null()).then(() {
+            state ::= self.pool.read(0);
+            state.give(
+                pointer.to<u8>(),
+                self.policy.cache_bytes,
+                self.policy.block_bytes,
+                self.policy.blocks
+            );
+            self.pool.write(0, state);
+        });
+    }
+})

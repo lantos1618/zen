@@ -63,7 +63,7 @@ check_positive_control() {
     local -a compiler_flags=()
     [[ "$compiler" == clang ]] && compiler_flags=("${clang_warning_flags[@]}")
 
-    if LC_ALL=C "$binary" "${warning_flags[@]}" "${compiler_flags[@]}" \
+    if LC_ALL=C "$binary" "${warning_flags[@]}" ${compiler_flags[@]+"${compiler_flags[@]}"} \
         -Werror=unused-variable \
         "$positive_control" >"$log" 2>&1; then
         fail "$compiler did not reject the unused-variable positive control"
@@ -85,7 +85,7 @@ check_artifact() {
     actual="$(grep -c ': warning:' "$log" || true)"
 
     if [[ "$actual" -gt "$expected" ]]; then
-        sed -n '1,40p' "$log" >&2
+        cat "$log" >&2
         fail "$compiler $artifact warnings increased: expected at most $expected, found $actual"
     fi
     if [[ "$actual" -lt "$expected" ]]; then
@@ -112,7 +112,7 @@ for compiler in gcc clang; do
         else
             input="$work_dir/emitted.c"
         fi
-        LC_ALL=C "$binary" "${warning_flags[@]}" "${compiler_flags[@]}" "$input" \
+        LC_ALL=C "$binary" "${warning_flags[@]}" ${compiler_flags[@]+"${compiler_flags[@]}"} "$input" \
             >"$work_dir/$compiler-$artifact.log" 2>&1 &
         jobs+=("$!")
         job_names+=("$compiler $artifact")

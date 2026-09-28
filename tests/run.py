@@ -1056,12 +1056,15 @@ def deterministic_binary(binary: Path, timeout: float) -> bool:
         "_ITM_deregisterTMCloneTable", "_ITM_registerTMCloneTable", "__gmon_start__",
     }
     try:
-        symbols = subprocess.run(["nm", "-D", "--undefined-only", str(binary)],
+        options = ["-u"] if sys.platform == "darwin" else ["-D", "--undefined-only"]
+        symbols = subprocess.run(["nm", *options, str(binary)],
                                  capture_output=True, text=True, timeout=timeout)
         if symbols.returncode:
             return False
         names = {line.split()[-1].split("@", 1)[0]
                  for line in symbols.stdout.splitlines() if line.split()}
+        if sys.platform == "darwin":
+            names = {name[1:] if name.startswith("_") else name for name in names}
         # Static binaries have no dynamic dependency list to prove their closure.
         return bool(names) and names <= allowed
     except (OSError, subprocess.SubprocessError):
@@ -1207,6 +1210,8 @@ def native_link_args(out_c: Path) -> list[str]:
         for library in needed_libraries:
             if library not in libraries:
                 libraries.append(library)
+    if b"#include <math.h>" in generated.splitlines():
+        libraries.append("-lm")
     return [*sources, *libraries]
 
 

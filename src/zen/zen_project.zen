@@ -545,10 +545,13 @@ Project = {
         self.env.fs.read(self.a, generated).match({
             Err(_)     => Ok(()),
             Ok(source) => {
-                tls ::= false;
+                tls  ::= false;
+                math ::= false;
                 source.view().split('\n').loop((line) {
                     (line.starts_with("extern ") && line.contains(" SSL_")).then(() { tls = true; });
+                    line.eq("#include <math.h>").then(() { math = true; });
                 });
+                math.then(() { argv.add("-lm").try(); });
                 tls.then(() {
                     argv.add("-lssl").try();
                     argv.add("-lcrypto").try();

@@ -151,7 +151,11 @@ lspcheck: build
 ## are built once per invocation, then formatting and determinism inspect the
 ## same compiler that ran the test suite.
 verify: override TEST_CACHE_ARGS := --result-cache "$(TEST_RESULTS)" --refresh-result-cache
-verify: test fmt determinism fixpoint differential runtimecheck ownershipcheck warnings ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck
+verify: warnings test fmt determinism fixpoint differential runtimecheck ownershipcheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck
+
+.PHONY: poolcheck
+poolcheck: build
+	$(PY) tests/quality/pool_alloc.py --zen ./zen --ubsan
 
 .PHONY: ownershipcheck
 ownershipcheck: build
@@ -227,7 +231,7 @@ gate = ./zen build tests/gates --entry $(1).zen --emit-c -o build/gates/$(1).c \
 ##     @$(call nonempty,cap,$(ROOT) -name '*.zen' -print0 | LC_ALL=C sort -z); \
 ##       build/gates/line_cap "$${files[@]}"
 define nonempty
-mapfile -d '' files < <(find $(2)) && test $${#files[@]} -gt 0 || { echo "$(1): found no .zen files — this gate is checking nothing" >&2; exit 2; }
+files=(); while IFS= read -r -d '' file; do files+=("$$file"); done < <(find $(2)); test $${#files[@]} -gt 0 || { echo "$(1): found no .zen files — this gate is checking nothing" >&2; exit 2; }
 endef
 
 ## cap: a structural-review prompt. Long files print notes but do not fail:

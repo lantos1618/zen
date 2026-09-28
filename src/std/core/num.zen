@@ -116,6 +116,7 @@ to_u8* = (self: usize) Res<u8>
 to_u8* = (self: u32) Res<u8>
 to_u16* = (self: u64) Res<u16>
 to_usize* = (self: u64) Res<usize>
+to_usize* = (self: i64) Res<usize>
 to_i32* = (self: u64) Res<i32>
 to_i32* = (self: i64) Res<i32>
 

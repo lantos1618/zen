@@ -325,6 +325,7 @@ Struct* = {
     body_span*: Span,
     native_header* :: Res<str> = None,
     native_symbol* :: Res<str> = None,
+    native_record* :: bool = false,
 
     has_field* = (self: @Self, name: str) bool {
         self.members.find((m) {

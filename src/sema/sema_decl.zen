@@ -220,12 +220,29 @@ struct_bodies = (c :: Checker, s: Struct, m: Module, mi: usize)
     s.members.loop((mem) {
         c.member_body(mem, self_ty, m, mi).try();
         mem.kind.match({
-            Field(field) => c.field_default(field, self_ty, mi),
+            Field(field) => (!s.native_record && s.native_header.match({Ok(_) => true, None => false})).match({
+                true  => c.native_field_default(field, self_ty, mi),
+                false => c.field_default(field, self_ty, mi),
+            }),
             _            => Ok(()),
         }).try();
     });
     c.release_tvars(tmark).try();
     Ok(());
+}
+
+// The parser restricts native fallbacks to integer literals. Fixed-width
+// ranges are checked here; target-dependent C ranges are checked by C headers.
+native_field_default = (c :: Checker, field: Field, self_ty: TyId, mi: usize)
+                       Res<(), AllocError> {
+    field.value.when_ok((value) {
+        ctx = c.self_ctx(mi, self_ty).try();
+        field.type.when_ok((written) {
+            want = c.type_from_ast(written, ctx).try();
+            c.check_literal(value, want).try();
+        });
+    });
+    Ok(())
 }
 
 // Defaults belong to the declaration's module and type-parameter scope.

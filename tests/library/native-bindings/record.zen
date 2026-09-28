@@ -1,0 +1,14 @@
+Native = c.record("@HEADER@", "struct zen_native_record", { value*:: c_int })
+main = () i32 {
+    (7).to_c_int().match({
+        None => 2,
+        Ok(initial) => (12).to_c_int().match({
+            None => 3,
+            Ok(updated) => {
+                value ::= Native(value: initial);
+                value.value = updated;
+                (value.value == updated).match({true => 0, false => 1})
+            },
+        }),
+    })
+}

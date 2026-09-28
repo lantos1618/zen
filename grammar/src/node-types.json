@@ -985,6 +985,10 @@
             "named": true
           },
           {
+            "type": "native_binding",
+            "named": true
+          },
+          {
             "type": "number_literal",
             "named": true
           },
@@ -2632,6 +2636,56 @@
     }
   },
   {
+    "type": "native_binding",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "struct_body",
+            "named": true
+          }
+        ]
+      },
+      "header": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      },
+      "kind": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "bind",
+            "named": false
+          },
+          {
+            "type": "record",
+            "named": false
+          }
+        ]
+      },
+      "symbol": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "parameter",
     "named": true,
     "fields": {
@@ -3758,9 +3812,17 @@
     "named": false
   },
   {
+    "type": "bind",
+    "named": false
+  },
+  {
     "type": "block_comment",
     "named": true,
     "extra": true
+  },
+  {
+    "type": "c",
+    "named": false
   },
   {
     "type": "char_literal",
@@ -3786,6 +3848,10 @@
   {
     "type": "number_literal",
     "named": true
+  },
+  {
+    "type": "record",
+    "named": false
   },
   {
     "type": "scope_expression",

@@ -3,7 +3,7 @@
 // names; declared fields use mangled names.
 
 ExprId, Decl, Struct, Member = std.ast
-Const, Access, Impl = std.ast
+Const, Access, Impl, Field = std.ast
 AllocError = std.mem
 Vec = std.collections
 str, String = std.text
@@ -23,8 +23,10 @@ ctype, struct_decl, has_storage = gen.gen_c.gen_c_type
 write_qname = gen.gen_c.gen_c_layout
 bind_text = gen.gen_c.gen_c_range
 expr, ty_of = gen.gen_c.gen_c_expr
-field_of = gen.gen_c.gen_c_type
+field_of, is_native_record = gen.gen_c.gen_c_type
+base_of = sema.sema_member
 lower_const_value = gen.gen_c.gen_c_const
+type_from_ast = sema.sema_denote
 
 // The base's resolved kind separates declaration reads from value fields.
 lower_access* = (
@@ -35,10 +37,145 @@ lower_access* = (
     want : TyId,
     out  :: String
 ) Res<(), AllocError> {
-    be.base_decl(a.base, ctx).match({
-        Ok(ty) => be.write_variant_value(id, ty, want, a.name.text, out),
-        None   => be.lower_type_or_field(id, a, ctx, want, out),
+    be.native_constant(id, a, ctx, out).try().match({
+        true  => Ok(()),
+        false => be.base_decl(a.base, ctx).match({
+            Ok(ty) => be.write_variant_value(id, ty, want, a.name.text, out),
+            None   => be.lower_type_or_field(id, a, ctx, want, out),
+        }),
     })
+}
+
+// Header constants are runtime reads of the target C implementation. A field
+// default is a preprocessor fallback, never a Zen compile-time value.
+native_constant = (
+    be  :: CBackend,
+    id  : ExprId,
+    a   : Access,
+    ctx : Ctx,
+    out :: String
+) Res<bool, AllocError> {
+    base = be.check.base_of(a.base, ctx).try();
+    be.check.types.at(base.ty).match({
+        Named(n) => struct_decl(be, n.decl).match({
+            Ok(s) => (!s.native_record).match({
+                true  => s.native_header.match({
+                    Ok(header) => be.native_constant_member(
+                        id,
+                        s,
+                        header,
+                        a.name.text,
+                        ctx,
+                        out
+                    ),
+                    None       => Ok(false),
+                }),
+                false => Ok(false),
+            }),
+            None  => Ok(false),
+        }),
+        _        => Ok(false),
+    })
+}
+
+native_constant_member = (
+    be     :: CBackend,
+    id     : ExprId,
+    s      : Struct,
+    header : str,
+    name   : str,
+    ctx    : Ctx,
+    out    :: String
+) Res<bool, AllocError> {
+    s.members.find((m) {
+        m.kind.match({ Field(f) => f.name.text.eq(name), _ => false })
+    }).match({
+        None  => Ok(false),
+        Ok(m) => m.kind.match({
+            Field(f) => {
+                be.need_c_header(header, true).try().match({
+                    false => be.unsupported(
+                        id,
+                        "an invalid native constant header",
+                        out
+                    ),
+                    true  => be.write_native_constant(f, ctx, out),
+                }).try();
+                Ok(true)
+            },
+            _        => Ok(false),
+        }),
+    })
+}
+
+write_native_constant = (
+    be  :: CBackend,
+    f   : Field,
+    ctx : Ctx,
+    out :: String
+) Res<(), AllocError> {
+    f.value.match({
+        None      => out.add(f.name.text),
+        Ok(value) => {
+            macro = be.fresh_name("native_constant").try();
+            fallback ::= be.alloc.String().try();
+            unknown = be.check.types.unknown().try();
+            expr(be, value, ctx, unknown, fallback).try();
+            directive ::= be.alloc.String().try();
+            range     ::= be.alloc.String().try();
+            cty       ::= be.alloc.String().try();
+            be.native_fallback_type(
+                f,
+                ctx,
+                macro.view(),
+                fallback.view(),
+                cty,
+                range
+            ).try();
+            directive.fmt(
+                "#ifdef {}\n#define {} {}\n#else\n{}#define {} (({})({}))\n#endif",
+                f.name.text,
+                macro.view(),
+                f.name.text,
+                range.view(),
+                macro.view(),
+                cty.view(),
+                fallback.view()
+            ).try();
+            be.c_headers.add(directive).try();
+            out.add(macro.view())
+        },
+    })
+}
+
+native_fallback_type = (
+    be    :: CBackend,
+    f     : Field,
+    ctx   : Ctx,
+    macro : str,
+    value : str,
+    cty   :: String,
+    range :: String
+)
+                       Res<(), AllocError> {
+    written = f.type.ok_or(AllocError.OutOfMemory).try();
+    ty      = be.check.type_from_ast(written, ctx).try();
+    be.ctype(ty, cty).try();
+    limit = be.check.prim_name(ty).match({
+        "c_int" => "INT_MAX", "c_uint" => "UINT_MAX",
+        "c_long" => "LONG_MAX", "c_ulong" => "ULONG_MAX",
+        "c_char" => "CHAR_MAX", _ => "",
+    });
+    (!limit.eq("")).then(() {
+        be.need_c_header("limits.h", true).try();
+        range.fmt(
+            "typedef char {}_range[(({}) <= {}) ? 1 : -1];\n",
+            macro,
+            value,
+            limit
+        ).try();
+    });
+    Ok(())
 }
 
 // Type constants have no receiver storage and lower like module constants.
@@ -551,10 +688,10 @@ write_supplied_value = (
     Ok(());
 }
 
-// `str` fields use the runtime ABI names; declared fields remain mangled.
+// Header-owned records and `str` retain their ABI field names.
 field_name = (be :: CBackend, rty: TyId, name: str, out :: String)
              Res<(), AllocError> {
-    be.is_str(rty).match({
+    (be.is_str(rty) || be.is_native_record(rty)).match({
         true  => out.add(name),
         false => out.sym_member(name),
     })

@@ -1,0 +1,8 @@
+Native = c.bind("@HEADER@", {
+    ZEN_PRESENT_CONSTANT*: c_int = 99
+    ZEN_ABSENT_CONSTANT*: c_int = 23
+    ZEN_ENUM_CONSTANT*: c_int
+})
+main = () i32 {
+    (Native.ZEN_PRESENT_CONSTANT == 37 && Native.ZEN_ABSENT_CONSTANT == 23 && Native.ZEN_ENUM_CONSTANT == 19).match({true => 0, false => 1})
+}

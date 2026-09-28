@@ -294,12 +294,23 @@ module.exports = grammar({
 
     _declaration_value: ($) =>
       choice(
+        $.native_binding,
         $.struct_body,
         $.enum_body,
         $.function_signature,
         $.generic_type,
         $._expression,
       ),
+
+    // Header binding bodies declare typed members, unlike ordinary call
+    // records whose colon entries contain expressions.
+    native_binding: ($) =>
+      prec(2, seq(
+        'c', '.', field('kind', choice('bind', 'record')), '(',
+        field('header', $.string_literal), ',',
+        optional(seq(field('symbol', $.string_literal), ',')),
+        field('body', $.struct_body), optional(','), ')',
+      )),
 
     // `Circle.impl(Rect, { width: .., height: .. })` — D16. The shape is
     // fixed (a target, a trait, and a record) because that is the only shape

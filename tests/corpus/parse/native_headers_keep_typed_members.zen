@@ -1,0 +1,17 @@
+// Native binding bodies contain declarations, including generic pointer types.
+Ptr = std.mem
+SocketConstants = c.bind("sys/socket.h", {
+    AF_INET6*: c_int
+    MSG_NOSIGNAL*: c_int = 0
+})
+Process = c.bind("unistd.h", { getpid* = () c_int })
+Info = c.record("netdb.h", "struct addrinfo", {
+    ai_flags*: c_int,
+    ai_addr*: Ptr<()>,
+    ai_canonname*: Ptr<c_char>,
+    ai_next*: Ptr<Info>,
+})
+main = (env: Env) Res<i32, IoError> {
+    println("native bindings");
+    Ok(0)
+}

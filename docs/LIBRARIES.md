@@ -25,8 +25,12 @@ not be copied and must be closed before its allocator dies.
 Native functions are declared with `c.bind` against their actual headers. The
 compiler emits calls rather than handwritten forwarding implementations. The
 native callback facility accepts explicitly typed nongeneric free functions;
-it does not make captured Zen closures into native callbacks. Record layouts
-that are currently mirrored in Zen are checked against the native SDK header.
+it does not make captured Zen closures into native callbacks. `c.record` uses
+the native header's layout and checks scalar field types. `std.net` uses this
+for `addrinfo` and typed header constants for platform flags; socket ownership,
+allocation and cleanup remain Zen. Native pointer lifetimes remain explicit
+FFI responsibilities. Existing mirrored application records need migration
+before they can claim this header-owned layout contract.
 
 The application and adapter code are Zen. Operating-system frameworks and the
 NeMo Speech inference engine are external native dependencies. Parakeet's

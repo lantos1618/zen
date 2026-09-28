@@ -1,0 +1,2 @@
+Native = c.record("@HEADER@", "struct zen_native_record", { value*: i32 | u32 })
+main = () i32 { value: i32 = 1; Native(value: value); 0 }

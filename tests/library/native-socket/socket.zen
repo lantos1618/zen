@@ -1,0 +1,67 @@
+Socket, SocketFault, resolve_addr = std.net.socket
+Native = c.bind("probe.h", {
+    probe_check* = (yes: i32) ()
+    probe_cloexec* = (fd: i32) i32
+    probe_closed* = (fd: i32) i32
+    probe_fds* = () i32
+    probe_default_sigpipe* = () ()
+})
+HOST: str = "HARNESS_HOST"
+PORT: u16 = 0
+REFUSED_PORT: u16 = 0
+check = (yes: bool) () { (!yes).then(() { Native.probe_check(0); }); }
+drop_socket = (a: Alloc) Res<i32, SocketFault> {
+    socket = Socket.tcp_connect(a, HOST, PORT).try();
+    Ok(socket.handle().raw_handle())
+}
+main = (env: Env) Res<(), AllocError | SocketFault> {
+    a  = env.mem.alloc();
+    v4 = resolve_addr(a, "127.0.0.1").try();
+    check(v4.ip.view() == "127.0.0.1" && !v4.is_v6);
+    v6 = resolve_addr(a, "::1").try();
+    check(v6.ip.view() == "::1" && v6.is_v6);
+    before = Native.probe_fds();
+    socket ::= Socket.tcp_connect(a, HOST, PORT).try();
+    fd = socket.handle().raw_handle();
+    Native.probe_check(Native.probe_cloexec(fd));
+    socket.write("ping").try();
+    bytes ::= a.Vec<u8>();
+    check(socket.read(bytes, 1).try() == 1 && bytes.ptr().read(0) == 'p');
+    socket.write("ack").try();
+    remaining ::= 3;
+    offset    ::= 0;
+    expected: str = "ong";
+    loop(() { remaining > 0 }, (h) {
+        n = socket.read(bytes, remaining).try();
+        Range(0, n).loop((i) { check(bytes.ptr().read(i) == expected.ptr().read(offset + i)); });
+        remaining = remaining - n;
+        offset    = offset + n;
+    });
+    socket.close(); socket.close();
+    Native.probe_check(Native.probe_closed(fd));
+    socket.write("closed").match({ Ok(_) => check(false), Err(_) => {} });
+    Native.probe_check(Native.probe_closed(drop_socket(a).try()));
+    Range(0, 100).loop((i) {
+        Socket.tcp_connect(a, HOST, REFUSED_PORT).match({ Ok(_) => check(false), Err(_) => {} });
+    });
+    check(Native.probe_fds() == before);
+    // The peer closes with RST after reading pipe. Consume that closure first.
+    Native.probe_default_sigpipe();
+    broken ::= Socket.tcp_connect(a, HOST, PORT).try();
+    broken.write("pipe").try();
+    broken.read(bytes, 1).match({ Ok(_) => check(false), Err(_) => {} });
+    // Harness closes with RST; repeat writes until fault rather than assuming
+    // the first send after peer close must fail.
+    failures ::= 0;
+    Range(0, 64).loop((i) {
+        broken.write(
+            "after closure"
+        ).match({ Ok(_) => {}, Err(_) => { failures = failures + 1; } });
+    });
+    check(failures > 0);
+    broken.handle().send(bytes.ptr(), 1, 0).match({ Ok(_) => check(false), Err(_) => {} });
+    broken.close();
+    check(Native.probe_fds() == before);
+    println("PASS DNS, loopback, CLOEXEC, close/drop, refusal and SIGPIPE");
+    Ok(())
+}

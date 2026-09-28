@@ -151,7 +151,12 @@ lspcheck: build
 ## are built once per invocation, then formatting and determinism inspect the
 ## same compiler that ran the test suite.
 verify: override TEST_CACHE_ARGS := --result-cache "$(TEST_RESULTS)" --refresh-result-cache
-verify: warnings test fmt determinism fixpoint differential runtimecheck ownershipcheck actorcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck
+verify: warnings nativecheck test fmt determinism fixpoint differential runtimecheck ownershipcheck actorcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck
+
+.PHONY: nativecheck
+nativecheck: build
+	$(PY) tests/library/native-bindings/run.py --zen ./zen
+	$(PY) tests/library/native-socket/run.py --zen ./zen --ubsan
 
 .PHONY: poolcheck
 poolcheck: build

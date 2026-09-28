@@ -1,0 +1,123 @@
+// Level-triggered OS readiness, independent of HTTP and actor scheduling.
+// A single owner calls wait/change; watched descriptors are borrowed.
+Alloc, Ptr, null_ptr = std.mem
+Drop = std.core
+Native = c.bind("zen_readiness.h", {
+    zen_ready_words = (capacity: i32) usize
+    zen_ready_open = () i32
+    zen_ready_change = (queue: i32, fd: i32, slot: usize, write: i32, fresh: i32) i32
+    zen_ready_remove = (queue: i32, fd: i32) i32
+    zen_ready_wait = (queue: i32, events: Ptr<usize>, capacity: i32, timeout_ms: i32) i32
+    zen_ready_slot = (events: Ptr<usize>, index: usize) usize
+    zen_ready_errno = () i32
+    zen_ready_interrupted = (error: i32) i32
+})
+Io = c.bind("unistd.h", { close = (fd: i32) i32 })
+ReadinessError* = Invalid | Allocation | Closed | System(i32)
+Interest* = Read | Write
+WaitResult* = Ready(usize) | Interrupted
+
+Readiness* = {
+    alloc: Alloc,
+    fd :: i32,
+    events: Ptr<usize>,
+    capacity: i32,
+    count :: usize,
+
+    open* = (alloc: Alloc, capacity: usize) Res<Readiness, ReadinessError> {
+        (capacity > 0 && capacity <= 2147483647).ensure(
+            ReadinessError.Invalid
+        ).try();
+        cap    = capacity.to_u64().to_i32().ok_or(ReadinessError.Invalid).try();
+        events = alloc.realloc<usize>(
+            null_ptr<usize>(),
+            Native.zen_ready_words(cap)
+        ).try(ReadinessError.Allocation);
+        fd     = Native.zen_ready_open();
+        (fd < 0).match({
+            true  => {
+                error = Native.zen_ready_errno();
+                alloc.free(events);
+                Err(ReadinessError.System(error))
+            },
+            false => Ok(Readiness(
+                alloc: alloc,
+                fd: fd,
+                events: events,
+                capacity: cap,
+                count: 0
+            )),
+        })
+    }
+
+    // Caller tracks whether a descriptor is newly registered. Duplicate add
+    // and missing modify/remove have platform-specific native errors.
+    add* = (self: @Self, fd: i32, slot: usize, interest: Interest) Res<(), ReadinessError> {
+        self.change(fd, slot, interest, 1)
+    }
+    modify* = (self: @Self, fd: i32, slot: usize, interest: Interest) Res<(), ReadinessError> {
+        self.change(fd, slot, interest, 0)
+    }
+    change = (self: @Self, fd: i32, slot: usize, interest: Interest, fresh: i32) Res<(), ReadinessError> {
+        (self.fd >= 0).ensure(ReadinessError.Closed).try();
+        (fd >= 0).ensure(ReadinessError.Invalid).try();
+        write: i32 = interest.match({Read => 0, Write => 1});
+        (Native.zen_ready_change(self.fd, fd, slot, write, fresh) == 0).match({
+            true => Ok(()), false => Err(ReadinessError.System(Native.zen_ready_errno())),
+        })
+    }
+    remove* = (self: @Self, fd: i32) Res<(), ReadinessError> {
+        (self.fd >= 0).ensure(ReadinessError.Closed).try();
+        (fd >= 0).ensure(ReadinessError.Invalid).try();
+        (Native.zen_ready_remove(self.fd, fd) == 0).match({
+            true => Ok(()), false => Err(ReadinessError.System(Native.zen_ready_errno())),
+        })
+    }
+
+    // -1 waits indefinitely, zero polls, positive values are milliseconds.
+    // EINTR is returned explicitly; never restart a full timeout secretly.
+    // Any wait invalidates the previous batch. EOF/error readiness is delivered
+    // as a slot; the descriptor's actual I/O reports the terminal condition.
+    wait* = (self :: @Self, timeout_ms: i32) Res<WaitResult, ReadinessError> {
+        self.count = 0;
+        (self.fd >= 0).ensure(ReadinessError.Closed).try();
+        (timeout_ms >= -1).ensure(ReadinessError.Invalid).try();
+        count = Native.zen_ready_wait(
+            self.fd,
+            self.events,
+            self.capacity,
+            timeout_ms
+        );
+        (count < 0).match({
+            true  => {
+                error = Native.zen_ready_errno();
+                (Native.zen_ready_interrupted(error) != 0).match({
+                    true  => Ok(WaitResult.Interrupted),
+                    false => Err(ReadinessError.System(error)),
+                })
+            },
+            false => {
+                self.count = count.to_i64().to_usize().ok_or(
+                    ReadinessError.Invalid
+                ).try();
+                Ok(WaitResult.Ready(self.count))
+            },
+        })
+    }
+    ready_slot* = (self: @Self, index: usize) Res<usize, ReadinessError> {
+        (self.fd >= 0).ensure(ReadinessError.Closed).try();
+        (index < self.count).ensure(ReadinessError.Invalid).try();
+        Ok(Native.zen_ready_slot(self.events, index))
+    }
+    close* = (self :: @Self) () {
+        (self.fd >= 0).then(() {
+            fd         = self.fd;
+            self.fd    = -1;
+            self.count = 0;
+            // Do not retry close after EINTR: the descriptor may be reused.
+            Io.close(fd);
+            self.alloc.free(self.events);
+        });
+    }
+}
+Readiness.impl(Drop, { drop = (self :: @Self) () { self.close() } })

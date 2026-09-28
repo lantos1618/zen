@@ -190,3 +190,7 @@ u16.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
 u32.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
 u64.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
 usize.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
+
+// Compiler-native unsigned bit operations. Rotation counts are modulo 64.
+bit_xor* = (self: u64, other: u64) u64
+rotate_right* = (self: u64, count: usize) u64

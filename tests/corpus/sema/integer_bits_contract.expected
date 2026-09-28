@@ -1,0 +1,12 @@
+registered: true
+owner: false
+result: false
+source: false
+arity: false
+mutable: false
+private: false
+generic: false
+body: false
+rotate: true
+rotate count: false
+foreign: true

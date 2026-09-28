@@ -169,11 +169,11 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None  # Never forward the bearer credential to another destination.
 
 
-def validate(response):
+def validate(response, questions=None):
     if not isinstance(response, dict) or not isinstance(response.get('model'), str):
         raise ValueError('Missing response model')
     answers = response.get('answers', {})
-    for name, question in QUESTIONS.items():
+    for name, question in (QUESTIONS if questions is None else questions).items():
         answer = answers.get(name, {})
         if answer.get('type') != question['type']:
             raise ValueError('Missing or wrong answer type: ' + name)
@@ -195,7 +195,7 @@ def evaluate(payload, key, stop):
             'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'})
         try:
             with urllib.request.build_opener(NoRedirect()).open(request, timeout=90) as response:
-                return validate(json.load(response))
+                return validate(json.load(response), payload['questions'])
         except urllib.error.HTTPError as error:
             if error.code in (401, 402, 403):
                 stop.set()

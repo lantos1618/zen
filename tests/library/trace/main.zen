@@ -1,0 +1,53 @@
+Buffer, Span = std.trace
+null_ptr = std.mem
+str_at = std.text
+Probe = c.bind("trace_probe.h", { begin = () (), end = () () })
+main = (env: Env) Res<i32, AllocError> {
+    a = env.mem.alloc();
+    buffer ::= Buffer.create(a, 2).try();
+    name = a.realloc<u8>(null_ptr<u8>(), 4).try();
+    name.copy_from("root".ptr(), 4);
+    Probe.begin();
+    disabled ::= Buffer.create(a, 0).try();
+    Buffer.create(a, usize.MAX).match({Ok(_) => false, Err(_) => true}).ensure(AllocError.OutOfMemory).try();
+    (!disabled.record(Span(id: 1, parent: 0, name: "off", start_ns: 0, end_ns: 0, failed: false))).ensure(AllocError.OutOfMemory).try();
+    (disabled.count == 0 && disabled.dropped == 1).ensure(
+        AllocError.OutOfMemory
+    ).try();
+    (!buffer.record(Span(id: 0, parent: 0, name: "zero", start_ns: 0, end_ns: 1, failed: false))).ensure(AllocError.OutOfMemory).try();
+    (!buffer.record(Span(id: 1, parent: 1, name: "self", start_ns: 0, end_ns: 1, failed: false))).ensure(AllocError.OutOfMemory).try();
+    (!buffer.record(Span(id: 1, parent: 0, name: "", start_ns: 0, end_ns: 1, failed: false))).ensure(AllocError.OutOfMemory).try();
+    (!buffer.record(Span(id: 1, parent: 0, name: "reverse", start_ns: 2, end_ns: 1, failed: false))).ensure(AllocError.OutOfMemory).try();
+    (buffer.count == 0 && buffer.dropped == 4).ensure(
+        AllocError.OutOfMemory
+    ).try();
+    buffer.record(Span(id: 1, parent: 0, name: str_at(name, 4), start_ns: 0, end_ns: u64.MAX, failed: false)).ensure(AllocError.OutOfMemory).try();
+    buffer.record(Span(id: 2, parent: 1, name: "child", start_ns: 10, end_ns: 10, failed: true)).ensure(AllocError.OutOfMemory).try();
+    Range(0, 10000).loop((i) {
+        (!buffer.record(Span(id: 3, parent: 0, name: "full", start_ns: 1, end_ns: 2, failed: false))).ensure(AllocError.OutOfMemory).try();
+    });
+    (buffer.count == 2 && buffer.dropped == 10004).ensure(
+        AllocError.OutOfMemory
+    ).try();
+    buffer.at(0).match({None => false, Ok(span) => span.id == 1 && span.name == "root" && span.end_ns == u64.MAX && !span.failed}).ensure(AllocError.OutOfMemory).try();
+    name.write(0, 'b');
+    buffer.at(0).match({None => false, Ok(span) => span.name == "boot"}).ensure(AllocError.OutOfMemory).try();
+    buffer.at(1).match({None => false, Ok(span) => span.id == 2 && span.parent == 1 && span.name == "child" && span.failed}).ensure(AllocError.OutOfMemory).try();
+    buffer.at(2).match({None => true, Ok(_) => false}).ensure(AllocError.OutOfMemory).try();
+    buffer.at(usize.MAX).match({None => true, Ok(_) => false}).ensure(AllocError.OutOfMemory).try();
+    saturated ::= Buffer(
+        spans: null_ptr<Span>(),
+        capacity: 0,
+        count: 0,
+        dropped: usize.MAX
+    );
+    (!saturated.record(Span(id: 3, parent: 0, name: "saturated", start_ns: 1, end_ns: 2, failed: false))).ensure(AllocError.OutOfMemory).try();
+    (saturated.dropped == usize.MAX && saturated.count == 0).ensure(
+        AllocError.OutOfMemory
+    ).try();
+    Probe.end();
+    env.out.println(
+        "PASS: bounded spans, invalid inputs, saturation, indexed reads and allocation-free record"
+    );
+    Ok(0)
+}

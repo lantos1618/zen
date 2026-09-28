@@ -1,0 +1,22 @@
+// Synthetic descriptor: rejection must happen before reading payload bytes.
+Ptr, null_ptr = std.mem
+str_at = std.text
+Sink = {}
+Sink.impl(Actor, {
+    accept = (self :: @Self, ctx: Context, bytes: str) { println(
+        "unexpected delivery"
+    ); }
+})
+main = (env: Env) Res<i32, ActorStartError> {
+    target   = env.spawn(Sink()).try();
+    huge     = str_at(null_ptr<u8>(), usize.MAX);
+    rejected = target.accept(
+        huge
+    ).match({Ok(_) => false, Err(error) => error.match({ActorError.Full => true, _ => false})});
+    target.stop(); target.join();
+    closed = target.accept(
+        "closed"
+    ).match({Ok(_) => false, Err(error) => error.match({ActorError.Closed => true, _ => false})});
+    println("oversized rejected {} closed rejected {}", rejected, closed);
+    Ok((rejected && closed).match({true => 0, false => 1}))
+}

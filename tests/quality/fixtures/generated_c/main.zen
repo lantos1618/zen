@@ -7,12 +7,32 @@ Choice = Number(i32) | Empty
 score = (choice: Choice) i32 {
     choice.match({
         Number(value) => value,
-        Empty => 0,
+        Empty         => 0,
     });
 }
 
 main = (env: Env) Res<i32, AllocError> {
     boxed = Box(value: Choice.Number(21));
     println("generated C score: {}", score(boxed.value));
-    Ok(0);
+    valid = readiness(Ready.Readable) == 1 && readiness(Ready.Writable) == 2
+        && scalar(7) == 1 && scalar(8) == 0
+        && compound(Choice.Number(21)) == 1 && compound(Choice.Number(22)) == 2
+        && compound(Choice.Empty) == 0 && text_kind("") == 0
+        && text_kind("ready") == 1 && text_kind("other") == 2;
+    println("generated C patterns: {}", valid);
+    Ok(valid.match({ true => 0, false => 1 }));
+}
+
+Ready = Readable | Writable
+readiness = (ready: Ready) i32 {
+    ready.match({ Readable => 1, Writable => 2 })
+}
+scalar = (value: i32) i32 {
+    value.match({ 7 => 1, _ => 0 })
+}
+compound = (choice: Choice) i32 {
+    choice.match({ Number(21) => 1, Number(_) => 2, Empty => 0 })
+}
+text_kind = (value: str) i32 {
+    value.match({ "" => 0, "ready" => 1, _ => 2 })
 }

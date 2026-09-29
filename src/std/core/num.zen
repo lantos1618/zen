@@ -52,6 +52,13 @@ u64* = {
     BITS*: usize = 64,
 }
 
+// u128 holds wide products and carries. Literals are limited to the u64
+// range, so MAX is not spelled here; ~0 is `u128.MIN -% 1`.
+u128* = {
+    MIN*: u128 = 0,
+    BITS*: usize = 128,
+}
+
 // usize follows the target pointer width. Current supported architectures are
 // 64-bit; a 32-bit target must change this declaration and backend metadata
 // together.
@@ -88,6 +95,11 @@ to_u32* = (self: u16) u32
 to_u64* = (self: u16) u64
 to_u64* = (self: u32) u64
 to_usize* = (self: u32) usize
+to_u128* = (self: u8) u128
+to_u128* = (self: u16) u128
+to_u128* = (self: u32) u128
+to_u128* = (self: u64) u128
+to_u128* = (self: usize) u128
 
 // usize is currently 64-bit. u64-to-usize is omitted because it would narrow
 // on a future 32-bit target.
@@ -119,6 +131,7 @@ to_usize* = (self: u64) Res<usize>
 to_usize* = (self: i64) Res<usize>
 to_i32* = (self: u64) Res<i32>
 to_i32* = (self: i64) Res<i32>
+to_u64* = (self: u128) Res<u64>
 
 // C int follows the native ABI; both directions check the destination range.
 to_c_int* = (self: i32) Res<c_int>
@@ -189,16 +202,61 @@ u8.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
 u16.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
 u32.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
 u64.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
+u128.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
 usize.impl(Eq, { eq ::= (self: @Self, other: @Self) bool { self == other } })
 
-// Compiler-native unsigned bit operations. Rotation counts are modulo 64.
-bit_xor* = (self: u64, other: u64) u64
-rotate_right* = (self: u64, count: usize) u64
-
-// Logical shifts saturate to zero at or above the word width.
+// Compiler-native unsigned bit operations on W = u8, u16, u32, u64, u128 and
+// usize. Rotation counts are reduced modulo the width. Logical shifts
+// saturate to zero at or above the word width.
+bit_xor* = (self: u8, other: u8) u8
+bit_xor* = (self: u16, other: u16) u16
 bit_xor* = (self: u32, other: u32) u32
+bit_xor* = (self: u64, other: u64) u64
+bit_xor* = (self: u128, other: u128) u128
+bit_xor* = (self: usize, other: usize) usize
+bit_and* = (self: u8, other: u8) u8
+bit_and* = (self: u16, other: u16) u16
 bit_and* = (self: u32, other: u32) u32
 bit_and* = (self: u64, other: u64) u64
-rotate_right* = (self: u32, count: usize) u32
+bit_and* = (self: u128, other: u128) u128
+bit_and* = (self: usize, other: usize) usize
+bit_or* = (self: u8, other: u8) u8
+bit_or* = (self: u16, other: u16) u16
+bit_or* = (self: u32, other: u32) u32
+bit_or* = (self: u64, other: u64) u64
+bit_or* = (self: u128, other: u128) u128
+bit_or* = (self: usize, other: usize) usize
+shift_left* = (self: u8, count: usize) u8
+shift_left* = (self: u16, count: usize) u16
+shift_left* = (self: u32, count: usize) u32
+shift_left* = (self: u64, count: usize) u64
+shift_left* = (self: u128, count: usize) u128
+shift_left* = (self: usize, count: usize) usize
+shift_right* = (self: u8, count: usize) u8
+shift_right* = (self: u16, count: usize) u16
 shift_right* = (self: u32, count: usize) u32
 shift_right* = (self: u64, count: usize) u64
+shift_right* = (self: u128, count: usize) u128
+shift_right* = (self: usize, count: usize) usize
+rotate_left* = (self: u32, count: usize) u32
+rotate_left* = (self: u64, count: usize) u64
+rotate_right* = (self: u32, count: usize) u32
+rotate_right* = (self: u64, count: usize) u64
+
+// 64x64->128 multiplication; never overflows.
+mul_wide* = (self: u64, other: u64) u128
+
+// Explicit truncation keeps the low bits of a strictly wider unsigned word.
+// Unlike the checked `to_` conversions, it never fails: the discarded high
+// bits are the documented intent.
+truncate_u8* = (self: u16) u8
+truncate_u8* = (self: u32) u8
+truncate_u8* = (self: u64) u8
+truncate_u8* = (self: usize) u8
+truncate_u16* = (self: u32) u16
+truncate_u16* = (self: u64) u16
+truncate_u16* = (self: usize) u16
+truncate_u32* = (self: u64) u32
+truncate_u32* = (self: usize) u32
+truncate_u32* = (self: u128) u32
+truncate_u64* = (self: u128) u64

@@ -9,6 +9,7 @@ CBackend = gen.gen_c.gen_c_state
 expr = gen.gen_c.gen_c_expr
 c_prim = gen.gen_c.gen_c_type
 temp, write_assign_none, write_assign_ok = gen.gen_c.gen_c_flow
+unsigned_width = sema.sema_prim
 
 lower_numeric* = (
     be        :: CBackend,
@@ -63,11 +64,12 @@ checked_numeric = (
 numeric_fits = (be :: CBackend, value: str, source: str, target: NarrowTarget)
                Res<(), AllocError> {
     signed  = source.is_in(["i64", "i32", "c_int"]);
-    minimum = target.match({ I32 => "INT32_MIN", CInt => "INT_MIN", U8 => "0", U16 => "0", Usize => "0" });
+    minimum = target.match({ I32 => "INT32_MIN", CInt => "INT_MIN", U8 => "0", U16 => "0", U64 => "0", Usize => "0" });
     maximum = target.match({
-        U8 => "UINT8_MAX", U16 => "UINT16_MAX", Usize => "SIZE_MAX",
-        I32 => "INT32_MAX", CInt => "INT_MAX",
+        U8 => "UINT8_MAX", U16 => "UINT16_MAX", U64 => "UINT64_MAX",
+        Usize => "SIZE_MAX", I32 => "INT32_MAX", CInt => "INT_MAX",
     });
+    // uintmax_t is narrower than u128, so a u128 compares in its own type.
     signed.match({
         true  => be.fmt(
             "(intmax_t){} >= {} && (intmax_t){} <= {}",
@@ -76,12 +78,17 @@ numeric_fits = (be :: CBackend, value: str, source: str, target: NarrowTarget)
             value,
             maximum
         ),
-        false => be.fmt("(uintmax_t){} <= (uintmax_t){}", value, maximum),
+        false => source.eq("u128").match({
+            true  => be.fmt("{} <= (zg_u128){}", value, maximum),
+            false => be.fmt("(uintmax_t){} <= (uintmax_t){}", value, maximum),
+        }),
     })
 }
 
 // Hold both inputs in source order: rotation references each more than once.
-// Mask both shift counts so zero and width multiples never shift by the word width.
+// Mask rotation counts so zero and width multiples never shift by the word
+// width; guard shifts, whose counts at or above the width yield zero. The
+// result is cast back because C promotes u8 and u16 operands to int.
 lower_integer_bits* = (
     be        :: CBackend,
     left      : ExprId,
@@ -90,13 +97,15 @@ lower_integer_bits* = (
     ctx       : Ctx,
     out       :: String
 ) Res<(), AllocError> {
-    lt           = operation.word;
-    word         = be.check.prim_name(lt);
-    width: usize = word.eq("u32").match({true => 32, false => 64});
-    rt           = be.check.types.prim(
-        operation.name.is_in([
-            "bit_xor", "bit_and"
-        ]).match({true => word, false => "usize"})
+    lt    = operation.word;
+    word  = be.check.prim_name(lt);
+    ct    = c_prim(word);
+    width = unsigned_width(word);
+    mask  = width - 1;
+    rt    = be.check.types.prim(
+        operation.name.starts_with(
+            "bit_"
+        ).match({true => word, false => "usize"})
     ).try();
     lc ::= be.alloc.String().try();
     be.expr(left, ctx, lt, lc).try();
@@ -106,27 +115,53 @@ lower_integer_bits* = (
     be.expr(right, ctx, rt, rc).try();
     rv = be.temp(rt, "bits").try();
     be.set_line(rv.view(), rc.view()).try();
+    l = lv.view();
+    r = rv.view();
     operation.name.match({
-        "bit_xor"     => out.fmt("({} ^ {})", lv.view(), rv.view()),
-        "bit_and"     => out.fmt("({} & {})", lv.view(), rv.view()),
-        // A logical shift by the width or more yields zero. Guard the C shift.
+        "bit_xor"     => out.fmt("(({})({} ^ {}))", ct, l, r),
+        "bit_and"     => out.fmt("(({})({} & {}))", ct, l, r),
+        "bit_or"      => out.fmt("(({})({} | {}))", ct, l, r),
         "shift_right" => out.fmt(
-            "({} >= {}u ? 0 : ({} >> {}))",
-            rv.view(),
+            "({} >= {}u ? ({})0 : ({})({} >> {}))",
+            r,
             width,
-            lv.view(),
-            rv.view()
+            ct,
+            ct,
+            l,
+            r
+        ),
+        "shift_left"  => out.fmt(
+            "({} >= {}u ? ({})0 : ({})({} << {}))",
+            r,
+            width,
+            ct,
+            ct,
+            l,
+            r
+        ),
+        "rotate_left" => out.fmt(
+            "(({})(({} << ({} & {}u)) | ({} >> (({}u - ({} & {}u)) & {}u))))",
+            ct,
+            l,
+            r,
+            mask,
+            l,
+            width,
+            r,
+            mask,
+            mask
         ),
         _             => out.fmt(
-            "(({} >> ({} & {}u)) | ({} << (({}u - ({} & {}u)) & {}u)))",
-            lv.view(),
-            rv.view(),
-            width - 1,
-            lv.view(),
+            "(({})(({} >> ({} & {}u)) | ({} << (({}u - ({} & {}u)) & {}u))))",
+            ct,
+            l,
+            r,
+            mask,
+            l,
             width,
-            rv.view(),
-            width - 1,
-            width - 1
+            r,
+            mask,
+            mask
         ),
     })
 }

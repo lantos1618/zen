@@ -56,7 +56,8 @@ check_represented_enum = (
     ctx        = Ctx(mi, c.types.unknown().try());
     repr       = c.inferred_discriminant_repr(e, ctx).try();
     name       = c.prim_name(repr);
-    valid_repr = is_integer(name) && !name.eq("usize") && e.tparams.len == 0;
+    valid_repr = is_integer(name) && !name.is_in(["usize", "u128"])
+        && e.tparams.len == 0;
     valid_repr.match({
         true  => c.check_discriminant_rows(e, repr, name, ctx),
         false => c.report(

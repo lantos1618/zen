@@ -1816,17 +1816,40 @@ main = (env: Env) Res<i32, Error> {
 
 ## Unsigned bit operations
 
-`std.core.num` exports `bit_xor(self: W, other: W) W`,
-`bit_and(self: W, other: W) W`, `rotate_right(self: W, count: usize) W`,
-and `shift_right(self: W, count: usize) W` for unsigned words W = u32 or u64.
-All support free-function and receiver-call syntax. Binary operands must use
-the same word type. Rotation reduces the count modulo the word width; zero
-and width multiples preserve the input. Logical right shift fills with zero;
-counts greater than or equal to the width return zero (including usize.MAX).
-The C backend guards shifts and masks rotation counts to avoid undefined C shifts.
+`std.core.num` exports `bit_xor(self: W, other: W) W`, `bit_and`, `bit_or`,
+`shift_left(self: W, count: usize) W` and `shift_right` for unsigned words
+W = u8, u16, u32, u64, u128 or usize, plus `rotate_left` and `rotate_right`
+for u32 and u64. All support free-function and receiver-call syntax. Binary
+operands must use the same word type. Rotation reduces the count modulo the
+word width; zero and width multiples preserve the input. Logical shifts fill
+with zero; counts greater than or equal to the width return zero (including
+usize.MAX). The C backend guards shifts and masks rotation counts to avoid
+undefined C shifts, and casts u8/u16 results back after C's int promotion.
 
 These allocation-free compiler primitives evaluate operands once in source
 order. Only validated exported, nongeneric, immutable-parameter declarations
 with these exact signatures in `std.core.num` acquire primitive behavior.
 User functions with bodies may use the same names normally. This adds no
 new operator syntax, crypto dependency or constant-time compiler guarantee.
+Zen deliberately has no bitwise operator tokens: `|` separates enum variants
+and `^`, `&`, `<<`, `>>` are not in the lexer, so named operations are the
+whole surface rather than a stand-in for missing operators.
+
+## Wide integers and truncation
+
+`u128` is a fixed-width unsigned primitive. It supports the ordinary checked
+and wrapping arithmetic, comparisons, `Eq`, the bit operations above,
+lossless `to_u128` from every narrower unsigned word, and checked
+`to_u64(self: u128) Res<u64>`. Literals remain limited to the u64 range and
+there is no decimal printer: print `truncate_u64()` and a shifted high half.
+The C backend lowers it to `unsigned __int128` and refuses a C compiler
+without it with `#error`; every supported 64-bit GCC/Clang target has it.
+Checked `*` on u128 guards by division; hot paths use `*%` or `mul_wide`.
+
+`mul_wide(self: u64, other: u64) u128` returns the exact product and never
+traps. `truncate_u8/u16/u32/u64(self: W) T` keep the low bits of a strictly
+wider unsigned W; they are the one spelled way to discard high bits and never
+fail, unlike the checked `to_` conversions. Validation is by declaration
+identity exactly as for conversions (`sema_prim`); a bodyless `mul_wide` or
+`truncate_*` elsewhere is rejected. JS and assembly refuse these types
+through the scalar lowering's existing type check.

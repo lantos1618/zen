@@ -42,6 +42,7 @@ emit_clock = gen.gen_c.gen_c_clock
 emit_native_features, emit_proc = gen.gen_c.gen_c_proc
 emit_threads, emit_spawn_envs = gen.gen_c.gen_c_threads
 emit_actor_floor, emit_actor_defs = gen.gen_c.gen_c_actor
+emit_machine = gen.gen_c.gen_c_machine
 
 // Bound the reachable set by functions lowered. Crossing it reports Overrun
 // instead of silently emitting an incomplete translation unit.
@@ -73,6 +74,7 @@ emit_prelude = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     be.emit_c_headers(out).try();
     emit_banner(out).try();
     emit_floor(out).try();
+    be.emit_machine(out).try();
     be.emit_proc(out).try();
     emit_scope_floor(be, out).try();
     emit_fs(be, out).try();

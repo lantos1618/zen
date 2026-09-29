@@ -1,0 +1,2 @@
+no `truncate_u32` on `u16`
+4:24

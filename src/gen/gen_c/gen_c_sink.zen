@@ -763,7 +763,7 @@ number_writer = (prim: str) str {
 }
 
 integer_writer = (prim: str) str {
-    is_c_integer(prim).match({
+    (is_c_integer(prim) && !prim.eq("u128")).match({
         false => "",
         true  => signed_writer(prim),
     })

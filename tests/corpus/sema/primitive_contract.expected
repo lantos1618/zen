@@ -1,0 +1,20 @@
+mul_wide: true
+mul_wide owner: false
+mul_wide result: false
+mul_wide words: false
+mul_wide private: false
+mul_wide mutable: false
+truncate: true
+truncate u128: true
+truncate widening: false
+truncate same: false
+truncate name: false
+truncate signed: false
+truncate owner: false
+unknown: false
+u8 or: true
+u128 shift: true
+u16 rotate: true
+usize xor: true
+i64 or: false
+foreign: true

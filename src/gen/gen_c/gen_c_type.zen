@@ -33,7 +33,10 @@ request_slots = gen.gen_c.gen_c_fat
 // types fall back to `int` so C remains parseable around the diagnostic.
 ctype* = (be :: CBackend, id: TyId, out :: String) Res<(), AllocError> {
     be.types().at(id).match({
-        Prim(p)  => out.add(c_prim(p.name)),
+        Prim(p)  => {
+            machine_prim(p.name).then(() { be.need_machine() });
+            out.add(c_prim(p.name))
+        },
         Named(n) => be.maybe_ptr(id, n, out),
         Res(_)   => be.named_ctype(id, out),
         Union(_) => be.named_ctype(id, out),
@@ -367,6 +370,7 @@ c_prim* = (name: str) str {
         "u16"         => "uint16_t",
         "u32"         => "uint32_t",
         "u64"         => "uint64_t",
+        "u128"        => "zg_u128",
         "usize"       => "size_t",
         "c_char"      => "char",
         "c_schar"     => "signed char",
@@ -389,6 +393,11 @@ c_prim* = (name: str) str {
     })
 }
 
+// Types spelled by the machine floor's typedefs rather than a C header.
+machine_prim* = (name: str) bool {
+    name.eq("u128")
+}
+
 // `int` is the spelling an unspellable type falls back to, so it
 // cannot double as the answer for a Zen type that really is `int`.
 // The list is asked directly.
@@ -401,7 +410,8 @@ c_prim_known* = (name: str) bool {
 // The integer types a trapping operation can be emitted for.
 is_c_integer* = (name: str) bool {
     name.is_in([
-        "i8", "i16", "i32", "i64", "int", "u8", "u16", "u32", "u64", "usize"
+        "i8", "i16", "i32", "i64", "int", "u8", "u16", "u32", "u64", "u128",
+        "usize"
     ])
 }
 

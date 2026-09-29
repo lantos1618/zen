@@ -1,0 +1,99 @@
+// Machine primitives: wide multiplication and explicit truncation.
+// Like numeric conversions, only validated bodyless declarations in the
+// owning standard modules acquire an operation. Backends consume the
+// recorded Primitive by declaration identity, never by a callee's spelling.
+Function = std.ast
+AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+Checker, Ctx = sema.sema_check
+TyId = sema.sema_ty
+Def = sema.sema_def
+param_type, ret_type = sema.sema_denote
+SemaFault, NameFault = sema.sema_diag
+
+// `params` are the declared parameter types in order, receiver first.
+Primitive* = { name*: str, params*: Vec<TyId>, result*: TyId }
+
+// Modules whose bodyless declarations must all be supported primitives.
+primitive_module* = (module: str) bool {
+    module.is_in(["std.core.num"])
+}
+
+// Names no other module may declare without a body: a local declaration
+// must not manufacture a truncating cast or a wide multiply.
+reserved_primitive = (name: str) bool {
+    name.eq("mul_wide") || name.starts_with("truncate_")
+}
+
+primitive_signature* = (c :: Checker, d: Def, f: Function)
+                       Res<(), AllocError> {
+    module = c.world.module_name(d.id);
+    (primitive_module(module) || reserved_primitive(f.name.text)).match({
+        false => Ok(()),
+        true  => c.primitive_declaration(d, f, module),
+    })
+}
+
+primitive_declaration = (c :: Checker, d: Def, f: Function, module: str)
+                        Res<(), AllocError> {
+    ctx = Ctx(d.id.module.to_usize(), c.types.unknown().try());
+    params ::= c.alloc.Vec<TyId>();
+    names  ::= c.alloc.Vec<String>();
+    fixed  ::= f.exported && f.tparams.len == 0;
+    f.params.loop((p) {
+        fixed = fixed && !p.mutable;
+        t     = c.param_type(p, ctx).try();
+        params.add(t).try();
+        names.add(c.types.name_of(t).try()).try();
+    });
+    result = c.ret_type(f, ctx).try();
+    shown ::= c.types.name_of(result).try();
+    (fixed && primitive_module(module)
+        && primitive_shape(f.name.text, names, shown.view())).match({
+        false => c.report(
+            d.span.file,
+            d.span,
+            SemaFault.InvalidPrimitive(NameFault(name: d.name))
+        ),
+        true  => c.primitives.set(
+            d.id,
+            Primitive(name: f.name.text, params: params, result: result)
+        ),
+    })
+}
+
+type_at* = (names: Vec<String>, i: usize) str {
+    names.get(i).match({ Ok(n) => n.view(), None => "" })
+}
+
+primitive_shape = (name: str, ps: Vec<String>, r: str) bool {
+    name.eq("mul_wide").match({
+        true  => ps.len == 2 && type_at(ps, 0).eq("u64")
+            && type_at(ps, 1).eq("u64") && r.eq("u128"),
+        false => name.starts_with("truncate_") && ps.len == 1
+            && r.eq(name.slice(9, name.len)) && narrows(type_at(ps, 0), r),
+    })
+}
+
+// Bit width of an unsigned word; zero for anything else. usize follows the
+// current 64-bit targets, as in std.core.num.
+unsigned_width* = (name: str) usize {
+    name.match({
+        "u8"    => 8,
+        "u16"   => 16,
+        "u32"   => 32,
+        "u64"   => 64,
+        "usize" => 64,
+        "u128"  => 128,
+        _       => 0,
+    })
+}
+
+// Truncation keeps the low bits of a strictly wider unsigned word. Its
+// destination is a fixed-width word so the result does not depend on usize.
+narrows = (source: str, target: str) bool {
+    target.is_in(["u8", "u16", "u32", "u64"])
+        && unsigned_width(target) > 0
+        && unsigned_width(target) < unsigned_width(source)
+}

@@ -30,6 +30,7 @@ complete_inst = gen.gen_c.gen_c_infer
 ctype, is_unit, has_storage, c_prim, spellable, declared_ret = gen.gen_c.gen_c_type
 write_none = gen.gen_c.gen_c_type
 lower_numeric, lower_integer_bits = gen.gen_c.gen_c_num
+lower_primitive = gen.gen_c.gen_c_machine
 expr, ty_of, want_of = gen.gen_c.gen_c_expr
 value_held, holds = gen.gen_c.gen_c_expr
 Dest, deliver = gen.gen_c.gen_c_stmt
@@ -270,13 +271,27 @@ CallSite = {
     bits_or_call = (self: @Self, be :: CBackend, d: Def, f: Function,
                     out :: String) Res<(), AllocError> {
         be.check.integer_bits.get(d.id).match({
-            None          => self.plain_or_foreign(be, d, f, out),
+            None          => self.primitive_or_call(be, d, f, out),
             Ok(operation) => {
                 left         = recv_arg(self.c, self.recv).ok_or(AllocError.OutOfMemory).try();
                 index: usize = self.recv.match({ Ok(_) => 0, None => 1 });
                 right        = arg_value(self.c, index).ok_or(AllocError.OutOfMemory).try();
                 be.lower_integer_bits(left, right, operation, self.ctx, out)
             },
+        })
+    }
+
+    primitive_or_call = (self: @Self, be :: CBackend, d: Def, f: Function,
+                         out :: String) Res<(), AllocError> {
+        be.check.primitives.get(d.id).match({
+            None          => self.plain_or_foreign(be, d, f, out),
+            Ok(primitive) => be.lower_primitive(
+                self.c,
+                self.recv,
+                primitive,
+                self.ctx,
+                out
+            ),
         })
     }
 

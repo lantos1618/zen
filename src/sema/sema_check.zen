@@ -16,6 +16,7 @@ Inst, InstEdge = sema.sema_inst
 DiscriminantCall = sema.sema_discriminant
 VariantNameCall = sema.sema_variant_name
 NumericConversion, IntegerBitOperation = sema.sema_numeric
+Primitive = sema.sema_prim
 OwnCheck, StoreEffects = sema.sema_store
 
 // One scoped name. Mutability feeds receiver/ownership checks, param feeds LSP
@@ -119,6 +120,8 @@ Checker* = {
     // Validated standard numeric operations, keyed by declaration identity.
     numeric_conversions* :: Map<DeclId, NumericConversion>,
     integer_bits* :: Map<DeclId, IntegerBitOperation>,
+    // Validated machine primitives (wide multiply, truncation, vectors).
+    primitives* :: Map<DeclId, Primitive>,
 
     // Compiler-provided represented-enum conversions.
     discriminant_calls* :: Map<ExprId, DiscriminantCall>,
@@ -787,6 +790,7 @@ Checker* = (a: Alloc, tree: Ast) Res<Checker, AllocError> {
         store_effects: a.StoreEffects(),
         numeric_conversions: a.Map<DeclId, NumericConversion>(),
         integer_bits: a.Map<DeclId, IntegerBitOperation>(),
+        primitives: a.Map<DeclId, Primitive>(),
         discriminant_calls: a.Map<ExprId, DiscriminantCall>(),
         variant_name_calls: a.Map<ExprId, VariantNameCall>(),
         param_memo: a.Map<ExprId, bool>(),

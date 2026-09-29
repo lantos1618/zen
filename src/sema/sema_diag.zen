@@ -50,6 +50,7 @@ SemaFault* =
     | LiteralOutOfRange(TypeFault)     // the family fits, the value does not
     | ActorPayload(NameFault)          // payload storage cannot cross a mailbox
     | InvalidNumericConversion(NameFault)
+    | InvalidPrimitive(NameFault)
     | InvalidEnumRepresentation(NameFault)
     | InvalidEnumDiscriminant(NameFault)
     | DuplicateEnumDiscriminant(PairFault)
@@ -165,6 +166,7 @@ message* = (fault: SemaFault) str {
         CatchAllConstruction(_)      => "a represented enum's catch-all is constructed only by `from_discriminant`, which preserves the canonical known variants",
         NoOverload(_)                => "no overload matches: resolution is on declared parameter types and arity",
         InvalidNumericConversion(_)  => "bodyless numeric conversion requires a supported std.core.num signature; import the shared conversion or provide a function body",
+        InvalidPrimitive(_)          => "bodyless machine primitive requires a supported std.core.num, std.simd or std.mem signature; import the standard operation or provide a function body",
         InvalidInstantiation(_)      => "invalid generic instantiation: type arguments must match the declaration and every use of one parameter must agree",
         DuplicateSignature(_)        => "duplicate signature: parameter names are documentation, not identity",
         AmbiguousOverload(_)         => "ambiguous overload: these two signatures accept the same call",
@@ -234,6 +236,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         NoOverload(f)                => out.write_name(f),
         InvalidInstantiation(f)      => out.write_name(f),
         InvalidNumericConversion(f)  => out.write_name(f),
+        InvalidPrimitive(f)          => out.write_name(f),
         ImplMissingField(f)          => out.write_missing(f),
         CtorMissingField(f)          => out.write_ctor_missing(f),
         CtorNamesNoMember(f)         => out.write_member(types, f),

@@ -1,0 +1,86 @@
+// C floor and lowering for machine-level primitives: the u128 type, wide
+// multiplication and explicit truncation. Emitted only when a reachable program spells one of them.
+// The C backend targets 64-bit GCC/Clang, which provide unsigned __int128;
+// another toolchain is refused with #error rather than silently narrowed.
+
+Call, ExprId = std.ast
+AllocError = std.mem
+Vec = std.collections
+String, str = std.text
+Range = std.core
+Primitive = sema.sema_prim
+Ctx = sema.sema_check
+Emit = gen.gen_emit
+CBackend = gen.gen_c.gen_c_state
+comment = gen.gen_c.gen_c_runtime
+c_prim = gen.gen_c.gen_c_type
+expr = gen.gen_c.gen_c_expr
+temp = gen.gen_c.gen_c_flow
+recv_arg, arg_value = gen.gen_c.gen_c_arg
+
+emit_machine* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+    be.uses_machine().match({
+        false => Ok(()),
+        true  => write_machine(out),
+    })
+}
+
+write_machine = (out :: Emit) Res<(), AllocError> {
+    comment(out, "machine floor: wide integers").try();
+    out.say("#if defined(__SIZEOF_INT128__)").try();
+    out.say("__extension__ typedef unsigned __int128 zg_u128;").try();
+    out.say("#else").try();
+    out.say(
+        "#error \"Zen u128 requires a C compiler with unsigned __int128\""
+    ).try();
+    out.say("#endif").try();
+    out.say("#define ZG_U128_MAX (~(zg_u128)0)").try();
+    out.line().try();
+    Ok(())
+}
+
+// Evaluate every operand once, receiver first, into a temporary of its
+// declared type; then render the operation over those names.
+lower_primitive* = (
+    be   :: CBackend,
+    c    : Call,
+    recv : Res<ExprId>,
+    p    : Primitive,
+    ctx  : Ctx,
+    out  :: String
+) Res<(), AllocError> {
+    be.need_machine();
+    held ::= be.alloc.Vec<String>();
+    shift: usize = recv.match({ Ok(_) => 1, None => 0 });
+    Range(0, p.params.len).loop((i) {
+        ty    = p.params.get(i).ok_or(AllocError.OutOfMemory).try();
+        value = (i < shift).match({
+            true  => recv_arg(c, recv),
+            false => arg_value(c, i - shift),
+        }).ok_or(AllocError.OutOfMemory).try();
+        code ::= be.alloc.String().try();
+        be.expr(value, ctx, ty, code).try();
+        name = be.temp(ty, "prim").try();
+        be.set_line(name.view(), code.view()).try();
+        held.add(name).try();
+    });
+    be.render_primitive(p, held, out)
+}
+
+render_primitive = (
+    be   :: CBackend,
+    p    : Primitive,
+    held : Vec<String>,
+    out  :: String
+) Res<(), AllocError> {
+    a = operand(held, 0);
+    b = operand(held, 1);
+    p.name.eq("mul_wide").match({
+        true  => out.fmt("((zg_u128){} * (zg_u128){})", a, b),
+        false => out.fmt("(({}){})", c_prim(be.check.prim_name(p.result)), a),
+    })
+}
+
+operand = (held: Vec<String>, i: usize) str {
+    held.get(i).match({ Ok(s) => s.view(), None => "" })
+}

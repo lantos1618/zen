@@ -132,7 +132,7 @@ int main(void) {
 }
 '''
     (work/'probe.c').write_text(prefix+source+harness)
-    subprocess.run(['clang','-O2','-pthread','-Wno-parentheses-equality',str(work/'probe.c'),'-o',str(work/'probe')],check=True,timeout=90)
+    subprocess.run(['clang','-O2','-pthread','-Werror=parentheses-equality',str(work/'probe.c'),'-o',str(work/'probe')],check=True,timeout=90)
     subprocess.run([str(work/'probe')],check=True,timeout=20)
 
     # Negative control: prove rejected-send allocation checks detect regressions.
@@ -140,7 +140,7 @@ int main(void) {
     signature='static int zg_actor_send(zg_actor *a, zg_actor_turn turn, const void *data, size_t size, const zg_actor_slice *slices, size_t slice_count) {'
     assert signature in probe
     (work/'negative.c').write_text(probe.replace(signature, signature + '\n void *unexpected=malloc(1); free(unexpected);',1))
-    subprocess.run(['clang','-O2','-pthread','-Wno-parentheses-equality',str(work/'negative.c'),'-o',str(work/'negative')],check=True,timeout=90)
+    subprocess.run(['clang','-O2','-pthread','-Werror=parentheses-equality',str(work/'negative.c'),'-o',str(work/'negative')],check=True,timeout=90)
     control=subprocess.run([str(work/'negative')],capture_output=True,timeout=20)
     assert control.returncode != 0, 'Negative allocation control unexpectedly passed'
     print('PASS: rejected-send allocation negative control')
@@ -149,7 +149,7 @@ int main(void) {
     transition = 'if (was_empty) pthread_cond_signal(&a->wake);'
     assert transition in probe
     (work/'wake-negative.c').write_text(probe.replace(transition, 'pthread_cond_signal(&a->wake);',1))
-    subprocess.run(['clang','-O2','-pthread','-Wno-parentheses-equality',str(work/'wake-negative.c'),'-o',str(work/'wake-negative')],check=True,timeout=90)
+    subprocess.run(['clang','-O2','-pthread','-Werror=parentheses-equality',str(work/'wake-negative.c'),'-o',str(work/'wake-negative')],check=True,timeout=90)
     control=subprocess.run([str(work/'wake-negative')],capture_output=True,timeout=20)
     assert control.returncode != 0, 'Redundant-wakeup control unexpectedly passed'
     print('PASS: one wake signal for 63 queued messages; redundant-wakeup control detected')

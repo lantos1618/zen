@@ -1840,3 +1840,20 @@ main = (env: Env) Res<i32, Error> {
 - **Supervision.** A trap aborts the process. Killing only the offending actor is the Pony answer and needs a supervision story that does not exist yet.
 - **`env.threads.spawn` vs `env.blocking.run`.** If the only legitimate use of a thread is running blocking work off the scheduler, the honest capability is `blocking.run` — it makes the misuse unrepresentable rather than merely discouraged.
 - **Comptime file reads.** Excluded from v1 for reproducibility. `@embed_file` is the feature people will ask for.
+
+## Unsigned bit operations
+
+`std.core.num` exports `bit_xor(self: W, other: W) W`,
+`bit_and(self: W, other: W) W`, `rotate_right(self: W, count: usize) W`,
+and `shift_right(self: W, count: usize) W` for unsigned words W = u32 or u64.
+All support free-function and receiver-call syntax. Binary operands must use
+the same word type. Rotation reduces the count modulo the word width; zero
+and width multiples preserve the input. Logical right shift fills with zero;
+counts greater than or equal to the width return zero (including usize.MAX).
+The C backend guards shifts and masks rotation counts to avoid undefined C shifts.
+
+These allocation-free compiler primitives evaluate operands once in source
+order. Only validated exported, nongeneric, immutable-parameter declarations
+with these exact signatures in `std.core.num` acquire primitive behavior.
+User functions with bodies may use the same names normally. This adds no
+new operator syntax, crypto dependency or constant-time compiler guarantee.

@@ -1,0 +1,20 @@
+registered: true
+owner: false
+result: false
+source: false
+arity: false
+mutable: false
+private: false
+generic: false
+body: false
+rotate: true
+rotate count: false
+u32 xor: true
+u32 rotate: true
+u32 and: true
+u64 and: true
+shift: true
+mixed: false
+shift count: false
+and owner: false
+foreign: true

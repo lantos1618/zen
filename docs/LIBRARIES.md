@@ -105,3 +105,89 @@ preparation.
 The buffer gate also forces eight native producers to overlap inside preparation,
 checks 512 delivered buffers and each producer's order, grows each receiver buffer,
 and tracks complete reclamation of preparation allocations at shutdown.
+
+## JSON object inspection
+
+`Jsons.member_count(id)` and `Jsons.member(id, index)` expose stored object
+members without allocation or serialization. Enumeration preserves duplicate
+keys and their stored order; `field(id, name)` continues to return the last
+matching value. Keys are decoded borrowed text and share the tree's storage
+lifetime. Non-object values return zero members / `None`; out-of-range member
+indices return `None`. Invalid `JsonId` values retain `at`'s trapping contract.
+
+This capability was extracted from agentfleet's resource-schema validation.
+Agent commands, RPC framing, extension environment variables and package policy
+remain application concerns. General process cancellation, bounded execution
+and atomic filesystem publication need independent lifecycle and portability
+contracts before being added to std; the former agentfleet `proc.c` patch must
+not be applied over the current Zen-owned process implementation.
+
+## Bounded binary cursors
+
+`std.bytes.ByteReader` and `ByteWriter` borrow a caller-owned `Ptr<u8>` and
+length. `open` accepts a null pointer only for zero length. They allocate
+nothing and do not extend memory lifetimes; the caller must supply a live
+region of the declared size, with writable storage for a writer.
+
+Readers expose `read_be(width)`, `read_le(width)` and `take(count)`;
+writers expose `write_be(value, width)` and `write_le(value, width)`.
+Widths are 1–8 bytes; decoded values are u64. A write rejects a value that
+cannot fit in the requested width. Invalid widths/values produce `Invalid`;
+insufficient remaining storage produces `Truncated`. Failure leaves the
+cursor position and destination bytes unchanged. `remaining`, `consumed`
+and `written` expose progress without allocation. `take` returns a borrowed
+`str` byte view; it does not validate UTF-8. These cursors are independent
+values, so copying one copies its position, not its storage.
+
+Integer/endian/cursor behavior belongs in std. SHA, AEAD, TLS transcript
+state and cryptographic key schedules remain in zen-crypto. Algorithm-specific
+fixed-size block loops need not be generalized solely to move them into std.
+
+## Operating-system entropy
+
+`std.entropy.fill_random(output, count)` fills a caller-owned writable byte span
+using the operating system's cryptographic random source. It allocates nothing,
+retains no pointer or PRNG state, and has no predictable fallback. Supply a live
+span of `count` bytes. A null pointer is accepted only when count is zero;
+empty calls perform no OS operation. Nonempty null spans return `Invalid`.
+
+On macOS 10.12+ and Linux with glibc 2.25+, the header-backed `getentropy`
+binding requests at most 256 bytes per call; chunking and errors are handled in
+Zen. The operation may block during OS entropy initialization. Any OS refusal
+returns `Unavailable`; earlier chunks may already have overwritten the output,
+so callers must discard the entire result on failure. No secure-erasure claim
+is made. This is distinct from `std.core.rand`, which must not generate keys.
+
+TLS algorithms remain in zen-crypto. Public handshake randomness and ephemeral
+private keys require separate calls: never expose private bytes by reusing them
+as the public ClientHello/ServerHello random. OS entropy availability does not
+replace protocol validation, secret ownership or side-channel review.
+
+The corpus checks real OS success and buffer guards. `tests/library/entropy`
+uses a deterministic test-only OS replacement to cover 256-byte chunking,
+zero/null spans, failure on the first and a later call, and stopping after
+failure. A deliberately false OS-success result must fail its assertions.
+These checks do not attempt to establish entropy quality through statistics.
+
+Reference: [getentropy](https://man7.org/linux/man-pages/man3/getentropy.3.html).
+The macOS SDK declares the same interface in `sys/random.h`.
+
+## HTTP is a package dependency
+
+HTTP/1 and HTTP/2 are maintained in [zen-http](https://github.com/lantos1618/zen-http).
+`std.net.http`, `std.net.http2`, their top-level `std` re-exports, and
+`env.net.http()` have been removed. This is a breaking source change; there is
+no compatibility facade or hidden package download. The compiler bootstrap
+and standard library have no dependency on zen-http or zen-openssl.
+
+Applications import `HttpClient`, response/error types and `H2Client` from
+`http`, and construct `HttpClient()` explicitly. Register the package and its
+TLS backend in the application's build graph; the package README documents
+its current sibling-checkout and OpenSSL build requirements. HTTP-specific
+regression coverage is maintained with the package rather than duplicated
+inside compiler std tests. The native PSK client is an explicit package API;
+ordinary certificate-verified HTTPS continues to use zen-openssl.
+
+Socket, readiness, TCP, DNS and other shared OS primitives remain in std.
+The reserved `Net` capability retains its empty shape; it no longer constructs
+an HTTP client.

@@ -33,7 +33,7 @@ static void *measured_malloc(size_t n) {
     def check(name, generated, flags=(), failure=False):
         path = work / f'{name}.c'
         path.write_text(prefix + generated + harness)
-        subprocess.run(['clang', '-O1', '-g', '-pthread', '-Wno-parentheses-equality', *flags,
+        subprocess.run(['clang', '-O1', '-g', '-pthread', '-Werror=parentheses-equality', *flags,
                         '-I', str(work), str(path), '-o', str(work / name)], check=True, timeout=90)
         result = subprocess.run([str(work / name)], capture_output=True, text=True, timeout=40)
         if failure:

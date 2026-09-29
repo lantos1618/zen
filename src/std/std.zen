@@ -39,11 +39,7 @@ Env*, Console*, Stdin*, Fs*, FsError*, fs_message*, Lock*,
 Threads*, Thread*, ThreadError* = std.env
 ProcError*, ProcOutput*, Process* = std.proc
 
-// networking: TCP/TLS/DNS floors and the HTTP/1.1 client built on them
-HttpClient*, HttpResponse*, HttpResponseMeta*, HttpError* = std.net.http
-H2Client*, H2Response*, H2Error*, H2StreamError*, H2Head*, H2Chunk*,
-    MAX_SEND*, h2_chunk*, post_once* =
-    std.net.http2
+// Networking primitives; HTTP protocols live in the zen-http package.
 TcpStream*, TcpError* = std.net.tcp
 TlsStream*, TlsError* = std.net.tls
 DnsAddr*, DnsError*, resolve* = std.net.dns

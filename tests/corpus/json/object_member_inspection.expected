@@ -1,0 +1,20 @@
+members: 7
+key 0: nested
+key 1: dup
+key 2: dup
+key 3: empty
+key 4: array
+key 5: scalar
+key 6: escaped
+nested members: 1
+nested key: inner
+nested end refused: true
+last duplicate: 3
+empty members: 0
+empty refused: true
+array members: 0
+array refused: true
+scalar members: 0
+scalar refused: true
+end refused: true
+huge index refused: true

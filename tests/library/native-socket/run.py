@@ -80,7 +80,7 @@ with tempfile.TemporaryDirectory(prefix='zen-native-socket-') as folder:
         subprocess.run([str(args.zen.resolve()), 'build', str(work), '--emit-c', '-o', str(work / 'generated.c')], env=env, check=True, timeout=120)
         binary = work / name
         flags = ['-fsanitize=undefined', '-fno-sanitize-recover=all'] if args.ubsan else []
-        subprocess.run(['clang', '-O1', '-g', '-Wno-parentheses-equality', *flags, '-I', str(work), '-include', str(work / 'probe.h'), str(work / 'generated.c'), '-o', str(binary)], check=True, timeout=90)
+        subprocess.run(['clang', '-O1', '-g', '-Werror=parentheses-equality', *flags, '-I', str(work), '-include', str(work / 'probe.h'), str(work / 'generated.c'), '-o', str(binary)], check=True, timeout=90)
         return binary
     def execute(binary):
         # subprocess restores Python-ignored SIGPIPE; Zen also explicitly resets it.

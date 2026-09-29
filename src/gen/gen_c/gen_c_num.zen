@@ -3,7 +3,7 @@
 ExprId = std.ast
 AllocError = std.mem
 String, str = std.text
-NumericConversion, NarrowTarget = sema.sema_numeric
+NumericConversion, NarrowTarget, IntegerBitOperation = sema.sema_numeric
 Ctx = sema.sema_check
 CBackend = gen.gen_c.gen_c_state
 expr = gen.gen_c.gen_c_expr
@@ -77,5 +77,56 @@ numeric_fits = (be :: CBackend, value: str, source: str, target: NarrowTarget)
             maximum
         ),
         false => be.fmt("(uintmax_t){} <= (uintmax_t){}", value, maximum),
+    })
+}
+
+// Hold both inputs in source order: rotation references each more than once.
+// Mask both shift counts so zero and width multiples never shift by the word width.
+lower_integer_bits* = (
+    be        :: CBackend,
+    left      : ExprId,
+    right     : ExprId,
+    operation : IntegerBitOperation,
+    ctx       : Ctx,
+    out       :: String
+) Res<(), AllocError> {
+    lt           = operation.word;
+    word         = be.check.prim_name(lt);
+    width: usize = word.eq("u32").match({true => 32, false => 64});
+    rt           = be.check.types.prim(
+        operation.name.is_in([
+            "bit_xor", "bit_and"
+        ]).match({true => word, false => "usize"})
+    ).try();
+    lc ::= be.alloc.String().try();
+    be.expr(left, ctx, lt, lc).try();
+    lv = be.temp(lt, "bits").try();
+    be.set_line(lv.view(), lc.view()).try();
+    rc ::= be.alloc.String().try();
+    be.expr(right, ctx, rt, rc).try();
+    rv = be.temp(rt, "bits").try();
+    be.set_line(rv.view(), rc.view()).try();
+    operation.name.match({
+        "bit_xor"     => out.fmt("({} ^ {})", lv.view(), rv.view()),
+        "bit_and"     => out.fmt("({} & {})", lv.view(), rv.view()),
+        // A logical shift by the width or more yields zero. Guard the C shift.
+        "shift_right" => out.fmt(
+            "({} >= {}u ? 0 : ({} >> {}))",
+            rv.view(),
+            width,
+            lv.view(),
+            rv.view()
+        ),
+        _             => out.fmt(
+            "(({} >> ({} & {}u)) | ({} << (({}u - ({} & {}u)) & {}u)))",
+            lv.view(),
+            rv.view(),
+            width - 1,
+            lv.view(),
+            width,
+            rv.view(),
+            width - 1,
+            width - 1
+        ),
     })
 }

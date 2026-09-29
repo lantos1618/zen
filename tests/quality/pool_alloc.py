@@ -22,7 +22,7 @@ with tempfile.TemporaryDirectory(prefix='zen-pool-alloc-') as folder:
     def execute(name, text, flags=(), expected=True):
         path = work / (name + '.c')
         path.write_text(text)
-        subprocess.run(['clang', '-O1', '-g', '-Wno-parentheses-equality', *flags, str(path), '-o', str(work / name)], check=True, timeout=90)
+        subprocess.run(['clang', '-O1', '-g', '-Werror=parentheses-equality', *flags, str(path), '-o', str(work / name)], check=True, timeout=90)
         result = subprocess.run([str(work / name)], capture_output=True, text=True, timeout=30)
         if expected:
             print(result.stdout, end='')

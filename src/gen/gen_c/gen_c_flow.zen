@@ -32,7 +32,10 @@ write_position = gen.gen_c.gen_c_op
 
 // One point in the pattern walk. Conditions and bindings traverse the
 // same type at the same C place; carrying that pair on the receiver keeps
-// recursive lowering from relaying it through every helper.
+// recursive lowering from relaying it through every helper. Conditions contain
+// comparisons joined by &&; the enclosing if supplies their parentheses.
+// Equality binds more tightly than &&, preserving tag-before-payload guards
+// without producing Clang's redundant-parenthesized-equality warning.
 PatternSite = {
     ty: TyId,
     place: str,
@@ -177,8 +180,7 @@ PatternSite = {
         qname ::= be.alloc.String().try();
         be.enum_path(self.ty, qname).try();
         out.fmt(" && {}.zg_tag == ", self.place).try();
-        out.sym_variant(qname.view(), case).try();
-        Ok(())
+        out.sym_variant(qname.view(), case)
     }
 
     tag_cond = (self: @Self, be :: CBackend, q: QualifiedName,
@@ -201,8 +203,7 @@ PatternSite = {
                 None       => self.nominal_tag(be, name, out),
             }),
             _        => self.nominal_tag(be, name, out),
-        }).try();
-        Ok(())
+        })
     }
 
     nominal_tag = (self: @Self, be :: CBackend, name: str, out :: String)
@@ -452,8 +453,7 @@ write_str_cond = (l: Literal, scrut: str, out :: String)
     (n > 0).match({
         true  => str_bytes_cond(l, scrut, n, out),
         false => Ok(()),
-    }).try();
-    Ok(());
+    })
 }
 
 // The empty string is its length and nothing more: a zero-length `str`

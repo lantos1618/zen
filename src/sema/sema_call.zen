@@ -286,6 +286,7 @@ CallCheck = {
                 c.arg_lambdas(self.call.args, params, off, self.ctx).try();
                 c.args_handle_check(self.call.args, params, off, self.ctx)
                     .try();
+                c.refuse_literal_lends(k, params, actuals).try();
                 k.generic.then(() {
                     self.edge = Ok(c.call_edge(self.id, k, self.inst).try());
                 });
@@ -1269,6 +1270,48 @@ args_handle_check = (
 ) Res<(), AllocError> {
     args.loop((h, i, a) {
         c.refuse_handle_argument(a, params.ty_at(i + off), ctx).try();
+    });
+    Ok(());
+}
+
+// A `::` parameter receives the argument's address, so the argument's storage
+// must already have the parameter's type. An unannotated integer is stored as
+// an i64 whatever a later use wants (a float as an f64), and C converts values
+// between widths but not the pointers to them.
+refuse_literal_lends = (
+    c       :: Checker,
+    k       : Cand,
+    params  : Vec<TyId>,
+    actuals : Vec<Actual>
+) Res<(), AllocError> {
+    c.tree.decl_at(k.id).match({
+        None       => Ok(()),
+        Ok(callee) => callee.kind.match({
+            Function(f) => c.literal_lends(f, params, actuals),
+            _           => Ok(()),
+        }),
+    })
+}
+
+literal_lends = (
+    c       :: Checker,
+    f       : Function,
+    params  : Vec<TyId>,
+    actuals : Vec<Actual>
+) Res<(), AllocError> {
+    actuals.loop((h, i, a) {
+        lent   = f.params.get(i).match({ Ok(p) => p.mutable, None => false });
+        stored = c.prim_name(a.ty).eq("int").match({ true => "i64", false => "f64" });
+        wanted = params.get(i).match({ Ok(t) => c.prim_name(t), None => stored });
+        (lent && c.is_literal_ty(a.ty) && !wanted.eq(stored)).then(() {
+            c.refuse(
+                a.span,
+                SemaFault.LiteralLent(NameFault(name: f.params.get(i).match({
+                    Ok(p) => p.name.text,
+                    None  => "",
+                })))
+            ).try();
+        });
     });
     Ok(());
 }

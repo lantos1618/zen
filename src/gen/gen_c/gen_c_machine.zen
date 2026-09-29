@@ -1,15 +1,19 @@
 // C floor and lowering for machine-level primitives: the u128 type, wide
-// multiplication and explicit truncation. Emitted only when a reachable program spells one of them.
-// The C backend targets 64-bit GCC/Clang, which provide unsigned __int128;
-// another toolchain is refused with #error rather than silently narrowed.
+// multiplication, explicit truncation and std.simd vectors. The floor is
+// emitted only when a reachable program spells one of them.
+// The C backend targets 64-bit GCC/Clang, which provide unsigned __int128
+// and vector extensions; another toolchain is refused with #error rather
+// than silently narrowed or scalarized.
 
-Call, ExprId = std.ast
+Call, ExprId, ArrayLit = std.ast
 AllocError = std.mem
 Vec = std.collections
 String, str = std.text
 Range = std.core
-Primitive = sema.sema_prim
+Primitive, unsigned_width = sema.sema_prim
 Ctx = sema.sema_check
+vector_lanes, vector_lane = sema.sema_ty
+const_int = sema.sema_const
 Emit = gen.gen_emit
 CBackend = gen.gen_c.gen_c_state
 comment = gen.gen_c.gen_c_runtime
@@ -17,6 +21,8 @@ c_prim = gen.gen_c.gen_c_type
 expr = gen.gen_c.gen_c_expr
 temp = gen.gen_c.gen_c_flow
 recv_arg, arg_value = gen.gen_c.gen_c_arg
+write_position = gen.gen_c.gen_c_op
+ELEMS = gen.gen_c.gen_c_array
 
 emit_machine* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     be.uses_machine().match({
@@ -26,7 +32,7 @@ emit_machine* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
 }
 
 write_machine = (out :: Emit) Res<(), AllocError> {
-    comment(out, "machine floor: wide integers").try();
+    comment(out, "machine floor: wide integers and vectors").try();
     out.say("#if defined(__SIZEOF_INT128__)").try();
     out.say("__extension__ typedef unsigned __int128 zg_u128;").try();
     out.say("#else").try();
@@ -35,12 +41,61 @@ write_machine = (out :: Emit) Res<(), AllocError> {
     ).try();
     out.say("#endif").try();
     out.say("#define ZG_U128_MAX (~(zg_u128)0)").try();
+    out.say("#if !defined(__GNUC__)").try();
+    out.say(
+        "#error \"Zen vectors require GCC or Clang vector extensions\""
+    ).try();
+    out.say("#endif").try();
+    // Vector values may live in arena storage, whose alignment is 16.
+    out.say("typedef uint8_t zg_u8x16 __attribute__((vector_size(16)));").try();
+    out.say(
+        "typedef uint8_t zg_u8x32 __attribute__((vector_size(32), aligned(16)));"
+    ).try();
+    out.say(
+        "typedef uint32_t zg_u32x4 __attribute__((vector_size(16)));"
+    ).try();
+    out.say(
+        "typedef uint32_t zg_u32x8 __attribute__((vector_size(32), aligned(16)));"
+    ).try();
+    out.say(
+        "typedef uint64_t zg_u64x2 __attribute__((vector_size(16)));"
+    ).try();
+    out.say(
+        "typedef uint64_t zg_u64x4 __attribute__((vector_size(32), aligned(16)));"
+    ).try();
+    // Clang and GCC 12+ take constant indices; older GCC takes a mask vector.
+    out.say("#if defined(__clang__) || __GNUC__ >= 12").try();
+    out.say(
+        "#define ZG_SHUFFLE(V, a, b, ...) __builtin_shufflevector(a, b, __VA_ARGS__)"
+    ).try();
+    out.say("#else").try();
+    out.say(
+        "#define ZG_SHUFFLE(V, a, b, ...) __builtin_shuffle(a, b, (V){__VA_ARGS__})"
+    ).try();
+    out.say("#endif").try();
     out.line().try();
     Ok(())
 }
 
+// One lowered call: the site's arguments in parameter order, receiver first.
+PrimSite = {
+    c: Call,
+    recv: Res<ExprId>,
+    p: Primitive,
+    ctx: Ctx,
+
+    value_at = (self: @Self, i: usize) Res<ExprId> {
+        shift: usize = self.recv.match({ Ok(_) => 1, None => 0 });
+        (i < shift).match({
+            true  => recv_arg(self.c, self.recv),
+            false => arg_value(self.c, i - shift),
+        })
+    }
+}
+
 // Evaluate every operand once, receiver first, into a temporary of its
-// declared type; then render the operation over those names.
+// declared type; then render the operation over those names. A shuffle
+// pattern written as literal indices is read at compile time instead.
 lower_primitive* = (
     be   :: CBackend,
     c    : Call,
@@ -50,37 +105,322 @@ lower_primitive* = (
     out  :: String
 ) Res<(), AllocError> {
     be.need_machine();
-    held ::= be.alloc.Vec<String>();
-    shift: usize = recv.match({ Ok(_) => 1, None => 0 });
+    site = PrimSite(c: c, recv: recv, p: p, ctx: ctx);
+    held    ::= be.alloc.Vec<String>();
+    literal ::= false;
     Range(0, p.params.len).loop((i) {
         ty    = p.params.get(i).ok_or(AllocError.OutOfMemory).try();
-        value = (i < shift).match({
-            true  => recv_arg(c, recv),
-            false => arg_value(c, i - shift),
-        }).ok_or(AllocError.OutOfMemory).try();
+        value = site.value_at(i).ok_or(AllocError.OutOfMemory).try();
         code ::= be.alloc.String().try();
-        be.expr(value, ctx, ty, code).try();
-        name = be.temp(ty, "prim").try();
-        be.set_line(name.view(), code.view()).try();
-        held.add(name).try();
+        fixed   = be.literal_pattern(site, i, value, code).try();
+        literal = literal || fixed;
+        fixed.match({
+            true  => held.add(code).try(),
+            false => {
+                be.expr(value, site.ctx, ty, code).try();
+                name = be.temp(ty, "prim").try();
+                be.set_line(name.view(), code.view()).try();
+                held.add(name).try();
+            },
+        });
     });
-    be.render_primitive(p, held, out)
+    be.render_primitive(site, held, literal, out)
+}
+
+// The last argument of a shuffle, when every index is an integer literal,
+// becomes the comma-separated constant list; indices are reduced modulo the
+// selectable lane count exactly as the dynamic path reduces them.
+literal_pattern = (
+    be    :: CBackend,
+    site  : PrimSite,
+    i     : usize,
+    value : ExprId,
+    code  :: String
+) Res<bool, AllocError> {
+    shuffling = site.p.name.eq("shuffle") || site.p.name.eq("shuffle2");
+    (shuffling && i + 1 == site.p.params.len).match({
+        false => Ok(false),
+        true  => be.tree.expr_at(value).kind.match({
+            Array(a) => be.constant_indices(a, site.p, code),
+            _        => Ok(false),
+        }),
+    })
+}
+
+constant_indices = (be :: CBackend, a: ArrayLit, p: Primitive, code :: String)
+                   Res<bool, AllocError> {
+    lanes = vector_lanes(be.check.prim_name(p.result));
+    mask  = p.name.eq(
+        "shuffle2"
+    ).match({ true => 2 * lanes - 1, false => lanes - 1 });
+    ok ::= a.elems.len == lanes;
+    a.elems.loop((e) {
+        be.check.const_int(e).match({
+            None    => { ok = false; },
+            Ok(raw) => (raw >= 0).match({
+                false => { ok = false; },
+                true  => {
+                    (code.len() > 0).then(() { code.add(", ").try() });
+                    code.write_usize(raw.to_usize().match({ Ok(n) => n, None => 0 }).bit_and(
+                        mask
+                    )).try();
+                },
+            }),
+        });
+    });
+    Ok(ok)
 }
 
 render_primitive = (
-    be   :: CBackend,
-    p    : Primitive,
-    held : Vec<String>,
-    out  :: String
+    be      :: CBackend,
+    site    : PrimSite,
+    held    : Vec<String>,
+    literal : bool,
+    out     :: String
 ) Res<(), AllocError> {
+    p = site.p;
     a = operand(held, 0);
     b = operand(held, 1);
     p.name.eq("mul_wide").match({
         true  => out.fmt("((zg_u128){} * (zg_u128){})", a, b),
-        false => out.fmt("(({}){})", c_prim(be.check.prim_name(p.result)), a),
+        false => p.name.starts_with("truncate_").match({
+            true  => out.fmt(
+                "(({}){})",
+                c_prim(be.check.prim_name(p.result)),
+                a
+            ),
+            false => be.render_vector(site, held, literal, out),
+        }),
     })
 }
 
 operand = (held: Vec<String>, i: usize) str {
     held.get(i).match({ Ok(s) => s.view(), None => "" })
+}
+
+render_vector = (
+    be      :: CBackend,
+    site    : PrimSite,
+    held    : Vec<String>,
+    literal : bool,
+    out     :: String
+) Res<(), AllocError> {
+    p = site.p;
+    v = be.check.prim_name(p.result);
+    a = operand(held, 0);
+    b = operand(held, 1);
+    p.name.match({
+        "add_wrap"     => out.fmt("({} + {})", a, b),
+        "sub_wrap"     => out.fmt("({} - {})", a, b),
+        "mul_wrap"     => out.fmt("({} * {})", a, b),
+        "bit_xor"      => out.fmt("({} ^ {})", a, b),
+        "bit_and"      => out.fmt("({} & {})", a, b),
+        "bit_or"       => out.fmt("({} | {})", a, b),
+        "shift_left"   => be.vector_shift(v, a, b, "<<", out),
+        "shift_right"  => be.vector_shift(v, a, b, ">>", out),
+        "rotate_left"  => be.vector_rotate(v, a, b, "<<", ">>", out),
+        "rotate_right" => be.vector_rotate(v, a, b, ">>", "<<", out),
+        "store"        => out.fmt(
+            "((void)memcpy({} + {}, &{}, sizeof {}))",
+            b,
+            operand(held, 2),
+            a,
+            a
+        ),
+        "lane"         => be.vector_lane_read(site, a, b, out),
+        "with_lane"    => be.vector_lane_write(site, held, out),
+        "shuffle"      => be.vector_shuffle(v, a, a, b, literal, false, out),
+        "shuffle2"     => be.vector_shuffle(
+            v,
+            a,
+            b,
+            operand(held, 2),
+            literal,
+            true,
+            out
+        ),
+        _              => be.vector_constructor(site, held, out),
+    })
+}
+
+// A count at or beyond the lane width yields zero; C's vector shift by such
+// a count is undefined, so the guard selects the zero vector instead.
+vector_shift = (be :: CBackend, v: str, a: str, n: str, op: str, out :: String)
+               Res<(), AllocError> {
+    lane  = vector_lane(v);
+    width = unsigned_width(lane);
+    out.fmt(
+        "({} >= {}u ? (zg_{}){0} : ({} {} ({}){}))",
+        n,
+        width,
+        v,
+        a,
+        op,
+        c_prim(lane),
+        n
+    )
+}
+
+vector_rotate = (
+    be   :: CBackend,
+    v    : str,
+    a    : str,
+    n    : str,
+    near : str,
+    far  : str,
+    out  :: String
+) Res<(), AllocError> {
+    lane  = vector_lane(v);
+    width = unsigned_width(lane);
+    ct    = c_prim(lane);
+    out.fmt(
+        "(({} {} ({})({} & {}u)) | ({} {} ({})(({}u - ({} & {}u)) & {}u)))",
+        a,
+        near,
+        ct,
+        n,
+        width - 1,
+        a,
+        far,
+        ct,
+        width,
+        n,
+        width - 1,
+        width - 1
+    )
+}
+
+// Lane access traps at the index argument, like fixed-array indexing.
+lane_index = (
+    be    :: CBackend,
+    site  : PrimSite,
+    index : str,
+    lanes : usize,
+    out   :: String
+) Res<(), AllocError> {
+    at   = site.value_at(1).ok_or(AllocError.OutOfMemory).try();
+    span = be.tree.expr_at(at).span;
+    pos ::= be.alloc.String().try();
+    be.write_position(span.file, span, pos).try();
+    out.fmt("zg_idx_u({}, {}, {})", index, lanes, pos.view())
+}
+
+vector_lane_read = (
+    be    :: CBackend,
+    site  : PrimSite,
+    a     : str,
+    index : str,
+    out   :: String
+) Res<(), AllocError> {
+    lanes = vector_lanes(be.check.prim_name(site.p.params.get(0).match({
+        Ok(t) => t,
+        None  => site.p.result,
+    })));
+    idx ::= be.alloc.String().try();
+    be.lane_index(site, index, lanes, idx).try();
+    out.fmt("{}[{}]", a, idx.view())
+}
+
+vector_lane_write = (
+    be   :: CBackend,
+    site : PrimSite,
+    held : Vec<String>,
+    out  :: String
+) Res<(), AllocError> {
+    v     = be.check.prim_name(site.p.result);
+    lanes = vector_lanes(v);
+    copy  = be.temp(site.p.result, "lanes").try();
+    be.set_line(copy.view(), operand(held, 0)).try();
+    idx ::= be.alloc.String().try();
+    be.lane_index(site, operand(held, 1), lanes, idx).try();
+    be.fmt("{}[{}] = {};\n", copy.view(), idx.view(), operand(held, 2)).try();
+    out.add(copy.view())
+}
+
+// `pattern` is either the literal index list or a held fixed array.
+vector_shuffle = (
+    be      :: CBackend,
+    v       : str,
+    a       : str,
+    b       : str,
+    pattern : str,
+    literal : bool,
+    two     : bool,
+    out     :: String
+) Res<(), AllocError> {
+    literal.match({
+        true  => out.fmt("ZG_SHUFFLE(zg_{}, {}, {}, {})", v, a, b, pattern),
+        false => {
+            lanes = vector_lanes(v);
+            out.fmt("((zg_{}){", v).try();
+            Range(0, lanes).loop((i) {
+                (i > 0).then(() { out.add(", ").try() });
+                two.match({
+                    true  => out.fmt(
+                        "(({}.{}[{}] & {}u) < {}u ? {}[{}.{}[{}] & {}u] : {}[{}.{}[{}] & {}u])",
+                        pattern,
+                        ELEMS,
+                        i,
+                        2 * lanes - 1,
+                        lanes,
+                        a,
+                        pattern,
+                        ELEMS,
+                        i,
+                        lanes - 1,
+                        b,
+                        pattern,
+                        ELEMS,
+                        i,
+                        lanes - 1
+                    ),
+                    false => out.fmt(
+                        "{}[{}.{}[{}] & {}u]",
+                        a,
+                        pattern,
+                        ELEMS,
+                        i,
+                        lanes - 1
+                    ),
+                }).try();
+            });
+            out.add("})")
+        },
+    })
+}
+
+// splat_V, lanes_V and load_V construct the result vector.
+vector_constructor = (
+    be   :: CBackend,
+    site : PrimSite,
+    held : Vec<String>,
+    out  :: String
+) Res<(), AllocError> {
+    v     = be.check.prim_name(site.p.result);
+    lanes = vector_lanes(v);
+    site.p.name.starts_with("load_").match({
+        true  => {
+            loaded = be.temp(site.p.result, "load").try();
+            be.fmt(
+                "memcpy(&{}, {} + {}, sizeof {});\n",
+                loaded.view(),
+                operand(held, 0),
+                operand(held, 1),
+                loaded.view()
+            ).try();
+            out.add(loaded.view())
+        },
+        false => {
+            splat = site.p.name.starts_with("splat_");
+            out.fmt("((zg_{}){", v).try();
+            Range(0, lanes).loop((i) {
+                (i > 0).then(() { out.add(", ").try() });
+                out.add(operand(
+                    held,
+                    splat.match({ true => 0, false => i })
+                )).try();
+            });
+            out.add("})")
+        },
+    })
 }

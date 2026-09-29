@@ -1853,3 +1853,33 @@ fail, unlike the checked `to_` conversions. Validation is by declaration
 identity exactly as for conversions (`sema_prim`); a bodyless `mul_wide` or
 `truncate_*` elsewhere is rejected. JS and assembly refuse these types
 through the scalar lowering's existing type check.
+
+## SIMD vectors
+
+`u8x16`, `u8x32`, `u32x4`, `u32x8`, `u64x2` and `u64x4` are primitive
+vectors of unsigned lanes. They have no operators, no `Eq` and no printer;
+`std.simd` supplies every operation as a validated bodyless declaration:
+
+| Operation | Meaning |
+| --- | --- |
+| `splat_V(value: E)`, `lanes_V(l0.., lN-1: E)` | construct (lanes_ for N <= 8) |
+| `load_V(bytes: Ptr<u8>, offset: usize)` | unaligned native-order load |
+| `v.store(bytes: Ptr<u8>, offset: usize)` | unaligned native-order store |
+| `v.lane(i)`, `v.with_lane(i, x)` | read / replace one lane; traps at i >= N |
+| `add_wrap`, `sub_wrap`, `mul_wrap`, `bit_xor`, `bit_and`, `bit_or` | lane-wise, wrapping |
+| `shift_left`, `shift_right(count: usize)` | same count per lane; zero at >= lane width |
+| `rotate_left`, `rotate_right(count: usize)` | count modulo lane width |
+| `v.shuffle(pattern: [usize, N])` | lane i = v[pattern[i] mod N] |
+| `v.shuffle2(w, pattern: [usize, N])` | lane i = (v ++ w)[pattern[i] mod 2N] |
+
+Every supported target is little-endian, so a load of `u32x4` reads four
+little-endian words. A shuffle whose pattern is an array literal of integer
+literals lowers to one `__builtin_shufflevector` (GCC 12+/Clang; older GCC
+uses `__builtin_shuffle`); any other pattern is evaluated once and selects
+lane by lane with the same modulo rule, so both paths agree. The C backend
+emits GNU vector-extension typedefs, capped at 16-byte alignment because
+arena storage guarantees no more; 32-byte vectors compile to two 16-byte
+registers unless their function is compiled for a wider target. Lane
+arithmetic never traps: vector code states wrapping by name. Vector
+operations evaluate operands once in source order. JS and assembly refuse
+vector types through the scalar lowering's type check.

@@ -23,7 +23,39 @@ is_prim* = (name: str) bool {
     fixed_integer(name)
         || c_integer(name)
         || is_float(name)
+        || is_vector(name)
         || name.is_in(["c_char", "bool", "str", "()"])
+}
+
+// Fixed-width SIMD vectors of unsigned lanes (std.simd). They are not
+// integers: no operator applies to them, only the std.simd primitives.
+is_vector* = (name: str) bool {
+    name.is_in(["u8x16", "u8x32", "u32x4", "u32x8", "u64x2", "u64x4"])
+}
+
+// The lane type and count of a vector primitive; "" and 0 otherwise.
+vector_lane* = (name: str) str {
+    name.match({
+        "u8x16" => "u8",
+        "u8x32" => "u8",
+        "u32x4" => "u32",
+        "u32x8" => "u32",
+        "u64x2" => "u64",
+        "u64x4" => "u64",
+        _       => "",
+    })
+}
+
+vector_lanes* = (name: str) usize {
+    name.match({
+        "u8x16" => 16,
+        "u8x32" => 32,
+        "u32x4" => 4,
+        "u32x8" => 8,
+        "u64x2" => 2,
+        "u64x4" => 4,
+        _       => 0,
+    })
 }
 
 is_integer* = (name: str) bool {

@@ -1,4 +1,5 @@
-// Machine primitives: wide multiplication and explicit truncation.
+// Machine primitives: wide multiplication, explicit truncation and the
+// std.simd vector operations.
 // Like numeric conversions, only validated bodyless declarations in the
 // owning standard modules acquire an operation. Backends consume the
 // recorded Primitive by declaration identity, never by a callee's spelling.
@@ -7,7 +8,7 @@ AllocError = std.mem
 Vec = std.collections
 str, String = std.text
 Checker, Ctx = sema.sema_check
-TyId = sema.sema_ty
+TyId, is_vector, vector_lane, vector_lanes = sema.sema_ty
 Def = sema.sema_def
 param_type, ret_type = sema.sema_denote
 SemaFault, NameFault = sema.sema_diag
@@ -17,7 +18,7 @@ Primitive* = { name*: str, params*: Vec<TyId>, result*: TyId }
 
 // Modules whose bodyless declarations must all be supported primitives.
 primitive_module* = (module: str) bool {
-    module.is_in(["std.core.num"])
+    module.is_in(["std.core.num", "std.simd"])
 }
 
 // Names no other module may declare without a body: a local declaration
@@ -49,8 +50,11 @@ primitive_declaration = (c :: Checker, d: Def, f: Function, module: str)
     });
     result = c.ret_type(f, ctx).try();
     shown ::= c.types.name_of(result).try();
-    (fixed && primitive_module(module)
-        && primitive_shape(f.name.text, names, shown.view())).match({
+    shape = module.eq("std.simd").match({
+        true  => vector_shape(f.name.text, names, shown.view()),
+        false => primitive_shape(f.name.text, names, shown.view()),
+    });
+    (fixed && primitive_module(module) && shape).match({
         false => c.report(
             d.span.file,
             d.span,
@@ -96,4 +100,79 @@ narrows = (source: str, target: str) bool {
     target.is_in(["u8", "u16", "u32", "u64"])
         && unsigned_width(target) > 0
         && unsigned_width(target) < unsigned_width(source)
+}
+
+// std.simd: V is a vector, E its lane type, N its lane count. Constructors
+// name their vector (`splat_u32x4`); operations overload on the receiver.
+vector_shape = (name: str, ps: Vec<String>, r: str) bool {
+    v = type_at(ps, 0);
+    e = vector_lane(v);
+    n = vector_lanes(v);
+    name.match({
+        "store"     => is_vector(v) && ps.len == 3
+            && type_at(ps, 1).eq("Ptr<u8>") && type_at(ps, 2).eq("usize")
+            && r.eq("()"),
+        "lane"      => is_vector(v) && ps.len == 2
+            && type_at(ps, 1).eq("usize") && r.eq(e),
+        "with_lane" => is_vector(v) && ps.len == 3
+            && type_at(ps, 1).eq("usize") && type_at(ps, 2).eq(e) && r.eq(v),
+        "shuffle"   => is_vector(v) && ps.len == 2
+            && is_pattern(type_at(ps, 1), n) && r.eq(v),
+        "shuffle2"  => is_vector(v) && ps.len == 3 && type_at(ps, 1).eq(v)
+            && is_pattern(type_at(ps, 2), n) && r.eq(v),
+        _           => lane_shape(name, ps, r)
+            || constructor_shape(name, ps, r),
+    })
+}
+
+// Lane-wise arithmetic wraps; shifts and rotations take one usize count.
+lane_shape = (name: str, ps: Vec<String>, r: str) bool {
+    v       = type_at(ps, 0);
+    binary  = name.is_in([
+        "add_wrap", "sub_wrap", "mul_wrap", "bit_xor", "bit_and", "bit_or"
+    ]);
+    counted = name.is_in([
+        "shift_left", "shift_right", "rotate_left", "rotate_right"
+    ]);
+    second  = binary.match({ true => v, false => "usize" });
+    (binary || counted) && is_vector(v) && ps.len == 2
+        && type_at(ps, 1).eq(second) && r.eq(v)
+}
+
+constructor_shape = (name: str, ps: Vec<String>, r: str) bool {
+    e = vector_lane(r);
+    n = vector_lanes(r);
+    is_vector(r) && constructor_of(name, r, ps, e, n)
+}
+
+constructor_of = (name: str, r: str, ps: Vec<String>, e: str, n: usize) bool {
+    name.ends_with(r) && name_head(name, r).match({
+        "splat_" => ps.len == 1 && type_at(ps, 0).eq(e),
+        "load_"  => ps.len == 2 && type_at(ps, 0).eq("Ptr<u8>")
+            && type_at(ps, 1).eq("usize"),
+        "lanes_" => ps.len == n && all_lanes(ps, e),
+        _        => false,
+    })
+}
+
+name_head = (name: str, r: str) str {
+    (name.len > r.len).match({
+        true  => name.slice(0, name.len - r.len),
+        false => "",
+    })
+}
+
+all_lanes = (ps: Vec<String>, e: str) bool {
+    ok ::= true;
+    ps.loop((p) { ok = ok && p.view().eq(e); });
+    ok
+}
+
+// A shuffle pattern is a fixed array of N usize lane indices.
+is_pattern = (shown: str, n: usize) bool {
+    n > 0 && shown.starts_with("[usize, ") && shown.ends_with("]")
+        && shown.slice(8, shown.len - 1).parse_usize().match({
+            Ok(count) => count == n,
+            None      => false,
+        })
 }

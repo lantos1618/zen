@@ -17,4 +17,19 @@ u128 shift: true
 u16 rotate: true
 usize xor: true
 i64 or: false
+splat: true
+splat lane: false
+splat name: false
+lanes: true
+lanes count: false
+lane: true
+with_lane: true
+vector xor: true
+vector mixed: false
+vector rotate: true
+shuffle: true
+shuffle count: false
+shuffle2: true
+simd owner: false
+scalar in simd: false
 foreign: true

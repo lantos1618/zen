@@ -205,7 +205,9 @@ integer_bit_signature = (
     d : Def,
     f : Function
 ) Res<(), AllocError> {
-    integer_bit_name(f.name.text).match({
+    scalar = integer_bit_name(f.name.text)
+        && !c.world.module_name(d.id).eq("std.simd");
+    scalar.match({
         false => c.primitive_signature(d, f),
         true  => {
             (c.world.module_name(d.id).eq("std.core.num") && f.exported

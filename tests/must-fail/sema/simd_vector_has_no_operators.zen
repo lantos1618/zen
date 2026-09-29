@@ -1,0 +1,5 @@
+splat_u32x4 = std.simd
+main = () {
+    a = splat_u32x4(1);
+    b = a + a;
+}

@@ -155,6 +155,87 @@ main = (env: Env) Res<(), AllocError> {
         true
     ).try();
     a.row("i64 or", "bit_or* = (self: i64, other: i64) i64\n", num, true).try();
+    simd = "std.simd";
+    a.row("splat", "splat_u32x4* = (value: u32) u32x4\n", simd, false).try();
+    a.row(
+        "splat lane",
+        "splat_u32x4* = (value: u64) u32x4\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "splat name",
+        "splat_u32x8* = (value: u32) u32x4\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "lanes",
+        "lanes_u64x2* = (a: u64, b: u64) u64x2\n",
+        simd,
+        false
+    ).try();
+    a.row("lanes count", "lanes_u64x2* = (a: u64) u64x2\n", simd, false).try();
+    a.row(
+        "lane",
+        "lane* = (self: u64x4, index: usize) u64\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "with_lane",
+        "with_lane* = (self: u8x16, index: usize, value: u8) u8x16\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "vector xor",
+        "bit_xor* = (self: u32x4, other: u32x4) u32x4\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "vector mixed",
+        "add_wrap* = (self: u32x4, other: u32x8) u32x4\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "vector rotate",
+        "rotate_left* = (self: u32x8, count: usize) u32x8\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "shuffle",
+        "shuffle* = (self: u32x4, pattern: [usize, 4]) u32x4\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "shuffle count",
+        "shuffle* = (self: u32x4, pattern: [usize, 3]) u32x4\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "shuffle2",
+        "shuffle2* = (self: u64x2, other: u64x2, pattern: [usize, 2]) u64x2\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "simd owner",
+        "add_wrap* = (self: u32x4, other: u32x4) u32x4\n",
+        "pretend.simd",
+        false
+    ).try();
+    a.row(
+        "scalar in simd",
+        "bit_xor* = (self: u32, other: u32) u32\n",
+        simd,
+        false
+    ).try();
     println("foreign: {}", foreign_keeps_binding(a).try());
     Ok(())
 }

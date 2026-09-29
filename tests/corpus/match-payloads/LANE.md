@@ -14,6 +14,8 @@ with" column is the one-line compiler change that would fail the test.
 - match_value_is_the_payload_binding — deliver each arm's value from the previous arm's slot or the scrutinee temp instead of that arm's own expression: numbers cross between the four matches (40 where 41 belongs); the None case catches it with no binding in scope at all.
 - struct_payload_fields_read_through_the_binder — spell the union member or field offset from the second enum's table (both enums declare `At`; only one is matched per value): `p.line`/`p.col` read Mark.At's u64 slot — swapped or garbage, still valid C.
 - arm_binding_scrutinee_of_a_nested_match — leave the inner match's binder (or the outer arm's binding feeding it) on the checker scope stack after the arm closes: inner values misresolve or trailing `outer 99` prints a branch-local value. Two variants on Wrap are load-bearing: with one variant the declaration stops parsing as a nominal enum.
+- err_case_on_a_union_tests_only_that_case — make `narrows` ask only `is_variant` again (a bare case name under `Err` on `Kind | Fail` adds no condition): the first `Err(Case)` arm swallows every error, every line prints "authentication" and `expect_protocol` accepts any failure.
+- err_payload_case_on_a_union_reads_the_case — resolve `Err(Protocol(c))` to its member `Kind` instead of the case (drop `names_member_case`): `Err(Protocol(_))` catches `Io`, and binding `c` to the whole `Kind` is rejected by cc.
 
 ## Suspected compiler bug (NOT encoded in any test)
 

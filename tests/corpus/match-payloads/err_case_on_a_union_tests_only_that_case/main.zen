@@ -1,0 +1,77 @@
+// A BARE CASE NAME UNDER `Err` ON A UNION TESTS ONLY THAT CASE. On
+// `Res<T, Kind | Fail>`, `Err(Authentication)` names a case of the member
+// `Kind`; it is not a binder. Codegen once added no condition beyond the
+// `Err` tag for it, so the first `Err(Case)` arm swallowed EVERY error —
+// a check like `result.match({Err(Authentication) => Ok(()), _ => bad})`
+// passed for any failure at all, silently. Every error here is routed to
+// a different arm, and the matching arm is never the first one, so an arm
+// that tests only the Err tag prints "authentication" on every line.
+//
+// The same pins are repeated through a declared alias (`Both`), whose
+// members are read off its declaration rather than the inline spelling,
+// and through member names (`Err(Fail)`), which test the member tag.
+
+Kind = Io | Protocol | Authentication
+Fail = Mismatch | Accepted
+Both = Kind | Fail
+
+pick = (n: i32) Res<i32, Kind | Fail> {
+    n.match({
+        0 => Err(Kind.Protocol),
+        1 => Err(Kind.Authentication),
+        2 => Err(Fail.Accepted),
+        3 => Err(Kind.Io),
+        _ => Ok(n),
+    });
+}
+
+pick_both = (n: i32) Res<i32, Both> {
+    n.match({
+        0 => Err(Kind.Protocol),
+        1 => Err(Kind.Authentication),
+        2 => Err(Fail.Accepted),
+        3 => Err(Kind.Io),
+        _ => Ok(n),
+    });
+}
+
+inline = (r: Res<i32, Kind | Fail>) str {
+    r.match({
+        Err(Authentication) => "authentication",
+        Err(Protocol)       => "protocol",
+        Err(Accepted)       => "accepted",
+        Err(_)              => "other error",
+        Ok(_)               => "ok",
+    });
+}
+
+declared = (r: Res<i32, Both>) str {
+    r.match({
+        Err(Authentication) => "authentication",
+        Err(Fail)           => "fail member",
+        Err(Kind)           => "kind member",
+        Ok(_)               => "ok",
+    });
+}
+
+// The shape the vacuous check took in practice: one case accepted,
+// everything else a failure.
+expect_protocol = (r: Res<i32, Kind | Fail>) Res<(), Fail> {
+    r.match({ Err(Protocol) => Ok(()), _ => Err(Fail.Accepted) });
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", inline(pick(0)));
+    println("{}", inline(pick(1)));
+    println("{}", inline(pick(2)));
+    println("{}", inline(pick(3)));
+    println("{}", inline(pick(4)));
+    println("{}", declared(pick_both(0)));
+    println("{}", declared(pick_both(1)));
+    println("{}", declared(pick_both(2)));
+    println("{}", declared(pick_both(4)));
+    expect_protocol(pick(0)).match({ Ok(_) => println("protocol accepted"), Err(_) => println("protocol refused") });
+    expect_protocol(pick(1)).match({ Ok(_) => println("authentication accepted"), Err(_) => println("authentication refused") });
+    expect_protocol(pick(4)).match({ Ok(_) => println("ok accepted"), Err(_) => println("ok refused") });
+    Ok(0);
+}

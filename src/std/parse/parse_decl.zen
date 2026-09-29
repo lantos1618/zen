@@ -186,10 +186,14 @@ decl_value = (
     });
 }
 
-// A header binding is a namespace of explicitly written native signatures.
+// A header binding is a namespace of explicitly written native signatures:
+// `c.bind("header.h", {..})`, `c.record(..)`, or `js.bind("document", {..})`
+// for an object of the JavaScript host.
 native_binding_ahead = (p: Parser) bool {
-    p.at_text("c") && p.peek_n(1).kind == TokenKind.Dot
-        && (p.text(p.peek_n(2)).eq("bind") || p.text(p.peek_n(2)).eq("record")) && p.peek_n(3).kind == TokenKind.ParenOpen
+    c_form = p.at_text("c")
+        && (p.text(p.peek_n(2)).eq("bind") || p.text(p.peek_n(2)).eq("record"));
+    js_form = p.at_text("js") && p.text(p.peek_n(2)).eq("bind");
+    (c_form || js_form) && p.peek_n(1).kind == TokenKind.Dot && p.peek_n(3).kind == TokenKind.ParenOpen
 }
 
 native_text = (p :: Parser) Res<str, AllocError> {
@@ -207,6 +211,7 @@ native_text = (p :: Parser) Res<str, AllocError> {
 native_binding = (p :: Parser, m: Mark, head: ImportName, tparams: Vec<TParam>)
                  Res<Decl, AllocError> {
     native_record = p.text(p.peek_n(2)).eq("record");
+    native_host = p.at_text("js");
     p.bump().try(); p.bump().try(); p.bump().try();
     open = p.here_span();
     p.bump().try();
@@ -252,7 +257,8 @@ native_binding = (p :: Parser, m: Mark, head: ImportName, tparams: Vec<TParam>)
         });
         valid     = converted.kind.match({
             Function(f) => !native_record && f.body.match({ None => f.tparams.len == 0, Ok(_) => false }),
-            Field(f)    => native_record.match({
+            // A host object has members, not header constants.
+            Field(f)    => !native_host && native_record.match({
                 true  => f.type.match({None => false, Ok(_) => true}) && f.value.match({None => true, Ok(_) => false}),
                 false => !f.mutable && p.native_integer(
                     f.type
@@ -284,6 +290,7 @@ native_binding = (p :: Parser, m: Mark, head: ImportName, tparams: Vec<TParam>)
         native_header: Ok(
             header
         ), native_symbol: symbol, native_record: native_record,
+        native_host: native_host,
     )), m)
 }
 

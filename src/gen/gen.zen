@@ -14,7 +14,7 @@ String, str = std.text
 LowerError = gen.gen_lower
 lower_native = gen.gen_lower_core
 Program, float = gen.gen_ir
-emit_js = gen.gen_js
+emit_js, emit_app, emit_runtime, PAGE = gen.gen_js
 X86_64Linux = gen.gen_asm_x86
 Arm64, Arm64Os = gen.gen_asm_arm64
 verify_native, message = gen.gen_verify
@@ -44,6 +44,9 @@ Generation* = {
     symbols*: bool,
     // The native machine for assembly; None when no target was resolved.
     target*: Res<Target>,
+    // JavaScript for a page (`--target js-browser`): publish index.html,
+    // runtime.js and app.js instead of one script.
+    browser* :: bool = false,
 
     // Lowering diagnostics precede publication. The returned count includes
     // backend faults and publication failures; allocation errors stay typed.
@@ -143,11 +146,27 @@ Generation* = {
                 },
             }),
             Ok(_)      => backend.match({
-                Js  => publish(Artifact(
-                    kind: ArtifactKind.Source,
-                    name: "zen.js",
-                    text: emit_js(self.alloc, program).try().view()
-                )),
+                Js  => self.browser.match({
+                    false => publish(Artifact(
+                        kind: ArtifactKind.Source,
+                        name: "zen.js",
+                        text: emit_js(self.alloc, program).try().view()
+                    )),
+                    true  => {
+                        page = publish(Artifact(kind: ArtifactKind.Source, name: "index.html", text: PAGE)).try();
+                        runtime = publish(Artifact(
+                            kind: ArtifactKind.Source,
+                            name: "runtime.js",
+                            text: emit_runtime(self.alloc).try().view()
+                        )).try();
+                        app = publish(Artifact(
+                            kind: ArtifactKind.Source,
+                            name: "app.js",
+                            text: emit_app(self.alloc, program).try().view()
+                        )).try();
+                        Ok(page + runtime + app)
+                    },
+                }),
                 Asm => refused_by_asm(program).match({
                     Ok(what) => {
                         report.fmt("error: unsupported by the asm backend: {}\n", what).try();
@@ -278,6 +297,15 @@ refused_by_asm = (program: Program) Res<str> {
     program.functions.loop((function) {
         function.slots.loop((ty) {
             float(ty).then(() { found = Ok("floating-point values"); });
+        });
+        function.blocks.loop((block) {
+            block.code.loop((instruction) {
+                instruction.match({
+                    Host(_) => { found = Ok("JavaScript host calls (js.bind)"); },
+                    Wait(_) => { found = Ok("JavaScript event waits (std.js.wait)"); },
+                    _       => (),
+                });
+            });
         });
     });
     found

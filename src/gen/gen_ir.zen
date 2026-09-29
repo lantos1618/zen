@@ -103,6 +103,27 @@ Start* = { out*: usize, value*: StartValue }
 // returns such a region by its pointer.
 Pages* = { out*: usize, bytes*: usize }
 
+// How a value crosses into the JavaScript host (`js.bind`, see std.js):
+// `Number` an integer or f64 word, `Flag` a Bool, `Text` a `str` aggregate
+// (pointer and length, decoded to a JavaScript string at the boundary),
+// `Handle` a U32 index into the host's object table, `Handler` a U32 event
+// handler id, `Nothing` no value (results only).
+Marshal* = Number | Flag | Text | Handle | Handler | Nothing
+
+// A call of a `js.bind` member. `object` is the binding's object path; with
+// `receiver` the first argument is the object and the path after its first
+// segment is followed from it. A `member` spelled `set_x`/`get_x` assigns or
+// reads property `x`; any other member is a method call.
+HostCall* = {
+    out*: usize,
+    object*: str,
+    member*: str,
+    receiver*: bool,
+    args*: Vec<usize>,
+    marshal*: Vec<Marshal>,
+    result*: Marshal,
+}
+
 Instruction* = Constant(Const)
     | Copy(Move)
     | UnaryValue(Unary)
@@ -124,6 +145,10 @@ Instruction* = Constant(Const)
     | SysConst(SysValue)
     // Write out buffered standard output now (before blocking on input).
     | Flush
+    // JavaScript host only: a `js.bind` call, and a suspension until a
+    // registered event handler fires (its id into the U32 slot).
+    | Host(HostCall)
+    | Wait(usize)
 
 // A terminator that ends the process with Zen's trap report.
 TrapKind* = Overflow | DivideByZero | OutOfBounds | Unreachable | OutOfMemory

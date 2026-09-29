@@ -404,7 +404,10 @@ Project = {
             std_root: self.job.std_root,
             symbol_map: self.env.var("ZEN_SYMBOL_MAP").value_or(""),
             ffi: true,
-            target: self.planned.target.clang_triple().value_or("")
+            target: exe.spec.web.match({
+                true  => "js-browser",
+                false => self.planned.target.clang_triple().value_or(""),
+            })
         );
         compiler ::= self.a.Build(self.env, root);
         compiler.set_std_root(self.job.std_root);
@@ -708,7 +711,7 @@ Project = {
                 self.planned.target.os.stable_name(),
                 self.planned.target.arch.stable_name(),
                 exe.name,
-                exe.spec.backend.match({ Js => ".js", _ => "" })
+                exe.spec.backend.match({ Js => exe.spec.web.match({ true => "", false => ".js" }), _ => "" })
             ),
         })
     }

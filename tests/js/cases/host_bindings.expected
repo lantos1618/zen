@@ -1,0 +1,10 @@
+max 2.25
+floor -8
+parseInt 42
+finite true false
+push 3
+includes true false
+same object, same handle true
+missing element is handle 0
+length 1
+wait 0 deep 1

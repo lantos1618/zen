@@ -5,7 +5,7 @@ Alloc = std.mem
 Vec = std.collections
 Range = std.core
 str = std.text
-Program, Func, Scalar, Instruction, Terminator, Op = gen.gen_ir
+Program, Func, Scalar, Instruction, Terminator, Op, Marshal = gen.gen_ir
 same, word, integer, signed, float = gen.gen_ir
 arity = gen.gen_sys
 
@@ -200,6 +200,35 @@ Check = {
                 self.expect(slot, Scalar.Ptr)
             },
             Flush              => self.native_only(),
+            Host(call)         => {
+                self.native_only().try();
+                (call.args.len == call.marshal.len).ensure(self.fault(IrReason.Arguments)).try();
+                call.args.loop((h, i, slot) {
+                    ty = self.slot(slot).try();
+                    fits = call.marshal.get(i).value_or(Marshal.Nothing).match({
+                        Number  => integer(ty) || float(ty),
+                        Flag    => same(ty, Scalar.Bool),
+                        Text    => ty.match({ Block(l) => l.size == 16, _ => false }),
+                        Handle  => same(ty, Scalar.U32),
+                        Handler => same(ty, Scalar.U32),
+                        Nothing => false,
+                    });
+                    fits.ensure(self.fault(IrReason.Type)).try();
+                });
+                out = self.slot(call.out).try();
+                call.result.match({
+                    Number  => integer(out) || float(out),
+                    Flag    => same(out, Scalar.Bool),
+                    Handle  => same(out, Scalar.U32),
+                    Nothing => same(out, Scalar.Unit),
+                    _       => false,
+                }).ensure(self.fault(IrReason.Type)).try();
+                Ok(())
+            },
+            Wait(slot)         => {
+                self.native_only().try();
+                self.expect(slot, Scalar.U32)
+            },
             SysConst(value)    => {
                 self.native_only().try();
                 integer(self.slot(value.out).try()).ensure(self.fault(IrReason.Type)).try();
@@ -353,6 +382,11 @@ Check = {
             UnmapPages(slot)   => self.initialized(flags, slot),
             SysConst(_)        => Ok(()),
             Flush              => Ok(()),
+            Host(call)         => {
+                call.args.loop((slot) { self.initialized(flags, slot).try(); });
+                Ok(())
+            },
+            Wait(_)            => Ok(()),
         })
     }
 
@@ -392,6 +426,8 @@ write = (flags :: Vec<bool>, instruction: Instruction) {
         Startup(value)     => { flags.set(value.out, true); },
         MapPages(value)    => { flags.set(value.out, true); },
         SysConst(value)    => { flags.set(value.out, true); },
+        Host(value)        => { flags.set(value.out, true); },
+        Wait(slot)         => { flags.set(slot, true); },
         _                  => (),
     });
 }

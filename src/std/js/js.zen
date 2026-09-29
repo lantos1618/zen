@@ -1,0 +1,37 @@
+// The JavaScript host, for programs built with `--backend js`.
+//
+// Host objects and methods are declared with `js.bind`, the JavaScript
+// counterpart of `c.bind`:
+//
+//     Document = js.bind("document", {
+//         createElement* = (tag: str) Ref
+//     })
+//     Element = js.bind("Element", {
+//         append* = (this: Ref, child: Ref) ()
+//         set_textContent* = (this: Ref, text: str) ()
+//     })
+//
+// The string names a global object path; when the first parameter is
+// `this: Ref` the members apply to that object instead, and the path after
+// the first segment is followed from it (`"Element.style"` reaches
+// `self.style`). A member named `set_x`/`get_x` assigns/reads property `x`;
+// any other member is a method call. Values cross the boundary explicitly:
+// integers, `f64` and `bool` as numbers; `str` as UTF-8 bytes in Zen's heap
+// (pointer and length) decoded to a JavaScript string by the call's stub;
+// host objects as `Ref`s, small integers indexing the runtime's handle
+// table; event handlers as `Handler` ids. Nothing else may cross.
+//
+// Events never run Zen code from inside JavaScript: a listener registered
+// with a `Handler` only queues that handler's id, and `wait` suspends the
+// program until an id is queued. Zen stays one synchronous thread.
+
+// A host object in the runtime's handle table. Id 0 is `null`/`undefined`.
+Ref* = { id*: u32 }
+
+// A registered event handler; `wait` answers its id when its event fires.
+Handler* = { id*: u32 }
+
+// Suspend the program until a registered handler fires, then answer its
+// id. Compiler-provided: the JavaScript backend turns the functions that
+// can reach it into resumable generators. 0 means no events can arrive.
+wait* = () u32

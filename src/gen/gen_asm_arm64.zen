@@ -303,6 +303,10 @@ Assembly = {
                 self.x0_slot = None;
                 self.out.add("    bl za_flush\n")
             },
+            // JavaScript-host instructions; `refused_by_asm` rejects such
+            // programs before any renderer runs.
+            Host(_)            => Ok(()),
+            Wait(_)            => Ok(()),
             SysConst(value)    => {
                 platform = self.darwin().match({ true => Platform.Darwin, false => Platform.LinuxArm64 });
                 self.immediate("x0", bits64(constant_value(value.name, platform))).try();

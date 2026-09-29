@@ -489,6 +489,7 @@ Executor = {
             language: self.optional_text_field(r, "language", "c"),
             frameworks: Ok(self.optional_texts_field(r, "frameworks").try()),
             strip: self.optional_bool_field(r, "strip", false),
+            web: self.optional_bool_field(r, "web", false),
             out: self.optional_path_field(r, "out")
         );
         node = ExeNode(name: name, spec: spec);

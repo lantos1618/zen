@@ -30,49 +30,124 @@ Vec = std.collections
 Span = std.ast
 Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
 Scalar, Op, TrapKind, Stream = gen.gen_ir
-Convert, Load, Store, SysCall, Start = gen.gen_ir
+Convert, Load, Store, SysCall, Start, HostCall, Marshal = gen.gen_ir
 width, trap_message = gen.gen_ir
 Sys, constant_value, Platform = gen.gen_sys
 write_runtime = gen.gen_js_runtime
 
 // The caller verifies the program first (gen_verify.verify_native); malformed
 // IR is a compiler fault, not executable input.
+//
+// One self-contained script (the runtime, then the program): what Node runs.
 emit_js* = (a: Alloc, program: Program) Res<String, AllocError> {
+    out ::= a.String().try();
+    write_runtime(out).try();
+    app = emit_app(a, program).try();
+    out.add(app.view()).try();
+    Ok(out)
+}
+
+// The program alone (binding stubs, functions, constants and the call of
+// `zmain`), for a page that loads the runtime separately (`js-browser`).
+emit_app* = (a: Alloc, program: Program) Res<String, AllocError> {
     writer ::= JavaScript(
+        alloc: a,
         program: program,
         out: a.String().try(),
         data: a.String().try(),
         location: a.String().try(),
-        homes: a.Vec<usize>()
+        homes: a.Vec<usize>(),
+        suspends: a.Vec<bool>(),
+        stubs: a.Vec<String>()
     );
     writer.render().try();
     Ok(writer.out)
 }
 
+// The runtime alone (`runtime.js` of the `js-browser` layout).
+emit_runtime* = (a: Alloc) Res<String, AllocError> {
+    out ::= a.String().try();
+    write_runtime(out).try();
+    Ok(out)
+}
+
+// The page of the `js-browser` layout: it loads the runtime, then the
+// program, which builds its own DOM through js.bind. The body starts empty.
+PAGE*: str = "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Zen</title>\n<script src=\"runtime.js\" defer></script>\n<script src=\"app.js\" defer></script>\n</head>\n<body></body>\n</html>\n"
+
 // No frame home: the slot is a JS local.
 LOCAL: usize = 18446744073709551615
 
 JavaScript = {
+    alloc: Alloc,
     program: Program,
     out :: String,
-    // Module-level constants (static bytes, f64 bit patterns). They follow
-    // the functions but run before `zmain`, so each is evaluated once.
+    // Module-level constants (static bytes, f64 bit patterns, host-call
+    // stubs). They follow the functions but run before `zmain`.
     data :: String,
     location :: String,
     // Per function: each slot's frame offset, or LOCAL.
     homes :: Vec<usize>,
+    // Per function: whether it can reach `Wait` and so renders as a
+    // generator that its callers resume with `yield*`.
+    suspends :: Vec<bool>,
+    // One host-call stub per distinct binding signature, by its key.
+    stubs :: Vec<String>,
     function_id :: usize = 0,
     frame :: usize = 0,
     next_constant :: usize = 0,
 
     render = (self :: @Self) Res<(), AllocError> {
-        write_runtime(self.out).try();
+        self.find_suspending().try();
         self.program.functions.loop((h, index, function) {
             self.function(index, function).try();
         });
         self.out.add(self.data.view()).try();
         self.out.fmt("zmain(zf{});\n", self.program.entry)
     }
+
+    // A function suspends when it contains `Wait` or invokes a function that
+    // suspends; iterate to the fixed point over the call graph.
+    find_suspending = (self :: @Self) Res<(), AllocError> {
+        self.program.functions.loop((function) {
+            waits ::= false;
+            function.blocks.loop((block) {
+                block.code.loop((instruction) {
+                    instruction.match({ Wait(_) => { waits = true; }, _ => () });
+                });
+            });
+            self.suspends.add(waits).try();
+        });
+        changed ::= true;
+        loop(() { changed }, (h) {
+            changed = false;
+            self.program.functions.loop((fh, index, function) {
+                (!self.suspending(index)).then(() {
+                    reaches ::= false;
+                    function.blocks.loop((block) {
+                        block.code.loop((instruction) {
+                            instruction.match({
+                                Invoke(call) => { reaches = reaches || self.suspending(
+                                    call.function
+                                ); },
+                                _            => (),
+                            });
+                        });
+                    });
+                    reaches.then(() {
+                        self.suspends.set(
+                            index,
+                            true
+                        ).match({ Ok(_) => (), None => () });
+                        changed = true;
+                    });
+                });
+            });
+        });
+        Ok(())
+    }
+
+    suspending = (self: @Self, index: usize) bool { self.suspends.get(index).value_or(false) }
 
     slot_type = (self: @Self, slot: usize) Scalar {
         self.program.functions.get(self.function_id).match({
@@ -117,7 +192,8 @@ JavaScript = {
     function = (self :: @Self, id: usize, function: Func) Res<(), AllocError> {
         self.function_id = id;
         self.layout_frame(function);
-        self.out.fmt("function zf{}(", id).try();
+        star: str = self.suspending(id).match({ true => "*", false => "" });
+        self.out.fmt("function{} zf{}(", star, id).try();
         first ::= true;
         Range(0, function.parameters).loop((i) {
             ty = function.slots.get(i).value_or(Scalar.Unit);
@@ -349,6 +425,13 @@ JavaScript = {
                 constant_value(value.name, Platform.LinuxX86_64)
             ),
             Flush              => self.out.add("      zflush();\n"),
+            Host(call)         => self.host(call),
+            // Suspend; the runtime resumes with a handler id.
+            Wait(slot)         => {
+                self.open(slot).try();
+                self.out.add("(yield 0) >>> 0").try();
+                self.close(slot)
+            },
         })
     }
 
@@ -944,20 +1027,187 @@ JavaScript = {
             call.function
         ).match({ Ok(f) => f.result, None => Scalar.Unit });
         direct = result.match({ Unit => true, Block(_) => true, _ => false });
+        // A suspending callee is a generator; `yield*` runs it to completion,
+        // passing its suspensions up to the runtime.
+        resume: str = self.suspending(
+            call.function
+        ).match({ true => "yield* ", false => "" });
         direct.match({
             true  => {
-                self.out.fmt("      zf{}(", call.function).try();
+                self.out.fmt("      {}zf{}(", resume, call.function).try();
                 self.arguments(call, result).try();
                 self.out.add(");\n")
             },
             false => {
                 self.open(call.out).try();
-                self.out.fmt("zf{}(", call.function).try();
+                self.out.fmt("({}zf{}(", resume, call.function).try();
                 self.arguments(call, result).try();
-                self.out.add(")").try();
+                self.out.add("))").try();
                 self.close(call.out).try();
                 wide(result).match({ true => self.set_high(call.out), false => Ok(()) })
             },
+        })
+    }
+
+    // A `js.bind` call through its stub; the stub converts each argument to
+    // its JavaScript form and the result back.
+    host = (self :: @Self, call: HostCall) Res<(), AllocError> {
+        stub = self.stub(call).try();
+        out  = self.slot_type(call.out);
+        call.result.match({
+            Nothing => {
+                self.out.fmt("      zj{}(", stub).try();
+                self.host_arguments(call).try();
+                self.out.add(");\n")
+            },
+            Number  => wide(out).match({
+                true  => {
+                    self.open(call.out).try();
+                    self.out.fmt("zfromnum(zj{}(", stub).try();
+                    self.host_arguments(call).try();
+                    self.out.add("))").try();
+                    self.close(call.out).try();
+                    self.set_high(call.out)
+                },
+                false => {
+                    self.open(call.out).try();
+                    is_float(out).match({
+                        true  => self.out.add("+("),
+                        false => self.canonical(out),
+                    }).try();
+                    self.out.fmt("zj{}(", stub).try();
+                    self.host_arguments(call).try();
+                    self.out.add("))").try();
+                    self.close(call.out)
+                },
+            }),
+            _       => {
+                self.open(call.out).try();
+                self.out.fmt("zj{}(", stub).try();
+                self.host_arguments(call).try();
+                self.out.add(")").try();
+                self.close(call.out)
+            },
+        })
+    }
+
+    host_arguments = (self :: @Self, call: HostCall) Res<(), AllocError> {
+        call.args.loop((h, i, slot) {
+            (i > 0).then(() { self.out.add(", ").try(); });
+            ty = self.slot_type(slot);
+            call.marshal.get(i).value_or(Marshal.Nothing).match({
+                Text => self.at(slot),
+                _    => wide(ty).match({
+                    true  => {
+                        self.out.add("znum(").try();
+                        self.pair(slot).try();
+                        self.out.fmt(", {})", truth(signed_class(ty)))
+                    },
+                    false => self.lo(slot),
+                }),
+            }).try();
+        });
+        Ok(())
+    }
+
+    // The stub's number for this binding signature, written on first use.
+    stub = (self :: @Self, call: HostCall) Res<usize, AllocError> {
+        key ::= self.alloc.String().try();
+        key.fmt(
+            "{}|{}|{}|{}|",
+            call.object,
+            call.member,
+            call.receiver,
+            marshal_name(call.result)
+        ).try();
+        call.marshal.loop((m) { key.fmt("{},", marshal_name(m)).try(); });
+        found: Res<usize> ::= None;
+        self.stubs.loop(
+            (h, i, known) { known.view().eq(key.view()).then(() { found = Ok(i); }); }
+        );
+        found.match({
+            Ok(i) => Ok(i),
+            None  => {
+                index = self.stubs.len;
+                self.stubs.add(key).try();
+                self.write_stub(index, call).try();
+                Ok(index)
+            },
+        })
+    }
+
+    // function zjN(a0, a1) { const t = zobj(a0)["style"]; return (t["setProperty"](zstr(a1)), 0); }
+    // The object is a global path, or the receiver followed by the path
+    // after its first segment. Names are emitted only when they are plain
+    // identifiers; any other spelling becomes a stub that throws.
+    write_stub = (self :: @Self, index: usize, call: HostCall) Res<(), AllocError> {
+        self.data.fmt("function zj{}(", index).try();
+        Range(0, call.args.len).loop((i) {
+            (i > 0).then(() { self.data.add(", ").try(); });
+            self.data.fmt("a{}", i).try();
+        });
+        self.data.add(") {\n").try();
+        valid ::= identifier(call.member);
+        call.object.split('.').loop((segment) { valid = valid && identifier(segment); });
+        valid.match({
+            false => self.data.add(
+                "  throw new Error(\"js.bind: invalid object path or member name\");\n}\n"
+            ),
+            true  => {
+                self.data.add(
+                    call.receiver.match({ true => "  const t = zobj(a0)", false => "  const t = globalThis" })
+                ).try();
+                skip ::= call.receiver;
+                call.object.split('.').loop((segment) {
+                    skip.match({
+                        true  => { skip = false; },
+                        false => { self.data.fmt("[\"{}\"]", segment).try(); },
+                    });
+                });
+                self.data.add(";\n  return ").try();
+                first    = call.receiver.match({ true => 1, false => 0 });
+                property = call.member.len > 4 && (call.member.starts_with("set_") || call.member.starts_with("get_"));
+                setter   = property && call.member.starts_with("set_");
+                name     = property.match({ true => call.member.slice(
+                    4,
+                    call.member.len
+                ), false => call.member });
+                setter.match({
+                    true  => {
+                        self.data.fmt("(t[\"{}\"] = ", name).try();
+                        self.argument_js(call, first).try();
+                        self.data.add(", 0);\n}\n")
+                    },
+                    false => {
+                        self.data.add(result_open(call.result)).try();
+                        self.data.fmt("t[\"{}\"]", name).try();
+                        (!property).then(() {
+                            self.data.add("(").try();
+                            Range(first, call.args.len).loop((i) {
+                                (i > first).then(
+                                    () { self.data.add(", ").try(); }
+                                );
+                                self.argument_js(call, i).try();
+                            });
+                            self.data.add(")").try();
+                        });
+                        self.data.add(result_close(call.result)).try();
+                        self.data.add(";\n}\n")
+                    },
+                })
+            },
+        })
+    }
+
+    // Argument `i` converted to its JavaScript form inside a stub.
+    argument_js = (self :: @Self, call: HostCall, i: usize) Res<(), AllocError> {
+        call.marshal.get(i).value_or(Marshal.Nothing).match({
+            Number  => self.data.fmt("a{}", i),
+            Flag    => self.data.fmt("(a{} !== 0)", i),
+            Text    => self.data.fmt("zstr(a{})", i),
+            Handle  => self.data.fmt("zobj(a{})", i),
+            Handler => self.data.fmt("zhandler(a{})", i),
+            Nothing => self.data.add("undefined"),
         })
     }
 
@@ -1085,6 +1335,30 @@ unit = (ty: Scalar) bool { ty.match({ Unit => true, _ => false }) }
 is_float = (ty: Scalar) bool { ty.match({ F64 => true, _ => false }) }
 signed_class = (ty: Scalar) bool {
     ty.match({ I8 => true, I16 => true, I32 => true, I64 => true, _ => false })
+}
+
+// How a result converts back: a number stays a number, a boolean becomes
+// 1/0, an object becomes a handle, and nothing is 0.
+result_open = (m: Marshal) str {
+    m.match({ Number => "+(", Flag => "(", Handle => "zref(", _ => "(" })
+}
+
+result_close = (m: Marshal) str {
+    m.match({ Flag => ") ? 1 : 0", Nothing => ", 0)", _ => ")" })
+}
+
+marshal_name = (m: Marshal) str {
+    m.match({ Number => "n", Flag => "b", Text => "s", Handle => "r", Handler => "h", Nothing => "-" })
+}
+
+// A JavaScript identifier made only of ASCII letters, digits, `_` and `$`.
+identifier = (text: str) bool {
+    ok ::= text.len > 0;
+    text.loop((c) {
+        letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$';
+        ok     = ok && (letter || (c >= '0' && c <= '9'));
+    });
+    ok && !(text.index(0) >= '0' && text.index(0) <= '9')
 }
 
 truth = (value: bool) str { value.match({ true => "true", false => "false" }) }

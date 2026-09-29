@@ -107,7 +107,7 @@ help_model = (a: Alloc) Res<Command<HelpArg>, AllocError> {
         HelpArg.TargetName,
         "TRIPLE",
         ValueType.Text,
-        "Native target for asm (x86_64-linux, aarch64-linux, arm64-darwin); default: host"
+        "Native target for asm (x86_64-linux, aarch64-linux, arm64-darwin; default: host), or js-browser for a page directory with js"
     ).try();
     build.flag("--emit-c", HelpArg.EmitC, "Emit C to standard output").try();
     build.option(

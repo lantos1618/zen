@@ -5,7 +5,9 @@
 // `.env`); `make test` holds the C backend to those sidecars on every run, so
 // they are the C side of the comparison. This gate compiles the same program
 // with `--backend js`, runs it under Node, and requires the same stdout, the
-// same exit status and every `.stderr` line as a substring.
+// same exit status and every `.stderr` line as a substring. The programs in
+// tests/js/cases use the JavaScript host (`js.bind`), which C cannot run;
+// their `.expected` files are written by hand and they must always pass.
 //
 //   js-corpus <zen> [--gaps FILE] [--filter TEXT] [--shrink] [--verbose]
 //
@@ -233,8 +235,13 @@ first_line = (text: str) str {
     text.split_once('\n').match({ Ok(pair) => pair.before, None => text })
 }
 
-// `tests/corpus/<lane>/...` names the lane.
+// `tests/corpus/<lane>/...` names the lane; the JavaScript-only cases are
+// the `js-host` lane.
 lane_of = (base: str) str {
+    base.starts_with("tests/js/cases/").match({ true => "js-host", false => corpus_lane(base) })
+}
+
+corpus_lane = (base: str) str {
     rest = base.starts_with("tests/corpus/").match({
         true  => base.slice("tests/corpus/".len, base.len),
         false => base,
@@ -325,7 +332,9 @@ gate = (env: Env, a: Alloc, zen: str, gaps_path: str, filter: str, shrink: bool,
     gaps = parse_gaps(a, gap_text).try();
 
     find ::= a.Vec<str>();
-    ["find", "tests/corpus", "-name", "*.expected"].loop((w) { find.add(w).try(); });
+    // The corpus, plus JavaScript-only cases (js.bind) that the C oracle
+    // cannot run; their `.expected` is written by hand.
+    ["find", "tests/corpus", "tests/js/cases", "-name", "*.expected"].loop((w) { find.add(w).try(); });
     found = env.proc.run_argv(a, "", find).match({ Ok(out) => out.out.view(), Err(_) => "" });
     paths ::= a.Vec<Name>();
     found.split('\n').loop((line) {

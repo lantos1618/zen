@@ -127,7 +127,12 @@ Exe* = {
     frameworks* :: Res<Vec<str>> = None,
     strip* :: bool = false,
 
-    // None selects build/{os}-{arch}/{name}, with .js for JavaScript.
+    // JavaScript for a page: `out` is a directory that receives index.html,
+    // runtime.js and app.js (the `js-browser` layout).
+    web* :: bool = false,
+
+    // None selects build/{os}-{arch}/{name}, with .js for JavaScript (a
+    // directory of that name for `web`).
     out* :: Res<Path> = None,
 }
 

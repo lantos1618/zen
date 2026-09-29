@@ -26,6 +26,7 @@ needs_hoist = gen.gen_c.gen_c_hoist
 write_set_value = gen.gen_c.gen_c_widen
 declare_temp = gen.gen_c.gen_c_flow
 unwind_to = gen.gen_c.gen_c_own
+write_position = gen.gen_c.gen_c_op
 
 lower_try* = (
     be      :: CBackend,
@@ -201,8 +202,19 @@ TryPropagation = {
     propagate = (self: @Self, be :: CBackend) Res<(), AllocError> {
         self.unwind_frame(be).try();
         forms_agree(self.source.form, self.target.form).match({
-            false => be.report_widening(self.node),
+            false => self.propagate_open(be),
             true  => self.propagate_failure(be),
+        })
+    }
+
+    // A `Res` whose every arm was `Ok(..)` settles no failure form: sema
+    // leaves it Open, and it can never hold anything but `Ok`. Its guard
+    // is dead, so it traps rather than inventing an error value; the old
+    // answer reported a widening that was never asked for.
+    propagate_open = (self: @Self, be :: CBackend) Res<(), AllocError> {
+        is_open(self.source.form).match({
+            false => be.report_widening(self.node),
+            true  => be.write_dead_guard(self.node),
         })
     }
 
@@ -556,6 +568,16 @@ carries = (
 
 forms_agree = (got: ResForm, want: ResForm) bool {
     is_failure(got) == is_failure(want)
+}
+
+is_open = (form: ResForm) bool {
+    form.match({ Open => true, _ => false })
+}
+
+write_dead_guard = (be :: CBackend, node: Expr) Res<(), AllocError> {
+    pos ::= be.alloc.String().try();
+    be.write_position(node.span.file, node.span, pos).try();
+    be.fmt("zg_unreachable({});\n", pos.view())
 }
 
 report_widening = (be :: CBackend, node: Expr) Res<(), AllocError> {

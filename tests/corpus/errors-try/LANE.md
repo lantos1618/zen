@@ -3,6 +3,9 @@
 7 corpus tests under tests/corpus/errors-try/. Each line: path -- the one-line
 compiler change that would break it.
 
+- try_on_an_all_ok_match_never_widens -- treat an open `Res` (a match whose
+  every arm is `Ok`) as a form mismatch again: the program is refused with
+  "widening an error set through .try()".
 - try_carries_the_payload_through_three_layers -- declare a try temp as C `int`
   instead of the payload's own i64 type (or unwrap into the Res struct's tag
   slot): 2^31 truncates and the test prints -2147483648 instead of 2147483647.

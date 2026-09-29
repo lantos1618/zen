@@ -1,0 +1,43 @@
+// `.try()` ON A MATCH WHOSE EVERY ARM IS `Ok` IS NOT A WIDENING. No arm
+// raises, so sema leaves the match's `Res` open — it has no failure
+// form of its own. Codegen compared that form against the enclosing
+// function's `Res<_, E>` failure form, found them different, and refused
+// the program as "widening an error set through .try()". An open `Res`
+// can only ever hold `Ok`, so its guard is dead and the value passes.
+//
+// Both the unit and a payload-carrying open match are unwrapped, and
+// a real failure follows on the same path so the function still
+// propagates what it is given.
+
+Kind = Io | Protocol
+Fail = Mismatch | Accepted
+
+input = (n: i32) Res<i32, Kind | Fail> {
+    n.match({ 0 => Err(Kind.Protocol), 1 => Err(Fail.Accepted), _ => Ok(n) })
+}
+
+settle = (n: i32) Res<i32, AllocError | Kind | Fail> {
+    input(n).match({ Ok(_) => Ok(()), Err(_) => Ok(()) }).try();
+    doubled = (n > 3).match({ true => Ok(n * 2), false => Ok(n) }).try();
+    later   = input(n - 2).try();
+    Ok(doubled + later)
+}
+
+show = (n: i32) {
+    settle(n).match({
+        Ok(v)         => println("{} ok {}", n, v),
+        Err(Protocol) => println("{} protocol", n),
+        Err(Accepted) => println("{} accepted", n),
+        Err(_)        => println("{} other", n),
+    });
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    show(0);
+    show(1);
+    show(2);
+    show(3);
+    show(4);
+    show(5);
+    Ok(0);
+}

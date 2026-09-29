@@ -34,7 +34,7 @@ weighted = (a: Alloc, parameters: usize) Res<Func, AllocError> {
     product = parameters + 2;
     code ::= a.Vec<Instruction>();
     code.add(Instruction.Constant(Const(out: result, value: 0))).try();
-    factor: i32 ::= 1;
+    factor: i64 ::= 1;
     Range(0, parameters - 1).loop((i) {
         code.add(Instruction.Constant(Const(out: place, value: factor))).try();
         code.add(binary(product, i, Op.Mul, place)).try();
@@ -184,11 +184,11 @@ abi = (a: Alloc) Res<Program, AllocError> {
     Ok(Program(functions: functions, entry: 0))
 }
 
-digit = (i: usize) i32 {
+digit = (i: usize) i64 {
     i.match({ 0 => 1, 1 => 2, 2 => 3, 3 => 4, 4 => 5, 5 => 6, 6 => 7, 7 => 8, _ => 9 })
 }
 
-trapping = (a: Alloc, left: i32, op: Op, right: i32) Res<Program, AllocError> {
+trapping = (a: Alloc, left: i64, op: Op, right: i64) Res<Program, AllocError> {
     code ::= a.Vec<Instruction>();
     code.add(Instruction.Constant(Const(out: 0, value: left))).try();
     code.add(Instruction.Constant(Const(out: 1, value: right))).try();
@@ -337,7 +337,7 @@ main = (env: Env) Res<i32, AllocError
         env,
         a,
         "add",
-        trapping(a, i32.MAX, Op.Add, 1).try()
+        trapping(a, i32.MAX.to_i64(), Op.Add, 1).try()
     ).try();
     println(
         "addition overflow {}",

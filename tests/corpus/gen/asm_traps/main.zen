@@ -29,7 +29,7 @@ binary = (out: usize, left: usize, op: Op, right: usize) Instruction {
     ))
 }
 
-trapping = (a: Alloc, left: i32, op: Op, right: i32) Res<Program, AllocError> {
+trapping = (a: Alloc, left: i64, op: Op, right: i64) Res<Program, AllocError> {
     code ::= a.Vec<Instruction>();
     code.add(Instruction.Constant(Const(out: 0, value: left))).try();
     code.add(Instruction.Constant(Const(out: 1, value: right))).try();
@@ -132,7 +132,7 @@ main = (env: Env) Res<i32, AllocError
         env,
         a,
         "divide",
-        trapping(a, i32.MIN, Op.Div, -1).try()
+        trapping(a, i32.MIN.to_i64(), Op.Div, -1).try()
     ).try();
     println(
         "division overflow {}",
@@ -143,7 +143,7 @@ main = (env: Env) Res<i32, AllocError
         env,
         a,
         "remainder",
-        trapping(a, i32.MIN, Op.Rem, -1).try()
+        trapping(a, i32.MIN.to_i64(), Op.Rem, -1).try()
     ).try();
     println(
         "remainder overflow {}",

@@ -63,8 +63,8 @@ check = (
     fault     : str,
 ) Res<bool, AllocError> {
     code ::= a.Vec<Instruction>();
-    code.add(Instruction.Constant(Const(out: 0, value: left))).try();
-    code.add(Instruction.Constant(Const(out: 1, value: right))).try();
+    code.add(Instruction.Constant(Const(out: 0, value: left.to_i64()))).try();
+    code.add(Instruction.Constant(Const(out: 1, value: right.to_i64()))).try();
     code.add(Instruction.Text(before)).try();
     code.add(operation).try();
     code.add(Instruction.Text("execution continued after the trap\n")).try();

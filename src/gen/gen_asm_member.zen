@@ -1,0 +1,515 @@
+// Member calls for the native lowering. A member resolves statically to a
+// struct's own function, an impl's function or a bound's default body; a
+// value whose static type is a bound (for example `Alloc`) dispatches at
+// run time over the program's implementors of that bound. The compiler-
+// provided memory operations (`Mem.alloc`, `Mem.page`, `Mem.release`) are
+// lowered here too.
+
+Alloc, AllocError = std.mem
+Vec, Map = std.collections
+String, str = std.text
+Range = std.core
+ExprId, BlockId, Span, Function, Call, Struct, Impl, Member, Decl = std.ast
+nowhere = std.ast
+Checker, DeclId, Def, TyId, Inst, decl_at, CheckedCall, ImplId = sema.sema
+Scalar, Op, Const, Move, Binary, Instruction, Load, Store, Address, Pages = gen.gen_ir
+Invocation = gen.gen_ir
+TrapKind = gen.gen_ir
+LowerError, unsupported = gen.gen_lower
+Native, Value, Place, Base, Callee = gen.gen_asm_lower
+to_i64_bits = gen.gen_asm_lower
+Shape, Form, shape, size_of = gen.gen_asm_shape
+Source, bind_sources, invoke, call_inst, source_expr = gen.gen_asm_call
+
+// How a member call reaches its body.
+Target = Static(Callee) | Dynamic(Bound)
+
+// A bound value: the bound's declaration and its program-wide implementors
+// in tag order.
+Bound* = { decl*: DeclId, ty*: TyId, implementors*: Vec<TyId> }
+
+// ---------------------------------------------------------------------
+// resolution
+// ---------------------------------------------------------------------
+
+member_call* = (lo :: Native, id: ExprId, c: Call, checked: CheckedCall, receiver: ExprId,
+                name: str, span: Span) Res<Value, LowerError> {
+    recv_ty = lo.type_of(receiver).try();
+    method_inst = lo.call_inst(checked.inst).try();
+    lo.bound_of(recv_ty).try().match({
+        Ok(bound) => lo.dynamic_call(id, c, bound, receiver, name, method_inst, span),
+        None      => {
+            callee = lo.resolve(recv_ty, name, checked.body, c.args.len + 1, method_inst, None, span).try();
+            sources = lo.bind_sources(callee.f, c, Ok(receiver), span).try();
+            lo.invoke(id, callee, sources, c, span)
+        },
+    })
+}
+
+// The function named `name` for receiver type `ty`: the body sema checked
+// when known, otherwise the first function of that name and arity on the
+// type, its impls (for `via`, only impls of that bound) or their bounds.
+resolve* = (lo :: Native, ty: TyId, name: str, body: Res<BlockId>, arity: usize,
+            method_inst: Inst, via: Res<DeclId>, span: Span) Res<Callee, LowerError> {
+    owners = lo.owners_of(ty, via).try();
+    found: Res<Callee> = loop<Callee>((h) {
+        owners.loop((owner) {
+            owner.members.loop((mh, index, m) {
+                m.kind.match({
+                    Function(f) => {
+                        // A type's own member is the body sema chose; an
+                        // impl member overrides a bound's default of the
+                        // same name; a default is used when nothing does.
+                        by_name = f.name.text.eq(name) && f.params.len == arity;
+                        fits = owner.kind.match({
+                            Own     => body.match({
+                                Ok(b) => f.body.match({ Ok(own) => own == b, None => false }),
+                                None  => by_name,
+                            }),
+                            Supply  => by_name && f.body.match({ Ok(_) => true, None => false }),
+                            Default => body.match({
+                                Ok(b) => f.body.match({ Ok(own) => own == b, None => false }),
+                                None  => by_name && f.body.match({ Ok(_) => true, None => false }),
+                            }),
+                        });
+                        fits.then(() {
+                            inst = lo.merged(owner.inst, method_inst).try();
+                            h.break(Callee(
+                                f: f,
+                                owner: owner.decl,
+                                member: Ok(index),
+                                module: owner.decl.module.to_usize(),
+                                inst: inst,
+                                self_ty: Ok(ty),
+                                generic_owner: owner.generic
+                            ));
+                        });
+                    },
+                    _           => (),
+                });
+            });
+        });
+        h.break();
+    });
+    found.ok_or(unsupported(span, lo.described("a member without a body this backend can find", ty)))
+}
+
+// A place a member may be declared: the type's own declaration, an impl for
+// it, or the bound such an impl satisfies.
+OwnerKind = Own | Supply | Default
+Owner = { decl: DeclId, members: Vec<Member>, inst: Inst, generic: Res<DeclId>, kind: OwnerKind }
+
+owners_of = (lo :: Native, ty: TyId, via: Res<DeclId>) Res<Vec<Owner>, LowerError> {
+    out ::= lo.alloc.Vec<Owner>();
+    own = lo.own_decl(ty).try();
+    inst = lo.type_inst(ty).try();
+    own.when_ok((decl) {
+        decl_at(lo.tree, decl).when_ok((d) {
+            d.kind.match({
+                Struct(s) => out.add(Owner(decl: decl, members: s.members, inst: inst, generic: Ok(decl), kind: OwnerKind.Own)).try(LowerError.OutOfMemory),
+                _         => (),
+            });
+        });
+    });
+    impls = lo.impls_for(ty, own).try();
+    impls.loop((pair) {
+        wanted = via.match({ Ok(b) => pair.bound == b, None => true });
+        wanted.then(() {
+            out.add(Owner(decl: pair.id.decl, members: pair.impl.members, inst: inst, generic: own, kind: OwnerKind.Supply)).try(LowerError.OutOfMemory);
+        });
+    });
+    impls.loop((pair) {
+        wanted = via.match({ Ok(b) => pair.bound == b, None => true });
+        wanted.then(() {
+            decl_at(lo.tree, pair.bound).when_ok((d) {
+                d.kind.match({
+                    Struct(s) => out.add(Owner(decl: pair.bound, members: s.members, inst: inst, generic: own, kind: OwnerKind.Default)).try(LowerError.OutOfMemory),
+                    _         => (),
+                });
+            });
+        });
+    });
+    Ok(out)
+}
+
+// The declaration a type's members live on: a named type's own, or the
+// std struct that declares a primitive's methods (`str`).
+own_decl = (lo :: Native, ty: TyId) Res<Res<DeclId>, LowerError> {
+    lo.check.types.at(ty).match({
+        Named(n) => Ok(Ok(n.decl)),
+        Prim(p)  => {
+            defs ::= lo.alloc.Vec<Def>();
+            lo.check.world.exported_named(p.name, defs).try(LowerError.OutOfMemory);
+            Ok(defs.find((d) { d.kind.match({ StructDef => true, _ => false }) }).match({
+                Ok(d) => Ok(d.id),
+                None  => None,
+            }))
+        },
+        _        => Ok(None),
+    })
+}
+
+type_inst = (lo :: Native, ty: TyId) Res<Inst, LowerError> {
+    lo.check.types.at(ty).match({
+        Named(n) => lo.check.inst_of_named(n).try(LowerError.OutOfMemory),
+        _        => Ok(lo.alloc.Inst()),
+    })
+}
+
+merged = (lo :: Native, first: Inst, second: Inst) Res<Inst, LowerError> {
+    inst ::= lo.alloc.Inst();
+    [first, second].loop((part) {
+        Range(0, part.len()).loop((i) {
+            part.var_at(i).when_ok((v) {
+                part.arg_at(i).when_ok((a) { inst.bind(v, a).try(LowerError.OutOfMemory); });
+            });
+        });
+    });
+    Ok(inst)
+}
+
+ImplFor = { id: ImplId, impl: Impl, bound: DeclId }
+
+// Impls whose target names this type in the target's own scope.
+impls_for = (lo :: Native, ty: TyId, own: Res<DeclId>) Res<Vec<ImplFor>, LowerError> {
+    out ::= lo.alloc.Vec<ImplFor>();
+    name = lo.type_name(ty);
+    ids ::= lo.alloc.Vec<ImplId>();
+    lo.check.world.impls_named(lo.tree, name, ids).try(LowerError.OutOfMemory);
+    ids.loop((id) {
+        lo.check.world.impl_at(lo.tree, id).when_ok((i) {
+            target_ok = own.match({
+                Ok(decl) => lo.names_decl(id.decl.module.to_usize(), i.target.text, decl).try(),
+                None     => true,
+            });
+            bound = lo.bound_decl(i).try();
+            (target_ok).then(() {
+                bound.when_ok((b) {
+                    out.add(ImplFor(id: id, impl: i, bound: b)).try(LowerError.OutOfMemory);
+                });
+            });
+        });
+    });
+    Ok(out)
+}
+
+names_decl = (lo :: Native, module: usize, name: str, decl: DeclId) Res<bool, LowerError> {
+    defs ::= lo.alloc.Vec<Def>();
+    lo.check.world.defs_of(module, name, defs).try(LowerError.OutOfMemory);
+    Ok(defs.find((d) { d.id == decl }).match({ Ok(_) => true, None => false }))
+}
+
+// The declaration an impl's bound names.
+bound_decl = (lo :: Native, i: Impl) Res<Res<DeclId>, LowerError> {
+    Ok(lo.check.type_memo.get(i.bound).match({
+        None     => None,
+        Ok(ty)   => lo.check.types.at(ty).match({
+            Named(n) => Ok(n.decl),
+            _        => None,
+        }),
+    }))
+}
+
+// ---------------------------------------------------------------------
+// bound values
+// ---------------------------------------------------------------------
+
+// A struct with function members and no storage is a bound; a value of that
+// type holds an implementor's tag and a pointer to the implementor value.
+bound_of* = (lo :: Native, ty: TyId) Res<Res<Bound>, LowerError> {
+    s = lo.shape(ty).try();
+    s.form.match({
+        Handle(decl) => Ok(Ok(Bound(decl: decl, ty: ty, implementors: lo.implementors(decl).try()))),
+        _            => Ok(None),
+    })
+}
+
+// Every non-generic type with an impl of this bound, in module order.
+implementors* = (lo :: Native, bound: DeclId) Res<Vec<TyId>, LowerError> {
+    out ::= lo.alloc.Vec<TyId>();
+    Range(0, lo.check.world.count()).loop((mi) {
+        lo.check.world.table_at(mi).match({
+            Ok(table) => lo.module_implementors(mi, table.impls, bound, out).try(),
+            None      => (),
+        });
+    });
+    Ok(out)
+}
+
+module_implementors = (lo :: Native, mi: usize, impls: Vec<ImplId>, bound: DeclId,
+                       out :: Vec<TyId>) Res<(), LowerError> {
+    impls.loop((id) {
+        lo.implementor_of(mi, id, bound).try().match({
+            Ok(t) => out.add(t).try(LowerError.OutOfMemory),
+            None  => (),
+        });
+    });
+    Ok(())
+}
+
+implementor_of = (lo :: Native, mi: usize, id: ImplId, bound: DeclId) Res<Res<TyId>, LowerError> {
+    lo.check.world.impl_at(lo.tree, id).match({
+        None    => Ok(None),
+        Ok(i)   => lo.bound_decl(i).try().match({
+            None    => Ok(None),
+            Ok(b)   => (b == bound).match({
+                true  => lo.target_type(mi, i.target.text),
+                false => Ok(None),
+            }),
+        }),
+    })
+}
+
+target_type = (lo :: Native, module: usize, name: str) Res<Res<TyId>, LowerError> {
+    defs ::= lo.alloc.Vec<Def>();
+    lo.check.world.defs_of(module, name, defs).try(LowerError.OutOfMemory);
+    found = defs.find((d) { d.kind.match({ StructDef => true, EnumDef => true, _ => false }) });
+    Ok(found.match({
+        None    => None,
+        Ok(d)   => {
+            generic = decl_at(lo.tree, d.id).match({
+                Ok(x) => x.kind.match({
+                    Struct(s) => s.tparams.len > 0,
+                    Enum(e)   => e.tparams.len > 0,
+                    _         => true,
+                }),
+                None  => true,
+            });
+            generic.match({
+                true  => None,
+                false => {
+                    args ::= lo.alloc.Vec<TyId>();
+                    lo.check.types.named(d.id, d.qname, d.name, args).match({
+                        Ok(t)  => Ok(t),
+                        Err(_) => None,
+                    })
+                },
+            })
+        },
+    }))
+}
+
+// An implementor value enters a bound as its tag and a pointer to a copy
+// that lives as long as the enclosing function invocation.
+to_bound* = (lo :: Native, value: Value, target: TyId) Res<Res<Value>, LowerError> {
+    lo.bound_of(target).try().match({
+        None        => Ok(None),
+        Ok(bound)   => {
+            found: Res<usize> = loop<usize>((h) {
+                bound.implementors.loop((hh, i, t) { (t == value.ty).then(() { h.break(i); }); });
+                h.break();
+            });
+            found.match({
+                None      => Ok(None),
+                Ok(tag)   => {
+                    out = lo.temp(target).try();
+                    at = lo.slot_of(Scalar.Ptr).try();
+                    lo.add(Instruction.AddressOf(Address(out: at, slot: out.slot))).try();
+                    word = lo.word_const(Scalar.U32, tag.to_i64_bits()).try();
+                    lo.add(Instruction.StoreValue(Store(base: at, offset: 0, value: word))).try();
+                    held = lo.copy_value(value).try();
+                    pointer = lo.address(lo.spill(held)).try();
+                    lo.add(Instruction.StoreValue(Store(base: at, offset: 8, value: pointer))).try();
+                    Ok(Ok(out))
+                },
+            })
+        },
+    })
+}
+
+// Evaluate the arguments once, then branch on the implementor tag.
+dynamic_call = (lo :: Native, id: ExprId, c: Call, bound: Bound, receiver: ExprId, name: str,
+                method_inst: Inst, span: Span) Res<Value, LowerError> {
+    handle = lo.expr(receiver).try();
+    at = lo.address(lo.spill(handle)).try();
+    tag = lo.slot_of(Scalar.U32).try();
+    pointer = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.LoadValue(Load(out: tag, base: at, offset: 0))).try();
+    lo.add(Instruction.LoadValue(Load(out: pointer, base: at, offset: 8))).try();
+    args ::= lo.alloc.Vec<Value>();
+    c.args.loop((a) { args.add(lo.expr(a.value).try()).try(LowerError.OutOfMemory); });
+    ty = lo.type_of(id).try();
+    out = lo.temp(ty).try();
+    done = lo.label().try();
+    bound.implementors.loop((h, i, implementor) {
+        yes  = lo.label().try();
+        next = lo.label().try();
+        expected = lo.word_const(Scalar.U32, i.to_i64_bits()).try();
+        test = lo.slot_of(Scalar.Bool).try();
+        lo.add(Instruction.BinaryValue(Binary(out: test, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+        lo.branch_to(test, yes, next).try();
+        lo.start(yes);
+        self_value = lo.read(Place(base: Base.Through(pointer), offset: 0, ty: implementor)).try();
+        result = lo.implementor_call(implementor, bound, name, self_value, args, method_inst, ty, span).try();
+        lo.add(Instruction.Copy(Move(out: out.slot, source: result.slot))).try();
+        lo.jump(done).try();
+        lo.start(next);
+    });
+    lo.trap(TrapKind.Unreachable, span).try();
+    lo.start(done);
+    Ok(out)
+}
+
+// One implementor's member, with the bound's hooks defaulted: an absent
+// `free` does nothing and an absent `create<T>` asks `raw` for T's bytes.
+implementor_call = (lo :: Native, implementor: TyId, bound: Bound, name: str, self_value: Value,
+                    args: Vec<Value>, method_inst: Inst, ty: TyId, span: Span) Res<Value, LowerError> {
+    arity = args.len + 1;
+    lo.resolve(implementor, name, None, arity, method_inst, Ok(bound.decl), span).match({
+        Ok(callee) => lo.call_values(callee, self_value, args, ty, span),
+        Err(e)     => name.match({
+            "free"   => lo.unit(),
+            "create" => {
+                elem = method_inst.arg_at(0).ok_or(unsupported(span, "create without an element type")).try();
+                bytes = lo.word_const(Scalar.U64, size_of(lo.class_of(elem).try()).to_i64_bits()).try();
+                align = lo.word_const(Scalar.U64, 16).try();
+                usize_ty = lo.prim("usize").try();
+                raw = lo.resolve(implementor, "raw", None, 3, lo.alloc.Inst(), Ok(bound.decl), span).try();
+                sizes ::= lo.alloc.Vec<Value>();
+                sizes.add(Value(slot: bytes, ty: usize_ty)).try(LowerError.OutOfMemory);
+                sizes.add(Value(slot: align, ty: usize_ty)).try(LowerError.OutOfMemory);
+                made = lo.call_values(raw, self_value, sizes, lo.result_type(raw).try(), span).try();
+                // Res<Ptr<u8>, E> and Res<Ptr<T>, E> share one layout.
+                Ok(Value(slot: made.slot, ty: ty))
+            },
+            _        => Err(e),
+        }),
+    })
+}
+
+// Call a resolved member with already-evaluated receiver and arguments.
+call_values* = (lo :: Native, callee: Callee, self_value: Value, args: Vec<Value>, ty: TyId, span: Span)
+               Res<Value, LowerError> {
+    index = lo.enqueue(callee).try();
+    slots ::= lo.alloc.Vec<usize>();
+    callee.f.params.loop((h, i, p) {
+        want = lo.param_type(callee, i).try();
+        value = (i == 0).match({
+            true  => self_value,
+            false => args.get(i - 1).ok_or(unsupported(span, "a missing argument")).try(),
+        });
+        coerced = lo.coerce(value, want).try();
+        slot = p.mutable.match({
+            true  => lo.address(lo.spill(lo.copy_value(coerced).try())).try(),
+            false => coerced.slot,
+        });
+        slots.add(slot).try(LowerError.OutOfMemory);
+    });
+    ret = lo.result_type(callee).try();
+    out = lo.temp(ret).try();
+    lo.add(Instruction.Invoke(Invocation(out: out.slot, function: index, args: slots))).try();
+    lo.coerce(out, ty)
+}
+
+// ---------------------------------------------------------------------
+// page authority
+// ---------------------------------------------------------------------
+
+// `Mem.alloc()` builds an Arena over fresh zeroed state; `Mem.page` maps a
+// run with its Page header in the first bytes; `Mem.release` unmaps.
+mem_call* = (lo :: Native, id: ExprId, name: str, sources: Vec<Source>, span: Span)
+            Res<Value, LowerError> {
+    ty = lo.type_of(id).try();
+    name.match({
+        "alloc"   => {
+            s = lo.shape(ty).try();
+            state_field = s.form.match({
+                Record(fields) => fields.find((f) { f.name.eq("state") }),
+                _              => None,
+            }).ok_or(unsupported(span, "an Arena without a state field")).try();
+            state_ty = lo.pointee_of(state_field.ty).try();
+            bytes = lo.word_const(Scalar.U64, size_of(lo.class_of(state_ty).try()).max_one().to_i64_bits()).try();
+            state = lo.slot_of(Scalar.Ptr).try();
+            lo.add(Instruction.MapPages(Pages(out: state, bytes: bytes))).try();
+            lo.out_of_memory_trap(state, span).try();
+            out = lo.temp(ty).try();
+            at = lo.slot_of(Scalar.Ptr).try();
+            lo.add(Instruction.AddressOf(Address(out: at, slot: out.slot))).try();
+            lo.add(Instruction.StoreValue(Store(base: at, offset: state_field.offset, value: state))).try();
+            Ok(out)
+        },
+        "page"    => {
+            size = lo.expr_as(sources.source_expr(1, span).try(), lo.prim("usize").try()).try();
+            ok_ty = lo.payload_type(ty, "Ok").try();
+            page_ty = lo.pointee_of(ok_ty).try();
+            header = size_of(lo.class_of(page_ty).try());
+            header_bytes = lo.word_const(Scalar.U64, header.to_i64_bits()).try();
+            total = lo.slot_of(Scalar.U64).try();
+            lo.add(Instruction.BinaryValue(Binary(out: total, left: size.slot, right: header_bytes, op: Op.Add, span: span))).try();
+            raw = lo.slot_of(Scalar.Ptr).try();
+            lo.add(Instruction.MapPages(Pages(out: raw, bytes: total))).try();
+            out = lo.temp(ty).try();
+            zero = lo.word_const(Scalar.Ptr, 0).try();
+            failed = lo.slot_of(Scalar.Bool).try();
+            lo.add(Instruction.BinaryValue(Binary(out: failed, left: raw, right: zero, op: Op.Equal, span: nowhere()))).try();
+            bad = lo.label().try();
+            good = lo.label().try();
+            done = lo.label().try();
+            lo.branch_to(failed, bad, good).try();
+            lo.start(bad);
+            err_ty = lo.payload_type(ty, "Err").try();
+            reason = lo.variant_value(err_ty, "OutOfMemory", None, span).try();
+            refused = lo.variant_value(ty, "Err", Ok(reason), span).try();
+            lo.add(Instruction.Copy(Move(out: out.slot, source: refused.slot))).try();
+            lo.jump(done).try();
+            lo.start(good);
+            fields = lo.shape(page_ty).try().form.match({ Record(f) => Ok(f), _ => None })
+                .ok_or(unsupported(span, "a Page without fields")).try();
+            prev = sources.get(2).value_or(Source.Absent).match({
+                Given(e) => lo.expr(e).try().slot,
+                _        => lo.word_const(Scalar.Ptr, 0).try(),
+            });
+            base = lo.slot_of(Scalar.Ptr).try();
+            lo.add(Instruction.BinaryValue(Binary(out: base, left: raw, right: header_bytes, op: Op.WrapAdd, span: nowhere()))).try();
+            fields.loop((f) {
+                value = f.name.match({
+                    "prev" => Ok(prev),
+                    "base" => Ok(base),
+                    "size" => Ok(size.slot),
+                    _      => None,
+                });
+                value.when_ok((v) {
+                    lo.add(Instruction.StoreValue(Store(base: raw, offset: f.offset, value: v))).try();
+                });
+            });
+            made = lo.variant_value(ty, "Ok", Ok(Value(slot: raw, ty: ok_ty)), span).try();
+            lo.add(Instruction.Copy(Move(out: out.slot, source: made.slot))).try();
+            lo.enter(done).try();
+            Ok(out)
+        },
+        "release" => {
+            region = lo.expr(sources.source_expr(1, span).try()).try();
+            lo.add(Instruction.UnmapPages(region.slot)).try();
+            lo.unit()
+        },
+        _         => Err(unsupported(span, "this page-authority operation")),
+    })
+}
+
+max_one = (n: usize) usize { (n == 0).match({ true => 1, false => n }) }
+
+out_of_memory_trap = (lo :: Native, pointer: usize, span: Span) Res<(), LowerError> {
+    zero = lo.word_const(Scalar.Ptr, 0).try();
+    failed = lo.slot_of(Scalar.Bool).try();
+    lo.add(Instruction.BinaryValue(Binary(out: failed, left: pointer, right: zero, op: Op.Equal, span: nowhere()))).try();
+    bad = lo.label().try();
+    good = lo.label().try();
+    lo.branch_to(failed, bad, good).try();
+    lo.start(bad);
+    lo.trap(TrapKind.OutOfMemory, span).try();
+    lo.start(good);
+    Ok(())
+}
+
+pointee_of* = (lo :: Native, ty: TyId) Res<TyId, LowerError> {
+    lo.check.types.at(ty).match({
+        Named(n) => n.args.get(0).ok_or(unsupported(nowhere(), "a pointer without an element type")),
+        _        => Err(unsupported(nowhere(), "a pointer operation on a non-pointer")),
+    })
+}
+
+payload_type* = (lo :: Native, ty: TyId, name: str) Res<TyId, LowerError> {
+    variants = lo.variants_of(ty).try();
+    found = variants.find((v) { v.name.eq(name) }).ok_or(unsupported(nowhere(), "a missing variant")).try();
+    found.payload.ok_or(unsupported(nowhere(), "a payload-free variant"))
+}

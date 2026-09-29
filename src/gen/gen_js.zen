@@ -76,6 +76,8 @@ JavaScript = {
                 branch.yes,
                 branch.no
             ),
+            // Native-surface IR; `verify` refuses it before rendering.
+            Trap(_)        => self.out.add(OUTSIDE),
         })
     }
 
@@ -101,6 +103,8 @@ JavaScript = {
                 self.out.byte_string(value).try();
                 self.out.add(");\n")
             },
+            // Native-surface IR; `verify` refuses it before rendering.
+            _                  => self.out.add(OUTSIDE),
         })
     }
 
@@ -194,6 +198,7 @@ JavaScript = {
                 value.left,
                 value.right
             ),
+            _            => self.out.add("zg_outside("),
         }).try();
         checked = value.op.match({ Add => true, Sub => true, Mul => true, Div => true, Rem => true, _ => false });
         checked.then(() {
@@ -224,6 +229,7 @@ JavaScript = {
                 value.value
             ),
             Unit => self.out.add("      process.stdout.write(\"()\");\n"),
+            _    => self.out.add(OUTSIDE),
         })
     }
 }
@@ -232,6 +238,8 @@ JavaScript = {
 // execution without process.exit truncating already-produced output.
 // Every i32 is exactly representable as a Number. An in-range product is exact
 // too; rounding of larger products cannot bring them inside the i32 bounds.
+OUTSIDE: str = "      throw new Error(\"native-surface IR\");\n"
+
 runtime = (out :: String) Res<(), AllocError> {
     out.add("\"use strict\";\n").try();
     out.add("class ZenTrap extends Error {}\n").try();

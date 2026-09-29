@@ -1,13 +1,21 @@
-// GNU-syntax x86-64 Linux assembly for the scalar IR. The executable is
+// GNU-syntax x86-64 Linux assembly for the native IR. The executable is
 // freestanding: its own `_start`, raw `syscall` instructions and a small
-// runtime emitted beside the program. No C library is linked. Each value
-// has an eight-byte stack slot; calls preserve those slots without spilling.
+// runtime emitted beside the program. No C library is linked.
+//
+// Frame: every slot lives below %rbp. Word slots take eight bytes and hold
+// their value extended to 64 bits; aggregate slots take their rounded size.
+// Calls follow System V for words; an aggregate argument is passed as a
+// pointer to the caller's copy, and an aggregate result is written through a
+// hidden pointer passed in %rdi, as System V does for MEMORY-class values.
 
 Alloc, AllocError = std.mem
 str, String = std.text
 Range = std.core
 Vec = std.collections
 Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
+Scalar, Layout, Op, TrapKind, Fault = gen.gen_ir
+Convert, Load, Store, SysCall, Start, Stream = gen.gen_ir
+width, signed, word, trap_message = gen.gen_ir
 Span = std.ast
 Target = gen.gen_asm
 Sys, linux_x86_64 = gen.gen_asm_sys
@@ -19,80 +27,135 @@ X86_64Linux* = { alloc*: Alloc }
 X86_64Linux.impl(Target, {
     emit = (self: @Self, program: Program) Res<String, AllocError> {
         writer ::= Assembly(
+            alloc: self.alloc,
+            program: program,
             out: self.alloc.String().try(),
             data: self.alloc.String().try(),
+            scratch: self.alloc.String().try(),
             traps: self.alloc.Vec<TrapSite>(),
+            offsets: self.alloc.Vec<usize>(),
             next_label: 0
         );
-        writer.program(program).try();
+        writer.render().try();
         Ok(writer.out)
     }
 })
 
 // An out-of-line trap: the check branches here only when it fails, so the
 // location and message loads stay off the fast path.
-TrapSite = { label: usize, location: usize, message: str }
+TrapSite = { label: usize, location: usize, length: usize, what: TrapKind }
 
 Assembly = {
+    alloc: Alloc,
+    program: Program,
     out :: String,
     // Read-only literals are collected and emitted once after the code.
     data :: String,
+    scratch :: String,
     traps :: Vec<TrapSite>,
+    // Per function: each slot's distance below %rbp.
+    offsets :: Vec<usize>,
     next_label :: usize,
-    // Stack slots remain authoritative. This fact holds only within one
-    // basic block and is discarded across calls that do not store a result.
-    eax_slot :: Res<usize> = None,
+    function_id :: usize = 0,
+    // Where the hidden aggregate-result pointer is saved, below %rbp.
+    result_offset :: usize = 0,
+    // Slots remain authoritative. This fact holds only within one basic
+    // block and is discarded across calls and stores through pointers.
+    rax_slot :: Res<usize> = None,
 
-    program = (self :: @Self, program: Program) Res<(), AllocError> {
+    render = (self :: @Self) Res<(), AllocError> {
         self.out.add(".text\n").try();
-        program.functions.loop((h, i, function) {
+        self.program.functions.loop((h, i, function) {
             self.function(i, function).try();
         });
-        // The kernel enters with an aligned stack holding argc; `call`
+        // The kernel enters with %rsp at argc, 16-byte aligned; `call`
         // leaves the entry function its System V alignment.
         self.out.fmt(
-            ".globl _start\n.type _start, @function\n_start:\n    xorl %ebp, %ebp\n    andq $-16, %rsp\n    call za_fn_{}\n    movl %eax, %edi\n    jmp za_exit\n.size _start, .-_start\n",
-            program.entry
+            ".globl _start\n.type _start, @function\n_start:\n    xorl %ebp, %ebp\n    movq %rsp, za_start_sp(%rip)\n    andq $-16, %rsp\n    call za_fn_{}\n    movl %eax, %edi\n    jmp za_exit\n.size _start, .-_start\n",
+            self.program.entry
         ).try();
         self.runtime().try();
         self.out.add(".section .rodata\n").try();
         self.out.add(self.data.view()).try();
         self.out.add(
-            ".bss\n.p2align 4\nza_out_buf:\n    .zero 65536\nza_out_len:\n    .zero 8\n"
+            ".bss\n.p2align 4\nza_out_buf:\n    .zero 65536\nza_out_len:\n    .zero 8\nza_start_sp:\n    .zero 8\n"
         ).try();
         self.out.add(".section .note.GNU-stack,\"\",@progbits\n")
     }
 
+    slot_type = (self: @Self, slot: usize) Scalar {
+        self.program.functions.get(self.function_id).match({
+            Ok(f) => f.slots.get(slot).value_or(Scalar.Unit),
+            None  => Scalar.Unit,
+        })
+    }
+
+    offset = (self: @Self, slot: usize) usize {
+        self.offsets.get(slot).value_or(0)
+    }
+
+    // Aggregates are laid out upward from their lowest address.
+    layout_frame = (self :: @Self, function: Func) usize {
+        self.offsets.clear();
+        cursor ::= 8;
+        self.result_offset = cursor;
+        function.slots.loop((ty) {
+            size  = round_up(at_least_word(stored_size(ty)), 8);
+            align = ty.match({ Block(l) => (l.align > 8).match({ true => 16, false => 8 }), _ => 8 });
+            cursor = round_up(cursor + size, align);
+            self.offsets.add(cursor).ignore();
+        });
+        round_up(cursor, 16)
+    }
+
     function = (self :: @Self, id: usize, function: Func)
                Res<(), AllocError> {
-        frame = ((function.slots.len * 8 + 15) / 16) * 16;
+        self.function_id = id;
+        frame = self.layout_frame(function);
         self.out.fmt(
-            ".type za_fn_{}, @function\nza_fn_{}:\n    pushq %rbp\n    movq %rsp, %rbp\n",
+            ".type za_fn_{}, @function\nza_fn_{}:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq ${}, %rsp\n",
             id,
-            id
+            id,
+            frame
         ).try();
-        (frame > 0).then(() {
-            self.out.fmt("    subq ${}, %rsp\n", frame).try();
+        hidden = is_block(function.result);
+        hidden.then(() {
+            self.out.fmt("    movq %rdi, -{}(%rbp)\n", self.result_offset).try();
         });
+        first = hidden.match({ true => 1, false => 0 });
+        // Spill every incoming word first: an aggregate's copy below uses
+        // registers that may still hold later arguments. An aggregate slot
+        // briefly holds the caller's pointer to its value.
         Range(0, function.parameters).loop((i) {
-            (i < REGISTER_ARGUMENTS).match({
-                true  => self.store(i, argument_register(i)),
-                false => {
-                    self.out.fmt(
-                        "    movl {}(%rbp), %eax\n",
-                        16 + (i - REGISTER_ARGUMENTS) * 8
-                    ).try();
-                    self.store(i, "%eax")
-                },
+            position = i + first;
+            (position < REGISTER_ARGUMENTS).match({
+                true  => self.out.fmt(
+                    "    movq {}, -{}(%rbp)\n",
+                    argument_register(position),
+                    self.offset(i)
+                ),
+                false => self.out.fmt(
+                    "    movq {}(%rbp), %rax\n    movq %rax, -{}(%rbp)\n",
+                    16 + (position - REGISTER_ARGUMENTS) * 8,
+                    self.offset(i)
+                ),
             }).try();
         });
+        Range(0, function.parameters).loop((i) {
+            ty = function.slots.get(i).value_or(Scalar.Unit);
+            is_block(ty).then(() {
+                self.out.fmt("    movq -{}(%rbp), %rsi\n", self.offset(i)).try();
+                self.slot_address(i, "%rdi").try();
+                self.copy_block("%rdi", "%rsi", stored_size(ty)).try();
+            });
+        });
         function.blocks.loop((h, block_id, block) {
-            self.eax_slot = None;
+            self.rax_slot = None;
             self.out.fmt(".Lza_f{}_b{}:\n", id, block_id).try();
             block.code.loop(
                 (instruction) { self.instruction(instruction).try(); }
             );
-            self.terminator(id, block.exit).try();
+            self.terminator(id, function, block.exit).try();
         });
         self.trap_stubs().try();
         self.out.fmt(".size za_fn_{}, .-za_fn_{}\n", id, id)
@@ -102,160 +165,497 @@ Assembly = {
                   Res<(), AllocError> {
         instruction.match({
             Constant(value)    => {
-                self.eax_slot.when_ok((slot) {
-                    (slot == value.out).then(() { self.eax_slot = None; });
-                });
-                self.out.fmt(
-                    "    movl ${}, -{}(%rbp)\n",
-                    value.value,
-                    slot_offset(value.out)
-                )
+                (value.value >= -2147483648 && value.value <= 2147483647).match({
+                    true  => self.out.fmt("    movq ${}, %rax\n", value.value),
+                    false => self.out.fmt("    movabsq ${}, %rax\n", value.value),
+                }).try();
+                self.store(value.out, "%rax")
             },
-            Copy(value)        => {
-                self.load(value.source, "%eax").try();
-                self.store(value.out, "%eax")
-            },
+            Copy(value)        => self.copy(value.out, value.source),
             UnaryValue(value)  => self.unary(value),
             BinaryValue(value) => self.binary(value),
             Invoke(call)       => self.call(call),
             PrintValue(value)  => self.print(value),
             Text(bytes)        => self.text(bytes),
+            Cast(value)        => {
+                self.load(value.input, "%rax").try();
+                self.convert(self.slot_type(value.input), self.slot_type(value.out)).try();
+                self.store(value.out, "%rax")
+            },
+            AddressOf(value)   => {
+                self.slot_address(value.slot, "%rax").try();
+                // The slot may now change through the pointer.
+                self.rax_slot = None;
+                self.store(value.out, "%rax")
+            },
+            LoadValue(value)   => self.load_memory(value),
+            StoreValue(value)  => self.store_memory(value),
+            CopyBytes(value)   => {
+                self.load(value.dest, "%rdi").try();
+                self.load(value.source, "%rsi").try();
+                self.load(value.bytes, "%rcx").try();
+                self.rax_slot = None;
+                self.out.add("    rep movsb\n")
+            },
+            Bytes(value)       => {
+                label = self.literal(value.bytes).try();
+                self.out.fmt("    leaq .Lza_d{}(%rip), %rax\n", label).try();
+                self.store(value.out, "%rax")
+            },
+            WriteOut(value)    => {
+                self.load(value.data, "%rdi").try();
+                self.load(value.len, "%rsi").try();
+                self.rax_slot = None;
+                self.out.fmt("    movl ${}, %edx\n    call za_emit\n", descriptor(value.stream))
+            },
+            System(call)       => self.system(call),
+            MapPages(value)    => {
+                self.load(value.bytes, "%rdi").try();
+                self.rax_slot = None;
+                self.out.add("    call za_map\n").try();
+                self.store(value.out, "%rax")
+            },
+            UnmapPages(slot)   => {
+                self.load(slot, "%rdi").try();
+                self.rax_slot = None;
+                self.out.add("    call za_unmap\n")
+            },
+            Startup(value)     => {
+                self.out.add("    movq za_start_sp(%rip), %rcx\n").try();
+                value.value.match({
+                    Argc => self.out.add("    movq (%rcx), %rax\n"),
+                    Argv => self.out.add("    leaq 8(%rcx), %rax\n"),
+                    Envp => self.out.add(
+                        "    movq (%rcx), %rax\n    leaq 16(%rcx,%rax,8), %rax\n"
+                    ),
+                }).try();
+                self.rax_slot = None;
+                self.store(value.out, "%rax")
+            },
         })
     }
 
-    terminator = (self :: @Self, function: usize, exit: Terminator)
-                 Res<(), AllocError> {
+    terminator = (self :: @Self, function_id: usize, function: Func,
+                  exit: Terminator) Res<(), AllocError> {
         exit.match({
             Return(value)  => {
-                self.load(value, "%eax").try();
+                is_block(function.result).match({
+                    true  => {
+                        self.slot_address(value, "%rsi").try();
+                        self.out.fmt("    movq -{}(%rbp), %rdi\n", self.result_offset).try();
+                        self.copy_block("%rdi", "%rsi", stored_size(function.result)).try();
+                        self.out.fmt("    movq -{}(%rbp), %rax\n", self.result_offset)
+                    },
+                    false => self.load(value, "%rax"),
+                }).try();
                 self.out.add("    leave\n    ret\n")
             },
             Jump(block)    => self.out.fmt(
                 "    jmp .Lza_f{}_b{}\n",
-                function,
+                function_id,
                 block
             ),
             Branch(branch) => {
-                self.load(branch.value, "%eax").try();
+                self.load(branch.value, "%rax").try();
                 self.out.fmt(
-                    "    testl %eax, %eax\n    jnz .Lza_f{}_b{}\n    jmp .Lza_f{}_b{}\n",
-                    function,
+                    "    testq %rax, %rax\n    jnz .Lza_f{}_b{}\n    jmp .Lza_f{}_b{}\n",
+                    function_id,
                     branch.yes,
-                    function,
+                    function_id,
                     branch.no
                 )
+            },
+            Trap(fault)    => self.trap_if("mp", fault.span, fault.what),
+        })
+    }
+
+    copy = (self :: @Self, out: usize, source: usize) Res<(), AllocError> {
+        ty = self.slot_type(out);
+        is_block(ty).match({
+            true  => {
+                self.slot_address(source, "%rsi").try();
+                self.slot_address(out, "%rdi").try();
+                self.copy_block("%rdi", "%rsi", stored_size(ty))
+            },
+            false => {
+                self.load(source, "%rax").try();
+                self.store(out, "%rax")
             },
         })
     }
 
     unary = (self :: @Self, value: Unary) Res<(), AllocError> {
-        self.load(value.input, "%eax").try();
+        ty = self.slot_type(value.input);
+        self.load(value.input, "%rax").try();
         value.op.match({
             Neg => {
-                self.out.add("    negl %eax\n").try();
-                self.trap_if("o", value.span, OVERFLOW)
+                self.out.add("    negq %rax\n").try();
+                self.checked_signed(ty, value.span)
             },
-            Not => self.out.add(
-                "    testl %eax, %eax\n    sete %al\n    movzbl %al, %eax\n"
-            ),
+            Not => self.out.add("    xorq $1, %rax\n"),
         }).try();
-        self.store(value.out, "%eax")
+        self.store(value.out, "%rax")
+    }
+
+    // A signed result of width below 64 bits must survive sign extension
+    // from its own width; a 64-bit result uses the overflow flag.
+    checked_signed = (self :: @Self, ty: Scalar, span: Span) Res<(), AllocError> {
+        (width(ty) == 8).match({
+            true  => self.trap_if("o", span, TrapKind.Overflow),
+            false => self.range_check(ty, span),
+        })
+    }
+
+    // Compare the 64-bit result with its value re-extended from the type's
+    // width; any difference is an overflow.
+    range_check = (self :: @Self, ty: Scalar, span: Span) Res<(), AllocError> {
+        self.out.add("    movq %rax, %rdx\n").try();
+        self.extend("%rdx", "%edx", "%dx", "%dl", ty).try();
+        self.out.add("    cmpq %rdx, %rax\n").try();
+        self.trap_if("ne", span, TrapKind.Overflow)
+    }
+
+    // Truncate a register to `ty`'s width and extend it back to 64 bits.
+    extend = (self :: @Self, full: str, dword: str, half: str, byte: str,
+              ty: Scalar) Res<(), AllocError> {
+        ty.match({
+            I8   => self.out.fmt("    movsbq {}, {}\n", byte, full),
+            U8   => self.out.fmt("    movzbl {}, {}\n", byte, dword),
+            Bool => self.out.fmt("    movzbl {}, {}\n", byte, dword),
+            I16  => self.out.fmt("    movswq {}, {}\n", half, full),
+            U16  => self.out.fmt("    movzwl {}, {}\n", half, dword),
+            I32  => self.out.fmt("    movslq {}, {}\n", dword, full),
+            U32  => self.out.fmt("    movl {}, {}\n", dword, dword),
+            _    => Ok(()),
+        })
+    }
+
+    canon = (self :: @Self, ty: Scalar) Res<(), AllocError> {
+        self.extend("%rax", "%eax", "%ax", "%al", ty)
+    }
+
+    convert = (self :: @Self, from: Scalar, to: Scalar) Res<(), AllocError> {
+        to.match({
+            Bool => (width(from) == 1 && !signed(from)).match({
+                true  => Ok(()),
+                false => self.out.add("    testq %rax, %rax\n    setne %al\n    movzbl %al, %eax\n"),
+            }),
+            _    => self.canon(to),
+        })
     }
 
     binary = (self :: @Self, value: Binary) Res<(), AllocError> {
-        self.load(value.left, "%eax").try();
-        self.load(value.right, "%ecx").try();
+        ty        = self.slot_type(value.left);
+        is_signed = signed(ty);
+        self.load(value.left, "%rax").try();
+        self.load(value.right, "%rcx").try();
         value.op.match({
             Add          => {
-                self.out.add("    addl %ecx, %eax\n").try();
-                self.trap_if("o", value.span, OVERFLOW)
+                self.out.add("    addq %rcx, %rax\n").try();
+                self.checked(ty, value.span)
             },
             Sub          => {
-                self.out.add("    subl %ecx, %eax\n").try();
-                self.trap_if("o", value.span, OVERFLOW)
+                self.out.add("    subq %rcx, %rax\n").try();
+                self.checked(ty, value.span)
             },
-            Mul          => {
-                self.out.add("    imull %ecx, %eax\n").try();
-                self.trap_if("o", value.span, OVERFLOW)
-            },
-            Div          => self.divide(value.span, "%eax"),
-            Rem          => self.divide(value.span, "%edx"),
+            Mul          => (width(ty) == 8).match({
+                true  => is_signed.match({
+                    true  => {
+                        self.out.add("    imulq %rcx, %rax\n").try();
+                        self.trap_if("o", value.span, TrapKind.Overflow)
+                    },
+                    false => {
+                        self.out.add("    mulq %rcx\n").try();
+                        self.trap_if("o", value.span, TrapKind.Overflow)
+                    },
+                }),
+                // Extended operands of at most 32 bits multiply exactly.
+                false => {
+                    self.out.add("    imulq %rcx, %rax\n").try();
+                    self.range_check(ty, value.span)
+                },
+            }),
+            Div          => self.divide(ty, value.span, false),
+            Rem          => self.divide(ty, value.span, true),
             Equal        => self.compare("e"),
             NotEqual     => self.compare("ne"),
-            Less         => self.compare("l"),
-            LessEqual    => self.compare("le"),
-            Greater      => self.compare("g"),
-            GreaterEqual => self.compare("ge"),
+            Less         => self.compare(is_signed.match({ true => "l", false => "b" })),
+            LessEqual    => self.compare(is_signed.match({ true => "le", false => "be" })),
+            Greater      => self.compare(is_signed.match({ true => "g", false => "a" })),
+            GreaterEqual => self.compare(is_signed.match({ true => "ge", false => "ae" })),
+            WrapAdd      => {
+                self.out.add("    addq %rcx, %rax\n").try();
+                self.canon(ty)
+            },
+            WrapSub      => {
+                self.out.add("    subq %rcx, %rax\n").try();
+                self.canon(ty)
+            },
+            WrapMul      => {
+                self.out.add("    imulq %rcx, %rax\n").try();
+                self.canon(ty)
+            },
+            And          => self.out.add("    andq %rcx, %rax\n"),
+            Or           => self.out.add("    orq %rcx, %rax\n"),
+            Xor          => self.out.add("    xorq %rcx, %rax\n"),
+            Shl          => self.shift("shlq", ty),
+            Shr          => self.shift("shrq", ty),
+            Rotr         => self.rotate(ty),
         }).try();
-        self.store(value.out, "%eax")
+        self.store(value.out, "%rax")
+    }
+
+    // Checked add/sub: flags for 64-bit words, range for narrower ones.
+    checked = (self :: @Self, ty: Scalar, span: Span) Res<(), AllocError> {
+        (width(ty) == 8).match({
+            true  => self.trap_if(
+                signed(ty).match({ true => "o", false => "c" }),
+                span,
+                TrapKind.Overflow
+            ),
+            false => self.range_check(ty, span),
+        })
+    }
+
+    // Counts at or beyond the width produce zero, as the std contract says.
+    shift = (self :: @Self, op: str, ty: Scalar) Res<(), AllocError> {
+        label = self.label();
+        self.out.fmt(
+            "    xorl %edx, %edx\n    cmpq ${}, %rcx\n    cmovaeq %rdx, %rax\n    jae .Lza_t{}\n    {} %cl, %rax\n.Lza_t{}:\n",
+            width(ty) * 8,
+            label,
+            op,
+            label
+        ).try();
+        self.canon(ty)
+    }
+
+    rotate = (self :: @Self, ty: Scalar) Res<(), AllocError> {
+        width(ty).match({
+            1 => self.out.add("    rorb %cl, %al\n    movzbl %al, %eax\n"),
+            2 => self.out.add("    rorw %cl, %ax\n    movzwl %ax, %eax\n"),
+            4 => self.out.add("    rorl %cl, %eax\n"),
+            _ => self.out.add("    rorq %cl, %rax\n"),
+        })
     }
 
     compare = (self :: @Self, condition: str) Res<(), AllocError> {
         self.out.fmt(
-            "    cmpl %ecx, %eax\n    set{} %al\n    movzbl %al, %eax\n",
+            "    cmpq %rcx, %rax\n    set{} %al\n    movzbl %al, %eax\n",
             condition
         )
     }
 
     // Zero divisors and MIN / -1 trap at the operator; idiv would fault.
-    divide = (self :: @Self, span: Span, result_register: str)
+    divide = (self :: @Self, ty: Scalar, span: Span, remainder: bool)
              Res<(), AllocError> {
-        self.out.add("    testl %ecx, %ecx\n").try();
-        self.trap_if("z", span, DIVIDE_BY_ZERO).try();
-        label = self.label();
-        self.out.fmt(
-            "    cmpl $-1, %ecx\n    jne .Lza_t{}\n    cmpl $-2147483648, %eax\n",
-            label
-        ).try();
-        self.trap_if("e", span, OVERFLOW).try();
-        self.out.fmt(".Lza_t{}:\n    cltd\n    idivl %ecx\n", label).try();
-        (!result_register.eq("%eax")).then(() {
-            self.out.fmt("    movl {}, %eax\n", result_register).try();
+        self.out.add("    testq %rcx, %rcx\n").try();
+        self.trap_if("z", span, TrapKind.DivideByZero).try();
+        signed(ty).match({
+            true  => {
+                label = self.label();
+                self.out.fmt(
+                    "    cmpq $-1, %rcx\n    jne .Lza_t{}\n    movabsq ${}, %rdx\n    cmpq %rdx, %rax\n",
+                    label,
+                    minimum(ty)
+                ).try();
+                self.trap_if("e", span, TrapKind.Overflow).try();
+                self.out.fmt(".Lza_t{}:\n    cqto\n    idivq %rcx\n", label)
+            },
+            false => self.out.add("    xorl %edx, %edx\n    divq %rcx\n"),
+        }).try();
+        remainder.then(() { self.out.add("    movq %rdx, %rax\n").try(); });
+        Ok(())
+    }
+
+    load_memory = (self :: @Self, value: Load) Res<(), AllocError> {
+        ty = self.slot_type(value.out);
+        self.load(value.base, "%rsi").try();
+        is_block(ty).match({
+            true  => {
+                (value.offset > 0).then(() {
+                    self.out.fmt("    addq ${}, %rsi\n", value.offset).try();
+                });
+                self.slot_address(value.out, "%rdi").try();
+                self.rax_slot = None;
+                self.copy_block("%rdi", "%rsi", stored_size(ty))
+            },
+            false => {
+                op = ty.match({
+                    I8   => "movsbq",
+                    U8   => "movzbl",
+                    Bool => "movzbl",
+                    I16  => "movswq",
+                    U16  => "movzwl",
+                    I32  => "movslq",
+                    U32  => "movl",
+                    _    => "movq",
+                });
+                dest = ty.match({
+                    U8 => "%eax", Bool => "%eax", U16 => "%eax", U32 => "%eax", _ => "%rax",
+                });
+                ty.match({
+                    Unit => self.out.add("    xorl %eax, %eax\n"),
+                    _    => self.out.fmt("    {} {}(%rsi), {}\n", op, value.offset, dest),
+                }).try();
+                self.rax_slot = None;
+                self.store(value.out, "%rax")
+            },
+        })
+    }
+
+    store_memory = (self :: @Self, value: Store) Res<(), AllocError> {
+        ty = self.slot_type(value.value);
+        self.load(value.base, "%rdi").try();
+        is_block(ty).match({
+            true  => {
+                (value.offset > 0).then(() {
+                    self.out.fmt("    addq ${}, %rdi\n", value.offset).try();
+                });
+                self.slot_address(value.value, "%rsi").try();
+                self.copy_block("%rdi", "%rsi", stored_size(ty)).try();
+            },
+            false => {
+                self.load(value.value, "%rax").try();
+                width(ty).match({
+                    0 => Ok(()),
+                    1 => self.out.fmt("    movb %al, {}(%rdi)\n", value.offset),
+                    2 => self.out.fmt("    movw %ax, {}(%rdi)\n", value.offset),
+                    4 => self.out.fmt("    movl %eax, {}(%rdi)\n", value.offset),
+                    _ => self.out.fmt("    movq %rax, {}(%rdi)\n", value.offset),
+                }).try();
+            },
         });
+        // The store may have written any slot whose address was taken.
+        self.rax_slot = None;
+        Ok(())
+    }
+
+    // Copy `size` bytes from the address in `source` to the address in
+    // `dest`, clobbering both, %rcx and %rdx.
+    copy_block = (self :: @Self, dest: str, source: str, size: usize)
+                 Res<(), AllocError> {
+        (size > 64).match({
+            true  => {
+                (!dest.eq("%rdi")).then(() { self.out.fmt("    movq {}, %rdi\n", dest).try(); });
+                (!source.eq("%rsi")).then(() { self.out.fmt("    movq {}, %rsi\n", source).try(); });
+                self.out.fmt("    movq ${}, %rcx\n    rep movsb\n", size).try();
+            },
+            false => {
+                at ::= 0;
+                loop(() { at + 8 <= size }, (h) {
+                    self.out.fmt(
+                        "    movq {}({}), %rdx\n    movq %rdx, {}({})\n",
+                        at,
+                        source,
+                        at,
+                        dest
+                    ).try();
+                    at = at + 8;
+                });
+                loop(() { at < size }, (h) {
+                    self.out.fmt(
+                        "    movb {}({}), %dl\n    movb %dl, {}({})\n",
+                        at,
+                        source,
+                        at,
+                        dest
+                    ).try();
+                    at = at + 1;
+                });
+            },
+        });
+        self.rax_slot = None;
         Ok(())
     }
 
     call = (self :: @Self, call: Invocation) Res<(), AllocError> {
-        stacked = (call.args.len > REGISTER_ARGUMENTS).match({
-            true  => call.args.len - REGISTER_ARGUMENTS,
+        callee = self.program.functions.get(call.function).match({
+            Ok(f) => Ok(f),
+            None  => None,
+        });
+        hidden = callee.match({ Ok(f) => is_block(f.result), None => false });
+        first  = hidden.match({ true => 1, false => 0 });
+        total  = call.args.len + first;
+        stacked = (total > REGISTER_ARGUMENTS).match({
+            true  => total - REGISTER_ARGUMENTS,
             false => 0,
         });
         padding = stacked % 2;
         (padding > 0).then(() { self.out.add("    subq $8, %rsp\n").try(); });
-        // Stack arguments occupy eight-byte ABI slots, rightmost first. The
-        // padding precedes them so the first stacked argument remains at rsp.
-        Range(0, stacked).loop((offset) {
-            call.args.get(call.args.len - offset - 1).when_ok((value) {
-                self.load(value, "%eax").try();
-                self.out.add("    cltq\n    pushq %rax\n").try();
+        // Stack arguments occupy eight-byte ABI slots, rightmost first.
+        Range(0, stacked).loop((k) {
+            index = total - k - 1 - first;
+            call.args.get(index).when_ok((slot) {
+                self.argument(slot, "%rax").try();
+                self.out.add("    pushq %rax\n").try();
             });
         });
-        call.args.loop((h, i, value) {
-            (i == REGISTER_ARGUMENTS).then(() { h.break(); });
-            self.load(value, argument_register(i)).try();
+        hidden.then(() { self.slot_address(call.out, "%rdi").try(); });
+        call.args.loop((h, i, slot) {
+            (i + first >= REGISTER_ARGUMENTS).then(() { h.break(); });
+            self.argument(slot, argument_register(i + first)).try();
         });
         self.out.fmt("    call za_fn_{}\n", call.function).try();
         (stacked > 0).then(() {
             self.out.fmt("    addq ${}, %rsp\n", (stacked + padding) * 8).try();
         });
-        self.store(call.out, "%eax")
+        self.rax_slot = None;
+        hidden.match({
+            true  => Ok(()),
+            false => self.store(call.out, "%rax"),
+        })
+    }
+
+    // A word travels by value; an aggregate by the address of its slot.
+    argument = (self :: @Self, slot: usize, register: str) Res<(), AllocError> {
+        is_block(self.slot_type(slot)).match({
+            true  => self.slot_address(slot, register),
+            false => self.load(slot, register),
+        })
+    }
+
+    system = (self :: @Self, call: SysCall) Res<(), AllocError> {
+        call.args.loop((h, i, slot) {
+            self.load(slot, system_register(i)).try();
+        });
+        self.rax_slot = None;
+        linux_x86_64(call.call).match({
+            Ok(number) => self.out.fmt("    movl ${}, %eax\n    syscall\n", number),
+            // The kernel has no such call: answer -ENOSYS without trapping.
+            None       => self.out.add("    movq $-38, %rax\n"),
+        }).try();
+        self.store(call.out, "%rax")
     }
 
     print = (self :: @Self, value: Print) Res<(), AllocError> {
+        fd = descriptor(value.stream);
         value.ty.match({
-            I32  => {
-                self.load(value.value, "%eax").try();
-                self.out.add("    movslq %eax, %rdi\n    call za_print_i64\n")
-            },
             Bool => {
-                self.load(value.value, "%eax").try();
-                self.out.add(
-                    "    leaq za_false(%rip), %rdi\n    leaq za_true(%rip), %rdx\n    xorl %esi, %esi\n    testl %eax, %eax\n    cmovneq %rdx, %rdi\n    setz %sil\n    addl $4, %esi\n    call za_out\n"
+                self.load(value.value, "%rax").try();
+                self.out.fmt(
+                    "    leaq za_false(%rip), %rdi\n    leaq za_true(%rip), %rdx\n    xorl %esi, %esi\n    testq %rax, %rax\n    cmovneq %rdx, %rdi\n    setz %sil\n    addl $4, %esi\n    movl ${}, %edx\n    call za_emit\n",
+                    fd
                 )
             },
-            Unit => self.text("()"),
+            Unit => {
+                label = self.literal("()").try();
+                self.out.fmt(
+                    "    leaq .Lza_d{}(%rip), %rdi\n    movl $2, %esi\n    movl ${}, %edx\n    call za_emit\n",
+                    label,
+                    fd
+                )
+            },
+            _    => {
+                self.load(value.value, "%rdi").try();
+                self.out.fmt("    movl ${}, %esi\n", fd).try();
+                signed(value.ty).match({
+                    true  => self.out.add("    call za_print_i64\n"),
+                    false => self.out.add("    call za_print_u64\n"),
+                })
+            },
         }).try();
-        self.eax_slot = None;
+        self.rax_slot = None;
         Ok(())
     }
 
@@ -268,7 +668,7 @@ Assembly = {
                 bytes.len
             ).try();
         });
-        self.eax_slot = None;
+        self.rax_slot = None;
         Ok(())
     }
 
@@ -282,14 +682,15 @@ Assembly = {
     }
 
     data_bytes = (self :: @Self, bytes: str) Res<(), AllocError> {
-        (!bytes.is_empty()).then(() {
-            self.data.add("    .byte ").try();
-            bytes.loop((h, i, byte) {
-                (i > 0).then(() { self.data.add(",").try(); });
-                self.data.fmt("{}", byte).try();
+        bytes.loop((h, i, byte) {
+            (i % 32 == 0).then(() {
+                (i > 0).then(() { self.data.add("\n").try(); });
+                self.data.add("    .byte ").try();
             });
-            self.data.add("\n").try();
+            (i % 32 > 0).then(() { self.data.add(",").try(); });
+            self.data.fmt("{}", byte).try();
         });
+        (!bytes.is_empty()).then(() { self.data.add("\n").try(); });
         Ok(())
     }
 
@@ -299,21 +700,26 @@ Assembly = {
         label
     }
 
+    slot_address = (self :: @Self, slot: usize, register: str)
+                   Res<(), AllocError> {
+        self.out.fmt("    leaq -{}(%rbp), {}\n", self.offset(slot), register)
+    }
+
     load = (self :: @Self, slot: usize, register: str) Res<(), AllocError> {
-        cached = self.eax_slot.match({ Ok(value) => value == slot, None => false });
+        cached = self.rax_slot.match({ Ok(value) => value == slot, None => false });
         cached.match({
             true  => {
-                (!register.eq("%eax")).then(() {
-                    self.out.fmt("    movl %eax, {}\n", register).try();
+                (!register.eq("%rax")).then(() {
+                    self.out.fmt("    movq %rax, {}\n", register).try();
                 });
             },
             false => {
                 self.out.fmt(
-                    "    movl -{}(%rbp), {}\n",
-                    slot_offset(slot),
+                    "    movq -{}(%rbp), {}\n",
+                    self.offset(slot),
                     register
                 ).try();
-                register.eq("%eax").then(() { self.eax_slot = Ok(slot); });
+                register.eq("%rax").then(() { self.rax_slot = Ok(slot); });
             },
         });
         Ok(())
@@ -321,51 +727,52 @@ Assembly = {
 
     store = (self :: @Self, slot: usize, register: str) Res<(), AllocError> {
         self.out.fmt(
-            "    movl {}, -{}(%rbp)\n",
+            "    movq {}, -{}(%rbp)\n",
             register,
-            slot_offset(slot)
+            self.offset(slot)
         ).try();
-        self.eax_slot = register.eq("%eax").match({ true => Ok(slot), false => None });
+        self.rax_slot = register.eq("%rax").match({ true => Ok(slot), false => None });
         Ok(())
     }
 
-    // Branch to an out-of-line trap when `condition` holds after a check.
-    trap_if = (self :: @Self, condition: str, span: Span, message: str)
+    // Branch to an out-of-line trap when `condition` holds after a check;
+    // "mp" makes the branch unconditional.
+    trap_if = (self :: @Self, condition: str, span: Span, what: TrapKind)
               Res<(), AllocError> {
-        label    = self.label();
-        location = self.location(span).try();
-        self.traps.add(TrapSite(
-            label: label,
-            location: location,
-            message: message
-        )).try();
+        label = self.label();
+        site  = self.location(label, span, what).try();
+        self.traps.add(site).try();
         self.out.fmt("    j{} .Lza_trap{}\n", condition, label)
     }
 
-    location = (self :: @Self, span: Span) Res<usize, AllocError> {
-        label = self.label();
-        self.data.fmt(".Lza_d{}:\n", label).try();
-        self.data_bytes(span.file).try();
-        self.data.fmt(
-            "    .ascii \":{}:{}: trap: \"\n.Lza_d{}_end:\n",
+    location = (self :: @Self, label: usize, span: Span, what: TrapKind)
+               Res<TrapSite, AllocError> {
+        data = self.label();
+        self.scratch.clear();
+        self.scratch.add(span.file).try();
+        self.scratch.fmt(
+            ":{}:{}: trap: {}\n",
             span.start.line,
             span.start.col,
-            label
+            trap_message(what)
         ).try();
-        Ok(label)
+        self.data.fmt(".Lza_d{}:\n", data).try();
+        self.data_bytes(self.scratch.view()).try();
+        Ok(TrapSite(
+            label: label,
+            location: data,
+            length: self.scratch.view().len,
+            what: what
+        ))
     }
 
     trap_stubs = (self :: @Self) Res<(), AllocError> {
         self.traps.loop((site) {
             self.out.fmt(
-                ".Lza_trap{}:\n    leaq .Lza_d{}(%rip), %rdi\n    movl $(.Lza_d{}_end - .Lza_d{}), %esi\n    leaq za_{}(%rip), %rdx\n    movl $(za_{}_end - za_{}), %ecx\n    jmp za_trap\n",
+                ".Lza_trap{}:\n    leaq .Lza_d{}(%rip), %rdi\n    movl ${}, %esi\n    jmp za_trap\n",
                 site.label,
                 site.location,
-                site.location,
-                site.location,
-                site.message,
-                site.message,
-                site.message
+                site.length
             ).try();
         });
         self.traps.clear();
@@ -397,38 +804,80 @@ Assembly = {
         self.out.add(
             "za_out:\n    movq za_out_len(%rip), %rax\n    leaq (%rax,%rsi), %rcx\n    cmpq $65536, %rcx\n    jbe 1f\n    pushq %rdi\n    pushq %rsi\n    call za_flush\n    popq %rsi\n    popq %rdi\n    cmpq $65536, %rsi\n    jbe 0f\n    movq %rsi, %rdx\n    movq %rdi, %rsi\n    movl $1, %edi\n    jmp za_write_all\n0:\n    xorl %eax, %eax\n1:\n    leaq za_out_buf(%rip), %rcx\n    addq %rax, %rcx\n    addq %rsi, %rax\n    movq %rax, za_out_len(%rip)\n    movq %rdi, %r8\n    movq %rcx, %rdi\n    movq %rsi, %rcx\n    movq %r8, %rsi\n    rep movsb\n    ret\n"
         ).try();
-        // print_i64(rdi) / print_u64(rdi): digits are produced backwards
-        // into a stack buffer. Negation of the minimum is exact as unsigned.
-        self.out.add(
-            "za_print_u64:\n    xorl %r9d, %r9d\n    movq %rdi, %rax\n    jmp 1f\nza_print_i64:\n    movq %rdi, %r9\n    movq %rdi, %rax\n    testq %rax, %rax\n    jns 1f\n    negq %rax\n1:\n    subq $40, %rsp\n    leaq 32(%rsp), %rsi\n    movl $10, %ecx\n2:\n    xorl %edx, %edx\n    divq %rcx\n    addb $48, %dl\n    decq %rsi\n    movb %dl, (%rsi)\n    testq %rax, %rax\n    jnz 2b\n    testq %r9, %r9\n    jns 3f\n    decq %rsi\n    movb $45, (%rsi)\n3:\n    leaq 32(%rsp), %rdx\n    subq %rsi, %rdx\n    movq %rsi, %rdi\n    movq %rdx, %rsi\n    call za_out\n    addq $40, %rsp\n    ret\n"
-        ).try();
-        // trap(rdi/rsi location, rdx/rcx message): flush stdout first so
-        // output preceding the fault is not lost, then exit 134.
+        // map(rdi bytes) -> rax: anonymous pages behind a 16-byte header
+        // holding the mapping's length; null on failure. unmap(rdi).
         self.out.fmt(
-            "za_trap:\n    movq %rdi, %r12\n    movq %rsi, %r13\n    movq %rdx, %r14\n    movq %rcx, %r15\n    call za_flush\n    movl $2, %edi\n    movq %r12, %rsi\n    movq %r13, %rdx\n    call za_write_all\n    movl $2, %edi\n    movq %r14, %rsi\n    movq %r15, %rdx\n    call za_write_all\n    movl $134, %edi\n    movl ${}, %eax\n    syscall\n    ud2\n",
+            "za_map:\n    leaq 16(%rdi), %rsi\n    pushq %rsi\n    xorl %edi, %edi\n    movl $3, %edx\n    movl $34, %r10d\n    movq $-1, %r8\n    xorl %r9d, %r9d\n    movl ${}, %eax\n    syscall\n    popq %rsi\n    cmpq $-4096, %rax\n    ja 1f\n    movq %rsi, (%rax)\n    addq $16, %rax\n    ret\n1:\n    xorl %eax, %eax\n    ret\nza_unmap:\n    testq %rdi, %rdi\n    jz 1f\n    subq $16, %rdi\n    movq (%rdi), %rsi\n    movl ${}, %eax\n    syscall\n1:\n    ret\n",
+            linux_x86_64(Sys.Mmap).value_or(0),
+            linux_x86_64(Sys.Munmap).value_or(0)
+        ).try();
+        // emit(rdi bytes, rsi length, edx descriptor): buffered stdout,
+        // written-through stderr.
+        self.out.add(
+            "za_emit:\n    cmpl $1, %edx\n    je za_out\n    movq %rsi, %rdx\n    movq %rdi, %rsi\n    movl $2, %edi\n    jmp za_write_all\n"
+        ).try();
+        // print_i64(rdi, esi descriptor) / print_u64: digits are produced
+        // backwards into a stack buffer. Negation of the minimum is exact as
+        // unsigned.
+        self.out.add(
+            "za_print_u64:\n    xorl %r9d, %r9d\n    movq %rdi, %rax\n    jmp 1f\nza_print_i64:\n    movq %rdi, %r9\n    movq %rdi, %rax\n    testq %rax, %rax\n    jns 1f\n    negq %rax\n1:\n    movl %esi, %r10d\n    subq $40, %rsp\n    leaq 32(%rsp), %rsi\n    movl $10, %ecx\n2:\n    xorl %edx, %edx\n    divq %rcx\n    addb $48, %dl\n    decq %rsi\n    movb %dl, (%rsi)\n    testq %rax, %rax\n    jnz 2b\n    testq %r9, %r9\n    jns 3f\n    decq %rsi\n    movb $45, (%rsi)\n3:\n    leaq 32(%rsp), %rdx\n    subq %rsi, %rdx\n    movq %rsi, %rdi\n    movq %rdx, %rsi\n    movl %r10d, %edx\n    call za_emit\n    addq $40, %rsp\n    ret\n"
+        ).try();
+        // trap(rdi/rsi report): flush stdout first so output preceding the
+        // fault is not lost, then report on stderr and exit 134.
+        self.out.fmt(
+            "za_trap:\n    movq %rdi, %r12\n    movq %rsi, %r13\n    call za_flush\n    movl $2, %edi\n    movq %r12, %rsi\n    movq %r13, %rdx\n    call za_write_all\n    movl $134, %edi\n    movl ${}, %eax\n    syscall\n    ud2\n",
             exit
         ).try();
-        self.data.add(
-            "za_true:\n    .ascii \"true\"\nza_false:\n    .ascii \"false\"\nza_overflow:\n    .ascii \"integer overflow\\n\"\nza_overflow_end:\nza_divzero:\n    .ascii \"divide by zero\\n\"\nza_divzero_end:\n"
-        )
+        self.data.add("za_true:\n    .ascii \"true\"\nza_false:\n    .ascii \"false\"\n")
     }
 }
 
-OVERFLOW: str = "overflow"
-DIVIDE_BY_ZERO: str = "divzero"
+descriptor = (stream: Stream) usize { stream.match({ Out => 1, Err => 2 }) }
 
-slot_offset = (slot: usize) usize { (slot + 1) * 8 }
+is_block = (ty: Scalar) bool { ty.match({ Block(_) => true, _ => false }) }
+
+stored_size = (ty: Scalar) usize {
+    ty.match({ Block(l) => l.size, _ => 8 })
+}
+
+at_least_word = (size: usize) usize { (size < 8).match({ true => 8, false => size }) }
+
+round_up = (value: usize, align: usize) usize {
+    ((value + align - 1) / align) * align
+}
+
+// The most negative value of a signed class, as a 64-bit immediate.
+minimum = (ty: Scalar) i64 {
+    ty.match({
+        I8  => -128,
+        I16 => -32768,
+        I32 => -2147483648,
+        _   => i64.MIN,
+    })
+}
 
 REGISTER_ARGUMENTS: usize = 6
 
-// Called only for the register prefix; later scalar arguments use the stack.
+// Called only for the register prefix; later arguments use the stack.
 argument_register = (index: usize) str {
     index.match({
-        0 => "%edi",
-        1 => "%esi",
-        2 => "%edx",
-        3 => "%ecx",
-        4 => "%r8d",
-        _ => "%r9d",
+        0 => "%rdi",
+        1 => "%rsi",
+        2 => "%rdx",
+        3 => "%rcx",
+        4 => "%r8",
+        _ => "%r9",
+    })
+}
+
+// The Linux system-call convention replaces %rcx with %r10.
+system_register = (index: usize) str {
+    index.match({
+        0 => "%rdi",
+        1 => "%rsi",
+        2 => "%rdx",
+        3 => "%r10",
+        4 => "%r8",
+        _ => "%r9",
     })
 }

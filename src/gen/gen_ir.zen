@@ -1,11 +1,42 @@
-// Scalar executable IR shared by the JavaScript and assembly renderers.
+// Executable IR shared by the JavaScript and assembly renderers.
 // The caller owns every vector and text buffer. Renderers consume a verified
 // program synchronously; retaining a view does not extend that allocation.
+//
+// Two surfaces share these types. The scalar surface (`I32`, `Bool`, `Unit`
+// slots and the first seven instructions) is what `gen_lower` produces for
+// every renderer. The native surface adds integer widths, pointers,
+// aggregates held in frame memory, memory access, system calls and traps;
+// `gen_asm_lower` produces it and only the assembly targets render it.
+// `gen_verify.verify` admits the scalar surface; `verify_native` admits both.
 Vec = std.collections
 str = std.text
 Span = std.ast
+Sys = gen.gen_asm_sys
 
-Scalar* = I32 | Bool | Unit
+// Size and alignment of an aggregate slot, in bytes.
+Layout* = { size*: usize, align*: usize }
+
+// A slot's machine class. Integer slots hold their value extended to the
+// full machine word (signed types sign-extend, unsigned types, `Bool` and
+// `Ptr` zero-extend). `Block` is an aggregate stored in frame memory; it is
+// copied by value and never held in a register.
+Scalar* = I32
+    | Bool
+    | Unit
+    | I8
+    | U8
+    | I16
+    | U16
+    | U32
+    | I64
+    | U64
+    | Ptr
+    | Block(Layout)
+
+// Arithmetic `Add`/`Sub`/`Mul`/`Div`/`Rem` and unary `Neg` trap on overflow
+// and on a zero divisor. `Wrap*` operations wrap at the slot width. Bit
+// operations act on unsigned words; a shift or rotate count is a `U64`
+// operand. Comparisons are signed or unsigned according to the operands.
 Op* = Add
     | Sub
     | Mul
@@ -17,15 +48,54 @@ Op* = Add
     | LessEqual
     | Greater
     | GreaterEqual
+    | WrapAdd
+    | WrapSub
+    | WrapMul
+    | And
+    | Or
+    | Xor
+    | Shl
+    | Shr
+    | Rotr
 UnaryOp* = Neg | Not
 
-Const* = { out*: usize, value*: i32 }
+// `value` holds the constant's bits as a signed 64-bit number; a `U64`
+// above `i64.MAX` is stored in two's complement.
+Const* = { out*: usize, value*: i64 }
 Move* = { out*: usize, source*: usize }
 Unary* = { out*: usize, input*: usize, op*: UnaryOp, span*: Span }
 Binary* = { out*: usize, left*: usize, right*: usize, op*: Op, span*: Span }
 Invocation* = { out*: usize, function*: usize, args*: Vec<usize> }
-Print* = { value*: usize, ty*: Scalar }
+// Standard output is buffered and flushed at exit and before a trap report;
+// standard error is written through.
+Stream* = Out | Err
+Print* = { value*: usize, ty*: Scalar, stream* :: Stream = Stream.Out }
 Branch* = { value*: usize, yes*: usize, no*: usize }
+
+// Native surface. `Convert` truncates or extends an integer, bool or pointer
+// to the output slot's class. `Address` yields a pointer to a slot's storage;
+// taking it makes the slot's contents initialized for verification, because
+// stores through the pointer may fill it. `Load`/`Store` move the value
+// class of `out`/`value` at `base + offset`.
+Convert* = { out*: usize, input*: usize }
+Address* = { out*: usize, slot*: usize }
+Load* = { out*: usize, base*: usize, offset*: usize }
+Store* = { base*: usize, offset*: usize, value*: usize }
+// Copy `bytes` (a U64 slot) bytes between non-overlapping regions.
+CopyMem* = { dest*: usize, source*: usize, bytes*: usize }
+// A pointer to read-only bytes emitted with the program.
+StaticBytes* = { out*: usize, bytes*: str }
+// Write `len` bytes at `data` to a standard stream.
+Write* = { data*: usize, len*: usize, stream*: Stream }
+// A kernel operation; the result is a word, negative for `-errno`.
+SysCall* = { out*: usize, call*: Sys, args*: Vec<usize> }
+// Process start values: `argc`, `argv` and `envp`.
+StartValue* = Argc | Argv | Envp
+Start* = { out*: usize, value*: StartValue }
+// Anonymous zeroed memory of at least `bytes` (a U64 slot) bytes, 16-byte
+// aligned; the pointer is null when the kernel refuses. `UnmapPages`
+// returns such a region by its pointer.
+Pages* = { out*: usize, bytes*: usize }
 
 Instruction* = Constant(Const)
     | Copy(Move)
@@ -34,8 +104,23 @@ Instruction* = Constant(Const)
     | Invoke(Invocation)
     | PrintValue(Print)
     | Text(str)
+    | Cast(Convert)
+    | AddressOf(Address)
+    | LoadValue(Load)
+    | StoreValue(Store)
+    | CopyBytes(CopyMem)
+    | Bytes(StaticBytes)
+    | WriteOut(Write)
+    | System(SysCall)
+    | Startup(Start)
+    | MapPages(Pages)
+    | UnmapPages(usize)
 
-Terminator* = Return(usize) | Jump(usize) | Branch(Branch)
+// A terminator that ends the process with Zen's trap report.
+TrapKind* = Overflow | DivideByZero | OutOfBounds | Unreachable | OutOfMemory
+Fault* = { what*: TrapKind, span*: Span }
+
+Terminator* = Return(usize) | Jump(usize) | Branch(Branch) | Trap(Fault)
 
 // Every block has exactly one terminator; its targets index Func.blocks.
 BasicBlock* = {
@@ -57,4 +142,70 @@ Program* = {
     functions*: Vec<Func>,
     // The entry function takes no arguments.
     entry*: usize,
+}
+
+// The trap report's `what`, as the C backend spells it.
+trap_message* = (what: TrapKind) str {
+    what.match({
+        Overflow     => "integer overflow",
+        DivideByZero => "divide by zero",
+        OutOfBounds  => "index out of bounds",
+        Unreachable  => "unreachable match arm",
+        OutOfMemory  => "out of memory",
+    })
+}
+
+// Integer classes: width in bytes and signedness. Bool and Ptr are unsigned
+// one- and eight-byte words; Unit and Block are not integers.
+width* = (ty: Scalar) usize {
+    ty.match({
+        I8       => 1,
+        U8       => 1,
+        Bool     => 1,
+        I16      => 2,
+        U16      => 2,
+        I32      => 4,
+        U32      => 4,
+        I64      => 8,
+        U64      => 8,
+        Ptr      => 8,
+        Unit     => 0,
+        Block(l) => l.size,
+    })
+}
+
+signed* = (ty: Scalar) bool {
+    ty.match({ I8 => true, I16 => true, I32 => true, I64 => true, _ => false })
+}
+
+integer* = (ty: Scalar) bool {
+    ty.match({
+        I8 => true, U8 => true, I16 => true, U16 => true, I32 => true,
+        U32 => true, I64 => true, U64 => true, _ => false,
+    })
+}
+
+// Machine word classes: integers, Bool and Ptr.
+word* = (ty: Scalar) bool {
+    ty.match({ Unit => false, Block(_) => false, _ => true })
+}
+
+same* = (left: Scalar, right: Scalar) bool {
+    left.match({
+        I32      => right.match({ I32 => true, _ => false }),
+        Bool     => right.match({ Bool => true, _ => false }),
+        Unit     => right.match({ Unit => true, _ => false }),
+        I8       => right.match({ I8 => true, _ => false }),
+        U8       => right.match({ U8 => true, _ => false }),
+        I16      => right.match({ I16 => true, _ => false }),
+        U16      => right.match({ U16 => true, _ => false }),
+        U32      => right.match({ U32 => true, _ => false }),
+        I64      => right.match({ I64 => true, _ => false }),
+        U64      => right.match({ U64 => true, _ => false }),
+        Ptr      => right.match({ Ptr => true, _ => false }),
+        Block(l) => right.match({
+            Block(r) => l.size == r.size && l.align == r.align,
+            _        => false,
+        }),
+    })
 }

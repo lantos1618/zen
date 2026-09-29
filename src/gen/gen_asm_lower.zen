@@ -1,0 +1,1756 @@
+// The native lowering: checked Zen to the native IR surface consumed by the
+// assembly targets. It is target-independent; `gen_asm_x86` and
+// `gen_asm_arm64` render its output. The scalar `gen_lower` remains the
+// JavaScript and IR-C path until those renderers accept the wider IR.
+//
+// Values live in typed slots: words in word slots, aggregates in `Block`
+// slots addressed through `AddressOf` with `Load`/`Store` at field offsets.
+// Every generic function is instantiated per substitution (the checked call
+// supplies it). A call that passes a closure is inlined with the closure
+// bound to its parameter, so `.try()` and `h.break()` inside the closure
+// leave the frame that wrote them; `loop` overloads lower to branches. A
+// mutable parameter (`::`) receives the address of the caller's place.
+// Unsupported reachable constructs fail before any artifact is published.
+
+Alloc, AllocError = std.mem
+Vec, Map = std.collections
+String, str = std.text
+Range = std.core
+decode_literal = std.lex
+Ast, ExprId, BlockId, TypeId, Span, Function, Literal, Bind = std.ast
+BinOp, UnOp, Match, Call, Expr, Pattern, Lambda, Param, Access, Index = std.ast
+TParam = std.ast
+PatternId = std.ast
+nowhere = std.ast
+Checker, DeclId, Def, TyId, Ctx, Inst, decl_at = sema.sema
+subst, type_from_ast, is_prim = sema.sema
+is_drop_type = sema.sema_drop
+Scalar, Layout, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print = gen.gen_ir
+Branch, Instruction, Func, Program, BasicBlock, Terminator = gen.gen_ir
+Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault = gen.gen_ir
+word, integer, same = gen.gen_ir
+LowerError, unsupported = gen.gen_lower
+Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of = gen.gen_asm_shape
+to_bound = gen.gen_asm_member
+capability = gen.gen_asm_shape
+variant_index, size_of, TAG_BYTES = gen.gen_asm_shape
+call, construct_named, print_call = gen.gen_asm_call
+
+// A value computed into a slot, with its concrete (substituted) type.
+Value* = { slot*: usize, ty*: TyId }
+
+// Where a readable, writable value lives: in a slot, or behind a pointer
+// held in a slot, at a byte offset.
+Base* = InSlot(usize) | Through(usize)
+Place* = { base*: Base, offset*: usize, ty*: TyId }
+
+// A closure is never a runtime value: it is inlined where it is called,
+// in the frame that wrote it.
+LambdaRef* = { expr*: ExprId, frame*: usize }
+
+LocalKind* = Direct(Value)
+    | Ref(Place)
+    | Closure(LambdaRef)
+    | Handle(usize)
+    | Capability(TyId)
+
+Local* = { name*: str, frame*: usize, kind*: LocalKind }
+
+// One lexical function body: the real function or an inlined callee. Names,
+// types and `.try()` resolve in the frame that wrote them. `scope` says
+// which type parameters written types may name.
+Frame* = {
+    inst*: Inst,
+    module*: usize,
+    ret_slot*: usize,
+    ret_block*: usize,
+    ret_ty*: TyId,
+    self_ty*: Res<TyId>,
+    scope*: Res<Callee>,
+}
+
+// A function body at one instantiation: a free function, or a member of a
+// struct, an impl or a bound. `owner` is the function's own declaration or
+// the declaration holding it at `member`. `generic_owner` is the struct
+// whose type parameters the member may name.
+Callee* = {
+    f*: Function,
+    owner*: DeclId,
+    member*: Res<usize>,
+    module*: usize,
+    inst*: Inst,
+    self_ty*: Res<TyId>,
+    generic_owner*: Res<DeclId>,
+}
+
+// Loop control for one active `loop` call.
+LoopTarget* = { brk*: usize, next*: usize, result*: Res<Value> }
+
+Native* = {
+    alloc*: Alloc,
+    tree*: Ast,
+    check* :: Checker,
+    unit_ty*: TyId,
+    known* :: Map<str, usize>,
+    pending* :: Vec<Callee>,
+    shapes* :: Map<TyId, Shape>,
+    // Per real function.
+    slots* :: Vec<Scalar>,
+    blocks* :: Vec<Res<BasicBlock>>,
+    code* :: Vec<Instruction>,
+    current* :: Res<usize> = None,
+    locals* :: Vec<Local>,
+    frames* :: Vec<Frame>,
+    frame* :: usize = 0,
+    loops* :: Vec<LoopTarget>,
+    depth* :: usize = 0,
+
+    // -------------------------------------------------------------------
+    // blocks and slots
+    // -------------------------------------------------------------------
+
+    add* = (self :: @Self, instruction: Instruction) Res<(), LowerError> {
+        self.code.add(instruction).try(LowerError.OutOfMemory);
+        Ok(())
+    }
+
+    slot_of* = (self :: @Self, class: Scalar) Res<usize, LowerError> {
+        index = self.slots.len;
+        self.slots.add(class).try(LowerError.OutOfMemory);
+        Ok(index)
+    }
+
+    temp* = (self :: @Self, ty: TyId) Res<Value, LowerError> {
+        class = self.class_of(ty).try();
+        Ok(Value(slot: self.slot_of(class).try(), ty: ty))
+    }
+
+    label* = (self :: @Self) Res<usize, LowerError> {
+        id = self.blocks.len;
+        self.blocks.add(None).try(LowerError.OutOfMemory);
+        Ok(id)
+    }
+
+    start* = (self :: @Self, id: usize) {
+        self.current = Ok(id);
+        self.code    = self.alloc.Vec<Instruction>();
+    }
+
+    // After a terminator, code is unreachable until the next `start`; it is
+    // collected into a detached block that nothing branches to.
+    finish* = (self :: @Self, exit: Terminator) Res<(), LowerError> {
+        self.current.when_ok((id) {
+            self.blocks.set(id, Ok(BasicBlock(code: self.code, exit: exit)))
+                .ok_or(unsupported(nowhere(), "an unreserved block")).try();
+        });
+        self.current = None;
+        dead = self.label().try();
+        self.start(dead);
+        Ok(())
+    }
+
+    jump* = (self :: @Self, target: usize) Res<(), LowerError> {
+        self.finish(Terminator.Jump(target))
+    }
+
+    branch_to* = (self :: @Self, value: usize, yes: usize, no: usize)
+                 Res<(), LowerError> {
+        self.finish(Terminator.Branch(Branch(value: value, yes: yes, no: no)))
+    }
+
+    // Continue emitting into `id`; the detached block ends by jumping there.
+    enter* = (self :: @Self, id: usize) Res<(), LowerError> {
+        self.jump(id).try();
+        self.start(id);
+        Ok(())
+    }
+
+    trap* = (self :: @Self, what: TrapKind, span: Span) Res<(), LowerError> {
+        self.finish(Terminator.Trap(Fault(what: what, span: span)))
+    }
+
+    constant* = (self :: @Self, ty: TyId, value: i64) Res<Value, LowerError> {
+        out = self.temp(ty).try();
+        self.add(Instruction.Constant(Const(out: out.slot, value: value))).try();
+        Ok(out)
+    }
+
+    word_const* = (self :: @Self, class: Scalar, value: i64) Res<usize, LowerError> {
+        out = self.slot_of(class).try();
+        self.add(Instruction.Constant(Const(out: out, value: value))).try();
+        Ok(out)
+    }
+
+    unit* = (self :: @Self) Res<Value, LowerError> {
+        self.constant(self.unit_ty, 0)
+    }
+
+    // Switch the lexical frame; the previous one is returned for restore.
+    use_frame* = (self :: @Self, frame: usize) usize {
+        saved      = self.frame;
+        self.frame = frame;
+        saved
+    }
+
+    deeper* = (self :: @Self) { self.depth = self.depth + 1; }
+    shallower* = (self :: @Self) { self.depth = self.depth - 1; }
+
+    // -------------------------------------------------------------------
+    // types
+    // -------------------------------------------------------------------
+
+    here* = (self: @Self) Frame {
+        self.frames.get(self.frame).value_or(Frame(
+            inst: self.alloc.Inst(),
+            module: 0,
+            ret_slot: 0,
+            ret_block: 0,
+            ret_ty: self.unit_ty,
+            self_ty: None,
+            scope: None
+        ))
+    }
+
+    ctx* = (self: @Self) Ctx {
+        frame = self.here();
+        Ctx(
+            module: frame.module,
+            ret: frame.ret_ty,
+            has_ret: true,
+            self_ty: frame.self_ty.value_or(self.unit_ty),
+            has_self: frame.self_ty.match({ Ok(_) => true, None => false })
+        )
+    }
+
+    // A checked type at this frame's instantiation. Inside a bound's default
+    // body the bound's own type stands for the implementing Self.
+    concrete* = (self :: @Self, ty: TyId) Res<TyId, LowerError> {
+        frame = self.here();
+        settled = self.check.subst(ty, frame.inst).try(LowerError.OutOfMemory);
+        Ok(frame.scope.match({
+            None         => settled,
+            Ok(callee)   => callee.self_ty.match({
+                None       => settled,
+                Ok(self_ty) => self.check.types.at(settled).match({
+                    Named(n) => (n.decl == callee.owner).match({ true => self_ty, false => settled }),
+                    _        => settled,
+                }),
+            }),
+        }))
+    }
+
+    // The checked type of an expression at this frame's instantiation.
+    type_of* = (self :: @Self, id: ExprId) Res<TyId, LowerError> {
+        raw = self.check.expr_memo.get(id).ok_or(unsupported(
+            self.tree.expr_at(id).span,
+            "an expression without a checked type"
+        )).try();
+        self.concrete(raw)
+    }
+
+    // A written type in this frame, with its function's (and owner's) type
+    // parameters in scope.
+    written* = (self :: @Self, id: TypeId) Res<TyId, LowerError> {
+        self.here().scope.match({
+            Ok(callee) => self.callee_type(callee, id),
+            None       => {
+                raw = self.check.type_from_ast(id, self.ctx()).try(LowerError.OutOfMemory);
+                self.concrete(raw)
+            },
+        })
+    }
+
+    callee_type* = (self :: @Self, callee: Callee, id: TypeId) Res<TyId, LowerError> {
+        ctx = Ctx(
+            module: callee.module,
+            ret: self.unit_ty,
+            has_ret: false,
+            self_ty: callee.self_ty.value_or(self.unit_ty),
+            has_self: callee.self_ty.match({ Ok(_) => true, None => false })
+        );
+        mark = self.check.tvar_mark();
+        callee.generic_owner.when_ok((owner) {
+            decl_at(self.tree, owner).when_ok((d) {
+                d.kind.match({
+                    Struct(s) => self.enter_vars(owner.module.to_usize(), s.name.text, s.tparams).try(),
+                    Enum(e)   => self.enter_vars(owner.module.to_usize(), e.name.text, e.tparams).try(),
+                    _         => (),
+                });
+            });
+        });
+        self.enter_vars(callee.module, callee.f.name.text, callee.f.tparams).try();
+        raw = self.check.type_from_ast(id, ctx).try(LowerError.OutOfMemory);
+        self.check.release_tvars(mark).try(LowerError.OutOfMemory);
+        self.check.subst(raw, callee.inst).try(LowerError.OutOfMemory)
+    }
+
+    enter_vars = (self :: @Self, module: usize, name: str, tparams: Vec<TParam>)
+                 Res<(), LowerError> {
+        owner = self.check.owner_of(module, name).try(LowerError.OutOfMemory);
+        tparams.loop((tp) {
+            var = self.check.types.var(tp.name.text, owner).try(LowerError.OutOfMemory);
+            self.check.push_tvar(tp.name.text, var).try(LowerError.OutOfMemory);
+        });
+        Ok(())
+    }
+
+    prim* = (self :: @Self, name: str) Res<TyId, LowerError> {
+        self.check.types.prim(name).try(LowerError.OutOfMemory)
+    }
+
+    prim_name* = (self: @Self, ty: TyId) str {
+        self.check.types.at(ty).match({ Prim(p) => p.name, _ => "" })
+    }
+
+    is_unit* = (self :: @Self, ty: TyId) bool {
+        self.class_of(ty).match({
+            Ok(class) => class.match({ Unit => true, _ => false }),
+            Err(_)    => false,
+        })
+    }
+
+    // -------------------------------------------------------------------
+    // locals
+    // -------------------------------------------------------------------
+
+    bind_local* = (self :: @Self, name: str, kind: LocalKind) Res<(), LowerError> {
+        kind.match({
+            Direct(v) => self.refuse_drop(v.ty),
+            _         => Ok(()),
+        }).try();
+        self.locals.add(Local(name: name, frame: self.frame, kind: kind)).try(LowerError.OutOfMemory);
+        Ok(())
+    }
+
+    // Scope-exit cleanup (`Drop`) is not lowered yet; a program binding
+    // such a value is refused rather than silently skipping its drop.
+    refuse_drop = (self :: @Self, ty: TyId) Res<(), LowerError> {
+        // An Arena's pages are returned to the kernel at exit instead.
+        arena = self.qualified(ty).eq("std.mem.mem_arena.Arena");
+        dropping = !arena && self.check.is_drop_type(ty).try(LowerError.OutOfMemory);
+        (!dropping).ensure(unsupported(nowhere(), self.described("values with Drop cleanup", ty))).try();
+        Ok(())
+    }
+
+    lookup* = (self: @Self, name: str) Res<LocalKind> {
+        i ::= self.locals.len;
+        found: Res<LocalKind> = loop<LocalKind>(() { i > 0 }, (h) {
+            i     = i - 1;
+            local = self.locals.get(i).try();
+            (local.frame == self.frame && local.name.eq(name)).then(() { h.break(local.kind); });
+        });
+        found
+    }
+
+    release_locals* = (self :: @Self, mark: usize) {
+        loop(() { self.locals.len > mark }, (h) { self.locals.take(self.locals.len - 1); });
+    }
+
+    // -------------------------------------------------------------------
+    // places
+    // -------------------------------------------------------------------
+
+    copy_value* = (self :: @Self, value: Value) Res<Value, LowerError> {
+        out = self.temp(value.ty).try();
+        self.add(Instruction.Copy(Move(out: out.slot, source: value.slot))).try();
+        Ok(out)
+    }
+
+    // A pointer to a place's first byte.
+    address* = (self :: @Self, place: Place) Res<usize, LowerError> {
+        base = place.base.match({
+            InSlot(slot) => {
+                p = self.slot_of(Scalar.Ptr).try();
+                self.add(Instruction.AddressOf(Address(out: p, slot: slot))).try();
+                p
+            },
+            Through(p)   => p,
+        });
+        self.offset_pointer(base, place.offset)
+    }
+
+    offset_pointer* = (self :: @Self, base: usize, offset: usize) Res<usize, LowerError> {
+        (offset == 0).match({
+            true  => Ok(base),
+            false => {
+                amount = self.word_const(Scalar.U64, offset.to_i64_bits()).try();
+                out    = self.slot_of(Scalar.Ptr).try();
+                self.add(Instruction.BinaryValue(Binary(
+                    out: out,
+                    left: base,
+                    right: amount,
+                    op: Op.WrapAdd,
+                    span: nowhere()
+                ))).try();
+                Ok(out)
+            },
+        })
+    }
+
+    read* = (self :: @Self, place: Place) Res<Value, LowerError> {
+        out = self.temp(place.ty).try();
+        whole = place.base.match({ InSlot(_) => place.offset == 0, Through(_) => false });
+        source_is = place.base.match({ InSlot(s) => s, Through(_) => 0 });
+        (whole && same(self.slots.get(source_is).value_or(Scalar.Unit), self.slots.get(out.slot).value_or(Scalar.Unit))).match({
+            true  => self.add(Instruction.Copy(Move(out: out.slot, source: source_is))).try(),
+            false => {
+                pointer = place.base.match({
+                    InSlot(slot) => {
+                        p = self.slot_of(Scalar.Ptr).try();
+                        self.add(Instruction.AddressOf(Address(out: p, slot: slot))).try();
+                        p
+                    },
+                    Through(p)   => p,
+                });
+                self.add(Instruction.LoadValue(Load(out: out.slot, base: pointer, offset: place.offset))).try();
+            },
+        });
+        Ok(out)
+    }
+
+    write* = (self :: @Self, place: Place, value: Value) Res<(), LowerError> {
+        whole = place.base.match({ InSlot(_) => place.offset == 0, Through(_) => false });
+        target = place.base.match({ InSlot(s) => s, Through(_) => 0 });
+        (whole && same(self.slots.get(target).value_or(Scalar.Unit), self.slots.get(value.slot).value_or(Scalar.Unit))).match({
+            true  => self.add(Instruction.Copy(Move(out: target, source: value.slot))),
+            false => {
+                pointer = place.base.match({
+                    InSlot(slot) => {
+                        p = self.slot_of(Scalar.Ptr).try();
+                        self.add(Instruction.AddressOf(Address(out: p, slot: slot))).try();
+                        p
+                    },
+                    Through(p)   => p,
+                });
+                self.add(Instruction.StoreValue(Store(base: pointer, offset: place.offset, value: value.slot)))
+            },
+        })
+    }
+
+    // Materialize a value in a fresh slot so it has a place.
+    spill* = (self :: @Self, value: Value) Place {
+        Place(base: Base.InSlot(value.slot), offset: 0, ty: value.ty)
+    }
+
+    // A field of a record-shaped value.
+    field_place* = (self :: @Self, base: Place, name: str, span: Span)
+                   Res<Place, LowerError> {
+        s = self.shape(base.ty).try();
+        found: Res<FieldAt> = s.form.match({
+            Record(fields) => fields.find((f) { f.name.eq(name) }),
+            _              => None,
+        });
+        self.prim_name(base.ty).eq("str").match({
+            true  => {
+                field = name.match({
+                    "len"  => Ok(Place(base: base.base, offset: base.offset + 8, ty: self.prim("usize").try())),
+                    "data" => Ok(Place(base: base.base, offset: base.offset, ty: self.ptr_u8().try())),
+                    _      => Err(unsupported(span, "this str field")),
+                }).try();
+                Ok(field)
+            },
+            false => {
+                f = found.ok_or(unsupported(span, "a field of a value without record layout")).try();
+                Ok(Place(base: base.base, offset: base.offset + f.offset, ty: f.ty))
+            },
+        })
+    }
+
+    ptr_u8* = (self :: @Self) Res<TyId, LowerError> {
+        defs ::= self.alloc.Vec<Def>();
+        self.check.world.exported_named("Ptr", defs).try(LowerError.OutOfMemory);
+        ptr = defs.find((d) { self.check.world.module_name(d.id).eq("std.mem.mem_ptr") })
+            .ok_or(unsupported(nowhere(), "the std Ptr declaration")).try();
+        args ::= self.alloc.Vec<TyId>();
+        args.add(self.prim("u8").try()).try(LowerError.OutOfMemory);
+        self.check.types.named(ptr.id, ptr.qname, ptr.name, args).try(LowerError.OutOfMemory)
+    }
+
+    // The place an expression denotes, when it has one.
+    place_of* = (self :: @Self, id: ExprId) Res<Res<Place>, LowerError> {
+        e = self.tree.expr_at(id);
+        e.kind.match({
+            Name(n)   => Ok(self.lookup(n.text).match({
+                Ok(Direct(v)) => Ok(Place(base: Base.InSlot(v.slot), offset: 0, ty: v.ty)),
+                Ok(Ref(p))    => Ok(p),
+                _             => None,
+            })),
+            Paren(p)  => self.place_of(p.inner),
+            SelfType  => Ok(self.lookup("self").match({
+                Ok(Direct(v)) => Ok(Place(base: Base.InSlot(v.slot), offset: 0, ty: v.ty)),
+                Ok(Ref(p))    => Ok(p),
+                _             => None,
+            })),
+            Access(a) => self.is_value_access(a).match({
+                false => Ok(None),
+                true  => self.place_of(a.base).try().match({
+                    Ok(base) => Ok(Ok(self.field_place(base, a.name.text, e.span).try())),
+                    None     => Ok(None),
+                }),
+            }),
+            Index(x)  => Ok(Ok(self.index_place(x, e.span).try())),
+            _         => Ok(None),
+        })
+    }
+
+    // An access reads a field unless its base names a type.
+    is_value_access* = (self :: @Self, a: Access) bool {
+        self.tree.expr_at(a.base).kind.match({
+            Name(n) => self.lookup(n.text).match({
+                Ok(_) => true,
+                None  => !self.names_type(n.text),
+            }),
+            _       => true,
+        })
+    }
+
+    names_type* = (self :: @Self, name: str) bool {
+        defs ::= self.alloc.Vec<Def>();
+        self.check.world.defs_of(self.here().module, name, defs).ignore();
+        defs.find((d) { d.kind.match({ StructDef => true, EnumDef => true, AliasDef => true, _ => false }) })
+            .match({ Ok(_) => true, None => is_prim(name) })
+    }
+
+    // -------------------------------------------------------------------
+    // expressions
+    // -------------------------------------------------------------------
+
+    // Evaluate into a value whose slot the caller may keep.
+    expr* = (self :: @Self, id: ExprId) Res<Value, LowerError> {
+        e = self.tree.expr_at(id);
+        e.kind.match({
+            Name(n)       => self.name(id, n.text, e.span),
+            Literal(l)    => self.literal(id, l, e.span),
+            Unit          => self.unit(),
+            Paren(p)      => self.expr(p.inner),
+            Block(b)      => self.block(b),
+            Unary(u)      => self.unary(id, u.op, u.operand, u.op_span),
+            Binary(b)     => self.binary(id, b.op, b.lhs, b.rhs, b.op_span),
+            Match(m)      => self.match_expr(id, m, e.span),
+            Call(c)       => self.call(id, c, e.span),
+            Access(a)     => self.access(id, a, e.span),
+            Index(x)      => {
+                place = self.index_place(x, e.span).try();
+                self.read(place)
+            },
+            Try(t)        => self.try_expr(id, t.operand, t.error, e.span),
+            FixedArray(f) => self.array(id, f.elems, e.span),
+            Array(a)      => self.array(id, a.elems, e.span),
+            SelfType      => self.name(id, "self", e.span),
+            _             => Err(unsupported(e.span, "this expression in a native executable")),
+        })
+    }
+
+    name = (self :: @Self, id: ExprId, text: str, span: Span) Res<Value, LowerError> {
+        self.lookup(text).match({
+            Ok(Direct(v))     => self.copy_value(v),
+            Ok(Ref(p))        => self.read(p),
+            Ok(Capability(t)) => self.constant_unit_of(t),
+            Ok(Closure(_))    => Err(unsupported(span, "a closure used as a value")),
+            Ok(Handle(_))     => Err(unsupported(span, "a loop handle used as a value")),
+            None              => self.global(id, text, span),
+        })
+    }
+
+    constant_unit_of = (self :: @Self, ty: TyId) Res<Value, LowerError> {
+        self.constant(ty, 0)
+    }
+
+    // A module-level constant or a bare enum variant.
+    global = (self :: @Self, id: ExprId, text: str, span: Span) Res<Value, LowerError> {
+        ty = self.type_of(id).try();
+        defs ::= self.alloc.Vec<Def>();
+        self.check.world.defs_of(self.here().module, text, defs).try(LowerError.OutOfMemory);
+        constant = defs.find((d) { d.kind.match({ ConstDef => true, _ => false }) });
+        constant.match({
+            Ok(d) => self.global_const(d, ty, span),
+            None  => self.variant_value(ty, text, None, span),
+        })
+    }
+
+    global_const = (self :: @Self, d: Def, ty: TyId, span: Span) Res<Value, LowerError> {
+        decl = decl_at(self.tree, d.id).ok_or(unsupported(span, "a missing constant")).try();
+        value = decl.kind.match({
+            Const(c) => Ok(c.value),
+            _        => None,
+        }).ok_or(unsupported(span, "a constant without a value")).try();
+        // The initializer is read in its declaring module.
+        saved = self.frame;
+        self.frames.add(Frame(
+            inst: self.alloc.Inst(),
+            module: d.id.module.to_usize(),
+            ret_slot: 0,
+            ret_block: 0,
+            ret_ty: self.unit_ty,
+            self_ty: None,
+            scope: None
+        )).try(LowerError.OutOfMemory);
+        self.frame = self.frames.len - 1;
+        result = self.expr_as(value, ty);
+        self.frame = saved;
+        result
+    }
+
+    // Evaluate, then settle integer literals of an unsettled type into `ty`.
+    expr_as* = (self :: @Self, id: ExprId, ty: TyId) Res<Value, LowerError> {
+        value = self.expr(id).try();
+        self.coerce(value, ty)
+    }
+
+    // Integer width changes that sema settled (literal defaults, lossless
+    // widening at a boundary) and `Ok` lifting of bare values.
+    coerce* = (self :: @Self, value: Value, ty: TyId) Res<Value, LowerError> {
+        (value.ty == ty || self.is_unit(ty)).match({
+            true  => (value.ty == ty).match({ true => Ok(value), false => self.unit() }),
+            false => self.to_bound(value, ty).try().match({
+                Ok(handle) => Ok(handle),
+                None       => self.convert_value(value, ty),
+            }),
+        })
+    }
+
+    convert_value = (self :: @Self, value: Value, ty: TyId) Res<Value, LowerError> {
+        (false).match({
+            true  => Ok(value),
+            false => {
+                from = self.class_of(value.ty).try();
+                to   = self.class_of(ty).try();
+                (integer(from) && integer(to)).match({
+                    true  => {
+                        out = self.temp(ty).try();
+                        self.add(Instruction.Cast(Convert(out: out.slot, input: value.slot))).try();
+                        Ok(out)
+                    },
+                    false => same(from, to).match({
+                        true  => Ok(Value(slot: value.slot, ty: ty)),
+                        false => self.variant_position(ty, self.type_name(value.ty)).match({
+                            // A member value enters the union that names it.
+                            Ok(_) => self.variant_value(ty, self.type_name(value.ty), Ok(value), nowhere()),
+                            None  => (self.has_variants(value.ty) && self.has_variants(ty)).match({
+                                // Same-named alternatives carry over, payloads
+                                // converted (an open Res meeting its settled form).
+                                true  => self.remap_variants(value, ty, nowhere()),
+                                false => self.lift(value, ty),
+                            }),
+                        }),
+                    }),
+                })
+            },
+        })
+    }
+
+    // A bare value where a Res is expected becomes Ok(value).
+    lift = (self :: @Self, value: Value, ty: TyId) Res<Value, LowerError> {
+        self.check.types.at(ty).match({
+            Res(r) => {
+                inner = self.coerce(value, self.concrete(r.value).try()).try();
+                self.variant_value(ty, "Ok", Ok(inner), nowhere())
+            },
+            _      => Err(unsupported(nowhere(), self.described2("a value conversion this backend does not model", value.ty, ty))),
+        })
+    }
+
+    literal = (self :: @Self, id: ExprId, l: Literal, span: Span) Res<Value, LowerError> {
+        ty = self.type_of(id).try();
+        l.kind.match({
+            Int   => {
+                value = l.integer.ok_or(unsupported(span, "an unparsed integer literal")).try();
+                self.constant(ty, value.to_i64_bits())
+            },
+            Bool  => self.constant(ty, l.text.eq("true").match({ true => 1, false => 0 })),
+            Char  => {
+                text = l.text.slice(1, l.text.len - 1).decode_literal(self.alloc)
+                    .match({ Ok(t) => Ok(t), Err(_) => Err(unsupported(span, "a malformed literal escape")) }).try();
+                self.constant(ty, text.get(0).value_or(0).to_i64())
+            },
+            Str   => {
+                text = l.text.slice(1, l.text.len - 1).decode_literal(self.alloc)
+                    .match({ Ok(t) => Ok(t), Err(_) => Err(unsupported(span, "a malformed literal escape")) }).try();
+                self.string(text, ty)
+            },
+            Float => Err(unsupported(span, "floating-point values")),
+        })
+    }
+
+    // A str aggregate over static bytes.
+    string* = (self :: @Self, text: str, ty: TyId) Res<Value, LowerError> {
+        out  = self.temp(ty).try();
+        data = self.slot_of(Scalar.Ptr).try();
+        self.add(Instruction.Bytes(StaticBytes(out: data, bytes: text))).try();
+        len  = self.word_const(Scalar.U64, text.len.to_i64_bits()).try();
+        at   = self.slot_of(Scalar.Ptr).try();
+        self.add(Instruction.AddressOf(Address(out: at, slot: out.slot))).try();
+        self.add(Instruction.StoreValue(Store(base: at, offset: 0, value: data))).try();
+        self.add(Instruction.StoreValue(Store(base: at, offset: 8, value: len))).try();
+        Ok(out)
+    }
+
+    unary = (self :: @Self, id: ExprId, op: UnOp, operand: ExprId, span: Span)
+            Res<Value, LowerError> {
+        ty = self.type_of(id).try();
+        // The minimum signed literal has no positive intermediate.
+        // A negated literal is a constant, including the minimum whose
+        // magnitude has no positive form in its type.
+        folded: Res<i64> = op.match({
+            Neg => self.tree.expr_at(operand).kind.match({
+                Literal(l) => l.integer.match({
+                    Ok(v) => Ok(0 -% v.to_i64_bits()),
+                    None  => None,
+                }),
+                _          => self.check.const_int(id),
+            }),
+            _   => None,
+        });
+        folded.match({
+            Ok(v) => self.constant(ty, v),
+            None  => {
+                value = self.expr_as(operand, ty).try();
+                operation = op.match({ Neg => Ok(UnaryOp.Neg), Not => Ok(UnaryOp.Not), _ => None })
+                    .ok_or(unsupported(span, "address-of")).try();
+                out = self.temp(ty).try();
+                self.add(Instruction.UnaryValue(Unary(
+                    out: out.slot,
+                    input: value.slot,
+                    op: operation,
+                    span: span
+                ))).try();
+                Ok(out)
+            },
+        })
+    }
+
+    binary = (self :: @Self, id: ExprId, op: BinOp, lhs: ExprId, rhs: ExprId,
+              span: Span) Res<Value, LowerError> {
+        op.match({
+            And => self.logical(true, lhs, rhs),
+            Or  => self.logical(false, lhs, rhs),
+            _   => {
+                ty      = self.type_of(id).try();
+                compare = op.match({
+                    Equal => true, NotEqual => true, Less => true, LessEq => true,
+                    Greater => true, GreaterEq => true, _ => false,
+                });
+                operand = compare.match({
+                    true  => self.operand_type(lhs, rhs).try(),
+                    false => ty,
+                });
+                left  = self.expr_as(lhs, operand).try();
+                right = self.expr_as(rhs, operand).try();
+                (compare && !word(self.class_of(operand).try())).match({
+                    true  => self.equal_values(op, left, right, span),
+                    false => {
+                        operation = op.match({
+                            Add       => Op.Add,
+                            Sub       => Op.Sub,
+                            Mul       => Op.Mul,
+                            Div       => Op.Div,
+                            Rem       => Op.Rem,
+                            AddWrap   => Op.WrapAdd,
+                            SubWrap   => Op.WrapSub,
+                            MulWrap   => Op.WrapMul,
+                            Equal     => Op.Equal,
+                            NotEqual  => Op.NotEqual,
+                            Less      => Op.Less,
+                            LessEq    => Op.LessEqual,
+                            Greater   => Op.Greater,
+                            GreaterEq => Op.GreaterEqual,
+                            _         => Op.Equal,
+                        });
+                        out = self.temp(ty).try();
+                        self.add(Instruction.BinaryValue(Binary(
+                            out: out.slot,
+                            left: left.slot,
+                            right: right.slot,
+                            op: operation,
+                            span: span
+                        ))).try();
+                        Ok(out)
+                    },
+                })
+            },
+        })
+    }
+
+    // Comparison operands share the wider settled type of the two sides.
+    operand_type = (self :: @Self, lhs: ExprId, rhs: ExprId) Res<TyId, LowerError> {
+        left  = self.type_of(lhs).try();
+        right = self.type_of(rhs).try();
+        self.prim_name(left).eq("int").match({ true => Ok(right), false => Ok(left) })
+    }
+
+    // Aggregate equality: str compares bytes; other aggregates compare
+    // their bytes field by field through the `eq` the std declares.
+    equal_values = (self :: @Self, op: BinOp, left: Value, right: Value, span: Span)
+                   Res<Value, LowerError> {
+        self.prim_name(left.ty).eq("str").match({
+            false => Err(unsupported(span, "== on aggregates other than str")),
+            true  => {
+                result = self.str_equal(left, right).try();
+                op.match({
+                    NotEqual => {
+                        out = self.temp(result.ty).try();
+                        self.add(Instruction.UnaryValue(Unary(out: out.slot, input: result.slot, op: UnaryOp.Not, span: span))).try();
+                        Ok(out)
+                    },
+                    _        => Ok(result),
+                })
+            },
+        })
+    }
+
+    // Byte-wise str equality: lengths, then each byte.
+    str_equal* = (self :: @Self, left: Value, right: Value) Res<Value, LowerError> {
+        bool_ty = self.prim("bool").try();
+        usize_ty = self.prim("usize").try();
+        u8_ty   = self.prim("u8").try();
+        out     = self.constant(bool_ty, 0).try();
+        lp = self.address(self.spill(left)).try();
+        rp = self.address(self.spill(right)).try();
+        ll = self.slot_of(Scalar.U64).try();
+        rl = self.slot_of(Scalar.U64).try();
+        self.add(Instruction.LoadValue(Load(out: ll, base: lp, offset: 8))).try();
+        self.add(Instruction.LoadValue(Load(out: rl, base: rp, offset: 8))).try();
+        ld = self.slot_of(Scalar.Ptr).try();
+        rd = self.slot_of(Scalar.Ptr).try();
+        self.add(Instruction.LoadValue(Load(out: ld, base: lp, offset: 0))).try();
+        self.add(Instruction.LoadValue(Load(out: rd, base: rp, offset: 0))).try();
+        same_len = self.slot_of(Scalar.Bool).try();
+        self.add(Instruction.BinaryValue(Binary(out: same_len, left: ll, right: rl, op: Op.Equal, span: nowhere()))).try();
+        walk = self.label().try();
+        test = self.label().try();
+        body = self.label().try();
+        yes  = self.label().try();
+        done = self.label().try();
+        self.branch_to(same_len, walk, done).try();
+        self.start(walk);
+        i = self.word_const(Scalar.U64, 0).try();
+        one = self.word_const(Scalar.U64, 1).try();
+        self.jump(test).try();
+        self.start(test);
+        more = self.slot_of(Scalar.Bool).try();
+        self.add(Instruction.BinaryValue(Binary(out: more, left: i, right: ll, op: Op.Less, span: nowhere()))).try();
+        self.branch_to(more, body, yes).try();
+        self.start(body);
+        la = self.slot_of(Scalar.Ptr).try();
+        ra = self.slot_of(Scalar.Ptr).try();
+        self.add(Instruction.BinaryValue(Binary(out: la, left: ld, right: i, op: Op.WrapAdd, span: nowhere()))).try();
+        self.add(Instruction.BinaryValue(Binary(out: ra, left: rd, right: i, op: Op.WrapAdd, span: nowhere()))).try();
+        lb = self.slot_of(Scalar.U8).try();
+        rb = self.slot_of(Scalar.U8).try();
+        self.add(Instruction.LoadValue(Load(out: lb, base: la, offset: 0))).try();
+        self.add(Instruction.LoadValue(Load(out: rb, base: ra, offset: 0))).try();
+        eq = self.slot_of(Scalar.Bool).try();
+        self.add(Instruction.BinaryValue(Binary(out: eq, left: lb, right: rb, op: Op.Equal, span: nowhere()))).try();
+        self.add(Instruction.BinaryValue(Binary(out: i, left: i, right: one, op: Op.WrapAdd, span: nowhere()))).try();
+        self.branch_to(eq, test, done).try();
+        self.start(yes);
+        self.add(Instruction.Constant(Const(out: out.slot, value: 1))).try();
+        self.enter(done).try();
+        Ok(out)
+    }
+
+    // Short-circuit: the right side runs only when it decides the result.
+    logical = (self :: @Self, and: bool, lhs: ExprId, rhs: ExprId) Res<Value, LowerError> {
+        left = self.expr(lhs).try();
+        out  = self.copy_value(left).try();
+        next = self.label().try();
+        done = self.label().try();
+        and.match({
+            true  => self.branch_to(left.slot, next, done),
+            false => self.branch_to(left.slot, done, next),
+        }).try();
+        self.start(next);
+        right = self.expr(rhs).try();
+        self.add(Instruction.Copy(Move(out: out.slot, source: right.slot))).try();
+        self.enter(done).try();
+        Ok(out)
+    }
+
+    // -------------------------------------------------------------------
+    // blocks and statements
+    // -------------------------------------------------------------------
+
+    block* = (self :: @Self, id: BlockId) Res<Value, LowerError> {
+        block = self.tree.block_at(id);
+        mark  = self.locals.len;
+        last ::= self.unit().try();
+        block.stmts.loop((h, i, s) {
+            tail = i + 1 == block.stmts.len && block.value.match({ Ok(_) => false, None => true });
+            last = s.kind.match({
+                Expr(e)  => tail.match({
+                    // A semicolon-terminated tail may settle the block value.
+                    true  => self.expr(e.expr),
+                    false => { self.expr(e.expr).try(); self.unit() },
+                }),
+                Bind(b)  => { self.bind(b, s.span).try(); self.unit() },
+                Block(b) => self.block(b),
+                Decl(_)  => Err(unsupported(s.span, "nested declarations")),
+            }).try();
+        });
+        value = block.value.match({ Ok(e) => self.expr(e), None => Ok(last) }).try();
+        self.release_locals(mark);
+        Ok(value)
+    }
+
+    bind = (self :: @Self, b: Bind, span: Span) Res<(), LowerError> {
+        target = self.tree.expr_at(b.target);
+        target.kind.match({
+            Name(n) => {
+                existing = self.lookup(n.text);
+                fresh = b.mutable || b.type.match({ Ok(_) => true, None => false })
+                    || existing.match({ Ok(Direct(_)) => false, Ok(Ref(_)) => false, _ => true });
+                fresh.match({
+                    true  => {
+                        ty = b.type.match({
+                            Ok(t) => self.written(t),
+                            None  => self.type_of(b.value),
+                        }).try();
+                        self.is_capability(ty).match({
+                            true  => self.bind_local(n.text, LocalKind.Capability(ty)),
+                            false => {
+                                value = self.bind_value(b.value, ty).try();
+                                slot  = self.copy_value(value).try();
+                                self.bind_local(n.text, LocalKind.Direct(slot))
+                            },
+                        })
+                    },
+                    false => {
+                        place = self.place_of(b.target).try().ok_or(unsupported(target.span, "an assignment target")).try();
+                        value = self.expr_as(b.value, place.ty).try();
+                        self.write(place, value)
+                    },
+                })
+            },
+            _       => {
+                place = self.place_of(b.target).try().ok_or(unsupported(target.span, "an assignment target")).try();
+                value = self.expr_as(b.value, place.ty).try();
+                self.write(place, value)
+            },
+        })
+    }
+
+    // A capability or closure keeps its binding form; values get a slot.
+    bind_value = (self :: @Self, id: ExprId, ty: TyId) Res<Value, LowerError> {
+        self.expr_as(id, ty)
+    }
+
+    // -------------------------------------------------------------------
+    // access and indexing
+    // -------------------------------------------------------------------
+
+    access = (self :: @Self, id: ExprId, a: Access, span: Span) Res<Value, LowerError> {
+        base_expr = self.tree.expr_at(a.base);
+        type_name: Res<str> = base_expr.kind.match({
+            Name(n) => self.lookup(n.text).match({
+                Ok(_) => None,
+                None  => self.names_type(n.text).match({ true => Ok(n.text), false => None }),
+            }),
+            _       => None,
+        });
+        type_name.match({
+            Ok(name) => self.type_member(id, name, a.name.text, span),
+            None     => {
+                capability = self.capability_of(a.base).try();
+                capability.match({
+                    Ok(_) => {
+                        ty = self.type_of(id).try();
+                        self.constant(ty, 0)
+                    },
+                    None  => self.place_of(a.base).try().match({
+                        Ok(place) => self.read(self.field_place(place, a.name.text, span).try()),
+                        None      => {
+                            base  = self.expr(a.base).try();
+                            field = self.field_place(self.spill(base), a.name.text, span).try();
+                            self.read(field)
+                        },
+                    }),
+                })
+            },
+        })
+    }
+
+    // `Type.Variant`, `i32.MAX` and similar associated values.
+    type_member = (self :: @Self, id: ExprId, type_name: str, member: str, span: Span)
+                  Res<Value, LowerError> {
+        ty = self.type_of(id).try();
+        is_prim(type_name).match({
+            true  => self.prim_constant(ty, type_name, member, span),
+            false => self.variant_value(ty, member, None, span),
+        })
+    }
+
+    prim_constant = (self :: @Self, ty: TyId, prim: str, member: str, span: Span)
+                    Res<Value, LowerError> {
+        bits: i64 = prim.match({
+            "i8" => 8, "u8" => 8, "i16" => 16, "u16" => 16, "i32" => 32, "u32" => 32,
+            _ => 64,
+        });
+        is_signed = prim.starts_with("i");
+        value: Res<i64> = member.match({
+            "BITS" => Ok(bits),
+            "MAX"  => is_signed.match({
+                true  => Ok(bits.signed_max()),
+                false => Ok(bits.unsigned_max_bits()),
+            }),
+            "MIN"  => is_signed.match({
+                true  => Ok(-bits.signed_max() - 1),
+                false => Ok(0),
+            }),
+            _      => None,
+        });
+        self.constant(ty, value.ok_or(unsupported(span, "this primitive constant")).try())
+    }
+
+    // The capability an expression denotes (`env`, `env.out`), if any.
+    capability_of* = (self :: @Self, id: ExprId) Res<Res<TyId>, LowerError> {
+        e = self.tree.expr_at(id);
+        e.kind.match({
+            Name(n)   => Ok(self.lookup(n.text).match({ Ok(Capability(t)) => Ok(t), _ => None })),
+            Paren(p)  => self.capability_of(p.inner),
+            Access(a) => self.capability_of(a.base).try().match({
+                None    => Ok(None),
+                Ok(_)   => {
+                    ty = self.type_of(id).try();
+                    Ok(self.shape(ty).try().class.match({ Unit => Ok(ty), _ => None }))
+                },
+            }),
+            _         => Ok(None),
+        })
+    }
+
+    // Arrays and str index bytes with a bounds trap at the `[`.
+    index_place* = (self :: @Self, x: Index, span: Span) Res<Place, LowerError> {
+        base_ty = self.type_of(x.base).try();
+        base = self.place_of(x.base).try().match({
+            Ok(p) => p,
+            None  => {
+                value = self.expr(x.base).try();
+                self.spill(value)
+            },
+        });
+        usize_ty = self.prim("usize").try();
+        index = self.expr_as(x.index, usize_ty).try();
+        s = self.shape(base_ty).try();
+        s.form.match({
+            Array(elements) => {
+                count = self.word_const(Scalar.U64, elements.count.to_i64_bits()).try();
+                self.bounds(index.slot, count, x.op_span).try();
+                pointer = self.address(base).try();
+                stride  = self.word_const(Scalar.U64, elements.stride.to_i64_bits()).try();
+                offset  = self.slot_of(Scalar.U64).try();
+                self.add(Instruction.BinaryValue(Binary(out: offset, left: index.slot, right: stride, op: Op.WrapMul, span: nowhere()))).try();
+                at = self.slot_of(Scalar.Ptr).try();
+                self.add(Instruction.BinaryValue(Binary(out: at, left: pointer, right: offset, op: Op.WrapAdd, span: nowhere()))).try();
+                Ok(Place(base: Base.Through(at), offset: 0, ty: elements.elem))
+            },
+            _               => self.prim_name(base_ty).eq("str").match({
+                true  => {
+                    pointer = self.address(base).try();
+                    len = self.slot_of(Scalar.U64).try();
+                    self.add(Instruction.LoadValue(Load(out: len, base: pointer, offset: 8))).try();
+                    self.bounds(index.slot, len, x.op_span).try();
+                    data = self.slot_of(Scalar.Ptr).try();
+                    self.add(Instruction.LoadValue(Load(out: data, base: pointer, offset: 0))).try();
+                    at = self.slot_of(Scalar.Ptr).try();
+                    self.add(Instruction.BinaryValue(Binary(out: at, left: data, right: index.slot, op: Op.WrapAdd, span: nowhere()))).try();
+                    Ok(Place(base: Base.Through(at), offset: 0, ty: self.prim("u8").try()))
+                },
+                false => Err(unsupported(span, "indexing this value")),
+            }),
+        })
+    }
+
+    bounds = (self :: @Self, index: usize, count: usize, span: Span) Res<(), LowerError> {
+        inside = self.slot_of(Scalar.Bool).try();
+        self.add(Instruction.BinaryValue(Binary(out: inside, left: index, right: count, op: Op.Less, span: nowhere()))).try();
+        ok   = self.label().try();
+        fail = self.label().try();
+        self.branch_to(inside, ok, fail).try();
+        self.start(fail);
+        self.trap(TrapKind.OutOfBounds, span).try();
+        self.start(ok);
+        Ok(())
+    }
+
+    array = (self :: @Self, id: ExprId, elems: Vec<ExprId>, span: Span) Res<Value, LowerError> {
+        ty = self.type_of(id).try();
+        s  = self.shape(ty).try();
+        elements = s.form.match({ Array(e) => Ok(e), _ => None })
+            .ok_or(unsupported(span, "an array literal without a fixed array type")).try();
+        out = self.temp(ty).try();
+        base = self.slot_of(Scalar.Ptr).try();
+        elems.loop((h, i, elem) {
+            value = self.expr_as(elem, elements.elem).try();
+            self.add(Instruction.AddressOf(Address(out: base, slot: out.slot))).try();
+            self.add(Instruction.StoreValue(Store(base: base, offset: i * elements.stride, value: value.slot))).try();
+        });
+        Ok(out)
+    }
+
+    // -------------------------------------------------------------------
+    // variants and matching
+    // -------------------------------------------------------------------
+
+    // Construct the alternative `name` of `ty`, with an optional payload.
+    variant_value* = (self :: @Self, ty: TyId, name: str, payload: Res<Value>, span: Span)
+                     Res<Value, LowerError> {
+        s = self.shape(ty).try();
+        s.form.match({
+            Tags(variants)   => {
+                tag = variant_index(variants, name).ok_or(unsupported(span, "an unknown variant")).try();
+                self.constant(ty, tag.to_i64_bits())
+            },
+            Variants(tagged) => {
+                tag = variant_index(tagged.variants, name).ok_or(unsupported(span, "an unknown variant")).try();
+                out = self.temp(ty).try();
+                at  = self.slot_of(Scalar.Ptr).try();
+                self.add(Instruction.AddressOf(Address(out: at, slot: out.slot))).try();
+                word = self.word_const(Scalar.U32, tag.to_i64_bits()).try();
+                self.add(Instruction.StoreValue(Store(base: at, offset: 0, value: word))).try();
+                payload.when_ok((p) {
+                    expected = tagged.variants.get(tag).ok_or(unsupported(span, "a missing variant")).try().payload;
+                    stored = expected.match({
+                        Ok(t) => self.coerce(p, t).try(),
+                        None  => p,
+                    });
+                    self.add(Instruction.StoreValue(Store(base: at, offset: tagged.payload, value: stored.slot))).try();
+                });
+                Ok(out)
+            },
+            _                => Err(unsupported(span, "a variant of a type without alternatives")),
+        })
+    }
+
+    // The tag of a tagged value, as a U32 word.
+    tag_of* = (self :: @Self, value: Value) Res<usize, LowerError> {
+        s = self.shape(value.ty).try();
+        s.form.match({
+            Tags(_) => Ok(value.slot),
+            _       => {
+                at = self.address(self.spill(value)).try();
+                tag = self.slot_of(Scalar.U32).try();
+                self.add(Instruction.LoadValue(Load(out: tag, base: at, offset: 0))).try();
+                Ok(tag)
+            },
+        })
+    }
+
+    payload_of* = (self :: @Self, value: Value, tag: usize) Res<Value, LowerError> {
+        s = self.shape(value.ty).try();
+        // Zero-size payloads occupy no bytes: the tag word is the value.
+        empty: Res<TyId> = s.form.match({
+            Tags(v) => v.get(tag).match({ Ok(variant) => variant.payload, None => None }),
+            _       => None,
+        });
+        empty.match({
+            Ok(ty) => self.constant(ty, 0),
+            None   => self.payload_in_memory(value, tag),
+        })
+    }
+
+    payload_in_memory = (self :: @Self, value: Value, tag: usize) Res<Value, LowerError> {
+        s = self.shape(value.ty).try();
+        tagged = s.form.match({ Variants(t) => Ok(t), _ => None })
+            .ok_or(unsupported(nowhere(), self.described("a payload of a value without one", value.ty))).try();
+        variant = tagged.variants.get(tag).ok_or(unsupported(nowhere(), "a missing variant")).try();
+        ty = variant.payload.ok_or(unsupported(nowhere(), "a payload-free variant")).try();
+        self.read(Place(base: Base.InSlot(value.slot), offset: tagged.payload, ty: ty))
+    }
+
+    match_expr = (self :: @Self, id: ExprId, m: Match, span: Span) Res<Value, LowerError> {
+        ty    = self.type_of(id).try();
+        subject_ty = self.type_of(m.scrutinee).try();
+        subject = self.expr_as(m.scrutinee, subject_ty).try();
+        out   = self.temp(ty).try();
+        done  = self.label().try();
+        s     = self.shape(subject_ty).try();
+        m.arms.loop((arm) {
+            next = self.label().try();
+            body = self.label().try();
+            mark = self.locals.len;
+            self.test_pattern(arm.pattern, subject, body, next).try();
+            self.start(body);
+            self.bind_pattern(arm.pattern, subject).try();
+            value = self.expr_as(arm.body, ty).try();
+            self.add(Instruction.Copy(Move(out: out.slot, source: value.slot))).try();
+            self.release_locals(mark);
+            self.jump(done).try();
+            self.start(next);
+        });
+        // Exhaustiveness is checked; falling out of every arm is a bug.
+        self.trap(TrapKind.Unreachable, span).try();
+        self.start(done);
+        Ok(out)
+    }
+
+    // Branch to `yes` when the pattern matches, else to `no`. A nested
+    // pattern tests the payload only after its variant matched.
+    test_pattern = (self :: @Self, id: PatternId, subject: Value, yes: usize, no: usize)
+                   Res<(), LowerError> {
+        p = self.tree.pattern_at(id);
+        p.kind.match({
+            Wild           => self.jump(yes),
+            Literal(l)     => {
+                expected = self.literal_pattern(l, subject.ty, p.span).try();
+                test = self.equal_test(subject, expected).try();
+                self.branch_to(test, yes, no)
+            },
+            Name(n)        => self.variant_position(subject.ty, n.name.last_segment()).match({
+                // A binder always matches.
+                None        => self.jump(yes),
+                Ok(index)   => {
+                    test = self.tag_test(subject, index).try();
+                    self.branch_to(test, yes, no)
+                },
+            }),
+            Destructure(d) => {
+                index = self.variant_position(subject.ty, d.name.last_segment())
+                    .ok_or(unsupported(p.span, "an unknown variant pattern")).try();
+                test = self.tag_test(subject, index).try();
+                inner = self.label().try();
+                self.branch_to(test, inner, no).try();
+                self.start(inner);
+                payload = self.payload_of(subject, index).try();
+                self.test_pattern(d.binder, payload, yes, no)
+            },
+        })
+    }
+
+    variant_position = (self :: @Self, ty: TyId, name: str) Res<usize> {
+        self.has_variants(ty).match({
+            false => None,
+            true  => self.variants_of(ty).match({
+                Ok(v)  => variant_index(v, name),
+                Err(_) => None,
+            }),
+        })
+    }
+
+    tag_test = (self :: @Self, subject: Value, index: usize) Res<usize, LowerError> {
+        tag = self.tag_of(subject).try();
+        expected = self.word_const(Scalar.U32, index.to_i64_bits()).try();
+        test = self.slot_of(Scalar.Bool).try();
+        self.add(Instruction.BinaryValue(Binary(out: test, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+        Ok(test)
+    }
+
+    has_variants* = (self :: @Self, ty: TyId) bool {
+        self.shape(ty).match({
+            Ok(s)  => s.form.match({ Tags(_) => true, Variants(_) => true, _ => false }),
+            Err(_) => false,
+        })
+    }
+
+    variants_of* = (self :: @Self, ty: TyId) Res<Vec<VariantAt>, LowerError> {
+        s = self.shape(ty).try();
+        s.form.match({
+            Tags(v)     => Ok(v),
+            Variants(t) => Ok(t.variants),
+            _           => Err(unsupported(nowhere(), self.described("alternatives of a value without them", ty))),
+        })
+    }
+
+    described2* = (self: @Self, what: str, from: TyId, to: TyId) str {
+        self.alloc.String("{} (`{}` to `{}`)", what, self.check.types.key_at(from), self.check.types.key_at(to)).match({
+            Ok(s)  => s.view(),
+            Err(_) => what,
+        })
+    }
+
+    // A fault message naming the type involved.
+    described* = (self: @Self, what: str, ty: TyId) str {
+        self.alloc.String("{} (`{}`)", what, self.check.types.key_at(ty)).match({
+            Ok(s)  => s.view(),
+            Err(_) => what,
+        })
+    }
+
+    literal_pattern = (self :: @Self, l: Literal, ty: TyId, span: Span) Res<Value, LowerError> {
+        l.kind.match({
+            Int   => self.constant(ty, l.integer.ok_or(unsupported(span, "an unparsed integer")).try().to_i64_bits()),
+            Bool  => self.constant(ty, l.text.eq("true").match({ true => 1, false => 0 })),
+            Char  => {
+                text = l.text.slice(1, l.text.len - 1).decode_literal(self.alloc).match({ Ok(t) => Ok(t), Err(_) => Err(unsupported(span, "a malformed literal escape")) }).try();
+                self.constant(ty, text.get(0).value_or(0).to_i64())
+            },
+            Str   => {
+                text = l.text.slice(1, l.text.len - 1).decode_literal(self.alloc).match({ Ok(t) => Ok(t), Err(_) => Err(unsupported(span, "a malformed literal escape")) }).try();
+                self.string(text, ty)
+            },
+            Float => Err(unsupported(span, "floating-point patterns")),
+        })
+    }
+
+    equal_test = (self :: @Self, left: Value, right: Value) Res<usize, LowerError> {
+        self.prim_name(left.ty).eq("str").match({
+            true  => Ok(self.str_equal(left, right).try().slot),
+            false => {
+                test = self.slot_of(Scalar.Bool).try();
+                self.add(Instruction.BinaryValue(Binary(out: test, left: left.slot, right: right.slot, op: Op.Equal, span: nowhere()))).try();
+                Ok(test)
+            },
+        })
+    }
+
+    // Binders: a bare name that is not a variant binds the whole subject; a
+    // destructure binds the payload.
+    bind_pattern = (self :: @Self, id: PatternId, subject: Value) Res<(), LowerError> {
+        p = self.tree.pattern_at(id);
+        p.kind.match({
+            Name(n)        => {
+                is_variant = self.variants_of(subject.ty).match({
+                    Ok(v)  => variant_index(v, n.name.last_segment()).match({ Ok(_) => true, None => false }),
+                    Err(_) => false,
+                });
+                is_variant.match({
+                    true  => Ok(()),
+                    false => {
+                        copy = self.copy_value(subject).try();
+                        self.bind_local(n.name.last_segment(), LocalKind.Direct(copy))
+                    },
+                })
+            },
+            Destructure(d) => {
+                variants = self.variants_of(subject.ty).try();
+                index = variant_index(variants, d.name.last_segment())
+                    .ok_or(unsupported(p.span, "an unknown variant pattern")).try();
+                payload = self.payload_of(subject, index).try();
+                self.bind_pattern(d.binder, payload)
+            },
+            _              => Ok(()),
+        })
+    }
+
+    // -------------------------------------------------------------------
+    // .try()
+    // -------------------------------------------------------------------
+
+    // Ok continues with the payload; None/Err leaves the frame that wrote
+    // the expression, converting the failure to that frame's result type.
+    try_expr = (self :: @Self, id: ExprId, operand: ExprId, error: Res<ExprId>, span: Span)
+               Res<Value, LowerError> {
+        value = self.expr(operand).try();
+        variants = self.variants_of(value.ty).try();
+        ok_tag = variant_index(variants, "Ok").ok_or(unsupported(span, "try on a value without Ok")).try();
+        tag = self.tag_of(value).try();
+        expected = self.word_const(Scalar.U32, ok_tag.to_i64_bits()).try();
+        is_ok = self.slot_of(Scalar.Bool).try();
+        self.add(Instruction.BinaryValue(Binary(out: is_ok, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+        good = self.label().try();
+        bad  = self.label().try();
+        self.branch_to(is_ok, good, bad).try();
+        self.start(bad);
+        frame = self.here();
+        failure = self.failure_for(value, variants, frame.ret_ty, error, span).try();
+        self.add(Instruction.Copy(Move(out: frame.ret_slot, source: failure.slot))).try();
+        self.jump(frame.ret_block).try();
+        self.start(good);
+        ty = self.type_of(id).try();
+        payload = self.payload_of(value, ok_tag).try();
+        self.coerce(payload, ty)
+    }
+
+    // The frame's result for a failed operand: None stays None; an error
+    // becomes the frame's Err, mapped or replaced when `.try(e)` says so.
+    failure_for = (self :: @Self, value: Value, variants: Vec<VariantAt>, ret: TyId,
+                   error: Res<ExprId>, span: Span) Res<Value, LowerError> {
+        target_variants = self.variants_of(ret).try();
+        variant_index(variants, "Err").match({
+            None    => error.match({
+                None    => self.variant_value(ret, "None", None, span),
+                Ok(e)   => {
+                    reason = self.replacement(e, ret, None).try();
+                    self.variant_value(ret, "Err", Ok(reason), span)
+                },
+            }),
+            Ok(err) => {
+                original = self.payload_of(value, err).try();
+                reason = error.match({
+                    None    => Ok(original),
+                    Ok(e)   => self.replacement(e, ret, Ok(original)),
+                }).try();
+                variant_index(target_variants, "Err").match({
+                    Ok(_)  => {
+                        target = self.err_type(ret).try();
+                        converted = self.widen_error(reason, target, span).try();
+                        self.variant_value(ret, "Err", Ok(converted), span)
+                    },
+                    None   => self.variant_value(ret, "None", None, span),
+                })
+            },
+        })
+    }
+
+    // `.try(value)` replaces the error; `.try((e) { .. })` maps it.
+    replacement = (self :: @Self, e: ExprId, ret: TyId, original: Res<Value>)
+                  Res<Value, LowerError> {
+        target = self.err_type(ret).try();
+        self.tree.expr_at(e).kind.match({
+            Lambda(l) => {
+                lambda = LambdaRef(expr: e, frame: self.frame);
+                args ::= self.alloc.Vec<Value>();
+                original.when_ok((o) { args.add(o).try(LowerError.OutOfMemory); });
+                self.inline_lambda(lambda, args, target)
+            },
+            _         => self.expr_as(e, target),
+        })
+    }
+
+    err_type* = (self :: @Self, ty: TyId) Res<TyId, LowerError> {
+        self.check.types.at(ty).match({
+            Res(r) => self.concrete(r.error),
+            _      => Err(unsupported(nowhere(), "an error result outside Res")),
+        })
+    }
+
+    // An error value moves into a wider error set by its member name.
+    widen_error* = (self :: @Self, value: Value, target: TyId, span: Span)
+                   Res<Value, LowerError> {
+        (value.ty == target).match({
+            true  => Ok(value),
+            false => {
+                target_variants = self.variants_of(target).try();
+                name = self.type_name(value.ty);
+                variant_index(target_variants, name).match({
+                    // The source type is itself one member of the target.
+                    Ok(_)  => self.variant_value(target, name, Ok(value), span),
+                    // Otherwise the source's own alternatives carry over.
+                    None   => self.remap_variants(value, target, span),
+                })
+            },
+        })
+    }
+
+    qualified* = (self: @Self, ty: TyId) str {
+        self.check.types.at(ty).match({
+            Named(n) => self.alloc.String("{}.{}", self.check.world.module_name(n.decl), n.name).match({
+                Ok(s)  => s.view(),
+                Err(_) => "",
+            }),
+            _        => "",
+        })
+    }
+
+    type_name* = (self: @Self, ty: TyId) str {
+        self.check.types.at(ty).match({
+            Named(n) => n.name,
+            Prim(p)  => p.name,
+            _        => "",
+        })
+    }
+
+    // Each source alternative becomes the same-named target alternative.
+    remap_variants = (self :: @Self, value: Value, target: TyId, span: Span)
+                     Res<Value, LowerError> {
+        source = self.variants_of(value.ty).try();
+        out = self.temp(target).try();
+        done = self.label().try();
+        tag = self.tag_of(value).try();
+        source.loop((h, i, variant) {
+            yes  = self.label().try();
+            next = self.label().try();
+            expected = self.word_const(Scalar.U32, i.to_i64_bits()).try();
+            test = self.slot_of(Scalar.Bool).try();
+            self.add(Instruction.BinaryValue(Binary(out: test, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+            self.branch_to(test, yes, next).try();
+            self.start(yes);
+            target_variants = self.variants_of(target).try();
+            variant_index(target_variants, variant.name).match({
+                // A source alternative the target lacks cannot occur here.
+                None    => self.trap(TrapKind.Unreachable, span).try(),
+                Ok(_)   => {
+                    payload: Res<Value> = variant.payload.match({
+                        Ok(_) => Ok(self.payload_of(value, i).try()),
+                        None  => None,
+                    });
+                    made = self.variant_value(target, variant.name, payload, span).try();
+                    self.add(Instruction.Copy(Move(out: out.slot, source: made.slot))).try();
+                    self.jump(done).try();
+                },
+            });
+            self.start(next);
+        });
+        self.trap(TrapKind.Unreachable, span).try();
+        self.start(done);
+        Ok(out)
+    }
+
+    // -------------------------------------------------------------------
+    // functions and inlining
+    // -------------------------------------------------------------------
+
+    // Inline a closure body with its parameters bound to `args`, in the
+    // frame that wrote it.
+    inline_lambda* = (self :: @Self, lambda: LambdaRef, args: Vec<Value>, want: TyId)
+                     Res<Value, LowerError> {
+        l = self.tree.expr_at(lambda.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
+            .ok_or(unsupported(nowhere(), "a closure that is not a lambda")).try();
+        saved = self.frame;
+        self.frame = lambda.frame;
+        mark = self.locals.len;
+        l.params.loop((h, i, p) {
+            args.get(i).when_ok((arg) {
+                copy = self.copy_value(arg).try();
+                self.bind_local(p.name.text, LocalKind.Direct(copy)).try();
+            });
+        });
+        value = self.block(l.body).try();
+        self.release_locals(mark);
+        self.frame = saved;
+        self.coerce(value, want)
+    }
+
+    // A frame for an inlined or lowered body, returning through `ret_block`.
+    push_frame* = (self :: @Self, inst: Inst, module: usize, ret_ty: TyId,
+                   self_ty: Res<TyId>, scope: Res<Callee>) Res<usize, LowerError> {
+        ret_slot  = self.temp(ret_ty).try().slot;
+        ret_block = self.label().try();
+        self.frames.add(Frame(
+            inst: inst,
+            module: module,
+            ret_slot: ret_slot,
+            ret_block: ret_block,
+            ret_ty: ret_ty,
+            self_ty: self_ty,
+            scope: scope
+        )).try(LowerError.OutOfMemory);
+        Ok(self.frames.len - 1)
+    }
+
+    // A real function instance for (callee, substitution, Self).
+    enqueue* = (self :: @Self, callee: Callee) Res<usize, LowerError> {
+        key = self.instance_key(callee).try();
+        self.known.get(key.view()).match({
+            Ok(index) => Ok(index),
+            None      => {
+                index = self.pending.len;
+                self.pending.add(callee).try(LowerError.OutOfMemory);
+                self.known.set(key.view(), index).try(LowerError.OutOfMemory);
+                Ok(index)
+            },
+        })
+    }
+
+    instance_key = (self :: @Self, callee: Callee) Res<String, LowerError> {
+        key ::= self.alloc.String(
+            "{}:{}#{}",
+            callee.owner.module.to_usize(),
+            callee.owner.decl.to_usize(),
+            callee.member.value_or(usize.MAX)
+        ).try(LowerError.OutOfMemory);
+        callee.self_ty.when_ok((t) {
+            key.fmt("@{}", self.check.types.key_at(t)).try(LowerError.OutOfMemory);
+        });
+        Range(0, callee.inst.len()).loop((i) {
+            callee.inst.var_at(i).when_ok((v) {
+                callee.inst.arg_at(i).when_ok((t) {
+                    key.fmt(",{}={}", self.check.types.key_at(v), self.check.types.key_at(t)).try(LowerError.OutOfMemory);
+                });
+            });
+        });
+        Ok(key)
+    }
+
+    // Lower one real function instance.
+    function* = (self :: @Self, callee: Callee, entry: bool) Res<Func, LowerError> {
+        f    = callee.f;
+        body = f.body.ok_or(unsupported(f.name.span, "a call to a bodiless declaration")).try();
+        self.slots   = self.alloc.Vec<Scalar>();
+        self.blocks  = self.alloc.Vec<Res<BasicBlock>>();
+        self.locals  = self.alloc.Vec<Local>();
+        self.frames  = self.alloc.Vec<Frame>();
+        self.loops   = self.alloc.Vec<LoopTarget>();
+        self.depth   = 0;
+        first = self.label().try();
+        self.start(first);
+        // Parameter slots come first, in order.
+        ret_ty = f.ret.match({ Ok(t) => self.callee_type(callee, t), None => Ok(self.unit_ty) }).try();
+        params ::= self.alloc.Vec<Param>();
+        f.params.loop((p) { params.add(p).try(LowerError.OutOfMemory); });
+        kinds ::= self.alloc.Vec<LocalKind>();
+        params.loop((p) {
+            ty = p.type.ok_or(unsupported(p.span, "an inferred parameter type")).try();
+            t  = self.callee_type(callee, ty).try();
+            capability = self.shape(t).try().class.match({ Unit => self.is_capability(t), _ => false });
+            capability.match({
+                true  => {
+                    // Capabilities carry no data; a callee still receives
+                    // an argument position so calls keep one shape.
+                    entry.match({ true => (), false => { self.temp(t).try(); } });
+                    kinds.add(LocalKind.Capability(t)).try(LowerError.OutOfMemory);
+                },
+                false => p.mutable.match({
+                    true  => {
+                        pointer = self.slot_of(Scalar.Ptr).try();
+                        kinds.add(LocalKind.Ref(Place(base: Base.Through(pointer), offset: 0, ty: t))).try(LowerError.OutOfMemory);
+                    },
+                    false => {
+                        slot = self.temp(t).try();
+                        kinds.add(LocalKind.Direct(slot)).try(LowerError.OutOfMemory);
+                    },
+                }),
+            });
+        });
+        entry.then(() {
+            (self.slots.len == 0).ensure(unsupported(f.name.span, "main parameters other than Env")).try();
+        });
+        parameters = self.slots.len;
+        frame = self.push_frame(callee.inst, callee.module, ret_ty, callee.self_ty, Ok(callee)).try();
+        self.frame = frame;
+        params.loop((h, i, p) {
+            kinds.get(i).when_ok((k) { self.bind_local(p.name.text, k).try(); });
+        });
+        value = self.block(body).try();
+        here = self.here();
+        coerced = self.coerce(value, ret_ty).try();
+        self.add(Instruction.Copy(Move(out: here.ret_slot, source: coerced.slot))).try();
+        self.enter(here.ret_block).try();
+        exit_value = entry.match({
+            true  => self.exit_code(Value(slot: here.ret_slot, ty: ret_ty)).try(),
+            false => here.ret_slot,
+        });
+        self.finish(Terminator.Return(exit_value)).try();
+        blocks ::= self.alloc.Vec<BasicBlock>();
+        self.blocks.loop((pending) {
+            blocks.add(pending.value_or(BasicBlock(
+                code: self.alloc.Vec<Instruction>(),
+                exit: Terminator.Trap(Fault(what: TrapKind.Unreachable, span: f.name.span))
+            ))).try(LowerError.OutOfMemory);
+        });
+        result_class = entry.match({
+            true  => Scalar.I32,
+            false => self.class_of(ret_ty).try(),
+        });
+        Ok(Func(
+            name: f.name.text,
+            parameters: parameters,
+            slots: self.slots,
+            blocks: blocks,
+            result: result_class
+        ))
+    }
+
+    is_capability* = (self :: @Self, ty: TyId) bool {
+        capability(self.qualified(ty))
+    }
+
+    // main's result as a process status: an integer is the status, unit is
+    // zero, Ok(n) is n (or zero for a non-integer payload), anything else 1.
+    exit_code = (self :: @Self, value: Value) Res<usize, LowerError> {
+        i32_ty = self.prim("i32").try();
+        s = self.shape(value.ty).try();
+        s.class.match({
+            Unit     => self.word_const(Scalar.I32, 0),
+            Block(_) => {
+                variants = self.variants_of(value.ty).try();
+                ok = variant_index(variants, "Ok").ok_or(unsupported(nowhere(), "a main result without Ok")).try();
+                out = self.word_const(Scalar.I32, 1).try();
+                tag = self.tag_of(value).try();
+                expected = self.word_const(Scalar.U32, ok.to_i64_bits()).try();
+                test = self.slot_of(Scalar.Bool).try();
+                self.add(Instruction.BinaryValue(Binary(out: test, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+                yes  = self.label().try();
+                done = self.label().try();
+                self.branch_to(test, yes, done).try();
+                self.start(yes);
+                payload_ty = variants.get(ok).ok_or(unsupported(nowhere(), "a missing variant")).try().payload;
+                code = payload_ty.match({
+                    Ok(t) => integer(self.class_of(t).try()).match({
+                        true  => {
+                            p = self.payload_of(value, ok).try();
+                            c = self.slot_of(Scalar.I32).try();
+                            self.add(Instruction.Cast(Convert(out: c, input: p.slot))).try();
+                            c
+                        },
+                        false => self.word_const(Scalar.I32, 0).try(),
+                    }),
+                    None  => self.word_const(Scalar.I32, 0).try(),
+                });
+                self.add(Instruction.Copy(Move(out: out, source: code))).try();
+                self.enter(done).try();
+                Ok(out)
+            },
+            _        => integer(s.class).match({
+                true  => {
+                    c = self.slot_of(Scalar.I32).try();
+                    self.add(Instruction.Cast(Convert(out: c, input: value.slot))).try();
+                    Ok(c)
+                },
+                false => self.word_const(Scalar.I32, 0),
+            }),
+        })
+    }
+}
+
+// Two's-complement bits of an unsigned value as a signed constant. The
+// value is split into 31-bit digits because only checked narrowing to i32
+// exists between these widths.
+to_i64_bits* = (value: u64) i64 {
+    low  = (value % 2147483648).to_i32().value_or(0).to_i64();
+    mid  = ((value / 2147483648) % 2147483648).to_i32().value_or(0).to_i64();
+    high = (value / 4611686018427387904).to_i32().value_or(0).to_i64();
+    (high *% 4611686018427387904) +% (mid * 2147483648) +% low
+}
+
+to_i64_bits* = (value: usize) i64 {
+    value.to_u64().to_i64_bits()
+}
+
+signed_max = (bits: i64) i64 {
+    bits.match({ 8 => 127, 16 => 32767, 32 => 2147483647, _ => 9223372036854775807 })
+}
+
+unsigned_max_bits = (bits: i64) i64 {
+    bits.match({ 8 => 255, 16 => 65535, 32 => 4294967295, _ => -1 })
+}
+
+lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
+                Res<Program, LowerError> {
+    module = tree.module_at(entry).ok_or(unsupported(nowhere(), "a missing entry module")).try();
+    mains ::= alloc.Vec<DeclId>();
+    table = check.world.table_at(entry).ok_or(unsupported(module.span, "a missing module table")).try();
+    table.defs.loop((def) {
+        is_main = def.name.eq("main") && def.kind.match({ FunctionDef => true, _ => false });
+        is_main.then(() { mains.add(def.id).try(LowerError.OutOfMemory); });
+    });
+    (mains.len == 1).ensure(unsupported(module.span, "an executable without exactly one main function")).try();
+    main = mains.get(0).ok_or(unsupported(module.span, "a missing main function")).try();
+    checker ::= check;
+    unit_ty = checker.types.unit().try(LowerError.OutOfMemory);
+    state ::= Native(
+        alloc: alloc,
+        tree: tree,
+        check: checker,
+        unit_ty: unit_ty,
+        known: alloc.Map<str, usize>(),
+        pending: alloc.Vec<Callee>(),
+        shapes: alloc.Map<TyId, Shape>(),
+        slots: alloc.Vec<Scalar>(),
+        blocks: alloc.Vec<Res<BasicBlock>>(),
+        code: alloc.Vec<Instruction>(),
+        locals: alloc.Vec<Local>(),
+        frames: alloc.Vec<Frame>(),
+        loops: alloc.Vec<LoopTarget>()
+    );
+    main_decl = decl_at(tree, main).ok_or(unsupported(module.span, "a missing main function")).try();
+    main_fn = main_decl.kind.match({ Function(f) => Ok(f), _ => None })
+        .ok_or(unsupported(module.span, "a main that is not a function")).try();
+    entry_index = state.enqueue(Callee(
+        f: main_fn,
+        owner: main,
+        member: None,
+        module: main.module.to_usize(),
+        inst: alloc.Inst(),
+        self_ty: None,
+        generic_owner: None
+    )).try();
+    functions ::= alloc.Vec<Func>();
+    i: usize ::= 0;
+    loop(() { i < state.pending.len }, (h) {
+        callee = state.pending.get(i).ok_or(unsupported(module.span, "a missing reachable function")).try();
+        f = state.function(callee, i == entry_index).try();
+        functions.add(f).try(LowerError.OutOfMemory);
+        i = i + 1;
+    });
+    Ok(Program(functions: functions, entry: entry_index))
+}

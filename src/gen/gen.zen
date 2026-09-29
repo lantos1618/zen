@@ -11,12 +11,13 @@ Ast = std.ast
 Checker = sema.sema
 Codegen, Target = std.build
 String, str = std.text
-lower = gen.gen_lower
+lower, LowerError = gen.gen_lower
+lower_native = gen.gen_asm_lower
 Program = gen.gen_ir
 emit_js = gen.gen_js
 X86_64Linux = gen.gen_asm_x86
 Arm64, Arm64Os = gen.gen_asm_arm64
-verify, message = gen.gen_verify
+verify, verify_native, message = gen.gen_verify
 
 Layout* = Single | Modules
 ArtifactKind* = Source | Symbols
@@ -93,12 +94,7 @@ Generation* = {
                 ).try();
                 Ok(1)
             },
-            true  => lower(
-                self.alloc,
-                self.tree,
-                self.check,
-                self.entry
-            ).match({
+            true  => self.lowered(backend).match({
                 Err(error)  => error.match({
                     OutOfMemory        => Err(AllocError.OutOfMemory),
                     Unsupported(fault) => {
@@ -122,11 +118,22 @@ Generation* = {
         })
     }
 
+    // JavaScript consumes the scalar surface; assembly the native surface.
+    lowered = (self: @Self, backend: ScalarBackend) Res<Program, LowerError> {
+        backend.match({
+            Js  => lower(self.alloc, self.tree, self.check, self.entry),
+            Asm => lower_native(self.alloc, self.tree, self.check, self.entry),
+        })
+    }
+
     render_scalar = (self: @Self, backend: ScalarBackend, program: Program,
                      report :: String,
                      publish: (artifact: Artifact) Res<usize, AllocError>)
                     Res<usize, AllocError> {
-        program.verify(self.alloc).match({
+        backend.match({
+            Js  => program.verify(self.alloc),
+            Asm => program.verify_native(self.alloc),
+        }).match({
             Err(error) => error.match({
                 OutOfMemory    => Err(AllocError.OutOfMemory),
                 Invalid(fault) => {

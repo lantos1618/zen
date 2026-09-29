@@ -71,6 +71,7 @@ C = {
                     self.labels.set(branch.yes, true);
                     self.labels.set(branch.no, true);
                 },
+                Trap(_)        => (),
             });
         });
         self.out.add("  goto b0;\n").try();
@@ -96,6 +97,8 @@ C = {
                 branch.yes,
                 branch.no
             ),
+            // Native-surface IR; `verify` refuses it before rendering.
+            Trap(_)        => self.out.add(OUTSIDE),
         })
     }
 
@@ -120,6 +123,8 @@ C = {
                 self.out.bytes(text).try();
                 self.out.fmt(", 1, {}, stdout);\n", text.len)
             },
+            // Native-surface IR; `verify` refuses it before rendering.
+            _                  => self.out.add(OUTSIDE),
         })
     }
 
@@ -183,6 +188,7 @@ C = {
             LessEqual    => self.out.fmt("v{} <= v{}", value.left, value.right),
             Greater      => self.out.fmt("v{} > v{}", value.left, value.right),
             GreaterEqual => self.out.fmt("v{} >= v{}", value.left, value.right),
+            _            => self.out.add("zg_outside("),
         }).try();
         checked = value.op.match({ Add => true, Sub => true, Mul => true, Div => true, Rem => true, _ => false });
         checked.then(() {
@@ -210,6 +216,7 @@ C = {
                 value.value
             ),
             Unit => self.out.add("  fputs(\"()\", stdout);\n"),
+            _    => self.out.add(OUTSIDE),
         })
     }
 }
@@ -224,6 +231,8 @@ bytes = (out :: String, text: str) Res<(), AllocError> {
     });
     out.add('"')
 }
+
+OUTSIDE: str = "  #error native-surface IR\n"
 
 runtime = (out :: String) Res<(), AllocError> {
     out.add(

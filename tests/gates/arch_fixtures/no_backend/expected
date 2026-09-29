@@ -1,0 +1,2 @@
+arch_boundary: no backend files among 1 inputs — this gate is checking nothing
+exit 2

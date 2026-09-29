@@ -1,7 +1,0 @@
-script 7
-named_script 7
-native zen: asm projects require Linux x86_64 GNU
-1
-script file true
-named file true
-assembly file false

@@ -1,0 +1,286 @@
+// The kernel interface of the native targets, as ordinary Zen.
+//
+// The bodiless operations below are provided by the native (asm) backend
+// for each target: Linux x86-64 and Linux AArch64 issue raw system calls
+// (`syscall`, `svc #0`) with no C library at all; macOS calls the libSystem
+// function of the same name, because Darwin's system-call numbers are not a
+// stable ABI (Apple supports only libSystem as the kernel boundary, as Go
+// has done since 1.11). Every result follows the Linux convention on every
+// OS: a negative value is `-errno`. The C and JavaScript backends do not
+// provide these operations; programs that need portable I/O use `Env`.
+//
+// Everything after the operations is built on them in Zen: C-string
+// lengths, environment lookup, whole-buffer writes and reads, clocks,
+// randomness, and `Pages`, an `Alloc` that maps each run directly.
+
+Alloc, AllocError, Ptr, null_ptr = std.mem
+str, String = std.text
+Sink, WriteError = std.core
+
+// ---------------------------------------------------------------------
+// operations (compiler-provided per target)
+// ---------------------------------------------------------------------
+
+read* = (fd: i32, buf: Ptr<u8>, len: usize) i64
+write* = (fd: i32, buf: Ptr<u8>, len: usize) i64
+openat* = (dir: i32, path: Ptr<u8>, flags: i32, mode: u32) i64
+close* = (fd: i32) i64
+mmap* = (addr: usize, len: usize, prot: i32, flags: i32, fd: i32, offset: i64) i64
+munmap* = (addr: usize, len: usize) i64
+exit_group* = (status: i32) i64
+clock_gettime* = (clock: i32, time: Ptr<u8>) i64
+// Linux getrandom; on macOS getentropy in chunks of at most 256 bytes, with
+// the Linux result (the byte count).
+getrandom* = (buf: Ptr<u8>, len: usize, flags: u32) i64
+socket* = (domain: i32, kind: i32, protocol: i32) i64
+bind* = (fd: i32, address: Ptr<u8>, len: u32) i64
+listen* = (fd: i32, backlog: i32) i64
+// accept4 on Linux; accept on macOS (flags must be zero there).
+accept4* = (fd: i32, address: Ptr<u8>, len: Ptr<u32>, flags: i32) i64
+connect* = (fd: i32, address: Ptr<u8>, len: u32) i64
+// Readiness: epoll on Linux, kqueue on macOS. The other OS answers -ENOSYS.
+epoll_create1* = (flags: i32) i64
+epoll_ctl* = (epoll: i32, op: i32, fd: i32, event: Ptr<u8>) i64
+epoll_pwait* = (epoll: i32, events: Ptr<u8>, count: i32, timeout: i32, mask: usize, size: usize) i64
+kqueue* = () i64
+kevent* = (kq: i32, changes: Ptr<u8>, count: i32, events: Ptr<u8>, capacity: i32, timeout: Ptr<u8>) i64
+// Linux only; macOS threads go through pthreads, which this layer does not
+// expose yet.
+futex* = (address: Ptr<u32>, op: i32, value: u32, timeout: usize, other: usize, third: u32) i64
+clone* = (flags: usize, stack: usize, parent: usize, child: usize, tls: usize) i64
+
+// Process start values.
+argc* = () usize
+argv* = () Ptr<Ptr<u8>>
+envp* = () Ptr<Ptr<u8>>
+
+// Console output in the runtime's order with every other console write:
+// stream 1 is buffered standard output, stream 2 unbuffered standard error.
+emit* = (stream: i32, data: Ptr<u8>, len: usize) ()
+emit_byte* = (stream: i32, b: u8) ()
+
+// OS constants whose values differ between the targets.
+at_fdcwd* = () i32
+o_rdonly* = () i32
+o_wronly* = () i32
+o_rdwr* = () i32
+o_creat* = () i32
+o_trunc* = () i32
+o_append* = () i32
+o_cloexec* = () i32
+o_directory* = () i32
+clock_monotonic* = () i32
+clock_realtime* = () i32
+eintr* = () i64
+eagain* = () i64
+
+// ---------------------------------------------------------------------
+// built on the operations
+// ---------------------------------------------------------------------
+
+STDIN*: i32 = 0
+STDOUT*: i32 = 1
+STDERR*: i32 = 2
+
+// -ENOMEM: the text or path buffer could not be allocated.
+NO_MEMORY*: i64 = -12
+
+// The length of a NUL-terminated byte string.
+c_len* = (p: Ptr<u8>) usize {
+    n ::= 0;
+    loop(() { p.read(n) != 0 }, (h) { n = n + 1; });
+    n
+}
+
+// A borrowed view of a NUL-terminated byte string.
+c_view* = (p: Ptr<u8>) str { str(data: p, len: c_len(p)) }
+
+// The i-th process argument, if present.
+arg* = (i: usize) Res<str> {
+    (i < argc()).match({
+        true  => Ok(c_view(argv().read(i))),
+        false => None,
+    })
+}
+
+// An environment variable's value, borrowed from the process's own block.
+env_var* = (name: str) Res<str> {
+    block = envp();
+    i ::= 0;
+    found: Res<str> = loop<str>((h) {
+        entry = block.read(i);
+        entry.is_null().then(() { h.break(); });
+        text = c_view(entry);
+        (text.len > name.len && text.index(name.len) == '=' && text.slice(0, name.len).eq(name)).then(() {
+            h.break(text.slice(name.len + 1, text.len));
+        });
+        i = i + 1;
+    });
+    found
+}
+
+// Write every byte, retrying interrupted and short writes.
+write_all* = (fd: i32, bytes: str) Res<(), i64> {
+    done ::= 0;
+    failure: Res<i64> = loop<i64>(() { done < bytes.len }, (h) {
+        n = write(fd, bytes.ptr().offset(done), bytes.len - done);
+        (n < 0 && n != 0 - eintr()).then(() { h.break(n); });
+        (n > 0).then(() { done = done + n.to_usize().value_or(0); });
+    });
+    failure.match({ Ok(e) => Err(e), None => Ok(()) })
+}
+
+// Read until `n` bytes arrive at `base` or input ends. The count read, or
+// -errno when the first read fails.
+read_full* = (fd: i32, base: Ptr<u8>, n: usize) Res<usize, i64> {
+    got ::= 0;
+    failure: Res<i64> = loop<i64>(() { got < n }, (h) {
+        r = read(fd, base.offset(got), n - got);
+        (r == 0).then(() { h.break(); });
+        (r < 0 && r != 0 - eintr()).then(() { h.break(r); });
+        (r > 0).then(() { got = got + r.to_usize().value_or(0); });
+    });
+    failure.match({
+        Ok(e) => (got == 0).match({ true => Err(e), false => Ok(got) }),
+        None  => Ok(got),
+    })
+}
+
+// A path as a NUL-terminated copy for the kernel.
+c_path* = (a: Alloc, path: str) Res<Ptr<u8>, AllocError> {
+    buf = a.raw(path.len + 1, 1).try();
+    (path.len > 0).then(() { buf.copy_from(path.ptr(), path.len); });
+    buf.write(path.len, 0);
+    Ok(buf)
+}
+
+// Read a whole file into caller-owned text. The error is the kernel's
+// -errno, or -12 (ENOMEM) when the text cannot grow.
+read_file* = (a: Alloc, path: str) Res<String, i64> {
+    name = c_path(a, path).match({ Ok(p) => Ok(p), Err(_) => Err(NO_MEMORY) }).try();
+    fd = openat(at_fdcwd(), name, o_rdonly() + o_cloexec(), 0);
+    (fd < 0).match({ true => Err(fd), false => Ok(()) }).try();
+    handle = fd.to_i32().value_or(-1);
+    out ::= a.String().match({ Ok(s) => Ok(s), Err(_) => Err(NO_MEMORY) }).try();
+    chunk = a.raw(65536, 16).match({ Ok(p) => Ok(p), Err(_) => Err(NO_MEMORY) }).try();
+    failure: Res<i64> = loop<i64>((h) {
+        n = read(handle, chunk, 65536);
+        (n == 0).then(() { h.break(); });
+        (n < 0 && n != 0 - eintr()).then(() { h.break(n); });
+        (n > 0).then(() {
+            out.add(str(data: chunk, len: n.to_usize().value_or(0))).match({
+                Ok(_)  => (),
+                Err(_) => h.break(NO_MEMORY),
+            });
+        });
+    });
+    close(handle);
+    failure.match({ Ok(e) => Err(e), None => Ok(out) })
+}
+
+// Create or truncate a file and write all of `bytes` to it.
+write_file* = (a: Alloc, path: str, bytes: str) Res<(), i64> {
+    name = c_path(a, path).match({ Ok(p) => Ok(p), Err(_) => Err(NO_MEMORY) }).try();
+    fd = openat(at_fdcwd(), name, o_wronly() + o_creat() + o_trunc() + o_cloexec(), 420);
+    (fd < 0).match({ true => Err(fd), false => Ok(()) }).try();
+    handle = fd.to_i32().value_or(-1);
+    written = write_all(handle, bytes);
+    close(handle);
+    written
+}
+
+// Nanoseconds on a clock: clock_gettime into a timespec held by the
+// backend, as seconds * 10^9 + nanoseconds.
+clock_ns* = (clock: i32) u64
+
+// Monotonic nanoseconds, for measuring intervals.
+monotonic_ns* = () u64 { clock_ns(clock_monotonic()) }
+
+// Wall-clock nanoseconds since the Unix epoch.
+realtime_ns* = () u64 { clock_ns(clock_realtime()) }
+
+// Fill `len` bytes at `buf` with kernel randomness.
+random_bytes* = (buf: Ptr<u8>, len: usize) Res<(), i64> {
+    done ::= 0;
+    failure: Res<i64> = loop<i64>(() { done < len }, (h) {
+        n = getrandom(buf.offset(done), len - done, 0);
+        (n < 0 && n != 0 - eintr()).then(() { h.break(n); });
+        (n > 0).then(() { done = done + n.to_usize().value_or(0); });
+    });
+    failure.match({ Ok(e) => Err(e), None => Ok(()) })
+}
+
+// A Sink over a standard stream; `{}` of a Display value writes through it.
+StreamSink* = { stream: i32 }
+
+StreamSink.impl(Sink, {
+    write = (self :: @Self, bytes: str) Res<(), WriteError> {
+        emit(self.stream, bytes.ptr(), bytes.len);
+        Ok(())
+    }
+
+    write_byte = (self :: @Self, b: u8) Res<(), WriteError> {
+        emit_byte(self.stream, b);
+        Ok(())
+    }
+})
+
+// ---------------------------------------------------------------------
+// Pages: an Alloc that maps every run directly from the kernel
+// ---------------------------------------------------------------------
+
+// Each run is its own anonymous mapping with a 16-byte header holding the
+// mapping's length and the run's byte size. Freeing unmaps it. Suited to
+// few large buffers; an Arena over `Mem` is the cheaper default.
+Pages* = {}
+
+PAGE_HEADER: usize = 16
+
+map_run = (size: usize) Res<Ptr<u8>, AllocError> {
+    total = size + PAGE_HEADER;
+    got = mmap(0, total, 3, map_private_anonymous(), -1, 0);
+    (got < 0).match({
+        true  => Err(AllocError.OutOfMemory),
+        false => {
+            base = pointer_at(got.to_usize().value_or(0));
+            base.to<usize>().write(0, total);
+            base.to<usize>().write(1, size);
+            Ok(base.offset(PAGE_HEADER))
+        },
+    })
+}
+
+map_private_anonymous* = () i32
+
+// The raw address conversions the kernel interface needs.
+pointer_at* = (address: usize) Ptr<u8>
+
+address_of* = (p: Ptr<u8>) usize
+
+Pages.impl(Alloc, {
+    raw = (self: @Self, size: usize, align: usize) Res<Ptr<u8>, AllocError> {
+        map_run(size)
+    }
+
+    realloc = <T>(self: @Self, p: Ptr<T>, count: usize) Res<Ptr<T>, AllocError> {
+        want = p.bytes(count);
+        fresh = map_run(want).try();
+        src = p.to<u8>();
+        (!src.is_null()).then(() {
+            old = src.back(PAGE_HEADER).to<usize>().read(1);
+            keep = (old > want).match({ true => want, false => old });
+            (keep > 0).then(() { fresh.copy_from(src, keep); });
+            head = src.back(PAGE_HEADER);
+            munmap(address_of(head), head.to<usize>().read(0));
+        });
+        Ok(fresh.to<T>())
+    }
+
+    free = <T>(self: @Self, p: Ptr<T>) {
+        src = p.to<u8>();
+        (!src.is_null()).then(() {
+            head = src.back(PAGE_HEADER);
+            munmap(address_of(head), head.to<usize>().read(0));
+        });
+    }
+})

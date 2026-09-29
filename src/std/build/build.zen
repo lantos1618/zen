@@ -86,6 +86,23 @@ Target* = {
     }
 }
 
+// Parse the target spellings accepted by `--target`: clang triples and
+// their short `<arch>-<os>` forms. Unknown spellings are refused.
+target_named* = (text: str) Res<Target> {
+    text.match({
+        "x86_64-linux"        => Ok(Target(os: Os.Linux, arch: Arch.X86_64, abi: Abi.Gnu)),
+        "x86_64-linux-gnu"    => Ok(Target(os: Os.Linux, arch: Arch.X86_64, abi: Abi.Gnu)),
+        "aarch64-linux"       => Ok(Target(os: Os.Linux, arch: Arch.Arm64, abi: Abi.Gnu)),
+        "aarch64-linux-gnu"   => Ok(Target(os: Os.Linux, arch: Arch.Arm64, abi: Abi.Gnu)),
+        "arm64-linux"         => Ok(Target(os: Os.Linux, arch: Arch.Arm64, abi: Abi.Gnu)),
+        "arm64-darwin"        => Ok(Target(os: Os.Macos, arch: Arch.Arm64, abi: Abi.Darwin)),
+        "arm64-apple-darwin"  => Ok(Target(os: Os.Macos, arch: Arch.Arm64, abi: Abi.Darwin)),
+        "x86_64-darwin"       => Ok(Target(os: Os.Macos, arch: Arch.X86_64, abi: Abi.Darwin)),
+        "x86_64-apple-darwin" => Ok(Target(os: Os.Macos, arch: Arch.X86_64, abi: Abi.Darwin)),
+        _                     => None,
+    })
+}
+
 // A Git source pinned to a full commit ID. Paths are relative to its checkout.
 // The project driver fetches it on first use and verifies a clean cache on reuse.
 Package* = {
@@ -219,6 +236,8 @@ BuildArgs* = {
     ffi* :: bool = false,
     repeat* :: usize = 1,
     permute* :: Permutation = Permutation.Natural,
+    // A target spelling for native generators; empty selects the host.
+    target* :: str = "",
 
     emits* = (self: @Self) bool {
         self.emission.match({ Check => false, _ => true })
@@ -251,6 +270,7 @@ BuildFlags* = {
     ffi* :: bool = false,
     repeat* :: usize = 1,
     permute* :: str = "",
+    target* :: str = "",
 
     set_root* = (self :: @Self, value: str) { self.root = value; }
     set_out* = (self :: @Self, value: str) { self.out = value; }
@@ -266,6 +286,7 @@ BuildFlags* = {
     set_repeat* = (self :: @Self, value: usize) { self.repeat = value; }
     set_permute* = (self :: @Self, value: str) { self.permute = value; }
     set_backend* = (self :: @Self, value: str) { self.backend = value; }
+    set_target* = (self :: @Self, value: str) { self.target = value; }
     enable_emit_c* = (self :: @Self) { self.emit_c = true; }
     enable_ffi* = (self :: @Self) { self.ffi = true; }
 
@@ -287,6 +308,7 @@ BuildFlags* = {
             SymbolMap => self.set_symbol_map(value),
             Repeat    => self.set_repeat(value.repeat_count()),
             Permute   => self.set_permute(value),
+            TargetName => self.set_target(value),
             _         => (),
         });
     }
@@ -318,7 +340,8 @@ BuildFlags* = {
                     symbol_map: self.symbol_map,
                     ffi: self.ffi,
                     repeat: self.repeat,
-                    permute: permutation(self.permute)
+                    permute: permutation(self.permute),
+                    target: self.target
                 )),
             }),
         })
@@ -354,6 +377,7 @@ BuildFlag* = EmitC
     | Repeat
     | Permute
     | Ffi
+    | TargetName
 
 FLAG_EMIT_C*: str = "--emit-c"
 FLAG_EMIT_DIR*: str = "--emit-c-dir"
@@ -365,6 +389,7 @@ FLAG_SYMBOL_MAP*: str = "--symbol-map"
 FLAG_REPEAT*: str = "--repeat"
 FLAG_PERMUTE*: str = "--permute"
 FLAG_FFI*: str = "--ffi"
+FLAG_TARGET*: str = "--target"
 ZEN_STD_ENV*: str = "ZEN_STD"
 
 build_options* = (a: Alloc) Res<Options<BuildFlag>, AllocError> {
@@ -379,6 +404,7 @@ build_options* = (a: Alloc) Res<Options<BuildFlag>, AllocError> {
     declared.setting(FLAG_REPEAT, BuildFlag.Repeat).try();
     declared.setting(FLAG_PERMUTE, BuildFlag.Permute).try();
     declared.flag(FLAG_FFI, BuildFlag.Ffi).try();
+    declared.setting(FLAG_TARGET, BuildFlag.TargetName).try();
     Ok(declared)
 }
 

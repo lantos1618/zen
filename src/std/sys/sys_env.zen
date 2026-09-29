@@ -1,0 +1,71 @@
+// Env capabilities on the kernel interface, for the native backend. Each
+// function is the native meaning of one bodiless Env, Fs, Stdin or Clock
+// member; the C backend supplies its own.
+
+Alloc, AllocError, Ptr = std.mem
+str, String = std.text
+Vec = std.collections
+FsError = std.env
+Duration, IoError, Range = std.core
+read_file, write_file, env_var, arg, argc, Pages = std.sys
+monotonic_ns, realtime_ns, c_path, openat, close, at_fdcwd, o_rdonly, o_cloexec = std.sys
+o_directory = std.sys
+
+// A kernel -errno as the Fs error a caller can act on.
+fs_error* = (errno: i64) FsError {
+    code = 0 - errno;
+    code.match({
+        2  => FsError.NotFound,
+        13 => FsError.Denied,
+        1  => FsError.Denied,
+        21 => FsError.IsDir,
+        17 => FsError.Exists,
+        12 => FsError.OutOfMemory,
+        _  => FsError.Failed,
+    })
+}
+
+fs_read* = (a: Alloc, path: str) Res<String, FsError> {
+    read_file(a, path).map_err((e) { fs_error(e) })
+}
+
+fs_write* = (path: str, bytes: str) Res<(), FsError> {
+    scratch = Pages();
+    write_file(scratch, path, bytes).map_err((e) { fs_error(e) })
+}
+
+// Whether a path names anything, and whether it names a directory.
+fs_exists* = (path: str) bool { probe(path, 0) }
+
+fs_is_dir* = (path: str) bool { probe(path, o_directory()) }
+
+probe = (path: str, extra: i32) bool {
+    scratch = Pages();
+    c_path(scratch, path).match({
+        Err(_)  => false,
+        Ok(p)   => {
+            fd = openat(at_fdcwd(), p, o_rdonly() + o_cloexec() + extra, 0);
+            (fd >= 0).then(() { close(fd.to_i32().value_or(-1)); });
+            scratch.free(p);
+            fd >= 0
+        },
+    })
+}
+
+// The process arguments as borrowed views, in a Vec whose storage is
+// mapped directly and lives until exit.
+argv* = () Vec<str> {
+    pages = Pages();
+    rows ::= pages.Vec<str>();
+    Range(0, argc()).loop((i) { arg(i).when_ok((s) { rows.add(s).ignore(); }); });
+    rows
+}
+
+var* = (name: str) Res<str> { env_var(name) }
+
+
+// Monotonic time; its origin is unspecified, so only differences matter.
+since_start* = () Duration { Duration(ns: monotonic_ns()) }
+
+// Wall-clock time since the Unix epoch.
+unix* = () Duration { Duration(ns: realtime_ns()) }

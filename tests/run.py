@@ -775,7 +775,7 @@ class ResultCache:
     dependency closure. Verification can always disable this cache entirely.
     """
     VERSION = 1
-    REWRITTEN = {"corpus/gen/asm_renderer", "corpus/gen/scalar_backends", "corpus/backends/c_ir_pilot", "corpus/env/clock_reads_are_two_authorities",
+    REWRITTEN = {"corpus/env/clock_reads_are_two_authorities",
                  "corpus/net/tcp_connect", "corpus/net/tls_connect"}
 
     def __init__(self, directory: Path, tool: Toolchain, args: argparse.Namespace):
@@ -1553,16 +1553,6 @@ def run_corpus(test: Test, tool: Toolchain, work: Path, args: argparse.Namespace
 
     if test.tid == "corpus/env/fs_read_special_file_with_zero_stat_size":
         loopback = ZeroSizeFilePeer(work)
-
-    if test.tid in {"corpus/gen/asm_renderer", "corpus/gen/scalar_backends", "corpus/backends/c_ir_pilot"}:
-        native_asm = platform.system() == "Linux" and platform.machine() == "x86_64"
-        path = root / entry
-        text, count = re.subn(r"HARNESS_NATIVE_ASM\*\s*:\s*bool\s*=\s*(true|false)",
-                             "HARNESS_NATIVE_ASM* : bool = " + str(native_asm).lower(),
-                             path.read_text())
-        if count != 1:
-            raise HarnessError(f"{test.tid}: expected one HARNESS_NATIVE_ASM declaration")
-        path.write_text(text)
 
     if test.tid == "corpus/net/tls_connect":
         try:

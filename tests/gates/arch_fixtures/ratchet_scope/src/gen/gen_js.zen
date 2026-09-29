@@ -1,0 +1,3 @@
+// Tries to buy an exemption through the allowlist.
+Checker = sema.sema
+Program = gen.gen_ir

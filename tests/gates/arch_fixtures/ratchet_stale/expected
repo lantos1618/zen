@@ -1,0 +1,3 @@
+allowlist:2: `gen/gen_c/gen_c_expr.zen sema.sema_inst` no longer matches an import. The ratchet clicked: delete the line and lower the ceiling.
+arch_boundary: 1 violation(s). Backends consume gen_ir plus a Target only; see docs/IR_ARCHITECTURE.md §3.
+exit 1

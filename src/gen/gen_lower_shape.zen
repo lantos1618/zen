@@ -1,0 +1,297 @@
+// Machine layouts of checked Zen types for the native lowering. A shape says
+// which IR slot class holds a value and where its parts live in memory.
+// Layout follows the C rules the C backend relies on: fields in declaration
+// order at their natural alignment, a u32 tag before a variant payload.
+
+Alloc, AllocError = std.mem
+Vec, Map = std.collections
+str, String = std.text
+Range = std.core
+Decl, Struct, Member = std.ast
+TyId, TyNamed, Case, cases_of, DeclId = sema.sema
+Checker, Ctx, Inst, decl_at = sema.sema
+inst_of_named, owner_of, subst, type_from_ast = sema.sema
+union_reading = sema.sema_union
+Scalar, Layout = gen.gen_ir
+Lowerer = gen.gen_lower_core
+LowerError, unsupported = gen.gen_lower
+nowhere = std.ast
+
+// Where a record field lives inside its aggregate.
+FieldAt* = { name*: str, ty*: TyId, offset*: usize }
+
+// One alternative of a tagged value: tag value is its index.
+VariantAt* = { name*: str, payload*: Res<TyId> }
+
+Tagged* = {
+    variants*: Vec<VariantAt>,
+    // Payload offset after the u32 tag.
+    payload*: usize,
+}
+
+Elements* = { elem*: TyId, count*: usize, stride*: usize }
+
+// Plain words and unit need no parts. `Tags` are payload-free enums held in
+// a U32 word whose value is the tag.
+Form* = Plain
+    | Record(Vec<FieldAt>)
+    | Variants(Tagged)
+    | Tags(Vec<VariantAt>)
+    | Array(Elements)
+    | Handle(DeclId)
+
+Shape* = { class*: Scalar, form*: Form }
+
+TAG_BYTES*: usize = 4
+
+size_of* = (class: Scalar) usize {
+    class.match({
+        I8 => 1, U8 => 1, Bool => 1, I16 => 2, U16 => 2, I32 => 4, U32 => 4,
+        I64 => 8, U64 => 8, Ptr => 8, Unit => 0, Block(l) => l.size,
+    })
+}
+
+align_of* = (class: Scalar) usize {
+    class.match({ Unit => 1, Block(l) => l.align, _ => size_of(class) })
+}
+
+round_up* = (value: usize, align: usize) usize {
+    ((value + align - 1) / align) * align
+}
+
+// The IR class of a primitive name; None for primitives this backend does
+// not lower (floats).
+prim_class* = (name: str) Res<Scalar> {
+    name.match({
+        "i8"         => Ok(Scalar.I8),
+        "u8"         => Ok(Scalar.U8),
+        "i16"        => Ok(Scalar.I16),
+        "u16"        => Ok(Scalar.U16),
+        "i32"        => Ok(Scalar.I32),
+        "u32"        => Ok(Scalar.U32),
+        "i64"        => Ok(Scalar.I64),
+        "u64"        => Ok(Scalar.U64),
+        "usize"      => Ok(Scalar.U64),
+        "bool"       => Ok(Scalar.Bool),
+        "()"         => Ok(Scalar.Unit),
+        // Unsettled integer literals take the C path's 64-bit width.
+        "int"        => Ok(Scalar.I64),
+        "c_char"     => Ok(Scalar.I8),
+        "c_schar"    => Ok(Scalar.I8),
+        "c_uchar"    => Ok(Scalar.U8),
+        "c_short"    => Ok(Scalar.I16),
+        "c_ushort"   => Ok(Scalar.U16),
+        "c_int"      => Ok(Scalar.I32),
+        "c_uint"     => Ok(Scalar.U32),
+        "c_long"     => Ok(Scalar.I64),
+        "c_ulong"    => Ok(Scalar.U64),
+        "c_longlong" => Ok(Scalar.I64),
+        "c_ulonglong" => Ok(Scalar.U64),
+        _            => None,
+    })
+}
+
+// `str` is a borrowed pointer and length.
+STR_LAYOUT*: Layout = Layout(size: 16, align: 8)
+
+// Capability records the runtime supplies; they carry no data here.
+capability* = (qualified: str) bool {
+    qualified.is_in([
+        "std.env.env.Env", "std.env.env.Console", "std.env.env.Stdin",
+        "std.env.env.Fs", "std.env.env.Net", "std.env.env.Threads",
+        "std.env.env.Clock", "std.mem.mem_arena.Mem", "std.proc.proc.Process",
+        "std.core.loop.loop_handle.LoopHandle"
+    ])
+}
+
+// The shape of a concrete type. Results are cached per type.
+shape* = (lo :: Lowerer, ty: TyId) Res<Shape, LowerError> {
+    lo.shapes.get(ty).match({
+        Ok(found) => Ok(found),
+        None      => {
+            made = lo.compute_shape(ty).try();
+            lo.shapes.set(ty, made).try(LowerError.OutOfMemory);
+            Ok(made)
+        },
+    })
+}
+
+class_of* = (lo :: Lowerer, ty: TyId) Res<Scalar, LowerError> {
+    Ok(lo.shape(ty).try().class)
+}
+
+compute_shape = (lo :: Lowerer, ty: TyId) Res<Shape, LowerError> {
+    lo.check.types.at(ty).match({
+        Prim(p)  => p.name.eq("str").match({
+            // `str` is the record `{ data: Ptr<u8>, len: usize }`.
+            true  => {
+                fields ::= lo.alloc.Vec<FieldAt>();
+                fields.add(FieldAt(name: "data", ty: lo.ptr_u8().try(), offset: 0)).try(LowerError.OutOfMemory);
+                fields.add(FieldAt(name: "len", ty: lo.prim("usize").try(), offset: 8)).try(LowerError.OutOfMemory);
+                Ok(Shape(class: Scalar.Block(STR_LAYOUT), form: Form.Record(fields)))
+            },
+            false => prim_class(p.name).match({
+                Ok(class) => Ok(Shape(class: class, form: Form.Plain)),
+                None      => Err(unsupported(nowhere(), "floating-point values")),
+            }),
+        }),
+        Res(r)   => {
+            cases ::= lo.alloc.Vec<Case>();
+            lo.check.cases_of(ty, cases).try(LowerError.OutOfMemory);
+            lo.tagged(cases)
+        },
+        Named(n) => lo.named_shape(n, ty),
+        Union(_) => {
+            cases ::= lo.alloc.Vec<Case>();
+            lo.check.cases_of(ty, cases).try(LowerError.OutOfMemory);
+            lo.tagged(cases)
+        },
+        Array(a) => {
+            elem   = lo.shape(a.elem).try();
+            stride = round_up(size_of(elem.class), align_of(elem.class));
+            Ok(Shape(
+                class: Scalar.Block(Layout(
+                    size: stride * a.count,
+                    align: align_of(elem.class)
+                )),
+                form: Form.Array(Elements(elem: a.elem, count: a.count, stride: stride))
+            ))
+        },
+        Fn(_)    => Err(unsupported(nowhere(), "function values")),
+        // A parameter no value ever settles (`Opt.None`, the payload of a
+        // loop that never breaks with a value, `Err(e)` before its Ok type
+        // is known) holds no bytes; conversions to a settled type carry
+        // only the alternatives that exist.
+        Var(v)   => Ok(Shape(class: Scalar.Unit, form: Form.Plain)),
+        Infer    => Ok(Shape(class: Scalar.Unit, form: Form.Plain)),
+        Unknown  => Err(unsupported(nowhere(), "a type sema did not settle")),
+    })
+}
+
+named_shape = (lo :: Lowerer, n: TyNamed, ty: TyId) Res<Shape, LowerError> {
+    qualified = lo.alloc.String(
+        "{}.{}",
+        lo.check.world.module_name(n.decl),
+        n.name
+    ).try(LowerError.OutOfMemory);
+    (qualified.view().eq("std.mem.mem_ptr.Ptr")).match({
+        true  => Ok(Shape(class: Scalar.Ptr, form: Form.Plain)),
+        false => capability(qualified.view()).match({
+            true  => Ok(Shape(class: Scalar.Unit, form: Form.Plain)),
+            false => {
+                decl = decl_at(lo.tree, n.decl).ok_or(unsupported(nowhere(), "a missing type declaration")).try();
+                decl.kind.match({
+                    // A struct of functions without storage is a bound: its
+                    // values are an implementor tag and a receiver pointer.
+                    Struct(s) => behaviour_only(s).match({
+                        true  => Ok(Shape(class: Scalar.Block(Layout(size: 16, align: 8)), form: Form.Handle(n.decl))),
+                        false => lo.record(n, s),
+                    }),
+                    Enum(_)   => {
+                        cases ::= lo.alloc.Vec<Case>();
+                        lo.check.cases_of(ty, cases).try(LowerError.OutOfMemory);
+                        lo.tagged(cases)
+                    },
+                    _         => Err(unsupported(decl.span, "this kind of type declaration")),
+                })
+            },
+        }),
+    })
+}
+
+behaviour_only* = (s: Struct) bool {
+    functions = s.members.find((m) { m.kind.match({ Function(_) => true, _ => false }) });
+    fields = s.members.find((m) { m.kind.match({ Field(_) => true, _ => false }) });
+    functions.match({ Ok(_) => true, None => false }) && fields.match({ Ok(_) => false, None => true })
+}
+
+// Fields in declaration order at natural alignment. A record whose fields
+// all occupy no bytes is itself unit-shaped.
+record = (lo :: Lowerer, n: TyNamed, s: Struct) Res<Shape, LowerError> {
+    fields = lo.field_types(n, s).try();
+    placed ::= lo.alloc.Vec<FieldAt>();
+    cursor ::= 0;
+    align  ::= 1;
+    fields.loop((field) {
+        class = lo.class_of(field.ty).try();
+        a     = align_of(class);
+        cursor = round_up(cursor, a);
+        placed.add(FieldAt(name: field.name, ty: field.ty, offset: cursor)).try(LowerError.OutOfMemory);
+        cursor = cursor + size_of(class);
+        (a > align).then(() { align = a; });
+    });
+    size = round_up(cursor, align);
+    (size == 0).match({
+        true  => Ok(Shape(class: Scalar.Unit, form: Form.Record(placed))),
+        false => Ok(Shape(
+            class: Scalar.Block(Layout(size: size, align: align)),
+            form: Form.Record(placed)
+        )),
+    })
+}
+
+// Storage fields with their types at this instantiation.
+field_types* = (lo :: Lowerer, n: TyNamed, s: Struct) Res<Vec<FieldAt>, LowerError> {
+    inst  = lo.check.inst_of_named(n).try(LowerError.OutOfMemory);
+    mi    = n.decl.module.to_usize();
+    ctx   = Ctx(module: mi, ret: lo.unit_ty, has_ret: false, self_ty: lo.unit_ty, has_self: false);
+    owner = lo.check.owner_of(mi, s.name.text).try(LowerError.OutOfMemory);
+    mark  = lo.check.tvar_mark();
+    s.tparams.loop((tp) {
+        var = lo.check.types.var(tp.name.text, owner).try(LowerError.OutOfMemory);
+        lo.check.push_tvar(tp.name.text, var).try(LowerError.OutOfMemory);
+    });
+    out ::= lo.alloc.Vec<FieldAt>();
+    s.members.loop((m) {
+        m.kind.match({
+            Field(f) => f.type.match({
+                Ok(t)  => {
+                    raw = lo.check.type_from_ast(t, ctx).try(LowerError.OutOfMemory);
+                    ty  = lo.check.subst(raw, inst).try(LowerError.OutOfMemory);
+                    out.add(FieldAt(name: f.name.text, ty: ty, offset: 0)).try(LowerError.OutOfMemory);
+                },
+                None   => (),
+            }),
+            _        => (),
+        });
+    });
+    lo.check.release_tvars(mark).try(LowerError.OutOfMemory);
+    Ok(out)
+}
+
+// A u32 tag, then the largest payload at its alignment. Payload-free enums
+// are the tag word alone.
+tagged = (lo :: Lowerer, cases: Vec<Case>) Res<Shape, LowerError> {
+    variants ::= lo.alloc.Vec<VariantAt>();
+    size  ::= 0;
+    align ::= 1;
+    cases.loop((c) {
+        payload: Res<TyId> = c.has_payload.match({ true => Ok(c.payload), false => None });
+        payload.when_ok((p) {
+            class = lo.class_of(p).try();
+            (size_of(class) > size).then(() { size = size_of(class); });
+            (align_of(class) > align).then(() { align = align_of(class); });
+        });
+        variants.add(VariantAt(name: c.name, payload: payload)).try(LowerError.OutOfMemory);
+    });
+    (size == 0).match({
+        true  => Ok(Shape(class: Scalar.U32, form: Form.Tags(variants))),
+        false => {
+            offset = round_up(TAG_BYTES, align);
+            whole  = (align > TAG_BYTES).match({ true => align, false => TAG_BYTES });
+            Ok(Shape(
+                class: Scalar.Block(Layout(size: round_up(offset + size, whole), align: whole)),
+                form: Form.Variants(Tagged(variants: variants, payload: offset))
+            ))
+        },
+    })
+}
+
+// The tag of a named alternative.
+variant_index* = (variants: Vec<VariantAt>, name: str) Res<usize> {
+    found: Res<usize> = loop<usize>((h) {
+        variants.loop((vh, i, v) { v.name.eq(name).then(() { h.break(i); }); });
+        h.break();
+    });
+    found
+}

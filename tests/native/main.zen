@@ -1,0 +1,347 @@
+// Differential corpus runner for the native assembly backend.
+//
+// Every executable corpus test is a program with its C-backend behaviour
+// recorded beside it (`.expected` stdout, optional `.exit`, `.stderr`,
+// `.args`, `.stdin`, `.env`); the ordinary harness holds the C backend to
+// those sidecars. This runner compiles the same program with
+// `--backend asm`, assembles and links it with the system `as`/`ld` only,
+// runs it, and compares stdout, exit status and stderr substrings.
+//
+//   native-corpus <zen> <target> [filter] [shard] [shards]
+//
+// <target> is x86_64-linux, aarch64-linux or arm64-darwin. A foreign Linux
+// architecture assembles with `<arch>-linux-gnu-as`/`ld` and runs under
+// `qemu-<arch>`. Each line reports PASS, FAIL (behaviour differs),
+// UNSUPPORTED (the compiler refused the program before publishing
+// assembly) or BROKEN (assembly or link failed: a backend bug). The summary
+// counts each class over the selected tests.
+
+Alloc, AllocError = std.mem
+str, String = std.text
+Vec = std.collections
+ProcOutput = std.proc
+Range = std.core
+
+Target = { arch: str, os: str, cross: str, runner: str }
+
+target_of = (name: str, host_arch: str) Res<Target> {
+    name.match({
+        "x86_64-linux"  => Ok(Target(
+            arch: "x86_64",
+            os: "linux",
+            cross: host_arch.eq("x86_64").match({ true => "", false => "x86_64-linux-gnu-" }),
+            runner: host_arch.eq("x86_64").match({ true => "", false => "qemu-x86_64" })
+        )),
+        "aarch64-linux" => Ok(Target(
+            arch: "aarch64",
+            os: "linux",
+            cross: host_arch.eq("x86_64").match({ true => "aarch64-linux-gnu-", false => "" }),
+            runner: host_arch.eq("x86_64").match({ true => "qemu-aarch64", false => "" })
+        )),
+        "arm64-darwin"  => Ok(Target(arch: "arm64", os: "darwin", cross: "", runner: "")),
+        _               => None,
+    })
+}
+
+Tally = {
+    pass :: usize = 0,
+    fail :: usize = 0,
+    unsupported :: usize = 0,
+    broken :: usize = 0,
+}
+
+Case = { root: str, entry: str, base: str }
+
+Runner = {
+    env: Env,
+    a: Alloc,
+    zen: str,
+    target_name: str,
+    target: Target,
+    work: str,
+    sdk: str,
+
+    run = (self: @Self, argv: Vec<str>) Res<ProcOutput, AllocError> {
+        self.env.proc.run_argv(self.a, "", argv).match({
+            Ok(out) => Ok(out),
+            Err(_)  => Ok(ProcOutput(code: 127, out: self.a.String().try(), err: self.a.String().try())),
+        })
+    }
+
+    read = (self: @Self, path: str) Res<str> {
+        self.env.fs.read(self.a, path).match({ Ok(s) => Ok(s.view()), Err(_) => None })
+    }
+
+    // Compile with the native backend; None when the compiler refused.
+    compile = (self: @Self, c: Case, source: str) Res<Res<str>, AllocError> {
+        argv ::= self.a.Vec<str>();
+        [self.zen, "build", c.root, "--entry", c.entry, "--std", "src", "--backend", "asm", "--target", self.target_name, "-o", source].loop((w) {
+            argv.add(w).try();
+        });
+        out = self.run(argv).try();
+        (out.code == 0).match({
+            true  => Ok(None),
+            false => {
+                reason ::= self.a.String().try();
+                reason.add(out.out.view()).try();
+                reason.add(out.err.view()).try();
+                Ok(Ok(reason.view()))
+            },
+        })
+    }
+
+    link = (self: @Self, source: str, object: str, binary: str) Res<Res<str>, AllocError> {
+        assemble ::= self.a.Vec<str>();
+        assembler = self.a.String("{}as", self.target.cross).try();
+        assemble.add(assembler.view()).try();
+        self.target.os.eq("darwin").then(() { assemble.add("-arch").try(); assemble.add("arm64").try(); });
+        [source, "-o", object].loop((w) { assemble.add(w).try(); });
+        first = self.run(assemble).try();
+        (first.code == 0).match({
+            false => Ok(Ok(first.err.view())),
+            true  => {
+                link ::= self.a.Vec<str>();
+                linker = self.a.String("{}ld", self.target.cross).try();
+                link.add(linker.view()).try();
+                self.target.os.eq("darwin").match({
+                    true  => {
+                        ["-arch", "arm64", "-platform_version", "macos", "11.0", "11.0", "-e", "_main", "-lSystem", "-syslibroot", self.sdk].loop((w) { link.add(w).try(); });
+                    },
+                    false => link.add("-static").try(),
+                });
+                [object, "-o", binary].loop((w) { link.add(w).try(); });
+                second = self.run(link).try();
+                (second.code == 0).match({ true => Ok(None), false => Ok(Ok(second.err.view())) })
+            },
+        })
+    }
+
+    // Launch under a 10 s alarm, with the test's arguments, environment
+    // and stdin; a POSIX shell only performs the redirection.
+    execute = (self: @Self, c: Case, binary: str, index: usize) Res<ProcOutput, AllocError> {
+        // As tests/run.py stages it: the program runs in a scratch
+        // directory where its root is visible as `src`.
+        here = self.env.fs.cwd(self.a).match({ Ok(s) => s.view(), Err(_) => "." });
+        run_dir = self.a.String("{}/{}/run{}", here, self.work, index).try();
+        setup ::= self.a.Vec<str>();
+        // The program is invoked as `<run dir>/prog`, the name argv[0] tests
+        // pin, and the symlink-loop test finds its loop staged beside it.
+        script ::= self.a.String("rm -rf '{}' && mkdir -p '{}' && ln -sfn '{}/{}' '{}/src' && ln -sfn '{}/{}' '{}/prog'", run_dir.view(), run_dir.view(), here, c.root, run_dir.view(), here, binary, run_dir.view()).try();
+        c.base.ends_with("symlink_loop_is_failed/main").then(() {
+            script.fmt(" && ln -sfn loop '{}/loop'", run_dir.view()).try();
+        });
+        ["/bin/sh", "-c", script.view()].loop((w) { setup.add(w).try(); });
+        self.run(setup).try();
+        command ::= self.a.String().try();
+        command.fmt("cd '{}' && ", run_dir.view()).try();
+        command.add("exec perl -e 'alarm 10; exec @ARGV' ").try();
+        // The harness exports two over-long names for this test alone.
+        c.base.ends_with("env_var_resolves_a_name_of_any_length").then(() {
+            command.add("env ").try();
+            command.add(self.a.String("{}=hello ", repeat(self.a, 'V', 5039).try().view()).try().view()).try();
+            command.add(self.a.String("{}=hello ", repeat(self.a, 'B', 4096).try().view()).try().view()).try();
+        });
+        self.read_sidecar(c, "env").when_ok((text) {
+            command.add("env ").try();
+            text.split('\n').loop((line) {
+                (!line.is_empty()).then(() { command.fmt("'{}' ", line).try(); });
+            });
+        });
+        (!self.target.runner.is_empty()).then(() { command.fmt("{} ", self.target.runner).try(); });
+        command.fmt("'{}/prog'", run_dir.view()).try();
+        self.read_sidecar(c, "args").when_ok((text) {
+            text.split('\n').loop((line) {
+                (!line.is_empty()).then(() { command.fmt(" '{}'", line).try(); });
+            });
+        });
+        stdin = self.a.String("{}.stdin", c.base).try();
+        self.env.fs.exists(stdin.view()).match({
+            true  => command.fmt(" < '{}/{}'", here, stdin.view()),
+            false => command.add(" < /dev/null"),
+        }).try();
+        argv ::= self.a.Vec<str>();
+        ["/bin/sh", "-c", command.view()].loop((w) { argv.add(w).try(); });
+        self.run(argv)
+    }
+
+    read_sidecar = (self: @Self, c: Case, kind: str) Res<str> {
+        self.a.String("{}.{}", c.base, kind).match({
+            Ok(path) => self.read(path.view()),
+            Err(_)   => None,
+        })
+    }
+
+    // The harness rewrites this test's epoch to the current second, as
+    // tests/run.py does, in a staged copy.
+    staged = (self: @Self, c: Case, index: usize) Res<Case, AllocError> {
+        c.base.ends_with("clock_reads_are_two_authorities").match({
+            false => Ok(c),
+            true  => {
+                source = self.a.String("{}/{}", c.root, c.entry).try();
+                text = self.read(source.view()).value_or("");
+                dir = self.a.String("{}/stage{}", self.work, index).try();
+                mkdir ::= self.a.Vec<str>();
+                ["mkdir", "-p", dir.view()].loop((w) { mkdir.add(w).try(); });
+                self.run(mkdir).try();
+                line = "HARNESS_EPOCH* : u64 = 0";
+                patched ::= self.a.String().try();
+                text.find(line).match({
+                    None     => patched.add(text).try(),
+                    Ok(at)   => {
+                        patched.add(text.slice(0, at)).try();
+                        patched.fmt("HARNESS_EPOCH* : u64 = {}", self.env.clock.unix().seconds_of()).try();
+                        patched.add(text.slice(at + line.len, text.len)).try();
+                    },
+                });
+                target = self.a.String("{}/{}", dir.view(), c.entry).try();
+                self.env.fs.write(target.view(), patched.view()).ignore();
+                Ok(Case(root: dir.view(), entry: c.entry, base: c.base))
+            },
+        })
+    }
+
+    // One test's verdict line.
+    case = (self: @Self, original: Case, index: usize, tally :: Tally) Res<(), AllocError> {
+        c = self.staged(original, index).try();
+        source = self.a.String("{}/t{}.s", self.work, index).try();
+        object = self.a.String("{}/t{}.o", self.work, index).try();
+        binary = self.a.String("{}/t{}", self.work, index).try();
+        self.compile(c, source.view()).try().match({
+            Ok(reason) => {
+                tally.unsupported = tally.unsupported + 1;
+                println("UNSUPPORTED {} :: {}", c.base, first_line(reason));
+            },
+            None       => self.link(source.view(), object.view(), binary.view()).try().match({
+                Ok(reason) => {
+                    tally.broken = tally.broken + 1;
+                    println("BROKEN {} :: {}", c.base, first_line(reason));
+                },
+                None       => {
+                    result = self.execute(c, binary.view(), index).try();
+                    verdict = self.compare(c, result).try();
+                    verdict.is_empty().match({
+                        true  => { tally.pass = tally.pass + 1; println("PASS {}", c.base); },
+                        false => { tally.fail = tally.fail + 1; println("FAIL {} :: {}", c.base, verdict); },
+                    });
+                },
+            }),
+        });
+        Ok(())
+    }
+
+    compare = (self: @Self, c: Case, result: ProcOutput) Res<str, AllocError> {
+        expected_out = self.read_sidecar(c, "expected").value_or("");
+        expected_code = self.read_sidecar(c, "exit").match({
+            Ok(text) => text.trim().value_or("0").parse_i32().value_or(0),
+            None     => 0,
+        });
+        stderr_parts = self.read_sidecar(c, "stderr");
+        problem ::= self.a.String().try();
+        (result.code != expected_code).then(() {
+            problem.fmt("exit {} (expected {}) ", result.code, expected_code).try();
+        });
+        (!result.out.view().eq(expected_out)).then(() {
+            problem.fmt("stdout differs ({} bytes, expected {}) ", result.out.view().len, expected_out.len).try();
+        });
+        stderr_parts.when_ok((parts) {
+            parts.split('\n').loop((line) {
+                (!line.is_empty() && !result.err.view().contains(line)).then(() {
+                    problem.fmt("stderr lacks `{}` ", line).try();
+                });
+            });
+        });
+        Ok(problem.view())
+    }
+}
+
+repeat = (a: Alloc, byte: u8, n: usize) Res<String, AllocError> {
+    out ::= a.String().try();
+    Range(0, n).loop((_) { out.add(byte).try(); });
+    Ok(out)
+}
+
+first_line = (text: str) str {
+    text.split_once('\n').match({ Ok(pair) => pair.before, None => text })
+}
+
+// `name.expected` beside `name.zen` is a single-file test; a directory
+// holding `main.zen` and `.expected` (or `main.expected`) is a program root.
+case_of = (a: Alloc, expected: str) Res<Res<Case>, AllocError> {
+    base = expected.slice(0, expected.len - ".expected".len);
+    single = a.String("{}.zen", base).try();
+    Ok(base.rfind('/').match({
+        None      => None,
+        Ok(slash) => {
+            dir  = base.slice(0, slash);
+            name = base.slice(slash + 1, base.len);
+            name.is_empty().match({
+                true  => Ok(Case(root: dir, entry: "main.zen", base: base)),
+                false => name.eq("main").match({
+                    true  => Ok(Case(root: dir, entry: "main.zen", base: base)),
+                    false => Ok(Case(root: dir, entry: a.String("{}.zen", name).try().view(), base: base)),
+                }),
+            })
+        },
+    }))
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    (env.argv.len < 3).then(() {
+        println("usage: native-corpus <zen> <target> [filter] [shard] [shards]");
+    });
+    zen = env.argv.get(1).value_or("./zen");
+    target_name = env.argv.get(2).value_or("x86_64-linux");
+    filter = env.argv.get(3).value_or("");
+    shard = env.argv.get(4).value_or("0").parse_usize().value_or(0);
+    shards = env.argv.get(5).value_or("1").parse_usize().value_or(1);
+    uname ::= a.Vec<str>();
+    uname.add("uname").try();
+    uname.add("-m").try();
+    host_arch = env.proc.run_argv(a, "", uname).match({
+        Ok(out) => out.out.view().trim().value_or(""),
+        Err(_)  => "",
+    });
+    arch = host_arch.eq("arm64").match({ true => "aarch64", false => host_arch });
+    target = target_of(target_name, arch).match({
+        Ok(t) => t,
+        None  => Target(arch: "", os: "", cross: "", runner: ""),
+    });
+    work = a.String("build/native-corpus/{}-{}", target_name, shard).try();
+    mkdir ::= a.Vec<str>();
+    ["mkdir", "-p", work.view()].loop((w) { mkdir.add(w).try(); });
+    env.proc.run_argv(a, "", mkdir).ignore();
+    sdk = target.os.eq("darwin").match({
+        true  => {
+            argv ::= a.Vec<str>();
+            ["xcrun", "--sdk", "macosx", "--show-sdk-path"].loop((w) { argv.add(w).try(); });
+            env.proc.run_argv(a, "", argv).match({ Ok(out) => out.out.view().trim().value_or(""), Err(_) => "" })
+        },
+        false => "",
+    });
+    find ::= a.Vec<str>();
+    ["find", "tests/corpus", "-name", "*.expected"].loop((w) { find.add(w).try(); });
+    listed = env.proc.run_argv(a, "", find).match({ Ok(out) => out.out.view(), Err(_) => "" });
+    paths ::= a.Vec<str>();
+    listed.split('\n').loop((line) {
+        (!line.is_empty() && line.contains(filter)).then(() { paths.add(line).try(); });
+    });
+    runner = Runner(env: env, a: a, zen: zen, target_name: target_name, target: target, work: work.view(), sdk: sdk);
+    tally ::= Tally();
+    paths.loop((h, i, path) {
+        (i % shards == shard).then(() {
+            case_of(a, path).try().when_ok((c) { runner.case(c, i, tally).try(); });
+        });
+    });
+    total = tally.pass + tally.fail + tally.unsupported + tally.broken;
+    println(
+        "native-corpus {}: {} pass, {} fail, {} unsupported, {} broken of {}",
+        target_name,
+        tally.pass,
+        tally.fail,
+        tally.unsupported,
+        tally.broken,
+        total
+    );
+    Ok(0)
+}

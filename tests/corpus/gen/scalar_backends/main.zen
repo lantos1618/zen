@@ -1,5 +1,5 @@
-HARNESS_NATIVE_ASM* : bool = false
-Build = zen.zen_build
+Build, host_target = zen.zen_build
+assemble_and_link = zen.zen_native
 Generation, Layout = gen.gen
 Codegen = std.build
 
@@ -24,6 +24,7 @@ run = (
         println("frontend {}", report.view());
     });
     source_path = backend.match({ C => "candidate.c", Js => "candidate.js", Asm => "candidate.s" });
+    host        = host_target(env, a).try();
     generation  = Generation(
         alloc: a,
         mem: env.mem,
@@ -33,7 +34,8 @@ run = (
         entry: 0,
         layout: Layout.Single,
         ffi: false,
-        symbols: false
+        symbols: false,
+        target: host
     );
     called ::= 0;
     faults = generation.emit(report, (artifact) {
@@ -49,13 +51,20 @@ run = (
     good: Res<bool> = loop<bool>((h) {
         (build.diag_count() > 0 || check.diag_count() > 0 || faults > 0 || called != 1)
             .then(() { h.break(false); });
-        (backend.match({ Asm => true, _ => false }) && !HARNESS_NATIVE_ASM).then(
-            () { h.break(asm_object(env, a, source_path).try()); }
-        );
         args ::= a.Vec<str>();
         backend.match({
-            Js => { args.add("node").try(); args.add(source_path).try(); },
-            _  => {
+            Js  => { args.add("node").try(); args.add(source_path).try(); },
+            // Native assembly uses the system assembler and linker only.
+            Asm => {
+                log ::= a.String().try();
+                built = host.match({
+                    Ok(machine) => assemble_and_link(env, a, machine, source_path, "candidate", false, log).try(),
+                    None        => false,
+                });
+                (!built).then(() { h.break(false); });
+                args.add("./candidate").try();
+            },
+            _   => {
                 compiler ::= a.Vec<str>();
                 [str, 6]("cc", source_path, "-o", "candidate", "-pthread", "-lm")
                     .loop((word) { compiler.add(word).try(); });
@@ -95,7 +104,8 @@ refused = (env: Env, a: Alloc, backend: Codegen, source: str, layout: Layout)
         entry: 0,
         layout: layout,
         ffi: false,
-        symbols: false
+        symbols: false,
+        target: host_target(env, a).try()
     );
     called ::= false;
     faults = generation.emit(report, (artifact) { called = true; Ok(0) }).try();
@@ -125,11 +135,6 @@ c_literal_output = (a: Alloc) Res<String, AllocError> {
 }
 
 main = (env: Env) Res<(), AllocError> {
-    (!HARNESS_NATIVE_ASM).then(
-        () { println(
-            "asm checks assemble ELF objects; execution requires Linux x86_64 GNU"
-        ); }
-    );
     [Codegen, 3](Codegen.C, Codegen.Js, Codegen.Asm).loop((backend) {
         a = env.mem.alloc();
         println(
@@ -162,52 +167,23 @@ main = (env: Env) Res<(), AllocError> {
         "c literal paths {}",
         run(env, a, Codegen.C, "literal_c.zen", expected.view(), 0).try()
     );
+    // JavaScript keeps the scalar surface; the native surface runs these
+    // with the C backend's meaning (64-bit literal arithmetic, a bool main
+    // exits 0).
+    w = env.mem.alloc();
+    println("js wide refused {}", refused(env, w, Codegen.Js, "wide.zen", Layout.Single).try());
+    println("js literal width refused {}", refused(env, w, Codegen.Js, "literal_width.zen", Layout.Single).try());
+    println("js bool entry refused {}", refused(env, w, Codegen.Js, "bool_entry.zen", Layout.Single).try());
+    println("asm wide {}", run(env, w, Codegen.Asm, "wide.zen", "12\n", 0).try());
+    println("asm literal width {}", run(env, w, Codegen.Asm, "literal_width.zen", "2147483648\n", 0).try());
+    println("asm bool entry {}", run(env, w, Codegen.Asm, "bool_entry.zen", "", 0).try());
     [Codegen, 2](Codegen.Js, Codegen.Asm).loop((backend) {
-        a = env.mem.alloc();
-        println(
-            "{} wide refused {}",
-            backend.stable_name(),
-            refused(env, a, backend, "wide.zen", Layout.Single).try()
-        );
-        println(
-            "{} literal width refused {}",
-            backend.stable_name(),
-            refused(env, a, backend, "literal_width.zen", Layout.Single).try()
-        );
-        println(
-            "{} bool entry refused {}",
-            backend.stable_name(),
-            refused(env, a, backend, "bool_entry.zen", Layout.Single).try()
-        );
+        b = env.mem.alloc();
         println(
             "{} split refused {}",
             backend.stable_name(),
-            refused(env, a, backend, "program.zen", Layout.Modules).try()
+            refused(env, b, backend, "program.zen", Layout.Modules).try()
         );
     });
     Ok(())
-}
-
-// A foreign host validates the real ELF object; execution remains a Linux
-// x86-64 gate, never reported as having run on another instruction set.
-asm_object = (env: Env, a: Alloc, source: str) Res<bool, AllocError> {
-    args ::= a.Vec<str>();
-    ["clang", "--target=x86_64-linux-gnu", "-c", source, "-o", "assembly.o"].loop((word) { args.add(word).try(); });
-    result = env.proc.run_argv(
-        a,
-        "",
-        args
-    ).match({ Ok(r) => r.code == 0, Err(_) => false });
-    (!result).match({
-        true  => Ok(false),
-        false => Ok(env.fs.read(a, "assembly.o").match({
-            Err(_)   => false,
-            Ok(file) => {
-                bytes = file.view();
-                bytes.len >= 20 && bytes.index(0) == 127 && bytes.slice(1, 4).eq("ELF")
-                    && bytes.index(4) == 2 && bytes.index(5) == 1
-                    && bytes.index(18) == 62 && bytes.index(19) == 0
-            },
-        })),
-    })
 }

@@ -15,7 +15,7 @@ Instruction, Func, Program, BasicBlock, Terminator = gen.gen_ir
 Fault* = { span*: Span, what*: str }
 LowerError* = OutOfMemory | Unsupported(Fault)
 
-unsupported = (span: Span, what: str) LowerError {
+unsupported* = (span: Span, what: str) LowerError {
     LowerError.Unsupported(Fault(span: span, what: what))
 }
 
@@ -84,7 +84,7 @@ Lowering = {
         value = self.slot(ty).try();
         self.add(Instruction.Constant(Const(
             out: value.slot,
-            value: number
+            value: number.to_i64()
         ))).try();
         Ok(value)
     }

@@ -1,0 +1,43 @@
+// The build target, kept behind a record so the test can also import the
+// renderer contract, which is likewise named `Target`. ZEN_ASM_TARGET
+// selects another target (for example aarch64-linux under qemu user mode);
+// otherwise the host is used.
+Target, target_named = std.build
+host_target = zen.zen_build
+assemble_and_link, launcher = zen.zen_native
+
+Host* = {
+    target: Target,
+
+    arm64* = (self: @Self) bool {
+        self.target.arch.match({ Arm64 => true, X86_64 => false })
+    }
+
+    darwin* = (self: @Self) bool {
+        self.target.os.match({ Macos => true, _ => false })
+    }
+
+    // Assemble and link with the system tools only.
+    link* = (self: @Self, env: Env, a: Alloc, source: str, output: str)
+            Res<bool, AllocError> {
+        log ::= a.String().try();
+        assemble_and_link(env, a, self.target, source, output, false, log)
+    }
+
+    // The argv prefix that runs one of this target's executables here.
+    command* = (self: @Self, env: Env, a: Alloc, program: str)
+               Res<Vec<str>, AllocError> {
+        argv ::= a.Vec<str>();
+        launcher(env, a, self.target, argv).try();
+        argv.add(program).try();
+        Ok(argv)
+    }
+}
+
+detect* = (env: Env, a: Alloc) Res<Res<Host>, AllocError> {
+    chosen = env.var("ZEN_ASM_TARGET").match({
+        Ok(name) => target_named(name),
+        None     => host_target(env, a).try(),
+    });
+    Ok(chosen.match({ Ok(target) => Ok(Host(target: target)), None => None }))
+}

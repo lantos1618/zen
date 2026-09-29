@@ -54,7 +54,7 @@ example = (a: Alloc) Res<Example, AllocError> {
     slots ::= a.Vec<Scalar>();
     [Scalar.I32, Scalar.I32, Scalar.Bool, Scalar.Unit].loop((ty) { slots.add(ty).try(); });
     code ::= a.Vec<Instruction>();
-    [i32, 4](1, 2, 1, 0).loop((h, index, number) {
+    [i64, 4](1, 2, 1, 0).loop((h, index, number) {
         code.add(Instruction.Constant(Const(out: index, value: number))).try();
     });
     Ok(Example(alloc: a, slots: slots, code: code, exit: Terminator.Return(0)))

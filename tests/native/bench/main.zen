@@ -1,0 +1,26 @@
+// SHA-256 throughput: the same Zen source (zen-crypto's sha256.zen) built
+// with the C backend and the native asm backend. Hashes a 1 MiB buffer
+// `rounds` times (argument, default 64) and prints the final digest, so
+// both builds can be checked for identical output before timing.
+sha256_candidate = sha256
+Ptr = std.mem
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    size: usize = 1048576;
+    rounds = env.argv.get(1).match({ Ok(s) => s.parse_usize().value_or(64), None => 64 });
+    input = a.raw(size, 16).try();
+    Range(0, size).loop((i) { input.write(i, (i % 251).to_u8().value_or(0)); });
+    words = a.raw(72 * 4, 16).try().to<u32>();
+    block = a.raw(64, 16).try();
+    out = a.raw(32, 16).try();
+    Range(0, rounds).loop((r) {
+        sha256_candidate(out, 32, input, size, block, 64, words, 72);
+        // Chain the rounds so no round can be skipped.
+        input.write(0, out.read(0));
+    });
+    hex ::= a.String().try();
+    Range(0, 32).loop((i) { hex.write_hex_fixed(out.read(i).to_u64(), 2).try(); });
+    println("{} MiB sha256 {}", rounds, hex.view());
+    Ok(0);
+}

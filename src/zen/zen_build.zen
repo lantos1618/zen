@@ -27,7 +27,7 @@ check_module_graph = sema.sema
 Def = sema.sema
 Generation, Layout = gen.gen
 
-BuildArgs, Emission, Permutation = std.build
+BuildArgs, Emission, Permutation, Target, Os, Arch, Abi, target_named = std.build
 
 slash_for, under = zen.zen_path
 unit_at, candidate, joined, relative_to = zen.zen_path
@@ -591,6 +591,15 @@ Build* = {
     // owns backend state; Publisher owns the requested destinations.
     emit = (self :: @Self, c :: Checker, job: BuildArgs) Res<(), AllocError> {
         job.emits().then(() {
+            // Only native assembly depends on the machine; other generators
+            // never probe the host.
+            target: Res<Target> = job.backend.match({
+                Asm => job.target.is_empty().match({
+                    true  => host_target(self.env, self.alloc).try(),
+                    false => target_named(job.target),
+                }),
+                _   => None,
+            });
             generation = Generation(
                 alloc: self.alloc,
                 mem: self.env.mem,
@@ -603,7 +612,8 @@ Build* = {
                     _            => Layout.Single,
                 }),
                 ffi: self.ffi,
-                symbols: !job.symbol_map.is_empty()
+                symbols: !job.symbol_map.is_empty(),
+                target: target
             );
             publisher  = Publisher(
                 env: self.env,
@@ -744,4 +754,30 @@ check_build* = (
     docs.set(path, text).try();
     checked = check_workspace(env, a, root, rel, docs).try();
     Ok(CheckedBuild(root: root, rel: rel, c: checked.c));
+}
+
+// Detect the machine executing the compiler, rather than assuming Linux/x86.
+host_target* = (env: Env, a: Alloc) Res<Res<Target>, AllocError> {
+    argv ::= a.Vec<str>();
+    argv.add("uname").try();
+    argv.add("-sm").try();
+    host       = env.proc.run_argv(a, "", argv).match({
+        Ok(result) => (result.code == 0).match({ true => result.out.view(), false => "" }),
+        Err(_)     => "",
+    });
+    known_os   = host.starts_with("Darwin ") || host.starts_with("Linux ");
+    known_arch = host.contains("x86_64") || host.contains("arm64") || host.contains("aarch64");
+    (known_os && known_arch).match({
+        false => Ok(None),
+        true  => {
+            os   = host.starts_with(
+                "Darwin "
+            ).match({ true => Os.Macos, false => Os.Linux });
+            arch = host.contains(
+                "x86_64"
+            ).match({ true => Arch.X86_64, false => Arch.Arm64 });
+            abi  = os.match({ Macos => Abi.Darwin, _ => Abi.Gnu });
+            Ok(Ok(Target(os: os, arch: arch, abi: abi)))
+        },
+    })
 }

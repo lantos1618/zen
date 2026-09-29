@@ -5,7 +5,9 @@ Alloc = std.mem
 Vec = std.collections
 Range = std.core
 str = std.text
-Program, Func, Scalar, Instruction, Terminator = gen.gen_ir
+Program, Func, Scalar, Instruction, Terminator, Op = gen.gen_ir
+same, word, integer, signed = gen.gen_ir
+arity = gen.gen_sys
 
 IrReason* = EntryFunction
     | EntryParameters
@@ -18,6 +20,7 @@ IrReason* = EntryFunction
     | Arguments
     | Target
     | Uninitialized
+    | Surface
 
 message* = (reason: IrReason) str {
     reason.match({
@@ -32,24 +35,42 @@ message* = (reason: IrReason) str {
         Arguments       => "call argument count does not match its signature",
         Target          => "terminator refers to a missing block",
         Uninitialized   => "slot is read before initialization on a reachable path",
+        Surface         => "instruction or slot class is outside this renderer's surface",
     })
 }
 
 IrFault* = { function*: usize, block*: usize, reason*: IrReason }
 VerifyError* = OutOfMemory | Invalid(IrFault)
 
-same = (left: Scalar, right: Scalar) bool {
-    left.match({
-        I32  => right.match({ I32 => true, _ => false }),
-        Bool => right.match({ Bool => true, _ => false }),
-        Unit => right.match({ Unit => true, _ => false }),
+// Whether a constant's bits are a value of its slot class.
+fits = (ty: Scalar, value: i64) bool {
+    ty.match({
+        I32      => value >= -2147483648 && value <= 2147483647,
+        Bool     => value == 0 || value == 1,
+        Unit     => value == 0,
+        I8       => value >= -128 && value <= 127,
+        U8       => value >= 0 && value <= 255,
+        I16      => value >= -32768 && value <= 32767,
+        U16      => value >= 0 && value <= 65535,
+        U32      => value >= 0 && value <= 4294967295,
+        I64      => true,
+        U64      => true,
+        Ptr      => true,
+        Block(_) => false,
     })
+}
+
+// The classes the scalar renderers (JavaScript, IR C) understand.
+scalar_class = (ty: Scalar) bool {
+    ty.match({ I32 => true, Bool => true, Unit => true, _ => false })
 }
 
 Check = {
     program: Program,
     function: Func,
     index: usize,
+    // The native surface admits every instruction and slot class.
+    native: bool,
     block :: usize = 0,
 
     fault = (self: @Self, reason: IrReason) VerifyError {
@@ -76,13 +97,22 @@ Check = {
         Ok(())
     }
 
+    native_only = (self: @Self) Res<(), VerifyError> {
+        self.native.ensure(self.fault(IrReason.Surface)).try();
+        Ok(())
+    }
+
+    word_slot = (self: @Self, index: usize) Res<Scalar, VerifyError> {
+        ty = self.slot(index).try();
+        word(ty).ensure(self.fault(IrReason.Type)).try();
+        Ok(ty)
+    }
+
     instruction = (self: @Self, instruction: Instruction) Res<(), VerifyError> {
         instruction.match({
             Constant(value)    => {
-                ty    = self.slot(value.out).try();
-                valid = ty.match({ I32 => true, Bool => value.value == 0 || value.value == 1,
-                    Unit => value.value == 0 });
-                valid.ensure(self.fault(IrReason.Constant)).try();
+                ty = self.slot(value.out).try();
+                fits(ty, value.value).ensure(self.fault(IrReason.Constant)).try();
                 Ok(())
             },
             Copy(value)        => self.expect(
@@ -90,25 +120,14 @@ Check = {
                 self.slot(value.source).try()
             ),
             UnaryValue(value)  => {
-                ty = value.op.match({ Neg => Scalar.I32, Not => Scalar.Bool });
-                self.expect(value.input, ty).try();
+                ty = self.slot(value.input).try();
+                value.op.match({
+                    Neg => signed(ty),
+                    Not => same(ty, Scalar.Bool),
+                }).ensure(self.fault(IrReason.Type)).try();
                 self.expect(value.out, ty)
             },
-            BinaryValue(value) => {
-                input = self.slot(value.left).try();
-                self.expect(value.right, input).try();
-                result = value.op.match({
-                    Equal => Scalar.Bool, NotEqual => Scalar.Bool,
-                    _ => {
-                        input.same(Scalar.I32).ensure(self.fault(IrReason.Type)).try();
-                        value.op.match({
-                            Add => Scalar.I32, Sub => Scalar.I32, Mul => Scalar.I32,
-                            Div => Scalar.I32, Rem => Scalar.I32, _ => Scalar.Bool,
-                        })
-                    },
-                });
-                self.expect(value.out, result)
-            },
+            BinaryValue(value) => self.binary(value.left, value.right, value.out, value.op),
             Invoke(call)       => {
                 callee = self.program.functions.get(call.function)
                     .ok_or(self.fault(IrReason.Callee)).try();
@@ -121,8 +140,129 @@ Check = {
                 });
                 self.expect(call.out, callee.result)
             },
-            PrintValue(value)  => self.expect(value.value, value.ty),
+            PrintValue(value)  => {
+                (word(value.ty) || same(value.ty, Scalar.Unit))
+                    .ensure(self.fault(IrReason.Type)).try();
+                self.expect(value.value, value.ty)
+            },
             Text(_)            => Ok(()),
+            Cast(value)        => {
+                self.native_only().try();
+                self.word_slot(value.input).try();
+                self.word_slot(value.out).try();
+                Ok(())
+            },
+            AddressOf(value)   => {
+                self.native_only().try();
+                self.slot(value.slot).try();
+                self.expect(value.out, Scalar.Ptr)
+            },
+            LoadValue(value)   => {
+                self.native_only().try();
+                self.slot(value.out).try();
+                self.expect(value.base, Scalar.Ptr)
+            },
+            StoreValue(value)  => {
+                self.native_only().try();
+                self.slot(value.value).try();
+                self.expect(value.base, Scalar.Ptr)
+            },
+            CopyBytes(value)   => {
+                self.native_only().try();
+                self.expect(value.dest, Scalar.Ptr).try();
+                self.expect(value.source, Scalar.Ptr).try();
+                self.expect(value.bytes, Scalar.U64)
+            },
+            Bytes(value)       => {
+                self.native_only().try();
+                self.expect(value.out, Scalar.Ptr)
+            },
+            WriteOut(value)    => {
+                self.native_only().try();
+                self.expect(value.data, Scalar.Ptr).try();
+                self.expect(value.len, Scalar.U64)
+            },
+            System(call)       => {
+                self.native_only().try();
+                (call.args.len == arity(call.call)).ensure(self.fault(IrReason.Arguments)).try();
+                call.args.loop((slot) { self.word_slot(slot).try(); });
+                self.expect(call.out, Scalar.I64)
+            },
+            MapPages(value)    => {
+                self.native_only().try();
+                self.expect(value.bytes, Scalar.U64).try();
+                self.expect(value.out, Scalar.Ptr)
+            },
+            UnmapPages(slot)   => {
+                self.native_only().try();
+                self.expect(slot, Scalar.Ptr)
+            },
+            Flush              => self.native_only(),
+            SysConst(value)    => {
+                self.native_only().try();
+                integer(self.slot(value.out).try()).ensure(self.fault(IrReason.Type)).try();
+                Ok(())
+            },
+            Startup(value)     => {
+                self.native_only().try();
+                ty = value.value.match({ Argc => Scalar.U64, _ => Scalar.Ptr });
+                self.expect(value.out, ty)
+            },
+        })
+    }
+
+    // Scalar renderers keep the original i32 arithmetic and comparisons.
+    binary = (self: @Self, left: usize, right: usize, out: usize, op: Op)
+             Res<(), VerifyError> {
+        input = self.slot(left).try();
+        rhs   = self.slot(right).try();
+        pointer_step = same(input, Scalar.Ptr) && same(rhs, Scalar.U64)
+            && op.match({ WrapAdd => true, WrapSub => true, _ => false });
+        shift = op.match({ Shl => true, Shr => true, Rotr => true, _ => false });
+        (pointer_step || (shift && same(rhs, Scalar.U64)) || same(input, rhs))
+            .ensure(self.fault(IrReason.Type)).try();
+        self.native.match({
+            false => {
+                result = op.match({
+                    Equal => Scalar.Bool, NotEqual => Scalar.Bool,
+                    Add => Scalar.I32, Sub => Scalar.I32, Mul => Scalar.I32,
+                    Div => Scalar.I32, Rem => Scalar.I32,
+                    Less => Scalar.Bool, LessEqual => Scalar.Bool,
+                    Greater => Scalar.Bool, GreaterEqual => Scalar.Bool,
+                    _ => Scalar.Unit,
+                });
+                same(result, Scalar.Unit).match({
+                    true  => Err(self.fault(IrReason.Surface)),
+                    false => Ok(()),
+                }).try();
+                op.match({ Equal => true, NotEqual => true, _ => same(input, Scalar.I32) })
+                    .ensure(self.fault(IrReason.Type)).try();
+                self.expect(out, result)
+            },
+            true  => {
+                valid = op.match({
+                    Equal        => word(input),
+                    NotEqual     => word(input),
+                    Less         => integer(input) || same(input, Scalar.Ptr),
+                    LessEqual    => integer(input) || same(input, Scalar.Ptr),
+                    Greater      => integer(input) || same(input, Scalar.Ptr),
+                    GreaterEqual => integer(input) || same(input, Scalar.Ptr),
+                    WrapAdd      => integer(input) || pointer_step,
+                    WrapSub      => integer(input) || pointer_step,
+                    And          => integer(input) || same(input, Scalar.Bool),
+                    Or           => integer(input) || same(input, Scalar.Bool),
+                    Xor          => integer(input) || same(input, Scalar.Bool),
+                    _            => integer(input),
+                });
+                valid.ensure(self.fault(IrReason.Type)).try();
+                result = op.match({
+                    Equal => Scalar.Bool, NotEqual => Scalar.Bool,
+                    Less => Scalar.Bool, LessEqual => Scalar.Bool,
+                    Greater => Scalar.Bool, GreaterEqual => Scalar.Bool,
+                    _ => input,
+                });
+                self.expect(out, result)
+            },
         })
     }
 
@@ -135,12 +275,18 @@ Check = {
                 self.target(branch.yes).try();
                 self.target(branch.no)
             },
+            Trap(_)        => self.native_only(),
         })
     }
 
     structure = (self :: @Self) Res<(), VerifyError> {
         (self.function.parameters <= self.function.slots.len)
             .ensure(self.fault(IrReason.ParameterSlots)).try();
+        (self.native || scalar_class(self.function.result))
+            .ensure(self.fault(IrReason.Surface)).try();
+        self.function.slots.loop((ty) {
+            (self.native || scalar_class(ty)).ensure(self.fault(IrReason.Surface)).try();
+        });
         (self.function.blocks.len > 0).ensure(self.fault(
             IrReason.MissingBlock
         )).try();
@@ -174,6 +320,32 @@ Check = {
             },
             PrintValue(value)  => self.initialized(flags, value.value),
             Text(_)            => Ok(()),
+            Cast(value)        => self.initialized(flags, value.input),
+            AddressOf(_)       => Ok(()),
+            LoadValue(value)   => self.initialized(flags, value.base),
+            StoreValue(value)  => {
+                self.initialized(flags, value.base).try();
+                self.initialized(flags, value.value)
+            },
+            CopyBytes(value)   => {
+                self.initialized(flags, value.dest).try();
+                self.initialized(flags, value.source).try();
+                self.initialized(flags, value.bytes)
+            },
+            Bytes(_)           => Ok(()),
+            WriteOut(value)    => {
+                self.initialized(flags, value.data).try();
+                self.initialized(flags, value.len)
+            },
+            System(call)       => {
+                call.args.loop((slot) { self.initialized(flags, slot).try(); });
+                Ok(())
+            },
+            Startup(_)         => Ok(()),
+            MapPages(value)    => self.initialized(flags, value.bytes),
+            UnmapPages(slot)   => self.initialized(flags, slot),
+            SysConst(_)        => Ok(()),
+            Flush              => Ok(()),
         })
     }
 
@@ -182,6 +354,7 @@ Check = {
             Return(slot)   => self.initialized(flags, slot),
             Branch(branch) => self.initialized(flags, branch.value),
             Jump(_)        => Ok(()),
+            Trap(_)        => Ok(()),
         })
     }
 }
@@ -200,6 +373,18 @@ write = (flags :: Vec<bool>, instruction: Instruction) {
         UnaryValue(value)  => { flags.set(value.out, true); },
         BinaryValue(value) => { flags.set(value.out, true); },
         Invoke(value)      => { flags.set(value.out, true); },
+        Cast(value)        => { flags.set(value.out, true); },
+        // Stores through the pointer may initialize the slot.
+        AddressOf(value)   => {
+            flags.set(value.out, true);
+            flags.set(value.slot, true);
+        },
+        LoadValue(value)   => { flags.set(value.out, true); },
+        Bytes(value)       => { flags.set(value.out, true); },
+        System(value)      => { flags.set(value.out, true); },
+        Startup(value)     => { flags.set(value.out, true); },
+        MapPages(value)    => { flags.set(value.out, true); },
+        SysConst(value)    => { flags.set(value.out, true); },
         _                  => (),
     });
 }
@@ -237,6 +422,7 @@ Flow = {
                     self.connect(index, branch.no)
                 },
                 Return(_)      => Ok(()),
+                Trap(_)        => Ok(()),
             }).try();
         });
         self.reachable.set(0, true);
@@ -249,6 +435,7 @@ Flow = {
                 Jump(to)       => self.visit(to, work),
                 Branch(branch) => { self.visit(branch.yes, work).try(); self.visit(branch.no, work) },
                 Return(_)      => Ok(()),
+                Trap(_)        => Ok(()),
             }).try();
             at = at + 1;
         });
@@ -314,7 +501,17 @@ Flow = {
     }
 }
 
+// The scalar surface every renderer accepts.
 verify* = (program: Program, alloc: Alloc) Res<(), VerifyError> {
+    checked(program, alloc, false)
+}
+
+// The full surface; only the assembly targets render it.
+verify_native* = (program: Program, alloc: Alloc) Res<(), VerifyError> {
+    checked(program, alloc, true)
+}
+
+checked = (program: Program, alloc: Alloc, native: bool) Res<(), VerifyError> {
     entry = program.functions.get(program.entry).ok_or(VerifyError.Invalid(IrFault(function: program.entry, block: 0, reason: IrReason.EntryFunction))).try();
     (entry.parameters == 0).ensure(VerifyError.Invalid(IrFault(
         function: program.entry,
@@ -322,13 +519,13 @@ verify* = (program: Program, alloc: Alloc) Res<(), VerifyError> {
         reason: IrReason.EntryParameters
     ))).try();
     program.functions.loop((h, index, function) {
-        check ::= Check(program: program, function: function, index: index);
+        check ::= Check(program: program, function: function, index: index, native: native);
         check.structure().try();
     });
     program.functions.loop((h, index, function) {
         flow ::= Flow(
             alloc: alloc,
-            check: Check(program: program, function: function, index: index),
+            check: Check(program: program, function: function, index: index, native: native),
             reachable: flags(alloc, function.blocks.len, false).try(),
             predecessors: alloc.Vec<Vec<usize>>(),
             outgoing: alloc.Vec<Vec<bool>>(),

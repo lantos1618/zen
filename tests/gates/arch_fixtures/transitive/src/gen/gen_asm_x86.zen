@@ -1,0 +1,3 @@
+// Clean on its face; its helper is not.
+helper = gen.gen_helper
+Program = gen.gen_ir

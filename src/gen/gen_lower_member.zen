@@ -1,0 +1,773 @@
+// Member calls for the native lowering. A member resolves statically to a
+// struct's own function, an impl's function or a bound's default body; a
+// value whose static type is a bound (for example `Alloc`) dispatches at
+// run time over the program's implementors of that bound. The compiler-
+// provided memory operations (`Mem.alloc`, `Mem.page`, `Mem.release`) are
+// lowered here too.
+
+Alloc, AllocError = std.mem
+Vec, Map = std.collections
+String, str = std.text
+Range = std.core
+ExprId, BlockId, Span, Function, Call, Struct, Impl, Member, Decl = std.ast
+nowhere = std.ast
+Checker, DeclId, Def, TyId, Inst, decl_at, CheckedCall, ImplId = sema.sema
+Sys = gen.gen_sys
+Scalar, Op, Const, Move, Binary, Instruction, Load, Store, Address, Pages = gen.gen_ir
+Invocation, SysCall, SysValue, Start, StartValue, Convert, Layout, Write, Stream = gen.gen_ir
+sys_named, constant_named = gen.gen_sys
+TrapKind = gen.gen_ir
+LowerError, unsupported = gen.gen_lower
+Lowerer, Value, Place, Base, Callee = gen.gen_lower_core
+to_i64_bits = gen.gen_lower_core
+Shape, Form, shape, size_of = gen.gen_lower_shape
+Source, bind_sources, invoke, call_inst, source_expr, result_type, real_call = gen.gen_lower_call
+settle_params = gen.gen_lower_call
+
+// How a member call reaches its body.
+Target = Static(Callee) | Dynamic(Bound)
+
+// A bound value: the bound's declaration and its program-wide implementors
+// in tag order.
+Bound* = { decl*: DeclId, ty*: TyId, implementors*: Vec<TyId> }
+
+// ---------------------------------------------------------------------
+// resolution
+// ---------------------------------------------------------------------
+
+member_call* = (lo :: Lowerer, id: ExprId, c: Call, checked: CheckedCall, receiver: ExprId,
+                name: str, span: Span) Res<Value, LowerError> {
+    recv_ty = lo.type_of(receiver).try();
+    method_inst = lo.call_inst(checked.inst).try();
+    lo.check.variant_name_call_of(id).match({
+        Ok(_) => lo.variant_name(id, receiver, span),
+        None  => lo.bound_of(recv_ty).try().match({
+            Ok(bound) => lo.dynamic_call(id, c, bound, receiver, name, method_inst, span),
+            None      => lo.resolve(recv_ty, name, checked.body, c.args.len + 1, method_inst, None, span).match({
+                Ok(callee) => {
+                    sources = lo.bind_sources(callee.f, c, Ok(receiver), span).try();
+                    lo.invoke(id, callee, sources, c, span)
+                },
+                // An allocator hook its implementor leaves out keeps the
+                // bound's meaning.
+                Err(e)     => name.is_in(["create", "free"]).match({
+                    false => Err(e),
+                    true  => {
+                        place = lo.place_of(receiver).try().match({
+                            Ok(p) => p,
+                            None  => lo.spill(lo.expr(receiver).try()),
+                        });
+                        args ::= lo.alloc.Vec<Source>();
+                        c.args.loop((a) { args.add(Source.Computed(lo.expr(a.value).try())).try(LowerError.OutOfMemory); });
+                        alloc_bound = lo.bound_named("Alloc", span).try();
+                        lo.implementor_call(recv_ty, alloc_bound, name, place, args, method_inst, lo.type_of(id).try(), span)
+                    },
+                }),
+            }),
+        }),
+    })
+}
+
+// The function named `name` for receiver type `ty`: the body sema checked
+// when known, otherwise the first function of that name and arity on the
+// type, its impls (for `via`, only impls of that bound) or their bounds.
+resolve* = (lo :: Lowerer, ty: TyId, name: str, body: Res<BlockId>, arity: usize,
+            method_inst: Inst, via: Res<DeclId>, span: Span) Res<Callee, LowerError> {
+    owners = lo.owners_of(ty, via).try();
+    found: Res<Callee> = loop<Callee>((h) {
+        owners.loop((owner) {
+            owner.members.loop((mh, index, m) {
+                m.kind.match({
+                    Function(f) => {
+                        // A type's own member is the body sema chose; an
+                        // impl member overrides a bound's default of the
+                        // same name; a default is used when nothing does.
+                        by_name = f.name.text.eq(name) && (f.params.len == arity || lo.variadic(f));
+                        fits = owner.kind.match({
+                            Own     => body.match({
+                                Ok(b) => f.body.match({ Ok(own) => own == b, None => false }),
+                                None  => by_name,
+                            }),
+                            Supply  => by_name && f.body.match({ Ok(_) => true, None => false }),
+                            Default => body.match({
+                                Ok(b) => f.body.match({ Ok(own) => own == b, None => false }),
+                                None  => by_name && f.body.match({ Ok(_) => true, None => false }),
+                            }),
+                        });
+                        fits.then(() {
+                            inst = lo.merged(owner.inst, method_inst).try();
+                            h.break(Callee(
+                                f: f,
+                                owner: owner.decl,
+                                member: Ok(index),
+                                module: owner.decl.module.to_usize(),
+                                inst: inst,
+                                self_ty: Ok(ty),
+                                generic_owner: owner.generic
+                            ));
+                        });
+                    },
+                    // `widen_i64 = to_i64`: an impl field naming a function
+                    // supplies that function as the member.
+                    Field(fd)   => {
+                        wanted = fd.name.text.eq(name) && owner.kind.match({ Supply => true, _ => false });
+                        alias: Res<Aliased> = wanted.match({
+                            false => None,
+                            true  => fd.value.match({
+                                Ok(e) => lo.aliased(owner.decl, e).try(),
+                                None  => None,
+                            }),
+                        });
+                        alias.match({
+                            Ok(f) => h.break(Callee(
+                                f: f.f,
+                                owner: f.owner,
+                                member: None,
+                                module: f.owner.module.to_usize(),
+                                inst: lo.alloc.Inst(),
+                                self_ty: None,
+                                generic_owner: None
+                            )),
+                            None  => (),
+                        });
+                    },
+                    _           => (),
+                });
+            });
+        });
+        h.break();
+    });
+    found.ok_or(unsupported(span, lo.described("a member without a body this backend can find", ty)))
+}
+
+// `value.variant_name()`: the name of the alternative it holds, as a str.
+variant_name = (lo :: Lowerer, id: ExprId, receiver: ExprId, span: Span) Res<Value, LowerError> {
+    value = lo.expr(receiver).try();
+    ty = lo.type_of(id).try();
+    variants = lo.variants_of(value.ty).try();
+    tag = lo.tag_of(value).try();
+    out = lo.temp(ty).try();
+    done = lo.label().try();
+    variants.loop((h, i, v) {
+        yes = lo.label().try();
+        next = lo.label().try();
+        expected = lo.word_const(Scalar.U32, i.to_i64_bits()).try();
+        test = lo.slot_of(Scalar.Bool).try();
+        lo.add(Instruction.BinaryValue(Binary(out: test, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+        lo.branch_to(test, yes, next).try();
+        lo.start(yes);
+        text = lo.string(v.name, ty).try();
+        lo.add(Instruction.Copy(Move(out: out.slot, source: text.slot))).try();
+        lo.jump(done).try();
+        lo.start(next);
+    });
+    lo.trap(TrapKind.Unreachable, span).try();
+    lo.start(done);
+    Ok(out)
+}
+
+// A std bound by name, with its program-wide implementors.
+bound_named = (lo :: Lowerer, name: str, span: Span) Res<Bound, LowerError> {
+    defs ::= lo.alloc.Vec<Def>();
+    lo.check.world.exported_named(name, defs).try(LowerError.OutOfMemory);
+    d = defs.find((d) { lo.check.world.module_name(d.id).starts_with("std.") })
+        .ok_or(unsupported(span, "a missing std bound")).try();
+    args ::= lo.alloc.Vec<TyId>();
+    ty = lo.check.types.named(d.id, d.qname, d.name, args).try(LowerError.OutOfMemory);
+    Ok(Bound(decl: d.id, ty: ty, implementors: lo.implementors(d.id).try()))
+}
+
+variadic* = (lo :: Lowerer, f: Function) bool {
+    (f.params.len > 0) && f.params.get(f.params.len - 1).match({
+        Ok(p) => p.type.match({
+            Ok(t) => lo.tree.type_at(t).kind.match({ Variadic => true, _ => false }),
+            None  => false,
+        }),
+        None  => false,
+    })
+}
+
+// A place a member may be declared: the type's own declaration, an impl for
+// it, or the bound such an impl satisfies.
+OwnerKind = Own | Supply | Default
+
+Aliased = { f: Function, owner: DeclId }
+
+// The function an impl field's value names, in the impl's module.
+aliased = (lo :: Lowerer, impl_decl: DeclId, e: ExprId) Res<Res<Aliased>, LowerError> {
+    lo.tree.expr_at(e).kind.match({
+        Name(n) => {
+            defs ::= lo.alloc.Vec<Def>();
+            lo.check.world.defs_of(impl_decl.module.to_usize(), n.text, defs).try(LowerError.OutOfMemory);
+            Ok(defs.find((d) { d.kind.match({ FunctionDef => true, _ => false }) }).match({
+                None    => None,
+                Ok(d)   => decl_at(lo.tree, d.id).match({
+                    Ok(x) => x.kind.match({ Function(f) => Ok(Aliased(f: f, owner: d.id)), _ => None }),
+                    None  => None,
+                }),
+            }))
+        },
+        _       => Ok(None),
+    })
+}
+Owner = { decl: DeclId, members: Vec<Member>, inst: Inst, generic: Res<DeclId>, kind: OwnerKind }
+
+owners_of = (lo :: Lowerer, ty: TyId, via: Res<DeclId>) Res<Vec<Owner>, LowerError> {
+    out ::= lo.alloc.Vec<Owner>();
+    own = lo.own_decl(ty).try();
+    inst = lo.type_inst(ty).try();
+    own.when_ok((decl) {
+        decl_at(lo.tree, decl).when_ok((d) {
+            d.kind.match({
+                Struct(s) => out.add(Owner(decl: decl, members: s.members, inst: inst, generic: Ok(decl), kind: OwnerKind.Own)).try(LowerError.OutOfMemory),
+                _         => (),
+            });
+        });
+    });
+    impls = lo.impls_for(ty, own).try();
+    impls.loop((pair) {
+        wanted = via.match({ Ok(b) => pair.bound == b, None => true });
+        wanted.then(() {
+            out.add(Owner(decl: pair.id.decl, members: pair.impl.members, inst: inst, generic: own, kind: OwnerKind.Supply)).try(LowerError.OutOfMemory);
+        });
+    });
+    impls.loop((pair) {
+        wanted = via.match({ Ok(b) => pair.bound == b, None => true });
+        wanted.then(() {
+            decl_at(lo.tree, pair.bound).when_ok((d) {
+                d.kind.match({
+                    Struct(s) => out.add(Owner(decl: pair.bound, members: s.members, inst: inst, generic: own, kind: OwnerKind.Default)).try(LowerError.OutOfMemory),
+                    _         => (),
+                });
+            });
+        });
+    });
+    Ok(out)
+}
+
+// The declaration a type's members live on: a named type's own, or the
+// std struct that declares a primitive's methods (`str`).
+own_decl = (lo :: Lowerer, ty: TyId) Res<Res<DeclId>, LowerError> {
+    lo.check.types.at(ty).match({
+        Named(n) => Ok(Ok(n.decl)),
+        Prim(p)  => {
+            defs ::= lo.alloc.Vec<Def>();
+            lo.check.world.exported_named(p.name, defs).try(LowerError.OutOfMemory);
+            Ok(defs.find((d) { d.kind.match({ StructDef => true, _ => false }) }).match({
+                Ok(d) => Ok(d.id),
+                None  => None,
+            }))
+        },
+        _        => Ok(None),
+    })
+}
+
+type_inst = (lo :: Lowerer, ty: TyId) Res<Inst, LowerError> {
+    lo.check.types.at(ty).match({
+        Named(n) => lo.check.inst_of_named(n).try(LowerError.OutOfMemory),
+        _        => Ok(lo.alloc.Inst()),
+    })
+}
+
+merged = (lo :: Lowerer, first: Inst, second: Inst) Res<Inst, LowerError> {
+    inst ::= lo.alloc.Inst();
+    [first, second].loop((part) {
+        Range(0, part.len()).loop((i) {
+            part.var_at(i).when_ok((v) {
+                part.arg_at(i).when_ok((a) { inst.bind(v, a).try(LowerError.OutOfMemory); });
+            });
+        });
+    });
+    Ok(inst)
+}
+
+ImplFor = { id: ImplId, impl: Impl, bound: DeclId }
+
+// Impls whose target names this type in the target's own scope.
+impls_for = (lo :: Lowerer, ty: TyId, own: Res<DeclId>) Res<Vec<ImplFor>, LowerError> {
+    out ::= lo.alloc.Vec<ImplFor>();
+    name = lo.type_name(ty);
+    ids ::= lo.alloc.Vec<ImplId>();
+    lo.check.world.impls_named(lo.tree, name, ids).try(LowerError.OutOfMemory);
+    ids.loop((id) {
+        lo.check.world.impl_at(lo.tree, id).when_ok((i) {
+            target_ok = own.match({
+                Ok(decl) => lo.names_decl(id.decl.module.to_usize(), i.target.text, decl).try(),
+                None     => true,
+            });
+            bound = lo.bound_decl(i).try();
+            (target_ok).then(() {
+                bound.when_ok((b) {
+                    out.add(ImplFor(id: id, impl: i, bound: b)).try(LowerError.OutOfMemory);
+                });
+            });
+        });
+    });
+    Ok(out)
+}
+
+names_decl = (lo :: Lowerer, module: usize, name: str, decl: DeclId) Res<bool, LowerError> {
+    defs ::= lo.alloc.Vec<Def>();
+    lo.check.world.defs_of(module, name, defs).try(LowerError.OutOfMemory);
+    Ok(defs.find((d) { d.id == decl }).match({ Ok(_) => true, None => false }))
+}
+
+// The declaration an impl's bound names.
+bound_decl = (lo :: Lowerer, i: Impl) Res<Res<DeclId>, LowerError> {
+    Ok(lo.check.type_memo.get(i.bound).match({
+        None     => None,
+        Ok(ty)   => lo.check.types.at(ty).match({
+            Named(n) => Ok(n.decl),
+            _        => None,
+        }),
+    }))
+}
+
+// ---------------------------------------------------------------------
+// bound values
+// ---------------------------------------------------------------------
+
+// A struct with function members and no storage is a bound; a value of that
+// type holds an implementor's tag and a pointer to the implementor value.
+bound_of* = (lo :: Lowerer, ty: TyId) Res<Res<Bound>, LowerError> {
+    s = lo.shape(ty).try();
+    s.form.match({
+        Handle(decl) => Ok(Ok(Bound(decl: decl, ty: ty, implementors: lo.implementors(decl).try()))),
+        _            => Ok(None),
+    })
+}
+
+// Every non-generic type with an impl of this bound, in module order.
+implementors* = (lo :: Lowerer, bound: DeclId) Res<Vec<TyId>, LowerError> {
+    out ::= lo.alloc.Vec<TyId>();
+    Range(0, lo.check.world.count()).loop((mi) {
+        lo.check.world.table_at(mi).match({
+            Ok(table) => lo.module_implementors(mi, table.impls, bound, out).try(),
+            None      => (),
+        });
+    });
+    Ok(out)
+}
+
+module_implementors = (lo :: Lowerer, mi: usize, impls: Vec<ImplId>, bound: DeclId,
+                       out :: Vec<TyId>) Res<(), LowerError> {
+    impls.loop((id) {
+        lo.implementor_of(mi, id, bound).try().match({
+            Ok(t) => out.add(t).try(LowerError.OutOfMemory),
+            None  => (),
+        });
+    });
+    Ok(())
+}
+
+implementor_of = (lo :: Lowerer, mi: usize, id: ImplId, bound: DeclId) Res<Res<TyId>, LowerError> {
+    lo.check.world.impl_at(lo.tree, id).match({
+        None    => Ok(None),
+        Ok(i)   => lo.bound_decl(i).try().match({
+            None    => Ok(None),
+            Ok(b)   => (b == bound).match({
+                true  => lo.target_type(mi, i.target.text),
+                false => Ok(None),
+            }),
+        }),
+    })
+}
+
+target_type = (lo :: Lowerer, module: usize, name: str) Res<Res<TyId>, LowerError> {
+    defs ::= lo.alloc.Vec<Def>();
+    lo.check.world.defs_of(module, name, defs).try(LowerError.OutOfMemory);
+    found = defs.find((d) { d.kind.match({ StructDef => true, EnumDef => true, _ => false }) });
+    Ok(found.match({
+        None    => None,
+        Ok(d)   => {
+            generic = decl_at(lo.tree, d.id).match({
+                Ok(x) => x.kind.match({
+                    Struct(s) => s.tparams.len > 0,
+                    Enum(e)   => e.tparams.len > 0,
+                    _         => true,
+                }),
+                None  => true,
+            });
+            generic.match({
+                true  => None,
+                false => {
+                    args ::= lo.alloc.Vec<TyId>();
+                    lo.check.types.named(d.id, d.qname, d.name, args).match({
+                        Ok(t)  => Ok(t),
+                        Err(_) => None,
+                    })
+                },
+            })
+        },
+    }))
+}
+
+// An implementor value enters a bound as its tag and a pointer to a copy
+// that lives as long as the enclosing function invocation.
+to_bound* = (lo :: Lowerer, value: Value, target: TyId) Res<Res<Value>, LowerError> {
+    lo.bound_of(target).try().match({
+        None        => Ok(None),
+        Ok(bound)   => {
+            found: Res<usize> = loop<usize>((h) {
+                bound.implementors.loop((hh, i, t) { (t == value.ty).then(() { h.break(i); }); });
+                h.break();
+            });
+            found.match({
+                None      => Ok(None),
+                Ok(tag)   => {
+                    lo.made.add(value.ty).try(LowerError.OutOfMemory);
+                    out = lo.temp(target).try();
+                    at = lo.slot_of(Scalar.Ptr).try();
+                    lo.add(Instruction.AddressOf(Address(out: at, slot: out.slot))).try();
+                    word = lo.word_const(Scalar.U32, tag.to_i64_bits()).try();
+                    lo.add(Instruction.StoreValue(Store(base: at, offset: 0, value: word))).try();
+                    held = lo.copy_value(value).try();
+                    pointer = lo.address(lo.spill(held)).try();
+                    lo.add(Instruction.StoreValue(Store(base: at, offset: 8, value: pointer))).try();
+                    Ok(Ok(out))
+                },
+            })
+        },
+    })
+}
+
+// A bound handle whose receiver is the value at `place` itself, so mutable
+// members write into it (a String behind a Sink).
+handle_for_place* = (lo :: Lowerer, place: Place, target: TyId) Res<Res<Value>, LowerError> {
+    lo.bound_of(target).try().match({
+        None      => Ok(None),
+        Ok(bound) => {
+            found: Res<usize> = loop<usize>((h) {
+                bound.implementors.loop((hh, i, t) { (t == place.ty).then(() { h.break(i); }); });
+                h.break();
+            });
+            found.match({
+                None    => Ok(None),
+                Ok(tag) => {
+                    lo.made.add(place.ty).try(LowerError.OutOfMemory);
+                    out = lo.temp(target).try();
+                    at = lo.slot_of(Scalar.Ptr).try();
+                    lo.add(Instruction.AddressOf(Address(out: at, slot: out.slot))).try();
+                    word = lo.word_const(Scalar.U32, tag.to_i64_bits()).try();
+                    lo.add(Instruction.StoreValue(Store(base: at, offset: 0, value: word))).try();
+                    pointer = lo.address(place).try();
+                    lo.add(Instruction.StoreValue(Store(base: at, offset: 8, value: pointer))).try();
+                    Ok(Ok(out))
+                },
+            })
+        },
+    })
+}
+
+// Evaluate the arguments once, then branch on the implementor tag.
+dynamic_call = (lo :: Lowerer, id: ExprId, c: Call, bound: Bound, receiver: ExprId, name: str,
+                method_inst: Inst, span: Span) Res<Value, LowerError> {
+    handle = lo.expr(receiver).try();
+    // Arguments evaluate once, before the dispatch; a place stays a place so
+    // a mutable parameter writes through it.
+    args ::= lo.alloc.Vec<Source>();
+    c.args.loop((a) {
+        source = lo.place_of(a.value).try().match({
+            Ok(place) => Source.Located(place),
+            None      => Source.Computed(lo.expr(a.value).try()),
+        });
+        args.add(source).try(LowerError.OutOfMemory);
+    });
+    lo.dispatch(bound, handle, name, args, method_inst, lo.type_of(id).try(), span)
+}
+
+// Branch on a bound handle's implementor tag and call that implementor's
+// member with the handle's receiver.
+dispatch* = (lo :: Lowerer, bound: Bound, handle: Value, name: str, args: Vec<Source>,
+             method_inst: Inst, ty: TyId, span: Span) Res<Value, LowerError> {
+    at = lo.address(lo.spill(handle)).try();
+    tag = lo.slot_of(Scalar.U32).try();
+    pointer = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.LoadValue(Load(out: tag, base: at, offset: 0))).try();
+    lo.add(Instruction.LoadValue(Load(out: pointer, base: at, offset: 8))).try();
+    out = lo.temp(ty).try();
+    done = lo.label().try();
+    bound.implementors.loop((h, i, implementor) {
+        yes  = lo.label().try();
+        next = lo.label().try();
+        expected = lo.word_const(Scalar.U32, i.to_i64_bits()).try();
+        test = lo.slot_of(Scalar.Bool).try();
+        lo.add(Instruction.BinaryValue(Binary(out: test, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+        lo.branch_to(test, yes, next).try();
+        lo.start(yes);
+        held = Place(base: Base.Through(pointer), offset: 0, ty: implementor);
+        saved = lo.use_via(Ok(implementor));
+        attempt = lo.implementor_call(implementor, bound, name, held, args, method_inst, ty, span);
+        lo.use_via(saved);
+        result = attempt.try();
+        lo.add(Instruction.Copy(Move(out: out.slot, source: result.slot))).try();
+        lo.jump(done).try();
+        lo.start(next);
+    });
+    lo.trap(TrapKind.Unreachable, span).try();
+    lo.start(done);
+    Ok(out)
+}
+
+// One implementor's member, with the bound's hooks defaulted: an absent
+// `free` does nothing and an absent `create<T>` asks `raw` for T's bytes.
+implementor_call = (lo :: Lowerer, implementor: TyId, bound: Bound, name: str, receiver: Place,
+                    args: Vec<Source>, method_inst: Inst, ty: TyId, span: Span) Res<Value, LowerError> {
+    arity = args.len + 1;
+    lo.resolve(implementor, name, None, arity, method_inst, Ok(bound.decl), span).match({
+        Ok(callee) => lo.call_values(callee, receiver, args, ty, span),
+        Err(e)     => name.match({
+            "free"   => lo.unit(),
+            "create" => {
+                elem = method_inst.arg_at(0).ok_or(unsupported(span, "create without an element type")).try();
+                bytes = lo.word_const(Scalar.U64, size_of(lo.class_of(elem).try()).to_i64_bits()).try();
+                align = lo.word_const(Scalar.U64, 16).try();
+                usize_ty = lo.prim("usize").try();
+                raw = lo.resolve(implementor, "raw", None, 3, lo.alloc.Inst(), Ok(bound.decl), span).try();
+                sizes ::= lo.alloc.Vec<Source>();
+                sizes.add(Source.Computed(Value(slot: bytes, ty: usize_ty))).try(LowerError.OutOfMemory);
+                sizes.add(Source.Computed(Value(slot: align, ty: usize_ty))).try(LowerError.OutOfMemory);
+                made = lo.call_values(raw, receiver, sizes, lo.result_type(raw).try(), span).try();
+                // Res<Ptr<u8>, E> and Res<Ptr<T>, E> share one layout.
+                Ok(Value(slot: made.slot, ty: ty))
+            },
+            _        => Err(e),
+        }),
+    })
+}
+
+// Call a resolved member with already-evaluated receiver and arguments.
+call_values* = (lo :: Lowerer, open: Callee, receiver: Place, args: Vec<Source>, ty: TyId, span: Span)
+               Res<Value, LowerError> {
+    given ::= lo.alloc.Vec<Source>();
+    given.add(Source.Located(receiver)).try(LowerError.OutOfMemory);
+    args.loop((a) { given.add(a).try(LowerError.OutOfMemory); });
+    callee = lo.settle_params(open, given).try();
+    out = lo.real_call(callee, given, span).try();
+    lo.coerce(out, ty)
+}
+
+// ---------------------------------------------------------------------
+// page authority
+// ---------------------------------------------------------------------
+
+// `Mem.alloc()` builds an Arena over fresh zeroed state; `Mem.page` maps a
+// run with its Page header in the first bytes; `Mem.release` unmaps.
+mem_call* = (lo :: Lowerer, id: ExprId, name: str, sources: Vec<Source>, span: Span)
+            Res<Value, LowerError> {
+    ty = lo.type_of(id).try();
+    name.match({
+        "alloc"   => {
+            s = lo.shape(ty).try();
+            state_field = s.form.match({
+                Record(fields) => fields.find((f) { f.name.eq("state") }),
+                _              => None,
+            }).ok_or(unsupported(span, "an Arena without a state field")).try();
+            state_ty = lo.pointee_of(state_field.ty).try();
+            bytes = lo.word_const(Scalar.U64, size_of(lo.class_of(state_ty).try()).max_one().to_i64_bits()).try();
+            state = lo.slot_of(Scalar.Ptr).try();
+            lo.add(Instruction.MapPages(Pages(out: state, bytes: bytes))).try();
+            lo.out_of_memory_trap(state, span).try();
+            out = lo.temp(ty).try();
+            at = lo.slot_of(Scalar.Ptr).try();
+            lo.add(Instruction.AddressOf(Address(out: at, slot: out.slot))).try();
+            lo.add(Instruction.StoreValue(Store(base: at, offset: state_field.offset, value: state))).try();
+            Ok(out)
+        },
+        "page"    => {
+            size = lo.expr_as(sources.source_expr(1, span).try(), lo.prim("usize").try()).try();
+            ok_ty = lo.payload_type(ty, "Ok").try();
+            page_ty = lo.pointee_of(ok_ty).try();
+            header = size_of(lo.class_of(page_ty).try());
+            header_bytes = lo.word_const(Scalar.U64, header.to_i64_bits()).try();
+            total = lo.slot_of(Scalar.U64).try();
+            lo.add(Instruction.BinaryValue(Binary(out: total, left: size.slot, right: header_bytes, op: Op.Add, span: span))).try();
+            raw = lo.slot_of(Scalar.Ptr).try();
+            lo.add(Instruction.MapPages(Pages(out: raw, bytes: total))).try();
+            out = lo.temp(ty).try();
+            zero = lo.word_const(Scalar.Ptr, 0).try();
+            failed = lo.slot_of(Scalar.Bool).try();
+            lo.add(Instruction.BinaryValue(Binary(out: failed, left: raw, right: zero, op: Op.Equal, span: nowhere()))).try();
+            bad = lo.label().try();
+            good = lo.label().try();
+            done = lo.label().try();
+            lo.branch_to(failed, bad, good).try();
+            lo.start(bad);
+            err_ty = lo.payload_type(ty, "Err").try();
+            reason = lo.variant_value(err_ty, "OutOfMemory", None, span).try();
+            refused = lo.variant_value(ty, "Err", Ok(reason), span).try();
+            lo.add(Instruction.Copy(Move(out: out.slot, source: refused.slot))).try();
+            lo.jump(done).try();
+            lo.start(good);
+            fields = lo.shape(page_ty).try().form.match({ Record(f) => Ok(f), _ => None })
+                .ok_or(unsupported(span, "a Page without fields")).try();
+            prev = sources.get(2).value_or(Source.Absent).match({
+                Given(e) => lo.expr(e).try().slot,
+                _        => lo.word_const(Scalar.Ptr, 0).try(),
+            });
+            base = lo.slot_of(Scalar.Ptr).try();
+            lo.add(Instruction.BinaryValue(Binary(out: base, left: raw, right: header_bytes, op: Op.WrapAdd, span: nowhere()))).try();
+            fields.loop((f) {
+                value = f.name.match({
+                    "prev" => Ok(prev),
+                    "base" => Ok(base),
+                    "size" => Ok(size.slot),
+                    _      => None,
+                });
+                value.when_ok((v) {
+                    lo.add(Instruction.StoreValue(Store(base: raw, offset: f.offset, value: v))).try();
+                });
+            });
+            made = lo.variant_value(ty, "Ok", Ok(Value(slot: raw, ty: ok_ty)), span).try();
+            lo.add(Instruction.Copy(Move(out: out.slot, source: made.slot))).try();
+            lo.enter(done).try();
+            Ok(out)
+        },
+        "release" => {
+            region = lo.expr(sources.source_expr(1, span).try()).try();
+            lo.add(Instruction.UnmapPages(region.slot)).try();
+            lo.unit()
+        },
+        _         => Err(unsupported(span, "this page-authority operation")),
+    })
+}
+
+max_one = (n: usize) usize { (n == 0).match({ true => 1, false => n }) }
+
+out_of_memory_trap = (lo :: Lowerer, pointer: usize, span: Span) Res<(), LowerError> {
+    zero = lo.word_const(Scalar.Ptr, 0).try();
+    failed = lo.slot_of(Scalar.Bool).try();
+    lo.add(Instruction.BinaryValue(Binary(out: failed, left: pointer, right: zero, op: Op.Equal, span: nowhere()))).try();
+    bad = lo.label().try();
+    good = lo.label().try();
+    lo.branch_to(failed, bad, good).try();
+    lo.start(bad);
+    lo.trap(TrapKind.OutOfMemory, span).try();
+    lo.start(good);
+    Ok(())
+}
+
+pointee_of* = (lo :: Lowerer, ty: TyId) Res<TyId, LowerError> {
+    lo.check.types.at(ty).match({
+        Named(n) => n.args.get(0).ok_or(unsupported(nowhere(), "a pointer without an element type")),
+        _        => Err(unsupported(nowhere(), "a pointer operation on a non-pointer")),
+    })
+}
+
+payload_type* = (lo :: Lowerer, ty: TyId, name: str) Res<TyId, LowerError> {
+    variants = lo.variants_of(ty).try();
+    found = variants.find((v) { v.name.eq(name) }).ok_or(unsupported(nowhere(), "a missing variant")).try();
+    found.payload.ok_or(unsupported(nowhere(), "a payload-free variant"))
+}
+
+// ---------------------------------------------------------------------
+// std.sys: the kernel interface
+// ---------------------------------------------------------------------
+
+// The bodiless std.sys operations: kernel calls, process start values,
+// per-target constants, a clock reading and raw address conversions.
+sys_call* = (lo :: Lowerer, id: ExprId, name: str, sources: Vec<Source>, span: Span)
+            Res<Value, LowerError> {
+    ty = lo.type_of(id).try();
+    sys_named(name).match({
+        Ok(op)  => {
+            args ::= lo.alloc.Vec<usize>();
+            sources.loop((s) {
+                s.match({
+                    Given(e)    => args.add(lo.expr(e).try().slot).try(LowerError.OutOfMemory),
+                    Computed(v) => args.add(v.slot).try(LowerError.OutOfMemory),
+                    _           => Err(unsupported(span, "an omitted kernel argument")).try(),
+                });
+            });
+            out = lo.temp(ty).try();
+            lo.add(Instruction.System(SysCall(out: out.slot, call: op, args: args))).try();
+            Ok(out)
+        },
+        None    => constant_named(name).match({
+            Ok(c)   => {
+                out = lo.temp(ty).try();
+                lo.add(Instruction.SysConst(SysValue(out: out.slot, name: c))).try();
+                Ok(out)
+            },
+            None    => name.match({
+                "emit"        => {
+                    stream = lo.expr(sources.source_expr(0, span).try()).try();
+                    data = lo.expr(sources.source_expr(1, span).try()).try();
+                    len = lo.expr(sources.source_expr(2, span).try()).try();
+                    lo.emit_to(stream.slot, data.slot, len.slot).try();
+                    lo.unit()
+                },
+                "emit_byte"   => {
+                    stream = lo.expr(sources.source_expr(0, span).try()).try();
+                    byte = lo.expr(sources.source_expr(1, span).try()).try();
+                    cell = lo.copy_value(byte).try();
+                    at = lo.slot_of(Scalar.Ptr).try();
+                    lo.add(Instruction.AddressOf(Address(out: at, slot: cell.slot))).try();
+                    one = lo.word_const(Scalar.U64, 1).try();
+                    lo.emit_to(stream.slot, at, one).try();
+                    lo.unit()
+                },
+                "argc"        => lo.start_value(ty, StartValue.Argc),
+                "argv"        => lo.start_value(ty, StartValue.Argv),
+                "envp"        => lo.start_value(ty, StartValue.Envp),
+                "pointer_at"  => lo.converted(sources, ty, span),
+                "address_of"  => lo.converted(sources, ty, span),
+                "clock_ns"    => {
+                    clock = lo.expr(sources.source_expr(0, span).try()).try();
+                    time = lo.slot_of(Scalar.Block(Layout(size: 16, align: 8))).try();
+                    at = lo.slot_of(Scalar.Ptr).try();
+                    lo.add(Instruction.AddressOf(Address(out: at, slot: time))).try();
+                    status = lo.slot_of(Scalar.I64).try();
+                    args ::= lo.alloc.Vec<usize>();
+                    args.add(clock.slot).try(LowerError.OutOfMemory);
+                    args.add(at).try(LowerError.OutOfMemory);
+                    lo.add(Instruction.System(SysCall(out: status, call: Sys.ClockGettime, args: args))).try();
+                    seconds = lo.slot_of(Scalar.U64).try();
+                    nanos = lo.slot_of(Scalar.U64).try();
+                    lo.add(Instruction.LoadValue(Load(out: seconds, base: at, offset: 0))).try();
+                    lo.add(Instruction.LoadValue(Load(out: nanos, base: at, offset: 8))).try();
+                    billion = lo.word_const(Scalar.U64, 1000000000).try();
+                    scaled = lo.slot_of(Scalar.U64).try();
+                    lo.add(Instruction.BinaryValue(Binary(out: scaled, left: seconds, right: billion, op: Op.WrapMul, span: nowhere()))).try();
+                    out = lo.temp(ty).try();
+                    lo.add(Instruction.BinaryValue(Binary(out: out.slot, left: scaled, right: nanos, op: Op.WrapAdd, span: nowhere()))).try();
+                    Ok(out)
+                },
+                _             => Err(unsupported(span, "this std.sys operation")),
+            }),
+        }),
+    })
+}
+
+// Console bytes to stream 1 (buffered stdout) or otherwise stderr.
+emit_to = (lo :: Lowerer, stream: usize, data: usize, len: usize) Res<(), LowerError> {
+    one = lo.slot_of(lo.slots.get(stream).value_or(Scalar.I32)).try();
+    lo.add(Instruction.Constant(Const(out: one, value: 1))).try();
+    is_out = lo.slot_of(Scalar.Bool).try();
+    lo.add(Instruction.BinaryValue(Binary(out: is_out, left: stream, right: one, op: Op.Equal, span: nowhere()))).try();
+    out = lo.label().try();
+    err = lo.label().try();
+    done = lo.label().try();
+    lo.branch_to(is_out, out, err).try();
+    lo.start(out);
+    lo.add(Instruction.WriteOut(Write(data: data, len: len, stream: Stream.Out))).try();
+    lo.jump(done).try();
+    lo.start(err);
+    lo.add(Instruction.WriteOut(Write(data: data, len: len, stream: Stream.Err))).try();
+    lo.enter(done)
+}
+
+start_value = (lo :: Lowerer, ty: TyId, which: StartValue) Res<Value, LowerError> {
+    out = lo.temp(ty).try();
+    lo.add(Instruction.Startup(Start(out: out.slot, value: which))).try();
+    Ok(out)
+}
+
+converted = (lo :: Lowerer, sources: Vec<Source>, ty: TyId, span: Span) Res<Value, LowerError> {
+    value = lo.expr(sources.source_expr(0, span).try()).try();
+    out = lo.temp(ty).try();
+    lo.add(Instruction.Cast(Convert(out: out.slot, input: value.slot))).try();
+    Ok(out)
+}
+
+ignore_none = <T>(r: Res<T>) { r.match({ Ok(_) => (), None => () }); }

@@ -1,0 +1,135 @@
+// Native tool recipes for the assembly backend: the system assembler and
+// linker only. No C compiler, C runtime object or libc is involved. Linux
+// executables are static and have no interpreter; Darwin executables link
+// libSystem, the platform's only supported kernel interface.
+
+Alloc, AllocError = std.mem
+str, String = std.text
+Vec = std.collections
+Target, Arch = std.build
+host_target = zen.zen_build
+
+// Targets with an assembly renderer and a recipe below.
+asm_native* = (target: Target) bool {
+    target.clang_triple().match({
+        Ok(triple) => triple.is_in([
+            "x86_64-linux-gnu", "aarch64-linux-gnu", "arm64-apple-darwin"
+        ]),
+        None       => false,
+    })
+}
+
+// Assemble `source` and link `output`. Tool output, if any, is appended to
+// `log`; the result says whether both tools succeeded.
+assemble_and_link* = (env: Env, a: Alloc, target: Target, source: str,
+                      output: str, strip: bool, log :: String)
+                     Res<bool, AllocError> {
+    object   = a.String("{}.o", source).try();
+    darwin   = target.os.match({ Macos => true, _ => false });
+    prefix   = cross_prefix(env, a, target).try();
+    assembler = a.String("{}as", prefix).try();
+    linker    = a.String("{}ld", prefix).try();
+    assemble ::= a.Vec<str>();
+    assemble.add(assembler.view()).try();
+    darwin.then(() {
+        assemble.add("-arch").try();
+        assemble.add("arm64").try();
+    });
+    assemble.add(source).try();
+    assemble.add("-o").try();
+    assemble.add(object.view()).try();
+    (!tool(env, a, assemble, log).try()).match({
+        true  => Ok(false),
+        false => {
+            link ::= a.Vec<str>();
+            link.add(linker.view()).try();
+            darwin.match({
+                true  => {
+                    ["-arch", "arm64", "-platform_version", "macos", "11.0", "11.0", "-e", "_main", "-lSystem"].loop((word) {
+                        link.add(word).try();
+                    });
+                    sdk = darwin_sdk(env, a);
+                    (!sdk.is_empty()).then(() {
+                        link.add("-syslibroot").try();
+                        link.add(sdk).try();
+                    });
+                },
+                false => link.add("-static").try(),
+            });
+            strip.then(() { link.add("-s").try(); });
+            link.add(object.view()).try();
+            link.add("-o").try();
+            link.add(output).try();
+            tool(env, a, link, log)
+        },
+    })
+}
+
+// Linux cross tools follow the Debian/Ubuntu binutils naming. Darwin only
+// builds for its own architecture here.
+cross_prefix = (env: Env, a: Alloc, target: Target) Res<str, AllocError> {
+    Ok(host_target(env, a).try().match({
+        None       => "",
+        Ok(host)   => (same_arch(host.arch, target.arch) || target.os.match({ Linux => false, _ => true })).match({
+            true  => "",
+            false => target.arch.match({
+                Arm64  => "aarch64-linux-gnu-",
+                X86_64 => "x86_64-linux-gnu-",
+            }),
+        }),
+    }))
+}
+
+same_arch = (left: Arch, right: Arch) bool {
+    left.match({
+        Arm64  => right.match({ Arm64 => true, X86_64 => false }),
+        X86_64 => right.match({ X86_64 => true, Arm64 => false }),
+    })
+}
+
+// A foreign-architecture Linux executable runs under qemu user mode; a
+// native one runs directly. The program path is appended by the caller.
+launcher* = (env: Env, a: Alloc, target: Target, argv :: Vec<str>)
+            Res<(), AllocError> {
+    host_target(env, a).try().match({
+        None     => (),
+        Ok(host) => (!same_arch(host.arch, target.arch)).then(() {
+            target.arch.match({
+                Arm64  => argv.add("qemu-aarch64").try(),
+                X86_64 => argv.add("qemu-x86_64").try(),
+            });
+        }),
+    });
+    Ok(())
+}
+
+tool = (env: Env, a: Alloc, argv: Vec<str>, log :: String)
+       Res<bool, AllocError> {
+    env.proc.run_argv(a, "", argv).match({
+        Err(_)     => {
+            log.fmt("zen: could not start `{}`\n", argv.get(0).value_or("tool")).try();
+            Ok(false)
+        },
+        Ok(result) => {
+            log.add(result.out.view()).try();
+            log.add(result.err.view()).try();
+            Ok(result.code == 0)
+        },
+    })
+}
+
+// The SDK supplies libSystem's link stub; the dylib itself lives in the
+// shared cache. An empty answer lets ld use its default search.
+darwin_sdk = (env: Env, a: Alloc) str {
+    argv ::= a.Vec<str>();
+    ["xcrun", "--sdk", "macosx", "--show-sdk-path"].loop((word) {
+        argv.add(word).ignore();
+    });
+    env.proc.run_argv(a, "", argv).match({
+        Ok(result) => (result.code == 0).match({
+            true  => result.out.view().trim().value_or(""),
+            false => "",
+        }),
+        Err(_)     => "",
+    })
+}

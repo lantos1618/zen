@@ -19,6 +19,15 @@ zg_os_proc_read = (fd: i32, buf: Ptr<u8>, cap: usize, count: Ptr<usize>) i32
 zg_os_proc_wait = (pid: i32, code: Ptr<i32>) i32
 zg_os_proc_kill = (pid: i32) ()
 
+// File-creation policy is process-wide, including native libraries and children.
+// Set at startup before concurrent work; this is not an actor-local setting.
+CreationMask* = OwnerOnly | Bits(u32)
+FileCreation = c.bind("sys/stat.h", {
+    umask = (mask: u32) u32
+    S_IRWXG: u32
+    S_IRWXO: u32
+})
+
 ProcError* = SpawnFailed | WaitFailed | ReadFailed
 ProcStreamError* = ProcError | AllocError | IoError
 ProcOutput* = { code*: i32, out*: String, err*: String }
@@ -172,6 +181,16 @@ capture_error = (e: ProcStreamError) ProcError {
 }
 
 Process* = {
+    // Return the previous mask so a single-threaded caller can restore it.
+    // Existing files are unaffected; the mask only removes requested mode bits.
+    creation_mask* = (self: @Self, mask: CreationMask) CreationMask {
+        bits = mask.match({
+            OwnerOnly   => FileCreation.S_IRWXG + FileCreation.S_IRWXO,
+            Bits(value) => value,
+        });
+        CreationMask.Bits(FileCreation.umask(bits))
+    }
+
     run* = (self: @Self, a: Alloc, cwd: str, cmd: str) Res<ProcOutput, ProcError> {
         argv ::= a.Vec<str>();
         argv.add("/bin/sh").try(ProcError.ReadFailed);

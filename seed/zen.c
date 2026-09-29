@@ -743,6 +743,7 @@ typedef struct zu_tConsume_471637d32d9ba9a3 zu_tConsume_471637d32d9ba9a3;
 typedef struct zu_tConversionKind_8878794ac71e0999 zu_tConversionKind_8878794ac71e0999;
 typedef struct zu_tCreateCall_6940b6b6566aae69 zu_tCreateCall_6940b6b6566aae69;
 typedef struct zu_tCreated_f6280a6fdeada1cd zu_tCreated_f6280a6fdeada1cd;
+typedef struct zu_tCreationMask_ee17b1b4cc1117a6 zu_tCreationMask_ee17b1b4cc1117a6;
 typedef struct zu_tCtx_d27f42ceae30142d zu_tCtx_d27f42ceae30142d;
 typedef struct zu_tCursor_dcbb96f82f150471 zu_tCursor_dcbb96f82f150471;
 typedef struct zu_tDeclId_dc3ce35ed103077b zu_tDeclId_dc3ce35ed103077b;
@@ -2707,6 +2708,8 @@ enum {
     zu_e5_3std4json9json_read9JsonFault9BadEscape = 2,
     zu_e5_3std4json9json_read9JsonFault9BadNumber = 3,
     zu_e5_3std4json9json_read9JsonFault9Truncated = 1,
+    zu_e5_3std4proc4proc12CreationMask4Bits = 1,
+    zu_e5_3std4proc4proc12CreationMask9OwnerOnly = 0,
     zu_e5_3std4proc4proc15ProcStreamError10AllocError = 1,
     zu_e5_3std4proc4proc15ProcStreamError7IoError = 0,
     zu_e5_3std4proc4proc15ProcStreamError9ProcError = 2,
@@ -3736,6 +3739,7 @@ struct zu_tNet_c82fa119d2666f40 {
 
 struct zu_tProcess_7cad2351ebe64986 {
     void *zg_self;
+    zu_tCreationMask_ee17b1b4cc1117a6 (*zu_m13creation_mask)(void *, zu_tCreationMask_ee17b1b4cc1117a6);
     zu_tRes_7842252ab5743962 (*zu_m3run)(void *, zu_tAlloc_4b0b1907c921b6d6, zg_str, zg_str);
     zu_tRes_7842252ab5743962 (*zu_m8run_argv)(void *, zu_tAlloc_4b0b1907c921b6d6, zg_str, zu_tVec_77334147afaea5dd);
     zu_tRes_eaa028029f81e827 (*zu_m13run_argv_into)(void *, zu_tAlloc_4b0b1907c921b6d6, zg_str, zu_tVec_77334147afaea5dd, uint8_t, uint8_t, size_t, size_t);
@@ -5074,6 +5078,13 @@ struct zu_tCreated_f6280a6fdeada1cd {
     zu_tTyId_9aa8ad3e6f8cc34a zu_m4elem;
     zu_tTyId_9aa8ad3e6f8cc34a zu_m7raw_ret;
     zu_tTyId_9aa8ad3e6f8cc34a zu_m3ret;
+};
+
+struct zu_tCreationMask_ee17b1b4cc1117a6 {
+    int32_t zg_tag;
+    union {
+        uint32_t zu_m4Bits;
+    } zg_data;
 };
 
 struct zu_tCursor_dcbb96f82f150471 {
@@ -147595,7 +147606,7 @@ static zu_tProcError_81603fc8ebb3cdb7 zu_f4_3std4proc4proc13capture_errorO1_t4_3
     } else if (1) {
         return (zu_tProcError_81603fc8ebb3cdb7){ .zg_tag = zu_e5_3std4proc4proc9ProcError10ReadFailed };
     } else {
-        zg_unreachable("std/proc/proc.zen", 167, 7);
+        zg_unreachable("std/proc/proc.zen", 176, 7);
     }
 }
 
@@ -222517,9 +222528,9 @@ static zu_tRes_e33637fd6864dd34 zu_f5_3std4proc4proc6Stream4nextO4_t4_3std4proc4
             if (zg_s17) {
                 zu_l1i = zu_l5child.zu_m4next;
             } else if (!zg_s17) {
-                zu_l1i = zg_sub_i32(1, zu_l5child.zu_m4next, "std/proc/proc.zen", 118, 77);
+                zu_l1i = zg_sub_i32(1, zu_l5child.zu_m4next, "std/proc/proc.zen", 127, 77);
             } else {
-                zg_unreachable("std/proc/proc.zen", 118, 38);
+                zg_unreachable("std/proc/proc.zen", 127, 38);
             }
             int32_t zu_l2fd;
             bool zg_s18;
@@ -222529,19 +222540,19 @@ static zu_tRes_e33637fd6864dd34 zu_f5_3std4proc4proc6Stream4nextO4_t4_3std4proc4
             } else if (!zg_s18) {
                 zu_l2fd = zu_l5child.zu_m6err_fd;
             } else {
-                zg_unreachable("std/proc/proc.zen", 119, 35);
+                zg_unreachable("std/proc/proc.zen", 128, 35);
             }
             bool zu_l6active;
             bool zg_s19;
             zg_s19 = ((zu_l1i == 0));
             if (zg_s19) {
                 int32_t zg_s20;
-                zg_s20 = zg_mod_i32(zu_l5ready, 2, "std/proc/proc.zen", 120, 57);
+                zg_s20 = zg_mod_i32(zu_l5ready, 2, "std/proc/proc.zen", 129, 57);
                 zu_l6active = (zg_s20 == 1);
             } else if (!zg_s19) {
                 zu_l6active = (zu_l5ready >= 2);
             } else {
-                zg_unreachable("std/proc/proc.zen", 120, 35);
+                zg_unreachable("std/proc/proc.zen", 129, 35);
             }
             zu_tRes_040b04640b242cbe zg_n21;
             bool zg_b22;
@@ -222570,8 +222581,8 @@ static zu_tRes_e33637fd6864dd34 zu_f5_3std4proc4proc6Stream4nextO4_t4_3std4proc4
                 bool zg_s29;
                 zg_s29 = ((zu_l1n > 0));
                 if (zg_s29) {
-                    zu_l7channel = zg_add_i32(zu_l1i, 1, "std/proc/proc.zen", 130, 44);
-                    zu_l5child.zu_m4next = zg_sub_i32(1, zu_l1i, "std/proc/proc.zen", 131, 44);
+                    zu_l7channel = zg_add_i32(zu_l1i, 1, "std/proc/proc.zen", 139, 44);
+                    zu_l5child.zu_m4next = zg_sub_i32(1, zu_l1i, "std/proc/proc.zen", 140, 44);
                 } else if (!zg_s29) {
                     (void)(zg_os_proc_close(zu_l2fd));
                     bool zg_s30;
@@ -222581,10 +222592,10 @@ static zu_tRes_e33637fd6864dd34 zu_f5_3std4proc4proc6Stream4nextO4_t4_3std4proc4
                     } else if (!zg_s30) {
                         zu_l5child.zu_m6err_fd = (-1);
                     } else {
-                        zg_unreachable("std/proc/proc.zen", 135, 38);
+                        zg_unreachable("std/proc/proc.zen", 144, 38);
                     }
                 } else {
-                    zg_unreachable("std/proc/proc.zen", 128, 29);
+                    zg_unreachable("std/proc/proc.zen", 137, 29);
                 }
                 (zu_l4self.zu_m5child)[0] = zu_l5child;
                 (void)(0);
@@ -222662,7 +222673,7 @@ static zu_tRes_3f75f83cb426885a zu_f5_3std4proc4proc6Stream4openO2_t4_3std3mem9m
         (void)(zu_f5_3std4proc4proc6Stream5closeO1_t4_3std4proc4proc6Stream(zu_l6stream));
         return (zu_tRes_3f75f83cb426885a){ .zg_tag = zu_e5_3std4core6result3Res3Err, .zg_data.zu_m3Err = zu_l1e };
     } else {
-        zg_unreachable("std/proc/proc.zen", 70, 31);
+        zg_unreachable("std/proc/proc.zen", 79, 31);
     }
 }
 
@@ -222745,7 +222756,7 @@ static zu_tRes_8cccbc621a6a238d zu_f5_3std4proc4proc6Stream5spawnO3_t4_3std4proc
     (void)(zg_n8);
     zg_env2 zg_c16;
     zg_c16.zu_l5pipes = zu_l5pipes;
-    zg_defer(&zg_b1, zg_d2, &zg_c16, sizeof zg_c16, "std/proc/proc.zen", 79, 9);
+    zg_defer(&zg_b1, zg_d2, &zg_c16, sizeof zg_c16, "std/proc/proc.zen", 88, 9);
     (void)(0);
     zu_tRes_8cccbc621a6a238d zg_t17;
     bool zg_s18;
@@ -222841,7 +222852,7 @@ static zu_tRes_eaa028029f81e827 zu_f5_3std4proc4proc7Process13run_argv_intoO6_t4
     zu_l6stream = zg_t7.zg_data.zu_m2Ok;
     zg_env1 zg_c8;
     zg_c8.zu_l6stream = zu_l6stream;
-    zg_defer(&zg_b1, zg_d1, &zg_c8, sizeof zg_c8, "std/proc/proc.zen", 203, 9);
+    zg_defer(&zg_b1, zg_d1, &zg_c8, sizeof zg_c8, "std/proc/proc.zen", 222, 9);
     (void)(0);
     bool zu_l4done;
     zu_l4done = false;
@@ -222895,7 +222906,7 @@ static zu_tRes_eaa028029f81e827 zu_f5_3std4proc4proc7Process13run_argv_intoO6_t4
                 return zg_w20;
             }
         } else {
-            zg_unreachable("std/proc/proc.zen", 208, 21);
+            zg_unreachable("std/proc/proc.zen", 227, 21);
         }
     }
     zg_brk9: ;
@@ -222973,7 +222984,7 @@ static zu_tRes_e33637fd6864dd34 zu_f5_3std4proc4proc7Process16run_argv_inheritO4
         (void)(zu_f4_3std4core6result6ignoreO1_t4_3std4core6result3ResI2_zt4_3std4proc4proc9ProcErrorI2_zt4_3std4proc4proc9ProcError(zu_f4_3std4proc4proc8wait_forO2_b3i32t4_3std3mem7mem_ptr3PtrI1_b3i32(zg_s15, zu_l4code)));
         return (zu_tRes_e33637fd6864dd34){ .zg_tag = zu_e5_3std4core6result3Res3Err, .zg_data.zu_m3Err = zu_l1e };
     } else {
-        zg_unreachable("std/proc/proc.zen", 224, 37);
+        zg_unreachable("std/proc/proc.zen", 243, 37);
     }
 }
 
@@ -223005,7 +223016,7 @@ static zu_tRes_7842252ab5743962 zu_f5_3std4proc4proc7Process8run_argvO4_t4_3std4
         zu_tProcStreamError_1355909a644e1e38 zu_l1e = zg_s5.zg_data.zu_m3Err;
         return (zu_tRes_7842252ab5743962){ .zg_tag = zu_e5_3std4core6result3Res3Err, .zg_data.zu_m3Err = zu_f4_3std4proc4proc13capture_errorO1_t4_3std4proc4proc15ProcStreamError(zu_l1e) };
     } else {
-        zg_unreachable("std/proc/proc.zen", 188, 52);
+        zg_unreachable("std/proc/proc.zen", 207, 52);
     }
 }
 

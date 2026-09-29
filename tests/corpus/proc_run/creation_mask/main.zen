@@ -1,0 +1,16 @@
+CreationMask, Process = std.proc
+Failure = | WrongMask
+main = (env: Env) Res<(), Failure> {
+    original = env.proc.creation_mask(CreationMask.OwnerOnly);
+    @scope.defer(() { env.proc.creation_mask(original); });
+    previous = env.proc.creation_mask(CreationMask.Bits(23));
+    previous.match({Bits(bits) => bits == 63, _ => false}).ensure(
+        Failure.WrongMask
+    ).try();
+    custom = env.proc.creation_mask(CreationMask.OwnerOnly);
+    custom.match({Bits(bits) => bits == 23, _ => false}).ensure(
+        Failure.WrongMask
+    ).try();
+    println("creation mask: owner-only and previous-mask restoration passed");
+    Ok(())
+}

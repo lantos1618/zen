@@ -861,10 +861,6 @@ typedef struct zu_tHead_2b2cf032e72dcb9f zu_tHead_2b2cf032e72dcb9f;
 typedef struct zu_tHelpArg_e2ce6d2dba07ec02 zu_tHelpArg_e2ce6d2dba07ec02;
 typedef struct zu_tHoverResult_e3c860e8869c451f zu_tHoverResult_e3c860e8869c451f;
 typedef struct zu_tHover_efa1a625e55ca68d zu_tHover_efa1a625e55ca68d;
-typedef struct zu_tHttpClient_dd73943f8f481cd5 zu_tHttpClient_dd73943f8f481cd5;
-typedef struct zu_tHttpError_26a2970ded34db89 zu_tHttpError_26a2970ded34db89;
-typedef struct zu_tHttpResponseMeta_819f2fc9989a0951 zu_tHttpResponseMeta_819f2fc9989a0951;
-typedef struct zu_tHttpResponse_0ae2a18604baf0f4 zu_tHttpResponse_0ae2a18604baf0f4;
 typedef struct zu_tIdent_ad4e9e24f2d487f5 zu_tIdent_ad4e9e24f2d487f5;
 typedef struct zu_tImplAccess_f8e421af8c9ae850 zu_tImplAccess_f8e421af8c9ae850;
 typedef struct zu_tImplId_8c17f2763505eea1 zu_tImplId_8c17f2763505eea1;
@@ -1118,8 +1114,6 @@ typedef struct zu_tRes_0c8ab0324ef91078 zu_tRes_0c8ab0324ef91078;
 typedef struct zu_tRes_0cdc9e3743b89c2c zu_tRes_0cdc9e3743b89c2c;
 typedef struct zu_tRes_0d220bf9fbca9ebe zu_tRes_0d220bf9fbca9ebe;
 typedef struct zu_tRes_0d632c78b1b12f80 zu_tRes_0d632c78b1b12f80;
-typedef struct zu_tRes_0e8b096720e2a9af zu_tRes_0e8b096720e2a9af;
-typedef struct zu_tRes_0ee51212c34f43da zu_tRes_0ee51212c34f43da;
 typedef struct zu_tRes_0f101ca830d3546e zu_tRes_0f101ca830d3546e;
 typedef struct zu_tRes_0f71531445956795 zu_tRes_0f71531445956795;
 typedef struct zu_tRes_0f82d425ba096515 zu_tRes_0f82d425ba096515;
@@ -2720,13 +2714,6 @@ enum {
     zu_e5_3std5parse15parse_lookahead10ValueShape9EnumValue = 1,
     zu_e5_3std5parse15parse_lookahead10ValueShape9ExprValue = 5,
     zu_e5_3std5parse15parse_lookahead10ValueShape9PathValue = 3,
-    zu_e6_3std3net4http10http_types9HttpError10RecvFailed = 3,
-    zu_e6_3std3net4http10http_types9HttpError10SendFailed = 2,
-    zu_e6_3std3net4http10http_types9HttpError12DecodeFailed = 4,
-    zu_e6_3std3net4http10http_types9HttpError13ConnectFailed = 0,
-    zu_e6_3std3net4http10http_types9HttpError15BodyWriteFailed = 5,
-    zu_e6_3std3net4http10http_types9HttpError6Status = 6,
-    zu_e6_3std3net4http10http_types9HttpError9TlsFailed = 1,
 };
 
 struct zg_tArray_0d25acb70d16d364 {
@@ -3678,8 +3665,7 @@ struct zu_tFs_f43e9c5da1b90751 {
 };
 
 struct zu_tNet_c82fa119d2666f40 {
-    void *zg_self;
-    zu_tHttpClient_dd73943f8f481cd5 (*zu_m4http)(void *);
+    char zg_pad;
 };
 
 struct zu_tProcess_7cad2351ebe64986 {
@@ -6090,44 +6076,6 @@ struct zu_tHover_efa1a625e55ca68d {
     zu_tPosition_5d27d101fdaadd19 zu_m3end;
 };
 
-struct zu_tHttpClient_dd73943f8f481cd5 {
-    void *zg_self;
-    zu_tRes_0e8b096720e2a9af (*zu_m9post_into)(void *, zu_tAlloc_4b0b1907c921b6d6, zg_str, zu_tVec_77334147afaea5dd, zg_str, zu_tSink_cf564733fedaf21c);
-    zu_tRes_0ee51212c34f43da (*zu_m4post)(void *, zu_tAlloc_4b0b1907c921b6d6, zg_str, zu_tVec_77334147afaea5dd, zg_str);
-};
-
-struct zu_tIoError_ad2e843c4ea86222 {
-    int32_t zg_tag;
-};
-
-struct zu_tWriteError_89c65de375b0c0bf {
-    int32_t zg_tag;
-    union {
-        zu_tIoError_ad2e843c4ea86222 zu_m7IoError;
-        zu_tAllocError_4f4d7db8fb03ac60 zu_m10AllocError;
-    } zg_data;
-};
-
-struct zu_tHttpError_26a2970ded34db89 {
-    int32_t zg_tag;
-    union {
-        zu_tWriteError_89c65de375b0c0bf zu_m15BodyWriteFailed;
-        int32_t zu_m6Status;
-    } zg_data;
-};
-
-struct zu_tHttpResponseMeta_819f2fc9989a0951 {
-    int32_t zu_m6status;
-    size_t zu_m14content_length;
-    bool zu_m18has_content_length;
-    bool zu_m7chunked;
-};
-
-struct zu_tHttpResponse_0ae2a18604baf0f4 {
-    int32_t zu_m6status;
-    zu_tString_c9a8094f3f89916f zu_m4body;
-};
-
 struct zu_tImplAccess_f8e421af8c9ae850 {
     zu_tAccess_7537c26e5da99408 zu_m6access;
     zu_tCtx_d27f42ceae30142d zu_m3ctx;
@@ -6250,6 +6198,10 @@ struct zu_tInstruction_9bc71bc4a16a9d0c {
         zu_tPrint_74222bab31f6aa32 zu_m10PrintValue;
         zg_str zu_m4Text;
     } zg_data;
+};
+
+struct zu_tIoError_ad2e843c4ea86222 {
+    int32_t zg_tag;
 };
 
 struct zu_tIrReason_f56fe26d9394c5f6 {
@@ -7700,22 +7652,6 @@ struct zu_tRes_0d632c78b1b12f80 {
     union {
         zu_tCommand_aee2d248cfa008e1 * zu_m2Ok;
         zu_tAllocError_4f4d7db8fb03ac60 zu_m3Err;
-    } zg_data;
-};
-
-struct zu_tRes_0e8b096720e2a9af {
-    int32_t zg_tag;
-    union {
-        zu_tHttpResponseMeta_819f2fc9989a0951 zu_m2Ok;
-        zu_tHttpError_26a2970ded34db89 zu_m3Err;
-    } zg_data;
-};
-
-struct zu_tRes_0ee51212c34f43da {
-    int32_t zg_tag;
-    union {
-        zu_tHttpResponse_0ae2a18604baf0f4 zu_m2Ok;
-        zu_tHttpError_26a2970ded34db89 zu_m3Err;
     } zg_data;
 };
 
@@ -10571,6 +10507,14 @@ struct zu_tRes_94d9fad250fcfc0e {
     int32_t zg_tag;
     union {
         zu_tEntry_f49fd9671299107f zu_m2Ok;
+    } zg_data;
+};
+
+struct zu_tWriteError_89c65de375b0c0bf {
+    int32_t zg_tag;
+    union {
+        zu_tIoError_ad2e843c4ea86222 zu_m7IoError;
+        zu_tAllocError_4f4d7db8fb03ac60 zu_m10AllocError;
     } zg_data;
 };
 
@@ -139189,7 +139133,7 @@ static zg_str zu_f4_3std3env3env10fs_messageO1_t4_3std3env3env7FsError(zu_tFsErr
     } else if (zg_s1.zg_tag == zu_e5_3std3env3env7FsError11OutOfMemory) {
         return (zg_str){ (unsigned char *)"the buffer could not be obtained", 32u };
     } else {
-        zg_unreachable("std/env/env.zen", 33, 11);
+        zg_unreachable("std/env/env.zen", 32, 11);
     }
 }
 

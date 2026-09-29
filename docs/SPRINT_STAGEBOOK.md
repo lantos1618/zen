@@ -5,6 +5,24 @@ Completed execution logs, previous checkpoints and review transcripts live in
 Git history. Architecture and library contracts belong in [LIBRARIES.md](LIBRARIES.md),
 [DESIGN.md](DESIGN.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Current checkpoint: HTTP package boundary (2026-09-29)
+
+HTTP/1 and HTTP/2 implementations, std re-exports and `Net.http` have been
+removed. The compiler/std have no new package dependency or facade; `Net`
+remains an empty capability. Applications explicitly import the maintained
+`zen-http` package. Seven HTTP-specific corpus fixtures are preserved there:
+five existing H2 copies were equivalent after import normalization, and the
+HTTP/1 response/Sink and H2 actor receiver fixtures were moved with their
+expected outputs unchanged. Generic network primitives remain in std.
+
+The seed is regenerated and the 195-unit/header/seed fixpoint passes. The full
+zen-http macOS suite passes against the reduced std; all seven moved cases
+retain their outputs. Package coverage is published at zen-http `d7f94b2`.
+Local aggregate verification stops at the same pre-existing macOS SDK warning
+count (321 versus the Linux budget 320), with no budget increase. Full Linux
+CI remains the merge gate. The warning fix in PR #11 is the prerequisite.
+See LIBRARIES.md for caller migration.
+
 ## Current checkpoint: generated condition warnings (2026-09-29)
 
 Match conditions now rely on the enclosing C `if` parentheses, retaining

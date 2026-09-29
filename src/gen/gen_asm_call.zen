@@ -22,7 +22,7 @@ Write, Stream, TrapKind = gen.gen_ir
 word, integer, signed, same = gen.gen_ir
 LowerError, unsupported = gen.gen_lower
 Native, Value, Place, Base, LocalKind, LambdaRef, LoopTarget, Frame, Callee = gen.gen_asm_lower
-member_call, mem_call = gen.gen_asm_member
+member_call, mem_call, sys_call = gen.gen_asm_member
 to_i64_bits = gen.gen_asm_lower
 Shape, Form, FieldAt, VariantAt, shape, class_of, field_types = gen.gen_asm_shape
 variant_index, size_of = gen.gen_asm_shape
@@ -721,7 +721,6 @@ construct_named* = (lo :: Native, ty: TyId, c: Call, span: Span) Res<Value, Lowe
     s = lo.shape(ty).try();
     fields = s.form.match({ Record(f) => Ok(f), _ => None })
         .ok_or(unsupported(span, "a construction of a non-record type")).try();
-    decl = lo.struct_decl(ty).try();
     base = lo.slot_of(Scalar.Ptr).try();
     // Arguments evaluate in written order; omitted fields then take their
     // defaults in declaration order.
@@ -738,7 +737,7 @@ construct_named* = (lo :: Native, ty: TyId, c: Call, span: Span) Res<Value, Lowe
     fields.loop((h, i, field) {
         value = given.get(i).value_or(None).match({
             Ok(v) => v,
-            None  => lo.field_default(decl, ty, field, span).try(),
+            None  => lo.field_default(lo.struct_decl(ty).try(), ty, field, span).try(),
         });
         lo.add(Instruction.AddressOf(Address(out: base, slot: out.slot))).try();
         lo.add(Instruction.StoreValue(Store(base: base, offset: field.offset, value: value.slot))).try();
@@ -807,6 +806,7 @@ intrinsic = (lo :: Native, id: ExprId, callee: Callee, sources: Vec<Source>, c: 
                 "std.mem.mem_ptr"           => lo.pointer_call(id, name, sources, span),
                 "std.env.env"               => lo.env_call(id, name, c, sources, span),
                 "std.mem.mem_arena"         => lo.mem_call(id, name, sources, span),
+                "std.sys.sys"               => lo.sys_call(id, name, sources, span),
                 _                           => Err(unsupported(span, lo.alloc.String("the compiler-provided operation `{}.{}`", module, name).match({ Ok(t) => t.view(), Err(_) => "a compiler-provided operation" }))),
             }),
         }),
@@ -1005,8 +1005,144 @@ env_call = (lo :: Native, id: ExprId, name: str, c: Call, sources: Vec<Source>, 
             ty = lo.type_of(id).try();
             lo.variant_value(ty, "Ok", Ok(lo.unit().try()), span)
         },
-        _         => Err(unsupported(span, "this environment operation")),
+        "read"    => lo.receiver_kind(sources).eq("Stdin").match({
+            true  => lo.stdin_read(id, sources, span),
+            false => lo.sys_env_call(id, "fs_read", lo.without_receiver(sources).try(), c, span),
+        }),
+        _         => {
+            // The remaining capabilities are Zen functions over std.sys.
+            target = name.match({
+                "var"         => Ok("var"),
+                "read"        => Ok("fs_read"),
+                "write"       => Ok("fs_write"),
+                "exists"      => Ok("fs_exists"),
+                "is_dir"      => Ok("fs_is_dir"),
+                "since_start" => Ok("since_start"),
+                "unix"        => Ok("unix"),
+                _             => None,
+            }).ok_or(unsupported(span, "this environment operation")).try();
+            lo.sys_env_call(id, target, lo.without_receiver(sources).try(), c, span)
+        },
     })
+}
+
+without_receiver = (lo :: Native, sources: Vec<Source>) Res<Vec<Source>, LowerError> {
+    rest ::= lo.alloc.Vec<Source>();
+    sources.loop((h, i, s) { (i > 0).then(() { rest.add(s).try(LowerError.OutOfMemory); }); });
+    Ok(rest)
+}
+
+// `env.in.read(buf, n)`: at most `n` bytes onto the end of `buf`, within
+// its reserved capacity (more is `Full`); `len` advances by the count read.
+// This writes the Vec's fields, as the C backend's floor does.
+stdin_read = (lo :: Native, id: ExprId, sources: Vec<Source>, span: Span) Res<Value, LowerError> {
+    ty = lo.type_of(id).try();
+    usize_ty = lo.prim("usize").try();
+    buf_source = sources.get(1).value_or(Source.Absent);
+    buf_ty = buf_source.match({ Given(e) => lo.type_of(e), _ => Err(unsupported(span, "a stdin read without a buffer")) }).try();
+    buf = lo.argument_place(buf_source, buf_ty, span).try();
+    n = lo.argument_value(sources.get(2).value_or(Source.Absent), usize_ty, span).try();
+    len_place = lo.field_place(buf, "len", span).try();
+    data = lo.read(lo.field_place(buf, "data", span).try()).try();
+    len = lo.read(len_place).try();
+    cap = lo.read(lo.field_place(buf, "capacity", span).try()).try();
+    room = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.BinaryValue(Binary(out: room, left: cap.slot, right: len.slot, op: Op.WrapSub, span: nowhere()))).try();
+    too_many = lo.slot_of(Scalar.Bool).try();
+    lo.add(Instruction.BinaryValue(Binary(out: too_many, left: n.slot, right: room, op: Op.Greater, span: nowhere()))).try();
+    out = lo.temp(ty).try();
+    full = lo.label().try();
+    go = lo.label().try();
+    done = lo.label().try();
+    lo.branch_to(too_many, full, go).try();
+    lo.start(full);
+    err_ty = lo.err_type(ty).try();
+    refused = lo.variant_value(ty, "Err", Ok(lo.variant_value(err_ty, "Full", None, span).try()), span).try();
+    lo.add(Instruction.Copy(Move(out: out.slot, source: refused.slot))).try();
+    lo.jump(done).try();
+    lo.start(go);
+    // Pending output goes out before blocking on input.
+    lo.add(Instruction.Flush).try();
+    base = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.BinaryValue(Binary(out: base, left: data.slot, right: len.slot, op: Op.WrapAdd, span: nowhere()))).try();
+    fd_ty = lo.prim("i32").try();
+    fd = lo.constant(fd_ty, 0).try();
+    args ::= lo.alloc.Vec<Value>();
+    args.add(fd).try(LowerError.OutOfMemory);
+    args.add(Value(slot: base, ty: lo.ptr_u8().try())).try(LowerError.OutOfMemory);
+    args.add(n).try(LowerError.OutOfMemory);
+    result = lo.std_call("std.sys.sys", "read_full", args, span).try();
+    variants = lo.variants_of(result.ty).try();
+    ok = variant_index(variants, "Ok").ok_or(unsupported(span, "read_full without Ok")).try();
+    tag = lo.tag_of(result).try();
+    expected = lo.word_const(Scalar.U32, ok.to_i64_bits()).try();
+    good = lo.slot_of(Scalar.Bool).try();
+    lo.add(Instruction.BinaryValue(Binary(out: good, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+    read_ok = lo.label().try();
+    read_bad = lo.label().try();
+    lo.branch_to(good, read_ok, read_bad).try();
+    lo.start(read_bad);
+    closed = lo.variant_value(ty, "Err", Ok(lo.variant_value(err_ty, "Closed", None, span).try()), span).try();
+    lo.add(Instruction.Copy(Move(out: out.slot, source: closed.slot))).try();
+    lo.jump(done).try();
+    lo.start(read_ok);
+    got = lo.payload_of(result, ok).try();
+    grown = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.BinaryValue(Binary(out: grown, left: len.slot, right: got.slot, op: Op.WrapAdd, span: nowhere()))).try();
+    lo.write(len_place, Value(slot: grown, ty: usize_ty)).try();
+    made = lo.variant_value(ty, "Ok", Ok(got), span).try();
+    lo.add(Instruction.Copy(Move(out: out.slot, source: made.slot))).try();
+    lo.enter(done).try();
+    Ok(out)
+}
+
+// Call a function of a std module by name with evaluated arguments.
+std_call* = (lo :: Native, module_name: str, name: str, args: Vec<Value>, span: Span) Res<Value, LowerError> {
+    module = lo.check.world.index_of(module_name).ok_or(unsupported(span, "a missing std module")).try();
+    table = lo.check.world.table_at(module).ok_or(unsupported(span, "a missing std module table")).try();
+    def = table.defs.find((d) { d.name.eq(name) }).ok_or(unsupported(span, "a missing std function")).try();
+    decl = decl_at(lo.tree, def.id).ok_or(unsupported(span, "a missing std declaration")).try();
+    f = decl.kind.match({ Function(f) => Ok(f), _ => None }).ok_or(unsupported(span, "a std non-function")).try();
+    callee = Callee(f: f, owner: def.id, member: None, module: module, inst: lo.alloc.Inst(), self_ty: None, generic_owner: None);
+    index = lo.enqueue(callee).try();
+    slots ::= lo.alloc.Vec<usize>();
+    f.params.loop((h, i, p) {
+        want = lo.param_type(callee, i).try();
+        value = args.get(i).ok_or(unsupported(span, "a missing std argument")).try();
+        slots.add(lo.coerce(value, want).try().slot).try(LowerError.OutOfMemory);
+    });
+    ret = lo.result_type(callee).try();
+    out = lo.temp(ret).try();
+    lo.add(Instruction.Invoke(Invocation(out: out.slot, function: index, args: slots))).try();
+    Ok(out)
+}
+
+// The receiver capability's type name (`Stdin`, `Fs`, ...).
+receiver_kind = (lo :: Native, sources: Vec<Source>) str {
+    sources.get(0).value_or(Source.Absent).match({
+        Given(e) => lo.type_of(e).match({ Ok(t) => lo.type_name(t), Err(_) => "" }),
+        _        => "",
+    })
+}
+
+// Call a function of std.sys.sys_env by name.
+sys_env_call* = (lo :: Native, id: ExprId, name: str, sources: Vec<Source>, c: Call, span: Span)
+                Res<Value, LowerError> {
+    module = lo.check.world.index_of("std.sys.sys_env").ok_or(unsupported(span, "the std.sys.sys_env module")).try();
+    table = lo.check.world.table_at(module).ok_or(unsupported(span, "the std.sys.sys_env table")).try();
+    def = table.defs.find((d) { d.name.eq(name) }).ok_or(unsupported(span, "a missing std.sys.sys_env function")).try();
+    decl = decl_at(lo.tree, def.id).ok_or(unsupported(span, "a missing std.sys.sys_env declaration")).try();
+    f = decl.kind.match({ Function(f) => Ok(f), _ => None }).ok_or(unsupported(span, "a std.sys.sys_env non-function")).try();
+    callee = Callee(
+        f: f,
+        owner: def.id,
+        member: None,
+        module: module,
+        inst: lo.alloc.Inst(),
+        self_ty: None,
+        generic_owner: None
+    );
+    lo.invoke(id, callee, sources, c, span)
 }
 
 // ---------------------------------------------------------------------

@@ -140,3 +140,93 @@ darwin_symbol* = (call: Sys) Res<str> {
         Clone        => None,
     })
 }
+
+// Kernel constants whose values differ between the targets.
+SysConstant* = AtFdcwd
+    | ORdonly
+    | OWronly
+    | ORdwr
+    | OCreat
+    | OTrunc
+    | OAppend
+    | OCloexec
+    | ODirectory
+    | ClockMonotonic
+    | ClockRealtime
+    | EIntr
+    | EAgain
+    | MapPrivateAnonymous
+
+// The operating systems and architectures with constant tables.
+Platform* = LinuxX86_64 | LinuxArm64 | Darwin
+
+// Linux values come from the uapi headers (asm-generic for AArch64, whose
+// O_DIRECTORY differs from x86-64); Darwin values from the macOS SDK.
+constant_value* = (name: SysConstant, platform: Platform) i64 {
+    linux = platform.match({ Darwin => false, _ => true });
+    name.match({
+        AtFdcwd             => linux.match({ true => -100, false => -2 }),
+        ORdonly             => 0,
+        OWronly             => 1,
+        ORdwr               => 2,
+        OCreat              => linux.match({ true => 64, false => 512 }),
+        OTrunc              => linux.match({ true => 512, false => 1024 }),
+        OAppend             => linux.match({ true => 1024, false => 8 }),
+        OCloexec            => linux.match({ true => 524288, false => 16777216 }),
+        ODirectory          => platform.match({ LinuxX86_64 => 65536, LinuxArm64 => 16384, Darwin => 1048576 }),
+        ClockMonotonic      => linux.match({ true => 1, false => 6 }),
+        ClockRealtime       => 0,
+        EIntr               => 4,
+        EAgain              => linux.match({ true => 11, false => 35 }),
+        // MAP_PRIVATE | MAP_ANONYMOUS
+        MapPrivateAnonymous => linux.match({ true => 34, false => 4098 }),
+    })
+}
+
+// The Sys operation a std.sys declaration names.
+sys_named* = (name: str) Res<Sys> {
+    name.match({
+        "read"          => Ok(Sys.Read),
+        "write"         => Ok(Sys.Write),
+        "openat"        => Ok(Sys.Openat),
+        "close"         => Ok(Sys.Close),
+        "mmap"          => Ok(Sys.Mmap),
+        "munmap"        => Ok(Sys.Munmap),
+        "exit_group"    => Ok(Sys.ExitGroup),
+        "clock_gettime" => Ok(Sys.ClockGettime),
+        "getrandom"     => Ok(Sys.Getrandom),
+        "socket"        => Ok(Sys.Socket),
+        "bind"          => Ok(Sys.Bind),
+        "listen"        => Ok(Sys.Listen),
+        "accept4"       => Ok(Sys.Accept4),
+        "connect"       => Ok(Sys.Connect),
+        "epoll_create1" => Ok(Sys.EpollCreate1),
+        "epoll_ctl"     => Ok(Sys.EpollCtl),
+        "epoll_pwait"   => Ok(Sys.EpollPwait),
+        "kqueue"        => Ok(Sys.Kqueue),
+        "kevent"        => Ok(Sys.Kevent),
+        "futex"         => Ok(Sys.Futex),
+        "clone"         => Ok(Sys.Clone),
+        _               => None,
+    })
+}
+
+constant_named* = (name: str) Res<SysConstant> {
+    name.match({
+        "at_fdcwd"              => Ok(SysConstant.AtFdcwd),
+        "o_rdonly"              => Ok(SysConstant.ORdonly),
+        "o_wronly"              => Ok(SysConstant.OWronly),
+        "o_rdwr"                => Ok(SysConstant.ORdwr),
+        "o_creat"               => Ok(SysConstant.OCreat),
+        "o_trunc"               => Ok(SysConstant.OTrunc),
+        "o_append"              => Ok(SysConstant.OAppend),
+        "o_cloexec"             => Ok(SysConstant.OCloexec),
+        "o_directory"           => Ok(SysConstant.ODirectory),
+        "clock_monotonic"       => Ok(SysConstant.ClockMonotonic),
+        "clock_realtime"        => Ok(SysConstant.ClockRealtime),
+        "eintr"                 => Ok(SysConstant.EIntr),
+        "eagain"                => Ok(SysConstant.EAgain),
+        "map_private_anonymous" => Ok(SysConstant.MapPrivateAnonymous),
+        _                       => None,
+    })
+}

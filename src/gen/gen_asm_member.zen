@@ -12,8 +12,10 @@ Range = std.core
 ExprId, BlockId, Span, Function, Call, Struct, Impl, Member, Decl = std.ast
 nowhere = std.ast
 Checker, DeclId, Def, TyId, Inst, decl_at, CheckedCall, ImplId = sema.sema
+Sys = gen.gen_sys
 Scalar, Op, Const, Move, Binary, Instruction, Load, Store, Address, Pages = gen.gen_ir
-Invocation = gen.gen_ir
+Invocation, SysCall, SysValue, Start, StartValue, Convert, Layout = gen.gen_ir
+sys_named, constant_named = gen.gen_sys
 TrapKind = gen.gen_ir
 LowerError, unsupported = gen.gen_lower
 Native, Value, Place, Base, Callee = gen.gen_asm_lower
@@ -521,4 +523,79 @@ payload_type* = (lo :: Native, ty: TyId, name: str) Res<TyId, LowerError> {
     variants = lo.variants_of(ty).try();
     found = variants.find((v) { v.name.eq(name) }).ok_or(unsupported(nowhere(), "a missing variant")).try();
     found.payload.ok_or(unsupported(nowhere(), "a payload-free variant"))
+}
+
+// ---------------------------------------------------------------------
+// std.sys: the kernel interface
+// ---------------------------------------------------------------------
+
+// The bodiless std.sys operations: kernel calls, process start values,
+// per-target constants, a clock reading and raw address conversions.
+sys_call* = (lo :: Native, id: ExprId, name: str, sources: Vec<Source>, span: Span)
+            Res<Value, LowerError> {
+    ty = lo.type_of(id).try();
+    sys_named(name).match({
+        Ok(op)  => {
+            args ::= lo.alloc.Vec<usize>();
+            sources.loop((s) {
+                s.match({
+                    Given(e)    => args.add(lo.expr(e).try().slot).try(LowerError.OutOfMemory),
+                    Computed(v) => args.add(v.slot).try(LowerError.OutOfMemory),
+                    _           => Err(unsupported(span, "an omitted kernel argument")).try(),
+                });
+            });
+            out = lo.temp(ty).try();
+            lo.add(Instruction.System(SysCall(out: out.slot, call: op, args: args))).try();
+            Ok(out)
+        },
+        None    => constant_named(name).match({
+            Ok(c)   => {
+                out = lo.temp(ty).try();
+                lo.add(Instruction.SysConst(SysValue(out: out.slot, name: c))).try();
+                Ok(out)
+            },
+            None    => name.match({
+                "argc"        => lo.start_value(ty, StartValue.Argc),
+                "argv"        => lo.start_value(ty, StartValue.Argv),
+                "envp"        => lo.start_value(ty, StartValue.Envp),
+                "pointer_at"  => lo.converted(sources, ty, span),
+                "address_of"  => lo.converted(sources, ty, span),
+                "clock_ns"    => {
+                    clock = lo.expr(sources.source_expr(0, span).try()).try();
+                    time = lo.slot_of(Scalar.Block(Layout(size: 16, align: 8))).try();
+                    at = lo.slot_of(Scalar.Ptr).try();
+                    lo.add(Instruction.AddressOf(Address(out: at, slot: time))).try();
+                    status = lo.slot_of(Scalar.I64).try();
+                    args ::= lo.alloc.Vec<usize>();
+                    args.add(clock.slot).try(LowerError.OutOfMemory);
+                    args.add(at).try(LowerError.OutOfMemory);
+                    lo.add(Instruction.System(SysCall(out: status, call: Sys.ClockGettime, args: args))).try();
+                    seconds = lo.slot_of(Scalar.U64).try();
+                    nanos = lo.slot_of(Scalar.U64).try();
+                    lo.add(Instruction.LoadValue(Load(out: seconds, base: at, offset: 0))).try();
+                    lo.add(Instruction.LoadValue(Load(out: nanos, base: at, offset: 8))).try();
+                    billion = lo.word_const(Scalar.U64, 1000000000).try();
+                    scaled = lo.slot_of(Scalar.U64).try();
+                    lo.add(Instruction.BinaryValue(Binary(out: scaled, left: seconds, right: billion, op: Op.WrapMul, span: nowhere()))).try();
+                    out = lo.temp(ty).try();
+                    lo.add(Instruction.BinaryValue(Binary(out: out.slot, left: scaled, right: nanos, op: Op.WrapAdd, span: nowhere()))).try();
+                    Ok(out)
+                },
+                _             => Err(unsupported(span, "this std.sys operation")),
+            }),
+        }),
+    })
+}
+
+start_value = (lo :: Native, ty: TyId, which: StartValue) Res<Value, LowerError> {
+    out = lo.temp(ty).try();
+    lo.add(Instruction.Startup(Start(out: out.slot, value: which))).try();
+    Ok(out)
+}
+
+converted = (lo :: Native, sources: Vec<Source>, ty: TyId, span: Span) Res<Value, LowerError> {
+    value = lo.expr(sources.source_expr(0, span).try()).try();
+    out = lo.temp(ty).try();
+    lo.add(Instruction.Cast(Convert(out: out.slot, input: value.slot))).try();
+    Ok(out)
 }

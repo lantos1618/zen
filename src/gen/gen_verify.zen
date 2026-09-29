@@ -7,7 +7,7 @@ Range = std.core
 str = std.text
 Program, Func, Scalar, Instruction, Terminator, Op = gen.gen_ir
 same, word, integer, signed = gen.gen_ir
-arity = gen.gen_asm_sys
+arity = gen.gen_sys
 
 IrReason* = EntryFunction
     | EntryParameters
@@ -197,6 +197,12 @@ Check = {
                 self.native_only().try();
                 self.expect(slot, Scalar.Ptr)
             },
+            Flush              => self.native_only(),
+            SysConst(value)    => {
+                self.native_only().try();
+                integer(self.slot(value.out).try()).ensure(self.fault(IrReason.Type)).try();
+                Ok(())
+            },
             Startup(value)     => {
                 self.native_only().try();
                 ty = value.value.match({ Argc => Scalar.U64, _ => Scalar.Ptr });
@@ -338,6 +344,8 @@ Check = {
             Startup(_)         => Ok(()),
             MapPages(value)    => self.initialized(flags, value.bytes),
             UnmapPages(slot)   => self.initialized(flags, slot),
+            SysConst(_)        => Ok(()),
+            Flush              => Ok(()),
         })
     }
 
@@ -376,6 +384,7 @@ write = (flags :: Vec<bool>, instruction: Instruction) {
         System(value)      => { flags.set(value.out, true); },
         Startup(value)     => { flags.set(value.out, true); },
         MapPages(value)    => { flags.set(value.out, true); },
+        SysConst(value)    => { flags.set(value.out, true); },
         _                  => (),
     });
 }

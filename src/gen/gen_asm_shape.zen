@@ -123,7 +123,13 @@ class_of* = (lo :: Native, ty: TyId) Res<Scalar, LowerError> {
 compute_shape = (lo :: Native, ty: TyId) Res<Shape, LowerError> {
     lo.check.types.at(ty).match({
         Prim(p)  => p.name.eq("str").match({
-            true  => Ok(Shape(class: Scalar.Block(STR_LAYOUT), form: Form.Plain)),
+            // `str` is the record `{ data: Ptr<u8>, len: usize }`.
+            true  => {
+                fields ::= lo.alloc.Vec<FieldAt>();
+                fields.add(FieldAt(name: "data", ty: lo.ptr_u8().try(), offset: 0)).try(LowerError.OutOfMemory);
+                fields.add(FieldAt(name: "len", ty: lo.prim("usize").try(), offset: 8)).try(LowerError.OutOfMemory);
+                Ok(Shape(class: Scalar.Block(STR_LAYOUT), form: Form.Record(fields)))
+            },
             false => prim_class(p.name).match({
                 Ok(class) => Ok(Shape(class: class, form: Form.Plain)),
                 None      => Err(unsupported(nowhere(), "floating-point values")),

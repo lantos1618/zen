@@ -19,7 +19,7 @@ Range = std.core
 decode_literal = std.lex
 Ast, ExprId, BlockId, TypeId, Span, Function, Literal, Bind = std.ast
 BinOp, UnOp, Match, Call, Expr, Pattern, Lambda, Param, Access, Index = std.ast
-TParam = std.ast
+TParam, Arg = std.ast
 PatternId = std.ast
 nowhere = std.ast
 Checker, DeclId, Def, TyId, Ctx, Inst, decl_at = sema.sema
@@ -34,7 +34,7 @@ Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of = gen.gen_asm_shape
 to_bound = gen.gen_asm_member
 capability = gen.gen_asm_shape
 variant_index, size_of, TAG_BYTES = gen.gen_asm_shape
-call, construct_named, print_call = gen.gen_asm_call
+call, construct_named, print_call, sys_env_call, Source = gen.gen_asm_call
 
 // A value computed into a slot, with its concrete (substituted) type.
 Value* = { slot*: usize, ty*: TyId }
@@ -1049,7 +1049,19 @@ Native* = {
                 capability.match({
                     Ok(_) => {
                         ty = self.type_of(id).try();
-                        self.constant(ty, 0)
+                        self.is_unit(ty).match({
+                            true  => self.constant(ty, 0),
+                            // `env.argv`: the process arguments.
+                            false => a.name.text.eq("argv").match({
+                                true  => self.sys_env_call(id, "argv", self.alloc.Vec<Source>(), Call(
+                                    callee: id,
+                                    targs: self.alloc.Vec<TypeId>(),
+                                    args: self.alloc.Vec<Arg>(),
+                                    args_span: span
+                                ), span),
+                                false => Err(unsupported(span, "this environment field")),
+                            }),
+                        })
                     },
                     None  => self.place_of(a.base).try().match({
                         Ok(place) => self.read(self.field_place(place, a.name.text, span).try()),

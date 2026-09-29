@@ -22,7 +22,7 @@ Convert, Load, Store, SysCall, Start, Stream = gen.gen_ir
 width, signed, word, trap_message = gen.gen_ir
 Span = std.ast
 Target = gen.gen_asm
-Sys, linux_arm64, darwin_symbol = gen.gen_asm_sys
+Sys, linux_arm64, darwin_symbol, constant_value, Platform = gen.gen_sys
 
 Arm64Os* = Linux | Darwin
 
@@ -298,6 +298,15 @@ Assembly = {
                 self.load(slot, "x0").try();
                 self.x0_slot = None;
                 self.out.add("    bl za_unmap\n")
+            },
+            Flush              => {
+                self.x0_slot = None;
+                self.out.add("    bl za_flush\n")
+            },
+            SysConst(value)    => {
+                platform = self.darwin().match({ true => Platform.Darwin, false => Platform.LinuxArm64 });
+                self.immediate("x0", bits64(constant_value(value.name, platform))).try();
+                self.store(value.out, "x0")
             },
             Startup(value)     => {
                 symbol = value.value.match({ Argc => "za_argc", Argv => "za_argv", Envp => "za_envp" });
@@ -687,12 +696,18 @@ Assembly = {
         });
         self.x0_slot = None;
         self.darwin().match({
-            true  => darwin_symbol(call.call).match({
-                Ok(symbol) => self.out.fmt(
-                    "    bl _{}\n    cmn x0, #1\n    b.ne 1f\n    bl ___error\n    ldrsw x0, [x0]\n    neg x0, x0\n1:\n",
-                    symbol
-                ),
-                None       => self.out.add("    mov x0, #-78\n"),
+            // openat's mode is variadic (on the stack) and getentropy caps
+            // its length, so both go through runtime adapters.
+            true  => call.call.match({
+                Openat    => self.out.add("    bl za_d_openat\n    cmn x0, #1\n    b.ne 1f\n    bl ___error\n    ldrsw x0, [x0]\n    neg x0, x0\n1:\n"),
+                Getrandom => self.out.add("    bl za_d_getrandom\n"),
+                _         => darwin_symbol(call.call).match({
+                    Ok(symbol) => self.out.fmt(
+                        "    bl _{}\n    cmn x0, #1\n    b.ne 1f\n    bl ___error\n    ldrsw x0, [x0]\n    neg x0, x0\n1:\n",
+                        symbol
+                    ),
+                    None       => self.out.add("    mov x0, #-78\n"),
+                }),
             }),
             false => linux_arm64(call.call).match({
                 Ok(number) => self.out.fmt("    mov x8, #{}\n    svc #0\n", number),
@@ -1010,6 +1025,11 @@ Assembly = {
                 linux_arm64(Sys.Munmap).value_or(0)
             ),
         }).try();
+        self.darwin().then(() {
+            self.out.add(
+                "za_d_openat:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    sub sp, sp, #16\n    str x3, [sp]\n    bl _openat\n    add sp, sp, #16\n    ldp x29, x30, [sp], #16\n    ret\nza_d_getrandom:\n    stp x29, x30, [sp, #-48]!\n    mov x29, sp\n    stp x19, x20, [sp, #16]\n    str x21, [sp, #32]\n    mov x19, x0\n    mov x20, x1\n    mov x21, #0\n1:\n    cmp x21, x20\n    b.hs 3f\n    sub x1, x20, x21\n    mov x9, #256\n    cmp x1, x9\n    csel x1, x1, x9, ls\n    str x1, [sp, #40]\n    add x0, x19, x21\n    bl _getentropy\n    cbnz x0, 2f\n    ldr x1, [sp, #40]\n    add x21, x21, x1\n    b 1b\n2:\n    bl ___error\n    ldrsw x0, [x0]\n    neg x0, x0\n    b 4f\n3:\n    mov x0, x21\n4:\n    ldp x19, x20, [sp, #16]\n    ldr x21, [sp, #32]\n    ldp x29, x30, [sp], #48\n    ret\n"
+            ).try();
+        });
         // emit(x0 bytes, x1 length, x2 descriptor): buffered stdout,
         // written-through stderr.
         self.out.add(

@@ -121,6 +121,12 @@ Runner = {
     execute = (self: @Self, c: Case, binary: str) Res<ProcOutput, AllocError> {
         command ::= self.a.String().try();
         command.add("exec perl -e 'alarm 10; exec @ARGV' ").try();
+        // The harness exports two over-long names for this test alone.
+        c.base.ends_with("env_var_resolves_a_name_of_any_length").then(() {
+            command.add("env ").try();
+            command.add(self.a.String("{}=hello ", repeat(self.a, 'V', 5039).try().view()).try().view()).try();
+            command.add(self.a.String("{}=hello ", repeat(self.a, 'B', 4096).try().view()).try().view()).try();
+        });
         self.read_sidecar(c, "env").when_ok((text) {
             command.add("env ").try();
             text.split('\n').loop((line) {
@@ -151,8 +157,38 @@ Runner = {
         })
     }
 
+    // The harness rewrites this test's epoch to the current second, as
+    // tests/run.py does, in a staged copy.
+    staged = (self: @Self, c: Case, index: usize) Res<Case, AllocError> {
+        c.base.ends_with("clock_reads_are_two_authorities").match({
+            false => Ok(c),
+            true  => {
+                source = self.a.String("{}/{}", c.root, c.entry).try();
+                text = self.read(source.view()).value_or("");
+                dir = self.a.String("{}/stage{}", self.work, index).try();
+                mkdir ::= self.a.Vec<str>();
+                ["mkdir", "-p", dir.view()].loop((w) { mkdir.add(w).try(); });
+                self.run(mkdir).try();
+                line = "HARNESS_EPOCH* : u64 = 0";
+                patched ::= self.a.String().try();
+                text.find(line).match({
+                    None     => patched.add(text).try(),
+                    Ok(at)   => {
+                        patched.add(text.slice(0, at)).try();
+                        patched.fmt("HARNESS_EPOCH* : u64 = {}", self.env.clock.unix().seconds_of()).try();
+                        patched.add(text.slice(at + line.len, text.len)).try();
+                    },
+                });
+                target = self.a.String("{}/{}", dir.view(), c.entry).try();
+                self.env.fs.write(target.view(), patched.view()).ignore();
+                Ok(Case(root: dir.view(), entry: c.entry, base: c.base))
+            },
+        })
+    }
+
     // One test's verdict line.
-    case = (self: @Self, c: Case, index: usize, tally :: Tally) Res<(), AllocError> {
+    case = (self: @Self, original: Case, index: usize, tally :: Tally) Res<(), AllocError> {
+        c = self.staged(original, index).try();
         source = self.a.String("{}/t{}.s", self.work, index).try();
         object = self.a.String("{}/t{}.o", self.work, index).try();
         binary = self.a.String("{}/t{}", self.work, index).try();
@@ -202,6 +238,12 @@ Runner = {
         });
         Ok(problem.view())
     }
+}
+
+repeat = (a: Alloc, byte: u8, n: usize) Res<String, AllocError> {
+    out ::= a.String().try();
+    Range(0, n).loop((_) { out.add(byte).try(); });
+    Ok(out)
 }
 
 first_line = (text: str) str {

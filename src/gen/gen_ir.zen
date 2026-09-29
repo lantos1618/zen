@@ -11,7 +11,7 @@
 Vec = std.collections
 str = std.text
 Span = std.ast
-Sys = gen.gen_asm_sys
+Sys, SysConstant = gen.gen_sys
 
 // Size and alignment of an aggregate slot, in bytes.
 Layout* = { size*: usize, align*: usize }
@@ -89,6 +89,8 @@ StaticBytes* = { out*: usize, bytes*: str }
 Write* = { data*: usize, len*: usize, stream*: Stream }
 // A kernel operation; the result is a word, negative for `-errno`.
 SysCall* = { out*: usize, call*: Sys, args*: Vec<usize> }
+// A kernel constant at its target's value, as an I32/I64 word.
+SysValue* = { out*: usize, name*: SysConstant }
 // Process start values: `argc`, `argv` and `envp`.
 StartValue* = Argc | Argv | Envp
 Start* = { out*: usize, value*: StartValue }
@@ -115,6 +117,9 @@ Instruction* = Constant(Const)
     | Startup(Start)
     | MapPages(Pages)
     | UnmapPages(usize)
+    | SysConst(SysValue)
+    // Write out buffered standard output now (before blocking on input).
+    | Flush
 
 // A terminator that ends the process with Zen's trap report.
 TrapKind* = Overflow | DivideByZero | OutOfBounds | Unreachable | OutOfMemory

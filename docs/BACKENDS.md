@@ -1,7 +1,8 @@
 # Code generation
 
 C is the default, full-language backend and the compiler's bootstrap path.
-JavaScript and GNU x86-64 assembly support scalar executables. Their support
+JavaScript and assembly render the shared full lowering (`gen_lower_core`;
+see `JS_BACKEND.md` and `NATIVE_BACKEND.md` for what each covers). Their support
 boundary is deliberately checked: unsupported reachable code produces a source
 diagnostic before the output callback runs. Selecting another backend never
 falls back to C.
@@ -66,7 +67,9 @@ results, closures, generic instantiation, foreign calls, named/default call
 arguments, wrapping arithmetic, and other numeric widths are not lowered by
 these backends yet. Unused generic functions need not be lowered, but the
 frontend still checks the entire imported source graph. JavaScript project
-recipes refuse native link dependencies.
+recipes accept Zen source libraries and refuse native link dependencies.
+(This list describes the scalar surface; the full lowering behind
+`--backend js` and `--backend asm` covers much more, per `JS_BACKEND.md`.)
 
 ## Phase boundaries
 

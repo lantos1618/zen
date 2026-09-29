@@ -18,7 +18,7 @@ Primitive* = { name*: str, params*: Vec<TyId>, result*: TyId }
 
 // Modules whose bodyless declarations must all be supported primitives.
 primitive_module* = (module: str) bool {
-    module.is_in(["std.core.num", "std.simd", "std.ct"])
+    module.is_in(["std.core.num", "std.simd", "std.ct.ct"])
 }
 
 // Names no other module may declare without a body: a local declaration
@@ -55,7 +55,7 @@ primitive_declaration = (c :: Checker, d: Def, f: Function, module: str)
         "std.simd"        => vector_shape(f.name.text, names, shown.view()),
         "std.mem.mem_ptr" => f.name.text.eq("compiler_barrier")
             && names.len == 0 && shown.view().eq("()"),
-        "std.ct"          => barrier_shape(f.name.text, names, shown.view()),
+        "std.ct.ct"       => barrier_shape(f.name.text, names, shown.view()),
         _                 => primitive_shape(f.name.text, names, shown.view()),
     });
     owner = primitive_module(module) || module.eq("std.mem.mem_ptr");

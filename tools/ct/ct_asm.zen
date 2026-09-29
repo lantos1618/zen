@@ -1,0 +1,84 @@
+// ct-asm: the static constant-time check over a Zen program's generated C.
+//
+//   ct-asm --c build/program.c [--cc clang]... [--level -O2]... \
+//          [--leaky name]... [--manifest file] [--work build/ct]
+//
+// Emit the C with `zen build <root> --entry <file> --emit-c -o <file>`.
+// Every function with a Secret parameter is audited, and every function a
+// manifest names (see tools/ct/abi.zen for the format); `--leaky` names
+// negative controls that must be flagged. Exits 0 only when every audited
+// function passes on every compiler and level and every control is caught.
+Vec = std.collections
+str = std.text
+Audit, run_audit = audit
+
+main = (env: Env) Res<i32, AllocError> {
+    a = env.mem.alloc();
+    c_path    ::= "";
+    manifest  ::= "";
+    work      ::= "build/ct";
+    compilers ::= a.Vec<str>();
+    levels    ::= a.Vec<str>();
+    leaky     ::= a.Vec<str>();
+    i         ::= 1;
+    loop(() { i + 1 < env.argv.len }, (h) {
+        flag  = env.argv.get(i).value_or("");
+        value = env.argv.get(i + 1).value_or("");
+        flag.match({
+            "--c"        => { c_path = value; },
+            "--work"     => { work = value; },
+            "--cc"       => compilers.add(value).try(),
+            "--level"    => levels.add(value).try(),
+            "--leaky"    => leaky.add(value).try(),
+            "--manifest" => {
+                manifest = env.fs.read(a, value).match({
+                    Ok(text) => text.view(),
+                    Err(_)   => {
+                        println("ct-asm: cannot read manifest {}", value);
+                        ""
+                    },
+                });
+            },
+            _            => { println("ct-asm: unknown flag {}", flag); },
+        });
+        i = i + 2;
+    });
+    (compilers.len == 0).then(() { compilers.add("cc").try(); });
+    (levels.len == 0).then(
+        () { levels.add("-O2").try(); levels.add("-O3").try(); }
+    );
+    (c_path.len == 0).match({
+        true  => {
+            println("ct-asm: --c <generated.c> is required");
+            Ok(2)
+        },
+        false => run_audit(
+            env,
+            a,
+            Audit(
+                manifest: manifest,
+                compilers: compilers,
+                levels: levels,
+                leaky: leaky,
+                work: work
+            ),
+            c_path
+        ).match({
+            Ok(o)  => {
+                println(
+                    "ct-asm: {} passed, {} failed, {} negative control(s) flagged",
+                    o.passed,
+                    o.failed,
+                    o.controls
+                );
+                Ok(
+                    (o.failed == 0 && o.controls >= leaky.len).match({ true => 0, false => 1 })
+                )
+            },
+            Err(e) => {
+                println("ct-asm: could not run the audit");
+                Ok(2)
+            },
+        }),
+    })
+}

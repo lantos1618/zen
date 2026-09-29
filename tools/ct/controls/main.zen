@@ -1,0 +1,96 @@
+// Controls for tools/ct. The first group is constant time by construction
+// and must pass every static and dynamic check; the `leaky_` group is
+// accepted by the secret discipline only because each declassifies its
+// secret on purpose, and every check must flag it.
+Secret, declassify, Choice = std.ct
+ct_eq, ct_lt, ct_select, ct_swap, ct_memeq, ct_lookup = std.ct
+bit_xor, bit_and, shift_right, mul_wide, truncate_u64, truncate_u8 = std.core.num
+to_u64, to_usize = std.core.num
+Ptr = std.mem
+
+// Branch-free selection on a secret comparison.
+select_min* = (a: Secret<u64>, b: Secret<u64>) Secret<u64> {
+    ct_lt(a, b).ct_select(a, b)
+}
+
+// A four-limb product's low words, fiat style: wide multiplies and carries.
+mul_low* = (x: Secret<[u64, 4]>, y: Secret<[u64, 4]>) Secret<[u64, 4]> {
+    p0 = x[0].mul_wide(y[0]);
+    p1 = x[0].mul_wide(y[1]) +% x[1].mul_wide(y[0]) +% p0.shift_right(64);
+    p2 = x[0].mul_wide(y[2]) +% x[1].mul_wide(y[1]) +% x[2].mul_wide(y[0]) +% p1.shift_right(64);
+    p3 = x[0].mul_wide(y[3]) +% x[1].mul_wide(y[2]) +% x[2].mul_wide(y[1]) +% x[3].mul_wide(y[0])
+        +% p2.shift_right(64);
+    [u64, 4](p0.truncate_u64(), p1.truncate_u64(), p2.truncate_u64(), p3.truncate_u64())
+}
+
+// A Montgomery-ladder step: swap two field elements by a secret bit.
+ladder_swap* = (x: Secret<Ptr<u64>>, y: Secret<Ptr<u64>>, bit: Secret<u64>) {
+    ct_swap(x, y, 10, ct_eq(bit.bit_and(1), 1));
+}
+
+// Tag comparison over every byte.
+tags_equal* = (tag: Secret<Ptr<u8>>, expected: Ptr<u8>) bool {
+    ct_memeq(tag, expected, 16).declassify_bool()
+}
+
+// A full-scan table read at a secret index.
+sbox* = (table: Ptr<u8>, index: Secret<usize>) Secret<u8> { ct_lookup(
+    table,
+    256,
+    index
+) }
+
+// Leaks through an early exit: the loop stops at the first difference.
+leaky_compare* = (tag: Secret<Ptr<u8>>, expected: Ptr<u8>) bool {
+    same: bool ::= true;
+    Range(0, 16).loop((h, i) {
+        (declassify(tag.read(i)) != expected.read(i)).then(() {
+            same = false;
+            h.break();
+        });
+    });
+    same
+}
+
+// Leaks through the cache: the address depends on the secret.
+leaky_index* = (table: Ptr<u8>, index: Secret<u64>) u8 {
+    table.read(declassify(index).truncate_u8().to_usize())
+}
+
+// Leaks through the cache from a limb of a by-value array argument (on the
+// stack on x86-64, behind a hidden pointer on arm64).
+leaky_limb* = (x: Secret<[u64, 4]>, table: Ptr<u8>) u8 {
+    table.read(declassify(x[2]).truncate_u8().to_usize())
+}
+
+// Leaks through division latency.
+leaky_divide* = (key: Secret<u64>, divisor: u64) u64 { declassify(
+    key
+) / divisor }
+
+main = (env: Env) Res<(), AllocError> {
+    a     = env.mem.alloc();
+    bytes = a.raw(256, 16).try();
+    Range(0, 256).loop((i) { bytes.write(i, i.truncate_u8() *% 29); });
+    words = a.raw(160, 16).try().to<u64>();
+    Range(0, 20).loop((i) { words.write(i, i.to_u64()); });
+    x = [u64, 4](1, 2, 3, 4);
+    y = [u64, 4](5, 6, 7, 8);
+    ladder_swap(words, words.offset(10), 1);
+    println(
+        "{} {} {} {} {}",
+        declassify(select_min(3, 9)),
+        declassify(mul_low(x, y))[3],
+        words.read(0),
+        tags_equal(bytes, bytes),
+        declassify(sbox(bytes, 7))
+    );
+    println(
+        "{} {} {} {}",
+        leaky_limb(x, bytes),
+        leaky_compare(bytes, bytes.offset(1)),
+        leaky_index(bytes, 300),
+        leaky_divide(1000, 7)
+    );
+    Ok(())
+}

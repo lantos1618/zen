@@ -1,0 +1,1015 @@
+// Secret-dependence analysis of one compiled function's assembly.
+//
+// Input is the text a C compiler writes with -S (GNU/LLVM syntax): x86-64
+// AT&T from GCC or Clang, or arm64 from Clang. The analysis is a forward
+// dataflow over the function's instructions in file order. A register is
+// *secret* when its value depends on a secret input, and *points at
+// secrets* when it is a public address of secret memory (a Secret<Ptr<T>>
+// parameter, or the hidden pointer to a large by-value argument). Stack
+// slots are tracked by their offset from the stack pointer at entry, so
+// spills and reloads keep their taint. Taint is joined at labels and the
+// passes repeat until no label's state grows; a final pass reports.
+//
+// Reported, as in ctgrind and the constant-time literature:
+//   branch    a conditional branch whose flags or register are secret
+//   address   a load or store whose base or index register is secret
+//   divide    a division with a secret operand (variable latency)
+//   indirect  an indirect jump or call through a secret register
+//
+// Not modelled, so not reported: memory other than the stack and the
+// secret pointees (a secret copied into a heap buffer through a call and
+// read back is clean here), instructions whose latency depends on operands
+// other than division, and speculative execution. tools/ct/grind (valgrind)
+// tracks memory exactly on Linux; the timing test measures the machine.
+Alloc, AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+Range = std.core
+parse_i64 = std.text
+truncate_u32, to_i64 = std.core.num
+
+Isa* = X86 | Arm
+
+// A label or one instruction with operands split at top-level commas.
+Line* = { label*: str, mnemonic*: str, operands*: Vec<str>, text*: str }
+
+Finding* = { kind*: str, text*: str }
+
+// Where each secret input arrives, from tools/ct/abi.
+Seed* = {
+    values*: Vec<str>,        // registers holding secret values
+    pointers*: Vec<str>,      // registers pointing at secret memory
+    slots*: Vec<i64>,         // entry-relative stack bytes holding secrets
+    pointer_slots*: Vec<i64>, // stack arguments pointing at secret memory
+}
+
+State = {
+    live :: bool,
+    val :: Vec<str>,
+    pts :: Vec<str>,
+    slots :: Vec<i64>,
+    pslots :: Vec<i64>,
+    flags :: bool,
+    // Bytes the stack pointer has moved down since entry.
+    delta :: i64,
+    // The frame pointer as an entry-relative offset, once it is set.
+    frame :: Res<i64>,
+}
+
+// ---------------------------------------------------------------------
+// Reading a function out of an assembly file
+// ---------------------------------------------------------------------
+
+// A global label starts a function: not indented, not a directive, not a
+// compiler-local label (.L on ELF, L/Ltmp on Mach-O), not a comment.
+global_label = (line: str) Res<str> {
+    colon = line.find(':').try();
+    plain = !line.starts_with(" ") && !line.starts_with("\t")
+        && !line.starts_with(".") && !line.starts_with("L")
+        && !line.starts_with(";") && !line.starts_with("#")
+        && !line.starts_with("/");
+    (plain && colon > 0).ensure().try();
+    Ok(line.slice(0, colon))
+}
+
+// The lines of `symbol`'s body, or None when the file has no such label.
+// Mach-O prefixes C symbols with `_`.
+function_lines* = (a: Alloc, asm: str, symbol: str) Res<Vec<str>, AllocError> {
+    out    ::= a.Vec<str>();
+    inside ::= false;
+    asm.lines().loop((line) {
+        global_label(line).match({
+            Ok(name) => {
+                inside = name.eq(symbol) || (name.starts_with("_")
+                    && name.slice(1, name.len).eq(symbol));
+            },
+            None     => { inside.then(() { out.add(line).try(); }); },
+        });
+    });
+    Ok(out)
+}
+
+strip_comment = (isa: Isa, line: str) str {
+    cut = isa.match({
+        X86 => line.find('#'),
+        Arm => line.find(';').match({
+            Ok(i) => Ok(i),
+            None  => line.find("//"),
+        }),
+    });
+    cut.match({ Ok(i) => line.slice(0, i), None => line })
+}
+
+// Split at commas outside (), [] and {}.
+split_operands = (a: Alloc, text: str) Res<Vec<str>, AllocError> {
+    out   ::= a.Vec<str>();
+    depth ::= 0;
+    start ::= 0;
+    Range(0, text.len).loop((i) {
+        c = text.index(i);
+        (c == '(' || c == '[' || c == '{').then(() { depth = depth + 1; });
+        (c == ')' || c == ']' || c == '}').then(() { depth = depth - 1; });
+        (c == ',' && depth == 0).then(() {
+            out.add(text.slice(start, i).trim().value_or("")).try();
+            start = i + 1;
+        });
+    });
+    rest = text.slice(start, text.len).trim().value_or("");
+    (rest.len > 0).then(() { out.add(rest).try(); });
+    Ok(out)
+}
+
+parse_lines* = (a: Alloc, isa: Isa, body: Vec<str>) Res<Vec<Line>, AllocError> {
+    out ::= a.Vec<Line>();
+    body.loop((raw) {
+        line = strip_comment(isa, raw).trim().value_or("");
+        (line.len > 0 && !line.starts_with(".") || line.ends_with(":")).then(() {
+            (line.ends_with(":")).match({
+                true  => out.add(Line(
+                    label: line.slice(0, line.len - 1),
+                    mnemonic: "",
+                    operands: a.Vec<str>(),
+                    text: raw
+                )).try(),
+                false => { (line.len > 0).then(() {
+                    space    = Range(0, line.len).find((i) {
+                        line.index(i) == ' ' || line.index(i) == '\t'
+                    });
+                    mnemonic = space.match({ Ok(i) => line.slice(
+                        0,
+                        i
+                    ), None => line });
+                    rest     = space.match({ Ok(i) => line.slice(
+                        i + 1,
+                        line.len
+                    ), None => "" });
+                    out.add(Line(
+                        label: "",
+                        mnemonic: mnemonic,
+                        operands: split_operands(a, rest).try(),
+                        text: raw.trim().value_or(raw)
+                    )).try();
+                }); },
+            });
+        });
+    });
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------
+// Registers
+// ---------------------------------------------------------------------
+
+is_digit = (c: u8) bool { c >= '0' && c <= '9' }
+
+digits_after = (text: str, from: usize) str {
+    end ::= from;
+    loop(
+        () { end < text.len && is_digit(text.index(end)) },
+        (h) { end = end + 1; }
+    );
+    text.slice(from, end)
+}
+
+// x86 register families under one name: %eax, %ax and %al are rax.
+x86_reg* = (a: Alloc, op: str) Res<str> {
+    op.starts_with("%").ensure().try();
+    name = op.slice(1, op.len);
+    name.match({
+        "rax" => Ok("rax"), "eax" => Ok("rax"), "ax" => Ok("rax"), "al" => Ok("rax"), "ah" => Ok("rax"),
+        "rbx" => Ok("rbx"), "ebx" => Ok("rbx"), "bx" => Ok("rbx"), "bl" => Ok("rbx"), "bh" => Ok("rbx"),
+        "rcx" => Ok("rcx"), "ecx" => Ok("rcx"), "cx" => Ok("rcx"), "cl" => Ok("rcx"), "ch" => Ok("rcx"),
+        "rdx" => Ok("rdx"), "edx" => Ok("rdx"), "dx" => Ok("rdx"), "dl" => Ok("rdx"), "dh" => Ok("rdx"),
+        "rsi" => Ok("rsi"), "esi" => Ok("rsi"), "si" => Ok("rsi"), "sil" => Ok("rsi"),
+        "rdi" => Ok("rdi"), "edi" => Ok("rdi"), "di" => Ok("rdi"), "dil" => Ok("rdi"),
+        "rbp" => Ok("rbp"), "ebp" => Ok("rbp"), "bp" => Ok("rbp"), "bpl" => Ok("rbp"),
+        "rsp" => Ok("rsp"), "esp" => Ok("rsp"), "sp" => Ok("rsp"), "spl" => Ok("rsp"),
+        "rip" => Ok("rip"),
+        _     => (name.starts_with("r") && name.len > 1 && is_digit(name.index(1))).match({
+            true  => Ok(name.slice(0, 1 + digits_after(name, 1).len)),
+            false => (name.starts_with("xmm") || name.starts_with("ymm") || name.starts_with("zmm")).match({
+                true  => Ok(name.slice(1, 3 + digits_after(name, 3).len)),
+                false => None,
+            }),
+        }),
+    })
+}
+
+// arm64: x3 and w3 are "x3"; q3, d3, s3, h3, b3 and v3.4s are "v3".
+arm_reg* = (a: Alloc, op: str) Res<str> {
+    name = op.trim().value_or(op);
+    name.match({
+        "sp"  => Ok("sp"),
+        "wsp" => Ok("sp"),
+        "xzr" => None,
+        "wzr" => None,
+        "fp"  => Ok("x29"),
+        "lr"  => Ok("x30"),
+        _     => (name.len > 1 && is_digit(name.index(1))).match({
+            false => None,
+            true  => {
+                head = name.index(0);
+                n    = digits_after(name, 1);
+                (head == 'x' || head == 'w').match({
+                    true  => a.String("x{}", n).match({ Ok(s) => Ok(s.view()), Err(_) => None }),
+                    false => (head == 'v' || head == 'q' || head == 'd' || head == 's'
+                        || head == 'h' || head == 'b').match({
+                        true  => a.String("v{}", n).match({ Ok(s) => Ok(s.view()), Err(_) => None }),
+                        false => None,
+                    }),
+                })
+            },
+        }),
+    })
+}
+
+// ---------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------
+
+has = (set: Vec<str>, name: str) bool { name.is_in(set) }
+
+has_slot = (set: Vec<i64>, at: i64) bool {
+    set.find((s) { s == at }).match({ Ok(_) => true, None => false })
+}
+
+put = (set :: Vec<str>, name: str, on: bool) Res<(), AllocError> {
+    present = name.is_in(set);
+    (on && !present).then(() { set.add(name).try(); });
+    (!on && present).then(() {
+        at   = Range(0, set.len).find((i) { set.get(i).value_or("").eq(name) }).value_or(0);
+        last = set.take(set.len - 1).ok_or(AllocError.OutOfMemory).try();
+        (at < set.len).then(() { set.ptr().write(at, last); });
+    });
+    Ok(())
+}
+
+put_slot = (set :: Vec<i64>, at: i64, on: bool) Res<(), AllocError> {
+    present = has_slot(set, at);
+    (on && !present).then(() { set.add(at).try(); });
+    (!on && present).then(() {
+        i    = Range(0, set.len).find((k) { set.get(k).value_or(0) == at }).value_or(0);
+        last = set.take(set.len - 1).ok_or(AllocError.OutOfMemory).try();
+        (i < set.len).then(() { set.ptr().write(i, last); });
+    });
+    Ok(())
+}
+
+copy_state = (a: Alloc, s: State) Res<State, AllocError> {
+    Ok(State(
+        live: s.live,
+        val: s.val.map(a, (x) { x }).try(),
+        pts: s.pts.map(a, (x) { x }).try(),
+        slots: s.slots.map(a, (x) { x }).try(),
+        pslots: s.pslots.map(a, (x) { x }).try(),
+        flags: s.flags,
+        delta: s.delta,
+        frame: s.frame
+    ))
+}
+
+dead_state = (a: Alloc) State {
+    State(
+        live: false,
+        val: a.Vec<str>(),
+        pts: a.Vec<str>(),
+        slots: a.Vec<i64>(),
+        pslots: a.Vec<i64>(),
+        flags: false,
+        delta: 0,
+        frame: None
+    )
+}
+
+// Join `from` into `into`; true when `into` grew.
+join = (into :: State, from: State) Res<bool, AllocError> {
+    grew ::= false;
+    from.live.then(() {
+        (!into.live).then(() {
+            into.live  = true;
+            into.delta = from.delta;
+            into.frame = from.frame;
+            grew       = true;
+        });
+        from.val.loop(
+            (x) { (!has(into.val, x)).then(() { into.val.add(x).try(); grew = true; }); }
+        );
+        from.pts.loop(
+            (x) { (!has(into.pts, x)).then(() { into.pts.add(x).try(); grew = true; }); }
+        );
+        from.slots.loop(
+            (x) { (!has_slot(into.slots, x)).then(() { into.slots.add(x).try(); grew = true; }); }
+        );
+        from.pslots.loop(
+            (x) { (!has_slot(into.pslots, x)).then(() { into.pslots.add(x).try(); grew = true; }); }
+        );
+        (from.flags && !into.flags).then(
+            () { into.flags = true; grew = true; }
+        );
+    });
+    Ok(grew)
+}
+
+// ---------------------------------------------------------------------
+// The analysis
+// ---------------------------------------------------------------------
+
+Analysis* = {
+    alloc: Alloc,
+    isa: Isa,
+    lines: Vec<Line>,
+    labels :: Vec<str>,
+    states :: Vec<State>,
+    findings :: Vec<Finding>,
+    reporting :: bool,
+    grew :: bool,
+
+    state_at = (self: @Self, label: str) Res<usize> {
+        Range(0, self.labels.len).find((i) { self.labels.get(i).value_or("").eq(label) })
+    }
+
+    report = (self :: @Self, kind: str, text: str) Res<(), AllocError> {
+        self.reporting.match({
+            false => Ok(()),
+            true  => self.findings.add(Finding(kind: kind, text: text)),
+        })
+    }
+
+    // Send the current state along a jump to `label`.
+    flow = (self :: @Self, label: str, s: State) Res<(), AllocError> {
+        self.state_at(label).when_ok((i) {
+            into ::= self.states.get(i).ok_or(AllocError.OutOfMemory).try();
+            grew = join(into, s).try();
+            self.states.ptr().write(i, into);
+            grew.then(() { self.grew = true; });
+        });
+        Ok(())
+    }
+}
+
+// Run to a fixed point and return what the final pass found.
+analyze* = (
+    a     : Alloc,
+    isa   : Isa,
+    lines : Vec<Line>,
+    seed  : Seed
+) Res<Vec<Finding>, AllocError> {
+    an ::= Analysis(
+        alloc: a,
+        isa: isa,
+        lines: lines,
+        labels: a.Vec<str>(),
+        states: a.Vec<State>(),
+        findings: a.Vec<Finding>(),
+        reporting: false,
+        grew: false
+    );
+    lines.loop((l) {
+        (l.label.len > 0).then(() {
+            an.labels.add(l.label).try();
+            an.states.add(dead_state(a)).try();
+        });
+    });
+    rounds ::= 0;
+    loop((h) {
+        an.grew = false;
+        an.pass(seed).try();
+        rounds = rounds + 1;
+        (!an.grew || rounds > 64).then(() { h.break(); });
+    });
+    an.reporting = true;
+    an.pass(seed).try();
+    Ok(an.findings)
+}
+
+entry_state = (a: Alloc, seed: Seed) Res<State, AllocError> {
+    s ::= dead_state(a);
+    s.live = true;
+    seed.values.loop((r) { put(s.val, r, true).try(); });
+    seed.pointers.loop((r) { put(s.pts, r, true).try(); });
+    seed.slots.loop((o) { put_slot(s.slots, o, true).try(); });
+    seed.pointer_slots.loop((o) { put_slot(s.pslots, o, true).try(); });
+    Ok(s)
+}
+
+pass = (an :: Analysis, seed: Seed) Res<(), AllocError> {
+    cur ::= entry_state(an.alloc, seed).try();
+    an.lines.loop((l) {
+        (l.label.len > 0).match({
+            true  => {
+                an.state_at(l.label).when_ok((i) {
+                    here ::= an.states.get(i).ok_or(AllocError.OutOfMemory).try();
+                    // Fallthrough into a label is one more incoming edge.
+                    grew = join(here, cur).try();
+                    an.states.ptr().write(i, here);
+                    grew.then(() { an.grew = true; });
+                    cur = copy_state(an.alloc, here).try();
+                });
+            },
+            false => { cur.live.then(() {
+                an.isa.match({
+                    X86 => an.x86(cur, l).try(),
+                    Arm => an.arm(cur, l).try(),
+                });
+            }); },
+        });
+    });
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// x86-64, AT&T operand order (sources first, destination last)
+// ---------------------------------------------------------------------
+
+// A memory operand `disp(base,index,scale)`; `sym(%rip)` is a constant.
+X86Mem = { disp: i64, base: Res<str>, index: Res<str> }
+
+x86_mem = (a: Alloc, op: str) Res<X86Mem> {
+    text  = op.starts_with("*").match({ true => op.slice(1, op.len), false => op });
+    open  = text.find('(').try();
+    close = text.rfind(')').try();
+    inner = split_operands(
+        a,
+        text.slice(open + 1, close)
+    ).match({ Ok(v) => v, Err(_) => a.Vec<str>() });
+    head  = text.slice(0, open);
+    disp  = parse_i64(head).match({ Ok(n) => n, None => 0 });
+    base  = inner.get(0).match({ Ok(r) => x86_reg(a, r), None => None });
+    index = inner.get(1).match({ Ok(r) => x86_reg(a, r), None => None });
+    Ok(X86Mem(disp: disp, base: base, index: index))
+}
+
+x86_is_mem = (op: str) bool { op.contains('(') }
+
+// Entry-relative offset of a stack reference, when the base is the stack
+// or frame pointer.
+x86_slot = (cur: State, m: X86Mem) Res<i64> {
+    base = m.base.try();
+    base.match({
+        "rsp" => Ok(m.disp - cur.delta),
+        "rbp" => cur.frame.match({ Ok(f) => Ok(f + m.disp), None => None }),
+        _     => None,
+    })
+}
+
+x86_width = (mnemonic: str) i64 {
+    mnemonic.ends_with("q").match({ true => 8, false => 4 })
+}
+
+x86_value = (
+    an   :: Analysis,
+    cur  : State,
+    op   : str,
+    line : Line
+) Res<bool, AllocError> {
+    (x86_is_mem(op)).match({
+        true  => {
+            m = x86_mem(an.alloc, op).ok_or(AllocError.OutOfMemory).try();
+            an.x86_address(cur, m, line).try();
+            base_points = m.base.match({ Ok(b) => has(
+                cur.pts,
+                b
+            ), None => false });
+            slot        = x86_slot(cur, m).match({ Ok(o) => has_slot(cur.slots, o), None => false });
+            Ok(base_points || slot)
+        },
+        false => Ok(
+            x86_reg(an.alloc, op).match({ Ok(r) => has(cur.val, r), None => false })
+        ),
+    })
+}
+
+x86_address = (
+    an   :: Analysis,
+    cur  : State,
+    m    : X86Mem,
+    line : Line
+) Res<(), AllocError> {
+    secret = m.base.match({ Ok(b) => has(cur.val, b), None => false })
+        || m.index.match({ Ok(i) => has(cur.val, i), None => false });
+    secret.then(() { an.report("address", line.text).try(); });
+    Ok(())
+}
+
+x86_points = (an :: Analysis, cur: State, op: str) bool {
+    x86_is_mem(op).match({
+        true  => {
+            m = x86_mem(an.alloc, op).match({ Ok(v) => Ok(v), None => None });
+            m.match({
+                Ok(v) => x86_slot(cur, v).match({ Ok(o) => has_slot(cur.pslots, o), None => false }),
+                None  => false,
+            })
+        },
+        false => x86_reg(an.alloc, op).match({ Ok(r) => has(cur.pts, r), None => false }),
+    })
+}
+
+// Write a value (and whether it points at secrets) to a destination.
+x86_write = (
+    an     :: Analysis,
+    cur    :: State,
+    op     : str,
+    secret : bool,
+    points : bool,
+    line   : Line
+)
+                     Res<(), AllocError> {
+    x86_is_mem(op).match({
+        true  => {
+            m = x86_mem(an.alloc, op).ok_or(AllocError.OutOfMemory).try();
+            an.x86_address(cur, m, line).try();
+            x86_slot(cur, m).when_ok((o) {
+                put_slot(cur.slots, o, secret).try();
+                put_slot(cur.pslots, o, points).try();
+            });
+        },
+        false => { x86_reg(an.alloc, op).when_ok((r) {
+            put(cur.val, r, secret).try();
+            put(cur.pts, r, points).try();
+        }); },
+    });
+    Ok(())
+}
+
+x86_call = (an :: Analysis, cur :: State) Res<(), AllocError> {
+    args ::= false;
+    [str, 6]("rdi", "rsi", "rdx", "rcx", "r8", "r9").loop(
+        (r) { args = args || has(cur.val, r); }
+    );
+    [str, 9]("rcx", "rsi", "rdi", "r8", "r9", "r10", "r11", "rdx", "rax").loop((
+        r
+    ) {
+        put(cur.val, r, false).try();
+        put(cur.pts, r, false).try();
+    });
+    put(cur.val, "rax", args).try();
+    put(cur.val, "rdx", args).try();
+    cur.flags = false;
+    Ok(())
+}
+
+x86_imm = (op: str) i64 {
+    op.starts_with("$").match({
+        true  => parse_i64(op.slice(
+            1,
+            op.len
+        )).match({ Ok(n) => n, None => 0 }),
+        false => 0,
+    })
+}
+
+x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
+    m     = l.mnemonic;
+    ops   = l.operands;
+    n     = ops.len;
+    first = ops.get(0).value_or("");
+    last  = ops.get(n -% 1).value_or("");
+    same  = n == 2 && first.eq(last) && !x86_is_mem(first);
+    loop((h) {
+        // Control flow.
+        (m.starts_with("j")).then(() {
+            (m.eq("jmp") || m.eq("jmpq")).match({
+                true  => {
+                    last.starts_with("*").match({
+                        true  => {
+                            target = last.slice(1, last.len);
+                            (an.x86_value(cur, target, l).try()).then(() { an.report("indirect", l.text).try(); });
+                        },
+                        false => an.flow(last, cur).try(),
+                    });
+                    cur.live = false;
+                },
+                false => {
+                    cur.flags.then(() { an.report("branch", l.text).try(); });
+                    an.flow(last, cur).try();
+                },
+            });
+            h.break();
+        });
+        (m.starts_with("ret")).then(() { cur.live = false; h.break(); });
+        (m.starts_with("call")).then(() {
+            last.starts_with("*").then(() {
+                (an.x86_value(cur, last.slice(1, last.len), l).try()).then(() { an.report("indirect", l.text).try(); });
+            });
+            an.x86_call(cur).try();
+            h.break();
+        });
+        (m.starts_with("cmp") || m.starts_with("test") || m.starts_with("bt")
+            || m.starts_with("ucomis") || m.starts_with("comis") || m.starts_with("ptest")
+            || m.starts_with("vptest")).then(() {
+            secret ::= false;
+            ops.loop(
+                (op) { secret = secret || an.x86_value(cur, op, l).try(); }
+            );
+            cur.flags = secret;
+            h.break();
+        });
+        (m.starts_with("set")).then(() {
+            an.x86_write(cur, last, cur.flags, false, l).try();
+            h.break();
+        });
+        (m.starts_with("cmov")).then(() {
+            secret = an.x86_value(cur, first, l).try() || an.x86_value(cur, last, l).try() || cur.flags;
+            an.x86_write(cur, last, secret, false, l).try();
+            h.break();
+        });
+        (m.starts_with("lea")).then(() {
+            mem    = x86_mem(an.alloc, first).ok_or(AllocError.OutOfMemory).try();
+            secret = mem.base.match({ Ok(b) => has(cur.val, b), None => false })
+                || mem.index.match({ Ok(i) => has(cur.val, i), None => false });
+            points = mem.base.match({ Ok(b) => has(
+                cur.pts,
+                b
+            ), None => false });
+            // `lea d(%rsp), %rbp`-style frame setup.
+            (mem.base.value_or("").eq("rsp") && last.eq("%rbp")).then(() {
+                cur.frame = Ok(mem.disp - cur.delta);
+            });
+            an.x86_write(cur, last, secret, points, l).try();
+            h.break();
+        });
+        (m.starts_with("push")).then(() {
+            secret    = an.x86_value(cur, first, l).try();
+            points    = an.x86_points(cur, first);
+            cur.delta = cur.delta + 8;
+            put_slot(cur.slots, 0 - cur.delta, secret).try();
+            put_slot(cur.pslots, 0 - cur.delta, points).try();
+            h.break();
+        });
+        (m.starts_with("pop")).then(() {
+            secret    = has_slot(cur.slots, 0 - cur.delta);
+            points    = has_slot(cur.pslots, 0 - cur.delta);
+            cur.delta = cur.delta - 8;
+            an.x86_write(cur, first, secret, points, l).try();
+            h.break();
+        });
+        (m.starts_with("div") || m.starts_with("idiv")).then(() {
+            secret = an.x86_value(cur, first, l).try() || has(cur.val, "rax") || has(cur.val, "rdx");
+            secret.then(() { an.report("divide", l.text).try(); });
+            put(cur.val, "rax", secret).try();
+            put(cur.val, "rdx", secret).try();
+            h.break();
+        });
+        ((m.starts_with("mul") || m.starts_with("imul")) && n == 1).then(() {
+            secret = an.x86_value(cur, first, l).try() || has(cur.val, "rax");
+            put(cur.val, "rax", secret).try();
+            put(cur.val, "rdx", secret).try();
+            cur.flags = secret;
+            h.break();
+        });
+        (m.is_in(["cqto", "cqo", "cltd", "cdq", "cltq", "cdqe", "cwtl"])).then(() {
+            put(cur.val, "rdx", has(cur.val, "rax")).try();
+            h.break();
+        });
+        // Stack pointer arithmetic keeps slot offsets entry-relative.
+        (last.eq("%rsp") && n == 2 && first.starts_with("$")).then(() {
+            (m.starts_with("sub")).then(() { cur.delta = cur.delta + x86_imm(first); });
+            (m.starts_with("add")).then(() { cur.delta = cur.delta - x86_imm(first); });
+            h.break();
+        });
+        (m.starts_with("mov") && last.eq("%rbp") && first.eq("%rsp")).then(() {
+            cur.frame = Ok(0 - cur.delta);
+            put(cur.val, "rbp", false).try();
+            h.break();
+        });
+        // Zeroing idioms leave a clean register.
+        (same && (m.starts_with("xor") || m.starts_with("sub") || m.starts_with("pxor")
+            || m.starts_with("xorp") || m.starts_with("sbb") && false)).then(() {
+            an.x86_write(cur, last, false, false, l).try();
+            cur.flags = false;
+            h.break();
+        });
+        (n == 3 && (m.starts_with("vpxor") || m.starts_with("vxorp"))
+            && first.eq(ops.get(1).value_or("")) ).then(() {
+            an.x86_write(cur, last, false, false, l).try();
+            h.break();
+        });
+        // Moves copy, including loads through a pointer to secrets.
+        (m.starts_with("mov") || m.starts_with("vmov") || m.starts_with("cvt")
+            || m.starts_with("bswap") && false).then(() {
+            (n == 2).then(() {
+                secret = an.x86_value(cur, first, l).try();
+                points = an.x86_points(cur, first);
+                an.x86_write(cur, last, secret, points, l).try();
+            });
+            h.break();
+        });
+        (m.starts_with("nop") || m.starts_with("endbr") || m.eq("ud2") || m.eq("int3")
+            || m.eq("hlt") || m.starts_with("prefetch") || m.eq("lfence") || m.eq("mfence")
+            || m.eq("sfence") || m.eq("pause") || m.eq("vzeroupper")).then(() { h.break(); });
+        // Everything else computes its destination from its operands: a
+        // two-operand form also reads the destination, and adc/sbb read
+        // the carry. Flags follow the result.
+        secret ::= false;
+        points ::= false;
+        Range(0, n).loop((i) {
+            op    = ops.get(i).value_or("");
+            reads = i + 1 < n || n <= 2;
+            reads.then(() {
+                secret = secret || an.x86_value(cur, op, l).try();
+                points = points || an.x86_points(cur, op);
+            });
+        });
+        (m.starts_with("adc") || m.starts_with("sbb") || m.starts_with("rcl") || m.starts_with("rcr")).then(() {
+            secret = secret || cur.flags;
+        });
+        (n > 0).then(
+            () { an.x86_write(cur, last, secret, points && n <= 2, l).try(); }
+        );
+        cur.flags = secret;
+        h.break();
+    });
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// arm64 (destination first)
+// ---------------------------------------------------------------------
+
+// `[base, index-or-#imm, extend]` with an optional `!` writeback.
+ArmMem = { base: Res<str>, index: Res<str>, disp: i64, pre: bool }
+
+arm_is_mem = (op: str) bool { op.starts_with("[") }
+
+arm_mem = (a: Alloc, op: str) Res<ArmMem> {
+    close           = op.rfind(']').try();
+    inner           = split_operands(
+        a,
+        op.slice(1, close)
+    ).match({ Ok(v) => v, Err(_) => a.Vec<str>() });
+    base            = inner.get(0).match({ Ok(r) => arm_reg(a, r), None => None });
+    second          = inner.get(1).value_or("");
+    index: Res<str> = second.starts_with("#").match({ true => None, false => arm_reg(a, second) });
+    disp            = second.starts_with("#").match({
+        true  => parse_i64(second.slice(
+            1,
+            second.len
+        )).match({ Ok(n) => n, None => 0 }),
+        false => 0,
+    });
+    Ok(ArmMem(base: base, index: index, disp: disp, pre: op.ends_with("!")))
+}
+
+arm_slot = (cur: State, m: ArmMem) Res<i64> {
+    m.base.try().match({
+        "sp"  => Ok(m.disp - cur.delta),
+        "x29" => cur.frame.match({ Ok(f) => Ok(f + m.disp), None => None }),
+        _     => None,
+    })
+}
+
+arm_imm = (op: str) i64 {
+    op.starts_with("#").match({
+        true  => parse_i64(op.slice(
+            1,
+            op.len
+        )).match({ Ok(n) => n, None => 0 }),
+        false => 0,
+    })
+}
+
+// Register operands, including each register of a `{v0.16b, v1.16b}` list.
+arm_regs = (an :: Analysis, op: str) Res<Vec<str>, AllocError> {
+    out ::= an.alloc.Vec<str>();
+    op.starts_with("{").match({
+        true  => {
+            split_operands(an.alloc, op.slice(1, op.rfind('}').value_or(op.len))).try().loop((r) {
+                arm_reg(an.alloc, r).when_ok((x) { out.add(x).try(); });
+            });
+        },
+        false => { arm_reg(an.alloc, op).when_ok((x) { out.add(x).try(); }); },
+    });
+    Ok(out)
+}
+
+arm_address = (
+    an   :: Analysis,
+    cur  : State,
+    m    : ArmMem,
+    line : Line
+) Res<(), AllocError> {
+    secret = m.base.match({ Ok(b) => has(cur.val, b), None => false })
+        || m.index.match({ Ok(i) => has(cur.val, i), None => false });
+    secret.then(() { an.report("address", line.text).try(); });
+    Ok(())
+}
+
+arm_set = (an :: Analysis, cur :: State, reg: str, secret: bool, points: bool)
+                   Res<(), AllocError> {
+    put(cur.val, reg, secret).try();
+    put(cur.pts, reg, points).try();
+    Ok(())
+}
+
+// Loads and stores: registers before the memory operand, then an optional
+// post-index immediate.
+arm_memory = (
+    an    :: Analysis,
+    cur   :: State,
+    l     : Line,
+    store : bool
+) Res<(), AllocError> {
+    at      = Range(0, l.operands.len).find((i) { arm_is_mem(l.operands.get(i).value_or("")) }).value_or(0);
+    mem     = arm_mem(an.alloc, l.operands.get(at).value_or("[]")).ok_or(AllocError.OutOfMemory).try();
+    post    = l.operands.get(at + 1).value_or("");
+    sp_base = mem.base.value_or("").eq("sp");
+    (mem.pre && sp_base).then(() { cur.delta = cur.delta - mem.disp; });
+    an.arm_address(cur, mem, l).try();
+    // Register operands in order; exclusive stores lead with a status register.
+    regs ::= an.alloc.Vec<str>();
+    Range(0, at).loop((i) {
+        an.arm_regs(l.operands.get(i).value_or("")).try().loop((r) { regs.add(r).try(); });
+    });
+    exclusive  = l.mnemonic.starts_with("stxr") || l.mnemonic.starts_with("stlxr");
+    width: i64 = l.mnemonic.is_in(["ldp", "stp", "ldnp", "stnp"]).match({
+        true  => l.operands.get(0).value_or("").starts_with("w").match({ true => 4, false => 8 }),
+        false => 8,
+    });
+    // Offset of the first register's slot, after any pre-index writeback.
+    first_slot: Res<i64> = (mem.pre && sp_base).match({
+        true  => Ok(0 - cur.delta),
+        false => arm_slot(cur, mem),
+    });
+    points_in            = mem.base.match({ Ok(b) => has(
+        cur.pts,
+        b
+    ), None => false });
+    Range(0, regs.len).loop((k) {
+        reg = regs.get(k).value_or("");
+        (exclusive && k == 0 && store).match({
+            true  => an.arm_set(cur, reg, false, false).try(),
+            false => {
+                slot = first_slot.match({
+                    Ok(o) => Ok(
+                        o + width * (k - exclusive.match({ true => 1, false => 0 })).truncate_u32().to_i64()
+                    ),
+                    None  => None,
+                });
+                store.match({
+                    true  => { slot.when_ok((o) {
+                        put_slot(cur.slots, o, has(cur.val, reg)).try();
+                        put_slot(cur.pslots, o, has(cur.pts, reg)).try();
+                    }); },
+                    false => {
+                        secret = points_in || slot.match({ Ok(o) => has_slot(
+                            cur.slots,
+                            o
+                        ), None => false });
+                        points = slot.match({ Ok(o) => has_slot(
+                            cur.pslots,
+                            o
+                        ), None => false });
+                        an.arm_set(cur, reg, secret, points).try();
+                    },
+                });
+            },
+        });
+    });
+    (post.starts_with("#") && sp_base).then(() { cur.delta = cur.delta - arm_imm(post); });
+    Ok(())
+}
+
+arm_call = (an :: Analysis, cur :: State) Res<(), AllocError> {
+    args ::= false;
+    Range(0, 8).loop((i) {
+        name = an.alloc.String("x{}", i).try();
+        args = args || has(cur.val, name.view());
+    });
+    Range(0, 19).loop((i) {
+        name = an.alloc.String("x{}", i).try();
+        put(cur.val, name.view(), false).try();
+        put(cur.pts, name.view(), false).try();
+    });
+    put(cur.val, "x0", args).try();
+    put(cur.val, "x1", args).try();
+    cur.flags = false;
+    Ok(())
+}
+
+arm_reads = (
+    an   :: Analysis,
+    cur  : State,
+    ops  : Vec<str>,
+    from : usize
+) Res<bool, AllocError> {
+    secret ::= false;
+    Range(from, ops.len).loop((i) {
+        an.arm_regs(ops.get(i).value_or("")).try().loop((r) { secret = secret || has(cur.val, r); });
+    });
+    Ok(secret)
+}
+
+arm_points = (
+    an   :: Analysis,
+    cur  : State,
+    ops  : Vec<str>,
+    from : usize
+) Res<bool, AllocError> {
+    points ::= false;
+    Range(from, ops.len).loop((i) {
+        an.arm_regs(ops.get(i).value_or("")).try().loop((r) { points = points || has(cur.pts, r); });
+    });
+    Ok(points)
+}
+
+arm = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
+    m     = l.mnemonic;
+    ops   = l.operands;
+    n     = ops.len;
+    first = ops.get(0).value_or("");
+    last  = ops.get(n -% 1).value_or("");
+    dst   = arm_reg(an.alloc, first);
+    loop((h) {
+        (m.starts_with("b.") || (m.starts_with("b") && m.len == 3 && !m.eq("bic") && !m.eq("bfi")
+            && !m.eq("bit") && !m.eq("bif") && !m.eq("bsl") && !m.eq("brk"))).then(() {
+            cur.flags.then(() { an.report("branch", l.text).try(); });
+            an.flow(last, cur).try();
+            h.break();
+        });
+        (m.is_in(["cbz", "cbnz", "tbz", "tbnz"])).then(() {
+            (an.arm_reads(cur, ops, 0).try() && dst.match({ Ok(r) => has(cur.val, r), None => false }))
+                .then(() { an.report("branch", l.text).try(); });
+            an.flow(last, cur).try();
+            h.break();
+        });
+        (m.eq("b")).then(() { an.flow(last, cur).try(); cur.live = false; h.break(); });
+        (m.eq("br")).then(() {
+            dst.match({ Ok(r) => has(cur.val, r), None => false }).then(() { an.report("indirect", l.text).try(); });
+            cur.live = false;
+            h.break();
+        });
+        (m.eq("ret") || m.eq("retab") || m.eq("brk")).then(() { cur.live = false; h.break(); });
+        (m.eq("bl") || m.eq("blr")).then(() {
+            (m.eq("blr") && dst.match({ Ok(r) => has(cur.val, r), None => false })).then(() {
+                an.report("indirect", l.text).try();
+            });
+            an.arm_call(cur).try();
+            h.break();
+        });
+        (m.starts_with("ld") && ops.find((o) { arm_is_mem(o) }).match({ Ok(_) => true, None => false }))
+            .then(() { an.arm_memory(cur, l, false).try(); h.break(); });
+        (m.starts_with("st") && ops.find((o) { arm_is_mem(o) }).match({ Ok(_) => true, None => false }))
+            .then(() { an.arm_memory(cur, l, true).try(); h.break(); });
+        (m.is_in(["cmp", "cmn", "tst", "fcmp", "fcmpe"])).then(() {
+            cur.flags = an.arm_reads(cur, ops, 0).try();
+            h.break();
+        });
+        (m.is_in(["ccmp", "ccmn", "fccmp"])).then(() {
+            cur.flags = cur.flags || an.arm_reads(cur, ops, 0).try();
+            h.break();
+        });
+        (m.eq("udiv") || m.eq("sdiv")).then(() {
+            secret = an.arm_reads(cur, ops, 1).try();
+            secret.then(() { an.report("divide", l.text).try(); });
+            dst.when_ok((r) { an.arm_set(cur, r, secret, false).try(); });
+            h.break();
+        });
+        (m.is_in(["adr", "adrp", "movz", "movn"])).then(() {
+            dst.when_ok((r) { an.arm_set(cur, r, false, false).try(); });
+            h.break();
+        });
+        (m.eq("movk")).then(() { h.break(); });
+        // Stack and frame pointer bookkeeping.
+        (first.eq("sp") && n == 3 && ops.get(1).value_or("").eq("sp") && last.starts_with("#")).then(() {
+            m.eq("sub").then(() { cur.delta = cur.delta + arm_imm(last); });
+            m.eq("add").then(() { cur.delta = cur.delta - arm_imm(last); });
+            h.break();
+        });
+        (dst.value_or("").eq("x29") && ops.get(1).value_or("").eq("sp")).then(() {
+            cur.frame = Ok(
+                (n == 3).match({ true => arm_imm(
+                    last
+                ), false => 0 }) - cur.delta
+            );
+            an.arm_set(cur, "x29", false, false).try();
+            h.break();
+        });
+        (m.is_in([
+            "nop", "hint", "dmb", "dsb", "isb", "prfm", "pacibsp", "autibsp",
+            "paciasp", "autiasp", "bti"
+        ]))
+            .then(() { h.break(); });
+        // Everything else: the destination is computed from the sources.
+        // Conditional selects and carries also read the flags; the
+        // flag-setting forms write them.
+        secret ::= an.arm_reads(cur, ops, 1).try();
+        points      = an.arm_points(cur, ops, 1).try() && (m.eq("add") || m.eq("sub") || m.eq("mov"));
+        reads_flags = m.starts_with("cs") || m.starts_with("cinc") || m.starts_with("cinv")
+            || m.starts_with("cneg") || m.eq("cset") || m.eq("csetm") || m.eq("fcsel")
+            || m.starts_with("adc") || m.starts_with("sbc") || m.eq("ngc") || m.eq("ngcs");
+        reads_flags.then(() { secret = secret || cur.flags; });
+        // Partial writes (movk, bfi, ins, mov v.s[1]) keep the old value.
+        partial = m.eq("bfi") || m.eq("bfxil") || m.eq("ins") || first.contains('[');
+        partial.then(
+            () { secret = secret || dst.match({ Ok(r) => has(
+                cur.val,
+                r
+            ), None => false }); }
+        );
+        dst.when_ok((r) { an.arm_set(cur, r, secret, points).try(); });
+        (m.ends_with("s") && m.is_in(["adds", "subs", "ands", "bics", "adcs", "sbcs", "negs", "ngcs"]))
+            .then(() { cur.flags = secret; });
+        h.break();
+    });
+    Ok(())
+}

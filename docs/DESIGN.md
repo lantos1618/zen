@@ -1995,3 +1995,30 @@ at a secret type (its parameters are not written `Secret`, so the call rule
 refuses the secret argument instead). None of this reaches the C backend:
 `Secret<T>` lowers as `T`, and `tools/ct` checks what the C compiler made of
 it.
+
+### Checking what the C compiler made of it
+
+`tools/ct` holds three checks, each with leaky negative controls that must
+be flagged, so a check that has stopped seeing anything fails:
+
+- `ct-asm --c program.c` compiles a program's generated C to assembly with
+  each `--cc` at `-O2` and `-O3`. The C backend writes
+  `/* zen:secret zu_l3key *zu_l3out */` after the parameter list of every
+  function with a Secret parameter; the tool keeps those functions out of
+  line, places their secret inputs by the SysV x86-64 or AAPCS64 convention,
+  and runs a forward taint analysis over the assembly (registers and stack
+  slots, joined at labels). `--manifest` names further functions and their
+  secret parameters, for shared arithmetic whose signature cannot say
+  Secret because public verification uses it too. It fails on a conditional branch, a memory
+  address, a division or an indirect jump that depends on a secret. Memory
+  other than the stack and secret pointees is not modelled.
+- `ct-grind` is the ctgrind method: `std.ct.ct_grind.secret_bytes` marks
+  memory undefined for valgrind's memcheck, which then reports every branch
+  and address computed from it; `public_bytes` is the declassification.
+- `ct-timing` is a dudect-style statistical test (`std.ct.ct_timing`):
+  fixed against random inputs, interleaved, Welch's t over all measurements
+  and over dudect's percentile crops, run under `taskset` on one core after
+  the load average settles. |t| above 10 is a leak.
+
+`make ctcheck` runs the first two on their controls; the crypto package runs
+all three on its own functions.

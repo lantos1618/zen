@@ -1,0 +1,461 @@
+// Where a C function's secret parameters arrive, from the generated C.
+//
+// The Zen C backend writes ` /* zen:secret zu_l3key *zu_l3out */` after the
+// parameter list of every function with a parameter written std.ct.Secret
+// (`*` marks a pointer whose pointee is secret). This module reads those
+// definitions, sizes the parameter types from the struct definitions in
+// the same file, and assigns them to registers and stack slots by the
+// SysV x86-64 or AAPCS64 calling convention, which is what the assembly
+// taint analysis is seeded with.
+//
+// Covered: integers, pointers, bool, u128 (a register pair), and structs
+// and fixed arrays of those (by value: in one or two registers up to 16
+// bytes, otherwise on the stack on x86-64 and through a hidden pointer on
+// arm64). Floating-point parameters are treated as public. A result struct
+// larger than 16 bytes takes %rdi for its return pointer on x86-64.
+Alloc, AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+Range = std.core
+parse_usize = std.text
+truncate_u32, to_i64 = std.core.num
+Isa, Seed = taint
+
+Param* = { ctype*: str, name*: str }
+
+// One definition carrying the secret marker.
+Marked* = {
+    symbol*: str,
+    result*: str,
+    params*: Vec<Param>,
+    secret*: Vec<str>,     // C names of secret-valued parameters
+    pointee*: Vec<str>,    // C names of pointers to secret memory
+}
+
+Layout = { size: usize, align: usize }
+
+MARK: str = "/* zen:secret"
+
+// Every marked definition in the file, in file order.
+marked_functions* = (a: Alloc, c: str) Res<Vec<Marked>, AllocError> {
+    out ::= a.Vec<Marked>();
+    c.lines().loop((line) {
+        (line.starts_with("static ") && line.contains(MARK) && line.ends_with("{")).then(() {
+            parse_definition(a, line).when_ok((m) { out.add(m).try(); });
+        });
+    });
+    Ok(out)
+}
+
+parse_definition = (a: Alloc, line: str) Res<Marked> {
+    open   = line.find('(').try();
+    mark   = line.find(MARK).try();
+    close  = line.slice(0, mark).rfind(')').try();
+    head   = line.slice(0, open).trim().try();
+    space  = head.rfind(' ').try();
+    symbol = head.slice(space + 1, head.len);
+    result = head.slice(0, space).trim().try();
+    params ::= a.Vec<Param>();
+    line.slice(open + 1, close).split(',').loop((part) {
+        text = part.trim().value_or("");
+        (text.len > 0 && !text.eq("void")).then(() {
+            cut = last_identifier(text);
+            params.add(Param(
+                ctype: text.slice(0, cut).trim().value_or(""),
+                name: text.slice(cut, text.len)
+            )).match({ _ => () });
+        });
+    });
+    secret  ::= a.Vec<str>();
+    pointee ::= a.Vec<str>();
+    words = line.slice(mark + MARK.len, line.len);
+    words.split(' ').loop((w) {
+        (w.starts_with("zu_") || w.starts_with("*zu_") || w.starts_with("zg_")
+            || w.starts_with("*zg_")).then(() {
+            w.starts_with("*").match({
+                true  => pointee.add(w.slice(1, w.len)),
+                false => secret.add(w),
+            }).match({ _ => () });
+        });
+    });
+    Ok(Marked(
+        symbol: symbol,
+        result: strip_qualifiers(result),
+        params: params,
+        secret: secret,
+        pointee: pointee
+    ))
+}
+
+is_ident = (c: u8) bool {
+    (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+last_identifier = (text: str) usize {
+    at ::= text.len;
+    loop(() { at > 0 && is_ident(text.index(at - 1)) }, (h) { at = at - 1; });
+    at
+}
+
+// `static inline __attribute__((always_inline)) T` -> `T`.
+strip_qualifiers = (result: str) str {
+    close = result.rfind(')');
+    close.match({
+        Ok(i) => result.slice(i + 1, result.len).trim().value_or(result),
+        None  => result.starts_with("static ").match({
+            true  => result.slice(7, result.len).trim().value_or(result),
+            false => result,
+        }),
+    })
+}
+
+// ---------------------------------------------------------------------
+// Type layout
+// ---------------------------------------------------------------------
+
+scalar_layout = (ctype: str) Res<Layout> {
+    ctype.contains('*').match({
+        true  => Ok(Layout(size: 8, align: 8)),
+        false => ctype.match({
+            "uint8_t"       => Ok(Layout(size: 1, align: 1)),
+            "int8_t"        => Ok(Layout(size: 1, align: 1)),
+            "bool"          => Ok(Layout(size: 1, align: 1)),
+            "char"          => Ok(Layout(size: 1, align: 1)),
+            "unsigned char" => Ok(Layout(size: 1, align: 1)),
+            "uint16_t"      => Ok(Layout(size: 2, align: 2)),
+            "int16_t"       => Ok(Layout(size: 2, align: 2)),
+            "uint32_t"      => Ok(Layout(size: 4, align: 4)),
+            "int32_t"       => Ok(Layout(size: 4, align: 4)),
+            "int"           => Ok(Layout(size: 4, align: 4)),
+            "unsigned"      => Ok(Layout(size: 4, align: 4)),
+            "float"         => Ok(Layout(size: 4, align: 4)),
+            "uint64_t"      => Ok(Layout(size: 8, align: 8)),
+            "int64_t"       => Ok(Layout(size: 8, align: 8)),
+            "size_t"        => Ok(Layout(size: 8, align: 8)),
+            "long"          => Ok(Layout(size: 8, align: 8)),
+            "double"        => Ok(Layout(size: 8, align: 8)),
+            "zg_u128"       => Ok(Layout(size: 16, align: 16)),
+            "zg_str"        => Ok(Layout(size: 16, align: 8)),
+            _               => (ctype.starts_with("zg_u") && ctype.contains('x')).match({
+                true  => ctype.ends_with("x16").match({
+                    true  => Ok(Layout(size: 16, align: 16)),
+                    false => Ok(Layout(size: 32, align: 16)),
+                }),
+                false => None,
+            }),
+        }),
+    })
+}
+
+round_up = (n: usize, align: usize) usize {
+    (align == 0).match({ true => n, false => (n + align - 1) / align * align })
+}
+
+// The body lines of `struct NAME {` .. `};`.
+struct_body = (a: Alloc, c: str, name: str) Res<Vec<str>, AllocError> {
+    head = a.String("struct {} {", name).try();
+    out    ::= a.Vec<str>();
+    inside ::= false;
+    depth  ::= 0;
+    c.lines().loop((h, line) {
+        inside.match({
+            false => { line.starts_with(head.view()).then(() { inside = true; depth = 1; }); },
+            true  => {
+                t = line.trim().value_or("");
+                (t.ends_with("{")).then(() { depth = depth + 1; });
+                (t.starts_with("}")).then(() { depth = depth - 1; });
+                (depth == 0).match({
+                    true  => h.break(),
+                    false => out.add(t).try(),
+                });
+            },
+        });
+    });
+    Ok(out)
+}
+
+// Size and alignment of a C type spelled in the generated file. Nested
+// `union {` blocks take their largest member; `struct {` blocks sum.
+layout_of* = (a: Alloc, c: str, ctype: str) Res<Layout> {
+    scalar_layout(ctype).match({
+        Ok(l) => Ok(l),
+        None  => {
+            body = struct_body(
+                a,
+                c,
+                ctype
+            ).match({ Ok(b) => b, Err(_) => a.Vec<str>() });
+            (body.len > 0).ensure().try();
+            aggregate(a, c, body, 0, body.len, false)
+        },
+    })
+}
+
+// Lay out the fields in body[from..to]; `union` overlaps them.
+aggregate = (
+    a     : Alloc,
+    c     : str,
+    body  : Vec<str>,
+    from  : usize,
+    to    : usize,
+    union : bool
+) Res<Layout> {
+    size: usize  ::= 0;
+    align: usize ::= 1;
+    i            ::= from;
+    ok           ::= true;
+    loop(() { i < to && ok }, (h) {
+        line   = body.get(i).value_or("");
+        nested = line.eq("union {") || line.eq("struct {");
+        nested.match({
+            true  => {
+                // Find the matching close.
+                depth ::= 1;
+                j     ::= i + 1;
+                loop(() { j < to && depth > 0 }, (h2) {
+                    t = body.get(j).value_or("");
+                    t.ends_with("{").then(() { depth = depth + 1; });
+                    t.starts_with("}").then(() { depth = depth - 1; });
+                    j = j + 1;
+                });
+                inner = aggregate(a, c, body, i + 1, j - 1, line.eq("union {"));
+                inner.match({
+                    Ok(l) => {
+                        align = align.max(l.align);
+                        size  = union.match({ true => size.max(l.size), false => round_up(size, l.align) + l.size });
+                    },
+                    None  => { ok = false; },
+                });
+                i = j;
+            },
+            false => {
+                field(a, c, line).match({
+                    Ok(l) => {
+                        align = align.max(l.align);
+                        size  = union.match({ true => size.max(l.size), false => round_up(size, l.align) + l.size });
+                    },
+                    None  => { ok = false; },
+                });
+                i = i + 1;
+            },
+        });
+    });
+    ok.ensure().try();
+    Ok(Layout(size: round_up(size, align), align: align))
+}
+
+max = (
+    self  : usize,
+    other : usize
+) usize { (self > other).match({ true => self, false => other }) }
+
+// `uint64_t zg_elems[4];`, `zu_tFoo_1234 zu_m1x;`, `uint8_t *zu_m1p;`
+field = (a: Alloc, c: str, line: str) Res<Layout> {
+    text  = line.ends_with(";").match({ true => line.slice(0, line.len - 1), false => line });
+    count = text.ends_with("]").match({
+        true  => text.slice(
+            text.rfind('[').try() + 1,
+            text.len - 1
+        ).parse_usize().try(),
+        false => 1,
+    });
+    decl  = text.ends_with("]").match({ true => text.slice(0, text.rfind('[').try()), false => text });
+    cut   = last_identifier(decl);
+    ctype = decl.slice(0, cut).trim().try();
+    l     = layout_of(a, c, ctype).try();
+    Ok(Layout(size: l.size * count, align: l.align))
+}
+
+// ---------------------------------------------------------------------
+// Calling conventions
+// ---------------------------------------------------------------------
+
+X86_ARGS = [str, 6]("rdi", "rsi", "rdx", "rcx", "r8", "r9")
+
+seed_of* = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Seed, AllocError> {
+    values   ::= a.Vec<str>();
+    pointers ::= a.Vec<str>();
+    slots    ::= a.Vec<i64>();
+    pslots   ::= a.Vec<i64>();
+    next     ::= 0;
+    // Stack arguments start above the return address on x86-64 and at the
+    // stack pointer on arm64.
+    stack: usize ::= isa.match({ X86 => 8, Arm => 0 });
+    limit: usize = isa.match({ X86 => 6, Arm => 8 });
+    big_result   = layout_of(
+        a,
+        c,
+        m.result
+    ).match({ Ok(l) => l.size > 16, None => false });
+    (isa.match({ X86 => true, Arm => false }) && big_result).then(
+        () { next = 1; }
+    );
+    m.params.loop((p) {
+        l     = layout_of(a, c, p.ctype).match({ Ok(v) => v, None => Layout(size: 8, align: 8) });
+        value = p.name.is_in(m.secret);
+        point = p.name.is_in(m.pointee);
+        regs  = (l.size + 7) / 8;
+        // arm64 puts a u128 in an even-numbered register pair.
+        (isa.match({ Arm => true, X86 => false }) && l.align == 16 && next % 2 == 1).then(() {
+            next = next + 1;
+        });
+        in_regs  = l.size <= 16 && next + regs <= limit;
+        indirect = l.size > 16 && isa.match({ Arm => true, X86 => false });
+        (in_regs || (indirect && next < limit)).match({
+            true  => {
+                Range(0, indirect.match({ true => 1, false => regs })).loop((k) {
+                    reg = reg_name(a, isa, next + k).try();
+                    (value && !indirect).then(() { values.add(reg).try(); });
+                    (point || (value && indirect)).then(
+                        () { pointers.add(reg).try(); }
+                    );
+                });
+                next = next + indirect.match({ true => 1, false => regs });
+            },
+            false => {
+                // On the stack: every byte of a secret value is secret.
+                stack = round_up(stack, l.align.max(8));
+                point.then(
+                    () { pslots.add(stack.truncate_u32().to_i64()).try(); }
+                );
+                value.then(() {
+                    Range(0, (l.size + 7) / 8).loop((k) {
+                        slots.add(
+                            (stack + k * 8).truncate_u32().to_i64()
+                        ).try();
+                    });
+                });
+                stack = stack + round_up(l.size, 8);
+                (isa.match({ X86 => false, Arm => true }) && !in_regs).then(
+                    () { next = limit; }
+                );
+            },
+        });
+    });
+    Ok(Seed(
+        values: values,
+        pointers: pointers,
+        slots: slots,
+        pointer_slots: pslots
+    ))
+}
+
+reg_name = (a: Alloc, isa: Isa, i: usize) Res<str, AllocError> {
+    isa.match({
+        X86 => Ok(X86_ARGS[i]),
+        Arm => a.String("x{}", i).match({ Ok(s) => Ok(s.view()), Err(e) => Err(e) }),
+    })
+}
+
+// ---------------------------------------------------------------------
+// Manifests: functions audited without a Secret marker
+// ---------------------------------------------------------------------
+
+// A manifest names functions whose inputs are secret but whose signatures
+// cannot say so (shared arithmetic that also serves public verification):
+//
+//   # module  function          secret parameters (*name: secret pointee)
+//   p256      table_select      n
+//   aes_gcm   ghash_mul         x y
+//   tls13_cert_config  Tls13CertConfig.release  *self
+//
+// Every definition of the function (each overload and instantiation) is
+// audited. An entry that matches no definition is an error, unless its
+// module is written `?module`: the program may not reach that module.
+Entry* = { module*: str, function*: str, secret*: Vec<str>, pointee*: Vec<str>, optional*: bool }
+
+manifest_entries* = (a: Alloc, text: str) Res<Vec<Entry>, AllocError> {
+    out ::= a.Vec<Entry>();
+    text.lines().loop((raw) {
+        line = raw.split_once('#').match({ Ok(p) => p.before, None => raw }).trim().value_or("");
+        words ::= a.Vec<str>();
+        line.split(' ').loop((w) { (w.len > 0).then(() { words.add(w).try(); }); });
+        (words.len >= 2).then(() {
+            secret  ::= a.Vec<str>();
+            pointee ::= a.Vec<str>();
+            Range(2, words.len).loop((i) {
+                w = words.get(i).value_or("");
+                w.starts_with("*").match({
+                    true  => pointee.add(w.slice(1, w.len)).try(),
+                    false => secret.add(w).try(),
+                });
+            });
+            head     = words.get(0).value_or("");
+            optional = head.starts_with("?");
+            out.add(Entry(
+                optional: optional,
+                module: optional.match({ true => head.slice(
+                    1,
+                    head.len
+                ), false => head }),
+                function: words.get(1).value_or(""),
+                secret: secret,
+                pointee: pointee
+            )).try();
+        });
+    });
+    Ok(out)
+}
+
+// The Zen C backend's function symbol prefix: zu_f<n>_ then each path
+// component of the module and the function (Type.method included) as
+// <length><text>.
+symbol_prefix* = (a: Alloc, e: Entry) Res<String, AllocError> {
+    parts ::= a.Vec<str>();
+    e.module.split('.').loop((p) { parts.add(p).try(); });
+    e.function.split('.').loop((p) { parts.add(p).try(); });
+    out ::= a.String("zu_f{}_", parts.len).try();
+    parts.loop((p) { out.fmt("{}{}", p.len, p).try(); });
+    Ok(out)
+}
+
+// A C parameter's name for a Zen parameter.
+local_name = (a: Alloc, name: str) Res<str, AllocError> {
+    a.String("zu_l{}{}", name.len, name).match({ Ok(s) => Ok(s.view()), Err(e) => Err(e) })
+}
+
+// Definitions matching a manifest entry, as marked functions.
+manifest_functions* = (
+    a : Alloc,
+    c : str,
+    e : Entry
+) Res<Vec<Marked>, AllocError> {
+    prefix = symbol_prefix(a, e).try();
+    out ::= a.Vec<Marked>();
+    c.lines().loop((line) {
+        (line.starts_with("static ") && line.ends_with("{")).then(() {
+            open   = line.find('(').value_or(0);
+            head   = line.slice(0, open);
+            space  = head.rfind(' ').value_or(0);
+            symbol = head.slice(space + 1, head.len);
+            next   = symbol.slice(prefix.len().min(symbol.len), symbol.len);
+            (symbol.starts_with(prefix.view()) && (next.len == 0 || next.starts_with("O"))).then(() {
+                parse_plain(a, line).when_ok((m) {
+                    secret  ::= a.Vec<str>();
+                    pointee ::= a.Vec<str>();
+                    e.secret.loop(
+                        (n) { secret.add(local_name(a, n).try()).try(); }
+                    );
+                    e.pointee.loop(
+                        (n) { pointee.add(local_name(a, n).try()).try(); }
+                    );
+                    out.add(Marked(
+                        symbol: m.symbol,
+                        result: m.result,
+                        params: m.params,
+                        secret: secret,
+                        pointee: pointee
+                    )).try();
+                });
+            });
+        });
+    });
+    Ok(out)
+}
+
+// A definition line without the marker comment.
+parse_plain = (a: Alloc, line: str) Res<Marked> {
+    at     = line.rfind(')').try();
+    marked = a.String("{} {} */ {", line.slice(0, at + 1), MARK).match({ Ok(s) => Ok(s), Err(_) => None }).try();
+    parse_definition(a, marked.view())
+}

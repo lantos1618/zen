@@ -1,0 +1,126 @@
+// `zen test tools/ct` (or `make ctcheck`): the self-test of the
+// constant-time tooling, run from the repository root.
+//
+// 1. The static check (ct-asm) on tools/ct/controls with every compiler in
+//    CT_CC (comma-separated, default "cc") at -O2 and -O3: the
+//    constant-time controls must pass and every leaky_ control must be
+//    flagged.
+// 2. Where valgrind exists, the ctgrind check (ct-grind) with its own
+//    constant-time cases and leaky controls.
+// The timing test is separate (build/ct-timing) because it needs a quiet,
+// pinned core; see tools/ct/timing.zen.
+Vec = std.collections
+str = std.text
+Audit, run_audit = audit
+
+// Run argv; true when it exits 0. Output is shown only on failure.
+run = (env: Env, a: Alloc, words: Vec<str>) bool {
+    env.proc.run_argv(a, "", words).match({
+        Ok(r)  => {
+            (r.code != 0).then(
+                () { println("{}{}", r.out.view(), r.err.view()); }
+            );
+            r.code == 0
+        },
+        Err(_) => false,
+    })
+}
+
+words = (a: Alloc, text: str) Res<Vec<str>, AllocError> {
+    out ::= a.Vec<str>();
+    text.split(' ').loop((w) { (w.len > 0).then(() { out.add(w).try(); }); });
+    Ok(out)
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a    = env.mem.alloc();
+    zen  = env.var("ZEN_COMPILER").value_or("./zen");
+    std  = env.var("ZEN_STD").value_or("src");
+    work = "build/ct";
+    argv ::= a.Vec<str>();
+    [str, 3]("mkdir", "-p", work).loop((w) { argv.add(w).try(); });
+    env.proc.run_argv(a, "", argv).match({ _ => () });
+    emit ::= a.Vec<str>();
+    [str, 10](zen, "build", "tools/ct/controls", "--entry", "main.zen", "--std", std, "--emit-c", "-o", "build/ct/controls.c")
+        .loop((w) { emit.add(w).try(); });
+    emitted = env.proc.run_argv(
+        a,
+        "",
+        emit
+    ).match({ Ok(r) => r.code == 0, Err(_) => false });
+    (!emitted).then(
+        () { println("FAIL could not emit tools/ct/controls with {}", zen); }
+    );
+    compilers ::= a.Vec<str>();
+    env.var("CT_CC").value_or("cc").split(',').loop((cc) { compilers.add(cc).try(); });
+    levels ::= a.Vec<str>();
+    levels.add("-O2").try();
+    levels.add("-O3").try();
+    leaky ::= a.Vec<str>();
+    leaky.add("leaky_").try();
+    static_ok = emitted && run_audit(
+        env,
+        a,
+        Audit(
+            manifest: "",
+            compilers: compilers,
+            levels: levels,
+            leaky: leaky,
+            work: work
+        ),
+        "build/ct/controls.c"
+    ).match({
+        Ok(o)  => {
+            println(
+                "static: {} passed, {} failed, {} negative control(s) flagged",
+                o.passed,
+                o.failed,
+                o.controls
+            );
+            o.failed == 0 && o.controls > 0
+        },
+        Err(_) => false,
+    });
+    probe ::= a.Vec<str>();
+    probe.add("valgrind").try();
+    probe.add("--version").try();
+    has_valgrind = env.proc.run_argv(
+        a,
+        "",
+        probe
+    ).match({ Ok(r) => r.code == 0, Err(_) => false });
+    // The valgrind cases are their own program (they include
+    // <valgrind/memcheck.h>), built here only where valgrind exists.
+    grind_ok = has_valgrind.match({
+        true  => {
+            emit_grind = a.String(
+                "{} build tools/ct --entry grind.zen --std {} --emit-c -o build/ct/grind.c",
+                zen,
+                std
+            ).try();
+            cc         = compilers.get(0).value_or("cc");
+            compile    = a.String(
+                "{} -O2 -w build/ct/grind.c -o build/ct/ct-grind -lm -pthread",
+                cc
+            ).try();
+            run(env, a, words(a, emit_grind.view()).try())
+                && run(env, a, words(a, compile.view()).try())
+                && env.proc.run_argv(
+                    a,
+                    "",
+                    words(a, "build/ct/ct-grind").try()
+                ).match({
+                    Ok(r)  => {
+                        print("{}", r.out.view());
+                        r.code == 0
+                    },
+                    Err(_) => false,
+                })
+        },
+        false => {
+            println("SKIP ctgrind: valgrind is not installed on this host");
+            true
+        },
+    });
+    Ok((static_ok && grind_ok).match({ true => 0, false => 1 }))
+}

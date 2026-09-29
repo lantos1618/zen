@@ -1,0 +1,20 @@
+Builder, BuildError = std.build
+build = (b :: Builder) Res<(), BuildError> {
+    b.exe(
+        "ct-asm",
+        {src: Path("ct_asm.zen"), deps: [], out: Ok(Path("../../build/ct-asm"))}
+    ).try();
+    b.exe(
+        "ct-timing",
+        {src: Path("timing.zen"), deps: [], out: Ok(Path("../../build/ct-timing"))}
+    ).try();
+    b.exe(
+        "ct-grind",
+        {src: Path("grind.zen"), deps: [], out: Ok(Path("../../build/ct-grind"))}
+    ).try();
+    b.exe_test(
+        "ct",
+        {src: Path("check.zen"), deps: [], out: Ok(Path("../../build/ct-check"))}
+    ).try();
+    Ok(())
+}

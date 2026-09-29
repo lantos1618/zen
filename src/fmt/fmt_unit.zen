@@ -57,7 +57,10 @@ omit_unit_returns* = (
     lexed  : Lexed
 ) Res<UnitEdit, AllocError> {
     removed ::= a.Vec<bool>();
-    Range(0, parsed.src.text.len + 1).loop((i) { removed.add(false).try(); });
+    loop(
+        () { removed.len <= parsed.src.text.len },
+        (h) { removed.add(false).try(); }
+    );
     edits ::= Omissions(parsed: parsed, removed: removed);
     parsed.m.decls.loop((d) {
         d.kind.match({
@@ -76,7 +79,7 @@ omit_unit_returns* = (
     // Retain the token guard: permit only the precise AST-selected delimiter
     // tokens, and compare every other token (including comments) in order.
     after = scan(a, Source(file: lexed.source.file, text: out.view())).try();
-    at ::= 0; faithful ::= after.is_clean();
+    at: usize ::= 0; faithful ::= after.is_clean();
     lexed.tokens.loop((token) {
         edits.removed.ptr().read(token.span.start.offset).match({
             true  => {

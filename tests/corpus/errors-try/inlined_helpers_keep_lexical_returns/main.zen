@@ -5,7 +5,7 @@ Fault = | Bad(i32)
 Other = Replaced | Mapped(i32)
 Noisy = { tag: str }
 Noisy.impl(Drop, {
-    drop = (self :: @Self) () { println("drop {}", self.tag) }
+    drop = (self :: @Self) { println("drop {}", self.tag) }
 })
 
 leaf = (bad: bool) Res<i64, Fault> {

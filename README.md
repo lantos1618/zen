@@ -39,7 +39,7 @@ main = (env: Env) Res<i32, Error> {
 ## Streaming JSON
 
 `std.json.Decoder` accepts any `Range<u8>`, so the same call handles borrowed
-text, an HTTP/2 body chunk, or another byte container. Chunk boundaries do not
+text, an HTTP/2 body chunk from the `zen-http` package, or another byte container. Chunk boundaries do not
 have to align with JSON tokens. Text, keys, and number events own their bytes;
 call `finish` once when the document ends.
 
@@ -99,6 +99,18 @@ JavaScript backend execution tests. Verification also uses Node for the grammar
 and editor checks; CI installs Node 20 explicitly. A missing Node executable is
 reported as a test failure; JavaScript execution is not silently skipped.
 
+The review-tool gate needs the pinned Python package in `tests/requirements.txt`.
+For an isolated local verification environment:
+
+```sh
+python3 -m venv build/verify-python
+source build/verify-python/bin/activate
+python -m pip install -r tests/requirements.txt
+make verify
+```
+
+CI installs these dependencies explicitly; they are not compiler runtime dependencies.
+
 [Code generation](docs/BACKENDS.md) describes the C, JavaScript, and assembly
 backends and the runnable `example/backends` project.
 
@@ -142,3 +154,11 @@ compiler emissions and verifies that the checked-in seed is fresh. The corpus de
 requests currently supported. Stage 4 is the grade the tree is measured against,
 not a claim that stages 1–4 are complete. `docs/PLAN.md` is the map, and every
 stage in it ends at a command that exits non-zero when the stage is wrong.
+
+### HTTP package migration
+
+HTTP/1 and HTTP/2 now live in [zen-http](https://github.com/lantos1618/zen-http),
+not the standard library. Import their clients from `http` with an explicit
+application dependency. The former `std.net.http`, `std.net.http2`, top-level
+HTTP exports and `env.net.http()` are removed; see
+[the migration notes](docs/LIBRARIES.md#http-is-a-package-dependency).

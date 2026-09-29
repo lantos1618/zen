@@ -20,7 +20,7 @@ raise_b = () Res<i32, SnagB> { Err(SnagB.Hit); }
 widen_a = () Res<i32, Wide2> { raise_a().try(); Ok(0); }
 widen_b = () Res<i32, Wide2> { raise_b().try(); Ok(0); }
 
-describe = (env: Env, r: Res<i32, Wide2>) () {
+describe = (env: Env, r: Res<i32, Wide2>) {
     r.match({
         Ok(n)  => println("ok {}", n),
         Err(e) => e.match({

@@ -30,7 +30,7 @@ Point.impl(Display, {
 })
 
 // the two doors' bytes, side by side and then judged
-verdict = (label: str, one: str, two: str) () {
+verdict = (label: str, one: str, two: str) {
     println("{} one [{}]", label, one);
     println("{} two [{}]", label, two);
     println("{} same {}", label, one.eq(two));

@@ -121,7 +121,7 @@ main = (env: Env) Res<i32, AllocError> {
 // `a_session_is_answered_frame_by_frame` already pins every byte of it.
 // What is printed is the reply's JSON, whole — the kind numbers
 // included, since a right name under the wrong kind is still wrong.
-walk_replies = (out: str, table: Vec<Probe>) () {
+walk_replies = (out: str, table: Vec<Probe>) {
     at    ::= 0;
     seen  ::= 0;
     going ::= true;
@@ -140,7 +140,7 @@ walk_replies = (out: str, table: Vec<Probe>) () {
 // Reply 0 is `initialize` and the last is `shutdown`; the ones between
 // are the table, in order. The subtraction is guarded rather than let
 // to underflow, which on a usize is a trap and not a negative number.
-labelled = (i: usize, body: str, table: Vec<Probe>) () {
+labelled = (i: usize, body: str, table: Vec<Probe>) {
     (i == 0).match({
         true  => (),
         false => table.get(i - 1).match({
@@ -150,7 +150,7 @@ labelled = (i: usize, body: str, table: Vec<Probe>) () {
     });
 }
 
-printed = (p: Probe, body: str) () {
+printed = (p: Probe, body: str) {
     println("{}:{}  {}", p.line, p.character, p.what);
     println("    {}", body);
 }

@@ -70,35 +70,6 @@ static int32_t zg_add_i32(int32_t a, int32_t b, const char *file, unsigned long 
     #endif
 }
 
-static int32_t zg_sub_i32(int32_t a, int32_t b, const char *file, unsigned long line, unsigned long col) {
-    #ifdef ZG_HAS_OVERFLOW_BUILTINS
-    int32_t r;
-    if (__builtin_sub_overflow(a, b, &r)) zg_trap(file, line, col, "integer overflow");
-    return r;
-    #else
-    if ((b < 0 && a > INT32_MAX + b) || (b > 0 && a < INT32_MIN + b))
-        zg_trap(file, line, col, "integer overflow");
-    return (int32_t)((uint32_t)a - (uint32_t)b);
-    #endif
-}
-
-static int32_t zg_mul_i32(int32_t a, int32_t b, const char *file, unsigned long line, unsigned long col) {
-    #ifdef ZG_HAS_OVERFLOW_BUILTINS
-    int32_t r;
-    if (__builtin_mul_overflow(a, b, &r)) zg_trap(file, line, col, "integer overflow");
-    return r;
-    #else
-    if (a > 0) {
-        if (b > 0 && a > INT32_MAX / b) zg_trap(file, line, col, "integer overflow");
-        if (b < 0 && b < INT32_MIN / a) zg_trap(file, line, col, "integer overflow");
-    } else if (a < 0) {
-        if (b > 0 && a < INT32_MIN / b) zg_trap(file, line, col, "integer overflow");
-        if (b < 0 && b < INT32_MAX / a) zg_trap(file, line, col, "integer overflow");
-    }
-    return (int32_t)((uint32_t)a * (uint32_t)b);
-    #endif
-}
-
 static int32_t zg_div_i32(int32_t a, int32_t b, const char *file, unsigned long line, unsigned long col) {
     if (b == 0) zg_trap(file, line, col, "divide by zero");
     if (a == INT32_MIN && b == -1) zg_trap(file, line, col, "integer overflow");
@@ -109,18 +80,6 @@ static int32_t zg_mod_i32(int32_t a, int32_t b, const char *file, unsigned long 
     if (b == 0) zg_trap(file, line, col, "divide by zero");
     if (a == INT32_MIN && b == -1) zg_trap(file, line, col, "integer overflow");
     return (int32_t)(a % b);
-}
-
-static int32_t zg_wadd_i32(int32_t a, int32_t b) {
-    return (int32_t)((uint32_t)a + (uint32_t)b);
-}
-
-static int32_t zg_wsub_i32(int32_t a, int32_t b) {
-    return (int32_t)((uint32_t)a - (uint32_t)b);
-}
-
-static int32_t zg_wmul_i32(int32_t a, int32_t b) {
-    return (int32_t)((uint32_t)a * (uint32_t)b);
 }
 
 typedef struct zu_tFault_a61b4b54eb2c5242 zu_tFault_a61b4b54eb2c5242;

@@ -1,0 +1,5 @@
+Native = c.bind("@HEADER@", { ZEN_PRESENT_CONSTANT*: i32 })
+main = () i32 {
+    Native.ZEN_PRESENT_CONSTANT = 12;
+    0
+}

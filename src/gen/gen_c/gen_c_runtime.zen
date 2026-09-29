@@ -642,31 +642,30 @@ write_fs_unlock = (out :: Emit) Res<(), AllocError> {
     Ok(());
 }
 
-// One family per integer type the program actually performs a trapping
-// operation on, in sorted order, so the runtime is a function of the
-// program and not of the order its functions were lowered in.
+// Only requested operations, in primitive and operation order, so helper
+// output does not depend on the order functions were lowered.
 emit_helpers* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     seq = order(be.alloc, be.helper_types).try();
     seq.loop((h, i) {
         be.helper_types.get(i).match({
             None  => Ok(()),
-            Ok(s) => emit_family(out, s.view()),
+            Ok(s) => emit_family(be, out, s.view()),
         }).try();
     });
     Ok(());
 }
 
-emit_family = (out :: Emit, prim: str) Res<(), AllocError> {
+emit_family = (be: CBackend, out :: Emit, prim: str) Res<(), AllocError> {
     ct  = c_prim(prim);
     uct = unsigned_of(ct);
-    checked(out, ct, prim, "add", "__builtin_add_overflow").try();
-    checked(out, ct, prim, "sub", "__builtin_sub_overflow").try();
-    checked(out, ct, prim, "mul", "__builtin_mul_overflow").try();
-    divide(out, ct, prim, "div", "/", is_signed(prim)).try();
-    divide(out, ct, prim, "mod", "%", is_signed(prim)).try();
-    wrapping(out, ct, uct, prim, "wadd", "+").try();
-    wrapping(out, ct, uct, prim, "wsub", "-").try();
-    wrapping(out, ct, uct, prim, "wmul", "*").try();
+    be.has_helper(prim, "add").then(() { checked(out, ct, prim, "add", "__builtin_add_overflow").try(); });
+    be.has_helper(prim, "sub").then(() { checked(out, ct, prim, "sub", "__builtin_sub_overflow").try(); });
+    be.has_helper(prim, "mul").then(() { checked(out, ct, prim, "mul", "__builtin_mul_overflow").try(); });
+    be.has_helper(prim, "div").then(() { divide(out, ct, prim, "div", "/", is_signed(prim)).try(); });
+    be.has_helper(prim, "mod").then(() { divide(out, ct, prim, "mod", "%", is_signed(prim)).try(); });
+    be.has_helper(prim, "wadd").then(() { wrapping(out, ct, uct, prim, "wadd", "+").try(); });
+    be.has_helper(prim, "wsub").then(() { wrapping(out, ct, uct, prim, "wsub", "-").try(); });
+    be.has_helper(prim, "wmul").then(() { wrapping(out, ct, uct, prim, "wmul", "*").try(); });
     Ok(());
 }
 

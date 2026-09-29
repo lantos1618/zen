@@ -59,7 +59,7 @@ Vec*<T> = {
         Ok(consume value);
     }
 
-    clear* = (self :: @Self) () {
+    clear* = (self :: @Self) {
         loop(self.len > 0, (h) {
             self.take(self.len - 1).match({
                 Ok(value) => { dropped = consume value; },

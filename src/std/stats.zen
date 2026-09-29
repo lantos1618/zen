@@ -58,7 +58,7 @@ Samples* = {
         accepted
     }
 
-    clear* = (self :: @Self) () {
+    clear* = (self :: @Self) {
         self.count = 0;
         self.next  = 0;
     }
@@ -91,7 +91,7 @@ Samples* = {
         self.scratch.read(rank - 1)
     }
 
-    sort = (self: @Self) () {
+    sort = (self: @Self) {
         root ::= self.count / 2;
         loop(() { root > 0 }, (h) {
             root = root - 1;
@@ -107,7 +107,7 @@ Samples* = {
         });
     }
 
-    sift = (self: @Self, start: usize, end: usize) () {
+    sift = (self: @Self, start: usize, end: usize) {
         root ::= start;
         loop(() { root < end / 2 }, (h) {
             child ::= root * 2 + 1;

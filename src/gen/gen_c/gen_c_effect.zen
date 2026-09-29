@@ -34,7 +34,7 @@ CallEffects* = {
         Ok(value == MAY_CALL)
     }
 
-    remember = (self: @Self, id: ExprId, found: bool) () {
+    remember = (self: @Self, id: ExprId, found: bool) {
         self.answers.ptr().write(id.index.to_usize(), found.match({
             true => MAY_CALL, false => PURE,
         }));

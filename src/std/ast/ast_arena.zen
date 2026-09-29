@@ -171,7 +171,7 @@ Ast* = {
 
     trivia_count* = (self: @Self) usize { self.trivia.len }
 
-    exprs_each* = (self: @Self, body: (id: ExprId, node: Expr) ()) () {
+    exprs_each* = (self: @Self, body: (id: ExprId, node: Expr) ()) {
         id ::= ExprId(index: 0);
         Range(0, self.exprs.len).loop((h, i) {
             body(id, self.expr_at(id));
@@ -179,7 +179,7 @@ Ast* = {
         });
     }
 
-    types_each* = (self: @Self, body: (id: TypeId, node: Type) ()) () {
+    types_each* = (self: @Self, body: (id: TypeId, node: Type) ()) {
         id ::= TypeId(index: 0);
         Range(0, self.types.len).loop((h, i) {
             body(id, self.type_at(id));
@@ -198,7 +198,7 @@ Ast* = {
         Ok(());
     }
 
-    patterns_each* = (self: @Self, body: (id: PatternId, node: Pattern) ()) () {
+    patterns_each* = (self: @Self, body: (id: PatternId, node: Pattern) ()) {
         id ::= PatternId(index: 0);
         Range(0, self.patterns.len).loop((h, i) {
             body(id, self.pattern_at(id));
@@ -206,7 +206,7 @@ Ast* = {
         });
     }
 
-    blocks_each* = (self: @Self, body: (id: BlockId, node: Block) ()) () {
+    blocks_each* = (self: @Self, body: (id: BlockId, node: Block) ()) {
         id ::= BlockId(index: 0);
         Range(0, self.blocks.len).loop((h, i) {
             body(id, self.block_at(id));
@@ -247,7 +247,7 @@ c_type_in = (binding: CBinding, decl: u32) Res<CTypeBinding> {
 
 // Report a stale id before trapping. Ast copies are snapshots, so consumers
 // must be constructed after the tree is complete.
-stale = (what: str, index: usize, len: usize) () {
+stale = (what: str, index: usize, len: usize) {
     println(
         "ast: {} id {} is past the end of an arena holding {}",
         what,

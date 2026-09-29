@@ -6,7 +6,7 @@ publish = (
     box    :: Box,
     amount : i32
 ) i32 { box.value = box.value + amount; box.value }
-main = () () {
+main = () {
     box ::= Box(value: 10);
     println("{}", box.publish(5));
     println("{}", box.publish("member"));

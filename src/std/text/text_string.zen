@@ -21,7 +21,7 @@ String* = {
     is_empty* = (self: @Self) bool { self.data.len == 0 }
 
     // Discard the text while retaining its allocation for the next write.
-    clear* = (self :: @Self) () { self.data.clear(); }
+    clear* = (self :: @Self) { self.data.clear(); }
 
     // Appends bytes verbatim; braces have no format meaning.
     add* = (self :: @Self, s: str) Res<(), AllocError> {

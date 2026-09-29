@@ -35,7 +35,7 @@ main = (env: Env) Res<i32, AllocError> {
         "assembly file {}",
         env.fs.read(
             alloc,
-            "src/app/build/linux-x86_64/native.s"
+            "src/app/build/.zen/native/program.s"
         ).match({ Ok(_) => true, Err(_) => false })
     );
     Ok(0)

@@ -15,7 +15,7 @@ read = (text: str, at: usize) Res<u8, Failure> {
     Ok(byte)
 }
 
-main = () () {
+main = () {
     println("overload {}", "x"[0].kind());
     println("byte {}", read("az", 1).match({
         Ok(byte) => byte == 'z', Err(_) => false,

@@ -4,7 +4,7 @@ Right = | Text(str)
 left = () Res<i32, Left | Right> { Err(Left.Number(7)) }
 right = () Res<i32, Left | Right> { Err(Right.Text("hello")) }
 
-show = (result: Res<i32, Left | Right>) () {
+show = (result: Res<i32, Left | Right>) {
     result.match({
         Ok(value)  => println("ok {}", value),
         Err(error) => error.match({

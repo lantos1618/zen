@@ -8,11 +8,11 @@ HASH_MULT: u64 = 1000003
 Hasher* = {
     state :: u64 = HASH_SEED,
 
-    write_u8* = (self :: @Self, byte: u8) () {
+    write_u8* = (self :: @Self, byte: u8) {
         self.state = self.state *% HASH_MULT +% byte.to_u64();
     }
 
-    write_u64* = (self :: @Self, value: u64) () {
+    write_u64* = (self :: @Self, value: u64) {
         self.state = self.state *% HASH_MULT +% value;
     }
 

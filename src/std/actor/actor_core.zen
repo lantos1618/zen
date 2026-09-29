@@ -1,3 +1,4 @@
+MailboxStorage*, MailboxOps* = std.actor.actor_storage
 ActorError* = Closed | Full
 ActorStartError* = OutOfMemory | Unavailable
 
@@ -9,7 +10,9 @@ Ref*<A> = {
     // Close admission, drain accepted messages, then run stopped.
     stop* = (self: @Self) ()
 
-    // Wait until the actor has drained and stopped.
+    // Wait until the actor has drained and stopped; concurrent callers share
+    // one native join. Calling from this actor returns immediately. External
+    // callers must finish before process-wide runtime teardown.
     join* = (self: @Self) ()
 }
 

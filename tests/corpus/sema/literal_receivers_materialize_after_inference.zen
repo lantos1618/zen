@@ -8,7 +8,7 @@ Holder<T> = {
     keep = <U>(self: @Self, item: U) U { item }
 }
 
-main = () () {
+main = () {
     holder = Holder<str>(value: "receiver");
     println(
         "{} {} {}",

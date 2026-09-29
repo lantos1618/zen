@@ -1,0 +1,23 @@
+// Policy for mailbox storage only. Actor state and Context.alloc retain their
+// actor lifetime. Backend locks serialize take/give; close follows worker drain.
+Pool = std.mem.mem_pool
+Ptr = std.mem
+CACHE_BYTES*: usize = 1048576
+CACHE_BLOCK*: usize = 65536
+CACHE_COUNT*: usize = 64
+MailboxOps* = {
+    take* = (self :: @Self, bytes: usize) Ptr<u8>
+    give* = (self :: @Self, pointer: Ptr<u8>) ()
+    close* = (self :: @Self) ()
+}
+MailboxStorage* = { pool :: Pool = Pool() }
+MailboxStorage.impl(MailboxOps, {
+    take = (self :: @Self, bytes: usize) Ptr<u8> { self.pool.take(bytes) }
+    give = (self :: @Self, pointer: Ptr<u8>) { self.pool.give(
+        pointer,
+        CACHE_BYTES,
+        CACHE_BLOCK,
+        CACHE_COUNT
+    ) }
+    close = (self :: @Self) { self.pool.close() }
+})

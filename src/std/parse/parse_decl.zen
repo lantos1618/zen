@@ -15,7 +15,7 @@ AllocError = std.mem
 Span, Pos, Ident, no_trivia = std.ast.ast_span
 ExprId, TypeId = std.ast.ast_id
 Decl, DeclKind, Struct, Enum, Alias, Impl, Import, Const = std.ast.ast_node
-Member, Variant, ImportName, TParam, Module = std.ast.ast_node
+Member, MemberKind, Field, Variant, ImportName, TParam, Module = std.ast.ast_node
 TokenKind = std.parse.parse_token
 Parser, Mark = std.parse.parser
 expr = std.parse.parse_expr
@@ -189,7 +189,7 @@ decl_value = (
 // A header binding is a namespace of explicitly written native signatures.
 native_binding_ahead = (p: Parser) bool {
     p.at_text("c") && p.peek_n(1).kind == TokenKind.Dot
-        && p.text(p.peek_n(2)).eq("bind") && p.peek_n(3).kind == TokenKind.ParenOpen
+        && (p.text(p.peek_n(2)).eq("bind") || p.text(p.peek_n(2)).eq("record")) && p.peek_n(3).kind == TokenKind.ParenOpen
 }
 
 native_text = (p :: Parser) Res<str, AllocError> {
@@ -206,6 +206,7 @@ native_text = (p :: Parser) Res<str, AllocError> {
 
 native_binding = (p :: Parser, m: Mark, head: ImportName, tparams: Vec<TParam>)
                  Res<Decl, AllocError> {
+    native_record = p.text(p.peek_n(2)).eq("record");
     p.bump().try(); p.bump().try(); p.bump().try();
     open = p.here_span();
     p.bump().try();
@@ -222,21 +223,55 @@ native_binding = (p :: Parser, m: Mark, head: ImportName, tparams: Vec<TParam>)
         },
         false => None,
     });
-    body_start       = p.here();
-    members ::= p.alloc.Vec<Member>();
-    p.struct_members(members).try();
+    (native_record && symbol.match({None => true, Ok(_) => false})).then(() {
+        p.error("native records require an explicit C type name").try();
+    });
+    body_start = p.here();
+    raw_members ::= p.alloc.Vec<Member>();
+    p.struct_members(raw_members).try();
     body_span = p.span_from(body_start);
-    members.loop((member) {
-        valid = member.kind.match({
-            Function(f) => f.body.match({ None => f.tparams.len == 0, Ok(_) => false }),
+    members ::= p.alloc.Vec<Member>();
+    raw_members.loop((member) {
+        converted = (!native_record).match({
+            false => member,
+            true  => member.kind.match({
+                Const(c) => Member(
+                    kind: MemberKind.Field(Field(
+                        name: c.name,
+                        exported: c.exported,
+                        mutable: c.mutable,
+                        type: c.type,
+                        value: Ok(c.value)
+                    )),
+                    span: member.span,
+                    leading: member.leading,
+                    trailing: member.trailing
+                ),
+                _        => member,
+            }),
+        });
+        valid     = converted.kind.match({
+            Function(f) => !native_record && f.body.match({ None => f.tparams.len == 0, Ok(_) => false }),
+            Field(f)    => native_record.match({
+                true  => f.type.match({None => false, Ok(_) => true}) && f.value.match({None => true, Ok(_) => false}),
+                false => !f.mutable && p.native_integer(
+                    f.type
+                ) && f.value.match({
+                    None      => true,
+                    Ok(value) => p.tree.expr_at(
+                        value
+                    ).kind.match({Literal(lit) => lit.kind.match({Int => true, _ => false}), _ => false}),
+                }),
+            }),
             _           => false,
         });
         (!valid).then(() {
             p.error_at(
-                "native bindings require non-generic function signatures without bodies",
+                native_record.match({true => "native records require explicitly typed fields without defaults", false => "native bindings require function signatures or immutable integer constants with optional literal macro fallback"}),
                 member.span
             ).try();
         });
+        members.add(converted).try();
     });
     (tparams.len > 0).then(
         () { p.error("native binding namespaces cannot be generic").try(); }
@@ -246,8 +281,25 @@ native_binding = (p :: Parser, m: Mark, head: ImportName, tparams: Vec<TParam>)
     p.add_decl(DeclKind.Struct(Struct(
         name: head.name, exported: head.exported, tparams: tparams,
         members: members, body_span: body_span,
-        native_header: Ok(header), native_symbol: symbol,
+        native_header: Ok(
+            header
+        ), native_symbol: symbol, native_record: native_record,
     )), m)
+}
+
+// Native constants are runtime header expressions, not Zen comptime values.
+native_integer = (p: Parser, ty: Res<TypeId>) bool {
+    ty.match({
+        None   => false,
+        Ok(id) => p.tree.type_at(id).kind.match({
+            Named(n) => {
+                found ::= false;
+                ["c_int", "c_uint", "c_char", "c_long", "c_ulong", "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "isize", "usize"].loop((name) { found = found || n.name.text.eq(name); });
+                found && n.args.len == 0
+            },
+            _        => false,
+        }),
+    })
 }
 
 head_name = (p: Parser, names: Vec<ImportName>) ImportName {

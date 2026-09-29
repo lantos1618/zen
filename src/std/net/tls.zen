@@ -254,7 +254,7 @@ TlsStream* = {
         answer
     }
 
-    close* = (self :: @Self) () {
+    close* = (self :: @Self) {
         self.open.then(() {
             self.open = false;
             SSL_shutdown(self.ssl);
@@ -266,7 +266,7 @@ TlsStream* = {
 }
 
 TlsStream.impl(Drop, {
-    drop = (self :: @Self) () { self.close() }
+    drop = (self :: @Self) { self.close() }
 })
 
 // TlsError covers both transports' faults. The union owns the stream it
@@ -318,7 +318,7 @@ read* = (self: Stream, buf :: Vec<u8>, n: usize) Res<usize, TlsError> {
     })
 }
 
-close* = (self: Stream) () {
+close* = (self: Stream) {
     self.match({
         Tcp(t) => t.close(),
         Tls(t) => t.close(),
@@ -326,5 +326,5 @@ close* = (self: Stream) () {
 }
 
 Stream.impl(Drop, {
-    drop = (self :: @Self) () { self.close() }
+    drop = (self :: @Self) { self.close() }
 })

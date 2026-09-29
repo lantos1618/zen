@@ -79,11 +79,11 @@ Emit* = {
 
     // depth
 
-    indent* = (self :: @Self) () { self.depth = self.depth + 1; }
+    indent* = (self :: @Self) { self.depth = self.depth + 1; }
 
     // Saturates at zero: an unbalanced backend gets misindented C, not an
     // aborted compilation.
-    dedent* = (self :: @Self) () {
+    dedent* = (self :: @Self) {
         (self.depth > 0).then(() { self.depth = self.depth - 1; });
     }
 

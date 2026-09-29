@@ -11,6 +11,7 @@ Diag, Parser, module = std.parse.parse
 Src, Parsed = fmt.fmt_src
 Aligned, align_columns = fmt.fmt_decl
 break_lines = fmt.fmt_break
+omit_unit_returns, UnitEdit = fmt.fmt_unit
 
 FIRST: usize = 1
 
@@ -22,7 +23,7 @@ Render* = {
     // Non-empty diagnostics leave the source unchanged.
     diags*: Vec<Diag>,
 
-    // False means a formatting rule changed a token.
+    // False means a rule changed a token beyond AST-verified unit-return omission.
     faithful*: bool,
 }
 
@@ -41,8 +42,27 @@ parsed = (a: Alloc, lexed: Lexed) Res<Render, AllocError> {
     (p.diags.len == 0).match({
         false => rejected(a, p.diags),
         true  => {
-            src = a.Src(lexed.source.text).try();
-            printed(a, Parsed(src: src, tree: p.tree, m: m), lexed)
+            src   = a.Src(lexed.source.text).try();
+            tree  = Parsed(src: src, tree: p.tree, m: m);
+            units = omit_unit_returns(a, tree, lexed).try();
+            units.faithful.match({
+                false => rejected(a, a.Vec<Diag>()),
+                true  => units.changed.match({
+                    // Reparse after the narrow normalization; all ordinary
+                    // layout passes still require exact token preservation.
+                    true  => parsed(
+                        a,
+                        scan(
+                            a,
+                            Source(
+                                file: lexed.source.file,
+                                text: units.text.view()
+                            )
+                        ).try()
+                    ),
+                    false => printed(a, tree, lexed),
+                }),
+            })
         },
     })
 }

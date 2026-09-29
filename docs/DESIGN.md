@@ -76,10 +76,12 @@ So four decisions, all made in week one, all brutal to retrofit:
 **Ship the ownership *syntax* at stage 0** even though nothing checks it. `self :: @Self` and `consume` cost nothing to parse and ignore. Defer the syntax and every line of stdlib written before stage 3 has to be revised; defer only the enforcement and nothing is lost.
 
 **So read the Ownership section below as law, and check the tree before reading
-it as behaviour.** The formatter's current whitespace-only rules live in
+it as behaviour.** The formatter's layout rules and unit-return normalization live in
 `src/fmt/` and are held by `tests/corpus/fmt/`; token-moving match-arm rules
-remain owed. Its `faithful` guard re-lexes the result and refuses any token
-change. Ownership checks cover receiver mutation, consume/use-after-move,
+remain owed. Its `faithful` guard re-lexes the result and refuses token changes except
+AST-identified redundant unit returns on named functions and methods with bodies.
+Bodiless signatures, function types, callback return constraints and unit values
+remain explicit. Other formatting passes still preserve every token. Ownership checks cover receiver mutation, consume/use-after-move,
 copies and partial moves of `Drop` values, and `@scope` exits. Actor lowering
 and a bounded-mailbox runtime have landed, but deep `iso` sendability remains
 law rather than implemented behaviour. What is checked refuses; what is not
@@ -598,10 +600,45 @@ must supply the correct ABI for every call, including platform-specific return
 conventions. A cast does not prove ABI compatibility or ownership safety.
 
 These are explicit declarations, not automatic C header parsing. The binding
-namespace cannot be constructed as a runtime object. Its body accepts only
-non-generic function signatures without bodies. Constants,
-opaque native type declarations, C record layout, and automatic header imports
-are not implemented by this syntax. An inline binding expression passed to
+namespace cannot be constructed as a runtime object. Its body accepts
+non-generic function signatures without bodies and immutable, explicitly typed
+integer constants:
+
+```groovy fragment
+Socket = c.bind("sys/socket.h", {
+    AF_INET6*: i32
+    SOCK_CLOEXEC*: i32 = 0
+})
+```
+
+Required constants may name a macro or enum. An optional nonnegative integer
+literal supplies a fallback only when the name is not defined as a C macro;
+this presence test does not detect enum-only names. Values come from the target
+header, not Zen compile-time evaluation, and cannot size compile-time arrays.
+Fallbacks must fit the declared integer type, checked against the target ABI.
+The C backend enables its GNU/POSIX feature surface before including native
+headers, including in programs that do not use process operations.
+
+`c.record` binds a header-owned record without duplicating its layout:
+
+```groovy fragment
+Timespec = c.record("time.h", "struct timespec", {
+    tv_sec: c_long,
+    tv_nsec: c_long,
+})
+```
+
+Field names must match the header. Construction uses native designated fields,
+zero-initializes omitted native fields, and pointer arithmetic uses the actual
+native size. A declaration may expose a subset of fields. Records are nongeneric
+and support scalar and pointer fields without defaults. The C backend checks
+exact scalar type compatibility against the header, preventing a mutable field
+reference from using a wider scalar than the native field. Pointer pointee types,
+lifetimes and ownership remain the binding author's explicit FFI responsibility.
+Unions, bitfields, packed records and nested record fields are unsupported.
+
+Opaque native type declarations and automatic header imports are not implemented.
+An inline binding expression passed to
 `b.lib` is also not implemented: put bindings in a Zen module and declare build
 dependencies separately. The current implementation validates header and symbol
 names when a call is emitted; unused bindings do not cause includes.
@@ -997,7 +1034,7 @@ Arena* = {
 Arena.impl(Alloc, { ... })
 
 Arena.impl(Drop, {
-    drop = (self :: @Self) () { /* release every page at once */ }
+    drop = (self :: @Self) { /* release every page at once */ }
 })
 
 
@@ -1589,24 +1626,24 @@ Foo = {}
 Foo.impl(Actor, {
     // optional lifecycle hooks. println resolves through
     // ctx.env — a Context carries an Env, so one is in scope
-    started ::= (self :: @Self, ctx: Context) () { 
+    started ::= (self :: @Self, ctx: Context) {
         println("actor started") 
     }
-    stopped ::= (self :: @Self, ctx: Context) () { 
+    stopped ::= (self :: @Self, ctx: Context) {
         println("actor stopped") 
     }
 
     // behaviors: calling one on a Ref<Foo> enqueues a message
     // and returns immediately. allocator-backed payloads are refused;
     // gen_c_actor emits the message record from this signature
-    receive_msg = (self :: @Self, ctx: Context, data: str) () {
+    receive_msg = (self :: @Self, ctx: Context, data: str) {
         println("actor has received {}", data)
     }
 
     // request/response the pony way: the request carries the
     // reply ADDRESS, and the response is just another behavior
     // call. no promise, no await, no second concept
-    compute = (self :: @Self, ctx: Context, n: i32, reply: Ref<Collector>) () {
+    compute = (self :: @Self, ctx: Context, n: i32, reply: Ref<Collector>) {
         reply.result(n + 1);
     }
 })
@@ -1614,7 +1651,7 @@ Foo.impl(Actor, {
 Collector = {}
 
 Collector.impl(Actor, {
-    result = (self :: @Self, ctx: Context, v: i32) () {
+    result = (self :: @Self, ctx: Context, v: i32) {
         println("got {}", v)
     }
 })
@@ -1776,3 +1813,20 @@ main = (env: Env) Res<i32, Error> {
 - **Supervision.** A trap aborts the process. Killing only the offending actor is the Pony answer and needs a supervision story that does not exist yet.
 - **`env.threads.spawn` vs `env.blocking.run`.** If the only legitimate use of a thread is running blocking work off the scheduler, the honest capability is `blocking.run` — it makes the misuse unrepresentable rather than merely discouraged.
 - **Comptime file reads.** Excluded from v1 for reproducibility. `@embed_file` is the feature people will ask for.
+
+## Unsigned bit operations
+
+`std.core.num` exports `bit_xor(self: W, other: W) W`,
+`bit_and(self: W, other: W) W`, `rotate_right(self: W, count: usize) W`,
+and `shift_right(self: W, count: usize) W` for unsigned words W = u32 or u64.
+All support free-function and receiver-call syntax. Binary operands must use
+the same word type. Rotation reduces the count modulo the word width; zero
+and width multiples preserve the input. Logical right shift fills with zero;
+counts greater than or equal to the width return zero (including usize.MAX).
+The C backend guards shifts and masks rotation counts to avoid undefined C shifts.
+
+These allocation-free compiler primitives evaluate operands once in source
+order. Only validated exported, nongeneric, immutable-parameter declarations
+with these exact signatures in `std.core.num` acquire primitive behavior.
+User functions with bodies may use the same names normally. This adds no
+new operator syntax, crypto dependency or constant-time compiler guarantee.

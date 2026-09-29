@@ -1,6 +1,6 @@
 JsonEvent, JsonFault = std.json
 
-show = (event: JsonEvent) () {
+show = (event: JsonEvent) {
     event.match({
         ObjectStart => print("{"),
         ObjectEnd   => print("}"),

@@ -10,12 +10,12 @@ Bag* = {
     len* :: i32,
     slack :: i32 = 2,
 
-    add* = (self :: @Self, n: i32) () {
+    add* = (self :: @Self, n: i32) {
         self.rehome();
         self.len = self.len + n;
     }
 
-    rehome = (self :: @Self) () {
+    rehome = (self :: @Self) {
         self.len = self.len + 1;
     }
 }

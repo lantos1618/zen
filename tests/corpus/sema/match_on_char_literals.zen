@@ -17,7 +17,7 @@ classify = (b: u8) str {
     })
 }
 
-show = (s: str) () {
+show = (s: str) {
     Range(0, s.len).loop((h, i) {
         println("{} {}", s[i], classify(s[i]));
     });

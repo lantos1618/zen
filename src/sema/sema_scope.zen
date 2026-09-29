@@ -367,7 +367,7 @@ Sources = {
     local :: bool,
     source :: Res<ExprId>,
 
-    add = (self :: @Self, c :: Checker, o :: Own, value: ExprId) () {
+    add = (self :: @Self, c :: Checker, o :: Own, value: ExprId) {
         local       = c.is_arena_backed(o, value);
         self.source = joined_source(
             self.local,

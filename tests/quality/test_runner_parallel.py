@@ -32,6 +32,13 @@ class ParallelRunnerTests(unittest.TestCase):
         )]
         self.collection = runner.Collection(tests=self.tests)
 
+    def test_math_header_links_libm_only_when_reachable(self):
+        source = self.root / "math.c"
+        source.write_text("#include <math.h>\nint main(void) { return 0; }\n")
+        self.assertEqual(runner.native_link_args(source), ["-lm"])
+        source.write_text('const char *name = "math.h";\n')
+        self.assertEqual(runner.native_link_args(source), [])
+
     def make_test(self, tid):
         source = self.root / (tid.replace("/", "_") + ".zen")
         return runner.Test(tid, tid.split("/")[0], "fixture", source, source,
@@ -52,7 +59,7 @@ class ParallelRunnerTests(unittest.TestCase):
 
     def test_result_cache_hits_skip_execution_and_no_cache_runs_again(self):
         for test in self.tests:
-            test.source.write_text("main = () () {}\n")
+            test.source.write_text("main = () {}\n")
             test.expected_path.write_bytes(test.expected)
         cache = self.root / "verdicts"
         report = self.root / "cached.json"
@@ -72,7 +79,7 @@ class ParallelRunnerTests(unittest.TestCase):
             self.assertEqual(third[2], len(self.tests))
             refresh = self.invoke(*arguments, "--refresh-result-cache")
             self.assertEqual(refresh[2], len(self.tests))
-            self.tests[0].source.write_text("main = () () { changed() }\n")
+            self.tests[0].source.write_text("main = () { changed() }\n")
             changed = self.invoke(*arguments)
             self.assertEqual(changed[2], 1)
             # A cached pass must never hide collection errors outside selection.
@@ -375,12 +382,17 @@ class NativeCacheTests(unittest.TestCase):
 
 
 class ResultCacheTests(unittest.TestCase):
+    UNTRACKED_NATIVE_ENV = (
+        "LD_PRELOAD", "LD_LIBRARY_PATH", "GCC_EXEC_PREFIX", "COMPILER_PATH",
+        "CCACHE_PREFIX", "CPATH", "C_INCLUDE_PATH", "LIBRARY_PATH",
+    )
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="zen-verdict-check-")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.source = self.root / "case.zen"
-        self.source.write_text("main = () () {}\n")
+        self.source.write_text("main = () {}\n")
         self.expected = self.source.with_suffix(".expected")
         self.expected.write_text("")
         self.test = runner.Test("corpus/fixture/case", runner.CORPUS, "fixture",
@@ -457,7 +469,7 @@ class ResultCacheTests(unittest.TestCase):
             path = self.sources / name
             path.write_text(path.read_text() + "New = {}\n")
             self.assertEqual(self.cache().key(self.test), baseline)
-        self.source.write_text("Api = api\nmain = () () {}\n")
+        self.source.write_text("Api = api\nmain = () {}\n")
         imported = self.cache().key(self.test)
         worker = self.sources / "worker/worker.zen"
         worker.write_text(worker.read_text() + "New = {}\n")
@@ -580,7 +592,7 @@ class ResultCacheTests(unittest.TestCase):
             self.assertEqual(fresh.artifacts, [])
 
     def test_shared_source_snapshots_avoid_repeated_reads_and_reject_midrun_edits(self):
-        self.source.write_text("Api = api\nmain = () () {}\n")
+        self.source.write_text("Api = api\nmain = () {}\n")
         cache = self.cache()
         with patch.object(cache, "file_digest", wraps=cache.file_digest) as digest, \
              patch.object(runner, "sublayers_named_in", wraps=runner.sublayers_named_in) as votes:
@@ -614,7 +626,12 @@ class ResultCacheTests(unittest.TestCase):
         floor = self.root / "native.c"
         floor.write_text("native floor one")
         tool = runner.Toolchain("fixture", [str(compiler)])
-        with patch.object(runner, "__file__", str(harness)), \
+        # The baseline deliberately models a tracked toolchain, independent of
+        # loader/search paths injected by setup-python or a developer shell.
+        tracked_env = {key: value for key, value in os.environ.items()
+                       if key not in self.UNTRACKED_NATIVE_ENV}
+        with patch.dict(os.environ, tracked_env, clear=True), \
+             patch.object(runner, "__file__", str(harness)), \
              patch.object(runner, "NATIVE_FLOORS", ((b"probe", (floor,), ()),)):
             cache = runner.ResultCache(self.args.result_cache, tool, self.args)
             baseline = cache.identity
@@ -640,6 +657,21 @@ class ResultCacheTests(unittest.TestCase):
             # Executable scripts can have arbitrary undeclared dependencies.
             compiler.write_text("#!/bin/sh\nexec /bin/true\n")
             self.assertIsNone(cache.context())
+
+    def test_untracked_native_environment_bypasses_before_toolchain_probes(self):
+        self.context.stop()
+        tool = runner.Toolchain("fixture", ["unused"], src_root=self.sources)
+        tracked_env = {key: value for key, value in os.environ.items()
+                       if key not in self.UNTRACKED_NATIVE_ENV}
+        for name in self.UNTRACKED_NATIVE_ENV:
+            with self.subTest(name=name), \
+                 patch.dict(os.environ, tracked_env, clear=True), \
+                 patch.dict(os.environ, {name: "/untracked/toolchain"}), \
+                 patch.object(runner.platform, "system", return_value="Linux"), \
+                 patch.object(runner.shutil, "which", side_effect=AssertionError(
+                     "untracked environment reached native toolchain probes")):
+                cache = runner.ResultCache(self.args.result_cache, tool, self.args)
+                self.assertIsNone(cache.identity)
 
     @unittest.skipUnless(shutil.which("cc") and shutil.which("nm"), "requires native toolchain")
     def test_unknown_clock_and_process_symbols_bypass_verdict_cache(self):

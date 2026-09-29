@@ -350,7 +350,9 @@ write_unpack_one = (be :: CBackend, s: LocalSlot) Res<(), AllocError> {
         false => be.declarator(s.ty, cname.view(), line),
         true  => be.ref_field(s.ty, cname.view(), line),
     }).try();
-    be.fmt("{} = zg_e->{};\n", line.view(), cname.view())
+    be.fmt("{} = zg_e->{};\n", line.view(), cname.view()).try();
+    // Native lowering can erase a captured receiver while retaining its call.
+    be.fmt("(void){};\n", cname.view())
 }
 
 // the registration

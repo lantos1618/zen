@@ -10,7 +10,7 @@ Holder<T> = {
     get = (self: @Self) T { self.value }
 }
 
-main = () () {
+main = () {
     holder = Holder<str>(value: "receiver");
     println("{} {}", holder.agrees(3, 3), holder.agrees(3, 4));
     println("{}", holder.keep(7).to_i64());

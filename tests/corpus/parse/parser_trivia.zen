@@ -41,7 +41,7 @@ SOURCE: str = "// before the declaration\nPoint = {\n    x: i32,  // after the f
 // Every piece of a run, in order. A count alone would pass while the
 // parser attached the wrong comment, which is the failure this test
 // exists to catch.
-show_run = (env: Env, tree: Ast, label: str, run: TriviaRun) () {
+show_run = (env: Env, tree: Ast, label: str, run: TriviaRun) {
     println("{} {}", label, run.len);
     Range(0, run.len).loop((h, i) {
         t = tree.trivia_at(run, i);
@@ -57,7 +57,7 @@ show_run = (env: Env, tree: Ast, label: str, run: TriviaRun) () {
     });
 }
 
-show_members = (env: Env, tree: Ast, d: Decl) () {
+show_members = (env: Env, tree: Ast, d: Decl) {
     d.kind.match({
         Struct(s) => s.members.loop((h, mem) {
             show_run(env, tree, "member.leading", mem.leading);
@@ -67,7 +67,7 @@ show_members = (env: Env, tree: Ast, d: Decl) () {
     });
 }
 
-show_arms = (env: Env, tree: Ast, d: Decl) () {
+show_arms = (env: Env, tree: Ast, d: Decl) {
     d.kind.match({
         Function(f) => f.body.match({
             Ok(b) => show_arms_in(env, tree, tree.block_at(b)),
@@ -77,7 +77,7 @@ show_arms = (env: Env, tree: Ast, d: Decl) () {
     });
 }
 
-show_arms_in = (env: Env, tree: Ast, b: Block) () {
+show_arms_in = (env: Env, tree: Ast, b: Block) {
     b.stmts.loop((h, s) {
         s.kind.match({
             Expr(es) => show_arms_of(env, tree, es.expr),
@@ -86,7 +86,7 @@ show_arms_in = (env: Env, tree: Ast, b: Block) () {
     });
 }
 
-show_arms_of = (env: Env, tree: Ast, id: ExprId) () {
+show_arms_of = (env: Env, tree: Ast, id: ExprId) {
     tree.expr_at(id).kind.match({
         Match(mt) => mt.arms.loop((h, a) {
             show_run(env, tree, "arm.leading", a.leading);

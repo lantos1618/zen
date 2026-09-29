@@ -1,0 +1,82 @@
+// Borrowed, bounded binary cursors. No allocation or retained ownership.
+// The caller keeps the declared memory region live throughout cursor use.
+Ptr = std.mem
+str, str_at = std.text
+ByteError* = Invalid | Truncated
+ByteReader* = {
+    bytes: Ptr<u8>,
+    length: usize,
+    position :: usize,
+    open* = (bytes: Ptr<u8>, length: usize) Res<ByteReader, ByteError> {
+        (length == 0 || !bytes.is_null()).ensure(ByteError.Invalid).try();
+        Ok(ByteReader(bytes: bytes, length: length, position: 0))
+    }
+    remaining* = (self: @Self) usize { self.length - self.position }
+    consumed* = (self: @Self) usize { self.position }
+    take* = (self :: @Self, count: usize) Res<str, ByteError> {
+        (count <= self.remaining()).ensure(ByteError.Truncated).try();
+        pointer       = self.bytes.is_null().match({true => self.bytes, false => self.bytes.offset(
+            self.position
+        )});
+        self.position = self.position + count;
+        Ok(str_at(pointer, count))
+    }
+    read_be* = (self :: @Self, width: usize) Res<u64, ByteError> { self.read_order(
+        width,
+        false
+    ) }
+    read_le* = (self :: @Self, width: usize) Res<u64, ByteError> { self.read_order(
+        width,
+        true
+    ) }
+    read_order = (self :: @Self, width: usize, little: bool) Res<u64, ByteError> {
+        (width > 0 && width <= 8).ensure(ByteError.Invalid).try();
+        (width <= self.remaining()).ensure(ByteError.Truncated).try();
+        value: u64 ::= 0;
+        Range(0, width).loop((i) {
+            index = little.match({true => width - 1 - i, false => i});
+            value = value *% 256 + self.bytes.read(
+                self.position + index
+            ).to_u64();
+        });
+        self.position = self.position + width;
+        Ok(value)
+    }
+}
+ByteWriter* = {
+    bytes: Ptr<u8>,
+    length: usize,
+    position :: usize,
+    open* = (bytes: Ptr<u8>, length: usize) Res<ByteWriter, ByteError> {
+        (length == 0 || !bytes.is_null()).ensure(ByteError.Invalid).try();
+        Ok(ByteWriter(bytes: bytes, length: length, position: 0))
+    }
+    remaining* = (self: @Self) usize { self.length - self.position }
+    written* = (self: @Self) usize { self.position }
+    write_be* = (self :: @Self, value: u64, width: usize) Res<(), ByteError> { self.write_order(
+        value,
+        width,
+        false
+    ) }
+    write_le* = (self :: @Self, value: u64, width: usize) Res<(), ByteError> { self.write_order(
+        value,
+        width,
+        true
+    ) }
+    write_order = (self :: @Self, value: u64, width: usize, little: bool) Res<(), ByteError> {
+        (width > 0 && width <= 8).ensure(ByteError.Invalid).try();
+        (width <= self.remaining()).ensure(ByteError.Truncated).try();
+        rest ::= value;
+        Range(0, width).loop((i) { rest = rest / 256; });
+        (rest == 0).ensure(ByteError.Invalid).try();
+        rest = value;
+        Range(0, width).loop((i) {
+            index = little.match({true => i, false => width - 1 - i});
+            byte  = (rest % 256).to_usize().ok_or(ByteError.Invalid).try().to_u8().ok_or(ByteError.Invalid).try();
+            self.bytes.write(self.position + index, byte);
+            rest = rest / 256;
+        });
+        self.position = self.position + width;
+        Ok(())
+    }
+}

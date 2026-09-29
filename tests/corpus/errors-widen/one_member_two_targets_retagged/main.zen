@@ -31,7 +31,7 @@ into_wide = (n: i32) Res<i32, Wide3> {
     Ok(0);
 }
 
-read_mid = (env: Env, r: Res<i32, Mid>) () {
+read_mid = (env: Env, r: Res<i32, Mid>) {
     r.match({
         Ok(v)  => println("mid ok {}", v),
         Err(e) => e.match({
@@ -41,7 +41,7 @@ read_mid = (env: Env, r: Res<i32, Mid>) () {
     });
 }
 
-read_wide = (env: Env, r: Res<i32, Wide3>) () {
+read_wide = (env: Env, r: Res<i32, Wide3>) {
     r.match({
         Ok(v)  => println("wide ok {}", v),
         Err(e) => e.match({

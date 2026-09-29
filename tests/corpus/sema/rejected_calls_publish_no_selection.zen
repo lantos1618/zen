@@ -37,17 +37,17 @@ main = (env: Env) Res<(), AllocError> {
     inspect(
         a,
         "literal",
-        "take = (v: u8) () {}\nmain = () { take(300); }\n"
+        "take = (v: u8) {}\nmain = () { take(300); }\n"
     ).try();
     inspect(
         a,
         "generic literal",
-        "take = <T>(v: T) () {}\nmain = () { take<u8>(300); }\n"
+        "take = <T>(v: T) {}\nmain = () { take<u8>(300); }\n"
     ).try();
     inspect(
         a,
         "callback",
-        "take = (body: () i32) () {}\nmain = () { take(() { missing }); }\n"
+        "take = (body: () i32) {}\nmain = () { take(() { missing }); }\n"
     ).try();
     inspect(
         a,

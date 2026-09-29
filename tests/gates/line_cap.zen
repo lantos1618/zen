@@ -65,7 +65,7 @@ run = (env: Env, alloc: Alloc) Res<i32, AllocError> {
     (unread > 0).match({ true => Ok(2), false => Ok(0) })
 }
 
-note = (o: Over, threshold: usize) () {
+note = (o: Over, threshold: usize) {
     println(
         "note: {}: {} lines, over {} — check subjects, dependency edges, and parameter bundles",
         o.rel,

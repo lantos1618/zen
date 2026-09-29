@@ -32,7 +32,10 @@ write_position = gen.gen_c.gen_c_op
 
 // One point in the pattern walk. Conditions and bindings traverse the
 // same type at the same C place; carrying that pair on the receiver keeps
-// recursive lowering from relaying it through every helper.
+// recursive lowering from relaying it through every helper. Conditions contain
+// comparisons joined by &&; the enclosing if supplies their parentheses.
+// Equality binds more tightly than &&, preserving tag-before-payload guards
+// without producing Clang's redundant-parenthesized-equality warning.
 PatternSite = {
     ty: TyId,
     place: str,
@@ -176,9 +179,8 @@ PatternSite = {
                       out :: String) Res<(), AllocError> {
         qname ::= be.alloc.String().try();
         be.enum_path(self.ty, qname).try();
-        out.fmt(" && ({}.zg_tag == ", self.place).try();
-        out.sym_variant(qname.view(), case).try();
-        out.add(")")
+        out.fmt(" && {}.zg_tag == ", self.place).try();
+        out.sym_variant(qname.view(), case)
     }
 
     tag_cond = (self: @Self, be :: CBackend, q: QualifiedName,
@@ -188,7 +190,7 @@ PatternSite = {
 
     tag_name = (self: @Self, be :: CBackend, name: str, out :: String)
                Res<(), AllocError> {
-        out.fmt("({}.zg_tag == ", self.place).try();
+        out.fmt("{}.zg_tag == ", self.place).try();
         be.check.types.at(self.ty).match({
             Union(_) => member_of(be.check, self.ty, name).match({
                 Ok(member) => sym_union_variant(
@@ -201,8 +203,7 @@ PatternSite = {
                 None       => self.nominal_tag(be, name, out),
             }),
             _        => self.nominal_tag(be, name, out),
-        }).try();
-        out.add(")")
+        })
     }
 
     nominal_tag = (self: @Self, be :: CBackend, name: str, out :: String)
@@ -440,21 +441,19 @@ negate = (scrut: str, out :: String) Res<(), AllocError> {
 }
 
 equality = (scrut: str, text: str, out :: String) Res<(), AllocError> {
-    out.fmt("({scrut} == {text})")
+    out.fmt("{scrut} == {text}")
 }
 
 write_str_cond = (l: Literal, scrut: str, out :: String)
                  Res<(), AllocError> {
     n = l.text.slice(1, l.text.len - 1).literal_byte_len();
-    out.fmt("({scrut}.len == ").try();
+    out.fmt("{scrut}.len == ").try();
     out.write_usize(n).try();
     out.add("u").try();
     (n > 0).match({
         true  => str_bytes_cond(l, scrut, n, out),
         false => Ok(()),
-    }).try();
-    out.add(")").try();
-    Ok(());
+    })
 }
 
 // The empty string is its length and nothing more: a zero-length `str`

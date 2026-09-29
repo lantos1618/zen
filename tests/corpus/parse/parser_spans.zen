@@ -35,7 +35,7 @@ Decl, Block, Bind = std.ast.ast_node
 //   9  }
 SOURCE: str = "// a note\nPoint = {\n    x: i32,\n}\n\nmain = () i32 {\n    p = Point(x: 3);\n    0\n}\n"
 
-sp = (env: Env, label: str, s: Span) () {
+sp = (env: Env, label: str, s: Span) {
     println(
         "{} {}:{}..{}:{}",
         label,
@@ -46,7 +46,7 @@ sp = (env: Env, label: str, s: Span) () {
     );
 }
 
-show_struct = (env: Env, tree: Ast, d: Decl) () {
+show_struct = (env: Env, tree: Ast, d: Decl) {
     d.kind.match({
         Struct(s) => {
             sp(env, "struct.name", s.name.span);
@@ -73,7 +73,7 @@ show_struct = (env: Env, tree: Ast, d: Decl) () {
     });
 }
 
-show_fn = (env: Env, tree: Ast, d: Decl) () {
+show_fn = (env: Env, tree: Ast, d: Decl) {
     d.kind.match({
         Function(f) => {
             sp(env, "fn.name", f.name.span);
@@ -91,7 +91,7 @@ show_fn = (env: Env, tree: Ast, d: Decl) () {
     });
 }
 
-show_body = (env: Env, tree: Ast, b: Block) () {
+show_body = (env: Env, tree: Ast, b: Block) {
     sp(env, "fn.block", b.span);
     b.stmts.loop((h, s) {
         sp(env, "stmt", s.span);
@@ -106,7 +106,7 @@ show_body = (env: Env, tree: Ast, b: Block) () {
     });
 }
 
-show_bind = (env: Env, tree: Ast, bd: Bind) () {
+show_bind = (env: Env, tree: Ast, bd: Bind) {
     sp(env, "bind.target", tree.expr_at(bd.target).span);
     e = tree.expr_at(bd.value);
     sp(env, "bind.value", e.span);

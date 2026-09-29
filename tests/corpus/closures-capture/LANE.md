@@ -10,7 +10,7 @@ tests/corpus/closures-capture/h_lambda_argument_reads_the_live_binding -- run_la
 NOTES ON WHAT THE PROBING FOUND
 
 1. Locally bound closures cannot be called directly:
-       bump = () () { n = n + 5; }
+       bump = () { n = n + 5; }
    does not even parse (`expected expression` after the return type --
    `lambda_ahead` refuses a `(` return type in expression position), and
    with the ret type omitted sema accepts it but codegen says "cannot

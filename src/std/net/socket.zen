@@ -6,50 +6,50 @@ Res = std.core
 Drop = std.core
 Vec = std.collections
 
-// Known Linux ABI codes; foreign records and calls retain their integer layout.
-AddressFamily = | Unspecified = 0 | Ipv6 = 10 | Unknown(i32)
-SocketKind = | Stream = 1 | Unknown(i32)
-InternetProtocol = | Tcp = 6 | Unknown(i32)
+// Header-owned layout: the native compiler supplies offsets, size and alignment.
+AddrInfo = c.record("netdb.h", "struct addrinfo", {
+    ai_flags: i32,
+    ai_family: i32,
+    ai_socktype: i32,
+    ai_protocol: i32,
+    ai_addrlen: u32,
+    ai_addr: Ptr<()>,
+    ai_canonname: Ptr<c_char>,
+    ai_next: Ptr<AddrInfo>,
+})
+Native = c.bind("sys/socket.h", {
+    AF_UNSPEC: i32
+    AF_INET6: i32
+    SOCK_STREAM: i32
+    SOCK_CLOEXEC: i32 = 0
+    MSG_NOSIGNAL: i32 = 0
+    SO_NOSIGPIPE: i32 = 0
+    SOL_SOCKET: i32
+    socket = (domain: i32, kind: i32, protocol: i32) i32
+    connect = (fd: i32, address: Ptr<()>, address_len: u32) i32
+    send = (fd: i32, bytes: Ptr<u8>, len: usize, flags: i32) i64
+    recv = (fd: i32, bytes: Ptr<u8>, len: usize, flags: i32) i64
+    setsockopt = (fd: i32, level: i32, option: i32, value: Ptr<()>, len: u32) i32
+})
+Descriptors = c.bind("fcntl.h", {
+    F_GETFD: i32
+    F_SETFD: i32
+    FD_CLOEXEC: i32
+    fcntl = (fd: i32, command: i32, value: i32) i32
+})
+Io = c.bind("unistd.h", { close = (fd: i32) i32 })
+Resolver = c.bind("netdb.h", {
+    NI_MAXHOST: u32
+    NI_NUMERICHOST: i32
+    getaddrinfo = (host: Ptr<c_char>, service: Ptr<c_char>, hints: Ptr<AddrInfo>, answer: Ptr<Ptr<AddrInfo>>) i32
+    freeaddrinfo = (answer: Ptr<AddrInfo>) ()
+    getnameinfo = (address: Ptr<()>, address_len: u32, host: Ptr<c_char>, host_len: u32, service: Ptr<c_char>, service_len: u32, flags: i32) i32
+})
 
-// These values are combinable flags or a buffer capacity, not discriminants.
-SOCK_CLOEXEC: i32 = 524288
-MSG_NOSIGNAL: i32 = 16384
-NI_MAXHOST: u32 = 1025
-NI_NUMERICHOST: i32 = 1
-
-// Linux/POSIX addrinfo ABI used by getaddrinfo, connect, and getnameinfo.
-AddrInfo = {
-    flags: i32,
-    family: i32,
-    socktype: i32,
-    protocol: i32,
-    address_len: u32,
-    address: Ptr<u8>,
-    canonical_name: Ptr<u8>,
-    next: Ptr<AddrInfo>,
+// POSIX options here are individual positive bits; retain all caller flags.
+with_flag = (flags: i32, bit: i32) i32 {
+    (bit > 0 && (flags / bit) % 2 == 0).match({true => flags + bit, false => flags})
 }
-
-socket = (domain: i32, kind: i32, protocol: i32) i32
-connect = (fd: i32, address: Ptr<u8>, address_len: u32) i32
-send = (fd: i32, bytes: Ptr<u8>, len: usize, flags: i32) usize
-recv = (fd: i32, bytes: Ptr<u8>, len: usize, flags: i32) usize
-close = (fd: i32) i32
-getaddrinfo = (
-    host    : Ptr<u8>,
-    service : Ptr<u8>,
-    hints   : Ptr<AddrInfo>,
-    answer  : Ptr<Ptr<AddrInfo>>
-) i32
-freeaddrinfo = (answer: Ptr<AddrInfo>) ()
-getnameinfo = (
-    address     : Ptr<u8>,
-    address_len : u32,
-    host        : Ptr<u8>,
-    host_len    : u32,
-    service     : Ptr<u8>,
-    service_len : u32,
-    flags       : i32
-) i32
 
 SocketFault* = ConnectFault | WriteFault | ReadFault | PeerClosed
 
@@ -72,21 +72,20 @@ SocketFd* = {
         len   : usize,
         flags : i32
     ) Res<usize, SocketFault> {
-        n = send(self.raw, bytes, len, flags);
-        (n == usize.MAX).match({
-            true  => Err(SocketFault.WriteFault),
-            false => Ok(n),
-        })
+        (flags >= 0).ensure(SocketFault.WriteFault).try();
+        n = Native.send(
+            self.raw,
+            bytes,
+            len,
+            with_flag(flags, Native.MSG_NOSIGNAL)
+        );
+        n.to_usize().ok_or(SocketFault.WriteFault)
     }
 
     send* = (self: @Self, bytes: str) Res<(), SocketFault> {
         sent ::= 0;
         loop(sent < bytes.len, (h) {
-            n = self.send(
-                bytes.ptr().offset(sent),
-                bytes.len - sent,
-                MSG_NOSIGNAL
-            ).try();
+            n = self.send(bytes.ptr().offset(sent), bytes.len - sent, 0).try();
             (n == 0).match({
                 true  => Err(SocketFault.PeerClosed).try(),
                 false => { sent = sent + n; },
@@ -101,11 +100,8 @@ SocketFd* = {
         len   : usize,
         flags : i32
     ) Res<usize, SocketFault> {
-        n = recv(self.raw, bytes, len, flags);
-        (n == usize.MAX).match({
-            true  => Err(SocketFault.ReadFault),
-            false => Ok(n),
-        })
+        n = Native.recv(self.raw, bytes, len, flags);
+        n.to_usize().ok_or(SocketFault.ReadFault)
     }
 
     recv* = (self: @Self, bytes: Ptr<u8>, len: usize)
@@ -117,14 +113,14 @@ SocketFd* = {
 hints = (a: Alloc, fault: SocketFault) Res<Vec<AddrInfo>, SocketFault> {
     out ::= a.Vec<AddrInfo>();
     out.add(AddrInfo(
-        flags: 0,
-        family: AddressFamily.Unspecified.discriminant(),
-        socktype: SocketKind.Stream.discriminant(),
-        protocol: InternetProtocol.Tcp.discriminant(),
-        address_len: 0,
-        address: null_ptr<u8>(),
-        canonical_name: null_ptr<u8>(),
-        next: null_ptr<AddrInfo>()
+        ai_flags: 0,
+        ai_family: Native.AF_UNSPEC,
+        ai_socktype: Native.SOCK_STREAM,
+        ai_protocol: 0,
+        ai_addrlen: 0,
+        ai_addr: null_ptr<()>(),
+        ai_canonname: null_ptr<c_char>(),
+        ai_next: null_ptr<AddrInfo>()
     )).try(fault);
     Ok(out)
 }
@@ -140,7 +136,12 @@ addresses = (
     spec   ::= hints(a, alloc_fault).try();
     answer ::= a.Vec<Ptr<AddrInfo>>();
     answer.add(null_ptr<AddrInfo>()).try(alloc_fault);
-    (getaddrinfo(host, service, spec.ptr(), answer.ptr()) == 0).match({
+    (Resolver.getaddrinfo(
+        host.to<c_char>(),
+        service.to<c_char>(),
+        spec.ptr(),
+        answer.ptr()
+    ) == 0).match({
         false => Err(lookup_fault),
         true  => answer.ptr().read(0).is_null().match({
             true  => Err(lookup_fault),
@@ -159,35 +160,32 @@ resolve_addr* = (a: Alloc, host: str) Res<ResolvedAddr, SocketFault> {
         SocketFault.ConnectFault
     ).try();
     head = run.ptr().read(0);
-    @scope.defer(() { freeaddrinfo(head) });
+    @scope.defer(() { Resolver.freeaddrinfo(head) });
 
     info = head.read(0);
     bytes ::= a.Vec<u8>();
-    bytes.reserve(NI_MAXHOST.to_usize()).try(SocketFault.ReadFault);
-    rc = getnameinfo(
-        info.address,
-        info.address_len,
-        bytes.ptr(),
-        NI_MAXHOST,
-        null_ptr<u8>(),
+    bytes.reserve(Resolver.NI_MAXHOST.to_usize()).try(SocketFault.ReadFault);
+    rc = Resolver.getnameinfo(
+        info.ai_addr,
+        info.ai_addrlen,
+        bytes.ptr().to<c_char>(),
+        Resolver.NI_MAXHOST,
+        null_ptr<c_char>(),
         0,
-        NI_NUMERICHOST
+        Resolver.NI_NUMERICHOST
     );
     (rc == 0).match({
         false => Err(SocketFault.ReadFault),
         true  => {
             n ::= 0;
-            loop(() { n < NI_MAXHOST.to_usize() && bytes.ptr().read(
+            loop(() { n < Resolver.NI_MAXHOST.to_usize() && bytes.ptr().read(
                 n
             ) != 0 }, (h) {
                 n = n + 1;
             });
             ip ::= a.String().try(SocketFault.ReadFault);
             ip.add(str_at(bytes.ptr(), n)).try(SocketFault.ReadFault);
-            Ok(ResolvedAddr(
-                ip: ip,
-                is_v6: info.family == AddressFamily.Ipv6.discriminant()
-            ))
+            Ok(ResolvedAddr(ip: ip, is_v6: info.ai_family == Native.AF_INET6))
         },
     })
 }
@@ -209,30 +207,51 @@ Socket* = {
             SocketFault.ConnectFault
         ).try();
         head = run.ptr().read(0);
-        @scope.defer(() { freeaddrinfo(head) });
+        @scope.defer(() { Resolver.freeaddrinfo(head) });
 
-        // Socket descriptors can outlive calls that spawn child processes.
-        // Close-on-exec keeps those children from inheriting the connection.
+        option ::= a.Vec<i32>();
+        (Native.SO_NOSIGPIPE > 0).then(
+            () { option.add(1).try(SocketFault.ConnectFault); }
+        );
+        // Linux admits CLOEXEC atomically. Platforms without that socket flag
+        // set it before publishing the descriptor; concurrent fork needs care.
         raw ::= -1;
         at  ::= head;
         loop(() { !at.is_null() && raw < 0 }, (h) {
             info      = at.read(0);
-            candidate = socket(
-                info.family,
-                info.socktype + SOCK_CLOEXEC,
-                info.protocol
+            candidate = Native.socket(
+                info.ai_family,
+                with_flag(info.ai_socktype, Native.SOCK_CLOEXEC),
+                info.ai_protocol
             );
             (candidate >= 0).then(() {
-                (connect(
+                prior     = Descriptors.fcntl(
                     candidate,
-                    info.address,
-                    info.address_len
+                    Descriptors.F_GETFD,
+                    0
+                );
+                protected = prior >= 0 && Descriptors.fcntl(
+                    candidate,
+                    Descriptors.F_SETFD,
+                    with_flag(prior, Descriptors.FD_CLOEXEC)
+                ) == 0;
+                quiet     = Native.SO_NOSIGPIPE == 0 || Native.setsockopt(
+                    candidate,
+                    Native.SOL_SOCKET,
+                    Native.SO_NOSIGPIPE,
+                    option.ptr().to<()>(),
+                    4
+                ) == 0;
+                (protected && quiet && Native.connect(
+                    candidate,
+                    info.ai_addr,
+                    info.ai_addrlen
                 ) == 0).match({
                     true  => { raw = candidate; },
-                    false => { close(candidate); },
+                    false => { Io.close(candidate); },
                 });
             });
-            at = info.next;
+            at = info.ai_next;
         });
         (raw < 0).match({
             true  => Err(SocketFault.ConnectFault),
@@ -264,14 +283,14 @@ Socket* = {
         })
     }
 
-    close* = (self :: @Self) () {
+    close* = (self :: @Self) {
         self.open.then(() {
             self.open = false;
-            close(self.raw);
+            Io.close(self.raw);
         });
     }
 }
 
 Socket.impl(Drop, {
-    drop = (self :: @Self) () { self.close() }
+    drop = (self :: @Self) { self.close() }
 })

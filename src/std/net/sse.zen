@@ -74,7 +74,7 @@ SseDecoder* = {
 
     // EOF is not an event boundary. A final event without a blank line is
     // discarded; the last event ID remains available across reconnections.
-    finish* = (self :: @Self) () {
+    finish* = (self :: @Self) {
         self.line.clear();
         self.data.clear();
         self.kind.clear();

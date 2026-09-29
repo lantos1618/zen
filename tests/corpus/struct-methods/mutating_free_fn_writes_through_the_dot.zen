@@ -18,10 +18,10 @@
 W = {
     v*:: i32,
 
-    add = (self :: @Self, k: i32) () { self.v = self.v + k; }
+    add = (self :: @Self, k: i32) { self.v = self.v + k; }
 }
 
-bump = (w :: W, k: i32) () { w.v = w.v + k * 2; }
+bump = (w :: W, k: i32) { w.v = w.v + k * 2; }
 
 main = (env: Env) Res<i32, AllocError> {
     // the accepted twins: `::` bindings reach both forms, each write lands

@@ -15,7 +15,7 @@ Diag* = {
     note*: Res<Note>,
 
     // Terminal form: `file:line:col: message`, the note indented beneath.
-    say* = (self: @Self) () {
+    say* = (self: @Self) {
         println("{}:{}: {}", self.span.file, self.span.start, self.message);
         self.note.match({
             None  => (),

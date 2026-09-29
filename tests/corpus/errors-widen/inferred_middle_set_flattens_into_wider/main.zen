@@ -28,7 +28,7 @@ widen_both = (pick: bool) Res<i32, Both> {
     Ok(v);
 }
 
-describe = (env: Env, r: Res<i32, Both>) () {
+describe = (env: Env, r: Res<i32, Both>) {
     r.match({
         Ok(n)  => println("ok {}", n),
         Err(e) => e.match({

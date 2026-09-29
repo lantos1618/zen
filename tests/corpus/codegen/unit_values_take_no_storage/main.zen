@@ -10,7 +10,7 @@ pick = <T>(flag: bool, a: T, b: T) T {
     })
 }
 
-take = (u: ()) () { u }
+take = (u: ()) { u }
 
 make = () HasUnit {
     println("receiver ok");

@@ -1,0 +1,28 @@
+Pool, PoolStats = std.mem
+Native = c.bind("stdlib.h", { abort* = () () })
+Reader = { received :: bool = false }
+Reader.impl(Actor, {
+    receive = (self :: @Self, ctx: Context, value: PoolStats) {
+        valid = value.live_bytes == 0 && value.cached_bytes == 80 && value.owned_bytes == 80 && value.peak_bytes == 80 && value.cached_blocks == 1 && value.allocations == 1 && value.reuses == 0;
+        (!valid).then(() { Native.abort(); });
+        self.received = true;
+    }
+    stopped = (self :: @Self, ctx: Context) {
+        (!self.received).then(() { Native.abort(); });
+        println(
+            "PASS: pointer-free pool snapshot crosses actor mailbox after source pool close"
+        );
+    }
+})
+main = (env: Env) Res<i32, AllocError | ActorStartError | ActorError> {
+    pool ::= Pool();
+    pointer = pool.take(64);
+    (!pointer.is_null()).ensure(AllocError.OutOfMemory).try();
+    pool.give(pointer, 4096, 512, 8);
+    snapshot = pool.snapshot();
+    pool.close();
+    reader = env.spawn(Reader()).try();
+    reader.receive(snapshot).try();
+    reader.stop(); reader.join();
+    Ok(0)
+}

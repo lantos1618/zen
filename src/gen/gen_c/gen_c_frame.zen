@@ -92,7 +92,7 @@ InlineReturn* = {
     depth*: usize,
     used* :: bool = false,
 
-    note_use* = (self :: @Self) () { self.used = true; }
+    note_use* = (self :: @Self) { self.used = true; }
 }
 
 // The two labels and the result of one loop being lowered.
@@ -116,8 +116,8 @@ LoopFrame* = {
     // simply never run, the one failure shape a backend may not have.
     depth*: usize,
 
-    note_next* = (self :: @Self) () { self.next_used = true; }
-    note_break* = (self :: @Self) () { self.break_used = true; }
+    note_next* = (self :: @Self) { self.next_used = true; }
+    note_break* = (self :: @Self) { self.break_used = true; }
 }
 
 // One binding a block must destroy when it leaves.

@@ -293,7 +293,7 @@ Collector = {
         Ok(())
     }
 
-    leave = (self :: @Self, node: WalkNode) () {
+    leave = (self :: @Self, node: WalkNode) {
         node.match({
             Declaration(_) => { self.declarations = self.declarations - 1; },
             Member(_)      => { self.members = self.members - 1; },
@@ -381,7 +381,7 @@ Collector = {
         Ok(())
     }
 
-    uncertain = (self :: @Self, id: DeclId) () {
+    uncertain = (self :: @Self, id: DeclId) {
         self.indices.get(id).match({
             None  => (),
             Ok(i) => self.report.declarations.get(i).match({

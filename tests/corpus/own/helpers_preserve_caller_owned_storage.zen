@@ -1,5 +1,5 @@
-Box = { text :: str, put = (self :: @Self, text: str) () { self.text = text; } }
-store = (box :: Box, text: str) () { box.text = text; }
+Box = { text :: str, put = (self :: @Self, text: str) { self.text = text; } }
+store = (box :: Box, text: str) { box.text = text; }
 read_only = (text: str) usize { text.len }
 fill = (a: Alloc, box :: Box) Res<(), AllocError> {
     text = a.String("hello").try();

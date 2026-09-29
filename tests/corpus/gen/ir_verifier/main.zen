@@ -13,7 +13,7 @@ Refuse.impl(Alloc, {
     }
 })
 
-show = (name: str, program: Program, alloc: Alloc) () {
+show = (name: str, program: Program, alloc: Alloc) {
     verify(program, alloc).match({
         Ok(_)               => println("{} ok", name),
         Err(OutOfMemory)    => println("{} allocation failure", name),

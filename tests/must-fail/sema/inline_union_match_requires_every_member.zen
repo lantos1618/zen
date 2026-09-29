@@ -1,7 +1,7 @@
 Left = | Number(i32)
 Right = | Text(str)
 
-incomplete = (error: Left | Right) () {
+incomplete = (error: Left | Right) {
     error.match({ Left(_) => () });
 }
 

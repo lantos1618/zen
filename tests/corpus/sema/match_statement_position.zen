@@ -4,7 +4,7 @@
 
 Signal = Start | Stop | Reset
 
-step = (env: Env, s: Signal) () {
+step = (env: Env, s: Signal) {
     // value discarded: this match is a statement
     s.match({
         Start => println("start"),

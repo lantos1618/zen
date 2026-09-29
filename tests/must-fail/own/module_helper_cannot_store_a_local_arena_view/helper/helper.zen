@@ -1,2 +1,2 @@
 Box* = { text* :: str }
-store* = (box :: Box, value: str) () { box.text = value; }
+store* = (box :: Box, value: str) { box.text = value; }

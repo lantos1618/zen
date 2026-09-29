@@ -1,0 +1,142 @@
+Readiness, ReadinessError, WaitResult, Interest = std.net.readiness
+Native = c.bind("probe.h", {
+    fixture_start = () i32
+    fixture_fd = (index: i32) i32
+    fixture_write = () i32
+    fixture_drain = () i32
+    fixture_open = (fd: i32) i32
+    fixture_close_peer = () ()
+    fixture_finish = () ()
+    fixture_snapshot = () ()
+    fixture_new_cloexec = () i32
+    fixture_fd_count = () i32
+    fixture_millis = () i64
+    fixture_alarm = (milliseconds: i32) i32
+    fixture_signal_count = () i32
+    fixture_check = (value: i32, line: i32) ()
+})
+check = (value: bool, line: i32) { Native.fixture_check(
+    value.match({true => 1, false => 0}),
+    line
+); }
+ready_count = (result: WaitResult) usize { result.match({Ready(n) => n, Interrupted => { check(
+    false,
+    1
+); 0 }}) }
+drop_readiness = (a: Alloc) Res<(), ReadinessError> {
+    readiness = Readiness.open(a, 8).try();
+    Ok(())
+}
+main = (env: Env) Res<(), AllocError | ReadinessError> {
+    a = env.mem.alloc();
+    check(Native.fixture_start() == 1, 2);
+    before = Native.fixture_fd_count();
+    fd     = Native.fixture_fd(0);
+    Native.fixture_snapshot();
+    readiness ::= Readiness.open(a, 8).try();
+    check(Native.fixture_new_cloexec() == 1, 42);
+    check(Native.fixture_fd_count() == before + 1, 3);
+    check(readiness.ready_slot(0).match({Ok(_) => false, Err(_) => true}), 4);
+    readiness.add(fd, 0, Interest.Read).try();
+    // Empty polling and finite timeout do not invent a ready event.
+    check(ready_count(readiness.wait(0).try()) == 0, 5);
+    start = Native.fixture_millis();
+    check(ready_count(readiness.wait(30).try()) == 0, 6);
+    elapsed = Native.fixture_millis() - start;
+    check(elapsed >= 15 && elapsed < 1000, 7);
+    check(readiness.wait(-2).match({Ok(_) => false, Err(_) => true}), 8);
+    check(Native.fixture_write() == 1, 9);
+    count = ready_count(readiness.wait(1000).try());
+    check(count > 0, 10);
+    Range(0, count).loop((i) { check(readiness.ready_slot(i).match({Ok(slot) => slot == 0, Err(_) => false}), 11); });
+    check(
+        readiness.ready_slot(count).match({Ok(_) => false, Err(_) => true}),
+        12
+    );
+    // Level triggering reports unread data again without another write.
+    check(ready_count(readiness.wait(0).try()) > 0, 13);
+    check(Native.fixture_drain() == 1, 14);
+    check(ready_count(readiness.wait(0).try()) == 0, 15);
+    check(readiness.ready_slot(0).match({Ok(_) => false, Err(_) => true}), 16);
+    // Identity is application data, not a bounded connection-array index.
+    slot: usize = 4294967313;
+    readiness.modify(fd, slot, Interest.Write).try();
+    writes = ready_count(readiness.wait(1000).try());
+    check(writes > 0, 17);
+    Range(0, writes).loop((i) { check(readiness.ready_slot(i).match({Ok(value) => value == slot, Err(_) => false}), 18); });
+    readiness.modify(fd, 19, Interest.Read).try();
+    check(ready_count(readiness.wait(0).try()) == 0, 19);
+    // A delivered signal returns Interrupted; it is not an empty timeout or
+    // an invisible restart of the full timeout interval.
+    check(Native.fixture_alarm(20) == 1, 20);
+    interrupted_at = Native.fixture_millis();
+    check(
+        readiness.wait(
+            1000
+        ).try().match({Interrupted => true, Ready(_) => false}),
+        21
+    );
+    check(Native.fixture_signal_count() == 1, 22);
+    check(Native.fixture_millis() - interrupted_at < 800, 23);
+    check(Native.fixture_alarm(0) == 1, 24);
+    check(readiness.ready_slot(0).match({Ok(_) => false, Err(_) => true}), 25);
+    check(
+        readiness.add(
+            -1,
+            7,
+            Interest.Read
+        ).match({Ok(_) => false, Err(_) => true}),
+        26
+    );
+    check(
+        readiness.modify(
+            -1,
+            7,
+            Interest.Write
+        ).match({Ok(_) => false, Err(_) => true}),
+        27
+    );
+    check(readiness.remove(-1).match({Ok(_) => false, Err(_) => true}), 28);
+    readiness.remove(fd).try();
+    check(Native.fixture_write() == 1, 29);
+    check(ready_count(readiness.wait(0).try()) == 0, 30);
+    readiness.add(fd, 37, Interest.Read).try();
+    check(ready_count(readiness.wait(-1).try()) > 0, 31);
+    check(readiness.ready_slot(0).try() == 37, 32);
+    check(Native.fixture_drain() == 1, 33);
+    peer = Native.fixture_fd(1);
+    Native.fixture_close_peer();
+    check(
+        readiness.add(
+            peer,
+            0,
+            Interest.Read
+        ).match({Ok(_) => false, Err(System(_)) => true, Err(_) => false}),
+        44
+    );
+    // EOF/HUP remains readable so caller can observe the terminal condition.
+    check(ready_count(readiness.wait(1000).try()) > 0, 34);
+    check(readiness.ready_slot(0).try() == 37, 35);
+    readiness.close(); readiness.close();
+    check(Native.fixture_open(fd) == 1, 36);
+    check(Native.fixture_fd_count() == before - 1, 37);
+    check(readiness.wait(0).match({Ok(_) => false, Err(_) => true}), 38);
+    check(
+        readiness.add(
+            fd,
+            1,
+            Interest.Read
+        ).match({Ok(_) => false, Err(_) => true}),
+        39
+    );
+    check(readiness.ready_slot(0).match({Ok(_) => false, Err(_) => true}), 40);
+    Readiness.open(a, 2147483648).match({Ok(_) => check(false, 45), Err(_) => {}});
+    Readiness.open(a, 0).match({Ok(_) => check(false, 41), Err(_) => {}});
+    drop_readiness(a).try();
+    check(Native.fixture_fd_count() == before - 1, 43);
+    Native.fixture_finish();
+    println(
+        "PASS readiness read/write, identity, level triggering, timeout, interruption, modify/remove, EOF, invalid fd and close cleanup"
+    );
+    Ok(())
+}

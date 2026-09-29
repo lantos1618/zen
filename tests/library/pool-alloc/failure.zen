@@ -1,0 +1,29 @@
+Pool, PoolAlloc, PoolPolicy, Ptr, null_ptr = std.mem
+verify = (a: Alloc, pool: Ptr<Pool>) Res<(), AllocError> {
+    old = a.realloc<u8>(null_ptr<u8>(), 16).try();
+    Range(0, 16).loop((i) { old.write(i, 42); });
+    owned = pool.read(0).owned;
+    // Harness refuses exactly this 257-byte payload plus its 16-byte header.
+    failed = a.realloc(old, 257).match({Ok(_) => false, Err(_) => true});
+    failed.ensure(AllocError.OutOfMemory).try();
+    (pool.read(0).owned == owned).ensure(AllocError.OutOfMemory).try();
+    Range(0, 16).loop((i) { (old.read(i) == 42).ensure(AllocError.OutOfMemory).try(); });
+    a.free(old);
+    Ok(())
+}
+main = (env: Env) Res<i32, AllocError> {
+    owner = env.mem.alloc();
+    pool  = owner.realloc<Pool>(null_ptr<Pool>(), 1).try();
+    pool.write(0, Pool());
+    allocator = PoolAlloc(
+        pool: pool,
+        policy: PoolPolicy(cache_bytes: 4096, block_bytes: 512, blocks: 8)
+    );
+    verify(allocator, pool).try();
+    state ::= pool.read(0); state.close(); pool.write(0, state);
+    (state.owned == 0).ensure(AllocError.OutOfMemory).try();
+    println(
+        "PASS: native allocation failure preserves original bytes/ownership; teardown balanced"
+    );
+    Ok(0)
+}

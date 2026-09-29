@@ -6,7 +6,7 @@ wrap = (input: Input) Envelope { Envelope(input: input, other: "stable") }
 view = (
     envelope : Envelope
 ) str { alias = envelope; inner = alias.input; inner.text }
-put = (box :: Box, envelope: Envelope) () { box.text = view(envelope); }
+put = (box :: Box, envelope: Envelope) { box.text = view(envelope); }
 fill = (env: Env, box :: Box, text: str) Res<(), AllocError> {
  a        = env.mem.alloc();
  local    = a.String("temporary").try();

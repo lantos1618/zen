@@ -106,7 +106,7 @@ Stream = {
            Res<i32, ProcError> {
         child ::= self.child.read(0);
         count.write(0, 0);
-        channel ::= 0;
+        channel: i32 ::= 0;
         loop(child.out_fd >= 0 || child.err_fd >= 0, (h) {
             ready ::= zg_os_proc_poll(child.out_fd, child.err_fd);
             loop(
@@ -151,7 +151,7 @@ Stream = {
         Ok(self.code.read(0))
     }
 
-    close = (self: @Self) () {
+    close = (self: @Self) {
         child = self.child.read(0);
         zg_os_proc_close(child.out_fd);
         zg_os_proc_close(child.err_fd);

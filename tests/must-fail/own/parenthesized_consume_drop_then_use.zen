@@ -1,5 +1,5 @@
 Item = { id: i32 }
-Item.impl(Drop, { drop = (self :: @Self) () {} })
+Item.impl(Drop, { drop = (self :: @Self) {} })
 main = () i32 {
     item = Item(id: 7);
     (consume (item)).drop();

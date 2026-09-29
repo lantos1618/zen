@@ -119,7 +119,7 @@ class SelfBuildTests(unittest.TestCase):
         self.assertFalse((self.root / "shared").exists())
 
     def test_foreign_symbol_text_does_not_link_unused_libraries(self):
-        self.source.write_text('main = () () { println("SSL_read_ex"); }\n')
+        self.source.write_text('main = () { println("SSL_read_ex"); }\n')
         self.build()
         result = subprocess.run([str(self.output)], capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0)

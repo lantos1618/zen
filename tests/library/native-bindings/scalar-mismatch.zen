@@ -1,0 +1,7 @@
+// The header field is int: taking an i64 reference would overwrite its storage.
+Native = c.record("@HEADER@", "struct zen_native_record", { value*:: i64 })
+main = () i32 {
+    value ::= Native(value: 7);
+    value.value = 12;
+    0
+}

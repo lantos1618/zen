@@ -234,6 +234,10 @@ map* = <T, U>(items: Vec<T>, alloc: Alloc, body: (item: T) U)
 - `self :: @Self` means the method writes the receiver's own bytes.
 - `self: @Self` may still act through capabilities or referenced state.
 - Every parameter has a name and type, including parameters in function types.
+- Omit redundant unit return annotations on named functions and methods with a
+  body: write `run = () { ... }`, not `run = () () { ... }`. Keep `()`
+  in function types and bodyless declarations, and on anonymous callbacks when
+  the annotation constrains generic result inference.
 - Use `Res` for a failure the caller can act on. Trap only for violated program
   invariants.
 - If several adjacent parameters are always produced and consumed together,

@@ -22,13 +22,17 @@
 // other than division, and speculative execution. tools/ct/grind (valgrind)
 // tracks memory exactly on Linux; the timing test measures the machine.
 Alloc, AllocError = std.mem
-Vec = std.collections
+Vec, Map = std.collections
 str, String = std.text
 Range = std.core
 parse_i64 = std.text
 truncate_u32, to_i64 = std.core.num
 
 Isa* = X86 | Arm
+
+// Added to a callee's register arity (tools/ct/abi.zen) when its result
+// comes back in a register pair.
+PAIR*: usize = 1000
 
 // A label or one instruction with operands split at top-level commas.
 Line* = { label*: str, mnemonic*: str, operands*: Vec<str>, text*: str }
@@ -122,6 +126,21 @@ split_operands = (a: Alloc, text: str) Res<Vec<str>, AllocError> {
 parse_lines* = (a: Alloc, isa: Isa, body: Vec<str>) Res<Vec<Line>, AllocError> {
     out ::= a.Vec<Line>();
     body.loop((raw) {
+        // `zen:declassify <reg>...`, from std.ct.declassify_barrier's asm
+        // text, survives inside whatever comment syntax the compiler used.
+        raw.find("zen:declassify").when_ok((at) {
+            regs ::= a.Vec<str>();
+            raw.slice(at + 14, raw.len).split(' ').loop((w) {
+                word = w.trim().value_or("");
+                (word.len > 0 && !word.starts_with("*")).then(() { regs.add(word).try(); });
+            });
+            out.add(Line(
+                label: "",
+                mnemonic: "zen:declassify",
+                operands: regs,
+                text: raw
+            )).try();
+        });
         line = strip_comment(isa, raw).trim().value_or("");
         (line.len > 0 && !line.starts_with(".") || line.ends_with(":")).then(() {
             (line.ends_with(":")).match({
@@ -323,6 +342,12 @@ Analysis* = {
     findings :: Vec<Finding>,
     reporting :: bool,
     grew :: bool,
+    // Integer argument registers each called symbol takes, from its C
+    // prototype; an unknown callee is assumed to read them all.
+    arity: Map<str, usize>,
+    // Print every instruction of the final pass with the tainted registers
+    // and stack slots before it (ct-asm's CT_TRACE).
+    trace: bool,
 
     state_at = (self: @Self, label: str) Res<usize> {
         Range(0, self.labels.len).find((i) { self.labels.get(i).value_or("").eq(label) })
@@ -352,7 +377,9 @@ analyze* = (
     a     : Alloc,
     isa   : Isa,
     lines : Vec<Line>,
-    seed  : Seed
+    seed  : Seed,
+    arity : Map<str, usize>,
+    trace : bool
 ) Res<Vec<Finding>, AllocError> {
     an ::= Analysis(
         alloc: a,
@@ -362,7 +389,9 @@ analyze* = (
         states: a.Vec<State>(),
         findings: a.Vec<Finding>(),
         reporting: false,
-        grew: false
+        grew: false,
+        arity: arity,
+        trace: trace
     );
     lines.loop((l) {
         (l.label.len > 0).then(() {
@@ -407,6 +436,16 @@ pass = (an :: Analysis, seed: Seed) Res<(), AllocError> {
                 });
             },
             false => { cur.live.then(() {
+                (an.trace && an.reporting).then(() {
+                    shown ::= an.alloc.String().try();
+                    shown.fmt("flags={} secret:", cur.flags).try();
+                    cur.val.loop((r) { shown.fmt(" {}", r).try(); });
+                    shown.add(" slots:").try();
+                    cur.slots.loop((o) { shown.fmt(" {}", o).try(); });
+                    shown.add(" points:").try();
+                    cur.pts.loop((r) { shown.fmt(" {}", r).try(); });
+                    println("  {} | {}", l.text, shown.view());
+                });
                 an.isa.match({
                     X86 => an.x86(cur, l).try(),
                     Arm => an.arm(cur, l).try(),
@@ -531,11 +570,39 @@ x86_write = (
     Ok(())
 }
 
-x86_call = (an :: Analysis, cur :: State) Res<(), AllocError> {
+// Calls that never return end the path: what follows them in the file is
+// reached only by a jump, so their state must not fall through.
+no_return* = (op: str) bool {
+    name = call_target(op);
+    // Mach-O adds one leading underscore to C symbols.
+    base = name.slice(1, name.len);
+    never_returns(name) || (name.starts_with("_") && never_returns(base))
+}
+
+never_returns = (name: str) bool {
+    name.is_in([
+        "__stack_chk_fail", "abort", "exit", "_exit", "__assert_fail",
+        "zg_trap", "zg_unreachable", "zg_panic", "__builtin_trap"
+    ])
+}
+
+// The symbol a direct call names, without PLT or clone suffixes and the
+// Mach-O underscore.
+call_target* = (op: str) str {
+    plain = op.split_once('@').match({ Ok(p) => p.before, None => op });
+    base  = plain.split_once('.').match({ Ok(p) => p.before, None => plain });
+    base.starts_with("_zu_").match({ true => base.slice(1, base.len), false => base })
+}
+
+x86_call = (an :: Analysis, cur :: State, target: str) Res<(), AllocError> {
     args ::= false;
-    [str, 6]("rdi", "rsi", "rdx", "rcx", "r8", "r9").loop(
-        (r) { args = args || has(cur.val, r); }
-    );
+    known = an.arity.get(call_target(target));
+    n     = known.match({ Ok(k) => k % PAIR, None => 6 });
+    // Unknown callees may return a register pair.
+    pair = known.match({ Ok(k) => k >= PAIR, None => true });
+    [str, 6]("rdi", "rsi", "rdx", "rcx", "r8", "r9").loop((h, i, r) {
+        (i < n).then(() { args = args || has(cur.val, r); });
+    });
     [str, 9]("rcx", "rsi", "rdi", "r8", "r9", "r10", "r11", "rdx", "rax").loop((
         r
     ) {
@@ -543,7 +610,7 @@ x86_call = (an :: Analysis, cur :: State) Res<(), AllocError> {
         put(cur.pts, r, false).try();
     });
     put(cur.val, "rax", args).try();
-    put(cur.val, "rdx", args).try();
+    put(cur.val, "rdx", args && pair).try();
     cur.flags = false;
     Ok(())
 }
@@ -566,6 +633,12 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
     last  = ops.get(n -% 1).value_or("");
     same  = n == 2 && first.eq(last) && !x86_is_mem(first);
     loop((h) {
+        (m.eq("zen:declassify")).then(() {
+            ops.loop((op) {
+                x86_reg(an.alloc, op).when_ok((r) { put(cur.val, r, false).try(); });
+            });
+            h.break();
+        });
         // Control flow.
         (m.starts_with("j")).then(() {
             (m.eq("jmp") || m.eq("jmpq")).match({
@@ -591,7 +664,8 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             last.starts_with("*").then(() {
                 (an.x86_value(cur, last.slice(1, last.len), l).try()).then(() { an.report("indirect", l.text).try(); });
             });
-            an.x86_call(cur).try();
+            an.x86_call(cur, last).try();
+            no_return(last).then(() { cur.live = false; });
             h.break();
         });
         (m.starts_with("cmp") || m.starts_with("test") || m.starts_with("bt")
@@ -869,9 +943,12 @@ arm_memory = (
     Ok(())
 }
 
-arm_call = (an :: Analysis, cur :: State) Res<(), AllocError> {
+arm_call = (an :: Analysis, cur :: State, target: str) Res<(), AllocError> {
     args ::= false;
-    Range(0, 8).loop((i) {
+    known = an.arity.get(call_target(target));
+    n     = known.match({ Ok(k) => k % PAIR, None => 8 });
+    pair  = known.match({ Ok(k) => k >= PAIR, None => true });
+    Range(0, n.min(8)).loop((i) {
         name = an.alloc.String("x{}", i).try();
         args = args || has(cur.val, name.view());
     });
@@ -881,7 +958,7 @@ arm_call = (an :: Analysis, cur :: State) Res<(), AllocError> {
         put(cur.pts, name.view(), false).try();
     });
     put(cur.val, "x0", args).try();
-    put(cur.val, "x1", args).try();
+    put(cur.val, "x1", args && pair).try();
     cur.flags = false;
     Ok(())
 }
@@ -920,6 +997,12 @@ arm = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
     last  = ops.get(n -% 1).value_or("");
     dst   = arm_reg(an.alloc, first);
     loop((h) {
+        (m.eq("zen:declassify")).then(() {
+            ops.loop(
+                (op) { arm_reg(an.alloc, op).when_ok((r) { put(cur.val, r, false).try(); }); }
+            );
+            h.break();
+        });
         (m.starts_with("b.") || (m.starts_with("b") && m.len == 3 && !m.eq("bic") && !m.eq("bfi")
             && !m.eq("bit") && !m.eq("bif") && !m.eq("bsl") && !m.eq("brk"))).then(() {
             cur.flags.then(() { an.report("branch", l.text).try(); });
@@ -943,7 +1026,8 @@ arm = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             (m.eq("blr") && dst.match({ Ok(r) => has(cur.val, r), None => false })).then(() {
                 an.report("indirect", l.text).try();
             });
-            an.arm_call(cur).try();
+            an.arm_call(cur, last).try();
+            no_return(last).then(() { cur.live = false; });
             h.break();
         });
         (m.starts_with("ld") && ops.find((o) { arm_is_mem(o) }).match({ Ok(_) => true, None => false }))

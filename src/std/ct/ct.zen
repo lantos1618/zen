@@ -38,7 +38,26 @@ Secret*<T> = T
 
 // Make a secret value public: the one way a secret may become a branch
 // condition, an index or a public result. Every call is a place to audit.
-declassify* = <T>(value: T) T { value }
+// A word passes through declassify_barrier, which names its register in the
+// assembly (`/* zen:declassify %reg */`) so tools/ct treats the value as
+// public from there on. A pointer's declassification makes its pointee
+// public; a bool is declassified as it is.
+declassify* = (value: u8) u8 { declassify_barrier(value) }
+declassify* = (value: u16) u16 { declassify_barrier(value) }
+declassify* = (value: u32) u32 { declassify_barrier(value) }
+declassify* = (value: u64) u64 { declassify_barrier(value) }
+declassify* = (value: u128) u128 { declassify_barrier(value) }
+declassify* = (value: usize) usize { declassify_barrier(value) }
+declassify* = (value: bool) bool { value }
+declassify* = <T>(value: Ptr<T>) Ptr<T> { value }
+
+// value_barrier that also marks a declassification in the assembly.
+declassify_barrier* = (value: u8) u8
+declassify_barrier* = (value: u16) u16
+declassify_barrier* = (value: u32) u32
+declassify_barrier* = (value: u64) u64
+declassify_barrier* = (value: u128) u128
+declassify_barrier* = (value: usize) usize
 
 // The optimizer may assume nothing about the result, which is the argument
 // unchanged. Lowered by each backend; see the module comment.
@@ -64,7 +83,7 @@ Choice* = {
 to_u8* = inline (self: Choice) u8 { value_barrier(self.bit) }
 
 // Make the decision public. The only way from a Choice to a bool.
-declassify_bool* = (self: Choice) bool { value_barrier(self.bit) == 1 }
+declassify_bool* = (self: Choice) bool { declassify_barrier(self.bit) == 1 }
 
 and* = inline (self: Choice, other: Choice) Choice {
     Choice(bit: value_barrier(self.bit.bit_and(other.bit)))

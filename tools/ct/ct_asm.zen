@@ -57,6 +57,7 @@ main = (env: Env) Res<i32, AllocError> {
             a,
             Audit(
                 manifest: manifest,
+                trace: env.var("CT_TRACE").value_or(""),
                 compilers: compilers,
                 levels: levels,
                 leaky: leaky,

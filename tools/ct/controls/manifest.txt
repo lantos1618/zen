@@ -1,0 +1,5 @@
+# The leaky controls' secret parameters (see controls/main.zen).
+main  leaky_compare  *tag
+main  leaky_index    index
+main  leaky_limb     x
+main  leaky_divide   key

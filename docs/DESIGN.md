@@ -1963,6 +1963,8 @@ signature, so a public result is a promise its body must keep. A write of a secr
 a pointer or a `::` binding makes that binding secret too. `Choice` is not
 secret by itself; a Choice computed from a secret is. `declassify(v)` and
 `choice.declassify_bool()` are the only ways out, and are the audit points.
+`declassify` takes an unsigned word (marked in the assembly, see below), a
+bool, or a pointer (whose pointee becomes public).
 
 On a secret value sema refuses, at the exact expression:
 
@@ -2013,7 +2015,16 @@ be flagged, so a check that has stopped seeing anything fails:
   and runs a forward taint analysis over the assembly (registers and stack
   slots, joined at labels). `--manifest` names further functions and their
   secret parameters, for shared arithmetic whose signature cannot say
-  Secret because public verification uses it too. It fails on a conditional branch, a memory
+  Secret because public verification uses it too; `branches=N` on an entry
+  allows N secret-dependent branches, `?module` makes an entry optional.
+  `std.ct.declassify` of a word and `Choice.declassify_bool` pass through
+  `declassify_barrier`, whose asm text is `/* zen:declassify %reg */`: the
+  analysis treats that register as public from there on, so a program's
+  explicit declassifications are the only places its secrets may steer
+  code. A call taints its result only through the argument registers its C
+  prototype uses (and the second result register only for a two-register
+  result); calls that never return end their path. `CT_TRACE=<symbol>`
+  prints the analysis instruction by instruction. It fails on a conditional branch, a memory
   address, a division or an indirect jump that depends on a secret. Memory
   other than the stack and secret pointees is not modelled.
 - `ct-grind` is the ctgrind method: `std.ct.ct_grind.secret_bytes` marks

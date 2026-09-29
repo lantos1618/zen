@@ -1,7 +1,8 @@
 // Controls for tools/ct. The first group is constant time by construction
-// and must pass every static and dynamic check; the `leaky_` group is
-// accepted by the secret discipline only because each declassifies its
-// secret on purpose, and every check must flag it.
+// and must pass every static and dynamic check. The `leaky_` group is code
+// nobody marked Secret, so sema's discipline cannot see its secrets;
+// controls/manifest.txt names its secret parameters, and every check must
+// flag it.
 Secret, declassify, Choice = std.ct
 ct_eq, ct_lt, ct_select, ct_swap, ct_memeq, ct_lookup = std.ct
 bit_xor, bit_and, shift_right, mul_wide, truncate_u64, truncate_u8 = std.core.num
@@ -40,11 +41,17 @@ sbox* = (table: Ptr<u8>, index: Secret<usize>) Secret<u8> { ct_lookup(
     index
 ) }
 
+// Uses its secret as an address only after declassifying it: the marker
+// std.ct leaves in the assembly makes the value public there, so this passes.
+declassified_index* = (key: Secret<u64>, table: Ptr<u8>) u8 {
+    table.read(declassify(key).truncate_u8().to_usize())
+}
+
 // Leaks through an early exit: the loop stops at the first difference.
-leaky_compare* = (tag: Secret<Ptr<u8>>, expected: Ptr<u8>) bool {
+leaky_compare* = (tag: Ptr<u8>, expected: Ptr<u8>) bool {
     same: bool ::= true;
     Range(0, 16).loop((h, i) {
-        (declassify(tag.read(i)) != expected.read(i)).then(() {
+        (tag.read(i) != expected.read(i)).then(() {
             same = false;
             h.break();
         });
@@ -53,20 +60,18 @@ leaky_compare* = (tag: Secret<Ptr<u8>>, expected: Ptr<u8>) bool {
 }
 
 // Leaks through the cache: the address depends on the secret.
-leaky_index* = (table: Ptr<u8>, index: Secret<u64>) u8 {
-    table.read(declassify(index).truncate_u8().to_usize())
+leaky_index* = (table: Ptr<u8>, index: u64) u8 {
+    table.read(index.truncate_u8().to_usize())
 }
 
 // Leaks through the cache from a limb of a by-value array argument (on the
 // stack on x86-64, behind a hidden pointer on arm64).
-leaky_limb* = (x: Secret<[u64, 4]>, table: Ptr<u8>) u8 {
-    table.read(declassify(x[2]).truncate_u8().to_usize())
+leaky_limb* = (x: [u64, 4], table: Ptr<u8>) u8 {
+    table.read(x[2].truncate_u8().to_usize())
 }
 
 // Leaks through division latency.
-leaky_divide* = (key: Secret<u64>, divisor: u64) u64 { declassify(
-    key
-) / divisor }
+leaky_divide* = (key: u64, divisor: u64) u64 { key / divisor }
 
 main = (env: Env) Res<(), AllocError> {
     a     = env.mem.alloc();
@@ -78,12 +83,13 @@ main = (env: Env) Res<(), AllocError> {
     y = [u64, 4](5, 6, 7, 8);
     ladder_swap(words, words.offset(10), 1);
     println(
-        "{} {} {} {} {}",
+        "{} {} {} {} {} {}",
         declassify(select_min(3, 9)),
-        declassify(mul_low(x, y))[3],
+        declassify(mul_low(x, y)[3]),
         words.read(0),
         tags_equal(bytes, bytes),
-        declassify(sbox(bytes, 7))
+        declassify(sbox(bytes, 7)),
+        declassified_index(3, bytes)
     );
     println(
         "{} {} {} {}",

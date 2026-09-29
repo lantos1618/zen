@@ -10,12 +10,12 @@
 ProcError = std.proc
 FsError = std.env
 Alloc, AllocError = std.mem
-Vec = std.collections
+Vec, Map = std.collections
 str, String, parse_usize = std.text
 Range = std.core
 Isa, Finding, function_lines, parse_lines, analyze = taint
 Marked, marked_functions, seed_of = abi
-Entry, manifest_entries, manifest_functions = abi
+Entry, manifest_entries, manifest_functions, register_arity = abi
 
 AuditError* = AllocError | ProcError | FsError | AuditFault
 AuditFault* = | NoMarkedFunctions
@@ -29,6 +29,9 @@ Audit* = {
     // Text of a manifest (tools/ct/abi.zen) naming unmarked functions to
     // audit; empty for none.
     manifest*: str,
+    // A symbol substring whose analysis is printed instruction by
+    // instruction (CT_TRACE), or "".
+    trace* :: str = "",
     compilers*: Vec<str>,
     levels*: Vec<str>,
     leaky*: Vec<str>,
@@ -104,6 +107,18 @@ short_name* = (symbol: str) str {
 
 digit = (c: u8) bool { c >= '0' && c <= '9' }
 
+// No findings beyond `branches` allowed conditional branches.
+within = (found: Vec<Finding>, branches: usize) bool {
+    count ::= 0;
+    other ::= false;
+    found.loop((f) {
+        f.kind.eq(
+            "branch"
+        ).match({ true => { count = count + 1; }, false => { other = true; } });
+    });
+    !other && count <= branches
+}
+
 run_audit* = (
     env    : Env,
     a      : Alloc,
@@ -140,6 +155,8 @@ run_audit* = (
     audit_c = a.String("{}/audit.c", audit.work).try();
     env.fs.write(audit_c.view(), patched.view()).try();
     outcome ::= Outcome(passed: 0, failed: 0, controls: 0);
+    arity_x86 = register_arity(a, Isa.X86, source.view()).try();
+    arity_arm = register_arity(a, Isa.Arm, source.view()).try();
     audit.compilers.loop((cc) {
         audit.levels.loop((level) {
             asm_path = a.String(
@@ -173,7 +190,9 @@ run_audit* = (
                     source.view(),
                     m,
                     cc,
-                    level
+                    level,
+                    arity_x86,
+                    arity_arm
                 ).try();
                 outcome = Outcome(
                     passed: outcome.passed + one.passed,
@@ -187,13 +206,15 @@ run_audit* = (
 }
 
 audit_function = (
-    a     : Alloc,
-    audit : Audit,
-    asm   : str,
-    c     : str,
-    m     : Marked,
-    cc    : str,
-    level : str
+    a         : Alloc,
+    audit     : Audit,
+    asm       : str,
+    c         : str,
+    m         : Marked,
+    cc        : str,
+    level     : str,
+    arity_x86 : Map<str, usize>,
+    arity_arm : Map<str, usize>
 ) Res<Outcome, AuditError> {
     body = function_lines(a, asm, m.symbol).try();
     // An unused function may be dropped entirely; that is not a failure,
@@ -221,7 +242,14 @@ audit_function = (
             });
             lines   = parse_lines(a, isa, body).try();
             seed    = seed_of(a, isa, c, m).try();
-            found   = analyze(a, isa, lines, seed).try();
+            found   = analyze(
+                a,
+                isa,
+                lines,
+                seed,
+                isa.match({ X86 => arity_x86, Arm => arity_arm }),
+                audit.trace.len > 0 && m.symbol.contains(audit.trace)
+            ).try();
             arch    = isa.match({ X86 => "x86-64", Arm => "arm64" });
             located = seed.values.len + seed.pointers.len + seed.slots.len + seed.pointer_slots.len > 0;
             // A function whose secret inputs could not be placed would pass
@@ -264,16 +292,28 @@ audit_function = (
                         Ok(Outcome(passed: 0, failed: 1, controls: 0))
                     },
                 }),
-                false => (found.len == 0).match({
+                false => within(found, m.branches).match({
                     true  => {
-                        println(
-                            "PASS {} {} {} ({}): {} instructions, no secret-dependent branch, address or division",
-                            cc,
-                            level,
-                            short_name(m.symbol),
-                            arch,
-                            lines.len
-                        );
+                        (found.len == 0).match({
+                            true  => println(
+                                "PASS {} {} {} ({}): {} instructions, no secret-dependent branch, address or division",
+                                cc,
+                                level,
+                                short_name(m.symbol),
+                                arch,
+                                lines.len
+                            ),
+                            false => println(
+                                "PASS {} {} {} ({}): {} instructions, {} secret-dependent branch(es) within the {} allowed for its public outcome, no secret address or division",
+                                cc,
+                                level,
+                                short_name(m.symbol),
+                                arch,
+                                lines.len,
+                                found.len,
+                                m.branches
+                            ),
+                        });
                         Ok(Outcome(passed: 1, failed: 0, controls: 0))
                     },
                     false => {

@@ -58,11 +58,15 @@ main = (env: Env) Res<i32, AllocError> {
     levels.add("-O3").try();
     leaky ::= a.Vec<str>();
     leaky.add("leaky_").try();
-    static_ok = emitted && run_audit(
+    manifest  = env.fs.read(a, "tools/ct/controls/manifest.txt").match({
+        Ok(text) => text.view(),
+        Err(_)   => "",
+    });
+    static_ok = emitted && manifest.len > 0 && run_audit(
         env,
         a,
         Audit(
-            manifest: "",
+            manifest: manifest,
             compilers: compilers,
             levels: levels,
             leaky: leaky,

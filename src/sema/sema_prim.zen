@@ -26,6 +26,7 @@ primitive_module* = (module: str) bool {
 reserved_primitive = (name: str) bool {
     name.eq("mul_wide") || name.starts_with("truncate_")
         || name.eq("compiler_barrier") || name.eq("value_barrier")
+        || name.eq("declassify_barrier")
 }
 
 primitive_signature* = (c :: Checker, d: Def, f: Function)
@@ -87,9 +88,11 @@ primitive_shape = (name: str, ps: Vec<String>, r: str) bool {
 
 // std.ct.value_barrier returns its unsigned word unchanged, but the optimizer
 // may assume nothing about the result: the constant-time helpers rely on it
-// to stop a mask from being turned back into a branch.
+// to stop a mask from being turned back into a branch. declassify_barrier is
+// the same barrier, also naming its register in the assembly so tools/ct
+// knows the value is public from there on.
 barrier_shape = (name: str, ps: Vec<String>, r: str) bool {
-    name.eq("value_barrier") && ps.len == 1 && unsigned_width(type_at(ps, 0)) > 0
+    (name.eq("value_barrier") || name.eq("declassify_barrier")) && ps.len == 1 && unsigned_width(type_at(ps, 0)) > 0
         && r.eq(type_at(ps, 0))
 }
 

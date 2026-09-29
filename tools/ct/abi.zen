@@ -14,12 +14,12 @@
 // arm64). Floating-point parameters are treated as public. A result struct
 // larger than 16 bytes takes %rdi for its return pointer on x86-64.
 Alloc, AllocError = std.mem
-Vec = std.collections
+Vec, Map = std.collections
 str, String = std.text
 Range = std.core
 parse_usize = std.text
 truncate_u32, to_i64 = std.core.num
-Isa, Seed = taint
+Isa, Seed, PAIR = taint
 
 Param* = { ctype*: str, name*: str }
 
@@ -30,6 +30,9 @@ Marked* = {
     params*: Vec<Param>,
     secret*: Vec<str>,     // C names of secret-valued parameters
     pointee*: Vec<str>,    // C names of pointers to secret memory
+    // Secret-dependent conditional branches allowed, for a function whose
+    // one decision is a public outcome (an AEAD open's authentication).
+    branches* :: usize = 0,
 }
 
 Layout = { size: usize, align: usize }
@@ -358,11 +361,13 @@ reg_name = (a: Alloc, isa: Isa, i: usize) Res<str, AllocError> {
 //   p256      table_select      n
 //   aes_gcm   ghash_mul         x y
 //   tls13_cert_config  Tls13CertConfig.release  *self
+//   aes_gcm   aes_gcm_open      *key *scratch branches=1
 //
 // Every definition of the function (each overload and instantiation) is
 // audited. An entry that matches no definition is an error, unless its
 // module is written `?module`: the program may not reach that module.
-Entry* = { module*: str, function*: str, secret*: Vec<str>, pointee*: Vec<str>, optional*: bool }
+// `branches=N` allows N secret-dependent conditional branches (see Marked).
+Entry* = { module*: str, function*: str, secret*: Vec<str>, pointee*: Vec<str>, optional*: bool, branches*: usize }
 
 manifest_entries* = (a: Alloc, text: str) Res<Vec<Entry>, AllocError> {
     out ::= a.Vec<Entry>();
@@ -371,19 +376,24 @@ manifest_entries* = (a: Alloc, text: str) Res<Vec<Entry>, AllocError> {
         words ::= a.Vec<str>();
         line.split(' ').loop((w) { (w.len > 0).then(() { words.add(w).try(); }); });
         (words.len >= 2).then(() {
-            secret  ::= a.Vec<str>();
-            pointee ::= a.Vec<str>();
+            secret   ::= a.Vec<str>();
+            pointee  ::= a.Vec<str>();
+            branches ::= 0;
             Range(2, words.len).loop((i) {
                 w = words.get(i).value_or("");
-                w.starts_with("*").match({
-                    true  => pointee.add(w.slice(1, w.len)).try(),
-                    false => secret.add(w).try(),
+                w.starts_with("branches=").match({
+                    true  => { branches = w.slice(9, w.len).parse_usize().value_or(0); },
+                    false => w.starts_with("*").match({
+                        true  => pointee.add(w.slice(1, w.len)).try(),
+                        false => secret.add(w).try(),
+                    }),
                 });
             });
             head     = words.get(0).value_or("");
             optional = head.starts_with("?");
             out.add(Entry(
                 optional: optional,
+                branches: branches,
                 module: optional.match({ true => head.slice(
                     1,
                     head.len
@@ -444,7 +454,8 @@ manifest_functions* = (
                         result: m.result,
                         params: m.params,
                         secret: secret,
-                        pointee: pointee
+                        pointee: pointee,
+                        branches: e.branches
                     )).try();
                 });
             });
@@ -458,4 +469,62 @@ parse_plain = (a: Alloc, line: str) Res<Marked> {
     at     = line.rfind(')').try();
     marked = a.String("{} {} */ {", line.slice(0, at + 1), MARK).match({ Ok(s) => Ok(s), Err(_) => None }).try();
     parse_definition(a, marked.view())
+}
+
+// Integer argument registers each function in the file takes, for the
+// taint analysis's call rule: only those registers can carry a secret into
+// the callee. Unknown layouts count one register.
+register_arity* = (
+    a   : Alloc,
+    isa : Isa,
+    c   : str
+) Res<Map<str, usize>, AllocError> {
+    out ::= a.Map<str, usize>();
+    c.lines().loop((line) {
+        head = line.starts_with("static ") && line.contains('(')
+            && (line.ends_with(";") || line.ends_with("{"));
+        head.then(() {
+            parse_plain(a, line.ends_with(";").match({
+                true  => a.String(
+                    "{} {",
+                    line.slice(0, line.len - 1)
+                ).try().view(),
+                false => line,
+            })).when_ok((m) {
+                n ::= isa.match({
+                    X86 => layout_of(
+                        a,
+                        c,
+                        m.result
+                    ).match({ Ok(l) => (l.size > 16).match({ true => 1, false => 0 }), None => 0 }),
+                    Arm => 0,
+                });
+                m.params.loop((p) {
+                    size = layout_of(
+                        a,
+                        c,
+                        p.ctype
+                    ).match({ Ok(l) => l.size, None => 8 });
+                    n    = n + (size <= 8).match({
+                        true  => 1,
+                        false => (size <= 16).match({
+                            true  => 2,
+                            false => isa.match({ X86 => 0, Arm => 1 }),
+                        }),
+                    });
+                });
+                // A result of 9 to 16 bytes comes back in a register pair;
+                // PAIR marks it for the call rule.
+                pair = layout_of(a, c, m.result).match({
+                    Ok(l) => l.size > 8 && l.size <= 16,
+                    None  => false,
+                });
+                out.set(
+                    m.symbol,
+                    n + pair.match({ true => PAIR, false => 0 })
+                ).try();
+            });
+        });
+    });
+    Ok(out)
 }

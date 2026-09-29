@@ -1,0 +1,6 @@
+ensure 0 -2
+tail 7 -1
+raised -1
+either -1 -2
+local 9
+argument -2

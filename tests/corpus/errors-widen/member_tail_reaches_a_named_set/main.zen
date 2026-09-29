@@ -1,0 +1,43 @@
+// A MEMBER VALUE REACHES A DECLARED SET AT EVERY POSITION. `Mid` names
+// the set `Narrow | Other`; a `Res<_, Narrow>` delivered where a
+// `Res<_, Mid>` is wanted has to be rebuilt with Mid's tag wrapped around
+// the member. Codegen asked "is the wanted error a set?" of the NAME
+// (`Named`, never `Union`), answered no, and emitted the narrow struct
+// raw — `cc` refused the program. The inline spelling always worked.
+//
+// Each position is its own function: a returned `.ensure(..)` (which is
+// a `Res<(), Narrow>` call result), a bare tail call, a direct
+// `Err(member)`, a typed local, a match whose arms carry two different
+// members, and an argument. Reading back the member by name pins that
+// the tag, not just the C type, was built.
+
+Narrow = | Nope
+Other  = | Boom
+Mid    = Narrow | Other
+
+make  = (n: i32) Res<i32, Narrow> { (n > 0).match({ true => Ok(n), false => Err(Narrow.Nope) }) }
+makeo = (n: i32) Res<i32, Other> { (n > 0).match({ true => Ok(n), false => Err(Other.Boom) }) }
+
+ensured   = (n: i32) Res<(), Mid> { (n > 0).ensure(Other.Boom) }
+tail_call = (n: i32) Res<i32, Mid> { make(n) }
+raised    = () Res<i32, Mid> { Err(Narrow.Nope) }
+either    = (n: i32) Res<i32, Mid> { (n > 0).match({ true => make(n - 5), false => makeo(n) }) }
+
+read = (r: Res<i32, Mid>) i32 {
+    r.match({ Ok(v) => v, Err(Narrow) => -1, Err(Other) => -2 })
+}
+
+read_unit = (r: Res<(), Mid>) i32 {
+    r.match({ Ok(_) => 0, Err(Narrow) => -1, Err(Other) => -2 })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("ensure {} {}", read_unit(ensured(1)), read_unit(ensured(0)));
+    println("tail {} {}", read(tail_call(7)), read(tail_call(-1)));
+    println("raised {}", read(raised()));
+    println("either {} {}", read(either(1)), read(either(0)));
+    local: Res<i32, Mid> = make(9);
+    println("local {}", read(local));
+    println("argument {}", read(makeo(-4)));
+    Ok(0);
+}

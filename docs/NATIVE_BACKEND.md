@@ -99,7 +99,7 @@ machine details stay inside each target; targets never fall back to C.
 
 ```text
 AST + checked sema facts
-  → gen_asm_lower / gen_asm_call / gen_asm_member / gen_asm_shape   (native lowering)
+  → gen_lower_core / gen_lower_call / gen_lower_member / gen_lower_shape   (full lowering)
   → gen_ir.Program (native surface)  → gen_verify.verify_native
   → gen_asm_x86.X86_64Linux | gen_asm_arm64.Arm64(Linux | Darwin)   (renderers)
   → as + ld (zen.zen_native)
@@ -118,29 +118,54 @@ wrapping arithmetic, shifts and rotates are operations on typed slots. A C,
 JavaScript or LLVM renderer can consume the same program: `verify_native`
 checks it, and `verify` keeps the scalar renderers on their subset.
 
-**Native lowering** (target-independent, shared by both asm renderers):
+**Full lowering** (`src/gen/gen_lower_*`, target-independent; the arch gate in
+`tests/gates/arch_boundary.zen` classifies `gen.gen_lower*` as frontend, so
+renderers may not import it and it may not import a renderer). It is named
+for lowering, not for assembly: its output is the native IR surface, which any
+renderer that accepts that surface can consume. It stays separate from the
+scalar `gen_lower` and from the C IR pilot for now.
 
-* `gen_asm_shape` — machine layouts of checked types: words, `str` as
+* `gen_lower_shape` — machine layouts of checked types: words, `str` as
   `{data: Ptr<u8>, len: usize}`, records at natural alignment, tagged
   unions (u32 tag + payload; payload-free enums are the tag word), fixed
   arrays, bounds as `{tag, receiver pointer}` handles, capabilities as
   zero-size. An unsettled type parameter has a zero-size placeholder layout.
-* `gen_asm_lower` — frames, slots, places (`InSlot`/`Through`), statements,
+* `gen_lower_core` — frames, slots, places (`InSlot`/`Through`), statements,
   expressions, patterns (nested), `.try()` across frames, error-set
   widening, coercions (literal widths, `Ok` lifting, union membership,
   same-named alternatives), instantiation of functions per substitution.
-* `gen_asm_call` — calls: arguments in written order, mutable parameters by
+* `gen_lower_call` — calls: arguments in written order, mutable parameters by
   address, closure-taking callees inlined in the frame that wrote the
   closure (so `.try()` and `h.break()` keep their meaning), `loop`
   overloads and handles, `Ptr`, numeric conversions and bit operations,
   console formatting, constructions with defaults, inference of open
   parameters from arguments, closures, ranges and breaks.
-* `gen_asm_member` — member resolution (own struct, impl override, bound
+* `gen_lower_member` — member resolution (own struct, impl override, bound
   default), bound values dispatched at run time over the program's
   implementors (`Alloc` → `Arena`, `Pages`, test allocators), `Mem`
   (arenas over `mmap`), and the `std.sys` operations.
 
-**Renderers** own registers, frames, calls and object syntax. Words live in
+**What is still target-specific in the lowering.** Frames, registers, the
+calling convention, stack layout, syscall numbers, OS constants and libSystem
+symbols are all decided by the renderers and `gen_sys` from the IR and the
+`Target`. The lowering itself still assumes three things:
+
+* a 64-bit machine word: `usize`/`isize` lower to `U64`/`I64` and `Ptr` is
+  8 bytes, so pointer arithmetic and `str.len` are 64-bit;
+* the layouts `gen_lower_shape` computes (natural alignment with 8-byte
+  pointers, `str` as `{ptr@0, len@8}`, a `u32` tag before union payloads,
+  bound handles as `{u32 tag, receiver pointer}`), which are shared by all
+  three current targets but would need a data-layout parameter for a 32-bit
+  or wasm32 target;
+* the page header size used by `Pages`/`MapPages` (16 bytes), a runtime
+  convention the renderers implement identically.
+
+None of these names a register, an instruction or an OS; a `Layout` input
+(pointer width, alignment of `u64`) is the planned fix when a non-64-bit
+target arrives.
+
+**Renderers** own registers, frames, calls and object syntax. They consume
+only the IR program and the `Target` value. Words live in
 8-byte slots extended to 64 bits; aggregates are passed by pointer to the
 caller's copy and returned through a hidden pointer (`%rdi` / `x8`), which is
 the System V MEMORY class and the AAPCS64 indirect-result convention for
@@ -215,20 +240,61 @@ or linker rejected the output).
 
 | Target | Pass | Fail | Unsupported | Broken | Of |
 | --- | --- | --- | --- | --- | --- |
-| x86_64-linux (dev-box) | 507 (52.7%) | 0 | 455 | 0 | 962 |
-| aarch64-linux (qemu-user) | 507 (52.7%) | 0 | 455 | 0 | 962 |
-| arm64-darwin (this Mac) | see the latest run below | | | | 962 |
+| x86_64-linux (dev-box) | 638 (66.3%) | 0 | 324 | 0 | 962 |
+| aarch64-linux (qemu-user) | 638 (66.3%) | 0 | 324 | 0 | 962 |
+| arm64-darwin (this Mac) | 638 (66.3%) | 1 | 323 | 0 | 962 |
+
+The one macOS failure, `env/fs_read_special_file_with_zero_stat_size`, reads
+a file under `/proc`, which exists only on Linux; its expectation was recorded
+on Linux. On a loaded Mac, about 20 more programs exceed the runner's 10 s alarm
+(exit 142) because of the first-launch scan of each new binary. They pass when
+re-run with less parallelism.
 
 Run it: `cd tests/native && ../../zen build`, then from the repository root
 `tests/native/build/<os>-<arch>/native-corpus ./zen <target> [filter] [shard shards]`.
 
 Refused constructs, by the first one each unsupported program reaches
-(x86_64-linux, 455 programs): `String`/`fmt` formatting and `Display`
-(~50), `Drop` cleanup (36), unsettled types in remaining generic corners
-(~30), other `Env` operations (actors, threads, fs.lock/cwd/mkdir, args
-schema: ~27), `@scope`/`defer`, `consume`, `@meta` (~19), floats (18),
-`==` on records (16), folding loops (9), compiler-internal test roots that
-import `gen`/`sema` (~40).
+(x86_64-linux, 324 programs): types sema left unsettled in generic corners
+(34), other `Env` operations (actors, threads, fs.lock/cwd/mkdir, args
+schema: 27), floats (19), value conversions not modelled yet (19), loop
+handles used as values (10), unknown variants (10), native-only
+expressions (10), folding loops (9), and about 40 compiler-internal test
+roots that import `gen`/`sema`/`lsp` modules the runner does not stage.
+
+The runner stages each program as `tests/run.py` does: it runs as
+`<scratch>/prog` in a directory where its root is visible as `src`, with the
+harness-only environment variables, the symlink loop and the rewritten epoch
+for the tests that need them.
+
+### Stage 4: SHA-256 on both backends
+
+`tests/native/bench` builds zen-crypto's `sha256.zen` unchanged with the C
+backend (`cc -O2`) and with the asm backend, hashes 16 MiB, and checks that
+both print the same digest (`5d91165a…484186`). On dev-box (x86-64): C 0.07 s,
+asm 1.70 s, about 24x slower. The asm renderers keep every value in a stack
+slot and reload it for each operation, checked arithmetic branches after every
+add, and there is no register allocation, inlining of small callees or
+instruction selection for rotates and loads of whole words. ChaCha20 was not
+benchmarked; it needs the same work.
+
+### Roadmap to zen-crypto and zen-http on the native backend
+
+1. **Performance.** A per-function register allocator over the slot CFG
+   (linear scan is enough), whole-word loads/stores for `Ptr<u32>`/`Ptr<u64>`,
+   rotates as single instructions, and unchecked arithmetic where the IR
+   says `Wrap*`. The goal is within 2x of `cc -O2` on SHA-256 and ChaCha20.
+2. **Crypto surface** (see the requirements table above): `u128`/`mul_wide`,
+   vectors, target-feature dispatch (`CpuHas`), forced inlining, and
+   volatile store plus a compiler barrier for wiping secrets.
+3. **Remaining language coverage:** floats, the missing conversions, loop
+   handles as values, folding loops, and the unsettled generic corners.
+4. **zen-http:** sockets and readiness are already in `std.sys` (epoll on
+   Linux, kqueue on macOS). Missing are threads (`clone` + futex on Linux,
+   pthreads through libSystem on macOS), actors over them, and the `Env`
+   operations that the corpus still refuses.
+5. **Backend unification** (per `IR_ARCHITECTURE.md`): merge the full
+   lowering with the scalar `gen_lower` and the C IR pilot so one lowering
+   feeds C, JavaScript and assembly. This is deliberately not done yet.
 
 ### Stage 2: three targets, no libc
 

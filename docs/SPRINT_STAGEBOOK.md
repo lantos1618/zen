@@ -5,6 +5,23 @@ Completed execution logs, previous checkpoints and review transcripts live in
 Git history. Architecture and library contracts belong in [LIBRARIES.md](LIBRARIES.md),
 [DESIGN.md](DESIGN.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Current checkpoint: generated condition warnings (2026-09-29)
+
+Match conditions now rely on the enclosing C `if` parentheses, retaining
+comparison precedence and tag-before-payload short-circuiting. The readiness
+UBSan fixture and its negative control pass without warnings. The warning gate
+now treats Clang parentheses-equality as an error, proves rejection with a C
+control, and executes enum/scalar/payload/string pattern regression cases.
+It detects Apple's gcc-as-Clang alias rather than applying the GCC budget to it.
+The expanded emitted fixture reduces Clang's warning baseline from seven to six.
+
+The seed is regenerated. Local `make -j1 seed verify` stops at 321 Clang seed
+warnings versus the Linux baseline of 320. The original seed also emits exactly
+321 warnings on this SDK with the same enabled warning classes; no warning was
+added and no budget raised. This includes the macOS 26 deprecation of the
+existing posix_spawn_file_actions_addchdir_np binding. Full Linux verification
+remains the merge gate.
+
 ## Current checkpoint: OS entropy (2026-09-29)
 
 `std.entropy.fill_random` adds caller-buffer OS cryptographic randomness for

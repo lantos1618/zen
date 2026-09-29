@@ -4,4 +4,4 @@
 gcc seed 315
 clang seed 320
 gcc emitted 1
-clang emitted 7
+clang emitted 6

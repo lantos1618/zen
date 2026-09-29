@@ -14,7 +14,11 @@ SemaFault, NameFault = sema.sema_diag
 IntegerBitOperation* = { name*: str, word*: TyId }
 
 NarrowTarget* = U8 | U16 | Usize | I32 | CInt
-ConversionKind* = Widen | Checked(NarrowTarget)
+// Widen: every value converts exactly. Checked: an integer range check.
+// Exact: an integer/float conversion that is None unless the value is
+// represented exactly. Round: `narrow_*`, the one lossy family, which always
+// yields the nearest representable value (see std.core.num).
+ConversionKind* = Widen | Checked(NarrowTarget) | Exact | Round
 
 NumericConversion* = {
     source*: TyId,
@@ -64,9 +68,14 @@ source_numeric_declaration = (c :: Checker, d: Def) Res<(), AllocError> {
     })
 }
 
+// `to_T` converts without losing a value; `narrow_T` rounds.
 conversion_name = (name: str) Res<str> {
-    name.starts_with("to_").ensure().try();
-    target = name.slice(3, name.len);
+    start: usize = name.starts_with("to_").match({
+        true  => 3,
+        false => name.starts_with("narrow_").match({ true => 7, false => 0 }),
+    });
+    (start > 0).ensure().try();
+    target = name.slice(start, name.len);
     target.is_in([
         "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
         "usize", "f32", "f64", "bool", "c_char", "c_schar", "c_uchar",
@@ -92,7 +101,8 @@ numeric_signature = (c :: Checker, d: Def, f: Function, target: str)
                     );
                     source = c.param_type(p, ctx).try();
                     result = c.ret_type(f, ctx).try();
-                    c.register_numeric(d, source, target, result)
+                    rounds = f.name.text.starts_with("narrow_");
+                    c.register_numeric(d, source, target, rounds, result)
                 },
             })
         },
@@ -104,18 +114,29 @@ register_numeric = (
     d      : Def,
     source : TyId,
     target : str,
+    rounds : bool,
     result : TyId
 ) Res<(), AllocError> {
-    conversion_kind(c.prim_name(source), target).match({
+    name = c.prim_name(source);
+    float_kind(name, target, rounds).match({
+        Ok(kind) => Ok(kind),
+        None     => rounds.match({
+            true  => None,
+            false => conversion_kind(name, target),
+        }),
+    }).match({
         None     => c.invalid_numeric(d),
         Ok(kind) => {
+            optional = c.types.at(result).match({
+                Res(r) => r.form.match({ Absence => true, _ => false })
+                    && c.prim_name(r.value).eq(target),
+                _      => false,
+            });
             expected = kind.match({
                 Widen      => c.prim_name(result).eq(target),
-                Checked(_) => c.types.at(result).match({
-                    Res(r) => r.form.match({ Absence => true, _ => false })
-                        && c.prim_name(r.value).eq(target),
-                    _      => false,
-                }),
+                Round      => c.prim_name(result).eq(target),
+                Checked(_) => optional,
+                Exact      => optional,
             });
             expected.match({
                 false => c.invalid_numeric(d),
@@ -138,12 +159,14 @@ register_numeric = (
 // type; its checked conversions retain the contract for narrower targets.
 conversion_kind = (source: str, target: str) Res<ConversionKind> {
     lossless = source.match({
-        "u8"    => target.is_in(["u16", "u32", "u64", "usize", "i32", "i64"]),
-        "u16"   => target.is_in(["u32", "u64", "usize", "i64"]),
-        "u32"   => target.is_in(["u64", "usize", "i64"]),
+        "u8"    => target.is_in([
+            "u16", "u32", "u64", "usize", "i32", "i64", "f32", "f64"
+        ]),
+        "u16"   => target.is_in(["u32", "u64", "usize", "i64", "f32", "f64"]),
+        "u32"   => target.is_in(["u64", "usize", "i64", "f64"]),
         "usize" => target.eq("u64"),
-        "i8"    => target.is_in(["i16", "i32", "i64"]),
-        "i16"   => target.is_in(["i32", "i64"]),
+        "i8"    => target.is_in(["i16", "i32", "i64", "f32", "f64"]),
+        "i16"   => target.is_in(["i32", "i64", "f32", "f64"]),
         "i32"   => target.is_in(["i64", "f64"]),
         "f32"   => target.eq("f64"),
         _       => false,
@@ -169,6 +192,23 @@ conversion_kind = (source: str, target: str) Res<ConversionKind> {
                 _       => None,
             }),
         }),
+    })
+}
+
+// Conversions whose operand or result is a float and that are not lossless.
+// `narrow_*` rounds; `to_*` between an integer and f64 is exact or None.
+float_kind = (source: str, target: str, rounds: bool) Res<ConversionKind> {
+    rounds.match({
+        true  => {
+            ((source.eq("f64") && target.eq("f32"))
+                || (source.is_in(["i64", "u64"]) && target.eq("f64"))).ensure().try();
+            Ok(ConversionKind.Round)
+        },
+        false => {
+            ((source.eq("f64") && target.is_in(["i32", "i64"]))
+                || (source.is_in(["i64", "u64"]) && target.eq("f64"))).ensure().try();
+            Ok(ConversionKind.Exact)
+        },
     })
 }
 

@@ -1,9 +1,12 @@
 // Render sema-validated numeric operations. Widening preserves every value;
-// checked conversion evaluates its operand once and returns None on overflow.
+// checked conversion evaluates its operand once and returns None on overflow;
+// exact integer/float conversion returns None unless the value survives;
+// rounding conversion always produces the nearest representable value.
 ExprId = std.ast
 AllocError = std.mem
 String, str = std.text
-NumericConversion, NarrowTarget, IntegerBitOperation = sema.sema_numeric
+NumericConversion, NarrowTarget, ConversionKind = sema.sema_numeric
+IntegerBitOperation = sema.sema_numeric
 Ctx = sema.sema_check
 CBackend = gen.gen_c.gen_c_state
 expr = gen.gen_c.gen_c_expr
@@ -19,12 +22,14 @@ lower_numeric* = (
 ) Res<(), AllocError> {
     target = be.check.prim_name(operation.target);
     operation.kind.match({
-        Widen          => {
+        Widen      => {
             out.fmt("({})(", c_prim(target)).try();
             be.expr(value, ctx, operation.source, out).try();
             out.add(")")
         },
-        Checked(range) => be.checked_numeric(value, operation, range, ctx, out),
+        Checked(_) => be.checked_numeric(value, operation, ctx, out),
+        Exact      => be.checked_numeric(value, operation, ctx, out),
+        Round      => be.rounded_numeric(value, operation, ctx, out),
     })
 }
 
@@ -32,7 +37,6 @@ checked_numeric = (
     be        :: CBackend,
     value     : ExprId,
     operation : NumericConversion,
-    range     : NarrowTarget,
     ctx       : Ctx,
     out       :: String
 ) Res<(), AllocError> {
@@ -45,7 +49,10 @@ checked_numeric = (
     target = be.check.prim_name(operation.target);
     source = be.check.prim_name(operation.source);
     be.write("if (").try();
-    be.numeric_fits(held.view(), source, range).try();
+    operation.kind.match({
+        Checked(range) => be.numeric_fits(held.view(), source, range),
+        _              => be.exact_fits(held.view(), source, target),
+    }).try();
     be.writeln(") {").try();
     be.indent();
     cast ::= be.alloc.String().try();
@@ -77,6 +84,100 @@ numeric_fits = (be :: CBackend, value: str, source: str, target: NarrowTarget)
             maximum
         ),
         false => be.fmt("(uintmax_t){} <= (uintmax_t){}", value, maximum),
+    })
+}
+
+// Whether an integer/float conversion is exact. Every cast below runs only
+// after the range test has passed, so no C conversion leaves its defined
+// range: a NaN fails every comparison, and the round trip then rejects a
+// fractional f64 or an integer that has no f64 of its own.
+exact_fits = (be :: CBackend, value: str, source: str, target: str)
+             Res<(), AllocError> {
+    source.match({
+        "f64" => target.eq("i32").match({
+            true  => be.fmt(
+                "{} >= -2147483648.0 && {} <= 2147483647.0 && (double)(int32_t){} == {}",
+                value,
+                value,
+                value,
+                value
+            ),
+            false => be.fmt(
+                "{} >= -0x1p63 && {} < 0x1p63 && (double)(int64_t){} == {}",
+                value,
+                value,
+                value,
+                value
+            ),
+        }),
+        "u64" => be.fmt(
+            "(double){} < 0x1p64 && (uint64_t)(double){} == {}",
+            value,
+            value,
+            value
+        ),
+        _     => be.fmt(
+            "(double){} < 0x1p63 && (int64_t)(double){} == {}",
+            value,
+            value,
+            value
+        ),
+    })
+}
+
+// `narrow_f32` and `narrow_f64`. An integer always lies inside the f64
+// range, so its cast is defined and rounds to nearest. An f64 is compared
+// first because C leaves converting an out-of-range double to float
+// undefined: at or beyond FLT_MAX plus half an ulp (0x1.ffffffp127) IEEE
+// rounding gives infinity, spelled from its bit pattern because C99 has no
+// infinity constant outside <math.h>; between FLT_MAX and that bound it
+// gives FLT_MAX. What remains (in range, or NaN) converts with the cast.
+rounded_numeric = (
+    be        :: CBackend,
+    value     : ExprId,
+    operation : NumericConversion,
+    ctx       : Ctx,
+    out       :: String
+) Res<(), AllocError> {
+    target = be.check.prim_name(operation.target);
+    code ::= be.alloc.String().try();
+    be.expr(value, ctx, operation.source, code).try();
+    target.eq("f32").match({
+        false => out.fmt("({})({})", c_prim(target), code.view()),
+        true  => {
+            held = be.temp(operation.source, "n").try();
+            be.set_line(held.view(), code.view()).try();
+            dst = be.temp(operation.result, "t").try();
+            n   = held.view();
+            t   = dst.view();
+            be.fmt(
+                "if ({} >= 0x1.ffffffp127 || {} <= -0x1.ffffffp127) {{\n",
+                n,
+                n
+            ).try();
+            be.indent();
+            be.fmt(
+                "uint32_t {}_bits = {} > 0 ? 0x7f800000u : 0xff800000u;\n",
+                t,
+                n
+            ).try();
+            be.fmt("memcpy(&{}, &{}_bits, sizeof {});\n", t, t, t).try();
+            be.dedent();
+            be.fmt("}} else if ({} > 0x1.fffffep127) {{\n", n).try();
+            be.indent();
+            be.fmt("{} = 0x1.fffffep127f;\n", t).try();
+            be.dedent();
+            be.fmt("}} else if ({} < -0x1.fffffep127) {{\n", n).try();
+            be.indent();
+            be.fmt("{} = -0x1.fffffep127f;\n", t).try();
+            be.dedent();
+            be.writeln("} else {").try();
+            be.indent();
+            be.fmt("{} = (float){};\n", t, n).try();
+            be.dedent();
+            be.writeln("}").try();
+            out.add(t)
+        },
     })
 }
 

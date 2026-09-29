@@ -36,7 +36,7 @@ static void *trace_realloc(void *p, size_t n) { assert(!trace_active); return re
     def execute(name, text, expected=True):
         file = work / (name + '.c')
         file.write_text(text)
-        subprocess.run(['clang', '-O1', '-g', '-fsanitize=undefined', '-Wno-parentheses-equality', '-I', str(work), '-include', str(work / 'trace_probe.h'), str(file), '-o', str(work / name)], check=True, timeout=90)
+        subprocess.run(['clang', '-O1', '-g', '-fsanitize=undefined', '-Werror=parentheses-equality', '-I', str(work), '-include', str(work / 'trace_probe.h'), str(file), '-o', str(work / name)], check=True, timeout=90)
         result = subprocess.run([str(work / name)], capture_output=True, text=True, timeout=30)
         if expected:
             assert result.returncode == 0, result.stdout + result.stderr

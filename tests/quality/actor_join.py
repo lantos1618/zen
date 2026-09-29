@@ -172,7 +172,7 @@ with tempfile.TemporaryDirectory(prefix='zen-actor-join-') as folder:
     def compile_run(name, text, expect_failure):
         src, binary = work / f'{name}.c', work / name
         src.write_text(text)
-        subprocess.run(['clang', '-O2', '-pthread', '-Wno-parentheses-equality', str(src), '-o', str(binary)],
+        subprocess.run(['clang', '-O2', '-pthread', '-Werror=parentheses-equality', str(src), '-o', str(binary)],
                        check=True, timeout=90)
         for mode in ('self', 'concurrent', 'idle', 'failure'):
             result = subprocess.run([str(binary), mode], capture_output=True, text=True, timeout=15)

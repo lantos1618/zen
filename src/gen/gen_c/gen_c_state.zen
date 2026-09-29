@@ -79,6 +79,11 @@ CBackend* = {
     type_queue* :: Vec<QueuedType>,
     type_lookup :: Map<str, usize>,
 
+    // Estimated C byte size per type, memoised for `gen_c_borrow.zen`:
+    // every signature and every call site asks the same question of the
+    // same few hundred types.
+    widths :: Map<TyId, usize>,
+
     // Integer types requiring checked-arithmetic helpers.
     helper_types* :: Vec<String>,
     helper_ops* :: Vec<ArithmeticHelper>,
@@ -129,6 +134,10 @@ CBackend* = {
     locals :: Vec<LocalSlot>,
     held_expression* :: Res<HeldExpression>,
     declared :: Vec<String>,
+    // Borrowed parameters this function lends to a `::` parameter. Sema
+    // accepts that lend and the write lands in the callee's own copy, so
+    // such a parameter is copied in at entry (`gen_c_decl.own_lent`).
+    lent :: Vec<String>,
     // Active loop and block stacks, innermost last.
     loops :: Vec<LoopFrame>,
     blocks :: Vec<BlockFrame>,
@@ -196,6 +205,13 @@ CBackend* = {
     // Mangled type names are injective and serve as worklist keys.
     type_index* = (self: @Self, name: str) Res<usize> {
         self.type_lookup.get(name)
+    }
+
+    known_width* = (self: @Self, ty: TyId) Res<usize> { self.widths.get(ty) }
+
+    remember_width* = (self :: @Self, ty: TyId, bytes: usize)
+                      Res<(), AllocError> {
+        self.widths.set(ty, bytes)
     }
 
     queue_type* = (self :: @Self, name: String, id: TyId)
@@ -650,6 +666,34 @@ CBackend* = {
         Ok(n);
     }
 
+    // Record that borrowed parameter `name` is lent to a `::` parameter.
+    note_lent* = (self :: @Self, name: str) Res<(), AllocError> {
+        self.lent.find((l) { l.view().eq(name) }).match({
+            Ok(_) => Ok(()),
+            None  => {
+                owned ::= self.alloc.String().try();
+                owned.add(name).try();
+                self.lent.add(owned)
+            },
+        })
+    }
+
+    is_lent* = (self: @Self, name: str) bool {
+        self.lent.find(
+            (l) { l.view().eq(name) }
+        ).match({ Ok(_) => true, None => false })
+    }
+
+    any_lent* = (self: @Self) bool { self.lent.len > 0 }
+
+    // A wide `:` parameter, received by address (gen_c_borrow.zen).
+    declare_borrowed* = (self :: @Self, name: str, ty: TyId)
+                        Res<usize, AllocError> {
+        n = self.reserve(name).try();
+        self.publish_slot(name, n, ty, false, true).try();
+        Ok(n);
+    }
+
     // A name is not in scope until its initialiser has been lowered, so
     // the two halves of `declare` are separable: `reserve` takes the
     // number the C name carries, `publish` is what makes the name
@@ -667,11 +711,23 @@ CBackend* = {
 
     publish* = (self :: @Self, name: str, n: usize, ty: TyId, by_ref: bool)
                Res<(), AllocError> {
+        self.publish_slot(name, n, ty, by_ref, false)
+    }
+
+    publish_slot = (
+        self     :: @Self,
+        name     : str,
+        n        : usize,
+        ty       : TyId,
+        by_ref   : bool,
+        borrowed : bool
+    ) Res<(), AllocError> {
         self.locals.add(LocalSlot(
             name: name,
             index: n,
             ty: ty,
-            by_ref: by_ref,
+            by_ref: by_ref || borrowed,
+            borrowed: borrowed,
             handle: 0,
             closure: 0
         )).try();
@@ -689,6 +745,7 @@ CBackend* = {
             index: 0,
             ty: cl.ret,
             by_ref: false,
+            borrowed: false,
             handle: 0,
             closure: self.closures.len
         )).try();
@@ -791,6 +848,7 @@ CBackend* = {
             index: 0,
             ty: ty,
             by_ref: false,
+            borrowed: false,
             handle: depth,
             closure: 0
         ))
@@ -887,6 +945,7 @@ CBackend* = {
     // The temporary counter is reset here and nowhere else.
     reset_frame* = (self :: @Self) Res<(), AllocError> {
         self.release(0).try();
+        self.lent.truncate(0);
         extra = self.declared.len;
         Range(0, extra).loop((h, i) {
             self.declared.take(self.declared.len - 1);
@@ -944,6 +1003,7 @@ CBackend* = (a: Alloc, tree: Ast, check: Checker) Res<CBackend, AllocError> {
         diags: a.Vec<GenDiag>(),
         type_queue: a.Vec<QueuedType>(),
         type_lookup: a.Map<str, usize>(),
+        widths: a.Map<TyId, usize>(),
         helper_types: a.Vec<String>(),
         helper_ops: a.Vec<ArithmeticHelper>(),
         print_used: false,
@@ -978,6 +1038,7 @@ CBackend* = (a: Alloc, tree: Ast, check: Checker) Res<CBackend, AllocError> {
         locals: a.Vec<LocalSlot>(),
         held_expression: None,
         declared: a.Vec<String>(),
+        lent: a.Vec<String>(),
         loops: a.Vec<LoopFrame>(),
         blocks: a.Vec<BlockFrame>(),
         drops: a.Vec<DropEntry>(),

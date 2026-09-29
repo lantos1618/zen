@@ -16,7 +16,8 @@ Site, site_of, member_at = gen.gen_c.gen_c_member
 impl_member_of, by_arity = gen.gen_c.gen_c_impl
 by_ref = gen.gen_c.gen_c_arg
 method_sig, member_symbol = gen.gen_c.gen_c_member
-Slot, slots_of, thunk_param = gen.gen_c.gen_c_fat
+Slot, slots_of, thunk_param, address_of = gen.gen_c.gen_c_fat
+borrows = gen.gen_c.gen_c_borrow
 
 ConsoleStream = Stdout | Stderr
 
@@ -211,7 +212,14 @@ display_call = (
     sig ::= be.alloc.Vec<TyId>();
     be.method_sig(ty, s.decl, f, s.decl.module.to_usize(), inst, sig).try();
     sym = be.member_symbol(ty, s, DISPLAY_MEMBER, sig, inst).try();
-    out.fmt("{}({text}, ", sym.view()).try();
+    out.fmt("{}(", sym.view()).try();
+    // A wide receiver is borrowed (gen_c_borrow.zen): its address, or a
+    // temporary's when the text is not a place.
+    be.borrows(f, 0, ty).try().match({
+        false => out.add(text),
+        true  => be.address_of(text, ty, out),
+    }).try();
+    out.add(", ").try();
     write_sink_arg(f, sink, out).try();
     out.add(")")
 }

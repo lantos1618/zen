@@ -1,0 +1,141 @@
+// A dense integer `.match` whose every arm is an integer literal lowers to a
+// `static const` table and one bounds-checked read, instead of an `if` chain.
+//
+//     k = (i: usize) u32 { i.match({ 0 => 0x428a2f98, 1 => .., _ => 0 }) }
+//
+// is the shape a round-constant or IV table takes in Zen, which has no
+// module-level array initialiser. As an `if` chain it costs a compare per arm
+// until clang happens to recognise the chain; as a table it is one load:
+//
+//     static const uint32_t zg_k1[64] = { 0x428a2f98, .. };
+//     return ((uint64_t)(zg_s2) < 64u ? zg_k1[zg_s2] : 0);
+//
+// Only the exact shape qualifies — arms `0, 1, .., n-1` in order, then `_`,
+// every body an integer literal — so the table is the match, value for value.
+
+Expr, Match, Arm = std.ast
+AllocError = std.mem
+String = std.text
+Range = std.core
+TyId = sema.sema_ty
+Ctx = sema.sema_check
+CBackend = gen.gen_c.gen_c_state
+ctype, is_c_integer = gen.gen_c.gen_c_type
+Dest, deliver, write_dest = gen.gen_c.gen_c_stmt
+declare_temp = gen.gen_c.gen_c_flow
+res_type_of, expr = gen.gen_c.gen_c_expr
+
+// Fewer arms than this read as clearly, and run as fast, as an `if` chain.
+MIN_TABLE: usize = 4
+
+// Lower `m` as a table when it has the shape above; false leaves it to the
+// general lowering, with nothing emitted.
+lower_table* = (
+    be  :: CBackend,
+    m   : Match,
+    ctx : Ctx,
+    ty  : TyId,
+    dst : Dest
+) Res<bool, AllocError> {
+    st = be.res_type_of(m.scrutinee, ctx).try();
+    (be.tabled(m, st, ty, dst)).match({
+        false => Ok(false),
+        true  => { be.write_table(m, ctx, st, ty, dst).try(); Ok(true) },
+    })
+}
+
+tabled = (be :: CBackend, m: Match, st: TyId, ty: TyId, dst: Dest) bool {
+    wants = dst.match({ Discard => false, _ => true });
+    count = m.arms.len;
+    wants && be.integer(st) && be.integer(ty) && (count > MIN_TABLE)
+        && be.wild_last(m) && be.dense_literals(m)
+}
+
+integer = (be :: CBackend, t: TyId) bool {
+    be.check.types.at(t).match({ Prim(p) => is_c_integer(p.name), _ => false })
+}
+
+wild_last = (be :: CBackend, m: Match) bool {
+    m.arms.get(m.arms.len - 1).match({
+        None    => false,
+        Ok(arm) => be.tree.pattern_at(arm.pattern).kind.match({
+            Wild => be.int_literal(arm),
+            _    => false,
+        }),
+    })
+}
+
+// Arm k (every arm but the last) tests the integer literal k and yields
+// an integer literal.
+dense_literals = (be :: CBackend, m: Match) bool {
+    Range(0, m.arms.len - 1).find((k) {
+        m.arms.get(k).match({
+            None    => true,
+            Ok(arm) => (be.tests(arm, k) && be.int_literal(arm)) == false,
+        })
+    }).match({ Ok(_) => false, None => true })
+}
+
+tests = (be :: CBackend, arm: Arm, k: usize) bool {
+    be.tree.pattern_at(arm.pattern).kind.match({
+        Literal(l) => l.kind.match({
+            Int => l.integer.match({ Ok(v) => v == k.to_u64(), None => false }),
+            _   => false,
+        }),
+        _          => false,
+    })
+}
+
+int_literal = (be :: CBackend, arm: Arm) bool {
+    be.tree.expr_at(arm.body).kind.match({
+        Literal(l) => l.kind.match({ Int => true, _ => false }),
+        _          => false,
+    })
+}
+
+write_table = (
+    be  :: CBackend,
+    m   : Match,
+    ctx : Ctx,
+    st  : TyId,
+    ty  : TyId,
+    dst : Dest
+) Res<(), AllocError> {
+    scrut ::= be.fresh_name("s").try();
+    be.declare_temp(st, scrut.view()).try();
+    be.deliver(m.scrutinee, ctx, st, Dest.Into(scrut.view())).try();
+    count = m.arms.len - 1;
+    table ::= be.fresh_name("k").try();
+    line  ::= be.alloc.String().try();
+    line.add("static const ").try();
+    be.ctype(ty, line).try();
+    line.add(" ").try();
+    line.add(table.view()).try();
+    line.add("[").try();
+    line.write_usize(count).try();
+    line.add("] = { ").try();
+    fallback ::= be.alloc.String().try();
+    m.arms.loop((h, k, arm) {
+        value ::= be.alloc.String().try();
+        expr(be, arm.body, ctx, ty, value).try();
+        (k < count).match({
+            true  => {
+                (k > 0).then(() { line.add(", ").try() });
+                line.add(value.view()).try();
+            },
+            false => { fallback.add(value.view()).try(); },
+        });
+    });
+    line.add(" };\n").try();
+    be.fmt("{}", line.view()).try();
+    read ::= be.alloc.String().try();
+    read.fmt("((uint64_t)({}) < ", scrut.view()).try();
+    read.write_usize(count).try();
+    read.fmt(
+        "u ? {}[{}] : {})",
+        table.view(),
+        scrut.view(),
+        fallback.view()
+    ).try();
+    be.write_dest(dst, read.view())
+}

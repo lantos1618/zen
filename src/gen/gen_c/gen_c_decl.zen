@@ -42,6 +42,7 @@ emit_clock = gen.gen_c.gen_c_clock
 emit_native_features, emit_proc = gen.gen_c.gen_c_proc
 emit_threads, emit_spawn_envs = gen.gen_c.gen_c_threads
 emit_actor_floor, emit_actor_defs = gen.gen_c.gen_c_actor
+borrows = gen.gen_c.gen_c_borrow
 
 // Bound the reachable set by functions lowered. Crossing it reports Overrun
 // instead of silently emitting an incomplete translation unit.
@@ -539,7 +540,58 @@ lower_shape = (
     be.write_proto(qname, name, span, f, ret, sig, proto).try();
     be.open_buf().try();
     be.write_body(blk, mi, ret, self_ty, sctx.has_self).try();
+    be.own_lent(f, sig).try();
     be.keep(qname, sig, proto, span).try();
+    Ok(());
+}
+
+// A borrowed parameter (gen_c_borrow.zen) that this body lent to a `::`
+// parameter gets its own copy, made on entry: the lend may write, and
+// the writes must land where a by-value parameter's did — in this call's
+// copy, visible to the rest of the body and never to the caller. The body
+// was lowered reading `(*p)`, so it moves into a block where `p` is the
+// address of the copy.
+own_lent = (be :: CBackend, f: Function, sig: Vec<TyId>)
+           Res<(), AllocError> {
+    be.any_lent().match({
+        false => Ok(()),
+        true  => be.wrap_lent(f, sig),
+    })
+}
+
+wrap_lent = (be :: CBackend, f: Function, sig: Vec<TyId>)
+            Res<(), AllocError> {
+    body = be.take_buf().try();
+    copies ::= be.alloc.String().try();
+    points ::= be.alloc.String().try();
+    f.params.loop((h, i, p) {
+        be.is_lent(p.name.text).then(() {
+            ty = sig.get(i).match({ Ok(t) => t, None => TyId(index: 0) });
+            cty ::= be.alloc.String().try();
+            be.ctype(ty, cty).try();
+            name ::= be.alloc.String().try();
+            be.slot_index(p.name.text, p.name.span, name).try();
+            copies.fmt(
+                "    {} zg_own_{} = *{};\n",
+                cty.view(),
+                name.view(),
+                name.view()
+            ).try();
+            points.fmt(
+                "    {} *{} = &zg_own_{};\n",
+                cty.view(),
+                name.view(),
+                name.view()
+            ).try();
+        });
+    });
+    text ::= be.alloc.Emit().try();
+    text.bytes(copies.view()).try();
+    text.bytes("    {\n").try();
+    text.bytes(points.view()).try();
+    text.bytes(body.view()).try();
+    text.bytes("    }\n").try();
+    be.put_buf(text);
     Ok(());
 }
 
@@ -602,8 +654,8 @@ self_body_ctx* = (
 // answer with.
 bind_params = (be :: CBackend, f: Function, ctx: Ctx, sig :: Vec<TyId>)
               Res<(), AllocError> {
-    f.params.loop((h, p) {
-        bind_param(be, p, ctx, sig).try();
+    f.params.loop((h, i, p) {
+        bind_param(be, f, i, p, ctx, sig).try();
     });
     Ok(());
 }
@@ -611,12 +663,23 @@ bind_params = (be :: CBackend, f: Function, ctx: Ctx, sig :: Vec<TyId>)
 // `param_type` resolves `@Self`. C declarations use the current concrete
 // Instantiation, while sema keeps the generic declared type in its node memo;
 // Backend reads apply `be.inst` through `ty_of`.
-bind_param = (be :: CBackend, p: Param, ctx: Ctx, sig :: Vec<TyId>)
-             Res<(), AllocError> {
+bind_param = (
+    be  :: CBackend,
+    f   : Function,
+    i   : usize,
+    p   : Param,
+    ctx : Ctx,
+    sig :: Vec<TyId>
+) Res<(), AllocError> {
     declared = be.check.param_type(p, ctx).try();
     ty       = sub(be, declared).try();
     sig.add(ty).try();
-    be.declare(p.name.text, ty, p.mutable).try();
+    // A borrowed `:` parameter is an address too (gen_c_borrow.zen), so
+    // its reads dereference exactly as a `::` parameter's do.
+    be.borrows(f, i, ty).try().match({
+        true  => be.declare_borrowed(p.name.text, ty),
+        false => be.declare(p.name.text, ty, p.mutable),
+    }).try();
     be.check.bind(p.name.text, declared, p.mutable, true).try();
     Ok(());
 }
@@ -667,7 +730,7 @@ write_param_list = (
         ty = sig.get(i).match({ Ok(t) => t, None => unknown });
         be.has_storage(ty).then(() {
             written.then(() { out.add(", ").try() });
-            be.write_param(p, i, sig, out).try();
+            be.write_param(f, p, i, sig, out).try();
             written = true;
         });
     });
@@ -675,9 +738,11 @@ write_param_list = (
     Ok(());
 }
 
-// A `::` parameter is declared as a pointer — see `ref_declarator`.
+// A `::` parameter is declared as a pointer — see `ref_declarator` — and
+// so is a wide `:` one, const, which is `borrow_declarator`.
 write_param = (
     be  :: CBackend,
+    f   : Function,
     p   : Param,
     i   : usize,
     sig : Vec<TyId>,
@@ -687,8 +752,11 @@ write_param = (
     name ::= be.alloc.String().try();
     be.slot_index(p.name.text, p.name.span, name).try();
     p.mutable.match({
-        false => be.declarator(ty, name.view(), out),
         true  => be.ref_declarator(ty, name.view(), out),
+        false => be.borrows(f, i, ty).try().match({
+            false => be.declarator(ty, name.view(), out),
+            true  => be.borrow_declarator(ty, name.view(), out),
+        }),
     })
 }
 
@@ -699,6 +767,13 @@ ref_declarator* = (be :: CBackend, ty: TyId, name: str, out :: String)
                   Res<(), AllocError> {
     be.ctype(ty, out).try();
     out.fmt(" *{name}")
+}
+
+// A borrowed `:` parameter: the address of storage the callee only reads.
+borrow_declarator* = (be :: CBackend, ty: TyId, name: str, out :: String)
+                     Res<(), AllocError> {
+    out.add("const ").try();
+    be.ref_declarator(ty, name, out)
 }
 
 slot_index = (be :: CBackend, name: str, span: Span, out :: String)

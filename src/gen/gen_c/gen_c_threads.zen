@@ -278,7 +278,9 @@ write_spawn_field = (be :: CBackend, s: LocalSlot, text :: String)
     text.add("    ").try();
     cname ::= be.alloc.String().try();
     sym_local(cname, s.name, s.index).try();
-    s.by_ref.match({
+    // A borrowed parameter is copied: the thread may outlive the call
+    // whose caller lent the storage.
+    (s.by_ref && (s.borrowed == false)).match({
         false => be.declarator(s.ty, cname.view(), text),
         true  => be.spawn_ref_field(s.ty, cname.view(), text),
     }).try();
@@ -383,11 +385,22 @@ write_spawn_unpack_one = (be :: CBackend, s: LocalSlot)
     line  ::= be.alloc.String().try();
     cname ::= be.alloc.String().try();
     sym_local(cname, s.name, s.index).try();
-    s.by_ref.match({
-        false => be.declarator(s.ty, cname.view(), line),
-        true  => be.spawn_ref_field(s.ty, cname.view(), line),
-    }).try();
-    be.fmt("{} = zg_e->{};\n", line.view(), cname.view())
+    s.borrowed.match({
+        // The copy lives in the heap record for the whole thread, and the
+        // body still reads the name through a dereference.
+        true  => {
+            line.add("const ").try();
+            be.spawn_ref_field(s.ty, cname.view(), line).try();
+            be.fmt("{} = &zg_e->{};\n", line.view(), cname.view())
+        },
+        false => {
+            s.by_ref.match({
+                false => be.declarator(s.ty, cname.view(), line),
+                true  => be.spawn_ref_field(s.ty, cname.view(), line),
+            }).try();
+            be.fmt("{} = zg_e->{};\n", line.view(), cname.view())
+        },
+    })
 }
 
 // the trampoline
@@ -508,7 +521,10 @@ copy_spawn_capture = (be :: CBackend, s: LocalSlot, cell: str)
                      Res<(), AllocError> {
     cname ::= be.alloc.String().try();
     sym_local(cname, s.name, s.index).try();
-    be.fmt("{cell}->{} = {};\n", cname.view(), cname.view())
+    s.borrowed.match({
+        true  => be.fmt("{cell}->{} = *{};\n", cname.view(), cname.view()),
+        false => be.fmt("{cell}->{} = {};\n", cname.view(), cname.view()),
+    })
 }
 
 write_spawn_ok = (be :: CBackend, ret: TyId, pt: str, dst: str)

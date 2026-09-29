@@ -11,6 +11,7 @@ CBackend = gen.gen_c.gen_c_state
 expr, value_held = gen.gen_c.gen_c_expr
 declare_temp = gen.gen_c.gen_c_flow
 address_of = gen.gen_c.gen_c_fat
+borrows, write_borrow, note_lend = gen.gen_c.gen_c_borrow
 
 arg_text* = (
     be   :: CBackend,
@@ -80,8 +81,11 @@ write_arg_at* = (
 ) Res<(), AllocError> {
     want = sig.get(i).match({ Ok(t) => t, None => TyId(index: 0) });
     by_ref(f, i).match({
-        false => be.value_held(value, ctx, want, hold, out),
         true  => be.write_address(value, ctx, want, out),
+        false => be.borrows(f, i, want).try().match({
+            false => be.value_held(value, ctx, want, hold, out),
+            true  => be.write_borrow(value, hold, f, ctx, want, out),
+        }),
     })
 }
 
@@ -98,6 +102,7 @@ write_address* = (
 ) Res<(), AllocError> {
     code ::= be.alloc.String().try();
     be.expr(value, ctx, want, code).try();
+    be.note_lend(value).try();
     be.address_of(code.view(), want, out).try();
     Ok(())
 }

@@ -429,7 +429,7 @@ request_defined = (be :: CBackend, id: TyId) Res<(), AllocError> {
     })
 }
 
-is_foreign_opaque = (be: CBackend, id: TyId) bool {
+is_foreign_opaque* = (be: CBackend, id: TyId) bool {
     be.types().at(id).match({
         Named(n) => be.foreign_binding(
             n

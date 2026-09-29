@@ -25,7 +25,8 @@ expr, ty_of = gen.gen_c.gen_c_expr
 recv_inst = gen.gen_c.gen_c_mono
 temp, payload_type, write_assign_ok, write_assign_err = gen.gen_c.gen_c_flow
 write_assign_ok_unit = gen.gen_c.gen_c_flow
-by_ref = gen.gen_c.gen_c_arg
+passes_address = gen.gen_c.gen_c_borrow
+ty_at = sema.sema_cand
 fat_value = gen.gen_c.gen_c_fat
 actor_byte_buffer, actor_payload_unsafe = sema.sema_copy
 
@@ -761,10 +762,24 @@ ActorSend = {
             context_c.view()
         ).try();
         body.fmt("    {payload} *zg_msg = ({payload} *)zg_raw;\n").try();
-        body.fmt("    (void)({}(zg_state, *zg_ctx", sym.view()).try();
+        // The context and message live in the actor record for the whole
+        // call, so a borrowed parameter (gen_c_borrow.zen) takes them by
+        // address exactly as a `::` one does.
+        context_by_address = be.passes_address(
+            self.hit.f,
+            1,
+            sig.ty_at(1)
+        ).try();
+        body.fmt("    (void)({}(zg_state, ", sym.view()).try();
+        context_by_address.match({
+            true  => body.add("zg_ctx"),
+            false => body.add("*zg_ctx"),
+        }).try();
         Range(2, sig.len).loop((h, i) {
             body.add(", ").try();
-            by_ref(self.hit.f, i).then(() { body.add("&").try() });
+            be.passes_address(self.hit.f, i, sig.ty_at(i)).try().then(() {
+                body.add("&").try()
+            });
             body.add("zg_msg->zg_arg").try();
             body.write_usize(i - 2).try();
         });
@@ -1243,14 +1258,33 @@ add_lifecycle_callback = (
     proto.fmt("{}void {}(zg_actor *zg_base)", be.linkage(), name.view()).try();
     body ::= be.alloc.String().try();
     body.fmt("    {rec} *zg_self = ({rec} *)zg_base;\n").try();
+    ctx = be.context_arg(actor, hit).try();
     context.match({
         true  => body.fmt(
-            "    (void)({}(&zg_self->zg_state, zg_self->zg_ctx));\n",
-            sym.view()
+            "    (void)({}(&zg_self->zg_state, {}));\n",
+            sym.view(),
+            ctx
         ),
         false => body.fmt("    (void)({}(&zg_self->zg_state));\n", sym.view()),
     }).try();
     be.add_function(name, proto, body)
+}
+
+// A lifecycle behavior's context argument. The context lives in the actor
+// record for the whole call, so a borrowed context parameter
+// (gen_c_borrow.zen) receives its address.
+context_arg = (
+    be    :: CBackend,
+    actor : TyId,
+    hit   : BehaviorHit
+) Res<str, AllocError> {
+    inst = be.recv_inst(actor).try();
+    sig ::= be.alloc.Vec<TyId>();
+    be.method_sig(actor, hit.site.decl, hit.f, hit.mi, inst, sig).try();
+    be.passes_address(hit.f, 1, sig.ty_at(1)).try().match({
+        true  => Ok("&zg_self->zg_ctx"),
+        false => Ok("zg_self->zg_ctx"),
+    })
 }
 
 behavior_symbol = (be :: CBackend, actor: TyId, hit: BehaviorHit)
@@ -1280,8 +1314,9 @@ write_stopped_callback = (
         Ok(hit) => {
             sym = be.behavior_symbol(actor, hit).try();
             body.fmt(
-                "    (void)({}(&zg_self->zg_state, zg_self->zg_ctx));\n",
-                sym.view()
+                "    (void)({}(&zg_self->zg_state, {}));\n",
+                sym.view(),
+                be.context_arg(actor, hit).try()
             )
         },
     }).try();

@@ -49,6 +49,7 @@ create_type = gen.gen_c.gen_c_alloc
 field_of = gen.gen_c.gen_c_type
 inline_result_type = gen.gen_c.gen_c_settle
 needs_fat, write_fat_value = gen.gen_c.gen_c_fat
+note_lend = gen.gen_c.gen_c_borrow
 release_binding = gen.gen_c.gen_c_own
 lower_scope_ref, is_scope_ref, scope_type = gen.gen_c.gen_c_scope
 lower_global_value = gen.gen_c.gen_c_const
@@ -661,6 +662,9 @@ fat_expr = (
     cty     = be.ty_of(id, ctx, unknown).try();
     code ::= be.alloc.String().try();
     be.value_expr(id, ctx, cty, code).try();
+    // The record points at the value, and a `::` method reached through it
+    // writes there: a borrowed parameter needs its own copy first.
+    be.note_lend(id).try();
     be.write_fat_value(code.view(), cty, want, out)
 }
 

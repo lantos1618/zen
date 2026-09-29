@@ -15,6 +15,8 @@ ctype, request_type = gen.gen_c.gen_c_type
 write_qname = gen.gen_c.gen_c_layout
 expr = gen.gen_c.gen_c_expr
 Dest, deliver = gen.gen_c.gen_c_stmt
+init_temp = gen.gen_c.gen_c_flow
+Range = std.core
 contains_drop = sema.sema_copy
 GenFault = gen.gen_diag
 
@@ -35,10 +37,8 @@ named_ptr = (be :: CBackend, rty: TyId) bool {
 }
 
 ptr_verb = (name: str) bool {
-    name.is_in([
-        "read", "take", "write", "offset", "back", "bytes", "copy_from", "to",
-        "is_null", "same"
-    ])
+    name.is_in(["read", "take", "write", "offset", "back", "bytes", "copy_from", "to", "is_null", "same"]) || byte_order_verb(name)
+
 }
 
 // The run's element type, which every member below scales by.
@@ -65,6 +65,13 @@ PtrTypeSite = {
     want: TyId,
 
     resolve = (self: @Self, be :: CBackend) Res<TyId, AllocError> {
+        byte_order_verb(self.name).match({
+            true  => byte_order_type(be, self.name),
+            false => self.element_or_after(be),
+        })
+    }
+
+    element_or_after = (self: @Self, be :: CBackend) Res<TyId, AllocError> {
         et = be.elem_of(self.rty).try();
         self.name.is_in(["read", "take"]).match({
             true  => Ok(et),
@@ -164,6 +171,14 @@ PtrCall = {
 
     lower = (self: @Self, be :: CBackend, out :: String)
             Res<(), AllocError> {
+        byte_order_verb(self.site.name).match({
+            true  => self.byte_order(be, out),
+            false => self.element_access(be, out),
+        })
+    }
+
+    element_access = (self: @Self, be :: CBackend, out :: String)
+                     Res<(), AllocError> {
         self.site.name.is_in(["read", "take"]).match({
             true  => self.read(be, out),
             false => self.after_read(be, out),
@@ -223,6 +238,66 @@ PtrCall = {
         self.site.name.eq("is_null").match({
             true  => out.fmt("({} == NULL)", self.base),
             false => self.reinterpret(be, out),
+        })
+    }
+
+    // `p.read_le64(i)` and the rest of the byte-order verbs (mem_ptr.zen).
+    // The bytes are assembled with shifts: C compilers fold that into one
+    // load or store, byte-swapped where the order differs from the target's,
+    // and unlike a cast through a wider pointer it needs no alignment and
+    // breaks no aliasing rule.
+    byte_order = (self: @Self, be :: CBackend, out :: String)
+                 Res<(), AllocError> {
+        be.is_byte(self.et).match({
+            false => be.unsupported(
+                self.id,
+                "a byte-order read or write on a Ptr whose element is not u8",
+                out
+            ),
+            true  => self.byte_order_bytes(be, out),
+        })
+    }
+
+    byte_order_bytes = (self: @Self, be :: CBackend, out :: String)
+                       Res<(), AllocError> {
+        name  = self.site.name;
+        width = byte_order_width(name);
+        vty   = byte_order_value(be, width).try();
+        cty ::= be.alloc.String().try();
+        be.ctype(vty, cty).try();
+        idx ::= be.alloc.String().try();
+        self.index_arg(be, 0, idx).try();
+        start ::= be.alloc.String().try();
+        start.fmt("({} + ({}))", self.base, idx.view()).try();
+        at = be.init_temp(self.site.rty, "at", start.view()).try();
+        name.is_in(["read_le32", "read_be32", "read_le64", "read_be64"]).match({
+            true  => {
+                out.add("(").try();
+                Range(0, width).loop((h, k) {
+                    (k > 0).then(() { out.add(" | ").try() });
+                    out.fmt("(({}){}[", cty.view(), at.view()).try();
+                    out.write_usize(k).try();
+                    out.add("] << ").try();
+                    out.write_usize(byte_shift(name, width, k)).try();
+                    out.add(")").try();
+                });
+                out.add(")")
+            },
+            false => {
+                val ::= be.alloc.String().try();
+                self.value_arg(be, 1, vty, val).try();
+                v = be.init_temp(vty, "v", val.view()).try();
+                Range(0, width).loop((h, k) {
+                    line ::= be.alloc.String().try();
+                    line.fmt("{}[", at.view()).try();
+                    line.write_usize(k).try();
+                    line.fmt("] = (uint8_t)({} >> ", v.view()).try();
+                    line.write_usize(byte_shift(name, width, k)).try();
+                    line.add(");\n").try();
+                    be.fmt("{}", line.view()).try();
+                });
+                out.add("0")
+            },
         })
     }
 
@@ -498,4 +573,48 @@ write_null = (be :: CBackend, want: TyId, out :: String)
     cty ::= be.alloc.String().try();
     be.ctype(want, cty).try();
     out.fmt("(({})NULL)", cty.view())
+}
+
+// byte order
+
+byte_order_verb = (name: str) bool {
+    name.is_in([
+        "read_le32", "read_be32", "read_le64", "read_be64", "write_le32",
+        "write_be32", "write_le64", "write_be64"
+    ])
+}
+
+byte_order_width = (name: str) usize {
+    name.is_in(["read_le64", "read_be64", "write_le64", "write_be64"]).match({
+        true  => 8,
+        false => 4,
+    })
+}
+
+// The integer a verb reads or writes.
+byte_order_value = (be :: CBackend, width: usize) Res<TyId, AllocError> {
+    (width == 8).match({
+        true  => be.check.types.prim("u64"),
+        false => be.check.types.prim("u32"),
+    })
+}
+
+// A read answers the integer; a write answers unit.
+byte_order_type = (be :: CBackend, name: str) Res<TyId, AllocError> {
+    name.is_in(["write_le32", "write_be32", "write_le64", "write_be64"]).match({
+        true  => be.check.types.prim("()"),
+        false => be.byte_order_value(byte_order_width(name)),
+    })
+}
+
+// Byte k of a little-endian value holds bits 8k up; big-endian reverses.
+byte_shift = (name: str, width: usize, k: usize) usize {
+    name.is_in(["read_le32", "read_le64", "write_le32", "write_le64"]).match({
+        true  => 8 * k,
+        false => 8 * (width - 1 - k),
+    })
+}
+
+is_byte = (be :: CBackend, t: TyId) bool {
+    be.check.types.at(t).match({ Prim(p) => p.name.eq("u8"), _ => false })
 }

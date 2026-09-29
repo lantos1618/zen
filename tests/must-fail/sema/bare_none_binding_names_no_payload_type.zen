@@ -1,0 +1,17 @@
+// MUST FAIL: `x ::= None` declares a binding from a bare `None`, which
+// names `Res` and none of its type arguments. A binding's type is fixed
+// where it is declared, and nothing later settles it: neither passing it
+// to a `Res<u64>` parameter nor assigning `Ok(..)` to it supplies the
+// payload. Accepted, the binding was stored as a `Res` of a placeholder
+// payload, so the call below handed cc a struct of a different type than
+// `take` expects. Written `x: Res<u64> ::= None`, the program is fine.
+//
+// position: the binding's name, where the missing type belongs.
+
+take = (r: Res<u64>) u64 { r.match({ Ok(v) => v, None => 7 }) }
+
+main = (env: Env) Res<i32, AllocError> {
+    x ::= None;
+    println("n {}", take(x));
+    Ok(0);
+}

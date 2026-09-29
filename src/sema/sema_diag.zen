@@ -54,6 +54,7 @@ SemaFault* =
     | InvalidEnumDiscriminant(NameFault)
     | DuplicateEnumDiscriminant(PairFault)
     | CatchAllConstruction(NameFault)
+    | BareNoneBinding(NameFault)       // a binding declared from a bare `None`
 
     // overloading
     | NoOverload(NameFault)            // no candidate of that arity or those types
@@ -223,6 +224,7 @@ message* = (fault: SemaFault) str {
         ArenaEscapes(_)              => "a value backed by an arena this body made may not be returned: the arena is dropped at the end of this body, so the caller would read freed pages — take the arena as a parameter, or move it into the value you return",
         HandleNotAValue(_)           => "a loop handle is not a value: it names the loop it came from and has no storage, so only `h.break(..)` and `h.next()` may read it",
         ConsumedByCapture(_)         => "consume after capture:",
+        BareNoneBinding(_)           => "`None` alone does not say which Res this is: annotate the binding",
     });
 }
 
@@ -273,6 +275,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         ArenaStored(f)               => out.write_name(f),
         ArenaEscapes(f)              => out.write_name(f),
         HandleNotAValue(f)           => out.write_name(f),
+        BareNoneBinding(f)           => out.write_bare_none_binding(f),
 
         ConsumedUse(f)               => out.write_place(
             f,
@@ -329,6 +332,13 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
 
 write_name = (out :: String, f: NameFault) Res<(), AllocError> {
     out.quote(f.name)
+}
+
+write_bare_none_binding = (out :: String, f: NameFault) Res<(), AllocError> {
+    out.quote(f.name).try();
+    out.add(
+        ": `None` names no payload type, and a binding's type is fixed where it is declared, so a later use cannot supply one"
+    )
 }
 
 write_ctor_missing = (out :: String, f: NameFault) Res<(), AllocError> {

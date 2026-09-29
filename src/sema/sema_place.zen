@@ -22,8 +22,36 @@ bind_stmt* = (c :: Checker, b: Bind, ctx: Ctx) Res<TyId, AllocError> {
     }).try();
     settled = c.settle_variant_at(b.value, got, want, ctx).try();
     c.check_assign(b, settled, want, ctx).try();
+    c.refuse_bare_none(b, want).try();
     c.bind_target(b, want, ctx).try();
     c.types.prim("()")
+}
+
+// An unannotated declaration takes its initializer's type, and a binding's
+// type never changes after its declaration. A bare `None` names no payload
+// type, so nothing could ever supply the payload the storage needs.
+refuse_bare_none = (c :: Checker, b: Bind, want: TyId) Res<(), AllocError> {
+    written = b.type.match({ Ok(_) => true, None => false });
+    stores  = c.assign_binding(b).match({ Ok(_) => true, None => false });
+    target  = c.tree.expr_at(b.target);
+    target.kind.match({
+        Name(n) => (!written && !stores && c.is_bare_none(want)).then(() {
+            c.refuse(
+                target.span,
+                SemaFault.BareNoneBinding(NameFault(name: n.text))
+            ).try();
+        }),
+        _       => (),
+    });
+    Ok(());
+}
+
+// A bare `None` is an absence whose payload nothing has named.
+is_bare_none = (c: Checker, ty: TyId) bool {
+    c.types.at(ty).match({
+        Res(r) => r.form.match({ Absence => c.is_infer(r.value), _ => false }),
+        _      => false,
+    })
 }
 
 // Only plain `=` with no written type can mean a write. Mutable or explicitly

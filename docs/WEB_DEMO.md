@@ -1,10 +1,11 @@
 # zen-ui in the browser
 
 A zen-ui app, written in Zen, compiled by Zen's JavaScript backend, running
-in a browser tab. This is the JavaScript backend's first real milestone: the
-program is ordinary zen-ui code (its `View`, layout, appearance and text
-state), lowered by the same shared IR lowering the assembly backend uses,
-and rendered to JavaScript. There is no second AST-to-JS compiler, and no C.
+in a browser tab. The app, zen-ui's layout, and the web host that turns a
+zen-ui `View` into DOM elements are all Zen. The only JavaScript that is not
+compiled Zen is what `gen_js` itself emits: the runtime and one small stub
+per `js.bind` member signature. There is no second AST-to-JS compiler and
+no C.
 
 ## Run it
 
@@ -12,121 +13,178 @@ The compiler must be this branch's `./zen` (`make build`). From the zen-ui
 checkout:
 
 ```sh
-ZEN=../zen-web/zen
-ZEN_STD=../zen-web/src $ZEN build web-counter   # build/web/app.js (JS backend)
-ZEN_STD=../zen-web/src $ZEN build web-serve     # build/web-serve  (asm backend)
-./build/web-serve 8765                          # then open http://127.0.0.1:8765/
+ZEN_STD=../zen-web/src ../zen-web/zen build web-counter   # build/web/ (JS backend)
+ZEN_STD=../zen-web/src ../zen-web/zen build web-serve     # build/web-serve (asm backend)
+./build/web-serve 8765                                    # open http://127.0.0.1:8765/
 ```
 
-`web-serve` is the demo's file server, itself written in Zen
-(`web/serve.zen`) and built by the native assembly backend: it serves
-`web/` (the page) and `build/web/` (the compiled program) side by side and
-sends the cross-origin-isolation headers the page needs. Any static server
-that sends `Cross-Origin-Opener-Policy: same-origin` and
-`Cross-Origin-Embedder-Policy: require-corp` works too.
-
-The encoder test runs on both backends and must print the same bytes:
+`web-counter` is declared in zen-ui's `build.zen` with `backend: Codegen.Js,
+web: true, out: Ok(Path("build/web"))`. Without a project, the same output
+comes from:
 
 ```sh
-ZEN_STD=../zen-web/src $ZEN build web-test && ./build/web-test
-ZEN_STD=../zen-web/src $ZEN build web-test-js && node build/web-test.js
+zen build <root> --entry main.zen --backend js --target js-browser -o build/web
 ```
+
+`web-serve` is a tiny file server written in Zen (`web/serve.zen`) and built
+by the native assembly backend; any static file server works. Screenshots
+from the verification run are in zen-ui `build/web-screenshots/`.
+
+## The `js-browser` layout
+
+`--target js-browser -o DIR` (or `web: true` on a project executable) writes
+three files. The layout is stable: a `zen serve` dev server builds and serves
+this directory.
+
+| File | What it is |
+| --- | --- |
+| `index.html` | A fixed page: loads `runtime.js`, then `app.js`, with an empty `<body>`. The program builds its own DOM. |
+| `runtime.js` | The JS backend's runtime (`src/gen/gen_js_runtime.zen`): heap, 64-bit helpers, traps, output, the `js.bind` boundary, the event queue and the page host. The same for every program. |
+| `app.js` | The program: `js.bind` stubs, one function per IR function, constants, and `zmain(entry)`. |
+
+Without `--target js-browser`, `--backend js -o FILE` still writes one
+self-contained script (runtime and program) for Node.
 
 ## The pipeline
 
 ```text
 examples/web_counter.zen ─┐
-src/ui.zen, src/web.zen ──┴─▶ parse ─▶ sema ─▶ gen_lower_core ─▶ gen_ir (native surface)
-                                                (shared with asm)        │
-                                                                         ▼
+src/ui.zen ───────────────┤
+src/web_host.zen (js.bind)┴─▶ parse ─▶ sema ─▶ gen_lower_core ─▶ gen_ir (native surface,
+                                               (shared with asm)   plus Host and Wait)
+                                                                        │
                                                         gen_verify.verify_native
-                                                                         │
-                                                                         ▼
-                                  gen_js (renderer) + gen_js_runtime (machine half)
-                                                                         │
-                                                                         ▼
-                                                             build/web/app.js
-   browser: index.html ─▶ host.js ─▶ new Worker("app.js") ─┐
-                            ▲   │                           │ runs `main`
-            DOM clicks ─────┘   └── applies command packets ◀┘ (stdout)
-            event packets ──────────────────────────────────▶ (stdin, blocks)
+                                                                        │
+                                   gen_js: functions, generators, stubs ▼
+                                                 build/web/{index.html, runtime.js, app.js}
+
+ page load ─▶ runtime.js ─▶ app.js: zmain(main)
+     main lays out the View (zen-ui) and builds the DOM (js.bind calls),
+     then page.next() ─▶ std.js.wait() suspends the program
+ click ─▶ listener queues the handler id ─▶ runtime resumes main ─▶ Zen
+     updates the View ─▶ page.sync() sets textContent ─▶ wait() suspends again
 ```
 
-1. **Front end.** Nothing JS-specific: the counter is checked by sema like
-   any Zen program.
-2. **Shared lowering** (`src/gen/gen_lower_*`). The same lowering the
-   assembly backend uses produces the native IR surface: typed slots,
-   `Block` aggregates, `Load`/`Store`, checked arithmetic, `Trap`
-   terminators, `System` calls. This work added `F64` to that surface
-   (zen-ui's layout is all `f64`), static struct-member calls
-   (`View.create(...)`), and `Ptr.take`; all three are target-neutral
-   lowering, so the assembly backend gets them too (it refuses `F64` for
-   now, with a reason, before rendering).
-3. **Verification.** `gen_verify.verify_native`, the one verifier.
-4. **Rendering** (`src/gen/gen_js.zen`). IR only, no AST or sema
-   (`make archcheck`). One JS function per IR function, a `switch` over
-   basic blocks. The machine model is in `docs/JS_BACKEND.md`: one linear
-   heap (`ArrayBuffer` + `DataView`), `Ptr` = byte offset, 64-bit words as
-   `(lo, hi)` uint32 pairs with the high half of a result in `zH`, frames on
-   a heap stack, traps that report `file:line:col: trap: …` and exit 134.
-5. **Runtime** (`src/gen/gen_js_runtime.zen`, emitted into every script).
-   The heap and page allocator, 64-bit helpers, `%g` float printing,
-   buffered stdout, the `System` call layer, and two hosts: Node (a
-   process) and a browser Worker.
-6. **The page** (zen-ui `web/index.html`, `web/host.js`). `host.js` is the
-   only hand-written JavaScript in the demo, about 120 lines, and it makes
-   no decisions: it starts `app.js` in a Worker, draws the command packets
-   the program writes, and turns clicks into event packets.
+1. **Front end.** Nothing JavaScript-specific. `js.bind` parses into the same
+   native-namespace declaration `c.bind` does (a struct of bodiless
+   signatures, marked as a host object), so sema checks its calls like any
+   other native call.
+2. **Shared lowering** (`src/gen/gen_lower_*`). The lowering the assembly
+   backend uses, extended target-neutrally: `F64` values, static
+   struct-member calls (`View.create(...)`), `Ptr.take`, and two IR
+   instructions: `Host`, a `js.bind` call that records how each argument
+   crosses (number, bool, `str`, handle or handler), and `Wait`.
+3. **Verification.** `gen_verify.verify_native` also checks each `Host`
+   argument against its boundary form.
+4. **Rendering** (`src/gen/gen_js.zen`; IR only, per `make archcheck`). One
+   JS function per IR function. A function that can reach `Wait` renders as
+   a generator (`function*`) and its callers resume it with `yield*`, so the
+   Zen program stays synchronous while the page's event loop runs. Each
+   distinct `js.bind` signature gets one stub:
 
-### How the program talks to the page
+   ```js
+   function zj6(a0, a1) {
+     const t = zobj(a0);
+     return (t["textContent"] = zstr(a1), 0);
+   }
+   ```
 
-The browser host is a *sys flavor*, not a foreign-function binding: the
-Worker's standard streams are wired to the page.
+5. **Runtime** (`src/gen/gen_js_runtime.zen`). Besides the machine model in
+   `docs/JS_BACKEND.md`: the handle table (`zref`, `zobj`), UTF-8 decoding
+   of `str` slices (`zstr`), listeners that queue handler ids (`zhandler`),
+   and the driver that resumes a suspended program when an id is queued.
 
-- **stdout → commands.** `src/web.zen` (zen-ui's web host, in Zen) writes
-  little-endian packets: one per `View` node (frame, font size, flags,
-  colours, radius, alignment, id and text), a title, "ready", and later one
-  per changed text. The layout is documented at the top of `src/web.zen`.
-  zen-ui computes every frame; the page positions elements absolutely.
-- **stdin → events.** A click on a button appends `{kind: 1, action}` (two
-  u64 words) to a ring buffer in a `SharedArrayBuffer`. The runtime's `read`
-  blocks in `Atomics.wait` until bytes arrive, so the Zen program is a
-  plain loop:
+### `js.bind`
 
-  ```zen
-  web ::= Web.open(arena, view, "Zen UI · Web Counter").try();
-  running.loop((h) {
-      web.next(env).match({
-          Closed        => { running = false; },
-          Press(action) => { /* update the View */ web.sync(view).try(); },
-      });
-  });
-  ```
+```zen
+Ref, Handler, wait = std.js
 
-  The runtime flushes buffered stdout before it blocks on stdin, so each
-  event's updates reach the page before the program waits again.
-- **SharedArrayBuffer** needs a cross-origin-isolated page, hence the
-  COOP/COEP headers from `web-serve`.
+Document = js.bind("document", {
+    createElement* = (tag: str) Ref
+    get_body* = () Ref
+    set_title* = (title: str) ()
+})
+Element = js.bind("Element", {
+    append* = (this: Ref, child: Ref) ()
+    set_textContent* = (this: Ref, text: str) ()
+    addEventListener* = (this: Ref, kind: str, handler: Handler) ()
+})
+StyleNumber = js.bind("Element.style", {
+    setProperty* = (this: Ref, name: str, value: f64) ()
+})
+```
 
-Because the protocol is plain bytes on standard streams, the same program
-runs under Node with a file as stdin (useful for tests), and the encoders
-run on the C backend too (`tests/web.zen`).
+- The string is an object path. Without a receiver it starts at
+  `globalThis` (`"document"`, `"Math"`). When the first parameter is
+  `this: Ref`, the member applies to that object and the path after the
+  first segment is followed from it (`"Element.style"` reaches `this.style`);
+  the first segment only names the kind of object.
+- `set_x` assigns property `x`, `get_x` reads it, and any other member is a
+  method call of the same name. These are JavaScript's names, so they do not
+  follow Zen naming. Names must be plain identifiers; anything else becomes
+  a stub that throws.
+- Marshalling is explicit and closed. Integers, `f64` and `bool` cross as
+  numbers. `str` crosses as a UTF-8 slice of Zen's heap (pointer and
+  length) that the stub decodes. Host objects cross as `Ref`, a u32 index
+  into the runtime's handle table: 0 is `null`/`undefined`, and the same
+  object always has the same index. `Handler`, a u32 id, crosses as a
+  listener that queues that id. Nothing else may cross, and a `str` or a
+  `Handler` never comes back.
+- Events never call into Zen from JavaScript. `std.js.wait()` suspends the
+  program until a handler fires and answers its id (0 when no event can
+  arrive, as under Node).
+- The C backend refuses `js.bind` members, and the asm backend refuses
+  programs that use them before rendering.
+
+**Overlap with native packages.** `js.bind` is meant to share its
+declaration and check machinery with the native-packages work
+(`zen-native-pkgs`, `docs/proposals/NATIVE_PACKAGES.md`). Today `js.bind`
+and `c.bind` already parse into one kind of declaration and pass through the
+same sema paths. Under that proposal the string would become a declared
+native, for example `js.bind(js.native.dom.object("document"), {..})` with
+`dom` declared by a `b.native` whose availability is per target
+(`js-browser` provides `dom`; Node would provide `node:fs`). The proposal's
+resolution and visibility rule (a library may bind only natives in its
+dependency closure) and its target gating would then apply to host objects
+unchanged, and the marshalling table above is the JavaScript counterpart of
+its C ABI type check. Nothing here waits on that work.
+
+### The zen-ui web host (`src/web_host.zen`)
+
+`Page.open(arena, view, title)` walks the View and creates one element per
+node: a `<button>` for buttons and a `<div>` for text and boxes. zen-ui's
+computed frame, font size, colours and corner radius are set as CSS custom
+properties with `style.setProperty(name, f64)`, and one stylesheet (Zen
+strings appended to a `<style>` element) maps them onto `left`, `top`,
+`width`, `height`, `background`, `color` and `border-radius`. Numbers cross
+as numbers and the browser formats them, so no float formatting happens in
+Zen. Each button registers `Handler(id: node index + 1)` for `"click"`.
+
+`page.next(view)` waits for a handler and answers `Press(action)` for that
+node; `page.sync(view)` redraws the text of every node whose
+`text_revision` moved. The demo (`examples/web_counter.zen`) is an ordinary
+loop over `next`, `view.set_text` and `sync`.
 
 ## What changed where
 
-Compiler (`zen-web`, branch `web-backend`):
+Compiler (`zen-web`, branch `web-backend`, on `unified-rooms` after the
+native-asm-backend merge):
 
 | File | Change |
 | --- | --- |
-| `src/gen/gen_js.zen` | New renderer of the native IR surface (replaces the scalar-only one). |
-| `src/gen/gen_js_runtime.zen` | New: the JS runtime, emitted into each script. |
-| `src/gen/gen.zen` | `--backend js` uses the full lowering and `verify_native`; asm refuses `F64` with a reason. |
-| `src/gen/gen_ir.zen`, `gen_verify.zen` | `Scalar.F64`: IEEE arithmetic and comparisons, bit-pattern constants. |
+| `src/gen/gen_js.zen` | Renderer of the native IR surface; generators for suspending functions; `js.bind` stubs; `emit_js` (Node script) and `emit_app`, `emit_runtime`, `PAGE` (page layout). |
+| `src/gen/gen_js_runtime.zen` | The JS runtime, including the `js.bind` boundary and the page and Node hosts. |
+| `src/gen/gen.zen` | `--backend js` uses the full lowering and `verify_native`; the `js-browser` layout; asm refuses `F64` and host instructions with a reason. |
+| `src/gen/gen_ir.zen`, `gen_verify.zen` | `Scalar.F64`; `Host(HostCall)` with `Marshal`; `Wait`. |
 | `src/gen/gen_lower_shape.zen`, `gen_lower_core.zen` | `f64` values; float literals to exact bits (Clinger's fast path; others refused). |
-| `src/gen/gen_lower_call.zen` | Static member calls through a type; `Ptr.take`; formatting an `f64` into text refused. |
-| `src/zen/zen_project.zen` | JS project targets may depend on Zen source libraries (only native libraries are refused). |
-| `tests/js/main.zen` | The corpus gate stages programs like the native runner (`src`, `prog`, harness env). |
-| `tests/corpus/gen/scalar_backends` | JS now runs the wide/bool-entry programs instead of refusing them. |
+| `src/gen/gen_lower_call.zen` | `js.bind` calls; `std.js.wait`; static member calls through a type; formatting an `f64` into text refused. |
+| `src/std/js/js.zen` | New: `Ref`, `Handler`, `wait`, and the `js.bind` contract. |
+| `src/std/parse/parse_decl.zen`, `src/std/ast/ast_node.zen` | `js.bind(path, {..})` parses to a native namespace with `native_host`. |
+| `src/gen/gen_c/gen_c_assoc.zen` | C refuses `js.bind` members. |
+| `src/zen/zen_build.zen`, `zen_cli.zen` | `--target js-browser -o DIR`. |
+| `src/std/build/build.zen`, `src/zen/zen_build_plan.zen`, `zen_project.zen` | Project executables take `web: true`; JS targets may depend on Zen source libraries. |
+| `tests/js/main.zen`, `tests/js/cases/` | The gate stages programs like the native runner and also runs JavaScript-only `js.bind` cases. |
+| `tests/corpus/gen/scalar_backends` | JS now runs the wide and bool-entry programs instead of refusing them. |
 
 zen-ui (uncommitted):
 
@@ -134,48 +192,36 @@ zen-ui (uncommitted):
 | --- | --- |
 | `src/environment.zen` | `Platform = Macos \| Ios \| Web`. |
 | `examples/main.zen` | The one exhaustive `Platform` match gains `Web`. |
-| `src/web.zen` | New: the web host (`Web.open`, `next`, `sync`, packet encoders). |
+| `src/web_host.zen` | New: the web host in Zen (`Page.open`, `next`, `sync`) over `js.bind`. |
 | `examples/web_counter.zen` | New: the demo. |
-| `tests/web.zen` | New: encoder test, run on C and JS. |
-| `web/index.html`, `web/host.js` | New: the page and its DOM glue. |
 | `web/serve.zen` | New: the Zen file server (asm backend). |
-| `build.zen` | Targets `web-counter`, `web-test`, `web-test-js`, `web-serve`. |
+| `build.zen` | Targets `web-counter` (`web: true`) and `web-serve`. |
 
 ## What works and what does not
 
-Measured with `make jscheck` (every executable corpus program through
-`--backend js` under Node, compared with the C oracle): **656 of 961**
-programs now behave exactly like C (1 of 976 before this work), with 1
-Linux-only failure, 304 refused by the shared lowering and none broken.
-`docs/JS_BACKEND.md` has the breakdown.
-
-Supported by the JS backend now: everything the shared lowering supports
-(integers of every width with Zen's traps, `f64`, records, enums and `Res`,
-matches, `.try()`, generics, inlined closures, loops, `Ptr`, `Alloc`/arenas
-over pages, `str`/`String`/`Vec`, formatting of integers and `str`),
-stdout/stderr/stdin, files through `Env.fs` under Node, argv and env,
-clocks and randomness.
+`make jscheck` compiles every executable corpus program with `--backend js`,
+runs it under Node and compares it with the C oracle: **661 of 977**
+programs now behave exactly like C (1 of 976 before this work), none emit
+broken JavaScript, and the remaining failures and refusals are in the shared
+lowering (`docs/JS_BACKEND.md` has the breakdown).
 
 Not yet, in the order they block zen-ui:
 
 - **`vararg` parameters.** zen-ui's `Elements` builder (`tree.Window(...,
-  children...)`) uses them, and the shared lowering refuses them, so the
-  demo builds its screen through `View` directly (`view.box`, `view.text`,
+  children...)`) uses them and the shared lowering refuses them, so the demo
+  builds its screen through `View` directly (`view.box`, `view.text`,
   `view.button`), which is the same layout engine.
-- **Actors and threads.** The macOS/iOS hosts drive the UI from actors over
-  pipes (`src/interaction.zen`, `c.bind` to `unistd.h`/`poll.h`). The
-  lowering refuses actors, and `c.bind` natives have no JS mapping; the web
-  host therefore uses a synchronous event loop instead of `Session`/`Pump`.
-  The planned mapping (Workers + `Atomics` on a shared heap) is in
-  `docs/JS_BACKEND.md`.
+- **Actors and threads.** The macOS and iOS hosts drive the UI from actors
+  over pipes (`src/interaction.zen`, `c.bind` to `unistd.h` and `poll.h`).
+  The lowering refuses actors, so the web host is a synchronous loop over
+  `std.js.wait` instead of `Session` and `Pump`.
 - **Formatting an `f64` into text** (`a.String("{}", 1.5)`): `add_f64` has
-  no Zen body yet (C uses `%g`). Printing an `f64` to the console works.
-- **`f32`**, float literals beyond 15 significant digits or a decimal
-  exponent beyond ±22, and float match patterns.
-- Sockets, `epoll`/`kqueue` and process spawning (no synchronous
-  equivalent in Node or a browser).
-- Text input: the host sends button presses only; editable nodes and
-  keyboard events are not wired yet.
+  no Zen body yet (C uses `%g`). Printing an `f64` works.
+- **Text input and keys.** The web host registers clicks only; editable
+  nodes, keyboard, pointer drags and scroll offsets are not wired yet.
+- `f32`, float literals beyond 15 significant digits or a decimal exponent
+  beyond ±22, float match patterns; sockets, `epoll`/`kqueue` and process
+  spawning.
 - `usize` is still 64-bit in the IR, so lengths and indices pay for pair
   arithmetic. A 32-bit `usize` on JS needs a data-layout parameter in the
-  shared lowering (`NATIVE_BACKEND.md`).
+  shared lowering.

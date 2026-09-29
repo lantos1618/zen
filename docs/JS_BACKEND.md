@@ -27,27 +27,32 @@ Single run, all lanes: `./zen run tests/js -- ./zen`; one lane:
 | Tree | Pass | Notes |
 | --- | --- | --- |
 | `unified-rooms` 890acb1c | 1 / 976 (0.1 %) | the scalar IR admits only `i32`, `bool`, unit; every lane is 0 % except `codegen` (1 / 76) |
-| `web-backend` (on `native-asm-backend` f6fef3b1) | 656 / 961 (68.3 %) | renders the full lowering; 1 FAIL, 304 UNSUPPORTED, 0 BROKEN |
+| `web-backend` on `unified-rooms` 2b70b639 | 661 / 977 (67.7 %) | renders the full lowering; 3 FAIL, 313 UNSUPPORTED, 0 BROKEN |
 
-For comparison, the assembly backend passes 638 / 962 on the same corpus on
-this Mac (`NATIVE_BACKEND.md`); the JS backend passes a few more because it
-also runs the `f64`, static-member and `Ptr.take` programs that lowering
-now accepts and the assembly renderers still refuse or have not re-measured.
+(On the pre-merge `native-asm-backend` base the same renderer passed 656 of
+961; the assembly backend passes 638 of 962 there on this Mac.) The gate
+also runs the JavaScript-only cases in `tests/js/cases` (the `js-host`
+lane: `js.bind` and suspension under Node), which must always pass.
 
-The one FAIL, `env/fs_read_special_file_with_zero_stat_size`, reads a file
-under `/proc`, which exists only on Linux (the asm backend fails it on macOS
-for the same reason). The 304 refusals come from the shared lowering, not
-the renderer, by the first construct each program reaches: 117 are
+The three FAILs: `env/fs_read_special_file_with_zero_stat_size` reads a
+file under `/proc`, which exists only on Linux (asm fails it on macOS too);
+`errors-variant/err_binder_arm_joins_its_set_into_the_match` and
+`match-payloads/err_case_on_a_union_tests_only_that_case` are matches on
+error-set unions that the shared lowering decides differently from C, and
+the asm backend fails them identically, so the fix belongs in
+`gen_lower_core`, not the renderer. The 313 refusals also come from the
+shared lowering, by the first construct each program reaches: 117 are
 compiler-internal tests that import `gen`/`sema`/`lsp` modules the runner
-does not stage; then types sema left unsettled in generic corners (34),
-other `Env` operations — actors, threads, `fs.lock`/`cwd`/`mkdir`, args
-schemas (27), value conversions not modelled yet (19), expressions only the
-C backend lowers (10), loop handles used as values (10) and folding loops
-(9). Closing those is lowering work that serves both targets.
+does not stage; then types sema left unsettled in generic corners (35),
+other `Env` operations such as actors, threads, `fs.lock`/`cwd`/`mkdir` and
+argument schemas (30), value conversions not modelled yet (19),
+expressions only the C backend lowers (10), loop handles used as values
+(10) and folding loops (9). Closing those is lowering work that serves both
+targets.
 
-The gap list was regenerated for this base (it had been measured on
-`unified-rooms`, whose corpus differs); `--shrink` keeps it ratcheting from
-here.
+The gap list was regenerated for this base (it had been measured on an
+earlier `unified-rooms`, whose corpus differs); `--shrink` keeps it
+ratcheting from here.
 
 ## The renderer of the native IR surface (implemented)
 
@@ -168,17 +173,40 @@ equivalent and answer `-ENOSYS` at run time. Constants (`SysConst`) take
 their Linux x86-64 values and the Node host translates open flags and
 error codes.
 
-In a browser the program runs in a Worker and the host maps the standard
-streams onto the page: output chunks are posted to the page, and `read` on
-standard input waits with `Atomics.wait` on a ring buffer in a
-`SharedArrayBuffer` that the page fills (so the page must be
-cross-origin isolated). This is the `JsBrowser` sys flavor of
-IR_ARCHITECTURE §3.1; zen-ui's web host is built on it (`WEB_DEMO.md`).
-`c.bind` natives used by std today (`unistd.h`, `fcntl.h`, `stdlib.h`,
-`math.h`, `errno.h`, `sys/stat.h`, `arc4random_buf`, `malloc`/`free` in the
-pool) are reached through the same syscall layer once std's natives are
-expressed as `gen_sys` operations, which the native targets need too; only
-`math.h` functions map to `Math.*` directly.
+In a page the program runs on the page's own thread (the page host):
+standard output and error go to the console, standard input is empty, and
+the DOM is reached through `js.bind` (below). This is the `JsBrowser` sys
+flavor of IR_ARCHITECTURE §3.1.
+
+### Host bindings and suspension
+
+`js.bind("object.path", {..})` declares host objects the way `c.bind`
+declares a header (contract in `src/std/js/js.zen`). Lowering turns each
+call into a `Host` instruction that names the object path, the member,
+whether the first argument is the receiver, and each argument's boundary
+form (`Marshal`: number, bool, `str`, handle, handler). The renderer emits
+one stub per distinct signature; the stub converts arguments (`zstr` decodes
+a UTF-8 slice, `zobj` looks a handle up, `zhandler` makes a listener that
+queues an id), makes the call or property access, and converts the result
+back (`zref` registers an object in the handle table).
+
+`std.js.wait()` is the only way to receive events. It lowers to `Wait`; the
+renderer makes every function that can reach a `Wait` a generator
+(`function*`), makes calls to those functions `yield*`, and makes the `Wait`
+itself `yield`. The runtime drives the entry generator: a queued handler id
+resumes it at once, otherwise a host with events (a page) resumes it when a
+listener fires, and a host without events (Node) resumes it with 0. Zen code
+never runs inside a JavaScript callback, and functions that cannot reach
+`Wait` are ordinary functions with no generator cost.
+
+### Output layouts
+
+`--backend js -o FILE` writes one self-contained script (the runtime, then
+the program) for Node. `--backend js --target js-browser -o DIR` (or
+`web: true` on a project executable) writes `DIR/index.html` (a fixed page
+that loads the two scripts), `DIR/runtime.js` (the runtime, identical for
+every program) and `DIR/app.js` (the program). `WEB_DEMO.md` walks a zen-ui
+app through both.
 
 ### Actors (not implemented yet)
 

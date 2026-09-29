@@ -17,10 +17,10 @@ cd example/backends
 ../../zen run asm
 ```
 
-Each prints `fib(10) = 55`. JavaScript runs on Node.js. Assembly projects require
-Linux, x86-64, the GNU ABI, and a C toolchain for assembly and linking. The
-assembly renderer writes `.s` directly; it does not ask a C compiler to generate
-assembly from C.
+Each prints `fib(10) = 55`. JavaScript runs on Node.js. Assembly projects run on
+Linux x86-64, Linux AArch64 and macOS arm64 and need only the system assembler
+and linker (`as`, `ld`): no C compiler and no libc. The renderer writes `.s`
+directly. See [the native backend](NATIVE_BACKEND.md) for the OS policy.
 
 `Codegen.C`, `Codegen.Js`, and `Codegen.Asm` select the recipe in `build.zen`.
 JavaScript defaults to `build/{os}-{arch}/{name}.js`; an explicit output path is
@@ -37,8 +37,9 @@ From the repository root, select a backend explicitly for raw source emission:
 
 `--backend` selects source output; omitting `-o` writes it to stdout. Existing
 `--emit-c` invocations remain compatible. Split-module output and symbol maps
-currently belong to C. Raw assembly output has a fixed Linux x86-64 GNU target; it is not a
-host-independent assembly format.
+currently belong to C. Raw assembly output targets the host unless
+`--target x86_64-linux|aarch64-linux|arm64-darwin` selects another machine; it
+is not a host-independent assembly format.
 
 ## Implemented scalar surface
 
@@ -115,16 +116,22 @@ without publishing or running it. The renderer preserves effect order, control f
 source-position traps, and exact byte output. Verification remains the caller's
 precondition; the normal Generation path verifies before invoking a renderer.
 
-`gen_asm_x86.X86_64LinuxGnu(alloc: a)` implements that contract. Its allocator
-is required at construction. This concrete target owns instruction selection,
-registers, stack layout, System V calls, ELF/GNU syntax,
-and Linux runtime linkage. `Codegen.Asm` explicitly selects this target; neither
-host detection nor another architecture is implied by the generic contract.
+`gen_asm_x86.X86_64Linux(alloc: a)` and
+`gen_asm_arm64.Arm64(alloc: a, os: Arm64Os.Linux | Arm64Os.Darwin)` implement
+that contract. The allocator is required at construction. Each concrete target
+owns instruction selection, registers, stack layout, its calling convention
+(System V, AAPCS64), object syntax (ELF/GNU, Mach-O) and runtime linkage. Every
+target emits its own small runtime (buffered stdout, decimal printing, traps,
+exit) in assembly; Linux targets enter at their own `_start` and use raw system
+calls, Darwin enters at `_main` and calls libSystem. `gen.emit_assembly`
+selects the target from a `std.build.Target` at the generation boundary; the
+generic contract implies neither host detection nor an architecture.
 The direct assembly corpus invokes the target through a generic `Target` bound
 and checks real executable behavior, including stack arguments and ABI alignment.
-The x86 renderer reuses a slot value already held in `%eax` within a basic
+The renderers reuse a slot value already held in `%eax`/`w0` within a basic
 block. Stack slots remain authoritative; writes update or invalidate that fact,
-and block entries and libc calls discard it. This removes redundant reloads
+and block entries and runtime calls discard it. Trap checks branch to
+out-of-line stubs, so the location and message loads stay off the fast path. This removes redundant reloads
 without changing arithmetic checks, evaluation order, or the calling convention.
 
 Future implementations such as `gen_asm_aarch64` should satisfy the same
@@ -140,8 +147,9 @@ spellings of `Asm`:
 
 | Target | Object/link format | Calling convention | Status |
 | --- | --- | --- | --- |
-| Linux x86-64 GNU | ELF | System V AMD64 | Implemented scalar subset |
-| Linux ARM64 | ELF | AAPCS64 | Proposed |
+| Linux x86-64 | ELF, static, raw syscalls | System V AMD64 | Implemented |
+| Linux ARM64 | ELF, static, raw syscalls | AAPCS64 | Implemented (qemu-user verified) |
+| macOS arm64 | Mach-O, libSystem | AAPCS64 (Apple) | Implemented |
 | Windows x86-64 | COFF/PE | Microsoft x64 | Proposed |
 
 Keep libc/foreign calls distinct from direct kernel syscalls. A foreign call

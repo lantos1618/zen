@@ -1,4 +1,5 @@
-Build = zen.zen_build
+Build, host_target = zen.zen_build
+assemble_and_link = zen.zen_native
 Generation, Layout = gen.gen
 Codegen = std.build
 
@@ -23,6 +24,7 @@ run = (
         println("frontend {}", report.view());
     });
     source_path = backend.match({ C => "candidate.c", Js => "candidate.js", Asm => "candidate.s" });
+    host        = host_target(env, a).try();
     generation  = Generation(
         alloc: a,
         mem: env.mem,
@@ -32,7 +34,8 @@ run = (
         entry: 0,
         layout: Layout.Single,
         ffi: false,
-        symbols: false
+        symbols: false,
+        target: host
     );
     called ::= 0;
     faults = generation.emit(report, (artifact) {
@@ -50,8 +53,18 @@ run = (
             .then(() { h.break(false); });
         args ::= a.Vec<str>();
         backend.match({
-            Js => { args.add("node").try(); args.add(source_path).try(); },
-            _  => {
+            Js  => { args.add("node").try(); args.add(source_path).try(); },
+            // Native assembly uses the system assembler and linker only.
+            Asm => {
+                log ::= a.String().try();
+                built = host.match({
+                    Ok(machine) => assemble_and_link(env, a, machine, source_path, "candidate", false, log).try(),
+                    None        => false,
+                });
+                (!built).then(() { h.break(false); });
+                args.add("./candidate").try();
+            },
+            _   => {
                 compiler ::= a.Vec<str>();
                 [str, 7]("cc", source_path, "-o", "candidate", "-pthread", "-lm", "-pie")
                     .loop((word) { compiler.add(word).try(); });
@@ -91,7 +104,8 @@ refused = (env: Env, a: Alloc, backend: Codegen, source: str, layout: Layout)
         entry: 0,
         layout: layout,
         ffi: false,
-        symbols: false
+        symbols: false,
+        target: host_target(env, a).try()
     );
     called ::= false;
     faults = generation.emit(report, (artifact) { called = true; Ok(0) }).try();

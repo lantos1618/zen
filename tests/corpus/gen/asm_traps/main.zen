@@ -1,0 +1,158 @@
+// Division traps through the host renderer directly, so the checks cannot be
+// hidden by the source lowerer. Companion of gen/asm_renderer, split because
+// every case is a separately launched executable. Each executable is built for the host with the system
+// assembler and linker only: no C compiler and no libc.
+Alloc, AllocError = std.mem
+FsError = std.env
+ProcError, ProcOutput = std.proc
+Span, Pos = std.ast
+Program, Func, Instruction, BasicBlock, Terminator, Const, Binary, Op, Scalar = gen.gen_ir
+Target = gen.gen_asm
+X86_64Linux = gen.gen_asm_x86
+Arm64, Arm64Os = gen.gen_asm_arm64
+verify, VerifyError = gen.gen_verify
+Host, detect = machine
+
+BuildFault = Compile | UnknownHost
+
+binary = (out: usize, left: usize, op: Op, right: usize) Instruction {
+    Instruction.BinaryValue(Binary(
+        out: out,
+        left: left,
+        right: right,
+        op: op,
+        span: Span(
+            file: "a\"b\\c.zen",
+            start: Pos(line: 7, col: 11),
+            end: Pos(line: 7, col: 12)
+        )
+    ))
+}
+
+trapping = (a: Alloc, left: i32, op: Op, right: i32) Res<Program, AllocError> {
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.Constant(Const(out: 0, value: left))).try();
+    code.add(Instruction.Constant(Const(out: 1, value: right))).try();
+    code.add(Instruction.Text("before\n")).try();
+    code.add(binary(2, 0, op, 1)).try();
+    blocks ::= a.Vec<BasicBlock>();
+    blocks.add(BasicBlock(code: code, exit: Terminator.Return(2))).try();
+    functions ::= a.Vec<Func>();
+    functions.add(Func(
+        name: "main",
+        parameters: 0,
+        slots: i32_slots(a, 3).try(),
+        blocks: blocks,
+        result: Scalar.I32
+    )).try();
+    Ok(Program(functions: functions, entry: 0))
+}
+
+i32_slots = (a: Alloc, count: usize) Res<Vec<Scalar>, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    Range(0, count).loop((_) { slots.add(Scalar.I32).try(); });
+    Ok(slots)
+}
+
+emit_with = <T: Target>(target: T, program: Program)
+            Res<String, AllocError> {
+    target.emit(program)
+}
+
+// The host's renderer, reached through the generic Target contract.
+render = (host: Host, a: Alloc, program: Program)
+         Res<String, AllocError> {
+    host.arm64().match({
+        false => emit_with(X86_64Linux(alloc: a), program),
+        true  => emit_with(Arm64(alloc: a, os: host.darwin().match({
+            true  => Arm64Os.Darwin,
+            false => Arm64Os.Linux,
+        })), program),
+    })
+}
+
+// AArch64 faults on a misaligned sp access by itself. On x86-64 the
+// runtime's integer printer is entered through a probe that exits 97 unless
+// the caller kept System V alignment, including callees with stack arguments.
+probed = (a: Alloc, host: Host, assembly: String) Res<String, AllocError> {
+    host.arm64().match({
+        true  => Ok(assembly),
+        false => {
+            out ::= a.String().try();
+            rest ::= assembly.view();
+            call = "call za_print_i64\n";
+            loop((h) {
+                rest.find(call).match({
+                    None     => { out.add(rest).try(); h.break(); },
+                    Ok(at)   => {
+                        out.add(rest.slice(0, at)).try();
+                        out.add("call probe_print\n").try();
+                        rest = rest.slice(at + call.len, rest.len);
+                    },
+                });
+            });
+            out.add(
+                ".text\nprobe_print:\n    movq %rsp, %r11\n    andl $15, %r11d\n    cmpl $8, %r11d\n    jne 1f\n    jmp za_print_i64\n1:\n    movl $97, %edi\n    movl $231, %eax\n    syscall\n"
+            ).try();
+            Ok(out)
+        },
+    })
+}
+
+run = (host: Host, env: Env, a: Alloc, name: str, program: Program)
+      Res<ProcOutput, AllocError
+          | FsError
+          | ProcError
+          | BuildFault
+          | VerifyError> {
+    program.verify(a).try();
+    source   = a.String("{}.s", name).try();
+    assembly = probed(a, host, render(host, a, program).try()).try();
+    env.fs.write(source.view(), assembly.view()).try();
+    built = host.link(env, a, source.view(), name).try();
+    built.ensure(BuildFault.Compile).try();
+    path = a.String("./{}", name).try();
+    env.proc.run_argv(a, ".", host.command(env, a, path.view()).try())
+}
+
+check_trap = (output: ProcOutput, reason: str) bool {
+    output.code == 134 && output.out.view().eq("before\n")
+        && output.err.view().eq(reason)
+}
+
+main = (env: Env) Res<i32, AllocError
+    | FsError
+    | ProcError
+    | BuildFault
+    | VerifyError> {
+    a       = env.mem.alloc();
+    host    = detect(env, a).try().ok_or(BuildFault.UnknownHost).try();
+    divided = run(
+        host,
+        env,
+        a,
+        "divide",
+        trapping(a, i32.MIN, Op.Div, -1).try()
+    ).try();
+    println(
+        "division overflow {}",
+        check_trap(divided, "a\"b\\c.zen:7:11: trap: integer overflow\n")
+    );
+    remainder = run(
+        host,
+        env,
+        a,
+        "remainder",
+        trapping(a, i32.MIN, Op.Rem, -1).try()
+    ).try();
+    println(
+        "remainder overflow {}",
+        check_trap(remainder, "a\"b\\c.zen:7:11: trap: integer overflow\n")
+    );
+    zero = run(host, env, a, "zero", trapping(a, 7, Op.Div, 0).try()).try();
+    println(
+        "divide by zero {}",
+        check_trap(zero, "a\"b\\c.zen:7:11: trap: divide by zero\n")
+    );
+    Ok(0)
+}

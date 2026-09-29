@@ -1,0 +1,142 @@
+// The operating-system interface of the native targets. Each operation has
+// one portable name; a target maps it to a Linux system-call number or, on
+// Darwin, to the libSystem function that owns that call. Darwin's syscall
+// numbers are not a stable ABI, so its targets link libSystem instead of
+// trapping into the kernel directly.
+//
+// Every operation returns a machine word. A negative result is `-errno` on
+// every target: Darwin wrappers translate libSystem's `-1` plus `errno` into
+// that form, so code above this layer never inspects an OS-specific errno.
+str = std.text
+
+Sys* = Read
+    | Write
+    | Openat
+    | Close
+    | Mmap
+    | Munmap
+    | ExitGroup
+    | ClockGettime
+    | Getrandom
+    | Socket
+    | Bind
+    | Listen
+    | Accept4
+    | Connect
+    | EpollCreate1
+    | EpollCtl
+    | EpollPwait
+    | Kqueue
+    | Kevent
+    | Futex
+    | Clone
+
+// Word arguments each operation consumes, in kernel order.
+arity* = (call: Sys) usize {
+    call.match({
+        Read         => 3,
+        Write        => 3,
+        Openat       => 4,
+        Close        => 1,
+        Mmap         => 6,
+        Munmap       => 2,
+        ExitGroup    => 1,
+        ClockGettime => 2,
+        Getrandom    => 3,
+        Socket       => 3,
+        Bind         => 3,
+        Listen       => 2,
+        Accept4      => 4,
+        Connect      => 3,
+        EpollCreate1 => 1,
+        EpollCtl     => 4,
+        EpollPwait   => 6,
+        Kqueue       => 0,
+        Kevent       => 6,
+        Futex        => 6,
+        Clone        => 5,
+    })
+}
+
+// arch/x86/entry/syscalls/syscall_64.tbl. None: the kernel has no such call.
+linux_x86_64* = (call: Sys) Res<usize> {
+    call.match({
+        Read         => Ok(0),
+        Write        => Ok(1),
+        Openat       => Ok(257),
+        Close        => Ok(3),
+        Mmap         => Ok(9),
+        Munmap       => Ok(11),
+        ExitGroup    => Ok(231),
+        ClockGettime => Ok(228),
+        Getrandom    => Ok(318),
+        Socket       => Ok(41),
+        Bind         => Ok(49),
+        Listen       => Ok(50),
+        Accept4      => Ok(288),
+        Connect      => Ok(42),
+        EpollCreate1 => Ok(291),
+        EpollCtl     => Ok(233),
+        EpollPwait   => Ok(281),
+        Kqueue       => None,
+        Kevent       => None,
+        Futex        => Ok(202),
+        Clone        => Ok(56),
+    })
+}
+
+// include/uapi/asm-generic/unistd.h, shared by arm64 and other new ports.
+linux_arm64* = (call: Sys) Res<usize> {
+    call.match({
+        Read         => Ok(63),
+        Write        => Ok(64),
+        Openat       => Ok(56),
+        Close        => Ok(57),
+        Mmap         => Ok(222),
+        Munmap       => Ok(215),
+        ExitGroup    => Ok(94),
+        ClockGettime => Ok(113),
+        Getrandom    => Ok(278),
+        Socket       => Ok(198),
+        Bind         => Ok(200),
+        Listen       => Ok(201),
+        Accept4      => Ok(242),
+        Connect      => Ok(203),
+        EpollCreate1 => Ok(20),
+        EpollCtl     => Ok(21),
+        EpollPwait   => Ok(22),
+        Kqueue       => None,
+        Kevent       => None,
+        Futex        => Ok(98),
+        Clone        => Ok(220),
+    })
+}
+
+// libSystem exports, without the Mach-O underscore. Operations Darwin spells
+// differently map to their closest public equivalent; epoll, futex and raw
+// clone have none and are refused rather than emulated here.
+darwin_symbol* = (call: Sys) Res<str> {
+    call.match({
+        Read         => Ok("read"),
+        Write        => Ok("write"),
+        Openat       => Ok("openat"),
+        Close        => Ok("close"),
+        Mmap         => Ok("mmap"),
+        Munmap       => Ok("munmap"),
+        ExitGroup    => Ok("_exit"),
+        ClockGettime => Ok("clock_gettime"),
+        Getrandom    => Ok("getentropy"),
+        Socket       => Ok("socket"),
+        Bind         => Ok("bind"),
+        Listen       => Ok("listen"),
+        Accept4      => Ok("accept"),
+        Connect      => Ok("connect"),
+        EpollCreate1 => None,
+        EpollCtl     => None,
+        EpollPwait   => None,
+        Kqueue       => Ok("kqueue"),
+        Kevent       => Ok("kevent"),
+        Futex        => None,
+        Clone        => None,
+    })
+}

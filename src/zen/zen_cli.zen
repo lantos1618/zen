@@ -56,6 +56,7 @@ HelpArg = Root
     | EmitC
     | EmitDir
     | Backend
+    | TargetName
     | Out
     | Entry
     | StdRoot
@@ -100,6 +101,13 @@ help_model = (a: Alloc) Res<Command<HelpArg>, AllocError> {
         "NAME",
         ValueType.Text,
         "Select a generator (c, js, asm)"
+    ).try();
+    build.option(
+        "--target",
+        HelpArg.TargetName,
+        "TRIPLE",
+        ValueType.Text,
+        "Native target for asm (x86_64-linux, aarch64-linux, arm64-darwin); default: host"
     ).try();
     build.flag("--emit-c", HelpArg.EmitC, "Emit C to standard output").try();
     build.option(

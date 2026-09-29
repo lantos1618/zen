@@ -7,7 +7,8 @@ Path, Range, join_path = std.core
 Map, Vec = std.collections
 
 BuildArgs, ProjectArgs, Emission, Target, Os, Arch, Abi, Dep, Codegen = std.build
-Build = zen.zen_build
+Build, host_target = zen.zen_build
+asm_native, assemble_and_link = zen.zen_native
 entry_of, holds_build_zen = zen.zen_path
 BuildPlan, ExeNode, plan = zen.zen_build_plan
 
@@ -53,32 +54,6 @@ project_present = (env: Env, a: Alloc, job: ProjectArgs, action: Action)
             Ok(planned)                   => Project(env: env, a: a, job: job, planned: planned).execute(action),
             }),
         }),
-    })
-}
-
-// Detect the machine executing the compiler, rather than assuming Linux/x86.
-host_target = (env: Env, a: Alloc) Res<Res<Target>, AllocError> {
-    argv ::= a.Vec<str>();
-    argv.add("uname").try();
-    argv.add("-sm").try();
-    host       = env.proc.run_argv(a, "", argv).match({
-        Ok(result) => (result.code == 0).match({ true => result.out.view(), false => "" }),
-        Err(_)     => "",
-    });
-    known_os   = host.starts_with("Darwin ") || host.starts_with("Linux ");
-    known_arch = host.contains("x86_64") || host.contains("arm64") || host.contains("aarch64");
-    (known_os && known_arch).match({
-        false => Ok(None),
-        true  => {
-            os   = host.starts_with(
-                "Darwin "
-            ).match({ true => Os.Macos, false => Os.Linux });
-            arch = host.contains(
-                "x86_64"
-            ).match({ true => Arch.X86_64, false => Arch.Arm64 });
-            abi  = os.match({ Macos => Abi.Darwin, _ => Abi.Gnu });
-            Ok(Ok(Target(os: os, arch: arch, abi: abi)))
-        },
     })
 }
 
@@ -252,13 +227,12 @@ Project = {
         exe.spec.backend.match({
             C   => self.build_native(exe, "c"),
             Js  => self.build_script(exe),
-            Asm => self.planned.target.clang_triple().match({
-                Ok(triple) => triple.eq("x86_64-linux-gnu"),
-                None       => false,
-            }).match({
+            Asm => asm_native(self.planned.target).match({
                 true  => self.build_native(exe, "s"),
                 false => {
-                    println("zen: asm projects require Linux x86_64 GNU");
+                    println(
+                        "zen: asm projects require x86_64-linux, aarch64-linux or arm64-darwin"
+                    );
                     Ok(None)
                 },
             }),
@@ -358,7 +332,8 @@ Project = {
             entry: entry,
             std_root: self.job.std_root,
             symbol_map: self.env.var("ZEN_SYMBOL_MAP").value_or(""),
-            ffi: true
+            ffi: true,
+            target: self.planned.target.clang_triple().value_or("")
         );
         compiler ::= self.a.Build(self.env, root);
         compiler.set_std_root(self.job.std_root);
@@ -380,6 +355,30 @@ Project = {
 
     link_exe = (self: @Self, exe: ExeNode, generated: str, output: str)
                Res<bool, AllocError> {
+        exe.spec.backend.match({
+            Asm => self.assemble_exe(exe, generated, output),
+            _   => self.link_c(exe, generated, output),
+        })
+    }
+
+    assemble_exe = (self: @Self, exe: ExeNode, generated: str, output: str)
+                   Res<bool, AllocError> {
+        log ::= self.a.String().try();
+        ok = assemble_and_link(
+            self.env,
+            self.a,
+            self.planned.target,
+            generated,
+            output,
+            exe.spec.strip,
+            log
+        ).try();
+        (!log.view().is_empty()).then(() { println("{}", log.view()); });
+        Ok(ok)
+    }
+
+    link_c = (self: @Self, exe: ExeNode, generated: str, output: str)
+             Res<bool, AllocError> {
         argv ::= self.a.Vec<str>();
         compiler = self.env.var("CC").value_or("cc");
         valid_cc = self.append_command(compiler, argv).try() && argv.len > 0;

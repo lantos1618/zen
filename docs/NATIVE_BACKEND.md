@@ -54,6 +54,27 @@ first unsupported construct each program reaches):
 12. **Fixed arrays** – `[T, N]` literals, bounds-checked indexing, `loop`.
 13. **Floats**, `@meta`, actors, threads, `c.bind` FFI, `proc`, `fs`, `net`.
 
+### Crypto-driven requirements (from the ChaCha20-Poly1305 port)
+
+`zen-crypto-perf/docs/NATIVE_CRYPTO.md` measures what holds pure-Zen crypto
+back. None of these exist in the C backend either; the IR is designed so each
+has an obvious home rather than being bolted onto a target later.
+
+| Need | IR shape | Target lowering |
+| --- | --- | --- |
+| Vector types: 4/8 lanes of u32 with add, xor, rotate and lane shuffles | `Vector(lanes, elem)` slot kind (16/32-byte slots, 16-byte aligned); `VectorBinary`, `VectorRotate`, `Shuffle(pattern)` instructions | NEON (`add.4s`, `eor`, `ushr`+`sli` or `tbl`) on arm64; SSE2/AVX2 on x86-64 |
+| u128 or 64x64->128 multiply | `MulWide(out_lo, out_hi, a, b)` over u64 (signed/unsigned) | `mul`+`umulh` on arm64, `mulq` on x86-64 |
+| Explicit u64 -> u32 truncation | `Convert` with an explicit `Truncate` mode (never implicit) | `mov wN, wM` / `movl` |
+| Target-feature selection, runtime dispatch between CPU paths | features on the target value (`avx2`, `neon`, `sha`); a `CpuHas(feature)` instruction for dispatch | `cpuid` on x86-64; `hw.optional.*`/`HWCAP` on arm64 (NEON is baseline) |
+| Left shift, bit-or | `Op.Shl`, `Op.Or` beside `Xor`, `And`, `Shr`, `Rotr` | one instruction each |
+| Forced inlining | a function attribute carried in `Func`, honoured by an IR inliner before rendering | target independent |
+| Volatile store, compiler barrier (secure wiping) | `Store` with a `volatile` flag; `Barrier` instruction that no pass may move memory across | plain stores (the renderer never elides stores) plus no reordering; a barrier emits nothing on these in-order renderers but must stop future optimisation passes |
+
+Because the renderers emit every IR store and never reorder memory, a volatile
+store and a compiler barrier are already honoured today; the flags exist so
+that later optimisation passes (register allocation, dead-store elimination,
+inlining) keep that guarantee.
+
 ### Plan
 
 The design rules in `BACKENDS.md` bind this work: language semantics are
@@ -102,4 +123,34 @@ the layer is OS-independent.
 
 ## Status
 
-See the sections appended by each stage below.
+### Stage 2: three targets, no libc
+
+* `gen_asm_x86.X86_64Linux`: rewritten without libc. Own `_start`, `syscall`
+  for `write`/`exit_group`, 8-byte slots, out-of-line trap stubs.
+* `gen_asm_arm64.Arm64(os: Linux | Darwin)`: new. Slots addressed from `sp`
+  with a preallocated outgoing-argument area, `movz/movk` constants,
+  `adds/subs/negs` + `b.vs`, `smull` + sign-extension compare for checked
+  multiply, explicit zero and `MIN / -1` checks around `sdiv`.
+* Runtime per target, in assembly: a 64 KiB stdout buffer (`za_out`,
+  `za_flush`), `za_write_all` (retries `EINTR` and short writes),
+  `za_print_i64/u64`, `za_trap` (flush, `file:line:col: trap: what` to fd 2,
+  exit 134) and `za_exit`. The Darwin build imports exactly `_write`,
+  `__exit` and `___error` from libSystem.
+* `gen_asm_sys`: the syscall layer (`Sys` operations; Linux x86-64 and
+  generic-table numbers; libSystem symbols; `-errno` result convention).
+* Driver: `zen build --backend asm [--target T]` (host by default);
+  `Codegen.Asm` projects assemble and link with `as` + `ld`
+  (`zen.zen_native`), cross-prefixed binutils and `qemu-<arch>` when the
+  target architecture differs from a Linux host.
+* Tests (Zen): `gen/asm_renderer` (calls with 6-9 arguments, stack alignment
+  probe on x86-64, exact bytes, register-cache invalidation, add/mul traps)
+  and `gen/asm_traps` (div/rem overflow, divide by zero) build for the host;
+  `ZEN_ASM_TARGET=aarch64-linux` runs them for AArch64 under qemu.
+  Verified: macOS arm64 (native), Linux x86-64 (dev-box), Linux AArch64
+  (dev-box, qemu-aarch64 8.2 + binutils 2.42).
+
+On this macOS host every freshly linked executable (C or assembly) takes about
+3-4 s to launch the first time (a system policy scan), so tests that launch
+many new binaries (`gen/scalar_backends`, `backends/c_ir_pilot`) exceed the
+harness's 20 s default here; they pass with `--run-timeout 300`, as they did
+not before this change for the asm cases.

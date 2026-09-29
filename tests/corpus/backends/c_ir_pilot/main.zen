@@ -1,8 +1,9 @@
 // Compare one checked input across both C paths and the other scalar renderers.
 // Each native output is compiled with warnings as errors and undefined-behavior
 // checks, then executed; matching source text alone would not prove parity.
-Build = zen.zen_build
-Generation, Layout = gen.gen
+Build, host_target = zen.zen_build
+assemble_and_link = zen.zen_native
+Generation, Layout, emit_assembly = gen.gen
 Codegen = std.build
 Program, Func, BasicBlock, Instruction, Terminator, Const, Scalar, Binary, Op, Branch = gen.gen_ir
 nowhere = std.ast
@@ -10,9 +11,20 @@ lower = gen.gen_lower
 verify = gen.gen_verify
 emit_c = gen.gen_c_ir
 emit_js = gen.gen_js
-X86_64LinuxGnu = gen.gen_asm_x86
 
 Backend = LegacyC | IrC | Js | Asm
+
+// The host's native renderer; an unsupported host yields empty text, which
+// then fails to assemble.
+host_assembly = (env: Env, a: Alloc, program: Program) Res<String, AllocError> {
+    host_target(env, a).try().match({
+        None          => a.String(),
+        Ok(machine)   => emit_assembly(a, machine, program).try().match({
+            None       => a.String(),
+            Ok(text)   => Ok(text),
+        }),
+    })
+}
 
 name = (self: Backend) str {
     self.match({ LegacyC => "legacy C", IrC => "IR C", Js => "JS", Asm => "ASM" })
@@ -62,7 +74,8 @@ Case = {
                             entry: 0,
                             layout: Layout.Single,
                             ffi: false,
-                            symbols: false
+                            symbols: false,
+                            target: None
                         );
                         faults     = generation.emit(
                             report,
@@ -79,7 +92,7 @@ Case = {
                     },
                     IrC     => { code = emit_c(a, program).try(); },
                     Js      => { code = emit_js(a, program).try(); },
-                    Asm     => { code = X86_64LinuxGnu(alloc: a).emit(program).try(); },
+                    Asm     => { code = host_assembly(env, a, program).try(); },
                 });
                 good = self.execute(env, a, backend, code.view()).try();
                 (!good).then(
@@ -112,8 +125,18 @@ Case = {
             (!written).then(() { h.break(false); });
             args ::= a.Vec<str>();
             backend.match({
-                Js => { args.add("node").try(); args.add(source).try(); },
-                _  => {
+                Js  => { args.add("node").try(); args.add(source).try(); },
+                // Native assembly uses the system assembler and linker only.
+                Asm => {
+                    log ::= a.String().try();
+                    built = host_target(env, a).try().match({
+                        Ok(machine) => assemble_and_link(env, a, machine, source, "candidate", false, log).try(),
+                        None        => false,
+                    });
+                    (!built).then(() { println("assemble {}", log.view()); h.break(false); });
+                    args.add("./candidate").try();
+                },
+                _   => {
                     compiler ::= a.Vec<str>();
                     [str, 8]("cc", source, "-O2", "-o", "candidate", "-pthread", "-lm", "-pie")
                         .loop((word) { compiler.add(word).try(); });
@@ -256,7 +279,7 @@ direct = (env: Env, a: Alloc) Res<bool, AllocError> {
             code: 0
         );
         [Backend.IrC, Backend.Js, Backend.Asm].loop((backend) {
-            text = backend.match({ Js => emit_js(a, program), Asm => X86_64LinuxGnu(alloc: a).emit(program), _ => emit_c(a, program) }).try();
+            text = backend.match({ Js => emit_js(a, program), Asm => host_assembly(env, a, program), _ => emit_c(a, program) }).try();
             good = case.execute(env, a, backend, text.view()).try() && good;
         });
     });

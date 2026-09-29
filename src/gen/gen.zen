@@ -9,12 +9,13 @@ lower_program*, emit_header*, emit_unit*, group_bodies*, ModuleBodies* = gen.gen
 Alloc, AllocError, Mem = std.mem
 Ast = std.ast
 Checker = sema.sema
-Codegen = std.build
+Codegen, Target = std.build
 String, str = std.text
 lower = gen.gen_lower
 Program = gen.gen_ir
 emit_js = gen.gen_js
-X86_64LinuxGnu = gen.gen_asm_x86
+X86_64Linux = gen.gen_asm_x86
+Arm64, Arm64Os = gen.gen_asm_arm64
 verify, message = gen.gen_verify
 
 Layout* = Single | Modules
@@ -40,6 +41,8 @@ Generation* = {
     layout*: Layout,
     ffi*: bool,
     symbols*: bool,
+    // The native machine for assembly; None when no target was resolved.
+    target*: Res<Target>,
 
     // Lowering diagnostics precede publication. The returned count includes
     // backend faults and publication failures; allocation errors stay typed.
@@ -136,21 +139,37 @@ Generation* = {
                     Ok(1)
                 },
             }),
-            Ok(_)      => {
-                    out  = backend.match({
-                        Js  => emit_js(self.alloc, program),
-                        Asm => X86_64LinuxGnu(alloc: self.alloc).emit(program),
-                    }).try();
-                    name = backend.match({ Js => "zen.js", Asm => "zen.s" });
-                    publish(Artifact(
+            Ok(_)      => backend.match({
+                Js  => publish(Artifact(
+                    kind: ArtifactKind.Source,
+                    name: "zen.js",
+                    text: emit_js(self.alloc, program).try().view()
+                )),
+                Asm => self.assembly(program).try().match({
+                    None      => {
+                        report.add(
+                            "error: the asm backend supports x86_64-linux, aarch64-linux and arm64-darwin targets\n"
+                        ).try();
+                        Ok(1)
+                    },
+                    Ok(text)  => publish(Artifact(
                         kind: ArtifactKind.Source,
-                        name: name,
-                        text: out.view()
-                    ))
-            },
+                        name: "zen.s",
+                        text: text.view()
+                    )),
+                }),
+            }),
         })
     }
 
+
+    assembly = (self: @Self, program: Program)
+               Res<Res<String>, AllocError> {
+        self.target.match({
+            None         => Ok(None),
+            Ok(machine)  => emit_assembly(self.alloc, machine, program),
+        })
+    }
 }
 
 // One backend owns lowering state throughout rendering. Split C lowers once,
@@ -234,4 +253,22 @@ COutput = {
             text: out.view()
         ))
     }
+}
+
+// Target selection happens here, at the generation boundary; the renderer
+// contract does not import its implementations. None: no renderer exists
+// for this machine. The caller verifies the program first.
+emit_assembly* = (alloc: Alloc, machine: Target, program: Program)
+                 Res<Res<String>, AllocError> {
+    machine.os.match({
+        Linux   => machine.arch.match({
+            X86_64 => Ok(Ok(X86_64Linux(alloc: alloc).emit(program).try())),
+            Arm64  => Ok(Ok(Arm64(alloc: alloc, os: Arm64Os.Linux).emit(program).try())),
+        }),
+        Macos   => machine.arch.match({
+            Arm64  => Ok(Ok(Arm64(alloc: alloc, os: Arm64Os.Darwin).emit(program).try())),
+            X86_64 => Ok(None),
+        }),
+        Windows => Ok(None),
+    })
 }

@@ -1,0 +1,628 @@
+// AArch64 assembly for the scalar IR under AAPCS64. Two operating systems
+// share the instruction selection and differ only in object dialect and in
+// how the runtime reaches the kernel:
+//
+// - Linux: ELF, its own `_start`, raw `svc #0` system calls, no libc.
+// - Darwin: Mach-O, `_main` entered from dyld, and libSystem calls, because
+//   Darwin's system-call numbers are not a stable ABI. No C is compiled.
+//
+// Each value has an eight-byte slot addressed from `sp`; outgoing stack
+// arguments occupy the bottom of the frame, so `sp` never moves in a body.
+
+Alloc, AllocError = std.mem
+str, String = std.text
+Range = std.core
+Vec = std.collections
+Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
+Span = std.ast
+Target = gen.gen_asm
+Sys, linux_arm64, darwin_symbol = gen.gen_asm_sys
+
+Arm64Os* = Linux | Darwin
+
+Arm64* = { alloc*: Alloc, os*: Arm64Os }
+
+Arm64.impl(Target, {
+    emit = (self: @Self, program: Program) Res<String, AllocError> {
+        writer ::= Assembly(
+            alloc: self.alloc,
+            os: self.os,
+            out: self.alloc.String().try(),
+            data: self.alloc.String().try(),
+            scratch: self.alloc.String().try(),
+            traps: self.alloc.Vec<TrapSite>(),
+            next_label: 0
+        );
+        writer.program(program).try();
+        Ok(writer.out)
+    }
+})
+
+TrapSite = { label: usize, location: usize, length: usize, message: str }
+
+Frame = { outgoing: usize, size: usize }
+
+Assembly = {
+    alloc: Alloc,
+    os: Arm64Os,
+    out :: String,
+    data :: String,
+    // Formats a trap location once so its byte length is known exactly.
+    scratch :: String,
+    traps :: Vec<TrapSite>,
+    next_label :: usize,
+    frame :: Frame = Frame(outgoing: 0, size: 0),
+    // Slots remain authoritative; w0 caches one slot within a block.
+    w0_slot :: Res<usize> = None,
+
+    darwin = (self: @Self) bool {
+        self.os.match({ Darwin => true, Linux => false })
+    }
+
+    // Assembler-local label prefix for this object format.
+    local = (self: @Self) str {
+        self.darwin().match({ true => "L", false => ".L" })
+    }
+
+    program = (self :: @Self, program: Program) Res<(), AllocError> {
+        self.darwin().match({
+            true  => self.out.add(".build_version macos, 11, 0\n.text\n"),
+            false => self.out.add(".text\n"),
+        }).try();
+        program.functions.loop((h, i, function) {
+            self.function(i, function).try();
+        });
+        self.entry(program.entry).try();
+        self.runtime().try();
+        self.darwin().match({
+            true  => {
+                self.out.add(".section __TEXT,__const\n").try();
+                self.out.add(self.data.view()).try();
+                self.out.add(
+                    ".zerofill __DATA,__bss,za_out_buf,65536,4\n.zerofill __DATA,__bss,za_out_len,8,3\n"
+                )
+            },
+            false => {
+                self.out.add(".section .rodata\n").try();
+                self.out.add(self.data.view()).try();
+                self.out.add(
+                    ".bss\n.p2align 4\nza_out_buf:\n    .zero 65536\nza_out_len:\n    .zero 8\n.section .note.GNU-stack,\"\",@progbits\n"
+                )
+            },
+        })
+    }
+
+    entry = (self :: @Self, entry: usize) Res<(), AllocError> {
+        self.darwin().match({
+            // dyld calls main with an aligned stack and a return address;
+            // the program never returns through it.
+            true  => self.out.fmt(
+                ".globl _main\n.p2align 2\n_main:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    bl za_fn_{}\n    b za_exit\n",
+                entry
+            ),
+            // The kernel enters with sp 16-byte aligned at argc.
+            false => self.out.fmt(
+                ".globl _start\n.type _start, %function\n.p2align 2\n_start:\n    mov x29, #0\n    mov x30, #0\n    bl za_fn_{}\n    b za_exit\n",
+                entry
+            ),
+        })
+    }
+
+    function = (self :: @Self, id: usize, function: Func)
+               Res<(), AllocError> {
+        outgoing ::= 0;
+        function.blocks.loop((block) {
+            block.code.loop((instruction) {
+                instruction.match({
+                    Invoke(call) => {
+                        (call.args.len > REGISTER_ARGUMENTS).then(() {
+                            need = (call.args.len - REGISTER_ARGUMENTS) * 8;
+                            (need > outgoing).then(() { outgoing = need; });
+                        });
+                    },
+                    _            => (),
+                });
+            });
+        });
+        outgoing   = round16(outgoing);
+        self.frame = Frame(
+            outgoing: outgoing,
+            size: round16(outgoing + function.slots.len * 8)
+        );
+        self.darwin().match({
+            true  => self.out.fmt(".p2align 2\nza_fn_{}:\n", id),
+            false => self.out.fmt(
+                ".type za_fn_{}, %function\n.p2align 2\nza_fn_{}:\n",
+                id,
+                id
+            ),
+        }).try();
+        self.out.add("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n").try();
+        self.adjust("sub", self.frame.size).try();
+        Range(0, function.parameters).loop((i) {
+            (i < REGISTER_ARGUMENTS).match({
+                true  => self.store(i, argument_register(i)),
+                false => {
+                    self.out.fmt(
+                        "    ldr w9, [x29, #{}]\n",
+                        16 + (i - REGISTER_ARGUMENTS) * 8
+                    ).try();
+                    self.store(i, "w9")
+                },
+            }).try();
+        });
+        function.blocks.loop((h, block_id, block) {
+            self.w0_slot = None;
+            self.out.fmt("{}za_f{}_b{}:\n", self.local(), id, block_id).try();
+            block.code.loop(
+                (instruction) { self.instruction(instruction).try(); }
+            );
+            self.terminator(id, block.exit).try();
+        });
+        self.trap_stubs().try();
+        self.darwin().match({
+            true  => Ok(()),
+            false => self.out.fmt(".size za_fn_{}, .-za_fn_{}\n", id, id),
+        })
+    }
+
+    // `sp` adjustments larger than an add immediate go through x16.
+    adjust = (self :: @Self, op: str, bytes: usize) Res<(), AllocError> {
+        (bytes == 0).match({
+            true  => Ok(()),
+            false => (bytes < 4096).match({
+                true  => self.out.fmt("    {} sp, sp, #{}\n", op, bytes),
+                false => {
+                    self.immediate("x16", bytes.to_u64()).try();
+                    self.out.fmt("    {} sp, sp, x16\n", op)
+                },
+            }),
+        })
+    }
+
+    instruction = (self :: @Self, instruction: Instruction)
+                  Res<(), AllocError> {
+        instruction.match({
+            Constant(value)    => {
+                self.immediate("w9", bits64(value.value.to_i64())).try();
+                self.store_plain(value.out, "w9").try();
+                self.w0_slot.when_ok((slot) {
+                    (slot == value.out).then(() { self.w0_slot = None; });
+                });
+                Ok(())
+            },
+            Copy(value)        => {
+                self.load(value.source, "w0").try();
+                self.store(value.out, "w0")
+            },
+            UnaryValue(value)  => self.unary(value),
+            BinaryValue(value) => self.binary(value),
+            Invoke(call)       => self.call(call),
+            PrintValue(value)  => self.print(value),
+            Text(bytes)        => self.text(bytes),
+        })
+    }
+
+    terminator = (self :: @Self, function: usize, exit: Terminator)
+                 Res<(), AllocError> {
+        exit.match({
+            Return(value)  => {
+                self.load(value, "w0").try();
+                self.out.add(
+                    "    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n"
+                )
+            },
+            Jump(block)    => self.out.fmt(
+                "    b {}za_f{}_b{}\n",
+                self.local(),
+                function,
+                block
+            ),
+            Branch(branch) => {
+                self.load(branch.value, "w0").try();
+                self.out.fmt(
+                    "    cbnz w0, {}za_f{}_b{}\n    b {}za_f{}_b{}\n",
+                    self.local(),
+                    function,
+                    branch.yes,
+                    self.local(),
+                    function,
+                    branch.no
+                )
+            },
+        })
+    }
+
+    unary = (self :: @Self, value: Unary) Res<(), AllocError> {
+        self.load(value.input, "w0").try();
+        value.op.match({
+            Neg => {
+                self.out.add("    negs w0, w0\n").try();
+                self.trap_if("vs", value.span, OVERFLOW)
+            },
+            Not => self.out.add("    cmp w0, #0\n    cset w0, eq\n"),
+        }).try();
+        self.store(value.out, "w0")
+    }
+
+    binary = (self :: @Self, value: Binary) Res<(), AllocError> {
+        self.load(value.left, "w0").try();
+        self.load(value.right, "w1").try();
+        value.op.match({
+            Add          => {
+                self.out.add("    adds w0, w0, w1\n").try();
+                self.trap_if("vs", value.span, OVERFLOW)
+            },
+            Sub          => {
+                self.out.add("    subs w0, w0, w1\n").try();
+                self.trap_if("vs", value.span, OVERFLOW)
+            },
+            Mul          => {
+                self.out.add(
+                    "    smull x0, w0, w1\n    cmp x0, w0, sxtw\n"
+                ).try();
+                self.trap_if("ne", value.span, OVERFLOW)
+            },
+            Div          => self.divide(value.span, false),
+            Rem          => self.divide(value.span, true),
+            Equal        => self.compare("eq"),
+            NotEqual     => self.compare("ne"),
+            Less         => self.compare("lt"),
+            LessEqual    => self.compare("le"),
+            Greater      => self.compare("gt"),
+            GreaterEqual => self.compare("ge"),
+        }).try();
+        self.store(value.out, "w0")
+    }
+
+    compare = (self :: @Self, condition: str) Res<(), AllocError> {
+        self.out.fmt("    cmp w0, w1\n    cset w0, {}\n", condition)
+    }
+
+    // sdiv does not fault, so zero and MIN / -1 are checked explicitly to
+    // keep Zen's traps rather than the hardware's quiet results.
+    divide = (self :: @Self, span: Span, remainder: bool)
+             Res<(), AllocError> {
+        self.out.add("    cmp w1, #0\n").try();
+        self.trap_if("eq", span, DIVIDE_BY_ZERO).try();
+        self.out.add(
+            "    mov w2, #0x80000000\n    cmn w1, #1\n    ccmp w0, w2, #0, eq\n"
+        ).try();
+        self.trap_if("eq", span, OVERFLOW).try();
+        self.out.add("    sdiv w2, w0, w1\n").try();
+        remainder.match({
+            true  => self.out.add("    msub w0, w2, w1, w0\n"),
+            false => self.out.add("    mov w0, w2\n"),
+        })
+    }
+
+    call = (self :: @Self, call: Invocation) Res<(), AllocError> {
+        call.args.loop((h, i, value) {
+            (i >= REGISTER_ARGUMENTS).then(() {
+                self.load(value, "w9").try();
+                self.out.add("    sxtw x9, w9\n").try();
+                self.out.fmt(
+                    "    str x9, [sp, #{}]\n",
+                    (i - REGISTER_ARGUMENTS) * 8
+                ).try();
+            });
+        });
+        self.w0_slot = None;
+        call.args.loop((h, i, value) {
+            (i == REGISTER_ARGUMENTS).then(() { h.break(); });
+            self.load_plain(value, argument_register(i)).try();
+        });
+        self.out.fmt("    bl za_fn_{}\n", call.function).try();
+        self.store(call.out, "w0")
+    }
+
+    print = (self :: @Self, value: Print) Res<(), AllocError> {
+        value.ty.match({
+            I32  => {
+                self.load(value.value, "w0").try();
+                self.out.add("    sxtw x0, w0\n    bl za_print_i64\n")
+            },
+            Bool => {
+                self.load(value.value, "w9").try();
+                self.address("x0", "za_false").try();
+                self.address("x10", "za_true").try();
+                self.out.add(
+                    "    cmp w9, #0\n    csel x0, x0, x10, eq\n    cset x1, eq\n    add x1, x1, #4\n    bl za_out\n"
+                )
+            },
+            Unit => self.text("()"),
+        }).try();
+        self.w0_slot = None;
+        Ok(())
+    }
+
+    text = (self :: @Self, bytes: str) Res<(), AllocError> {
+        (!bytes.is_empty()).then(() {
+            label = self.literal(bytes).try();
+            data  = self.data_label(label).try();
+            self.address("x0", data.view()).try();
+            self.immediate("x1", bytes.len.to_u64()).try();
+            self.out.add("    bl za_out\n").try();
+        });
+        self.w0_slot = None;
+        Ok(())
+    }
+
+    data_label = (self: @Self, label: usize) Res<String, AllocError> {
+        name ::= self.alloc.String().try();
+        name.fmt("{}za_d{}", self.local(), label).try();
+        Ok(name)
+    }
+
+    // Materialize a data address; Mach-O and ELF spell page relocations
+    // differently.
+    address = (self :: @Self, register: str, symbol: str)
+              Res<(), AllocError> {
+        self.darwin().match({
+            true  => self.out.fmt(
+                "    adrp {}, {}@PAGE\n    add {}, {}, {}@PAGEOFF\n",
+                register,
+                symbol,
+                register,
+                register,
+                symbol
+            ),
+            false => self.out.fmt(
+                "    adrp {}, {}\n    add {}, {}, :lo12:{}\n",
+                register,
+                symbol,
+                register,
+                register,
+                symbol
+            ),
+        })
+    }
+
+    // movz/movk sequence for any 64-bit pattern; a w register receives the
+    // low 32 bits.
+    immediate = (self :: @Self, register: str, bits: u64)
+                Res<(), AllocError> {
+        chunks: usize = register.starts_with("x").match({ true => 4, false => 2 });
+        self.out.fmt("    movz {}, #{}\n", register, bits % 65536).try();
+        scale ::= bits / 65536;
+        Range(1, chunks).loop((i) {
+            part = scale % 65536;
+            (part != 0).then(() {
+                self.out.fmt(
+                    "    movk {}, #{}, lsl #{}\n",
+                    register,
+                    part,
+                    i * 16
+                ).try();
+            });
+            scale = scale / 65536;
+        });
+        Ok(())
+    }
+
+    literal = (self :: @Self, bytes: str) Res<usize, AllocError> {
+        label = self.label();
+        self.data.fmt("{}za_d{}:\n", self.local(), label).try();
+        self.data_bytes(bytes).try();
+        Ok(label)
+    }
+
+    data_bytes = (self :: @Self, bytes: str) Res<(), AllocError> {
+        (!bytes.is_empty()).then(() {
+            self.data.add("    .byte ").try();
+            bytes.loop((h, i, byte) {
+                (i > 0).then(() { self.data.add(",").try(); });
+                self.data.fmt("{}", byte).try();
+            });
+            self.data.add("\n").try();
+        });
+        Ok(())
+    }
+
+    label = (self :: @Self) usize {
+        label           = self.next_label;
+        self.next_label = label + 1;
+        label
+    }
+
+    slot_offset = (self: @Self, slot: usize) usize {
+        self.frame.outgoing + slot * 8
+    }
+
+    load = (self :: @Self, slot: usize, register: str) Res<(), AllocError> {
+        cached = self.w0_slot.match({ Ok(value) => value == slot, None => false });
+        cached.match({
+            true  => {
+                (!register.eq("w0")).then(() {
+                    self.out.fmt("    mov {}, w0\n", register).try();
+                });
+            },
+            false => {
+                self.load_plain(slot, register).try();
+                register.eq("w0").then(() { self.w0_slot = Ok(slot); });
+            },
+        });
+        Ok(())
+    }
+
+    load_plain = (self :: @Self, slot: usize, register: str)
+                 Res<(), AllocError> {
+        self.memory("ldr", register, self.slot_offset(slot))
+    }
+
+    store = (self :: @Self, slot: usize, register: str) Res<(), AllocError> {
+        self.store_plain(slot, register).try();
+        self.w0_slot = register.eq("w0").match({ true => Ok(slot), false => None });
+        Ok(())
+    }
+
+    store_plain = (self :: @Self, slot: usize, register: str)
+                  Res<(), AllocError> {
+        self.memory("str", register, self.slot_offset(slot))
+    }
+
+    // Scaled unsigned offsets reach 16 KiB for words; larger frames address
+    // through x16.
+    memory = (self :: @Self, op: str, register: str, offset: usize)
+             Res<(), AllocError> {
+        (offset < 16380).match({
+            true  => self.out.fmt("    {} {}, [sp, #{}]\n", op, register, offset),
+            false => {
+                self.immediate("x16", offset.to_u64()).try();
+                self.out.fmt("    {} {}, [sp, x16]\n", op, register)
+            },
+        })
+    }
+
+    trap_if = (self :: @Self, condition: str, span: Span, message: str)
+              Res<(), AllocError> {
+        label = self.label();
+        site  = self.location(label, span, message).try();
+        self.traps.add(site).try();
+        self.out.fmt("    b.{} {}za_trap{}\n", condition, self.local(), label)
+    }
+
+    location = (self :: @Self, label: usize, span: Span, message: str)
+               Res<TrapSite, AllocError> {
+        data = self.label();
+        self.scratch.clear();
+        self.scratch.add(span.file).try();
+        self.scratch.fmt(
+            ":{}:{}: trap: ",
+            span.start.line,
+            span.start.col
+        ).try();
+        self.data.fmt("{}za_d{}:\n", self.local(), data).try();
+        self.data_bytes(self.scratch.view()).try();
+        Ok(TrapSite(
+            label: label,
+            location: data,
+            length: self.scratch.view().len,
+            message: message
+        ))
+    }
+
+    trap_stubs = (self :: @Self) Res<(), AllocError> {
+        self.traps.loop((site) {
+            self.out.fmt("{}za_trap{}:\n", self.local(), site.label).try();
+            data = self.data_label(site.location).try();
+            self.address("x0", data.view()).try();
+            self.immediate("x1", site.length.to_u64()).try();
+            message = self.alloc.String("za_{}", site.message).try();
+            self.address("x2", message.view()).try();
+            self.out.fmt("    mov x3, #{}\n    b za_trap\n", message_length(site.message)).try();
+        });
+        self.traps.clear();
+        Ok(())
+    }
+
+    // Kernel entry points in the -errno convention. Linux traps directly;
+    // Darwin calls the libSystem function and translates errno.
+    syscalls = (self :: @Self) Res<(), AllocError> {
+        self.darwin().match({
+            true  => {
+                write = darwin_symbol(Sys.Write).value_or("write");
+                exit  = darwin_symbol(Sys.ExitGroup).value_or("exit");
+                self.out.fmt(
+                    "za_sys_write:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    bl _{}\n    cmn x0, #1\n    b.ne 1f\n    bl ___error\n    ldrsw x0, [x0]\n    neg x0, x0\n1:\n    ldp x29, x30, [sp], #16\n    ret\nza_sys_exit:\n    bl _{}\n    brk #1\n",
+                    write,
+                    exit
+                )
+            },
+            false => {
+                write = linux_arm64(Sys.Write).value_or(0);
+                exit  = linux_arm64(Sys.ExitGroup).value_or(0);
+                self.out.fmt(
+                    "za_sys_write:\n    mov x8, #{}\n    svc #0\n    ret\nza_sys_exit:\n    mov x8, #{}\n    svc #0\n    brk #1\n",
+                    write,
+                    exit
+                )
+            },
+        })
+    }
+
+    // Buffered standard output, decimal integers, traps and exit. Routines
+    // may clobber caller-saved registers; no value stays live in one.
+    runtime = (self :: @Self) Res<(), AllocError> {
+        self.out.add(".p2align 2\n").try();
+        self.syscalls().try();
+        self.out.add(
+            "za_exit:\n    mov x19, x0\n    bl za_flush\n    mov x0, x19\n    bl za_sys_exit\n"
+        ).try();
+        // write_all(x0 fd, x1 bytes, x2 length): retry EINTR and short
+        // writes; any other failure abandons the remaining bytes.
+        self.out.add(
+            "za_write_all:\n    stp x29, x30, [sp, #-48]!\n    mov x29, sp\n    stp x19, x20, [sp, #16]\n    str x21, [sp, #32]\n    mov x19, x0\n    mov x20, x1\n    mov x21, x2\n0:\n    cbz x21, 2f\n    mov x0, x19\n    mov x1, x20\n    mov x2, x21\n    bl za_sys_write\n    cmn x0, #4\n    b.eq 0b\n    cmp x0, #0\n    b.le 2f\n    add x20, x20, x0\n    sub x21, x21, x0\n    b 0b\n2:\n    ldp x19, x20, [sp, #16]\n    ldr x21, [sp, #32]\n    ldp x29, x30, [sp], #48\n    ret\n"
+        ).try();
+        self.out.add(
+            "za_flush:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n"
+        ).try();
+        self.address("x9", "za_out_len").try();
+        self.out.add("    ldr x2, [x9]\n    cbz x2, 1f\n    str xzr, [x9]\n    mov x0, #1\n").try();
+        self.address("x1", "za_out_buf").try();
+        self.out.add(
+            "    bl za_write_all\n1:\n    ldp x29, x30, [sp], #16\n    ret\n"
+        ).try();
+        // out(x0 bytes, x1 length) appends to the stdout buffer. A run
+        // larger than the buffer is written through after a flush.
+        self.out.add(
+            "za_out:\n    stp x29, x30, [sp, #-32]!\n    mov x29, sp\n"
+        ).try();
+        self.address("x9", "za_out_len").try();
+        self.out.add(
+            "    ldr x3, [x9]\n    add x4, x3, x1\n    mov x5, #65536\n    cmp x4, x5\n    b.ls 1f\n    stp x0, x1, [sp, #16]\n    bl za_flush\n    ldp x0, x1, [sp, #16]\n    mov x5, #65536\n    cmp x1, x5\n    b.ls 0f\n    mov x2, x1\n    mov x1, x0\n    mov x0, #1\n    ldp x29, x30, [sp], #32\n    b za_write_all\n0:\n    mov x3, #0\n"
+        ).try();
+        self.address("x9", "za_out_len").try();
+        self.out.add("1:\n    add x4, x3, x1\n    str x4, [x9]\n").try();
+        self.address("x10", "za_out_buf").try();
+        self.out.add(
+            "    add x10, x10, x3\n    cbz x1, 3f\n2:\n    ldrb w11, [x0], #1\n    strb w11, [x10], #1\n    subs x1, x1, #1\n    b.ne 2b\n3:\n    ldp x29, x30, [sp], #32\n    ret\n"
+        ).try();
+        // print_i64(x0) / print_u64(x0): digits are produced backwards into
+        // a stack buffer. Negation of the minimum is exact as unsigned.
+        self.out.add(
+            "za_print_u64:\n    mov x9, #0\n    b 1f\nza_print_i64:\n    mov x9, x0\n    cmp x0, #0\n    cneg x0, x0, lt\n1:\n    stp x29, x30, [sp, #-48]!\n    mov x29, sp\n    add x1, sp, #48\n    mov x2, #10\n2:\n    udiv x3, x0, x2\n    msub x4, x3, x2, x0\n    add w4, w4, #48\n    strb w4, [x1, #-1]!\n    mov x0, x3\n    cbnz x0, 2b\n    tbz x9, #63, 3f\n    mov w4, #45\n    strb w4, [x1, #-1]!\n3:\n    add x2, sp, #48\n    sub x2, x2, x1\n    mov x0, x1\n    mov x1, x2\n    bl za_out\n    ldp x29, x30, [sp], #48\n    ret\n"
+        ).try();
+        // trap(x0/x1 location, x2/x3 message): flush stdout first so output
+        // preceding the fault is not lost, then exit 134.
+        self.out.add(
+            "za_trap:\n    mov x19, x0\n    mov x20, x1\n    mov x21, x2\n    mov x22, x3\n    bl za_flush\n    mov x0, #2\n    mov x1, x19\n    mov x2, x20\n    bl za_write_all\n    mov x0, #2\n    mov x1, x21\n    mov x2, x22\n    bl za_write_all\n    mov x0, #134\n    bl za_sys_exit\n"
+        ).try();
+        self.data.add(
+            "za_true:\n    .ascii \"true\"\nza_false:\n    .ascii \"false\"\nza_overflow:\n    .ascii \"integer overflow\\n\"\nza_divzero:\n    .ascii \"divide by zero\\n\"\n"
+        )
+    }
+}
+
+OVERFLOW: str = "overflow"
+DIVIDE_BY_ZERO: str = "divzero"
+
+message_length = (name: str) usize {
+    name.match({ "overflow" => 17, _ => 15 })
+}
+
+// The two's-complement bit pattern of a signed value.
+bits64 = (value: i64) u64 {
+    (value < 0).match({
+        true  => u64.MAX - (-(value + 1)).to_usize().value_or(0).to_u64(),
+        false => value.to_usize().value_or(0).to_u64(),
+    })
+}
+
+round16 = (bytes: usize) usize { ((bytes + 15) / 16) * 16 }
+
+REGISTER_ARGUMENTS: usize = 8
+
+// Called only for the register prefix; later scalar arguments use the stack.
+argument_register = (index: usize) str {
+    index.match({
+        0 => "w0",
+        1 => "w1",
+        2 => "w2",
+        3 => "w3",
+        4 => "w4",
+        5 => "w5",
+        6 => "w6",
+        _ => "w7",
+    })
+}

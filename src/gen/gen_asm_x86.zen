@@ -1,27 +1,44 @@
-// GNU x86-64 Linux System V assembly for the scalar IR. Each value has a
-// four-byte stack slot; calls preserve those slots without register spilling.
+// GNU-syntax x86-64 Linux assembly for the scalar IR. The executable is
+// freestanding: its own `_start`, raw `syscall` instructions and a small
+// runtime emitted beside the program. No C library is linked. Each value
+// has an eight-byte stack slot; calls preserve those slots without spilling.
 
 Alloc, AllocError = std.mem
 str, String = std.text
 Range = std.core
+Vec = std.collections
 Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
 Span = std.ast
 Target = gen.gen_asm
+Sys, linux_x86_64 = gen.gen_asm_sys
 
-// This target fixes the instruction set, object dialect, OS and calling ABI.
-X86_64LinuxGnu* = { alloc*: Alloc }
+// This target fixes the instruction set, object dialect, OS and calling ABI:
+// x86-64, ELF with GNU assembler syntax, Linux system calls, System V calls.
+X86_64Linux* = { alloc*: Alloc }
 
-X86_64LinuxGnu.impl(Target, {
+X86_64Linux.impl(Target, {
     emit = (self: @Self, program: Program) Res<String, AllocError> {
-        writer ::= Assembly(out: self.alloc.String().try(), next_literal: 0);
+        writer ::= Assembly(
+            out: self.alloc.String().try(),
+            data: self.alloc.String().try(),
+            traps: self.alloc.Vec<TrapSite>(),
+            next_label: 0
+        );
         writer.program(program).try();
         Ok(writer.out)
     }
 })
 
+// An out-of-line trap: the check branches here only when it fails, so the
+// location and message loads stay off the fast path.
+TrapSite = { label: usize, location: usize, message: str }
+
 Assembly = {
     out :: String,
-    next_literal :: usize,
+    // Read-only literals are collected and emitted once after the code.
+    data :: String,
+    traps :: Vec<TrapSite>,
+    next_label :: usize,
     // Stack slots remain authoritative. This fact holds only within one
     // basic block and is discarded across calls that do not store a result.
     eax_slot :: Res<usize> = None,
@@ -31,23 +48,32 @@ Assembly = {
         program.functions.loop((h, i, function) {
             self.function(i, function).try();
         });
+        // The kernel enters with an aligned stack holding argc; `call`
+        // leaves the entry function its System V alignment.
         self.out.fmt(
-            ".globl main\n.type main, @function\nmain:\n    pushq %rbp\n    movq %rsp, %rbp\n    call za_fn_{}\n    leave\n    ret\n.size main, .-main\n",
+            ".globl _start\n.type _start, @function\n_start:\n    xorl %ebp, %ebp\n    andq $-16, %rsp\n    call za_fn_{}\n    movl %eax, %edi\n    jmp za_exit\n.size _start, .-_start\n",
             program.entry
         ).try();
-        self.traps().try();
+        self.runtime().try();
+        self.out.add(".section .rodata\n").try();
+        self.out.add(self.data.view()).try();
+        self.out.add(
+            ".bss\n.p2align 4\nza_out_buf:\n    .zero 65536\nza_out_len:\n    .zero 8\n"
+        ).try();
         self.out.add(".section .note.GNU-stack,\"\",@progbits\n")
     }
 
     function = (self :: @Self, id: usize, function: Func)
                Res<(), AllocError> {
-        frame = ((function.slots.len * 4 + 15) / 16) * 16;
+        frame = ((function.slots.len * 8 + 15) / 16) * 16;
         self.out.fmt(
-            ".type za_fn_{}, @function\nza_fn_{}:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq ${}, %rsp\n",
+            ".type za_fn_{}, @function\nza_fn_{}:\n    pushq %rbp\n    movq %rsp, %rbp\n",
             id,
-            id,
-            frame
+            id
         ).try();
+        (frame > 0).then(() {
+            self.out.fmt("    subq ${}, %rsp\n", frame).try();
+        });
         Range(0, function.parameters).loop((i) {
             (i < REGISTER_ARGUMENTS).match({
                 true  => self.store(i, argument_register(i)),
@@ -68,6 +94,7 @@ Assembly = {
             );
             self.terminator(id, block.exit).try();
         });
+        self.trap_stubs().try();
         self.out.fmt(".size za_fn_{}, .-za_fn_{}\n", id, id)
     }
 
@@ -122,13 +149,12 @@ Assembly = {
     }
 
     unary = (self :: @Self, value: Unary) Res<(), AllocError> {
-        value.op.match({
-            Neg => self.location(value.span),
-            Not => Ok(()),
-        }).try();
         self.load(value.input, "%eax").try();
         value.op.match({
-            Neg => self.out.add("    negl %eax\n    jo .Lza_overflow\n"),
+            Neg => {
+                self.out.add("    negl %eax\n").try();
+                self.trap_if("o", value.span, OVERFLOW)
+            },
             Not => self.out.add(
                 "    testl %eax, %eax\n    sete %al\n    movzbl %al, %eax\n"
             ),
@@ -137,30 +163,23 @@ Assembly = {
     }
 
     binary = (self :: @Self, value: Binary) Res<(), AllocError> {
-        value.op.match({
-            Add => true,
-            Sub => true,
-            Mul => true,
-            Div => true,
-            Rem => true,
-            _   => false
-        }).then(() {
-            self.location(value.span).try();
-        });
         self.load(value.left, "%eax").try();
         self.load(value.right, "%ecx").try();
         value.op.match({
-            Add          => self.out.add(
-                "    addl %ecx, %eax\n    jo .Lza_overflow\n"
-            ),
-            Sub          => self.out.add(
-                "    subl %ecx, %eax\n    jo .Lza_overflow\n"
-            ),
-            Mul          => self.out.add(
-                "    imull %ecx, %eax\n    jo .Lza_overflow\n"
-            ),
-            Div          => self.divide("%eax"),
-            Rem          => self.divide("%edx"),
+            Add          => {
+                self.out.add("    addl %ecx, %eax\n").try();
+                self.trap_if("o", value.span, OVERFLOW)
+            },
+            Sub          => {
+                self.out.add("    subl %ecx, %eax\n").try();
+                self.trap_if("o", value.span, OVERFLOW)
+            },
+            Mul          => {
+                self.out.add("    imull %ecx, %eax\n").try();
+                self.trap_if("o", value.span, OVERFLOW)
+            },
+            Div          => self.divide(value.span, "%eax"),
+            Rem          => self.divide(value.span, "%edx"),
             Equal        => self.compare("e"),
             NotEqual     => self.compare("ne"),
             Less         => self.compare("l"),
@@ -178,14 +197,22 @@ Assembly = {
         )
     }
 
-    divide = (self :: @Self, result_register: str) Res<(), AllocError> {
+    // Zero divisors and MIN / -1 trap at the operator; idiv would fault.
+    divide = (self :: @Self, span: Span, result_register: str)
+             Res<(), AllocError> {
+        self.out.add("    testl %ecx, %ecx\n").try();
+        self.trap_if("z", span, DIVIDE_BY_ZERO).try();
         label = self.label();
         self.out.fmt(
-            "    testl %ecx, %ecx\n    jz .Lza_divzero\n    cmpl $-2147483648, %eax\n    jne .Lza_t{}\n    cmpl $-1, %ecx\n    je .Lza_overflow\n.Lza_t{}:\n    cltd\n    idivl %ecx\n",
-            label,
+            "    cmpl $-1, %ecx\n    jne .Lza_t{}\n    cmpl $-2147483648, %eax\n",
             label
         ).try();
-        self.out.fmt("    movl {}, %eax\n", result_register)
+        self.trap_if("e", span, OVERFLOW).try();
+        self.out.fmt(".Lza_t{}:\n    cltd\n    idivl %ecx\n", label).try();
+        (!result_register.eq("%eax")).then(() {
+            self.out.fmt("    movl {}, %eax\n", result_register).try();
+        });
+        Ok(())
     }
 
     call = (self :: @Self, call: Invocation) Res<(), AllocError> {
@@ -217,15 +244,13 @@ Assembly = {
     print = (self :: @Self, value: Print) Res<(), AllocError> {
         value.ty.match({
             I32  => {
-                self.load(value.value, "%esi").try();
-                self.out.add(
-                    "    leaq .Lza_integer(%rip), %rdi\n    xorl %eax, %eax\n    call printf@PLT\n"
-                )
+                self.load(value.value, "%eax").try();
+                self.out.add("    movslq %eax, %rdi\n    call za_print_i64\n")
             },
             Bool => {
                 self.load(value.value, "%eax").try();
                 self.out.add(
-                    "    leaq .Lza_false(%rip), %rsi\n    leaq .Lza_true(%rip), %rdx\n    testl %eax, %eax\n    cmovneq %rdx, %rsi\n    leaq .Lza_string(%rip), %rdi\n    xorl %eax, %eax\n    call printf@PLT\n"
+                    "    leaq za_false(%rip), %rdi\n    leaq za_true(%rip), %rdx\n    xorl %esi, %esi\n    testl %eax, %eax\n    cmovneq %rdx, %rdi\n    setz %sil\n    addl $4, %esi\n    call za_out\n"
                 )
             },
             Unit => self.text("()"),
@@ -238,7 +263,7 @@ Assembly = {
         (!bytes.is_empty()).then(() {
             label = self.literal(bytes).try();
             self.out.fmt(
-                "    leaq .Lza_t{}(%rip), %rdi\n    movl $1, %esi\n    movabsq ${}, %rdx\n    movq stdout@GOTPCREL(%rip), %rcx\n    movq (%rcx), %rcx\n    call fwrite@PLT\n",
+                "    leaq .Lza_d{}(%rip), %rdi\n    movl ${}, %esi\n    call za_out\n",
                 label,
                 bytes.len
             ).try();
@@ -251,27 +276,26 @@ Assembly = {
     // without introducing an assembler string-escaping dialect.
     literal = (self :: @Self, bytes: str) Res<usize, AllocError> {
         label = self.label();
-        self.out.fmt(".pushsection .rodata\n.Lza_t{}:\n", label).try();
+        self.data.fmt(".Lza_d{}:\n", label).try();
         self.data_bytes(bytes).try();
-        self.out.add(".popsection\n").try();
         Ok(label)
     }
 
     data_bytes = (self :: @Self, bytes: str) Res<(), AllocError> {
         (!bytes.is_empty()).then(() {
-            self.out.add("    .byte ").try();
+            self.data.add("    .byte ").try();
             bytes.loop((h, i, byte) {
-                (i > 0).then(() { self.out.add(",").try(); });
-                self.out.fmt("{}", byte).try();
+                (i > 0).then(() { self.data.add(",").try(); });
+                self.data.fmt("{}", byte).try();
             });
-            self.out.add("\n").try();
+            self.data.add("\n").try();
         });
         Ok(())
     }
 
     label = (self :: @Self) usize {
-        label             = self.next_literal;
-        self.next_literal = label + 1;
+        label           = self.next_label;
+        self.next_label = label + 1;
         label
     }
 
@@ -305,27 +329,95 @@ Assembly = {
         Ok(())
     }
 
-    location = (self :: @Self, span: Span) Res<(), AllocError> {
+    // Branch to an out-of-line trap when `condition` holds after a check.
+    trap_if = (self :: @Self, condition: str, span: Span, message: str)
+              Res<(), AllocError> {
+        label    = self.label();
+        location = self.location(span).try();
+        self.traps.add(TrapSite(
+            label: label,
+            location: location,
+            message: message
+        )).try();
+        self.out.fmt("    j{} .Lza_trap{}\n", condition, label)
+    }
+
+    location = (self :: @Self, span: Span) Res<usize, AllocError> {
         label = self.label();
-        self.out.fmt(".pushsection .rodata\n.Lza_t{}:\n", label).try();
+        self.data.fmt(".Lza_d{}:\n", label).try();
         self.data_bytes(span.file).try();
-        self.out.fmt(
-            "    .asciz \":{}:{}: trap: \"\n.popsection\n    leaq .Lza_t{}(%rip), %rdi\n",
+        self.data.fmt(
+            "    .ascii \":{}:{}: trap: \"\n.Lza_d{}_end:\n",
             span.start.line,
             span.start.col,
             label
-        )
+        ).try();
+        Ok(label)
     }
 
-    traps = (self :: @Self) Res<(), AllocError> {
+    trap_stubs = (self :: @Self) Res<(), AllocError> {
+        self.traps.loop((site) {
+            self.out.fmt(
+                ".Lza_trap{}:\n    leaq .Lza_d{}(%rip), %rdi\n    movl $(.Lza_d{}_end - .Lza_d{}), %esi\n    leaq za_{}(%rip), %rdx\n    movl $(za_{}_end - za_{}), %ecx\n    jmp za_trap\n",
+                site.label,
+                site.location,
+                site.location,
+                site.location,
+                site.message,
+                site.message,
+                site.message
+            ).try();
+        });
+        self.traps.clear();
+        Ok(())
+    }
+
+    // The runtime: buffered standard output, decimal integers, traps and
+    // process exit, all through raw Linux system calls. Every routine may
+    // clobber caller-saved registers; generated code keeps no value live in
+    // a register across these calls.
+    runtime = (self :: @Self) Res<(), AllocError> {
+        write     = linux_x86_64(Sys.Write).value_or(0);
+        exit      = linux_x86_64(Sys.ExitGroup).value_or(0);
+        self.out.fmt(
+            "za_exit:\n    pushq %rdi\n    call za_flush\n    popq %rdi\n    movl ${}, %eax\n    syscall\n    ud2\n",
+            exit
+        ).try();
+        // write_all(edi fd, rsi bytes, rdx length): retry EINTR and short
+        // writes; any other failure abandons the remaining bytes.
+        self.out.fmt(
+            "za_write_all:\n0:\n    testq %rdx, %rdx\n    jz 2f\n    movl ${}, %eax\n    syscall\n    cmpq $-4, %rax\n    je 0b\n    testq %rax, %rax\n    jle 2f\n    addq %rax, %rsi\n    subq %rax, %rdx\n    jmp 0b\n2:\n    ret\n",
+            write
+        ).try();
         self.out.add(
-            ".Lza_overflow:\n    leaq .Lza_overflow_message(%rip), %rsi\n    jmp .Lza_trap\n.Lza_divzero:\n    leaq .Lza_divzero_message(%rip), %rsi\n.Lza_trap:\n    subq $16, %rsp\n    movq %rdi, (%rsp)\n    movq %rsi, 8(%rsp)\n    xorl %edi, %edi\n    call fflush@PLT\n    movq (%rsp), %rdi\n    movq stderr@GOTPCREL(%rip), %rsi\n    movq (%rsi), %rsi\n    call fputs@PLT\n    movq 8(%rsp), %rdi\n    movq stderr@GOTPCREL(%rip), %rsi\n    movq (%rsi), %rsi\n    call fputs@PLT\n    addq $16, %rsp\n    movl $134, %edi\n    call exit@PLT\n    ud2\n.section .rodata\n.Lza_integer:\n    .asciz \"%d\"\n.Lza_string:\n    .asciz \"%s\"\n.Lza_false:\n    .asciz \"false\"\n.Lza_true:\n    .asciz \"true\"\n.Lza_overflow_message:\n    .asciz \"integer overflow\\n\"\n.Lza_divzero_message:\n    .asciz \"divide by zero\\n\"\n"
+            "za_flush:\n    movq za_out_len(%rip), %rdx\n    testq %rdx, %rdx\n    jz 1f\n    movl $1, %edi\n    leaq za_out_buf(%rip), %rsi\n    call za_write_all\n    movq $0, za_out_len(%rip)\n1:\n    ret\n"
+        ).try();
+        // out(rdi bytes, rsi length) appends to the stdout buffer. A run
+        // larger than the buffer is written through after a flush.
+        self.out.add(
+            "za_out:\n    movq za_out_len(%rip), %rax\n    leaq (%rax,%rsi), %rcx\n    cmpq $65536, %rcx\n    jbe 1f\n    pushq %rdi\n    pushq %rsi\n    call za_flush\n    popq %rsi\n    popq %rdi\n    cmpq $65536, %rsi\n    jbe 0f\n    movq %rsi, %rdx\n    movq %rdi, %rsi\n    movl $1, %edi\n    jmp za_write_all\n0:\n    xorl %eax, %eax\n1:\n    leaq za_out_buf(%rip), %rcx\n    addq %rax, %rcx\n    addq %rsi, %rax\n    movq %rax, za_out_len(%rip)\n    movq %rdi, %r8\n    movq %rcx, %rdi\n    movq %rsi, %rcx\n    movq %r8, %rsi\n    rep movsb\n    ret\n"
+        ).try();
+        // print_i64(rdi) / print_u64(rdi): digits are produced backwards
+        // into a stack buffer. Negation of the minimum is exact as unsigned.
+        self.out.add(
+            "za_print_u64:\n    xorl %r9d, %r9d\n    movq %rdi, %rax\n    jmp 1f\nza_print_i64:\n    movq %rdi, %r9\n    movq %rdi, %rax\n    testq %rax, %rax\n    jns 1f\n    negq %rax\n1:\n    subq $40, %rsp\n    leaq 32(%rsp), %rsi\n    movl $10, %ecx\n2:\n    xorl %edx, %edx\n    divq %rcx\n    addb $48, %dl\n    decq %rsi\n    movb %dl, (%rsi)\n    testq %rax, %rax\n    jnz 2b\n    testq %r9, %r9\n    jns 3f\n    decq %rsi\n    movb $45, (%rsi)\n3:\n    leaq 32(%rsp), %rdx\n    subq %rsi, %rdx\n    movq %rsi, %rdi\n    movq %rdx, %rsi\n    call za_out\n    addq $40, %rsp\n    ret\n"
+        ).try();
+        // trap(rdi/rsi location, rdx/rcx message): flush stdout first so
+        // output preceding the fault is not lost, then exit 134.
+        self.out.fmt(
+            "za_trap:\n    movq %rdi, %r12\n    movq %rsi, %r13\n    movq %rdx, %r14\n    movq %rcx, %r15\n    call za_flush\n    movl $2, %edi\n    movq %r12, %rsi\n    movq %r13, %rdx\n    call za_write_all\n    movl $2, %edi\n    movq %r14, %rsi\n    movq %r15, %rdx\n    call za_write_all\n    movl $134, %edi\n    movl ${}, %eax\n    syscall\n    ud2\n",
+            exit
+        ).try();
+        self.data.add(
+            "za_true:\n    .ascii \"true\"\nza_false:\n    .ascii \"false\"\nza_overflow:\n    .ascii \"integer overflow\\n\"\nza_overflow_end:\nza_divzero:\n    .ascii \"divide by zero\\n\"\nza_divzero_end:\n"
         )
     }
-
 }
 
-slot_offset = (slot: usize) usize { (slot + 1) * 4 }
+OVERFLOW: str = "overflow"
+DIVIDE_BY_ZERO: str = "divzero"
+
+slot_offset = (slot: usize) usize { (slot + 1) * 8 }
 
 REGISTER_ARGUMENTS: usize = 6
 

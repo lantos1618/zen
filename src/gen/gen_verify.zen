@@ -6,7 +6,7 @@ Vec = std.collections
 Range = std.core
 str = std.text
 Program, Func, Scalar, Instruction, Terminator, Op = gen.gen_ir
-same, word, integer, signed = gen.gen_ir
+same, word, integer, signed, float = gen.gen_ir
 arity = gen.gen_sys
 
 IrReason* = EntryFunction
@@ -56,6 +56,8 @@ fits = (ty: Scalar, value: i64) bool {
         I64      => true,
         U64      => true,
         Ptr      => true,
+        // Any bit pattern is an f64 (NaNs included).
+        F64      => true,
         Block(_) => false,
     })
 }
@@ -122,7 +124,7 @@ Check = {
             UnaryValue(value)  => {
                 ty = self.slot(value.input).try();
                 value.op.match({
-                    Neg => signed(ty),
+                    Neg => signed(ty) || float(ty),
                     Not => same(ty, Scalar.Bool),
                 }).ensure(self.fault(IrReason.Type)).try();
                 self.expect(value.out, ty)
@@ -243,10 +245,15 @@ Check = {
                 valid = op.match({
                     Equal        => word(input),
                     NotEqual     => word(input),
-                    Less         => integer(input) || same(input, Scalar.Ptr),
-                    LessEqual    => integer(input) || same(input, Scalar.Ptr),
-                    Greater      => integer(input) || same(input, Scalar.Ptr),
-                    GreaterEqual => integer(input) || same(input, Scalar.Ptr),
+                    Less         => integer(input) || float(input) || same(input, Scalar.Ptr),
+                    LessEqual    => integer(input) || float(input) || same(input, Scalar.Ptr),
+                    Greater      => integer(input) || float(input) || same(input, Scalar.Ptr),
+                    GreaterEqual => integer(input) || float(input) || same(input, Scalar.Ptr),
+                    Add          => integer(input) || float(input),
+                    Sub          => integer(input) || float(input),
+                    Mul          => integer(input) || float(input),
+                    Div          => integer(input) || float(input),
+                    Rem          => integer(input) || float(input),
                     WrapAdd      => integer(input) || pointer_step,
                     WrapSub      => integer(input) || pointer_step,
                     And          => integer(input) || same(input, Scalar.Bool),

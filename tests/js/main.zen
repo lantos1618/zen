@@ -86,17 +86,36 @@ Runner = {
     }
 
     // Launch under a 10 s alarm with the test's arguments, environment and
-    // stdin. The POSIX shell only performs the redirection and `env` words.
-    execute = (self: @Self, c: Case, script: str) Res<ProcOutput, AllocError> {
+    // stdin, staged as tests/run.py and tests/native stage a program: it runs
+    // in a scratch directory where its root is visible as `src`, invoked as
+    // `<run dir>/prog` (the name argv[0] tests pin; Node runs an
+    // extensionless script as CommonJS), with the symlink loop and the two
+    // over-long variables the harness supplies to the tests that need them.
+    execute = (self: @Self, c: Case, script: str, index: usize) Res<ProcOutput, AllocError> {
+        here = self.env.fs.cwd(self.a).match({ Ok(s) => s.view(), Err(_) => "." });
+        run_dir = self.a.String("{}/{}/run{}", here, self.work, index).try();
+        setup ::= self.a.String("rm -rf '{}' && mkdir -p '{}' && ln -sfn '{}/{}' '{}/src' && cp '{}' '{}/prog'", run_dir.view(), run_dir.view(), here, c.root, run_dir.view(), script, run_dir.view()).try();
+        c.base.ends_with("symlink_loop_is_failed/main").then(() {
+            setup.fmt(" && ln -sfn loop '{}/loop'", run_dir.view()).try();
+        });
+        prepare ::= self.a.Vec<str>();
+        ["/bin/sh", "-c", setup.view()].loop((w) { prepare.add(w).try(); });
+        self.run(prepare).try();
         command ::= self.a.String().try();
+        command.fmt("cd '{}' && ", run_dir.view()).try();
         command.add("exec perl -e 'alarm 10; exec @ARGV' ").try();
+        c.base.ends_with("env_var_resolves_a_name_of_any_length").then(() {
+            command.add("env ").try();
+            command.add(self.a.String("{}=hello ", repeat(self.a, 'V', 5039).try().view()).try().view()).try();
+            command.add(self.a.String("{}=hello ", repeat(self.a, 'B', 4096).try().view()).try().view()).try();
+        });
         self.sidecar(c, "env").when_ok((text) {
             command.add("env ").try();
             text.split('\n').loop((line) {
                 (!line.is_empty()).then(() { command.fmt("'{}' ", line).try(); });
             });
         });
-        command.fmt("node '{}'", script).try();
+        command.fmt("node '{}/prog'", run_dir.view()).try();
         self.sidecar(c, "args").when_ok((text) {
             text.split('\n').loop((line) {
                 (!line.is_empty()).then(() { command.fmt(" '{}'", line).try(); });
@@ -104,7 +123,7 @@ Runner = {
         });
         stdin = self.a.String("{}.stdin", c.base).try();
         self.env.fs.exists(stdin.view()).match({
-            true  => command.fmt(" < '{}'", stdin.view()),
+            true  => command.fmt(" < '{}/{}'", here, stdin.view()),
             false => command.add(" < /dev/null"),
         }).try();
         argv ::= self.a.Vec<str>();
@@ -142,13 +161,43 @@ Runner = {
         Ok(problem.view())
     }
 
-    case = (self: @Self, c: Case, index: usize) Res<Outcome, AllocError> {
+    // The harness rewrites this test's epoch to the current second, as
+    // tests/run.py does, in a staged copy.
+    staged = (self: @Self, c: Case, index: usize) Res<Case, AllocError> {
+        c.base.ends_with("clock_reads_are_two_authorities").match({
+            false => Ok(c),
+            true  => {
+                source = self.a.String("{}/{}", c.root, c.entry).try();
+                text = self.read(source.view()).value_or("");
+                dir = self.a.String("{}/stage{}", self.work, index).try();
+                mkdir ::= self.a.Vec<str>();
+                ["mkdir", "-p", dir.view()].loop((w) { mkdir.add(w).try(); });
+                self.run(mkdir).try();
+                line = "HARNESS_EPOCH* : u64 = 0";
+                patched ::= self.a.String().try();
+                text.find(line).match({
+                    None     => patched.add(text).try(),
+                    Ok(at)   => {
+                        patched.add(text.slice(0, at)).try();
+                        patched.fmt("HARNESS_EPOCH* : u64 = {}", self.env.clock.unix().seconds_of()).try();
+                        patched.add(text.slice(at + line.len, text.len)).try();
+                    },
+                });
+                target = self.a.String("{}/{}", dir.view(), c.entry).try();
+                self.env.fs.write(target.view(), patched.view()).ignore();
+                Ok(Case(root: dir.view(), entry: c.entry, base: c.base))
+            },
+        })
+    }
+
+    case = (self: @Self, original: Case, index: usize) Res<Outcome, AllocError> {
+        c = self.staged(original, index).try();
         script = self.a.String("{}/t{}.js", self.work, index).try();
         lane = lane_of(c.base);
         self.compile(c, script.view()).try().match({
             Ok(reason) => Ok(Outcome(base: c.base, lane: lane, verdict: Verdict.Unsupported, reason: first_line(reason))),
             None       => {
-                result = self.execute(c, script.view()).try();
+                result = self.execute(c, script.view(), index).try();
                 // A JavaScript exception escaping the generated program prints
                 // a stack; Zen traps never do. That is a backend bug.
                 broken = result.err.view().contains("\n    at ");
@@ -172,6 +221,13 @@ verdict_name = (v: Verdict) str {
 }
 
 is_pass = (v: Verdict) bool { v.match({ Pass => true, _ => false }) }
+
+
+repeat = (a: Alloc, byte: u8, n: usize) Res<String, AllocError> {
+    out ::= a.String().try();
+    Range(0, n).loop((k) { out.add(byte).try(); });
+    Ok(out)
+}
 
 first_line = (text: str) str {
     text.split_once('\n').match({ Ok(pair) => pair.before, None => text })

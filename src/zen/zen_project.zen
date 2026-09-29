@@ -299,9 +299,23 @@ Project = {
     build_script = (self: @Self, exe: ExeNode) Res<Res<String>, AllocError> {
         output              = self.output_path(exe).try();
         result: Res<String> = loop<String>((done) {
-            (exe.spec.deps.len > 0).then(() {
-                println("zen: js projects do not support native dependencies");
-                done.break();
+            // Zen source libraries compile into the script like any module;
+            // a library that links native code has nothing to link against.
+            native = exe.spec.deps.find((dep) {
+                self.planned.libs.find((lib) { lib.name.eq(dep.name) }).match({
+                    None      => false,
+                    Ok(found) => found.spec.libs.len > 0,
+                })
+            });
+            native.match({
+                None    => (),
+                Ok(dep) => {
+                    println(
+                        "zen: js projects cannot link native library `{}`",
+                        dep.name
+                    );
+                    done.break();
+                },
             });
             (!self.ensure_parent(output.view()).try()).then(() { done.break(); });
             (!self.compile_exe(exe, output.view()).try()).then(() { done.break(); });

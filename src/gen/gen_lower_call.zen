@@ -19,7 +19,7 @@ subst = sema.sema
 Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print = gen.gen_ir
 Instruction, Terminator, Convert, Address, Load, Store, CopyMem, StaticBytes = gen.gen_ir
 Write, Stream, TrapKind = gen.gen_ir
-word, integer, signed, same = gen.gen_ir
+word, integer, signed, same, float = gen.gen_ir
 LowerError, unsupported = gen.gen_lower
 Lowerer, Value, Place, Base, LocalKind, LambdaRef, LoopTarget, Frame, Callee = gen.gen_lower_core
 DeferEntry, Local = gen.gen_lower_core
@@ -148,16 +148,34 @@ dot_call_on = (lo :: Lowerer, id: ExprId, c: Call, a: Access, base: Expr, span: 
                 Ok(checked) => checked.declaration.match({ Ok(_) => true, None => false }),
                 None        => false,
             });
+            // A function declared inside a struct and called through the
+            // type (`View.create(a, 16)`): sema records the member's body and
+            // the type that provides it, and there is no receiver.
+            member: Res<CheckedCall> = selected.match({
+                Ok(checked) => checked.body.match({
+                    None    => None,
+                    Ok(_)   => checked.member_provider.match({ Ok(_) => Ok(checked), None => None }),
+                }),
+                None        => None,
+            });
             (type_base && !declared).match({
-                // `Type.Variant(payload)` or a construction through a type.
-                true  => {
-                    ty = lo.settled_type(id).try();
-                    s  = lo.shape(ty).try();
-                    s.form.match({
-                        Record(_) => lo.construct_named(ty, c, span),
-                        _         => lo.variant_call(ty, c, a.name.text, span),
-                    })
-                },
+                true  => member.match({
+                    Ok(checked) => {
+                        owner = lo.concrete(checked.member_provider.value_or(lo.unit_ty)).try();
+                        callee = lo.resolve(owner, a.name.text, checked.body, c.args.len, lo.call_inst(checked.inst).try(), None, span).try();
+                        sources = lo.bind_sources(callee.f, c, None, span).try();
+                        lo.invoke(id, callee, sources, c, span)
+                    },
+                    // `Type.Variant(payload)` or a construction through a type.
+                    None        => {
+                        ty = lo.settled_type(id).try();
+                        s  = lo.shape(ty).try();
+                        s.form.match({
+                            Record(_) => lo.construct_named(ty, c, span),
+                            _         => lo.variant_call(ty, c, a.name.text, span),
+                        })
+                    },
+                }),
                 false => {
                     checked = selected.ok_or(unsupported(span, "a call without successful semantic checking")).try();
                     receiver: Res<ExprId> = type_base.match({ true => None, false => Ok(a.base) });
@@ -1820,6 +1838,8 @@ print_value* = (lo :: Lowerer, value: Value, to: FmtTo, span: Span) Res<(), Lowe
             true  => lo.write_str(place, value),
             false => primitive.match({
                 true  => {
+                    // `add_f64` has no Zen body yet (C formats with %g).
+                    (!float(class)).ensure(unsupported(span, "formatting an f64 into text")).try();
                     sink = lo.sink_for_place(place, span).try();
                     helper = class.match({
                         Bool => "add_bool",

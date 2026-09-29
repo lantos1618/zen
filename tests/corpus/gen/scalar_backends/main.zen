@@ -167,16 +167,15 @@ main = (env: Env) Res<(), AllocError> {
         "c literal paths {}",
         run(env, a, Codegen.C, "literal_c.zen", expected.view(), 0).try()
     );
-    // JavaScript keeps the scalar surface; the native surface runs these
+    // JavaScript and assembly render the full lowering, so both run these
     // with the C backend's meaning (64-bit literal arithmetic, a bool main
     // exits 0).
-    w = env.mem.alloc();
-    println("js wide refused {}", refused(env, w, Codegen.Js, "wide.zen", Layout.Single).try());
-    println("js literal width refused {}", refused(env, w, Codegen.Js, "literal_width.zen", Layout.Single).try());
-    println("js bool entry refused {}", refused(env, w, Codegen.Js, "bool_entry.zen", Layout.Single).try());
-    println("asm wide {}", run(env, w, Codegen.Asm, "wide.zen", "12\n", 0).try());
-    println("asm literal width {}", run(env, w, Codegen.Asm, "literal_width.zen", "2147483648\n", 0).try());
-    println("asm bool entry {}", run(env, w, Codegen.Asm, "bool_entry.zen", "", 0).try());
+    [Codegen, 2](Codegen.Js, Codegen.Asm).loop((backend) {
+        w = env.mem.alloc();
+        println("{} wide {}", backend.stable_name(), run(env, w, backend, "wide.zen", "12\n", 0).try());
+        println("{} literal width {}", backend.stable_name(), run(env, w, backend, "literal_width.zen", "2147483648\n", 0).try());
+        println("{} bool entry {}", backend.stable_name(), run(env, w, backend, "bool_entry.zen", "", 0).try());
+    });
     [Codegen, 2](Codegen.Js, Codegen.Asm).loop((backend) {
         b = env.mem.alloc();
         println(

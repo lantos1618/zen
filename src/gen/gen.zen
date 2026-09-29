@@ -137,9 +137,11 @@ Generation* = {
             Err(error) => error.match({
                 OutOfMemory    => Err(AllocError.OutOfMemory),
                 Invalid(fault) => {
+                    name = program.functions.get(fault.function).match({ Ok(f) => f.name, None => "?" });
                     report.fmt(
-                        "compiler error: invalid IR at function {}, block {}: {}\n",
+                        "compiler error: invalid IR at function {} ({}), block {}: {}\n",
                         fault.function,
+                        name,
                         fault.block,
                         fault.reason.message()
                     ).try();

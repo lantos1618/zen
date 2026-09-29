@@ -765,6 +765,8 @@ unparen = (id: ExprId, lo :: Native) ExprId {
 // `Record(name: value, ..)` with written defaults for omitted fields.
 construct_named* = (lo :: Native, ty: TyId, c: Call, span: Span) Res<Value, LowerError> {
     out = lo.temp(ty).try();
+    // A record of no bytes is fully written by writing nothing.
+    lo.is_unit(ty).then(() { lo.add(Instruction.Constant(Const(out: out.slot, value: 0))).try(); });
     s = lo.shape(ty).try();
     fields = s.form.match({ Record(f) => Ok(f), _ => None })
         .ok_or(unsupported(span, "a construction of a non-record type")).try();

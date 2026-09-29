@@ -6,8 +6,10 @@ that compiler's `build .` command. Zen checks the project graph, emits the
 compiler's C, invokes the native toolchain, and publishes `./zen`.
 `make bootstrap` uses the same path. Neither command needs Python or an
 installed Zen compiler. Once bootstrapped, `./zen build .` rebuilds itself.
-Make supplies `ZEN_STD` (defaulting to the checkout's `src`) so the seed
-executable can locate the standard library from its bootstrap directory.
+Make supplies `ZEN_STD` as the checkout's own `src`, so the seed executable
+locates the standard library from its bootstrap directory and builds against
+the library versioned with the compiler. A `ZEN_STD` exported by the shell does
+not reach the build; `make build ZEN_STD=<dir>` selects another tree.
 
 Project builds currently regenerate and compile each selected target in full.
 The Python incremental driver and its cache have been retired. `J` controls

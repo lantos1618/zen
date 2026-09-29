@@ -1,0 +1,50 @@
+// A closure parameter passed on to another function-typed parameter binds
+// the same closure there: the body is still inlined where it is finally
+// called, and its free names still mean the bindings of the function that
+// wrote the lambda, however many callees it was forwarded through.
+//
+// `twice` forwards one level and `four` two. `count` is a local of `main`,
+// stored into by a lambda forwarded through `ticks` into `tick`, so it
+// reads 5 only if every call wrote the caller's own binding. `Box.map`
+// receives the closure as a method parameter. `shadowed` hands its `f` to a
+// callee whose earlier parameter is also named `f`: the argument still means
+// the caller's closure, not the callee's number. A backend that treats the
+// forwarded name as a value refuses it as "a lambda read as a value"; one
+// that rebinds its free names in the callee's frame prints other numbers.
+
+Box = {
+    n: i64,
+
+    map = (self: @Self, f: (v: i64) i64) i64 { f(self.n) }
+}
+
+apply = (f: (v: i64) i64, x: i64) i64 { f(x) }
+
+twice = (f: (v: i64) i64, x: i64) i64 { apply(f, apply((f), x)) }
+
+four = (g: (v: i64) i64, x: i64) i64 { twice(g, twice(g, x)) }
+
+tick = (f: () (), n: usize) usize {
+    Range(0, n).loop((h, i) { f(); });
+    n
+}
+
+ticks = (f: () (), n: usize) usize { tick(f, n) + tick(f, 1) }
+
+mapped = (f: (v: i64) i64, b: Box) i64 { b.map(f) }
+
+feed = (f: i64, g: (v: i64) i64) i64 { g(f) }
+
+shadowed = (f: (v: i64) i64) i64 { feed(1, f) }
+
+main = (env: Env) Res<i32, AllocError> {
+    step = 3;
+    println("twice {}", twice((v: i64) i64 { v + step }, 5));
+    println("four {}", four((v: i64) i64 { v * 2 }, 1));
+    count ::= 0;
+    println("ticks {}", ticks(() { count = count + 1; }, 4));
+    println("count {}", count);
+    println("map {}", mapped((v: i64) i64 { v + step }, Box(n: 100)));
+    println("shadowed {}", shadowed((v: i64) i64 { v + 10 }));
+    Ok(0);
+}

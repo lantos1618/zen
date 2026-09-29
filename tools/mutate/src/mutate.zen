@@ -1,7 +1,8 @@
 // zen-mutate: mutation testing for Zen sources.
 //
 //   zen-mutate --root DIR --file PATH --test CMD [--build CMD]
-//              [--work DIR] [--max N] [--timeout SECONDS] [--list] [--keep]
+//              [--work DIR] [--max N] [--only OPERATOR] [--timeout SECONDS]
+//              [--list] [--keep]
 //
 // Every mutant of DIR/PATH is applied to a fresh copy of DIR made under the
 // work directory (never to DIR itself), `--build` and then `--test` run
@@ -28,12 +29,13 @@ Cli = {
     build ::     str   = "",
     work ::      str   = "build/mutate",
     max ::       usize = 200,
+    only ::      str   = "",
     timeout ::   usize = 60,
     list ::      bool  = false,
     keep ::      bool  = false,
 }
 
-USAGE: str = "usage: zen-mutate --root DIR --file PATH --test CMD [--build CMD] [--work DIR] [--max N] [--timeout SECONDS] [--list] [--keep]"
+USAGE: str = "usage: zen-mutate --root DIR --file PATH --test CMD [--build CMD] [--work DIR] [--max N] [--only OPERATOR] [--timeout SECONDS] [--list] [--keep]"
 
 Tally = {
     survived :: usize,
@@ -67,12 +69,24 @@ describe = (m: Mutant, text: str, out :: String) Res<(), AllocError> {
     )
 }
 
-// Which of `total` mutants run: all of them, or `max` evenly spaced.
-chosen = (a: Alloc, total: usize, max: usize) Res<Vec<usize>, AllocError> {
+// Which mutants run: those of the `--only` operator (every operator when
+// it is empty), all of them or `max` evenly spaced. Numbers stay the
+// file's, so a filtered run names the same mutants as a full one.
+chosen = (a: Alloc, mutants: Vec<Mutant>, only: str, max: usize)
+         Res<Vec<usize>, AllocError> {
+    eligible ::= a.Vec<usize>();
+    mutants.loop((h, i, m) {
+        (only.is_empty() || operator_name(m.op).eq(only)).then(() {
+            eligible.add(i).try();
+        });
+    });
+    total = eligible.len;
     out ::= a.Vec<usize>();
     (total <= max).match({
-        true  => Range(0, total).loop((h, i) { out.add(i).try(); }),
-        false => Range(0, max).loop((h, i) { out.add(i * total / max).try(); }),
+        true  => eligible.loop((h, i) { out.add(i).try(); }),
+        false => Range(0, max).loop((h, k) {
+            out.add(eligible.get(k * total / max).value_or(0)).try();
+        }),
     });
     Ok(out)
 }
@@ -128,7 +142,7 @@ mutate = (env: Env, a: Alloc, cli: Cli) Res<i32, AllocError> {
             Ok(m)  => m,
             Err(_) => { println("zen-mutate: {} does not parse", path.view()); h.break(2); a.Vec<Mutant>() },
         });
-        picked  = chosen(a, mutants.len, cli.max).try();
+        picked  = chosen(a, mutants, cli.only, cli.max).try();
         println(
             "zen-mutate: {} mutants of {}, running {}",
             mutants.len,

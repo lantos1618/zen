@@ -38,7 +38,7 @@ J       ?= $(shell nproc 2>/dev/null || echo 4)
 CACHE   ?= $(shell command -v ccache 2>/dev/null)
 ZCC      = $(CACHE) $(CC)
 
-.PHONY: reviewcheck projectcheck lspcheck all check build dev-build dev-check dev-run bootstrap buildcheck runnercheck editorcheck seed test verify differential runtimecheck warnings lint parse cap dupcomments faults lextile determinism fixpoint grammar fmt asan ubsan leak profile clean clean-obj clean-reports clean-all help
+.PHONY: archcheck reviewcheck projectcheck lspcheck all check build dev-build dev-check dev-run bootstrap buildcheck runnercheck editorcheck seed test verify differential runtimecheck warnings lint parse cap dupcomments faults lextile determinism fixpoint grammar fmt asan ubsan leak profile clean clean-obj clean-reports clean-all help
 
 # These gates share ./zen, build/, and grammar/zen.so. Keep their dependency
 # graphs serial even when an operator invokes `make -j verify`.
@@ -151,7 +151,7 @@ lspcheck: build
 ## are built once per invocation, then formatting and determinism inspect the
 ## same compiler that ran the test suite.
 verify: override TEST_CACHE_ARGS := --result-cache "$(TEST_RESULTS)" --refresh-result-cache
-verify: warnings nativecheck test fmt determinism fixpoint differential runtimecheck ownershipcheck actorcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck
+verify: warnings nativecheck test archcheck fmt determinism fixpoint differential runtimecheck ownershipcheck actorcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck
 
 .PHONY: nativecheck
 nativecheck: build
@@ -258,6 +258,24 @@ cap: build
 	@$(call gate,line_cap)
 	@$(call nonempty,cap,$(ROOT) -name '*.zen' -print0 | LC_ALL=C sort -z); \
 	  build/gates/line_cap "$${files[@]}"
+
+## archcheck: backends consume gen_ir plus a Target, never the AST or sema.
+## docs/IR_ARCHITECTURE.md §3 is the rule; tests/gates/arch_boundary.zen says
+## how roles follow from paths and why taint is transitive inside src/gen.
+## Today's AST-driven gen_c is grandfathered edge by edge in
+## tests/gates/arch_boundary.allow, a ratchet: the list must match the tree
+## exactly and hold ARCH_GEN_C_CEILING edges, so it can shrink and cannot grow.
+## The fixture cases run first, so a gate that stopped detecting violations
+## fails here before it can pass the real tree.
+##
+## DO NOT RAISE THIS NUMBER. Lower it when an import migrates to gen_ir.
+ARCH_GEN_C_CEILING := 306
+archcheck: build
+	@mkdir -p build/gates
+	@$(call gate,arch_boundary)
+	@tests/gates/arch_fixtures/run.sh build/gates/arch_boundary
+	@$(call nonempty,archcheck,$(ROOT)/gen -name '*.zen' -print0 | LC_ALL=C sort -z); \
+	  build/gates/arch_boundary $(ROOT) tests/gates/arch_boundary.allow $(ARCH_GEN_C_CEILING) "$${files[@]}"
 
 ## dupcomments: no comment block may sit immediately above a copy of itself.
 ## A merge or a bad paste leaves that behind and it survives review, because

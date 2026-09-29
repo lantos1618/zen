@@ -1,0 +1,4 @@
+// A backend that reads the checker and the AST proper.
+Checker = sema.sema
+Ast, Span = std.ast
+Program = gen.gen_ir

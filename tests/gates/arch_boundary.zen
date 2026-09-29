@@ -1,0 +1,619 @@
+// tests/gates/arch_boundary.zen
+// BACKENDS READ THE IR, NEVER THE FRONTEND.
+//
+// docs/IR_ARCHITECTURE.md §3 is the rule this gate enforces: a backend (C, JS,
+// asm, and every later text emitter or JIT) consumes a verified `gen_ir`
+// program plus a Target, and nothing else. It does not import the AST, the
+// lexer, the parser, the semantic checker, lowering, or the driver. The reason
+// is structural, not taste: a rule a backend re-derives from the AST is a rule
+// every backend re-derives, and the copies drift. One lowering, one verifier,
+// N renderers.
+//
+// Usage:  arch_boundary ROOT ALLOWLIST CEILING FILE...
+//
+//     ROOT       the source root the FILEs sit under (`src`); a file's path
+//                below it computes its module name (`gen/gen_js.zen` is
+//                `gen.gen_js`, `gen/gen_c/gen_c.zen` is `gen.gen_c`)
+//     ALLOWLIST  the gen_c ratchet, one `path module` edge per line
+//     CEILING    the exact number of edges the allowlist must hold
+//     FILE...    every .zen file under ROOT/gen (the gate computes taint over
+//                the whole set, so it must see the helpers as well)
+//
+//     0   every backend is clean and the allowlist is exact
+//     1   a violation; each is named with file:line and what it reached
+//     2   the gate could not run (no files, unreadable or unparseable input)
+//
+// ROLES COME FROM THE PATH, so a new file is classified on the day it lands:
+//
+//   backend        top-level gen/ files named gen_js*, gen_ts*, gen_asm*,
+//                  gen_c_ir*, gen_sys*, gen_ir*, gen_verify*, gen_rust*,
+//                  gen_nasm*, gen_fasm*, gen_llvm*, gen_jit*, gen_wasm*;
+//                  and EVERY file in a gen/ subdirectory other than gen_c/.
+//                  The IR and its verifier are held to the backend rule: an
+//                  IR that imports the AST would smuggle it into every
+//                  renderer.
+//   grandfathered  gen/gen_c/*. Today's C backend is AST-driven. Each of its
+//                  direct frontend imports is listed in the allowlist; a new
+//                  one fails, and a removed one must leave the list.
+//   shared         everything else under gen/ (the driver, lowering, naming,
+//                  diagnostics). Unchecked, but it participates in taint.
+//
+// FRONTEND means: `sema.*`, `std.lex*`, `std.parse*`, `gen.gen_lower*`, the
+// tool roots `zen.*`, `fmt.*`, `lsp.*`, and `std.ast*` — except an import that
+// binds only `Span`. A source position is IR data (every trap and debug line
+// carries one); the rest of the AST is not. When Span moves to a neutral
+// module (IR_ARCHITECTURE.md, open question) this exception goes.
+//
+// TAINT IS TRANSITIVE WITHIN gen/. A backend may not import a gen/ module that
+// itself reaches the frontend, or a helper would launder the edge. Modules
+// outside gen/ are judged by name only: std below the AST is trusted not to
+// import upward, which `std`'s own layering (ARCHITECTURE.md) owns.
+//
+// THE RATCHET. The allowlist may only shrink:
+//   - an entry outside gen/gen_c/ is refused (it cannot exempt a new backend)
+//   - an entry that no longer matches a live import is refused (stale), so a
+//     migrated import must also leave the list
+//   - the entry count must equal CEILING, which `make archcheck` passes from
+//     the Makefile. Shrinking the list is two edits (the line, the number);
+//     growing it means raising a number whose comment says not to, in a diff
+//     a reviewer sees.
+
+Alloc, AllocError = std.mem
+str, String = std.text
+parse_usize = std.text.text_num
+Vec = std.collections
+Range = std.core
+FsError = std.env
+
+scan, Source = std.lex.lex
+Parser = std.parse.parser
+ImportName, Module = std.ast.ast_node
+Ident = std.ast.ast_span
+
+GRANDFATHERED: str = "gen/gen_c/"
+GEN_DIR: str = "gen/"
+
+// Leading argv positions before the file list.
+FIRST_FILE: usize = 4
+
+Role = Backend | Grandfathered | Shared
+
+// One import declaration. `span_only` is true when every name it binds is
+// `Span`, the one AST type the IR is allowed to carry.
+Edge = {
+    module*: str,
+    line*: usize,
+    span_only*: bool,
+}
+
+Unit = {
+    path*: str,
+    rel*: str,
+    module*: str,
+    role*: Role,
+    edges*: Vec<Edge>,
+}
+
+// A `path module` line of the allowlist.
+Allowed = {
+    rel*: str,
+    module*: str,
+    line*: usize,
+}
+
+// Why a gen/ module is tainted: the frontend module it reaches, or "" when it
+// reaches none.
+Taint = {
+    unit*: str,
+    reaches*: str,
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+    (env.argv.len <= FIRST_FILE).match({
+        true  => no_files(),
+        false => run(env, alloc),
+    })
+}
+
+no_files = () Res<i32, AllocError> {
+    println(
+        "arch_boundary: usage: arch_boundary ROOT ALLOWLIST CEILING FILE..."
+    );
+    println(
+        "    no files given — this gate is checking nothing. `make archcheck`"
+    );
+    println(
+        "    feeds it `find src/gen -name '*.zen'`; an empty find must not read as green."
+    );
+    Ok(2);
+}
+
+run = (env: Env, alloc: Alloc) Res<i32, AllocError> {
+    root    = arg(env, 1);
+    ceiling = arg(env, 3).parse_usize();
+    units  ::= alloc.Vec<Unit>();
+    broken ::= 0;
+    Range(FIRST_FILE, env.argv.len).loop((h, i) {
+        path = arg(env, i);
+        load(env, alloc, root, path).try().match({
+            Ok(u) => units.add(u).try(),
+            None  => { broken = broken + 1; },
+        });
+    });
+    allowed = allowlist(env, alloc, arg(env, 2)).try();
+    backends ::= 0;
+    units.loop((h, u) {
+        u.role.match({ Backend => { backends = backends + 1; }, _ => () });
+    });
+    (broken > 0 || allowed.ok == false).match({
+        true  => Ok(2),
+        false => ceiling.match({
+            None    => {
+                println(
+                    "arch_boundary: CEILING `{}` is not a count",
+                    arg(env, 3)
+                );
+                Ok(2);
+            },
+            Ok(max) => (backends == 0).match({
+                true  => {
+                    println(
+                        "arch_boundary: no backend files among {} inputs — this gate is checking nothing",
+                        units.len
+                    );
+                    Ok(2);
+                },
+                false => judge(alloc, units, allowed.entries, max, backends),
+            }),
+        }),
+    })
+}
+
+judge = (
+    a        : Alloc,
+    units    : Vec<Unit>,
+    allowed  : Vec<Allowed>,
+    ceiling  : usize,
+    backends : usize
+) Res<i32, AllocError> {
+    taint = tainted(a, units).try();
+    bad ::= 0;
+    units.loop((h, u) {
+        u.role.match({
+            Backend       => { bad = bad + backend_faults(u, units, taint); },
+            Grandfathered => { bad = bad + unlisted(u, allowed); },
+            Shared        => (),
+        });
+    });
+    bad = bad + stale(units, allowed) + ratchet(allowed.len, ceiling);
+    (bad > 0).match({
+        true  => {
+            println(
+                "arch_boundary: {} violation(s). Backends consume gen_ir plus a Target only; see docs/IR_ARCHITECTURE.md §3.",
+                bad
+            );
+            Ok(1);
+        },
+        false => {
+            println(
+                "arch_boundary: {} backend file(s) clean; gen_c ratchet at {} frontend edge(s)",
+                backends,
+                allowed.len
+            );
+            Ok(0);
+        },
+    })
+}
+
+// ---- reading -------------------------------------------------------------
+
+// A file's imports, off the real parse tree. None (after printing why) when it
+// cannot be read, lexed or parsed: a file the gate did not inspect is not a
+// clean file.
+load = (env: Env, a: Alloc, root: str, path: str) Res<Res<Unit>, AllocError> {
+    env.fs.read(a, path).match({
+        Err(e)   => {
+            println("arch_boundary: {}: {}", path, fs_word(e));
+            Ok(None);
+        },
+        Ok(text) => parsed(a, below(root, path), path, text.view()),
+    })
+}
+
+parsed = (a: Alloc, rel: str, path: str, text: str)
+         Res<Res<Unit>, AllocError> {
+    lexed = scan(a, Source(file: path, text: text)).try();
+    lexed.is_clean().match({
+        false => {
+            println("arch_boundary: {}: does not lex", path);
+            Ok(None);
+        },
+        true  => {
+            p ::= a.Parser(lexed);
+            m = p.module(path).try();
+            (p.diags.len == 0).match({
+                false => {
+                    println("arch_boundary: {}: does not parse", path);
+                    Ok(None);
+                },
+                true  => Ok(Ok(Unit(
+                    path: path,
+                    rel: rel,
+                    module: module_of(a, rel).try(),
+                    role: role_of(rel),
+                    edges: imports(a, m).try(),
+                ))),
+            })
+        },
+    })
+}
+
+// Every import declaration of the module, in source order.
+imports = (a: Alloc, m: Module) Res<Vec<Edge>, AllocError> {
+    edges ::= a.Vec<Edge>();
+    m.decls.loop((h, d) {
+        d.kind.match({
+            Import(im) => edges.add(Edge(
+                module: joined(a, im.module.segments).try(),
+                line: d.span.start.line,
+                span_only: only_span(im.names),
+            )).try(),
+            _          => (),
+        });
+    });
+    Ok(edges);
+}
+
+only_span = (names: Vec<ImportName>) bool {
+    all ::= names.len > 0;
+    names.loop((h, n) {
+        n.name.text.eq("Span").match({ true => (), false => { all = false; } });
+    });
+    all
+}
+
+joined = (a: Alloc, segments: Vec<Ident>) Res<str, AllocError> {
+    out ::= a.String().try();
+    segments.loop((h, i, s) {
+        (i > 0).then(() { out.add('.').try(); });
+        out.add(s.text).try();
+    });
+    Ok(out.view());
+}
+
+// `gen/gen_c/gen_c_state.zen` -> `gen.gen_c.gen_c_state`, and a folder's root
+// file `gen/gen_c/gen_c.zen` -> `gen.gen_c` (DESIGN.md: module paths are
+// `<folder>/<folder>.zen`).
+module_of = (a: Alloc, rel: str) Res<str, AllocError> {
+    stem = rel.ends_with(".zen").match({
+        true  => rel.slice(0, rel.len - 4),
+        false => rel,
+    });
+    parts ::= a.Vec<str>();
+    stem.split('/').loop((h, piece) { parts.add(piece).try(); });
+    keep ::= parts.len;
+    (parts.len >= 2 && piece_at(parts, parts.len - 1).eq(piece_at(parts, parts.len - 2)))
+        .then(() { keep = parts.len - 1; });
+    out ::= a.String().try();
+    Range(0, keep).loop((h, i) {
+        (i > 0).then(() { out.add('.').try(); });
+        out.add(piece_at(parts, i)).try();
+    });
+    Ok(out.view());
+}
+
+piece_at = (parts: Vec<str>, i: usize) str {
+    parts.get(i).match({ Ok(s) => s, None => "" })
+}
+
+below = (root: str, path: str) str {
+    (path.starts_with(root) && path.len > root.len + 1
+        && path.index(root.len) == '/').match({
+        true  => path.slice(root.len + 1, path.len),
+        false => path,
+    })
+}
+
+role_of = (rel: str) Role {
+    rel.starts_with(GRANDFATHERED).match({
+        true  => Role.Grandfathered,
+        false => rel.starts_with(GEN_DIR).match({
+            false => Role.Shared,
+            true  => {
+                inside = rel.slice(GEN_DIR.len, rel.len);
+                (inside.contains('/') || backend_name(inside)).match({
+                    true  => Role.Backend,
+                    false => Role.Shared,
+                })
+            },
+        }),
+    })
+}
+
+// Top-level gen/ files that render IR, or ARE the IR. A new target's file
+// name must start with one of these (or live in its own gen/ subdirectory).
+backend_name = (file: str) bool {
+    file.starts_with("gen_js") || file.starts_with("gen_ts")
+        || file.starts_with("gen_asm") || file.starts_with("gen_c_ir")
+        || file.starts_with("gen_sys") || file.starts_with("gen_ir")
+        || file.starts_with("gen_verify") || file.starts_with("gen_rust")
+        || file.starts_with("gen_nasm") || file.starts_with("gen_fasm")
+        || file.starts_with("gen_llvm") || file.starts_with("gen_jit")
+        || file.starts_with("gen_wasm")
+}
+
+Allowlist = {
+    ok*: bool,
+    entries*: Vec<Allowed>,
+}
+
+// `#` starts a comment line; blank lines are ignored; every other line is
+// `path module` with a single space.
+allowlist = (env: Env, a: Alloc, path: str) Res<Allowlist, AllocError> {
+    entries ::= a.Vec<Allowed>();
+    env.fs.read(a, path).match({
+        Err(e)   => {
+            println("arch_boundary: allowlist {}: {}", path, fs_word(e));
+            Ok(Allowlist(ok: false, entries: entries));
+        },
+        Ok(text) => {
+            ok ::= true;
+            text.view().split('\n').loop((h, n, raw) {
+                row = strip(raw);
+                (row.is_empty() || row.index(0) == '#').match({
+                    true  => (),
+                    false => row.split_once(' ').match({
+                        Ok(pair) => entries.add(Allowed(
+                            rel: pair.before,
+                            module: strip(pair.after),
+                            line: n + 1,
+                        )).try(),
+                        None     => {
+                            ok = false;
+                            println(
+                                "{}:{}: expected `path module`, got `{}`",
+                                path,
+                                n + 1,
+                                row
+                            );
+                        },
+                    }),
+                });
+            });
+            Ok(Allowlist(ok: ok, entries: entries));
+        },
+    })
+}
+
+strip = (s: str) str {
+    from ::= 0;
+    to   ::= s.len;
+    Range(0, s.len).loop((h, i) {
+        (from == i && is_space(s.index(i))).then(() { from = i + 1; });
+    });
+    Range(0, s.len).loop((h, i) {
+        back = s.len - i;
+        (to == back && back > from && is_space(s.index(back - 1))).then(() {
+            to = back - 1;
+        });
+    });
+    s.slice(from, to)
+}
+
+is_space = (b: u8) bool { b.is_in([' ', '\t', '\r']) }
+
+// ---- the rule ------------------------------------------------------------
+
+frontend = (e: Edge) bool {
+    m = e.module;
+    root_is(m, "sema") || root_is(m, "zen") || root_is(m, "fmt")
+        || root_is(m, "lsp") || root_is(m, "std.lex") || root_is(m, "std.parse")
+        || m.starts_with("gen.gen_lower")
+        || (root_is(m, "std.ast") && e.span_only == false)
+}
+
+// `m` is `root` or a module below it.
+root_is = (m: str, root: str) bool {
+    m.eq(root) || (m.starts_with(root) && m.len > root.len && m.index(root.len) == '.')
+}
+
+// Fixpoint over the gen/ modules: a module is tainted if it imports the
+// frontend or imports a tainted module. At most one pass per module.
+tainted = (a: Alloc, units: Vec<Unit>) Res<Vec<Taint>, AllocError> {
+    out ::= a.Vec<Taint>();
+    units.loop((h, u) {
+        first ::= "";
+        u.edges.loop((h2, e) {
+            (first.is_empty() && frontend(e)).then(() { first = e.module; });
+        });
+        out.add(Taint(unit: u.module, reaches: first)).try();
+    });
+    changed ::= true;
+    Range(0, units.len + 1).loop((h, pass) {
+        changed.match({
+            false => h.break(),
+            true  => {
+                changed = false;
+                units.loop((h2, i, u) {
+                    reach_of(out, i).is_empty().then(() {
+                        via = through(u, out);
+                        via.is_empty().match({
+                            true  => (),
+                            false => {
+                                out.set(i, Taint(unit: u.module, reaches: via))
+                                    .match({ _ => () });
+                                changed = true;
+                            },
+                        });
+                    });
+                });
+            },
+        });
+    });
+    Ok(out);
+}
+
+// The frontend module a unit reaches through a tainted gen/ import, or "".
+through = (u: Unit, taint: Vec<Taint>) str {
+    found ::= "";
+    u.edges.loop((h, e) {
+        found.is_empty().then(() { found = reached(taint, e.module); });
+    });
+    found
+}
+
+reached = (taint: Vec<Taint>, module: str) str {
+    found ::= "";
+    taint.loop((h, t) {
+        (found.is_empty() && t.unit.eq(module)).then(() { found = t.reaches; });
+    });
+    found
+}
+
+backend_faults = (u: Unit, units: Vec<Unit>, taint: Vec<Taint>) usize {
+    n ::= 0;
+    u.edges.loop((h, e) {
+        frontend(e).match({
+            true  => {
+                n = n + 1;
+                println(
+                    "{}:{}: backend imports {}, a frontend module. Carry the fact it needs in gen_ir instead.",
+                    u.path,
+                    e.line,
+                    e.module
+                );
+            },
+            false => {
+                via = reached(taint, e.module);
+                via.is_empty().match({
+                    true  => (),
+                    false => {
+                        n = n + 1;
+                        println(
+                            "{}:{}: backend imports {}, which reaches {}. A helper does not launder a frontend edge.",
+                            u.path,
+                            e.line,
+                            e.module,
+                            via
+                        );
+                    },
+                });
+            },
+        });
+    });
+    n
+}
+
+// A gen_c frontend import that the allowlist does not name.
+unlisted = (u: Unit, allowed: Vec<Allowed>) usize {
+    n ::= 0;
+    u.edges.loop((h, e) {
+        (frontend(e) && listed(allowed, u.rel, e.module) == false).then(() {
+            n = n + 1;
+            println(
+                "{}:{}: gen_c gained a frontend import ({}). The gen_c allowlist only shrinks: lower the construct to gen_ir, or take the fact from an existing import.",
+                u.path,
+                e.line,
+                e.module
+            );
+        });
+    });
+    n
+}
+
+listed = (allowed: Vec<Allowed>, rel: str, module: str) bool {
+    hit ::= false;
+    allowed.loop((h, x) {
+        (x.rel.eq(rel) && x.module.eq(module)).then(() { hit = true; });
+    });
+    hit
+}
+
+// Entries outside gen_c, and entries whose import is gone.
+stale = (units: Vec<Unit>, allowed: Vec<Allowed>) usize {
+    n ::= 0;
+    allowed.loop((h, x) {
+        x.rel.starts_with(GRANDFATHERED).match({
+            false => {
+                n = n + 1;
+                println(
+                    "allowlist:{}: {} is not in gen/gen_c/. Only the grandfathered C backend may be listed; no new backend starts in debt.",
+                    x.line,
+                    x.rel
+                );
+            },
+            true  => live(units, x).match({
+                true  => (),
+                false => {
+                    n = n + 1;
+                    println(
+                        "allowlist:{}: `{} {}` no longer matches an import. The ratchet clicked: delete the line and lower the ceiling.",
+                        x.line,
+                        x.rel,
+                        x.module
+                    );
+                },
+            }),
+        });
+    });
+    n
+}
+
+live = (units: Vec<Unit>, x: Allowed) bool {
+    hit ::= false;
+    units.loop((h, u) {
+        u.rel.eq(x.rel).then(() {
+            u.edges.loop((h2, e) {
+                (frontend(e) && e.module.eq(x.module)).then(() { hit = true; });
+            });
+        });
+    });
+    hit
+}
+
+ratchet = (count: usize, ceiling: usize) usize {
+    (count == ceiling).match({
+        true  => 0,
+        false => (count < ceiling).match({
+            true  => {
+                println(
+                    "arch_boundary: the allowlist holds {} edge(s) and the ceiling is {}. It shrank: lower ARCH_GEN_C_CEILING in the Makefile to {}.",
+                    count,
+                    ceiling,
+                    count
+                );
+                1
+            },
+            false => {
+                println(
+                    "arch_boundary: the allowlist holds {} edge(s), over the ceiling of {}. It only shrinks; move the new import's fact into gen_ir.",
+                    count,
+                    ceiling
+                );
+                1
+            },
+        }),
+    })
+}
+
+// ---- small accessors -----------------------------------------------------
+
+reach_of = (taint: Vec<Taint>, i: usize) str {
+    taint.get(i).match({ Ok(t) => t.reaches, None => "" })
+}
+
+arg = (env: Env, i: usize) str {
+    env.argv.get(i).match({ Ok(s) => s, None => "" })
+}
+
+fs_word = (e: FsError) str {
+    e.match({
+        NotFound    => "not found",
+        Denied      => "denied",
+        IsDir       => "is a directory",
+        Exists      => "already locked",
+        Failed      => "could not be read",
+        OutOfMemory => "out of memory",
+    })
+}

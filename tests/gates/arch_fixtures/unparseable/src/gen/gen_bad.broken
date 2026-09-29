@@ -1,0 +1,2 @@
+// Deliberately broken: an import with no module path.
+Program =

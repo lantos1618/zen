@@ -11,6 +11,7 @@ the language, implementation stages, source style, and verification rules.
   builder-language terms, with a red-capable exit for every build card.
 - `GEN_C_SHAPE.md` defines the current compiler-structure migration.
 - `BACKENDS.md` describes supported generator selection and the generation/driver boundary.
+- `IR_ARCHITECTURE.md` is the proposed one-IR backend architecture, its migration plan, and the `make archcheck` boundary gate.
 - `SOURCE_OWNERSHIP_AUDIT.md` records the ownership decisions behind that
   migration.
 

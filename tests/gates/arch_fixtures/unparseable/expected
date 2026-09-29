@@ -1,0 +1,2 @@
+arch_boundary: tests/gates/arch_fixtures/unparseable/src/gen/gen_bad.broken: does not parse
+exit 2

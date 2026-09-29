@@ -1,0 +1,2 @@
+// Lowering only; no backend in the set.
+Checker = sema.sema

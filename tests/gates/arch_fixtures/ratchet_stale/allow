@@ -1,0 +1,2 @@
+gen/gen_c/gen_c_expr.zen sema.sema_check
+gen/gen_c/gen_c_expr.zen sema.sema_inst

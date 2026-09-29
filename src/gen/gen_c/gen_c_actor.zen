@@ -670,7 +670,8 @@ ActorSend = {
     lower = (self: @Self, be :: CBackend, out :: String)
             Res<(), AllocError> {
         be.need_actor();
-        ret = be.check.type_of(self.id, self.ctx).try();
+        // In a generic body the call's sema type still names type variables.
+        ret = be.sub(be.check.type_of(self.id, self.ctx).try()).try();
         be.request_type(ret).try();
         inst = be.recv_inst(self.actor_ty).try();
         sig ::= be.alloc.Vec<TyId>();
@@ -1014,7 +1015,9 @@ lower_actor_spawn* = (
     ctx : Ctx,
     out :: String
 ) Res<(), AllocError> {
-    ret = be.check.type_of(id, ctx).try();
+    // Substitute the instantiation being lowered: a spawn inside a generic
+    // function must record the concrete actor state type.
+    ret = be.sub(be.check.type_of(id, ctx).try()).try();
     be.payload_type(ret, "Ok").match({
         None       => be.unsupported(id, "Env.spawn without a Ref result", out),
         Ok(ref_ty) => be.ref_of_actor(ref_ty).try().match({

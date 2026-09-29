@@ -1,0 +1,35 @@
+// A generic function spawning a generic actor must record the concrete
+// actor state type of the instantiation being lowered, including for the
+// stopped lifecycle hook and a self-addressed behavior.
+Weight = { value = (self :: @Self) u64 }
+Light = { n: u64 }
+Light.impl(Weight, { value = (self :: @Self) u64 { self.n } })
+Heavy = { n: u64, extra: u64 }
+Heavy.impl(Weight, { value = (self :: @Self) u64 { self.n + self.extra } })
+Holder<W: Weight> = {
+    item: W,
+    turns :: u64 = 0,
+    total = (self :: @Self) u64 { self.item.value() * self.turns }
+}
+Holder.impl(Actor, {
+    turn = (self :: @Self, ctx: Context, me: Ref<Holder<W>>, left: u64) {
+        self.turns = self.turns + 1;
+        (left > 1).then(() { me.turn(me, left - 1).ignore(); });
+    }
+    stopped = (self :: @Self, ctx: Context) {
+        total: u64 = self.total();
+        println("stopped after {} turns total {}", self.turns, total);
+    }
+})
+spin = <W: Weight>(env: Env, item: W, turns: u64) Res<(), ActorStartError | ActorError> {
+    actor = env.spawn(Holder<W>(item: item)).try();
+    actor.turn(actor, turns).try();
+    env.threads.sleep(50);
+    actor.stop(); actor.join();
+    Ok(())
+}
+main = (env: Env) Res<i32, ActorStartError | ActorError> {
+    spin(env, Light(n: 2), 3).try();
+    spin(env, Heavy(n: 2, extra: 5), 4).try();
+    Ok(0)
+}

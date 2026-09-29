@@ -1906,3 +1906,41 @@ calls cross translation units, so there the request is dropped rather than
 turned into a C error. Inlining changes no semantics: evaluation order,
 traps and ownership are those of an ordinary call. A recursive `inline`
 function is a C compiler error, which the backend does not yet diagnose.
+
+## Constant-time arithmetic
+
+`std.ct` is the library for code whose timing must not depend on secrets.
+A comparison returns a `Choice`, a 0/1 value that is deliberately not a
+`bool`: it cannot be matched, short-circuited or passed to `.then`, only
+combined (`and`, `or`, `xor`, `not`), spent in a select, or made public with
+`declassify_bool()`. The operations are `ct_is_zero`, `ct_eq`, `ct_ne`,
+`ct_lt` and `ct_gt` for u8, u16, u32, u64, u128 and usize; `ct_select`,
+`ct_cmov` and `ct_swap` on words and on spans of u8, u32 or u64 words;
+`ct_memeq` and `ct_memcmp` over bytes; and `ct_lookup`, which reads a whole
+table (of words, or of fixed-stride records) to return one entry. The
+formulas are BoringSSL's `constant_time_*` family; the shapes follow Rust's
+`subtle`, libsodium's `crypto_verify_n` and fiat-crypto's `cmovznz`.
+
+Everything rests on `value_barrier(x)`, a primitive owned by `std.ct` for
+each unsigned word. It returns `x` unchanged, and the optimizer may assume
+nothing about the result. Every `Choice` and every mask made from one passes
+through it, so a C compiler cannot rediscover that a mask is a boolean and
+compile the select as a branch. What each backend promises:
+
+- **C** lowers the barrier to `__asm__("" : "+r"(x))` (BoringSSL's
+  `value_barrier_w`), a u128 as its two 64-bit halves. It emits no
+  instruction. Source shape plus the barrier is the whole promise: the C
+  compiler still chooses instructions, and a CPU instruction whose latency
+  depends on its operands (division, some multipliers) is not prevented.
+  The evidence for a given compiler and target is `tools/ct`, which checks
+  the optimized assembly and measures timing.
+- **JavaScript** gives no constant-time guarantee: engines speculate,
+  specialize on observed values and represent integers differently by
+  magnitude. The backend refuses `std.ct` programs through its scalar type
+  check (unsigned words are outside its subset), and if that subset grows
+  it must keep refusing the barrier rather than lowering it to an identity.
+- **Assembly** refuses these types today. When it learns unsigned words it
+  must lower `value_barrier` as an opaque register redefinition and must not
+  turn the masked selects into branches: a renderer that pattern-matches
+  `ct_select` into a jump would reintroduce the leak the library exists to
+  prevent.

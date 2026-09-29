@@ -1,0 +1,21 @@
+u8 pairs: 65536 checked, 0 wrong
+u16 values: 65536 checked, 0 wrong
+wide pairs: 72324 checked, 0 wrong
+choice: and 01 or 01 xor 01 not 01 from_bit(3) 1 declassify true
+masks: 255 4294967295 18446744073709551615 0
+swap(0): 10 20
+swap(1): 20 10
+cmov(0): 20
+cmov(1): 99
+u128 cmov: true
+barrier: 42 4294967295
+memeq: equal 1 empty 1
+memeq/memcmp: 64 single-byte differences, 0 wrong
+memcmp: first difference wins -1 1 equal 0
+lookup: 8 indices, 0 wrong, past end 0
+byte lookup: 63 0
+record lookup: 4000012 5000015
+record past end: 0 0
+span swap(0): 0 4000012
+span swap(1): 4000012 0
+span cmov(1): 3000009 3000009

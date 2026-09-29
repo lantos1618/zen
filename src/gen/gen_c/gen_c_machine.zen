@@ -186,8 +186,30 @@ render_primitive = (
             be.writeln("__asm__ __volatile__(\"\" ::: \"memory\");").try();
             out.add("((void)0)")
         },
+        "value_barrier"    => be.value_barrier(site, operand(held, 0), out),
         _                  => be.render_scalar(site, held, literal, out),
     })
+}
+
+// BoringSSL's value_barrier_w: an empty asm that claims to rewrite its
+// register operand. The value is unchanged, but the optimizer can no longer
+// prove anything about it (that it is 0 or 1, or came from a comparison), so
+// masks built from it are not folded back into branches or conditional
+// moves chosen by value. The operand is already a fresh temporary. A u128 is
+// passed as its two 64-bit halves, since a 128-bit "r" operand is not
+// accepted on every target.
+value_barrier = (be :: CBackend, site: PrimSite, held: str, out :: String)
+                Res<(), AllocError> {
+    (be.check.prim_name(site.p.result).eq("u128")).match({
+        false => be.fmt("__asm__(\"\" : \"+r\"({}));\n", held).try(),
+        true  => be.fmt(
+            "{ uint64_t zg_lo = (uint64_t){}, zg_hi = (uint64_t)({} >> 64); __asm__(\"\" : \"+r\"(zg_lo), \"+r\"(zg_hi)); {} = ((zg_u128)zg_hi << 64) | zg_lo; }\n",
+            held,
+            held,
+            held
+        ).try(),
+    });
+    out.add(held)
 }
 
 render_scalar = (

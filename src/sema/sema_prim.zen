@@ -1,5 +1,5 @@
-// Machine primitives: wide multiplication, explicit truncation and the
-// std.simd vector operations.
+// Machine primitives: wide multiplication, explicit truncation, the
+// std.simd vector operations and the std.ct value barrier.
 // Like numeric conversions, only validated bodyless declarations in the
 // owning standard modules acquire an operation. Backends consume the
 // recorded Primitive by declaration identity, never by a callee's spelling.
@@ -18,14 +18,14 @@ Primitive* = { name*: str, params*: Vec<TyId>, result*: TyId }
 
 // Modules whose bodyless declarations must all be supported primitives.
 primitive_module* = (module: str) bool {
-    module.is_in(["std.core.num", "std.simd"])
+    module.is_in(["std.core.num", "std.simd", "std.ct"])
 }
 
 // Names no other module may declare without a body: a local declaration
 // must not manufacture a truncating cast or a wide multiply.
 reserved_primitive = (name: str) bool {
     name.eq("mul_wide") || name.starts_with("truncate_")
-        || name.eq("compiler_barrier")
+        || name.eq("compiler_barrier") || name.eq("value_barrier")
 }
 
 primitive_signature* = (c :: Checker, d: Def, f: Function)
@@ -55,6 +55,7 @@ primitive_declaration = (c :: Checker, d: Def, f: Function, module: str)
         "std.simd"        => vector_shape(f.name.text, names, shown.view()),
         "std.mem.mem_ptr" => f.name.text.eq("compiler_barrier")
             && names.len == 0 && shown.view().eq("()"),
+        "std.ct"          => barrier_shape(f.name.text, names, shown.view()),
         _                 => primitive_shape(f.name.text, names, shown.view()),
     });
     owner = primitive_module(module) || module.eq("std.mem.mem_ptr");
@@ -82,6 +83,14 @@ primitive_shape = (name: str, ps: Vec<String>, r: str) bool {
         false => name.starts_with("truncate_") && ps.len == 1
             && r.eq(name.slice(9, name.len)) && narrows(type_at(ps, 0), r),
     })
+}
+
+// std.ct.value_barrier returns its unsigned word unchanged, but the optimizer
+// may assume nothing about the result: the constant-time helpers rely on it
+// to stop a mask from being turned back into a branch.
+barrier_shape = (name: str, ps: Vec<String>, r: str) bool {
+    name.eq("value_barrier") && ps.len == 1 && unsigned_width(type_at(ps, 0)) > 0
+        && r.eq(type_at(ps, 0))
 }
 
 // Bit width of an unsigned word; zero for anything else. usize follows the

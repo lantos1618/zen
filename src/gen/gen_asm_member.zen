@@ -19,7 +19,7 @@ LowerError, unsupported = gen.gen_lower
 Native, Value, Place, Base, Callee = gen.gen_asm_lower
 to_i64_bits = gen.gen_asm_lower
 Shape, Form, shape, size_of = gen.gen_asm_shape
-Source, bind_sources, invoke, call_inst, source_expr = gen.gen_asm_call
+Source, bind_sources, invoke, call_inst, source_expr, result_type = gen.gen_asm_call
 
 // How a member call reaches its body.
 Target = Static(Callee) | Dynamic(Bound)

@@ -56,6 +56,8 @@ LocalKind* = Direct(Value)
 
 Local* = { name*: str, frame*: usize, kind*: LocalKind }
 
+Expected* = { id*: ExprId, ty*: TyId }
+
 // One lexical function body: the real function or an inlined callee. Names,
 // types and `.try()` resolve in the frame that wrote them. `scope` says
 // which type parameters written types may name.
@@ -104,6 +106,9 @@ Native* = {
     frame* :: usize = 0,
     loops* :: Vec<LoopTarget>,
     depth* :: usize = 0,
+    // The type a context wants for one expression, used when the
+    // expression's own checked type leaves a parameter unsettled.
+    expected* :: Res<Expected> = None,
 
     // -------------------------------------------------------------------
     // blocks and slots
@@ -302,8 +307,18 @@ Native* = {
         self.check.types.at(ty).match({ Prim(p) => p.name, _ => "" })
     }
 
+    // An unsettled type standing in for a value that never exists here.
+    placeholder* = (self :: @Self, ty: TyId) bool {
+        !self.settled(ty) && self.class_of(ty).match({
+            Ok(class) => class.match({ Unit => true, _ => false }),
+            Err(_)    => false,
+        })
+    }
+
+    // A settled type that occupies no bytes. An unsettled parameter is not
+    // unit: its placeholder layout says nothing about the value.
     is_unit* = (self :: @Self, ty: TyId) bool {
-        self.class_of(ty).match({
+        self.settled(ty) && self.class_of(ty).match({
             Ok(class) => class.match({ Unit => true, _ => false }),
             Err(_)    => false,
         })
@@ -515,9 +530,23 @@ Native* = {
     // expressions
     // -------------------------------------------------------------------
 
-    // Evaluate into a value whose slot the caller may keep.
+    // Evaluate into a value whose slot the caller may keep. A fault raised
+    // without a position takes the innermost expression's.
     expr* = (self :: @Self, id: ExprId) Res<Value, LowerError> {
         e = self.tree.expr_at(id);
+        self.expr_kind(id, e).match({
+            Ok(value) => Ok(value),
+            Err(err)  => Err(err.match({
+                OutOfMemory        => LowerError.OutOfMemory,
+                Unsupported(fault) => fault.span.file.is_empty().match({
+                    true  => unsupported(e.span, fault.what),
+                    false => LowerError.Unsupported(fault),
+                }),
+            })),
+        })
+    }
+
+    expr_kind = (self :: @Self, id: ExprId, e: Expr) Res<Value, LowerError> {
         e.kind.match({
             Name(n)       => self.name(id, n.text, e.span),
             Literal(l)    => self.literal(id, l, e.span),
@@ -570,11 +599,13 @@ Native* = {
 
     global_const = (self :: @Self, d: Def, ty: TyId, span: Span) Res<Value, LowerError> {
         decl = decl_at(self.tree, d.id).ok_or(unsupported(span, "a missing constant")).try();
-        value = decl.kind.match({
-            Const(c) => Ok(c.value),
+        constant = decl.kind.match({
+            Const(c) => Ok(c),
             _        => None,
         }).ok_or(unsupported(span, "a constant without a value")).try();
-        // The initializer is read in its declaring module.
+        value = constant.value;
+        // The initializer is read in its declaring module, at its written
+        // type when it has one.
         saved = self.frame;
         self.frames.add(Frame(
             inst: self.alloc.Inst(),
@@ -586,22 +617,63 @@ Native* = {
             scope: None
         )).try(LowerError.OutOfMemory);
         self.frame = self.frames.len - 1;
-        result = self.expr_as(value, ty);
+        want = constant.type.match({
+            Ok(t) => self.written(t).match({ Ok(w) => w, Err(_) => ty }),
+            None  => ty,
+        });
+        result = self.expr_as(value, want);
         self.frame = saved;
         result
     }
 
     // Evaluate, then settle integer literals of an unsettled type into `ty`.
     expr_as* = (self :: @Self, id: ExprId, ty: TyId) Res<Value, LowerError> {
+        self.expected = Ok(Expected(id: self.unwrapped(id), ty: ty));
         value = self.expr(id).try();
         self.coerce(value, ty)
+    }
+
+    unwrapped = (self: @Self, id: ExprId) ExprId {
+        self.tree.expr_at(id).kind.match({ Paren(p) => self.unwrapped(p.inner), _ => id })
+    }
+
+    // The checked type of an expression, or the context's when the checked
+    // one leaves a type parameter open.
+    settled_type* = (self :: @Self, id: ExprId) Res<TyId, LowerError> {
+        own = self.type_of(id).try();
+        self.settled(own).match({
+            true  => Ok(own),
+            false => self.expected.match({
+                Ok(want) => (want.id == id).match({ true => Ok(want.ty), false => Ok(own) }),
+                None     => Ok(own),
+            }),
+        })
+    }
+
+    // Whether a type mentions no unsettled parameter.
+    settled* = (self :: @Self, ty: TyId) bool {
+        self.check.types.at(ty).match({
+            Var(_)   => false,
+            Infer    => false,
+            Unknown  => false,
+            Prim(p)  => true,
+            Named(n) => n.args.find((a) { !self.settled(a) }).match({ Ok(_) => false, None => true }),
+            Res(r)   => self.settled(r.value) && r.form.match({
+                Failure => self.settled(r.error),
+                _       => true,
+            }),
+            Array(a) => self.settled(a.elem),
+            Union(u) => u.members.find((m) { !self.settled(m) }).match({ Ok(_) => false, None => true }),
+            Fn(_)    => true,
+        })
     }
 
     // Integer width changes that sema settled (literal defaults, lossless
     // widening at a boundary) and `Ok` lifting of bare values.
     coerce* = (self :: @Self, value: Value, ty: TyId) Res<Value, LowerError> {
-        (value.ty == ty || self.is_unit(ty)).match({
-            true  => (value.ty == ty).match({ true => Ok(value), false => self.unit() }),
+        // A value already more settled than the wanted type keeps its own.
+        (value.ty == ty || self.is_unit(ty) || !self.settled(ty)).match({
+            true  => (value.ty == ty || !self.is_unit(ty)).match({ true => Ok(value), false => self.unit() }),
             false => self.to_bound(value, ty).try().match({
                 Ok(handle) => Ok(handle),
                 None       => self.convert_value(value, ty),
@@ -725,17 +797,22 @@ Native* = {
             And => self.logical(true, lhs, rhs),
             Or  => self.logical(false, lhs, rhs),
             _   => {
-                ty      = self.type_of(id).try();
+                checked = self.type_of(id).try();
                 compare = op.match({
                     Equal => true, NotEqual => true, Less => true, LessEq => true,
                     Greater => true, GreaterEq => true, _ => false,
                 });
-                operand = compare.match({
-                    true  => self.operand_type(lhs, rhs).try(),
-                    false => ty,
+                raw_left  = self.expr(lhs).try();
+                raw_right = self.expr(rhs).try();
+                // The operands meet at the checked arithmetic type, else at
+                // whichever side is settled and not an open literal.
+                operand = (!compare && self.settled(checked)).match({
+                    true  => checked,
+                    false => self.meeting(raw_left.ty, raw_right.ty),
                 });
-                left  = self.expr_as(lhs, operand).try();
-                right = self.expr_as(rhs, operand).try();
+                ty = compare.match({ true => checked, false => operand });
+                left  = self.coerce(raw_left, operand).try();
+                right = self.coerce(raw_right, operand).try();
                 (compare && !word(self.class_of(operand).try())).match({
                     true  => self.equal_values(op, left, right, span),
                     false => {
@@ -771,11 +848,12 @@ Native* = {
         })
     }
 
-    // Comparison operands share the wider settled type of the two sides.
-    operand_type = (self :: @Self, lhs: ExprId, rhs: ExprId) Res<TyId, LowerError> {
-        left  = self.type_of(lhs).try();
-        right = self.type_of(rhs).try();
-        self.prim_name(left).eq("int").match({ true => Ok(right), false => Ok(left) })
+    meeting = (self :: @Self, left: TyId, right: TyId) TyId {
+        firm = (self.settled(left) && !self.prim_name(left).eq("int"));
+        firm.match({
+            true  => left,
+            false => self.settled(right).match({ true => right, false => left }),
+        })
     }
 
     // Aggregate equality: str compares bytes; other aggregates compare
@@ -1458,14 +1536,26 @@ Native* = {
             variant_index(target_variants, variant.name).match({
                 // A source alternative the target lacks cannot occur here.
                 None    => self.trap(TrapKind.Unreachable, span).try(),
-                Ok(_)   => {
-                    payload: Res<Value> = variant.payload.match({
-                        Ok(_) => Ok(self.payload_of(value, i).try()),
-                        None  => None,
+                Ok(t)   => {
+                    // An unsettled placeholder payload cannot reach a
+                    // settled one: that alternative never holds a value.
+                    wanted = target_variants.get(t).match({ Ok(v) => v.payload, None => None });
+                    phantom = variant.payload.match({
+                        Ok(p) => self.placeholder(p) && wanted.match({ Ok(w) => !self.placeholder(w) && !self.is_unit(w), None => false }),
+                        None  => false,
                     });
-                    made = self.variant_value(target, variant.name, payload, span).try();
-                    self.add(Instruction.Copy(Move(out: out.slot, source: made.slot))).try();
-                    self.jump(done).try();
+                    phantom.match({
+                        true  => self.trap(TrapKind.Unreachable, span).try(),
+                        false => {
+                            payload: Res<Value> = variant.payload.match({
+                                Ok(_) => Ok(self.payload_of(value, i).try()),
+                                None  => None,
+                            });
+                            made = self.variant_value(target, variant.name, payload, span).try();
+                            self.add(Instruction.Copy(Move(out: out.slot, source: made.slot))).try();
+                            self.jump(done).try();
+                        },
+                    });
                 },
             });
             self.start(next);

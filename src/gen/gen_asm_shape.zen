@@ -152,8 +152,12 @@ compute_shape = (lo :: Native, ty: TyId) Res<Shape, LowerError> {
             ))
         },
         Fn(_)    => Err(unsupported(nowhere(), "function values")),
-        Var(v)   => Err(unsupported(nowhere(), "an unresolved generic type")),
-        Infer    => Err(unsupported(nowhere(), "a type sema did not settle")),
+        // A parameter no value ever settles (`Opt.None`, the payload of a
+        // loop that never breaks with a value, `Err(e)` before its Ok type
+        // is known) holds no bytes; conversions to a settled type carry
+        // only the alternatives that exist.
+        Var(v)   => Ok(Shape(class: Scalar.Unit, form: Form.Plain)),
+        Infer    => Ok(Shape(class: Scalar.Unit, form: Form.Plain)),
         Unknown  => Err(unsupported(nowhere(), "a type sema did not settle")),
     })
 }

@@ -12,6 +12,7 @@ decode_literal = std.lex
 Ast, ExprId, BlockId, TypeId, Span, Function, Literal, Call, Arg, Param = std.ast
 Expr, Lambda, Access, Struct, Member, Impl = std.ast
 ImplId = sema.sema
+walk, WalkVisitor, WalkEvent, WalkNode = std.ast.ast_walk
 nowhere = std.ast
 Checker, DeclId, Def, TyId, Ctx, Inst, decl_at, CheckedCall = sema.sema
 subst = sema.sema
@@ -80,7 +81,7 @@ named_call = (lo :: Native, id: ExprId, c: Call, name: str, span: Span) Res<Valu
 
 // A call without a checked function: a struct construction or a variant.
 construction = (lo :: Native, id: ExprId, c: Call, name: str, span: Span) Res<Value, LowerError> {
-    ty = lo.type_of(id).try();
+    ty = lo.settled_type(id).try();
     s  = lo.shape(ty).try();
     s.form.match({
         Record(_) => lo.construct_named(ty, c, span),
@@ -125,7 +126,7 @@ dot_call = (lo :: Native, id: ExprId, c: Call, a: Access, span: Span) Res<Value,
             (type_base && !declared).match({
                 // `Type.Variant(payload)` or a construction through a type.
                 true  => {
-                    ty = lo.type_of(id).try();
+                    ty = lo.settled_type(id).try();
                     s  = lo.shape(ty).try();
                     s.form.match({
                         Record(_) => lo.construct_named(ty, c, span),
@@ -179,7 +180,7 @@ checked_invoke = (lo :: Native, id: ExprId, c: Call, checked: CheckedCall,
                     lo.invoke(id, callee, sources, c, span)
                 },
                 Struct(_)   => {
-                    ty = lo.type_of(id).try();
+                    ty = lo.settled_type(id).try();
                     lo.construct_named(ty, c, span)
                 },
                 _           => Err(unsupported(span, "a call to this kind of declaration")),
@@ -382,9 +383,10 @@ real_call* = (lo :: Native, callee: Callee, sources: Vec<Source>, span: Span)
 
 // Inline a callee body: closure parameters bind the caller's lambdas,
 // mutable parameters alias the caller's places.
-inline_call* = (lo :: Native, callee: Callee, sources: Vec<Source>, span: Span)
+inline_call* = (lo :: Native, open: Callee, sources: Vec<Source>, span: Span)
                Res<Value, LowerError> {
     (lo.depth < 24).ensure(unsupported(span, "recursion through closure-taking functions")).try();
+    callee = lo.settle_closures(open, sources, span).try();
     body = callee.f.body.ok_or(unsupported(span, "a bodiless callee")).try();
     kinds ::= lo.alloc.Vec<LocalKind>();
     callee.f.params.loop((h, i, p) {
@@ -423,6 +425,74 @@ inline_call* = (lo :: Native, callee: Callee, sources: Vec<Source>, span: Span)
     lo.use_frame(saved);
     result = Value(slot: here.ret_slot, ty: ret);
     lo.copy_value(result)
+}
+
+// A type parameter that only a closure's result determines (`then<T>` with
+// `() T`) takes the type of the lambda body written for it.
+settle_closures = (lo :: Native, callee: Callee, sources: Vec<Source>, span: Span)
+                  Res<Callee, LowerError> {
+    extra ::= lo.alloc.Inst();
+    callee.f.params.loop((h, i, p) {
+        ty = lo.param_type(callee, i).try();
+        lo.check.types.at(ty).match({
+            Fn(signature) => lo.check.types.at(signature.ret).match({
+                Var(_) => sources.get(i).value_or(Source.Absent).match({
+                    Given(e) => lo.lambda_result(e).try().when_ok((result) {
+                        extra.bind(signature.ret, result).try(LowerError.OutOfMemory);
+                    }).ignore_none(),
+                    _        => (),
+                }),
+                _      => (),
+            }),
+            _             => (),
+        });
+    });
+    (extra.len() == 0).match({
+        true  => Ok(callee),
+        false => {
+            inst ::= lo.alloc.Inst();
+            [callee.inst, extra].loop((part) {
+                Range(0, part.len()).loop((k) {
+                    part.var_at(k).when_ok((v) {
+                        part.arg_at(k).when_ok((a) { inst.bind(v, a).try(LowerError.OutOfMemory); });
+                    });
+                });
+            });
+            Ok(Callee(
+                f: callee.f,
+                owner: callee.owner,
+                member: callee.member,
+                module: callee.module,
+                inst: inst,
+                self_ty: callee.self_ty,
+                generic_owner: callee.generic_owner
+            ))
+        },
+    })
+}
+
+// The checked type of a lambda body's value, when the argument is a lambda.
+lambda_result = (lo :: Native, e: ExprId) Res<Res<TyId>, LowerError> {
+    lo.stripped(e).kind.match({
+        Lambda(l) => {
+            block = lo.tree.block_at(l.body);
+            tail: Res<ExprId> = block.value.match({
+                Ok(v) => Ok(v),
+                None  => block.stmts.get(block.stmts.len - 1).match({
+                    Ok(s) => s.kind.match({ Expr(x) => Ok(x.expr), _ => None }),
+                    None  => None,
+                }),
+            });
+            tail.match({
+                None    => Ok(Ok(lo.unit_ty)),
+                Ok(t)   => {
+                    ty = lo.type_of(t).try();
+                    Ok(lo.settled(ty).match({ true => Ok(ty), false => None }))
+                },
+            })
+        },
+        _         => Ok(None),
+    })
 }
 
 is_fn_type = (lo :: Native, ty: TyId) bool {
@@ -752,12 +822,12 @@ env_call = (lo :: Native, id: ExprId, name: str, c: Call, sources: Vec<Source>, 
 // The loop overloads: the body's parameter list selects the form.
 loop_call = (lo :: Native, id: ExprId, f: Function, sources: Vec<Source>, span: Span)
             Res<Value, LowerError> {
-    ty = lo.type_of(id).try();
+    body_index = f.params.len - 1;
+    body = lo.closure_of(sources.get(body_index).value_or(Source.Absent), span).try();
+    ty = lo.loop_type(id, body).try();
     result = lo.temp(ty).try();
     none = lo.variant_value(ty, "None", None, span).try();
     lo.add(Instruction.Copy(Move(out: result.slot, source: none.slot))).try();
-    body_index = f.params.len - 1;
-    body = lo.closure_of(sources.get(body_index).value_or(Source.Absent), span).try();
     body_params = lo.lambda_params(body).try();
     brk  = lo.label().try();
     next = lo.label().try();
@@ -800,6 +870,92 @@ loop_call = (lo :: Native, id: ExprId, f: Function, sources: Vec<Source>, span: 
     lo.loops.take(lo.loops.len - 1);
     Ok(result)
 }
+
+// A loop's Res<T> is settled by its context, else by the first
+// `h.break(value)` its body writes.
+loop_type = (lo :: Native, id: ExprId, body: LambdaRef) Res<TyId, LowerError> {
+    ty = lo.settled_type(id).try();
+    lo.settled(ty).match({
+        true  => Ok(ty),
+        false => {
+            l = lo.tree.expr_at(body.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
+                .ok_or(unsupported(nowhere(), "a loop body that is not a lambda")).try();
+            handle = l.params.get(0).match({ Ok(p) => p.name.text, None => "" });
+            finder ::= BreakFinder(tree: lo.tree, handle: handle);
+            walk(lo.tree, lo.alloc, WalkNode.Block(l.body), finder).try(LowerError.OutOfMemory);
+            finder.found.match({
+                None      => Ok(ty),
+                Ok(value) => {
+                    saved = lo.use_frame(body.frame);
+                    payload = lo.type_of(value);
+                    lo.use_frame(saved);
+                    checked = payload.try();
+                    settled = lo.settled(checked).match({
+                        true  => checked,
+                        false => lo.literal_type(value).try().value_or(checked),
+                    });
+                    open = lo.check.types.res_open(settled).try(LowerError.OutOfMemory);
+                    Ok(open)
+                },
+            })
+        },
+    })
+}
+
+// The default type of a literal (or a negated one) whose checked type is
+// still a parameter.
+literal_type = (lo :: Native, id: ExprId) Res<Res<TyId>, LowerError> {
+    lo.tree.expr_at(id).kind.match({
+        Literal(l) => l.kind.match({
+            Int  => Ok(Ok(lo.prim("int").try())),
+            Str  => Ok(Ok(lo.prim("str").try())),
+            Bool => Ok(Ok(lo.prim("bool").try())),
+            Char => Ok(Ok(lo.prim("u8").try())),
+            _    => Ok(None),
+        }),
+        Unary(u)   => lo.literal_type(u.operand),
+        Paren(p)   => lo.literal_type(p.inner),
+        _          => Ok(None),
+    })
+}
+
+// Finds the first `handle.break(value)` in a loop body.
+BreakFinder = {
+    tree: Ast,
+    handle: str,
+    found :: Res<ExprId> = None,
+}
+
+BreakFinder.impl(WalkVisitor, {
+    visit = (self :: @Self, event: WalkEvent) Res<(), AllocError> {
+        event.match({
+            Enter(node) => node.match({
+                Expr(id) => self.found.match({
+                    Ok(_) => (),
+                    None  => self.tree.expr_at(id).kind.match({
+                        Call(c) => (c.args.len == 1).then(() {
+                            self.tree.expr_at(c.callee).kind.match({
+                                Access(a) => (a.name.text.eq("break") && self.tree.expr_at(a.base).kind.match({
+                                    Name(n) => n.text.eq(self.handle),
+                                    _       => false,
+                                })).then(() {
+                                    c.args.get(0).when_ok((arg) { self.found = Ok(arg.value); });
+                                }).ignore_none(),
+                                _         => (),
+                            });
+                        }).ignore_none(),
+                        _       => (),
+                    }),
+                }),
+                _        => (),
+            }),
+            Leave(_)    => (),
+        });
+        Ok(())
+    }
+})
+
+ignore_none = <T>(r: Res<T>) { r.match({ Ok(_) => (), None => () }); }
 
 lambda_params = (lo :: Native, lambda: LambdaRef) Res<usize, LowerError> {
     lo.tree.expr_at(lambda.expr).kind.match({

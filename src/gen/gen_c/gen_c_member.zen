@@ -405,6 +405,23 @@ supplied_member = (
     })
 }
 
+// The member a dot call reaches at its receiver's site, asked before the call
+// is lowered: the type's own declaration first, then an impl, in the order
+// `with_site` and `supplied_or_ufcs` lower them. None leaves the call to UFCS.
+site_member* = (be :: CBackend, c: Call, s: Site, name: str, ctx: Ctx)
+               Res<Res<Member>, AllocError> {
+    own ::= be.alloc.Vec<Member>();
+    member_at(be, s, name, own).try();
+    be.pick_member(c, s, own, ctx).try().match({
+        Ok(m) => Ok(Ok(m)),
+        None  => {
+            supplied ::= be.alloc.Vec<Member>();
+            be.impl_member_at(s.decl, name, supplied).try();
+            be.pick_member(c, s, supplied, ctx)
+        },
+    })
+}
+
 // Select overloaded members by declared parameter types and arity. A single
 // member needs only the arity check.
 

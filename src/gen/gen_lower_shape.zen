@@ -13,7 +13,7 @@ Checker, Ctx, Inst, decl_at = sema.sema
 inst_of_named, owner_of, subst, type_from_ast = sema.sema
 union_reading = sema.sema_union
 Scalar, Layout = gen.gen_ir
-Native = gen.gen_asm_lower
+Lowerer = gen.gen_lower_core
 LowerError, unsupported = gen.gen_lower
 nowhere = std.ast
 
@@ -105,7 +105,7 @@ capability* = (qualified: str) bool {
 }
 
 // The shape of a concrete type. Results are cached per type.
-shape* = (lo :: Native, ty: TyId) Res<Shape, LowerError> {
+shape* = (lo :: Lowerer, ty: TyId) Res<Shape, LowerError> {
     lo.shapes.get(ty).match({
         Ok(found) => Ok(found),
         None      => {
@@ -116,11 +116,11 @@ shape* = (lo :: Native, ty: TyId) Res<Shape, LowerError> {
     })
 }
 
-class_of* = (lo :: Native, ty: TyId) Res<Scalar, LowerError> {
+class_of* = (lo :: Lowerer, ty: TyId) Res<Scalar, LowerError> {
     Ok(lo.shape(ty).try().class)
 }
 
-compute_shape = (lo :: Native, ty: TyId) Res<Shape, LowerError> {
+compute_shape = (lo :: Lowerer, ty: TyId) Res<Shape, LowerError> {
     lo.check.types.at(ty).match({
         Prim(p)  => p.name.eq("str").match({
             // `str` is the record `{ data: Ptr<u8>, len: usize }`.
@@ -168,7 +168,7 @@ compute_shape = (lo :: Native, ty: TyId) Res<Shape, LowerError> {
     })
 }
 
-named_shape = (lo :: Native, n: TyNamed, ty: TyId) Res<Shape, LowerError> {
+named_shape = (lo :: Lowerer, n: TyNamed, ty: TyId) Res<Shape, LowerError> {
     qualified = lo.alloc.String(
         "{}.{}",
         lo.check.world.module_name(n.decl),
@@ -207,7 +207,7 @@ behaviour_only* = (s: Struct) bool {
 
 // Fields in declaration order at natural alignment. A record whose fields
 // all occupy no bytes is itself unit-shaped.
-record = (lo :: Native, n: TyNamed, s: Struct) Res<Shape, LowerError> {
+record = (lo :: Lowerer, n: TyNamed, s: Struct) Res<Shape, LowerError> {
     fields = lo.field_types(n, s).try();
     placed ::= lo.alloc.Vec<FieldAt>();
     cursor ::= 0;
@@ -231,7 +231,7 @@ record = (lo :: Native, n: TyNamed, s: Struct) Res<Shape, LowerError> {
 }
 
 // Storage fields with their types at this instantiation.
-field_types* = (lo :: Native, n: TyNamed, s: Struct) Res<Vec<FieldAt>, LowerError> {
+field_types* = (lo :: Lowerer, n: TyNamed, s: Struct) Res<Vec<FieldAt>, LowerError> {
     inst  = lo.check.inst_of_named(n).try(LowerError.OutOfMemory);
     mi    = n.decl.module.to_usize();
     ctx   = Ctx(module: mi, ret: lo.unit_ty, has_ret: false, self_ty: lo.unit_ty, has_self: false);
@@ -261,7 +261,7 @@ field_types* = (lo :: Native, n: TyNamed, s: Struct) Res<Vec<FieldAt>, LowerErro
 
 // A u32 tag, then the largest payload at its alignment. Payload-free enums
 // are the tag word alone.
-tagged = (lo :: Native, cases: Vec<Case>) Res<Shape, LowerError> {
+tagged = (lo :: Lowerer, cases: Vec<Case>) Res<Shape, LowerError> {
     variants ::= lo.alloc.Vec<VariantAt>();
     size  ::= 0;
     align ::= 1;

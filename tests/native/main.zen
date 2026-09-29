@@ -124,7 +124,12 @@ Runner = {
         here = self.env.fs.cwd(self.a).match({ Ok(s) => s.view(), Err(_) => "." });
         run_dir = self.a.String("{}/{}/run{}", here, self.work, index).try();
         setup ::= self.a.Vec<str>();
-        script = self.a.String("mkdir -p '{}' && ln -sfn '{}/{}' '{}/src'", run_dir.view(), here, c.root, run_dir.view()).try();
+        // The program is invoked as `<run dir>/prog`, the name argv[0] tests
+        // pin, and the symlink-loop test finds its loop staged beside it.
+        script ::= self.a.String("rm -rf '{}' && mkdir -p '{}' && ln -sfn '{}/{}' '{}/src' && ln -sfn '{}/{}' '{}/prog'", run_dir.view(), run_dir.view(), here, c.root, run_dir.view(), here, binary, run_dir.view()).try();
+        c.base.ends_with("symlink_loop_is_failed/main").then(() {
+            script.fmt(" && ln -sfn loop '{}/loop'", run_dir.view()).try();
+        });
         ["/bin/sh", "-c", script.view()].loop((w) { setup.add(w).try(); });
         self.run(setup).try();
         command ::= self.a.String().try();
@@ -143,7 +148,7 @@ Runner = {
             });
         });
         (!self.target.runner.is_empty()).then(() { command.fmt("{} ", self.target.runner).try(); });
-        command.fmt("'{}/{}'", here, binary).try();
+        command.fmt("'{}/prog'", run_dir.view()).try();
         self.read_sidecar(c, "args").when_ok((text) {
             text.split('\n').loop((line) {
                 (!line.is_empty()).then(() { command.fmt(" '{}'", line).try(); });

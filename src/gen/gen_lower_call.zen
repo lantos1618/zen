@@ -21,13 +21,13 @@ Instruction, Terminator, Convert, Address, Load, Store, CopyMem, StaticBytes = g
 Write, Stream, TrapKind = gen.gen_ir
 word, integer, signed, same = gen.gen_ir
 LowerError, unsupported = gen.gen_lower
-Native, Value, Place, Base, LocalKind, LambdaRef, LoopTarget, Frame, Callee = gen.gen_asm_lower
-DeferEntry, Local = gen.gen_asm_lower
-member_call, mem_call, sys_call, resolve, to_bound, handle_for_place = gen.gen_asm_member
-bound_of, dispatch, Bound = gen.gen_asm_member
-to_i64_bits = gen.gen_asm_lower
-Shape, Form, FieldAt, VariantAt, shape, class_of, field_types = gen.gen_asm_shape
-variant_index, size_of = gen.gen_asm_shape
+Lowerer, Value, Place, Base, LocalKind, LambdaRef, LoopTarget, Frame, Callee = gen.gen_lower_core
+DeferEntry, Local = gen.gen_lower_core
+member_call, mem_call, sys_call, resolve, to_bound, handle_for_place = gen.gen_lower_member
+bound_of, dispatch, Bound = gen.gen_lower_member
+to_i64_bits = gen.gen_lower_core
+Shape, Form, FieldAt, VariantAt, shape, class_of, field_types = gen.gen_lower_shape
+variant_index, size_of = gen.gen_lower_shape
 
 // One argument position after binding names and the receiver.
 Source* = Given(ExprId) | Absent | Computed(Value) | Located(Place)
@@ -36,7 +36,7 @@ Source* = Given(ExprId) | Absent | Computed(Value) | Located(Place)
 // dispatch
 // ---------------------------------------------------------------------
 
-call* = (lo :: Native, id: ExprId, c: Call, span: Span) Res<Value, LowerError> {
+call* = (lo :: Lowerer, id: ExprId, c: Call, span: Span) Res<Value, LowerError> {
     callee = lo.stripped(c.callee);
     callee.kind.match({
         Name(n)   => lo.lookup(n.text).match({
@@ -52,12 +52,12 @@ call* = (lo :: Native, id: ExprId, c: Call, span: Span) Res<Value, LowerError> {
     })
 }
 
-stripped = (lo :: Native, id: ExprId) Expr {
+stripped = (lo :: Lowerer, id: ExprId) Expr {
     e = lo.tree.expr_at(id);
     e.kind.match({ Paren(p) => lo.stripped(p.inner), _ => e })
 }
 
-named_call = (lo :: Native, id: ExprId, c: Call, name: str, span: Span) Res<Value, LowerError> {
+named_call = (lo :: Lowerer, id: ExprId, c: Call, name: str, span: Span) Res<Value, LowerError> {
     selected = lo.check.checked_call(id);
     resolved = selected.match({
         Ok(checked) => checked.declaration.match({ Ok(_) => true, None => false }),
@@ -82,7 +82,7 @@ named_call = (lo :: Native, id: ExprId, c: Call, name: str, span: Span) Res<Valu
 }
 
 // A call without a checked function: a struct construction or a variant.
-construction = (lo :: Native, id: ExprId, c: Call, name: str, span: Span) Res<Value, LowerError> {
+construction = (lo :: Lowerer, id: ExprId, c: Call, name: str, span: Span) Res<Value, LowerError> {
     ty = lo.settled_type(id).try();
     s  = lo.shape(ty).try();
     s.form.match({
@@ -91,7 +91,7 @@ construction = (lo :: Native, id: ExprId, c: Call, name: str, span: Span) Res<Va
     })
 }
 
-variant_call = (lo :: Native, ty: TyId, c: Call, name: str, span: Span) Res<Value, LowerError> {
+variant_call = (lo :: Lowerer, ty: TyId, c: Call, name: str, span: Span) Res<Value, LowerError> {
     payload: Res<Value> = c.args.get(0).match({
         None    => None,
         Ok(arg) => {
@@ -104,7 +104,7 @@ variant_call = (lo :: Native, ty: TyId, c: Call, name: str, span: Span) Res<Valu
     lo.variant_value(ty, name, payload, span)
 }
 
-dot_call = (lo :: Native, id: ExprId, c: Call, a: Access, span: Span) Res<Value, LowerError> {
+dot_call = (lo :: Lowerer, id: ExprId, c: Call, a: Access, span: Span) Res<Value, LowerError> {
     base = lo.tree.expr_at(a.base);
     at_scope = base.kind.match({ Scope => true, _ => false });
     (at_scope && a.name.text.eq("defer")).match({
@@ -115,7 +115,7 @@ dot_call = (lo :: Native, id: ExprId, c: Call, a: Access, span: Span) Res<Value,
 
 // `@scope.defer(closure)`: arm the closure for the innermost block's exit,
 // with the locals it reads captured now.
-defer = (lo :: Native, c: Call, span: Span) Res<Value, LowerError> {
+defer = (lo :: Lowerer, c: Call, span: Span) Res<Value, LowerError> {
     arg = c.args.get(0).ok_or(unsupported(span, "a defer without a closure")).try();
     lambda = lo.closure_of(Source.Given(arg.value), span).try();
     // The flag starts clear on function entry and is set where this
@@ -128,7 +128,7 @@ defer = (lo :: Native, c: Call, span: Span) Res<Value, LowerError> {
     lo.unit()
 }
 
-dot_call_on = (lo :: Native, id: ExprId, c: Call, a: Access, base: Expr, span: Span) Res<Value, LowerError> {
+dot_call_on = (lo :: Lowerer, id: ExprId, c: Call, a: Access, base: Expr, span: Span) Res<Value, LowerError> {
     handle: Res<usize> = base.kind.match({
         Name(n) => lo.lookup(n.text).match({ Ok(Handle(loop_id)) => Ok(loop_id), _ => None }),
         _       => None,
@@ -172,7 +172,7 @@ dot_call_on = (lo :: Native, id: ExprId, c: Call, a: Access, base: Expr, span: S
 // checked calls
 // ---------------------------------------------------------------------
 
-checked_invoke = (lo :: Native, id: ExprId, c: Call, checked: CheckedCall,
+checked_invoke = (lo :: Lowerer, id: ExprId, c: Call, checked: CheckedCall,
                   dot_receiver: Res<ExprId>, span: Span) Res<Value, LowerError> {
     signature_receiver: Res<ExprId> = checked.signature.match({
         Ok(sig) => sig.receiver,
@@ -222,7 +222,7 @@ checked_invoke = (lo :: Native, id: ExprId, c: Call, checked: CheckedCall,
 
 // Run a resolved callee: compiler-provided bodiless operations, inlined
 // closure-taking bodies, or a call to a real function instance.
-invoke* = (lo :: Native, id: ExprId, open: Callee, written: Vec<Source>, c: Call, span: Span)
+invoke* = (lo :: Lowerer, id: ExprId, open: Callee, written: Vec<Source>, c: Call, span: Span)
           Res<Value, LowerError> {
     callee = lo.settle_range(lo.settle_params(open, written).try()).try();
     sources = callee.f.body.match({
@@ -240,7 +240,7 @@ invoke* = (lo :: Native, id: ExprId, open: Callee, written: Vec<Source>, c: Call
 
 // A parameter written as a bare type parameter (`range: R`) that the
 // checked substitution left open takes its argument's checked type.
-settle_params* = (lo :: Native, callee: Callee, sources: Vec<Source>) Res<Callee, LowerError> {
+settle_params* = (lo :: Lowerer, callee: Callee, sources: Vec<Source>) Res<Callee, LowerError> {
     bare = Callee(
         f: callee.f,
         owner: callee.owner,
@@ -290,7 +290,7 @@ settle_params* = (lo :: Native, callee: Callee, sources: Vec<Source>) Res<Callee
 
 // Bind each type parameter in a parameter's written type that the checked
 // substitution left open to the matching part of the argument's type.
-unify = (lo :: Native, raw: TyId, actual: TyId, known: Inst, extra :: Inst) Res<(), LowerError> {
+unify = (lo :: Lowerer, raw: TyId, actual: TyId, known: Inst, extra :: Inst) Res<(), LowerError> {
     lo.check.types.at(raw).match({
         Var(_)   => (!lo.settled(lo.arg_for(known, raw)) && lo.settled(actual)).then(() {
             extra.bind(raw, actual).try(LowerError.OutOfMemory);
@@ -322,7 +322,7 @@ unify = (lo :: Native, raw: TyId, actual: TyId, known: Inst, extra :: Inst) Res<
 // A traversal `<R: Range<T>, T>` whose element type sema left open takes it
 // from the range: an array's element, str's byte, a Range's index, or the
 // argument of the range type's Range impl.
-settle_range = (lo :: Native, callee: Callee) Res<Callee, LowerError> {
+settle_range = (lo :: Lowerer, callee: Callee) Res<Callee, LowerError> {
     range_var: Res<TyId> = lo.var_named(callee.inst, "R");
     elem_var: Res<TyId> = lo.var_named(callee.inst, "T");
     fix: Res<Pair> = range_var.match({
@@ -367,7 +367,7 @@ settle_range = (lo :: Native, callee: Callee) Res<Callee, LowerError> {
 
 Pair = { var: TyId, ty: TyId }
 
-var_named = (lo :: Native, inst: Inst, name: str) Res<TyId> {
+var_named = (lo :: Lowerer, inst: Inst, name: str) Res<TyId> {
     found: Res<TyId> = loop<TyId>((h) {
         Range(0, inst.len()).loop((k) {
             inst.var_at(k).when_ok((v) {
@@ -382,7 +382,7 @@ var_named = (lo :: Native, inst: Inst, name: str) Res<TyId> {
     found
 }
 
-arg_for = (lo :: Native, inst: Inst, var: TyId) TyId {
+arg_for = (lo :: Lowerer, inst: Inst, var: TyId) TyId {
     found: Res<TyId> = loop<TyId>((h) {
         Range(0, inst.len()).loop((k) {
             (inst.var_at(k).match({ Ok(v) => v == var, None => false })).then(() {
@@ -394,7 +394,7 @@ arg_for = (lo :: Native, inst: Inst, var: TyId) TyId {
     found.value_or(var)
 }
 
-range_elem* = (lo :: Native, range: TyId) Res<Res<TyId>, LowerError> {
+range_elem* = (lo :: Lowerer, range: TyId) Res<Res<TyId>, LowerError> {
     lo.check.types.at(range).match({
         Array(a) => Ok(Ok(a.elem)),
         Prim(p)  => Ok(p.name.eq("str").match({ true => Ok(lo.prim("u8").try()), false => None })),
@@ -406,7 +406,7 @@ range_elem* = (lo :: Native, range: TyId) Res<Res<TyId>, LowerError> {
     })
 }
 
-impl_range_elem = (lo :: Native, range: TyId, n: TyNamed) Res<Res<TyId>, LowerError> {
+impl_range_elem = (lo :: Lowerer, range: TyId, n: TyNamed) Res<Res<TyId>, LowerError> {
     ids ::= lo.alloc.Vec<ImplId>();
     lo.check.world.impls_named(lo.tree, n.name, ids).try(LowerError.OutOfMemory);
     inst = lo.check.inst_of_named(n).try(LowerError.OutOfMemory);
@@ -431,7 +431,7 @@ impl_range_elem = (lo :: Native, range: TyId, n: TyNamed) Res<Res<TyId>, LowerEr
 }
 
 // The call's substitution with the caller's own parameters resolved.
-call_inst* = (lo :: Native, raw: Inst) Res<Inst, LowerError> {
+call_inst* = (lo :: Lowerer, raw: Inst) Res<Inst, LowerError> {
     inst ::= lo.alloc.Inst();
     Range(0, raw.len()).loop((i) {
         v = raw.var_at(i).ok_or(unsupported(nowhere(), "a malformed instantiation")).try();
@@ -444,7 +444,7 @@ call_inst* = (lo :: Native, raw: Inst) Res<Inst, LowerError> {
 // Arguments in parameter order: the receiver first, then positional
 // arguments, named arguments by name; omitted trailing parameters stay
 // Absent (a Res parameter then receives None).
-bind_sources* = (lo :: Native, f: Function, c: Call, receiver: Res<ExprId>, span: Span)
+bind_sources* = (lo :: Lowerer, f: Function, c: Call, receiver: Res<ExprId>, span: Span)
                 Res<Vec<Source>, LowerError> {
     out ::= lo.alloc.Vec<Source>();
     f.params.loop((_) { out.add(Source.Absent).try(LowerError.OutOfMemory); });
@@ -484,7 +484,7 @@ bind_sources* = (lo :: Native, f: Function, c: Call, receiver: Res<ExprId>, span
 
 // By-value arguments evaluate in the order they are written (the receiver
 // first), whatever order their parameters have.
-in_written_order = (lo :: Native, callee: Callee, sources: Vec<Source>, c: Call)
+in_written_order = (lo :: Lowerer, callee: Callee, sources: Vec<Source>, c: Call)
                    Res<Vec<Source>, LowerError> {
     out ::= lo.alloc.Vec<Source>();
     sources.loop((s) { out.add(s).try(LowerError.OutOfMemory); });
@@ -541,7 +541,7 @@ source_index = (sources: Vec<Source>, e: ExprId) Res<usize> {
 
 // A callee taking a closure is inlined so the closure's `.try()` and
 // `h.break()` keep their meaning.
-higher_order = (lo :: Native, f: Function) bool {
+higher_order = (lo :: Lowerer, f: Function) bool {
     f.params.find((p) {
         p.type.match({
             Ok(t) => lo.tree.type_at(t).kind.match({ Fn(_) => true, _ => false }),
@@ -550,13 +550,13 @@ higher_order = (lo :: Native, f: Function) bool {
     }).match({ Ok(_) => true, None => false })
 }
 
-param_type* = (lo :: Native, callee: Callee, i: usize) Res<TyId, LowerError> {
+param_type* = (lo :: Lowerer, callee: Callee, i: usize) Res<TyId, LowerError> {
     p = callee.f.params.get(i).ok_or(unsupported(nowhere(), "a missing parameter")).try();
     t = p.type.ok_or(unsupported(p.span, "an inferred parameter type")).try();
     lo.callee_type(callee, t)
 }
 
-result_type* = (lo :: Native, callee: Callee) Res<TyId, LowerError> {
+result_type* = (lo :: Lowerer, callee: Callee) Res<TyId, LowerError> {
     callee.f.ret.match({
         None    => Ok(lo.unit_ty),
         Ok(t)   => lo.callee_type(callee, t),
@@ -564,7 +564,7 @@ result_type* = (lo :: Native, callee: Callee) Res<TyId, LowerError> {
 }
 
 // Evaluate one argument for a by-value parameter.
-argument_value* = (lo :: Native, source: Source, ty: TyId, span: Span) Res<Value, LowerError> {
+argument_value* = (lo :: Lowerer, source: Source, ty: TyId, span: Span) Res<Value, LowerError> {
     source.match({
         Given(e)    => lo.expr_as(e, ty),
         Absent      => lo.variant_value(ty, "None", None, span),
@@ -574,7 +574,7 @@ argument_value* = (lo :: Native, source: Source, ty: TyId, span: Span) Res<Value
 }
 
 // A mutable parameter aliases the caller's place; a temporary gets one.
-argument_place* = (lo :: Native, source: Source, ty: TyId, span: Span) Res<Place, LowerError> {
+argument_place* = (lo :: Lowerer, source: Source, ty: TyId, span: Span) Res<Place, LowerError> {
     place = lo.source_place(source, ty, span).try();
     // An implementor's place passed as a mutable bound (`out :: Sink` given
     // a String) becomes a handle that points at it.
@@ -587,7 +587,7 @@ argument_place* = (lo :: Native, source: Source, ty: TyId, span: Span) Res<Place
     })
 }
 
-source_place = (lo :: Native, source: Source, ty: TyId, span: Span) Res<Place, LowerError> {
+source_place = (lo :: Lowerer, source: Source, ty: TyId, span: Span) Res<Place, LowerError> {
     source.match({
         Computed(v) => Ok(lo.spill(lo.copy_value(v).try())),
         Located(p)  => Ok(p),
@@ -602,7 +602,7 @@ source_place = (lo :: Native, source: Source, ty: TyId, span: Span) Res<Place, L
     })
 }
 
-real_call* = (lo :: Native, callee: Callee, sources: Vec<Source>, span: Span)
+real_call* = (lo :: Lowerer, callee: Callee, sources: Vec<Source>, span: Span)
              Res<Value, LowerError> {
     index = lo.enqueue(callee).try();
     args ::= lo.alloc.Vec<usize>();
@@ -623,7 +623,7 @@ real_call* = (lo :: Native, callee: Callee, sources: Vec<Source>, span: Span)
 
 // Inline a callee body: closure parameters bind the caller's lambdas,
 // mutable parameters alias the caller's places.
-inline_call* = (lo :: Native, open: Callee, sources: Vec<Source>, span: Span)
+inline_call* = (lo :: Lowerer, open: Callee, sources: Vec<Source>, span: Span)
                Res<Value, LowerError> {
     (lo.depth < 24).ensure(unsupported(span, "recursion through closure-taking functions")).try();
     callee = lo.settle_closures(open, sources, span).try();
@@ -669,7 +669,7 @@ inline_call* = (lo :: Native, open: Callee, sources: Vec<Source>, span: Span)
 
 // A type parameter that only a closure's result determines (`then<T>` with
 // `() T`) takes the type of the lambda body written for it.
-settle_closures = (lo :: Native, callee: Callee, sources: Vec<Source>, span: Span)
+settle_closures = (lo :: Lowerer, callee: Callee, sources: Vec<Source>, span: Span)
                   Res<Callee, LowerError> {
     extra ::= lo.alloc.Inst();
     callee.f.params.loop((h, i, p) {
@@ -713,7 +713,7 @@ settle_closures = (lo :: Native, callee: Callee, sources: Vec<Source>, span: Spa
 }
 
 // The checked type of a lambda body's value, when the argument is a lambda.
-lambda_result = (lo :: Native, e: ExprId) Res<Res<TyId>, LowerError> {
+lambda_result = (lo :: Lowerer, e: ExprId) Res<Res<TyId>, LowerError> {
     lo.stripped(e).kind.match({
         Lambda(l) => {
             block = lo.tree.block_at(l.body);
@@ -736,11 +736,11 @@ lambda_result = (lo :: Native, e: ExprId) Res<Res<TyId>, LowerError> {
     })
 }
 
-is_fn_type = (lo :: Native, ty: TyId) bool {
+is_fn_type = (lo :: Lowerer, ty: TyId) bool {
     lo.check.types.at(ty).match({ Fn(_) => true, _ => false })
 }
 
-closure_of = (lo :: Native, source: Source, span: Span) Res<LambdaRef, LowerError> {
+closure_of = (lo :: Lowerer, source: Source, span: Span) Res<LambdaRef, LowerError> {
     e = source.match({ Given(e) => Ok(e), _ => None })
         .ok_or(unsupported(span, "an omitted closure argument")).try();
     node = lo.stripped(e);
@@ -754,7 +754,7 @@ closure_of = (lo :: Native, source: Source, span: Span) Res<LambdaRef, LowerErro
     })
 }
 
-unparen = (id: ExprId, lo :: Native) ExprId {
+unparen = (id: ExprId, lo :: Lowerer) ExprId {
     lo.tree.expr_at(id).kind.match({ Paren(p) => p.inner.unparen(lo), _ => id })
 }
 
@@ -763,7 +763,7 @@ unparen = (id: ExprId, lo :: Native) ExprId {
 // ---------------------------------------------------------------------
 
 // `Record(name: value, ..)` with written defaults for omitted fields.
-construct_named* = (lo :: Native, ty: TyId, c: Call, span: Span) Res<Value, LowerError> {
+construct_named* = (lo :: Lowerer, ty: TyId, c: Call, span: Span) Res<Value, LowerError> {
     out = lo.temp(ty).try();
     // A record of no bytes is fully written by writing nothing.
     lo.is_unit(ty).then(() { lo.add(Instruction.Constant(Const(out: out.slot, value: 0))).try(); });
@@ -796,7 +796,7 @@ construct_named* = (lo :: Native, ty: TyId, c: Call, span: Span) Res<Value, Lowe
 
 StructDecl = { id: DeclId, s: Struct }
 
-struct_decl = (lo :: Native, ty: TyId) Res<StructDecl, LowerError> {
+struct_decl = (lo :: Lowerer, ty: TyId) Res<StructDecl, LowerError> {
     lo.check.types.at(ty).match({
         Named(n) => decl_at(lo.tree, n.decl).match({
             Ok(d) => d.kind.match({
@@ -811,7 +811,7 @@ struct_decl = (lo :: Native, ty: TyId) Res<StructDecl, LowerError> {
 
 // An omitted field takes its written default, evaluated in the declaring
 // module; an omitted Res field is None.
-field_default = (lo :: Native, decl: StructDecl, ty: TyId, field: FieldAt, span: Span)
+field_default = (lo :: Lowerer, decl: StructDecl, ty: TyId, field: FieldAt, span: Span)
                 Res<Value, LowerError> {
     written: Res<ExprId> = decl.s.members.find((m) { m.named(field.name) }).match({
         Ok(m) => m.kind.match({ Field(f) => f.value, _ => None }),
@@ -837,7 +837,7 @@ field_default = (lo :: Native, decl: StructDecl, ty: TyId, field: FieldAt, span:
 // compiler-provided operations
 // ---------------------------------------------------------------------
 
-intrinsic = (lo :: Native, id: ExprId, callee: Callee, sources: Vec<Source>, c: Call, span: Span)
+intrinsic = (lo :: Lowerer, id: ExprId, callee: Callee, sources: Vec<Source>, c: Call, span: Span)
             Res<Value, LowerError> {
     decl = callee.owner;
     module = lo.check.world.module_name(decl);
@@ -885,7 +885,7 @@ source_expr* = (sources: Vec<Source>, i: usize, span: Span) Res<ExprId, LowerErr
     })
 }
 
-conversion = (lo :: Native, id: ExprId, sources: Vec<Source>, span: Span) Res<Value, LowerError> {
+conversion = (lo :: Lowerer, id: ExprId, sources: Vec<Source>, span: Span) Res<Value, LowerError> {
     ty = lo.type_of(id).try();
     arg = lo.expr(sources.source_expr(0, span).try()).try();
     lo.check.types.at(ty).match({
@@ -927,7 +927,7 @@ conversion = (lo :: Native, id: ExprId, sources: Vec<Source>, span: Span) Res<Va
 // A signed negative never fits an unsigned target and an unsigned value
 // above the signed maximum never fits a signed one; comparing the signs of
 // source and result catches both after a round trip.
-sign_agrees = (lo :: Native, from: Value, to: Value) Res<usize, LowerError> {
+sign_agrees = (lo :: Lowerer, from: Value, to: Value) Res<usize, LowerError> {
     from_signed = signed(lo.class_of(from.ty).try());
     to_signed = signed(lo.class_of(to.ty).try());
     (from_signed == to_signed).match({
@@ -946,7 +946,7 @@ sign_agrees = (lo :: Native, from: Value, to: Value) Res<usize, LowerError> {
     })
 }
 
-bit_operation = (lo :: Native, id: ExprId, name: str, sources: Vec<Source>, span: Span)
+bit_operation = (lo :: Lowerer, id: ExprId, name: str, sources: Vec<Source>, span: Span)
                 Res<Value, LowerError> {
     ty = lo.type_of(id).try();
     left = lo.expr_as(sources.source_expr(0, span).try(), ty).try();
@@ -964,7 +964,7 @@ bit_operation = (lo :: Native, id: ExprId, name: str, sources: Vec<Source>, span
 }
 
 // Ptr<T> operations. Element sizes come from T at this instantiation.
-pointer_call = (lo :: Native, id: ExprId, name: str, sources: Vec<Source>, span: Span)
+pointer_call = (lo :: Lowerer, id: ExprId, name: str, sources: Vec<Source>, span: Span)
                Res<Value, LowerError> {
     ty = lo.type_of(id).try();
     name.match({
@@ -1026,19 +1026,19 @@ pointer_call = (lo :: Native, id: ExprId, name: str, sources: Vec<Source>, span:
     })
 }
 
-pointee = (lo :: Native, ty: TyId) Res<TyId, LowerError> {
+pointee = (lo :: Lowerer, ty: TyId) Res<TyId, LowerError> {
     lo.check.types.at(ty).match({
         Named(n) => n.args.get(0).ok_or(unsupported(nowhere(), "a Ptr without an element type")),
         _        => Err(unsupported(nowhere(), "a pointer operation on a non-pointer")),
     })
 }
 
-element_size = (lo :: Native, ty: TyId) Res<usize, LowerError> {
+element_size = (lo :: Lowerer, ty: TyId) Res<usize, LowerError> {
     class = lo.class_of(ty).try();
     Ok(size_of(class))
 }
 
-scaled = (lo :: Native, count: usize, stride: usize) Res<usize, LowerError> {
+scaled = (lo :: Lowerer, count: usize, stride: usize) Res<usize, LowerError> {
     (stride == 1).match({
         true  => Ok(count),
         false => {
@@ -1050,7 +1050,7 @@ scaled = (lo :: Native, count: usize, stride: usize) Res<usize, LowerError> {
     })
 }
 
-element_at = (lo :: Native, pointer: Value, sources: Vec<Source>, stride: usize, span: Span)
+element_at = (lo :: Lowerer, pointer: Value, sources: Vec<Source>, stride: usize, span: Span)
              Res<usize, LowerError> {
     index = lo.expr_as(sources.source_expr(1, span).try(), lo.prim("usize").try()).try();
     bytes = lo.scaled(index.slot, stride).try();
@@ -1060,7 +1060,7 @@ element_at = (lo :: Native, pointer: Value, sources: Vec<Source>, stride: usize,
 }
 
 // Console and environment operations supplied by the runtime.
-env_call = (lo :: Native, id: ExprId, name: str, c: Call, sources: Vec<Source>, span: Span)
+env_call = (lo :: Lowerer, id: ExprId, name: str, c: Call, sources: Vec<Source>, span: Span)
            Res<Value, LowerError> {
     name.match({
         "println" => lo.print_call(c.args, 0, true, Stream.Out, span),
@@ -1091,7 +1091,7 @@ env_call = (lo :: Native, id: ExprId, name: str, c: Call, sources: Vec<Source>, 
     })
 }
 
-without_receiver = (lo :: Native, sources: Vec<Source>) Res<Vec<Source>, LowerError> {
+without_receiver = (lo :: Lowerer, sources: Vec<Source>) Res<Vec<Source>, LowerError> {
     rest ::= lo.alloc.Vec<Source>();
     sources.loop((h, i, s) { (i > 0).then(() { rest.add(s).try(LowerError.OutOfMemory); }); });
     Ok(rest)
@@ -1100,7 +1100,7 @@ without_receiver = (lo :: Native, sources: Vec<Source>) Res<Vec<Source>, LowerEr
 // `env.in.read(buf, n)`: at most `n` bytes onto the end of `buf`, within
 // its reserved capacity (more is `Full`); `len` advances by the count read.
 // This writes the Vec's fields, as the C backend's floor does.
-stdin_read = (lo :: Native, id: ExprId, sources: Vec<Source>, span: Span) Res<Value, LowerError> {
+stdin_read = (lo :: Lowerer, id: ExprId, sources: Vec<Source>, span: Span) Res<Value, LowerError> {
     ty = lo.type_of(id).try();
     usize_ty = lo.prim("usize").try();
     buf_source = sources.get(1).value_or(Source.Absent);
@@ -1162,7 +1162,7 @@ stdin_read = (lo :: Native, id: ExprId, sources: Vec<Source>, span: Span) Res<Va
 }
 
 // Call a function of a std module by name with evaluated arguments.
-std_call* = (lo :: Native, module_name: str, name: str, args: Vec<Value>, span: Span) Res<Value, LowerError> {
+std_call* = (lo :: Lowerer, module_name: str, name: str, args: Vec<Value>, span: Span) Res<Value, LowerError> {
     module = lo.check.world.index_of(module_name).ok_or(unsupported(span, "a missing std module")).try();
     table = lo.check.world.table_at(module).ok_or(unsupported(span, "a missing std module table")).try();
     def = table.defs.find((d) { d.name.eq(name) }).ok_or(unsupported(span, "a missing std function")).try();
@@ -1183,7 +1183,7 @@ std_call* = (lo :: Native, module_name: str, name: str, args: Vec<Value>, span: 
 }
 
 // The receiver capability's type name (`Stdin`, `Fs`, ...).
-receiver_kind = (lo :: Native, sources: Vec<Source>) str {
+receiver_kind = (lo :: Lowerer, sources: Vec<Source>) str {
     sources.get(0).value_or(Source.Absent).match({
         Given(e) => lo.type_of(e).match({ Ok(t) => lo.type_name(t), Err(_) => "" }),
         _        => "",
@@ -1191,7 +1191,7 @@ receiver_kind = (lo :: Native, sources: Vec<Source>) str {
 }
 
 // Call a function of std.sys.sys_env by name.
-sys_env_call* = (lo :: Native, id: ExprId, name: str, sources: Vec<Source>, c: Call, span: Span)
+sys_env_call* = (lo :: Lowerer, id: ExprId, name: str, sources: Vec<Source>, c: Call, span: Span)
                 Res<Value, LowerError> {
     module = lo.check.world.index_of("std.sys.sys_env").ok_or(unsupported(span, "the std.sys.sys_env module")).try();
     table = lo.check.world.table_at(module).ok_or(unsupported(span, "the std.sys.sys_env table")).try();
@@ -1215,7 +1215,7 @@ sys_env_call* = (lo :: Native, id: ExprId, name: str, sources: Vec<Source>, c: C
 // ---------------------------------------------------------------------
 
 // The loop overloads: the body's parameter list selects the form.
-loop_call = (lo :: Native, id: ExprId, f: Function, sources: Vec<Source>, span: Span)
+loop_call = (lo :: Lowerer, id: ExprId, f: Function, sources: Vec<Source>, span: Span)
             Res<Value, LowerError> {
     body_index = f.params.len - 1;
     body = lo.closure_of(sources.get(body_index).value_or(Source.Absent), span).try();
@@ -1268,7 +1268,7 @@ loop_call = (lo :: Native, id: ExprId, f: Function, sources: Vec<Source>, span: 
 
 // A loop's Res<T> is settled by its context, else by the first
 // `h.break(value)` its body writes.
-loop_type = (lo :: Native, id: ExprId, body: LambdaRef) Res<TyId, LowerError> {
+loop_type = (lo :: Lowerer, id: ExprId, body: LambdaRef) Res<TyId, LowerError> {
     ty = lo.settled_type(id).try();
     lo.settled(ty).match({
         true  => Ok(ty),
@@ -1300,7 +1300,7 @@ loop_type = (lo :: Native, id: ExprId, body: LambdaRef) Res<TyId, LowerError> {
 
 // The default type of a literal (or a negated one) whose checked type is
 // still a parameter.
-literal_type = (lo :: Native, id: ExprId) Res<Res<TyId>, LowerError> {
+literal_type = (lo :: Lowerer, id: ExprId) Res<Res<TyId>, LowerError> {
     lo.tree.expr_at(id).kind.match({
         Literal(l) => l.kind.match({
             Int  => Ok(Ok(lo.prim("int").try())),
@@ -1353,7 +1353,7 @@ BreakFinder.impl(WalkVisitor, {
 
 ignore_none = <T>(r: Res<T>) { r.match({ Ok(_) => (), None => () }); }
 
-lambda_params = (lo :: Native, lambda: LambdaRef) Res<usize, LowerError> {
+lambda_params = (lo :: Lowerer, lambda: LambdaRef) Res<usize, LowerError> {
     lo.tree.expr_at(lambda.expr).kind.match({
         Lambda(l) => Ok(l.params.len),
         _         => Err(unsupported(nowhere(), "a loop body that is not a lambda")),
@@ -1361,7 +1361,7 @@ lambda_params = (lo :: Native, lambda: LambdaRef) Res<usize, LowerError> {
 }
 
 // `cond` is a closure evaluated each pass, or a boolean place re-read.
-condition = (lo :: Native, source: Source, span: Span) Res<usize, LowerError> {
+condition = (lo :: Lowerer, source: Source, span: Span) Res<usize, LowerError> {
     e = source.match({ Given(e) => Ok(e), _ => None }).ok_or(unsupported(span, "a loop without a condition")).try();
     node = lo.stripped(e);
     bool_ty = lo.prim("bool").try();
@@ -1372,7 +1372,7 @@ condition = (lo :: Native, source: Source, span: Span) Res<usize, LowerError> {
 }
 
 // The body runs with its handle bound to this loop.
-run_body = (lo :: Native, body: LambdaRef, loop_id: usize, values: Vec<Value>)
+run_body = (lo :: Lowerer, body: LambdaRef, loop_id: usize, values: Vec<Value>)
            Res<(), LowerError> {
     l = lo.tree.expr_at(body.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
         .ok_or(unsupported(nowhere(), "a loop body that is not a lambda")).try();
@@ -1400,7 +1400,7 @@ run_body = (lo :: Native, body: LambdaRef, loop_id: usize, values: Vec<Value>)
 
 // Walk [start, end) of a Range, a fixed array, or a type implementing
 // Range whose `at` supplies each value.
-range_loop = (lo :: Native, sources: Vec<Source>, body: LambdaRef, body_params: usize,
+range_loop = (lo :: Lowerer, sources: Vec<Source>, body: LambdaRef, body_params: usize,
               loop_id: usize, top: usize, next: usize, brk: usize, span: Span)
              Res<(), LowerError> {
     range_expr = sources.source_expr(0, span).try();
@@ -1448,13 +1448,13 @@ WalkKind = Elements | Indices | At(AtHook)
 AtHook = { decl: DeclId, f: Function, impl_module: usize }
 Walk = { start: usize, end: usize, kind: WalkKind }
 
-copy_slot = (lo :: Native, slot: usize) Res<usize, LowerError> {
+copy_slot = (lo :: Lowerer, slot: usize) Res<usize, LowerError> {
     out = lo.slot_of(lo.slots.get(slot).value_or(Scalar.U64)).try();
     lo.add(Instruction.Copy(Move(out: out, source: slot))).try();
     Ok(out)
 }
 
-element_place = (lo :: Native, array: Value, index: usize) Res<Place, LowerError> {
+element_place = (lo :: Lowerer, array: Value, index: usize) Res<Place, LowerError> {
     s = lo.shape(array.ty).try();
     elements = s.form.match({ Array(e) => Ok(e), _ => None }).ok_or(unsupported(nowhere(), "an array walk")).try();
     base = lo.address(lo.spill(array)).try();
@@ -1468,7 +1468,7 @@ element_place = (lo :: Native, array: Value, index: usize) Res<Place, LowerError
 
 // A Range record reads its fields; another type supplies start/end/at
 // through its Range impl.
-range_bounds = (lo :: Native, range: Value, span: Span) Res<Walk, LowerError> {
+range_bounds = (lo :: Lowerer, range: Value, span: Span) Res<Walk, LowerError> {
     qualified = lo.qualified_name(range.ty);
     qualified.eq("std.core.range.Range").match({
         true  => {
@@ -1481,7 +1481,7 @@ range_bounds = (lo :: Native, range: Value, span: Span) Res<Walk, LowerError> {
     })
 }
 
-qualified_name* = (lo :: Native, ty: TyId) str {
+qualified_name* = (lo :: Lowerer, ty: TyId) str {
     lo.check.types.at(ty).match({
         Named(n) => lo.alloc.String("{}.{}", lo.check.world.module_name(n.decl), n.name).match({
             Ok(s)  => s.view(),
@@ -1491,7 +1491,7 @@ qualified_name* = (lo :: Native, ty: TyId) str {
     })
 }
 
-impl_bounds = (lo :: Native, range: Value, span: Span) Res<Walk, LowerError> {
+impl_bounds = (lo :: Lowerer, range: Value, span: Span) Res<Walk, LowerError> {
     target = lo.type_name(range.ty);
     ids ::= lo.alloc.Vec<ImplId>();
     lo.check.world.impls_named(lo.tree, target, ids).try(LowerError.OutOfMemory);
@@ -1537,7 +1537,7 @@ impl_bounds = (lo :: Native, range: Value, span: Span) Res<Walk, LowerError> {
 }
 
 // One pass's value from the impl's `at`; None ends the walk.
-at_value = (lo :: Native, range: Value, hook: AtHook, index: Value, brk: usize, span: Span)
+at_value = (lo :: Lowerer, range: Value, hook: AtHook, index: Value, brk: usize, span: Span)
            Res<Value, LowerError> {
     body = hook.f.body.ok_or(unsupported(span, "a bodiless at")).try();
     inst = lo.check.types.at(range.ty).match({
@@ -1584,7 +1584,7 @@ at_value = (lo :: Native, range: Value, hook: AtHook, index: Value, brk: usize, 
     lo.payload_of(produced, ok)
 }
 
-at_result = (lo :: Native, hook: AtHook, inst: Inst, self_ty: TyId) Res<TyId, LowerError> {
+at_result = (lo :: Lowerer, hook: AtHook, inst: Inst, self_ty: TyId) Res<TyId, LowerError> {
     t = hook.f.ret.ok_or(unsupported(nowhere(), "an at without a result type")).try();
     owner: Res<DeclId> = lo.check.types.at(self_ty).match({ Named(n) => Ok(n.decl), _ => None });
     lo.callee_type(Callee(
@@ -1599,7 +1599,7 @@ at_result = (lo :: Native, hook: AtHook, inst: Inst, self_ty: TyId) Res<TyId, Lo
 }
 
 // `h.break()`, `h.break(value)` and `h.next()`.
-handle_call = (lo :: Native, loop_id: usize, name: str, c: Call, span: Span)
+handle_call = (lo :: Lowerer, loop_id: usize, name: str, c: Call, span: Span)
               Res<Value, LowerError> {
     target = lo.loops.get(loop_id).ok_or(unsupported(span, "a loop handle outside its loop")).try();
     name.match({
@@ -1632,7 +1632,7 @@ handle_call = (lo :: Native, loop_id: usize, name: str, c: Call, span: Span)
 // ---------------------------------------------------------------------
 
 // `a.String(fmt, args..)` and `s.fmt(fmt, args..)`: formatting into text.
-string_call = (lo :: Native, id: ExprId, name: str, c: Call, sources: Vec<Source>, span: Span)
+string_call = (lo :: Lowerer, id: ExprId, name: str, c: Call, sources: Vec<Source>, span: Span)
               Res<Value, LowerError> {
     ty = lo.type_of(id).try();
     name.match({
@@ -1691,7 +1691,7 @@ string_call = (lo :: Native, id: ExprId, name: str, c: Call, sources: Vec<Source
     })
 }
 
-std_callee_arity = (lo :: Native, module_name: str, name: str, arity: usize, span: Span) Res<Callee, LowerError> {
+std_callee_arity = (lo :: Lowerer, module_name: str, name: str, arity: usize, span: Span) Res<Callee, LowerError> {
     module = lo.check.world.index_of(module_name).ok_or(unsupported(span, "a missing std module")).try();
     table = lo.check.world.table_at(module).ok_or(unsupported(span, "a missing std module table")).try();
     found: Res<Callee> = loop<Callee>((h) {
@@ -1717,13 +1717,13 @@ FmtTo* = Console(Stream) | Into(Place)
 
 // `print`/`println` and Console output: a literal format string with
 // positional and named holes, or plain values.
-print_call* = (lo :: Native, args: Vec<Arg>, first: usize, newline: bool, stream: Stream,
+print_call* = (lo :: Lowerer, args: Vec<Arg>, first: usize, newline: bool, stream: Stream,
                span: Span) Res<Value, LowerError> {
     lo.format_call(args, first, newline, FmtTo.Console(stream), span).try();
     lo.unit()
 }
 
-format_call* = (lo :: Native, args: Vec<Arg>, first: usize, newline: bool, to: FmtTo,
+format_call* = (lo :: Lowerer, args: Vec<Arg>, first: usize, newline: bool, to: FmtTo,
                 span: Span) Res<(), LowerError> {
     raw: Res<str> = args.get(first).match({
         None    => None,
@@ -1745,7 +1745,7 @@ format_call* = (lo :: Native, args: Vec<Arg>, first: usize, newline: bool, to: F
     Ok(())
 }
 
-text = (lo :: Native, bytes: str, to: FmtTo) Res<(), LowerError> {
+text = (lo :: Lowerer, bytes: str, to: FmtTo) Res<(), LowerError> {
     (!bytes.is_empty()).then(() {
         to.match({
             Console(stream) => stream.match({
@@ -1766,7 +1766,7 @@ text = (lo :: Native, bytes: str, to: FmtTo) Res<(), LowerError> {
     Ok(())
 }
 
-print_expr = (lo :: Native, id: ExprId, to: FmtTo) Res<(), LowerError> {
+print_expr = (lo :: Lowerer, id: ExprId, to: FmtTo) Res<(), LowerError> {
     e = lo.tree.expr_at(id);
     raw: Res<str> = e.kind.match({
         Literal(l) => l.kind.match({ Str => Ok(l.text), _ => None }),
@@ -1785,7 +1785,7 @@ print_expr = (lo :: Native, id: ExprId, to: FmtTo) Res<(), LowerError> {
     })
 }
 
-print_value* = (lo :: Native, value: Value, to: FmtTo, span: Span) Res<(), LowerError> {
+print_value* = (lo :: Lowerer, value: Value, to: FmtTo, span: Span) Res<(), LowerError> {
     class = lo.class_of(value.ty).try();
     is_str = lo.prim_name(value.ty).eq("str");
     primitive = word(class) && lo.plain_word(value.ty);
@@ -1834,12 +1834,12 @@ print_value* = (lo :: Native, value: Value, to: FmtTo, span: Span) Res<(), Lower
 }
 
 // Integers and bool print directly; payload-free enums and pointers do not.
-plain_word = (lo :: Native, ty: TyId) bool {
+plain_word = (lo :: Lowerer, ty: TyId) bool {
     lo.check.types.at(ty).match({ Prim(_) => true, _ => false })
 }
 
 // `{}` of a non-primitive value: its Display `toString(out :: Sink)`.
-display = (lo :: Native, value: Value, sink: Value, span: Span) Res<(), LowerError> {
+display = (lo :: Lowerer, value: Value, sink: Value, span: Span) Res<(), LowerError> {
     callee = lo.resolve(value.ty, "toString", None, 2, lo.alloc.Inst(), None, span).try();
     sources ::= lo.alloc.Vec<Source>();
     sources.add(Source.Computed(value)).try(LowerError.OutOfMemory);
@@ -1849,7 +1849,7 @@ display = (lo :: Native, value: Value, sink: Value, span: Span) Res<(), LowerErr
 }
 
 // A Sink over a console stream (std.sys.StreamSink).
-stream_sink = (lo :: Native, stream: Stream, span: Span) Res<Value, LowerError> {
+stream_sink = (lo :: Lowerer, stream: Stream, span: Span) Res<Value, LowerError> {
     sink_ty = lo.std_type("std.sys.sys", "StreamSink", span).try();
     fd_ty = lo.prim("i32").try();
     fd = lo.constant(fd_ty, stream.match({ Out => 1, Err => 2 })).try();
@@ -1863,7 +1863,7 @@ stream_sink = (lo :: Native, stream: Stream, span: Span) Res<Value, LowerError> 
 
 // A Sink whose receiver is the String at `place`, so writes land there; a
 // place already holding a Sink handle is that handle.
-sink_for_place = (lo :: Native, place: Place, span: Span) Res<Value, LowerError> {
+sink_for_place = (lo :: Lowerer, place: Place, span: Span) Res<Value, LowerError> {
     sink_ty = lo.std_type("std.core.io", "Sink", span).try();
     (place.ty == sink_ty).match({
         true  => lo.read(place),
@@ -1873,7 +1873,7 @@ sink_for_place = (lo :: Native, place: Place, span: Span) Res<Value, LowerError>
 
 // Append a str to the text at `place`: String.add, or Sink.write through a
 // handle.
-write_str = (lo :: Native, place: Place, value: Value) Res<(), LowerError> {
+write_str = (lo :: Lowerer, place: Place, value: Value) Res<(), LowerError> {
     lo.bound_of(place.ty).try().match({
         None        => lo.string_add(place, value),
         Ok(bound)   => {
@@ -1888,7 +1888,7 @@ write_str = (lo :: Native, place: Place, value: Value) Res<(), LowerError> {
 }
 
 // A bound member's declared result type (for dispatching `write`).
-std_result = (lo :: Native, name: str, bound: Bound, span: Span) Res<TyId, LowerError> {
+std_result = (lo :: Lowerer, name: str, bound: Bound, span: Span) Res<TyId, LowerError> {
     decl = decl_at(lo.tree, bound.decl).ok_or(unsupported(span, "a missing bound")).try();
     s = decl.kind.match({ Struct(s) => Ok(s), _ => None }).ok_or(unsupported(span, "a bound that is not a struct")).try();
     member = s.members.find((m) { m.named(name) }).ok_or(unsupported(span, "a missing bound member")).try();
@@ -1898,7 +1898,7 @@ std_result = (lo :: Native, name: str, bound: Bound, span: Span) Res<TyId, Lower
 }
 
 // One of std.text.text_fmt's `add_*(out :: Sink, v)` writers.
-fmt_helper = (lo :: Native, name: str, sink: Value, value: Value, span: Span) Res<(), LowerError> {
+fmt_helper = (lo :: Lowerer, name: str, sink: Value, value: Value, span: Span) Res<(), LowerError> {
     callee = lo.std_callee("std.text.text_fmt", name, span).try();
     sources ::= lo.alloc.Vec<Source>();
     sources.add(Source.Computed(sink)).try(LowerError.OutOfMemory);
@@ -1908,7 +1908,7 @@ fmt_helper = (lo :: Native, name: str, sink: Value, value: Value, span: Span) Re
 }
 
 // `String.add(s: str)` on the String at `place`.
-string_add = (lo :: Native, place: Place, value: Value) Res<(), LowerError> {
+string_add = (lo :: Lowerer, place: Place, value: Value) Res<(), LowerError> {
     callee = lo.resolve(place.ty, "add", None, 2, lo.alloc.Inst(), None, nowhere()).try();
     sources ::= lo.alloc.Vec<Source>();
     sources.add(Source.Located(place)).try(LowerError.OutOfMemory);
@@ -1918,7 +1918,7 @@ string_add = (lo :: Native, place: Place, value: Value) Res<(), LowerError> {
 }
 
 // A non-generic type declared in a std module.
-std_type* = (lo :: Native, module_name: str, name: str, span: Span) Res<TyId, LowerError> {
+std_type* = (lo :: Lowerer, module_name: str, name: str, span: Span) Res<TyId, LowerError> {
     module = lo.check.world.index_of(module_name).ok_or(unsupported(span, "a missing std module")).try();
     table = lo.check.world.table_at(module).ok_or(unsupported(span, "a missing std module table")).try();
     def = table.defs.find((d) { d.name.eq(name) }).ok_or(unsupported(span, "a missing std type")).try();
@@ -1926,7 +1926,7 @@ std_type* = (lo :: Native, module_name: str, name: str, span: Span) Res<TyId, Lo
     lo.check.types.named(def.id, def.qname, def.name, args).try(LowerError.OutOfMemory)
 }
 
-std_callee* = (lo :: Native, module_name: str, name: str, span: Span) Res<Callee, LowerError> {
+std_callee* = (lo :: Lowerer, module_name: str, name: str, span: Span) Res<Callee, LowerError> {
     module = lo.check.world.index_of(module_name).ok_or(unsupported(span, "a missing std module")).try();
     table = lo.check.world.table_at(module).ok_or(unsupported(span, "a missing std module table")).try();
     def = table.defs.find((d) { d.name.eq(name) && d.kind.match({ FunctionDef => true, _ => false }) })
@@ -1936,7 +1936,7 @@ std_callee* = (lo :: Native, module_name: str, name: str, span: Span) Res<Callee
     Ok(Callee(f: f, owner: def.id, member: None, module: module, inst: lo.alloc.Inst(), self_ty: None, generic_owner: None))
 }
 
-format = (lo :: Native, args: Vec<Arg>, first: usize, raw: str, to: FmtTo, span: Span)
+format = (lo :: Lowerer, args: Vec<Arg>, first: usize, raw: str, to: FmtTo, span: Span)
          Res<(), LowerError> {
     end = raw.len - 1;
     start: usize ::= 1;
@@ -1979,7 +1979,7 @@ format = (lo :: Native, args: Vec<Arg>, first: usize, raw: str, to: FmtTo, span:
     Ok(())
 }
 
-raw_text = (lo :: Native, raw: str, to: FmtTo, span: Span) Res<(), LowerError> {
+raw_text = (lo :: Lowerer, raw: str, to: FmtTo, span: Span) Res<(), LowerError> {
     decoded = raw.decode_literal(lo.alloc).match({
         Ok(t)  => Ok(t),
         Err(_) => Err(unsupported(span, "a malformed literal escape")),

@@ -10,7 +10,6 @@
 # line means a new AST/sema dependency in a backend: carry the fact in gen_ir
 # instead. Generated once from the tree at 890acb1c, sorted with LC_ALL=C.
 gen/gen_c/gen_c_actor.zen sema.sema_check
-gen/gen_c/gen_c_actor.zen sema.sema_copy
 gen/gen_c/gen_c_actor.zen sema.sema_def
 gen/gen_c/gen_c_actor.zen sema.sema_id
 gen/gen_c/gen_c_actor.zen sema.sema_inst
@@ -228,7 +227,6 @@ gen/gen_c/gen_c_print.zen sema.sema_ty
 gen/gen_c/gen_c_print.zen std.ast
 gen/gen_c/gen_c_print.zen std.lex
 gen/gen_c/gen_c_ptr.zen sema.sema_check
-gen/gen_c/gen_c_ptr.zen sema.sema_copy
 gen/gen_c/gen_c_ptr.zen sema.sema_ty
 gen/gen_c/gen_c_ptr.zen std.ast
 gen/gen_c/gen_c_range.zen sema.sema_check

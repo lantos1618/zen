@@ -6,7 +6,7 @@
 // slots and the first seven instructions) is what `gen_lower` produces for
 // every renderer. The native surface adds integer widths, pointers,
 // aggregates held in frame memory, memory access, system calls and traps;
-// `gen_asm_lower` produces it and only the assembly targets render it.
+// `gen_lower_core` produces it and only the assembly targets render it.
 // `gen_verify.verify` admits the scalar surface; `verify_native` admits both.
 Vec = std.collections
 str = std.text

@@ -18,11 +18,11 @@ Invocation, SysCall, SysValue, Start, StartValue, Convert, Layout, Write, Stream
 sys_named, constant_named = gen.gen_sys
 TrapKind = gen.gen_ir
 LowerError, unsupported = gen.gen_lower
-Native, Value, Place, Base, Callee = gen.gen_asm_lower
-to_i64_bits = gen.gen_asm_lower
-Shape, Form, shape, size_of = gen.gen_asm_shape
-Source, bind_sources, invoke, call_inst, source_expr, result_type, real_call = gen.gen_asm_call
-settle_params = gen.gen_asm_call
+Lowerer, Value, Place, Base, Callee = gen.gen_lower_core
+to_i64_bits = gen.gen_lower_core
+Shape, Form, shape, size_of = gen.gen_lower_shape
+Source, bind_sources, invoke, call_inst, source_expr, result_type, real_call = gen.gen_lower_call
+settle_params = gen.gen_lower_call
 
 // How a member call reaches its body.
 Target = Static(Callee) | Dynamic(Bound)
@@ -35,7 +35,7 @@ Bound* = { decl*: DeclId, ty*: TyId, implementors*: Vec<TyId> }
 // resolution
 // ---------------------------------------------------------------------
 
-member_call* = (lo :: Native, id: ExprId, c: Call, checked: CheckedCall, receiver: ExprId,
+member_call* = (lo :: Lowerer, id: ExprId, c: Call, checked: CheckedCall, receiver: ExprId,
                 name: str, span: Span) Res<Value, LowerError> {
     recv_ty = lo.type_of(receiver).try();
     method_inst = lo.call_inst(checked.inst).try();
@@ -71,7 +71,7 @@ member_call* = (lo :: Native, id: ExprId, c: Call, checked: CheckedCall, receive
 // The function named `name` for receiver type `ty`: the body sema checked
 // when known, otherwise the first function of that name and arity on the
 // type, its impls (for `via`, only impls of that bound) or their bounds.
-resolve* = (lo :: Native, ty: TyId, name: str, body: Res<BlockId>, arity: usize,
+resolve* = (lo :: Lowerer, ty: TyId, name: str, body: Res<BlockId>, arity: usize,
             method_inst: Inst, via: Res<DeclId>, span: Span) Res<Callee, LowerError> {
     owners = lo.owners_of(ty, via).try();
     found: Res<Callee> = loop<Callee>((h) {
@@ -141,7 +141,7 @@ resolve* = (lo :: Native, ty: TyId, name: str, body: Res<BlockId>, arity: usize,
 }
 
 // `value.variant_name()`: the name of the alternative it holds, as a str.
-variant_name = (lo :: Native, id: ExprId, receiver: ExprId, span: Span) Res<Value, LowerError> {
+variant_name = (lo :: Lowerer, id: ExprId, receiver: ExprId, span: Span) Res<Value, LowerError> {
     value = lo.expr(receiver).try();
     ty = lo.type_of(id).try();
     variants = lo.variants_of(value.ty).try();
@@ -167,7 +167,7 @@ variant_name = (lo :: Native, id: ExprId, receiver: ExprId, span: Span) Res<Valu
 }
 
 // A std bound by name, with its program-wide implementors.
-bound_named = (lo :: Native, name: str, span: Span) Res<Bound, LowerError> {
+bound_named = (lo :: Lowerer, name: str, span: Span) Res<Bound, LowerError> {
     defs ::= lo.alloc.Vec<Def>();
     lo.check.world.exported_named(name, defs).try(LowerError.OutOfMemory);
     d = defs.find((d) { lo.check.world.module_name(d.id).starts_with("std.") })
@@ -177,7 +177,7 @@ bound_named = (lo :: Native, name: str, span: Span) Res<Bound, LowerError> {
     Ok(Bound(decl: d.id, ty: ty, implementors: lo.implementors(d.id).try()))
 }
 
-variadic* = (lo :: Native, f: Function) bool {
+variadic* = (lo :: Lowerer, f: Function) bool {
     (f.params.len > 0) && f.params.get(f.params.len - 1).match({
         Ok(p) => p.type.match({
             Ok(t) => lo.tree.type_at(t).kind.match({ Variadic => true, _ => false }),
@@ -194,7 +194,7 @@ OwnerKind = Own | Supply | Default
 Aliased = { f: Function, owner: DeclId }
 
 // The function an impl field's value names, in the impl's module.
-aliased = (lo :: Native, impl_decl: DeclId, e: ExprId) Res<Res<Aliased>, LowerError> {
+aliased = (lo :: Lowerer, impl_decl: DeclId, e: ExprId) Res<Res<Aliased>, LowerError> {
     lo.tree.expr_at(e).kind.match({
         Name(n) => {
             defs ::= lo.alloc.Vec<Def>();
@@ -212,7 +212,7 @@ aliased = (lo :: Native, impl_decl: DeclId, e: ExprId) Res<Res<Aliased>, LowerEr
 }
 Owner = { decl: DeclId, members: Vec<Member>, inst: Inst, generic: Res<DeclId>, kind: OwnerKind }
 
-owners_of = (lo :: Native, ty: TyId, via: Res<DeclId>) Res<Vec<Owner>, LowerError> {
+owners_of = (lo :: Lowerer, ty: TyId, via: Res<DeclId>) Res<Vec<Owner>, LowerError> {
     out ::= lo.alloc.Vec<Owner>();
     own = lo.own_decl(ty).try();
     inst = lo.type_inst(ty).try();
@@ -247,7 +247,7 @@ owners_of = (lo :: Native, ty: TyId, via: Res<DeclId>) Res<Vec<Owner>, LowerErro
 
 // The declaration a type's members live on: a named type's own, or the
 // std struct that declares a primitive's methods (`str`).
-own_decl = (lo :: Native, ty: TyId) Res<Res<DeclId>, LowerError> {
+own_decl = (lo :: Lowerer, ty: TyId) Res<Res<DeclId>, LowerError> {
     lo.check.types.at(ty).match({
         Named(n) => Ok(Ok(n.decl)),
         Prim(p)  => {
@@ -262,14 +262,14 @@ own_decl = (lo :: Native, ty: TyId) Res<Res<DeclId>, LowerError> {
     })
 }
 
-type_inst = (lo :: Native, ty: TyId) Res<Inst, LowerError> {
+type_inst = (lo :: Lowerer, ty: TyId) Res<Inst, LowerError> {
     lo.check.types.at(ty).match({
         Named(n) => lo.check.inst_of_named(n).try(LowerError.OutOfMemory),
         _        => Ok(lo.alloc.Inst()),
     })
 }
 
-merged = (lo :: Native, first: Inst, second: Inst) Res<Inst, LowerError> {
+merged = (lo :: Lowerer, first: Inst, second: Inst) Res<Inst, LowerError> {
     inst ::= lo.alloc.Inst();
     [first, second].loop((part) {
         Range(0, part.len()).loop((i) {
@@ -284,7 +284,7 @@ merged = (lo :: Native, first: Inst, second: Inst) Res<Inst, LowerError> {
 ImplFor = { id: ImplId, impl: Impl, bound: DeclId }
 
 // Impls whose target names this type in the target's own scope.
-impls_for = (lo :: Native, ty: TyId, own: Res<DeclId>) Res<Vec<ImplFor>, LowerError> {
+impls_for = (lo :: Lowerer, ty: TyId, own: Res<DeclId>) Res<Vec<ImplFor>, LowerError> {
     out ::= lo.alloc.Vec<ImplFor>();
     name = lo.type_name(ty);
     ids ::= lo.alloc.Vec<ImplId>();
@@ -306,14 +306,14 @@ impls_for = (lo :: Native, ty: TyId, own: Res<DeclId>) Res<Vec<ImplFor>, LowerEr
     Ok(out)
 }
 
-names_decl = (lo :: Native, module: usize, name: str, decl: DeclId) Res<bool, LowerError> {
+names_decl = (lo :: Lowerer, module: usize, name: str, decl: DeclId) Res<bool, LowerError> {
     defs ::= lo.alloc.Vec<Def>();
     lo.check.world.defs_of(module, name, defs).try(LowerError.OutOfMemory);
     Ok(defs.find((d) { d.id == decl }).match({ Ok(_) => true, None => false }))
 }
 
 // The declaration an impl's bound names.
-bound_decl = (lo :: Native, i: Impl) Res<Res<DeclId>, LowerError> {
+bound_decl = (lo :: Lowerer, i: Impl) Res<Res<DeclId>, LowerError> {
     Ok(lo.check.type_memo.get(i.bound).match({
         None     => None,
         Ok(ty)   => lo.check.types.at(ty).match({
@@ -329,7 +329,7 @@ bound_decl = (lo :: Native, i: Impl) Res<Res<DeclId>, LowerError> {
 
 // A struct with function members and no storage is a bound; a value of that
 // type holds an implementor's tag and a pointer to the implementor value.
-bound_of* = (lo :: Native, ty: TyId) Res<Res<Bound>, LowerError> {
+bound_of* = (lo :: Lowerer, ty: TyId) Res<Res<Bound>, LowerError> {
     s = lo.shape(ty).try();
     s.form.match({
         Handle(decl) => Ok(Ok(Bound(decl: decl, ty: ty, implementors: lo.implementors(decl).try()))),
@@ -338,7 +338,7 @@ bound_of* = (lo :: Native, ty: TyId) Res<Res<Bound>, LowerError> {
 }
 
 // Every non-generic type with an impl of this bound, in module order.
-implementors* = (lo :: Native, bound: DeclId) Res<Vec<TyId>, LowerError> {
+implementors* = (lo :: Lowerer, bound: DeclId) Res<Vec<TyId>, LowerError> {
     out ::= lo.alloc.Vec<TyId>();
     Range(0, lo.check.world.count()).loop((mi) {
         lo.check.world.table_at(mi).match({
@@ -349,7 +349,7 @@ implementors* = (lo :: Native, bound: DeclId) Res<Vec<TyId>, LowerError> {
     Ok(out)
 }
 
-module_implementors = (lo :: Native, mi: usize, impls: Vec<ImplId>, bound: DeclId,
+module_implementors = (lo :: Lowerer, mi: usize, impls: Vec<ImplId>, bound: DeclId,
                        out :: Vec<TyId>) Res<(), LowerError> {
     impls.loop((id) {
         lo.implementor_of(mi, id, bound).try().match({
@@ -360,7 +360,7 @@ module_implementors = (lo :: Native, mi: usize, impls: Vec<ImplId>, bound: DeclI
     Ok(())
 }
 
-implementor_of = (lo :: Native, mi: usize, id: ImplId, bound: DeclId) Res<Res<TyId>, LowerError> {
+implementor_of = (lo :: Lowerer, mi: usize, id: ImplId, bound: DeclId) Res<Res<TyId>, LowerError> {
     lo.check.world.impl_at(lo.tree, id).match({
         None    => Ok(None),
         Ok(i)   => lo.bound_decl(i).try().match({
@@ -373,7 +373,7 @@ implementor_of = (lo :: Native, mi: usize, id: ImplId, bound: DeclId) Res<Res<Ty
     })
 }
 
-target_type = (lo :: Native, module: usize, name: str) Res<Res<TyId>, LowerError> {
+target_type = (lo :: Lowerer, module: usize, name: str) Res<Res<TyId>, LowerError> {
     defs ::= lo.alloc.Vec<Def>();
     lo.check.world.defs_of(module, name, defs).try(LowerError.OutOfMemory);
     found = defs.find((d) { d.kind.match({ StructDef => true, EnumDef => true, _ => false }) });
@@ -404,7 +404,7 @@ target_type = (lo :: Native, module: usize, name: str) Res<Res<TyId>, LowerError
 
 // An implementor value enters a bound as its tag and a pointer to a copy
 // that lives as long as the enclosing function invocation.
-to_bound* = (lo :: Native, value: Value, target: TyId) Res<Res<Value>, LowerError> {
+to_bound* = (lo :: Lowerer, value: Value, target: TyId) Res<Res<Value>, LowerError> {
     lo.bound_of(target).try().match({
         None        => Ok(None),
         Ok(bound)   => {
@@ -433,7 +433,7 @@ to_bound* = (lo :: Native, value: Value, target: TyId) Res<Res<Value>, LowerErro
 
 // A bound handle whose receiver is the value at `place` itself, so mutable
 // members write into it (a String behind a Sink).
-handle_for_place* = (lo :: Native, place: Place, target: TyId) Res<Res<Value>, LowerError> {
+handle_for_place* = (lo :: Lowerer, place: Place, target: TyId) Res<Res<Value>, LowerError> {
     lo.bound_of(target).try().match({
         None      => Ok(None),
         Ok(bound) => {
@@ -460,7 +460,7 @@ handle_for_place* = (lo :: Native, place: Place, target: TyId) Res<Res<Value>, L
 }
 
 // Evaluate the arguments once, then branch on the implementor tag.
-dynamic_call = (lo :: Native, id: ExprId, c: Call, bound: Bound, receiver: ExprId, name: str,
+dynamic_call = (lo :: Lowerer, id: ExprId, c: Call, bound: Bound, receiver: ExprId, name: str,
                 method_inst: Inst, span: Span) Res<Value, LowerError> {
     handle = lo.expr(receiver).try();
     // Arguments evaluate once, before the dispatch; a place stays a place so
@@ -478,7 +478,7 @@ dynamic_call = (lo :: Native, id: ExprId, c: Call, bound: Bound, receiver: ExprI
 
 // Branch on a bound handle's implementor tag and call that implementor's
 // member with the handle's receiver.
-dispatch* = (lo :: Native, bound: Bound, handle: Value, name: str, args: Vec<Source>,
+dispatch* = (lo :: Lowerer, bound: Bound, handle: Value, name: str, args: Vec<Source>,
              method_inst: Inst, ty: TyId, span: Span) Res<Value, LowerError> {
     at = lo.address(lo.spill(handle)).try();
     tag = lo.slot_of(Scalar.U32).try();
@@ -511,7 +511,7 @@ dispatch* = (lo :: Native, bound: Bound, handle: Value, name: str, args: Vec<Sou
 
 // One implementor's member, with the bound's hooks defaulted: an absent
 // `free` does nothing and an absent `create<T>` asks `raw` for T's bytes.
-implementor_call = (lo :: Native, implementor: TyId, bound: Bound, name: str, receiver: Place,
+implementor_call = (lo :: Lowerer, implementor: TyId, bound: Bound, name: str, receiver: Place,
                     args: Vec<Source>, method_inst: Inst, ty: TyId, span: Span) Res<Value, LowerError> {
     arity = args.len + 1;
     lo.resolve(implementor, name, None, arity, method_inst, Ok(bound.decl), span).match({
@@ -537,7 +537,7 @@ implementor_call = (lo :: Native, implementor: TyId, bound: Bound, name: str, re
 }
 
 // Call a resolved member with already-evaluated receiver and arguments.
-call_values* = (lo :: Native, open: Callee, receiver: Place, args: Vec<Source>, ty: TyId, span: Span)
+call_values* = (lo :: Lowerer, open: Callee, receiver: Place, args: Vec<Source>, ty: TyId, span: Span)
                Res<Value, LowerError> {
     given ::= lo.alloc.Vec<Source>();
     given.add(Source.Located(receiver)).try(LowerError.OutOfMemory);
@@ -553,7 +553,7 @@ call_values* = (lo :: Native, open: Callee, receiver: Place, args: Vec<Source>, 
 
 // `Mem.alloc()` builds an Arena over fresh zeroed state; `Mem.page` maps a
 // run with its Page header in the first bytes; `Mem.release` unmaps.
-mem_call* = (lo :: Native, id: ExprId, name: str, sources: Vec<Source>, span: Span)
+mem_call* = (lo :: Lowerer, id: ExprId, name: str, sources: Vec<Source>, span: Span)
             Res<Value, LowerError> {
     ty = lo.type_of(id).try();
     name.match({
@@ -634,7 +634,7 @@ mem_call* = (lo :: Native, id: ExprId, name: str, sources: Vec<Source>, span: Sp
 
 max_one = (n: usize) usize { (n == 0).match({ true => 1, false => n }) }
 
-out_of_memory_trap = (lo :: Native, pointer: usize, span: Span) Res<(), LowerError> {
+out_of_memory_trap = (lo :: Lowerer, pointer: usize, span: Span) Res<(), LowerError> {
     zero = lo.word_const(Scalar.Ptr, 0).try();
     failed = lo.slot_of(Scalar.Bool).try();
     lo.add(Instruction.BinaryValue(Binary(out: failed, left: pointer, right: zero, op: Op.Equal, span: nowhere()))).try();
@@ -647,14 +647,14 @@ out_of_memory_trap = (lo :: Native, pointer: usize, span: Span) Res<(), LowerErr
     Ok(())
 }
 
-pointee_of* = (lo :: Native, ty: TyId) Res<TyId, LowerError> {
+pointee_of* = (lo :: Lowerer, ty: TyId) Res<TyId, LowerError> {
     lo.check.types.at(ty).match({
         Named(n) => n.args.get(0).ok_or(unsupported(nowhere(), "a pointer without an element type")),
         _        => Err(unsupported(nowhere(), "a pointer operation on a non-pointer")),
     })
 }
 
-payload_type* = (lo :: Native, ty: TyId, name: str) Res<TyId, LowerError> {
+payload_type* = (lo :: Lowerer, ty: TyId, name: str) Res<TyId, LowerError> {
     variants = lo.variants_of(ty).try();
     found = variants.find((v) { v.name.eq(name) }).ok_or(unsupported(nowhere(), "a missing variant")).try();
     found.payload.ok_or(unsupported(nowhere(), "a payload-free variant"))
@@ -666,7 +666,7 @@ payload_type* = (lo :: Native, ty: TyId, name: str) Res<TyId, LowerError> {
 
 // The bodiless std.sys operations: kernel calls, process start values,
 // per-target constants, a clock reading and raw address conversions.
-sys_call* = (lo :: Native, id: ExprId, name: str, sources: Vec<Source>, span: Span)
+sys_call* = (lo :: Lowerer, id: ExprId, name: str, sources: Vec<Source>, span: Span)
             Res<Value, LowerError> {
     ty = lo.type_of(id).try();
     sys_named(name).match({
@@ -740,7 +740,7 @@ sys_call* = (lo :: Native, id: ExprId, name: str, sources: Vec<Source>, span: Sp
 }
 
 // Console bytes to stream 1 (buffered stdout) or otherwise stderr.
-emit_to = (lo :: Native, stream: usize, data: usize, len: usize) Res<(), LowerError> {
+emit_to = (lo :: Lowerer, stream: usize, data: usize, len: usize) Res<(), LowerError> {
     one = lo.slot_of(lo.slots.get(stream).value_or(Scalar.I32)).try();
     lo.add(Instruction.Constant(Const(out: one, value: 1))).try();
     is_out = lo.slot_of(Scalar.Bool).try();
@@ -757,13 +757,13 @@ emit_to = (lo :: Native, stream: usize, data: usize, len: usize) Res<(), LowerEr
     lo.enter(done)
 }
 
-start_value = (lo :: Native, ty: TyId, which: StartValue) Res<Value, LowerError> {
+start_value = (lo :: Lowerer, ty: TyId, which: StartValue) Res<Value, LowerError> {
     out = lo.temp(ty).try();
     lo.add(Instruction.Startup(Start(out: out.slot, value: which))).try();
     Ok(out)
 }
 
-converted = (lo :: Native, sources: Vec<Source>, ty: TyId, span: Span) Res<Value, LowerError> {
+converted = (lo :: Lowerer, sources: Vec<Source>, ty: TyId, span: Span) Res<Value, LowerError> {
     value = lo.expr(sources.source_expr(0, span).try()).try();
     out = lo.temp(ty).try();
     lo.add(Instruction.Cast(Convert(out: out.slot, input: value.slot))).try();

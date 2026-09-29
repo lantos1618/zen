@@ -1,0 +1,3 @@
+Circle* = { r: i32 }
+
+area* = (c: Circle) i32 { c.r * c.r * 3 }

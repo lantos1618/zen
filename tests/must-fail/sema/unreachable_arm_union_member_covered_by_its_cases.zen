@@ -1,0 +1,21 @@
+// Every case of `Kind` has its own arm, so `Err(Kind)` below them has
+// nothing left to take.
+
+Kind = Io | Protocol | Authentication
+Fail = Mismatch | Accepted
+
+name = (r: Res<i32, Kind | Fail>) str {
+    r.match({
+        Err(Io)             => "io",
+        Err(Protocol)       => "protocol",
+        Err(Authentication) => "authentication",
+        Err(Kind)           => "kind",
+        Err(Fail)           => "fail",
+        Ok(_)               => "ok",
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", name(Err(Kind.Io)));
+    Ok(0);
+}

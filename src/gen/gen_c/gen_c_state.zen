@@ -11,6 +11,7 @@ DeclId = sema.sema_id
 TyId, Types = sema.sema_ty
 World, Def = sema.sema_def
 Checker = sema.sema_check
+ArmTrace = sema.sema_arm_trace
 Inst = sema.sema_inst
 CallEffects = gen.gen_c.gen_c_effect
 LoopSyntax = gen.gen_c.gen_c_shape
@@ -139,6 +140,8 @@ CBackend* = {
     // Lambdas remain addressable after their lexical scope is rewound.
     closures :: Vec<Closure>,
     inline_returns :: Vec<InlineReturn>,
+    // The tests the match arm being lowered has emitted so far.
+    arm_trace* :: ArmTrace,
     return_to* :: Res<usize>,
     // Current inline depth.
     depth* :: usize,
@@ -975,6 +978,7 @@ CBackend* = (a: Alloc, tree: Ast, check: Checker) Res<CBackend, AllocError> {
         drops: a.Vec<DropEntry>(),
         closures: a.Vec<Closure>(),
         inline_returns: a.Vec<InlineReturn>(),
+        arm_trace: a.ArmTrace(),
         return_to: None,
         depth: 0,
         floor: 0,

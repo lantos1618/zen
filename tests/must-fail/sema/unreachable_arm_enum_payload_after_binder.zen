@@ -1,0 +1,16 @@
+// `At(_)` already takes every `At`; the literal payload below is dead.
+
+Mark = At(i32) | Nowhere
+
+line = (m: Mark) i32 {
+    m.match({
+        At(_)   => 1,
+        Nowhere => 0,
+        At(5)   => 5,
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", line(Mark.At(5)));
+    Ok(0);
+}

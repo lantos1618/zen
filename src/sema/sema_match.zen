@@ -30,6 +30,8 @@ Pat* = {
 Pats* = {
     rows :: Vec<Pat>,
     alloc: Alloc,
+    // A second reading of patterns sema already accepted reports nothing.
+    quiet: bool,
 
     add* = (self :: @Self, p: Pat) Res<usize, AllocError> {
         i = self.rows.len;
@@ -67,7 +69,12 @@ Pats* = {
 
 }
 
-Pats* = (a: Alloc) Pats { Pats(rows: a.Vec<Pat>(), alloc: a) }
+Pats* = (a: Alloc) Pats { Pats(rows: a.Vec<Pat>(), alloc: a, quiet: false) }
+
+// Patterns for re-reading arms that sema has already checked.
+quiet_pats* = (a: Alloc) Pats {
+    Pats(rows: a.Vec<Pat>(), alloc: a, quiet: true)
+}
 
 PatMatrix* = {
     cells :: Vec<usize>,
@@ -117,7 +124,7 @@ norm_arms = (
     Ok(());
 }
 
-norm_pattern = (c :: Checker, ps :: Pats, pid: PatternId, ty: TyId, ctx: Ctx)
+norm_pattern* = (c :: Checker, ps :: Pats, pid: PatternId, ty: TyId, ctx: Ctx)
                 Res<usize, AllocError> {
     node = c.tree.pattern_at(pid);
     node.kind.match({
@@ -159,17 +166,36 @@ plain_ctor = (
     ps.add(sub_pat(text, sub, node.span))
 }
 
+// `Err(Kind(k))` names the member `Kind`; `Err(Protocol(c))`, with
+// `Protocol` a case of `Kind`, names that case inside it. Read as a
+// constructor of the set itself, the case is disjoint from `Kind`: an arm
+// after `Err(Kind)` looked reachable and the cases of `Kind` never
+// covered it.
 norm_set_ctor = (
-    c      :: Checker,
-    ps     :: Pats,
-    node   : Pattern,
-    d      : Destructure,
-    member : str,
-    mty    : TyId,
-    ctx    : Ctx
+    c    :: Checker,
+    ps   :: Pats,
+    node : Pattern,
+    d    : Destructure,
+    text : str,
+    mty  : TyId,
+    ctx  : Ctx
 ) Res<usize, AllocError> {
-    sub = c.norm_pattern(ps, d.binder, mty, ctx).try();
-    ps.add(sub_pat(member, sub, node.span))
+    member = c.member_name(mty);
+    inner  = c.names_member_case(mty, text).try().match({
+        true  => c.plain_ctor(ps, node, d, mty, text, ctx),
+        false => c.norm_pattern(ps, d.binder, mty, ctx),
+    }).try();
+    ps.add(sub_pat(member, inner, node.span))
+}
+
+// A name `member_of` resolved to `mty` is the member itself or a case of
+// it; code generation draws the same line in `names_member_case`.
+names_member_case = (c :: Checker, mty: TyId, text: str)
+                    Res<bool, AllocError> {
+    (c.member_name(mty).eq(text) == false).match({
+        false => Ok(false),
+        true  => c.is_case(mty, text),
+    })
 }
 
 // A declared nullary case remains a constructor; other names are binders.
@@ -247,14 +273,14 @@ norm_binder = (
     ctx  : Ctx
 ) Res<usize, AllocError> {
     is_const = c.names_const(text, ctx).try();
-    is_const.then(() {
+    (is_const && (ps.quiet == false)).then(() {
         c.refuse(
             node.span,
             SemaFault.ConstPattern(NameFault(name: text))
         ).try();
     });
     // Constants already receive the more specific constant-pattern diagnostic.
-    (is_const == false && c.not_a_case(ty, text)).then(() {
+    (is_const == false && ps.quiet == false && c.not_a_case(ty, text)).then(() {
         c.refuse(node.span, SemaFault.NotACase(NameFault(name: text))).try();
     });
     ps.add(binder_pat(text, node.span)).try()
@@ -290,7 +316,7 @@ check_coverage = (
 }
 
 // Poison, holes, and unsubstituted parameters have no reliable case list.
-checkable = (c: Checker, sty: TyId) bool {
+checkable* = (c: Checker, sty: TyId) bool {
     (c.is_unknown(sty) || c.is_infer(sty) || c.is_var(sty)) == false
 }
 
@@ -754,6 +780,24 @@ MatchCoverage = (pats :: Pats, sty: TyId) MatchCoverage {
     MatchCoverage(pats: pats, sty: sty)
 }
 
+// Whether every value of `ty` that pattern `inner` matches, `outer`
+// matches too. The engine that finds unreachable arms answers it: `inner`
+// is covered exactly when it is useless below a single `outer` row.
+covers* = (c :: Checker, ps :: Pats, outer: usize, inner: usize, ty: TyId)
+          Res<bool, AllocError> {
+    coverage ::= MatchCoverage(ps, ty);
+    m        ::= ps.alloc.PatMatrix(1);
+    row      ::= ps.alloc.Vec<usize>();
+    row.add(outer).try();
+    m.add_row(row).try();
+    q ::= ps.alloc.Vec<usize>();
+    q.add(inner).try();
+    tys  = coverage.one_ty().try();
+    open = coverage.useful(c, m, q, tys).try();
+    ps   = coverage.pats;
+    Ok(open == false)
+}
+
 arm_types = (
     c    :: Checker,
     ps   :: Pats,
@@ -874,7 +918,7 @@ binder_pat = (name: str, span: Span) Pat {
     )
 }
 
-ctor_pat = (name: str, span: Span) Pat {
+ctor_pat* = (name: str, span: Span) Pat {
     Pat(
         kind: PatKind.CtorPat,
         name: name,
@@ -885,7 +929,7 @@ ctor_pat = (name: str, span: Span) Pat {
     )
 }
 
-sub_pat = (name: str, sub: usize, span: Span) Pat {
+sub_pat* = (name: str, sub: usize, span: Span) Pat {
     Pat(
         kind: PatKind.CtorPat,
         name: name,
@@ -929,7 +973,7 @@ member_name = (c :: Checker, mty: TyId) str {
     })
 }
 
-lit_pat = (text: str, span: Span) Pat {
+lit_pat* = (text: str, span: Span) Pat {
     Pat(
         kind: PatKind.LitPat,
         name: text,

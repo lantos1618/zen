@@ -1,0 +1,21 @@
+// On `Kind | Fail`, `Err(Kind)` takes every case of `Kind`, so the
+// `Err(Protocol)` below it never runs. Code generation once gave the
+// bare case no test at all, which made the FIRST such arm take every
+// error; the checker must read the case as inside its member.
+
+Kind = Io | Protocol | Authentication
+Fail = Mismatch | Accepted
+
+name = (r: Res<i32, Kind | Fail>) str {
+    r.match({
+        Err(Kind)     => "kind",
+        Err(Protocol) => "protocol",
+        Err(_)        => "fail",
+        Ok(_)         => "ok",
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", name(Err(Kind.Protocol)));
+    Ok(0);
+}

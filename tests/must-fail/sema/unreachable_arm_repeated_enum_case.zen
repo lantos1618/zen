@@ -1,0 +1,16 @@
+// A case named twice: the second arm never runs.
+
+Signal = Start | Stop
+
+code = (s: Signal) i32 {
+    s.match({
+        Start => 1,
+        Stop  => 2,
+        Start => 3,
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", code(Signal.Stop));
+    Ok(0);
+}

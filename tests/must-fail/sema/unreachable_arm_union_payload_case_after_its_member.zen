@@ -1,0 +1,20 @@
+// `Err(Protocol(c))`, with `Protocol(i32)` a case of the member `Kind`,
+// is inside `Err(Kind)`. Read as a constructor of the set itself, the
+// case was disjoint from `Kind` and this dead arm passed.
+
+Kind = Io(i32) | Protocol(i32)
+Fail = Mismatch | Accepted
+
+code = (r: Res<i32, Kind | Fail>) i32 {
+    r.match({
+        Err(Kind)        => 1,
+        Err(Protocol(c)) => c,
+        Err(_)           => -1,
+        Ok(v)            => v,
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", code(Err(Kind.Protocol(9))));
+    Ok(0);
+}

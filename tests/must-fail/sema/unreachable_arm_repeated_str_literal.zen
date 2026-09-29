@@ -1,0 +1,15 @@
+// A string literal named twice: the second arm never runs.
+
+greet = (s: str) i32 {
+    s.match({
+        "hello" => 1,
+        "bye"   => 2,
+        "hello" => 3,
+        _       => 0,
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", greet("bye"));
+    Ok(0);
+}

@@ -1,0 +1,18 @@
+// MUST FAIL: `alpha` and `beta` both export `digest(x: u64)`, and this
+// module imports neither function, so `x.digest()` reaches both through
+// the receiver's type and neither outranks the other. Accepted, the call
+// bound to whichever module was loaded first, silently; a differential
+// test comparing the two modules then compared one module with itself.
+// Importing the intended function by name (`digest, ... = beta`) settles
+// it; the module aliases below only load the two modules.
+//
+// position: the call.
+
+first = alpha
+second = beta
+
+main = (env: Env) Res<i32, AllocError> {
+    x: u64 = 7;
+    println("{}", x.digest());
+    Ok(0);
+}

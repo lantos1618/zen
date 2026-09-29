@@ -179,6 +179,7 @@ CallCheck = {
     ) Res<TyId, AllocError> {
         cands ::= c.alloc.Vec<Cand>();
         c.cands_of(self.ctx.module, name, cands).try();
+        visible = cands.len;
         c.travelled_cands(name, recv, cands).try();
         // Free-form UFCS also considers argument zero as the receiver.
         recv.match({
@@ -189,8 +190,53 @@ CallCheck = {
             }),
         }).try();
         self.first_matching(c, cands, actuals).try().match({
-            Ok(k) => self.chosen(c, k, actuals),
+            Ok(k) => {
+                self.refuse_travelled_tie(c, name, cands, visible, k).try();
+                self.chosen(c, k, actuals)
+            },
             None  => self.construct_or_fail(c, name, recv, cands, recovery),
+        })
+    }
+
+    // Candidates after `visible` travelled in from other modules' exports, so
+    // none outranks another. When the pick is one of them and another module
+    // exports the same parameter list, list order would decide which module
+    // runs; the call is refused instead, and importing the intended function
+    // by name makes it visible and settles the choice.
+    refuse_travelled_tie = (
+        self    : @Self,
+        c       :: Checker,
+        name    : str,
+        cands   : Vec<Cand>,
+        visible : usize,
+        k       : Cand
+    ) Res<(), AllocError> {
+        travelled = Range(visible, cands.len).find((i) {
+            cands.get(i).match({ Ok(x) => x.id.eq(k.id), None => false })
+        }).match({ Ok(_) => true, None => false });
+        rival     = Range(visible, cands.len).find((i) {
+            cands.get(i).match({
+                Ok(x) => !x.id.eq(k.id) && c.same_signature(x, k),
+                None  => false,
+            })
+        });
+        travelled.match({
+            false => Ok(()),
+            true  => rival.match({
+                None  => Ok(()),
+                Ok(i) => cands.get(i).match({
+                    None      => Ok(()),
+                    Ok(other) => c.report(
+                        self.node.span.file,
+                        self.node.span,
+                        SemaFault.TravelledTie(PairFault(
+                            name: name,
+                            first: k.span,
+                            second: other.span
+                        ))
+                    ),
+                }),
+            }),
         })
     }
 

@@ -1,0 +1,22 @@
+fill_random, EntropyError = std.entropy
+main = (env: Env) Res<(), AllocError> {
+    a     = env.mem.alloc();
+    bytes = a.raw(515, 1).try();
+    @scope.defer(() { a.free(bytes); });
+    bytes.write(0, 173); bytes.write(514, 219);
+    empty   = fill_random(null_ptr<u8>(), 0).match({Ok(_) => true, _ => false});
+    invalid = fill_random(
+        null_ptr<u8>(),
+        1
+    ).match({Err(EntropyError.Invalid) => true, _ => false});
+    filled  = fill_random(
+        bytes.offset(1),
+        513
+    ).match({Ok(_) => true, _ => false});
+    println("empty and invalid spans: {}", empty && invalid);
+    println(
+        "OS fill and bounds: {}",
+        filled && bytes.read(0) == 173 && bytes.read(514) == 219
+    );
+    Ok(())
+}

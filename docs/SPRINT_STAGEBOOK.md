@@ -5,6 +5,21 @@ Completed execution logs, previous checkpoints and review transcripts live in
 Git history. Architecture and library contracts belong in [LIBRARIES.md](LIBRARIES.md),
 [DESIGN.md](DESIGN.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Current checkpoint: OS entropy (2026-09-29)
+
+`std.entropy.fill_random` adds caller-buffer OS cryptographic randomness for
+macOS/Linux via header-backed `getentropy`. Zen owns bounded 256-byte chunking
+and error propagation; there is no allocation, package dependency, PRNG state,
+or fallback to `std.core.rand`. On OS failure callers must discard the whole
+output because earlier chunks may already have been written.
+
+The real-OS corpus and deterministic UBSan OS-failure fixture pass on macOS.
+The latter checks empty/null spans, exact chunk boundaries, first/later-call
+failure and a deliberately false-success control. Seed regeneration produces
+no seed changes. `make -j1 seed verify` stops at the known macOS compiler-name
+warning issue (Apple Clang as gcc: 7,094 warnings against GCC budget 315), with
+no budget changes. Full Linux CI remains the merge gate.
+
 ## Current checkpoint: canonical unit-return spelling (2026-09-28)
 
 Named functions and methods with bodies now use `name = (...) { ... }` rather

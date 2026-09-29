@@ -1,0 +1,843 @@
+// Experimental native IETF ChaCha20-Poly1305 (RFC 8439), not XChaCha20.
+// No C crypto calls. Fixed rounds, limb arithmetic and full-tag comparison;
+// generated code and side-channel behavior have not been independently audited.
+// Scratch retains key material; callers must use a vetted erasure mechanism.
+//
+// Algorithms are ported from libsodium 1.0.22 (https://libsodium.org),
+// src/libsodium:
+//   crypto_stream/chacha20/dolbeau/u8.h  - eight-block ChaCha20 on AVX2: one
+//       u32x8 per state word (lane l = block l), VEC8_ROUND_SEQ line order,
+//       then ONEQUAD_UNPCK (unpack epi32/epi64 within 128-bit halves) and
+//       ONEOCTO (permute2x128) as std.simd shuffle2 patterns. Selected at run
+//       time from the std.simd Avx2 capability.
+//   crypto_stream/chacha20/dolbeau/u4.h  - the same with u32x4 (SSE2/NEON)
+//       for the remaining 256-byte runs and CPUs without AVX2.
+//   crypto_stream/chacha20/ref/chacha20_ref.c - one-block QUARTERROUND core,
+//       used for the Poly1305 key block and the final <256 bytes.
+//   crypto_onetimeauth/poly1305/donna/poly1305_donna64.h - radix 2^44
+//       poly1305_init/poly1305_blocks/poly1305_finish with 64x64->128
+//       products (std.core.num mul_wide, u128 sums), as libsodium selects
+//       with HAVE_TI_MODE.
+// Zen differences are limited to the interface: caller-owned scratch instead
+// of a context struct, no allocation, and TLS-style padded AEAD framing.
+//
+// libsodium license (ISC):
+//   Copyright (c) 2013-2026 Frank Denis <j at pureftpd dot org>
+//
+//   Permission to use, copy, modify, and/or distribute this software for any
+//   purpose with or without fee is hereby granted, provided that the above
+//   copyright notice and this permission notice appear in all copies.
+//
+//   THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+//   WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+//   MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+//   ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+//   WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+//   ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+//   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+Ptr = std.mem
+Range = std.core
+bit_xor, bit_and, bit_or, rotate_right, shift_right, shift_left, to_u32, to_u64, to_u8 = std.core.num
+mul_wide, truncate_u8, truncate_u32, truncate_u64, to_u128 = std.core.num
+avx2, Avx2, splat_u32x8, lanes_u32x8, load_u32x8 = std.simd
+splat_u32x4, lanes_u32x4, load_u32x4, load_u64x2 = std.simd
+splat_u64x4, lanes_u64x4, load_u64x4, splat_u64x2, lanes_u64x2 = std.simd
+
+// Key spans 32 readable bytes; nonce spans 12. Never reuse a nonce with a key.
+// Scratch spans >=40 aligned u64 words and cannot overlap any other buffer.
+// Input/output may be exactly identical; all other overlapping spans are invalid
+// caller usage, including output overlapping AAD, key or nonce. No allocation.
+// Null input/AAD is permitted only for zero length. Output must be non-null.
+// seal appends a full 16-byte tag. open checks it before writing any plaintext.
+// Invalid arguments and failed authentication leave output unchanged.
+chacha20poly1305_seal* = (
+    output          : Ptr<u8>,
+    output_capacity : usize,
+    message         : Ptr<u8>,
+    message_count   : usize,
+    aad             : Ptr<u8>,
+    aad_count       : usize,
+    key             : Ptr<u8>,
+    nonce           : Ptr<u8>,
+    scratch         : Ptr<u64>,
+    scratch_words   : usize
+) bool {
+    valid = message_count <= 274877906880 && output_capacity >= 16
+        && message_count <= output_capacity - 16
+        && spans(
+            output,
+            message,
+            message_count,
+            aad,
+            aad_count,
+            key,
+            nonce,
+            scratch,
+            scratch_words
+        );
+    valid.match({
+        false => false,
+        true  => {
+            initialize(scratch, key, nonce);
+            stream_xor(scratch, output, message, message_count);
+            poly_key(scratch);
+            authenticate(scratch, aad, aad_count, output, message_count);
+            output.offset(message_count).copy_from(scratch.offset(38).to<u8>(), 16);
+            true
+        },
+    })
+}
+chacha20poly1305_open* = (
+    output           : Ptr<u8>,
+    output_capacity  : usize,
+    ciphertext       : Ptr<u8>,
+    ciphertext_count : usize,
+    aad              : Ptr<u8>,
+    aad_count        : usize,
+    key              : Ptr<u8>,
+    nonce            : Ptr<u8>,
+    scratch          : Ptr<u64>,
+    scratch_words    : usize
+) bool {
+    valid = ciphertext_count >= 16 && ciphertext_count <= 274877906896
+        && ciphertext_count - 16 <= output_capacity
+        && spans(
+            output,
+            ciphertext,
+            ciphertext_count,
+            aad,
+            aad_count,
+            key,
+            nonce,
+            scratch,
+            scratch_words
+        );
+    valid.match({
+        false => false,
+        true  => {
+            count = ciphertext_count - 16;
+            initialize(scratch, key, nonce);
+            poly_key(scratch);
+            authenticate(scratch, aad, aad_count, ciphertext, count);
+            tag = scratch.offset(38).to<u8>();
+            different: u32 ::= 0;
+            Range(0, 16).loop((i) {
+                different = different +% tag.read(i).to_u32().bit_xor(ciphertext.read(count + i).to_u32());
+            });
+            (different == 0).match({
+                false => false,
+                true  => { stream_xor(
+                    scratch,
+                    output,
+                    ciphertext,
+                    count
+                ); true },
+            })
+        },
+    })
+}
+spans = (
+    output        : Ptr<u8>,
+    input         : Ptr<u8>,
+    count         : usize,
+    aad           : Ptr<u8>,
+    aad_count     : usize,
+    key           : Ptr<u8>,
+    nonce         : Ptr<u8>,
+    scratch       : Ptr<u64>,
+    scratch_words : usize
+) bool {
+    !output.is_null() && (count == 0 || !input.is_null()) && (aad_count == 0 || !aad.is_null())
+        && !key.is_null() && !nonce.is_null() && !scratch.is_null() && scratch_words >= 40
+}
+// Scratch words: 0..7 ChaCha20 input state (16 u32, word 12 unused), 8..39
+// four-lane working state. Once the stream is done or not yet started, 8..15
+// hold one keystream block, 24..37 Poly1305 r/h/pad, 38..39 buffer and tag.
+low8_64 = (value: u64) u8 {
+    value.bit_and(255).to_usize().match({Ok(n) => n.to_u8().match({Ok(b) => b, None => 0}), None => 0})
+}
+low8 = (value: u32) u8 { value.bit_and(255).to_u8().match({Ok(b) => b, None => 0}) }
+// Wrapping index/shift arithmetic: operands are bounded by validated spans,
+// and multiplication by 2^k is the only left shift Zen currently exposes.
+load32 = (input: Ptr<u8>, offset: usize) u32 {
+    input.read(offset).to_u32() +% input.read(offset +% 1).to_u32() *% 256
+        +% input.read(offset +% 2).to_u32() *% 65536 +% input.read(offset +% 3).to_u32() *% 16777216
+}
+store32 = (output: Ptr<u8>, offset: usize, value: u32) {
+    output.write(offset, low8(value)); output.write(offset +% 1, low8(value.shift_right(8)));
+    output.write(offset +% 2, low8(value.shift_right(16))); output.write(offset +% 3, low8(value.shift_right(24)));
+}
+initialize* = (scratch: Ptr<u64>, key: Ptr<u8>, nonce: Ptr<u8>) {
+    initial = scratch.to<u32>();
+    initial.write(0, 1634760805); initial.write(1, 857760878);
+    initial.write(2, 2036477234); initial.write(3, 1797285236);
+    Range(0, 8).loop((i) { initial.write(4 + i, load32(key, i * 4)); });
+    initial.write(12, 0);
+    Range(0, 3).loop((i) { initial.write(13 + i, load32(nonce, i * 4)); });
+}
+// chacha20_ref.c: one keystream block for counter into scratch words 8..15.
+block = (scratch: Ptr<u64>, counter: u32) {
+    j = scratch.to<u32>();
+    x0 ::= j.read(0); x1 ::= j.read(1); x2 ::= j.read(2); x3 ::= j.read(3);
+    x4 ::= j.read(4); x5 ::= j.read(5); x6 ::= j.read(6); x7 ::= j.read(7);
+    x8 ::= j.read(8); x9 ::= j.read(9); x10 ::= j.read(10); x11 ::= j.read(11);
+    x12 ::= counter; x13 ::= j.read(13); x14 ::= j.read(14); x15 ::= j.read(15);
+    Range(0, 10).loop((round) {
+        x0 = x0 +% x4; x12 = x12.bit_xor(x0).rotate_right(16);
+        x8 = x8 +% x12; x4 = x4.bit_xor(x8).rotate_right(20);
+        x0 = x0 +% x4; x12 = x12.bit_xor(x0).rotate_right(24);
+        x8 = x8 +% x12; x4 = x4.bit_xor(x8).rotate_right(25);
+        x1 = x1 +% x5; x13 = x13.bit_xor(x1).rotate_right(16);
+        x9 = x9 +% x13; x5 = x5.bit_xor(x9).rotate_right(20);
+        x1 = x1 +% x5; x13 = x13.bit_xor(x1).rotate_right(24);
+        x9 = x9 +% x13; x5 = x5.bit_xor(x9).rotate_right(25);
+        x2 = x2 +% x6; x14 = x14.bit_xor(x2).rotate_right(16);
+        x10 = x10 +% x14; x6 = x6.bit_xor(x10).rotate_right(20);
+        x2 = x2 +% x6; x14 = x14.bit_xor(x2).rotate_right(24);
+        x10 = x10 +% x14; x6 = x6.bit_xor(x10).rotate_right(25);
+        x3 = x3 +% x7; x15 = x15.bit_xor(x3).rotate_right(16);
+        x11 = x11 +% x15; x7 = x7.bit_xor(x11).rotate_right(20);
+        x3 = x3 +% x7; x15 = x15.bit_xor(x3).rotate_right(24);
+        x11 = x11 +% x15; x7 = x7.bit_xor(x11).rotate_right(25);
+        x0 = x0 +% x5; x15 = x15.bit_xor(x0).rotate_right(16);
+        x10 = x10 +% x15; x5 = x5.bit_xor(x10).rotate_right(20);
+        x0 = x0 +% x5; x15 = x15.bit_xor(x0).rotate_right(24);
+        x10 = x10 +% x15; x5 = x5.bit_xor(x10).rotate_right(25);
+        x1 = x1 +% x6; x12 = x12.bit_xor(x1).rotate_right(16);
+        x11 = x11 +% x12; x6 = x6.bit_xor(x11).rotate_right(20);
+        x1 = x1 +% x6; x12 = x12.bit_xor(x1).rotate_right(24);
+        x11 = x11 +% x12; x6 = x6.bit_xor(x11).rotate_right(25);
+        x2 = x2 +% x7; x13 = x13.bit_xor(x2).rotate_right(16);
+        x8 = x8 +% x13; x7 = x7.bit_xor(x8).rotate_right(20);
+        x2 = x2 +% x7; x13 = x13.bit_xor(x2).rotate_right(24);
+        x8 = x8 +% x13; x7 = x7.bit_xor(x8).rotate_right(25);
+        x3 = x3 +% x4; x14 = x14.bit_xor(x3).rotate_right(16);
+        x9 = x9 +% x14; x4 = x4.bit_xor(x9).rotate_right(20);
+        x3 = x3 +% x4; x14 = x14.bit_xor(x3).rotate_right(24);
+        x9 = x9 +% x14; x4 = x4.bit_xor(x9).rotate_right(25);
+    });
+    out = scratch.offset(8).to<u8>();
+    store32(out, 0, x0 +% j.read(0)); store32(out, 4, x1 +% j.read(1));
+    store32(out, 8, x2 +% j.read(2)); store32(out, 12, x3 +% j.read(3));
+    store32(out, 16, x4 +% j.read(4)); store32(out, 20, x5 +% j.read(5));
+    store32(out, 24, x6 +% j.read(6)); store32(out, 28, x7 +% j.read(7));
+    store32(out, 32, x8 +% j.read(8)); store32(out, 36, x9 +% j.read(9));
+    store32(out, 40, x10 +% j.read(10)); store32(out, 44, x11 +% j.read(11));
+    store32(out, 48, x12 +% counter); store32(out, 52, x13 +% j.read(13));
+    store32(out, 56, x14 +% j.read(14)); store32(out, 60, x15 +% j.read(15));
+}
+// u4.h: four blocks (counters counter..counter+3) for 256 bytes at offset.
+// Word w of block l is kept at v[4*w + l], the layout of u4.h's x_w vectors.
+// The lane loop is the innermost loop, its iterations are independent and
+// its v accesses have unit stride, so the C compiler's loop vectorizer maps
+// each state word to one 4 x u32 register (SSE2 on baseline x86-64, NEON on
+// arm64) as VEC4_QUARTERROUND does. That requires the ten double rounds to
+// be written out: a nested round loop would not be vectorized.
+blocks8 = (
+    cpu     : Avx2,
+    j       : Ptr<u32>,
+    output  : Ptr<u8>,
+    input   : Ptr<u8>,
+    offset  : usize,
+    counter : u32
+) {
+    o0 = splat_u32x8(j.read(0));
+    o1 = splat_u32x8(j.read(1));
+    o2 = splat_u32x8(j.read(2));
+    o3 = splat_u32x8(j.read(3));
+    o4 = splat_u32x8(j.read(4));
+    o5 = splat_u32x8(j.read(5));
+    o6 = splat_u32x8(j.read(6));
+    o7 = splat_u32x8(j.read(7));
+    o8 = splat_u32x8(j.read(8));
+    o9 = splat_u32x8(j.read(9));
+    o10 = splat_u32x8(j.read(10));
+    o11 = splat_u32x8(j.read(11));
+    o12 = splat_u32x8(counter).add_wrap(lanes_u32x8(0, 1, 2, 3, 4, 5, 6, 7));
+    o13 = splat_u32x8(j.read(13));
+    o14 = splat_u32x8(j.read(14));
+    o15 = splat_u32x8(j.read(15));
+    x0 ::= o0;
+    x1 ::= o1;
+    x2 ::= o2;
+    x3 ::= o3;
+    x4 ::= o4;
+    x5 ::= o5;
+    x6 ::= o6;
+    x7 ::= o7;
+    x8 ::= o8;
+    x9 ::= o9;
+    x10 ::= o10;
+    x11 ::= o11;
+    x12 ::= o12;
+    x13 ::= o13;
+    x14 ::= o14;
+    x15 ::= o15;
+    Range(0, 10).loop((round) {
+        x0 = x0.add_wrap(x4); x12 = x12.bit_xor(x0).rotate_left(16);
+        x1 = x1.add_wrap(x5); x13 = x13.bit_xor(x1).rotate_left(16);
+        x2 = x2.add_wrap(x6); x14 = x14.bit_xor(x2).rotate_left(16);
+        x3 = x3.add_wrap(x7); x15 = x15.bit_xor(x3).rotate_left(16);
+        x8 = x8.add_wrap(x12); x4 = x4.bit_xor(x8).rotate_left(12);
+        x9 = x9.add_wrap(x13); x5 = x5.bit_xor(x9).rotate_left(12);
+        x10 = x10.add_wrap(x14); x6 = x6.bit_xor(x10).rotate_left(12);
+        x11 = x11.add_wrap(x15); x7 = x7.bit_xor(x11).rotate_left(12);
+        x0 = x0.add_wrap(x4); x12 = x12.bit_xor(x0).rotate_left(8);
+        x1 = x1.add_wrap(x5); x13 = x13.bit_xor(x1).rotate_left(8);
+        x2 = x2.add_wrap(x6); x14 = x14.bit_xor(x2).rotate_left(8);
+        x3 = x3.add_wrap(x7); x15 = x15.bit_xor(x3).rotate_left(8);
+        x8 = x8.add_wrap(x12); x4 = x4.bit_xor(x8).rotate_left(7);
+        x9 = x9.add_wrap(x13); x5 = x5.bit_xor(x9).rotate_left(7);
+        x10 = x10.add_wrap(x14); x6 = x6.bit_xor(x10).rotate_left(7);
+        x11 = x11.add_wrap(x15); x7 = x7.bit_xor(x11).rotate_left(7);
+        x0 = x0.add_wrap(x5); x15 = x15.bit_xor(x0).rotate_left(16);
+        x1 = x1.add_wrap(x6); x12 = x12.bit_xor(x1).rotate_left(16);
+        x2 = x2.add_wrap(x7); x13 = x13.bit_xor(x2).rotate_left(16);
+        x3 = x3.add_wrap(x4); x14 = x14.bit_xor(x3).rotate_left(16);
+        x10 = x10.add_wrap(x15); x5 = x5.bit_xor(x10).rotate_left(12);
+        x11 = x11.add_wrap(x12); x6 = x6.bit_xor(x11).rotate_left(12);
+        x8 = x8.add_wrap(x13); x7 = x7.bit_xor(x8).rotate_left(12);
+        x9 = x9.add_wrap(x14); x4 = x4.bit_xor(x9).rotate_left(12);
+        x0 = x0.add_wrap(x5); x15 = x15.bit_xor(x0).rotate_left(8);
+        x1 = x1.add_wrap(x6); x12 = x12.bit_xor(x1).rotate_left(8);
+        x2 = x2.add_wrap(x7); x13 = x13.bit_xor(x2).rotate_left(8);
+        x3 = x3.add_wrap(x4); x14 = x14.bit_xor(x3).rotate_left(8);
+        x10 = x10.add_wrap(x15); x5 = x5.bit_xor(x10).rotate_left(7);
+        x11 = x11.add_wrap(x12); x6 = x6.bit_xor(x11).rotate_left(7);
+        x8 = x8.add_wrap(x13); x7 = x7.bit_xor(x8).rotate_left(7);
+        x9 = x9.add_wrap(x14); x4 = x4.bit_xor(x9).rotate_left(7);
+    });
+    x0 = x0.add_wrap(o0);
+    x1 = x1.add_wrap(o1);
+    x2 = x2.add_wrap(o2);
+    x3 = x3.add_wrap(o3);
+    x4 = x4.add_wrap(o4);
+    x5 = x5.add_wrap(o5);
+    x6 = x6.add_wrap(o6);
+    x7 = x7.add_wrap(o7);
+    x8 = x8.add_wrap(o8);
+    x9 = x9.add_wrap(o9);
+    x10 = x10.add_wrap(o10);
+    x11 = x11.add_wrap(o11);
+    x12 = x12.add_wrap(o12);
+    x13 = x13.add_wrap(o13);
+    x14 = x14.add_wrap(o14);
+    x15 = x15.add_wrap(o15);
+    t0 = x0.shuffle2(x1, [0, 8, 1, 9, 4, 12, 5, 13]); t1 = x2.shuffle2(x3, [0, 8, 1, 9, 4, 12, 5, 13]);
+    t2 = x0.shuffle2(x1, [2, 10, 3, 11, 6, 14, 7, 15]); t3 = x2.shuffle2(x3, [2, 10, 3, 11, 6, 14, 7, 15]);
+    y0 = t0.shuffle2(t1, [0, 1, 8, 9, 4, 5, 12, 13]); y1 = t0.shuffle2(t1, [2, 3, 10, 11, 6, 7, 14, 15]);
+    y2 = t2.shuffle2(t3, [0, 1, 8, 9, 4, 5, 12, 13]); y3 = t2.shuffle2(t3, [2, 3, 10, 11, 6, 7, 14, 15]);
+    t4 = x4.shuffle2(x5, [0, 8, 1, 9, 4, 12, 5, 13]); t5 = x6.shuffle2(x7, [0, 8, 1, 9, 4, 12, 5, 13]);
+    t6 = x4.shuffle2(x5, [2, 10, 3, 11, 6, 14, 7, 15]); t7 = x6.shuffle2(x7, [2, 10, 3, 11, 6, 14, 7, 15]);
+    y4 = t4.shuffle2(t5, [0, 1, 8, 9, 4, 5, 12, 13]); y5 = t4.shuffle2(t5, [2, 3, 10, 11, 6, 7, 14, 15]);
+    y6 = t6.shuffle2(t7, [0, 1, 8, 9, 4, 5, 12, 13]); y7 = t6.shuffle2(t7, [2, 3, 10, 11, 6, 7, 14, 15]);
+    t8 = x8.shuffle2(x9, [0, 8, 1, 9, 4, 12, 5, 13]); t9 = x10.shuffle2(x11, [0, 8, 1, 9, 4, 12, 5, 13]);
+    t10 = x8.shuffle2(x9, [2, 10, 3, 11, 6, 14, 7, 15]); t11 = x10.shuffle2(x11, [2, 10, 3, 11, 6, 14, 7, 15]);
+    y8 = t8.shuffle2(t9, [0, 1, 8, 9, 4, 5, 12, 13]); y9 = t8.shuffle2(t9, [2, 3, 10, 11, 6, 7, 14, 15]);
+    y10 = t10.shuffle2(t11, [0, 1, 8, 9, 4, 5, 12, 13]); y11 = t10.shuffle2(t11, [2, 3, 10, 11, 6, 7, 14, 15]);
+    t12 = x12.shuffle2(x13, [0, 8, 1, 9, 4, 12, 5, 13]); t13 = x14.shuffle2(x15, [0, 8, 1, 9, 4, 12, 5, 13]);
+    t14 = x12.shuffle2(x13, [2, 10, 3, 11, 6, 14, 7, 15]); t15 = x14.shuffle2(x15, [2, 10, 3, 11, 6, 14, 7, 15]);
+    y12 = t12.shuffle2(t13, [0, 1, 8, 9, 4, 5, 12, 13]); y13 = t12.shuffle2(t13, [2, 3, 10, 11, 6, 7, 14, 15]);
+    y14 = t14.shuffle2(t15, [0, 1, 8, 9, 4, 5, 12, 13]); y15 = t14.shuffle2(t15, [2, 3, 10, 11, 6, 7, 14, 15]);
+    xor_store_u32x8(cpu, output, input, offset + 0, y0.shuffle2(y4, [0, 1, 2, 3, 8, 9, 10, 11]));
+    xor_store_u32x8(cpu, output, input, offset + 256, y0.shuffle2(y4, [4, 5, 6, 7, 12, 13, 14, 15]));
+    xor_store_u32x8(cpu, output, input, offset + 64, y1.shuffle2(y5, [0, 1, 2, 3, 8, 9, 10, 11]));
+    xor_store_u32x8(cpu, output, input, offset + 320, y1.shuffle2(y5, [4, 5, 6, 7, 12, 13, 14, 15]));
+    xor_store_u32x8(cpu, output, input, offset + 128, y2.shuffle2(y6, [0, 1, 2, 3, 8, 9, 10, 11]));
+    xor_store_u32x8(cpu, output, input, offset + 384, y2.shuffle2(y6, [4, 5, 6, 7, 12, 13, 14, 15]));
+    xor_store_u32x8(cpu, output, input, offset + 192, y3.shuffle2(y7, [0, 1, 2, 3, 8, 9, 10, 11]));
+    xor_store_u32x8(cpu, output, input, offset + 448, y3.shuffle2(y7, [4, 5, 6, 7, 12, 13, 14, 15]));
+    xor_store_u32x8(cpu, output, input, offset + 32, y8.shuffle2(y12, [0, 1, 2, 3, 8, 9, 10, 11]));
+    xor_store_u32x8(cpu, output, input, offset + 288, y8.shuffle2(y12, [4, 5, 6, 7, 12, 13, 14, 15]));
+    xor_store_u32x8(cpu, output, input, offset + 96, y9.shuffle2(y13, [0, 1, 2, 3, 8, 9, 10, 11]));
+    xor_store_u32x8(cpu, output, input, offset + 352, y9.shuffle2(y13, [4, 5, 6, 7, 12, 13, 14, 15]));
+    xor_store_u32x8(cpu, output, input, offset + 160, y10.shuffle2(y14, [0, 1, 2, 3, 8, 9, 10, 11]));
+    xor_store_u32x8(cpu, output, input, offset + 416, y10.shuffle2(y14, [4, 5, 6, 7, 12, 13, 14, 15]));
+    xor_store_u32x8(cpu, output, input, offset + 224, y11.shuffle2(y15, [0, 1, 2, 3, 8, 9, 10, 11]));
+    xor_store_u32x8(cpu, output, input, offset + 480, y11.shuffle2(y15, [4, 5, 6, 7, 12, 13, 14, 15]));
+}
+
+blocks4 = (
+    j       : Ptr<u32>,
+    output  : Ptr<u8>,
+    input   : Ptr<u8>,
+    offset  : usize,
+    counter : u32
+) {
+    o0 = splat_u32x4(j.read(0));
+    o1 = splat_u32x4(j.read(1));
+    o2 = splat_u32x4(j.read(2));
+    o3 = splat_u32x4(j.read(3));
+    o4 = splat_u32x4(j.read(4));
+    o5 = splat_u32x4(j.read(5));
+    o6 = splat_u32x4(j.read(6));
+    o7 = splat_u32x4(j.read(7));
+    o8 = splat_u32x4(j.read(8));
+    o9 = splat_u32x4(j.read(9));
+    o10 = splat_u32x4(j.read(10));
+    o11 = splat_u32x4(j.read(11));
+    o12 = splat_u32x4(counter).add_wrap(lanes_u32x4(0, 1, 2, 3));
+    o13 = splat_u32x4(j.read(13));
+    o14 = splat_u32x4(j.read(14));
+    o15 = splat_u32x4(j.read(15));
+    x0 ::= o0;
+    x1 ::= o1;
+    x2 ::= o2;
+    x3 ::= o3;
+    x4 ::= o4;
+    x5 ::= o5;
+    x6 ::= o6;
+    x7 ::= o7;
+    x8 ::= o8;
+    x9 ::= o9;
+    x10 ::= o10;
+    x11 ::= o11;
+    x12 ::= o12;
+    x13 ::= o13;
+    x14 ::= o14;
+    x15 ::= o15;
+    Range(0, 10).loop((round) {
+        x0 = x0.add_wrap(x4); x12 = x12.bit_xor(x0).rotate_left(16);
+        x1 = x1.add_wrap(x5); x13 = x13.bit_xor(x1).rotate_left(16);
+        x2 = x2.add_wrap(x6); x14 = x14.bit_xor(x2).rotate_left(16);
+        x3 = x3.add_wrap(x7); x15 = x15.bit_xor(x3).rotate_left(16);
+        x8 = x8.add_wrap(x12); x4 = x4.bit_xor(x8).rotate_left(12);
+        x9 = x9.add_wrap(x13); x5 = x5.bit_xor(x9).rotate_left(12);
+        x10 = x10.add_wrap(x14); x6 = x6.bit_xor(x10).rotate_left(12);
+        x11 = x11.add_wrap(x15); x7 = x7.bit_xor(x11).rotate_left(12);
+        x0 = x0.add_wrap(x4); x12 = x12.bit_xor(x0).rotate_left(8);
+        x1 = x1.add_wrap(x5); x13 = x13.bit_xor(x1).rotate_left(8);
+        x2 = x2.add_wrap(x6); x14 = x14.bit_xor(x2).rotate_left(8);
+        x3 = x3.add_wrap(x7); x15 = x15.bit_xor(x3).rotate_left(8);
+        x8 = x8.add_wrap(x12); x4 = x4.bit_xor(x8).rotate_left(7);
+        x9 = x9.add_wrap(x13); x5 = x5.bit_xor(x9).rotate_left(7);
+        x10 = x10.add_wrap(x14); x6 = x6.bit_xor(x10).rotate_left(7);
+        x11 = x11.add_wrap(x15); x7 = x7.bit_xor(x11).rotate_left(7);
+        x0 = x0.add_wrap(x5); x15 = x15.bit_xor(x0).rotate_left(16);
+        x1 = x1.add_wrap(x6); x12 = x12.bit_xor(x1).rotate_left(16);
+        x2 = x2.add_wrap(x7); x13 = x13.bit_xor(x2).rotate_left(16);
+        x3 = x3.add_wrap(x4); x14 = x14.bit_xor(x3).rotate_left(16);
+        x10 = x10.add_wrap(x15); x5 = x5.bit_xor(x10).rotate_left(12);
+        x11 = x11.add_wrap(x12); x6 = x6.bit_xor(x11).rotate_left(12);
+        x8 = x8.add_wrap(x13); x7 = x7.bit_xor(x8).rotate_left(12);
+        x9 = x9.add_wrap(x14); x4 = x4.bit_xor(x9).rotate_left(12);
+        x0 = x0.add_wrap(x5); x15 = x15.bit_xor(x0).rotate_left(8);
+        x1 = x1.add_wrap(x6); x12 = x12.bit_xor(x1).rotate_left(8);
+        x2 = x2.add_wrap(x7); x13 = x13.bit_xor(x2).rotate_left(8);
+        x3 = x3.add_wrap(x4); x14 = x14.bit_xor(x3).rotate_left(8);
+        x10 = x10.add_wrap(x15); x5 = x5.bit_xor(x10).rotate_left(7);
+        x11 = x11.add_wrap(x12); x6 = x6.bit_xor(x11).rotate_left(7);
+        x8 = x8.add_wrap(x13); x7 = x7.bit_xor(x8).rotate_left(7);
+        x9 = x9.add_wrap(x14); x4 = x4.bit_xor(x9).rotate_left(7);
+    });
+    x0 = x0.add_wrap(o0);
+    x1 = x1.add_wrap(o1);
+    x2 = x2.add_wrap(o2);
+    x3 = x3.add_wrap(o3);
+    x4 = x4.add_wrap(o4);
+    x5 = x5.add_wrap(o5);
+    x6 = x6.add_wrap(o6);
+    x7 = x7.add_wrap(o7);
+    x8 = x8.add_wrap(o8);
+    x9 = x9.add_wrap(o9);
+    x10 = x10.add_wrap(o10);
+    x11 = x11.add_wrap(o11);
+    x12 = x12.add_wrap(o12);
+    x13 = x13.add_wrap(o13);
+    x14 = x14.add_wrap(o14);
+    x15 = x15.add_wrap(o15);
+    t0 = x0.shuffle2(x1, [0, 4, 1, 5]); t1 = x2.shuffle2(x3, [0, 4, 1, 5]);
+    t2 = x0.shuffle2(x1, [2, 6, 3, 7]); t3 = x2.shuffle2(x3, [2, 6, 3, 7]);
+    y0 = t0.shuffle2(t1, [0, 1, 4, 5]); y1 = t0.shuffle2(t1, [2, 3, 6, 7]);
+    y2 = t2.shuffle2(t3, [0, 1, 4, 5]); y3 = t2.shuffle2(t3, [2, 3, 6, 7]);
+    t4 = x4.shuffle2(x5, [0, 4, 1, 5]); t5 = x6.shuffle2(x7, [0, 4, 1, 5]);
+    t6 = x4.shuffle2(x5, [2, 6, 3, 7]); t7 = x6.shuffle2(x7, [2, 6, 3, 7]);
+    y4 = t4.shuffle2(t5, [0, 1, 4, 5]); y5 = t4.shuffle2(t5, [2, 3, 6, 7]);
+    y6 = t6.shuffle2(t7, [0, 1, 4, 5]); y7 = t6.shuffle2(t7, [2, 3, 6, 7]);
+    t8 = x8.shuffle2(x9, [0, 4, 1, 5]); t9 = x10.shuffle2(x11, [0, 4, 1, 5]);
+    t10 = x8.shuffle2(x9, [2, 6, 3, 7]); t11 = x10.shuffle2(x11, [2, 6, 3, 7]);
+    y8 = t8.shuffle2(t9, [0, 1, 4, 5]); y9 = t8.shuffle2(t9, [2, 3, 6, 7]);
+    y10 = t10.shuffle2(t11, [0, 1, 4, 5]); y11 = t10.shuffle2(t11, [2, 3, 6, 7]);
+    t12 = x12.shuffle2(x13, [0, 4, 1, 5]); t13 = x14.shuffle2(x15, [0, 4, 1, 5]);
+    t14 = x12.shuffle2(x13, [2, 6, 3, 7]); t15 = x14.shuffle2(x15, [2, 6, 3, 7]);
+    y12 = t12.shuffle2(t13, [0, 1, 4, 5]); y13 = t12.shuffle2(t13, [2, 3, 6, 7]);
+    y14 = t14.shuffle2(t15, [0, 1, 4, 5]); y15 = t14.shuffle2(t15, [2, 3, 6, 7]);
+    xor_store_u32x4(output, input, offset + 0, y0);
+    xor_store_u32x4(output, input, offset + 64, y1);
+    xor_store_u32x4(output, input, offset + 128, y2);
+    xor_store_u32x4(output, input, offset + 192, y3);
+    xor_store_u32x4(output, input, offset + 16, y4);
+    xor_store_u32x4(output, input, offset + 80, y5);
+    xor_store_u32x4(output, input, offset + 144, y6);
+    xor_store_u32x4(output, input, offset + 208, y7);
+    xor_store_u32x4(output, input, offset + 32, y8);
+    xor_store_u32x4(output, input, offset + 96, y9);
+    xor_store_u32x4(output, input, offset + 160, y10);
+    xor_store_u32x4(output, input, offset + 224, y11);
+    xor_store_u32x4(output, input, offset + 48, y12);
+    xor_store_u32x4(output, input, offset + 112, y13);
+    xor_store_u32x4(output, input, offset + 176, y14);
+    xor_store_u32x4(output, input, offset + 240, y15);
+}
+
+// XOR one vector of keystream into 16 or 32 bytes of input. A 32-byte
+// vector crosses calls only between AVX2 functions, hence the capability.
+xor_store_u32x8 = (cpu: Avx2, output: Ptr<u8>, input: Ptr<u8>, offset: usize, v: u32x8) {
+    load_u32x8(input, offset).bit_xor(v).store(output, offset);
+}
+xor_store_u32x4 = inline (output: Ptr<u8>, input: Ptr<u8>, offset: usize, v: u32x4) {
+    load_u32x4(input, offset).bit_xor(v).store(output, offset);
+}
+// 512-byte runs with AVX2; returns the bytes done.
+stream8 = (cpu: Avx2, j: Ptr<u32>, output: Ptr<u8>, input: Ptr<u8>, count: usize) usize {
+    offset: usize ::= 0; counter: u32 ::= 1;
+    (count - offset >= 512).loop((loop) {
+        blocks8(cpu, j, output, input, offset, counter);
+        offset  = offset + 512;
+        counter = counter +% 8;
+    });
+    offset
+}
+stream_xor* = (
+    scratch : Ptr<u64>,
+    output  : Ptr<u8>,
+    input   : Ptr<u8>,
+    count   : usize
+) {
+    j = scratch.to<u32>();
+    offset: usize ::= avx2().match({ Ok(cpu) => stream8(cpu, j, output, input, count), None => 0 });
+    // The IETF block counter starts at 1; the stream is at block offset / 64.
+    counter: u32 ::= 1 +% offset.shift_right(6).truncate_u32();
+    (count - offset >= 256).loop((loop) {
+        blocks4(j, output, input, offset, counter);
+        offset  = offset + 256;
+        counter = counter +% 4;
+    });
+    (offset < count).loop((loop) {
+        block(scratch, counter);
+        take       = (count - offset).min(64);
+        key_stream = scratch.offset(8).to<u8>();
+        Range(0, take).loop((i) {
+            output.write(offset +% i, input.read(offset +% i).bit_xor(key_stream.read(i)));
+        });
+        offset  = offset + take;
+        counter = counter +% 1;
+    });
+}
+
+// ---- Poly1305 (poly1305_donna64.h) -------------------------------------------
+// Scratch words 24..26 r, 27..29 h (radix 2^44/2^44/2^42), 30..31 pad.
+MASK44: u64 = 17592186044415
+MASK42: u64 = 4398046511103
+load64 = (m: Ptr<u8>, offset: usize) u64 {
+    v: u64 ::= 0;
+    Range(0, 8).loop((i) { v = v.bit_or(m.read(offset + i).to_u64().shift_left(8 * i)); });
+    v
+}
+store64 = (output: Ptr<u8>, offset: usize, value: u64) {
+    Range(0, 8).loop((i) { output.write(offset + i, value.shift_right(8 * i).truncate_u8()); });
+}
+poly_key* = (scratch: Ptr<u64>) {
+    block(scratch, 0);
+    key = scratch.offset(8).to<u8>(); p = scratch.offset(24);
+    t0 = load64(key, 0); t1 = load64(key, 8);
+    // r &= 0xffffffc0ffffffc0ffffffc0fffffff
+    p.write(0, t0.bit_and(17575274610687));
+    p.write(1, t0.shift_right(44).bit_or(t1.shift_left(20)).bit_and(17592181915647));
+    p.write(2, t1.shift_right(24).bit_and(68719475727));
+    p.write(3, 0); p.write(4, 0); p.write(5, 0);
+    p.write(6, load64(key, 16)); p.write(7, load64(key, 24));
+}
+// Every AEAD block is a full 16 bytes (zero padded), so the 2^128 bit is set.
+poly_blocks = (p: Ptr<u64>, m: Ptr<u8>, count: usize) {
+    r0 = p.read(0); r1 = p.read(1); r2 = p.read(2);
+    s1 = r1 *% 20; s2 = r2 *% 20;
+    h0 ::= p.read(3); h1 ::= p.read(4); h2 ::= p.read(5);
+    offset: usize ::= 0;
+    (offset < count).loop((loop) {
+        words = load_u64x2(m, offset);
+        t0 = words.lane(0); t1 = words.lane(1);
+        h0 = h0 +% t0.bit_and(MASK44);
+        h1 = h1 +% t0.shift_right(44).bit_or(t1.shift_left(20)).bit_and(MASK44);
+        h2 = h2 +% t1.shift_right(24).bit_and(MASK42).bit_or(1099511627776);
+        d0 ::= h0.mul_wide(r0) +% h1.mul_wide(s2) +% h2.mul_wide(s1);
+        d1 ::= h0.mul_wide(r1) +% h1.mul_wide(r0) +% h2.mul_wide(s2);
+        d2 ::= h0.mul_wide(r2) +% h1.mul_wide(r1) +% h2.mul_wide(r0);
+        c ::= d0.shift_right(44).truncate_u64(); h0 = d0.truncate_u64().bit_and(MASK44);
+        d1 = d1 +% c.to_u128(); c = d1.shift_right(44).truncate_u64(); h1 = d1.truncate_u64().bit_and(MASK44);
+        d2 = d2 +% c.to_u128(); c = d2.shift_right(42).truncate_u64(); h2 = d2.truncate_u64().bit_and(MASK42);
+        h0 = h0 +% c *% 5; c = h0.shift_right(44); h0 = h0.bit_and(MASK44);
+        h1 = h1 +% c;
+        offset = offset + 16;
+    });
+    p.write(3, h0); p.write(4, h1); p.write(5, h2);
+}
+// Long runs go through the vector lanes (four with AVX2, else two); the
+// remainder and short inputs use donna64.
+poly_bulk = (p: Ptr<u64>, input: Ptr<u8>, full: usize) usize {
+    avx2().match({
+        Ok(cpu) => {
+            n = (full >= 256).match({ true => full - full % 64, false => 0 });
+            (n > 0).then(() { poly_lanes4(cpu, p, input, n); });
+            n
+        },
+        None    => {
+            n = (full >= 128).match({ true => full - full % 32, false => 0 });
+            (n > 0).then(() { poly_lanes2(p, input, n); });
+            n
+        },
+    })
+}
+poly_padded = (p: Ptr<u64>, buffer: Ptr<u8>, input: Ptr<u8>, count: usize) {
+    full = count - count % 16;
+    done = poly_bulk(p, input, full);
+    (full > done).then(() { poly_blocks(p, input.offset(done), full - done); });
+    (count != full).then(() {
+        Range(0, 16).loop((i) { buffer.write(i, 0); });
+        Range(0, count - full).loop((i) { buffer.write(i, input.read(full + i)); });
+        poly_blocks(p, buffer, 16);
+    });
+}
+// poly1305_finish: full carry, constant-time select of h or h - p, then
+// (h + pad) mod 2^128.
+poly_finish = (p: Ptr<u64>, output: Ptr<u8>) {
+    h0 ::= p.read(3); h1 ::= p.read(4); h2 ::= p.read(5);
+    c ::= h1.shift_right(44); h1 = h1.bit_and(MASK44);
+    h2 = h2 +% c; c = h2.shift_right(42); h2 = h2.bit_and(MASK42);
+    h0 = h0 +% c *% 5; c = h0.shift_right(44); h0 = h0.bit_and(MASK44);
+    h1 = h1 +% c; c = h1.shift_right(44); h1 = h1.bit_and(MASK44);
+    h2 = h2 +% c; c = h2.shift_right(42); h2 = h2.bit_and(MASK42);
+    h0 = h0 +% c *% 5; c = h0.shift_right(44); h0 = h0.bit_and(MASK44);
+    h1 = h1 +% c;
+    g0 ::= h0 +% 5; c = g0.shift_right(44); g0 = g0.bit_and(MASK44);
+    g1 ::= h1 +% c; c = g1.shift_right(44); g1 = g1.bit_and(MASK44);
+    g2 ::= h2 +% c -% 4398046511104;
+    mask ::= g2.shift_right(63) -% 1;
+    g0 = g0.bit_and(mask); g1 = g1.bit_and(mask); g2 = g2.bit_and(mask);
+    mask = mask.bit_xor(18446744073709551615);
+    h0 = h0.bit_and(mask).bit_or(g0); h1 = h1.bit_and(mask).bit_or(g1); h2 = h2.bit_and(mask).bit_or(g2);
+    t0 = p.read(6); t1 = p.read(7);
+    h0 = h0 +% t0.bit_and(MASK44); c = h0.shift_right(44); h0 = h0.bit_and(MASK44);
+    h1 = h1 +% t0.shift_right(44).bit_or(t1.shift_left(20)).bit_and(MASK44) +% c;
+    c = h1.shift_right(44); h1 = h1.bit_and(MASK44);
+    h2 = (h2 +% t1.shift_right(24).bit_and(MASK42) +% c).bit_and(MASK42);
+    store64(output, 0, h0.bit_or(h1.shift_left(44)));
+    store64(output, 8, h1.shift_right(20).bit_or(h2.shift_left(24)));
+}
+authenticate* = (
+    scratch    : Ptr<u64>,
+    aad        : Ptr<u8>,
+    aad_count  : usize,
+    ciphertext : Ptr<u8>,
+    count      : usize
+) {
+    p = scratch.offset(24); buffer = scratch.offset(38).to<u8>();
+    poly_padded(p, buffer, aad, aad_count); poly_padded(p, buffer, ciphertext, count);
+    store64(buffer, 0, aad_count.to_u64()); store64(buffer, 8, count.to_u64());
+    poly_blocks(p, buffer, 16); poly_finish(p, buffer);
+}
+
+
+// ---- Poly1305 lanes support ---------------------------------------------------
+Wide3 = { w0: u64, w1: u64, w2: u64 }
+Limbs26 = { l0: u64, l1: u64, l2: u64, l3: u64, l4: u64 }
+
+// a * r mod p in radix 2^44 (poly1305_donna64.h blocks without a message).
+mulmod = (p: Ptr<u64>, a: Wide3) Wide3 {
+    r0 = p.read(0); r1 = p.read(1); r2 = p.read(2);
+    s1 = r1 *% 20; s2 = r2 *% 20;
+    d0 ::= a.w0.mul_wide(r0) +% a.w1.mul_wide(s2) +% a.w2.mul_wide(s1);
+    d1 ::= a.w0.mul_wide(r1) +% a.w1.mul_wide(r0) +% a.w2.mul_wide(s2);
+    d2 ::= a.w0.mul_wide(r2) +% a.w1.mul_wide(r1) +% a.w2.mul_wide(r0);
+    c ::= d0.shift_right(44).truncate_u64(); h0 ::= d0.truncate_u64().bit_and(MASK44);
+    d1 = d1 +% c.to_u128(); c = d1.shift_right(44).truncate_u64(); h1 = d1.truncate_u64().bit_and(MASK44);
+    d2 = d2 +% c.to_u128(); c = d2.shift_right(42).truncate_u64(); h2 = d2.truncate_u64().bit_and(MASK42);
+    h0 = h0 +% c *% 5; c = h0.shift_right(44); h0 = h0.bit_and(MASK44);
+    Wide3(w0: h0, w1: h1 +% c, w2: h2)
+}
+
+// Radix 2^44 (h1 fully carried first) to five 26-bit limbs.
+limbs26 = (h0: u64, h1: u64, h2: u64) Limbs26 {
+    m26: u64 = 67108863;
+    Limbs26(
+        l0: h0.bit_and(m26),
+        l1: h0.shift_right(26).bit_or(h1.shift_left(18)).bit_and(m26),
+        l2: h1.shift_right(8).bit_and(m26),
+        l3: h1.shift_right(34).bit_or(h2.shift_left(10)).bit_and(m26),
+        l4: h2.shift_right(16)
+    )
+}
+
+limbs26_carried = (h0: u64, h1: u64, h2: u64) Limbs26 {
+    c = h0.shift_right(44);
+    k1 = h1 +% c;
+    limbs26(h0.bit_and(MASK44), k1.bit_and(MASK44), h2 +% k1.shift_right(44))
+}
+
+// Five 26-bit limb sums back to the radix 2^44 state, partially reduced.
+// Limb fields are added, not or-ed, after masking where they straddle words.
+store_limbs = (p: Ptr<u64>, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64) {
+    m26: u64 = 67108863;
+    c ::= a0.shift_right(26); l0 ::= a0.bit_and(m26);
+    k1 = a1 +% c; c = k1.shift_right(26); l1 = k1.bit_and(m26);
+    k2 = a2 +% c; c = k2.shift_right(26); l2 = k2.bit_and(m26);
+    k3 = a3 +% c; c = k3.shift_right(26); l3 = k3.bit_and(m26);
+    k4 = a4 +% c; c = k4.shift_right(26); l4 = k4.bit_and(m26);
+    l0 = l0 +% c *% 5; c = l0.shift_right(26); l0 = l0.bit_and(m26);
+    k5 = l1 +% c;
+    h0 = l0 +% k5.bit_and(262143).shift_left(26);
+    h1 ::= k5.shift_right(18) +% l2.shift_left(8) +% l3.bit_and(1023).shift_left(34);
+    h2 = l3.shift_right(10) +% l4.shift_left(16) +% h1.shift_right(44);
+    p.write(3, h0); p.write(4, h1.bit_and(MASK44)); p.write(5, h2);
+}
+
+// poly1305_sse2.c-style lanes: 4 blocks per step in radix 2^26, lane j
+// holding blocks j, j+4, ... with r^4 per step; the lanes are finally
+// multiplied by r^4..r^1 and summed. Products use the low 32 bits of each
+// 64-bit lane (PMULUDQ/UMULL); every operand is below 2^30.
+Lanes4 = { a0: u64x4, a1: u64x4, a2: u64x4, a3: u64x4, a4: u64x4 }
+
+mul32_4 = (cpu: Avx2, a: u64x4, b: u64x4) u64x4 { a.mul_low32(b) }
+
+// A * R, partially reduced: every limb below 2^26 except a1 (< 2^27).
+mulr4 = (cpu: Avx2, x: Lanes4, r: Lanes4) Lanes4 {
+    m26 = splat_u64x4(67108863);
+    s1 = r.a1.mul_wrap(splat_u64x4(5)); s2 = r.a2.mul_wrap(splat_u64x4(5));
+    s3 = r.a3.mul_wrap(splat_u64x4(5)); s4 = r.a4.mul_wrap(splat_u64x4(5));
+    d0 ::= mul32_4(cpu, x.a0, r.a0).add_wrap(mul32_4(cpu, x.a1, s4)).add_wrap(mul32_4(cpu, x.a2, s3)).add_wrap(mul32_4(cpu, x.a3, s2)).add_wrap(mul32_4(cpu, x.a4, s1));
+    d1 ::= mul32_4(cpu, x.a0, r.a1).add_wrap(mul32_4(cpu, x.a1, r.a0)).add_wrap(mul32_4(cpu, x.a2, s4)).add_wrap(mul32_4(cpu, x.a3, s3)).add_wrap(mul32_4(cpu, x.a4, s2));
+    d2 ::= mul32_4(cpu, x.a0, r.a2).add_wrap(mul32_4(cpu, x.a1, r.a1)).add_wrap(mul32_4(cpu, x.a2, r.a0)).add_wrap(mul32_4(cpu, x.a3, s4)).add_wrap(mul32_4(cpu, x.a4, s3));
+    d3 ::= mul32_4(cpu, x.a0, r.a3).add_wrap(mul32_4(cpu, x.a1, r.a2)).add_wrap(mul32_4(cpu, x.a2, r.a1)).add_wrap(mul32_4(cpu, x.a3, r.a0)).add_wrap(mul32_4(cpu, x.a4, s4));
+    d4 ::= mul32_4(cpu, x.a0, r.a4).add_wrap(mul32_4(cpu, x.a1, r.a3)).add_wrap(mul32_4(cpu, x.a2, r.a2)).add_wrap(mul32_4(cpu, x.a3, r.a1)).add_wrap(mul32_4(cpu, x.a4, r.a0));
+    c ::= d0.shift_right(26); t0 ::= d0.bit_and(m26);
+    d1 = d1.add_wrap(c); c = d1.shift_right(26); t1 = d1.bit_and(m26);
+    d2 = d2.add_wrap(c); c = d2.shift_right(26); t2 = d2.bit_and(m26);
+    d3 = d3.add_wrap(c); c = d3.shift_right(26); t3 = d3.bit_and(m26);
+    d4 = d4.add_wrap(c); c = d4.shift_right(26); t4 = d4.bit_and(m26);
+    t0 = t0.add_wrap(c.mul_wrap(splat_u64x4(5))); c = t0.shift_right(26); t0 = t0.bit_and(m26);
+    Lanes4(a0: t0, a1: t1.add_wrap(c), a2: t2, a3: t3, a4: t4)
+}
+
+// Blocks offset .. offset + 64 as lanes, with the 2^128 bit.
+message4 = (cpu: Avx2, m: Ptr<u8>, offset: usize) Lanes4 {
+    m26 = splat_u64x4(67108863);
+    x = load_u64x4(m, offset); y = load_u64x4(m, offset + 32);
+    lo = x.shuffle2(y, [0, 2, 4, 6]); hi = x.shuffle2(y, [1, 3, 5, 7]);
+    Lanes4(
+        a0: lo.bit_and(m26),
+        a1: lo.shift_right(26).bit_and(m26),
+        a2: lo.shift_right(52).bit_or(hi.shift_left(12)).bit_and(m26),
+        a3: hi.shift_right(14).bit_and(m26),
+        a4: hi.shift_right(40).bit_or(splat_u64x4(16777216))
+    )
+}
+
+add4 = (cpu: Avx2, x: Lanes4, y: Lanes4) Lanes4 {
+    Lanes4(a0: x.a0.add_wrap(y.a0), a1: x.a1.add_wrap(y.a1), a2: x.a2.add_wrap(y.a2), a3: x.a3.add_wrap(y.a3), a4: x.a4.add_wrap(y.a4))
+}
+
+// count is a nonzero multiple of 64.
+poly_lanes4 = (cpu: Avx2, p: Ptr<u64>, m: Ptr<u8>, count: usize) {
+    r1 = limbs26(p.read(0), p.read(1), p.read(2));
+    r2w = mulmod(p, Wide3(w0: p.read(0), w1: p.read(1), w2: p.read(2)));
+    r3w = mulmod(p, r2w);
+    r4w = mulmod(p, r3w);
+    r2 = limbs26_carried(r2w.w0, r2w.w1, r2w.w2);
+    r3 = limbs26_carried(r3w.w0, r3w.w1, r3w.w2);
+    r4 = limbs26_carried(r4w.w0, r4w.w1, r4w.w2);
+    q1 = r1;
+    q2 = r2;
+    q3 = r3;
+    q4 = r4;
+    step = Lanes4(a0: splat_u64x4(r4.l0), a1: splat_u64x4(r4.l1), a2: splat_u64x4(r4.l2), a3: splat_u64x4(r4.l3), a4: splat_u64x4(r4.l4));
+    tail = Lanes4(a0: lanes_u64x4(q4.l0, q3.l0, q2.l0, q1.l0), a1: lanes_u64x4(q4.l1, q3.l1, q2.l1, q1.l1), a2: lanes_u64x4(q4.l2, q3.l2, q2.l2, q1.l2), a3: lanes_u64x4(q4.l3, q3.l3, q2.l3, q1.l3), a4: lanes_u64x4(q4.l4, q3.l4, q2.l4, q1.l4));
+    h = limbs26_carried(p.read(3), p.read(4), p.read(5));
+    first = message4(cpu, m, 0);
+    acc ::= Lanes4(
+        a0: first.a0.with_lane(0, first.a0.lane(0) +% h.l0),
+        a1: first.a1.with_lane(0, first.a1.lane(0) +% h.l1),
+        a2: first.a2.with_lane(0, first.a2.lane(0) +% h.l2),
+        a3: first.a3.with_lane(0, first.a3.lane(0) +% h.l3),
+        a4: first.a4.with_lane(0, first.a4.lane(0) +% h.l4)
+    );
+    offset: usize ::= 64;
+    (offset < count).loop((loop) {
+        acc    = add4(cpu, mulr4(cpu, acc, step), message4(cpu, m, offset));
+        offset = offset + 64;
+    });
+    acc = mulr4(cpu, acc, tail);
+    store_limbs(p, acc.a0.lane(0) +% acc.a0.lane(1) +% acc.a0.lane(2) +% acc.a0.lane(3), acc.a1.lane(0) +% acc.a1.lane(1) +% acc.a1.lane(2) +% acc.a1.lane(3), acc.a2.lane(0) +% acc.a2.lane(1) +% acc.a2.lane(2) +% acc.a2.lane(3), acc.a3.lane(0) +% acc.a3.lane(1) +% acc.a3.lane(2) +% acc.a3.lane(3), acc.a4.lane(0) +% acc.a4.lane(1) +% acc.a4.lane(2) +% acc.a4.lane(3));
+}
+
+// poly1305_sse2.c-style lanes: 2 blocks per step in radix 2^26, lane j
+// holding blocks j, j+2, ... with r^2 per step; the lanes are finally
+// multiplied by r^2..r^1 and summed. Products use the low 32 bits of each
+// 64-bit lane (PMULUDQ/UMULL); every operand is below 2^30.
+Lanes2 = { a0: u64x2, a1: u64x2, a2: u64x2, a3: u64x2, a4: u64x2 }
+
+mul32_2 = (a: u64x2, b: u64x2) u64x2 { a.mul_low32(b) }
+
+// A * R, partially reduced: every limb below 2^26 except a1 (< 2^27).
+mulr2 = (x: Lanes2, r: Lanes2) Lanes2 {
+    m26 = splat_u64x2(67108863);
+    s1 = r.a1.mul_wrap(splat_u64x2(5)); s2 = r.a2.mul_wrap(splat_u64x2(5));
+    s3 = r.a3.mul_wrap(splat_u64x2(5)); s4 = r.a4.mul_wrap(splat_u64x2(5));
+    d0 ::= mul32_2(x.a0, r.a0).add_wrap(mul32_2(x.a1, s4)).add_wrap(mul32_2(x.a2, s3)).add_wrap(mul32_2(x.a3, s2)).add_wrap(mul32_2(x.a4, s1));
+    d1 ::= mul32_2(x.a0, r.a1).add_wrap(mul32_2(x.a1, r.a0)).add_wrap(mul32_2(x.a2, s4)).add_wrap(mul32_2(x.a3, s3)).add_wrap(mul32_2(x.a4, s2));
+    d2 ::= mul32_2(x.a0, r.a2).add_wrap(mul32_2(x.a1, r.a1)).add_wrap(mul32_2(x.a2, r.a0)).add_wrap(mul32_2(x.a3, s4)).add_wrap(mul32_2(x.a4, s3));
+    d3 ::= mul32_2(x.a0, r.a3).add_wrap(mul32_2(x.a1, r.a2)).add_wrap(mul32_2(x.a2, r.a1)).add_wrap(mul32_2(x.a3, r.a0)).add_wrap(mul32_2(x.a4, s4));
+    d4 ::= mul32_2(x.a0, r.a4).add_wrap(mul32_2(x.a1, r.a3)).add_wrap(mul32_2(x.a2, r.a2)).add_wrap(mul32_2(x.a3, r.a1)).add_wrap(mul32_2(x.a4, r.a0));
+    c ::= d0.shift_right(26); t0 ::= d0.bit_and(m26);
+    d1 = d1.add_wrap(c); c = d1.shift_right(26); t1 = d1.bit_and(m26);
+    d2 = d2.add_wrap(c); c = d2.shift_right(26); t2 = d2.bit_and(m26);
+    d3 = d3.add_wrap(c); c = d3.shift_right(26); t3 = d3.bit_and(m26);
+    d4 = d4.add_wrap(c); c = d4.shift_right(26); t4 = d4.bit_and(m26);
+    t0 = t0.add_wrap(c.mul_wrap(splat_u64x2(5))); c = t0.shift_right(26); t0 = t0.bit_and(m26);
+    Lanes2(a0: t0, a1: t1.add_wrap(c), a2: t2, a3: t3, a4: t4)
+}
+
+// Blocks offset .. offset + 32 as lanes, with the 2^128 bit.
+message2 = (m: Ptr<u8>, offset: usize) Lanes2 {
+    m26 = splat_u64x2(67108863);
+    x = load_u64x2(m, offset); y = load_u64x2(m, offset + 16);
+    lo = x.shuffle2(y, [0, 2]); hi = x.shuffle2(y, [1, 3]);
+    Lanes2(
+        a0: lo.bit_and(m26),
+        a1: lo.shift_right(26).bit_and(m26),
+        a2: lo.shift_right(52).bit_or(hi.shift_left(12)).bit_and(m26),
+        a3: hi.shift_right(14).bit_and(m26),
+        a4: hi.shift_right(40).bit_or(splat_u64x2(16777216))
+    )
+}
+
+add2 = (x: Lanes2, y: Lanes2) Lanes2 {
+    Lanes2(a0: x.a0.add_wrap(y.a0), a1: x.a1.add_wrap(y.a1), a2: x.a2.add_wrap(y.a2), a3: x.a3.add_wrap(y.a3), a4: x.a4.add_wrap(y.a4))
+}
+
+// count is a nonzero multiple of 32.
+poly_lanes2 = (p: Ptr<u64>, m: Ptr<u8>, count: usize) {
+    r1 = limbs26(p.read(0), p.read(1), p.read(2));
+    r2w = mulmod(p, Wide3(w0: p.read(0), w1: p.read(1), w2: p.read(2)));
+    r2 = limbs26_carried(r2w.w0, r2w.w1, r2w.w2);
+    q1 = r1;
+    q2 = r2;
+    step = Lanes2(a0: splat_u64x2(r2.l0), a1: splat_u64x2(r2.l1), a2: splat_u64x2(r2.l2), a3: splat_u64x2(r2.l3), a4: splat_u64x2(r2.l4));
+    tail = Lanes2(a0: lanes_u64x2(q2.l0, q1.l0), a1: lanes_u64x2(q2.l1, q1.l1), a2: lanes_u64x2(q2.l2, q1.l2), a3: lanes_u64x2(q2.l3, q1.l3), a4: lanes_u64x2(q2.l4, q1.l4));
+    h = limbs26_carried(p.read(3), p.read(4), p.read(5));
+    first = message2(m, 0);
+    acc ::= Lanes2(
+        a0: first.a0.with_lane(0, first.a0.lane(0) +% h.l0),
+        a1: first.a1.with_lane(0, first.a1.lane(0) +% h.l1),
+        a2: first.a2.with_lane(0, first.a2.lane(0) +% h.l2),
+        a3: first.a3.with_lane(0, first.a3.lane(0) +% h.l3),
+        a4: first.a4.with_lane(0, first.a4.lane(0) +% h.l4)
+    );
+    offset: usize ::= 32;
+    (offset < count).loop((loop) {
+        acc    = add2(mulr2(acc, step), message2(m, offset));
+        offset = offset + 32;
+    });
+    acc = mulr2(acc, tail);
+    store_limbs(p, acc.a0.lane(0) +% acc.a0.lane(1), acc.a1.lane(0) +% acc.a1.lane(1), acc.a2.lane(0) +% acc.a2.lane(1), acc.a3.lane(0) +% acc.a3.lane(1), acc.a4.lane(0) +% acc.a4.lane(1));
+}
+

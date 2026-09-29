@@ -1,0 +1,432 @@
+diff --color -ruN --exclude build orig-certs/build.zen certs/build.zen
+--- orig-certs/build.zen	2026-09-29 11:00:37
++++ certs/build.zen	2026-09-29 12:51:47
+@@ -24,6 +24,18 @@
+         "test-chacha20poly1305",
+         {src: Path("tests/chacha20poly1305_native.zen"), deps: [aead], out: Ok(Path("build/test-chacha20poly1305"))}
+     ).try();
++    bits = b.lib(
++        "bits64",
++        {src: Path("src/bits64.zen"), libs: [], paths: []}
++    ).try();
++    aes = b.lib(
++        "aes_gcm",
++        {src: Path("src/aes_gcm.zen"), libs: [], paths: []}
++    ).try();
++    b.exe(
++        "bench-aes-gcm",
++        {src: Path("tests/aes_gcm_bench.zen"), deps: [bits, aes], out: Ok(Path("build/bench-aes-gcm"))}
++    ).try();
+     x25519 = b.lib(
+         "x25519",
+         {src: Path("src/x25519.zen"), libs: [], paths: []}
+diff --color -ruN --exclude build orig-certs/src/aes_gcm.zen certs/src/aes_gcm.zen
+--- orig-certs/src/aes_gcm.zen	2026-09-29 11:00:37
++++ certs/src/aes_gcm.zen	2026-09-29 13:18:23
+@@ -19,12 +19,16 @@
+ //
+ // Encryption-only: GCM never needs the inverse cipher.
+ Ptr = std.mem
+-bit_xor, bit_and, shift_right = std.core.num
++bit_xor, bit_and, bit_or, shift_left, shift_right = std.core.num
+ or64 = bits64
++aes, clmul, Aes, Clmul, load_u8x16, splat_u8x16, splat_u64x2, lanes_u64x2, load_u64x2 = std.simd
++splat_u32x4, load_u32x4 = std.simd
++rotate_right = std.core.num
+ 
+ // Scratch layout (u64 words): key schedule 0..22, H 22..24, counter 24..26,
+-// tag mask 26..28, block 28..30, ghash y/h 30..38, tag 38..40.
+-AES_GCM_SCRATCH_WORDS*: usize = 48
++// tag mask 26..28, block 28..30, ghash y/h 30..38, tag 38..40, hardware
++// GHASH powers H^1..H^8 48..64.
++AES_GCM_SCRATCH_WORDS*: usize = 64
+ 
+ // Left shifts are written as wrapping multiplication by the constant 2^k
+ // (Zen has no `<<`); the C compiler emits shifts.
+@@ -346,10 +350,23 @@
+     ok = valid(output, key, nonce, scratch, scratch_words, message, message_count, aad, aad_count)
+         && message_count <= 68719476704 && output_capacity >= 16 && message_count <= output_capacity - 16;
+     ok.then(() {
+-        sp = spans(scratch);
+-        setup(sp, key, nonce);
+-        counter_crypt(sp, output, message, message_count);
+-        authenticate(sp, output, message_count, aad, aad_count);
++        sp     = spans(scratch);
++        powers = scratch.offset(48).to<u8>();
++        hardware = aes().match({
++            Ok(cpu) => clmul().match({
++                Ok(gh) => {
++                    seal_hw(cpu, gh, sp, output, message, message_count, aad, aad_count, key, nonce, powers);
++                    true
++                },
++                None   => false,
++            }),
++            None    => false,
++        });
++        (!hardware).then(() {
++            setup(sp, key, nonce);
++            counter_crypt(sp, output, message, message_count);
++            authenticate(sp, output, message_count, aad, aad_count);
++        });
+         output.offset(message_count).copy_from(sp.tag, 16);
+     });
+     ok
+@@ -364,14 +381,288 @@
+         true  => {
+             sp = spans(scratch);
+             count = ciphertext_count - 16;
+-            setup(sp, key, nonce);
+-            authenticate(sp, ciphertext, count, aad, aad_count);
+-            // subtle.ConstantTimeCompare over the full tag.
+-            difference: u64 ::= 0;
+-            Range(0, 16).loop((i) { difference = or64(difference, sp.tag.read(i).to_u64().bit_xor(ciphertext.read(count + i).to_u64())); });
+-            authentic = difference == 0;
+-            authentic.then(() { counter_crypt(sp, output, ciphertext, count); });
+-            authentic
++            powers = scratch.offset(48).to<u8>();
++            aes().match({
++                Ok(cpu) => clmul().match({
++                    Ok(gh) => open_hw(cpu, gh, sp, output, ciphertext, count, aad, aad_count, key, nonce, powers),
++                    None   => open_soft(sp, output, ciphertext, count, aad, aad_count, key, nonce),
++                }),
++                None    => open_soft(sp, output, ciphertext, count, aad, aad_count, key, nonce),
++            })
+         },
+     })
+ }
++open_soft = (sp: Spans, output: Ptr<u8>, ciphertext: Ptr<u8>, count: usize, aad: Ptr<u8>, aad_count: usize, key: Ptr<u8>, nonce: Ptr<u8>) bool {
++    setup(sp, key, nonce);
++    authenticate(sp, ciphertext, count, aad, aad_count);
++    authentic = tag_matches(sp, ciphertext, count);
++    authentic.then(() { counter_crypt(sp, output, ciphertext, count); });
++    authentic
++}
++// subtle.ConstantTimeCompare over the full tag, shared by both paths.
++tag_matches = (sp: Spans, ciphertext: Ptr<u8>, count: usize) bool {
++    difference: u64 ::= 0;
++    Range(0, 16).loop((i) { difference = or64(difference, sp.tag.read(i).to_u64().bit_xor(ciphertext.read(count + i).to_u64())); });
++    authentic = difference == 0;
++    authentic
++}
++
++// ---- Hardware path -----------------------------------------------------------
++//
++// Ported from OpenSSL 3.5.4's perlasm designs (Apache-2.0; see
++// docs/THIRD_PARTY.md): ghash-x86_64.pl gcm_init_clmul (the "<<1 twist" of H
++// and powers H^2..), clmul64x2_kernel (Karatsuba with H.lo^H.hi) and
++// reduction_alg9, aggregated over eight blocks as gcm_ghash_clmul does over
++// four; aesni-x86_64.pl / aesv8-armx.pl eight-block CTR interleaving.
++// GHASH state is kept byte-reflected (pshufb bswap) as a u64x2 whose lane 1
++// holds the high 64 bits. std.simd lowers the instructions to AESENC and
++// PCLMULQDQ on x86-64 and AESE/AESMC and PMULL on arm64. Selected at run time
++// from the Aes and Clmul capabilities; the constant-time software path above
++// remains for CPUs without them.
++Wide = { lo: u64x2, mid: u64x2, hi: u64x2 }
++
++reflect = (block: u8x16) u64x2 {
++    block.shuffle([15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]).cast_u64x2()
++}
++
++unreflect = (x: u64x2) u8x16 {
++    x.cast_u8x16().shuffle([15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0])
++}
++
++// clmul64x2_kernel without the fold: accumulate a * h into three parts.
++karatsuba = (cpu: Clmul, a: u64x2, h: u64x2, acc: Wide) Wide {
++    am = a.bit_xor(a.shuffle([1, 0]));
++    hm = h.bit_xor(h.shuffle([1, 0]));
++    Wide(
++        lo: acc.lo.bit_xor(a.clmul_low(h, cpu)),
++        mid: acc.mid.bit_xor(am.clmul_low(hm, cpu)),
++        hi: acc.hi.bit_xor(a.clmul_high(h, cpu))
++    )
++}
++
++zero_wide = () Wide {
++    zero = splat_u64x2(0);
++    Wide(lo: zero, mid: zero, hi: zero)
++}
++
++// Karatsuba fold, then reduction_alg9's two phases.
++reduce = (w: Wide) u64x2 {
++    zero = splat_u64x2(0);
++    mid  = w.mid.bit_xor(w.lo).bit_xor(w.hi);
++    x0   = w.lo.bit_xor(mid.shuffle2(zero, [2, 0]));
++    xhi  = w.hi.bit_xor(mid.shuffle2(zero, [1, 2]));
++    t1   = x0.bit_xor(x0.shift_left(5));
++    s    = x0.shift_left(6).bit_xor(t1).shift_left(57);
++    x1   = s.shuffle2(zero, [2, 0]).bit_xor(x0);
++    hi1  = xhi.bit_xor(s.shuffle2(zero, [1, 2]));
++    t2   = x1.bit_xor(x1.shift_right(1));
++    x2   = x1.shift_right(6).bit_xor(t2).shift_right(1);
++    x2.bit_xor(hi1).bit_xor(x1)
++}
++
++// gcm_init_clmul: H<<1 with the 0x1c2 polynomial folded in on carry.
++twist = (h: u64x2) u64x2 {
++    lo    = h.lane(0);
++    hi    = h.lane(1);
++    carry = 0 -% hi.shift_right(63);
++    lanes_u64x2(
++        lo.shift_left(1).bit_xor(carry.bit_and(1)),
++        hi.shift_left(1).bit_or(lo.shift_right(63)).bit_xor(carry.bit_and(13979173243358019584))
++    )
++}
++
++// Eight AES-128 blocks in flight, as aesni_ctr32_encrypt_blocks interleaves.
++Blocks8 = { b0: u8x16, b1: u8x16, b2: u8x16, b3: u8x16, b4: u8x16, b5: u8x16, b6: u8x16, b7: u8x16 }
++
++aes8 = (cpu: Aes, keys: Ptr<u8>, x: Blocks8) Blocks8 {
++    k0 = load_u8x16(keys, 0);
++    b0 ::= x.b0.bit_xor(k0);
++    b1 ::= x.b1.bit_xor(k0);
++    b2 ::= x.b2.bit_xor(k0);
++    b3 ::= x.b3.bit_xor(k0);
++    b4 ::= x.b4.bit_xor(k0);
++    b5 ::= x.b5.bit_xor(k0);
++    b6 ::= x.b6.bit_xor(k0);
++    b7 ::= x.b7.bit_xor(k0);
++    Range(1, 10).loop((r) {
++        k = load_u8x16(keys, 16 * r);
++        b0 = b0.aes_round(k, cpu);
++        b1 = b1.aes_round(k, cpu);
++        b2 = b2.aes_round(k, cpu);
++        b3 = b3.aes_round(k, cpu);
++        b4 = b4.aes_round(k, cpu);
++        b5 = b5.aes_round(k, cpu);
++        b6 = b6.aes_round(k, cpu);
++        b7 = b7.aes_round(k, cpu);
++    });
++    k10 = load_u8x16(keys, 160);
++    Blocks8(
++        b0: b0.aes_round_last(k10, cpu),
++        b1: b1.aes_round_last(k10, cpu),
++        b2: b2.aes_round_last(k10, cpu),
++        b3: b3.aes_round_last(k10, cpu),
++        b4: b4.aes_round_last(k10, cpu),
++        b5: b5.aes_round_last(k10, cpu),
++        b6: b6.aes_round_last(k10, cpu),
++        b7: b7.aes_round_last(k10, cpu)
++    )
++}
++
++aes1 = (cpu: Aes, keys: Ptr<u8>, x: u8x16) u8x16 {
++    b ::= x.bit_xor(load_u8x16(keys, 0));
++    Range(1, 10).loop((r) { b = b.aes_round(load_u8x16(keys, 16 * r), cpu); });
++    b.aes_round_last(load_u8x16(keys, 160), cpu)
++}
++
++// Counter block i: nonce || be32(counter + i); `base` holds the nonce.
++counter_block = (base: u8x16, counter: u32) u8x16 {
++    swapped = counter.shift_left(24).bit_or(counter.shift_left(8).bit_and(16711680))
++        .bit_or(counter.shift_right(8).bit_and(65280)).bit_or(counter.shift_right(24));
++    base.cast_u32x4().with_lane(3, swapped).cast_u8x16()
++}
++
++// Round keys (176 bytes) from the software key schedule, H powers 1..8 as
++// reflected u64x2 at `powers`, and the nonce block.
++Hardware = { keys: Ptr<u8>, powers: Ptr<u8>, base: u8x16 }
++
++// KeyExpansion with the AES unit, as aesv8-armx.pl's key setup: with the
++// word broadcast to all four columns ShiftRows is the identity, so the last
++// round with a zero key is SubWord on every column.
++expand_key_hw = (cpu: Aes, key: Ptr<u8>, keys: Ptr<u8>) {
++    words = keys.to<u32>();
++    zero  = splat_u8x16(0);
++    Range(0, 4).loop((i) {
++        words.write(i, load_u32x4(key, 0).lane(i));
++    });
++    rcon: u32 ::= 1;
++    Range(4, 44).loop((i) {
++        temp ::= words.read(i - 1);
++        (i % 4 == 0).then(() {
++            rotated = temp.rotate_right(8);
++            temp = splat_u32x4(rotated).cast_u8x16().aes_round_last(zero, cpu).cast_u32x4().lane(0).bit_xor(rcon);
++            rcon = rcon.shift_left(1).bit_xor(rcon.shift_right(7).bit_and(1) *% 27).bit_and(255);
++        });
++        words.write(i, words.read(i - 4).bit_xor(temp));
++    });
++}
++
++// Powers beyond H^1 are needed only for eight-block GHASH runs.
++hardware_setup = (aes_cpu: Aes, gh: Clmul, sp: Spans, key: Ptr<u8>, nonce: Ptr<u8>, powers: Ptr<u8>, bulk: bool) Hardware {
++    keys = sp.schedule.to<u8>();
++    expand_key_hw(aes_cpu, key, keys);
++    Range(0, 16).loop((i) { sp.block.write(i, 0); });
++    sp.block.copy_from(nonce, 12);
++    base = load_u8x16(sp.block, 0);
++    h1 = twist(reflect(aes1(aes_cpu, keys, splat_u8x16(0))));
++    h1.store(powers, 0);
++    hk ::= h1;
++    bulk.then(() {
++        Range(1, 8).loop((i) {
++            hk = reduce(karatsuba(gh, hk, h1, zero_wide()));
++            hk.store(powers, 16 * i);
++        });
++    });
++    Hardware(keys: keys, powers: powers, base: base)
++}
++
++power = (hw: Hardware, k: usize) u64x2 { load_u64x2(hw.powers, 16 * (k - 1)) }
++
++// GHASH over `count` bytes; a final partial block is zero padded.
++ghash_hw = (gh: Clmul, hw: Hardware, x: u64x2, data: Ptr<u8>, count: usize, pad: Ptr<u8>) u64x2 {
++    y  ::= x;
++    at ::= 0;
++    (count - at >= 128).loop((h) {
++        w ::= karatsuba(gh, y.bit_xor(reflect(load_u8x16(data, at))), power(hw, 8), zero_wide());
++        w = karatsuba(gh, reflect(load_u8x16(data, at + 16)), power(hw, 7), w);
++        w = karatsuba(gh, reflect(load_u8x16(data, at + 32)), power(hw, 6), w);
++        w = karatsuba(gh, reflect(load_u8x16(data, at + 48)), power(hw, 5), w);
++        w = karatsuba(gh, reflect(load_u8x16(data, at + 64)), power(hw, 4), w);
++        w = karatsuba(gh, reflect(load_u8x16(data, at + 80)), power(hw, 3), w);
++        w = karatsuba(gh, reflect(load_u8x16(data, at + 96)), power(hw, 2), w);
++        w = karatsuba(gh, reflect(load_u8x16(data, at + 112)), power(hw, 1), w);
++        y  = reduce(w);
++        at = at + 128;
++    });
++    (count - at >= 16).loop((h) {
++        y  = reduce(karatsuba(gh, y.bit_xor(reflect(load_u8x16(data, at))), power(hw, 1), zero_wide()));
++        at = at + 16;
++    });
++    (at < count).then(() {
++        Range(0, 16).loop((i) { pad.write(i, 0); });
++        pad.copy_from(data.offset(at), count - at);
++        y = reduce(karatsuba(gh, y.bit_xor(reflect(load_u8x16(pad, 0))), power(hw, 1), zero_wide()));
++    });
++    y
++}
++
++xor_block = (output: Ptr<u8>, input: Ptr<u8>, at: usize, stream: u8x16) {
++    load_u8x16(input, at).bit_xor(stream).store(output, at);
++}
++
++// CTR from counter block 2 (J0 + 1), eight blocks at a time.
++ctr_hw = (cpu: Aes, hw: Hardware, output: Ptr<u8>, input: Ptr<u8>, count: usize, pad: Ptr<u8>) {
++    at: usize ::= 0;
++    counter: u32 ::= 2;
++    (count - at >= 128).loop((h) {
++        s = aes8(cpu, hw.keys, Blocks8(
++            b0: counter_block(hw.base, counter +% 0),
++            b1: counter_block(hw.base, counter +% 1),
++            b2: counter_block(hw.base, counter +% 2),
++            b3: counter_block(hw.base, counter +% 3),
++            b4: counter_block(hw.base, counter +% 4),
++            b5: counter_block(hw.base, counter +% 5),
++            b6: counter_block(hw.base, counter +% 6),
++            b7: counter_block(hw.base, counter +% 7)
++        ));
++        xor_block(output, input, at + 0, s.b0);
++        xor_block(output, input, at + 16, s.b1);
++        xor_block(output, input, at + 32, s.b2);
++        xor_block(output, input, at + 48, s.b3);
++        xor_block(output, input, at + 64, s.b4);
++        xor_block(output, input, at + 80, s.b5);
++        xor_block(output, input, at + 96, s.b6);
++        xor_block(output, input, at + 112, s.b7);
++        at      = at + 128;
++        counter = counter +% 8;
++    });
++    (at < count).loop((h) {
++        stream = aes1(cpu, hw.keys, counter_block(hw.base, counter));
++        take   = (count - at).min(16);
++        (take == 16).match({
++            true  => xor_block(output, input, at, stream),
++            false => {
++                stream.store(pad, 0);
++                Range(0, take).loop((i) { output.write(at + i, input.read(at + i).bit_xor(pad.read(i))); });
++            },
++        });
++        at      = at + take;
++        counter = counter +% 1;
++    });
++}
++
++// Tag = E(K, J0) xor GHASH(aad, ciphertext, bit lengths).
++tag_hw = (cpu: Aes, gh: Clmul, hw: Hardware, sp: Spans, ciphertext: Ptr<u8>, count: usize, aad: Ptr<u8>, aad_count: usize) {
++    y ::= splat_u64x2(0);
++    (aad_count > 0).then(() { y = ghash_hw(gh, hw, y, aad, aad_count, sp.block); });
++    (count > 0).then(() { y = ghash_hw(gh, hw, y, ciphertext, count, sp.block); });
++    lengths = lanes_u64x2(count.to_u64() *% 8, aad_count.to_u64() *% 8);
++    y = reduce(karatsuba(gh, y.bit_xor(lengths), power(hw, 1), zero_wide()));
++    mask = aes1(cpu, hw.keys, counter_block(hw.base, 1));
++    unreflect(y).bit_xor(mask).store(sp.tag, 0);
++}
++
++seal_hw = (cpu: Aes, gh: Clmul, sp: Spans, output: Ptr<u8>, message: Ptr<u8>, count: usize, aad: Ptr<u8>, aad_count: usize, key: Ptr<u8>, nonce: Ptr<u8>, powers: Ptr<u8>) {
++    hw = hardware_setup(cpu, gh, sp, key, nonce, powers, count >= 128 || aad_count >= 128);
++    ctr_hw(cpu, hw, output, message, count, sp.block);
++    tag_hw(cpu, gh, hw, sp, output, count, aad, aad_count);
++}
++
++// The tag is checked before any plaintext is written.
++open_hw = (cpu: Aes, gh: Clmul, sp: Spans, output: Ptr<u8>, ciphertext: Ptr<u8>, count: usize, aad: Ptr<u8>, aad_count: usize, key: Ptr<u8>, nonce: Ptr<u8>, powers: Ptr<u8>) bool {
++    hw = hardware_setup(cpu, gh, sp, key, nonce, powers, count >= 128 || aad_count >= 128);
++    tag_hw(cpu, gh, hw, sp, ciphertext, count, aad, aad_count);
++    authentic = tag_matches(sp, ciphertext, count);
++    authentic.then(() { ctr_hw(cpu, hw, output, ciphertext, count, sp.block); });
++    authentic
++}
++
+diff --color -ruN --exclude build orig-certs/tests/aes_gcm_bench.zen certs/tests/aes_gcm_bench.zen
+--- orig-certs/tests/aes_gcm_bench.zen	1969-12-31 19:00:00
++++ certs/tests/aes_gcm_bench.zen	2026-09-29 12:51:36
+@@ -0,0 +1,58 @@
++// Throughput microbenchmark for native AES-128-GCM seal/open.
++// Reports MB/s (10^6 bytes of plaintext per second) for TLS-like records:
++// 5-byte AAD, 64 B, 512 B, 1 KiB and 16 KiB messages, reusing one scratch buffer.
++aes128gcm_seal, aes128gcm_open, AES_GCM_SCRATCH_WORDS = aes_gcm
++measure = (
++    env     : Env,
++    seal    : bool,
++    buffer  : Ptr<u8>,
++    sealed  : Ptr<u8>,
++    count   : usize,
++    key     : Ptr<u8>,
++    nonce   : Ptr<u8>,
++    scratch : Ptr<u64>
++) bool {
++    ok ::= aes128gcm_seal(sealed, count + 16, buffer, count, key, 5, key, nonce, scratch, AES_GCM_SCRATCH_WORDS);
++    target: u64 = 400000000;
++    start = env.clock.since_start().ns;
++    elapsed: u64 ::= 0; bytes: u64 ::= 0; rounds: u64 ::= 0;
++    (elapsed < target).loop((h) {
++        Range(0, 64).loop((i) {
++            seal.match({
++                true  => { ok = aes128gcm_seal(sealed, count + 16, buffer, count, key, 5, key, nonce, scratch, AES_GCM_SCRATCH_WORDS) && ok; },
++                false => { ok = aes128gcm_open(buffer, count, sealed, count + 16, key, 5, key, nonce, scratch, AES_GCM_SCRATCH_WORDS) && ok; },
++            });
++        });
++        bytes   = bytes + 64 * count.to_u64();
++        rounds  = rounds + 64;
++        elapsed = env.clock.since_start().ns - start;
++    });
++    // bytes * 1000 / ns = MB/s; one decimal place.
++    tenths = bytes * 10000 / elapsed;
++    println(
++        "{} {} B: {}.{} MB/s, {} ns/op",
++        seal.match({true => "seal", false => "open"}),
++        count,
++        tenths / 10,
++        tenths % 10,
++        elapsed / rounds
++    );
++    ok
++}
++main = (env: Env) Res<i32, AllocError> {
++    a       = env.mem.alloc();
++    buffer  = a.realloc<u8>(null_ptr<u8>(), 16384 + 64).try();
++    sealed  = a.realloc<u8>(null_ptr<u8>(), 16384 + 64).try();
++    key     = a.realloc<u8>(null_ptr<u8>(), 64).try();
++    scratch = a.realloc<u64>(null_ptr<u64>(), AES_GCM_SCRATCH_WORDS).try();
++    Range(0, 64).loop((i) { key.write(i, (i * 7 + 3).to_u8().match({Ok(b) => b, None => 0})); });
++    Range(0, 16384).loop((i) { buffer.write(i, (i % 251).to_u8().match({Ok(b) => b, None => 0})); });
++    ok ::= true;
++    Range(0, 4).loop((i) {
++        count: usize = i.match({0 => 64, 1 => 512, 2 => 1024, _ => 16384});
++        ok = measure(env, true, buffer, sealed, count, key, key.offset(32), scratch) && ok;
++        ok = measure(env, false, buffer, sealed, count, key, key.offset(32), scratch) && ok;
++    });
++    println("bench ok: {}", ok);
++    Ok(ok.match({true => 0, false => 1}))
++}

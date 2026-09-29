@@ -1,0 +1,119 @@
+date: Tue Sep 29 20:00:04 UTC 2026
+cpu: model name	: AMD EPYC-Milan Processor
+Ubuntu clang version 18.1.3 (1ubuntu1)
+OpenSSL 3.0.13 30 Jan 2024 (Library: OpenSSL 3.0.13 30 Jan 2024)
+load before: 3.49 1.10 0.51 3/683 446840
+== run 1
+-- zen origin/main ChaCha20-Poly1305 (zen-crypto-perf 7c5194d)
+seal 64 B: 202.4 MB/s, 316 ns/op
+open 64 B: 187.7 MB/s, 340 ns/op
+seal 512 B: 571.7 MB/s, 895 ns/op
+open 512 B: 561.4 MB/s, 911 ns/op
+seal 1024 B: 674.0 MB/s, 1519 ns/op
+open 1024 B: 673.1 MB/s, 1521 ns/op
+seal 16384 B: 787.0 MB/s, 20816 ns/op
+open 16384 B: 787.2 MB/s, 20812 ns/op
+-- zen simd ChaCha20-Poly1305 components
+chacha20 16384 B: 2808.8 MB/s
+poly1305 16384 B: 6995.9 MB/s
+-- zen simd ChaCha20-Poly1305
+seal 64 B: 204.3 MB/s, 313 ns/op
+open 64 B: 198.8 MB/s, 321 ns/op
+seal 512 B: 1118.2 MB/s, 457 ns/op
+open 512 B: 1142.8 MB/s, 448 ns/op
+seal 1024 B: 1467.1 MB/s, 697 ns/op
+open 1024 B: 1445.4 MB/s, 708 ns/op
+seal 16384 B: 1982.0 MB/s, 8266 ns/op
+open 16384 B: 1994.9 MB/s, 8212 ns/op
+-- zen simd AES-128-GCM
+seal 64 B: 417.0 MB/s, 153 ns/op
+open 64 B: 450.3 MB/s, 142 ns/op
+seal 512 B: 1930.9 MB/s, 265 ns/op
+open 512 B: 2004.0 MB/s, 255 ns/op
+seal 1024 B: 2759.6 MB/s, 371 ns/op
+open 1024 B: 2820.7 MB/s, 363 ns/op
+seal 16384 B: 4553.4 MB/s, 3598 ns/op
+open 16384 B: 4555.9 MB/s, 3596 ns/op
+-- openssl
+ChaCha20-Poly1305   318815.36k   527883.01k  1271583.23k  2216461.31k  2364669.95k  2372091.90k
+AES-128-GCM     720489.52k  1628953.02k  3271774.72k  4208386.05k  4657381.38k  4898586.62k
+== run 2
+-- zen origin/main ChaCha20-Poly1305 (zen-crypto-perf 7c5194d)
+seal 64 B: 201.4 MB/s, 317 ns/op
+open 64 B: 200.5 MB/s, 319 ns/op
+seal 512 B: 583.6 MB/s, 877 ns/op
+open 512 B: 536.4 MB/s, 954 ns/op
+seal 1024 B: 676.0 MB/s, 1514 ns/op
+open 1024 B: 675.2 MB/s, 1516 ns/op
+seal 16384 B: 788.2 MB/s, 20784 ns/op
+open 16384 B: 789.3 MB/s, 20756 ns/op
+-- zen simd ChaCha20-Poly1305 components
+chacha20 16384 B: 2830.1 MB/s
+poly1305 16384 B: 7038.6 MB/s
+-- zen simd ChaCha20-Poly1305
+seal 64 B: 210.7 MB/s, 303 ns/op
+open 64 B: 200.5 MB/s, 319 ns/op
+seal 512 B: 1132.5 MB/s, 452 ns/op
+open 512 B: 1143.7 MB/s, 447 ns/op
+seal 1024 B: 1464.0 MB/s, 699 ns/op
+open 1024 B: 1463.1 MB/s, 699 ns/op
+seal 16384 B: 1998.9 MB/s, 8196 ns/op
+open 16384 B: 1996.6 MB/s, 8205 ns/op
+-- zen simd AES-128-GCM
+seal 64 B: 418.3 MB/s, 152 ns/op
+open 64 B: 451.9 MB/s, 141 ns/op
+seal 512 B: 1934.6 MB/s, 264 ns/op
+open 512 B: 2006.1 MB/s, 255 ns/op
+seal 1024 B: 2758.9 MB/s, 371 ns/op
+open 1024 B: 2823.2 MB/s, 362 ns/op
+seal 16384 B: 4467.3 MB/s, 3667 ns/op
+open 16384 B: 4545.2 MB/s, 3604 ns/op
+-- openssl
+ChaCha20-Poly1305   314516.43k   524301.44k  1283664.90k  2224201.73k  2329321.47k  2360016.90k
+AES-128-GCM     666700.78k  1673460.22k  3405148.67k  4351882.24k  4850622.46k  4871553.02k
+== run 3
+-- zen origin/main ChaCha20-Poly1305 (zen-crypto-perf 7c5194d)
+seal 64 B: 200.6 MB/s, 318 ns/op
+open 64 B: 200.0 MB/s, 319 ns/op
+seal 512 B: 537.3 MB/s, 952 ns/op
+open 512 B: 561.7 MB/s, 911 ns/op
+seal 1024 B: 653.9 MB/s, 1565 ns/op
+open 1024 B: 659.9 MB/s, 1551 ns/op
+seal 16384 B: 762.6 MB/s, 21482 ns/op
+open 16384 B: 760.5 MB/s, 21540 ns/op
+-- zen simd ChaCha20-Poly1305 components
+chacha20 16384 B: 2712.4 MB/s
+poly1305 16384 B: 7012.8 MB/s
+-- zen simd ChaCha20-Poly1305
+seal 64 B: 200.5 MB/s, 319 ns/op
+open 64 B: 198.3 MB/s, 322 ns/op
+seal 512 B: 1116.8 MB/s, 458 ns/op
+open 512 B: 1120.5 MB/s, 456 ns/op
+seal 1024 B: 1427.9 MB/s, 717 ns/op
+open 1024 B: 1438.9 MB/s, 711 ns/op
+seal 16384 B: 1959.3 MB/s, 8362 ns/op
+open 16384 B: 1954.6 MB/s, 8382 ns/op
+-- zen simd AES-128-GCM
+seal 64 B: 417.5 MB/s, 153 ns/op
+open 64 B: 451.5 MB/s, 141 ns/op
+seal 512 B: 1917.8 MB/s, 266 ns/op
+open 512 B: 2001.9 MB/s, 255 ns/op
+seal 1024 B: 2630.1 MB/s, 389 ns/op
+open 1024 B: 2825.5 MB/s, 362 ns/op
+seal 16384 B: 4554.3 MB/s, 3597 ns/op
+open 16384 B: 4556.1 MB/s, 3596 ns/op
+-- openssl
+ChaCha20-Poly1305   319803.98k   531314.88k  1287427.33k  2252187.65k  2362843.14k  2372829.18k
+AES-128-GCM     715370.35k  1696466.94k  3370026.24k  4416300.03k  4858535.94k  4883005.44k
+load after: 4.40 1.81 0.80 4/692 449272
+4.08 1.94 0.87 5/698 450137
+seal 64 B: 14.0 MB/s, 4565 ns/op
+open 64 B: 14.0 MB/s, 4559 ns/op
+seal 512 B: 21.0 MB/s, 24330 ns/op
+open 512 B: 21.1 MB/s, 24169 ns/op
+seal 1024 B: 21.9 MB/s, 46616 ns/op
+open 1024 B: 22.0 MB/s, 46501 ns/op
+seal 16384 B: 22.8 MB/s, 717084 ns/op
+open 16384 B: 22.8 MB/s, 717231 ns/op
+bench ok: true
+4.23 2.01 0.90 6/695 450247

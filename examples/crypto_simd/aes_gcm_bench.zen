@@ -1,0 +1,58 @@
+// Throughput microbenchmark for native AES-128-GCM seal/open.
+// Reports MB/s (10^6 bytes of plaintext per second) for TLS-like records:
+// 5-byte AAD, 64 B, 512 B, 1 KiB and 16 KiB messages, reusing one scratch buffer.
+aes128gcm_seal, aes128gcm_open, AES_GCM_SCRATCH_WORDS = aes_gcm
+measure = (
+    env     : Env,
+    seal    : bool,
+    buffer  : Ptr<u8>,
+    sealed  : Ptr<u8>,
+    count   : usize,
+    key     : Ptr<u8>,
+    nonce   : Ptr<u8>,
+    scratch : Ptr<u64>
+) bool {
+    ok ::= aes128gcm_seal(sealed, count + 16, buffer, count, key, 5, key, nonce, scratch, AES_GCM_SCRATCH_WORDS);
+    target: u64 = 400000000;
+    start = env.clock.since_start().ns;
+    elapsed: u64 ::= 0; bytes: u64 ::= 0; rounds: u64 ::= 0;
+    (elapsed < target).loop((h) {
+        Range(0, 64).loop((i) {
+            seal.match({
+                true  => { ok = aes128gcm_seal(sealed, count + 16, buffer, count, key, 5, key, nonce, scratch, AES_GCM_SCRATCH_WORDS) && ok; },
+                false => { ok = aes128gcm_open(buffer, count, sealed, count + 16, key, 5, key, nonce, scratch, AES_GCM_SCRATCH_WORDS) && ok; },
+            });
+        });
+        bytes   = bytes + 64 * count.to_u64();
+        rounds  = rounds + 64;
+        elapsed = env.clock.since_start().ns - start;
+    });
+    // bytes * 1000 / ns = MB/s; one decimal place.
+    tenths = bytes * 10000 / elapsed;
+    println(
+        "{} {} B: {}.{} MB/s, {} ns/op",
+        seal.match({true => "seal", false => "open"}),
+        count,
+        tenths / 10,
+        tenths % 10,
+        elapsed / rounds
+    );
+    ok
+}
+main = (env: Env) Res<i32, AllocError> {
+    a       = env.mem.alloc();
+    buffer  = a.realloc<u8>(null_ptr<u8>(), 16384 + 64).try();
+    sealed  = a.realloc<u8>(null_ptr<u8>(), 16384 + 64).try();
+    key     = a.realloc<u8>(null_ptr<u8>(), 64).try();
+    scratch = a.realloc<u64>(null_ptr<u64>(), AES_GCM_SCRATCH_WORDS).try();
+    Range(0, 64).loop((i) { key.write(i, (i * 7 + 3).to_u8().match({Ok(b) => b, None => 0})); });
+    Range(0, 16384).loop((i) { buffer.write(i, (i % 251).to_u8().match({Ok(b) => b, None => 0})); });
+    ok ::= true;
+    Range(0, 4).loop((i) {
+        count: usize = i.match({0 => 64, 1 => 512, 2 => 1024, _ => 16384});
+        ok = measure(env, true, buffer, sealed, count, key, key.offset(32), scratch) && ok;
+        ok = measure(env, false, buffer, sealed, count, key, key.offset(32), scratch) && ok;
+    });
+    println("bench ok: {}", ok);
+    Ok(ok.match({true => 0, false => 1}))
+}

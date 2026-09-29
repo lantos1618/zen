@@ -95,6 +95,60 @@ machine details stay inside each target; targets never fall back to C.
 * **Stage 4 – measurement.** Compile a crypto primitive with both backends and
   compare runtime.
 
+## Architecture
+
+```text
+AST + checked sema facts
+  → gen_asm_lower / gen_asm_call / gen_asm_member / gen_asm_shape   (native lowering)
+  → gen_ir.Program (native surface)  → gen_verify.verify_native
+  → gen_asm_x86.X86_64Linux | gen_asm_arm64.Arm64(Linux | Darwin)   (renderers)
+  → as + ld (zen.zen_native)
+```
+
+**The IR stays target-neutral.** `gen_ir` has two surfaces. The scalar surface
+(`I32 | Bool | Unit`, the original instructions) is what `gen_lower` produces
+for JavaScript and the IR-C pilot. The native surface adds integer widths
+(`I8 … U64`), `Ptr`, `Block(Layout)` aggregates held in frame memory,
+`Convert`, `AddressOf`, `Load`/`Store` at byte offsets, `CopyBytes`,
+`StaticBytes`, stream output (`WriteOut`, `Print` with a stream), `System`
+(portable `Sys` operation), `SysConst` (portable constant name), `Startup`
+(argc/argv/envp), `MapPages`/`UnmapPages`, `Flush`, and a `Trap` terminator.
+Nothing in it names a register, an instruction or an ABI; checked arithmetic,
+wrapping arithmetic, shifts and rotates are operations on typed slots. A C,
+JavaScript or LLVM renderer can consume the same program: `verify_native`
+checks it, and `verify` keeps the scalar renderers on their subset.
+
+**Native lowering** (target-independent, shared by both asm renderers):
+
+* `gen_asm_shape` — machine layouts of checked types: words, `str` as
+  `{data: Ptr<u8>, len: usize}`, records at natural alignment, tagged
+  unions (u32 tag + payload; payload-free enums are the tag word), fixed
+  arrays, bounds as `{tag, receiver pointer}` handles, capabilities as
+  zero-size. An unsettled type parameter has a zero-size placeholder layout.
+* `gen_asm_lower` — frames, slots, places (`InSlot`/`Through`), statements,
+  expressions, patterns (nested), `.try()` across frames, error-set
+  widening, coercions (literal widths, `Ok` lifting, union membership,
+  same-named alternatives), instantiation of functions per substitution.
+* `gen_asm_call` — calls: arguments in written order, mutable parameters by
+  address, closure-taking callees inlined in the frame that wrote the
+  closure (so `.try()` and `h.break()` keep their meaning), `loop`
+  overloads and handles, `Ptr`, numeric conversions and bit operations,
+  console formatting, constructions with defaults, inference of open
+  parameters from arguments, closures, ranges and breaks.
+* `gen_asm_member` — member resolution (own struct, impl override, bound
+  default), bound values dispatched at run time over the program's
+  implementors (`Alloc` → `Arena`, `Pages`, test allocators), `Mem`
+  (arenas over `mmap`), and the `std.sys` operations.
+
+**Renderers** own registers, frames, calls and object syntax. Words live in
+8-byte slots extended to 64 bits; aggregates are passed by pointer to the
+caller's copy and returned through a hidden pointer (`%rdi` / `x8`), which is
+the System V MEMORY class and the AAPCS64 indirect-result convention for
+large composites (small-struct register classification is not implemented;
+it only matters for foreign calls, which this backend does not make). The
+runtime (buffered stdout, decimal printing, traps, exit, page mapping,
+Darwin adapters) is emitted as assembly beside the program.
+
 ## Operating system policy
 
 | Target | Entry | Kernel interface | Object/link |
@@ -112,16 +166,69 @@ No C source is compiled and no C runtime startup object is used; dyld calls
 `_main` directly. Linux, whose syscall ABI is stable, gets raw syscalls and no
 dynamic linker at all (static ELF, no interpreter).
 
-The syscall layer is defined in Zen, in `gen_asm_sys`: one `Sys` enumeration
-of the operations the runtime and std need (`read`, `write`, `openat`,
-`close`, `mmap`, `munmap`, `exit_group`, `clock_gettime`, `getrandom`,
-`socket`, `bind`, `listen`, `accept4`, `connect`, `epoll_*`/`kqueue`, `futex`,
-`clone`), and per-target tables mapping each to a Linux number or a libSystem
-symbol. Results follow the Linux convention everywhere: a negative value is
-`-errno`; the Darwin target converts `-1`/`errno` into that form so code above
-the layer is OS-independent.
+### The syscall layer
+
+Two Zen pieces make the kernel interface first-class:
+
+* **`std.sys`** (`src/std/sys/sys.zen`) is the reusable module programs and
+  std import. Its bodiless declarations are the kernel operations — `read`,
+  `write`, `openat`, `close`, `mmap`, `munmap`, `exit_group`,
+  `clock_gettime`, `getrandom`, `socket`, `bind`, `listen`, `accept4`,
+  `connect`, `epoll_create1/ctl/pwait`, `kqueue`, `kevent`, `futex`, `clone` —
+  plus process start values (`argc`, `argv`, `envp`) and constants whose
+  values differ per OS (`at_fdcwd`, `o_creat`, `clock_monotonic`, ...). On
+  them, in ordinary Zen: `c_len`, `arg`, `env_var`, `write_all`,
+  `read_full`, `read_file`, `write_file`, `monotonic_ns`, `realtime_ns`,
+  `random_bytes`, and **`Pages`, an `Alloc` whose runs are individual
+  anonymous mappings** (header with the mapping length; `free` unmaps).
+  `std.sys.sys_env` gives the `Env` capabilities (`var`, `argv`,
+  `fs.read/write/exists/is_dir`, the clock) their native meaning; the
+  native lowering calls these Zen functions for the bodiless `Env` members.
+* **`gen.gen_sys`** holds the target facts: the `Sys` operations, their Linux
+  x86-64 numbers (`syscall_64.tbl`), Linux AArch64 numbers (asm-generic
+  `unistd.h`), their libSystem symbols, and the per-platform constant table.
+
+Every operation returns a word; a negative value is `-errno` on every OS. The
+Darwin renderer converts libSystem's `-1` + `errno` into that form, and
+adapts the two calls whose C shape differs: `openat`'s variadic mode goes on
+the stack, and `getrandom` becomes `getentropy` in 256-byte chunks returning
+the byte count. `accept4` is `accept` on Darwin (flags must be zero), epoll
+and futex/clone answer `-ENOSYS` there, kqueue answers `-ENOSYS` on Linux.
+Threads over `clone` + futex are not built yet; macOS threads would go through
+pthreads in libSystem.
+
+The C and JavaScript backends do not provide the bodiless `std.sys`
+operations; C programs keep reaching the OS through `Env` and libc.
 
 ## Status
+
+### Stage 3: real programs (differential corpus)
+
+`tests/native` is a Zen program (`tests/native/main.zen`, built by
+`tests/native/build.zen` with the C backend) that compiles every corpus
+program with `--backend asm --target T`, assembles and links it with the
+system tools only, runs it with the test's arguments, stdin and environment,
+and compares stdout, exit status and stderr substrings with the recorded C
+behaviour (`.expected`, `.exit`, `.stderr`). Verdicts: PASS, FAIL (behaviour
+differs), UNSUPPORTED (refused before publishing assembly), BROKEN (assembler
+or linker rejected the output).
+
+| Target | Pass | Fail | Unsupported | Broken | Of |
+| --- | --- | --- | --- | --- | --- |
+| x86_64-linux (dev-box) | 507 (52.7%) | 0 | 455 | 0 | 962 |
+| aarch64-linux (qemu-user) | 507 (52.7%) | 0 | 455 | 0 | 962 |
+| arm64-darwin (this Mac) | see the latest run below | | | | 962 |
+
+Run it: `cd tests/native && ../../zen build`, then from the repository root
+`tests/native/build/<os>-<arch>/native-corpus ./zen <target> [filter] [shard shards]`.
+
+Refused constructs, by the first one each unsupported program reaches
+(x86_64-linux, 455 programs): `String`/`fmt` formatting and `Display`
+(~50), `Drop` cleanup (36), unsettled types in remaining generic corners
+(~30), other `Env` operations (actors, threads, fs.lock/cwd/mkdir, args
+schema: ~27), `@scope`/`defer`, `consume`, `@meta` (~19), floats (18),
+`==` on records (16), folding loops (9), compiler-internal test roots that
+import `gen`/`sema` (~40).
 
 ### Stage 2: three targets, no libc
 
@@ -136,7 +243,7 @@ the layer is OS-independent.
   `za_print_i64/u64`, `za_trap` (flush, `file:line:col: trap: what` to fd 2,
   exit 134) and `za_exit`. The Darwin build imports exactly `_write`,
   `__exit` and `___error` from libSystem.
-* `gen_asm_sys`: the syscall layer (`Sys` operations; Linux x86-64 and
+* `gen_sys`: the syscall layer (`Sys` operations; Linux x86-64 and
   generic-table numbers; libSystem symbols; `-errno` result convention).
 * Driver: `zen build --backend asm [--target T]` (host by default);
   `Codegen.Asm` projects assemble and link with `as` + `ld`

@@ -12,7 +12,7 @@ Ctx = sema.sema_check
 CBackend = gen.gen_c.gen_c_state
 unresolved, unsupported = gen.gen_c.gen_c_report
 expr = gen.gen_c.gen_c_expr
-base_decl, type_const, TypeConst = gen.gen_c.gen_c_read
+base_decl, type_const, TypeConst, module_const = gen.gen_c.gen_c_read
 intern_named, write_variant_value = gen.gen_c.gen_c_read
 plain_ctx = gen.gen_c.gen_c_decl
 is_null_ptr = gen.gen_c.gen_c_ptr
@@ -98,7 +98,9 @@ lower_def_value = (
     })
 }
 
-lower_const = (
+// Also the lowering of a module-qualified constant (`config.LIMIT`), which
+// `gen_c_read` resolves through the module's exports first.
+lower_const* = (
     be   :: CBackend,
     id   : ExprId,
     d    : Def,
@@ -219,14 +221,17 @@ variant_is_pure_name = (be :: CBackend, text: str, ctx: Ctx) bool {
     })
 }
 
-// A nullary variant and a constant on a type are both values of a
-// Declaration: neither names a function and neither reads a frame, so
-// both can be written wherever they are read. A field access cannot —
+// A nullary variant, a constant on a type, and a module's exported constant
+// are all values of a declaration: none names a function and none reads a
+// frame, so each can be written wherever it is read. A field access cannot —
 // it reads a receiver.
 is_pure_access = (be :: CBackend, a: Access, ctx: Ctx) bool {
     be.base_decl(a.base, ctx).match({
         Ok(_) => true,
-        None  => be.has_type_const(a, ctx),
+        None  => be.has_type_const(a, ctx) || be.module_const(a, ctx).match({
+            Ok(yes) => yes,
+            Err(_)  => false,
+        }),
     })
 }
 

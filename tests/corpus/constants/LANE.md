@@ -88,8 +88,9 @@ refusal.
 ## Language facts learned while probing (for the next lane)
 
 - Import bindings rename nothing: `X = mod.mod` requires X to BE an
-  export of mod.mod; multi-name form is `A, B = mod.mod`; dotted use of
-  an import binding (`H.RATE`) is not a thing.
+  export of mod.mod; multi-name form is `A, B = mod.mod`. A binding to
+  the module itself (`H = helper`) reads its exports as `H.RATE`
+  (module_qualified_constant_reads_the_export).
 - Two same-named imports compile; first binding wins (resolution-order
   territory, not probed further).
 - `str.len` is a FIELD; usize has no `.to_i64()`; bool has no `.to_i64()`
@@ -101,4 +102,4 @@ refusal.
   to `misc/other.zen` and silently became "nothing is at that path" --
   the FILE name must match the folder for `<folder>/<folder>.zen`.
 
-TESTS: 7
+TESTS: 8

@@ -20,6 +20,7 @@ Native, Value, Place, Base, Callee = gen.gen_asm_lower
 to_i64_bits = gen.gen_asm_lower
 Shape, Form, shape, size_of = gen.gen_asm_shape
 Source, bind_sources, invoke, call_inst, source_expr, result_type = gen.gen_asm_call
+settle_params = gen.gen_asm_call
 
 // How a member call reaches its body.
 Target = Static(Callee) | Dynamic(Bound)
@@ -302,6 +303,7 @@ to_bound* = (lo :: Native, value: Value, target: TyId) Res<Res<Value>, LowerErro
             found.match({
                 None      => Ok(None),
                 Ok(tag)   => {
+                    lo.made.add(value.ty).try(LowerError.OutOfMemory);
                     out = lo.temp(target).try();
                     at = lo.slot_of(Scalar.Ptr).try();
                     lo.add(Instruction.AddressOf(Address(out: at, slot: out.slot))).try();
@@ -340,7 +342,10 @@ dynamic_call = (lo :: Native, id: ExprId, c: Call, bound: Bound, receiver: ExprI
         lo.branch_to(test, yes, next).try();
         lo.start(yes);
         self_value = lo.read(Place(base: Base.Through(pointer), offset: 0, ty: implementor)).try();
-        result = lo.implementor_call(implementor, bound, name, self_value, args, method_inst, ty, span).try();
+        saved = lo.use_via(Ok(implementor));
+        attempt = lo.implementor_call(implementor, bound, name, self_value, args, method_inst, ty, span);
+        lo.use_via(saved);
+        result = attempt.try();
         lo.add(Instruction.Copy(Move(out: out.slot, source: result.slot))).try();
         lo.jump(done).try();
         lo.start(next);
@@ -378,8 +383,12 @@ implementor_call = (lo :: Native, implementor: TyId, bound: Bound, name: str, se
 }
 
 // Call a resolved member with already-evaluated receiver and arguments.
-call_values* = (lo :: Native, callee: Callee, self_value: Value, args: Vec<Value>, ty: TyId, span: Span)
+call_values* = (lo :: Native, open: Callee, self_value: Value, args: Vec<Value>, ty: TyId, span: Span)
                Res<Value, LowerError> {
+    given ::= lo.alloc.Vec<Source>();
+    given.add(Source.Computed(self_value)).try(LowerError.OutOfMemory);
+    args.loop((a) { given.add(Source.Computed(a)).try(LowerError.OutOfMemory); });
+    callee = lo.settle_params(open, given).try();
     index = lo.enqueue(callee).try();
     slots ::= lo.alloc.Vec<usize>();
     callee.f.params.loop((h, i, p) {

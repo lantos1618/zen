@@ -14,7 +14,7 @@ Expr, Lambda, Access, Struct, Member, Impl = std.ast
 ImplId = sema.sema
 walk, WalkVisitor, WalkEvent, WalkNode = std.ast.ast_walk
 nowhere = std.ast
-Checker, DeclId, Def, TyId, Ctx, Inst, decl_at, CheckedCall = sema.sema
+Checker, DeclId, Def, TyId, Ctx, Inst, decl_at, CheckedCall, TyNamed = sema.sema
 subst = sema.sema
 Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print = gen.gen_ir
 Instruction, Terminator, Convert, Address, Load, Store, CopyMem, StaticBytes = gen.gen_ir
@@ -197,8 +197,9 @@ checked_invoke = (lo :: Native, id: ExprId, c: Call, checked: CheckedCall,
 
 // Run a resolved callee: compiler-provided bodiless operations, inlined
 // closure-taking bodies, or a call to a real function instance.
-invoke* = (lo :: Native, id: ExprId, callee: Callee, written: Vec<Source>, c: Call, span: Span)
+invoke* = (lo :: Native, id: ExprId, open: Callee, written: Vec<Source>, c: Call, span: Span)
           Res<Value, LowerError> {
+    callee = lo.settle_range(lo.settle_params(open, written).try()).try();
     sources = callee.f.body.match({
         None  => written,
         Ok(_) => lo.in_written_order(callee, written, c).try(),
@@ -210,6 +211,198 @@ invoke* = (lo :: Native, id: ExprId, callee: Callee, written: Vec<Source>, c: Ca
             false => lo.real_call(callee, sources, span),
         }),
     })
+}
+
+// A parameter written as a bare type parameter (`range: R`) that the
+// checked substitution left open takes its argument's checked type.
+settle_params* = (lo :: Native, callee: Callee, sources: Vec<Source>) Res<Callee, LowerError> {
+    bare = Callee(
+        f: callee.f,
+        owner: callee.owner,
+        member: callee.member,
+        module: callee.module,
+        inst: lo.alloc.Inst(),
+        self_ty: callee.self_ty,
+        generic_owner: callee.generic_owner
+    );
+    extra ::= lo.alloc.Inst();
+    callee.f.params.loop((h, i, p) {
+        p.type.when_ok((t) {
+            raw = lo.callee_type(bare, t).try();
+            actual: Res<TyId> = sources.get(i).value_or(Source.Absent).match({
+                Given(e)    => lo.type_of(e).match({ Ok(a) => Ok(a), Err(_) => None }),
+                Computed(v) => Ok(v.ty),
+                Located(l)  => Ok(l.ty),
+                Absent      => None,
+            });
+            actual.when_ok((a) { lo.unify(raw, a, callee.inst, extra).try(); });
+        });
+    });
+    (extra.len() == 0).match({
+        true  => Ok(callee),
+        false => {
+            inst ::= lo.alloc.Inst();
+            // New bindings first: an Inst keeps the first binding of a var.
+            [extra, callee.inst].loop((part) {
+                Range(0, part.len()).loop((k) {
+                    part.var_at(k).when_ok((v) {
+                        part.arg_at(k).when_ok((a) { inst.bind(v, a).try(LowerError.OutOfMemory); });
+                    });
+                });
+            });
+            Ok(Callee(
+                f: callee.f,
+                owner: callee.owner,
+                member: callee.member,
+                module: callee.module,
+                inst: inst,
+                self_ty: callee.self_ty,
+                generic_owner: callee.generic_owner
+            ))
+        },
+    })
+}
+
+// Bind each type parameter in a parameter's written type that the checked
+// substitution left open to the matching part of the argument's type.
+unify = (lo :: Native, raw: TyId, actual: TyId, known: Inst, extra :: Inst) Res<(), LowerError> {
+    lo.check.types.at(raw).match({
+        Var(_)   => (!lo.settled(lo.arg_for(known, raw)) && lo.settled(actual)).then(() {
+            extra.bind(raw, actual).try(LowerError.OutOfMemory);
+        }).ignore_none(),
+        Named(r) => lo.check.types.at(actual).match({
+            Named(a) => (r.decl == a.decl).then(() {
+                r.args.loop((h, k, part) {
+                    a.args.get(k).when_ok((other) { lo.unify(part, other, known, extra).try(); });
+                });
+            }).ignore_none(),
+            _        => (),
+        }),
+        Res(r)   => lo.check.types.at(actual).match({
+            Res(a) => {
+                lo.unify(r.value, a.value, known, extra).try();
+                lo.unify(r.error, a.error, known, extra).try();
+            },
+            _      => (),
+        }),
+        Array(r) => lo.check.types.at(actual).match({
+            Array(a) => lo.unify(r.elem, a.elem, known, extra).try(),
+            _        => (),
+        }),
+        _        => (),
+    });
+    Ok(())
+}
+
+// A traversal `<R: Range<T>, T>` whose element type sema left open takes it
+// from the range: an array's element, str's byte, a Range's index, or the
+// argument of the range type's Range impl.
+settle_range = (lo :: Native, callee: Callee) Res<Callee, LowerError> {
+    range_var: Res<TyId> = lo.var_named(callee.inst, "R");
+    elem_var: Res<TyId> = lo.var_named(callee.inst, "T");
+    fix: Res<Pair> = range_var.match({
+        None    => None,
+        Ok(rv)  => elem_var.match({
+            None    => None,
+            Ok(tv)  => {
+                range = lo.arg_for(callee.inst, rv);
+                elem = lo.arg_for(callee.inst, tv);
+                (lo.settled(range) && !lo.settled(elem)).match({
+                    true  => lo.range_elem(range).try().match({
+                        Ok(e) => Ok(Pair(var: tv, ty: e)),
+                        None  => None,
+                    }),
+                    false => None,
+                })
+            },
+        }),
+    });
+    fix.match({
+        None    => Ok(callee),
+        Ok(p)   => {
+            inst ::= lo.alloc.Inst();
+            inst.bind(p.var, p.ty).try(LowerError.OutOfMemory);
+            Range(0, callee.inst.len()).loop((k) {
+                callee.inst.var_at(k).when_ok((v) {
+                    callee.inst.arg_at(k).when_ok((a) { inst.bind(v, a).try(LowerError.OutOfMemory); });
+                });
+            });
+            Ok(Callee(
+                f: callee.f,
+                owner: callee.owner,
+                member: callee.member,
+                module: callee.module,
+                inst: inst,
+                self_ty: callee.self_ty,
+                generic_owner: callee.generic_owner
+            ))
+        },
+    })
+}
+
+Pair = { var: TyId, ty: TyId }
+
+var_named = (lo :: Native, inst: Inst, name: str) Res<TyId> {
+    found: Res<TyId> = loop<TyId>((h) {
+        Range(0, inst.len()).loop((k) {
+            inst.var_at(k).when_ok((v) {
+                lo.check.types.at(v).match({
+                    Var(tv) => tv.name.eq(name).then(() { h.break(v); }).ignore_none(),
+                    _       => (),
+                });
+            });
+        });
+        h.break();
+    });
+    found
+}
+
+arg_for = (lo :: Native, inst: Inst, var: TyId) TyId {
+    found: Res<TyId> = loop<TyId>((h) {
+        Range(0, inst.len()).loop((k) {
+            (inst.var_at(k).match({ Ok(v) => v == var, None => false })).then(() {
+                inst.arg_at(k).when_ok((a) { h.break(a); });
+            });
+        });
+        h.break();
+    });
+    found.value_or(var)
+}
+
+range_elem* = (lo :: Native, range: TyId) Res<Res<TyId>, LowerError> {
+    lo.check.types.at(range).match({
+        Array(a) => Ok(Ok(a.elem)),
+        Prim(p)  => Ok(p.name.eq("str").match({ true => Ok(lo.prim("u8").try()), false => None })),
+        Named(n) => lo.qualified(range).eq("std.core.range.Range").match({
+            true  => Ok(Ok(lo.prim("usize").try())),
+            false => lo.impl_range_elem(range, n),
+        }),
+        _        => Ok(None),
+    })
+}
+
+impl_range_elem = (lo :: Native, range: TyId, n: TyNamed) Res<Res<TyId>, LowerError> {
+    ids ::= lo.alloc.Vec<ImplId>();
+    lo.check.world.impls_named(lo.tree, n.name, ids).try(LowerError.OutOfMemory);
+    inst = lo.check.inst_of_named(n).try(LowerError.OutOfMemory);
+    found: Res<TyId> = loop<TyId>((h) {
+        ids.loop((id) {
+            lo.check.world.impl_at(lo.tree, id).when_ok((i) {
+                lo.check.type_memo.get(i.bound).when_ok((bound) {
+                    lo.check.types.at(bound).match({
+                        Named(b) => (b.name.eq("Range")).then(() {
+                            b.args.get(0).when_ok((arg) {
+                                h.break(lo.check.subst(arg, inst).try(LowerError.OutOfMemory));
+                            });
+                        }).ignore_none(),
+                        _        => (),
+                    });
+                });
+            });
+        });
+        h.break();
+    });
+    Ok(found)
 }
 
 // The call's substitution with the caller's own parameters resolved.
@@ -451,7 +644,8 @@ settle_closures = (lo :: Native, callee: Callee, sources: Vec<Source>, span: Spa
         true  => Ok(callee),
         false => {
             inst ::= lo.alloc.Inst();
-            [callee.inst, extra].loop((part) {
+            // New bindings first: an Inst keeps the first binding of a var.
+            [extra, callee.inst].loop((part) {
                 Range(0, part.len()).loop((k) {
                     part.var_at(k).when_ok((v) {
                         part.arg_at(k).when_ok((a) { inst.bind(v, a).try(LowerError.OutOfMemory); });
@@ -884,7 +1078,8 @@ loop_type = (lo :: Native, id: ExprId, body: LambdaRef) Res<TyId, LowerError> {
             finder ::= BreakFinder(tree: lo.tree, handle: handle);
             walk(lo.tree, lo.alloc, WalkNode.Block(l.body), finder).try(LowerError.OutOfMemory);
             finder.found.match({
-                None      => Ok(ty),
+                // Without a valued break the result is only ever None.
+                None      => lo.check.types.res_open(lo.unit_ty).try(LowerError.OutOfMemory),
                 Ok(value) => {
                     saved = lo.use_frame(body.frame);
                     payload = lo.type_of(value);
@@ -1149,7 +1344,17 @@ at_value = (lo :: Native, range: Value, hook: AtHook, index: Value, brk: usize, 
         _        => lo.alloc.Inst(),
     });
     ret = lo.at_result(hook, inst, range.ty).try();
-    frame = lo.push_frame(inst, hook.impl_module, ret, Ok(range.ty), None).try();
+    owner: Res<DeclId> = lo.check.types.at(range.ty).match({ Named(n) => Ok(n.decl), _ => None });
+    scope = Callee(
+        f: hook.f,
+        owner: hook.decl,
+        member: None,
+        module: hook.impl_module,
+        inst: inst,
+        self_ty: Ok(range.ty),
+        generic_owner: owner
+    );
+    frame = lo.push_frame(inst, hook.impl_module, ret, Ok(range.ty), Ok(scope)).try();
     saved = lo.use_frame(frame);
     mark = lo.locals.len;
     hook.f.params.loop((h, i, p) {
@@ -1180,9 +1385,16 @@ at_value = (lo :: Native, range: Value, hook: AtHook, index: Value, brk: usize, 
 
 at_result = (lo :: Native, hook: AtHook, inst: Inst, self_ty: TyId) Res<TyId, LowerError> {
     t = hook.f.ret.ok_or(unsupported(nowhere(), "an at without a result type")).try();
-    ctx = Ctx(module: hook.impl_module, ret: lo.unit_ty, has_ret: false, self_ty: self_ty, has_self: true);
-    raw = lo.check.type_from_ast(t, ctx).try(LowerError.OutOfMemory);
-    lo.check.subst(raw, inst).try(LowerError.OutOfMemory)
+    owner: Res<DeclId> = lo.check.types.at(self_ty).match({ Named(n) => Ok(n.decl), _ => None });
+    lo.callee_type(Callee(
+        f: hook.f,
+        owner: hook.decl,
+        member: None,
+        module: hook.impl_module,
+        inst: inst,
+        self_ty: Ok(self_ty),
+        generic_owner: owner
+    ), t)
 }
 
 // `h.break()`, `h.break(value)` and `h.next()`.

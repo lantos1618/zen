@@ -58,6 +58,8 @@ Local* = { name*: str, frame*: usize, kind*: LocalKind }
 
 Expected* = { id*: ExprId, ty*: TyId }
 
+Broken* = { ty*: TyId, fault*: LowerError }
+
 // One lexical function body: the real function or an inlined callee. Names,
 // types and `.try()` resolve in the frame that wrote them. `scope` says
 // which type parameters written types may name.
@@ -109,6 +111,14 @@ Native* = {
     // The type a context wants for one expression, used when the
     // expression's own checked type leaves a parameter unsettled.
     expected* :: Res<Expected> = None,
+    // Functions reached only through one implementor's dispatch branch:
+    // lowering failure there refuses the program only if some value of
+    // that implementor is converted into its bound.
+    via* :: Res<TyId> = None,
+
+    vias* :: Vec<Res<TyId>>,
+    made* :: Vec<TyId>,
+    broken* :: Vec<Broken>,
 
     // -------------------------------------------------------------------
     // blocks and slots
@@ -198,6 +208,13 @@ Native* = {
     }
 
     deeper* = (self :: @Self) { self.depth = self.depth + 1; }
+
+    // Mark enqueues as reached through one implementor's dispatch.
+    use_via* = (self :: @Self, via: Res<TyId>) Res<TyId> {
+        saved    = self.via;
+        self.via = via;
+        saved
+    }
     shallower* = (self :: @Self) { self.depth = self.depth - 1; }
 
     // -------------------------------------------------------------------
@@ -1616,6 +1633,7 @@ Native* = {
                 index = self.pending.len;
                 self.pending.add(callee).try(LowerError.OutOfMemory);
                 self.known.set(key.view(), index).try(LowerError.OutOfMemory);
+                self.vias.add(self.via).try(LowerError.OutOfMemory);
                 Ok(index)
             },
         })
@@ -1720,6 +1738,30 @@ Native* = {
         ))
     }
 
+    // A function that cannot run: same signature, a trap for a body.
+    stub = (self :: @Self, callee: Callee) Res<Func, LowerError> {
+        self.slots = self.alloc.Vec<Scalar>();
+        callee.f.params.loop((h, i, p) {
+            ty = p.type.ok_or(unsupported(p.span, "an inferred parameter type")).try();
+            t = self.callee_type(callee, ty).try();
+            class = p.mutable.match({ true => Scalar.Ptr, false => self.class_of(t).try() });
+            self.slots.add(class).try(LowerError.OutOfMemory);
+        });
+        ret = callee.f.ret.match({ Ok(t) => self.callee_type(callee, t), None => Ok(self.unit_ty) }).try();
+        blocks ::= self.alloc.Vec<BasicBlock>();
+        blocks.add(BasicBlock(
+            code: self.alloc.Vec<Instruction>(),
+            exit: Terminator.Trap(Fault(what: TrapKind.Unreachable, span: callee.f.name.span))
+        )).try(LowerError.OutOfMemory);
+        Ok(Func(
+            name: callee.f.name.text,
+            parameters: self.slots.len,
+            slots: self.slots,
+            blocks: blocks,
+            result: self.class_of(ret).try()
+        ))
+    }
+
     is_capability* = (self :: @Self, ty: TyId) bool {
         capability(self.qualified(ty))
     }
@@ -1820,7 +1862,10 @@ lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
         code: alloc.Vec<Instruction>(),
         locals: alloc.Vec<Local>(),
         frames: alloc.Vec<Frame>(),
-        loops: alloc.Vec<LoopTarget>()
+        loops: alloc.Vec<LoopTarget>(),
+        vias: alloc.Vec<Res<TyId>>(),
+        made: alloc.Vec<TyId>(),
+        broken: alloc.Vec<Broken>()
     );
     main_decl = decl_at(tree, main).ok_or(unsupported(module.span, "a missing main function")).try();
     main_fn = main_decl.kind.match({ Function(f) => Ok(f), _ => None })
@@ -1838,9 +1883,26 @@ lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
     i: usize ::= 0;
     loop(() { i < state.pending.len }, (h) {
         callee = state.pending.get(i).ok_or(unsupported(module.span, "a missing reachable function")).try();
-        f = state.function(callee, i == entry_index).try();
+        via = state.vias.get(i).value_or(None);
+        state.use_via(via);
+        f = state.function(callee, i == entry_index).match({
+            Ok(f)    => f,
+            Err(err) => via.match({
+                // Only one implementor's branch reaches this function.
+                Ok(ty) => {
+                    state.broken.add(Broken(ty: ty, fault: err)).try(LowerError.OutOfMemory);
+                    state.stub(callee).try()
+                },
+                None   => { Err(err).try(); state.stub(callee).try() },
+            }),
+        });
         functions.add(f).try(LowerError.OutOfMemory);
         i = i + 1;
+    });
+    // A broken implementor refuses the program only when a value of it
+    // can reach its bound.
+    state.broken.loop((b) {
+        state.made.find((t) { t == b.ty }).when_ok((_) { Err(b.fault).try(); });
     });
     Ok(Program(functions: functions, entry: entry_index))
 }

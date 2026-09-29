@@ -5,13 +5,14 @@
 // and vector extensions; another toolchain is refused with #error rather
 // than silently narrowed or scalarized.
 
-Call, ExprId, ArrayLit = std.ast
+Call, ExprId, ArrayLit, Function = std.ast
 AllocError = std.mem
 Vec = std.collections
 String, str = std.text
 Range = std.core
 Primitive, unsigned_width = sema.sema_prim
 Ctx = sema.sema_check
+TyId = sema.sema_ty
 vector_lanes, vector_lane = sema.sema_ty
 const_int = sema.sema_const
 Emit = gen.gen_emit
@@ -172,6 +173,24 @@ constant_indices = (be :: CBackend, a: ArrayLit, p: Primitive, code :: String)
 }
 
 render_primitive = (
+    be      :: CBackend,
+    site    : PrimSite,
+    held    : Vec<String>,
+    literal : bool,
+    out     :: String
+) Res<(), AllocError> {
+    site.p.name.match({
+        "compiler_barrier" => {
+            // An empty asm with a memory clobber: no memory access moves
+            // across it and no preceding store is treated as dead.
+            be.writeln("__asm__ __volatile__(\"\" ::: \"memory\");").try();
+            out.add("((void)0)")
+        },
+        _                  => be.render_scalar(site, held, literal, out),
+    })
+}
+
+render_scalar = (
     be      :: CBackend,
     site    : PrimSite,
     held    : Vec<String>,
@@ -423,4 +442,20 @@ vector_constructor = (
             out.add("})")
         },
     })
+}
+
+// Attributes between linkage and return type, on prototype and definition
+// alike. `inline` functions are always inlined within one translation unit;
+// split output gives functions external linkage and calls cross files, so
+// there the request is dropped rather than turned into a C error.
+function_attributes* = (
+    be  :: CBackend,
+    f   : Function,
+    sig : Vec<TyId>,
+    out :: String
+) Res<(), AllocError> {
+    (f.inline && be.linkage().eq("static ")).then(() {
+        out.add("inline __attribute__((always_inline)) ").try();
+    });
+    Ok(())
 }

@@ -35,7 +35,7 @@ named_ptr = (be :: CBackend, rty: TyId) bool {
 ptr_verb = (name: str) bool {
     name.is_in([
         "read", "write", "offset", "back", "bytes", "copy_from", "to",
-        "is_null", "same"
+        "is_null", "same", "read_volatile", "write_volatile"
     ])
 }
 
@@ -64,7 +64,7 @@ PtrTypeSite = {
 
     resolve = (self: @Self, be :: CBackend) Res<TyId, AllocError> {
         et = be.elem_of(self.rty).try();
-        self.name.eq("read").match({
+        (self.name.eq("read") || self.name.eq("read_volatile")).match({
             true  => Ok(et),
             false => self.after_read(be),
         })
@@ -142,7 +142,9 @@ PtrUnitPolicy = PtrLower | PtrRefuse | PtrZero
 ptr_unit_policy = (be: CBackend, et: TyId, name: str) PtrUnitPolicy {
     be.is_unit(et).match({
         false => PtrUnitPolicy.PtrLower,
-        true  => name.is_in(["read", "write", "offset", "back"]).match({
+        true  => name.is_in([
+            "read", "write", "offset", "back", "read_volatile", "write_volatile"
+        ]).match({
             true  => PtrUnitPolicy.PtrRefuse,
             false => name.is_in(["bytes", "copy_from"]).match({
                 true  => PtrUnitPolicy.PtrZero,
@@ -162,10 +164,42 @@ PtrCall = {
 
     lower = (self: @Self, be :: CBackend, out :: String)
             Res<(), AllocError> {
-        self.site.name.eq("read").match({
-            true  => self.read(be, out),
-            false => self.after_read(be, out),
+        self.site.name.match({
+            "read_volatile"  => self.volatile_read(be, out),
+            "write_volatile" => self.volatile_write(be, out),
+            "read"           => self.read(be, out),
+            _                => self.after_read(be, out),
         })
+    }
+
+    // Volatile accesses go through a `volatile T *` so the C compiler
+    // performs each one exactly as written: none is elided or merged.
+    volatile_run = (self: @Self, be :: CBackend, out :: String)
+                   Res<(), AllocError> {
+        be.request_type(self.et).try();
+        cty ::= be.alloc.String().try();
+        be.ctype(self.et, cty).try();
+        out.fmt("((volatile {} *){})", cty.view(), self.base)
+    }
+
+    volatile_read = (self: @Self, be :: CBackend, out :: String)
+                    Res<(), AllocError> {
+        self.volatile_run(be, out).try();
+        out.add("[").try();
+        self.index_arg(be, 0, out).try();
+        out.add("]")
+    }
+
+    volatile_write = (self: @Self, be :: CBackend, out :: String)
+                     Res<(), AllocError> {
+        ptr ::= be.alloc.String().try();
+        self.volatile_run(be, ptr).try();
+        idx ::= be.alloc.String().try();
+        self.index_arg(be, 0, idx).try();
+        val ::= be.alloc.String().try();
+        self.value_arg(be, 1, self.et, val).try();
+        be.fmt("{}[{}] = {};\n", ptr.view(), idx.view(), val.view()).try();
+        out.add("0")
     }
 
     after_read = (self: @Self, be :: CBackend, out :: String)

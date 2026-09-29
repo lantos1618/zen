@@ -977,6 +977,10 @@
             "named": true
           },
           {
+            "type": "inline_function",
+            "named": true
+          },
+          {
             "type": "member_expression",
             "named": true
           },
@@ -1847,6 +1851,21 @@
     "type": "inferred_type",
     "named": true,
     "fields": {}
+  },
+  {
+    "type": "inline_function",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "function",
+          "named": true
+        }
+      ]
+    }
   },
   {
     "type": "let_statement",
@@ -3839,6 +3858,10 @@
   {
     "type": "identifier",
     "named": true
+  },
+  {
+    "type": "inline",
+    "named": false
   },
   {
     "type": "line_comment",

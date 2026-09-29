@@ -297,6 +297,7 @@ module.exports = grammar({
         $.native_binding,
         $.struct_body,
         $.enum_body,
+        $.inline_function,
         $.function_signature,
         $.generic_type,
         $._expression,
@@ -463,6 +464,11 @@ module.exports = grammar({
           ),
         ),
       ),
+
+    // `mix = inline (a: u32) u32 { .. }`: a module-level function the
+    // backend must inline. `inline` is contextual; `inline(x)` elsewhere is
+    // an ordinary call.
+    inline_function: ($) => prec(2, seq('inline', $.function)),
 
     // A signature ALWAYS writes its return type: `() ()` "has nothing to name
     // and stays as it is" (DESIGN.md:389), and every `= sig` in the document

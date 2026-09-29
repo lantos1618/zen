@@ -20,7 +20,7 @@ TokenKind = std.parse.parse_token
 Parser, Mark = std.parse.parser
 expr = std.parse.parse_expr
 type, written_type = std.parse.parse_type
-value_shape, delim_step = std.parse.parse_lookahead
+value_shape, delim_step, inline_fn_ahead = std.parse.parse_lookahead
 struct_members, record_body, type_params, fn_value = std.parse.parse_member
 
 // Parse a whole module. Its span and trailing trivia cover the complete file.
@@ -431,7 +431,10 @@ fn_decl = (
     tparams : Vec<TParam>,
     mutable : bool
 ) Res<Decl, AllocError> {
-    f = p.fn_value(head.name, head.exported, tparams, mutable).try();
+    forced = p.inline_fn_ahead();
+    forced.then(() { p.bump().try(); });
+    f ::= p.fn_value(head.name, head.exported, tparams, mutable).try();
+    forced.then(() { f.force_inline(); });
     p.add_decl(DeclKind.Function(f), m);
 }
 

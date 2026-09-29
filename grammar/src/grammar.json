@@ -177,6 +177,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "inline_function"
+        },
+        {
+          "type": "SYMBOL",
           "name": "function_signature"
         },
         {
@@ -908,6 +912,23 @@
             }
           ]
         }
+      }
+    },
+    "inline_function": {
+      "type": "PREC",
+      "value": 2,
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "STRING",
+            "value": "inline"
+          },
+          {
+            "type": "SYMBOL",
+            "name": "function"
+          }
+        ]
       }
     },
     "function_signature": {

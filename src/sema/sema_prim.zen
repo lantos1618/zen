@@ -25,6 +25,7 @@ primitive_module* = (module: str) bool {
 // must not manufacture a truncating cast or a wide multiply.
 reserved_primitive = (name: str) bool {
     name.eq("mul_wide") || name.starts_with("truncate_")
+        || name.eq("compiler_barrier")
 }
 
 primitive_signature* = (c :: Checker, d: Def, f: Function)
@@ -50,11 +51,14 @@ primitive_declaration = (c :: Checker, d: Def, f: Function, module: str)
     });
     result = c.ret_type(f, ctx).try();
     shown ::= c.types.name_of(result).try();
-    shape = module.eq("std.simd").match({
-        true  => vector_shape(f.name.text, names, shown.view()),
-        false => primitive_shape(f.name.text, names, shown.view()),
+    shape = module.match({
+        "std.simd"        => vector_shape(f.name.text, names, shown.view()),
+        "std.mem.mem_ptr" => f.name.text.eq("compiler_barrier")
+            && names.len == 0 && shown.view().eq("()"),
+        _                 => primitive_shape(f.name.text, names, shown.view()),
     });
-    (fixed && primitive_module(module) && shape).match({
+    owner = primitive_module(module) || module.eq("std.mem.mem_ptr");
+    (fixed && owner && shape).match({
         false => c.report(
             d.span.file,
             d.span,

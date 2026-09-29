@@ -1883,3 +1883,26 @@ registers unless their function is compiled for a wider target. Lane
 arithmetic never traps: vector code states wrapping by name. Vector
 operations evaluate operands once in source order. JS and assembly refuse
 vector types through the scalar lowering's type check.
+
+## Volatile access, compiler barriers and forced inlining
+
+`Ptr<T>` has `read_volatile(index)` and `write_volatile(index, value)`. Each
+is performed exactly once and in order with other volatile accesses; the C
+backend lowers them through a `volatile T *`. `std.mem.compiler_barrier()`
+prevents the compiler from moving memory accesses across it or treating
+earlier stores as dead (an empty `asm volatile` with a memory clobber); it
+emits no instruction and is not a CPU fence. `std.mem.wipe(bytes, count)`
+zeroes a span with volatile stores followed by a barrier. It erases only
+that span: copies in registers, spills or other buffers are not reached, so
+it is one part of a secret-lifetime contract, not the whole.
+
+A module-level function declared `name = inline (..) T { .. }` must be
+inlined into every caller. `inline` is contextual, not a keyword and not a
+new `@` name: it is recognized only directly before a function value in a
+declaration, so `inline(x)` elsewhere remains a call of a binding named
+`inline`. The C backend emits `static inline __attribute__((always_inline))`
+in single-file output. Split output gives functions external linkage and
+calls cross translation units, so there the request is dropped rather than
+turned into a C error. Inlining changes no semantics: evaluation order,
+traps and ownership are those of an ordinary call. A recursive `inline`
+function is a C compiler error, which the backend does not yet diagnose.

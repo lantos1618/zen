@@ -51,7 +51,7 @@ value_kind = (env: Env, tree: Ast, id: ExprId) str {
     });
 }
 
-show = (env: Env, tree: Ast, d: Decl) () {
+show = (env: Env, tree: Ast, d: Decl) {
     d.kind.match({
         Alias(a)    => println("alias {}", a.name.text),
         Enum(e)     => e.leading_bar.match({

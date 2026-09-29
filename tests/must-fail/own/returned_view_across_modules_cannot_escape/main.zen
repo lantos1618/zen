@@ -1,6 +1,6 @@
 Input, view = helpers.helpers
 Box = { text :: str }
-put = (box :: Box, input: Input) () { box.text = view(input); }
+put = (box :: Box, input: Input) { box.text = view(input); }
 bad = (env: Env, box :: Box) Res<(), AllocError> {
     a    = env.mem.alloc();
     text = a.String("temporary").try();

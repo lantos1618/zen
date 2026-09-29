@@ -20,7 +20,7 @@ Cell = {
     doubled* = (self: @Self) i32 { self.n * 2 },
 }
 
-each = (c: Cell, f: (x: Cell) ()) () { f(c) }
+each = (c: Cell, f: (x: Cell) ()) { f(c) }
 
 main = (env: Env) Res<i32, AllocError> {
     each(Cell(n: 21), (x) { println("{}", x.doubled()) });

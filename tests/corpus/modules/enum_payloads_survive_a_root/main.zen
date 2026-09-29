@@ -5,7 +5,7 @@
 // lines -- so every arm reads what it bound and prints it.
 Pos, Node = shape.shape
 
-show = (n: Node) () {
+show = (n: Node) {
     n.match({
         Leaf(v) => println("leaf {}", v),
         At(p)   => println("at {}", p.line),

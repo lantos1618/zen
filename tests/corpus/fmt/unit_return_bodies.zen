@@ -1,0 +1,23 @@
+render = fmt.fmt
+scan, Source = std.lex
+SOURCE: str = "plain = () () {}\ngeneric = <T>(value: T) () {}\nThing = {\n    run = (self: @Self) () {}\n    hook ::= (self: @Self) () {}\n}\nThing.impl(Drop, { drop = (self :: @Self) () {} })\n"
+WANTED: str = "plain = () {}\ngeneric = <T>(value: T) {}\nThing = {\n    run = (self: @Self) {}\n    hook ::= (self: @Self) {}\n}\nThing.impl(Drop, { drop = (self :: @Self) {} })\n"
+main = (env: Env) Res<(), AllocError> {
+    a      = env.mem.alloc();
+    result = render(
+        a,
+        scan(a, Source(file: "unit.zen", text: SOURCE)).try()
+    ).try();
+    second = render(
+        a,
+        scan(a, Source(file: "unit.zen", text: result.text.view())).try()
+    ).try();
+    println(
+        "faithful {} exact {} fixed {} diagnostics {}",
+        result.faithful && second.faithful,
+        result.text.view().eq(WANTED),
+        result.text.view().eq(second.text.view()),
+        result.diags.len
+    );
+    Ok(())
+}

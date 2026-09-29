@@ -13,4 +13,4 @@
 
 id* = <T>(x: T) T { nowhere }
 
-main* = () () {}
+main* = () {}

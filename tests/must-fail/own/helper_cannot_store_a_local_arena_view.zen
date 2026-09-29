@@ -1,5 +1,5 @@
 Box = { text :: str }
-put = (box :: Box, text: str) () { box.text = text; }
+put = (box :: Box, text: str) { box.text = text; }
 main = (env: Env) Res<(), AllocError> {
     box ::= Box(text: "");
     bad(env, box).try();

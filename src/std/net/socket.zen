@@ -283,7 +283,7 @@ Socket* = {
         })
     }
 
-    close* = (self :: @Self) () {
+    close* = (self :: @Self) {
         self.open.then(() {
             self.open = false;
             Io.close(self.raw);
@@ -292,5 +292,5 @@ Socket* = {
 }
 
 Socket.impl(Drop, {
-    drop = (self :: @Self) () { self.close() }
+    drop = (self :: @Self) { self.close() }
 })

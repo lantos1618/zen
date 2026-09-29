@@ -9,7 +9,7 @@ Native = c.bind("probe.h", {
 HOST: str = "HARNESS_HOST"
 PORT: u16 = 0
 REFUSED_PORT: u16 = 0
-check = (yes: bool) () { (!yes).then(() { Native.probe_check(0); }); }
+check = (yes: bool) { (!yes).then(() { Native.probe_check(0); }); }
 drop_socket = (a: Alloc) Res<i32, SocketFault> {
     socket = Socket.tcp_connect(a, HOST, PORT).try();
     Ok(socket.handle().raw_handle())

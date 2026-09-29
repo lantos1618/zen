@@ -15,7 +15,7 @@ Native = c.bind("probe.h", {
     fixture_signal_count = () i32
     fixture_check = (value: i32, line: i32) ()
 })
-check = (value: bool, line: i32) () { Native.fixture_check(
+check = (value: bool, line: i32) { Native.fixture_check(
     value.match({true => 1, false => 0}),
     line
 ); }

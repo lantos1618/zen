@@ -36,9 +36,9 @@ TcpStream* = {
         self.socket.read(buf, n).map_err((e) { e.tcp_error() })
     }
 
-    close* = (self :: @Self) () { self.socket.close() }
+    close* = (self :: @Self) { self.socket.close() }
 }
 
 TcpStream.impl(Drop, {
-    drop = (self :: @Self) () { self.close() }
+    drop = (self :: @Self) { self.close() }
 })

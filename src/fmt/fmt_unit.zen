@@ -1,0 +1,100 @@
+// The only semantic normalization: omit an explicit unit result on a function
+// with a body. AST identity distinguishes it from parameters, values, function
+// types and bodiless bindings. Every other token remains byte-for-byte intact.
+Alloc, AllocError = std.mem
+str, String = std.text
+Vec = std.collections
+Range = std.core
+TypeId = std.ast.ast_id
+Function, Member = std.ast.ast_node
+Lexed, Source, scan, TokenKind = std.lex.lex
+Parsed = fmt.fmt_src
+UnitEdit* = { text*: String, changed*: bool, faithful*: bool }
+Omissions = {
+    parsed: Parsed,
+    removed :: Vec<bool>,
+    changed :: bool = false,
+    unit = (self :: @Self, ret: Res<TypeId>) Res<(), AllocError> {
+        ret.match({
+            None   => {},
+            Ok(id) => {
+                t = self.parsed.tree.type_at(id);
+                t.kind.match({
+                    Unit => {
+                        from = self.parsed.src.offset(t.span.start);
+                        to   = self.parsed.src.offset(t.span.end);
+                        text = self.parsed.src.text;
+                        // Only literal parentheses belonging to this AST unit
+                        // type can be omitted. No synthetic or inferred span.
+                        (to >= from + 2 && to <= text.len && text.index(from) == '(' && text.index(to - 1) == ')').then(() {
+                            self.removed.set(from, true); self.removed.set(to - 1, true);
+                            self.changed = true;
+                            // Preserve comments even inside the return type.
+                            self.parsed.src.all_space(from + 1, to - 1).then(() {
+                                Range(from + 1, to - 1).loop((i) { self.removed.set(i, true); });
+                                end ::= to;
+                                loop(() { end < text.len && (text.index(end) == ' ' || text.index(end) == '\t') }, (h) {
+                                    self.removed.set(end, true); end = end + 1;
+                                });
+                            });
+                        });
+                    },
+                    _    => {},
+                });
+            },
+        }); Ok(())
+    }
+    function = (self :: @Self, f: Function) Res<(), AllocError> {
+        f.body.match({Ok(_) => self.unit(f.ret), None => Ok(())})
+    }
+    members = (self :: @Self, members: Vec<Member>) Res<(), AllocError> {
+        members.loop((m) { m.kind.match({Function(f) => self.function(f).try(), _ => {}}); }); Ok(())
+    }
+}
+omit_unit_returns* = (
+    a      : Alloc,
+    parsed : Parsed,
+    lexed  : Lexed
+) Res<UnitEdit, AllocError> {
+    removed ::= a.Vec<bool>();
+    Range(0, parsed.src.text.len + 1).loop((i) { removed.add(false).try(); });
+    edits ::= Omissions(parsed: parsed, removed: removed);
+    parsed.m.decls.loop((d) {
+        d.kind.match({
+            Function(f) => edits.function(f).try(),
+            Struct(s)   => edits.members(s.members).try(),
+            Impl(i)     => edits.members(i.members).try(),
+            _           => {},
+        });
+    });
+    // Lambda result annotations constrain callback inference. Omission is not
+    // equivalent there; only named Function nodes default to unit.
+    out ::= a.String().try();
+    Range(0, parsed.src.text.len).loop((i) {
+        (!edits.removed.ptr().read(i)).then(() { out.add(parsed.src.text.index(i)).try(); });
+    });
+    // Retain the token guard: permit only the precise AST-selected delimiter
+    // tokens, and compare every other token (including comments) in order.
+    after = scan(a, Source(file: lexed.source.file, text: out.view())).try();
+    at ::= 0; faithful ::= after.is_clean();
+    lexed.tokens.loop((token) {
+        edits.removed.ptr().read(token.span.start.offset).match({
+            true  => {
+                allowed  = (token.kind == TokenKind.ParenOpen || token.kind == TokenKind.ParenClose) && token.span.end.offset == token.span.start.offset + 1;
+                faithful = faithful && allowed;
+            },
+            false => {
+                after.tokens.get(at).match({
+                    None      => { faithful = false; },
+                    Ok(other) => { faithful = faithful && token.kind == other.kind && lexed.source.text_of(token).eq(after.source.text_of(other)); },
+                });
+                at = at + 1;
+            },
+        });
+    });
+    Ok(UnitEdit(
+        text: out,
+        changed: edits.changed,
+        faithful: faithful && at == after.tokens.len
+    ))
+}

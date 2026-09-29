@@ -13,7 +13,7 @@ Buf = {
 }
 
 Buf.impl(Drop, {
-    drop = (self :: @Self) () { /* nothing to release: id is bytes */ }
+    drop = (self :: @Self) { /* nothing to release: id is bytes */ }
 })
 
 Error = AllocError | IoError | ThreadError

@@ -5,6 +5,27 @@ Completed execution logs, previous checkpoints and review transcripts live in
 Git history. Architecture and library contracts belong in [LIBRARIES.md](LIBRARIES.md),
 [DESIGN.md](DESIGN.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Current checkpoint: canonical unit-return spelling (2026-09-28)
+
+Named functions and methods with bodies now use `name = (...) { ... }` rather
+than an explicit unit return. Compiler/std source, examples, test harnesses,
+documentation and generated snippets were migrated. Legacy parser coverage
+uses quoted source and checks the explicit Unit AST; unit types in bodiless
+signatures and anonymous callback constraints remain unchanged.
+
+The formatter normalizes only AST Function nodes with a body and literal Unit
+return delimiters. A dedicated token guard permits only those deletions;
+comments, strings and every other token remain checked. Lambda return types
+are preserved because they can affect generic callback inference.
+
+All 1,351 formatter-gate files pass. The final 25 focused cases pass, including
+16 formatter tests; the separate migration checks passed 76 cases and 42
+quality tests (five existing skips). Compiler fixpoint confirms all 195 C units,
+zen.h and the regenerated seed match. `make -j1 seed verify` stops at the known
+macOS compiler-name/warning-budget issue (Apple Clang as gcc: 7,095 warnings
+against the GCC budget of 315). No budget was relaxed; aggregate success for
+this change is not claimed. Logs are in ignored build/source_health/omit-unit-return.
+
 ## Current checkpoint: native TLS integer and byte floor (2026-09-28)
 
 The isolated `native-tls-bits` branch extends validated std.core.num primitives

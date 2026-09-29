@@ -32,7 +32,7 @@ outer = (n: i32) Res<i32, All> {
     Ok(v);
 }
 
-describe = (env: Env, r: Res<i32, All>) () {
+describe = (env: Env, r: Res<i32, All>) {
     r.match({
         Ok(v)  => println("ok {}", v),
         Err(e) => e.match({

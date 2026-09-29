@@ -47,7 +47,7 @@ main = (env: Env) Res<i32, ArgError> {
     Ok(0);
 }
 
-show = (self: Duration) () {
+show = (self: Duration) {
     u = self.unit_of();
     println("{}{}", self.count_in(u), suffix(u));
 }

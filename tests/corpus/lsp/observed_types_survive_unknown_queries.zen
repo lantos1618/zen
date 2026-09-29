@@ -5,7 +5,7 @@ Ctx = sema.sema_check
 type_from_ast = sema.sema_denote
 TypeId = std.ast
 
-TEXT: str = "Wrap<T> = { item: T }\nBox = { key = (self: @Self, item: Wrap<@Self>) () {} }\n"
+TEXT: str = "Wrap<T> = { item: T }\nBox = { key = (self: @Self, item: Wrap<@Self>) {} }\n"
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

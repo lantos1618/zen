@@ -1,25 +1,12 @@
-// `g = (x: usize) () { .. }` — a declaration whose return type is
-// written `()`.
-//
-// R1a classifies a declaration's value by the token after the parameter
-// list's `)`, and that test deliberately refused a `(`, so that
-// `g = (f)(x)` stays a call of a parenthesised callee. But a function
-// that WRITES its unit return type has a `(` there too, so
-// `strip_bom = (lx :: Lexer) () { .. }` in src/std/lex/lex_scan.zen was
-// classified as a constant and its parameter list parsed as an
-// expression.
-//
-// What tells the two apart is one more group: a second `(..)` followed
-// by a `{` is a return type and a body, and a call is never followed by
-// a block.
-//
-// THE SIGNATURE-ONLY SPELLING IS NOW CALLED. `Sink.put` -- the actually
-// novel case, a `()` return type with NO `{` after it at all -- used to be
-// declared and never observed, and the file's only runtime expectation was
-// the argument echoed back from the easy half. `Doubler` implements it and
-// the value that comes out has to have travelled through the signature.
+// Explicit unit returns remain valid parser input. Executable functions use
+// the canonical omitted annotation; the quoted source preserves the legacy
+// lookahead case where a second parenthesized group denotes the return type.
+scan, Source = std.lex
+Parser, module = std.parse
 
-shout = (env: Env, n: i32) () { println("{}", n * 6 + 4) }
+SOURCE: str = "shout = (env: Env, n: i32) () {}\n"
+
+shout = (env: Env, n: i32) { println("{}", n * 6 + 4) }
 
 // the signature-only spelling of the same thing, which has no `{` after
 // it at all and must still not be read as a call
@@ -30,10 +17,29 @@ Sink = {
 Doubler = { factor: i32 }
 
 Doubler.impl(Sink, {
-    put* = (self: @Self, e: Env, n: i32) () { println("{}", n * self.factor) }
+    put* = (self: @Self, e: Env, n: i32) { println("{}", n * self.factor) }
 })
 
-main = (env: Env) Res<i32, ArgError> {
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+    lexed = scan(alloc, Source(file: "unit.zen", text: SOURCE)).try();
+    p ::= alloc.Parser(lexed);
+    m     = p.module("unit").try();
+    valid = m.decls.get(0).match({
+        Ok(d) => d.kind.match({
+            Function(f) => f.body.match({ Ok(_) => true, None => false }) && f.params.len == 2 && f.ret.match({
+                Ok(t) => p.tree.type_at(
+                    t
+                ).kind.match({ Unit => true, _ => false }),
+                None  => false,
+            }),
+            _           => false,
+        }),
+        None  => false,
+    });
+    (!valid || lexed.diags.len != 0 || p.diags.len != 0 || m.decls.len != 1).then(() {
+        println("explicit unit return was not parsed as a function");
+    });
     shout(env, 7);
     d = Doubler(factor: 3);
     d.put(env, 14);

@@ -56,7 +56,7 @@ main = (env: Env) Res<i32, AllocError> {
 // of the last line rather than as a blank one. `println` appends a
 // newline of its own, so printing the buffer whole would put a line in
 // the expectation that is not in the file.
-show = (text: str) () {
+show = (text: str) {
     line ::= 0;
     from ::= 0;
     Range(0, text.len).loop((h, i) {

@@ -101,7 +101,7 @@ Walk = {
 
     // forward to `target`, counting as DESIGN.md says to count: LF ends a
     // line, CR does not, and a multi-byte character costs its bytes
-    to* = (self :: @Self, target: usize) () {
+    to* = (self :: @Self, target: usize) {
         loop(
             () { self.off < target },
             (h) {

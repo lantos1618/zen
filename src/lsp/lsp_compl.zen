@@ -69,7 +69,7 @@ MemberAnswer = {
 MemberCache* = {
     roots :: Res<Vec<SourceRoot>> = None,
 
-    set_roots* = (self :: @Self, roots: Vec<SourceRoot>) () {
+    set_roots* = (self :: @Self, roots: Vec<SourceRoot>) {
         self.roots = Ok(roots);
         self.invalidate();
     }
@@ -79,10 +79,10 @@ MemberCache* = {
     stale :: bool = false,
     builds* :: usize = 0,
 
-    invalidate* = (self :: @Self) () { self.stale = true; }
+    invalidate* = (self :: @Self) { self.stale = true; }
 
     // The patched document is part of the key; other buffers are dependencies.
-    changed* = (self :: @Self, path: str) () {
+    changed* = (self :: @Self, path: str) {
         self.cur.when_ok((answer) {
             (!answer.path.eq(path)).then(() { self.invalidate(); });
         });
@@ -198,7 +198,7 @@ MemberCache* = {
 }
 
 MemberCache.impl(Drop, {
-    drop = (self :: @Self) () { self.arena.drop(); }
+    drop = (self :: @Self) { self.arena.drop(); }
 })
 
 MemberCache* = (env: Env) MemberCache {

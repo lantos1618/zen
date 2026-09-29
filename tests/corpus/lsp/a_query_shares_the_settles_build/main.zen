@@ -129,7 +129,7 @@ definition = (a: Alloc, id: usize, into :: String) Res<(), AllocError> {
 
 // Every frame's body, one per line — framing unwrapped, since a
 // `.expected` may not carry the CR a `Content-Length` header does.
-walk = (out: str) () {
+walk = (out: str) {
     from  ::= 0;
     going ::= true;
     loop(() { going && from < out.len }, (h) {

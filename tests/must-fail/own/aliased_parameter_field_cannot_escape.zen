@@ -1,7 +1,7 @@
 Box = { text :: str }
 Input = { text: str, scratch: str }
 Envelope = { input: Input, other: str }
-put = (box :: Box, input: Input) () {
+put = (box :: Box, input: Input) {
     first    = input;
     second   = (first);
     box.text = second.text;

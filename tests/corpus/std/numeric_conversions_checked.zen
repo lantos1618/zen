@@ -6,7 +6,7 @@ once = (count :: i32, value: i64) i64 {
     value
 }
 
-main = (env: Env) () {
+main = (env: Env) {
     low: i64  = -2147483648;
     high: i64 = 2147483647;
     println(

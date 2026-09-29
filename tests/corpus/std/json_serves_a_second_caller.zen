@@ -47,7 +47,7 @@ trip = (a: Alloc, doc: str) Res<(), AllocError> {
 
 // A member read out of a parsed document, named rather than indexed —
 // the way a stranger reads a document they did not write.
-name_line = (tree: Jsons, id: JsonId) () {
+name_line = (tree: Jsons, id: JsonId) {
     tree.field(id, "name").match({
         None      => println("field name -> absent"),
         Ok(named) => tree.text(named).match({
@@ -61,7 +61,7 @@ name_line = (tree: Jsons, id: JsonId) () {
 // Two levels down, then an element of THAT member's array — depth is
 // the point: the module serves a stranger's document, not just the
 // wire's fixed shapes.
-deep_line = (tree: Jsons, id: JsonId) () {
+deep_line = (tree: Jsons, id: JsonId) {
     tree.field(id, "deep").match({
         None        => println("deep[0] -> absent"),
         Ok(deep_id) => tree.field(deep_id, "x").match({

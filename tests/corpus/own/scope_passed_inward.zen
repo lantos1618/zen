@@ -6,7 +6,7 @@
 // scope_stored_in_struct, scope_returned,
 // scope_captured_by_escaping_closure.
 
-register = (s: Scope, env: Env) () {
+register = (s: Scope, env: Env) {
     s.defer(() { env.out.println("cleanup") });
 }
 

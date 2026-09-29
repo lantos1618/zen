@@ -1,6 +1,6 @@
 Permutation, permutation = std.build
 
-show = (p: Permutation) () {
+show = (p: Permutation) {
     println(
         "{} {} {} {}",
         p.index(4, 0),

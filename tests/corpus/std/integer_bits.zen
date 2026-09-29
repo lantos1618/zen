@@ -11,7 +11,7 @@ count_once = (calls :: i32) usize {
     (calls == 4).match({ true => 65, false => 0 })
 }
 
-main = () () {
+main = () {
     small: u32 = 2309737967;
     println(
         "u32 xor/and: {} {} {}",

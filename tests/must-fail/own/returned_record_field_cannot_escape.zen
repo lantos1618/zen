@@ -6,7 +6,7 @@ wrap = (input: Input) Envelope { Envelope(
     input: identity(input),
     other: "static"
 ) }
-put = (box :: Box, input: Input) () {
+put = (box :: Box, input: Input) {
     returned = wrap(input);
     box.text = returned.input.text;
 }

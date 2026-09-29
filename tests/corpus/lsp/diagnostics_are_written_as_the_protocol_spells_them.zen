@@ -155,7 +155,7 @@ at = (
 }
 
 // Every frame's body, one per line, in the order they were written.
-walk = (out: str) () {
+walk = (out: str) {
     from  ::= 0;
     n     ::= 0;
     going ::= true;

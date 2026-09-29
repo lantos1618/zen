@@ -1,5 +1,5 @@
 bit_xor = std.core.num
-main = () () {
+main = () {
     op = bit_xor;
     println("{}", op(1, 2));
 }

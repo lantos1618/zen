@@ -1,5 +1,5 @@
 bit_xor, rotate_right = std.core.num
-main = () () {
+main = () {
     small: u16 = 1;
     value      = bit_xor(1, small);
 }

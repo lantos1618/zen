@@ -49,7 +49,7 @@ un_name = (op: UnOp) str {
 // One node per line, prefixed by its depth. Deliberately not an
 // indented tree: a depth number is exact where leading spaces in an
 // `.expected` file are easy to get wrong by one.
-show = (env: Env, tree: Ast, id: ExprId, depth: usize) () {
+show = (env: Env, tree: Ast, id: ExprId, depth: usize) {
     e = tree.expr_at(id);
     e.kind.match({
         Literal(l) => println("{} {}", depth, l.text),

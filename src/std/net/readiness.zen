@@ -109,7 +109,7 @@ Readiness* = {
         (index < self.count).ensure(ReadinessError.Invalid).try();
         Ok(Native.zen_ready_slot(self.events, index))
     }
-    close* = (self :: @Self) () {
+    close* = (self :: @Self) {
         (self.fd >= 0).then(() {
             fd         = self.fd;
             self.fd    = -1;
@@ -120,4 +120,4 @@ Readiness* = {
         });
     }
 }
-Readiness.impl(Drop, { drop = (self :: @Self) () { self.close() } })
+Readiness.impl(Drop, { drop = (self :: @Self) { self.close() } })

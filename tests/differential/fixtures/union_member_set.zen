@@ -4,7 +4,7 @@ NotFound = | NotFound
 Denied = | Denied
 Set = Denied | NotFound
 
-show = (error: Set) () {
+show = (error: Set) {
     error.match({
         NotFound(value) => value.match({
             NotFound => println("not found"),

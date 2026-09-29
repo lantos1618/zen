@@ -7,7 +7,7 @@ Cell = Full(i32) | Blank
 Slot = Left(Cell) | Right(Cell) | Gone
 
 // `_` as a whole arm, covering two remaining variants
-tail_arm = (env: Env, s: Slot) () {
+tail_arm = (env: Env, s: Slot) {
     s.match({
         Left(c) => cell_arm(env, c),
         _       => println("not left"),
@@ -15,7 +15,7 @@ tail_arm = (env: Env, s: Slot) () {
 }
 
 // `_` inside a payload: the variant is named, the payload is not bound
-cell_arm = (env: Env, c: Cell) () {
+cell_arm = (env: Env, c: Cell) {
     c.match({
         Full(_) => println("full"),
         _       => println("blank"),
@@ -23,7 +23,7 @@ cell_arm = (env: Env, c: Cell) () {
 }
 
 // `_` as the payload of every arm, with the enum still fully covered
-payload_arm = (env: Env, s: Slot) () {
+payload_arm = (env: Env, s: Slot) {
     s.match({
         Left(_)  => println("left"),
         Right(_) => println("right"),
@@ -32,7 +32,7 @@ payload_arm = (env: Env, s: Slot) () {
 }
 
 // `_` nested one level down
-nested_arm = (env: Env, s: Slot) () {
+nested_arm = (env: Env, s: Slot) {
     s.match({
         Left(Full(_)) => println("left full"),
         Left(_)       => println("left other"),
@@ -41,7 +41,7 @@ nested_arm = (env: Env, s: Slot) () {
 }
 
 // `_` alone: legal, and exhaustive by construction
-any_arm = (env: Env, s: Slot) () {
+any_arm = (env: Env, s: Slot) {
     s.match({
         _ => println("any"),
     });

@@ -50,7 +50,7 @@ value_kind = (tree: Ast, v: Res<ExprId>) str {
     });
 }
 
-show = (tree: Ast, d: Decl) () {
+show = (tree: Ast, d: Decl) {
     d.kind.match({
         Function(f) => f.body.match({
             Ok(b) => println(

@@ -47,13 +47,13 @@ main = () i32 {
 
     def test_rejects_non_abi_functions(self):
         cases = [
-            'f = (env: Env) () {}',
-            'f = (s: str) () {}',
-            'f = (unit: ()) () {}',
+            'f = (env: Env) {}',
+            'f = (s: str) {}',
+            'f = (unit: ()) {}',
             'f = () str { "not a native scalar" }',
-            'f = (x :: i32) () {}',
+            'f = (x :: i32) {}',
             'f = (x: i32) i32',
-            'f<T> = (x: T) () {}',
+            'f<T> = (x: T) {}',
         ]
         for declaration in cases:
             with self.subTest(declaration=declaration):

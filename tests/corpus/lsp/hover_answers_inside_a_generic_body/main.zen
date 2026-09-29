@@ -148,7 +148,7 @@ main = (env: Env) Res<i32, AllocError> {
 // that has nothing to do with hover. What is printed is the reply's
 // JSON, whole — the `range` included, since a right type under the
 // wrong underline is still wrong.
-walk_replies = (out: str, table: Vec<Probe>) () {
+walk_replies = (out: str, table: Vec<Probe>) {
     at    ::= 0;
     seen  ::= 0;
     going ::= true;
@@ -168,7 +168,7 @@ walk_replies = (out: str, table: Vec<Probe>) () {
 // are the table, in order. Neither of the two is printed — they are the
 // other test's subject — and the subtraction is guarded rather than let
 // to underflow, which on a usize is a trap and not a negative number.
-labelled = (i: usize, body: str, table: Vec<Probe>) () {
+labelled = (i: usize, body: str, table: Vec<Probe>) {
     (i == 0).match({
         true  => (),
         false => table.get(i - 1).match({
@@ -178,7 +178,7 @@ labelled = (i: usize, body: str, table: Vec<Probe>) () {
     });
 }
 
-printed = (p: Probe, body: str) () {
+printed = (p: Probe, body: str) {
     println("{}:{}  {}", p.line, p.character, p.what);
     println("    {}", body);
 }

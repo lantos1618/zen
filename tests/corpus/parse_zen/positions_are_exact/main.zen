@@ -49,7 +49,7 @@ str = std.text
 //   11  (end of file)
 SRC: str = "Point = {\n    x: i32,\n    y: i32,\n}\n\nSign = Neg | Pos\n\ndist = (p: Point) i32 {\n    add(p.x + p.y, 1)\n}\n"
 
-sp = (label: str, s: Span) () {
+sp = (label: str, s: Span) {
     println(
         "{} {}:{}..{}:{}",
         label,
@@ -62,7 +62,7 @@ sp = (label: str, s: Span) () {
 
 // decl 0: a struct, its brace-delimited body, and both of its fields.
 // `struct.body` is the crossing-lines row.
-show_struct = (tree: Ast, d: Decl) () {
+show_struct = (tree: Ast, d: Decl) {
     sp("decl0", d.span);
     d.kind.match({
         Struct(s) => {
@@ -88,7 +88,7 @@ show_struct = (tree: Ast, d: Decl) () {
 
 // decl 1: an enum on one line. Each variant is its own span, and the
 // bars between them belong to the enum, not to either neighbour.
-show_enum = (d: Decl) () {
+show_enum = (d: Decl) {
     sp("decl1", d.span);
     d.kind.match({
         Enum(e) => {
@@ -101,7 +101,7 @@ show_enum = (d: Decl) () {
 
 // decl 2: a function. `fn.params` is the parenthesised list INCLUDING
 // its parens; `param` is the parameter alone, inside them.
-show_fn = (tree: Ast, d: Decl) () {
+show_fn = (tree: Ast, d: Decl) {
     sp("decl2", d.span);
     d.kind.match({
         Function(f) => {
@@ -128,7 +128,7 @@ show_fn = (tree: Ast, d: Decl) () {
     });
 }
 
-show_body = (tree: Ast, b: Block) () {
+show_body = (tree: Ast, b: Block) {
     sp("fn.block", b.span);
     println("stmts {}", b.stmts.len);
     b.value.match({
@@ -139,7 +139,7 @@ show_body = (tree: Ast, b: Block) () {
 
 // the call's own span runs from the callee to the `)`; `call.args` is
 // the argument list's parens and everything between them.
-show_call = (tree: Ast, e: Expr) () {
+show_call = (tree: Ast, e: Expr) {
     sp("call", e.span);
     e.kind.match({
         Call(c) => {
@@ -156,7 +156,7 @@ show_call = (tree: Ast, e: Expr) () {
 
 // `p.x + p.y` is the row that proves an operator carries a span of its
 // own: `binary.op` is the `+` and nothing else.
-show_arg = (tree: Ast, e: Expr) () {
+show_arg = (tree: Ast, e: Expr) {
     sp("arg.value", e.span);
     e.kind.match({
         Binary(b) => {

@@ -62,7 +62,7 @@ faithful_of = (a: Alloc, text: str) Res<bool, AllocError> {
     Ok(out.faithful);
 }
 
-show = (text: str) () {
+show = (text: str) {
     line ::= 0;
     from ::= 0;
     Range(0, text.len).loop((h, i) {

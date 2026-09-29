@@ -79,7 +79,7 @@ ask = (a: Alloc, into :: String) Res<(), AllocError> {
 // `shutdown`; only the middle one is this test's row. THE FRAMING IS
 // UNWRAPPED AND NOT PRINTED, because
 // `a_session_is_answered_frame_by_frame` already pins every byte of it.
-walk_replies = (out: str) () {
+walk_replies = (out: str) {
     at    ::= 0;
     seen  ::= 0;
     going ::= true;
@@ -91,7 +91,7 @@ walk_replies = (out: str) () {
     });
 }
 
-shown = (i: usize, body: str) () {
+shown = (i: usize, body: str) {
     (i == 1).match({
         true  => println("    {}", body),
         false => (),

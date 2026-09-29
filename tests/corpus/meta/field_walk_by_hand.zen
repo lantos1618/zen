@@ -7,18 +7,18 @@ Row = {
     flag: bool,
     tag: str,
 
-    show* = (self: @Self) () {
+    show* = (self: @Self) {
         println("n={}", self.n);
         println("flag={}", self.flag);
         println("tag={}", self.tag);
     },
 
-    skip_tag* = (self: @Self) () {
+    skip_tag* = (self: @Self) {
         println("kept n");
         println("kept flag");
     },
 
-    stop_at_flag* = (self: @Self) () {
+    stop_at_flag* = (self: @Self) {
         println("seen n");
     },
 }
@@ -26,12 +26,12 @@ Row = {
 Box<T> = {
     v: T,
 
-    show* = (self: @Self) () {
+    show* = (self: @Self) {
         println("box.v={}", self.v);
     },
 }
 
-describe* = (r: Row) () {
+describe* = (r: Row) {
     println("[n] {}", r.n);
     println("[flag] {}", r.flag);
     println("[tag] {}", r.tag);

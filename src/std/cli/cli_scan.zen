@@ -65,7 +65,7 @@ Args*<T> = {
         })
     }
 
-    reject* = (self :: @Self, word: str) () { self.bad = word; }
+    reject* = (self :: @Self, word: str) { self.bad = word; }
 
     find = (self: @Self, word: str) Res<Spec<T>> {
         Range(0, self.rules.len).find((i) {

@@ -82,7 +82,7 @@ def program(seed: int, count: int) -> tuple[str, str]:
         value + self.count
     }
 }"""]
-    main = ["main = () () {"]
+    main = ["main = () {"]
     expected = []
     # The first case always distinguishes left-to-right effects. The second
     # always distinguishes lazy arms, regardless of the random distribution.

@@ -206,7 +206,7 @@ Command*<T> = {
     require_command :: bool = false,
     allow_trailing :: bool = false,
 
-    set_version* = (self :: @Self, value: str) () { self.release = value; }
+    set_version* = (self :: @Self, value: str) { self.release = value; }
 
     flag* = (self :: @Self, name: str, id: T, help: str)
         Res<(), AllocError> {
@@ -251,11 +251,11 @@ Command*<T> = {
         self.commands.add(child)
     }
 
-    subcommand_required* = (self :: @Self) () {
+    subcommand_required* = (self :: @Self) {
         self.require_command = true;
     }
 
-    trailing_args* = (self :: @Self) () {
+    trailing_args* = (self :: @Self) {
         self.allow_trailing = true;
     }
 
@@ -1400,7 +1400,7 @@ Parser<T> = {
         })
     }
 
-    fail = (self :: @Self, kind: DiagnosticKind, word: str, other: str) () {
+    fail = (self :: @Self, kind: DiagnosticKind, word: str, other: str) {
         self.no_error().then(() {
             self.error = Ok(Diagnostic(
                 kind: kind,

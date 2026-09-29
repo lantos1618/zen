@@ -1,24 +1,24 @@
 Box = {
     n: i32,
 
-    make = (n: i32, label: Res<str>) () {
+    make = (n: i32, label: Res<str>) {
         println("associated {} {}", n, label.value_or("none"));
     }
 
-    show = (self: @Self, label: Res<str>) () {
+    show = (self: @Self, label: Res<str>) {
         println("method {} {}", self.n, label.value_or("none"));
     }
 }
 
-show_free = (n: i32, label: Res<str>) () {
+show_free = (n: i32, label: Res<str>) {
     println("free {} {}", n, label.value_or("none"));
 }
 
-pair = (a: str, left: Res<str>, right: Res<str>) () {
+pair = (a: str, left: Res<str>, right: Res<str>) {
     println("pair {} {} {}", a, left.value_or("none"), right.value_or("none"));
 }
 
-visit = (body: (n: i32) (), label: Res<str>) () {
+visit = (body: (n: i32) (), label: Res<str>) {
     body(7);
     println("inline {}", label.value_or("none"));
 }

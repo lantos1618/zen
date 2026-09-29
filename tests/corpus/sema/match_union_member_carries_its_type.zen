@@ -41,7 +41,7 @@ widen_frayed = () Res<i32, Error> {
     Ok(0);
 }
 
-describe = (env: Env, r: Res<i32, Error>) () {
+describe = (env: Env, r: Res<i32, Error>) {
     r.match({
         Ok(n)  => println("ok {}", n),
         Err(e) => e.match({

@@ -24,7 +24,7 @@ filled = (alloc: Alloc) Res<Vec<i32>, AllocError> {
     Ok(v);
 }
 
-show = (v: Vec<i32>, i: usize) () {
+show = (v: Vec<i32>, i: usize) {
     v.get(i).match({
         Ok(n) => println("{}", n),
         None  => println("past the end"),

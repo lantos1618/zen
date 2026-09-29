@@ -48,7 +48,7 @@ fill = (want: i64) Res<Cfg, ArgError> {
     })
 }
 
-show = (r: Res<Cfg, ArgError>) () {
+show = (r: Res<Cfg, ArgError>) {
     r.match({
         Ok(c)           => println("ok {} {}", c.name, c.count),
         Err(Missing(f)) => println("missing {} {}", f, f.len),

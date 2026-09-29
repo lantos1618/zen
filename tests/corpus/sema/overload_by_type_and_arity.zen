@@ -6,17 +6,17 @@ Handle = {
     id: i32,
 }
 
-show = (env: Env, n: i32) () { println("int {}", n) }
-show = (env: Env, s: str) () { println("str {}", s) }
-show = (env: Env, a: i32, b: i32) () { println("two {} {}", a, b) }
+show = (env: Env, n: i32) { println("int {}", n) }
+show = (env: Env, s: str) { println("str {}", s) }
+show = (env: Env, a: i32, b: i32) { println("two {} {}", a, b) }
 
 // the loop-shaped case: the two bodies differ only in the closure's
 // parameter list, which IS its type
-run = (env: Env, body: (h: Handle) ()) () {
+run = (env: Env, body: (h: Handle) ()) {
     body(Handle(id: 1));
 }
 
-run = (env: Env, body: (h: Handle, index: usize) ()) () {
+run = (env: Env, body: (h: Handle, index: usize) ()) {
     body(Handle(id: 2), 5);
 }
 

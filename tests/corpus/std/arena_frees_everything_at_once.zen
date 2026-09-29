@@ -12,7 +12,7 @@ Noisy = {
 }
 
 Noisy.impl(Drop, {
-    drop = (self :: @Self) () {
+    drop = (self :: @Self) {
         env = self.env;
         println("drop {}", self.id);
     }

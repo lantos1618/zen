@@ -75,7 +75,7 @@ ask = (a: Alloc, into :: String) Res<(), AllocError> {
     write_frame(body.view(), into)
 }
 
-walk_replies = (out: str) () {
+walk_replies = (out: str) {
     at    ::= 0;
     seen  ::= 0;
     going ::= true;
@@ -87,7 +87,7 @@ walk_replies = (out: str) () {
     });
 }
 
-shown = (i: usize, body: str) () {
+shown = (i: usize, body: str) {
     (i > 0 && i < 5).match({
         true  => println("    {}", body),
         false => (),

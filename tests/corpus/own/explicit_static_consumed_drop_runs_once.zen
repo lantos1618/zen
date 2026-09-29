@@ -1,5 +1,5 @@
 Item = { id: i32 }
-Item.impl(Drop, { drop = (self :: @Self) () { println("drop {}", self.id); } })
+Item.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id); } })
 
 main = (env: Env) Res<i32, AllocError> {
     arena = env.mem.alloc();

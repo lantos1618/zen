@@ -64,7 +64,7 @@ Lowering = {
         Ok(id)
     }
 
-    start = (self :: @Self, id: usize) () {
+    start = (self :: @Self, id: usize) {
         self.current = Ok(id);
         self.code    = self.alloc.Vec<Instruction>();
     }

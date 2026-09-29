@@ -83,13 +83,13 @@ main = (env: Env) Res<i32, Error> {
 Printer = {}
 
 Printer.impl(Actor, {
-    started ::= (self :: @Self, ctx: Context) () { println("printer started") }
-    stopped ::= (self :: @Self, ctx: Context) () { println("printer stopped") }
+    started ::= (self :: @Self, ctx: Context) { println("printer started") }
+    stopped ::= (self :: @Self, ctx: Context) { println("printer stopped") }
 
     // a behavior. its parameters are sendable by definition, so
     // nothing marks them: the constraint is on the argument, and
     // it is checked at the send
-    say = (self :: @Self, ctx: Context, data: str) () {
+    say = (self :: @Self, ctx: Context, data: str) {
         println("printer got {}", data)
     }
 })

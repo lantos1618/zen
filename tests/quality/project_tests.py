@@ -71,8 +71,8 @@ class ProjectTests(unittest.TestCase):
             self.assertIn("no matching executable test targets", result.stdout)
 
     def test_registered_unimported_source_is_checked_before_any_execution(self):
-        self.write("pass.zen", 'main = () () { println("must not run"); }\n')
-        self.write("broken_test.zen", 'main = () () { absent_test_function(); }\n')
+        self.write("pass.zen", 'main = () { println("must not run"); }\n')
+        self.write("broken_test.zen", 'main = () { absent_test_function(); }\n')
         self.build_file('b.exe_test("first", {src: Path("pass.zen"), deps: []}).try();\n'
                         'b.exe_test("broken", {src: Path("broken_test.zen"), deps: []}).try();')
         result = self.run_zen("test")
@@ -82,7 +82,7 @@ class ProjectTests(unittest.TestCase):
         self.assertNotIn("zen test: 2 passed", result.stdout)
 
     def test_trailing_arguments_require_a_separator(self):
-        self.write("args.zen", 'main = (env: Env) () {\n'
+        self.write("args.zen", 'main = (env: Env) {\n'
                    'env.argv.get(1).when_ok((arg) { println("arg {}", arg); });\n}\n')
         self.build_file('b.exe_test("args", {src: Path("args.zen"), deps: []}).try();')
         result = self.run_zen("test", "--", "--help")
@@ -110,7 +110,7 @@ class ProjectTests(unittest.TestCase):
         self.assertNotIn("zen test: 2 passed", result.stdout)
 
     def test_ordinary_build_does_not_execute_or_build_test_targets(self):
-        self.write("broken.zen", 'main = () () { missing(); }\n')
+        self.write("broken.zen", 'main = () { missing(); }\n')
         self.build_file('b.exe("app", {src: Path("pass.zen"), deps: []}).try();\n'
                         'b.exe_test("test", {src: Path("broken.zen"), deps: []}).try();')
         result = self.run_zen("build")

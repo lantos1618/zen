@@ -163,11 +163,10 @@ Lowering = {
             decl.span,
             "external function calls"
         )).try();
-        ret    = f.ret.ok_or(unsupported(
-            decl.span,
-            "an inferred function result"
-        )).try();
-        result = self.written_type(ret).try();
+        result = f.ret.match({
+            Ok(ret) => self.written_type(ret),
+            None    => Ok(Scalar.Unit),
+        }).try();
         (entry == false || result.match({ Bool => false, _ => true }))
             .ensure(unsupported(
                 decl.span,

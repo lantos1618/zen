@@ -62,10 +62,10 @@ Both new backends share these language rules:
 
 Actors, allocator capabilities, dynamic strings, collections, structural
 results, closures, generic instantiation, foreign calls, named/default call
-arguments, wrapping arithmetic, and other numeric widths are not lowered by
-these backends yet. Unused generic functions need not be lowered, but the
-frontend still checks the entire imported source graph. JavaScript project
-recipes refuse native link dependencies.
+arguments, wrapping arithmetic, bitwise operators, and other numeric widths
+are not lowered by these backends yet. Unused generic functions need not be
+lowered, but the frontend still checks the entire imported source graph.
+JavaScript project recipes refuse native link dependencies.
 
 ## Phase boundaries
 

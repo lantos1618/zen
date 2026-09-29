@@ -372,6 +372,7 @@ row = table.get("ada").ok_or(Error.NotFound).try();  // required form
 `Res` is for failure a caller can do something about — a file is missing, input is malformed. A bug is not that, and routing bugs through `Res` would put `.try()` on every arithmetic expression in the compiler and destroy the signal that makes `.try()` readable. So:
 
 - `+ - *` **trap** on overflow. `+% -% *%` wrap, for when wrapping is the intent.
+- Bit operations `& | ^ ~ << >>` never trap. They act on unsigned words only; a shift discards the bits it moves out, and a count at or above the width yields zero (see "Unsigned bit operations").
 - `/ %` **trap** on a zero divisor, and on `i32.MIN / -1` — which is an overflow wearing division's clothes, and faults identically on x86.
 - `buf[i]` on a fixed array is **bounds-checked and traps**. **The count is part of the type** — `[u8, 64]` and `[u8, 65]` are different types — which is what makes the check possible with no length stored beside the bytes, and what lets a literal index past a known length be the compile error below rather than a runtime trap. `Vec.get` still returns `Res<T>` — a lookup that can legitimately miss is not a bug.
 - A trap **aborts the process**: it prints `file:line:col: trap: <what>` to stderr and exits `134`. The three whats are `integer overflow`, `divide by zero`, `index out of bounds`, and the position is the **operator** token. Column is a 1-based byte offset.
@@ -512,7 +513,10 @@ The emitted C then fails to compile — `incompatible type for argument 2 of 'zg
 
 **The implemented rule is: a binary operator takes its left operand's type,
 and the right operand is not checked against it.** The return check can hide the
-gap when the left operand already matches the declared result.
+gap when the left operand already matches the declared result. The bitwise
+operators are the exception: `& | ^` check that both operands have the same
+unsigned type, and a shift checks its `usize` count (see "Unsigned bit
+operations").
 
 This remains a language decision, not a C-backend workaround: choose implicit
 numeric widening, explicit conversions only, or a rule between them, then add
@@ -1843,17 +1847,77 @@ main = (env: Env) Res<i32, Error> {
 
 ## Unsigned bit operations
 
-`std.core.num` exports `bit_xor(self: W, other: W) W`,
+`& | ^` (and, or, xor), `<<` and `>>` (logical shifts), and prefix `~`
+(complement) operate on unsigned integers: `u8`, `u16`, `u32`, `u64` and
+`usize`. Signed integers, floats and `bool` are refused; convert a signed
+value explicitly, and use `&&`, `||` and `!=` on booleans.
+
+- `a & b`, `a | b` and `a ^ b` require both operands to have the same unsigned
+  type, which is the result's type. There is no implicit widening: `u32 | u64`
+  is an error naming both types. A literal takes the other operand's type and
+  must fit it.
+- `~a` has `a`'s type.
+- `word << count` and `word >> count` shift an unsigned word; the result has
+  the word's type. The count is always `usize` (a literal count is checked
+  against `usize`); a narrower unsigned count converts with `.to_usize()`.
+- A literal alone chooses no width, so every bitwise expression needs a typed
+  unsigned operand: `1 | 2`, `~0` and `1 << n` are errors. Bind the value to a
+  typed name first, such as `one: u64 = 1; one << n`.
+
+Shifts are bit operations, not arithmetic, and never trap. Bits moved out of
+the word are discarded, `>>` fills with zero, and a count greater than or
+equal to the width yields zero, including `usize.MAX`. No backend may expose
+the underlying machine's shift behaviour: the C backend guards every count and
+converts narrow results back to their type, and constant folding computes the
+same values at the node's width.
+
+**A bitwise operator never relies on precedence.** Beside any different binary
+operator — comparison, arithmetic, logical, or another bitwise operator — the
+bitwise operand must be parenthesized, and shifts do not chain:
+
+```groovy fragment
+set  = flags & mask != 0;      // ERROR: write `(flags & mask) != 0`
+bits = a | b & c;              // ERROR: write `(a | b) & c` or `a | (b & c)`
+next = a << 2 + 1;             // ERROR: write `a << (2 + 1)` or `(a << 2) + 1`
+far  = a << 1 << 2;            // ERROR: write `(a << 1) << 2`
+all  = a | b | c;              // ok: one associative operator
+low  = ~a & b;                 // ok: `~` is a prefix operator, `(~a) & b`
+```
+
+The diagnostic spells out the parenthesized form. Chains of one associative
+operator — `a | b | c`, `a & b & c`, `a ^ b ^ c` — need no parentheses.
+
+**`<<` and `>>` are two adjacent angle tokens.** The lexer produces `<` and `>`
+only; in operator position the parser reads two of the same angle with no byte
+between them as a shift, so `Res<Ptr<u8>>` still closes two type-argument
+lists and `a > > b` is not a shift. A `<` immediately followed by another `<`
+never opens type arguments.
+
+**`|` is bitwise or only in an expression.** Type unions and enum variant lists
+keep their bars. Where a declaration and a binding share a shape, a run of
+`Name` or `Name(..)` joined by bars is a variant list unless it ends at `;` or
+an operator, or a bar is followed by something only an expression begins with:
+`mask = low | high;` in a body binds a value, while `Kind = Low | High`
+declares an enum. At module level an untyped `NAME = A | B` declares an enum;
+a written type makes it a constant, since an enum never writes one:
+`MASK: u8 = LOW | HIGH`. A represented enum's discriminant ends at the bar
+before the next variant, so a bitwise or there is parenthesized.
+
+`&` in prefix position is still the address-of operator; `&&` and `||` remain
+the short-circuit operators.
+
+`std.core.num` also exports `bit_xor(self: W, other: W) W`,
 `bit_and(self: W, other: W) W`, `rotate_right(self: W, count: usize) W`,
 and `shift_right(self: W, count: usize) W` for unsigned words W = u32 or u64.
-All support free-function and receiver-call syntax. Binary operands must use
-the same word type. Rotation reduces the count modulo the word width; zero
-and width multiples preserve the input. Logical right shift fills with zero;
-counts greater than or equal to the width return zero (including usize.MAX).
-The C backend guards shifts and masks rotation counts to avoid undefined C shifts.
+All support free-function and receiver-call syntax and agree with the
+operators; the operators are the primary spelling, and rotation has no
+operator. Rotation reduces the count modulo the word width; zero and width
+multiples preserve the input. The C backend masks rotation counts to avoid
+undefined C shifts.
 
 These allocation-free compiler primitives evaluate operands once in source
 order. Only validated exported, nongeneric, immutable-parameter declarations
 with these exact signatures in `std.core.num` acquire primitive behavior.
-User functions with bodies may use the same names normally. This adds no
-new operator syntax, crypto dependency or constant-time compiler guarantee.
+User functions with bodies may use the same names normally. Neither the
+operators nor the primitives add a crypto dependency or a constant-time
+compiler guarantee.

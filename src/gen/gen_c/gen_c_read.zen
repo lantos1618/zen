@@ -117,7 +117,7 @@ write_native_constant = (
     f.value.match({
         None      => out.add(f.name.text),
         Ok(value) => {
-            macro = be.fresh_name("native_constant").try();
+            macro = be.fresh_native_macro().try();
             fallback ::= be.alloc.String().try();
             unknown = be.check.types.unknown().try();
             expr(be, value, ctx, unknown, fallback).try();

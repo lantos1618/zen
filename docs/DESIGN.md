@@ -1955,8 +1955,11 @@ local binding, a struct field or a return type (anywhere inside the written
 type, so `Res<Secret<u64>>` and `[Secret<u64>, 4]` count).
 
 A value is *secret* when it is marked, or when it is computed from a secret
-value: the taint follows bindings, operators, field and element reads, and
-the result of any call given a secret argument. A write of a secret through
+value: the taint follows bindings, operators, and field, element and
+pointer reads. A call's result is secret when the callee's written result
+type says so, or, for the operations of `std.ct`, `std.core.num` and `Ptr`,
+when an argument is; any other function is checked against its own
+signature, so a public result is a promise its body must keep. A write of a secret through
 a pointer or a `::` binding makes that binding secret too. `Choice` is not
 secret by itself; a Choice computed from a secret is. `declassify(v)` and
 `choice.declassify_bool()` are the only ways out, and are the audit points.
@@ -1987,9 +1990,10 @@ wrapping-safe widenings, `truncate_*`, `mul_wide`), `std.simd` lanes and the
 with the discipline in mind or are single machine operations. `std.ct`
 itself is not checked: it is where the masks are built.
 
-The analysis is intraprocedural and flow-insensitive: once a local name is
-secret it is secret throughout the function, including in closures that
-capture it. Not tracked yet: values leaving a closure through `h.break(v)`,
+The analysis is intraprocedural and flow-insensitive: names are resolved
+through block and closure scopes to the binding they denote, and once a
+binding is secret it is secret throughout the function, including in
+closures that capture it. Not tracked yet: values leaving a closure through `h.break(v)`,
 calls through function values, globals, and a generic function instantiated
 at a secret type (its parameters are not written `Secret`, so the call rule
 refuses the secret argument instead). None of this reaches the C backend:

@@ -1852,6 +1852,17 @@ and width multiples preserve the input. Logical right shift fills with zero;
 counts greater than or equal to the width return zero (including usize.MAX).
 The C backend guards shifts and masks rotation counts to avoid undefined C shifts.
 
+## Signed arithmetic shift
+
+`shift_right(self: S, count: usize) S` is also exported for signed words
+S = i8, i16, i32 or i64, where it is the arithmetic shift: vacated high bits
+copy the sign bit, so a negative value stays negative and rounds toward
+negative infinity (`-7` shifted by 1 is `-4`). A count at or above the width
+yields 0 for a non-negative value and -1 for a negative one, the limit of
+shifting one bit at a time. The C backend never shifts a negative value
+(implementation-defined in C): it shifts the complement and complements back.
+Other bit operations remain unsigned-only; convert explicitly to mix them.
+
 These allocation-free compiler primitives evaluate operands once in source
 order. Only validated exported, nongeneric, immutable-parameter declarations
 with these exact signatures in `std.core.num` acquire primitive behavior.

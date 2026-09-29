@@ -180,6 +180,17 @@ invalid_numeric = (c :: Checker, d: Def) Res<(), AllocError> {
     )
 }
 
+// Every bit operation takes an unsigned word; `shift_right` alone also takes a
+// signed one, where it is the arithmetic shift.
+bit_word = (name: str, word: str) bool {
+    word.is_in(["u32", "u64"])
+        || (name.eq("shift_right") && signed_shift_word(word))
+}
+
+signed_shift_word* = (word: str) bool {
+    word.is_in(["i8", "i16", "i32", "i64"])
+}
+
 // Bit operations are compiler-owned only after validating their declaration.
 integer_bit_signature = (
     c :: Checker,
@@ -208,7 +219,7 @@ integer_bit_signature = (
                     second = f.name.text.is_in([
                         "bit_xor", "bit_and"
                     ]).match({true => word, false => "usize"});
-                    (!a.mutable && !b.mutable && word.is_in(["u32", "u64"])
+                    (!a.mutable && !b.mutable && bit_word(f.name.text, word)
                         && c.prim_name(bt).eq(second) && c.prim_name(rt).eq(word)).match({
                         false => c.invalid_numeric(d),
                         true  => c.integer_bits.set(

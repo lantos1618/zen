@@ -130,6 +130,19 @@ SemaFault* =
     | HandleNotAValue(NameFault)       // a loop handle names its loop, it is not a value
     | ConsumedByCapture(CaptureFault)  // a capture outlives the consume
 
+    // the secret discipline: a Secret-derived value may not steer timing
+    | SecretBranch(NameFault)          // match, then, ensure or try on a secret
+    | SecretShortCircuit(NameFault)    // an operand of && or ||
+    | SecretLoop(NameFault)            // a loop condition or looped-over value
+    | SecretIndex(NameFault)           // an index, offset or lane number
+    | SecretShift(NameFault)           // a shift or rotation count
+    | SecretDivide(NameFault)          // an operand of / or %
+    | SecretTrap(NameFault)            // checked arithmetic or conversion
+    | SecretCompare(NameFault)         // an ordinary comparison
+    | SecretCall(NameFault)            // an argument to a public parameter
+    | SecretResult(NameFault)          // a tail value of a public result
+    | SecretStore(NameFault)           // a write through a public parameter
+
 Diag* = {
     file*: str,
     span*: Span,
@@ -223,6 +236,17 @@ message* = (fault: SemaFault) str {
         ArenaEscapes(_)              => "a value backed by an arena this body made may not be returned: the arena is dropped at the end of this body, so the caller would read freed pages — take the arena as a parameter, or move it into the value you return",
         HandleNotAValue(_)           => "a loop handle is not a value: it names the loop it came from and has no storage, so only `h.break(..)` and `h.next()` may read it",
         ConsumedByCapture(_)         => "consume after capture:",
+        SecretBranch(_)              => "a secret value cannot choose a branch: the path taken would reveal it — compute both outcomes and pick one with std.ct ct_select, or declassify() the condition",
+        SecretShortCircuit(_)        => "a secret value cannot be an operand of `&&` or `||`: short-circuiting skips work depending on it — combine Choices with and/or",
+        SecretLoop(_)                => "a secret value cannot decide how long a loop runs: the trip count would reveal it — loop over a public bound",
+        SecretIndex(_)               => "a secret value cannot choose an address: the memory access pattern would reveal it — scan the table with std.ct ct_lookup",
+        SecretShift(_)               => "a secret value cannot be a shift or rotation count: the lowering tests the count against the width — shift by a public count",
+        SecretDivide(_)              => "a secret value cannot be an operand of `/` or `%`: division time depends on its operands and a zero divisor traps",
+        SecretTrap(_)                => "checked arithmetic on a secret value branches on it: an overflow trap or a failed conversion is a secret-dependent exit — use `+%`, `-%`, `*%` or truncate_*",
+        SecretCompare(_)             => "a secret value cannot be compared with an ordinary operator: the result is a bool the compiler may branch on — use std.ct ct_eq, ct_lt or ct_gt",
+        SecretCall(_)                => "a secret value is passed to a parameter not written Secret: the callee is checked as if the argument were public — mark the parameter Secret, or declassify() the argument",
+        SecretResult(_)              => "a secret value is returned from a function whose result is not written Secret: callers would treat it as public — mark the result Secret, or declassify() it",
+        SecretStore(_)               => "a secret value is written through a parameter not written Secret: the caller would read it as public — mark the parameter Secret",
     });
 }
 
@@ -295,6 +319,17 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
             " is partially moved, so the drop has a hole: move the whole value or none of it"
         ),
         ConsumedByCapture(f)         => out.write_capture(f),
+        SecretBranch(f)              => out.write_secret(f),
+        SecretShortCircuit(f)        => out.write_secret(f),
+        SecretLoop(f)                => out.write_secret(f),
+        SecretIndex(f)               => out.write_secret(f),
+        SecretShift(f)               => out.write_secret(f),
+        SecretDivide(f)              => out.write_secret(f),
+        SecretTrap(f)                => out.write_secret(f),
+        SecretCompare(f)             => out.write_secret(f),
+        SecretCall(f)                => out.write_name(f),
+        SecretResult(f)              => out.write_name(f),
+        SecretStore(f)               => out.write_name(f),
 
         NoSuchField(f)               => out.write_member(types, f),
         MemberNeedsValue(f)          => out.write_needs_value(types, f),
@@ -440,6 +475,12 @@ write_discarded = (out :: String, types: Types, f: TypeFault)
 write_place = (out :: String, f: NameFault, tail: str) Res<(), AllocError> {
     out.fmt(" {}{}", f.name, tail).try();
     Ok(());
+}
+
+// The secret the refused expression reads, when it names one directly.
+write_secret = (out :: String, f: NameFault) Res<(), AllocError> {
+    (f.name.len > 0).then(() { out.fmt(" (`{}` is secret)", f.name).try() });
+    Ok(())
 }
 
 write_capture = (out :: String, f: CaptureFault) Res<(), AllocError> {

@@ -31,6 +31,7 @@ check_own = sema.sema_own
 finish_ownership = sema.sema_store
 check_enum_discriminants = sema.sema_discriminant
 check_numeric_conversions = sema.sema_numeric
+check_secret = sema.sema_secret
 
 // Every declaration rule, for one module.
 check_module* = (c :: Checker, mi: usize) Res<(), AllocError> {
@@ -636,6 +637,7 @@ check_block = (c :: Checker, f: Function, body: BlockId, ctx: Ctx, owner: str)
     c.enter_owner("");
     c.check_return(body, ctx, got).try();
     c.settle_raised(f, ctx, got, rmark).try();
+    c.check_secret(f, body, ctx.module).try();
     c.check_own(f, body, ctx)
 }
 

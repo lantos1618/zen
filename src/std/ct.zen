@@ -31,6 +31,15 @@ truncate_u8, truncate_u64 = std.core.num
 Ptr = std.mem
 Range = std.core
 
+// A value the secret discipline tracks (docs/DESIGN.md, "Secret values").
+// It is exactly T: no wrapper and no conversion, so every operation on T
+// applies, and sema checks what the program does with it.
+Secret*<T> = T
+
+// Make a secret value public: the one way a secret may become a branch
+// condition, an index or a public result. Every call is a place to audit.
+declassify* = <T>(value: T) T { value }
+
 // The optimizer may assume nothing about the result, which is the argument
 // unchanged. Lowered by each backend; see the module comment.
 value_barrier* = (value: u8) u8

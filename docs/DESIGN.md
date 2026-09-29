@@ -1944,3 +1944,54 @@ compile the select as a branch. What each backend promises:
   turn the masked selects into branches: a renderer that pattern-matches
   `ct_select` into a jump would reintroduce the leak the library exists to
   prevent.
+
+## Secret values
+
+`std.ct.Secret<T>` marks a value whose timing must not reveal it. It is
+exactly `T` (a generic alias whose target is its own parameter), so every
+operation on `T` type-checks and lowers unchanged; what changes is what sema
+lets the program do with it. The marker may be written on a parameter, a
+local binding, a struct field or a return type (anywhere inside the written
+type, so `Res<Secret<u64>>` and `[Secret<u64>, 4]` count).
+
+A value is *secret* when it is marked, or when it is computed from a secret
+value: the taint follows bindings, operators, field and element reads, and
+the result of any call given a secret argument. A write of a secret through
+a pointer or a `::` binding makes that binding secret too. `Choice` is not
+secret by itself; a Choice computed from a secret is. `declassify(v)` and
+`choice.declassify_bool()` are the only ways out, and are the audit points.
+
+On a secret value sema refuses, at the exact expression:
+
+| rule | refused | instead |
+|---|---|---|
+| branch | `.match` scrutinee, `.then`/`.ensure` receiver, `.try()` operand | `ct_select`, `ct_cmov` |
+| short circuit | an operand of `&&` or `||` | `Choice.and`/`or` |
+| loop | a `loop` condition, a looped-over range or collection | public bounds |
+| index | `a[i]`, `Ptr.read`/`write`/`offset`/`back` index, SIMD lane index | `ct_lookup` |
+| shift | a secret shift or rotation count | public counts |
+| divide | either operand of `/` or `%` | Barrett/Montgomery reduction |
+| trap | checked `+ - *` and checked (`Res`-returning) conversions | `+% -% *%`, `truncate_*` |
+| compare | `== != < <= > >=` | `ct_eq`, `ct_lt`, ... |
+| call | a secret argument to a parameter not written `Secret` | mark the callee's parameter |
+| result | a secret tail value of a function whose result is not `Secret` | mark the result, or declassify |
+| store | a secret written through a parameter not written `Secret` | mark the parameter |
+
+Checked arithmetic is refused because its overflow test is itself a branch
+on the value. The call, result and store rules make the discipline
+modular: each function is checked alone, and a secret crosses a function
+boundary only where both sides say so. Calls into `std.ct`, the
+compiler-owned integer operations of `std.core.num` (bit operations,
+wrapping-safe widenings, `truncate_*`, `mul_wide`), `std.simd` lanes and the
+`Ptr` memory operations are accepted directly; they are either implemented
+with the discipline in mind or are single machine operations. `std.ct`
+itself is not checked: it is where the masks are built.
+
+The analysis is intraprocedural and flow-insensitive: once a local name is
+secret it is secret throughout the function, including in closures that
+capture it. Not tracked yet: values leaving a closure through `h.break(v)`,
+calls through function values, globals, and a generic function instantiated
+at a secret type (its parameters are not written `Secret`, so the call rule
+refuses the secret argument instead). None of this reaches the C backend:
+`Secret<T>` lowers as `T`, and `tools/ct` checks what the C compiler made of
+it.

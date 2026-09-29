@@ -32,6 +32,7 @@ word, integer, same = gen.gen_ir
 LowerError, unsupported = gen.gen_lower
 Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of = gen.gen_asm_shape
 to_bound, resolve = gen.gen_asm_member
+walk, WalkVisitor, WalkEvent, WalkNode = std.ast.ast_walk
 real_call = gen.gen_asm_call
 capability = gen.gen_asm_shape
 variant_index, size_of, TAG_BYTES = gen.gen_asm_shape
@@ -59,6 +60,9 @@ Local* = { name*: str, frame*: usize, kind*: LocalKind }
 
 Expected* = { id*: ExprId, ty*: TyId }
 
+// What a block's value is written as, for deciding what it hands out.
+Tail = Expression(ExprId) | Nested(BlockId) | Nothing
+
 Broken* = { ty*: TyId, fault*: LowerError }
 
 // One lexical function body: the real function or an inlined callee. Names,
@@ -72,6 +76,9 @@ Frame* = {
     ret_ty*: TyId,
     self_ty*: Res<TyId>,
     scope*: Res<Callee>,
+    // Cleanup scopes open when this frame began; a `.try()` leaving the
+    // frame runs every scope above.
+    depth* :: usize = 0,
 }
 
 // A function body at one instantiation: a free function, or a member of a
@@ -88,8 +95,21 @@ Callee* = {
     generic_owner*: Res<DeclId>,
 }
 
-// Loop control for one active `loop` call.
-LoopTarget* = { brk*: usize, next*: usize, result*: Res<Value> }
+// Loop control for one active `loop` call. `depth` is the cleanup depth
+// outside the body: break and next run the body's scopes above it.
+LoopTarget* = { brk*: usize, next*: usize, result*: Res<Value>, depth* :: usize = 0 }
+
+// One open block's cleanup: its Drop bindings from `drops`, its defers from
+// `defers`, both in registration order.
+Cleanup* = { drops*: usize, defers*: usize }
+
+// A binding whose type implements Drop; `live` is a Bool slot cleared when
+// the value is consumed.
+DropEntry* = { name*: str, frame*: usize, place*: Place, ty*: TyId, live*: usize }
+
+// A closure registered with `@scope.defer`: `armed` says whether this run
+// registered it; `captures` snapshot the locals it reads.
+DeferEntry* = { lambda*: LambdaRef, armed*: usize, captures*: Vec<Local> }
 
 Native* = {
     alloc*: Alloc,
@@ -103,12 +123,18 @@ Native* = {
     slots* :: Vec<Scalar>,
     blocks* :: Vec<Res<BasicBlock>>,
     code* :: Vec<Instruction>,
+    // Instructions for block 0, which runs once on entry and then jumps to
+    // the body (defer flags start clear here).
+    prologue* :: Vec<Instruction>,
     current* :: Res<usize> = None,
     locals* :: Vec<Local>,
     frames* :: Vec<Frame>,
     frame* :: usize = 0,
     loops* :: Vec<LoopTarget>,
     depth* :: usize = 0,
+    scopes* :: Vec<Cleanup>,
+    drops* :: Vec<DropEntry>,
+    defers* :: Vec<DeferEntry>,
     // The type a context wants for one expression, used when the
     // expression's own checked type leaves a parameter unsettled.
     expected* :: Res<Expected> = None,
@@ -347,10 +373,6 @@ Native* = {
     // -------------------------------------------------------------------
 
     bind_local* = (self :: @Self, name: str, kind: LocalKind) Res<(), LowerError> {
-        kind.match({
-            Direct(v) => self.refuse_drop(v.ty),
-            _         => Ok(()),
-        }).try();
         self.locals.add(Local(name: name, frame: self.frame, kind: kind)).try(LowerError.OutOfMemory);
         Ok(())
     }
@@ -584,6 +606,17 @@ Native* = {
             FixedArray(f) => self.array(id, f.elems, e.span),
             Array(a)      => self.array(id, a.elems, e.span),
             SelfType      => self.name(id, "self", e.span),
+            // `consume x` moves the value out: this frame no longer drops it.
+            Consume(c)    => {
+                value = self.expr(c.operand).try();
+                self.tree.expr_at(c.operand).kind.match({
+                    Name(n) => self.drop_entry(n.text).when_ok((entry) {
+                        self.add(Instruction.Constant(Const(out: entry.live, value: 0))).try();
+                    }).ignore_absent(),
+                    _       => (),
+                });
+                Ok(value)
+            },
             _             => Err(unsupported(e.span, "this expression in a native executable")),
         })
     }
@@ -1013,8 +1046,15 @@ Native* = {
     // -------------------------------------------------------------------
 
     block* = (self :: @Self, id: BlockId) Res<Value, LowerError> {
+        self.block_as(id, true)
+    }
+
+    // `used` is false for a block in statement position: nothing receives
+    // its value, so a binding it would hand out is dropped at its brace.
+    block_as = (self :: @Self, id: BlockId, used: bool) Res<Value, LowerError> {
         block = self.tree.block_at(id);
         mark  = self.locals.len;
+        self.scopes.add(Cleanup(drops: self.drops.len, defers: self.defers.len)).try(LowerError.OutOfMemory);
         last ::= self.unit().try();
         block.stmts.loop((h, i, s) {
             tail = i + 1 == block.stmts.len && block.value.match({ Ok(_) => false, None => true });
@@ -1025,13 +1065,176 @@ Native* = {
                     false => { self.expr(e.expr).try(); self.unit() },
                 }),
                 Bind(b)  => { self.bind(b, s.span).try(); self.unit() },
-                Block(b) => self.block(b),
+                Block(b) => self.block_as(b, tail && used),
                 Decl(_)  => Err(unsupported(s.span, "nested declarations")),
             }).try();
         });
         value = block.value.match({ Ok(e) => self.expr(e), None => Ok(last) }).try();
+        // A binding the block hands out as its value is not dropped here.
+        keep = used.match({ true => self.handed_out(id), false => "" });
+        self.run_scope(self.scopes.len - 1, keep).try();
+        top = self.scopes.get(self.scopes.len - 1).ok_or(unsupported(nowhere(), "a missing scope")).try();
+        loop(() { self.drops.len > top.drops }, (h) { self.drops.take(self.drops.len - 1); });
+        loop(() { self.defers.len > top.defers }, (h) { self.defers.take(self.defers.len - 1); });
+        self.scopes.take(self.scopes.len - 1);
         self.release_locals(mark);
         Ok(value)
+    }
+
+    // The name of the binding a block's value reads, if any.
+    handed_out = (self :: @Self, id: BlockId) str {
+        block = self.tree.block_at(id);
+        tail: Tail = block.value.match({
+            Ok(e) => Tail.Expression(e),
+            None  => (block.stmts.len > 0).match({
+                false => Tail.Nothing,
+                true  => block.stmts.get(block.stmts.len - 1).match({
+                    Ok(s) => s.kind.match({
+                        Expr(x)  => Tail.Expression(x.expr),
+                        // A trailing `{ .. }` statement hands out its tail.
+                        Block(b) => Tail.Nested(b),
+                        _        => Tail.Nothing,
+                    }),
+                    None  => Tail.Nothing,
+                }),
+            }),
+        });
+        tail.match({
+            Expression(e) => self.tree.expr_at(e).kind.match({
+                Name(n)    => n.text,
+                Consume(c) => self.tree.expr_at(c.operand).kind.match({ Name(n) => n.text, _ => "" }),
+                // `{ n }` hands out what its own tail names.
+                Block(b)   => self.handed_out(b),
+                Paren(p)   => self.tree.expr_at(p.inner).kind.match({ Name(n) => n.text, _ => "" }),
+                _          => "",
+            }),
+            Nested(b)     => self.handed_out(b),
+            Nothing       => "",
+        })
+    }
+
+    // Leave one scope: armed defers last-in first-out, then live Drop
+    // bindings in reverse declaration order.
+    run_scope = (self :: @Self, index: usize, keep: str) Res<(), LowerError> {
+        scope = self.scopes.get(index).ok_or(unsupported(nowhere(), "a missing scope")).try();
+        drops_end = self.scopes.get(index + 1).match({ Ok(next) => next.drops, None => self.drops.len });
+        defers_end = self.scopes.get(index + 1).match({ Ok(next) => next.defers, None => self.defers.len });
+        Range(scope.defers, defers_end).loop((k) {
+            entry = self.defers.get(defers_end - 1 - (k - scope.defers)).ok_or(unsupported(nowhere(), "a missing defer")).try();
+            self.run_defer(entry).try();
+        });
+        Range(scope.drops, drops_end).loop((k) {
+            entry = self.drops.get(drops_end - 1 - (k - scope.drops)).ok_or(unsupported(nowhere(), "a missing drop")).try();
+            (!entry.name.eq(keep)).then(() { self.guarded_drop(entry).try(); });
+        });
+        Ok(())
+    }
+
+    // An armed defer runs its closure with the locals it captured, and
+    // disarms so a later pass through the same block starts clear.
+    run_defer = (self :: @Self, entry: DeferEntry) Res<(), LowerError> {
+        yes = self.label().try();
+        done = self.label().try();
+        self.branch_to(entry.armed, yes, done).try();
+        self.start(yes);
+        self.add(Instruction.Constant(Const(out: entry.armed, value: 0))).try();
+        l = self.tree.expr_at(entry.lambda.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
+            .ok_or(unsupported(nowhere(), "a deferred closure that is not a lambda")).try();
+        saved = self.use_frame(entry.lambda.frame);
+        mark = self.locals.len;
+        entry.captures.loop((c) { self.locals.add(c).try(LowerError.OutOfMemory); });
+        self.block(l.body).try();
+        self.release_locals(mark);
+        self.use_frame(saved);
+        self.enter(done)
+    }
+
+    // Snapshot every local a closure reads, as `@scope.defer` captures them.
+    captures_of* = (self :: @Self, lambda: LambdaRef) Res<Vec<Local>, LowerError> {
+        l = self.tree.expr_at(lambda.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
+            .ok_or(unsupported(nowhere(), "a deferred closure that is not a lambda")).try();
+        finder ::= NameFinder(tree: self.tree, names: self.alloc.Vec<str>());
+        walk(self.tree, self.alloc, WalkNode.Block(l.body), finder).try(LowerError.OutOfMemory);
+        out ::= self.alloc.Vec<Local>();
+        saved = self.use_frame(lambda.frame);
+        finder.names.loop((name) {
+            self.lookup(name).match({
+                Ok(Direct(v)) => {
+                    copy = self.copy_value(v).try();
+                    out.add(Local(name: name, frame: lambda.frame, kind: LocalKind.Direct(copy))).try(LowerError.OutOfMemory);
+                },
+                Ok(Ref(p))    => {
+                    copy = self.read(p).try();
+                    out.add(Local(name: name, frame: lambda.frame, kind: LocalKind.Direct(copy))).try(LowerError.OutOfMemory);
+                },
+                _             => (),
+            });
+        });
+        self.use_frame(saved);
+        Ok(out)
+    }
+
+    // Run every scope above `depth` for a jump that leaves them.
+    unwind* = (self :: @Self, depth: usize) Res<(), LowerError> {
+        n = self.scopes.len;
+        (n > depth).then(() {
+            Range(0, n - depth).loop((k) { self.run_scope(n - 1 - k, "").try(); });
+        });
+        Ok(())
+    }
+
+    // Drop a binding's value if it is still live, and mark it dropped.
+    guarded_drop = (self :: @Self, entry: DropEntry) Res<(), LowerError> {
+        yes = self.label().try();
+        done = self.label().try();
+        self.branch_to(entry.live, yes, done).try();
+        self.start(yes);
+        callee = self.drop_callee(entry.ty).try();
+        sources ::= self.alloc.Vec<Source>();
+        sources.add(Source.Located(entry.place)).try(LowerError.OutOfMemory);
+        self.real_call(callee, sources, nowhere()).try();
+        self.add(Instruction.Constant(Const(out: entry.live, value: 0))).try();
+        self.enter(done)
+    }
+
+    // The `drop` a `T.impl(Drop, ..)` supplies.
+    drop_callee = (self :: @Self, ty: TyId) Res<Callee, LowerError> {
+        drop_decl = self.drop_bound().try();
+        self.resolve(ty, "drop", None, 1, self.alloc.Inst(), Ok(drop_decl), nowhere())
+    }
+
+    drop_bound = (self :: @Self) Res<DeclId, LowerError> {
+        defs ::= self.alloc.Vec<Def>();
+        self.check.world.exported_named("Drop", defs).try(LowerError.OutOfMemory);
+        d = defs.find((d) { self.check.world.module_name(d.id).starts_with("std.core") })
+            .ok_or(unsupported(nowhere(), "the std Drop bound")).try();
+        Ok(d.id)
+    }
+
+    // Register a fresh binding for cleanup when its type implements Drop.
+    note_drop = (self :: @Self, name: str, value: Value) Res<(), LowerError> {
+        self.check.is_drop_type(value.ty).try(LowerError.OutOfMemory).then(() {
+            live = self.word_const(Scalar.Bool, 1).try();
+            self.drops.add(DropEntry(
+                name: name,
+                frame: self.frame,
+                place: Place(base: Base.InSlot(value.slot), offset: 0, ty: value.ty),
+                ty: value.ty,
+                live: live
+            )).try(LowerError.OutOfMemory);
+        });
+        Ok(())
+    }
+
+    // The nearest cleanup entry for a name in this frame.
+    drop_entry = (self: @Self, name: str) Res<DropEntry> {
+        i ::= self.drops.len;
+        found: Res<DropEntry> = loop<DropEntry>(() { i > 0 }, (h) {
+            i = i - 1;
+            entry = self.drops.get(i).try();
+            (entry.frame == self.frame && entry.name.eq(name)).then(() { h.break(entry); });
+        });
+        found
     }
 
     bind = (self :: @Self, b: Bind, span: Span) Res<(), LowerError> {
@@ -1052,14 +1255,24 @@ Native* = {
                             false => {
                                 value = self.bind_value(b.value, ty).try();
                                 slot  = self.copy_value(value).try();
-                                self.bind_local(n.text, LocalKind.Direct(slot))
+                                self.bind_local(n.text, LocalKind.Direct(slot)).try();
+                                self.note_drop(n.text, slot)
                             },
                         })
                     },
                     false => {
                         place = self.place_of(b.target).try().ok_or(unsupported(target.span, "an assignment target")).try();
                         value = self.expr_as(b.value, place.ty).try();
-                        self.write(place, value)
+                        // Replacing a Drop binding's value drops the old one
+                        // and arms the binding for the new one.
+                        self.drop_entry(n.text).match({
+                            Ok(entry) => {
+                                self.guarded_drop(entry).try();
+                                self.write(place, value).try();
+                                self.add(Instruction.Constant(Const(out: entry.live, value: 1)))
+                            },
+                            None      => self.write(place, value),
+                        })
                     },
                 })
             },
@@ -1499,6 +1712,8 @@ Native* = {
         frame = self.here();
         failure = self.failure_for(value, variants, frame.ret_ty, error, span).try();
         self.add(Instruction.Copy(Move(out: frame.ret_slot, source: failure.slot))).try();
+        // Leaving the frame runs the cleanup of every scope it opened.
+        self.unwind(frame.depth).try();
         self.jump(frame.ret_block).try();
         self.start(good);
         ty = self.type_of(id).try();
@@ -1680,7 +1895,8 @@ Native* = {
             ret_block: ret_block,
             ret_ty: ret_ty,
             self_ty: self_ty,
-            scope: scope
+            scope: scope,
+            depth: self.scopes.len
         )).try(LowerError.OutOfMemory);
         Ok(self.frames.len - 1)
     }
@@ -1729,7 +1945,12 @@ Native* = {
         self.locals  = self.alloc.Vec<Local>();
         self.frames  = self.alloc.Vec<Frame>();
         self.loops   = self.alloc.Vec<LoopTarget>();
+        self.scopes  = self.alloc.Vec<Cleanup>();
+        self.drops   = self.alloc.Vec<DropEntry>();
+        self.defers  = self.alloc.Vec<DeferEntry>();
         self.depth   = 0;
+        self.prologue = self.alloc.Vec<Instruction>();
+        entry_block = self.label().try();
         first = self.label().try();
         self.start(first);
         // Parameter slots come first, in order.
@@ -1779,6 +2000,7 @@ Native* = {
             false => here.ret_slot,
         });
         self.finish(Terminator.Return(exit_value)).try();
+        self.blocks.set(entry_block, Ok(BasicBlock(code: self.prologue, exit: Terminator.Jump(first))));
         blocks ::= self.alloc.Vec<BasicBlock>();
         self.blocks.loop((pending) {
             blocks.add(pending.value_or(BasicBlock(
@@ -1897,6 +2119,34 @@ unsigned_max_bits = (bits: i64) i64 {
     bits.match({ 8 => 255, 16 => 65535, 32 => 4294967295, _ => -1 })
 }
 
+ignore_absent = <T>(r: Res<T>) { r.match({ Ok(_) => (), None => () }); }
+
+// Every name a closure body reads (its own bindings included; lookup at
+// registration keeps only the enclosing locals).
+NameFinder = {
+    tree: Ast,
+    names :: Vec<str>,
+}
+
+NameFinder.impl(WalkVisitor, {
+    visit = (self :: @Self, event: WalkEvent) Res<(), AllocError> {
+        event.match({
+            Enter(node) => node.match({
+                Expr(id) => self.tree.expr_at(id).kind.match({
+                    Name(n) => self.names.find((k) { k.eq(n.text) }).match({
+                        Ok(_) => (),
+                        None  => self.names.add(n.text).try(),
+                    }),
+                    _       => (),
+                }),
+                _        => (),
+            }),
+            Leave(_)    => (),
+        });
+        Ok(())
+    }
+})
+
 lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
                 Res<Program, LowerError> {
     module = tree.module_at(entry).ok_or(unsupported(nowhere(), "a missing entry module")).try();
@@ -1924,6 +2174,10 @@ lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
         locals: alloc.Vec<Local>(),
         frames: alloc.Vec<Frame>(),
         loops: alloc.Vec<LoopTarget>(),
+        prologue: alloc.Vec<Instruction>(),
+        scopes: alloc.Vec<Cleanup>(),
+        drops: alloc.Vec<DropEntry>(),
+        defers: alloc.Vec<DeferEntry>(),
         vias: alloc.Vec<Res<TyId>>(),
         made: alloc.Vec<TyId>(),
         broken: alloc.Vec<Broken>()

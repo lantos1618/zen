@@ -22,6 +22,7 @@ Write, Stream, TrapKind = gen.gen_ir
 word, integer, signed, same = gen.gen_ir
 LowerError, unsupported = gen.gen_lower
 Native, Value, Place, Base, LocalKind, LambdaRef, LoopTarget, Frame, Callee = gen.gen_asm_lower
+DeferEntry, Local = gen.gen_asm_lower
 member_call, mem_call, sys_call, resolve, to_bound, handle_for_place = gen.gen_asm_member
 bound_of, dispatch, Bound = gen.gen_asm_member
 to_i64_bits = gen.gen_asm_lower
@@ -105,6 +106,29 @@ variant_call = (lo :: Native, ty: TyId, c: Call, name: str, span: Span) Res<Valu
 
 dot_call = (lo :: Native, id: ExprId, c: Call, a: Access, span: Span) Res<Value, LowerError> {
     base = lo.tree.expr_at(a.base);
+    at_scope = base.kind.match({ Scope => true, _ => false });
+    (at_scope && a.name.text.eq("defer")).match({
+        true  => lo.defer(c, span),
+        false => lo.dot_call_on(id, c, a, base, span),
+    })
+}
+
+// `@scope.defer(closure)`: arm the closure for the innermost block's exit,
+// with the locals it reads captured now.
+defer = (lo :: Native, c: Call, span: Span) Res<Value, LowerError> {
+    arg = c.args.get(0).ok_or(unsupported(span, "a defer without a closure")).try();
+    lambda = lo.closure_of(Source.Given(arg.value), span).try();
+    // The flag starts clear on function entry and is set where this
+    // registration runs; the block's exit runs the closure only if armed.
+    armed = lo.slot_of(Scalar.Bool).try();
+    lo.prologue.add(Instruction.Constant(Const(out: armed, value: 0))).try(LowerError.OutOfMemory);
+    lo.add(Instruction.Constant(Const(out: armed, value: 1))).try();
+    captures = lo.captures_of(lambda).try();
+    lo.defers.add(DeferEntry(lambda: lambda, armed: armed, captures: captures)).try(LowerError.OutOfMemory);
+    lo.unit()
+}
+
+dot_call_on = (lo :: Native, id: ExprId, c: Call, a: Access, base: Expr, span: Span) Res<Value, LowerError> {
     handle: Res<usize> = base.kind.match({
         Name(n) => lo.lookup(n.text).match({ Ok(Handle(loop_id)) => Ok(loop_id), _ => None }),
         _       => None,
@@ -1202,7 +1226,7 @@ loop_call = (lo :: Native, id: ExprId, f: Function, sources: Vec<Source>, span: 
     next = lo.label().try();
     top  = lo.label().try();
     loop_id = lo.loops.len;
-    lo.loops.add(LoopTarget(brk: brk, next: next, result: Ok(result))).try(LowerError.OutOfMemory);
+    lo.loops.add(LoopTarget(brk: brk, next: next, result: Ok(result), depth: lo.scopes.len)).try(LowerError.OutOfMemory);
     first = f.params.get(0).ok_or(unsupported(span, "a loop without parameters")).try();
     first_name = first.name.text;
     (f.params.len < 3).ensure(unsupported(span, "folding loops")).try();
@@ -1578,6 +1602,7 @@ handle_call = (lo :: Native, loop_id: usize, name: str, c: Call, span: Span)
     target = lo.loops.get(loop_id).ok_or(unsupported(span, "a loop handle outside its loop")).try();
     name.match({
         "next"  => {
+            lo.unwind(target.depth).try();
             lo.jump(target.next).try();
             lo.unit()
         },
@@ -1592,6 +1617,7 @@ handle_call = (lo :: Native, loop_id: usize, name: str, c: Call, span: Span)
                     lo.add(Instruction.Copy(Move(out: result.slot, source: made.slot))).try();
                 });
             });
+            lo.unwind(target.depth).try();
             lo.jump(target.brk).try();
             lo.unit()
         },

@@ -64,13 +64,24 @@ write_machine = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     out.say(
         "typedef uint64_t zg_u64x4 __attribute__((vector_size(32), aligned(16)));"
     ).try();
-    // Full products of the low 32 bits of each 64-bit lane: PMULUDQ, UMULL.
+    // Full products of the low 32 bits of each 64-bit lane: PMULUDQ on x86
+    // (matched from the widening form), UMULL on arm64 (spelled directly:
+    // the widening form is scalarized when an operand is a splat).
+    out.say("#if defined(__aarch64__)").try();
+    out.say(
+        "#define ZG_MUL_LOW32_2(a, b) ((zg_u64x2)vmull_u32(vmovn_u64((uint64x2_t)(a)), vmovn_u64((uint64x2_t)(b))))"
+    ).try();
+    out.say(
+        "#define ZG_MUL_LOW32_4(a, b) __builtin_shufflevector(ZG_MUL_LOW32_2(__builtin_shufflevector(a, a, 0, 1), __builtin_shufflevector(b, b, 0, 1)), ZG_MUL_LOW32_2(__builtin_shufflevector(a, a, 2, 3), __builtin_shufflevector(b, b, 2, 3)), 0, 1, 2, 3)"
+    ).try();
+    out.say("#else").try();
     out.say(
         "#define ZG_MUL_LOW32_2(a, b) (__builtin_convertvector(__builtin_shufflevector((zg_u32x4)(a), (zg_u32x4)(a), 0, 2), zg_u64x2) * __builtin_convertvector(__builtin_shufflevector((zg_u32x4)(b), (zg_u32x4)(b), 0, 2), zg_u64x2))"
     ).try();
     out.say(
         "#define ZG_MUL_LOW32_4(a, b) (__builtin_convertvector(__builtin_shufflevector((zg_u32x8)(a), (zg_u32x8)(a), 0, 2, 4, 6), zg_u64x4) * __builtin_convertvector(__builtin_shufflevector((zg_u32x8)(b), (zg_u32x8)(b), 0, 2, 4, 6), zg_u64x4))"
     ).try();
+    out.say("#endif").try();
     // Rotation of u32 lanes by 16: a 16-bit lane swap is one REV32 on
     // arm64, while x86 lowers the shift form to one PSHUFB with SSSE3.
     out.say("#if defined(__aarch64__)").try();

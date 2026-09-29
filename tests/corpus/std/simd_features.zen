@@ -2,7 +2,7 @@
 // multiply instructions. Every line prints the same on a CPU without a
 // feature: the portable path must agree with the dispatched one.
 avx2, aes, clmul, Avx2, Aes, Clmul = std.simd
-splat_u32x8, lanes_u32x8, load_u8x16, lanes_u64x2 = std.simd
+splat_u32x8, lanes_u32x8, load_u8x16, lanes_u64x2, lanes_u64x4 = std.simd
 Ptr = std.mem
 
 // Compiled for AVX2: 32-byte vectors stay in YMM registers.
@@ -93,5 +93,13 @@ main = (env: Env) Res<(), AllocError> {
     println("cast: {}", lanes_u64x2(4294967297, 2).cast_u32x4().lane(2));
     low = lanes_u64x2(4294967297, 3).mul_low32(lanes_u64x2(5, 18446744073709551615));
     println("mul_low32: {} {}", low.lane(0), low.lane(1));
+    wide = lanes_u64x4(4294967297, 3, 65536, 7).mul_low32(lanes_u64x4(5, 18446744073709551615, 65536, 0));
+    println(
+        "mul_low32 x4: {} {} {} {}",
+        wide.lane(0),
+        wide.lane(1),
+        wide.lane(2),
+        wide.lane(3)
+    );
     Ok(())
 }

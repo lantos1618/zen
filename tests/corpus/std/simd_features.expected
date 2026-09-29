@@ -3,3 +3,4 @@ aes known answer: true
 clmul known answer: true
 cast: 2
 mul_low32: 5 12884901885
+mul_low32 x4: 5 12884901885 4294967296 0

@@ -82,3 +82,32 @@ values, so copying one copies its position, not its storage.
 Integer/endian/cursor behavior belongs in std. SHA, AEAD, TLS transcript
 state and cryptographic key schedules remain in zen-crypto. Algorithm-specific
 fixed-size block loops need not be generalized solely to move them into std.
+
+## Operating-system entropy
+
+`std.entropy.fill_random(output, count)` fills a caller-owned writable byte span
+using the operating system's cryptographic random source. It allocates nothing,
+retains no pointer or PRNG state, and has no predictable fallback. Supply a live
+span of `count` bytes. A null pointer is accepted only when count is zero;
+empty calls perform no OS operation. Nonempty null spans return `Invalid`.
+
+On macOS 10.12+ and Linux with glibc 2.25+, the header-backed `getentropy`
+binding requests at most 256 bytes per call; chunking and errors are handled in
+Zen. The operation may block during OS entropy initialization. Any OS refusal
+returns `Unavailable`; earlier chunks may already have overwritten the output,
+so callers must discard the entire result on failure. No secure-erasure claim
+is made. This is distinct from `std.core.rand`, which must not generate keys.
+
+TLS algorithms remain in zen-crypto. Public handshake randomness and ephemeral
+private keys require separate calls: never expose private bytes by reusing them
+as the public ClientHello/ServerHello random. OS entropy availability does not
+replace protocol validation, secret ownership or side-channel review.
+
+The corpus checks real OS success and buffer guards. `tests/library/entropy`
+uses a deterministic test-only OS replacement to cover 256-byte chunking,
+zero/null spans, failure on the first and a later call, and stopping after
+failure. A deliberately false OS-success result must fail its assertions.
+These checks do not attempt to establish entropy quality through statistics.
+
+Reference: [getentropy](https://man7.org/linux/man-pages/man3/getentropy.3.html).
+The macOS SDK declares the same interface in `sys/random.h`.

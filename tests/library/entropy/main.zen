@@ -1,0 +1,44 @@
+fill_random, EntropyError = std.entropy
+Probe = c.bind("probe.h", {
+    entropy_probe_calls = () usize
+    entropy_probe_mode = (mode: i32) ()
+})
+main = (env: Env) Res<i32, AllocError> {
+    a     = env.mem.alloc();
+    bytes = a.raw(515, 1).try();
+    @scope.defer(() { a.free(bytes); });
+    good ::= true;
+    Probe.entropy_probe_mode(0);
+    good = fill_random(
+        null_ptr<u8>(),
+        0
+    ).match({Ok(_) => true, _ => false}) && good;
+    good = fill_random(
+        null_ptr<u8>(),
+        1
+    ).match({Err(EntropyError.Invalid) => true, _ => false}) && good;
+    good = Probe.entropy_probe_calls() == 0 && good;
+    Range(0, 515).loop((i) { bytes.write(i, 173); });
+    good = fill_random(
+        bytes.offset(1),
+        513
+    ).match({Ok(_) => true, _ => false}) && good;
+    good = Probe.entropy_probe_calls() == 3 && bytes.read(0) == 173 && bytes.read(514) == 173 && good;
+    Range(0, 513).loop((i) { good = bytes.read(i + 1).to_usize() == i / 256 + 8 && good; });
+    Probe.entropy_probe_mode(1);
+    good = fill_random(
+        bytes.offset(1),
+        513
+    ).match({Err(EntropyError.Unavailable) => true, _ => false}) && good;
+    good = Probe.entropy_probe_calls() == 1 && good;
+    Probe.entropy_probe_mode(2);
+    Range(0, 515).loop((i) { bytes.write(i, 173); });
+    good = fill_random(
+        bytes.offset(1),
+        513
+    ).match({Err(EntropyError.Unavailable) => true, _ => false}) && good;
+    good = Probe.entropy_probe_calls() == 2 && bytes.read(0) == 173 && bytes.read(514) == 173 && good;
+    Range(0, 513).loop((i) { good = bytes.read(i + 1).to_usize() == (i < 256).match({true => 8, false => 173}) && good; });
+    println("entropy chunking, bounds and fail-closed errors: {}", good);
+    Ok(good.match({true => 0, false => 1}))
+}

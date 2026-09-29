@@ -14,14 +14,14 @@ nowhere = std.ast
 Checker, DeclId, Def, TyId, Inst, decl_at, CheckedCall, ImplId = sema.sema
 Sys = gen.gen_sys
 Scalar, Op, Const, Move, Binary, Instruction, Load, Store, Address, Pages = gen.gen_ir
-Invocation, SysCall, SysValue, Start, StartValue, Convert, Layout = gen.gen_ir
+Invocation, SysCall, SysValue, Start, StartValue, Convert, Layout, Write, Stream = gen.gen_ir
 sys_named, constant_named = gen.gen_sys
 TrapKind = gen.gen_ir
 LowerError, unsupported = gen.gen_lower
 Native, Value, Place, Base, Callee = gen.gen_asm_lower
 to_i64_bits = gen.gen_asm_lower
 Shape, Form, shape, size_of = gen.gen_asm_shape
-Source, bind_sources, invoke, call_inst, source_expr, result_type = gen.gen_asm_call
+Source, bind_sources, invoke, call_inst, source_expr, result_type, real_call = gen.gen_asm_call
 settle_params = gen.gen_asm_call
 
 // How a member call reaches its body.
@@ -321,6 +321,34 @@ to_bound* = (lo :: Native, value: Value, target: TyId) Res<Res<Value>, LowerErro
     })
 }
 
+// A bound handle whose receiver is the value at `place` itself, so mutable
+// members write into it (a String behind a Sink).
+handle_for_place* = (lo :: Native, place: Place, target: TyId) Res<Res<Value>, LowerError> {
+    lo.bound_of(target).try().match({
+        None      => Ok(None),
+        Ok(bound) => {
+            found: Res<usize> = loop<usize>((h) {
+                bound.implementors.loop((hh, i, t) { (t == place.ty).then(() { h.break(i); }); });
+                h.break();
+            });
+            found.match({
+                None    => Ok(None),
+                Ok(tag) => {
+                    lo.made.add(place.ty).try(LowerError.OutOfMemory);
+                    out = lo.temp(target).try();
+                    at = lo.slot_of(Scalar.Ptr).try();
+                    lo.add(Instruction.AddressOf(Address(out: at, slot: out.slot))).try();
+                    word = lo.word_const(Scalar.U32, tag.to_i64_bits()).try();
+                    lo.add(Instruction.StoreValue(Store(base: at, offset: 0, value: word))).try();
+                    pointer = lo.address(place).try();
+                    lo.add(Instruction.StoreValue(Store(base: at, offset: 8, value: pointer))).try();
+                    Ok(Ok(out))
+                },
+            })
+        },
+    })
+}
+
 // Evaluate the arguments once, then branch on the implementor tag.
 dynamic_call = (lo :: Native, id: ExprId, c: Call, bound: Bound, receiver: ExprId, name: str,
                 method_inst: Inst, span: Span) Res<Value, LowerError> {
@@ -330,8 +358,16 @@ dynamic_call = (lo :: Native, id: ExprId, c: Call, bound: Bound, receiver: ExprI
     pointer = lo.slot_of(Scalar.Ptr).try();
     lo.add(Instruction.LoadValue(Load(out: tag, base: at, offset: 0))).try();
     lo.add(Instruction.LoadValue(Load(out: pointer, base: at, offset: 8))).try();
-    args ::= lo.alloc.Vec<Value>();
-    c.args.loop((a) { args.add(lo.expr(a.value).try()).try(LowerError.OutOfMemory); });
+    // Arguments evaluate once, before the dispatch; a place stays a place so
+    // a mutable parameter writes through it.
+    args ::= lo.alloc.Vec<Source>();
+    c.args.loop((a) {
+        source = lo.place_of(a.value).try().match({
+            Ok(place) => Source.Located(place),
+            None      => Source.Computed(lo.expr(a.value).try()),
+        });
+        args.add(source).try(LowerError.OutOfMemory);
+    });
     ty = lo.type_of(id).try();
     out = lo.temp(ty).try();
     done = lo.label().try();
@@ -343,9 +379,9 @@ dynamic_call = (lo :: Native, id: ExprId, c: Call, bound: Bound, receiver: ExprI
         lo.add(Instruction.BinaryValue(Binary(out: test, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
         lo.branch_to(test, yes, next).try();
         lo.start(yes);
-        self_value = lo.read(Place(base: Base.Through(pointer), offset: 0, ty: implementor)).try();
+        held = Place(base: Base.Through(pointer), offset: 0, ty: implementor);
         saved = lo.use_via(Ok(implementor));
-        attempt = lo.implementor_call(implementor, bound, name, self_value, args, method_inst, ty, span);
+        attempt = lo.implementor_call(implementor, bound, name, held, args, method_inst, ty, span);
         lo.use_via(saved);
         result = attempt.try();
         lo.add(Instruction.Copy(Move(out: out.slot, source: result.slot))).try();
@@ -359,11 +395,11 @@ dynamic_call = (lo :: Native, id: ExprId, c: Call, bound: Bound, receiver: ExprI
 
 // One implementor's member, with the bound's hooks defaulted: an absent
 // `free` does nothing and an absent `create<T>` asks `raw` for T's bytes.
-implementor_call = (lo :: Native, implementor: TyId, bound: Bound, name: str, self_value: Value,
-                    args: Vec<Value>, method_inst: Inst, ty: TyId, span: Span) Res<Value, LowerError> {
+implementor_call = (lo :: Native, implementor: TyId, bound: Bound, name: str, receiver: Place,
+                    args: Vec<Source>, method_inst: Inst, ty: TyId, span: Span) Res<Value, LowerError> {
     arity = args.len + 1;
     lo.resolve(implementor, name, None, arity, method_inst, Ok(bound.decl), span).match({
-        Ok(callee) => lo.call_values(callee, self_value, args, ty, span),
+        Ok(callee) => lo.call_values(callee, receiver, args, ty, span),
         Err(e)     => name.match({
             "free"   => lo.unit(),
             "create" => {
@@ -372,10 +408,10 @@ implementor_call = (lo :: Native, implementor: TyId, bound: Bound, name: str, se
                 align = lo.word_const(Scalar.U64, 16).try();
                 usize_ty = lo.prim("usize").try();
                 raw = lo.resolve(implementor, "raw", None, 3, lo.alloc.Inst(), Ok(bound.decl), span).try();
-                sizes ::= lo.alloc.Vec<Value>();
-                sizes.add(Value(slot: bytes, ty: usize_ty)).try(LowerError.OutOfMemory);
-                sizes.add(Value(slot: align, ty: usize_ty)).try(LowerError.OutOfMemory);
-                made = lo.call_values(raw, self_value, sizes, lo.result_type(raw).try(), span).try();
+                sizes ::= lo.alloc.Vec<Source>();
+                sizes.add(Source.Computed(Value(slot: bytes, ty: usize_ty))).try(LowerError.OutOfMemory);
+                sizes.add(Source.Computed(Value(slot: align, ty: usize_ty))).try(LowerError.OutOfMemory);
+                made = lo.call_values(raw, receiver, sizes, lo.result_type(raw).try(), span).try();
                 // Res<Ptr<u8>, E> and Res<Ptr<T>, E> share one layout.
                 Ok(Value(slot: made.slot, ty: ty))
             },
@@ -385,30 +421,13 @@ implementor_call = (lo :: Native, implementor: TyId, bound: Bound, name: str, se
 }
 
 // Call a resolved member with already-evaluated receiver and arguments.
-call_values* = (lo :: Native, open: Callee, self_value: Value, args: Vec<Value>, ty: TyId, span: Span)
+call_values* = (lo :: Native, open: Callee, receiver: Place, args: Vec<Source>, ty: TyId, span: Span)
                Res<Value, LowerError> {
     given ::= lo.alloc.Vec<Source>();
-    given.add(Source.Computed(self_value)).try(LowerError.OutOfMemory);
-    args.loop((a) { given.add(Source.Computed(a)).try(LowerError.OutOfMemory); });
+    given.add(Source.Located(receiver)).try(LowerError.OutOfMemory);
+    args.loop((a) { given.add(a).try(LowerError.OutOfMemory); });
     callee = lo.settle_params(open, given).try();
-    index = lo.enqueue(callee).try();
-    slots ::= lo.alloc.Vec<usize>();
-    callee.f.params.loop((h, i, p) {
-        want = lo.param_type(callee, i).try();
-        value = (i == 0).match({
-            true  => self_value,
-            false => args.get(i - 1).ok_or(unsupported(span, "a missing argument")).try(),
-        });
-        coerced = lo.coerce(value, want).try();
-        slot = p.mutable.match({
-            true  => lo.address(lo.spill(lo.copy_value(coerced).try())).try(),
-            false => coerced.slot,
-        });
-        slots.add(slot).try(LowerError.OutOfMemory);
-    });
-    ret = lo.result_type(callee).try();
-    out = lo.temp(ret).try();
-    lo.add(Instruction.Invoke(Invocation(out: out.slot, function: index, args: slots))).try();
+    out = lo.real_call(callee, given, span).try();
     lo.coerce(out, ty)
 }
 
@@ -555,6 +574,23 @@ sys_call* = (lo :: Native, id: ExprId, name: str, sources: Vec<Source>, span: Sp
                 Ok(out)
             },
             None    => name.match({
+                "emit"        => {
+                    stream = lo.expr(sources.source_expr(0, span).try()).try();
+                    data = lo.expr(sources.source_expr(1, span).try()).try();
+                    len = lo.expr(sources.source_expr(2, span).try()).try();
+                    lo.emit_to(stream.slot, data.slot, len.slot).try();
+                    lo.unit()
+                },
+                "emit_byte"   => {
+                    stream = lo.expr(sources.source_expr(0, span).try()).try();
+                    byte = lo.expr(sources.source_expr(1, span).try()).try();
+                    cell = lo.copy_value(byte).try();
+                    at = lo.slot_of(Scalar.Ptr).try();
+                    lo.add(Instruction.AddressOf(Address(out: at, slot: cell.slot))).try();
+                    one = lo.word_const(Scalar.U64, 1).try();
+                    lo.emit_to(stream.slot, at, one).try();
+                    lo.unit()
+                },
                 "argc"        => lo.start_value(ty, StartValue.Argc),
                 "argv"        => lo.start_value(ty, StartValue.Argv),
                 "envp"        => lo.start_value(ty, StartValue.Envp),
@@ -585,6 +621,24 @@ sys_call* = (lo :: Native, id: ExprId, name: str, sources: Vec<Source>, span: Sp
             }),
         }),
     })
+}
+
+// Console bytes to stream 1 (buffered stdout) or otherwise stderr.
+emit_to = (lo :: Native, stream: usize, data: usize, len: usize) Res<(), LowerError> {
+    one = lo.slot_of(lo.slots.get(stream).value_or(Scalar.I32)).try();
+    lo.add(Instruction.Constant(Const(out: one, value: 1))).try();
+    is_out = lo.slot_of(Scalar.Bool).try();
+    lo.add(Instruction.BinaryValue(Binary(out: is_out, left: stream, right: one, op: Op.Equal, span: nowhere()))).try();
+    out = lo.label().try();
+    err = lo.label().try();
+    done = lo.label().try();
+    lo.branch_to(is_out, out, err).try();
+    lo.start(out);
+    lo.add(Instruction.WriteOut(Write(data: data, len: len, stream: Stream.Out))).try();
+    lo.jump(done).try();
+    lo.start(err);
+    lo.add(Instruction.WriteOut(Write(data: data, len: len, stream: Stream.Err))).try();
+    lo.enter(done)
 }
 
 start_value = (lo :: Native, ty: TyId, which: StartValue) Res<Value, LowerError> {

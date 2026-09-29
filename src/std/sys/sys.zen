@@ -15,6 +15,7 @@
 
 Alloc, AllocError, Ptr, null_ptr = std.mem
 str, String = std.text
+Sink, WriteError = std.core
 
 // ---------------------------------------------------------------------
 // operations (compiler-provided per target)
@@ -52,6 +53,11 @@ clone* = (flags: usize, stack: usize, parent: usize, child: usize, tls: usize) i
 argc* = () usize
 argv* = () Ptr<Ptr<u8>>
 envp* = () Ptr<Ptr<u8>>
+
+// Console output in the runtime's order with every other console write:
+// stream 1 is buffered standard output, stream 2 unbuffered standard error.
+emit* = (stream: i32, data: Ptr<u8>, len: usize) ()
+emit_byte* = (stream: i32, b: u8) ()
 
 // OS constants whose values differ between the targets.
 at_fdcwd* = () i32
@@ -203,6 +209,21 @@ random_bytes* = (buf: Ptr<u8>, len: usize) Res<(), i64> {
     });
     failure.match({ Ok(e) => Err(e), None => Ok(()) })
 }
+
+// A Sink over a standard stream; `{}` of a Display value writes through it.
+StreamSink* = { stream: i32 }
+
+StreamSink.impl(Sink, {
+    write = (self :: @Self, bytes: str) Res<(), WriteError> {
+        emit(self.stream, bytes.ptr(), bytes.len);
+        Ok(())
+    }
+
+    write_byte = (self :: @Self, b: u8) Res<(), WriteError> {
+        emit_byte(self.stream, b);
+        Ok(())
+    }
+})
 
 // ---------------------------------------------------------------------
 // Pages: an Alloc that maps every run directly from the kernel

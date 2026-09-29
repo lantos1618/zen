@@ -22,7 +22,7 @@ Write, Stream, TrapKind = gen.gen_ir
 word, integer, signed, same = gen.gen_ir
 LowerError, unsupported = gen.gen_lower
 Native, Value, Place, Base, LocalKind, LambdaRef, LoopTarget, Frame, Callee = gen.gen_asm_lower
-member_call, mem_call, sys_call = gen.gen_asm_member
+member_call, mem_call, sys_call, resolve, to_bound, handle_for_place = gen.gen_asm_member
 to_i64_bits = gen.gen_asm_lower
 Shape, Form, FieldAt, VariantAt, shape, class_of, field_types = gen.gen_asm_shape
 variant_index, size_of = gen.gen_asm_shape
@@ -428,11 +428,20 @@ bind_sources* = (lo :: Native, f: Function, c: Call, receiver: Res<ExprId>, span
         out.set(0, Source.Given(r));
         next = 1;
     });
+    // A variadic tail (`args: ...`) is read from the call by the operations
+    // that declare one.
+    variadic = (f.params.len > 0) && f.params.get(f.params.len - 1).match({
+        Ok(p) => p.type.match({
+            Ok(t) => lo.tree.type_at(t).kind.match({ Variadic => true, _ => false }),
+            None  => false,
+        }),
+        None  => false,
+    });
     c.args.loop((a) {
         a.name.match({
             None    => {
-                (next < out.len).ensure(unsupported(a.span, "more arguments than parameters")).try();
-                out.set(next, Source.Given(a.value));
+                (next < out.len || variadic).ensure(unsupported(a.span, "more arguments than parameters")).try();
+                (next < out.len).then(() { out.set(next, Source.Given(a.value)); });
                 next = next + 1;
             },
             Ok(name) => {
@@ -807,6 +816,7 @@ intrinsic = (lo :: Native, id: ExprId, callee: Callee, sources: Vec<Source>, c: 
                 "std.env.env"               => lo.env_call(id, name, c, sources, span),
                 "std.mem.mem_arena"         => lo.mem_call(id, name, sources, span),
                 "std.sys.sys"               => lo.sys_call(id, name, sources, span),
+                "std.text.text_string"      => lo.string_call(id, name, c, sources, span),
                 _                           => Err(unsupported(span, lo.alloc.String("the compiler-provided operation `{}.{}`", module, name).match({ Ok(t) => t.view(), Err(_) => "a compiler-provided operation" }))),
             }),
         }),
@@ -1564,10 +1574,100 @@ handle_call = (lo :: Native, loop_id: usize, name: str, c: Call, span: Span)
 // printing
 // ---------------------------------------------------------------------
 
+// `a.String(fmt, args..)` and `s.fmt(fmt, args..)`: formatting into text.
+string_call = (lo :: Native, id: ExprId, name: str, c: Call, sources: Vec<Source>, span: Span)
+              Res<Value, LowerError> {
+    ty = lo.type_of(id).try();
+    name.match({
+        "fmt"    => {
+            receiver = sources.get(0).value_or(Source.Absent);
+            string_ty = receiver.match({ Given(e) => lo.type_of(e), _ => Err(unsupported(span, "fmt without a String")) }).try();
+            place = lo.argument_place(receiver, string_ty, span).try();
+            written_first = receiver.match({
+                Given(e) => c.args.get(0).match({ Ok(a) => a.value == e, None => false }),
+                _        => false,
+            });
+            lo.format_call(c.args, written_first.match({ true => 1, false => 0 }), false, FmtTo.Into(place), span).try();
+            lo.variant_value(ty, "Ok", Ok(lo.unit().try()), span)
+        },
+        "String" => {
+            // The empty String from the one-argument constructor, then the
+            // formatted text appended to it.
+            alloc_source = sources.get(0).value_or(Source.Absent);
+            empty_callee = lo.std_callee_arity("std.text.text_string", "String", 1, span).try();
+            alloc_ty = lo.param_type(empty_callee, 0).try();
+            alloc = lo.argument_value(alloc_source, alloc_ty, span).try();
+            args ::= lo.alloc.Vec<Source>();
+            args.add(Source.Computed(alloc)).try(LowerError.OutOfMemory);
+            made = lo.real_call(empty_callee, args, span).try();
+            variants = lo.variants_of(made.ty).try();
+            ok = variant_index(variants, "Ok").ok_or(unsupported(span, "a String result without Ok")).try();
+            tag = lo.tag_of(made).try();
+            expected = lo.word_const(Scalar.U32, ok.to_i64_bits()).try();
+            test = lo.slot_of(Scalar.Bool).try();
+            lo.add(Instruction.BinaryValue(Binary(out: test, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+            out = lo.temp(ty).try();
+            good = lo.label().try();
+            bad = lo.label().try();
+            done = lo.label().try();
+            lo.branch_to(test, good, bad).try();
+            lo.start(bad);
+            converted = lo.coerce(made, ty).try();
+            lo.add(Instruction.Copy(Move(out: out.slot, source: converted.slot))).try();
+            lo.jump(done).try();
+            lo.start(good);
+            text = lo.payload_of(made, ok).try();
+            held = lo.copy_value(text).try();
+            // `a.String(fmt, ..)` writes the allocator as the receiver;
+            // `String(a, fmt, ..)` writes it first in the parentheses.
+            written_first = alloc_source.match({
+                Given(e) => c.args.get(0).match({ Ok(a) => a.value == e, None => false }),
+                _        => false,
+            });
+            lo.format_call(c.args, written_first.match({ true => 1, false => 0 }), false, FmtTo.Into(lo.spill(held)), span).try();
+            wrapped = lo.variant_value(ty, "Ok", Ok(held), span).try();
+            lo.add(Instruction.Copy(Move(out: out.slot, source: wrapped.slot))).try();
+            lo.enter(done).try();
+            Ok(out)
+        },
+        _        => Err(unsupported(span, "this text operation")),
+    })
+}
+
+std_callee_arity = (lo :: Native, module_name: str, name: str, arity: usize, span: Span) Res<Callee, LowerError> {
+    module = lo.check.world.index_of(module_name).ok_or(unsupported(span, "a missing std module")).try();
+    table = lo.check.world.table_at(module).ok_or(unsupported(span, "a missing std module table")).try();
+    found: Res<Callee> = loop<Callee>((h) {
+        table.defs.loop((d) {
+            (d.name.eq(name)).then(() {
+                decl_at(lo.tree, d.id).when_ok((decl) {
+                    decl.kind.match({
+                        Function(f) => (f.params.len == arity && f.body.match({ Ok(_) => true, None => false })).then(() {
+                            h.break(Callee(f: f, owner: d.id, member: None, module: module, inst: lo.alloc.Inst(), self_ty: None, generic_owner: None));
+                        }).ignore_none(),
+                        _           => (),
+                    });
+                });
+            }).ignore_none();
+        });
+        h.break();
+    });
+    found.ok_or(unsupported(span, "a missing std function overload"))
+}
+
+// Where formatted text goes: a console stream, or the String at a place.
+FmtTo* = Console(Stream) | Into(Place)
+
 // `print`/`println` and Console output: a literal format string with
 // positional and named holes, or plain values.
 print_call* = (lo :: Native, args: Vec<Arg>, first: usize, newline: bool, stream: Stream,
                span: Span) Res<Value, LowerError> {
+    lo.format_call(args, first, newline, FmtTo.Console(stream), span).try();
+    lo.unit()
+}
+
+format_call* = (lo :: Native, args: Vec<Arg>, first: usize, newline: bool, to: FmtTo,
+                span: Span) Res<(), LowerError> {
     raw: Res<str> = args.get(first).match({
         None    => None,
         Ok(arg) => lo.tree.expr_at(arg.value).kind.match({
@@ -1576,34 +1676,40 @@ print_call* = (lo :: Native, args: Vec<Arg>, first: usize, newline: bool, stream
         }),
     });
     raw.match({
-        Ok(text) => lo.format(args, first, text, stream, span),
+        Ok(text) => lo.format(args, first, text, to, span),
         None     => {
             args.loop((h, i, arg) {
-                (i >= first).then(() { lo.print_expr(arg.value, stream).try(); });
+                (i >= first).then(() { lo.print_expr(arg.value, to).try(); });
             });
             Ok(())
         },
     }).try();
-    newline.then(() { lo.text("\n", stream).try(); });
-    lo.unit()
+    newline.then(() { lo.text("\n", to).try(); });
+    Ok(())
 }
 
-text = (lo :: Native, bytes: str, stream: Stream) Res<(), LowerError> {
+text = (lo :: Native, bytes: str, to: FmtTo) Res<(), LowerError> {
     (!bytes.is_empty()).then(() {
-        stream.match({
-            Out => lo.add(Instruction.Text(bytes)).try(),
-            Err => {
-                data = lo.slot_of(Scalar.Ptr).try();
-                lo.add(Instruction.Bytes(StaticBytes(out: data, bytes: bytes))).try();
-                len = lo.word_const(Scalar.U64, bytes.len.to_i64_bits()).try();
-                lo.add(Instruction.WriteOut(Write(data: data, len: len, stream: Stream.Err))).try();
+        to.match({
+            Console(stream) => stream.match({
+                Out => lo.add(Instruction.Text(bytes)).try(),
+                Err => {
+                    data = lo.slot_of(Scalar.Ptr).try();
+                    lo.add(Instruction.Bytes(StaticBytes(out: data, bytes: bytes))).try();
+                    len = lo.word_const(Scalar.U64, bytes.len.to_i64_bits()).try();
+                    lo.add(Instruction.WriteOut(Write(data: data, len: len, stream: Stream.Err))).try();
+                },
+            }),
+            Into(place)     => {
+                value = lo.string(bytes, lo.prim("str").try()).try();
+                lo.string_add(place, value).try();
             },
         });
     });
     Ok(())
 }
 
-print_expr = (lo :: Native, id: ExprId, stream: Stream) Res<(), LowerError> {
+print_expr = (lo :: Native, id: ExprId, to: FmtTo) Res<(), LowerError> {
     e = lo.tree.expr_at(id);
     raw: Res<str> = e.kind.match({
         Literal(l) => l.kind.match({ Str => Ok(l.text), _ => None }),
@@ -1613,31 +1719,58 @@ print_expr = (lo :: Native, id: ExprId, stream: Stream) Res<(), LowerError> {
         Ok(text) => {
             decoded = text.slice(1, text.len - 1).decode_literal(lo.alloc)
                 .match({ Ok(t) => Ok(t), Err(_) => Err(unsupported(e.span, "a malformed literal escape")) }).try();
-            lo.text(decoded, stream)
+            lo.text(decoded, to)
         },
         None     => {
             value = lo.expr(id).try();
-            lo.print_value(value, stream, e.span)
+            lo.print_value(value, to, e.span)
         },
     })
 }
 
-print_value* = (lo :: Native, value: Value, stream: Stream, span: Span) Res<(), LowerError> {
+print_value* = (lo :: Native, value: Value, to: FmtTo, span: Span) Res<(), LowerError> {
     class = lo.class_of(value.ty).try();
-    lo.prim_name(value.ty).eq("str").match({
-        true  => {
-            at = lo.address(lo.spill(value)).try();
-            data = lo.slot_of(Scalar.Ptr).try();
-            len = lo.slot_of(Scalar.U64).try();
-            lo.add(Instruction.LoadValue(Load(out: data, base: at, offset: 0))).try();
-            lo.add(Instruction.LoadValue(Load(out: len, base: at, offset: 8))).try();
-            lo.add(Instruction.WriteOut(Write(data: data, len: len, stream: stream)))
-        },
-        false => (word(class) && lo.plain_word(value.ty)).match({
-            true  => lo.add(Instruction.PrintValue(Print(value: value.slot, ty: class, stream: stream))),
-            false => class.match({
-                Unit => lo.text("()", stream),
-                _    => Err(unsupported(span, "printing a value without a primitive printer (Display)")),
+    is_str = lo.prim_name(value.ty).eq("str");
+    primitive = word(class) && lo.plain_word(value.ty);
+    to.match({
+        Console(stream) => is_str.match({
+            true  => {
+                at = lo.address(lo.spill(value)).try();
+                data = lo.slot_of(Scalar.Ptr).try();
+                len = lo.slot_of(Scalar.U64).try();
+                lo.add(Instruction.LoadValue(Load(out: data, base: at, offset: 0))).try();
+                lo.add(Instruction.LoadValue(Load(out: len, base: at, offset: 8))).try();
+                lo.add(Instruction.WriteOut(Write(data: data, len: len, stream: stream)))
+            },
+            false => primitive.match({
+                true  => lo.add(Instruction.PrintValue(Print(value: value.slot, ty: class, stream: stream))),
+                false => lo.is_unit(value.ty).match({
+                    true  => lo.text("()", to),
+                    false => {
+                        sink = lo.stream_sink(stream, span).try();
+                        lo.display(value, sink, span)
+                    },
+                }),
+            }),
+        }),
+        Into(place)     => is_str.match({
+            true  => lo.string_add(place, value),
+            false => primitive.match({
+                true  => {
+                    sink = lo.sink_for_place(place, span).try();
+                    helper = class.match({
+                        Bool => "add_bool",
+                        _    => signed(class).match({ true => "add_i64", false => "add_u64" }),
+                    });
+                    lo.fmt_helper(helper, sink, value, span)
+                },
+                false => lo.is_unit(value.ty).match({
+                    true  => lo.text("()", to),
+                    false => {
+                        sink = lo.sink_for_place(place, span).try();
+                        lo.display(value, sink, span)
+                    },
+                }),
             }),
         }),
     })
@@ -1648,7 +1781,75 @@ plain_word = (lo :: Native, ty: TyId) bool {
     lo.check.types.at(ty).match({ Prim(_) => true, _ => false })
 }
 
-format = (lo :: Native, args: Vec<Arg>, first: usize, raw: str, stream: Stream, span: Span)
+// `{}` of a non-primitive value: its Display `toString(out :: Sink)`.
+display = (lo :: Native, value: Value, sink: Value, span: Span) Res<(), LowerError> {
+    callee = lo.resolve(value.ty, "toString", None, 2, lo.alloc.Inst(), None, span).try();
+    sources ::= lo.alloc.Vec<Source>();
+    sources.add(Source.Computed(value)).try(LowerError.OutOfMemory);
+    sources.add(Source.Computed(sink)).try(LowerError.OutOfMemory);
+    lo.real_call(callee, sources, span).try();
+    Ok(())
+}
+
+// A Sink over a console stream (std.sys.StreamSink).
+stream_sink = (lo :: Native, stream: Stream, span: Span) Res<Value, LowerError> {
+    sink_ty = lo.std_type("std.sys.sys", "StreamSink", span).try();
+    fd_ty = lo.prim("i32").try();
+    fd = lo.constant(fd_ty, stream.match({ Out => 1, Err => 2 })).try();
+    record = lo.temp(sink_ty).try();
+    at = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.AddressOf(Address(out: at, slot: record.slot))).try();
+    lo.add(Instruction.StoreValue(Store(base: at, offset: 0, value: fd.slot))).try();
+    lo.to_bound(record, lo.std_type("std.core.io", "Sink", span).try()).try()
+        .ok_or(unsupported(span, "a StreamSink that is not a Sink"))
+}
+
+// A Sink whose receiver is the String at `place`, so writes land there.
+sink_for_place = (lo :: Native, place: Place, span: Span) Res<Value, LowerError> {
+    sink_ty = lo.std_type("std.core.io", "Sink", span).try();
+    lo.handle_for_place(place, sink_ty).try().ok_or(unsupported(span, "a String that is not a Sink"))
+}
+
+// One of std.text.text_fmt's `add_*(out :: Sink, v)` writers.
+fmt_helper = (lo :: Native, name: str, sink: Value, value: Value, span: Span) Res<(), LowerError> {
+    callee = lo.std_callee("std.text.text_fmt", name, span).try();
+    sources ::= lo.alloc.Vec<Source>();
+    sources.add(Source.Computed(sink)).try(LowerError.OutOfMemory);
+    sources.add(Source.Computed(value)).try(LowerError.OutOfMemory);
+    lo.real_call(callee, sources, span).try();
+    Ok(())
+}
+
+// `String.add(s: str)` on the String at `place`.
+string_add = (lo :: Native, place: Place, value: Value) Res<(), LowerError> {
+    callee = lo.resolve(place.ty, "add", None, 2, lo.alloc.Inst(), None, nowhere()).try();
+    sources ::= lo.alloc.Vec<Source>();
+    sources.add(Source.Located(place)).try(LowerError.OutOfMemory);
+    sources.add(Source.Computed(value)).try(LowerError.OutOfMemory);
+    lo.real_call(callee, sources, nowhere()).try();
+    Ok(())
+}
+
+// A non-generic type declared in a std module.
+std_type* = (lo :: Native, module_name: str, name: str, span: Span) Res<TyId, LowerError> {
+    module = lo.check.world.index_of(module_name).ok_or(unsupported(span, "a missing std module")).try();
+    table = lo.check.world.table_at(module).ok_or(unsupported(span, "a missing std module table")).try();
+    def = table.defs.find((d) { d.name.eq(name) }).ok_or(unsupported(span, "a missing std type")).try();
+    args ::= lo.alloc.Vec<TyId>();
+    lo.check.types.named(def.id, def.qname, def.name, args).try(LowerError.OutOfMemory)
+}
+
+std_callee* = (lo :: Native, module_name: str, name: str, span: Span) Res<Callee, LowerError> {
+    module = lo.check.world.index_of(module_name).ok_or(unsupported(span, "a missing std module")).try();
+    table = lo.check.world.table_at(module).ok_or(unsupported(span, "a missing std module table")).try();
+    def = table.defs.find((d) { d.name.eq(name) && d.kind.match({ FunctionDef => true, _ => false }) })
+        .ok_or(unsupported(span, "a missing std function")).try();
+    decl = decl_at(lo.tree, def.id).ok_or(unsupported(span, "a missing std declaration")).try();
+    f = decl.kind.match({ Function(f) => Ok(f), _ => None }).ok_or(unsupported(span, "a std non-function")).try();
+    Ok(Callee(f: f, owner: def.id, member: None, module: module, inst: lo.alloc.Inst(), self_ty: None, generic_owner: None))
+}
+
+format = (lo :: Native, args: Vec<Arg>, first: usize, raw: str, to: FmtTo, span: Span)
          Res<(), LowerError> {
     end = raw.len - 1;
     start: usize ::= 1;
@@ -1659,42 +1860,42 @@ format = (lo :: Native, args: Vec<Arg>, first: usize, raw: str, stream: Stream, 
         at.what.match({
             Byte        => { i = i + (raw[i] == '\\').match({ true => 2, false => 1 }); },
             Pair        => {
-                lo.raw_text(raw.slice(start, at.keep), stream, span).try();
+                lo.raw_text(raw.slice(start, at.keep), to, span).try();
                 i     = at.next;
                 start = i;
             },
             Hole        => {
-                lo.raw_text(raw.slice(start, i), stream, span).try();
+                lo.raw_text(raw.slice(start, i), to, span).try();
                 arg = args.get(used).ok_or(unsupported(span, "a format hole without an argument")).try();
-                lo.print_expr(arg.value, stream).try();
+                lo.print_expr(arg.value, to).try();
                 used  = used + 1;
                 i     = at.next;
                 start = i;
             },
             Named(name) => {
-                lo.raw_text(raw.slice(start, i), stream, span).try();
+                lo.raw_text(raw.slice(start, i), to, span).try();
                 kind = lo.lookup(name).ok_or(unsupported(span, "a named hole without a local")).try();
                 value = kind.match({
                     Direct(v) => Ok(v),
                     Ref(p)    => lo.read(p),
                     _         => Err(unsupported(span, "a named hole naming a closure or handle")),
                 }).try();
-                lo.print_value(value, stream, span).try();
+                lo.print_value(value, to, span).try();
                 i     = at.next;
                 start = i;
             },
             NoName      => { Err(unsupported(span, "an invalid format hole")).try(); },
         });
     });
-    lo.raw_text(raw.slice(start, end), stream, span).try();
+    lo.raw_text(raw.slice(start, end), to, span).try();
     (used == args.len).ensure(unsupported(span, "an argument without a format hole")).try();
     Ok(())
 }
 
-raw_text = (lo :: Native, raw: str, stream: Stream, span: Span) Res<(), LowerError> {
+raw_text = (lo :: Native, raw: str, to: FmtTo, span: Span) Res<(), LowerError> {
     decoded = raw.decode_literal(lo.alloc).match({
         Ok(t)  => Ok(t),
         Err(_) => Err(unsupported(span, "a malformed literal escape")),
     }).try();
-    lo.text(decoded, stream)
+    lo.text(decoded, to)
 }

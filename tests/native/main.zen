@@ -118,8 +118,17 @@ Runner = {
 
     // Launch under a 10 s alarm, with the test's arguments, environment
     // and stdin; a POSIX shell only performs the redirection.
-    execute = (self: @Self, c: Case, binary: str) Res<ProcOutput, AllocError> {
+    execute = (self: @Self, c: Case, binary: str, index: usize) Res<ProcOutput, AllocError> {
+        // As tests/run.py stages it: the program runs in a scratch
+        // directory where its root is visible as `src`.
+        here = self.env.fs.cwd(self.a).match({ Ok(s) => s.view(), Err(_) => "." });
+        run_dir = self.a.String("{}/{}/run{}", here, self.work, index).try();
+        setup ::= self.a.Vec<str>();
+        script = self.a.String("mkdir -p '{}' && ln -sfn '{}/{}' '{}/src'", run_dir.view(), here, c.root, run_dir.view()).try();
+        ["/bin/sh", "-c", script.view()].loop((w) { setup.add(w).try(); });
+        self.run(setup).try();
         command ::= self.a.String().try();
+        command.fmt("cd '{}' && ", run_dir.view()).try();
         command.add("exec perl -e 'alarm 10; exec @ARGV' ").try();
         // The harness exports two over-long names for this test alone.
         c.base.ends_with("env_var_resolves_a_name_of_any_length").then(() {
@@ -134,7 +143,7 @@ Runner = {
             });
         });
         (!self.target.runner.is_empty()).then(() { command.fmt("{} ", self.target.runner).try(); });
-        command.fmt("'{}'", binary).try();
+        command.fmt("'{}/{}'", here, binary).try();
         self.read_sidecar(c, "args").when_ok((text) {
             text.split('\n').loop((line) {
                 (!line.is_empty()).then(() { command.fmt(" '{}'", line).try(); });
@@ -142,7 +151,7 @@ Runner = {
         });
         stdin = self.a.String("{}.stdin", c.base).try();
         self.env.fs.exists(stdin.view()).match({
-            true  => command.fmt(" < '{}'", stdin.view()),
+            true  => command.fmt(" < '{}/{}'", here, stdin.view()),
             false => command.add(" < /dev/null"),
         }).try();
         argv ::= self.a.Vec<str>();
@@ -203,7 +212,7 @@ Runner = {
                     println("BROKEN {} :: {}", c.base, first_line(reason));
                 },
                 None       => {
-                    result = self.execute(c, binary.view()).try();
+                    result = self.execute(c, binary.view(), index).try();
                     verdict = self.compare(c, result).try();
                     verdict.is_empty().match({
                         true  => { tally.pass = tally.pass + 1; println("PASS {}", c.base); },

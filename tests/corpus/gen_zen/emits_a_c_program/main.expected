@@ -130,7 +130,9 @@ static zu_tRes_4b26e59dcf5c1901 zu_f2_4main4mainO1_b3i32(int32_t zu_l3env) {
 
 static zu_tRes_4b26e59dcf5c1901 zu_f2_4main5halveO1_b3i32(int32_t zu_l1n) {
     bool zg_s1;
-    zg_s1 = ((zg_mod_i32(zu_l1n, 2, "main.zen", 4, 39) == 0));
+    int32_t zg_s2;
+    zg_s2 = zg_mod_i32(zu_l1n, 2, "main.zen", 4, 39);
+    zg_s1 = ((zg_s2 == 0));
     if (zg_s1) {
         return (zu_tRes_4b26e59dcf5c1901){ .zg_tag = zu_e5_3std4core6result3Res2Ok, .zg_data.zu_m2Ok = zg_div_i32(zu_l1n, 2, "main.zen", 4, 70) };
     } else if (!zg_s1) {

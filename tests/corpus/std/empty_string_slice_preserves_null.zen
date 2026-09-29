@@ -1,0 +1,18 @@
+main = (env: Env) Res<i32, AllocError> {
+    arena ::= env.mem.alloc();
+    text  = arena.String().try();
+    empty = text.view();
+    slice = empty.slice(0, 0);
+    println("empty {} null {}", slice.len, slice.ptr().is_null());
+    println("again {}", slice.slice(0, 0).len);
+    full = "abc";
+    println("full {}", full.slice(0, 3));
+    println("middle {}", full.slice(1, 2));
+    end = full.slice(3, 3);
+    println(
+        "end {} position {}",
+        end.len,
+        end.ptr().same(full.ptr().offset(3))
+    );
+    Ok(0)
+}

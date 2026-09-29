@@ -439,6 +439,7 @@ help:
 actorcheck: build
 	$(PY) tests/quality/actor_shutdown.py --zen ./zen
 	$(PY) tests/quality/actor_admission.py --zen ./zen
+	$(PY) tests/quality/actor_buffers.py --zen ./zen
 	$(PY) tests/quality/actor_join.py --zen ./zen
 	$(PY) tests/quality/actor_spawn_drop.py --zen ./zen
 	$(PY) tests/quality/page_allocation.py --zen ./zen

@@ -8,7 +8,7 @@ Noisy = {
 }
 
 Noisy.impl(Drop, {
-    drop = (self :: @Self) () { self.env.out.println("drop {}", self.tag) }
+    drop = (self :: @Self) { self.env.out.println("drop {}", self.tag) }
 })
 
 main = (env: Env) Res<i32, IoError> {

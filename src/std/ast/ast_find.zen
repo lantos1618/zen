@@ -19,7 +19,7 @@ Nearest = {
     found :: Res<NodeRef> = None,
     span :: Span,
 
-    offer = (self :: @Self, cand: Span, node: NodeRef) () {
+    offer = (self :: @Self, cand: Span, node: NodeRef) {
         closer = cand.covers(self.file, self.p) && self.found.match({
             None  => true,
             Ok(_) => cand.inside(self.span),

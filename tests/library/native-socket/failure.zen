@@ -6,7 +6,7 @@ Native = c.bind("probe.h", {
 })
 HOST: str = "HARNESS_HOST"
 REFUSED_PORT: u16 = 0
-check = (yes: bool) () { (!yes).then(() { Native.probe_check(0); }); }
+check = (yes: bool) { (!yes).then(() { Native.probe_check(0); }); }
 FailAlloc = {
     base: Alloc,
     remaining: Ptr<usize>,

@@ -32,12 +32,13 @@ verification, remove the mismatch case, or claim this transport verified.
 
 **Owning collection storage does not yet have a complete transfer contract.**
 Confirmed with a Drop owner that prints its id: `v.add(owner); v.clear()`
-accepts a borrowed owner and destroys it twice. Inserting `consume first`, then
-`v.set(0, consume second); v.clear()` destroys only second, losing first.
+accepts a borrowed owner and destroys it twice.
 `v.set(0, consume owner)` on an empty Vec destroys neither value. Raw slot
 extraction fixed owning lookup, but does not fix storage ownership or cleanup
 on admission failure. Maintained reproducers are in `tests/library/ownership-storage`
-(replace, borrow, invalid-set).
+(borrow, invalid-set). Successful Vec replacement now retires the displaced
+owner; `corpus/ownership-drop/vec_set_destroys_displaced_owners` checks repeated
+middle-slot replacement, clear and ordinary non-owning values.
 The repair needs a checked transfer requirement across generic/helper calls
 and failure cleanup. Merely dropping every value parameter is incorrect:
 ordinary parameters are borrowed. Do not describe owning collections as safe

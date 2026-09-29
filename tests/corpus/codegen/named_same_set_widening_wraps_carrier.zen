@@ -17,7 +17,7 @@ widen = () Res<(), Outer> {
     Ok(())
 }
 
-show = (result: Res<(), Outer>) () {
+show = (result: Res<(), Outer>) {
     result.match({
         Ok(_)  => println("ok"),
         Err(e) => e.match({

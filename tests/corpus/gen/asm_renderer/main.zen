@@ -1,3 +1,4 @@
+HARNESS_NATIVE_ASM* : bool = false
 // Exercise the renderer directly so ABI and trap behavior cannot be hidden by
 // the source lowerer. Each executable is linked as PIE in the test's workspace.
 Alloc, AllocError = std.mem
@@ -288,7 +289,7 @@ check_trap = (output: ProcOutput, reason: str) bool {
         && output.err.view().eq(reason)
 }
 
-main = (env: Env) Res<i32, AllocError
+native_main = (env: Env) Res<i32, AllocError
     | FsError
     | ProcError
     | BuildFault
@@ -366,4 +367,61 @@ main = (env: Env) Res<i32, AllocError
         check_trap(zero, "a\"b\\c.zen:7:11: trap: divide by zero\n")
     );
     Ok(0)
+}
+
+// A foreign host validates the real ELF object; execution remains a Linux
+// x86-64 gate, never reported as having run on another instruction set.
+asm_object = (env: Env, a: Alloc, source: str) Res<bool, AllocError> {
+    args ::= a.Vec<str>();
+    ["clang", "--target=x86_64-linux-gnu", "-c", source, "-o", "assembly.o"].loop((word) { args.add(word).try(); });
+    result = env.proc.run_argv(
+        a,
+        "",
+        args
+    ).match({ Ok(r) => r.code == 0, Err(_) => false });
+    (!result).match({
+        true  => Ok(false),
+        false => Ok(env.fs.read(a, "assembly.o").match({
+            Err(_)   => false,
+            Ok(file) => {
+                bytes = file.view();
+                bytes.len >= 20 && bytes.index(0) == 127 && bytes.slice(1, 4).eq("ELF")
+                    && bytes.index(4) == 2 && bytes.index(5) == 1
+                    && bytes.index(18) == 62 && bytes.index(19) == 0
+            },
+        })),
+    })
+}
+
+main = (env: Env) Res<i32, AllocError
+    | FsError
+    | ProcError
+    | BuildFault
+    | VerifyError> {
+    HARNESS_NATIVE_ASM.match({
+        true  => native_main(env),
+        false => {
+            a = env.mem.alloc();
+            programs ::= a.Vec<Program>();
+            programs.add(reloads(a).try()).try();
+            programs.add(calls(a).try()).try();
+            programs.add(stack_calls(a, 7).try()).try();
+            programs.add(stack_calls(a, 8).try()).try();
+            programs.add(trapping(a, i32.MAX, Op.Add, 1).try()).try();
+            programs.add(trapping(a, i32.MIN, Op.Div, -1).try()).try();
+            programs.add(trapping(a, 7, Op.Div, 0).try()).try();
+            programs.loop((h, i, program) {
+                program.verify(a).try();
+                assembly = X86_64LinuxGnu(alloc: a).emit(program).try();
+                env.fs.write("cross.s", assembly.view()).try();
+                println(
+                    "ELF object {} {}",
+                    i,
+                    asm_object(env, a, "cross.s").try()
+                );
+            });
+            println("execution requires Linux x86_64 GNU");
+            Ok(0)
+        },
+    })
 }

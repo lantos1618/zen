@@ -1,0 +1,17 @@
+Bytes = Vec<u8>
+Worker = {}
+Worker.impl(Actor, {
+    read = <T>(self :: @Self, ctx: Context, data: Vec<T>) { println(
+        "{}",
+        data.len
+    ); }
+})
+main = (env: Env) Res<i32, AllocError | ActorStartError | ActorError> {
+    arena ::= env.mem.alloc();
+    buf   ::= arena.Vec<u8>();
+    buf.add(7).try();
+    worker = env.spawn(Worker()).try();
+    worker.read(consume buf).try();
+    worker.stop(); worker.join();
+    Ok(0)
+}

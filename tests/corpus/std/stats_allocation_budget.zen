@@ -22,7 +22,7 @@ Budget.impl(Alloc, {
         self.accepts().ensure(AllocError.OutOfMemory).try();
         self.base.realloc(ptr, count)
     }
-    free = <T>(self: @Self, ptr: Ptr<T>) () {
+    free = <T>(self: @Self, ptr: Ptr<T>) {
         (!ptr.is_null()).then(() {
             self.releases.write(0, self.releases.read(0) + 1);
         });

@@ -29,7 +29,7 @@ Diag* = {
     span*: Span,
 
     // The terminal form, `file:line:col: message`.
-    say* = (self: @Self) () {
+    say* = (self: @Self) {
         println("{}:{}: {}", self.file, self.span.start, message(self.fault));
     }
 }

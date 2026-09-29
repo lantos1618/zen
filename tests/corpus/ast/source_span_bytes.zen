@@ -1,6 +1,6 @@
 Pos, Span = std.ast
 
-main = () () {
+main = () {
     text = "x = \"é\"\r\nnext\n";
     span = Span(
         file: "sample.zen",

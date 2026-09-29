@@ -269,7 +269,7 @@ shown = (
     length    : usize,
     colour    : usize,
     modifiers : usize
-) () {
+) {
     run  = run_of(text, line);
     from = run.start + source_position(text, line, character).col - 1;
     upto = run.start + source_position(text, line, character + length).col - 1;

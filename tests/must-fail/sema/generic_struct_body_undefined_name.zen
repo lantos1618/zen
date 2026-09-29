@@ -12,4 +12,4 @@ Box*<T> = {
     get* = (self: @Self) T { nowhere }
 }
 
-main* = () () {}
+main* = () {}

@@ -1,5 +1,5 @@
 Owner = { id: i32 }
-Owner.impl(Drop, { drop = (self :: @Self) () { println("drop {}", self.id); } })
+Owner.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id); } })
 main = (env: Env) Res<i32, AllocError> {
     values ::= env.mem.alloc().Vec<Owner>();
     first  ::= Owner(id: 1);

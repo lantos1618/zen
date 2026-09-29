@@ -81,14 +81,13 @@ callback_signature = (
     out :: String
 ) Res<(), AllocError> {
     valid = f.tparams.len == 0 && f.body.match({ Ok(_) => true, None => false }) &&
-        f.ret.match({ Ok(_) => true, None => false }) &&
         f.params.find(
             (p) { p.mutable || p.type.match({ Ok(_) => false, None => true }) }
         ).match({ Ok(_) => false, None => true });
     valid.match({
         false => be.unsupported(
             id,
-            "a native callback needs a nongeneric function body and explicit immutable C scalar/pointer parameters and result",
+            "a native callback needs a nongeneric function body and explicit immutable C scalar/pointer parameters and a C-compatible result",
             out
         ),
         true  => be.callback_abi(id, d, f, out),

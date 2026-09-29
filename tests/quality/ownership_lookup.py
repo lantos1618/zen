@@ -14,7 +14,7 @@ parser.add_argument('--old-zen', type=Path)
 parser.add_argument('--old-std', type=Path)
 args = parser.parse_args()
 HEADER = '''Owner = { id: i32 }
-Owner.impl(Drop, { drop = (self :: @Self) () { println("drop {}", self.id); } })
+Owner.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id); } })
 '''
 
 def program(body, extra=''):

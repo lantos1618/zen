@@ -134,12 +134,12 @@ Arena.impl(Alloc, {
         })
     }
 
-    free = <T>(self: @Self, p: Ptr<T>) () {}
+    free = <T>(self: @Self, p: Ptr<T>) {}
 })
 
 // Drop consumes the Arena owner and releases its page chain exactly once.
 Arena.impl(Drop, {
-    drop = (self :: @Self) () {
+    drop = (self :: @Self) {
         s = self.state.read(0);
         page ::= s.head;
         loop(!page.is_null(), (h) {

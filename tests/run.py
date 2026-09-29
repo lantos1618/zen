@@ -33,6 +33,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import errno
 import fnmatch
 import fcntl
 import hashlib
@@ -348,6 +349,10 @@ def _make_test(
     args_path: Path | None = None,
     env_path: Path | None = None,
 ) -> Test:
+    # A platform-specific oracle still executes the test; it never skips it.
+    variant = expected.with_name(expected.name + "." + platform.system().lower())
+    if kind != "must-fail" and platform.system() == "Darwin" and variant.is_file():
+        expected = variant
     return Test(
         tid=tid,
         kind=kind,
@@ -714,6 +719,12 @@ class CCompiler:
     timeout: float
 
     def build(self, tid: str, source: Path, binary: Path, native: list[str]) -> Run:
+        openssl_root = os.environ.get("OPENSSL_ROOT")
+        if openssl_root and "-lssl" in native:
+            lib = Path(openssl_root).expanduser().resolve() / "lib"
+            if not lib.is_dir():
+                raise HarnessError(f"OPENSSL_ROOT has no library directory: {lib}")
+            native = [f"-L{lib}", f"-Wl,-rpath,{lib}", *native]
         cacheable = bool(self.cache)
         if cacheable:
             generated = source.read_bytes()
@@ -764,7 +775,7 @@ class ResultCache:
     dependency closure. Verification can always disable this cache entirely.
     """
     VERSION = 1
-    REWRITTEN = {"corpus/env/clock_reads_are_two_authorities",
+    REWRITTEN = {"corpus/gen/asm_renderer", "corpus/gen/scalar_backends", "corpus/backends/c_ir_pilot", "corpus/env/clock_reads_are_two_authorities",
                  "corpus/net/tcp_connect", "corpus/net/tls_connect"}
 
     def __init__(self, directory: Path, tool: Toolchain, args: argparse.Namespace):
@@ -819,7 +830,7 @@ class ResultCache:
             return None
         if any(os.environ.get(name) for name in
                ("LD_PRELOAD", "LD_LIBRARY_PATH", "GCC_EXEC_PREFIX", "COMPILER_PATH",
-                "CCACHE_PREFIX", "CPATH", "C_INCLUDE_PATH", "LIBRARY_PATH")):
+                "CCACHE_PREFIX", "CPATH", "C_INCLUDE_PATH", "LIBRARY_PATH", "OPENSSL_ROOT")):
             return None
         try:
             cc = shutil.which(self.args.cc)
@@ -1127,6 +1138,51 @@ class LoopbackPeer:
         self.listener.close()
 
 
+class ZeroSizeFilePeer:
+    """A nonempty POSIX FIFO whose stat size is zero on Linux and macOS."""
+
+    def __init__(self, work: Path) -> None:
+        self.path = work / "zero-size-input"
+        os.mkfifo(self.path)
+        if self.path.stat().st_size != 0:
+            raise HarnessError("FIFO must report a zero stat size")
+        self.problem = ""
+        self.thread = None
+        self.stopped = threading.Event()
+
+    def start(self, timeout: float) -> None:
+        def serve():
+            deadline = time.monotonic() + timeout
+            while not self.stopped.is_set() and time.monotonic() < deadline:
+                try:
+                    fd = os.open(self.path, os.O_WRONLY | os.O_NONBLOCK)
+                except OSError as exc:
+                    if exc.errno != errno.ENXIO:
+                        self.problem = str(exc)
+                        return
+                    self.stopped.wait(0.01)
+                    continue
+                try:
+                    os.write(fd, b"zero-sized files still contain bytes\n")
+                except OSError as exc:
+                    self.problem = str(exc)
+                finally:
+                    os.close(fd)
+                return
+            self.problem = "FIFO reader did not open"
+        self.thread = threading.Thread(target=serve, daemon=True)
+        self.thread.start()
+
+    def finish(self, timeout: float) -> str:
+        self.stopped.set()
+        if self.thread is not None:
+            self.thread.join(min(timeout, 2.0))
+        return self.problem
+
+    def close(self) -> None:
+        self.stopped.set()
+
+
 class TlsLoopbackPeer(LoopbackPeer):
     """Two TLS handshakes: one trusted hostname and one rejected mismatch."""
 
@@ -1139,9 +1195,11 @@ class TlsLoopbackPeer(LoopbackPeer):
         if openssl is None:
             self.close()
             raise HarnessError("TLS corpus needs the OpenSSL command")
+        # RSA is supported by both older LibreSSL fixture servers and current
+        # OpenSSL clients. Keep SAN, key usage and hostname verification intact.
         made = run_process([
-            openssl, "req", "-x509", "-newkey", "ec",
-            "-pkeyopt", "ec_paramgen_curve:P-256", "-sha256", "-nodes",
+            openssl, "req", "-x509", "-newkey", "rsa:2048",
+            "-sha256", "-nodes",
             "-keyout", str(key), "-out", str(self.cert), "-days", "1",
             "-subj", "/CN=localhost",
             "-addext", "subjectAltName=DNS:localhost",
@@ -1493,6 +1551,19 @@ def run_corpus(test: Test, tool: Toolchain, work: Path, args: argparse.Namespace
                 loopback.close()
             return Result(test, False, [f"the harness could not stage loopback TCP: {e}"])
 
+    if test.tid == "corpus/env/fs_read_special_file_with_zero_stat_size":
+        loopback = ZeroSizeFilePeer(work)
+
+    if test.tid in {"corpus/gen/asm_renderer", "corpus/gen/scalar_backends", "corpus/backends/c_ir_pilot"}:
+        native_asm = platform.system() == "Linux" and platform.machine() == "x86_64"
+        path = root / entry
+        text, count = re.subn(r"HARNESS_NATIVE_ASM\*\s*:\s*bool\s*=\s*(true|false)",
+                             "HARNESS_NATIVE_ASM* : bool = " + str(native_asm).lower(),
+                             path.read_text())
+        if count != 1:
+            raise HarnessError(f"{test.tid}: expected one HARNESS_NATIVE_ASM declaration")
+        path.write_text(text)
+
     if test.tid == "corpus/net/tls_connect":
         try:
             loopback = TlsLoopbackPeer(work, args.timeout)
@@ -1595,6 +1666,8 @@ def run_corpus(test: Test, tool: Toolchain, work: Path, args: argparse.Namespace
         where = test.exit_path.name if test.exit_path else "no .exit file, so 0"
         note = " (killed by a signal)" if prog.signalled else ""
         reasons.append(f"exit code {prog.code}{note}, expected {test.exit_code} [{where}]")
+        if prog.stderr:
+            detail.append("actual stderr:\n" + clip(prog.stderr.decode("utf-8", "replace")))
 
     for want in test.stderr_lines:
         if want not in prog.stderr.decode("utf-8", "replace"):

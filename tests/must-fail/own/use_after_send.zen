@@ -1,5 +1,5 @@
-// A consumed message argument is unavailable to the sender even when message
-// lowering later rejects that payload type.
+// An accepted consumed buffer is unavailable to the sender.
+// Deep mailbox transfer does not revive the moved binding.
 
 Worker = {}
 

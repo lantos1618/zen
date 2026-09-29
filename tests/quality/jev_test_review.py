@@ -199,7 +199,7 @@ def evaluate(payload, key, stop):
         except urllib.error.HTTPError as error:
             if error.code in (401, 402, 403):
                 stop.set()
-            if error.code not in (429, 500, 502, 503, 504, 529) or attempt == 4:
+            if error.code not in (429, 500, 502, 503, 504, 520, 529) or attempt == 4:
                 raise RuntimeError('Jev HTTP ' + str(error.code)) from None
             time.sleep(min(30, 2 ** attempt + random.random()))
         except (urllib.error.URLError, TimeoutError):

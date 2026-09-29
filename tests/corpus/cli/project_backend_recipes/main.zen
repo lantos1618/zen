@@ -1,4 +1,4 @@
-project, Action = zen.zen_project
+project, Action, host_target = zen.zen_project
 ProjectArgs = std.build
 
 run = (env: Env, alloc: Alloc, target: str) Res<(), AllocError> {
@@ -14,6 +14,12 @@ run = (env: Env, alloc: Alloc, target: str) Res<(), AllocError> {
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
+    target = host_target(env, alloc).try().ok_or(AllocError.OutOfMemory).try();
+    script = alloc.String(
+        "src/app/build/{}-{}/script.js",
+        target.os.stable_name(),
+        target.arch.stable_name()
+    ).try();
     run(env, alloc, "script").try();
     run(env, alloc, "named_script").try();
     run(env, alloc, "native").try();
@@ -21,7 +27,7 @@ main = (env: Env) Res<i32, AllocError> {
         "script file {}",
         env.fs.read(
             alloc,
-            "src/app/build/linux-x86_64/script.js"
+            script.view()
         ).match({ Ok(_) => true, Err(_) => false })
     );
     println(

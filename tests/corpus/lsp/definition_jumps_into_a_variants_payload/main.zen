@@ -209,7 +209,7 @@ whole_at = (tree: Jsons, array: JsonId, at: usize) usize {
 
 // One decoded token, and THE BYTES IT COVERS — the slice comes back
 // through `source_position`, the conversion this file did not make.
-shown = (line: usize, character: usize, length: usize, colour: usize) () {
+shown = (line: usize, character: usize, length: usize, colour: usize) {
     run  = run_of(DOC, line);
     from = run.start + source_position(DOC, line, character).col - 1;
     upto = run.start + source_position(DOC, line, character + length).col - 1;

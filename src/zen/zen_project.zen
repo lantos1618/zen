@@ -9,7 +9,8 @@ Map, Vec = std.collections
 BuildArgs, ProjectArgs, Emission, Target, Os, Arch, Abi, Dep, Codegen = std.build
 Build = zen.zen_build
 entry_of, holds_build_zen = zen.zen_path
-BuildPlan, ExeNode, plan = zen.zen_build_plan
+BuildPlan, ExeNode, LibNode, plan = zen.zen_build_plan
+resolve, PackageFault = zen.zen_packages
 
 Action* = Build | Run | Test
 
@@ -50,14 +51,70 @@ project_present = (env: Env, a: Alloc, job: ProjectArgs, action: Action)
                 println("zen: build.zen uses an unsupported build expression");
                 Ok(1)
             },
-            Ok(planned)                   => Project(env: env, a: a, job: job, planned: planned).execute(action),
+            Ok(planned)                   => prepare_packages(
+                env,
+                a,
+                job,
+                planned,
+                action
+            ).try().match({
+                None      => Ok(1),
+                Ok(ready) => Project(env: env, a: a, job: job, planned: ready).execute(action),
+            }),
             }),
         }),
     })
 }
 
+// Resolve only dependencies of selected targets, before any compilation.
+prepare_packages = (
+    env     : Env,
+    a       : Alloc,
+    job     : ProjectArgs,
+    planned : BuildPlan,
+    action  : Action
+)
+                   Res<Res<BuildPlan>, AllocError> {
+    ready ::= planned;
+    targets = action.match({ Test => planned.tests, _ => planned.exes });
+    failed ::= false;
+    planned.packages.loop((h, node) {
+        needed = targets.find((exe) {
+            (job.target.is_empty() || exe.name.eq(job.target)) && exe.spec.deps.find((dep) {
+                dep.name.eq(node.name)
+            }).match({ Ok(_) => true, None => false })
+        }).match({ Ok(_) => true, None => false });
+        needed.then(() {
+            resolve(env, a, job.root, node.spec).match({
+                Err(error) => error.match({
+                    OutOfMemory => Err(AllocError.OutOfMemory).try(),
+                    _           => {
+                    message = error.match({
+                        InvalidSpec   => "requires an HTTPS/file URL, full lowercase commit ID and relative source paths",
+                        DirtyCache    => "cached source is modified; restore or remove its build/packages directory",
+                        CacheMismatch => "cache origin or commit differs from the manifest",
+                        MissingSource => "source entry does not exist in the pinned commit",
+                        Unavailable   => "Git or the package cache is unavailable or locked",
+                        _             => "Git fetch/verification failed; check the URL, commit and network (remove an incomplete cache before retrying)",
+                    });
+                    println("zen: package `{}`: {}", node.name, message);
+                    failed = true;
+                    h.break();
+                    },
+                }),
+                Ok(spec)   => ready.libs.add(LibNode(
+                    name: node.name,
+                    spec: spec,
+                    dep: Dep(name: node.name)
+                )).try(),
+            });
+        });
+    });
+    failed.match({ true => Ok(None), false => Ok(Ok(ready)) })
+}
+
 // Detect the machine executing the compiler, rather than assuming Linux/x86.
-host_target = (env: Env, a: Alloc) Res<Res<Target>, AllocError> {
+host_target* = (env: Env, a: Alloc) Res<Res<Target>, AllocError> {
     argv ::= a.Vec<str>();
     argv.add("uname").try();
     argv.add("-sm").try();

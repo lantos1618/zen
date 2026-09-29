@@ -5,12 +5,12 @@
 Box<T, U> = { left: T, right: U }
 Maybe<T, U> = First(T) | Second(U)
 
-bare_box = (value: Box) () {}
-short_box = (value: Box<i32>) () {}
-wide_box = (value: Box<i32, str, bool>) () {}
+bare_box = (value: Box) {}
+short_box = (value: Box<i32>) {}
+wide_box = (value: Box<i32, str, bool>) {}
 
-bare_maybe = (value: Maybe) () {}
-short_maybe = (value: Maybe<i32>) () {}
-wide_maybe = (value: Maybe<i32, str, bool>) () {}
+bare_maybe = (value: Maybe) {}
+short_maybe = (value: Maybe<i32>) {}
+wide_maybe = (value: Maybe<i32, str, bool>) {}
 
 main = (env: Env) Res<i32, AllocError> { Ok(0) }

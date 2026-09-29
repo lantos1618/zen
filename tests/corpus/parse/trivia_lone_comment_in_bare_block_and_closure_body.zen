@@ -32,7 +32,7 @@ Walk = {
     claimed* :: usize = 0,
 }
 
-add = (w :: Walk, run: TriviaRun) () {
+add = (w :: Walk, run: TriviaRun) {
     w.claimed = w.claimed + run.len;
 }
 
@@ -43,7 +43,7 @@ fn_body_of = (d: Decl) Res<BlockId> {
     })
 }
 
-walk_block = (w :: Walk, b: Block) () {
+walk_block = (w :: Walk, b: Block) {
     add(w, b.leading);
     Range(0, b.stmts.len).loop((h, i) {
         b.stmts.get(i).match({

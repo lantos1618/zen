@@ -3,8 +3,20 @@
 Libraries own a capability and expose ordinary Zen values. A library is a
 source module registered in `build.zen`; importing it does not require copying
 its source into the app. The selected executable names its library dependencies.
-Current projects use sibling checkouts with explicit paths; there is no package
-registry, dependency fetching, or lockfile resolver yet.
+Projects can register sibling checkouts with `b.lib`, or use pinned Git sources
+with `b.add`. The manifest itself contains the commit lock. There is no registry,
+semantic-version solver, transitive manifest execution, or `zen add` editor yet.
+See [project dependencies](BUILD_PACKAGES.md) for the implemented API.
+
+`std.fs.posix` owns streaming file descriptors for POSIX targets. `open_read`
+and `create_temporary` take caller-selected allocation; descriptor `read_exact`
+and `write_all` perform complete transfers without allocating, retrying EINTR.
+`size` preserves the cursor on seekable files. Handles have explicit `close`
+lifetimes, and `Fs.remove` removes temporary paths. The pointer-taking read
+requires caller-provided capacity; this is a native boundary, not a checked
+buffer or compiler-enforced descriptor ownership API. The temporary-file
+operation uses `mkstemps` (Darwin/Linux). Rooms owns its upload protocol,
+attachment limits, progress text and preview allowlist; those are not std APIs.
 
 | Library | Responsibility | Public boundary |
 | --- | --- | --- |
@@ -61,3 +73,35 @@ A future generic pollable actor-result channel belongs in std once its
 lifecycle, backpressure and portability contracts are implemented and tested;
 this milestone does not claim that channel exists. Do not move speech policy
 or macOS run-loop behavior into the actor runtime.
+
+### Actor byte-buffer transfer
+
+A direct `Vec<u8>` behavior argument requires `consume`. Admission copies its
+live bytes into a private arena backed by the receiver's `Env.mem`, replaces
+the vector's allocator and capacity, and publishes only after allocation
+succeeds. A refused allocation returns `ActorError.Full` and frees partial
+transfer storage. Closed/count/byte-limit refusals happen before preparation. Admission reserves
+count, bytes and pending work before releasing runtime locks for allocator
+callbacks. Stop waits for those reservations; a stop during preparation rejects
+the send and releases its private storage before running stopped.
+Nested vectors, other element types and borrowed vectors remain rejected.
+The shared `Env.mem` provider and its userdata must outlive the actor and support
+allocation/release from sender and worker threads. Each transfer arena itself
+has one mutator at a time.
+
+The transfer allocator has a stable address and remains live through subsequent
+turns, `stopped`, and actor destruction. The receiver can retain and grow even an
+initially empty vector. Each accepted buffer message currently retains a private
+arena until actor shutdown; this uses ordinary arena page granularity and is not
+a claim of bounded total actor-state memory. Message bytes remain subject to the
+mailbox admission limit. The transfer does not change general owning collection
+storage's unresolved borrow and invalid-set issues.
+
+`tests/quality/actor_buffers.py` exercises the generated runtime under UBSan,
+including corruption/lifetime negative controls, refusal at each preparation
+allocation, refused-allocation cleanup, closed admission without allocation, reentrant callbacks, and stop during
+preparation.
+
+The buffer gate also forces eight native producers to overlap inside preparation,
+checks 512 delivered buffers and each producer's order, grows each receiver buffer,
+and tracks complete reclamation of preparation allocations at shutdown.

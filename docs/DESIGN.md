@@ -76,10 +76,12 @@ So four decisions, all made in week one, all brutal to retrofit:
 **Ship the ownership *syntax* at stage 0** even though nothing checks it. `self :: @Self` and `consume` cost nothing to parse and ignore. Defer the syntax and every line of stdlib written before stage 3 has to be revised; defer only the enforcement and nothing is lost.
 
 **So read the Ownership section below as law, and check the tree before reading
-it as behaviour.** The formatter's current whitespace-only rules live in
+it as behaviour.** The formatter's layout rules and unit-return normalization live in
 `src/fmt/` and are held by `tests/corpus/fmt/`; token-moving match-arm rules
-remain owed. Its `faithful` guard re-lexes the result and refuses any token
-change. Ownership checks cover receiver mutation, consume/use-after-move,
+remain owed. Its `faithful` guard re-lexes the result and refuses token changes except
+AST-identified redundant unit returns on named functions and methods with bodies.
+Bodiless signatures, function types, callback return constraints and unit values
+remain explicit. Other formatting passes still preserve every token. Ownership checks cover receiver mutation, consume/use-after-move,
 copies and partial moves of `Drop` values, and `@scope` exits. Actor lowering
 and a bounded-mailbox runtime have landed, but deep `iso` sendability remains
 law rather than implemented behaviour. What is checked refuses; what is not
@@ -430,8 +432,9 @@ not a checked raw-pointer lifetime or aliasing system. Factories may still retur
 fresh owners. LSP document queries use owner-free views whose lifetime ends when
 the corresponding document is retired.
 
-Owning collection storage remains an unchecked boundary: borrowed insertion,
-replacement destruction and refusal cleanup do not yet satisfy this contract.
+Vec replacement destroys the displaced slot before returning success. Owning
+collection storage remains an unchecked boundary: borrowed insertion and
+refusal cleanup do not yet satisfy this contract.
 The maintained failing cases are in `tests/library/ownership-storage`; owning
 lookup checks must not be presented as end-to-end container ownership safety.
 
@@ -668,7 +671,8 @@ compare = (left: Ptr<()>, right: Ptr<()>) i32 {
 
 It returns a raw `Ptr<()>` containing the function address. The C backend accepts
 only one named, nongeneric free function with a body, explicitly typed immutable
-scalar or pointer parameters, and a scalar, pointer, or unit result. It rejects
+scalar or pointer parameters, and a scalar, pointer, or unit result. An omitted
+return annotation on a function body means unit and is accepted here too. It rejects
 capturing lambdas, local function values, aggregates (including `str`), and
 capability values. A native callback has no hidden `Env` or closure context;
 use the native API's explicit user-data pointer. The caller must supply the
@@ -1047,7 +1051,7 @@ Arena* = {
 Arena.impl(Alloc, { ... })
 
 Arena.impl(Drop, {
-    drop = (self :: @Self) () { /* release every page at once */ }
+    drop = (self :: @Self) { /* release every page at once */ }
 })
 
 
@@ -1310,9 +1314,11 @@ and an incompatible already-typed argument is still rejected.
 // three guarantees replace every lock:
 //   one message at a time per actor -> actor state is single-threaded
 //   causal ordering                 -> A's messages to B arrive in send order
-//   payload checking                -> allocator-backed values are refused
+//   payload checking                -> unsafe graphs are refused
 //
-// Deep val/iso sendability and unique `consume` handoff are still owed.
+// Direct consumed Vec<u8> payloads are deep-copied into receiver-backed
+// storage before admission succeeds; borrowed and nested vectors are refused.
+// General deep val/iso sendability and unique graph handoff are still owed.
 //
 // Callers may stop and join a Ref. Concurrent join callers pin the actor
 // record; shutdown drains accepted work, closes workers, waits for pins and
@@ -1414,6 +1420,7 @@ int add(int a, int b);
 // build files are zen programs; b is the Builder from std.build.
 // b is `::` because b.add / b.exe / b.test mutate the graph
 
+// Design sketch, not the implemented package API: see BUILD_PACKAGES.md.
 // package declarations are plain data at module level, build()
 // wires them into the graph. hash-locked, and the cli edits
 // these lines for you: `zen add json` / `zen remove json`
@@ -1645,24 +1652,25 @@ Foo = {}
 Foo.impl(Actor, {
     // optional lifecycle hooks. println resolves through
     // ctx.env — a Context carries an Env, so one is in scope
-    started ::= (self :: @Self, ctx: Context) () { 
+    started ::= (self :: @Self, ctx: Context) {
         println("actor started") 
     }
-    stopped ::= (self :: @Self, ctx: Context) () { 
+    stopped ::= (self :: @Self, ctx: Context) {
         println("actor stopped") 
     }
 
     // behaviors: calling one on a Ref<Foo> enqueues a message
-    // and returns immediately. allocator-backed payloads are refused;
+    // and returns immediately. Direct str bytes and consumed Vec<u8> buffers
+    // are copied; other allocator-backed payloads are refused;
     // gen_c_actor emits the message record from this signature
-    receive_msg = (self :: @Self, ctx: Context, data: str) () {
+    receive_msg = (self :: @Self, ctx: Context, data: str) {
         println("actor has received {}", data)
     }
 
     // request/response the pony way: the request carries the
     // reply ADDRESS, and the response is just another behavior
     // call. no promise, no await, no second concept
-    compute = (self :: @Self, ctx: Context, n: i32, reply: Ref<Collector>) () {
+    compute = (self :: @Self, ctx: Context, n: i32, reply: Ref<Collector>) {
         reply.result(n + 1);
     }
 })
@@ -1670,7 +1678,7 @@ Foo.impl(Actor, {
 Collector = {}
 
 Collector.impl(Actor, {
-    result = (self :: @Self, ctx: Context, v: i32) () {
+    result = (self :: @Self, ctx: Context, v: i32) {
         println("got {}", v)
     }
 })

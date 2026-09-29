@@ -1,7 +1,7 @@
 Input = { text: str }
 Box = {
     text :: str,
-    put = (self :: @Self, input: Input) () { self.text = input.text; }
+    put = (self :: @Self, input: Input) { self.text = input.text; }
 }
 bad = (env: Env, box :: Box) Res<(), AllocError> {
     a    = env.mem.alloc();

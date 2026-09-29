@@ -193,7 +193,7 @@ flags = (alloc: Alloc, count: usize, value: bool) Res<Vec<bool>, VerifyError> {
 }
 
 // Structural validation has established the bounds of every slot and edge.
-write = (flags :: Vec<bool>, instruction: Instruction) () {
+write = (flags :: Vec<bool>, instruction: Instruction) {
     instruction.match({
         Constant(value)    => { flags.set(value.out, true); },
         Copy(value)        => { flags.set(value.out, true); },

@@ -44,7 +44,11 @@ Vec*<T> = {
 
     set* = (self :: @Self, i: usize, value: T) Res<()> {
         (i < self.len).match({
-            true  => { self.data.write(i, value); Ok(()) },
+            true  => {
+                _ = self.data.take(i);
+                self.data.write(i, value);
+                Ok(())
+            },
             false => None,
         });
     }
@@ -60,7 +64,7 @@ Vec*<T> = {
         Ok(consume value);
     }
 
-    clear* = (self :: @Self) () {
+    clear* = (self :: @Self) {
         loop(self.len > 0, (h) {
             self.take(self.len - 1).match({
                 Ok(value) => { _ = consume value; },

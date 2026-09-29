@@ -1,0 +1,130 @@
+// Pinned Git sources for the project driver. All storage belongs to its arena;
+// dependency code and dependency build scripts are never executed here.
+Alloc, AllocError = std.mem
+str, String = std.text
+Vec, vararg = std.collections
+Package, Lib = std.build
+
+PackageFault* = InvalidSpec
+    | FetchFailed
+    | CacheMismatch
+    | DirtyCache
+    | Unavailable
+    | MissingSource
+PackageError* = PackageFault | AllocError
+
+resolve* = (
+    env     : Env,
+    a       : Alloc,
+    root    : str,
+    package : Package
+) Res<Lib, PackageError> {
+    valid(package).ensure(PackageFault.InvalidSpec).try();
+    cwd      = env.fs.cwd(a).try(PackageFault.Unavailable);
+    absolute = root.starts_with("/").match({
+        true  => a.String(root).try(),
+        false => a.String("{}/{}", cwd.view(), root).try(),
+    });
+    build    = a.String("{}/build", absolute.view()).try();
+    parent   = a.String("{}/packages", build.view()).try();
+    env.fs.mkdir(build.view()).try(PackageFault.Unavailable);
+    env.fs.mkdir(parent.view()).try(PackageFault.Unavailable);
+    path      = a.String("{}/{}", parent.view(), package.rev).try();
+    lock_path = a.String("{}.lock", path.view()).try();
+    held ::= env.fs.lock(lock_path.view()).try(PackageFault.Unavailable);
+    cache   = Cache(env: env, a: a, path: path.view());
+    created = env.fs.mkdir(path.view()).try(PackageFault.Unavailable);
+    created.then(() { cache.fetch(package).try(); });
+    cache.verify(package).try();
+    source = a.String("{}/{}", path.view(), package.src.text).try();
+    (env.fs.exists(source.view()) && !env.fs.is_dir(source.view())).ensure(PackageFault.MissingSource).try();
+    paths ::= a.Vec<str>();
+    package.paths.loop((part) {
+        resolved = a.String("{}/{}", path.view(), part).try();
+        paths.add(resolved.view()).try();
+    });
+    Ok(Lib(src: Path(source.view()), libs: package.libs, paths: paths))
+}
+
+valid = (package: Package) bool {
+    full     = package.rev.len == 40;
+    bad      = Range(0, package.rev.len).find((i) {
+        c = package.rev.index(i);
+        !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))
+    }).match({ Ok(_) => true, None => false });
+    url      = (package.url.starts_with("https://") || package.url.starts_with("file:///"))
+        && !package.url.contains(0) && !package.url.contains('\n') && !package.url.contains('\r');
+    bad_path = package.paths.find(
+        (path) { !relative(path) }
+    ).match({ Ok(_) => true, None => false });
+    full && !bad && url && relative(package.src.text) && !bad_path
+}
+
+relative = (path: str) bool {
+    good ::= !path.is_empty() && !path.starts_with("/") && !path.contains('\\') && !path.contains(0);
+    path.split('/').loop((part) { (part.eq("..") || part.is_empty()).then(() { good = false; }); });
+    good
+}
+
+Cache = {
+    env: Env,
+    a: Alloc,
+    path: str,
+
+    git = (self: @Self, words: vararg<str>) Res<String, PackageError> {
+        args ::= self.a.Vec<str>();
+        args.add("env").try();
+        args.add("GIT_TERMINAL_PROMPT=0").try();
+        args.add("git").try();
+        args.add("-c").try(); args.add("core.hooksPath=/dev/null").try();
+        args.add("-c").try(); args.add("core.fsmonitor=false").try();
+        args.add("-C").try(); args.add(self.path).try();
+        words.loop((word) { args.add(word).try(); });
+        result = self.env.proc.run_argv(
+            self.a,
+            "",
+            args
+        ).try(PackageFault.Unavailable);
+        (result.code == 0).ensure(PackageFault.FetchFailed).try();
+        Ok(result.out)
+    }
+
+    fetch = (self: @Self, package: Package) Res<(), PackageError> {
+        self.git("init", "--quiet", "--template=").try();
+        self.git("remote", "add", "origin", package.url).try();
+        self.git(
+            "fetch",
+            "--quiet",
+            "--depth=1",
+            "--no-tags",
+            "--recurse-submodules=no",
+            "--",
+            package.url,
+            package.rev
+        ).try();
+        fetched = self.git(
+            "rev-parse",
+            "--verify",
+            "FETCH_HEAD^{commit}"
+        ).try();
+        fetched.view().trim().value_or("").eq(package.rev).ensure(PackageFault.CacheMismatch).try();
+        self.git("checkout", "--quiet", "--detach", package.rev, "--").try();
+        Ok(())
+    }
+
+    verify = (self: @Self, package: Package) Res<(), PackageError> {
+        origin = self.git("remote", "get-url", "origin").try();
+        origin.view().trim().value_or("").eq(package.url).ensure(PackageFault.CacheMismatch).try();
+        head = self.git("rev-parse", "--verify", "HEAD^{commit}").try();
+        head.view().trim().value_or("").eq(package.rev).ensure(PackageFault.CacheMismatch).try();
+        status = self.git(
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignored"
+        ).try();
+        status.view().is_empty().ensure(PackageFault.DirtyCache).try();
+        self.git("fsck", "--no-reflogs", "--no-dangling").try();
+        Ok(())
+    }
+}

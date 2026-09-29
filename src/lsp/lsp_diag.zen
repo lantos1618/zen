@@ -49,7 +49,7 @@ WorkspaceTurn = {
 Diagnostics* = {
     roots :: Res<Vec<SourceRoot>> = None,
 
-    set_roots* = (self :: @Self, roots: Vec<SourceRoot>) () {
+    set_roots* = (self :: @Self, roots: Vec<SourceRoot>) {
         self.roots = Ok(roots);
         self.invalidate();
     }
@@ -61,7 +61,7 @@ Diagnostics* = {
     said_arena :: Arena,
     said :: Map<str, str>,
 
-    invalidate* = (self :: @Self) () {
+    invalidate* = (self :: @Self) {
         self.built.invalidate();
         self.dirty = true;
         self.fresh = false;
@@ -210,7 +210,7 @@ Diagnostics* = {
 }
 
 Diagnostics.impl(Drop, {
-    drop = (self :: @Self) () {
+    drop = (self :: @Self) {
         self.built.drop();
         self.said_arena.drop();
     }

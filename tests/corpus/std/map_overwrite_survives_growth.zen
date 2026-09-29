@@ -24,7 +24,7 @@ Key.impl(Eq, {
     eq ::= (self: @Self, other: @Self) bool { self.id == other.id }
 })
 
-show = (m: Map<Key, usize>, id: u64, label: str) () {
+show = (m: Map<Key, usize>, id: u64, label: str) {
     m.get(Key(id: id)).match({
         Ok(v) => println("{} {}", label, v),
         None  => println("{} missing", label),

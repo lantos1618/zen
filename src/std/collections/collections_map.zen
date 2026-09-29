@@ -53,7 +53,7 @@ Map*<K: Eq + Hash, V> = {
         h     : LoopHandle,
         key   : K,
         value : V
-    ) ()) () {
+    ) ()) {
         self.entries.loop((h, e) {
             body(h, e.key, e.value);
         });

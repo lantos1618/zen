@@ -37,7 +37,7 @@ Cand, TBound, Actual, cands_of, exported_cands = sema.sema_cand
 travelled_cands, matches = sema.sema_cand
 ty_at, is_tvar, sig_fits, signature_matches = sema.sema_cand
 omittable_tail, collect_bounds, tail_swallows = sema.sema_cand
-actor_payload_unsafe, contains_drop = sema.sema_copy
+actor_payload_unsafe, actor_byte_buffer, contains_drop = sema.sema_copy
 
 // A recovery signature supplies expected types to argument diagnostics, but
 // it cannot make a call valid when its declared parameters do not match.
@@ -510,7 +510,7 @@ CallCheck = {
         b     : Base,
         found : Vec<Found>
     ) Res<TyId, AllocError> {
-        c.refuse_actor_payloads(b.ty, self.actuals).try();
+        c.refuse_actor_payloads(b.ty, self.actuals, self.call).try();
         (found.len > 0).match({
             true  => {
                 got = self.method(c, ac, b, found).try();
@@ -1411,13 +1411,30 @@ settled_param = (c: Checker, want: TyId) bool {
     (c.is_var(want) || c.is_infer(want) || c.is_unknown(want)) == false
 }
 
-refuse_actor_payloads = (c :: Checker, recv: TyId, actuals: Vec<Actual>)
+actor_consumed_argument = (c: Checker, id: ExprId) bool {
+    c.tree.expr_at(id).kind.match({
+        Consume(_) => true,
+        Paren(p)   => c.actor_consumed_argument(p.inner),
+        _          => false,
+    })
+}
+
+refuse_actor_payloads = (
+    c       :: Checker,
+    recv    : TyId,
+    actuals : Vec<Actual>,
+    call    : Call
+)
                          Res<(), AllocError> {
     c.ref_of_actor(recv).try().match({
         None  => Ok(()),
         Ok(_) => {
-            actuals.loop((h, a) {
-                c.actor_payload_unsafe(a.ty).try().then(() {
+            actuals.loop((h, i, a) {
+                transferred = c.actor_byte_buffer(a.ty) && call.args.get(i).match({
+                    None    => false,
+                    Ok(arg) => c.actor_consumed_argument(arg.value),
+                });
+                (!transferred && c.actor_payload_unsafe(a.ty).try()).then(() {
                     spelling = c.types.name_of(a.ty).try();
                     c.report(
                         a.span.file,

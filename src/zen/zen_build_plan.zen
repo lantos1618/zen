@@ -10,7 +10,7 @@ Ast, ExprId, Expr, Call, Access, Record, Block, Function, Span, Try = std.ast
 nowhere = std.ast
 Stmt, Bind, Member, Field, Module = std.ast
 Checker, Ctx, type_of = sema.sema
-CImport, Lib, Extern, Exe, Dep, Target, Codegen = std.build
+CImport, Lib, Extern, Exe, Dep, Target, Codegen, Package = std.build
 
 PlanFault* = MissingBuild(str)
     | CheckedFaults
@@ -37,6 +37,11 @@ LibNode* = {
     dep*: Dep,
 }
 
+PackageNode* = {
+    name*: str,
+    spec*: Package,
+}
+
 ExternNode* = {
     name*: str,
     spec*: Extern,
@@ -52,6 +57,7 @@ BuildPlan* = {
     target*: Target,
     imports* :: Vec<CImportNode>,
     libs* :: Vec<LibNode>,
+    packages* :: Vec<PackageNode>,
     externs* :: Vec<ExternNode>,
     exes* :: Vec<ExeNode>,
     tests* :: Vec<ExeNode>,
@@ -60,6 +66,7 @@ BuildPlan* = {
 ExecutableRole = Program | Test
 
 Value = UnitValue
+    | BuilderValue
     | TextValue(str)
     | BoolValue(bool)
     | PathValue(Path)
@@ -122,7 +129,10 @@ Executor = {
         node = self.tree.expr_at(id);
         node.kind.match({
             Unit       => Ok(Value.UnitValue),
-            Name(n)    => self.local(n.text, node.span),
+            Name(n)    => n.text.eq(self.builder).match({
+                true  => Ok(Value.BuilderValue),
+                false => self.local(n.text, node.span),
+            }),
             Literal(l) => l.kind.match({
                 Str  => self.text(l.text, node.span),
                 Bool => Ok(Value.BoolValue(l.text.eq("true"))),
@@ -294,9 +304,13 @@ Executor = {
     // memo exists; the checked receiver type is the proof.
     access_call = (self :: @Self, id: ExprId, c: Call, a: Access, at: Span)
                   Res<Value, PlanError> {
-        self.builder_access(a).match({
-            false => self.value_call(c, a, at),
-            true  => self.builder_call(a.name.text, c, at),
+        // Evaluate the receiver once, so chained registrations retain order.
+        (a.name.text.eq("Vec") && c.args.len == 0).match({
+            true  => self.value_call(c, a, at),
+            false => self.eval(a.base).try().match({
+                BuilderValue => self.builder_call(a.name.text, c, at),
+                _            => self.value_call(c, a, at),
+            }),
         })
     }
 
@@ -362,13 +376,6 @@ Executor = {
         })
     }
 
-    builder_access = (self: @Self, a: Access) bool {
-        self.tree.expr_at(a.base).kind.match({
-            Name(n) => n.text.eq(self.builder),
-            _       => false,
-        })
-    }
-
     builder_call = (self :: @Self, name: str, c: Call, at: Span)
                    Res<Value, PlanError> {
         name.match({
@@ -378,6 +385,7 @@ Executor = {
             }),
             "c_import" => self.add_import(c, at),
             "lib"      => self.add_lib(c, at),
+            "add"      => self.add_package(c, at),
             "extern"   => self.add_extern(c, at),
             "exe"      => self.add_exe(c, at, ExecutableRole.Program),
             "exe_test" => self.add_exe(c, at, ExecutableRole.Test),
@@ -425,6 +433,24 @@ Executor = {
         Ok(Value.DepValue(dep))
     }
 
+    add_package = (self :: @Self, c: Call, at: Span) Res<Value, PlanError> {
+        name = self.name_arg(c, at).try();
+        self.unique(name).try();
+        r    = self.record(self.arg(c, 1, at).try()).try();
+        spec = Package(
+            url: self.text_field(r, "url").try(),
+            rev: self.text_field(r, "rev").try(),
+            src: self.path_field(r, "src").try(),
+            libs: self.texts_field(r, "libs").try(),
+            paths: self.texts_field(r, "paths").try()
+        );
+        self.plan.packages.add(PackageNode(
+            name: name,
+            spec: spec
+        )).try(PlanError.OutOfMemory);
+        Ok(Value.DepValue(Dep(name: name)))
+    }
+
     add_extern = (self :: @Self, c: Call, at: Span)
                  Res<Value, PlanError> {
         name = self.name_arg(c, at).try();
@@ -470,7 +496,7 @@ Executor = {
             Test    => self.plan.tests.add(node),
             Program => self.plan.exes.add(node),
         }).try(PlanError.OutOfMemory);
-        Ok(Value.UnitValue)
+        Ok(Value.BuilderValue)
     }
 
     unique = (self: @Self, name: str) Res<(), PlanError> {
@@ -478,6 +504,9 @@ Executor = {
                 Ok(_) => true, None => false,
             })
             || self.plan.libs.find((n) { n.name.eq(name) }).match({
+                Ok(_) => true, None => false,
+            })
+            || self.plan.packages.find((n) { n.name.eq(name) }).match({
                 Ok(_) => true, None => false,
             })
             || self.plan.externs.find((n) { n.name.eq(name) }).match({
@@ -538,6 +567,14 @@ Executor = {
                 }),
                 _        => Err(unsupported(m.span)),
             }),
+        })
+    }
+
+    text_field = (self :: @Self, r: Record, name: str) Res<str, PlanError> {
+        id = self.field(r, name).try();
+        self.eval(id).try().match({
+            TextValue(text) => Ok(text),
+            _               => Err(unsupported(self.tree.expr_at(id).span)),
         })
     }
 
@@ -721,6 +758,7 @@ execute_function = (
             target: target,
             imports: a.Vec<CImportNode>(),
             libs: a.Vec<LibNode>(),
+            packages: a.Vec<PackageNode>(),
             externs: a.Vec<ExternNode>(),
             exes: a.Vec<ExeNode>(),
             tests: a.Vec<ExeNode>()

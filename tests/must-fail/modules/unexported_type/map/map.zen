@@ -8,7 +8,7 @@ Entry = {
 Map* = {
     count* :: i32,
 
-    set* = (self :: @Self, key: i32) () {
+    set* = (self :: @Self, key: i32) {
         e = Entry(hash: key, key: key);
         self.count = self.count + e.key;
     }

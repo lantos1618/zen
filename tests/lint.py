@@ -176,6 +176,13 @@ class Linter:
     # ------------------------------------------------------------- flat form
 
     def check_flat_file(self, kind: str, base: Path, f: Path, suite: str) -> None:
+        if f.name.endswith(".expected.darwin"):
+            base_expected = f.with_name(f.name.removesuffix(".darwin"))
+            if kind == "must-fail" or not base_expected.is_file():
+                self.flag("orphan-expected", f, suite, "platform oracle needs a corpus base oracle", "add the corpus base .expected")
+            else:
+                self.check_corpus(f, base_expected.with_suffix(""), suite)
+            return
         if f.suffix not in KNOWN_SUFFIXES:
             if f.suffix == ".md":
                 # TESTING.md permits one README per AREA directory and says the
@@ -285,7 +292,12 @@ class Linter:
                 )
 
         for aux in d.iterdir():
-            if aux.is_file() and aux.suffix not in KNOWN_SUFFIXES and aux.name not in (
+            if aux.is_file() and aux.name.endswith(".expected.darwin"):
+                if kind == "must-fail" or aux.name != expected.name + ".darwin":
+                    self.flag("orphan-expected", aux, suite, "unsupported platform oracle", "use the corpus base oracle name plus .darwin")
+                else:
+                    self.check_corpus(aux, None, suite, dir_root=d)
+            if aux.is_file() and not aux.name.endswith(".expected.darwin") and aux.suffix not in KNOWN_SUFFIXES and aux.name not in (
                 ".expected", ".exit", ".stderr", ".count", ".stage",
                 ".stdin", ".args", ".env"
             ):

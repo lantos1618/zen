@@ -1,3 +1,4 @@
+HARNESS_NATIVE_ASM* : bool = false
 Build = zen.zen_build
 Generation, Layout = gen.gen
 Codegen = std.build
@@ -48,12 +49,15 @@ run = (
     good: Res<bool> = loop<bool>((h) {
         (build.diag_count() > 0 || check.diag_count() > 0 || faults > 0 || called != 1)
             .then(() { h.break(false); });
+        (backend.match({ Asm => true, _ => false }) && !HARNESS_NATIVE_ASM).then(
+            () { h.break(asm_object(env, a, source_path).try()); }
+        );
         args ::= a.Vec<str>();
         backend.match({
             Js => { args.add("node").try(); args.add(source_path).try(); },
             _  => {
                 compiler ::= a.Vec<str>();
-                [str, 7]("cc", source_path, "-o", "candidate", "-pthread", "-lm", "-pie")
+                [str, 6]("cc", source_path, "-o", "candidate", "-pthread", "-lm")
                     .loop((word) { compiler.add(word).try(); });
                 built = env.proc.run_argv(a, "", compiler).match({
                     Ok(result) => result.code == 0, Err(_) => false,
@@ -121,6 +125,11 @@ c_literal_output = (a: Alloc) Res<String, AllocError> {
 }
 
 main = (env: Env) Res<(), AllocError> {
+    (!HARNESS_NATIVE_ASM).then(
+        () { println(
+            "asm checks assemble ELF objects; execution requires Linux x86_64 GNU"
+        ); }
+    );
     [Codegen, 3](Codegen.C, Codegen.Js, Codegen.Asm).loop((backend) {
         a = env.mem.alloc();
         println(
@@ -177,4 +186,28 @@ main = (env: Env) Res<(), AllocError> {
         );
     });
     Ok(())
+}
+
+// A foreign host validates the real ELF object; execution remains a Linux
+// x86-64 gate, never reported as having run on another instruction set.
+asm_object = (env: Env, a: Alloc, source: str) Res<bool, AllocError> {
+    args ::= a.Vec<str>();
+    ["clang", "--target=x86_64-linux-gnu", "-c", source, "-o", "assembly.o"].loop((word) { args.add(word).try(); });
+    result = env.proc.run_argv(
+        a,
+        "",
+        args
+    ).match({ Ok(r) => r.code == 0, Err(_) => false });
+    (!result).match({
+        true  => Ok(false),
+        false => Ok(env.fs.read(a, "assembly.o").match({
+            Err(_)   => false,
+            Ok(file) => {
+                bytes = file.view();
+                bytes.len >= 20 && bytes.index(0) == 127 && bytes.slice(1, 4).eq("ELF")
+                    && bytes.index(4) == 2 && bytes.index(5) == 1
+                    && bytes.index(18) == 62 && bytes.index(19) == 0
+            },
+        })),
+    })
 }

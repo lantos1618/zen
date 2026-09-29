@@ -2,7 +2,10 @@ FsError = std.env
 Error = FsError | AllocError
 
 main = (env: Env) Res<i32, Error> {
-    text = env.fs.read(env.mem.alloc(), "/proc/self/status").try();
-    println("nonempty {}", !text.is_empty());
+    text = env.fs.read(env.mem.alloc(), "zero-size-input").try();
+    println(
+        "nonempty {}",
+        text.view().eq("zero-sized files still contain bytes\n")
+    );
     Ok(0)
 }

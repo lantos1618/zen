@@ -5,7 +5,7 @@ first = (input: Input, stop: bool) str {
     stop.match({ true => input.text, false => second(input) })
 }
 second = (input: Input) str { first(input, true) }
-put = (box :: Box, input: Input) () { box.text = first(input, false); }
+put = (box :: Box, input: Input) { box.text = first(input, false); }
 bad = (env: Env, box :: Box) Res<(), AllocError> {
     a    = env.mem.alloc();
     text = a.String("temporary").try();

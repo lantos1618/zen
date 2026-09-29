@@ -55,7 +55,7 @@ when_ok* = <T, U>(r: Res<T>, f: (value: T) U) Res<U> {
 // Discard a result whose failure the caller has decided not to act on: a
 // best-effort flush, a log line on a path that is already failing. A bare
 // expression statement would discard it too, but silently.
-ignore* = <T, E>(r: Res<T, E>) () {
+ignore* = <T, E>(r: Res<T, E>) {
     r.match({ Ok(_) => (), Err(_) => () });
 }
 

@@ -3,7 +3,7 @@ Item = {
     read = (self: @Self) i32 { self.id }
 }
 Item.impl(Drop, {
-    drop = (self :: @Self) () { println("drop {}", self.id); }
+    drop = (self :: @Self) { println("drop {}", self.id); }
 })
 main = () i32 {
     item = Item(id: 7);

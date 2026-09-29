@@ -39,6 +39,56 @@ class ParallelRunnerTests(unittest.TestCase):
         source.write_text('const char *name = "math.h";\n')
         self.assertEqual(runner.native_link_args(source), [])
 
+    def test_platform_oracle_preserves_base_and_diagnostic_expectations(self):
+        source = self.root / "main.zen"
+        expected = self.root / "main.expected"
+        expected.write_bytes(b"native\n")
+        expected.with_name("main.expected.darwin").write_bytes(b"cross assembly\n")
+        def collect(kind):
+            return runner._make_test("corpus/fixture", kind, "fixture", source,
+                                     source, expected, None, None, None, None,
+                                     None, False)
+        with patch.object(runner.platform, "system", return_value="Darwin"):
+            self.assertEqual(collect("corpus").expected, b"cross assembly\n")
+            self.assertEqual(collect("must-fail").expected, b"native\n")
+        with patch.object(runner.platform, "system", return_value="Linux"):
+            self.assertEqual(collect("corpus").expected, b"native\n")
+
+    def test_zero_size_fifo_delivers_exact_nonempty_input(self):
+        peer = runner.ZeroSizeFilePeer(self.root)
+        self.addCleanup(peer.close)
+        self.assertEqual(peer.path.stat().st_size, 0)
+        peer.start(2)
+        self.assertEqual(peer.path.read_bytes(), b"zero-sized files still contain bytes\n")
+        self.assertEqual(peer.finish(2), "")
+
+    def test_zero_size_fifo_without_reader_fails(self):
+        peer = runner.ZeroSizeFilePeer(self.root)
+        self.addCleanup(peer.close)
+        peer.start(0.01)
+        peer.thread.join(2)
+        self.assertEqual(peer.finish(2), "FIFO reader did not open")
+
+    def test_openssl_prefix_only_changes_tls_links(self):
+        prefix = self.root / "openssl"
+        (prefix / "lib").mkdir(parents=True)
+        compiler = runner.CCompiler("cc", ["-O2"], "", self.root, 2)
+        source, binary = self.root / "main.c", self.root / "main"
+        with patch.dict(os.environ, {"OPENSSL_ROOT": str(prefix)}), \
+             patch.object(runner, "run_process") as run:
+            compiler.build("plain", source, binary, [])
+            self.assertEqual(run.call_args.args[0], ["cc", "-O2", str(source), "-o", str(binary)])
+            compiler.build("tls", source, binary, ["-lssl", "-lcrypto"])
+            command = run.call_args.args[0]
+            self.assertIn("-L" + str((prefix / "lib").resolve()), command)
+            self.assertIn("-Wl,-rpath," + str((prefix / "lib").resolve()), command)
+            self.assertLess(command.index(str(source)), command.index("-lssl"))
+        with patch.dict(os.environ, {"OPENSSL_ROOT": str(self.root / "missing")}), \
+             patch.object(runner, "run_process") as run:
+            with self.assertRaises(runner.HarnessError):
+                compiler.build("tls", source, binary, ["-lssl"])
+            run.assert_not_called()
+
     def make_test(self, tid):
         source = self.root / (tid.replace("/", "_") + ".zen")
         return runner.Test(tid, tid.split("/")[0], "fixture", source, source,
@@ -59,7 +109,7 @@ class ParallelRunnerTests(unittest.TestCase):
 
     def test_result_cache_hits_skip_execution_and_no_cache_runs_again(self):
         for test in self.tests:
-            test.source.write_text("main = () () {}\n")
+            test.source.write_text("main = () {}\n")
             test.expected_path.write_bytes(test.expected)
         cache = self.root / "verdicts"
         report = self.root / "cached.json"
@@ -79,7 +129,7 @@ class ParallelRunnerTests(unittest.TestCase):
             self.assertEqual(third[2], len(self.tests))
             refresh = self.invoke(*arguments, "--refresh-result-cache")
             self.assertEqual(refresh[2], len(self.tests))
-            self.tests[0].source.write_text("main = () () { changed() }\n")
+            self.tests[0].source.write_text("main = () { changed() }\n")
             changed = self.invoke(*arguments)
             self.assertEqual(changed[2], 1)
             # A cached pass must never hide collection errors outside selection.
@@ -392,7 +442,7 @@ class ResultCacheTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.source = self.root / "case.zen"
-        self.source.write_text("main = () () {}\n")
+        self.source.write_text("main = () {}\n")
         self.expected = self.source.with_suffix(".expected")
         self.expected.write_text("")
         self.test = runner.Test("corpus/fixture/case", runner.CORPUS, "fixture",
@@ -469,7 +519,7 @@ class ResultCacheTests(unittest.TestCase):
             path = self.sources / name
             path.write_text(path.read_text() + "New = {}\n")
             self.assertEqual(self.cache().key(self.test), baseline)
-        self.source.write_text("Api = api\nmain = () () {}\n")
+        self.source.write_text("Api = api\nmain = () {}\n")
         imported = self.cache().key(self.test)
         worker = self.sources / "worker/worker.zen"
         worker.write_text(worker.read_text() + "New = {}\n")
@@ -592,7 +642,7 @@ class ResultCacheTests(unittest.TestCase):
             self.assertEqual(fresh.artifacts, [])
 
     def test_shared_source_snapshots_avoid_repeated_reads_and_reject_midrun_edits(self):
-        self.source.write_text("Api = api\nmain = () () {}\n")
+        self.source.write_text("Api = api\nmain = () {}\n")
         cache = self.cache()
         with patch.object(cache, "file_digest", wraps=cache.file_digest) as digest, \
              patch.object(runner, "sublayers_named_in", wraps=runner.sublayers_named_in) as votes:

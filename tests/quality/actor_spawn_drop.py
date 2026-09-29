@@ -13,7 +13,7 @@ parser.add_argument('--zen', type=Path, required=True)
 parser.add_argument('--std', type=Path, default=ROOT / 'src')
 args = parser.parse_args()
 program = '''Worker = { id: u64 }
-Worker.impl(Drop, { drop = (self :: @Self) () { println("drop {}", self.id); } })
+Worker.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id); } })
 Worker.impl(Actor, { ping = (self :: @Self, ctx: Context) {} })
 make_worker = () Worker { println("constructed"); Worker(id: 42) }
 main = (env: Env) i32 {

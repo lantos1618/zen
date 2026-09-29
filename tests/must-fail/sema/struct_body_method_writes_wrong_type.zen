@@ -4,7 +4,7 @@
 // `self.n = "not an int"` asked whether `str` fits `str`, and it does.
 Thing = {
     n :: i32,
-    bump* = (self :: @Self) () { self.n = "not an int"; }
+    bump* = (self :: @Self) { self.n = "not an int"; }
 }
 
 main* = (env: Env) i32 {

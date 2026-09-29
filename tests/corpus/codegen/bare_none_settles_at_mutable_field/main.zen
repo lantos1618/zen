@@ -2,7 +2,7 @@ State = {
     number :: Res<i32>,
     text   :: Res<str>,
 
-    clear = (self :: @Self) () {
+    clear = (self :: @Self) {
         self.number = None;
         self.text   = None;
     }

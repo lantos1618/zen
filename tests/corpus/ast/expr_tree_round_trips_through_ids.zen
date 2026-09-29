@@ -28,7 +28,7 @@ int_expr = (tree :: Ast, text: str, col: usize) Res<ExprId, AllocError> {
     ))
 }
 
-show = (env: Env, tree: Ast, id: ExprId) () {
+show = (env: Env, tree: Ast, id: ExprId) {
     e = tree.expr_at(id);
     e.kind.match({
         Literal(l) => println("int {} at {}", l.text, e.span.start.col),

@@ -1,0 +1,123 @@
+// POSIX streaming file operations. Descriptors are explicit native handles:
+// the caller closes each opened descriptor exactly once, after its last use.
+// No destructor or copy-ownership guarantee is implied. Paths use caller storage.
+Ptr = std.mem
+c_text, str_at = std.text
+
+Native = c.bind("unistd.h", {
+    read = (fd: i32, bytes: Ptr<u8>, length: usize) i64
+    write = (fd: i32, bytes: Ptr<u8>, length: usize) i64
+    lseek = (fd: i32, offset: i64, whence: i32) i64
+    close = (fd: i32) i32
+    SEEK_CUR: i32
+    SEEK_END: i32
+    SEEK_SET: i32
+})
+Files = c.bind("fcntl.h", {
+    open = (path: Ptr<c_char>, flags: i32) i32
+    O_RDONLY: i32
+})
+Temporary = c.bind("stdlib.h", {
+    mkstemps = (template: Ptr<c_char>, suffix: i32) i32
+})
+Errors = c.bind("errno.h", { errno: i32, EINTR: i32 })
+
+FileError* = InvalidPath
+    | OpenFailed
+    | ReadFailed
+    | UnexpectedEnd
+    | WriteFailed
+    | SeekFailed
+    | CloseFailed
+
+Descriptor* = {
+    fd*: i32,
+
+    // The caller supplies writable storage for length bytes. Empty transfers
+    // do not touch the pointer or descriptor. Interrupted syscalls are retried.
+    read_exact* = (self: @Self, bytes: Ptr<u8>, length: usize) Res<(), FileError> {
+        used: usize ::= 0;
+        loop(used < length, (h) {
+            count = Native.read(self.fd, bytes.offset(used), length - used);
+            (count < 0).match({
+                true  => { (Errors.errno == Errors.EINTR).ensure(
+                    FileError.ReadFailed
+                ).try(); },
+                false => {
+                    (count > 0).ensure(FileError.UnexpectedEnd).try();
+                    n = count.to_usize().ok_or(FileError.ReadFailed).try();
+                    (n <= length - used).ensure(FileError.ReadFailed).try();
+                    used = used + n;
+                },
+            });
+        });
+        Ok(())
+    }
+
+    write_all* = (self: @Self, bytes: str) Res<(), FileError> {
+        used: usize ::= 0;
+        loop(used < bytes.len, (h) {
+            count = Native.write(
+                self.fd,
+                bytes.ptr().offset(used),
+                bytes.len - used
+            );
+            (count < 0).match({
+                true  => { (Errors.errno == Errors.EINTR).ensure(
+                    FileError.WriteFailed
+                ).try(); },
+                false => {
+                    n = count.to_usize().ok_or(FileError.WriteFailed).try();
+                    (n > 0 && n <= bytes.len - used).ensure(
+                        FileError.WriteFailed
+                    ).try();
+                    used = used + n;
+                },
+            });
+        });
+        Ok(())
+    }
+
+    // Seekable files only. Preserve the cursor; callers must serialize access.
+    size* = (self: @Self) Res<usize, FileError> {
+        position = Native.lseek(self.fd, 0, Native.SEEK_CUR);
+        (position >= 0).ensure(FileError.SeekFailed).try();
+        end = Native.lseek(self.fd, 0, Native.SEEK_END);
+        (Native.lseek(self.fd, position, Native.SEEK_SET) == position).ensure(FileError.SeekFailed).try();
+        end.to_usize().ok_or(FileError.SeekFailed)
+    }
+
+    // Do not retry close after EINTR: some systems have already released fd.
+    close* = (self: @Self) Res<(), FileError> {
+        (Native.close(self.fd) == 0).ensure(FileError.CloseFailed)
+    }
+}
+
+open_read* = (a: Alloc, path: str) Res<Descriptor, AllocError | FileError> {
+    (path.len > 0 && !path.contains(0)).ensure(FileError.InvalidPath).try();
+    name = path.c_text(a).try();
+    fd   = Files.open(name.ptr().to<c_char>(), Files.O_RDONLY);
+    (fd >= 0).ensure(FileError.OpenFailed).try();
+    Ok(Descriptor(fd: fd))
+}
+
+TemporaryFile* = { file*: Descriptor, path*: str }
+
+// mkstemps is available on Darwin and Linux. The template must end in six Xs
+// followed by suffix_bytes bytes. The created file is exclusive, mode 0600.
+// The returned NUL-terminated path belongs to a. Caller closes AND removes it.
+create_temporary* = (a: Alloc, template: str, suffix_bytes: usize) Res<TemporaryFile, AllocError
+    | FileError> {
+    (!template.contains(0) && suffix_bytes <= template.len).ensure(FileError.InvalidPath).try();
+    end = template.len - suffix_bytes;
+    (end >= 6).ensure(FileError.InvalidPath).try();
+    (template.slice(end - 6, end) == "XXXXXX").ensure(FileError.InvalidPath).try();
+    suffix = suffix_bytes.to_u64().to_i32().ok_or(FileError.InvalidPath).try();
+    name   = template.c_text(a).try();
+    fd     = Temporary.mkstemps(name.ptr().to<c_char>(), suffix);
+    (fd >= 0).ensure(FileError.OpenFailed).try();
+    Ok(TemporaryFile(
+        file: Descriptor(fd: fd),
+        path: str_at(name.ptr(), template.len)
+    ))
+}

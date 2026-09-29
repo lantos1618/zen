@@ -72,7 +72,7 @@ main = (env: Env) Res<i32, AllocError> {
     Ok(old + captured + direct + invalid)
 }
 
-show_error = (e: ProcError) () {
+show_error = (e: ProcError) {
     e.match({
         SpawnFailed => println("spawn failed"),
         WaitFailed  => println("wait failed"),

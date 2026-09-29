@@ -294,3 +294,22 @@ Recorded here because they are gaps in `DESIGN.md`, not test cases:
 
 1. **`i32.MIN / -1`** is an overflow, not a division by zero. `DESIGN.md` says `/ %` trap on a zero divisor and stops there. It needs a sentence.
 2. **Signed overflow is UB in C**, so the trap has to be checked *before* the operation or via `__builtin_*_overflow`. This constrains `gen_c` and belongs in the design's failure-model section rather than being discovered during stage 0.4.
+
+### Native test dependencies and platform oracles
+
+Set `OPENSSL_ROOT` to an OpenSSL installation prefix when its libraries are
+outside the native linker's default search path. The runner adds its `lib`
+directory and runtime search path only to programs that link TLS. This setting
+disables verdict reuse, so a different OpenSSL installation is actually tested.
+TLS fixtures verify both a trusted localhost connection and a hostname mismatch.
+
+A corpus `.expected.darwin` beside the ordinary `.expected` supplies the macOS
+oracle. It still compiles and runs the test; diagnostic tests cannot override
+expectations this way. The Linux x86_64 GNU assembly backend executes its binaries
+on that host. On macOS the backend fixtures instead cross-assemble every emitted
+program and inspect the ELF architecture, and explicitly print that execution
+requires Linux x86_64 GNU. C and JS programs still execute locally. The project
+recipe test checks the explicit unsupported-target error and absent artifact.
+
+The zero-stat-size file test uses a controlled FIFO with exact nonempty contents,
+so it tests reading through EOF without depending on Linux `/proc`.

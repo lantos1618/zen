@@ -12,7 +12,7 @@ fault_at = (fault: JsonFault) usize {
     })
 }
 
-read_one = (a: Alloc, text: str) () {
+read_one = (a: Alloc, text: str) {
     tree ::= a.Jsons();
     read(a, tree, text).match({
         Ok(_)      => println("read accepted"),

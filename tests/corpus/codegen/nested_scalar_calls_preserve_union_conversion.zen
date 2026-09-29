@@ -1,0 +1,13 @@
+Value = i32 | bool
+identity = (n: i32) i32 { n }
+truth = (value: bool) bool { value }
+read = (value: Value) i32 {
+    value.match({ i32(n) => n, bool(b) => 0 })
+}
+main = () i32 {
+    println("{}", read(identity(42)));
+    println("{}", read(identity(identity(43))));
+    println("{}", read(read(identity(44))));
+    println("{}", read(truth(true)));
+    0
+}

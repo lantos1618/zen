@@ -35,6 +35,21 @@ main = (env: Env) Res<i32, AllocError> {
         self.assertIn("((void *)&", output.read_text())
         self.assertEqual(self.run_c(directory, output).returncode, 0)
 
+    def test_omitted_unit_return_callback(self):
+        directory, output, _ = self.compile(r'''
+Ptr = std.mem
+callback = std.native
+C = c.bind("stdlib.h", { atexit = (handler: Ptr<()>) i32 })
+IO = c.bind("unistd.h", { write = (fd: i32, bytes: Ptr<u8>, count: usize) i64 })
+finished = () {
+    IO.write(1, "unit callback\n".ptr(), 14);
+}
+main = () i32 { C.atexit(callback(finished)) }
+''')
+        result = self.run_c(directory, output)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "unit callback\n")
+
     def test_rejects_capturing_lambda(self):
         self.compile('''
 callback = std.native
@@ -47,13 +62,13 @@ main = () i32 {
 
     def test_rejects_non_abi_functions(self):
         cases = [
-            'f = (env: Env) () {}',
-            'f = (s: str) () {}',
-            'f = (unit: ()) () {}',
+            'f = (env: Env) {}',
+            'f = (s: str) {}',
+            'f = (unit: ()) {}',
             'f = () str { "not a native scalar" }',
-            'f = (x :: i32) () {}',
+            'f = (x :: i32) {}',
             'f = (x: i32) i32',
-            'f<T> = (x: T) () {}',
+            'f<T> = (x: T) {}',
         ]
         for declaration in cases:
             with self.subTest(declaration=declaration):

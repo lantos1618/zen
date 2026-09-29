@@ -1,3 +1,4 @@
+HARNESS_NATIVE_ASM* : bool = false
 // Compare one checked input across both C paths and the other scalar renderers.
 // Each native output is compiled with warnings as errors and undefined-behavior
 // checks, then executed; matching source text alone would not prove parity.
@@ -110,12 +111,15 @@ Case = {
                 text
             ).match({ Ok(_) => true, Err(_) => false });
             (!written).then(() { h.break(false); });
+            (backend.match({ Asm => true, _ => false }) && !HARNESS_NATIVE_ASM).then(
+                () { h.break(asm_object(env, a, source).try()); }
+            );
             args ::= a.Vec<str>();
             backend.match({
                 Js => { args.add("node").try(); args.add(source).try(); },
                 _  => {
                     compiler ::= a.Vec<str>();
-                    [str, 8]("cc", source, "-O2", "-o", "candidate", "-pthread", "-lm", "-pie")
+                    [str, 7]("cc", source, "-O2", "-o", "candidate", "-pthread", "-lm")
                         .loop((word) { compiler.add(word).try(); });
                     backend.match({
                         IrC => [str, 6]("-std=c11", "-Wall", "-Wextra", "-Werror", "-fsanitize=undefined", "-fno-sanitize-recover=all")
@@ -296,6 +300,9 @@ boundaries = (a: Alloc) Res<bool, AllocError> {
 }
 
 main = (env: Env) Res<(), AllocError> {
+    (!HARNESS_NATIVE_ASM).then(
+        () { println("parity executes C and JS; ASM assembles ELF objects"); }
+    );
     a = env.mem.alloc();
     expected ::= a.String(
         "13 4 false true 8 204\n18 8 65 2 3 -13\nfalse true false false true true false\nunit:()\nquoted:\"\\"
@@ -386,4 +393,28 @@ main = (env: Env) Res<(), AllocError> {
     println("IR cycle and arbitrary bytes {}", direct(env, a).try());
     println("allocation and verifier boundaries {}", boundaries(a).try());
     Ok(())
+}
+
+// A foreign host validates the real ELF object; execution remains a Linux
+// x86-64 gate, never reported as having run on another instruction set.
+asm_object = (env: Env, a: Alloc, source: str) Res<bool, AllocError> {
+    args ::= a.Vec<str>();
+    ["clang", "--target=x86_64-linux-gnu", "-c", source, "-o", "assembly.o"].loop((word) { args.add(word).try(); });
+    result = env.proc.run_argv(
+        a,
+        "",
+        args
+    ).match({ Ok(r) => r.code == 0, Err(_) => false });
+    (!result).match({
+        true  => Ok(false),
+        false => Ok(env.fs.read(a, "assembly.o").match({
+            Err(_)   => false,
+            Ok(file) => {
+                bytes = file.view();
+                bytes.len >= 20 && bytes.index(0) == 127 && bytes.slice(1, 4).eq("ELF")
+                    && bytes.index(4) == 2 && bytes.index(5) == 1
+                    && bytes.index(18) == 62 && bytes.index(19) == 0
+            },
+        })),
+    })
 }

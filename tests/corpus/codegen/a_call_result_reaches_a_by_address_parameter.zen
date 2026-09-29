@@ -19,7 +19,7 @@ Box = {
     v :: i32,
 }
 
-fill = (b :: Box, k: i32) () { b.v = k; }
+fill = (b :: Box, k: i32) { b.v = k; }
 
 make = (n: i32) Box { Box(v: n) }
 

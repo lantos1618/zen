@@ -151,7 +151,7 @@ Stream = {
         Ok(self.code.read(0))
     }
 
-    close = (self: @Self) () {
+    close = (self: @Self) {
         child = self.child.read(0);
         zg_os_proc_close(child.out_fd);
         zg_os_proc_close(child.err_fd);

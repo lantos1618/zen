@@ -83,7 +83,7 @@ Pool* = {
         });
         result
     }
-    give* = (self :: @Self, pointer: Ptr<u8>, cache_limit: usize, block_limit: usize, count_limit: usize) () {
+    give* = (self :: @Self, pointer: Ptr<u8>, cache_limit: usize, block_limit: usize, count_limit: usize) {
         (!pointer.is_null()).then(() {
             raw    = pointer.back(HEADER_BYTES);
             header = raw.to<Block>();
@@ -100,7 +100,7 @@ Pool* = {
             });
         });
     }
-    close* = (self :: @Self) () {
+    close* = (self :: @Self) {
         loop(!self.head.is_null(), (h) {
             current            = self.head;
             block              = current.read(0);
@@ -161,7 +161,7 @@ PoolAlloc.impl(Alloc, {
             },
         })
     }
-    free = <T>(self: @Self, pointer: Ptr<T>) () {
+    free = <T>(self: @Self, pointer: Ptr<T>) {
         (!pointer.is_null() && !self.pool.is_null()).then(() {
             state ::= self.pool.read(0);
             state.give(

@@ -124,14 +124,21 @@ def report(files,windows,out):
     for w in windows:
         row=by_path[w['path']];p=out/'responses'/(w['hash']+'.json')
         record=json.loads(p.read_text()) if p.exists() else dict(status='pending')
+        if record['status']=='reviewed':
+            answers=record['response']['answers']
+            actionable=any(answers[k]['choice'] not in ('none_visible','intentional','context_needed') for k in CATEGORIES)
+            severity=answers['severity']['choice']
+            record['classification_conflict']=severity in ('possible_correctness','likely_correctness','maintainability') and not actionable
         row['assessments'].append(dict(start_line=w['start_line'],end_line=w['end_line'],window=w['index'],request_hash=w['hash'],numbered_source=w['payload']['state']['file']['numbered_source'],**record))
     for row in by_path.values():
         if not row['assessments']:continue
         states=Counter(x['status'] for x in row['assessments'])
         row['status']='reviewed' if states['reviewed']==len(row['assessments']) else 'error' if states['error'] else 'pending'
         ranks={'none':0,'maintainability':1,'context_needed':2,'possible_correctness':3,'likely_correctness':4}
-        row['priority']=max((ranks.get(a.get('response',{}).get('answers',{}).get('severity',{}).get('choice'),0) for a in row['assessments']),default=0)
-    rows=sorted(by_path.values(),key=lambda x:(-x.get('priority',-1),x['path']))
+        row['reviewed_windows']=states['reviewed']
+        row['classification_conflict']=any(a.get('classification_conflict') for a in row['assessments'])
+        row['priority']=max((2 if a.get('classification_conflict') else ranks[a['response']['answers']['severity']['choice']] for a in row['assessments'] if a['status']=='reviewed'),default=None)
+    rows=sorted(by_path.values(),key=lambda x:(-(x.get('priority') if x.get('priority') is not None else -1),x['path']))
     summary=dict(files=len(rows),status=dict(Counter(r['status'] for r in rows)),windows=len(windows),window_status=dict(Counter(a['status'] for r in rows for a in r['assessments'])))
     data=dict(model=api.MODEL,endpoint=api.ENDPOINT,summary=summary,questions=QUESTIONS,guidance=GUIDANCE,files=rows)
     api.save(out/'files.json',data)

@@ -27,10 +27,10 @@ Bag = {
     inner :: P = P(),
     tag :: i64 = 5,
 
-    bump* = (self :: @Self, k: i64) () { self.inner.n = self.inner.n + k; }
+    bump* = (self :: @Self, k: i64) { self.inner.n = self.inner.n + k; }
 }
 
-grow = (p :: P, k: i64) () { p.n = p.n + k; }
+grow = (p :: P, k: i64) { p.n = p.n + k; }
 
 main = (env: Env) Res<i32, AllocError> {
     b ::= Bag();

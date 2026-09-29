@@ -1,0 +1,17 @@
+Reader = { read = (self: @Self) i32 }
+TextBox = { value: Reader }
+
+Worker = {}
+
+Worker.impl(Actor, {
+    process = (self :: @Self, ctx: Context, payload: TextBox) {
+        ctx.env.out.println("received")
+    }
+})
+
+forward = (worker: Ref<Worker>, payload: TextBox) Res<(), ActorError> {
+    worker.process(payload).try();
+    Ok(())
+}
+
+main = (env: Env) Res<i32, AllocError> { Ok(0) }

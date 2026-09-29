@@ -1,0 +1,30 @@
+Owner = { id: i32 }
+Owner.impl(Drop, {
+    drop = (self :: @Self) { println("drop {}", self.id); }
+})
+
+main = (env: Env) Res<i32, AllocError> {
+    arena  ::= env.mem.alloc();
+    values ::= arena.Vec<Owner>();
+    first  ::= Owner(id: 1);
+    middle ::= Owner(id: 2);
+    last   ::= Owner(id: 3);
+    values.add(consume first).try();
+    values.add(consume middle).try();
+    values.add(consume last).try();
+    replacement ::= Owner(id: 4);
+    println("replace");
+    values.set(1, consume replacement).ok_or(AllocError.OutOfMemory).try();
+    println("length {}", values.len);
+    again ::= Owner(id: 5);
+    values.set(1, consume again).ok_or(AllocError.OutOfMemory).try();
+    println("clear");
+    values.clear();
+    values.clear();
+    println("length {}", values.len);
+    plain ::= arena.Vec<i32>();
+    plain.add(7).try();
+    plain.set(0, 8).ok_or(AllocError.OutOfMemory).try();
+    println("plain {}", plain.get(0).ok_or(AllocError.OutOfMemory).try());
+    Ok(0)
+}

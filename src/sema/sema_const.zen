@@ -141,12 +141,12 @@ FoldStack = {
     count :: usize,
     result :: Res<i64>,
 
-    finish = (self :: @Self, result: Res<i64>) () {
+    finish = (self :: @Self, result: Res<i64>) {
         self.result = result;
         self.count  = self.count - 1;
     }
 
-    descend = (self :: @Self, id: ExprId) () {
+    descend = (self :: @Self, id: ExprId) {
         (self.count == FOLD_DEPTH).match({
             true  => { self.result = None; },
             false => {
@@ -157,7 +157,7 @@ FoldStack = {
         });
     }
 
-    step = (self :: @Self, c: Checker) () {
+    step = (self :: @Self, c: Checker) {
         at   = self.count - 1;
         node = c.tree.expr_at(self.nodes[at]);
         node.kind.match({
@@ -184,7 +184,7 @@ FoldStack = {
         });
     }
 
-    binary = (self :: @Self, at: usize, b: Binary) () {
+    binary = (self :: @Self, at: usize, b: Binary) {
         self.phases[at].match({
             0 => { self.phases[at] = 1; self.descend(b.lhs); },
             1 => self.result.match({

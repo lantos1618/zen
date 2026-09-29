@@ -34,6 +34,132 @@ class ProjectTests(unittest.TestCase):
                               env={**os.environ, "ZEN_STD": str(ROOT / "src")},
                               capture_output=True, text=True, timeout=90)
 
+    def test_chained_registrations_keep_order_and_select_targets(self):
+        self.build_file('b.exe("app", {src: Path("fail.zen"), deps: []}).try()\n'
+                        ' .exe_test("first", {src: Path("pass.zen"), deps: []}).try()\n'
+                        ' .exe_test("last", {src: Path("pass.zen"), deps: []}).try();')
+        result = self.run_zen("test")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("ok first\nok last", result.stdout)
+        self.assertIn("2 passed, 0 failed", result.stdout)
+        selected = self.run_zen("test", "last")
+        self.assertEqual(selected.returncode, 0, selected.stdout + selected.stderr)
+        self.assertNotIn("ok first", selected.stdout)
+
+    def test_chaining_requires_error_propagation(self):
+        self.build_file('b.exe("app", {src: Path("pass.zen"), deps: []})\n'
+                        ' .exe("other", {src: Path("pass.zen"), deps: []}).try();')
+        result = self.run_zen("build")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("no `exe`", result.stdout)
+
+    def test_chained_duplicate_stops_before_execution(self):
+        self.write("pass.zen", 'main = () { println("must not run"); }\n')
+        self.build_file('b.exe_test("same", {src: Path("pass.zen"), deps: []}).try()\n'
+                        ' .exe_test("same", {src: Path("pass.zen"), deps: []}).try();')
+        result = self.run_zen("test")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertNotIn("must not run", result.stdout)
+
+    def package_repo(self):
+        repo = self.root / "source repository"
+        repo.mkdir()
+        self.git(repo, "init", "--quiet", "--template=")
+        self.git(repo, "config", "user.email", "fixture@example.invalid")
+        self.git(repo, "config", "user.name", "Package fixture")
+        (repo / "sample.zen").write_text('answer* = () i32 { 42 }\nmarker* = 0\n')
+        self.git(repo, "add", "sample.zen")
+        self.git(repo, "commit", "--quiet", "-m", "fixture")
+        return repo, self.git(repo, "rev-parse", "HEAD").strip()
+
+    def git(self, repo, *args):
+        result = subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-C", str(repo), *args],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result.stdout
+
+    def package_manifest(self, repo, rev, src="sample.zen", used=True):
+        self.write("client.zen", 'answer, marker = sample\nmain = () i32 { answer() - 42 }\n')
+        target_src = "client.zen" if used else "pass.zen"
+        deps = "[sample]" if used else "[]"
+        self.build_file(f'sample = b.add("sample", {{url: "{repo.as_uri()}", rev: "{rev}", '
+                        f'src: Path("{src}"), libs: [], paths: []}}).try();\n'
+                        f'b.exe_test("client", {{src: Path("{target_src}"), deps: {deps}}}).try();')
+
+    def test_pinned_package_builds_and_reuses_cache_offline(self):
+        repo, rev = self.package_repo()
+        self.package_manifest(repo, rev)
+        first = self.run_zen("test", "client")
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        cache = self.root / "build/packages" / rev
+        self.assertEqual(self.git(cache, "rev-parse", "HEAD").strip(), rev)
+        repo.rename(repo.with_name("offline repository"))
+        offline = self.run_zen("test", "client")
+        self.assertEqual(offline.returncode, 0, offline.stdout + offline.stderr)
+
+    def test_package_cache_refuses_modified_and_untracked_sources(self):
+        repo, rev = self.package_repo()
+        self.package_manifest(repo, rev)
+        first = self.run_zen("test", "client")
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        cache = self.root / "build/packages" / rev
+        original = (cache / "sample.zen").read_text()
+        for filename in ("sample.zen", "untracked.zen"):
+            with self.subTest(filename=filename):
+                (cache / filename).write_text('answer* = () i32 { 99 }\n')
+                result = self.run_zen("test", "client")
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("cached source is modified", result.stdout)
+                self.assertNotIn("ok client", result.stdout)
+                if filename == "sample.zen":
+                    (cache / filename).write_text(original)
+                else:
+                    (cache / filename).unlink()
+
+    def test_package_refuses_wrong_origin_and_commit(self):
+        repo, rev = self.package_repo()
+        self.package_manifest(repo, rev)
+        first = self.run_zen("test", "client")
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        cache = self.root / "build/packages" / rev
+        self.git(cache, "remote", "set-url", "origin", "https://example.invalid/wrong")
+        result = self.run_zen("test", "client")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("cache origin or commit", result.stdout)
+        self.git(cache, "remote", "set-url", "origin", repo.as_uri())
+        self.git(cache, "-c", "user.email=fixture@example.invalid", "-c", "user.name=Fixture",
+                 "commit", "--allow-empty", "--quiet", "-m", "different commit")
+        result = self.run_zen("test", "client")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("cache origin or commit", result.stdout)
+
+    def test_package_rejects_floating_revisions_and_path_escape(self):
+        repo, rev = self.package_repo()
+        for pin, src in (("main", "sample.zen"), (rev, "../sample.zen"), (rev, "/tmp/sample.zen")):
+            with self.subTest(pin=pin, src=src):
+                self.package_manifest(repo, pin, src)
+                result = self.run_zen("test", "client")
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("full lowercase commit ID", result.stdout)
+                self.assertFalse((self.root / "build/packages").exists())
+
+    def test_missing_package_entry_and_commit_fail(self):
+        repo, rev = self.package_repo()
+        self.package_manifest(repo, rev, "absent.zen")
+        result = self.run_zen("test", "client")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("source entry does not exist", result.stdout)
+        self.package_manifest(repo, "0" * 40)
+        result = self.run_zen("test", "client")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("fetch/verification failed", result.stdout)
+
+    def test_unused_package_does_not_fetch(self):
+        self.package_manifest(self.root / "absent repository", "0" * 40, used=False)
+        result = self.run_zen("test", "client")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((self.root / "build/packages").exists())
+
     def test_failures_continue_and_selection_is_explicit(self):
         self.build_file('b.exe_test("first", {src: Path("pass.zen"), deps: []}).try();\n'
                         'b.exe_test("bad", {src: Path("fail.zen"), deps: []}).try();\n'
@@ -71,8 +197,8 @@ class ProjectTests(unittest.TestCase):
             self.assertIn("no matching executable test targets", result.stdout)
 
     def test_registered_unimported_source_is_checked_before_any_execution(self):
-        self.write("pass.zen", 'main = () () { println("must not run"); }\n')
-        self.write("broken_test.zen", 'main = () () { absent_test_function(); }\n')
+        self.write("pass.zen", 'main = () { println("must not run"); }\n')
+        self.write("broken_test.zen", 'main = () { absent_test_function(); }\n')
         self.build_file('b.exe_test("first", {src: Path("pass.zen"), deps: []}).try();\n'
                         'b.exe_test("broken", {src: Path("broken_test.zen"), deps: []}).try();')
         result = self.run_zen("test")
@@ -82,7 +208,7 @@ class ProjectTests(unittest.TestCase):
         self.assertNotIn("zen test: 2 passed", result.stdout)
 
     def test_trailing_arguments_require_a_separator(self):
-        self.write("args.zen", 'main = (env: Env) () {\n'
+        self.write("args.zen", 'main = (env: Env) {\n'
                    'env.argv.get(1).when_ok((arg) { println("arg {}", arg); });\n}\n')
         self.build_file('b.exe_test("args", {src: Path("args.zen"), deps: []}).try();')
         result = self.run_zen("test", "--", "--help")
@@ -110,7 +236,7 @@ class ProjectTests(unittest.TestCase):
         self.assertNotIn("zen test: 2 passed", result.stdout)
 
     def test_ordinary_build_does_not_execute_or_build_test_targets(self):
-        self.write("broken.zen", 'main = () () { missing(); }\n')
+        self.write("broken.zen", 'main = () { missing(); }\n')
         self.build_file('b.exe("app", {src: Path("pass.zen"), deps: []}).try();\n'
                         'b.exe_test("test", {src: Path("broken.zen"), deps: []}).try();')
         result = self.run_zen("build")

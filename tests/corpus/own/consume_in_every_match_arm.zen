@@ -1,7 +1,7 @@
 // Both alternatives transfer one owner; each selected value drops once.
 Buf = { id: i32 }
-Buf.impl(Drop, { drop = (self :: @Self) () { println("drop {}", self.id); } })
-choose = (left: bool, id: i32) () {
+Buf.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id); } })
+choose = (left: bool, id: i32) {
     value = Buf(id: id);
     kept  = left.match({ true => consume value, false => consume value });
     println("kept {}", kept.id);

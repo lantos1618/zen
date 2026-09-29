@@ -2,6 +2,8 @@
 """Compile the editor and require executed lifecycle tests, including a nonempty suite."""
 
 import argparse
+import json
+import shutil
 from pathlib import Path
 import re
 import subprocess
@@ -13,7 +15,19 @@ def check(project: Path) -> int:
     if not required.is_file():
         print(f"editorcheck: missing required lifecycle suite: {required}", file=sys.stderr)
         return 1
-    compiled = subprocess.run(["npm", "run", "compile"], cwd=project)
+    command = ["npm", "run", "compile"]
+    if shutil.which("npm") is None:
+        # Installed dependencies suffice for this exact script. Never skip
+        # project lifecycle hooks or substitute for a different compile task.
+        scripts = json.loads((project / "package.json").read_text()).get("scripts", {})
+        compiler = project / "node_modules/typescript/bin/tsc"
+        if (scripts.get("compile") != "tsc -p ./" or
+                "precompile" in scripts or "postcompile" in scripts or
+                not compiler.is_file()):
+            print("editorcheck: npm required for this project's compile scripts", file=sys.stderr)
+            return 1
+        command = ["node", str(compiler), "-p", "./"]
+    compiled = subprocess.run(command, cwd=project)
     if compiled.returncode:
         return compiled.returncode
     suites = sorted((project / "test").glob("*.test.cjs"))

@@ -444,7 +444,7 @@ ListRelations = {
         candidate.hi <= self.moved_end
     }
 
-    moved = (self :: @Self, candidate: Cand) () {
+    moved = (self :: @Self, candidate: Cand) {
         (candidate.hi > self.moved_end).then(
             () { self.moved_end = candidate.hi; }
         );

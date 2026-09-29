@@ -117,7 +117,7 @@ Reader* = {
         })
     }
 
-    digits = (self :: @Self) () {
+    digits = (self :: @Self) {
         loop(self.digit_here(), (h) { self.at = self.at + 1; });
         ();
     }
@@ -318,7 +318,7 @@ Reader* = {
         found;
     }
 
-    spaces = (self :: @Self) () {
+    spaces = (self :: @Self) {
         loop(self.space_here(), (h) { self.at = self.at + 1; });
         ();
     }
@@ -352,7 +352,7 @@ Reader* = {
         })
     }
 
-    up = (self :: @Self) () { self.depth = self.depth - 1; }
+    up = (self :: @Self) { self.depth = self.depth - 1; }
 }
 
 // Read one complete value. Non-whitespace after it is a trailing-data fault.

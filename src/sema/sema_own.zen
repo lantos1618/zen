@@ -305,7 +305,7 @@ Own* = {
         self.field_view(text, name).scoped
     }
 
-    taint_root = (self :: @Self, root: usize, value: Provenance) () {
+    taint_root = (self :: @Self, root: usize, value: Provenance) {
         self.vars.get(root).match({
             None    => (),
             Ok(old) => {
@@ -421,7 +421,7 @@ Own* = {
         Ok(());
     }
 
-    assign_provenance = (self :: @Self, root: usize, value: Provenance) () {
+    assign_provenance = (self :: @Self, root: usize, value: Provenance) {
         self.vars.get(root).match({
             None    => (),
             Ok(old) => {
@@ -448,7 +448,7 @@ Own* = {
         Ok(out)
     }
 
-    restore_provenance = (self :: @Self, saved: Vec<Provenance>) () {
+    restore_provenance = (self :: @Self, saved: Vec<Provenance>) {
         saved.loop((h, i, value) { self.assign_provenance(i, value); });
     }
 

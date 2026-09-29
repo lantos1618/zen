@@ -4,7 +4,7 @@
 Counter = {
     n :: i32,
 
-    bump* = (self :: @Self) () { self.n = self.n + 1; }
+    bump* = (self :: @Self) { self.n = self.n + 1; }
     read* = (self: @Self) i32 { self.n }
 }
 

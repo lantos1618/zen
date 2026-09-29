@@ -1,0 +1,10 @@
+replace
+drop 2
+length 3
+drop 4
+clear
+drop 3
+drop 5
+drop 1
+length 0
+plain 8

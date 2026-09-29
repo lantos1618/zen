@@ -25,7 +25,7 @@ IoError = | IsADirectory
 ParseError = | NotANumber
 Trouble = IoError | ParseError
 
-say = (door: str, t: Trouble) () {
+say = (door: str, t: Trouble) {
     t.match({
         ParseError(_) => println("{} parse", door),
         IoError(_)    => println("{} WRONG-TAG", door),

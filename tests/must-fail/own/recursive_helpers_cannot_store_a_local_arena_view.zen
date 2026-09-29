@@ -1,12 +1,12 @@
 Box = { text :: str }
-first = (box :: Box, text: str, again: bool) () {
+first = (box :: Box, text: str, again: bool) {
     again.match({ true => second(
         box,
         text,
         false
     ), false => { box.text = text; } });
 }
-second = (box :: Box, text: str, again: bool) () { first(box, text, again); }
+second = (box :: Box, text: str, again: bool) { first(box, text, again); }
 bad = (env: Env, box :: Box) Res<(), AllocError> {
     a    = env.mem.alloc();
     text = a.String("hello").try();

@@ -156,7 +156,7 @@ member_reaches_set = (
 // so there the answer is always yes.
 settled_member = (be: CBackend, cty: TyId, want: TyId, wide: TyId) bool {
     (be.check.is_unknown(cty) == false) && (cty.eq(wide) == false)
-        && be.is_named_or_res(cty) && be.check.types.set_has(wide, cty)
+        && be.is_stored_member(cty) && be.check.types.set_has(wide, cty)
         && be.variant_carries(want, cty)
 }
 
@@ -170,8 +170,9 @@ variant_carries = (be: CBackend, want: TyId, member: TyId) bool {
     })
 }
 
-is_named_or_res = (be: CBackend, cty: TyId) bool {
+is_stored_member = (be: CBackend, cty: TyId) bool {
     be.check.types.at(cty).match({
+        Prim(p)  => !p.name.eq("()"),
         Named(_) => true,
         Res(_)   => true,
         _        => false,

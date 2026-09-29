@@ -1,0 +1,9 @@
+main = () i32 {
+    zero: i32 = 0;
+    no        = false;
+    yes       = true;
+    println("and {}", no && (8 / zero + 1 + 2 > 0));
+    println("or {}", yes || (8 / zero + 1 + 2 > 0));
+    println("nested {}", no && (yes && (8 / zero + 1 + 2 > 0)));
+    0
+}

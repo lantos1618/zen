@@ -81,7 +81,7 @@ said_legend = (a: Alloc) Res<(), AllocError> {
     Ok(());
 }
 
-one_colour = (colour: Colour) () {
+one_colour = (colour: Colour) {
     println("  {} {}", index_of(colour), colour.variant_name());
 }
 
@@ -260,7 +260,7 @@ shown = (
     length    : usize,
     colour    : usize,
     modifiers : usize
-) () {
+) {
     run  = run_of(DOC, line);
     from = run.start + source_position(DOC, line, character).col - 1;
     upto = run.start + source_position(DOC, line, character + length).col - 1;

@@ -5,7 +5,7 @@ choose = (input: Input, static: bool) Input {
     static.then(() { result.text = "static"; });
     result
 }
-put = (box :: Box, input: Input) () { result = choose(
+put = (box :: Box, input: Input) { result = choose(
     input,
     false
 ); box.text = result.text; }

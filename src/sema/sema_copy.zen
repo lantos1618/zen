@@ -41,6 +41,25 @@ actor_payload_unsafe* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
     })
 }
 
+// Only direct byte buffers have mailbox transfer lowering. Nested containers
+// and buffers of owning elements remain rejected by the recursive policy.
+actor_byte_buffer* = (c: Checker, ty: TyId) bool {
+    c.types.at(ty).match({
+        Named(n) => (c.named_as(
+            n,
+            "Vec",
+            "std.collections.collections_vec"
+        ) && n.args.len == 1).match({
+            false => false,
+            true  => n.args.get(0).match({
+                None  => false,
+                Ok(t) => c.types.at(t).match({ Prim(p) => p.name.eq("u8"), _ => false }),
+            }),
+        }),
+        _        => false,
+    })
+}
+
 // One walk owns cycle detection for an entire payload. Checker remains a
 // mutable argument: type interning and scoped type variables belong to the
 // caller's semantic state, not a copied checker stored in this traversal.
@@ -153,7 +172,18 @@ PayloadWalk = {
             unsafe.then(() { h.break(); });
         });
         c.release_tvars(tmark).try();
-        Ok(unsafe)
+        // A bound carries an implicit receiver and function pointers even
+        // though its declaration has no stored fields.
+        methods ::= false;
+        storage ::= false;
+        s.members.loop((h, m) {
+            m.kind.match({
+                Function(_) => { methods = true; },
+                Field(_)    => { storage = true; },
+                _           => {},
+            });
+        });
+        Ok(unsafe || (self.actor_message() && methods && !storage))
     }
 
     field = (

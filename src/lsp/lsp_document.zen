@@ -11,11 +11,11 @@ Document* = {
     text*: str,
     version* :: Res<i64>,
 
-    revise* = (self :: @Self, version: Res<i64>) () { self.version = version; }
+    revise* = (self :: @Self, version: Res<i64>) { self.version = version; }
 }
 
 Document.impl(Drop, {
-    drop = (self :: @Self) () { self.arena.drop(); }
+    drop = (self :: @Self) { self.arena.drop(); }
 })
 
 Document* = (env: Env, uri: str, text: str, version: Res<i64>)
@@ -68,7 +68,7 @@ Documents* = {
         self.owners.take(index)
     }
 
-    clear* = (self :: @Self) () {
+    clear* = (self :: @Self) {
         self.views.clear();
         self.owners.clear();
     }

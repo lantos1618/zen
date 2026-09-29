@@ -23,7 +23,8 @@ Ctx = sema.sema_check
 type_of = sema.sema_type
 type_from_ast = sema.sema_denote
 sym_local = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
+CBackend, HeldExpression = gen.gen_c.gen_c_state
+init_temp = gen.gen_c.gen_c_flow
 LocalSlot = gen.gen_c.gen_c_frame
 sub, constructed, unsettled = gen.gen_c.gen_c_mono
 has_var = sema.sema_inst
@@ -78,7 +79,9 @@ spills_anywhere* = (be: CBackend, id: ExprId) bool {
         Consume(_) => true,
         Paren(p)   => be.spills_anywhere(p.inner),
         Unary(u)   => be.spills_anywhere(u.operand),
-        Binary(b)  => be.spills_anywhere(b.lhs) || be.spills_anywhere(b.rhs),
+        // Binary spines materialize intermediate results, even when their
+        // operands are pure. Those statements must stay under an &&/|| guard.
+        Binary(_)  => true,
         Access(a)  => be.spills_anywhere(a.base),
         Index(x)   => be.spills_anywhere(x.base) || be.spills_anywhere(x.index),
         Call(c)    => be.call_spills(c),
@@ -531,6 +534,93 @@ res_type_of* = (be :: CBackend, id: ExprId, ctx: Ctx)
 // Value. Required temporaries are emitted before the consuming statement.
 expr* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId, out :: String)
         Res<(), AllocError> {
+    be.held_expression.match({
+        Ok(held) => (held.id.index == id.index).match({
+            true  => be.render_expr(id, ctx, want, out),
+            false => be.sequence_calls(id, ctx, want, out),
+        }),
+        None     => be.sequence_calls(id, ctx, want, out),
+    })
+}
+
+// A chain of single-argument static scalar calls has exactly one evaluation
+// order. Render it from the inside out without retaining a native stack frame
+// per call. Methods, dynamic callees and ownership conversions use the normal
+// argument lowering path.
+sequence_calls = (
+    be   :: CBackend,
+    id   : ExprId,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+)
+                 Res<(), AllocError> {
+    chain ::= be.alloc.Vec<ExprId>();
+    next  ::= id;
+    going ::= true;
+    going.loop((h) {
+        be.scalar_call_child(next, ctx).try().match({
+            None      => { going = false; },
+            Ok(child) => { chain.add(next).try(); next = child; },
+        });
+    });
+    (chain.len < 2).match({
+        true  => be.render_expr(id, ctx, want, out),
+        false => {
+            held    = be.held_expression;
+            unknown = be.check.types.unknown().try();
+            Range(0, chain.len - 1).loop((h, i) {
+                at = chain.get(chain.len - 1 - i).ok_or(AllocError.OutOfMemory).try();
+                ty = be.ty_of(at, ctx, unknown).try();
+                value ::= be.alloc.String().try();
+                be.render_expr(at, ctx, ty, value).try();
+                name = be.init_temp(ty, "call", value.view()).try();
+                be.hold_expression(Ok(HeldExpression(
+                    id: at,
+                    value: name.view()
+                )));
+            });
+            be.render_expr(id, ctx, want, out).try();
+            be.hold_expression(held);
+            Ok(())
+        },
+    })
+}
+
+scalar_call_child = (be :: CBackend, id: ExprId, ctx: Ctx)
+                    Res<Res<ExprId>, AllocError> {
+    be.tree.expr_at(id).kind.match({
+        Call(c) => (c.args.len == 1).match({
+            false => Ok(None),
+            true  => be.tree.expr_at(c.callee).kind.match({
+                Name(_) => be.check.resolved_call(id).match({
+                    None  => Ok(None),
+                    Ok(_) => {
+                        ty        = be.ty_of(
+                            id,
+                            ctx,
+                            be.check.types.unknown().try()
+                        ).try();
+                        primitive = be.check.prim_name(ty);
+                        primitive.is_in([
+                            "i32", "u32", "i64", "u64", "usize", "u8", "bool"
+                        ]).match({
+                            false => Ok(None),
+                            true  => Ok(
+                                c.args.get(0).match({ Ok(a) => Ok(a.value), None => None })
+                            ),
+                        })
+                    },
+                }),
+                _       => Ok(None),
+            }),
+        }),
+        _       => Ok(None),
+    })
+}
+
+render_expr = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId, out :: String)
+              Res<(), AllocError> {
     be.door_of(id, ctx, want).try().match({
         Set   => be.set_expr(id, ctx, want, out),
         Hoist => be.hoist_expr(id, ctx, want, out),
@@ -574,7 +664,20 @@ fat_expr = (
     be.write_fat_value(code.view(), cty, want, out)
 }
 
-value_expr* = (
+// Substitute the evaluated value beneath contextual conversion. Bypassing
+// render_expr would lose tagged-union and bound-value construction at uses.
+value_expr* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId, out :: String)
+              Res<(), AllocError> {
+    be.held_expression.match({
+        Ok(held) => (held.id.index == id.index).match({
+            true  => out.add(held.value),
+            false => be.render_value_expr(id, ctx, want, out),
+        }),
+        None     => be.render_value_expr(id, ctx, want, out),
+    })
+}
+
+render_value_expr = (
     be   :: CBackend,
     id   : ExprId,
     ctx  : Ctx,
@@ -748,6 +851,19 @@ release_moved = (be :: CBackend, id: ExprId) Res<(), AllocError> {
     })
 }
 
+// Parentheses carry grouping in the AST, not another native recursion frame.
+unparen* = (be: CBackend, id: ExprId) ExprId {
+    current ::= id;
+    more    ::= true;
+    loop(more, (h) {
+        be.tree.expr_at(current).kind.match({
+            Paren(p) => { current = p.inner; },
+            _        => { more = false; },
+        });
+    });
+    current
+}
+
 lower_paren = (
     be   :: CBackend,
     id   : ExprId,
@@ -756,7 +872,7 @@ lower_paren = (
     out  :: String
 ) Res<(), AllocError> {
     out.add("(").try();
-    expr(be, id, ctx, want, out).try();
+    expr(be, be.unparen(id), ctx, want, out).try();
     out.add(")").try();
     Ok(());
 }

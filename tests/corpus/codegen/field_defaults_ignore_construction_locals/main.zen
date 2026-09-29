@@ -1,7 +1,7 @@
 Shade = Red | Green
 Box = { shade :: Shade = Green }
 
-main = () () {
+main = () {
     Green = 42;
     box   = Box();
     println("{} {}", Green, box.shade.match({ Red => 0, Green => 1 }));

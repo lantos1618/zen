@@ -111,7 +111,7 @@ faithful_of = (a: Alloc, text: str) Res<bool, AllocError> {
 // the fill rule's whole claim is about where 80 falls, and a golden
 // output nobody can measure by eye pins the shape without pinning the
 // reason.
-show = (text: str) () {
+show = (text: str) {
     line ::= 0;
     from ::= 0;
     Range(0, text.len).loop((h, i) {

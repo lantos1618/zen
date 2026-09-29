@@ -20,7 +20,7 @@ output was checked against hand-computed values before being written to
 Two things worth noting, neither a bug:
 
 1. An assignment statement inside a single-line function body needs its
-   trailing `;` (`grow = (p :: P, k: i64) () { p.n = p.n + k; }`) even though
+   trailing `;` (`grow = (p :: P, k: i64) { p.n = p.n + k; }`) even though
    the last expression in such a body does not. The diagnostic says exactly
    that ("an assignment is a statement, not a value"), so this is the parser
    working as documented -- just easy to trip over when copying Vec method

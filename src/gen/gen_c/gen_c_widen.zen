@@ -79,13 +79,24 @@ error_widens = (be :: CBackend, g: TyRes, w: TyRes) bool {
 // One member reaching a set, never a set reaching a wider one (see
 // header). `set_has` is sema's own containment test — the one that
 // admitted the program — so asking it again cannot disagree.
+// Both sides are asked at their resolved spelling (`set_of`), for the
+// reason `needs_set` gives below: `Res<(), Both>` with `Both = Kind | Fail`
+// names a declaration, and asking the name alone left a `Res<(), Fail>`
+// tail (`.ensure(Fail.Mismatch)`) returned raw into the wider struct.
+// A declared set must also have a variant carrying the member, or there
+// is no tag constant to build with (see `settled_member`).
 member_reaches_set = (be :: CBackend, got: TyId, want: TyId) bool {
     (got.eq(want) == false) && (be.is_set(got) == false)
-        && be.is_set(want) && be.check.types.set_has(want, got)
+        && be.is_set(want)
+        && be.check.types.set_has(be.check.set_of(want), got)
+        && be.variant_carries(want, got)
 }
 
 is_set = (be :: CBackend, ty: TyId) bool {
-    be.check.types.at(ty).match({ Union(_) => true, _ => false })
+    be.check.types.at(be.check.set_of(ty)).match({
+        Union(_) => true,
+        _        => false,
+    })
 }
 
 // The value at its own type, then rebuilt at the wanted one. Lowering

@@ -17,11 +17,15 @@ tests/corpus/errors-widen/one_member_two_targets_retagged -- memoizing "Narrow a
 tests/corpus/errors-widen/alias_retag_chain_translates_tags -- a hop that copies the
     previous hop's tag instead of translating it for `Mid` then `All` lands in the wrong
     final arm; Ok line pins the value, Err line pins the identity.
+tests/corpus/errors-widen/member_tail_reaches_a_named_set -- ask `is_set`/`convert_kind` about the
+    wanted NAME instead of its resolved set: a returned `.ensure(..)`, bare tail call, direct
+    `Err(member)`, typed local, two-member match and argument all emit the narrow struct raw
+    and cc rejects the program.
 
 ## Compiler bugs found (programs admitted by sema, rejected by cc -- no stdout exists,
 so they cannot be encoded as .expected; kept out of corpus per instructions)
 
-ONE ROOT CAUSE, four faces. sema admits widening through a NAMED error-set alias
+FIXED (all four faces; pinned by member_tail_reaches_a_named_set). ONE ROOT CAUSE, four faces. sema admits widening through a NAMED error-set alias
 (`Mid = Narrow | Other`) everywhere via `set_of`/`set_assignable` (`sema_check.zen:644`,
 `sema_try.zen:172`) — "a union is its members", so the alias IS the set. The C backend
 only widens when the wanted type is literally `Ty.Union`: `gen_c_widen.zen:119`

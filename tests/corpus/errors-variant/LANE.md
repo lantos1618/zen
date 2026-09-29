@@ -16,6 +16,7 @@ copies compiles, runs, and prints plausible names.
 | err_raise_inside_loop_exits_the_function | stop .try()'s non-local exit at the loop closure's frame -- main sees Ok(-1), not Over |
 | err_ok_path_survives_the_same_hops | zero the Ok payload slot while rebuilding Res during a re-tagging hop -- 4000000000 arrives as 0 |
 | err_std_write_error_keeps_its_variant | renumber the inner IoError enum when copying WriteError between frames -- Full reads as Closed/Invalid/Interrupted |
+| err_binder_arm_joins_its_set_into_the_match | require equal success payloads before merging arm error sets -- an `Err(e)` arm keeps the first arm's set and cc rejects the stored `Kind` |
 
 ## Compiler bugs found while writing this lane (NOT encoded as expected
 ## output; programs that show them are quoted in the report, kept out of

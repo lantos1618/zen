@@ -1,0 +1,12 @@
+protocol
+authentication
+accepted
+other error
+ok
+kind member
+authentication
+fail member
+ok
+protocol accepted
+authentication refused
+ok refused

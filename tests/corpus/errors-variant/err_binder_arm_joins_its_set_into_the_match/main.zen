@@ -1,0 +1,55 @@
+// AN `Err(e)` ARM STILL CONTRIBUTES ITS ERROR TO THE MATCH'S TYPE. Such an
+// arm says nothing about the success payload, so its `Res` value is
+// unsettled; the arm join demanded equal success payloads before merging
+// error sets and kept the FIRST arm's set instead. `{Err(Io) =>
+// Err(Fail.Mismatch), Err(e) => Err(e)}` was typed `Res<(), Fail>`, the
+// `Kind` from the binder arm was stored into it, and `cc` refused the
+// program. Every arm order and nesting below must join to `Kind | Fail`
+// and read each error back as the member it was raised as.
+
+Kind = Io | Protocol
+Fail = Mismatch | Accepted
+
+kinded = (n: i32) Res<i32, Kind> {
+    n.match({ 0 => Err(Kind.Io), 1 => Err(Kind.Protocol), _ => Ok(n) })
+}
+
+rename_io = (n: i32) Res<(), AllocError | Kind | Fail> {
+    kinded(n).match({ Ok(_) => Ok(()), Err(Io) => Err(Fail.Mismatch), Err(e) => Err(e) }).try();
+    Ok(())
+}
+
+pass_or_refuse = (n: i32) Res<(), AllocError | Kind | Fail> {
+    (n > 0).match({
+        true  => kinded(n).match({ Ok(_) => Ok(()), Err(e) => Err(e) }),
+        false => Err(Fail.Accepted),
+    }).try();
+    Ok(())
+}
+
+name = (r: Res<(), AllocError | Kind | Fail>) str {
+    r.match({
+        Ok(_)         => "ok",
+        Err(Io)       => "io",
+        Err(Protocol) => "protocol",
+        Err(Mismatch) => "mismatch",
+        Err(Accepted) => "accepted",
+        Err(_)        => "other",
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println(
+        "{} {} {}",
+        name(rename_io(0)),
+        name(rename_io(1)),
+        name(rename_io(2))
+    );
+    println(
+        "{} {} {}",
+        name(pass_or_refuse(0)),
+        name(pass_or_refuse(1)),
+        name(pass_or_refuse(2))
+    );
+    Ok(0);
+}

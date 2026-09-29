@@ -88,11 +88,33 @@ PatternSite = {
 
     member_ctor_cond = (self: @Self, be :: CBackend, d: Destructure,
                         mty: TyId, out :: String) Res<(), AllocError> {
+        be.names_member_case(mty, d.name.last_segment()).try().match({
+            true  => self.member_case_cond(be, d, mty, out),
+            false => self.member_leaf_cond(be, d, mty, out),
+        })
+    }
+
+    member_leaf_cond = (self: @Self, be :: CBackend, d: Destructure,
+                        mty: TyId, out :: String) Res<(), AllocError> {
         member = d.name.last_segment();
         self.tag_name(be, member, out).try();
         place ::= be.alloc.String().try();
         be.set_member_place(mty, self.place, place).try();
         self.at(mty, place.view()).leaf_cond(be, d.binder, out)
+    }
+
+    // `Err(Protocol(c))` on `Kind | Fail`, where `Protocol(i32)` is a case
+    // of the member `Kind`: the member tag, then the case tag and payload
+    // inside the member. Read as the member itself, it tested only `Kind`
+    // (so `Io(..)` matched too) and bound `c` to the whole `Kind`.
+    member_case_cond = (self: @Self, be :: CBackend, d: Destructure,
+                        mty: TyId, out :: String) Res<(), AllocError> {
+        leaf ::= be.leaf_name_of(mty).try();
+        self.tag_name(be, leaf, out).try();
+        place ::= be.alloc.String().try();
+        be.set_member_place(mty, self.place, place).try();
+        out.add(" && ").try();
+        self.at(mty, place.view()).plain_ctor_cond(be, d, out)
     }
 
     leaf_cond = (self: @Self, be :: CBackend, pid: PatternId,
@@ -225,8 +247,7 @@ PatternSite = {
     bind_name = (self: @Self, be :: CBackend, q: QualifiedName)
                 Res<(), AllocError> {
         name = q.last_segment();
-        (be.is_variant(self.ty, name) || member_of(be.check, self.ty, name)
-            .match({ Ok(_) => true, None => false })).match({
+        be.names_case(self.ty, name).match({
             true  => Ok(()),
             false => be.bind_local(name, self.ty, self.place),
         })
@@ -272,7 +293,11 @@ PatternSite = {
                         mty: TyId) Res<(), AllocError> {
         place ::= be.alloc.String().try();
         be.set_member_place(mty, self.place, place).try();
-        self.at(mty, place.view()).bind(be, d.binder)
+        member = self.at(mty, place.view());
+        be.names_member_case(mty, d.name.last_segment()).try().match({
+            true  => member.enum_bind_payload(be, d),
+            false => member.bind(be, d.binder),
+        })
     }
 
     bind_inner = (self: @Self, be :: CBackend, d: Destructure, ty: TyId)
@@ -386,12 +411,31 @@ bare_payload = (be :: CBackend, d: Destructure) Res<(), AllocError> {
 // Whether a pattern tests anything at all. A wildcard and a binder match
 // every value, so joining their `1` onto the chain would say nothing;
 // every other shape narrows. This is why `Ok(n)` stays a bare tag test.
+// A bare name on a set is a member or member-case test, never a binder:
+// `Err(Protocol)` on `Res<T, Kind | Fail>` tests the tag, as `bind_name`
+// already assumes when it declines to bind the name.
 narrows = (be :: CBackend, pid: PatternId, st: TyId) bool {
     be.tree.pattern_at(pid).kind.match({
         Wild    => false,
-        Name(p) => be.is_variant(st, p.name.last_segment()),
+        Name(p) => be.names_case(st, p.name.last_segment()),
         _       => true,
     })
+}
+
+// A name `member_of` resolved to `mty` is either the member itself or one
+// of its cases; only a case has its own tag and payload inside the member.
+names_member_case = (be :: CBackend, mty: TyId, name: str)
+                    Res<bool, AllocError> {
+    leaf ::= be.leaf_name_of(mty).try();
+    (leaf.eq(name) == false).match({
+        false => Ok(false),
+        true  => be.check.is_case(mty, name),
+    })
+}
+
+names_case = (be :: CBackend, st: TyId, name: str) bool {
+    be.is_variant(st, name) || member_of(be.check, st, name)
+        .match({ Ok(_) => true, None => false })
 }
 
 // Where a variant's payload lives: the union member under the tag. Both

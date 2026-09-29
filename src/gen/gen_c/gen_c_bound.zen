@@ -27,6 +27,7 @@ enter_struct_tparams = gen.gen_c.gen_c_mono
 ctype, is_unit, request_type, is_ptr_named, declared_ret = gen.gen_c.gen_c_type
 expr, ty_of, value_held, holds = gen.gen_c.gen_c_expr
 write_set_value = gen.gen_c.gen_c_widen
+carrier, wrap_error = gen.gen_c.gen_c_try
 init_temp = gen.gen_c.gen_c_flow
 Site, site_of = gen.gen_c.gen_c_member
 Slot, slots_of = gen.gen_c.gen_c_fat
@@ -52,7 +53,7 @@ convert_kind = (
     out  :: String
 ) Res<(), AllocError> {
     be.types().at(dst).match({
-        Named(n) => be.convert_named(code, dst, n, out),
+        Named(n) => be.convert_declared(code, src, dst, n, out),
         Res(r)   => be.convert_res(code, src, dst, r, out),
         Union(_) => be.convert_set(code, src, dst, out),
         _        => out.add(code),
@@ -88,6 +89,34 @@ tags_as_member = (be :: CBackend, src: TyId, dst: TyId) bool {
     be.types().at(src).match({
         Union(_) => false,
         _        => be.check.types.set_has(dst, src),
+    })
+}
+
+// A member entering a declared set (`Both = Kind | Fail`) is wrapped in
+// the variant that carries it, exactly as `gen_c_widen.set_expr` builds
+// the written form; a bare copy is a `Kind` struct where `Both` is wanted.
+convert_declared = (
+    be   :: CBackend,
+    code : str,
+    src  : TyId,
+    dst  : TyId,
+    n    : TyNamed,
+    out  :: String
+) Res<(), AllocError> {
+    be.declared_carrier(src, dst).match({
+        None  => be.convert_named(code, dst, n, out),
+        Ok(v) => be.wrap_error(dst, v, code, out),
+    })
+}
+
+declared_carrier = (be :: CBackend, src: TyId, dst: TyId) Res<str> {
+    wide = be.check.set_of(dst);
+    be.types().at(wide).match({
+        Union(_) => be.tags_as_member(src, wide).match({
+            false => None,
+            true  => be.carrier(dst, src),
+        }),
+        _        => None,
     })
 }
 

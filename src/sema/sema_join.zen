@@ -90,9 +90,14 @@ merge_against = (c :: Checker, a: TyId, b: TyId, ra: TyRes)
     })
 }
 
+// An `Err(e)` arm says nothing about the success payload, so its value is
+// unsettled; it still contributes its error. Requiring equal values here
+// kept the FIRST arm's error set, so `{Err(Io) => Err(Fail.Mismatch),
+// Err(e) => Err(e)}` typed as `Res<_, Fail>` and a `Kind` was stored into it.
 merge_failures = (c :: Checker, a: TyId, ra: TyRes, rb: TyRes)
                  Res<TyId, AllocError> {
-    (is_failure(ra.form) && is_failure(rb.form) && ra.value.eq(rb.value)
+    (is_failure(ra.form) && is_failure(rb.form)
+     && c.values_agree(ra.value, rb.value)
      && (c.unsettled(ra.error) == false)
      && (c.unsettled(rb.error) == false)).match({
         false => Ok(a),
@@ -100,9 +105,17 @@ merge_failures = (c :: Checker, a: TyId, ra: TyRes, rb: TyRes)
     })
 }
 
+values_agree = (c: Checker, a: TyId, b: TyId) bool {
+    a.eq(b) || c.unsettled(a) || c.unsettled(b)
+}
+
 merged_failure = (c :: Checker, ra: TyRes, rb: TyRes) Res<TyId, AllocError> {
     set = c.types.merge(ra.error, rb.error).try();
-    c.types.res_failure(ra.value, set)
+    c.types.res_failure(c.settled_of(ra.value, rb.value), set)
+}
+
+settled_of = (c: Checker, a: TyId, b: TyId) TyId {
+    c.unsettled(a).match({ true => b, false => a })
 }
 
 // The payload an open `Res` carries, when it carries a settled one.

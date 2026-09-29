@@ -1,0 +1,57 @@
+// A CASE WITH A PAYLOAD UNDER `Err` ON A UNION IS THAT CASE, NOT ITS
+// MEMBER. On `Res<T, Kind | Fail>` with `Kind = Io(i32) | Protocol(i32)`,
+// `Err(Protocol(c))` names the case `Protocol` of the member `Kind`. Codegen
+// read the name as the member it belongs to: the arm tested only the
+// `Kind` tag, so `Err(Protocol(_))` also caught `Io`, and `c` was bound to
+// the whole `Kind` struct. Both payload cases carry an i32, and `Io` is
+// raised with a value `Protocol` never is, so either reading shows up.
+// The declared alias `Both` repeats the pins through a declaration.
+
+Kind = Io(i32) | Protocol(i32)
+Fail = Mismatch | Accepted
+Both = Kind | Fail
+
+pick = (n: i32) Res<i32, Kind | Fail> {
+    n.match({ 0 => Err(Kind.Io(7)), 1 => Err(Kind.Protocol(9)), 2 => Err(Fail.Accepted), _ => Ok(n) })
+}
+
+pick_both = (n: i32) Res<i32, Both> {
+    n.match({ 0 => Err(Kind.Io(7)), 1 => Err(Kind.Protocol(9)), 2 => Err(Fail.Accepted), _ => Ok(n) })
+}
+
+bound = (r: Res<i32, Kind | Fail>) i32 {
+    r.match({ Err(Protocol(c)) => c, Err(Io(c)) => 100 + c, Err(_) => -1, Ok(v) => v })
+}
+
+tested = (r: Res<i32, Kind | Fail>) str {
+    r.match({ Err(Protocol(_)) => "protocol", Err(Kind) => "other kind", Err(_) => "fail", Ok(_) => "ok" })
+}
+
+declared = (r: Res<i32, Both>) i32 {
+    r.match({ Err(Protocol(c)) => c, Err(Io(c)) => 100 + c, Err(_) => -1, Ok(v) => v })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println(
+        "{} {} {} {}",
+        bound(pick(0)),
+        bound(pick(1)),
+        bound(pick(2)),
+        bound(pick(5))
+    );
+    println(
+        "{} {} {} {}",
+        tested(pick(0)),
+        tested(pick(1)),
+        tested(pick(2)),
+        tested(pick(5))
+    );
+    println(
+        "{} {} {} {}",
+        declared(pick_both(0)),
+        declared(pick_both(1)),
+        declared(pick_both(2)),
+        declared(pick_both(5))
+    );
+    Ok(0);
+}

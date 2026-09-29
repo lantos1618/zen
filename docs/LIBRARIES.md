@@ -62,6 +62,22 @@ lifecycle, backpressure and portability contracts are implemented and tested;
 this milestone does not claim that channel exists. Do not move speech policy
 or macOS run-loop behavior into the actor runtime.
 
+## JSON object inspection
+
+`Jsons.member_count(id)` and `Jsons.member(id, index)` expose stored object
+members without allocation or serialization. Enumeration preserves duplicate
+keys and their stored order; `field(id, name)` continues to return the last
+matching value. Keys are decoded borrowed text and share the tree's storage
+lifetime. Non-object values return zero members / `None`; out-of-range member
+indices return `None`. Invalid `JsonId` values retain `at`'s trapping contract.
+
+This capability was extracted from agentfleet's resource-schema validation.
+Agent commands, RPC framing, extension environment variables and package policy
+remain application concerns. General process cancellation, bounded execution
+and atomic filesystem publication need independent lifecycle and portability
+contracts before being added to std; the former agentfleet `proc.c` patch must
+not be applied over the current Zen-owned process implementation.
+
 ## Bounded binary cursors
 
 `std.bytes.ByteReader` and `ByteWriter` borrow a caller-owned `Ptr<u8>` and

@@ -143386,11 +143386,11 @@ static zu_tRes_6bcfd8df54764d06 zu_f4_3std4json10json_write10hex_escapeO2_b2u8t4
         return (zu_tRes_6bcfd8df54764d06){ .zg_tag = zu_e5_3std4core6result3Res3Err, .zg_data.zu_m3Err = zg_t1.zg_data.zu_m3Err };
     }
     zu_tRes_6bcfd8df54764d06 zg_t2;
-    zg_t2 = zu_f5_3std4text11text_string6String3addO2_t4_3std4text11text_string6Stringb2u8(&((*zu_l3out)), zu_f4_3std4core4byte9hex_digitO1_b2u8(zg_div_u8(zu_l1b, 16, "std/json/json_write.zen", 240, 25)));
+    zg_t2 = zu_f5_3std4text11text_string6String3addO2_t4_3std4text11text_string6Stringb2u8(&((*zu_l3out)), zu_f4_3std4core4byte9hex_digitO1_b2u8(zg_div_u8(zu_l1b, 16, "std/json/json_write.zen", 256, 25)));
     if (zg_t2.zg_tag != zu_e5_3std4core6result3Res2Ok) {
         return (zu_tRes_6bcfd8df54764d06){ .zg_tag = zu_e5_3std4core6result3Res3Err, .zg_data.zu_m3Err = zg_t2.zg_data.zu_m3Err };
     }
-    return zu_f5_3std4text11text_string6String3addO2_t4_3std4text11text_string6Stringb2u8(&((*zu_l3out)), zu_f4_3std4core4byte9hex_digitO1_b2u8(zg_mod_u8(zu_l1b, 16, "std/json/json_write.zen", 241, 25)));
+    return zu_f5_3std4text11text_string6String3addO2_t4_3std4text11text_string6Stringb2u8(&((*zu_l3out)), zu_f4_3std4core4byte9hex_digitO1_b2u8(zg_mod_u8(zu_l1b, 16, "std/json/json_write.zen", 257, 25)));
 }
 
 static zu_tRes_6bcfd8df54764d06 zu_f4_3std4json10json_write10write_textO2_b3strt4_3std4text11text_string6String(zg_str zu_l1s, zu_tString_c9a8094f3f89916f *zu_l3out) {
@@ -143467,10 +143467,10 @@ static zu_tRes_6bcfd8df54764d06 zu_f4_3std4json10json_write7escapedO2_b2u8t4_3st
         } else if (!zg_s2) {
             return zu_f5_3std4text11text_string6String3addO2_t4_3std4text11text_string6Stringb2u8(&((*zu_l3out)), zu_l1b);
         } else {
-            zg_unreachable("std/json/json_write.zen", 231, 27);
+            zg_unreachable("std/json/json_write.zen", 247, 27);
         }
     } else {
-        zg_unreachable("std/json/json_write.zen", 225, 7);
+        zg_unreachable("std/json/json_write.zen", 241, 7);
     }
 }
 
@@ -213325,7 +213325,7 @@ static zu_tRes_6bcfd8df54764d06 zu_f5_3std4json10json_write4Nest4nextO2_t4_3std4
     } else if (!zg_s1) {
         return zu_f4_3std4json10json_write7written();
     } else {
-        zg_unreachable("std/json/json_write.zen", 183, 14);
+        zg_unreachable("std/json/json_write.zen", 199, 14);
     }
 }
 
@@ -213368,7 +213368,7 @@ static zu_tRes_6bcfd8df54764d06 zu_f5_3std4json10json_write5Jsons11write_itemsO3
         zg_s10 = zu_l4self;
         zu_tJsonId_18de86585bbec8ec zg_s11;
         zu_tRes_39cae3f3f7304249 zg_s12;
-        zg_s12 = zu_f5_3std11collections15collections_vec3Vec3getO2_t4_3std11collections15collections_vec3VecI1_t4_3std4json10json_write6JsonIdb5usizeI1_t4_3std4json10json_write6JsonId(zu_l4self.zu_m5items, zg_add_usize(zu_l3run.zu_m2at, zu_l1i, "std/json/json_write.zen", 150, 39));
+        zg_s12 = zu_f5_3std11collections15collections_vec3Vec3getO2_t4_3std11collections15collections_vec3VecI1_t4_3std4json10json_write6JsonIdb5usizeI1_t4_3std4json10json_write6JsonId(zu_l4self.zu_m5items, zg_add_usize(zu_l3run.zu_m2at, zu_l1i, "std/json/json_write.zen", 166, 39));
         zg_s11 = zu_f4_3std4core6result8value_orO2_t4_3std4core6result3ResI1_t4_3std4json10json_write6JsonIdt4_3std4json10json_write6JsonIdI1_t4_3std4json10json_write6JsonId(zg_s12, (zu_tJsonId_18de86585bbec8ec){ .zu_m5index = 0 });
         zg_t9 = zu_f5_3std4json10json_write5Jsons5writeO3_t4_3std4json10json_write5Jsonst4_3std4json10json_write6JsonIdt4_3std4text11text_string6String(zg_s10, zg_s11, &((*zu_l3out)));
         if (zg_t9.zg_tag != zu_e5_3std4core6result3Res2Ok) {
@@ -213398,7 +213398,7 @@ static zu_tRes_6bcfd8df54764d06 zu_f5_3std4json10json_write5Jsons11write_pairsO3
         size_t zu_l1i = zg_i6;
         zu_tPair_48f74c29fcc13905 zu_l1p;
         zu_tRes_da1826544519381a zg_s8;
-        zg_s8 = zu_f5_3std11collections15collections_vec3Vec3getO2_t4_3std11collections15collections_vec3VecI1_t4_3std4json10json_write4Pairb5usizeI1_t4_3std4json10json_write4Pair(zu_l4self.zu_m5pairs, zg_add_usize(zu_l3run.zu_m2at, zu_l1i, "std/json/json_write.zen", 160, 39));
+        zg_s8 = zu_f5_3std11collections15collections_vec3Vec3getO2_t4_3std11collections15collections_vec3VecI1_t4_3std4json10json_write4Pairb5usizeI1_t4_3std4json10json_write4Pair(zu_l4self.zu_m5pairs, zg_add_usize(zu_l3run.zu_m2at, zu_l1i, "std/json/json_write.zen", 176, 39));
         zu_l1p = zu_f4_3std4core6result8value_orO2_t4_3std4core6result3ResI1_t4_3std4json10json_write4Pairt4_3std4json10json_write4PairI1_t4_3std4json10json_write4Pair(zg_s8, (zu_tPair_48f74c29fcc13905){ .zu_m3key = (zg_str){ (unsigned char *)"", 0u }, .zu_m5value = (zu_tJsonId_18de86585bbec8ec){ .zu_m5index = 0 } });
         zu_tRes_6bcfd8df54764d06 zg_t9;
         zg_t9 = zu_f5_3std4json10json_write4Nest3keyO3_t4_3std4json10json_write4Nestb3strt4_3std4text11text_string6String(&(zu_l5pairs), zu_l1p.zu_m3key, &((*zu_l3out)));
@@ -213449,16 +213449,16 @@ static zu_tRes_39cae3f3f7304249 zu_f5_3std4json10json_write5Jsons4itemO3_t4_3std
         bool zg_s2;
         zg_s2 = ((zu_l1i < zu_l3run.zu_m3len));
         if (zg_s2) {
-            return zu_f5_3std11collections15collections_vec3Vec3getO2_t4_3std11collections15collections_vec3VecI1_t4_3std4json10json_write6JsonIdb5usizeI1_t4_3std4json10json_write6JsonId(zu_l4self.zu_m5items, zg_add_usize(zu_l3run.zu_m2at, zu_l1i, "std/json/json_write.zen", 89, 48));
+            return zu_f5_3std11collections15collections_vec3Vec3getO2_t4_3std11collections15collections_vec3VecI1_t4_3std4json10json_write6JsonIdb5usizeI1_t4_3std4json10json_write6JsonId(zu_l4self.zu_m5items, zg_add_usize(zu_l3run.zu_m2at, zu_l1i, "std/json/json_write.zen", 105, 48));
         } else if (!zg_s2) {
             return (zu_tRes_39cae3f3f7304249){ .zg_tag = zu_e5_3std4core6result3Res4None };
         } else {
-            zg_unreachable("std/json/json_write.zen", 88, 39);
+            zg_unreachable("std/json/json_write.zen", 104, 39);
         }
     } else if (1) {
         return (zu_tRes_39cae3f3f7304249){ .zg_tag = zu_e5_3std4core6result3Res4None };
     } else {
-        zg_unreachable("std/json/json_write.zen", 87, 21);
+        zg_unreachable("std/json/json_write.zen", 103, 21);
     }
 }
 
@@ -213467,7 +213467,7 @@ static zu_tRes_39cae3f3f7304249 zu_f5_3std4json10json_write5Jsons4scanO3_t4_3std
     zu_l5found = (zu_tJsonId_18de86585bbec8ec){ .zu_m5index = 0 };
     bool zu_l4have;
     zu_l4have = false;
-    zu_tRange_0112d9fe4cb3d21f zg_r1 = (zu_tRange_0112d9fe4cb3d21f){ .zu_m5start = zu_l3run.zu_m2at, .zu_m3end = zg_add_usize(zu_l3run.zu_m2at, zu_l3run.zu_m3len, "std/json/json_write.zen", 76, 30) };
+    zu_tRange_0112d9fe4cb3d21f zg_r1 = (zu_tRange_0112d9fe4cb3d21f){ .zu_m5start = zu_l3run.zu_m2at, .zu_m3end = zg_add_usize(zu_l3run.zu_m2at, zu_l3run.zu_m3len, "std/json/json_write.zen", 92, 30) };
     zu_tRes_ef6b1e51b943ec0f zg_v4 = (zu_tRes_ef6b1e51b943ec0f){ .zg_tag = zu_e5_3std4core6result3Res4None };
     size_t zg_i5;
     size_t zg_n6;
@@ -213504,7 +213504,7 @@ static zu_tRes_39cae3f3f7304249 zu_f5_3std4json10json_write5Jsons4scanO3_t4_3std
     } else if (!zg_s11) {
         return (zu_tRes_39cae3f3f7304249){ .zg_tag = zu_e5_3std4core6result3Res4None };
     } else {
-        zg_unreachable("std/json/json_write.zen", 83, 14);
+        zg_unreachable("std/json/json_write.zen", 99, 14);
     }
 }
 
@@ -213517,7 +213517,7 @@ static zu_tRes_fc731e86de29bf10 zu_f5_3std4json10json_write5Jsons4textO2_t4_3std
     } else if (1) {
         return (zu_tRes_fc731e86de29bf10){ .zg_tag = zu_e5_3std4core6result3Res4None };
     } else {
-        zg_unreachable("std/json/json_write.zen", 97, 21);
+        zg_unreachable("std/json/json_write.zen", 113, 21);
     }
 }
 
@@ -213530,7 +213530,7 @@ static zu_tRes_39cae3f3f7304249 zu_f5_3std4json10json_write5Jsons5fieldO3_t4_3st
     } else if (1) {
         return (zu_tRes_39cae3f3f7304249){ .zg_tag = zu_e5_3std4core6result3Res4None };
     } else {
-        zg_unreachable("std/json/json_write.zen", 67, 21);
+        zg_unreachable("std/json/json_write.zen", 83, 21);
     }
 }
 
@@ -213543,7 +213543,7 @@ static zu_tRes_ef6b1e51b943ec0f zu_f5_3std4json10json_write5Jsons5wholeO2_t4_3st
     } else if (1) {
         return (zu_tRes_ef6b1e51b943ec0f){ .zg_tag = zu_e5_3std4core6result3Res4None };
     } else {
-        zg_unreachable("std/json/json_write.zen", 127, 21);
+        zg_unreachable("std/json/json_write.zen", 143, 21);
     }
 }
 
@@ -213562,7 +213562,7 @@ static zu_tRes_6bcfd8df54764d06 zu_f5_3std4json10json_write5Jsons5writeO3_t4_3st
         } else if (!zg_s3) {
             zg_s2 = (zg_str){ (unsigned char *)"false", 5u };
         } else {
-            zg_unreachable("std/json/json_write.zen", 137, 35);
+            zg_unreachable("std/json/json_write.zen", 153, 35);
         }
         return zu_f5_3std4text11text_string6String3addO2_t4_3std4text11text_string6Stringb3str(&((*zu_l3out)), zg_s2);
     } else if (zg_s1.zg_tag == zu_e5_3std4json10json_write4Json3Num) {
@@ -213578,7 +213578,7 @@ static zu_tRes_6bcfd8df54764d06 zu_f5_3std4json10json_write5Jsons5writeO3_t4_3st
         zu_tRun_911e8e96bc23a749 zu_l3run_2 = zg_s1.zg_data.zu_m3Obj;
         return zu_f5_3std4json10json_write5Jsons11write_pairsO3_t4_3std4json10json_write5Jsonst4_3std4json10json_write3Runt4_3std4text11text_string6String(zu_l4self, zu_l3run_2, &((*zu_l3out)));
     } else {
-        zg_unreachable("std/json/json_write.zen", 135, 21);
+        zg_unreachable("std/json/json_write.zen", 151, 21);
     }
 }
 

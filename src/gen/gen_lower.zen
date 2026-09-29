@@ -382,7 +382,10 @@ Lowering = {
             );
             value     = self.expr(operand).try();
             operation = op.match({ Neg => Ok(UnaryOp.Neg), Not => Ok(UnaryOp.Not), _ => None })
-                .ok_or(unsupported(span, "address-of")).try();
+                .ok_or(unsupported(span, op.match({
+                    BitNot => "bitwise not on unsigned integers",
+                    _      => "address-of",
+                }))).try();
             out       = self.slot(value.ty).try();
             self.add(Instruction.UnaryValue(Unary(
                 out: out.slot,
@@ -413,7 +416,10 @@ Lowering = {
                     LessEq   => Ok(Op.LessEqual),
                     Greater  => Ok(Op.Greater),
                     GreaterEq => Ok(Op.GreaterEqual), _ => None,
-                }).ok_or(unsupported(span, "wrapping arithmetic")).try();
+                }).ok_or(unsupported(span, op.is_bitwise().match({
+                    true  => "bitwise operators on unsigned integers",
+                    false => "wrapping arithmetic",
+                }))).try();
                 left      = self.expr(lhs).try();
                 right     = self.expr(rhs).try();
                 ty        = op.match({ Add => Scalar.I32, Sub => Scalar.I32, Mul => Scalar.I32,

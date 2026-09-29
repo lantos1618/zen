@@ -69,10 +69,19 @@ fixed_array_ahead* = (p :: Parser) bool {
 }
 
 // A `<` opens type arguments only when its matching `>` is followed by `(`;
-// otherwise it is a comparison.
+// otherwise it is a comparison. `<<` is a shift and never opens them.
 targs_ahead* = (p :: Parser) bool {
     j = p.angles_end_at(p.at);
-    (j > p.at) && p.live_kind(j) == TokenKind.ParenOpen
+    !p.shift_ahead() && (j > p.at) && p.live_kind(j) == TokenKind.ParenOpen
+}
+
+// Whether the cursor begins `<<` or `>>`: two of the same angle token with
+// no byte between them. Type arguments keep closing with separate `>` tokens.
+shift_ahead* = (p: Parser) bool {
+    here = p.peek();
+    next = p.peek_next();
+    here.kind.is_in([TokenKind.Lt, TokenKind.Gt]) && next.kind == here.kind
+        && here.span.end.offset == next.span.start.offset
 }
 
 // Index after a balanced group; stream length when it is unclosed.
@@ -207,8 +216,8 @@ ident_shape = (p :: Parser, module_level: bool) ValueShape {
 }
 
 // A plain enum places `|` after the payload; a represented enum places an
-// integer expression between `=` and that bar. `|` is not an expression
-// operator, so the first top-level bar decides.
+// integer expression between `=` and that bar, which the discriminant parse
+// stops at.
 variant_bar_at = (p :: Parser, from: usize) bool {
     kind = p.token_kind_at(from);
     kind == TokenKind.Bar
@@ -265,6 +274,8 @@ closes_value = (p :: Parser, j: usize) bool {
     !p.token_kind_at(j).continues_expr()
 }
 
+// `|` is absent: after a name or generic type it separates the members of a
+// union alias such as `Bytes = Vec<u8> | bool`.
 continues_expr = (kind: TokenKind) bool {
     kind.match({
         Dot         => true,
@@ -286,6 +297,8 @@ continues_expr = (kind: TokenKind) bool {
         GtEq        => true,
         AmpAmp      => true,
         BarBar      => true,
+        Amp         => true,
+        Caret       => true,
         _           => false,
     });
 }
@@ -372,11 +385,76 @@ declares_enum = (p :: Parser, j: usize, kind: TokenKind) bool {
 }
 
 bar_after = (p :: Parser, j: usize) bool {
+    k = p.past_variant(j);
+    p.variant_bar_at(k) && !p.bar_joins_operands(k)
+}
+
+// Whether the cursor begins `Name |` or `Name(..) |`, the shape shared by an
+// enum's variants and a bitwise or of names.
+bar_operands_ahead* = (p :: Parser) bool {
+    p.at_kind(TokenKind.Ident)
+        && p.token_kind_at(p.past_variant(p.at)) == TokenKind.Bar
+}
+
+// The token after a variant-shaped `Name` or `Name(..)` starting at `j`.
+past_variant = (p :: Parser, j: usize) usize {
     k ::= p.live_at(j + 1);
     (p.token_kind_at(k) == TokenKind.ParenOpen).then(() {
         k = p.live_at(p.group_end_at(k));
     });
-    p.variant_bar_at(k)
+    k
+}
+
+// `|` is also bitwise or. Names joined by bars are a variant list unless the
+// run ends at `;` or an operator, or a bar is followed by something only an
+// expression begins with: `mask = low | high;` binds a value, while
+// `Kind = Low | High` declares an enum.
+bar_joins_operands = (p :: Parser, bar: usize) bool {
+    at      ::= bar;
+    joins   ::= false;
+    running ::= p.token_kind_at(bar) == TokenKind.Bar;
+    running.loop((h) {
+        next = p.live_at(at + 1);
+        kind = p.token_kind_at(next);
+        (kind == TokenKind.Ident).match({
+            false => { joins = kind.begins_operand(); running = false; },
+            true  => {
+                at      = p.past_variant(next);
+                running = p.token_kind_at(at) == TokenKind.Bar;
+                (!running).then(() {
+                    joins = p.token_kind_at(at).ends_operands();
+                });
+            },
+        });
+    });
+    joins
+}
+
+// A token that begins an operand but never a variant name.
+begins_operand = (kind: TokenKind) bool {
+    kind.match({
+        Int(_)      => true,
+        Float       => true,
+        Str         => true,
+        Char        => true,
+        True        => true,
+        False       => true,
+        ParenOpen   => true,
+        BracketOpen => true,
+        Bang        => true,
+        Minus       => true,
+        Amp         => true,
+        Tilde       => true,
+        _           => false,
+    });
+}
+
+// A token that ends a bar run as an expression: the statement's `;`, or an
+// operator continuing it. `(` is excluded because a statement may follow a
+// nested enum declaration with one.
+ends_operands = (kind: TokenKind) bool {
+    kind == TokenKind.Semicolon
+        || (kind != TokenKind.ParenOpen && kind.continues_expr())
 }
 
 // Whether a return type begins here rather than the next member head.

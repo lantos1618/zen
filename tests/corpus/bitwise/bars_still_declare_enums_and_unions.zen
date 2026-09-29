@@ -1,0 +1,31 @@
+// `|` keeps declaring enums and unions; in an expression it is bitwise or.
+Color = Red | Green | Blue
+Shape = | Circle(u32) | Square(u32)
+Code = | Low = 1 | High = 2 | Other(u8)
+
+Failure = AllocError | WriteError
+
+LOW: u8  = 0x0F
+HIGH: u8 = 0xF0
+// A written type never belongs to an enum, so this is a constant.
+BOTH: u8 = LOW | HIGH
+
+lookup = () Res<u8, Failure> { Ok(BOTH) }
+
+side = (shape: Shape) u32 {
+    shape.match({ Circle(r) => r, Square(s) => s })
+}
+
+main = () {
+    // A binding ends at `;`, so its value is an expression.
+    mask      = LOW | HIGH;
+    flags: u8 = HIGH | LOW;
+    println("mask: {} {} {}", mask, flags, BOTH);
+    println("shape: {}", side(Shape.Square(7)) | side(Shape.Circle(8)));
+    println("code: {}", Code.High.discriminant());
+    println("union: {}", lookup().match({ Ok(v) => v, Err(_) => 0 }));
+    println(
+        "color: {}",
+        Color.Green.match({ Red => 0, Green => 1, Blue => 2 })
+    );
+}

@@ -11,7 +11,8 @@ Span, Ident, QualifiedName, TriviaRun = std.ast.ast_span
 ExprId, TypeId, PatternId, BlockId, CBindingId = std.ast.ast_id
 Alloc, AllocError = std.mem
 
-// `+ - *` trap on overflow; `+% -% *%` wrap.
+// `+ - *` trap on overflow; `+% -% *%` wrap. `& | ^ << >>` are unsigned bit
+// operations and never trap.
 BinOp* = Add
     | Sub
     | Mul
@@ -28,9 +29,52 @@ BinOp* = Add
     | GreaterEq
     | And
     | Or
+    | BitAnd
+    | BitOr
+    | BitXor
+    | ShiftLeft
+    | ShiftRight
 
-// Unary `!`, `-`, and address-of `&`.
-UnOp* = Not | Neg | Addr
+// The operator as written.
+glyph* = (op: BinOp) str {
+    op.match({
+        Add        => "+",
+        Sub        => "-",
+        Mul        => "*",
+        Div        => "/",
+        Rem        => "%",
+        AddWrap    => "+%",
+        SubWrap    => "-%",
+        MulWrap    => "*%",
+        Equal      => "==",
+        NotEqual   => "!=",
+        Less       => "<",
+        LessEq     => "<=",
+        Greater    => ">",
+        GreaterEq  => ">=",
+        And        => "&&",
+        Or         => "||",
+        BitAnd     => "&",
+        BitOr      => "|",
+        BitXor     => "^",
+        ShiftLeft  => "<<",
+        ShiftRight => ">>",
+    })
+}
+
+is_bitwise* = (op: BinOp) bool {
+    op.is_shift() || op.match({
+        BitAnd => true, BitOr => true, BitXor => true, _ => false,
+    })
+}
+
+// A shift's count is `usize`, not its word's type.
+is_shift* = (op: BinOp) bool {
+    op.match({ ShiftLeft => true, ShiftRight => true, _ => false })
+}
+
+// Unary `!`, `-`, address-of `&`, and bitwise not `~`.
+UnOp* = Not | Neg | Addr | BitNot
 
 // Method forms. Export (`*`) is stored on the member.
 //     Required   `= sig`        impl must provide it

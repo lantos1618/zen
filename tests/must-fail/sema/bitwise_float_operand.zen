@@ -1,0 +1,4 @@
+main = () {
+    ratio: f64 = 1.5;
+    flipped    = ratio ^ ratio;
+}

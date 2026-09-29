@@ -12,7 +12,9 @@ js wide refused true
 js literal width refused true
 js bool entry refused true
 js split refused true
+js bitwise refused true
 asm wide refused true
 asm literal width refused true
 asm bool entry refused true
 asm split refused true
+asm bitwise refused true

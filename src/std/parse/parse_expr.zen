@@ -13,15 +13,30 @@ TokenKind = std.parse.parse_token
 Parser, Mark = std.parse.parser
 type, type_args, written_type = std.parse.parse_type
 lambda_ahead, fixed_array_ahead, targs_ahead, starts_type = std.parse.parse_lookahead
+shift_ahead = std.parse.parse_lookahead
 pattern = std.parse.parse_pattern
 block, body_block = std.parse.parse_stmt
 record_body, params_list, type_params = std.parse.parse_member
 
 // `consume` has the lowest binding strength: `consume a + b` moves the sum.
+// Every nested expression may use `|` again, even inside a discriminant.
 expr* = (p :: Parser) Res<ExprId, AllocError> {
+    outer = p.bar_ends_from(false);
     p.enter().try();
     id = p.expr_guarded().try();
     p.leave();
+    p.bar_ends_until(outer);
+    Ok(id);
+}
+
+// A represented enum's discriminant, which ends at the `|` that begins the
+// next variant: `Headers = 1 | Priority = 2`. Parenthesize a bitwise or.
+expr_before_bar* = (p :: Parser) Res<ExprId, AllocError> {
+    outer = p.bar_ends_from(true);
+    p.enter().try();
+    id = p.expr_guarded().try();
+    p.leave();
+    p.bar_ends_until(outer);
     Ok(id);
 }
 
@@ -46,7 +61,10 @@ consume_expr = (p :: Parser, m: Mark) Res<ExprId, AllocError> {
     p.add_expr(ExprKind.Consume(Consume(operand: operand)), m);
 }
 
-// Binary precedence. Zero means the token is not a binary operator.
+// Binary precedence. Zero means the token is not a binary operator. The
+// bitwise operators share one tier between comparison and arithmetic; that
+// tier only shapes the tree `check_grouping` refuses, because a bitwise
+// operator never combines with a different operator without parentheses.
 precedence = (kind: TokenKind) usize {
     kind.match({
         BarBar    => 1,
@@ -57,17 +75,22 @@ precedence = (kind: TokenKind) usize {
         Gt        => 4,
         LtEq      => 4,
         GtEq      => 4,
-        Plus      => 5,
-        Minus     => 5,
-        PlusWrap  => 5,
-        MinusWrap => 5,
-        Star      => 6,
-        Slash     => 6,
-        Percent   => 6,
-        StarWrap  => 6,
+        Amp       => BITWISE,
+        Bar       => BITWISE,
+        Caret     => BITWISE,
+        Plus      => 6,
+        Minus     => 6,
+        PlusWrap  => 6,
+        MinusWrap => 6,
+        Star      => 7,
+        Slash     => 7,
+        Percent   => 7,
+        StarWrap  => 7,
         _         => 0,
     });
 }
+
+BITWISE: usize = 5
 
 binary_op = (kind: TokenKind) BinOp {
     kind.match({
@@ -79,6 +102,9 @@ binary_op = (kind: TokenKind) BinOp {
         Gt        => BinOp.Greater,
         LtEq      => BinOp.LessEq,
         GtEq      => BinOp.GreaterEq,
+        Amp       => BinOp.BitAnd,
+        Bar       => BinOp.BitOr,
+        Caret     => BinOp.BitXor,
         Plus      => BinOp.Add,
         Minus     => BinOp.Sub,
         PlusWrap  => BinOp.AddWrap,
@@ -91,43 +117,240 @@ binary_op = (kind: TokenKind) BinOp {
     });
 }
 
+// A binary operator at the cursor and the number of tokens it spans.
+Infix = {
+    op: BinOp,
+    prec: usize,
+    tokens: usize,
+}
+
+// `<<` and `>>` are two adjacent angle tokens rather than tokens of their
+// own, so `Res<Ptr<u8>>` closes two type-argument lists without splitting a
+// shift. A represented enum's discriminant stops at the `|` that begins its
+// next variant.
+infix = (p: Parser) Infix {
+    kind = p.peek().kind;
+    p.shift_ahead().match({
+        true  => Infix(
+            op: (kind == TokenKind.Lt).match({
+                true  => BinOp.ShiftLeft,
+                false => BinOp.ShiftRight,
+            }),
+            prec: BITWISE,
+            tokens: 2
+        ),
+        false => Infix(
+            op: kind.binary_op(),
+            prec: (p.bar_ends && kind == TokenKind.Bar).match({
+                true  => 0,
+                false => kind.precedence(),
+            }),
+            tokens: 1
+        ),
+    })
+}
+
 // `min` is the weakest precedence this call absorbs. Recursing at
 // `precedence + 1` makes equal-precedence operators left-associative.
 binary_from = (p :: Parser, m: Mark, min: usize) Res<ExprId, AllocError> {
     lhs     ::= p.unary_at(m).try();
     running ::= true;
     running.loop((h) {
-        prec    = p.peek().kind.precedence();
-        running = prec > 0 && prec >= min;
-        running.then(() { lhs = p.binary_step(m, prec, lhs).try(); });
+        op      = p.infix();
+        running = op.prec > 0 && op.prec >= min;
+        running.then(() { lhs = p.binary_step(m, op, lhs).try(); });
     });
     Ok(lhs);
 }
 
 binary_step = (
-    p    :: Parser,
-    m    : Mark,
-    prec : usize,
-    lhs  : ExprId
+    p   :: Parser,
+    m   : Mark,
+    op  : Infix,
+    lhs : ExprId
 ) Res<ExprId, AllocError> {
-    kind    = p.peek().kind;
-    op_span = p.here_span();
-    p.bump().try();
+    op_span  = p.infix_span(op.tokens).try();
     rhs_mark = p.open();
-    rhs      = p.binary_from(rhs_mark, prec + 1).try();
+    rhs      = p.binary_from(rhs_mark, op.prec + 1).try();
+    p.check_grouping(op.op, op_span, lhs, rhs).try();
     p.add_expr(ExprKind.Binary(Binary(
-        op: kind.binary_op(),
+        op: op.op,
         op_span: op_span,
         lhs: lhs,
         rhs: rhs,
     )), m.bare());
 }
 
+// Consume an operator's tokens; its span covers both halves of `<<`.
+infix_span = (p :: Parser, tokens: usize) Res<Span, AllocError> {
+    first = p.here_span();
+    p.bump().try();
+    (tokens == 2).match({
+        false => Ok(first),
+        true  => {
+            last = p.here_span();
+            p.bump().try();
+            Ok(Span(file: first.file, start: first.start, end: last.end))
+        },
+    })
+}
+
+// A bitwise operator never relies on precedence: beside a different binary
+// operator, or in a chain of shifts, its operand is parenthesized. The
+// diagnostic writes the grouping the parse chose, and also the other grouping
+// when a reader could have meant either.
+check_grouping = (
+    p       :: Parser,
+    op      : BinOp,
+    op_span : Span,
+    lhs     : ExprId,
+    rhs     : ExprId
+) Res<(), AllocError> {
+    p.binary_at(lhs).match({
+        Ok(inner) => p.check_nested(Nested(
+            op: op,
+            op_span: op_span,
+            inner: inner,
+            side: Grouped.Left(rhs),
+        )),
+        None      => Ok(()),
+    }).try();
+    p.binary_at(rhs).match({
+        Ok(inner) => p.check_nested(Nested(
+            op: op,
+            op_span: op_span,
+            inner: inner,
+            side: Grouped.Right(lhs),
+        )),
+        None      => Ok(()),
+    })
+}
+
+// Which side of the outer operator the inner operation sits on, carrying the
+// outer operator's other operand.
+Grouped = Left(ExprId) | Right(ExprId)
+
+// An unparenthesized binary operation that is an operand of another.
+Nested = {
+    op: BinOp,
+    op_span: Span,
+    inner: Binary,
+    side: Grouped,
+}
+
+binary_at = (p: Parser, id: ExprId) Res<Binary> {
+    p.tree.expr_at(id).kind.match({
+        Binary(b) => Ok(b),
+        _         => None,
+    })
+}
+
+check_nested = (p :: Parser, n: Nested) Res<(), AllocError> {
+    same    = n.op.glyph().eq(n.inner.op.glyph());
+    bitwise = n.op.is_bitwise() || n.inner.op.is_bitwise();
+    (same && n.op.is_shift()).match({
+        true  => p.refuse_grouping(n, "shifts do not chain", false, n.op_span),
+        false => (!same && bitwise).match({
+            false => Ok(()),
+            true  => p.refuse_mixing(n),
+        }),
+    })
+}
+
+// Two bitwise operators, or a bitwise operator beside arithmetic, could be
+// meant either way round; beside a comparison or a logical operator only the
+// bitwise operation can be the operand.
+refuse_mixing = (p :: Parser, n: Nested) Res<(), AllocError> {
+    (n.op.is_bitwise() && n.inner.op.is_bitwise()).match({
+        true  => p.refuse_grouping(
+            n,
+            "different bitwise operators need parentheses",
+            true,
+            n.op_span
+        ),
+        false => {
+            other = n.op.is_bitwise().match({ true => n.inner.op, false => n.op });
+            at    = n.op.is_bitwise().match({
+                true  => n.op_span,
+                false => n.inner.op_span,
+            });
+            reason ::= p.alloc.String().try();
+            reason.fmt(
+                "a bitwise operator needs parentheses beside `{}`",
+                other.glyph()
+            ).try();
+            p.refuse_grouping(n, reason.view(), other.is_arithmetic(), at)
+        },
+    })
+}
+
+is_arithmetic = (op: BinOp) bool {
+    op.match({
+        Add     => true,
+        Sub     => true,
+        Mul     => true,
+        Div     => true,
+        Rem     => true,
+        AddWrap => true,
+        SubWrap => true,
+        MulWrap => true,
+        _       => false,
+    })
+}
+
+// The refusal spells the parsed grouping and, with `both`, the other one.
+refuse_grouping = (
+    p      :: Parser,
+    n      : Nested,
+    reason : str,
+    both   : bool,
+    at     : Span
+) Res<(), AllocError> {
+    a = p.snippet(n.inner.lhs);
+    b = p.snippet(n.inner.rhs);
+    o = n.op.glyph();
+    i = n.inner.op.glyph();
+    message ::= p.alloc.String().try();
+    message.fmt("{}: write `", reason).try();
+    n.side.match({
+        Left(right) => {
+            c = p.snippet(right);
+            message.fmt("({} {} {}) {} {}`", a, i, b, o, c).try();
+            both.match({
+                true  => message.fmt(" or `{} {} ({} {} {})`", a, i, b, o, c),
+                false => Ok(()),
+            }).try();
+        },
+        Right(left) => {
+            c = p.snippet(left);
+            message.fmt("{} {} ({} {} {})`", c, o, a, i, b).try();
+            both.match({
+                true  => message.fmt(" or `({} {} {}) {} {}`", c, o, a, i, b),
+                false => Ok(()),
+            }).try();
+        },
+    });
+    p.error_at(message.view(), at)
+}
+
+// An operand's source text for a suggested rewrite; a long or multi-line
+// operand is elided.
+snippet = (p: Parser, id: ExprId) str {
+    text = p.tree.expr_at(id).span.text_in(p.source.text).value_or("...");
+    (text.len > SNIPPET_LIMIT || text.contains('\n')).match({
+        true  => "...",
+        false => text,
+    })
+}
+
+SNIPPET_LIMIT: usize = 40
+
 unary_at = (p :: Parser, m: Mark) Res<ExprId, AllocError> {
     op = p.peek().kind.match({
         Bang  => Ok(UnOp.Not),
         Minus => Ok(UnOp.Neg),
         Amp   => Ok(UnOp.Addr),
+        Tilde => Ok(UnOp.BitNot),
         _     => None,
     });
     op.match({
@@ -198,6 +421,7 @@ starts_expr = (p :: Parser) bool {
         Bang        => true,
         Minus       => true,
         Amp         => true,
+        Tilde       => true,
         Consume     => true,
         _           => false,
     });

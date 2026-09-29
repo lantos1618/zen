@@ -1,0 +1,4 @@
+main = () {
+    count: usize = 3;
+    moved: u64   = 1 << count;
+}

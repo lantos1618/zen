@@ -8,7 +8,7 @@ Cursor = std.lex.lex_cursor
 is_punct* = (b: u8) bool {
     b.is_in([
         '!', '%', '&', '(', ')', '*', '+', ',', '-', '.', '/',
-        ':', ';', '<', '=', '>', '[', ']', '{', '|', '}',
+        ':', ';', '<', '=', '>', '[', ']', '^', '{', '|', '}', '~',
     ])
 }
 
@@ -34,9 +34,11 @@ punct_kind* = (cur :: Cursor, b: u8) Res<TokenKind> {
         '>' => Ok(cur.pair('=', TokenKind.GtEq, TokenKind.Gt)),
         '[' => Ok(cur.solo(TokenKind.BracketOpen)),
         ']' => Ok(cur.solo(TokenKind.BracketClose)),
+        '^' => Ok(cur.solo(TokenKind.Caret)),
         '{' => Ok(cur.solo(TokenKind.BraceOpen)),
         '|' => Ok(cur.pair('|', TokenKind.BarBar, TokenKind.Bar)),
         '}' => Ok(cur.solo(TokenKind.BraceClose)),
+        '~' => Ok(cur.solo(TokenKind.Tilde)),
         _   => None,
     });
 }

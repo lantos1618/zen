@@ -1,4 +1,4 @@
-Binary, BinOp, ExprId, Unary = std.ast
+Binary, BinOp, ExprId, Unary, Span = std.ast
 AllocError = std.mem
 str = std.text
 TyId, is_integer, c_integer, is_float = sema.sema_ty
@@ -14,7 +14,10 @@ operands_agree* = (c :: Checker, b: Binary, lhs: TyId, rhs: TyId)
                   Res<(), AllocError> {
     logical(b.op).match({
         true  => Ok(()),
-        false => c.nonlogical_operands(b, lhs, rhs),
+        false => b.op.is_bitwise().match({
+            true  => c.bitwise_operands(b, lhs, rhs),
+            false => c.nonlogical_operands(b, lhs, rhs),
+        }),
     })
 }
 
@@ -123,6 +126,160 @@ invalid_operator = (c :: Checker, b: Binary, lhs: TyId, rhs: TyId)
             name: "",
             expected: lhs,
             found: rhs
+        ))
+    )
+}
+
+// Bitwise operators act on the bits of one unsigned width. `& | ^` take two
+// operands of the same unsigned type, and a shift moves an unsigned word by a
+// `usize` count. A literal takes the settled side's type and is checked by
+// value; literals alone choose no width, so one side must be settled.
+bitwise_operands = (c :: Checker, b: Binary, lhs: TyId, rhs: TyId)
+                   Res<(), AllocError> {
+    (c.written_operand(b.lhs) && c.written_operand(b.rhs)
+        && c.askable_operand(lhs) && c.askable_operand(rhs)).match({
+        false => Ok(()),
+        true  => b.op.is_shift().match({
+            true  => c.shift_operands(b, lhs, rhs),
+            false => c.same_width_operands(b, lhs, rhs),
+        }),
+    })
+}
+
+same_width_operands = (c :: Checker, b: Binary, lhs: TyId, rhs: TyId)
+                      Res<(), AllocError> {
+    c.is_literal_ty(lhs).match({
+        true  => c.is_literal_ty(rhs).match({
+            true  => c.untyped_bits(b.op_span, b.op.glyph(), lhs),
+            false => c.literal_beside_word(b.lhs, b.rhs, rhs, b.op.glyph()),
+        }),
+        false => c.is_literal_ty(rhs).match({
+            true  => c.literal_beside_word(b.rhs, b.lhs, lhs, b.op.glyph()),
+            false => c.settled_words(b, lhs, rhs),
+        }),
+    })
+}
+
+literal_beside_word = (
+    c       :: Checker,
+    literal : ExprId,
+    settled : ExprId,
+    word    : TyId,
+    glyph   : str
+) Res<(), AllocError> {
+    c.unsigned_word(word).match({
+        true  => c.check_literal(literal, word),
+        false => c.not_a_word(settled, word, glyph),
+    })
+}
+
+settled_words = (c :: Checker, b: Binary, lhs: TyId, rhs: TyId)
+                Res<(), AllocError> {
+    glyph = b.op.glyph();
+    (c.unsigned_word(lhs) && c.unsigned_word(rhs)).match({
+        true  => lhs.eq(rhs).match({
+            true  => Ok(()),
+            false => c.report(
+                b.op_span.file,
+                b.op_span,
+                SemaFault.BitwiseWidths(TypeFault(
+                    name: glyph,
+                    expected: lhs,
+                    found: rhs
+                ))
+            ),
+        }),
+        // One refusal per operator: the left operand when it is wrong.
+        false => c.unsigned_word(lhs).match({
+            true  => c.not_a_word(b.rhs, rhs, glyph),
+            false => c.not_a_word(b.lhs, lhs, glyph),
+        }),
+    })
+}
+
+shift_operands = (c :: Checker, b: Binary, lhs: TyId, rhs: TyId)
+                 Res<(), AllocError> {
+    glyph = b.op.glyph();
+    c.is_literal_ty(lhs).match({
+        true  => c.untyped_bits(b.op_span, glyph, lhs),
+        false => c.unsigned_word(lhs).match({
+            true  => c.shift_count(b, rhs, glyph),
+            false => c.not_a_word(b.lhs, lhs, glyph),
+        }),
+    })
+}
+
+shift_count = (c :: Checker, b: Binary, rhs: TyId, glyph: str)
+              Res<(), AllocError> {
+    count = c.types.prim("usize").try();
+    c.is_literal_ty(rhs).match({
+        true  => c.check_literal(b.rhs, count),
+        false => c.prim_name(rhs).eq("usize").match({
+            true  => Ok(()),
+            false => c.bad_shift_count(b.rhs, count, rhs, glyph),
+        }),
+    })
+}
+
+bad_shift_count = (
+    c     :: Checker,
+    id    : ExprId,
+    count : TyId,
+    found : TyId,
+    glyph : str
+) Res<(), AllocError> {
+    at = c.tree.expr_at(id).span;
+    c.report(
+        at.file,
+        at,
+        SemaFault.ShiftCount(TypeFault(
+            name: glyph,
+            expected: count,
+            found: found
+        ))
+    )
+}
+
+// `~` keeps its operand's unsigned type.
+check_bit_not* = (c :: Checker, u: Unary, inner: TyId)
+                 Res<TyId, AllocError> {
+    (c.askable_operand(inner) == false || c.unsigned_word(inner)).match({
+        true  => Ok(()),
+        false => c.is_literal_ty(inner).match({
+            true  => c.untyped_bits(u.op_span, "~", inner),
+            false => c.not_a_word(u.operand, inner, "~"),
+        }),
+    }).try();
+    Ok(inner)
+}
+
+unsigned_word* = (c: Checker, ty: TyId) bool {
+    c.prim_name(ty).is_in(["u8", "u16", "u32", "u64", "usize"])
+}
+
+not_a_word = (c :: Checker, id: ExprId, ty: TyId, glyph: str)
+             Res<(), AllocError> {
+    at = c.tree.expr_at(id).span;
+    c.report(
+        at.file,
+        at,
+        SemaFault.BitwiseOperand(TypeFault(
+            name: glyph,
+            expected: ty,
+            found: ty
+        ))
+    )
+}
+
+untyped_bits = (c :: Checker, at: Span, glyph: str, ty: TyId)
+               Res<(), AllocError> {
+    c.report(
+        at.file,
+        at,
+        SemaFault.BitwiseUntyped(TypeFault(
+            name: glyph,
+            expected: ty,
+            found: ty
         ))
     )
 }

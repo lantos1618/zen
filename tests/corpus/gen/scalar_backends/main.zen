@@ -184,6 +184,11 @@ main = (env: Env) Res<(), AllocError> {
             backend.stable_name(),
             refused(env, a, backend, "program.zen", Layout.Modules).try()
         );
+        println(
+            "{} bitwise refused {}",
+            backend.stable_name(),
+            refused(env, a, backend, "bitwise.zen", Layout.Single).try()
+        );
     });
     Ok(())
 }

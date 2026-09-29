@@ -1,0 +1,18 @@
+diagnostics: 0
+faithful: true
+unchanged: true
+---
+1 |LOW: u8  = 0x0F
+2 |HIGH: u8 = 0xF0
+3 |MASK: u8 = LOW | HIGH
+4 |
+5 |Kind = Low | High
+6 |
+7 |flags = (word: u32, count: usize) Res<Res<u32>> {
+8 |    Local = First | Second
+9 |    mask       = word & 0xFF;
+10 |    set        = (word & mask) != 0;
+11 |    moved: u32 = (word << count) | (word >> 1);
+12 |    Ok(Ok(~moved ^ mask))
+13 |}
+---

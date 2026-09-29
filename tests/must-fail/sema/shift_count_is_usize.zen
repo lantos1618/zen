@@ -1,0 +1,5 @@
+main = () {
+    word: u32  = 1;
+    count: u32 = 3;
+    moved      = word << count;
+}

@@ -76,10 +76,12 @@ So four decisions, all made in week one, all brutal to retrofit:
 **Ship the ownership *syntax* at stage 0** even though nothing checks it. `self :: @Self` and `consume` cost nothing to parse and ignore. Defer the syntax and every line of stdlib written before stage 3 has to be revised; defer only the enforcement and nothing is lost.
 
 **So read the Ownership section below as law, and check the tree before reading
-it as behaviour.** The formatter's current whitespace-only rules live in
+it as behaviour.** The formatter's layout rules and unit-return normalization live in
 `src/fmt/` and are held by `tests/corpus/fmt/`; token-moving match-arm rules
-remain owed. Its `faithful` guard re-lexes the result and refuses any token
-change. Ownership checks cover receiver mutation, consume/use-after-move,
+remain owed. Its `faithful` guard re-lexes the result and refuses token changes except
+AST-identified redundant unit returns on named functions and methods with bodies.
+Bodiless signatures, function types, callback return constraints and unit values
+remain explicit. Other formatting passes still preserve every token. Ownership checks cover receiver mutation, consume/use-after-move,
 copies and partial moves of `Drop` values, and `@scope` exits. Actor lowering
 and a bounded-mailbox runtime have landed, but deep `iso` sendability remains
 law rather than implemented behaviour. What is checked refuses; what is not
@@ -1032,7 +1034,7 @@ Arena* = {
 Arena.impl(Alloc, { ... })
 
 Arena.impl(Drop, {
-    drop = (self :: @Self) () { /* release every page at once */ }
+    drop = (self :: @Self) { /* release every page at once */ }
 })
 
 
@@ -1624,24 +1626,24 @@ Foo = {}
 Foo.impl(Actor, {
     // optional lifecycle hooks. println resolves through
     // ctx.env — a Context carries an Env, so one is in scope
-    started ::= (self :: @Self, ctx: Context) () { 
+    started ::= (self :: @Self, ctx: Context) {
         println("actor started") 
     }
-    stopped ::= (self :: @Self, ctx: Context) () { 
+    stopped ::= (self :: @Self, ctx: Context) {
         println("actor stopped") 
     }
 
     // behaviors: calling one on a Ref<Foo> enqueues a message
     // and returns immediately. allocator-backed payloads are refused;
     // gen_c_actor emits the message record from this signature
-    receive_msg = (self :: @Self, ctx: Context, data: str) () {
+    receive_msg = (self :: @Self, ctx: Context, data: str) {
         println("actor has received {}", data)
     }
 
     // request/response the pony way: the request carries the
     // reply ADDRESS, and the response is just another behavior
     // call. no promise, no await, no second concept
-    compute = (self :: @Self, ctx: Context, n: i32, reply: Ref<Collector>) () {
+    compute = (self :: @Self, ctx: Context, n: i32, reply: Ref<Collector>) {
         reply.result(n + 1);
     }
 })
@@ -1649,7 +1651,7 @@ Foo.impl(Actor, {
 Collector = {}
 
 Collector.impl(Actor, {
-    result = (self :: @Self, ctx: Context, v: i32) () {
+    result = (self :: @Self, ctx: Context, v: i32) {
         println("got {}", v)
     }
 })

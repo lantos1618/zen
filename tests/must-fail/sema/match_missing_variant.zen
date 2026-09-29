@@ -5,7 +5,7 @@
 
 Slot = Left(i32) | Right(i32) | Gone
 
-describe = (env: Env, s: Slot) () {
+describe = (env: Env, s: Slot) {
     s.match({
         Left(n)  => println("left {}", n),
         Right(n) => println("right {}", n),

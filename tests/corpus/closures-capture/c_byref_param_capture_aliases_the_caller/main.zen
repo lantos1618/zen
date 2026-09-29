@@ -15,13 +15,13 @@
 // of this rule (a plain binding snapshots); this pins the `::` half, and
 // the pair together are what "captures keep their kind" means.
 
-adder = (s: Scope, total :: i64) () {
+adder = (s: Scope, total :: i64) {
     s.defer(() {
         total = total + 2500;
     })
 }
 
-printer = (s: Scope, total :: i64) () {
+printer = (s: Scope, total :: i64) {
     s.defer(() { println("at exit {}", total) })
 }
 

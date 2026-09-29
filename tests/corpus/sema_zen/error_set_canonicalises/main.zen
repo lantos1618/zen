@@ -62,7 +62,7 @@ show = (t: Types, mem: Alloc, label: str, id: TyId) Res<(), AllocError> {
     Ok(());
 }
 
-same = (label: str, a: TyId, b: TyId) () {
+same = (label: str, a: TyId, b: TyId) {
     println("{} {}", label, a.eq(b));
 }
 

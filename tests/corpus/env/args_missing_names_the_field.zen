@@ -17,7 +17,7 @@ Cli = {
     KEY:       str,
 }
 
-show = (r: Res<Cli, ArgError>) () {
+show = (r: Res<Cli, ArgError>) {
     r.match({
         Ok(c)           => {
             println("stream {}", c.stream);

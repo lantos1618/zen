@@ -260,39 +260,39 @@ CBackend* = {
         self.helper_types.add(owned)
     }
 
-    need_print* = (self :: @Self) () { self.print_used = true; }
+    need_print* = (self :: @Self) { self.print_used = true; }
 
     uses_print* = (self: @Self) bool { self.print_used }
 
-    need_stderr* = (self :: @Self) () { self.stderr_used = true; }
+    need_stderr* = (self :: @Self) { self.stderr_used = true; }
 
     uses_stderr* = (self: @Self) bool { self.stderr_used }
 
-    need_fbuf* = (self :: @Self) () { self.fbuf_used = true; }
+    need_fbuf* = (self :: @Self) { self.fbuf_used = true; }
 
     uses_fbuf* = (self: @Self) bool { self.fbuf_used }
 
-    need_fs* = (self :: @Self) () { self.fs_used = true; }
+    need_fs* = (self :: @Self) { self.fs_used = true; }
 
     uses_fs* = (self: @Self) bool { self.fs_used }
 
-    need_stdin* = (self :: @Self) () { self.stdin_used = true; }
+    need_stdin* = (self :: @Self) { self.stdin_used = true; }
 
     uses_stdin* = (self: @Self) bool { self.stdin_used }
 
-    need_env* = (self :: @Self) () { self.env_used = true; }
+    need_env* = (self :: @Self) { self.env_used = true; }
 
     uses_env* = (self: @Self) bool { self.env_used }
 
-    need_clock* = (self :: @Self) () { self.clock_used = true; }
+    need_clock* = (self :: @Self) { self.clock_used = true; }
 
     uses_clock* = (self: @Self) bool { self.clock_used }
 
-    need_threads* = (self :: @Self) () { self.threads_used = true; }
+    need_threads* = (self :: @Self) { self.threads_used = true; }
 
     uses_threads* = (self: @Self) bool { self.threads_used }
 
-    need_spawn* = (self :: @Self) () { self.spawn_used = true; }
+    need_spawn* = (self :: @Self) { self.spawn_used = true; }
 
     uses_spawn* = (self: @Self) bool { self.spawn_used }
 
@@ -311,7 +311,7 @@ CBackend* = {
         self.spawn_envs.get(i)
     }
 
-    need_actor* = (self :: @Self) () { self.actor_used = true; }
+    need_actor* = (self :: @Self) { self.actor_used = true; }
 
     uses_actor* = (self: @Self) bool { self.actor_used }
 
@@ -331,7 +331,7 @@ CBackend* = {
     }
 
     // Cleanup storage; `gen_c_own` owns destruction policy.
-    need_scope* = (self :: @Self) () { self.scope_used = true; }
+    need_scope* = (self :: @Self) { self.scope_used = true; }
 
     uses_scope* = (self: @Self) bool { self.scope_used }
 
@@ -398,7 +398,7 @@ CBackend* = {
         Ok(held)
     }
 
-    restore_cleanup* = (self :: @Self, held: Cleanup) () {
+    restore_cleanup* = (self :: @Self, held: Cleanup) {
         self.blocks    = held.blocks;
         self.drops     = held.drops;
         self.return_to = held.return_to;
@@ -422,9 +422,9 @@ CBackend* = {
 
     newline* = (self :: @Self) Res<(), AllocError> { self.buf.line() }
 
-    indent* = (self :: @Self) () { self.buf.indent(); }
+    indent* = (self :: @Self) { self.buf.indent(); }
 
-    dedent* = (self :: @Self) () { self.buf.dedent(); }
+    dedent* = (self :: @Self) { self.buf.dedent(); }
 
     text* = (self: @Self) str { self.buf.view() }
 
@@ -448,7 +448,7 @@ CBackend* = {
         Ok(held);
     }
 
-    put_buf* = (self :: @Self, held: Emit) () { self.buf = held; }
+    put_buf* = (self :: @Self, held: Emit) { self.buf = held; }
 
     // Queue a function for lowering, once.
     // The mangled symbol includes signature and instantiation and is the key.
@@ -465,7 +465,7 @@ CBackend* = {
     }
 
     // Record the compatibility FFI flag for this emission.
-    enable_ffi* = (self :: @Self) () { self.ffi = true; }
+    enable_ffi* = (self :: @Self) { self.ffi = true; }
 
     need_extern* = (self :: @Self, name: str, proto: String)
                    Res<bool, AllocError> {
@@ -562,7 +562,7 @@ CBackend* = {
     // it queues rather than recurses — so one field is the whole of the
     // state, and clearing it is what makes a non-generic body see no
     // substitution at all.
-    enter_inst* = (self :: @Self, inst: Inst) () { self.inst = inst; }
+    enter_inst* = (self :: @Self, inst: Inst) { self.inst = inst; }
 
     // One lowered function, held apart for C ordering and tagged as source or
     // generated for the optional symbol map.
@@ -590,11 +590,11 @@ CBackend* = {
     // The unit every function kept from here on belongs to. Set once
     // per body, by the one place that knows which module the body was
     // declared in.
-    enter_unit* = (self :: @Self, mi: usize) () { self.unit = mi; }
+    enter_unit* = (self :: @Self, mi: usize) { self.unit = mi; }
 
     // Splitting the program across files means a call can cross one, so
     // nothing but `main` may keep internal linkage.
-    use_externs* = (self :: @Self) () { self.externs = true; }
+    use_externs* = (self :: @Self) { self.externs = true; }
 
     // What goes in front of a function, prototype and definition alike.
     linkage* = (self: @Self) str {
@@ -620,7 +620,7 @@ CBackend* = {
         held
     }
 
-    restore_locals* = (self :: @Self, held: Vec<LocalSlot>) () {
+    restore_locals* = (self :: @Self, held: Vec<LocalSlot>) {
         self.locals = held;
     }
 
@@ -724,7 +724,7 @@ CBackend* = {
     }
 
     // Select the lexical function that a non-local exit must leave.
-    enter_return* = (self :: @Self, target: Res<usize>) () {
+    enter_return* = (self :: @Self, target: Res<usize>) {
         self.return_to = target;
     }
 
@@ -752,7 +752,7 @@ CBackend* = {
         })
     }
 
-    note_inline_return* = (self :: @Self, index: usize) () {
+    note_inline_return* = (self :: @Self, index: usize) {
         target ::= self.inline_return(index);
         target.note_use();
         self.inline_returns.set(index, target);
@@ -768,11 +768,11 @@ CBackend* = {
     // `floor`. Written the way `enter_inst` is — the caller holds the
     // old value and hands it back — because the two are always entered
     // and left together.
-    enter_frame* = (self :: @Self, floor: usize) () { self.floor = floor; }
+    enter_frame* = (self :: @Self, floor: usize) { self.floor = floor; }
 
-    enter_call* = (self :: @Self) () { self.depth = self.depth + 1; }
+    enter_call* = (self :: @Self) { self.depth = self.depth + 1; }
 
-    leave_call* = (self :: @Self) () { self.depth = self.depth - 1; }
+    leave_call* = (self :: @Self) { self.depth = self.depth - 1; }
 
     // Bind `h` to the loop it came from. A handle has no C storage and
     // no declaration is written for it: what the name means is a pair
@@ -816,7 +816,7 @@ CBackend* = {
 
     // A next call may target an enclosing loop through a captured handle.
     // Record its target on the live frame, not the caller's copied snapshot.
-    note_next* = (self :: @Self, label: usize) () {
+    note_next* = (self :: @Self, label: usize) {
         self.loops.loop((h, index, frame) {
             (frame.cnt == label).then(() {
                 marked ::= frame;
@@ -829,7 +829,7 @@ CBackend* = {
 
     // A captured handle can break an enclosing loop. Mark the live target
     // before its label is considered at completion.
-    note_break* = (self :: @Self, label: usize) () {
+    note_break* = (self :: @Self, label: usize) {
         self.loops.loop((h, index, frame) {
             (frame.brk == label).then(() {
                 marked ::= frame;

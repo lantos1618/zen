@@ -1,7 +1,7 @@
 Noisy = { env: Env, id: i32 }
 
 Noisy.impl(Drop, {
-    drop = (self :: @Self) () { self.env.out.println("drop {}", self.id) }
+    drop = (self :: @Self) { self.env.out.println("drop {}", self.id) }
 })
 
 main = (env: Env) i32 {

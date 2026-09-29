@@ -66,7 +66,7 @@ Walker = { tree: Ast, pending :: Vec<WalkEvent> }
 
 // Children are recorded in source order. Reverse only the new segment so the
 // LIFO event stack delivers them in that order before their parent's Leave.
-reverse_children = (walker :: Walker, first: usize) () {
+reverse_children = (walker :: Walker, first: usize) {
     left  ::= first;
     right ::= walker.pending.len;
     loop(() { left < right }, (h) {

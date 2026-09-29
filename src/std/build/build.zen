@@ -250,24 +250,24 @@ BuildFlags* = {
     repeat* :: usize = 1,
     permute* :: str = "",
 
-    set_root* = (self :: @Self, value: str) () { self.root = value; }
-    set_out* = (self :: @Self, value: str) () { self.out = value; }
-    set_dir* = (self :: @Self, value: str) () {
+    set_root* = (self :: @Self, value: str) { self.root = value; }
+    set_out* = (self :: @Self, value: str) { self.out = value; }
+    set_dir* = (self :: @Self, value: str) {
         self.emit_c = true;
         self.dir    = value;
     }
-    set_entry* = (self :: @Self, value: str) () { self.entry = value; }
-    set_std_root* = (self :: @Self, value: str) () { self.std_root = value; }
-    set_symbol_map* = (self :: @Self, value: str) () {
+    set_entry* = (self :: @Self, value: str) { self.entry = value; }
+    set_std_root* = (self :: @Self, value: str) { self.std_root = value; }
+    set_symbol_map* = (self :: @Self, value: str) {
         self.symbol_map = value;
     }
-    set_repeat* = (self :: @Self, value: usize) () { self.repeat = value; }
-    set_permute* = (self :: @Self, value: str) () { self.permute = value; }
-    set_backend* = (self :: @Self, value: str) () { self.backend = value; }
-    enable_emit_c* = (self :: @Self) () { self.emit_c = true; }
-    enable_ffi* = (self :: @Self) () { self.ffi = true; }
+    set_repeat* = (self :: @Self, value: usize) { self.repeat = value; }
+    set_permute* = (self :: @Self, value: str) { self.permute = value; }
+    set_backend* = (self :: @Self, value: str) { self.backend = value; }
+    enable_emit_c* = (self :: @Self) { self.emit_c = true; }
+    enable_ffi* = (self :: @Self) { self.ffi = true; }
 
-    apply_switch* = (self :: @Self, flag: BuildFlag) () {
+    apply_switch* = (self :: @Self, flag: BuildFlag) {
         flag.match({
             EmitC => self.enable_emit_c(),
             Ffi   => self.enable_ffi(),
@@ -275,7 +275,7 @@ BuildFlags* = {
         });
     }
 
-    apply_setting* = (self :: @Self, flag: BuildFlag, value: str) () {
+    apply_setting* = (self :: @Self, flag: BuildFlag, value: str) {
         flag.match({
             EmitDir   => self.set_dir(value),
             Out       => self.set_out(value),

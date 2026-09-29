@@ -353,7 +353,7 @@ Server* = {
         })
     }
 
-    retire = (self :: @Self, at: usize) () {
+    retire = (self :: @Self, at: usize) {
         self.buffers.take(at).match({
             None         => (),
             Ok(document) => { retired = consume document; },
@@ -718,7 +718,7 @@ Server* = {
 }
 
 Server.impl(Drop, {
-    drop = (self :: @Self) () {
+    drop = (self :: @Self) {
         self.members.drop();
         self.notes.drop();
         self.docs_arena.drop();

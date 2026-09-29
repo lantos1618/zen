@@ -47,7 +47,7 @@ run = (a: i32, b: i32) Res<(), Harness> {
     Ok(());
 }
 
-report = (r: Res<(), Harness>) () {
+report = (r: Res<(), Harness>) {
     r.match({
         Ok(_)  => println("pass"),
         Err(e) => e.match({

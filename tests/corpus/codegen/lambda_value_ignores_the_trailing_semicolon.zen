@@ -27,7 +27,7 @@
 
 apply = <T>(f: () T) T { f() }
 
-run = (f: () ()) () { f() }
+run = (f: () ()) { f() }
 
 main = (env: Env) Res<i32, IoError> {
     bare: i32 = apply(() { 42 });

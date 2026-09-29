@@ -67,7 +67,7 @@ Build* = {
 
     ffi :: bool = false,
 
-    enable_ffi* = (self :: @Self) () { self.ffi = true; }
+    enable_ffi* = (self :: @Self) { self.ffi = true; }
 
     // Lex and parse diagnostics in discovery order. Semantic diagnostics stay
     // on Checker because rendering them requires its type store.
@@ -75,11 +75,11 @@ Build* = {
 
     permute* :: Permutation = Permutation.Natural,
 
-    walk_order* = (self :: @Self, order: Permutation) () {
+    walk_order* = (self :: @Self, order: Permutation) {
         self.permute = order;
     }
 
-    set_std_root* = (self :: @Self, path: str) () {
+    set_std_root* = (self :: @Self, path: str) {
         self.std_root = path;
     }
 
@@ -108,7 +108,7 @@ Build* = {
     // caller's lifetime. Ordinary builds do not allocate this index.
     sources* :: Res<Map<str, str>> = None,
 
-    capture_sources* = (self :: @Self) () {
+    capture_sources* = (self :: @Self) {
         self.sources = Ok(self.alloc.Map<str, str>());
     }
 
@@ -625,7 +625,7 @@ Build* = {
     // -----------------------------------------------------------------
 
     // tests/run.py reads this final count to enforce diagnostic sidecars.
-    tally* = (self: @Self) () {
+    tally* = (self: @Self) {
         (self.faults > 0).then(
             () { println("zen: {} diagnostic(s)", self.faults); }
         );

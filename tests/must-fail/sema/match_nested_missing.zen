@@ -8,7 +8,7 @@ Cell = Full(i32) | Blank
 
 Slot = Left(Cell) | Right(Cell) | Gone
 
-describe = (env: Env, s: Slot) () {
+describe = (env: Env, s: Slot) {
     s.match({
         Left(Full(n)) => println("left {}", n),
         Right(_)      => println("right"),

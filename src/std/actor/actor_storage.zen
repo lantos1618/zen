@@ -13,11 +13,11 @@ MailboxOps* = {
 MailboxStorage* = { pool :: Pool = Pool() }
 MailboxStorage.impl(MailboxOps, {
     take = (self :: @Self, bytes: usize) Ptr<u8> { self.pool.take(bytes) }
-    give = (self :: @Self, pointer: Ptr<u8>) () { self.pool.give(
+    give = (self :: @Self, pointer: Ptr<u8>) { self.pool.give(
         pointer,
         CACHE_BYTES,
         CACHE_BLOCK,
         CACHE_COUNT
     ) }
-    close = (self :: @Self) () { self.pool.close() }
+    close = (self :: @Self) { self.pool.close() }
 })

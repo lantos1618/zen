@@ -11,7 +11,7 @@
 
 LIMIT: i32 = 3
 
-describe = (env: Env, n: i32) () {
+describe = (env: Env, n: i32) {
     n.match({
         LIMIT => println("at the limit"),
         _     => println("under it"),

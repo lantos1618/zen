@@ -162,7 +162,7 @@ Checker* = {
         self.locals.map(self.alloc, (binding) { binding })
     }
 
-    use_bindings* = (self :: @Self, bindings: Vec<Binding>) () {
+    use_bindings* = (self :: @Self, bindings: Vec<Binding>) {
         self.locals = bindings;
     }
 
@@ -284,7 +284,7 @@ Checker* = {
         self.walk_stack.add(b)
     }
 
-    pop_walk* = (self :: @Self) () {
+    pop_walk* = (self :: @Self) {
         self.walk_stack.take(self.walk_stack.len - 1);
     }
 
@@ -294,7 +294,7 @@ Checker* = {
         self.walk_now.add(name)
     }
 
-    pop_walk_now* = (self :: @Self) () {
+    pop_walk_now* = (self :: @Self) {
         self.walk_now.take(self.walk_now.len - 1);
     }
 
@@ -310,11 +310,11 @@ Checker* = {
     // answer from the memo.
     rechecking* = (self: @Self) bool { self.meta_recheck > 0 }
 
-    enter_recheck* = (self :: @Self) () {
+    enter_recheck* = (self :: @Self) {
         self.meta_recheck = self.meta_recheck + 1;
     }
 
-    leave_recheck* = (self :: @Self) () {
+    leave_recheck* = (self :: @Self) {
         self.meta_recheck = self.meta_recheck - 1;
     }
 
@@ -351,7 +351,7 @@ Checker* = {
 
     // Whose body is being walked. `check_body` brackets one declaration
     // with these, so an edge recorded in between knows its caller.
-    enter_owner* = (self :: @Self, owner: str) () { self.owner_now = owner; }
+    enter_owner* = (self :: @Self, owner: str) { self.owner_now = owner; }
 
     owner_of_body* = (self: @Self) str { self.owner_now }
 
@@ -386,7 +386,7 @@ Checker* = {
         was
     }
 
-    leave_block* = (self :: @Self, was: usize) () { self.block_base = was; }
+    leave_block* = (self :: @Self, was: usize) { self.block_base = was; }
 
     lookup_here* = (self: @Self, name: str) Res<Binding> {
         Range(self.block_base, self.locals.len).find((k) {
@@ -884,6 +884,6 @@ innermost = (v: Vec<Binding>, name: str) Res<Binding> {
     })
 }
 
-truncate*<T> = (v :: Vec<T>, len: usize) () {
+truncate*<T> = (v :: Vec<T>, len: usize) {
     loop(v.len > len, (h) { v.take(v.len - 1); });
 }

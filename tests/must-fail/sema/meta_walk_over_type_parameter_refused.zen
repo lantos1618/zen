@@ -5,7 +5,7 @@
 //
 // position: the `@meta` token — the form that has nothing to walk.
 
-show* = <T>(v: T) () {
+show* = <T>(v: T) {
     @meta(x: T).fields().loop((h, field) {
         println("{}", field.name);
     });

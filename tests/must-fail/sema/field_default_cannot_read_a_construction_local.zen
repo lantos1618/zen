@@ -1,7 +1,7 @@
 Shade = Red | Green | Blue
 Bad = { value :: Shade = local }
 
-main = () () {
+main = () {
     local: Shade = Green;
     value = Bad();
     println("{}", value.value);

@@ -2,7 +2,7 @@ Box = { text :: str }
 Input = { text: str, scratch: str }
 Envelope = { input: Input, other: str }
 read = (envelope: Envelope) str { envelope.input.text }
-put = (box :: Box, input: Input) () {
+put = (box :: Box, input: Input) {
     envelope = Envelope(input: input, other: "static");
     box.text = read(envelope);
 }

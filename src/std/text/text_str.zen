@@ -44,7 +44,7 @@ str* = {
     }
 
     // `dst` must have room for `self.len` bytes.
-    copy_into* = (self: @Self, dst: Ptr<u8>) () {
+    copy_into* = (self: @Self, dst: Ptr<u8>) {
         (self.len > 0).match({
             true  => dst.copy_from(self.data, self.len),
             false => (),

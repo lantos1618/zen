@@ -4,7 +4,7 @@
 Counter* = {
     total* :: i32,
 
-    add* = (self :: @Self, n: i32) () {
+    add* = (self :: @Self, n: i32) {
         self.total = self.total + self.step(n);
     }
 

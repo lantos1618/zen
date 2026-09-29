@@ -180,7 +180,7 @@ torn_probe = () Probe {
 // `a_session_is_answered_frame_by_frame` already pins every byte of it.
 // What is printed is the reply's JSON, whole — the `range` included,
 // since a right type under the wrong underline is still wrong.
-walk_replies = (out: str, table: Vec<Probe>) () {
+walk_replies = (out: str, table: Vec<Probe>) {
     at    ::= 0;
     seen  ::= 0;
     going ::= true;
@@ -200,7 +200,7 @@ walk_replies = (out: str, table: Vec<Probe>) () {
 // the table and then the torn buffer's single row. The subtraction is
 // guarded rather than let to underflow, which on a usize is a trap and
 // not a negative number.
-labelled = (i: usize, body: str, table: Vec<Probe>) () {
+labelled = (i: usize, body: str, table: Vec<Probe>) {
     (i == 0).match({
         true  => (),
         false => table.get(i - 1).match({
@@ -212,14 +212,14 @@ labelled = (i: usize, body: str, table: Vec<Probe>) () {
 
 // One past the table is the torn buffer; anything further is
 // `shutdown`, which is the other test's subject.
-beyond = (i: usize, body: str, table: Vec<Probe>) () {
+beyond = (i: usize, body: str, table: Vec<Probe>) {
     (i == table.len + 1).match({
         true  => printed(torn_probe(), body),
         false => (),
     });
 }
 
-printed = (p: Probe, body: str) () {
+printed = (p: Probe, body: str) {
     println("{}:{}  {}", p.line, p.character, p.what);
     println("    {}", body);
 }

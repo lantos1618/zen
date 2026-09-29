@@ -8,7 +8,7 @@ show = (a: Alloc, label: str, declaration: str, name: str)
        Res<(), AllocError> {
     text ::= a.String().try();
     text.add(declaration).try();
-    text.fmt("\ninspect = (value: {}) () {{}}", name).try();
+    text.fmt("\ninspect = (value: {}) {{}}", name).try();
     hover = hover_at(
         a,
         "sample.zen",

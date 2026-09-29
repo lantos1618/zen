@@ -3,7 +3,7 @@
 // the captures are COPIED when `defer` is called — a later write to the
 // binding cannot be visible, and `note`'s frame has long returned.
 
-note = (s: Scope, tag: str) () {
+note = (s: Scope, tag: str) {
     s.defer(() { println("note {}", tag) });
 }
 

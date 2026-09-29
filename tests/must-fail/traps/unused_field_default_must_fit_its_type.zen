@@ -1,2 +1,2 @@
 Unused = { value :: u8 = 300 }
-main = () () {}
+main = () {}

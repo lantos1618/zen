@@ -361,7 +361,7 @@ Decoder* = {
         })
     }
 
-    value_done = (self :: @Self) () {
+    value_done = (self :: @Self) {
         (self.frames.len == 0).match({
             true  => { self.root_done = true; },
             false => self.phase().match({
@@ -379,7 +379,7 @@ Decoder* = {
             .value_or(Phase.ArrayValue)
     }
 
-    set_phase = (self :: @Self, phase: Phase) () {
+    set_phase = (self :: @Self, phase: Phase) {
         self.frames.set(self.frames.len - 1, phase);
         ();
     }

@@ -46,7 +46,7 @@ SRC: str = "main = (env: Env) i32 {\n    println(\"{}\", 1 + 2;\n"
 
 // every field of one diagnostic, so a note that stopped being built and
 // a note that stopped being carried are both this line going missing
-show = (d: Diag) () {
+show = (d: Diag) {
     println(
         "{}:{}:{}..{}:{}: {}",
         d.span.file,

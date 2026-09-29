@@ -7,14 +7,14 @@ Modulo.impl(Eq, {
     }
 })
 
-report = (answer: Res<(), TestError>) () {
+report = (answer: Res<(), TestError>) {
     answer.match({
         Ok(_)  => println("pass"),
         Err(e) => e.match({ Failed(why) => println("fail: {}", why) }),
     });
 }
 
-main = (env: Env) () {
+main = (env: Env) {
     t = Tester(env: env, alloc: env.mem.alloc());
     report(t.expect_eq(2, 2));
     report(t.expect_eq(2, 3));

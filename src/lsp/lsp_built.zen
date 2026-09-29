@@ -86,7 +86,7 @@ Built* = {
         })
     }
 
-    invalidate* = (self :: @Self) () { self.stale = true; }
+    invalidate* = (self :: @Self) { self.stale = true; }
 
     rebuild = (self :: @Self, env: Env, root: str, entry: str,
                uris: Vec<str>, docs: Map<str, str>) Res<(), AllocError> {
@@ -266,7 +266,7 @@ restore_uris = (spots :: Vec<Spot>, a: Alloc, directory: str, uris: Vec<str>)
 }
 
 Built.impl(Drop, {
-    drop = (self :: @Self) () { self.arena.drop(); }
+    drop = (self :: @Self) { self.arena.drop(); }
 })
 
 Built* = (env: Env) Built {

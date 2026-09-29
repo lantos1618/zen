@@ -25,20 +25,20 @@ Row = {
     flag: bool,
     tag: str,
 
-    show* = (self: @Self) () {
+    show* = (self: @Self) {
         @meta(self: @Self).fields().loop((h, field) {
             println("{}={}", field.name, self.at(field));
         });
     },
 
-    skip_tag* = (self: @Self) () {
+    skip_tag* = (self: @Self) {
         @meta(self: @Self).fields().loop((h, field) {
             field.name.eq("tag").then(() { h.next(); });
             println("kept {}", field.name);
         });
     },
 
-    stop_at_flag* = (self: @Self) () {
+    stop_at_flag* = (self: @Self) {
         @meta(self: @Self).fields().loop((h, field) {
             field.name.eq("flag").then(() { h.break(); });
             println("seen {}", field.name);
@@ -49,14 +49,14 @@ Row = {
 Box<T> = {
     v: T,
 
-    show* = (self: @Self) () {
+    show* = (self: @Self) {
         @meta(self: @Self).fields().loop((h, field) {
             println("box.{}={}", field.name, self.at(field));
         });
     },
 }
 
-describe* = (r: Row) () {
+describe* = (r: Row) {
     @meta(row: Row).fields().loop((h, field) {
         println("[{}] {}", field.name, r.at(field));
     });

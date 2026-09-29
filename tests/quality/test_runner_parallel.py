@@ -59,7 +59,7 @@ class ParallelRunnerTests(unittest.TestCase):
 
     def test_result_cache_hits_skip_execution_and_no_cache_runs_again(self):
         for test in self.tests:
-            test.source.write_text("main = () () {}\n")
+            test.source.write_text("main = () {}\n")
             test.expected_path.write_bytes(test.expected)
         cache = self.root / "verdicts"
         report = self.root / "cached.json"
@@ -79,7 +79,7 @@ class ParallelRunnerTests(unittest.TestCase):
             self.assertEqual(third[2], len(self.tests))
             refresh = self.invoke(*arguments, "--refresh-result-cache")
             self.assertEqual(refresh[2], len(self.tests))
-            self.tests[0].source.write_text("main = () () { changed() }\n")
+            self.tests[0].source.write_text("main = () { changed() }\n")
             changed = self.invoke(*arguments)
             self.assertEqual(changed[2], 1)
             # A cached pass must never hide collection errors outside selection.
@@ -392,7 +392,7 @@ class ResultCacheTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.source = self.root / "case.zen"
-        self.source.write_text("main = () () {}\n")
+        self.source.write_text("main = () {}\n")
         self.expected = self.source.with_suffix(".expected")
         self.expected.write_text("")
         self.test = runner.Test("corpus/fixture/case", runner.CORPUS, "fixture",
@@ -469,7 +469,7 @@ class ResultCacheTests(unittest.TestCase):
             path = self.sources / name
             path.write_text(path.read_text() + "New = {}\n")
             self.assertEqual(self.cache().key(self.test), baseline)
-        self.source.write_text("Api = api\nmain = () () {}\n")
+        self.source.write_text("Api = api\nmain = () {}\n")
         imported = self.cache().key(self.test)
         worker = self.sources / "worker/worker.zen"
         worker.write_text(worker.read_text() + "New = {}\n")
@@ -592,7 +592,7 @@ class ResultCacheTests(unittest.TestCase):
             self.assertEqual(fresh.artifacts, [])
 
     def test_shared_source_snapshots_avoid_repeated_reads_and_reject_midrun_edits(self):
-        self.source.write_text("Api = api\nmain = () () {}\n")
+        self.source.write_text("Api = api\nmain = () {}\n")
         cache = self.cache()
         with patch.object(cache, "file_digest", wraps=cache.file_digest) as digest, \
              patch.object(runner, "sublayers_named_in", wraps=runner.sublayers_named_in) as votes:

@@ -1,0 +1,23 @@
+render = fmt.fmt
+scan, Source = std.lex
+SOURCE: str = "// f = () () {} remains comment text\nfirst = () /* before */ () /* after */ {}\ninside = () (/* unit */) {}\nlast = () () { /* () */ } // ()\n"
+WANTED: str = "// f = () () {} remains comment text\nfirst = () /* before */ /* after */ {}\ninside = () /* unit */ {}\nlast = () { /* () */ } // ()\n"
+main = (env: Env) Res<(), AllocError> {
+    a      = env.mem.alloc();
+    result = render(
+        a,
+        scan(a, Source(file: "unit.zen", text: SOURCE)).try()
+    ).try();
+    second = render(
+        a,
+        scan(a, Source(file: "unit.zen", text: result.text.view())).try()
+    ).try();
+    println(
+        "faithful {} exact {} fixed {} diagnostics {}",
+        result.faithful && second.faithful,
+        result.text.view().eq(WANTED),
+        result.text.view().eq(second.text.view()),
+        result.diags.len
+    );
+    Ok(())
+}

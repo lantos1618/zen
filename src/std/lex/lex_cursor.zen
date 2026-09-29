@@ -29,11 +29,11 @@ Cursor* = {
         Pos(offset: self.offset, line: self.line, col: self.col)
     }
 
-    bump* = (self :: @Self) () {
+    bump* = (self :: @Self) {
         (!self.is_done()).then(() { self.step(); });
     }
 
-    bump_while* = (self :: @Self, keep: (b: u8) bool) () {
+    bump_while* = (self :: @Self, keep: (b: u8) bool) {
         loop(
             () { self.peek().match({ Ok(b) => keep(b), None => false }) },
             (h) { self.bump(); },
@@ -45,11 +45,11 @@ Cursor* = {
     }
 
     // A byte-order mark produces no token but still advances three columns.
-    skip_bom* = (self :: @Self) () {
+    skip_bom* = (self :: @Self) {
         self.at_bom().then(() { self.bump(); self.bump(); self.bump(); });
     }
 
-    step = (self :: @Self) () {
+    step = (self :: @Self) {
         self.at_byte('\n').match({
             true  => { self.line = self.line + 1; self.col = 1; },
             false => { self.col = self.col + 1; },

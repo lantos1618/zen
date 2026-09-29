@@ -14,7 +14,7 @@
 //
 // position: `h`, the argument whose passing was the mistake.
 
-keep = (g: LoopHandle) () { }
+keep = (g: LoopHandle) { }
 
 main = (env: Env) Res<i32, IoError> {
     Range(0, 1).loop((h, x) {

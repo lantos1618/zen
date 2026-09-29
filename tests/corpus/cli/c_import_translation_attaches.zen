@@ -34,7 +34,7 @@ bad_translation = (a: Alloc, req: CImportRequest)
     ))
 }
 
-show = (result: CAttachedTranslation, tree: Ast, req: CImportRequest) () {
+show = (result: CAttachedTranslation, tree: Ast, req: CImportRequest) {
     binding = tree.module_origin_at(result.attached.module).match({
         Ok(ModuleOrigin.CBinding(id)) => tree.c_binding_at(id).match({
             Ok(value) => value.headers.len,

@@ -1,4 +1,4 @@
-run = (body: (n: i32, label: Res<str>) ()) () {
+run = (body: (n: i32, label: Res<str>) ()) {
     body(1);
 }
 

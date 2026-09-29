@@ -2,8 +2,8 @@ Native = c.bind("stdlib.h", { abort* = () () })
 Pause = c.bind("unistd.h", { usleep* = (microseconds: u32) i32 })
 Worker = { turns :: usize = 0 }
 Worker.impl(Actor, {
-    receive = (self :: @Self, ctx: Context, value: usize) () { self.turns = self.turns + value; }
-    stopped = (self :: @Self, ctx: Context) () {
+    receive = (self :: @Self, ctx: Context, value: usize) { self.turns = self.turns + value; }
+    stopped = (self :: @Self, ctx: Context) {
         (self.turns == 10000).match({true => println(
             "PASS: 10000 generated actor turns drained"
         ), false => Native.abort()});

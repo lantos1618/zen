@@ -7,4 +7,4 @@
 
 broken* = <T>(x: T) i32 { "not an int" }
 
-main* = () () {}
+main* = () {}

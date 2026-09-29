@@ -1,6 +1,6 @@
 SseDecoder, SseEvent = std.net.sse
 
-show = (events: Vec<SseEvent>) () {
+show = (events: Vec<SseEvent>) {
     events.loop((h, event) {
         event.match({
             Message(message) => println(

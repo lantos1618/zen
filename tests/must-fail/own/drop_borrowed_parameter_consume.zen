@@ -1,4 +1,4 @@
-destroy = (arena :: Arena) () { (consume arena).drop(); }
+destroy = (arena :: Arena) { (consume arena).drop(); }
 main = (env: Env) Res<i32, AllocError> {
     arena ::= env.mem.alloc();
     destroy(arena);

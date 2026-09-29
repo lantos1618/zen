@@ -347,7 +347,7 @@ Parser* = {
     // the first syntax error in a statement. `resume` ends that containment.
     hushed = (self: @Self) bool { self.too_deep || self.said }
 
-    resume* = (self :: @Self) () { self.said = false; }
+    resume* = (self :: @Self) { self.said = false; }
 
     // Claim trivia immediately before consuming the node's first token. The
     // outermost node beginning there owns the run.
@@ -413,11 +413,11 @@ Parser* = {
         was;
     }
 
-    run_until* = (self :: @Self, was: usize) () { self.run_base = was; }
+    run_until* = (self :: @Self, was: usize) { self.run_base = was; }
 
-    leave* = (self :: @Self) () { self.depth = self.depth - 1; }
+    leave* = (self :: @Self) { self.depth = self.depth - 1; }
 
-    unwind* = (self :: @Self, links: usize) () { self.depth = self.depth - links; }
+    unwind* = (self :: @Self, links: usize) { self.depth = self.depth - links; }
 }
 
 // Construct over a lexed source. Lexer diagnostics remain with the caller;

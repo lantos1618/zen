@@ -1,0 +1,979 @@
+# Known JavaScript-backend gaps: corpus tests whose JS behaviour does not
+# yet match the C oracle. Ratchet: the gate fails on a failure not listed
+# here and on a listed test that passes. Regenerate with --shrink; it only
+# removes entries. Each comment is the verdict when last regenerated.
+tests/corpus/actor/dynamic_str_is_copied # UNSUPPORTED: dynamic_str_is_copied.zen:21:19: error: unsupported by this backend: this backend supports only i32,
+tests/corpus/actor/generic_spawn_settles_state # UNSUPPORTED: generic_spawn_settles_state.zen:31:19: error: unsupported by this backend: this backend supports onl
+tests/corpus/actor/multiple_actor_types_keep_distinct_c_names # UNSUPPORTED: multiple_actor_types_keep_distinct_c_names.zen:13:19: error: unsupported by this backend: this backe
+tests/corpus/actor/oversized_payload_is_rejected # UNSUPPORTED: oversized_payload_is_rejected.zen:10:19: error: unsupported by this backend: this backend supports o
+tests/corpus/actor/safe_nested_payload_crosses_actor # UNSUPPORTED: safe_nested_payload_crosses_actor.zen:22:19: error: unsupported by this backend: this backend suppor
+tests/corpus/actor/send_phase_keeps_message_shapes # UNSUPPORTED: send_phase_keeps_message_shapes.zen:23:19: error: unsupported by this backend: this backend supports
+tests/corpus/actor/surface_is_usable # UNSUPPORTED: surface_is_usable.zen:33:19: error: unsupported by this backend: this backend supports only i32, boo
+tests/corpus/actor/task_summary/main # UNSUPPORTED: main.zen:67:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/arrays/a_copy_walks_on_its_own/main # UNSUPPORTED: main.zen:15:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/arrays/a_function_returns_a_fresh_array/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/arrays/a_struct_field_holds_the_whole_array/main # UNSUPPORTED: main.zen:24:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/arrays/an_array_argument_is_a_private_copy/main # UNSUPPORTED: main.zen:12:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/arrays/an_index_steps_one_whole_element/main # UNSUPPORTED: main.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/arrays/filter_and_map_settle_the_arrays_element/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/arrays/literals_take_the_type_the_position_writes/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/arrays/the_walk_hands_element_and_index/main # UNSUPPORTED: main.zen:13:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/ast/expr_tree_round_trips_through_ids # UNSUPPORTED: expr_tree_round_trips_through_ids.zen:45:19: error: unsupported by this backend: this backend suppor
+tests/corpus/ast/impl_queries_distinguish_values_and_hooks # UNSUPPORTED: impl_queries_distinguish_values_and_hooks.zen:9:19: error: unsupported by this backend: this backend
+tests/corpus/ast/qualified_name_owns_segment_access # UNSUPPORTED: qualified_name_owns_segment_access.zen:17:19: error: unsupported by this backend: this backend suppo
+tests/corpus/ast/source_span_bytes # UNSUPPORTED: source_span_bytes.zen:4:12: error: unsupported by this backend: this backend supports only i32, bool
+tests/corpus/ast/structural_walk_handles_deep_trees # UNSUPPORTED: structural_walk_handles_deep_trees.zen:52:19: error: unsupported by this backend: this backend suppo
+tests/corpus/ast/structural_walk_preserves_owners # UNSUPPORTED: structural_walk_preserves_owners.zen:70:19: error: unsupported by this backend: this backend support
+tests/corpus/ast/trivia_attaches_as_a_run # UNSUPPORTED: trivia_attaches_as_a_run.zen:15:19: error: unsupported by this backend: this backend supports only i
+tests/corpus/backends/c_ir_pilot/main # UNSUPPORTED: main.zen:5:9: nothing is at that path: tried `zen/zen_build.zen` and `zen/zen_build/zen_build.zen`
+tests/corpus/casts-conversions/conversion_composes_in_expression_position/main # UNSUPPORTED: main.zen:22:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/casts-conversions/every_widening_overload_at_its_extreme/main # UNSUPPORTED: main.zen:4:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/casts-conversions/float_widening_is_exact/main # UNSUPPORTED: main.zen:29:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/casts-conversions/generic_bound_conversion_at_boundary/main # UNSUPPORTED: main.zen:4:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/casts-conversions/signed_minima_sign_extend_to_i64/main # UNSUPPORTED: main.zen:26:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/casts-conversions/ufcs_and_method_conversion_agree/main # UNSUPPORTED: main.zen:23:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/casts-conversions/unsigned_maxima_stay_unsigned_into_i64/main # UNSUPPORTED: main.zen:23:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/casts-conversions/user_to_prim_with_body_is_a_call/main # UNSUPPORTED: main.zen:20:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/cli/a_broken_import_walks_no_phantom_path/main # UNSUPPORTED: main.zen:15:18: construction has a surplus positional argument: `build` has no storage seat left
+tests/corpus/cli/backend_selection_is_explicit/main # UNSUPPORTED: main.zen:5:9: construction has a surplus positional argument: `cli` has no storage seat left
+tests/corpus/cli/build_plan_records_graph/main # UNSUPPORTED: main.zen:1:9: nothing is at that path: tried `zen/zen_build.zen` and `zen/zen_build/zen_build.zen`
+tests/corpus/cli/build_plan_selects_backend/main # UNSUPPORTED: main.zen:1:9: nothing is at that path: tried `zen/zen_build.zen` and `zen/zen_build/zen_build.zen`
+tests/corpus/cli/build_puts_every_module_in_one_tree/main # UNSUPPORTED: main.zen:34:12: nothing is at that path: tried `zen/zen_path.zen` and `zen/zen_path/zen_path.zen`
+tests/corpus/cli/build_target_spelling_is_owned_by_std # UNSUPPORTED: build_target_spelling_is_owned_by_std.zen:3:19: error: unsupported by this backend: this backend sup
+tests/corpus/cli/build_walks_a_module_alias/main # UNSUPPORTED: main.zen:41:18: construction has a surplus positional argument: `build` has no storage seat left
+tests/corpus/cli/build_walks_a_root_it_is_given/main # UNSUPPORTED: main.zen:17:18: construction has a surplus positional argument: `build` has no storage seat left
+tests/corpus/cli/c_import_clang_ast_translation # UNSUPPORTED: c_import_clang_ast_translation.zen:1:17: nothing is at that path: tried `zen/zen_c_translate.zen` an
+tests/corpus/cli/c_import_request_identity # UNSUPPORTED: c_import_request_identity.zen:5:11: nothing is at that path: tried `zen/zen_c_import.zen` and `zen/z
+tests/corpus/cli/c_import_translation_attaches # UNSUPPORTED: c_import_translation_attaches.zen:3:27: nothing is at that path: tried `zen/zen_c_import.zen` and `z
+tests/corpus/cli/check_validates_without_emission/main # UNSUPPORTED: main.zen:1:14: nothing is at that path: tried `zen.zen` and `zen/zen.zen`
+tests/corpus/cli/cli_build_args_are_validated_once # UNSUPPORTED: cli_build_args_are_validated_once.zen:4:12: nothing is at that path: tried `zen.zen` and `zen/zen.ze
+tests/corpus/cli/cli_reads_an_explicit_entry # UNSUPPORTED: cli_reads_an_explicit_entry.zen:22:12: nothing is at that path: tried `zen.zen` and `zen/zen.zen`
+tests/corpus/cli/project_backend_recipes/main # UNSUPPORTED: main.zen:1:32: nothing is at that path: tried `zen/zen_project.zen` and `zen/zen_project/zen_project
+tests/corpus/cli/project_commands_start_at_build_zen # UNSUPPORTED: project_commands_start_at_build_zen.zen:3:12: nothing is at that path: tried `zen.zen` and `zen/zen.
+tests/corpus/cli/project_test_targets/main # UNSUPPORTED: main.zen:1:19: nothing is at that path: tried `zen/zen_project.zen` and `zen/zen_project/zen_project
+tests/corpus/cli/value_flags_do_not_swallow_options # UNSUPPORTED: value_flags_do_not_swallow_options.zen:5:12: nothing is at that path: tried `zen.zen` and `zen/zen.z
+tests/corpus/closures-capture/a_mutation_before_defer_is_invisible/main # UNSUPPORTED: main.zen:15:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/closures-capture/b_two_writers_one_snapshot_each/main # UNSUPPORTED: main.zen:16:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/closures-capture/c_byref_param_capture_aliases_the_caller/main # UNSUPPORTED: main.zen:28:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/closures-capture/d_capture_walk_descends_nested_bodies/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/closures-capture/e_shadowing_bind_is_not_a_capture/main # UNSUPPORTED: main.zen:5:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/closures-capture/f_loop_body_accumulates_through_a_captured_local/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/closures-capture/g_inner_block_snapshot_outer_frame/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/closures-capture/h_lambda_argument_reads_the_live_binding/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/codegen/a_call_result_reaches_a_by_address_parameter # UNSUPPORTED: a_call_result_reaches_a_by_address_parameter.zen:26:19: error: unsupported by this backend: this bac
+tests/corpus/codegen/a_generic_method_infers_its_own_type # UNSUPPORTED: a_generic_method_infers_its_own_type.zen:15:19: error: unsupported by this backend: this backend sup
+tests/corpus/codegen/a_match_binder_leaves_with_its_arm/main # UNSUPPORTED: main.zen:13:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/codegen/a_member_written_at_its_union_arrives_tagged/main # UNSUPPORTED: main.zen:39:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/codegen/a_nested_block_is_the_blocks_value # UNSUPPORTED: a_nested_block_is_the_blocks_value.zen:16:19: error: unsupported by this backend: this backend suppo
+tests/corpus/codegen/a_recorded_call_never_falls_back_to_another_declaration # UNSUPPORTED: a_recorded_call_never_falls_back_to_another_declaration.zen:4:45: nothing is at that path: tried `se
+tests/corpus/codegen/a_try_in_tail_position_builds_its_res/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/codegen/a_unit_try_in_statement_position_writes_nothing/main # UNSUPPORTED: main.zen:11:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/codegen/a_unit_try_in_tail_position_builds_its_res/main # UNSUPPORTED: main.zen:28:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/codegen/a_written_fn_type_binds_its_own_tparams/main # UNSUPPORTED: main.zen:3:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/codegen/an_enum_argument_binds_its_parameter # UNSUPPORTED: an_enum_argument_binds_its_parameter.zen:41:19: error: unsupported by this backend: this backend sup
+tests/corpus/codegen/an_enum_impl_member_with_a_body_lowers # UNSUPPORTED: an_enum_impl_member_with_a_body_lowers.zen:39:19: error: unsupported by this backend: this backend s
+tests/corpus/codegen/an_impl_member_typed_at_the_instantiation # UNSUPPORTED: an_impl_member_typed_at_the_instantiation.zen:33:19: error: unsupported by this backend: this backen
+tests/corpus/codegen/argument_order # UNSUPPORTED: argument_order.zen:47:19: error: unsupported by this backend: this backend supports only i32, bool a
+tests/corpus/codegen/argument_order_arrays # UNSUPPORTED: argument_order_arrays.zen:31:19: error: unsupported by this backend: this backend supports only i32,
+tests/corpus/codegen/argument_order_fields # UNSUPPORTED: argument_order_fields.zen:31:19: error: unsupported by this backend: this backend supports only i32,
+tests/corpus/codegen/argument_order_short_circuits # UNSUPPORTED: argument_order_short_circuits.zen:29:19: error: unsupported by this backend: this backend supports o
+tests/corpus/codegen/argument_order_tail_read # UNSUPPORTED: argument_order_tail_read.zen:36:19: error: unsupported by this backend: this backend supports only i
+tests/corpus/codegen/associated_functions # UNSUPPORTED: associated_functions.zen:46:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/codegen/bare_none_settles_at_mutable_field/main # UNSUPPORTED: main.zen:11:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/codegen/bare_variant_picks_its_own_enum/main # UNSUPPORTED: main.zen:7:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/codegen/c_abi_integer_spelling # UNSUPPORTED: c_abi_integer_spelling.zen:21:19: error: unsupported by this backend: this backend supports only i32
+tests/corpus/codegen/c_keywords_c23 # UNSUPPORTED: c_keywords_c23.zen:25:19: error: unsupported by this backend: this backend supports only i32, bool a
+tests/corpus/codegen/c_keywords_c89 # UNSUPPORTED: c_keywords_c89.zen:16:19: error: unsupported by this backend: this backend supports only i32, bool a
+tests/corpus/codegen/c_keywords_c99_c11 # UNSUPPORTED: c_keywords_c99_c11.zen:13:19: error: unsupported by this backend: this backend supports only i32, bo
+tests/corpus/codegen/c_keywords_declaration_positions # UNSUPPORTED: c_keywords_declaration_positions.zen:28:19: error: unsupported by this backend: this backend support
+tests/corpus/codegen/c_libc_names # UNSUPPORTED: c_libc_names.zen:43:19: error: unsupported by this backend: this backend supports only i32, bool and
+tests/corpus/codegen/c_reserved_identifiers # UNSUPPORTED: c_reserved_identifiers.zen:32:19: error: unsupported by this backend: this backend supports only i32
+tests/corpus/codegen/call_effect_summaries_reuse_completed_subtrees # UNSUPPORTED: call_effect_summaries_reuse_completed_subtrees.zen:4:15: nothing is at that path: tried `gen/gen_c/g
+tests/corpus/codegen/checked_extension_beats_an_incompatible_member # UNSUPPORTED: checked_extension_beats_an_incompatible_member.zen:10:13: error: unsupported by this backend: this b
+tests/corpus/codegen/field_default_names_a_bare_variant # UNSUPPORTED: field_default_names_a_bare_variant.zen:33:19: error: unsupported by this backend: this backend suppo
+tests/corpus/codegen/field_defaults # UNSUPPORTED: field_defaults.zen:66:19: error: unsupported by this backend: this backend supports only i32, bool a
+tests/corpus/codegen/field_defaults_ignore_construction_locals/main # UNSUPPORTED: main.zen:6:13: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/codegen/forward_functions # UNSUPPORTED: forward_functions.zen:79:19: error: unsupported by this backend: this backend supports only i32, boo
+tests/corpus/codegen/forward_types # UNSUPPORTED: forward_types.zen:53:19: error: unsupported by this backend: this backend supports only i32, bool an
+tests/corpus/codegen/generic_closure_argument_settles_at_call/main # UNSUPPORTED: main.zen:3:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/codegen/generic_enum_helper_returns_each_instantiation # UNSUPPORTED: generic_enum_helper_returns_each_instantiation.zen:18:19: error: unsupported by this backend: this b
+tests/corpus/codegen/generic_field_defaults_keep_declaration_context/main # UNSUPPORTED: main.zen:12:14: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/codegen/generic_method_literal_defaults # UNSUPPORTED: generic_method_literal_defaults.zen:14:14: error: unsupported by this backend: this backend supports
+tests/corpus/codegen/indexed_write_stores_at_its_index # UNSUPPORTED: indexed_write_stores_at_its_index.zen:23:19: error: unsupported by this backend: this backend suppor
+tests/corpus/codegen/indirect_callee_precedes_arguments/main # UNSUPPORTED: main.zen:7:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/codegen/infix_order # UNSUPPORTED: infix_order.zen:24:19: error: unsupported by this backend: this backend supports only i32, bool and 
+tests/corpus/codegen/inlined_callee_keeps_its_own_local # UNSUPPORTED: inlined_callee_keeps_its_own_local.zen:14:19: error: unsupported by this backend: this backend suppo
+tests/corpus/codegen/lambda_value_ignores_the_trailing_semicolon # UNSUPPORTED: lambda_value_ignores_the_trailing_semicolon.zen:32:19: error: unsupported by this backend: this back
+tests/corpus/codegen/literal_boundaries_signed # UNSUPPORTED: literal_boundaries_signed.zen:32:19: error: unsupported by this backend: this backend supports only 
+tests/corpus/codegen/literal_boundaries_unsigned # UNSUPPORTED: literal_boundaries_unsigned.zen:28:19: error: unsupported by this backend: this backend supports onl
+tests/corpus/codegen/mangle_generic_instantiation # UNSUPPORTED: mangle_generic_instantiation.zen:41:19: error: unsupported by this backend: this backend supports on
+tests/corpus/codegen/mangle_module_collision/main # UNSUPPORTED: main.zen:36:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/codegen/mangle_root_and_sibling/main # UNSUPPORTED: main.zen:33:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/codegen/match_all_block_arms # UNSUPPORTED: match_all_block_arms.zen:48:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/codegen/match_as_comparison_operand # UNSUPPORTED: match_as_comparison_operand.zen:5:19: error: unsupported by this backend: this backend supports only
+tests/corpus/codegen/named_call_dispatch_keeps_its_precedence # UNSUPPORTED: named_call_dispatch_keeps_its_precedence.zen:12:19: error: unsupported by this backend: this backend
+tests/corpus/codegen/named_same_set_widening_wraps_carrier # UNSUPPORTED: named_same_set_widening_wraps_carrier.zen:35:19: error: unsupported by this backend: this backend su
+tests/corpus/codegen/negated_literal_i64_boundary # UNSUPPORTED: negated_literal_i64_boundary.zen:15:19: error: unsupported by this backend: this backend supports on
+tests/corpus/codegen/nested_capability_receiver_dispatches/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/codegen/nested_generic_option_records_keep_their_fields/main # UNSUPPORTED: main.zen:58:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/codegen/nested_scalar_calls_preserve_union_conversion # UNSUPPORTED: nested_scalar_calls_preserve_union_conversion.zen:4:16: error: unsupported by this backend: this bac
+tests/corpus/codegen/nesting_blocks # UNSUPPORTED: nesting_blocks.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool a
+tests/corpus/codegen/nesting_calls # UNSUPPORTED: nesting_calls.zen:26:19: error: unsupported by this backend: this backend supports only i32, bool an
+tests/corpus/codegen/nesting_expr # UNSUPPORTED: nesting_expr.zen:5:19: error: unsupported by this backend: this backend supports only i32, bool and 
+tests/corpus/codegen/nesting_match # UNSUPPORTED: nesting_match.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool an
+tests/corpus/codegen/null_pointer_field_default # UNSUPPORTED: null_pointer_field_default.zen:34:19: error: unsupported by this backend: this backend supports only
+tests/corpus/codegen/shadowing_initialiser_reads_the_outer_binding # UNSUPPORTED: shadowing_initialiser_reads_the_outer_binding.zen:4:19: error: unsupported by this backend: this bac
+tests/corpus/codegen/short_circuit_guards_its_operands # UNSUPPORTED: short_circuit_guards_its_operands.zen:33:19: error: unsupported by this backend: this backend suppor
+tests/corpus/codegen/struct_return_behavior # UNSUPPORTED: struct_return_behavior.zen:43:19: error: unsupported by this backend: this backend supports only i32
+tests/corpus/codegen/struct_return_large # UNSUPPORTED: struct_return_large.zen:87:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/codegen/struct_return_zero_field # UNSUPPORTED: struct_return_zero_field.zen:38:19: error: unsupported by this backend: this backend supports only i
+tests/corpus/codegen/transitive_type_closure_reaches_deepest_record # UNSUPPORTED: transitive_type_closure_reaches_deepest_record.zen:16:19: error: unsupported by this backend: this b
+tests/corpus/codegen/type_qualified_methods_use_explicit_receivers # UNSUPPORTED: type_qualified_methods_use_explicit_receivers.zen:9:12: error: unsupported by this backend: this bac
+tests/corpus/codegen/unit_allocation_has_a_c_object_size # UNSUPPORTED: unit_allocation_has_a_c_object_size.zen:1:19: error: unsupported by this backend: this backend suppo
+tests/corpus/codegen/unit_pointer_is_an_opaque_handle # UNSUPPORTED: unit_pointer_is_an_opaque_handle.zen:11:19: error: unsupported by this backend: this backend support
+tests/corpus/codegen/unit_values_take_no_storage/main # UNSUPPORTED: main.zen:20:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/codegen/unreachable_closed_chain_still_returns_every_arm # UNSUPPORTED: unreachable_closed_chain_still_returns_every_arm.zen:24:19: error: unsupported by this backend: this
+tests/corpus/codegen/vararg_after_unit_omits_the_erased_argument # UNSUPPORTED: vararg_after_unit_omits_the_erased_argument.zen:6:19: error: unsupported by this backend: this backe
+tests/corpus/codegen/variant_call_settles_its_enum # UNSUPPORTED: variant_call_settles_its_enum.zen:10:19: error: unsupported by this backend: this backend supports o
+tests/corpus/constants/constant_folds_in_its_own_module/main # UNSUPPORTED: main.zen:23:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/constants/constant_in_expression_positions/main # UNSUPPORTED: main.zen:23:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/constants/construction_valued_constant_arrives_whole/main # UNSUPPORTED: main.zen:24:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/constants/local_shadows_constant_and_leaves_it/main # UNSUPPORTED: main.zen:28:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/constants/negative_valued_constants_keep_their_sign/main # UNSUPPORTED: main.zen:26:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/constants/str_constant_is_the_same_bytes_at_every_use/main # UNSUPPORTED: main.zen:20:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/constants/wide_constants_keep_their_width/main # UNSUPPORTED: main.zen:25:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/deep-expressions/nested_arrays_settle_element_types/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/deep-expressions/nested_enum_tags_survive_twenty_wraps/main # UNSUPPORTED: main.zen:43:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/deep-expressions/nested_loop_break_carries_the_inner_value/main # UNSUPPORTED: main.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/deep-expressions/nested_member_chain_threads_types/main # UNSUPPORTED: main.zen:42:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/deep-expressions/ten_then_links_rewrap_each_value/main # UNSUPPORTED: main.zen:16:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/deep-expressions/try_chain_surfaces_the_deepest_error/main # UNSUPPORTED: main.zen:45:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/deep-expressions/twenty_nested_matches_join_through_each_other/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/deep-expressions/twenty_two_levels_of_mixed_operator_precedence/main # UNSUPPORTED: main.zen:36:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/div-mod-traps/div_zero_i16/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/div-mod-traps/div_zero_i64/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/div-mod-traps/div_zero_i8_u8/main # UNSUPPORTED: main.zen:22:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/div-mod-traps/div_zero_second_iteration/main # UNSUPPORTED: main.zen:16:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/div-mod-traps/div_zero_u16/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/div-mod-traps/div_zero_u32/main # UNSUPPORTED: main.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/div-mod-traps/div_zero_u64/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/div-mod-traps/div_zero_usize/main # UNSUPPORTED: main.zen:15:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/enum-basic/a_nullary_generic_variant_needs_no_type # UNSUPPORTED: a_nullary_generic_variant_needs_no_type.zen:6:19: error: unsupported by this backend: this backend s
+tests/corpus/enum-basic/bare_nullary_names_cross_a_call_boundary/main # UNSUPPORTED: main.zen:27:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/enum-basic/enum_typed_parameter_dispatches_in_the_callee/main # UNSUPPORTED: main.zen:30:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/enum-basic/nominal_bare_tags_still_compile # UNSUPPORTED: nominal_bare_tags_still_compile.zen:20:19: error: unsupported by this backend: this backend supports
+tests/corpus/enum-basic/reassigned_local_reads_the_current_tag/main # UNSUPPORTED: main.zen:14:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/enum-basic/single_variant_leading_bar_still_an_enum/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/enum-basic/three_variants_construct_and_match_every_arm/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/enum-basic/two_instantiations_answer_differently # UNSUPPORTED: two_instantiations_answer_differently.zen:18:19: error: unsupported by this backend: this backend su
+tests/corpus/enum-basic/wide_payload_survives_call_and_rewrap/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/enums/represented_enum_round_trips # UNSUPPORTED: represented_enum_round_trips.zen:4:19: error: unsupported by this backend: this backend supports onl
+tests/corpus/enums/variant_name_reflects # UNSUPPORTED: variant_name_reflects.zen:13:19: error: unsupported by this backend: this backend supports only i32,
+tests/corpus/env-args/argv0_names_the_program/main # UNSUPPORTED: main.zen:29:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/env-args/argv_row_bytes_are_raw_utf8/main # UNSUPPORTED: main.zen:23:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/env-args/argv_row_hash_pins_the_seed/main # UNSUPPORTED: main.zen:8:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/env-args/argv_rows_key_a_map_by_content/main # UNSUPPORTED: main.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/env-args/argv_rows_survive_two_walks/main # UNSUPPORTED: main.zen:25:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/env-args/many_rows_sum_their_lengths/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/env-args/multibyte_row_decodes_by_codepoint/main # UNSUPPORTED: main.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/env-args/past_the_last_row_is_none/main # UNSUPPORTED: main.zen:22:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/env/773_prelude_names_capability_types # UNSUPPORTED: 773_prelude_names_capability_types.zen:43:19: error: unsupported by this backend: this backend suppo
+tests/corpus/env/arg_error_names_the_field # UNSUPPORTED: arg_error_names_the_field.zen:59:19: error: unsupported by this backend: this backend supports only 
+tests/corpus/env/args_answer_is_typed_at_the_call # UNSUPPORTED: args_answer_is_typed_at_the_call.zen:17:19: error: unsupported by this backend: this backend support
+tests/corpus/env/args_fills_a_schema # UNSUPPORTED: args_fills_a_schema.zen:46:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/env/args_missing_names_the_field # UNSUPPORTED: args_missing_names_the_field.zen:36:19: error: unsupported by this backend: this backend supports on
+tests/corpus/env/args_parse_names_the_field # UNSUPPORTED: args_parse_names_the_field.zen:36:19: error: unsupported by this backend: this backend supports only
+tests/corpus/env/args_surplus_word_is_parse_of_the_last_positional # UNSUPPORTED: args_surplus_word_is_parse_of_the_last_positional.zen:36:19: error: unsupported by this backend: thi
+tests/corpus/env/args_unknown_flag_is_parse_of_the_word # UNSUPPORTED: args_unknown_flag_is_parse_of_the_word.zen:36:19: error: unsupported by this backend: this backend s
+tests/corpus/env/argv_is_populated # UNSUPPORTED: argv_is_populated.zen:17:19: error: unsupported by this backend: this backend supports only i32, boo
+tests/corpus/env/clock_reads_are_two_authorities # UNSUPPORTED: clock_reads_are_two_authorities.zen:23:19: error: unsupported by this backend: this backend supports
+tests/corpus/env/env_var_reads_the_environment # UNSUPPORTED: env_var_reads_the_environment.zen:15:19: error: unsupported by this backend: this backend supports o
+tests/corpus/env/env_var_resolves_a_name_of_any_length # UNSUPPORTED: env_var_resolves_a_name_of_any_length.zen:3:19: error: unsupported by this backend: this backend sup
+tests/corpus/env/fs_cwd_respects_allocator # UNSUPPORTED: fs_cwd_respects_allocator.zen:13:14: error: unsupported by this backend: this backend supports only 
+tests/corpus/env/fs_cwd_uses_process_directory # UNSUPPORTED: fs_cwd_uses_process_directory.zen:3:19: error: unsupported by this backend: this backend supports on
+tests/corpus/env/fs_lock_excludes_until_released # UNSUPPORTED: fs_lock_excludes_until_released.zen:26:19: error: unsupported by this backend: this backend supports
+tests/corpus/env/fs_lock_missing_parent_names_the_reason # UNSUPPORTED: fs_lock_missing_parent_names_the_reason.zen:7:19: error: unsupported by this backend: this backend s
+tests/corpus/env/fs_lock_survives_a_move_across_frames # UNSUPPORTED: fs_lock_survives_a_move_across_frames.zen:22:19: error: unsupported by this backend: this backend su
+tests/corpus/env/fs_mkdir_creates_once # UNSUPPORTED: fs_mkdir_creates_once.zen:8:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/env/fs_read_directory_is_not_bytes # UNSUPPORTED: fs_read_directory_is_not_bytes.zen:12:19: error: unsupported by this backend: this backend supports 
+tests/corpus/env/fs_read_empty_file_is_empty/main # UNSUPPORTED: main.zen:12:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/env/fs_read_missing_names_not_found # UNSUPPORTED: fs_read_missing_names_not_found.zen:9:19: error: unsupported by this backend: this backend supports 
+tests/corpus/env/fs_read_returns_the_whole_file/main # UNSUPPORTED: main.zen:15:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/env/fs_read_special_file_with_zero_stat_size/main # UNSUPPORTED: main.zen:4:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/env/fs_remove_directory_stays_isdir/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/env/fs_remove_true_when_something_was_there # UNSUPPORTED: fs_remove_true_when_something_was_there.zen:14:19: error: unsupported by this backend: this backend 
+tests/corpus/env/fs_walks_a_module_path/main # UNSUPPORTED: main.zen:24:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/env/fs_write_round_trips # UNSUPPORTED: fs_write_round_trips.zen:8:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/env/proc_arguments # UNSUPPORTED: proc_arguments.zen:8:19: error: unsupported by this backend: this backend supports only i32, bool an
+tests/corpus/env/proc_stream_errors # UNSUPPORTED: proc_stream_errors.zen:14:19: error: unsupported by this backend: this backend supports only i32, bo
+tests/corpus/env/proc_streams_before_exit # UNSUPPORTED: proc_streams_before_exit.zen:21:19: error: unsupported by this backend: this backend supports only i
+tests/corpus/env/stdin_echoes_its_bytes_exactly # UNSUPPORTED: stdin_echoes_its_bytes_exactly.zen:25:19: error: unsupported by this backend: this backend supports 
+tests/corpus/env/thread_periodic_worker # UNSUPPORTED: thread_periodic_worker.zen:11:19: error: unsupported by this backend: this backend supports only i32
+tests/corpus/env/threads_sleep_returns_and_continues # UNSUPPORTED: threads_sleep_returns_and_continues.zen:5:19: error: unsupported by this backend: this backend suppo
+tests/corpus/env/threads_spawn_joins_two_bodies # UNSUPPORTED: threads_spawn_joins_two_bodies.zen:8:19: error: unsupported by this backend: this backend supports o
+tests/corpus/errors-try/each_member_surfaces_under_its_own_name/main # UNSUPPORTED: main.zen:40:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-try/fallible_inline_helper_in_thread/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-try/inlined_helpers_keep_lexical_returns/main # UNSUPPORTED: main.zen:74:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-try/stepwise_widening_keeps_member_and_payload/main # UNSUPPORTED: main.zen:39:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-try/try_carries_the_payload_through_three_layers/main # UNSUPPORTED: main.zen:36:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-try/try_in_a_loop_takes_the_err_edge_once/main # UNSUPPORTED: main.zen:37:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-try/try_inside_a_match_arm_returns_through_the_frame/main # UNSUPPORTED: main.zen:39:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-try/try_on_an_all_ok_match_never_widens/ # UNSUPPORTED: main.zen:35:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-try/try_propagates_a_unit_error_as_the_tag/main # UNSUPPORTED: main.zen:14:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-try/try_tail_and_err_arm_join_in_one_caller/main # UNSUPPORTED: main.zen:35:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-try/try_through_every_frame_of_a_recursion/main # UNSUPPORTED: main.zen:43:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-variant/err_binder_arm_joins_its_set_into_the_match/ # UNSUPPORTED: main.zen:41:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-variant/err_flipped_spelling_retag_with_payloads/main # UNSUPPORTED: main.zen:22:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-variant/err_inferred_set_carries_both_members/main # UNSUPPORTED: main.zen:29:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-variant/err_inner_variant_survives_a_hop/main # UNSUPPORTED: main.zen:52:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-variant/err_ok_path_survives_the_same_hops/main # UNSUPPORTED: main.zen:24:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-variant/err_raise_inside_loop_exits_the_function/main # UNSUPPORTED: main.zen:27:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-variant/err_runtime_pick_reads_back_by_name/main # UNSUPPORTED: main.zen:43:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-variant/err_std_write_error_keeps_its_variant/main # UNSUPPORTED: main.zen:25:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-variant/err_widening_chain_keeps_member_and_payload/main # UNSUPPORTED: main.zen:27:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-widen/alias_retag_chain_translates_tags/main # UNSUPPORTED: main.zen:46:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-widen/inferred_middle_set_flattens_into_wider/main # UNSUPPORTED: main.zen:41:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-widen/member_tail_reaches_a_named_set/ # UNSUPPORTED: main.zen:34:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-widen/one_member_two_targets_retagged/main # UNSUPPORTED: main.zen:55:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-widen/payload_rides_the_widened_err/main # UNSUPPORTED: main.zen:35:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/errors-widen/shared_variant_name_keeps_its_member/main # UNSUPPORTED: main.zen:33:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/file-io/empty_file_reads_as_zero_not_stale/main # UNSUPPORTED: main.zen:15:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/file-io/missing_path_names_not_found_on_both_doors/main # UNSUPPORTED: main.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/file-io/posix_stream/main # UNSUPPORTED: main.zen:25:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/file-io/read_returns_whole_file_in_order/main # UNSUPPORTED: main.zen:13:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/file-io/rewrite_replaces_instead_of_appending/main # UNSUPPORTED: main.zen:13:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/file-io/symlink_loop_is_failed/main # UNSUPPORTED: main.zen:3:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/file-io/write_onto_directory_is_isdir/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/file-io/write_read_round_trip_keeps_nul_and_tabs/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/fmt/a_comment_between_items_stays_put # UNSUPPORTED: a_comment_between_items_stays_put.zen:15:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/f
+tests/corpus/fmt/a_file_that_does_not_parse_is_left_alone # UNSUPPORTED: a_file_that_does_not_parse_is_left_alone.zen:14:10: nothing is at that path: tried `fmt/fmt.zen` and
+tests/corpus/fmt/a_formatted_file_says_what_it_said # UNSUPPORTED: a_formatted_file_says_what_it_said.zen:32:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/
+tests/corpus/fmt/a_list_just_under_the_width_stays_packed # UNSUPPORTED: a_list_just_under_the_width_stays_packed.zen:13:10: nothing is at that path: tried `fmt/fmt.zen` and
+tests/corpus/fmt/a_long_argument_list_breaks_one_per_line # UNSUPPORTED: a_long_argument_list_breaks_one_per_line.zen:25:10: nothing is at that path: tried `fmt/fmt.zen` and
+tests/corpus/fmt/a_long_parameter_list_breaks_one_per_line # UNSUPPORTED: a_long_parameter_list_breaks_one_per_line.zen:44:10: nothing is at that path: tried `fmt/fmt.zen` an
+tests/corpus/fmt/a_long_union_breaks_one_variant_per_line # UNSUPPORTED: a_long_union_breaks_one_variant_per_line.zen:18:10: nothing is at that path: tried `fmt/fmt.zen` and
+tests/corpus/fmt/a_nested_list_breaks_only_where_it_must # UNSUPPORTED: a_nested_list_breaks_only_where_it_must.zen:33:10: nothing is at that path: tried `fmt/fmt.zen` and 
+tests/corpus/fmt/an_array_literal_fills_its_lines # UNSUPPORTED: an_array_literal_fills_its_lines.zen:42:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/fm
+tests/corpus/fmt/arms_line_up_on_their_arrows # UNSUPPORTED: arms_line_up_on_their_arrows.zen:43:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/fmt/fm
+tests/corpus/fmt/bindings_line_up_on_their_operators # UNSUPPORTED: bindings_line_up_on_their_operators.zen:33:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt
+tests/corpus/fmt/formatting_twice_moves_nothing # UNSUPPORTED: formatting_twice_moves_nothing.zen:28:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/fmt/
+tests/corpus/fmt/unit_return_bodies # UNSUPPORTED: unit_return_bodies.zen:1:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/fmt/fmt.zen`
+tests/corpus/fmt/unit_return_comments # UNSUPPORTED: unit_return_comments.zen:1:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/fmt/fmt.zen`
+tests/corpus/fmt/unit_return_preserved # UNSUPPORTED: unit_return_preserved.zen:1:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/fmt/fmt.zen`
+tests/corpus/fmt/unrelated_lists_keep_their_layout_at_scale # UNSUPPORTED: unrelated_lists_keep_their_layout_at_scale.zen:1:10: nothing is at that path: tried `fmt/fmt.zen` an
+tests/corpus/gen/asm_renderer/main # UNSUPPORTED: main.zen:8:114: nothing is at that path: tried `gen/gen_ir.zen` and `gen/gen_ir/gen_ir.zen`
+tests/corpus/gen/ir_verifier/main # UNSUPPORTED: main.zen:1:57: nothing is at that path: tried `gen/gen_ir.zen` and `gen/gen_ir/gen_ir.zen`
+tests/corpus/gen/js_renderer/main # UNSUPPORTED: main.zen:4:73: nothing is at that path: tried `gen/gen_ir.zen` and `gen/gen_ir/gen_ir.zen`
+tests/corpus/gen/scalar_backends/main # UNSUPPORTED: main.zen:2:9: nothing is at that path: tried `zen/zen_build.zen` and `zen/zen_build/zen_build.zen`
+tests/corpus/gen/str_index_ufcs_chain # UNSUPPORTED: str_index_ufcs_chain.zen:19:28: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/gen_zen/a_closure_row_cannot_be_read_as_storage/main # UNSUPPORTED: main.zen:5:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/backend_lookup_growth/main # UNSUPPORTED: main.zen:7:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/backend_records_survive_allocation_refusal/main # UNSUPPORTED: main.zen:2:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/bodyless_free_function_is_extern/main # UNSUPPORTED: main.zen:12:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/gen_zen/c_abi_primitives_keep_c_spelling/main # UNSUPPORTED: main.zen:1:10: nothing is at that path: tried `gen/gen_c.zen` and `gen/gen_c/gen_c.zen`
+tests/corpus/gen_zen/c_binding_header_owns_declarations/main # UNSUPPORTED: main.zen:8:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/c_binding_opaque_types_keep_native_names/main # UNSUPPORTED: main.zen:8:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/c_binding_rejects_an_unsafe_header/main # UNSUPPORTED: main.zen:7:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/c_binding_rejects_invalid_opaque_types/main # UNSUPPORTED: main.zen:8:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/emits_a_c_program/main # UNSUPPORTED: main.zen:23:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/gen_zen/emitter_preserves_blank_lines_and_stable_order/main # UNSUPPORTED: main.zen:1:15: nothing is at that path: tried `gen/gen_emit.zen` and `gen/gen_emit/gen_emit.zen`
+tests/corpus/gen_zen/ffi_lowers_a_bodyless_function/main # UNSUPPORTED: main.zen:8:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/lowers_the_loop_intrinsic/main # UNSUPPORTED: main.zen:13:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/gen_zen/mangles_by_length_prefix/main # UNSUPPORTED: main.zen:12:42: nothing is at that path: tried `gen/gen_name.zen` and `gen/gen_name/gen_name.zen`
+tests/corpus/gen_zen/monomorphises_a_generic/main # UNSUPPORTED: main.zen:30:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/gen_zen/range_literal_bound_receiver/main # UNSUPPORTED: main.zen:4:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/reports_what_it_cannot_lower/main # UNSUPPORTED: main.zen:18:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/gen_zen/short_circuit_does_not_run_the_right_operand # UNSUPPORTED: short_circuit_does_not_run_the_right_operand.zen:10:19: error: unsupported by this backend: this bac
+tests/corpus/gen_zen/symbol_map_keeps_only_source_functions/main # UNSUPPORTED: main.zen:7:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/union_reading_is_per_declaration/main # UNSUPPORTED: main.zen:12:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/gen_zen/unit_pointer_has_no_void_element_c/main # UNSUPPORTED: main.zen:7:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/generics/inline_method_keeps_its_type_arguments/main # UNSUPPORTED: main.zen:8:20: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/impl-traits/dispatch_picks_each_type_own_impl/main # UNSUPPORTED: main.zen:29:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/impl-traits/rebind_changes_what_the_default_sees/main # UNSUPPORTED: main.zen:29:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/imports/duplicate_import_first_binding_wins/main # UNSUPPORTED: main.zen:20:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/imports/field_default_survives_the_boundary/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/imports/generic_type_imported_and_instantiated/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/imports/imported_constant_folds_through_both_spellings/main # UNSUPPORTED: main.zen:6:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/imports/two_declarers_dealt_by_receiver/main # UNSUPPORTED: main.zen:22:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/imports/type_alone_carries_its_ufcs/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/imports/ufcs_free_form_reaches_the_travelling_function/main # UNSUPPORTED: main.zen:6:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/imports/unstarred_import_works_in_its_own_module/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/imports/unused_import_still_binds/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/integer-widening/literal_widens_by_position_variable_does_not/main # UNSUPPORTED: main.zen:36:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/integer-widening/overload_picked_by_receiver_width/main # UNSUPPORTED: main.zen:26:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/integer-widening/sign_extension_survives_widening/main # UNSUPPORTED: main.zen:4:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/integer-widening/unsigned_high_bits_zero_extend/main # UNSUPPORTED: main.zen:28:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/integer-widening/widened_value_computes_at_target_width/main # UNSUPPORTED: main.zen:28:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/integer-widening/widened_value_crosses_closure_and_accumulates/main # UNSUPPORTED: main.zen:30:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/json/escape_tables_agree # UNSUPPORTED: escape_tables_agree.zen:11:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/json/finished_decoders_refuse_every_feed # UNSUPPORTED: finished_decoders_refuse_every_feed.zen:15:19: error: unsupported by this backend: this backend supp
+tests/corpus/json/object_member_inspection # UNSUPPORTED: object_member_inspection.zen:5:19: error: unsupported by this backend: this backend supports only i3
+tests/corpus/json/read_and_stream_reject_raw_controls # UNSUPPORTED: read_and_stream_reject_raw_controls.zen:33:19: error: unsupported by this backend: this backend supp
+tests/corpus/json/streaming_decoder_crosses_chunks # UNSUPPORTED: streaming_decoder_crosses_chunks.zen:18:19: error: unsupported by this backend: this backend support
+tests/corpus/json/streaming_decoder_refuses_incomplete_json # UNSUPPORTED: streaming_decoder_refuses_incomplete_json.zen:31:19: error: unsupported by this backend: this backen
+tests/corpus/json/tree_accessors_default # UNSUPPORTED: tree_accessors_default.zen:10:19: error: unsupported by this backend: this backend supports only i32
+tests/corpus/json/typed_record_to_json # UNSUPPORTED: typed_record_to_json.zen:13:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/lex/block_comment_basic # UNSUPPORTED: block_comment_basic.zen:14:52: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/lex/block_comment_single_close # UNSUPPORTED: block_comment_single_close.zen:9:19: error: unsupported by this backend: this backend supports only 
+tests/corpus/lex/bom_utf8 # UNSUPPORTED: bom_utf8.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and unit
+tests/corpus/lex/bom_utf8_then_declaration # UNSUPPORTED: bom_utf8_then_declaration.zen:9:19: error: unsupported by this backend: this backend supports only i
+tests/corpus/lex/char_literal_basics # UNSUPPORTED: char_literal_basics.zen:17:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/lex/char_literal_is_byte # UNSUPPORTED: char_literal_is_byte.zen:12:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/lex/char_literal_vtab_formfeed # UNSUPPORTED: char_literal_vtab_formfeed.zen:7:19: error: unsupported by this backend: this backend supports only 
+tests/corpus/lex/comment_at_eof_no_newline # UNSUPPORTED: comment_at_eof_no_newline.zen:5:19: error: unsupported by this backend: this backend supports only i
+tests/corpus/lex/crlf_line_endings # UNSUPPORTED: crlf_line_endings.zen:5:19: error: unsupported by this backend: this backend supports only i32, bool
+tests/corpus/lex/crlf_mixed_with_lf # UNSUPPORTED: crlf_mixed_with_lf.zen:5:19: error: unsupported by this backend: this backend supports only i32, boo
+tests/corpus/lex/diagnostic_allocation_failures_propagate # UNSUPPORTED: diagnostic_allocation_failures_propagate.zen:52:19: error: unsupported by this backend: this backend
+tests/corpus/lex/hex_integer_literals # UNSUPPORTED: hex_integer_literals.zen:1:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/lex/identifier_charset_ascii # UNSUPPORTED: identifier_charset_ascii.zen:6:19: error: unsupported by this backend: this backend supports only i3
+tests/corpus/lex/identifier_prefix_of_keyword # UNSUPPORTED: identifier_prefix_of_keyword.zen:5:19: error: unsupported by this backend: this backend supports onl
+tests/corpus/lex/long_identifier # UNSUPPORTED: long_identifier.zen:4:19: error: unsupported by this backend: this backend supports only i32, bool a
+tests/corpus/lex/long_single_line # UNSUPPORTED: long_single_line.zen:5:19: error: unsupported by this backend: this backend supports only i32, bool 
+tests/corpus/lex/long_string_literal # UNSUPPORTED: long_string_literal.zen:5:19: error: unsupported by this backend: this backend supports only i32, bo
+tests/corpus/lex/no_trailing_newline # UNSUPPORTED: no_trailing_newline.zen:11:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/lex/number_adjacent_to_tokens # UNSUPPORTED: number_adjacent_to_tokens.zen:17:19: error: unsupported by this backend: this backend supports only 
+tests/corpus/lex/number_float_basics # UNSUPPORTED: number_float_basics.zen:12:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/lex/number_i32_min_literal # UNSUPPORTED: number_i32_min_literal.zen:5:19: error: unsupported by this backend: this backend supports only i32,
+tests/corpus/lex/number_type_boundaries # UNSUPPORTED: number_type_boundaries.zen:5:19: error: unsupported by this backend: this backend supports only i32,
+tests/corpus/lex/number_zero # UNSUPPORTED: number_zero.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool and 
+tests/corpus/lex/operator_maximal_munch # UNSUPPORTED: operator_maximal_munch.zen:12:19: error: unsupported by this backend: this backend supports only i32
+tests/corpus/lex/reserved_words_own_generated_name_validity # UNSUPPORTED: reserved_words_own_generated_name_validity.zen:8:25: error: unsupported by this backend: this backen
+tests/corpus/lex/string_byte_length # UNSUPPORTED: string_byte_length.zen:5:19: error: unsupported by this backend: this backend supports only i32, boo
+tests/corpus/lex/string_containing_bracket_markers # UNSUPPORTED: string_containing_bracket_markers.zen:11:19: error: unsupported by this backend: this backend suppor
+tests/corpus/lex/string_containing_comment_markers # UNSUPPORTED: string_containing_comment_markers.zen:6:19: error: unsupported by this backend: this backend support
+tests/corpus/lex/string_empty # UNSUPPORTED: string_empty.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and 
+tests/corpus/lex/string_escapes # UNSUPPORTED: string_escapes.zen:5:19: error: unsupported by this backend: this backend supports only i32, bool an
+tests/corpus/lex/string_literal_braces # UNSUPPORTED: string_literal_braces.zen:5:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/lex/string_literal_raw_tab # UNSUPPORTED: string_literal_raw_tab.zen:5:19: error: unsupported by this backend: this backend supports only i32,
+tests/corpus/lex/string_non_ascii_passthrough # UNSUPPORTED: string_non_ascii_passthrough.zen:5:19: error: unsupported by this backend: this backend supports onl
+tests/corpus/lex/tabs_as_indentation # UNSUPPORTED: tabs_as_indentation.zen:4:19: error: unsupported by this backend: this backend supports only i32, bo
+tests/corpus/lex/trailing_whitespace # UNSUPPORTED: trailing_whitespace.zen:5:19: error: unsupported by this backend: this backend supports only i32, bo
+tests/corpus/lex_zen/big_input/ # UNSUPPORTED: main.zen:28:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/lex_zen/comments/ # UNSUPPORTED: main.zen:49:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/lex_zen/edges/ # UNSUPPORTED: main.zen:40:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/lex_zen/faults/ # UNSUPPORTED: main.zen:44:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/lex_zen/kind_equality/ # UNSUPPORTED: main.zen:24:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/lex_zen/literals/ # UNSUPPORTED: main.zen:30:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/lex_zen/numbers/ # UNSUPPORTED: main.zen:30:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/lex_zen/spans/ # UNSUPPORTED: main.zen:32:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/lex_zen/token_kinds/ # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-basic/array_literals_walk_in_place/main # UNSUPPORTED: main.zen:11:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-basic/break_exits_at_depth_and_carries_a_value/main # UNSUPPORTED: main.zen:10:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-basic/empty_collections_run_zero_passes/main # UNSUPPORTED: main.zen:10:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-basic/fold_threads_acc_by_value_through_the_passes/main # UNSUPPORTED: main.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/loop-basic/index_and_value_differ_when_the_walk_is_not_zero_based/main # UNSUPPORTED: main.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/loop-basic/next_skips_the_rest_of_one_pass_only/main # UNSUPPORTED: main.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/loop-basic/single_element_collections_walk_exactly_once/main # UNSUPPORTED: main.zen:8:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/loop-basic/stored_names_do_not_bypass_range_at/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-basic/vec_walk_hands_out_insertion_order_elements/main # UNSUPPORTED: main.zen:4:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/loop-break/a_handle_names_its_own_loop_depth/main # UNSUPPORTED: main.zen:20:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-break/annotated_no_range_loop_stands_at_its_declaration/main # UNSUPPORTED: main.zen:4:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/loop-break/bool_break_payload_is_a_bool/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-break/break_copies_the_whole_struct_payload/main # UNSUPPORTED: main.zen:27:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-break/break_from_inside_then_and_match_frames/main # UNSUPPORTED: main.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-break/first_break_executed_supplies_the_loop_value/main # UNSUPPORTED: main.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-break/literal_break_that_fits_its_payload # UNSUPPORTED: literal_break_that_fits_its_payload.zen:16:19: error: unsupported by this backend: this backend supp
+tests/corpus/loop-break/natural_end_is_none_even_when_break_zero_is_ok/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-break/negative_break_payload_keeps_its_sign/main # UNSUPPORTED: main.zen:15:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-break/outer_break_carries_the_inner_loops_work/main # UNSUPPORTED: main.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-break/wide_break_payload_survives_whole/main # UNSUPPORTED: main.zen:15:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-nested/break_from_inner_body_stops_outer/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-nested/inner_break_value_not_outer_type/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-nested/nested_folds_break_carries_to_right_loop/main # UNSUPPORTED: main.zen:20:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-nested/nested_loops_break_inner_only/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-nested/next_in_inner_break_in_outer_same_nest/main # UNSUPPORTED: main.zen:15:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-nested/three_deep_middle_break/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-nested/try_inside_nested_loop_returns_past_both/main # UNSUPPORTED: main.zen:31:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/loop-nested/while_cond_nested_breaks_inner/main # UNSUPPORTED: main.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/lsp/a_build_zen_marks_the_root/main # UNSUPPORTED: main.zen:38:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/a_missing_module_is_named/main # UNSUPPORTED: main.zen:33:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/a_query_shares_the_settles_build/main # UNSUPPORTED: main.zen:37:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/a_session_is_answered_frame_by_frame/main # UNSUPPORTED: main.zen:24:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/a_watched_dependency_retires_the_build/main # UNSUPPORTED: main.zen:6:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/auto_import_offers_undefined_name/main # UNSUPPORTED: main.zen:33:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/closing_a_document_retires_its_overlay/main # UNSUPPORTED: main.zen:7:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/colour_comes_from_the_build/main # UNSUPPORTED: main.zen:45:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/colour_comes_from_the_lexer/main # UNSUPPORTED: main.zen:52:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/completion_lists_an_imported_types_members/main # UNSUPPORTED: main.zen:19:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/completion_lists_members_after_a_dot/main # UNSUPPORTED: main.zen:23:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/completion_narrows_the_scope_by_prefix/main # UNSUPPORTED: main.zen:22:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/definition_jumps_across_modules/main # UNSUPPORTED: main.zen:28:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/definition_jumps_into_a_variants_payload/main # UNSUPPORTED: main.zen:27:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/definition_jumps_within_a_module/main # UNSUPPORTED: main.zen:26:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/definition_uses_src_below_build_marker/main # UNSUPPORTED: main.zen:4:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/lsp/diagnostics_are_written_as_the_protocol_spells_them # UNSUPPORTED: diagnostics_are_written_as_the_protocol_spells_them.zen:44:17: nothing is at that path: tried `lsp/l
+tests/corpus/lsp/diagnostics_publish_and_clear/main # UNSUPPORTED: main.zen:8:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/document_symbol_lists_the_declarations/main # UNSUPPORTED: main.zen:19:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/document_symbol_skips_a_name_not_yet_typed/main # UNSUPPORTED: main.zen:12:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/document_uris_name_local_paths # UNSUPPORTED: document_uris_name_local_paths.zen:7:29: nothing is at that path: tried `lsp/lsp_uri.zen` and `lsp/l
+tests/corpus/lsp/every_query_refuses_a_uri_never_opened/main # UNSUPPORTED: main.zen:24:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/explicit_source_roots/main # UNSUPPORTED: main.zen:1:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/formatting_is_one_whole_document_edit/ # UNSUPPORTED: main.zen:29:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/fmt/fmt.zen`
+tests/corpus/lsp/formatting_refuses_a_buffer_with_a_hole/ # UNSUPPORTED: main.zen:30:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/frames_arrive_over_stdin # UNSUPPORTED: frames_arrive_over_stdin.zen:25:22: nothing is at that path: tried `lsp/lsp_frame.zen` and `lsp/lsp_
+tests/corpus/lsp/hover_answers_a_primitive_type/main # UNSUPPORTED: main.zen:6:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/hover_answers_an_imported_name/main # UNSUPPORTED: main.zen:8:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/hover_answers_at_a_declaration/main # UNSUPPORTED: main.zen:41:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/hover_answers_inside_a_generic_body/ # UNSUPPORTED: main.zen:18:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/hover_streams_shapes/main # UNSUPPORTED: main.zen:5:12: nothing is at that path: tried `lsp/lsp_hover.zen` and `lsp/lsp_hover/lsp_hover.zen`
+tests/corpus/lsp/idle_queries_do_not_grow_session/main # UNSUPPORTED: main.zen:2:10: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/import_queries_reuse_checked_graph/main # UNSUPPORTED: main.zen:3:23: nothing is at that path: tried `lsp/lsp_diag.zen` and `lsp/lsp_diag/lsp_diag.zen`
+tests/corpus/lsp/initialize_then_idle_sends_nothing # UNSUPPORTED: initialize_then_idle_sends_nothing.zen:23:17: nothing is at that path: tried `lsp/lsp_serve.zen` and
+tests/corpus/lsp/json_round_trips_and_rejects/main # UNSUPPORTED: main.zen:129:19: error: unsupported by this backend: this backend supports only i32, bool and unit v
+tests/corpus/lsp/method_types_keep_semantic_colours/main # UNSUPPORTED: main.zen:6:38: nothing is at that path: tried `lsp/lsp_query.zen` and `lsp/lsp_query/lsp_query.zen`
+tests/corpus/lsp/observed_types_survive_unknown_queries # UNSUPPORTED: observed_types_survive_unknown_queries.zen:1:20: nothing is at that path: tried `lsp/lsp_query.zen` 
+tests/corpus/lsp/patched_completion_uses_all_open_buffers/main # UNSUPPORTED: main.zen:3:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/positions_convert_both_ways/main # UNSUPPORTED: main.zen:38:33: nothing is at that path: tried `lsp/lsp_pos.zen` and `lsp/lsp_pos/lsp_pos.zen`
+tests/corpus/lsp/unchanged_diagnostics_are_not_republished/main # UNSUPPORTED: main.zen:7:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/workspace_diagnostics/main # UNSUPPORTED: main.zen:3:19: nothing is at that path: tried `zen/zen_build.zen` and `zen/zen_build/zen_build.zen`
+tests/corpus/map/a_str_key_is_its_bytes_not_its_pointer/main # UNSUPPORTED: main.zen:13:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/map/a_struct_key_is_its_fields_not_its_binding/main # UNSUPPORTED: main.zen:31:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/map/an_overwrite_rewrites_its_own_row_under_collisions/main # UNSUPPORTED: main.zen:24:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/map/every_key_reads_back_its_own_value/main # UNSUPPORTED: main.zen:14:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/map/known_length_slot_tables_allocate_once # UNSUPPORTED: known_length_slot_tables_allocate_once.zen:22:19: error: unsupported by this backend: this backend s
+tests/corpus/map/two_maps_never_share_rows/main # UNSUPPORTED: main.zen:11:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-exhaust/arms_shuffled_against_declaration_order/main # UNSUPPORTED: main.zen:28:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-exhaust/binder_arm_hands_the_whole_value_on/main # UNSUPPORTED: main.zen:35:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-exhaust/binder_in_statement_position_feeds_nested_match/main # UNSUPPORTED: main.zen:32:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-exhaust/literal_arms_and_wildcard_remainder/main # UNSUPPORTED: main.zen:27:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-exhaust/nested_arms_cover_every_path_without_wildcard/main # UNSUPPORTED: main.zen:34:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-exhaust/three_levels_of_pattern_fully_covered/main # UNSUPPORTED: main.zen:35:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-exhaust/wildcard_mid_chain_still_guards_its_case/main # UNSUPPORTED: main.zen:31:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-payloads/arm_binding_scrutinee_of_a_nested_match/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-payloads/bare_variant_name_tests_only_the_tag/main # UNSUPPORTED: main.zen:15:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-payloads/err_case_on_a_union_tests_only_that_case/ # UNSUPPORTED: main.zen:63:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-payloads/err_payload_case_on_a_union_reads_the_case/ # UNSUPPORTED: main.zen:34:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-payloads/literal_payload_narrows_and_binder_binds/main # UNSUPPORTED: main.zen:14:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-payloads/match_value_is_the_payload_binding/main # UNSUPPORTED: main.zen:13:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-payloads/nested_pattern_binder_only_at_the_bottom/main # UNSUPPORTED: main.zen:16:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-payloads/one_binder_name_across_arms_and_types/main # UNSUPPORTED: main.zen:13:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-payloads/struct_payload_fields_read_through_the_binder/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-payloads/two_enums_share_variant_names_and_payloads/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-value/a_local_binds_the_matched_arms_value/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-value/a_match_inside_a_loop_body/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-value/a_payload_binder_is_the_variant_value_in_operand_position/main # UNSUPPORTED: main.zen:30:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-value/an_enum_match_in_value_position/main # UNSUPPORTED: main.zen:32:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-value/match_as_an_operand_of_an_operator/main # UNSUPPORTED: main.zen:22:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/match-value/match_feeds_a_call_argument/main # UNSUPPORTED: main.zen:28:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/math/scalar # UNSUPPORTED: scalar.zen:7:18: error: unsupported by this backend: this backend supports only i32, bool and unit v
+tests/corpus/meta/alias_name_is_what_was_written # UNSUPPORTED: alias_name_is_what_was_written.zen:30:19: error: unsupported by this backend: this backend supports 
+tests/corpus/meta/field_count_via_meta # UNSUPPORTED: field_count_via_meta.zen:58:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/meta/field_walk_by_hand # UNSUPPORTED: field_walk_by_hand.zen:40:19: error: unsupported by this backend: this backend supports only i32, bo
+tests/corpus/meta/field_walk_shadowing # UNSUPPORTED: field_walk_shadowing.zen:10:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/meta/field_walk_via_meta # UNSUPPORTED: field_walk_via_meta.zen:65:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/meta/primitive_name_is_its_own_spelling # UNSUPPORTED: primitive_name_is_its_own_spelling.zen:42:19: error: unsupported by this backend: this backend suppo
+tests/corpus/meta/type_name_via_meta # UNSUPPORTED: type_name_via_meta.zen:26:19: error: unsupported by this backend: this backend supports only i32, bo
+tests/corpus/modules/alias_target_reads_its_own_module/ # UNSUPPORTED: main.zen:22:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/modules/diamond_reexport/ # UNSUPPORTED: main.zen:13:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/modules/enum_payloads_survive_a_root/main # UNSUPPORTED: main.zen:16:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/modules/enum_variants_survive_a_root/main # UNSUPPORTED: main.zen:11:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/modules/folder_root/ # UNSUPPORTED: main.zen:3:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/modules/folder_root_short_name/main # UNSUPPORTED: main.zen:12:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/modules/mixed_visibility_overloads/main # UNSUPPORTED: main.zen:3:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/modules/module_alias_qualified/main # UNSUPPORTED: main.zen:14:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/modules/overloads_survive_one_root/main # UNSUPPORTED: main.zen:4:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/modules/prelude_in_every_module/ # UNSUPPORTED: main.zen:3:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/modules/private_fn_does_not_shadow_a_field/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/modules/reexport_chain/ # UNSUPPORTED: main.zen:3:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/modules/same_name_isolated/ # UNSUPPORTED: main.zen:4:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/modules/same_name_overload/ # UNSUPPORTED: main.zen:6:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/modules/same_named_module_alias/main # UNSUPPORTED: main.zen:10:21: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/modules/same_type_name_method_and_free/main # UNSUPPORTED: main.zen:20:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/modules/shadowing/ # UNSUPPORTED: main.zen:10:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/modules/star_gate_visible/ # UNSUPPORTED: main.zen:3:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/modules/struct_survives_a_root/main # UNSUPPORTED: main.zen:4:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/modules/type_survives_two_roots/main # UNSUPPORTED: main.zen:12:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/modules/unstarred_local_only/ # UNSUPPORTED: main.zen:15:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/net/dns_resolve/main # UNSUPPORTED: main.zen:43:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/net/sse_stream/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/net/tcp_connect/main # UNSUPPORTED: main.zen:27:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/net/tls_connect/main # UNSUPPORTED: main.zen:12:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/operators-precedence/additive_binds_looser_than_multiplicative/main # UNSUPPORTED: main.zen:24:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/operators-precedence/and_binds_tighter_than_or/main # UNSUPPORTED: main.zen:23:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/operators-precedence/binary_operators_group_left/main # UNSUPPORTED: main.zen:25:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/operators-precedence/comparison_binds_tighter_than_equality/main # UNSUPPORTED: main.zen:22:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/operators-precedence/parentheses_override_every_tier/main # UNSUPPORTED: main.zen:28:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/operators-precedence/postfix_binds_tighter_than_unary/main # UNSUPPORTED: main.zen:30:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/operators-precedence/unary_minus_binds_tighter_than_binary/main # UNSUPPORTED: main.zen:27:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/operators-precedence/wrapping_ops_share_the_trapping_tier/main # UNSUPPORTED: main.zen:23:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/own/arena_handed_out_of_a_semicolon_tail # UNSUPPORTED: arena_handed_out_of_a_semicolon_tail.zen:6:19: error: unsupported by this backend: this backend supp
+tests/corpus/own/arena_other_owner_survives_drop # UNSUPPORTED: arena_other_owner_survives_drop.zen:1:19: error: unsupported by this backend: this backend supports 
+tests/corpus/own/arena_view_field_every_arm_overwritten # UNSUPPORTED: arena_view_field_every_arm_overwritten.zen:11:19: error: unsupported by this backend: this backend s
+tests/corpus/own/arena_view_field_overwritten # UNSUPPORTED: arena_view_field_overwritten.zen:11:19: error: unsupported by this backend: this backend supports on
+tests/corpus/own/arena_view_loop_chain_overwritten # UNSUPPORTED: arena_view_loop_chain_overwritten.zen:11:19: error: unsupported by this backend: this backend suppor
+tests/corpus/own/arena_view_overwritten_before_return # UNSUPPORTED: arena_view_overwritten_before_return.zen:10:19: error: unsupported by this backend: this backend sup
+tests/corpus/own/arena_view_overwritten_in_every_arm # UNSUPPORTED: arena_view_overwritten_in_every_arm.zen:13:19: error: unsupported by this backend: this backend supp
+tests/corpus/own/arena_view_replaced_after_drop # UNSUPPORTED: arena_view_replaced_after_drop.zen:1:19: error: unsupported by this backend: this backend supports o
+tests/corpus/own/block_hands_out_its_semicolon_tail # UNSUPPORTED: block_hands_out_its_semicolon_tail.zen:27:19: error: unsupported by this backend: this backend suppo
+tests/corpus/own/caller_arena_block_alias_returned # UNSUPPORTED: caller_arena_block_alias_returned.zen:10:19: error: unsupported by this backend: this backend suppor
+tests/corpus/own/caller_arena_view_stored_through_parameter # UNSUPPORTED: caller_arena_view_stored_through_parameter.zen:8:19: error: unsupported by this backend: this backen
+tests/corpus/own/conditional_record_return_keeps_independent_origins # UNSUPPORTED: conditional_record_return_keeps_independent_origins.zen:19:19: error: unsupported by this backend: t
+tests/corpus/own/consume_fresh_value_each_iteration # UNSUPPORTED: consume_fresh_value_each_iteration.zen:18:19: error: unsupported by this backend: this backend suppo
+tests/corpus/own/consume_in_every_match_arm # UNSUPPORTED: consume_in_every_match_arm.zen:9:19: error: unsupported by this backend: this backend supports only 
+tests/corpus/own/consume_shadow_keeps_outer_owned # UNSUPPORTED: consume_shadow_keeps_outer_owned.zen:18:19: error: unsupported by this backend: this backend support
+tests/corpus/own/consume_then_construct_again # UNSUPPORTED: consume_then_construct_again.zen:15:19: error: unsupported by this backend: this backend supports on
+tests/corpus/own/copied_record_fields_are_snapshots # UNSUPPORTED: copied_record_fields_are_snapshots.zen:13:19: error: unsupported by this backend: this backend suppo
+tests/corpus/own/copied_scalar_records_do_not_borrow_container # UNSUPPORTED: copied_scalar_records_do_not_borrow_container.zen:12:19: error: unsupported by this backend: this ba
+tests/corpus/own/deep_binary_callback_provenance # UNSUPPORTED: deep_binary_callback_provenance.zen:3:11: nothing is at that path: tried `sema/sema_check.zen` and `
+tests/corpus/own/defer_cap_is_thirty_two/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/own/defer_captures_at_registration # UNSUPPORTED: defer_captures_at_registration.zen:10:19: error: unsupported by this backend: this backend supports 
+tests/corpus/own/defer_runs_at_every_exit # UNSUPPORTED: defer_runs_at_every_exit.zen:23:19: error: unsupported by this backend: this backend supports only i
+tests/corpus/own/defer_runs_before_drop # UNSUPPORTED: defer_runs_before_drop.zen:18:19: error: unsupported by this backend: this backend supports only i32
+tests/corpus/own/drop_order_reverse # UNSUPPORTED: drop_order_reverse.zen:17:19: error: unsupported by this backend: this backend supports only i32, bo
+tests/corpus/own/duplicated_text_uses_the_chosen_allocator # UNSUPPORTED: duplicated_text_uses_the_chosen_allocator.zen:6:19: error: unsupported by this backend: this backend
+tests/corpus/own/explicit_consumed_drop_runs_once # UNSUPPORTED: explicit_consumed_drop_runs_once.zen:3:24: error: unsupported by this backend: this backend supports
+tests/corpus/own/explicit_static_consumed_drop_runs_once # UNSUPPORTED: explicit_static_consumed_drop_runs_once.zen:4:19: error: unsupported by this backend: this backend s
+tests/corpus/own/handle_method_through_immutable_field # UNSUPPORTED: handle_method_through_immutable_field.zen:30:19: error: unsupported by this backend: this backend su
+tests/corpus/own/handle_passed_as_immutable_param # UNSUPPORTED: handle_passed_as_immutable_param.zen:23:19: error: unsupported by this backend: this backend support
+tests/corpus/own/helpers_preserve_caller_owned_storage # UNSUPPORTED: helpers_preserve_caller_owned_storage.zen:10:19: error: unsupported by this backend: this backend su
+tests/corpus/own/helpers_preserve_independent_field_origins # UNSUPPORTED: helpers_preserve_independent_field_origins.zen:15:19: error: unsupported by this backend: this backe
+tests/corpus/own/mutable_field_takes_mutable_method # UNSUPPORTED: mutable_field_takes_mutable_method.zen:19:19: error: unsupported by this backend: this backend suppo
+tests/corpus/own/nested_block_hands_out_its_tail # UNSUPPORTED: nested_block_hands_out_its_tail.zen:43:19: error: unsupported by this backend: this backend supports
+tests/corpus/own/nested_field_overwrite_preserves_siblings # UNSUPPORTED: nested_field_overwrite_preserves_siblings.zen:14:19: error: unsupported by this backend: this backen
+tests/corpus/own/nested_helper_arguments_keep_independent_origins # UNSUPPORTED: nested_helper_arguments_keep_independent_origins.zen:15:19: error: unsupported by this backend: this
+tests/corpus/own/nonstandard_arena_returns # UNSUPPORTED: nonstandard_arena_returns.zen:3:31: error: unsupported by this backend: this expression in a scalar 
+tests/corpus/own/ordinary_drop_method_keeps_value # UNSUPPORTED: ordinary_drop_method_keeps_value.zen:2:24: error: unsupported by this backend: this backend supports
+tests/corpus/own/read_methods_on_immutable_binding # UNSUPPORTED: read_methods_on_immutable_binding.zen:34:19: error: unsupported by this backend: this backend suppor
+tests/corpus/own/returned_records_keep_independent_origins # UNSUPPORTED: returned_records_keep_independent_origins.zen:20:19: error: unsupported by this backend: this backen
+tests/corpus/own/scope_captured_by_non_escaping_closure # UNSUPPORTED: scope_captured_by_non_escaping_closure.zen:13:19: error: unsupported by this backend: this backend s
+tests/corpus/own/scope_nests_per_block # UNSUPPORTED: scope_nests_per_block.zen:5:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/own/scope_passed_inward # UNSUPPORTED: scope_passed_inward.zen:13:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/own/send_consumed_buffer # UNSUPPORTED: send_consumed_buffer.zen:46:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/own/standard_then_consumes_once # UNSUPPORTED: standard_then_consumes_once.zen:3:19: error: unsupported by this backend: this backend supports only
+tests/corpus/own/transferred_arena_view_stored_through_parameter # UNSUPPORTED: transferred_arena_view_stored_through_parameter.zen:11:19: error: unsupported by this backend: this 
+tests/corpus/own/user_clock_and_res_keep_their_declarations/main # UNSUPPORTED: main.zen:5:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/own/val_literal_crosses_actor # UNSUPPORTED: val_literal_crosses_actor.zen:14:19: error: unsupported by this backend: this backend supports only 
+tests/corpus/own/vector_take_transfers_owner_once # UNSUPPORTED: vector_take_transfers_owner_once.zen:3:19: error: unsupported by this backend: this backend supports
+tests/corpus/ownership-consume/consume_at_call_site_round_trips/main # UNSUPPORTED: main.zen:30:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/ownership-consume/consume_breaks_with_its_value/main # UNSUPPORTED: main.zen:29:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/ownership-consume/consume_chain_drops_once/main # UNSUPPORTED: main.zen:22:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/ownership-consume/consume_clears_only_moved_flag/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/ownership-consume/consume_in_every_arm_joins_alive/main # UNSUPPORTED: main.zen:24:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/ownership-consume/consume_of_handle_still_works/main # UNSUPPORTED: main.zen:15:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/ownership-consume/consume_swaps_two_values/main # UNSUPPORTED: main.zen:25:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/ownership-consume/short_circuit_keeps_an_unmoved_value/main # UNSUPPORTED: main.zen:14:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/ownership-drop/allocation_refusal_unwinds_owned_locals # UNSUPPORTED: allocation_refusal_unwinds_owned_locals.zen:31:14: error: unsupported by this backend: this backend 
+tests/corpus/ownership-drop/arm_constructs_value_lives_to_scope_end/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/ownership-drop/assignment_drops_the_displaced_value # UNSUPPORTED: assignment_drops_the_displaced_value.zen:17:19: error: unsupported by this backend: this backend sup
+tests/corpus/ownership-drop/assignment_fires_the_nearest_shadow/main # UNSUPPORTED: main.zen:23:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/ownership-drop/break_unwinds_only_the_current_pass/main # UNSUPPORTED: main.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/ownership-drop/consume_clears_the_live_flag/main # UNSUPPORTED: main.zen:22:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/ownership-drop/inner_block_drops_at_its_own_brace/main # UNSUPPORTED: main.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/ownership-drop/loop_bindings_drop_each_pass/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/ownership-drop/next_unwinds_nested_frames # UNSUPPORTED: next_unwinds_nested_frames.zen:8:13: error: unsupported by this backend: this backend supports only 
+tests/corpus/ownership-drop/reverse_order_over_drop_bindings_only/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/ownership-drop/statement_temporary_is_never_dropped/main # UNSUPPORTED: main.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/ownership-drop/try_unwinds_frame_by_frame/main # UNSUPPORTED: main.zen:38:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/ownership-drop/vec_set_destroys_displaced_owners # UNSUPPORTED: vec_set_destroys_displaced_owners.zen:6:19: error: unsupported by this backend: this backend support
+tests/corpus/panics/index_out_of_bounds_in_a_callee_names_the_callee # UNSUPPORTED: index_out_of_bounds_in_a_callee_names_the_callee.zen:28:19: error: unsupported by this backend: this
+tests/corpus/panics/overflow_in_a_callee_names_the_callee # UNSUPPORTED: overflow_in_a_callee_names_the_callee.zen:27:19: error: unsupported by this backend: this backend su
+tests/corpus/panics/the_first_check_to_fail_decides_the_message # UNSUPPORTED: the_first_check_to_fail_decides_the_message.zen:25:19: error: unsupported by this backend: this back
+tests/corpus/panics/trap_in_callee_names_the_callee/main # UNSUPPORTED: main.zen:22:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/panics/trap_inside_a_match_arm_names_the_arms_operator # UNSUPPORTED: trap_inside_a_match_arm_names_the_arms_operator.zen:22:19: error: unsupported by this backend: this 
+tests/corpus/parse/array_type_applied # UNSUPPORTED: array_type_applied.zen:7:19: error: unsupported by this backend: this backend supports only i32, boo
+tests/corpus/parse/block_bodied_arm_needs_no_comma # UNSUPPORTED: block_bodied_arm_needs_no_comma.zen:20:19: error: unsupported by this backend: this backend supports
+tests/corpus/parse/comment_between_enum_variants # UNSUPPORTED: comment_between_enum_variants.zen:27:19: error: unsupported by this backend: this backend supports o
+tests/corpus/parse/fn_no_return_type # UNSUPPORTED: fn_no_return_type.zen:18:19: error: unsupported by this backend: this backend supports only i32, boo
+tests/corpus/parse/fn_returning_unit_at_module_level # UNSUPPORTED: fn_returning_unit_at_module_level.zen:23:19: error: unsupported by this backend: this backend suppor
+tests/corpus/parse/generic_decl_two_spellings # UNSUPPORTED: generic_decl_two_spellings.zen:10:19: error: unsupported by this backend: this backend supports only
+tests/corpus/parse/impl_decl_statement # UNSUPPORTED: impl_decl_statement.zen:36:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/parse/leading_bar_separates_alias_from_enum # UNSUPPORTED: leading_bar_separates_alias_from_enum.zen:20:19: error: unsupported by this backend: this backend su
+tests/corpus/parse/native_headers_keep_typed_members # UNSUPPORTED: native_headers_keep_typed_members.zen:14:19: error: unsupported by this backend: this backend suppor
+tests/corpus/parse/nesting_shallow # UNSUPPORTED: nesting_shallow.zen:11:19: error: unsupported by this backend: this backend supports only i32, bool 
+tests/corpus/parse/paren_then_less_is_a_comparison # UNSUPPORTED: paren_then_less_is_a_comparison.zen:21:19: error: unsupported by this backend: this backend supports
+tests/corpus/parse/parser_ambiguities # UNSUPPORTED: parser_ambiguities.zen:93:19: error: unsupported by this backend: this backend supports only i32, bo
+tests/corpus/parse/parser_deep_nesting # UNSUPPORTED: parser_deep_nesting.zen:64:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/parse/parser_error_recovery # UNSUPPORTED: parser_error_recovery.zen:25:19: error: unsupported by this backend: this backend supports only i32,
+tests/corpus/parse/parser_group_lookahead_scaling # UNSUPPORTED: parser_group_lookahead_scaling.zen:13:16: a member is resolved on the receiver's type, so a name dec
+tests/corpus/parse/parser_precedence # UNSUPPORTED: parser_precedence.zen:89:19: error: unsupported by this backend: this backend supports only i32, boo
+tests/corpus/parse/parser_reads_a_star_as_multiplication # UNSUPPORTED: parser_reads_a_star_as_multiplication.zen:73:19: error: unsupported by this backend: this backend su
+tests/corpus/parse/parser_reads_its_own_stdlib_shapes # UNSUPPORTED: parser_reads_its_own_stdlib_shapes.zen:9:19: error: unsupported by this backend: this backend suppor
+tests/corpus/parse/parser_spans # UNSUPPORTED: parser_spans.zen:122:19: error: unsupported by this backend: this backend supports only i32, bool an
+tests/corpus/parse/parser_trivia # UNSUPPORTED: parser_trivia.zen:99:19: error: unsupported by this backend: this backend supports only i32, bool an
+tests/corpus/parse/postfix_chain # UNSUPPORTED: postfix_chain.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and
+tests/corpus/parse/prec_add_sub_left # UNSUPPORTED: prec_add_sub_left.zen:4:19: error: unsupported by this backend: this backend supports only i32, bool
+tests/corpus/parse/prec_add_wrapadd # UNSUPPORTED: prec_add_wrapadd.zen:8:19: error: unsupported by this backend: this backend supports only i32, bool 
+tests/corpus/parse/prec_and_cmp # UNSUPPORTED: prec_and_cmp.zen:4:19: error: unsupported by this backend: this backend supports only i32, bool and 
+tests/corpus/parse/prec_cmp_add # UNSUPPORTED: prec_cmp_add.zen:4:19: error: unsupported by this backend: this backend supports only i32, bool and 
+tests/corpus/parse/prec_cmp_lt # UNSUPPORTED: prec_cmp_lt.zen:5:19: error: unsupported by this backend: this backend supports only i32, bool and u
+tests/corpus/parse/prec_div_add # UNSUPPORTED: prec_div_add.zen:3:19: error: unsupported by this backend: this backend supports only i32, bool and 
+tests/corpus/parse/prec_div_mod_left # UNSUPPORTED: prec_div_mod_left.zen:4:19: error: unsupported by this backend: this backend supports only i32, bool
+tests/corpus/parse/prec_not_and # UNSUPPORTED: prec_not_and.zen:16:19: error: unsupported by this backend: this backend supports only i32, bool and
+tests/corpus/parse/prec_not_postfix # UNSUPPORTED: prec_not_postfix.zen:7:19: error: unsupported by this backend: this backend supports only i32, bool 
+tests/corpus/parse/prec_sub_wrapadd # UNSUPPORTED: prec_sub_wrapadd.zen:5:19: error: unsupported by this backend: this backend supports only i32, bool 
+tests/corpus/parse/prec_sub_wrapsub # UNSUPPORTED: prec_sub_wrapsub.zen:5:19: error: unsupported by this backend: this backend supports only i32, bool 
+tests/corpus/parse/prec_unary_minus_postfix # UNSUPPORTED: prec_unary_minus_postfix.zen:9:19: error: unsupported by this backend: this backend supports only i3
+tests/corpus/parse/prec_wrapadd_mul # UNSUPPORTED: prec_wrapadd_mul.zen:5:19: error: unsupported by this backend: this backend supports only i32, bool 
+tests/corpus/parse/prec_wrapmul_add # UNSUPPORTED: prec_wrapmul_add.zen:5:19: error: unsupported by this backend: this backend supports only i32, bool 
+tests/corpus/parse/represented_enum_discriminants # UNSUPPORTED: represented_enum_discriminants.zen:57:19: error: unsupported by this backend: this backend supports 
+tests/corpus/parse/stmt_termination # UNSUPPORTED: stmt_termination.zen:14:19: error: unsupported by this backend: this backend supports only i32, bool
+tests/corpus/parse/trivia_attachment_corners # UNSUPPORTED: trivia_attachment_corners.zen:302:19: error: unsupported by this backend: this backend supports only
+tests/corpus/parse/trivia_every_comment_is_owned # UNSUPPORTED: trivia_every_comment_is_owned.zen:329:19: error: unsupported by this backend: this backend supports 
+tests/corpus/parse/trivia_lone_comment_in_bare_block_and_closure_body # UNSUPPORTED: trivia_lone_comment_in_bare_block_and_closure_body.zen:68:19: error: unsupported by this backend: th
+tests/corpus/parse/unit_return_then_next_member # UNSUPPORTED: unit_return_then_next_member.zen:30:19: error: unsupported by this backend: this backend supports on
+tests/corpus/parse_zen/a_diagnostic_is_a_value_and_carries_its_note/main # UNSUPPORTED: main.zen:72:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/parse_zen/positions_are_exact/main # UNSUPPORTED: main.zen:171:19: error: unsupported by this backend: this backend supports only i32, bool and unit v
+tests/corpus/printing/bool_and_char_print_by_type_not_by_value/main # UNSUPPORTED: main.zen:22:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/printing/each_display_hole_picks_the_right_impl/main # UNSUPPORTED: main.zen:65:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/printing/every_width_prints_in_full/main # UNSUPPORTED: main.zen:33:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/printing/floats_print_only_through_f64/main # UNSUPPORTED: main.zen:24:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/printing/print_without_newline_and_value_only/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/printing/str_prints_its_bytes_verbatim/main # UNSUPPORTED: main.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/printing/the_print_grammar_escapes_and_refuses/main # UNSUPPORTED: main.zen:29:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/printing/unit_values_print_the_unit_placeholder/main # UNSUPPORTED: main.zen:6:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/printing/what_printing_refuses/main # UNSUPPORTED: main.zen:35:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/proc_run/allocation_failure_frees_captures/main # UNSUPPORTED: main.zen:38:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/proc_run/creation_mask/main # UNSUPPORTED: main.zen:3:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/proc_run/hello_world/main # UNSUPPORTED: main.zen:7:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/proc_run/large_streams/main # UNSUPPORTED: main.zen:8:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/ptr/comparisons_preserve_element_types # UNSUPPORTED: comparisons_preserve_element_types.zen:1:19: error: unsupported by this backend: this backend suppor
+tests/corpus/sema/array_count_from_a_constant # UNSUPPORTED: array_count_from_a_constant.zen:22:19: error: unsupported by this backend: this backend supports onl
+tests/corpus/sema/array_literal_element_settles # UNSUPPORTED: array_literal_element_settles.zen:35:19: error: unsupported by this backend: this backend supports o
+tests/corpus/sema/bound_third_module/ # UNSUPPORTED: main.zen:10:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/sema/bounded_generic_loop_keeps_value_callback # UNSUPPORTED: bounded_generic_loop_keeps_value_callback.zen:16:19: error: unsupported by this backend: this backen
+tests/corpus/sema/bounded_overloads_honor_callback_annotations/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/sema/callback_annotations_contextualize_literal_arguments # UNSUPPORTED: callback_annotations_contextualize_literal_arguments.zen:4:19: error: unsupported by this backend: t
+tests/corpus/sema/checked_calls_survive_contextual_rechecking # UNSUPPORTED: checked_calls_survive_contextual_rechecking.zen:3:16: nothing is at that path: tried `sema/sema_chec
+tests/corpus/sema/closure_body_is_typed # UNSUPPORTED: closure_body_is_typed.zen:25:19: error: unsupported by this backend: this backend supports only i32,
+tests/corpus/sema/computed_field_read # UNSUPPORTED: computed_field_read.zen:24:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/sema/construction_infers_its_type_arguments # UNSUPPORTED: construction_infers_its_type_arguments.zen:33:19: error: unsupported by this backend: this backend s
+tests/corpus/sema/construction_supplies_its_defaulted_fields # UNSUPPORTED: construction_supplies_its_defaulted_fields.zen:16:19: error: unsupported by this backend: this backe
+tests/corpus/sema/empty_body_is_a_body # UNSUPPORTED: empty_body_is_a_body.zen:16:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/sema/eq_impl_makes_equatable # UNSUPPORTED: eq_impl_makes_equatable.zen:14:19: error: unsupported by this backend: this backend supports only i3
+tests/corpus/sema/error_set_inferred/ # UNSUPPORTED: main.zen:3:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/sema/error_set_merge # UNSUPPORTED: error_set_merge.zen:31:19: error: unsupported by this backend: this backend supports only i32, bool 
+tests/corpus/sema/field_defaults_publish_checked_calls # UNSUPPORTED: field_defaults_publish_checked_calls.zen:3:11: nothing is at that path: tried `sema/sema_check.zen` 
+tests/corpus/sema/field_len_in_argument_position # UNSUPPORTED: field_len_in_argument_position.zen:11:19: error: unsupported by this backend: this backend supports 
+tests/corpus/sema/generic_array_infers_and_substitutes_element # UNSUPPORTED: generic_array_infers_and_substitutes_element.zen:6:19: error: unsupported by this backend: this back
+tests/corpus/sema/generic_member_instantiations_are_settled # UNSUPPORTED: generic_member_instantiations_are_settled.zen:14:19: error: unsupported by this backend: this backen
+tests/corpus/sema/generic_third_module/ # UNSUPPORTED: main.zen:8:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/sema/hoist_single_variant # UNSUPPORTED: hoist_single_variant.zen:17:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/sema/hoist_unsettled_error_set # UNSUPPORTED: hoist_unsettled_error_set.zen:23:19: error: unsupported by this backend: this backend supports only 
+tests/corpus/sema/impl_collision_bound_in_scope # UNSUPPORTED: impl_collision_bound_in_scope.zen:35:19: error: unsupported by this backend: this backend supports o
+tests/corpus/sema/inline_union_match_preserves_member_payloads # UNSUPPORTED: inline_union_match_preserves_member_payloads.zen:20:19: error: unsupported by this backend: this bac
+tests/corpus/sema/inline_union_nested_patterns_check_payloads # UNSUPPORTED: inline_union_nested_patterns_check_payloads.zen:31:19: error: unsupported by this backend: this back
+tests/corpus/sema/integer_bits_contract # UNSUPPORTED: integer_bits_contract.zen:5:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_
+tests/corpus/sema/literal_receivers_materialize_after_inference # UNSUPPORTED: literal_receivers_materialize_after_inference.zen:12:14: error: unsupported by this backend: this ba
+tests/corpus/sema/loop_binding_reaches_a_nested_closure # UNSUPPORTED: loop_binding_reaches_a_nested_closure.zen:26:19: error: unsupported by this backend: this backend su
+tests/corpus/sema/loop_handle_legal_uses # UNSUPPORTED: loop_handle_legal_uses.zen:12:19: error: unsupported by this backend: this backend supports only i32
+tests/corpus/sema/match_arm_binder_types_the_match # UNSUPPORTED: match_arm_binder_types_the_match.zen:18:19: error: unsupported by this backend: this backend support
+tests/corpus/sema/match_arms_fit_without_agreeing_literally # UNSUPPORTED: match_arms_fit_without_agreeing_literally.zen:87:19: error: unsupported by this backend: this backen
+tests/corpus/sema/match_arms_merge_error_sets # UNSUPPORTED: match_arms_merge_error_sets.zen:46:19: error: unsupported by this backend: this backend supports onl
+tests/corpus/sema/match_exhaustive_over_every_variant # UNSUPPORTED: match_exhaustive_over_every_variant.zen:21:19: error: unsupported by this backend: this backend supp
+tests/corpus/sema/match_join_arm_order # UNSUPPORTED: match_join_arm_order.zen:22:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/sema/match_nested # UNSUPPORTED: match_nested.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and
+tests/corpus/sema/match_nested_nullary_first # UNSUPPORTED: match_nested_nullary_first.zen:25:19: error: unsupported by this backend: this backend supports only
+tests/corpus/sema/match_on_char_literals # UNSUPPORTED: match_on_char_literals.zen:26:19: error: unsupported by this backend: this backend supports only i32
+tests/corpus/sema/match_on_str_literals # UNSUPPORTED: match_on_str_literals.zen:20:19: error: unsupported by this backend: this backend supports only i32,
+tests/corpus/sema/match_pattern_is_qualified # UNSUPPORTED: match_pattern_is_qualified.zen:54:19: error: unsupported by this backend: this backend supports only
+tests/corpus/sema/match_statement_position # UNSUPPORTED: match_statement_position.zen:25:19: error: unsupported by this backend: this backend supports only i
+tests/corpus/sema/match_union_member_carries_its_type # UNSUPPORTED: match_union_member_carries_its_type.zen:57:19: error: unsupported by this backend: this backend supp
+tests/corpus/sema/match_wildcard_positions # UNSUPPORTED: match_wildcard_positions.zen:50:19: error: unsupported by this backend: this backend supports only i
+tests/corpus/sema/member_call_facts_require_valid_signatures # UNSUPPORTED: member_call_facts_require_valid_signatures.zen:4:11: nothing is at that path: tried `sema/sema_check
+tests/corpus/sema/method_call_in_argument_position # UNSUPPORTED: method_call_in_argument_position.zen:10:19: error: unsupported by this backend: this backend support
+tests/corpus/sema/method_resolved_on_receiver_type # UNSUPPORTED: method_resolved_on_receiver_type.zen:15:19: error: unsupported by this backend: this backend support
+tests/corpus/sema/module_constant_value_fits # UNSUPPORTED: module_constant_value_fits.zen:61:19: error: unsupported by this backend: this backend supports only
+tests/corpus/sema/nominal_generic_types_validate_open_and_closed # UNSUPPORTED: nominal_generic_types_validate_open_and_closed.zen:11:19: error: unsupported by this backend: this b
+tests/corpus/sema/numeric_conversion_contract # UNSUPPORTED: numeric_conversion_contract.zen:5:11: nothing is at that path: tried `sema/sema_check.zen` and `sema
+tests/corpus/sema/ok_or_try # UNSUPPORTED: ok_or_try.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and uni
+tests/corpus/sema/operand_types_agree # UNSUPPORTED: operand_types_agree.zen:14:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/sema/operator_domains_keep_supported_boundaries # UNSUPPORTED: operator_domains_keep_supported_boundaries.zen:4:19: error: unsupported by this backend: this backen
+tests/corpus/sema/overload_bounds_keep_concrete_calls_disjoint # UNSUPPORTED: overload_bounds_keep_concrete_calls_disjoint.zen:26:19: error: unsupported by this backend: this bac
+tests/corpus/sema/overload_by_type_and_arity # UNSUPPORTED: overload_by_type_and_arity.zen:23:19: error: unsupported by this backend: this backend supports only
+tests/corpus/sema/overload_pick_is_observable # UNSUPPORTED: overload_pick_is_observable.zen:21:19: error: unsupported by this backend: this backend supports onl
+tests/corpus/sema/prim_const_bits # UNSUPPORTED: prim_const_bits.zen:59:19: error: unsupported by this backend: this backend supports only i32, bool 
+tests/corpus/sema/recursive_type_ptr # UNSUPPORTED: recursive_type_ptr.zen:10:19: error: unsupported by this backend: this backend supports only i32, bo
+tests/corpus/sema/rejected_calls_publish_no_selection # UNSUPPORTED: rejected_calls_publish_no_selection.zen:3:11: nothing is at that path: tried `sema/sema_check.zen` a
+tests/corpus/sema/statement_effects # UNSUPPORTED: statement_effects.zen:35:19: error: unsupported by this backend: this backend supports only i32, boo
+tests/corpus/sema/statement_tail_is_not_a_value # UNSUPPORTED: statement_tail_is_not_a_value.zen:19:19: error: unsupported by this backend: this backend supports o
+tests/corpus/sema/trailing_res_parameters_default_to_none # UNSUPPORTED: trailing_res_parameters_default_to_none.zen:26:19: error: unsupported by this backend: this backend 
+tests/corpus/sema/try_unconstrained_ok_carries_nothing # UNSUPPORTED: try_unconstrained_ok_carries_nothing.zen:13:19: error: unsupported by this backend: this backend sup
+tests/corpus/sema/type_observations_are_indexed_and_monotone # UNSUPPORTED: type_observations_are_indexed_and_monotone.zen:2:11: nothing is at that path: tried `sema/sema_check
+tests/corpus/sema/type_observations_survive_unknown_context # UNSUPPORTED: type_observations_survive_unknown_context.zen:2:16: nothing is at that path: tried `sema/sema_check.
+tests/corpus/sema/ufcs_and_method_are_one_overload_set # UNSUPPORTED: ufcs_and_method_are_one_overload_set.zen:14:19: error: unsupported by this backend: this backend sup
+tests/corpus/sema/ufcs_travels_to_an_impl_of_the_bound/main # UNSUPPORTED: main.zen:26:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/sema/union_member_set_is_order_independent # UNSUPPORTED: union_member_set_is_order_independent.zen:14:19: error: unsupported by this backend: this backend su
+tests/corpus/sema/usage_report/main # UNSUPPORTED: main.zen:4:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/sema/usize_talks_to_u64 # UNSUPPORTED: usize_talks_to_u64.zen:19:19: error: unsupported by this backend: this backend supports only i32, bo
+tests/corpus/sema/vararg_element_type_is_inferred # UNSUPPORTED: vararg_element_type_is_inferred.zen:29:19: error: unsupported by this backend: this backend supports
+tests/corpus/sema/vararg_pack_forwards # UNSUPPORTED: vararg_pack_forwards.zen:40:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/sema/vararg_pack_of_structs # UNSUPPORTED: vararg_pack_of_structs.zen:51:19: error: unsupported by this backend: this backend supports only i32
+tests/corpus/sema/variant_payload_uses_applied_type/main # UNSUPPORTED: main.zen:5:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/sema/vec_get_in_a_helper_is_not_map_get # UNSUPPORTED: vec_get_in_a_helper_is_not_map_get.zen:15:19: error: unsupported by this backend: this backend suppo
+tests/corpus/sema/widening_conversions_are_bounds # UNSUPPORTED: widening_conversions_are_bounds.zen:23:19: error: unsupported by this backend: this backend supports
+tests/corpus/sema/wrapped_lambda_argument_resolves_and_runs # UNSUPPORTED: wrapped_lambda_argument_resolves_and_runs.zen:3:19: error: unsupported by this backend: this backend
+tests/corpus/sema/zero_array_count_is_valid # UNSUPPORTED: zero_array_count_is_valid.zen:6:19: error: unsupported by this backend: this backend supports only i
+tests/corpus/sema_zen/a_cursor_position_finds_its_node/main # UNSUPPORTED: main.zen:8:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/sema_zen/a_declaration_is_read_with_its_own_scope/main # UNSUPPORTED: main.zen:29:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/sema_zen/a_prelude_declaration_of_a_primitive_is_that_primitive/main # UNSUPPORTED: main.zen:30:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/sema_zen/a_provable_trap_is_a_compile_error/main # UNSUPPORTED: main.zen:26:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/sema_zen/an_impl_supplies_but_never_stores/main # UNSUPPORTED: main.zen:29:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/sema_zen/an_unimported_name_is_not_visible/main # UNSUPPORTED: main.zen:32:23: nothing is at that path: tried `sema/sema_def.zen` and `sema/sema_def/sema_def.zen`
+tests/corpus/sema_zen/error_set_canonicalises/ # UNSUPPORTED: main.zen:18:15: nothing is at that path: tried `sema/sema_ty.zen` and `sema/sema_ty/sema_ty.zen`
+tests/corpus/sema_zen/error_set_canonicalises/main # UNSUPPORTED: main.zen:18:15: nothing is at that path: tried `sema/sema_ty.zen` and `sema/sema_ty/sema_ty.zen`
+tests/corpus/sema_zen/match_covers_the_pattern_space/main # UNSUPPORTED: main.zen:25:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/sema_zen/overload_resolution_reads_the_signature/main # UNSUPPORTED: main.zen:28:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/sema_zen/type_of_is_memoized/main # UNSUPPORTED: main.zen:18:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/slice-bounds/array_at_len_traps_not_reads/main # UNSUPPORTED: main.zen:22:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/slice-bounds/empty_str_index_zero_traps/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/slice-bounds/loop_overruns_array_and_traps_mid_iteration/main # UNSUPPORTED: main.zen:16:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/slice-bounds/signed_negative_index_needs_its_own_test/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/slice-bounds/slice_to_past_len_traps_in_its_check/main # UNSUPPORTED: main.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/slice-bounds/str_index_at_len_traps_by_underflow/main # UNSUPPORTED: main.zen:20:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/std/a_doubled_brace_writes_one # UNSUPPORTED: a_doubled_brace_writes_one.zen:17:19: error: unsupported by this backend: this backend supports only
+tests/corpus/std/a_named_hole_reads_the_scope # UNSUPPORTED: a_named_hole_reads_the_scope.zen:23:19: error: unsupported by this backend: this backend supports on
+tests/corpus/std/a_user_type_is_a_sink # UNSUPPORTED: a_user_type_is_a_sink.zen:70:19: error: unsupported by this backend: this backend supports only i32,
+tests/corpus/std/arena_frees_everything_at_once # UNSUPPORTED: arena_frees_everything_at_once.zen:21:19: error: unsupported by this backend: this backend supports 
+tests/corpus/std/bench_stats_carries_three_distinct_counters # UNSUPPORTED: bench_stats_carries_three_distinct_counters.zen:30:19: error: unsupported by this backend: this back
+tests/corpus/std/bool_then_closure_keeps_its_own_names # UNSUPPORTED: bool_then_closure_keeps_its_own_names.zen:26:19: error: unsupported by this backend: this backend su
+tests/corpus/std/bool_then_composes_with_try # UNSUPPORTED: bool_then_composes_with_try.zen:13:19: error: unsupported by this backend: this backend supports onl
+tests/corpus/std/bool_then_lands_in_res # UNSUPPORTED: bool_then_lands_in_res.zen:6:19: error: unsupported by this backend: this backend supports only i32,
+tests/corpus/std/bool_then_runs_only_when_true # UNSUPPORTED: bool_then_runs_only_when_true.zen:6:19: error: unsupported by this backend: this backend supports on
+tests/corpus/std/both_format_doors_write_the_same_bytes # UNSUPPORTED: both_format_doors_write_the_same_bytes.zen:39:19: error: unsupported by this backend: this backend s
+tests/corpus/std/build_api_resolves # UNSUPPORTED: build_api_resolves.zen:14:9: construction names no member: every argument must name a field of the t
+tests/corpus/std/build_permutation_owns_walk_order # UNSUPPORTED: build_permutation_owns_walk_order.zen:13:19: error: unsupported by this backend: this backend suppor
+tests/corpus/std/build_targets_and_error_set # UNSUPPORTED: build_targets_and_error_set.zen:57:19: error: unsupported by this backend: this backend supports onl
+tests/corpus/std/bulk_append_preserves_initialized_storage # UNSUPPORTED: bulk_append_preserves_initialized_storage.zen:24:19: error: unsupported by this backend: this backen
+tests/corpus/std/byte_ascii_questions # UNSUPPORTED: byte_ascii_questions.zen:5:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/std/byte_digit_spelling_overloads # UNSUPPORTED: byte_digit_spelling_overloads.zen:7:19: error: unsupported by this backend: this backend supports on
+tests/corpus/std/bytes_cursor # UNSUPPORTED: bytes_cursor.zen:11:19: error: unsupported by this backend: this backend supports only i32, bool and
+tests/corpus/std/cli_command_model_parses_and_writes_help # UNSUPPORTED: cli_command_model_parses_and_writes_help.zen:8:19: error: unsupported by this backend: this backend 
+tests/corpus/std/cli_constraints_use_explicit_presence # UNSUPPORTED: cli_constraints_use_explicit_presence.zen:8:19: error: unsupported by this backend: this backend sup
+tests/corpus/std/cli_declarations_reject_ambiguous_grammars # UNSUPPORTED: cli_declarations_reject_ambiguous_grammars.zen:8:19: error: unsupported by this backend: this backen
+tests/corpus/std/cli_nested_commands_and_trailing_args # UNSUPPORTED: cli_nested_commands_and_trailing_args.zen:8:19: error: unsupported by this backend: this backend sup
+tests/corpus/std/cli_option_values_do_not_swallow_options # UNSUPPORTED: cli_option_values_do_not_swallow_options.zen:8:19: error: unsupported by this backend: this backend 
+tests/corpus/std/collection_callbacks_preserve_failures # UNSUPPORTED: collection_callbacks_preserve_failures.zen:25:19: error: unsupported by this backend: this backend s
+tests/corpus/std/console_bound_println_reaches_the_same_floor # UNSUPPORTED: console_bound_println_reaches_the_same_floor.zen:19:19: error: unsupported by this backend: this bac
+tests/corpus/std/console_errorln_is_the_other_stream # UNSUPPORTED: console_errorln_is_the_other_stream.zen:12:19: error: unsupported by this backend: this backend supp
+tests/corpus/std/console_flush_is_explicit # UNSUPPORTED: console_flush_is_explicit.zen:1:19: error: unsupported by this backend: this backend supports only i
+tests/corpus/std/create_allocates_a_whole_element # UNSUPPORTED: create_allocates_a_whole_element.zen:20:19: error: unsupported by this backend: this backend support
+tests/corpus/std/create_calls_the_dynamic_allocator # UNSUPPORTED: create_calls_the_dynamic_allocator.zen:26:19: error: unsupported by this backend: this backend suppo
+tests/corpus/std/display_allocating_overload_picked_by_argument # UNSUPPORTED: display_allocating_overload_picked_by_argument.zen:21:19: error: unsupported by this backend: this b
+tests/corpus/std/display_brace_routes_through_tostring # UNSUPPORTED: display_brace_routes_through_tostring.zen:19:19: error: unsupported by this backend: this backend su
+tests/corpus/std/display_fmt_routes_through_the_sink # UNSUPPORTED: display_fmt_routes_through_the_sink.zen:54:19: error: unsupported by this backend: this backend supp
+tests/corpus/std/display_nesting_reuses_the_buffer # UNSUPPORTED: display_nesting_reuses_the_buffer.zen:35:19: error: unsupported by this backend: this backend suppor
+tests/corpus/std/display_println_routes_through_tostring # UNSUPPORTED: display_println_routes_through_tostring.zen:19:19: error: unsupported by this backend: this backend 
+tests/corpus/std/drop_runs_at_inner_block_exit # UNSUPPORTED: drop_runs_at_inner_block_exit.zen:19:19: error: unsupported by this backend: this backend supports o
+tests/corpus/std/drop_runs_exactly_once # UNSUPPORTED: drop_runs_exactly_once.zen:19:19: error: unsupported by this backend: this backend supports only i32
+tests/corpus/std/drop_runs_in_reverse_declaration_order # UNSUPPORTED: drop_runs_in_reverse_declaration_order.zen:18:19: error: unsupported by this backend: this backend s
+tests/corpus/std/duration_units_are_consumed_at_construction # UNSUPPORTED: duration_units_are_consumed_at_construction.zen:20:19: error: unsupported by this backend: this back
+tests/corpus/std/empty_string_slice_preserves_null # UNSUPPORTED: empty_string_slice_preserves_null.zen:1:19: error: unsupported by this backend: this backend support
+tests/corpus/std/ensure_preserves_optional_and_typed_exits # UNSUPPORTED: ensure_preserves_optional_and_typed_exits.zen:30:19: error: unsupported by this backend: this backen
+tests/corpus/std/eq_is_in_asks_each_types_own_eq # UNSUPPORTED: eq_is_in_asks_each_types_own_eq.zen:27:19: error: unsupported by this backend: this backend supports
+tests/corpus/std/eq_is_in_over_primitives # UNSUPPORTED: eq_is_in_over_primitives.zen:27:19: error: unsupported by this backend: this backend supports only i
+tests/corpus/std/error_set_member_variant_arms_discriminate # UNSUPPORTED: error_set_member_variant_arms_discriminate.zen:27:19: error: unsupported by this backend: this backe
+tests/corpus/std/fmt_writes_through_the_receivers_own_floor # UNSUPPORTED: fmt_writes_through_the_receivers_own_floor.zen:30:19: error: unsupported by this backend: this backe
+tests/corpus/std/folds_preserve_supplied_range_completion # UNSUPPORTED: folds_preserve_supplied_range_completion.zen:27:19: error: unsupported by this backend: this backend
+tests/corpus/std/fs_error_message_is_owned_by_env # UNSUPPORTED: fs_error_message_is_owned_by_env.zen:1:19: error: unsupported by this backend: this backend supports
+tests/corpus/std/integer_bits # UNSUPPORTED: integer_bits.zen:15:18: error: unsupported by this backend: an integer outside i32
+tests/corpus/std/json_serves_a_second_caller # UNSUPPORTED: json_serves_a_second_caller.zen:94:19: error: unsupported by this backend: this backend supports onl
+tests/corpus/std/lines_borrow_text_and_strip_terminators # UNSUPPORTED: lines_borrow_text_and_strip_terminators.zen:34:19: error: unsupported by this backend: this backend 
+tests/corpus/std/loop_break_type_is_the_loops_own # UNSUPPORTED: loop_break_type_is_the_loops_own.zen:16:19: error: unsupported by this backend: this backend support
+tests/corpus/std/loop_break_with_value # UNSUPPORTED: loop_break_with_value.zen:5:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/std/loop_break_without_value # UNSUPPORTED: loop_break_without_value.zen:5:19: error: unsupported by this backend: this backend supports only i3
+tests/corpus/std/loop_filter_allocates # UNSUPPORTED: loop_filter_allocates.zen:3:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/std/loop_find_missing_is_none # UNSUPPORTED: loop_find_missing_is_none.zen:12:19: error: unsupported by this backend: this backend supports only 
+tests/corpus/std/loop_find_returns_first # UNSUPPORTED: loop_find_returns_first.zen:5:19: error: unsupported by this backend: this backend supports only i32
+tests/corpus/std/loop_fold_break_carries_its_value # UNSUPPORTED: loop_fold_break_carries_its_value.zen:14:19: error: unsupported by this backend: this backend suppor
+tests/corpus/std/loop_fold_threads_acc # UNSUPPORTED: loop_fold_threads_acc.zen:7:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/std/loop_map_allocates # UNSUPPORTED: loop_map_allocates.zen:3:19: error: unsupported by this backend: this backend supports only i32, boo
+tests/corpus/std/loop_map_body_can_break_early # UNSUPPORTED: loop_map_body_can_break_early.zen:4:19: error: unsupported by this backend: this backend supports on
+tests/corpus/std/loop_next_skips # UNSUPPORTED: loop_next_skips.zen:6:19: error: unsupported by this backend: this backend supports only i32, bool a
+tests/corpus/std/loop_over_range # UNSUPPORTED: loop_over_range.zen:6:19: error: unsupported by this backend: this backend supports only i32, bool a
+tests/corpus/std/loop_value_only_visits_elements # UNSUPPORTED: loop_value_only_visits_elements.zen:19:19: error: unsupported by this backend: this backend supports
+tests/corpus/std/loop_while_cond # UNSUPPORTED: loop_while_cond.zen:6:19: error: unsupported by this backend: this backend supports only i32, bool a
+tests/corpus/std/loop_while_true_breaks # UNSUPPORTED: loop_while_true_breaks.zen:6:19: error: unsupported by this backend: this backend supports only i32,
+tests/corpus/std/loop_while_true_with_index # UNSUPPORTED: loop_while_true_with_index.zen:6:19: error: unsupported by this backend: this backend supports only 
+tests/corpus/std/map_collision_consults_eq # UNSUPPORTED: map_collision_consults_eq.zen:18:19: error: unsupported by this backend: this backend supports only 
+tests/corpus/std/map_grows_without_losing_a_key # UNSUPPORTED: map_grows_without_losing_a_key.zen:33:19: error: unsupported by this backend: this backend supports 
+tests/corpus/std/map_hash_width # UNSUPPORTED: map_hash_width.zen:47:19: error: unsupported by this backend: this backend supports only i32, bool a
+tests/corpus/std/map_len_counts_keys_and_pairs_walks_them # UNSUPPORTED: map_len_counts_keys_and_pairs_walks_them.zen:14:19: error: unsupported by this backend: this backend
+tests/corpus/std/map_many_collisions_all_resolve # UNSUPPORTED: map_many_collisions_all_resolve.zen:34:19: error: unsupported by this backend: this backend supports
+tests/corpus/std/map_missing_key_is_none # UNSUPPORTED: map_missing_key_is_none.zen:6:19: error: unsupported by this backend: this backend supports only i32
+tests/corpus/std/map_overwrite_survives_growth # UNSUPPORTED: map_overwrite_survives_growth.zen:34:19: error: unsupported by this backend: this backend supports o
+tests/corpus/std/map_set_overwrites # UNSUPPORTED: map_set_overwrites.zen:18:19: error: unsupported by this backend: this backend supports only i32, bo
+tests/corpus/std/map_str_keys_find_values # UNSUPPORTED: map_str_keys_find_values.zen:3:19: error: unsupported by this backend: this backend supports only i3
+tests/corpus/std/numeric_conversions_checked # UNSUPPORTED: numeric_conversions_checked.zen:10:10: error: unsupported by this backend: this backend supports onl
+tests/corpus/std/os_entropy # UNSUPPORTED: os_entropy.zen:2:19: error: unsupported by this backend: this backend supports only i32, bool and un
+tests/corpus/std/path_join_adds_only_the_missing_separator # UNSUPPORTED: path_join_adds_only_the_missing_separator.zen:6:19: error: unsupported by this backend: this backend
+tests/corpus/std/path_methods_own_path_queries # UNSUPPORTED: path_methods_own_path_queries.zen:1:19: error: unsupported by this backend: this backend supports on
+tests/corpus/std/pos_display_both_format_doors_agree # UNSUPPORTED: pos_display_both_format_doors_agree.zen:18:19: error: unsupported by this backend: this backend supp
+tests/corpus/std/res_hoists_bare_value_in_field # UNSUPPORTED: res_hoists_bare_value_in_field.zen:11:19: error: unsupported by this backend: this backend supports 
+tests/corpus/std/res_hoists_bare_value_in_return # UNSUPPORTED: res_hoists_bare_value_in_return.zen:23:19: error: unsupported by this backend: this backend supports
+tests/corpus/std/res_match_arm_widening_keeps_the_member # UNSUPPORTED: res_match_arm_widening_keeps_the_member.zen:82:19: error: unsupported by this backend: this backend 
+tests/corpus/std/res_ok_or_converts_none_to_err # UNSUPPORTED: res_ok_or_converts_none_to_err.zen:12:19: error: unsupported by this backend: this backend supports 
+tests/corpus/std/res_try_error_set_keeps_the_variant # UNSUPPORTED: res_try_error_set_keeps_the_variant.zen:38:19: error: unsupported by this backend: this backend supp
+tests/corpus/std/res_try_error_set_spelled_both_ways # UNSUPPORTED: res_try_error_set_spelled_both_ways.zen:41:19: error: unsupported by this backend: this backend supp
+tests/corpus/std/res_try_error_set_widens_strictly # UNSUPPORTED: res_try_error_set_widens_strictly.zen:45:19: error: unsupported by this backend: this backend suppor
+tests/corpus/std/res_try_error_sets_merge # UNSUPPORTED: res_try_error_sets_merge.zen:37:19: error: unsupported by this backend: this backend supports only i
+tests/corpus/std/res_try_propagates_through_frames # UNSUPPORTED: res_try_propagates_through_frames.zen:25:19: error: unsupported by this backend: this backend suppor
+tests/corpus/std/res_try_replaces_and_maps_error # UNSUPPORTED: res_try_replaces_and_maps_error.zen:40:19: error: unsupported by this backend: this backend supports
+tests/corpus/std/res_value_or_uses_the_success # UNSUPPORTED: res_value_or_uses_the_success.zen:1:19: error: unsupported by this backend: this backend supports on
+tests/corpus/std/res_when_ok_runs_on_present # UNSUPPORTED: res_when_ok_runs_on_present.zen:4:19: error: unsupported by this backend: this backend supports only
+tests/corpus/std/result_ignore_and_without_err # UNSUPPORTED: result_ignore_and_without_err.zen:4:19: error: unsupported by this backend: this backend supports on
+tests/corpus/std/rng_is_deterministic # UNSUPPORTED: rng_is_deterministic.zen:6:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/std/scratch_sort_is_stable_and_scales # UNSUPPORTED: scratch_sort_is_stable_and_scales.zen:39:19: error: unsupported by this backend: this backend suppor
+tests/corpus/std/split_walk_advances_once # UNSUPPORTED: split_walk_advances_once.zen:30:19: error: unsupported by this backend: this backend supports only i
+tests/corpus/std/stats_allocation_budget # UNSUPPORTED: stats_allocation_budget.zen:33:19: error: unsupported by this backend: this backend supports only i3
+tests/corpus/std/stats_rolling_measurements # UNSUPPORTED: stats_rolling_measurements.zen:4:19: error: unsupported by this backend: this backend supports only 
+tests/corpus/std/str_before_is_lexicographic # UNSUPPORTED: str_before_is_lexicographic.zen:6:19: error: unsupported by this backend: this backend supports only
+tests/corpus/std/str_count_and_replace_once # UNSUPPORTED: str_count_and_replace_once.zen:6:19: error: unsupported by this backend: this backend supports only 
+tests/corpus/std/str_eq_is_bytewise # UNSUPPORTED: str_eq_is_bytewise.zen:6:19: error: unsupported by this backend: this backend supports only i32, boo
+tests/corpus/std/str_index_yields_byte # UNSUPPORTED: str_index_yields_byte.zen:7:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/std/str_integer_parsers_share_digit_value # UNSUPPORTED: str_integer_parsers_share_digit_value.zen:5:16: error: unsupported by this backend: this backend sup
+tests/corpus/std/str_len_is_bytes # UNSUPPORTED: str_len_is_bytes.zen:7:19: error: unsupported by this backend: this backend supports only i32, bool 
+tests/corpus/std/str_to_i64_answers_not_a_trap # UNSUPPORTED: str_to_i64_answers_not_a_trap.zen:14:19: error: unsupported by this backend: this backend supports o
+tests/corpus/std/str_to_i64_sums_the_command_line # UNSUPPORTED: str_to_i64_sums_the_command_line.zen:5:19: error: unsupported by this backend: this backend supports
+tests/corpus/std/string_fmt_answers_the_buffer_floor # UNSUPPORTED: string_fmt_answers_the_buffer_floor.zen:12:19: error: unsupported by this backend: this backend supp
+tests/corpus/std/string_grows_past_its_first_pages # UNSUPPORTED: string_grows_past_its_first_pages.zen:8:19: error: unsupported by this backend: this backend support
+tests/corpus/std/string_integer_writers # UNSUPPORTED: string_integer_writers.zen:7:19: error: unsupported by this backend: this backend supports only i32,
+tests/corpus/std/string_outlives_the_loop_that_built_it # UNSUPPORTED: string_outlives_the_loop_that_built_it.zen:7:19: error: unsupported by this backend: this backend su
+tests/corpus/std/test_failure_carries_its_reason_through_the_runner # UNSUPPORTED: test_failure_carries_its_reason_through_the_runner.zen:62:19: error: unsupported by this backend: th
+tests/corpus/std/test_suite_runs_after_assertion_failure # UNSUPPORTED: test_suite_runs_after_assertion_failure.zen:3:19: error: unsupported by this backend: this backend s
+tests/corpus/std/tester_equality_uses_eq # UNSUPPORTED: tester_equality_uses_eq.zen:18:9: error: unsupported by this backend: this backend supports only i32
+tests/corpus/std/tester_expect_runs_the_assertion_both_ways # UNSUPPORTED: tester_expect_runs_the_assertion_both_ways.zen:26:19: error: unsupported by this backend: this backe
+tests/corpus/std/text_dup_and_truncate_are_shared # UNSUPPORTED: text_dup_and_truncate_are_shared.zen:3:19: error: unsupported by this backend: this backend supports
+tests/corpus/std/text_folds_keep_control_and_cursor # UNSUPPORTED: text_folds_keep_control_and_cursor.zen:36:19: error: unsupported by this backend: this backend suppo
+tests/corpus/std/the_reference_format_parser_runs # UNSUPPORTED: the_reference_format_parser_runs.zen:28:19: error: unsupported by this backend: this backend support
+tests/corpus/std/vec_add_returns_res # UNSUPPORTED: vec_add_returns_res.zen:7:19: error: unsupported by this backend: this backend supports only i32, bo
+tests/corpus/std/vec_and_map_get_side_by_side # UNSUPPORTED: vec_and_map_get_side_by_side.zen:5:19: error: unsupported by this backend: this backend supports onl
+tests/corpus/std/vec_get_out_of_range_is_none # UNSUPPORTED: vec_get_out_of_range_is_none.zen:6:19: error: unsupported by this backend: this backend supports onl
+tests/corpus/std/vec_get_returns_ok # UNSUPPORTED: vec_get_returns_ok.zen:5:19: error: unsupported by this backend: this backend supports only i32, boo
+tests/corpus/std/vec_grows_past_eight # UNSUPPORTED: vec_grows_past_eight.zen:7:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/std/vec_grows_past_sixteen # UNSUPPORTED: vec_grows_past_sixteen.zen:6:19: error: unsupported by this backend: this backend supports only i32,
+tests/corpus/std/zen_literal_decode # UNSUPPORTED: zen_literal_decode.zen:13:19: error: unsupported by this backend: this backend supports only i32, bo
+tests/corpus/stdin/a_long_line_reassembles_from_chunks/main # UNSUPPORTED: main.zen:24:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/stdin/a_refused_read_consumes_nothing/main # UNSUPPORTED: main.zen:16:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/stdin/an_empty_stream_answers_zero_and_no_error/main # UNSUPPORTED: main.zen:10:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/stdin/no_trailing_newline_is_still_whole_bytes/main # UNSUPPORTED: main.zen:23:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/stdin/one_line_arrives_whole_with_its_newline/main # UNSUPPORTED: main.zen:16:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/stdin/one_read_spans_lines_without_discipline/main # UNSUPPORTED: main.zen:23:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-basic/a_display_hole_writes_through_the_buffer/main # UNSUPPORTED: main.zen:31:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-basic/a_float_fits_the_buffer/main # UNSUPPORTED: main.zen:31:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-basic/a_hole_picks_its_writer_by_type/main # UNSUPPORTED: main.zen:24:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-basic/a_named_hole_reads_the_writing_frame/main # UNSUPPORTED: main.zen:31:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-basic/a_slice_is_a_view_not_a_copy/main # UNSUPPORTED: main.zen:20:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-basic/a_string_grows_through_three_reallocs/main # UNSUPPORTED: main.zen:6:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/string-basic/a_string_is_a_field_and_a_return/main # UNSUPPORTED: main.zen:47:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-basic/a_view_borrows_and_grow_moves_it/main # UNSUPPORTED: main.zen:26:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-basic/a_view_feeds_the_next_append/main # UNSUPPORTED: main.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-basic/byte_values_round_trip_through_the_buffer/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-basic/empty_means_zero_bytes_not_null/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-basic/format_and_raw_adds_share_one_buffer/main # UNSUPPORTED: main.zen:4:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/string-basic/recursion_appends_deepest_frame_first/main # UNSUPPORTED: main.zen:27:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-basic/str_eq_is_bytes_and_length/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-basic/str_find_split_trim_serve_a_csv/main # UNSUPPORTED: main.zen:45:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-basic/str_search_members_edge_cases/main # UNSUPPORTED: main.zen:35:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-basic/the_allocating_constructor_formats/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-basic/two_buffers_grow_without_touching/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-compare/before_orders_by_first_differing_byte/main # UNSUPPORTED: main.zen:27:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-compare/eq_checks_length_before_bytes/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-compare/eq_compares_bytes_not_addresses/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-compare/neq_is_eq_negated/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-compare/nul_byte_is_data_not_terminator/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-utf8/a_bad_lead_leaves_its_ascii_follower_readable/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-utf8/a_bom_inside_a_literal_is_payload_not_skipped/main # UNSUPPORTED: main.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/string-utf8/a_boundary_value_changes_width_not_its_payload/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-utf8/a_cursor_steps_by_sequence_width_not_one/main # UNSUPPORTED: main.zen:10:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-utf8/a_forbidden_lead_band_never_eats_its_ascii/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-utf8/a_replacement_character_in_data_decodes_to_its_own_value/main # UNSUPPORTED: main.zen:8:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/string-utf8/a_sequence_cut_at_the_buffer_end_is_invalid/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-utf8/a_surrogate_gap_edges_still_decode/main # UNSUPPORTED: main.zen:10:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-utf8/a_well_formed_lead_with_a_forbidden_value_is_invalid/main # UNSUPPORTED: main.zen:23:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-utf8/an_astral_codepoint_inside_ascii_text_steps_cleanly/main # UNSUPPORTED: main.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/string-utf8/an_encode_decode_roundtrip_holds_at_every_width/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-utf8/byte_len_and_codepoint_count_disagree_on_the_same_string/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-utf8/count_codepoints_walks_all_four_widths/main # UNSUPPORTED: main.zen:13:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/string-utf8/the_last_codepoint_decodes_and_one_bit_past_it_does_not/main # UNSUPPORTED: main.zen:17:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-basic/construction_arguments_bind_by_name_not_by_position/main # UNSUPPORTED: main.zen:24:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-basic/copy_carries_every_field_value/main # UNSUPPORTED: main.zen:24:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-basic/default_fills_the_omitted_tail_field/main # UNSUPPORTED: main.zen:22:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-basic/loop_body_constructs_a_fresh_value_each_pass/main # UNSUPPORTED: main.zen:24:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-basic/mutable_method_writes_through_the_callers_field/main # UNSUPPORTED: main.zen:35:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-basic/nested_default_is_copied_per_construction/main # UNSUPPORTED: main.zen:29:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-basic/nested_field_read_walks_every_offset/main # UNSUPPORTED: main.zen:29:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-basic/struct_returned_by_value_keeps_its_fields/main # UNSUPPORTED: main.zen:33:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-equality/defaulted_float_field_participates/main # UNSUPPORTED: main.zen:30:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-equality/eq_dispatches_to_the_types_own_eq/main # UNSUPPORTED: main.zen:37:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-equality/every_field_decides_one_pair/main # UNSUPPORTED: main.zen:26:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-equality/float_field_decides_the_compare/main # UNSUPPORTED: main.zen:34:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-equality/nested_eq_recurses_per_level/main # UNSUPPORTED: main.zen:42:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-equality/operator_and_method_are_one_call/main # UNSUPPORTED: main.zen:27:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-equality/str_field_compares_bytes_not_pointers/main # UNSUPPORTED: main.zen:47:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-methods/associated_fn_and_free_fn_keep_namespaces # UNSUPPORTED: associated_fn_and_free_fn_keep_namespaces.zen:25:19: error: unsupported by this backend: this backen
+tests/corpus/struct-methods/dot_and_direct_are_one_call/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-methods/dot_dispatch_projects_the_field_first # UNSUPPORTED: dot_dispatch_projects_the_field_first.zen:26:19: error: unsupported by this backend: this backend su
+tests/corpus/struct-methods/free_fn_extends_the_method_at_another_arity # UNSUPPORTED: free_fn_extends_the_method_at_another_arity.zen:23:19: error: unsupported by this backend: this back
+tests/corpus/struct-methods/free_fn_is_a_dot_candidate_like_a_method # UNSUPPORTED: free_fn_is_a_dot_candidate_like_a_method.zen:26:19: error: unsupported by this backend: this backend
+tests/corpus/struct-methods/free_fn_on_a_generic_instantiation # UNSUPPORTED: free_fn_on_a_generic_instantiation.zen:24:19: error: unsupported by this backend: this backend suppo
+tests/corpus/struct-methods/free_fn_reaches_every_receiver_shape # UNSUPPORTED: free_fn_reaches_every_receiver_shape.zen:30:19: error: unsupported by this backend: this backend sup
+tests/corpus/struct-methods/free_fn_travels_to_a_prelude_primitive # UNSUPPORTED: free_fn_travels_to_a_prelude_primitive.zen:18:19: error: unsupported by this backend: this backend s
+tests/corpus/struct-methods/free_fn_travels_to_a_union # UNSUPPORTED: free_fn_travels_to_a_union.zen:26:19: error: unsupported by this backend: this backend supports only
+tests/corpus/struct-methods/free_fn_travels_with_the_type/main # UNSUPPORTED: main.zen:23:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-methods/generic_free_fn_specialises_per_receiver # UNSUPPORTED: generic_free_fn_specialises_per_receiver.zen:28:19: error: unsupported by this backend: this backend
+tests/corpus/struct-methods/method_and_free_fn_split_on_later_type # UNSUPPORTED: method_and_free_fn_split_on_later_type.zen:11:19: error: unsupported by this backend: this backend s
+tests/corpus/struct-methods/methods_overload_on_a_later_parameter # UNSUPPORTED: methods_overload_on_a_later_parameter.zen:23:19: error: unsupported by this backend: this backend su
+tests/corpus/struct-methods/mutating_free_fn_writes_through_the_dot # UNSUPPORTED: mutating_free_fn_writes_through_the_dot.zen:26:19: error: unsupported by this backend: this backend 
+tests/corpus/struct-methods/paren_wrapped_lambda_keeps_its_arity/main # UNSUPPORTED: main.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and unit val
+tests/corpus/struct-methods/same_fn_name_on_two_types/main # UNSUPPORTED: main.zen:28:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-methods/wrapped_dot_call_keeps_short_circuit_order # UNSUPPORTED: wrapped_dot_call_keeps_short_circuit_order.zen:16:19: error: unsupported by this backend: this backe
+tests/corpus/struct-return/a_17_byte_struct_and_a_res_payload/main # UNSUPPORTED: main.zen:34:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-return/a_chain_of_methods_threads_the_value/main # UNSUPPORTED: main.zen:38:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-return/a_str_field_crosses_its_return/main # UNSUPPORTED: main.zen:22:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-return/a_vec_handle_inside_a_returned_struct/main # UNSUPPORTED: main.zen:37:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-return/an_err_payload_struct_keeps_its_fields/main # UNSUPPORTED: main.zen:41:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-return/nested_returns_copy_not_alias/main # UNSUPPORTED: main.zen:50:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/struct-return/the_abandoned_local_drops_in_the_callee/main # UNSUPPORTED: main.zen:42:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/trait-bound/bound_names_a_generic_trait/main # UNSUPPORTED: main.zen:28:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/trait-bound/bound_survives_a_generic_calling_a_generic/main # UNSUPPORTED: main.zen:35:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/trait-bound/computed_fields_recompute_and_own_storage_wins/main # UNSUPPORTED: main.zen:34:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/trait-bound/default_member_inherits_per_impl/main # UNSUPPORTED: main.zen:38:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/trait-bound/each_type_answers_with_its_own_impl/main # UNSUPPORTED: main.zen:46:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/trait-bound/impl_on_a_generic_type_satisfies_the_bound/main # UNSUPPORTED: main.zen:20:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/trait-bound/method_bound_from_a_third_module/main # UNSUPPORTED: main.zen:16:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/trait-bound/one_parameter_two_bounds_see_both_members/main # UNSUPPORTED: main.zen:36:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/traps/add_i16_max # UNSUPPORTED: add_i16_max.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and u
+tests/corpus/traps/add_i32_max # UNSUPPORTED: add_i32_max.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and u
+tests/corpus/traps/add_i64_max # UNSUPPORTED: add_i64_max.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and u
+tests/corpus/traps/add_i8_max # UNSUPPORTED: add_i8_max.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and un
+tests/corpus/traps/add_u16_max # UNSUPPORTED: add_u16_max.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and u
+tests/corpus/traps/add_u32_max # UNSUPPORTED: add_u32_max.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and u
+tests/corpus/traps/add_u64_max # UNSUPPORTED: add_u64_max.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and u
+tests/corpus/traps/add_u8_max # UNSUPPORTED: add_u8_max.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and un
+tests/corpus/traps/div_i32_min_neg_one # UNSUPPORTED: div_i32_min_neg_one.zen:10:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/traps/div_zero_i32 # UNSUPPORTED: div_zero_i32.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and 
+tests/corpus/traps/hex_digit_out_of_range # UNSUPPORTED: hex_digit_out_of_range.zen:18:19: error: unsupported by this backend: this backend supports only i32
+tests/corpus/traps/index_at_len_runtime # UNSUPPORTED: index_at_len_runtime.zen:16:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/traps/mod_i32_min_neg_one # UNSUPPORTED: mod_i32_min_neg_one.zen:10:19: error: unsupported by this backend: this backend supports only i32, b
+tests/corpus/traps/mod_zero_i32 # UNSUPPORTED: mod_zero_i32.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and 
+tests/corpus/traps/mul_i16_min_neg_one # UNSUPPORTED: mul_i16_min_neg_one.zen:9:19: error: unsupported by this backend: this backend supports only i32, bo
+tests/corpus/traps/mul_i32_min_neg_one # UNSUPPORTED: mul_i32_min_neg_one.zen:9:19: error: unsupported by this backend: this backend supports only i32, bo
+tests/corpus/traps/mul_i64_min_neg_one # UNSUPPORTED: mul_i64_min_neg_one.zen:9:19: error: unsupported by this backend: this backend supports only i32, bo
+tests/corpus/traps/mul_i8_min_neg_one # UNSUPPORTED: mul_i8_min_neg_one.zen:9:19: error: unsupported by this backend: this backend supports only i32, boo
+tests/corpus/traps/mul_u16_max # UNSUPPORTED: mul_u16_max.zen:8:19: error: unsupported by this backend: this backend supports only i32, bool and u
+tests/corpus/traps/mul_u32_max # UNSUPPORTED: mul_u32_max.zen:8:19: error: unsupported by this backend: this backend supports only i32, bool and u
+tests/corpus/traps/mul_u64_max # UNSUPPORTED: mul_u64_max.zen:8:19: error: unsupported by this backend: this backend supports only i32, bool and u
+tests/corpus/traps/mul_u8_max # UNSUPPORTED: mul_u8_max.zen:8:19: error: unsupported by this backend: this backend supports only i32, bool and un
+tests/corpus/traps/sub_i16_min # UNSUPPORTED: sub_i16_min.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and u
+tests/corpus/traps/sub_i32_min # UNSUPPORTED: sub_i32_min.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and u
+tests/corpus/traps/sub_i64_min # UNSUPPORTED: sub_i64_min.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and u
+tests/corpus/traps/sub_i8_min # UNSUPPORTED: sub_i8_min.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and un
+tests/corpus/traps/sub_u16_min # UNSUPPORTED: sub_u16_min.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and u
+tests/corpus/traps/sub_u32_min # UNSUPPORTED: sub_u32_min.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and u
+tests/corpus/traps/sub_u64_min # UNSUPPORTED: sub_u64_min.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and u
+tests/corpus/traps/sub_u8_min # UNSUPPORTED: sub_u8_min.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool and un
+tests/corpus/traps/vec_get_out_of_range # UNSUPPORTED: vec_get_out_of_range.zen:10:19: error: unsupported by this backend: this backend supports only i32, 
+tests/corpus/traps/wrap_add_i32_max # UNSUPPORTED: wrap_add_i32_max.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool 
+tests/corpus/traps/wrap_mul_i32_min # UNSUPPORTED: wrap_mul_i32_min.zen:9:19: error: unsupported by this backend: this backend supports only i32, bool 
+tests/corpus/traps/wrap_sub_i32_min # UNSUPPORTED: wrap_sub_i32_min.zen:8:19: error: unsupported by this backend: this backend supports only i32, bool 
+tests/corpus/vec/break_returns_the_element_and_next_skips_a_pass/main # UNSUPPORTED: main.zen:19:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/vec/clear_drops_elements_and_keeps_the_vec_reusable/main # UNSUPPORTED: main.zen:10:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/vec/empty_vec_owns_no_pages_until_the_first_add/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/vec/grow_moves_every_element_whole_at_every_width/main # UNSUPPORTED: main.zen:23:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/vec/map_and_filter_walk_in_order_to_the_end/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/vec/outer_realloc_copies_nested_vec_rows_whole/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/vec/require_names_the_miss # UNSUPPORTED: require_names_the_miss.zen:8:19: error: unsupported by this backend: this backend supports only i32,
+tests/corpus/vec/reserve_then_drain_to_empty_and_refill/main # UNSUPPORTED: main.zen:20:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/vec/set_overwrites_one_slot_and_leaves_len_alone/main # UNSUPPORTED: main.zen:20:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/vec/take_moves_a_drop_element_out_exactly_once/main # UNSUPPORTED: main.zen:29:19: error: unsupported by this backend: this backend supports only i32, bool and unit va
+tests/corpus/vec/take_moves_an_element_out_and_closes_the_gap/main # UNSUPPORTED: main.zen:21:19: error: unsupported by this backend: this backend supports only i32, bool and unit va

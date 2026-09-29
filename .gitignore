@@ -29,3 +29,4 @@ zen-new.c
 
 # The native corpus runner project builds beside its source.
 /tests/native/build/
+/tests/js/build/

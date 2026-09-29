@@ -1,0 +1,388 @@
+// Differential corpus gate for the JavaScript backend.
+//
+// Every executable corpus test records its C-backend behaviour beside it
+// (`.expected` stdout, optional `.exit`, `.stderr`, `.args`, `.stdin`,
+// `.env`); `make test` holds the C backend to those sidecars on every run, so
+// they are the C side of the comparison. This gate compiles the same program
+// with `--backend js`, runs it under Node, and requires the same stdout, the
+// same exit status and every `.stderr` line as a substring.
+//
+//   js-corpus <zen> [--gaps FILE] [--filter TEXT] [--shrink] [--verbose]
+//
+// Verdicts: PASS; FAIL (the program ran and behaved differently);
+// UNSUPPORTED (the compiler refused the program before publishing JS);
+// BROKEN (Node reported a JavaScript error, i.e. the backend emitted bad JS).
+// Tests carrying a `.stage` sidecar are deferred by the ordinary harness and
+// are not counted here.
+//
+// The known-gap file is a ratchet: one test base per line (`#` comments).
+// The gate fails when a test outside it does not pass (a regression) and
+// when a test inside it passes (the entry is stale and must be deleted), so
+// the list can only shrink. `--shrink` rewrites it to the gaps that still
+// fail; it never adds a test, except when the file does not exist yet.
+//
+// When `node` is not on PATH the gate prints a notice and succeeds: the JS
+// backend is optional tooling on build hosts.
+
+Alloc, AllocError = std.mem
+str, String = std.text
+Vec, Ordered, sort = std.collections
+ProcOutput = std.proc
+
+Verdict = Pass | Fail | Unsupported | Broken
+
+Outcome = { base: str, lane: str, verdict: Verdict, reason: str }
+
+Case = { root: str, entry: str, base: str }
+
+Runner = {
+    env: Env,
+    a: Alloc,
+    zen: str,
+    work: str,
+    darwin: bool,
+
+    run = (self: @Self, argv: Vec<str>) Res<ProcOutput, AllocError> {
+        self.env.proc.run_argv(self.a, "", argv).match({
+            Ok(out) => Ok(out),
+            Err(_)  => Ok(ProcOutput(code: 127, out: self.a.String().try(), err: self.a.String().try())),
+        })
+    }
+
+    read = (self: @Self, path: str) Res<str> {
+        self.env.fs.read(self.a, path).match({ Ok(s) => Ok(s.view()), Err(_) => None })
+    }
+
+    sidecar = (self: @Self, c: Case, kind: str) Res<str> {
+        self.a.String("{}.{}", c.base, kind).match({
+            Ok(path) => self.read(path.view()),
+            Err(_)   => None,
+        })
+    }
+
+    has_sidecar = (self: @Self, c: Case, kind: str) bool {
+        self.a.String("{}.{}", c.base, kind).match({
+            Ok(path) => self.env.fs.exists(path.view()),
+            Err(_)   => false,
+        })
+    }
+
+    // Compile with the JS backend; Ok(reason) when the compiler refused.
+    compile = (self: @Self, c: Case, script: str) Res<Res<str>, AllocError> {
+        argv ::= self.a.Vec<str>();
+        [self.zen, "build", c.root, "--entry", c.entry, "--std", "src", "--backend", "js", "-o", script].loop((w) {
+            argv.add(w).try();
+        });
+        out = self.run(argv).try();
+        (out.code == 0).match({
+            true  => Ok(None),
+            false => {
+                reason ::= self.a.String().try();
+                reason.add(out.out.view()).try();
+                reason.add(out.err.view()).try();
+                Ok(Ok(reason.view()))
+            },
+        })
+    }
+
+    // Launch under a 10 s alarm with the test's arguments, environment and
+    // stdin. The POSIX shell only performs the redirection and `env` words.
+    execute = (self: @Self, c: Case, script: str) Res<ProcOutput, AllocError> {
+        command ::= self.a.String().try();
+        command.add("exec perl -e 'alarm 10; exec @ARGV' ").try();
+        self.sidecar(c, "env").when_ok((text) {
+            command.add("env ").try();
+            text.split('\n').loop((line) {
+                (!line.is_empty()).then(() { command.fmt("'{}' ", line).try(); });
+            });
+        });
+        command.fmt("node '{}'", script).try();
+        self.sidecar(c, "args").when_ok((text) {
+            text.split('\n').loop((line) {
+                (!line.is_empty()).then(() { command.fmt(" '{}'", line).try(); });
+            });
+        });
+        stdin = self.a.String("{}.stdin", c.base).try();
+        self.env.fs.exists(stdin.view()).match({
+            true  => command.fmt(" < '{}'", stdin.view()),
+            false => command.add(" < /dev/null"),
+        }).try();
+        argv ::= self.a.Vec<str>();
+        ["/bin/sh", "-c", command.view()].loop((w) { argv.add(w).try(); });
+        self.run(argv)
+    }
+
+    // What differs from the C oracle; empty when nothing does.
+    compare = (self: @Self, c: Case, result: ProcOutput) Res<str, AllocError> {
+        expected_out = self.darwin.match({
+            true  => self.sidecar(c, "expected.darwin").match({
+                Ok(text) => text,
+                None     => self.sidecar(c, "expected").value_or(""),
+            }),
+            false => self.sidecar(c, "expected").value_or(""),
+        });
+        expected_code = self.sidecar(c, "exit").match({
+            Ok(text) => text.trim().value_or("0").parse_i32().value_or(0),
+            None     => 0,
+        });
+        problem ::= self.a.String().try();
+        (result.code != expected_code).then(() {
+            problem.fmt("exit {} (expected {}) ", result.code, expected_code).try();
+        });
+        (!result.out.view().eq(expected_out)).then(() {
+            problem.fmt("stdout differs ({} bytes, expected {}) ", result.out.view().len, expected_out.len).try();
+        });
+        self.sidecar(c, "stderr").when_ok((parts) {
+            parts.split('\n').loop((line) {
+                (!line.is_empty() && !result.err.view().contains(line)).then(() {
+                    problem.fmt("stderr lacks `{}` ", line).try();
+                });
+            });
+        });
+        Ok(problem.view())
+    }
+
+    case = (self: @Self, c: Case, index: usize) Res<Outcome, AllocError> {
+        script = self.a.String("{}/t{}.js", self.work, index).try();
+        lane = lane_of(c.base);
+        self.compile(c, script.view()).try().match({
+            Ok(reason) => Ok(Outcome(base: c.base, lane: lane, verdict: Verdict.Unsupported, reason: first_line(reason))),
+            None       => {
+                result = self.execute(c, script.view()).try();
+                // A JavaScript exception escaping the generated program prints
+                // a stack; Zen traps never do. That is a backend bug.
+                broken = result.err.view().contains("\n    at ");
+                broken.match({
+                    true  => Ok(Outcome(base: c.base, lane: lane, verdict: Verdict.Broken, reason: first_line(result.err.view()))),
+                    false => {
+                        problem = self.compare(c, result).try();
+                        problem.is_empty().match({
+                            true  => Ok(Outcome(base: c.base, lane: lane, verdict: Verdict.Pass, reason: "")),
+                            false => Ok(Outcome(base: c.base, lane: lane, verdict: Verdict.Fail, reason: problem)),
+                        })
+                    },
+                })
+            },
+        })
+    }
+}
+
+verdict_name = (v: Verdict) str {
+    v.match({ Pass => "PASS", Fail => "FAIL", Unsupported => "UNSUPPORTED", Broken => "BROKEN" })
+}
+
+is_pass = (v: Verdict) bool { v.match({ Pass => true, _ => false }) }
+
+first_line = (text: str) str {
+    text.split_once('\n').match({ Ok(pair) => pair.before, None => text })
+}
+
+// `tests/corpus/<lane>/...` names the lane.
+lane_of = (base: str) str {
+    rest = base.starts_with("tests/corpus/").match({
+        true  => base.slice("tests/corpus/".len, base.len),
+        false => base,
+    });
+    rest.split_once('/').match({ Ok(pair) => pair.before, None => rest })
+}
+
+// `name.expected` beside `name.zen` is a single-file test; a directory
+// holding `main.zen` and `.expected` (or `main.expected`) is a program root.
+// Sidecars are `<base>.<kind>`: `dir/.exit` and `dir/main.exit` both fit.
+case_of = (a: Alloc, expected: str) Res<Res<Case>, AllocError> {
+    base = expected.slice(0, expected.len - ".expected".len);
+    Ok(base.rfind('/').match({
+        None      => None,
+        Ok(slash) => {
+            dir  = base.slice(0, slash);
+            name = base.slice(slash + 1, base.len);
+            (name.is_empty() || name.eq("main")).match({
+                true  => Ok(Case(root: dir, entry: "main.zen", base: base)),
+                false => Ok(Case(root: dir, entry: a.String("{}.zen", name).try().view(), base: base)),
+            })
+        },
+    }))
+}
+
+// Test bases named by the gap file, ignoring comments and blank lines.
+parse_gaps = (a: Alloc, text: str) Res<Vec<str>, AllocError> {
+    gaps ::= a.Vec<str>();
+    text.split('\n').loop((line) {
+        entry = line.split_once('#').match({ Ok(pair) => pair.before, None => line });
+        entry.trim().when_ok((word) { gaps.add(word).try(); });
+    });
+    Ok(gaps)
+}
+
+listed = (gaps: Vec<str>, base: str) bool {
+    found ::= false;
+    gaps.loop((h, i, g) { g.eq(base).then(() { found = true; h.break(); }); });
+    found
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    zen ::= "./zen";
+    gaps_path ::= "tests/js/known_gaps.txt";
+    filter ::= "";
+    shrink ::= false;
+    verbose ::= false;
+    i ::= 1;
+    loop(() { i < env.argv.len }, (h) {
+        word = env.argv.get(i).value_or("");
+        word.match({
+            "--gaps"    => { i = i + 1; gaps_path = env.argv.get(i).value_or(gaps_path); },
+            "--filter"  => { i = i + 1; filter = env.argv.get(i).value_or(""); },
+            "--shrink"  => { shrink = true; },
+            "--verbose" => { verbose = true; },
+            _           => { zen = word; },
+        });
+        i = i + 1;
+    });
+
+    node ::= a.Vec<str>();
+    ["node", "--version"].loop((w) { node.add(w).try(); });
+    has_node = env.proc.run_argv(a, "", node).match({ Ok(out) => out.code == 0, Err(_) => false });
+    (!has_node).then(() {
+        println("js-corpus: node is not on PATH; skipping the JavaScript differential gate");
+    });
+    has_node.match({
+        false => Ok(0),
+        true  => gate(env, a, zen, gaps_path, filter, shrink, verbose),
+    })
+}
+
+gate = (env: Env, a: Alloc, zen: str, gaps_path: str, filter: str, shrink: bool, verbose: bool) Res<i32, AllocError> {
+    uname ::= a.Vec<str>();
+    ["uname", "-s"].loop((w) { uname.add(w).try(); });
+    darwin = env.proc.run_argv(a, "", uname).match({
+        Ok(out) => out.out.view().trim().value_or("").eq("Darwin"),
+        Err(_)  => false,
+    });
+    work = "build/js-corpus";
+    mkdir ::= a.Vec<str>();
+    ["mkdir", "-p", work].loop((w) { mkdir.add(w).try(); });
+    env.proc.run_argv(a, "", mkdir).ignore();
+
+    gaps_exist = env.fs.exists(gaps_path);
+    gap_text = env.fs.read(a, gaps_path).match({ Ok(s) => s.view(), Err(_) => "" });
+    gaps = parse_gaps(a, gap_text).try();
+
+    find ::= a.Vec<str>();
+    ["find", "tests/corpus", "-name", "*.expected"].loop((w) { find.add(w).try(); });
+    found = env.proc.run_argv(a, "", find).match({ Ok(out) => out.out.view(), Err(_) => "" });
+    paths ::= a.Vec<Name>();
+    found.split('\n').loop((line) {
+        (!line.is_empty() && line.contains(filter)).then(() { paths.add(Name(text: line)).try(); });
+    });
+    sort(paths, a).try();
+
+    runner = Runner(env: env, a: a, zen: zen, work: work, darwin: darwin);
+    outcomes ::= a.Vec<Outcome>();
+    paths.loop((h, i, path) {
+        case_of(a, path.text).try().when_ok((c) {
+            (!runner.has_sidecar(c, "stage")).then(() {
+                outcome = runner.case(c, i).try();
+                outcomes.add(outcome).try();
+                (verbose || !is_pass(outcome.verdict)).then(() {
+                    println("{} {} {}", verdict_name(outcome.verdict), outcome.base, outcome.reason);
+                });
+            });
+        });
+    });
+
+    report_lanes(a, outcomes).try();
+
+    regressions ::= 0;
+    stale ::= 0;
+    outcomes.loop((o) {
+        passed = is_pass(o.verdict);
+        allowed = listed(gaps, o.base);
+        (!passed && !allowed && gaps_exist).then(() {
+            regressions = regressions + 1;
+            println("REGRESSION {} ({}): not in {}", o.base, verdict_name(o.verdict), gaps_path);
+        });
+        (passed && allowed && !shrink).then(() {
+            stale = stale + 1;
+            println("STALE {}: passes now; delete it from {} (or rerun with --shrink)", o.base, gaps_path);
+        });
+    });
+
+    shrink.then(() {
+        text ::= a.String().try();
+        text.add("# Known JavaScript-backend gaps: corpus tests whose JS behaviour does not\n").try();
+        text.add("# yet match the C oracle. Ratchet: the gate fails on a failure not listed\n").try();
+        text.add("# here and on a listed test that passes. Regenerate with --shrink; it only\n").try();
+        text.add("# removes entries. Each comment is the verdict when last regenerated.\n").try();
+        outcomes.loop((o) {
+            keep = !is_pass(o.verdict) && (!gaps_exist || listed(gaps, o.base));
+            keep.then(() {
+                text.fmt("{} # {}: {}\n", o.base, verdict_name(o.verdict), clip(o.reason)).try();
+            });
+        });
+        // Entries outside this run's filter keep their line untouched.
+        gaps.loop((g) {
+            ran ::= false;
+            outcomes.loop((h, i, o) { o.base.eq(g).then(() { ran = true; h.break(); }); });
+            (!ran).then(() { text.fmt("{}\n", g).try(); });
+        });
+        env.fs.write(gaps_path, text.view()).match({
+            Ok(_)  => println("js-corpus: wrote {}", gaps_path),
+            Err(_) => println("js-corpus: cannot write {}", gaps_path),
+        });
+    });
+
+    failed = regressions + stale;
+    (failed > 0).then(() {
+        println("js-corpus: {} regression(s), {} stale gap(s)", regressions, stale);
+    });
+    Ok((failed > 0).match({ true => 1, false => 0 }))
+}
+
+// Keep generated gap comments to one short line.
+clip = (text: str) str {
+    (text.len > 100).match({ true => text.slice(0, 100), false => text })
+}
+
+// Pass rate per corpus lane, then the total.
+report_lanes = (a: Alloc, outcomes: Vec<Outcome>) Res<(), AllocError> {
+    lanes ::= a.Vec<Name>();
+    outcomes.loop((o) { (!named(lanes, o.lane)).then(() { lanes.add(Name(text: o.lane)).try(); }); });
+    sort(lanes, a).try();
+    println("lane\tpass\tfail\tunsup\tbroken\ttotal");
+    all_pass ::= 0;
+    lanes.loop((name) {
+        lane = name.text;
+        pass ::= 0;
+        fail ::= 0;
+        unsupported ::= 0;
+        broken ::= 0;
+        outcomes.loop((o) {
+            o.lane.eq(lane).then(() {
+                o.verdict.match({
+                    Pass        => { pass = pass + 1; },
+                    Fail        => { fail = fail + 1; },
+                    Unsupported => { unsupported = unsupported + 1; },
+                    Broken      => { broken = broken + 1; },
+                });
+            });
+        });
+        all_pass = all_pass + pass;
+        println("{}\t{}\t{}\t{}\t{}\t{}", lane, pass, fail, unsupported, broken, pass + fail + unsupported + broken);
+    });
+    println("js-corpus: {} of {} pass", all_pass, outcomes.len);
+    Ok(())
+}
+
+// Sorting orders test paths and lane names bytewise.
+Name = { text: str }
+
+Name.impl(Ordered, {
+    before = (self: @Self, other: @Self) bool { self.text.before(other.text) }
+})
+
+named = (names: Vec<Name>, text: str) bool {
+    found ::= false;
+    names.loop((h, i, n) { n.text.eq(text).then(() { found = true; h.break(); }); });
+    found
+}

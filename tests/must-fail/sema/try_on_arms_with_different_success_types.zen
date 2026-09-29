@@ -1,0 +1,25 @@
+// MUST FAIL: the arms of a match under `.try()` produce `Res<(), Fail>` and
+// `Res<i32, Kind>`. Joining the arms widens their error sets but keeps the
+// first arm's success type, so the second arm's `i32` has no place in the
+// joined `Res<(), Fail | Kind>`. Unchecked, sema accepted the match and the
+// C compiler refused to assign one arm's result struct to the other's.
+// The same arms with no `.try()` are refused by the ordinary arm join.
+//
+// position: the arm whose success type disagrees with the arms above it.
+
+Kind = | Bad | Worse
+Fail = | Broke
+Both = Kind | Fail
+
+one = (k: i32) Res<(), Fail> { (k == 0).match({ true => Ok(()), false => Err(Fail.Broke) }) }
+two = (k: i32) Res<i32, Kind> { (k == 0).match({ true => Ok(4), false => Err(Kind.Bad) }) }
+
+pick = (p: bool) Res<i32, Both> {
+    p.match({ true => one(0), false => two(1) }).try();
+    Ok(3)
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    pick(true).match({ Ok(v) => println("ok {}", v), Err(_) => println("err") });
+    Ok(0);
+}

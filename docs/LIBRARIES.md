@@ -151,12 +151,16 @@ retains no pointer or PRNG state, and has no predictable fallback. Supply a live
 span of `count` bytes. A null pointer is accepted only when count is zero;
 empty calls perform no OS operation. Nonempty null spans return `Invalid`.
 
-On macOS 10.12+ and Linux with glibc 2.25+, the header-backed `getentropy`
-binding requests at most 256 bytes per call; chunking and errors are handled in
-Zen. The operation may block during OS entropy initialization. Any OS refusal
-returns `Unavailable`; earlier chunks may already have overwritten the output,
-so callers must discard the entire result on failure. No secure-erasure claim
-is made. This is distinct from `std.core.rand`, which must not generate keys.
+On macOS, iOS and Linux with glibc 2.36+, the source is `arc4random_buf`,
+bound from `stdlib.h` (the iOS SDK has no `sys/random.h`, so the former
+`getentropy` binding could not compile there). One call fills the whole span.
+The operation may block during OS entropy initialization. `arc4random_buf` has
+no error result: Apple's implementation cannot fail, and glibc terminates the
+process instead of returning unfilled bytes. `fill_random` therefore never
+returns `Unavailable` today; the variant remains so existing matches compile.
+Callers should still treat any `Err` as "discard the whole buffer". No
+secure-erasure claim is made. This is distinct from `std.core.rand`, which must
+not generate keys.
 
 TLS algorithms remain in zen-crypto. Public handshake randomness and ephemeral
 private keys require separate calls: never expose private bytes by reusing them
@@ -164,13 +168,13 @@ as the public ClientHello/ServerHello random. OS entropy availability does not
 replace protocol validation, secret ownership or side-channel review.
 
 The corpus checks real OS success and buffer guards. `tests/library/entropy`
-uses a deterministic test-only OS replacement to cover 256-byte chunking,
-zero/null spans, failure on the first and a later call, and stopping after
-failure. A deliberately false OS-success result must fail its assertions.
+uses a deterministic test-only OS replacement to cover the exact requested
+span, untouched neighbouring bytes and zero/null spans. A deliberately short
+OS fill must fail its assertions.
 These checks do not attempt to establish entropy quality through statistics.
 
-Reference: [getentropy](https://man7.org/linux/man-pages/man3/getentropy.3.html).
-The macOS SDK declares the same interface in `sys/random.h`.
+Reference: [arc4random_buf](https://man7.org/linux/man-pages/man3/arc4random_buf.3.html).
+Apple SDKs declare the same interface in `stdlib.h`.
 
 ## HTTP is a package dependency
 

@@ -55,6 +55,11 @@ no seed changes. `make -j1 seed verify` stops at the known macOS compiler-name
 warning issue (Apple Clang as gcc: 7,094 warnings against GCC budget 315), with
 no budget changes. Full Linux CI remains the merge gate.
 
+Follow-up: the iOS SDK has no `sys/random.h`, so the source is now
+`arc4random_buf` from `stdlib.h` (Apple SDKs, glibc 2.36+). It has no error
+result, so chunking and the OS-refusal fixture were removed; `Unavailable` is
+kept but no longer produced. See docs/LIBRARIES.md.
+
 ## Current checkpoint: canonical unit-return spelling (2026-09-28)
 
 Named functions and methods with bodies now use `name = (...) { ... }` rather

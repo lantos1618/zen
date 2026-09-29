@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix='zen-entropy-') as folder:
     def check(name, source, expected):
         generated.write_text(source)
         binary = work / name
-        built = subprocess.run([os.getenv('CC', 'clang'), '-O2', *flags, '-Dgetentropy=zen_test_getentropy',
+        built = subprocess.run([os.getenv('CC', 'clang'), '-O2', *flags, '-Darc4random_buf=zen_test_arc4random_buf',
                                 '-I', str(work), str(generated), str(work / 'probe.c'), '-o', str(binary)],
                                timeout=90, capture_output=True, text=True)
         if built.returncode:
@@ -35,10 +35,11 @@ with tempfile.TemporaryDirectory(prefix='zen-entropy-') as folder:
         assert result.returncode == expected, (name, result.returncode, result.stdout, result.stderr)
         print(result.stdout, end='')
     check('entropy', original, 0)
-    # Deliberately lie about OS success; failure-path assertions must detect it.
+    # Deliberately leave the last requested byte unwritten; the exact-span
+    # assertions must detect a short OS fill.
     probe = work / 'probe.c'
     source = probe.read_text()
-    assert source.count('return -1;') == 1
-    probe.write_text(source.replace('return -1;', 'return 0;'))
+    assert source.count('i < count;') == 1
+    probe.write_text(source.replace('i < count;', 'i + 1 < count;'))
     check('entropy-negative-control', original, 1)
-    print('PASS negative control: a swallowed OS entropy failure is detected')
+    print('PASS negative control: a short OS fill is detected')

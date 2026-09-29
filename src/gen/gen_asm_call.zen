@@ -23,6 +23,7 @@ word, integer, signed, same = gen.gen_ir
 LowerError, unsupported = gen.gen_lower
 Native, Value, Place, Base, LocalKind, LambdaRef, LoopTarget, Frame, Callee = gen.gen_asm_lower
 member_call, mem_call, sys_call, resolve, to_bound, handle_for_place = gen.gen_asm_member
+bound_of, dispatch, Bound = gen.gen_asm_member
 to_i64_bits = gen.gen_asm_lower
 Shape, Form, FieldAt, VariantAt, shape, class_of, field_types = gen.gen_asm_shape
 variant_index, size_of = gen.gen_asm_shape
@@ -550,6 +551,19 @@ argument_value* = (lo :: Native, source: Source, ty: TyId, span: Span) Res<Value
 
 // A mutable parameter aliases the caller's place; a temporary gets one.
 argument_place* = (lo :: Native, source: Source, ty: TyId, span: Span) Res<Place, LowerError> {
+    place = lo.source_place(source, ty, span).try();
+    // An implementor's place passed as a mutable bound (`out :: Sink` given
+    // a String) becomes a handle that points at it.
+    (place.ty == ty || !lo.settled(ty)).match({
+        true  => Ok(place),
+        false => lo.handle_for_place(place, ty).try().match({
+            Ok(handle) => Ok(lo.spill(handle)),
+            None       => Ok(place),
+        }),
+    })
+}
+
+source_place = (lo :: Native, source: Source, ty: TyId, span: Span) Res<Place, LowerError> {
     source.match({
         Computed(v) => Ok(lo.spill(lo.copy_value(v).try())),
         Located(p)  => Ok(p),
@@ -817,6 +831,21 @@ intrinsic = (lo :: Native, id: ExprId, callee: Callee, sources: Vec<Source>, c: 
                 "std.mem.mem_arena"         => lo.mem_call(id, name, sources, span),
                 "std.sys.sys"               => lo.sys_call(id, name, sources, span),
                 "std.text.text_string"      => lo.string_call(id, name, c, sources, span),
+                "std.text.text_fmt"         => name.eq("fmt").match({
+                    // `fmt(out :: Sink, fmt, args..)`: formatting through a Sink.
+                    true  => {
+                        out_source = sources.get(0).value_or(Source.Absent);
+                        out_ty = out_source.match({ Given(e) => lo.type_of(e), _ => Err(unsupported(span, "fmt without a sink")) }).try();
+                        place = lo.argument_place(out_source, out_ty, span).try();
+                        written_first = out_source.match({
+                            Given(e) => c.args.get(0).match({ Ok(a) => a.value == e, None => false }),
+                            _        => false,
+                        });
+                        lo.format_call(c.args, written_first.match({ true => 1, false => 0 }), false, FmtTo.Into(place), span).try();
+                        lo.variant_value(lo.type_of(id).try(), "Ok", Ok(lo.unit().try()), span)
+                    },
+                    false => Err(unsupported(span, "this formatting operation")),
+                }),
                 _                           => Err(unsupported(span, lo.alloc.String("the compiler-provided operation `{}.{}`", module, name).match({ Ok(t) => t.view(), Err(_) => "a compiler-provided operation" }))),
             }),
         }),
@@ -1702,7 +1731,7 @@ text = (lo :: Native, bytes: str, to: FmtTo) Res<(), LowerError> {
             }),
             Into(place)     => {
                 value = lo.string(bytes, lo.prim("str").try()).try();
-                lo.string_add(place, value).try();
+                lo.write_str(place, value).try();
             },
         });
     });
@@ -1754,7 +1783,7 @@ print_value* = (lo :: Native, value: Value, to: FmtTo, span: Span) Res<(), Lower
             }),
         }),
         Into(place)     => is_str.match({
-            true  => lo.string_add(place, value),
+            true  => lo.write_str(place, value),
             false => primitive.match({
                 true  => {
                     sink = lo.sink_for_place(place, span).try();
@@ -1804,10 +1833,40 @@ stream_sink = (lo :: Native, stream: Stream, span: Span) Res<Value, LowerError> 
         .ok_or(unsupported(span, "a StreamSink that is not a Sink"))
 }
 
-// A Sink whose receiver is the String at `place`, so writes land there.
+// A Sink whose receiver is the String at `place`, so writes land there; a
+// place already holding a Sink handle is that handle.
 sink_for_place = (lo :: Native, place: Place, span: Span) Res<Value, LowerError> {
     sink_ty = lo.std_type("std.core.io", "Sink", span).try();
-    lo.handle_for_place(place, sink_ty).try().ok_or(unsupported(span, "a String that is not a Sink"))
+    (place.ty == sink_ty).match({
+        true  => lo.read(place),
+        false => lo.handle_for_place(place, sink_ty).try().ok_or(unsupported(span, "a String that is not a Sink")),
+    })
+}
+
+// Append a str to the text at `place`: String.add, or Sink.write through a
+// handle.
+write_str = (lo :: Native, place: Place, value: Value) Res<(), LowerError> {
+    lo.bound_of(place.ty).try().match({
+        None        => lo.string_add(place, value),
+        Ok(bound)   => {
+            handle = lo.read(place).try();
+            args ::= lo.alloc.Vec<Source>();
+            args.add(Source.Computed(value)).try(LowerError.OutOfMemory);
+            result_ty = lo.std_result("write", bound, nowhere()).try();
+            lo.dispatch(bound, handle, "write", args, lo.alloc.Inst(), result_ty, nowhere()).try();
+            Ok(())
+        },
+    })
+}
+
+// A bound member's declared result type (for dispatching `write`).
+std_result = (lo :: Native, name: str, bound: Bound, span: Span) Res<TyId, LowerError> {
+    decl = decl_at(lo.tree, bound.decl).ok_or(unsupported(span, "a missing bound")).try();
+    s = decl.kind.match({ Struct(s) => Ok(s), _ => None }).ok_or(unsupported(span, "a bound that is not a struct")).try();
+    member = s.members.find((m) { m.named(name) }).ok_or(unsupported(span, "a missing bound member")).try();
+    f = member.kind.match({ Function(f) => Ok(f), _ => None }).ok_or(unsupported(span, "a bound member that is not a function")).try();
+    callee = Callee(f: f, owner: bound.decl, member: None, module: bound.decl.module.to_usize(), inst: lo.alloc.Inst(), self_ty: Ok(bound.ty), generic_owner: Ok(bound.decl));
+    lo.result_type(callee)
 }
 
 // One of std.text.text_fmt's `add_*(out :: Sink, v)` writers.

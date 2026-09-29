@@ -39,13 +39,32 @@ member_call* = (lo :: Native, id: ExprId, c: Call, checked: CheckedCall, receive
                 name: str, span: Span) Res<Value, LowerError> {
     recv_ty = lo.type_of(receiver).try();
     method_inst = lo.call_inst(checked.inst).try();
-    lo.bound_of(recv_ty).try().match({
-        Ok(bound) => lo.dynamic_call(id, c, bound, receiver, name, method_inst, span),
-        None      => {
-            callee = lo.resolve(recv_ty, name, checked.body, c.args.len + 1, method_inst, None, span).try();
-            sources = lo.bind_sources(callee.f, c, Ok(receiver), span).try();
-            lo.invoke(id, callee, sources, c, span)
-        },
+    lo.check.variant_name_call_of(id).match({
+        Ok(_) => lo.variant_name(id, receiver, span),
+        None  => lo.bound_of(recv_ty).try().match({
+            Ok(bound) => lo.dynamic_call(id, c, bound, receiver, name, method_inst, span),
+            None      => lo.resolve(recv_ty, name, checked.body, c.args.len + 1, method_inst, None, span).match({
+                Ok(callee) => {
+                    sources = lo.bind_sources(callee.f, c, Ok(receiver), span).try();
+                    lo.invoke(id, callee, sources, c, span)
+                },
+                // An allocator hook its implementor leaves out keeps the
+                // bound's meaning.
+                Err(e)     => name.is_in(["create", "free"]).match({
+                    false => Err(e),
+                    true  => {
+                        place = lo.place_of(receiver).try().match({
+                            Ok(p) => p,
+                            None  => lo.spill(lo.expr(receiver).try()),
+                        });
+                        args ::= lo.alloc.Vec<Source>();
+                        c.args.loop((a) { args.add(Source.Computed(lo.expr(a.value).try())).try(LowerError.OutOfMemory); });
+                        alloc_bound = lo.bound_named("Alloc", span).try();
+                        lo.implementor_call(recv_ty, alloc_bound, name, place, args, method_inst, lo.type_of(id).try(), span)
+                    },
+                }),
+            }),
+        }),
     })
 }
 
@@ -63,7 +82,7 @@ resolve* = (lo :: Native, ty: TyId, name: str, body: Res<BlockId>, arity: usize,
                         // A type's own member is the body sema chose; an
                         // impl member overrides a bound's default of the
                         // same name; a default is used when nothing does.
-                        by_name = f.name.text.eq(name) && f.params.len == arity;
+                        by_name = f.name.text.eq(name) && (f.params.len == arity || lo.variadic(f));
                         fits = owner.kind.match({
                             Own     => body.match({
                                 Ok(b) => f.body.match({ Ok(own) => own == b, None => false }),
@@ -88,6 +107,30 @@ resolve* = (lo :: Native, ty: TyId, name: str, body: Res<BlockId>, arity: usize,
                             ));
                         });
                     },
+                    // `widen_i64 = to_i64`: an impl field naming a function
+                    // supplies that function as the member.
+                    Field(fd)   => {
+                        wanted = fd.name.text.eq(name) && owner.kind.match({ Supply => true, _ => false });
+                        alias: Res<Aliased> = wanted.match({
+                            false => None,
+                            true  => fd.value.match({
+                                Ok(e) => lo.aliased(owner.decl, e).try(),
+                                None  => None,
+                            }),
+                        });
+                        alias.match({
+                            Ok(f) => h.break(Callee(
+                                f: f.f,
+                                owner: f.owner,
+                                member: None,
+                                module: f.owner.module.to_usize(),
+                                inst: lo.alloc.Inst(),
+                                self_ty: None,
+                                generic_owner: None
+                            )),
+                            None  => (),
+                        });
+                    },
                     _           => (),
                 });
             });
@@ -97,9 +140,76 @@ resolve* = (lo :: Native, ty: TyId, name: str, body: Res<BlockId>, arity: usize,
     found.ok_or(unsupported(span, lo.described("a member without a body this backend can find", ty)))
 }
 
+// `value.variant_name()`: the name of the alternative it holds, as a str.
+variant_name = (lo :: Native, id: ExprId, receiver: ExprId, span: Span) Res<Value, LowerError> {
+    value = lo.expr(receiver).try();
+    ty = lo.type_of(id).try();
+    variants = lo.variants_of(value.ty).try();
+    tag = lo.tag_of(value).try();
+    out = lo.temp(ty).try();
+    done = lo.label().try();
+    variants.loop((h, i, v) {
+        yes = lo.label().try();
+        next = lo.label().try();
+        expected = lo.word_const(Scalar.U32, i.to_i64_bits()).try();
+        test = lo.slot_of(Scalar.Bool).try();
+        lo.add(Instruction.BinaryValue(Binary(out: test, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+        lo.branch_to(test, yes, next).try();
+        lo.start(yes);
+        text = lo.string(v.name, ty).try();
+        lo.add(Instruction.Copy(Move(out: out.slot, source: text.slot))).try();
+        lo.jump(done).try();
+        lo.start(next);
+    });
+    lo.trap(TrapKind.Unreachable, span).try();
+    lo.start(done);
+    Ok(out)
+}
+
+// A std bound by name, with its program-wide implementors.
+bound_named = (lo :: Native, name: str, span: Span) Res<Bound, LowerError> {
+    defs ::= lo.alloc.Vec<Def>();
+    lo.check.world.exported_named(name, defs).try(LowerError.OutOfMemory);
+    d = defs.find((d) { lo.check.world.module_name(d.id).starts_with("std.") })
+        .ok_or(unsupported(span, "a missing std bound")).try();
+    args ::= lo.alloc.Vec<TyId>();
+    ty = lo.check.types.named(d.id, d.qname, d.name, args).try(LowerError.OutOfMemory);
+    Ok(Bound(decl: d.id, ty: ty, implementors: lo.implementors(d.id).try()))
+}
+
+variadic* = (lo :: Native, f: Function) bool {
+    (f.params.len > 0) && f.params.get(f.params.len - 1).match({
+        Ok(p) => p.type.match({
+            Ok(t) => lo.tree.type_at(t).kind.match({ Variadic => true, _ => false }),
+            None  => false,
+        }),
+        None  => false,
+    })
+}
+
 // A place a member may be declared: the type's own declaration, an impl for
 // it, or the bound such an impl satisfies.
 OwnerKind = Own | Supply | Default
+
+Aliased = { f: Function, owner: DeclId }
+
+// The function an impl field's value names, in the impl's module.
+aliased = (lo :: Native, impl_decl: DeclId, e: ExprId) Res<Res<Aliased>, LowerError> {
+    lo.tree.expr_at(e).kind.match({
+        Name(n) => {
+            defs ::= lo.alloc.Vec<Def>();
+            lo.check.world.defs_of(impl_decl.module.to_usize(), n.text, defs).try(LowerError.OutOfMemory);
+            Ok(defs.find((d) { d.kind.match({ FunctionDef => true, _ => false }) }).match({
+                None    => None,
+                Ok(d)   => decl_at(lo.tree, d.id).match({
+                    Ok(x) => x.kind.match({ Function(f) => Ok(Aliased(f: f, owner: d.id)), _ => None }),
+                    None  => None,
+                }),
+            }))
+        },
+        _       => Ok(None),
+    })
+}
 Owner = { decl: DeclId, members: Vec<Member>, inst: Inst, generic: Res<DeclId>, kind: OwnerKind }
 
 owners_of = (lo :: Native, ty: TyId, via: Res<DeclId>) Res<Vec<Owner>, LowerError> {
@@ -353,11 +463,6 @@ handle_for_place* = (lo :: Native, place: Place, target: TyId) Res<Res<Value>, L
 dynamic_call = (lo :: Native, id: ExprId, c: Call, bound: Bound, receiver: ExprId, name: str,
                 method_inst: Inst, span: Span) Res<Value, LowerError> {
     handle = lo.expr(receiver).try();
-    at = lo.address(lo.spill(handle)).try();
-    tag = lo.slot_of(Scalar.U32).try();
-    pointer = lo.slot_of(Scalar.Ptr).try();
-    lo.add(Instruction.LoadValue(Load(out: tag, base: at, offset: 0))).try();
-    lo.add(Instruction.LoadValue(Load(out: pointer, base: at, offset: 8))).try();
     // Arguments evaluate once, before the dispatch; a place stays a place so
     // a mutable parameter writes through it.
     args ::= lo.alloc.Vec<Source>();
@@ -368,7 +473,18 @@ dynamic_call = (lo :: Native, id: ExprId, c: Call, bound: Bound, receiver: ExprI
         });
         args.add(source).try(LowerError.OutOfMemory);
     });
-    ty = lo.type_of(id).try();
+    lo.dispatch(bound, handle, name, args, method_inst, lo.type_of(id).try(), span)
+}
+
+// Branch on a bound handle's implementor tag and call that implementor's
+// member with the handle's receiver.
+dispatch* = (lo :: Native, bound: Bound, handle: Value, name: str, args: Vec<Source>,
+             method_inst: Inst, ty: TyId, span: Span) Res<Value, LowerError> {
+    at = lo.address(lo.spill(handle)).try();
+    tag = lo.slot_of(Scalar.U32).try();
+    pointer = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.LoadValue(Load(out: tag, base: at, offset: 0))).try();
+    lo.add(Instruction.LoadValue(Load(out: pointer, base: at, offset: 8))).try();
     out = lo.temp(ty).try();
     done = lo.label().try();
     bound.implementors.loop((h, i, implementor) {
@@ -653,3 +769,5 @@ converted = (lo :: Native, sources: Vec<Source>, ty: TyId, span: Span) Res<Value
     lo.add(Instruction.Cast(Convert(out: out.slot, input: value.slot))).try();
     Ok(out)
 }
+
+ignore_none = <T>(r: Res<T>) { r.match({ Ok(_) => (), None => () }); }

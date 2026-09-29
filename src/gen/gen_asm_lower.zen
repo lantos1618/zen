@@ -31,7 +31,8 @@ Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault = ge
 word, integer, same = gen.gen_ir
 LowerError, unsupported = gen.gen_lower
 Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of = gen.gen_asm_shape
-to_bound = gen.gen_asm_member
+to_bound, resolve = gen.gen_asm_member
+real_call = gen.gen_asm_call
 capability = gen.gen_asm_shape
 variant_index, size_of, TAG_BYTES = gen.gen_asm_shape
 call, construct_named, print_call, sys_env_call, Source = gen.gen_asm_call
@@ -712,7 +713,9 @@ Native* = {
                     },
                     false => same(from, to).match({
                         true  => Ok(Value(slot: value.slot, ty: ty)),
-                        false => self.variant_position(ty, self.type_name(value.ty)).match({
+                        false => self.array_coercion(value, ty).try().match({
+                          Ok(converted) => Ok(converted),
+                          None          => self.variant_position(ty, self.type_name(value.ty)).match({
                             // A member value enters the union that names it.
                             Ok(_) => self.variant_value(ty, self.type_name(value.ty), Ok(value), nowhere()),
                             None  => (self.has_variants(value.ty) && self.has_variants(ty)).match({
@@ -721,10 +724,39 @@ Native* = {
                                 true  => self.remap_variants(value, ty, nowhere()),
                                 false => self.lift(value, ty),
                             }),
+                          }),
                         }),
                     }),
                 })
             },
+        })
+    }
+
+    // Arrays of the same length convert element by element (a literal of
+    // open integers into `[u8, N]`).
+    array_coercion = (self :: @Self, value: Value, ty: TyId) Res<Res<Value>, LowerError> {
+        from = self.shape(value.ty).try();
+        to = self.shape(ty).try();
+        from.form.match({
+            Array(a) => to.form.match({
+                Array(b) => (a.count == b.count).match({
+                    false => Ok(None),
+                    true  => {
+                        out = self.temp(ty).try();
+                        source = self.address(self.spill(value)).try();
+                        dest = self.slot_of(Scalar.Ptr).try();
+                        Range(0, a.count).loop((i) {
+                            self.add(Instruction.AddressOf(Address(out: dest, slot: out.slot))).try();
+                            element = self.read(Place(base: Base.Through(source), offset: i * a.stride, ty: a.elem)).try();
+                            converted = self.coerce(element, b.elem).try();
+                            self.add(Instruction.StoreValue(Store(base: dest, offset: i * b.stride, value: converted.slot))).try();
+                        });
+                        Ok(Ok(out))
+                    },
+                }),
+                _        => Ok(None),
+            }),
+            _        => Ok(None),
         })
     }
 
@@ -878,7 +910,22 @@ Native* = {
     equal_values = (self :: @Self, op: BinOp, left: Value, right: Value, span: Span)
                    Res<Value, LowerError> {
         self.prim_name(left.ty).eq("str").match({
-            false => Err(unsupported(span, "== on aggregates other than str")),
+            // `==` on other aggregates is the type's own `eq`.
+            false => {
+                callee = self.resolve(left.ty, "eq", None, 2, self.alloc.Inst(), None, span).try();
+                sources ::= self.alloc.Vec<Source>();
+                sources.add(Source.Computed(left)).try(LowerError.OutOfMemory);
+                sources.add(Source.Computed(right)).try(LowerError.OutOfMemory);
+                result = self.real_call(callee, sources, span).try();
+                op.match({
+                    NotEqual => {
+                        out = self.temp(result.ty).try();
+                        self.add(Instruction.UnaryValue(Unary(out: out.slot, input: result.slot, op: UnaryOp.Not, span: span))).try();
+                        Ok(out)
+                    },
+                    _        => Ok(result),
+                })
+            },
             true  => {
                 result = self.str_equal(left, right).try();
                 op.match({
@@ -1090,7 +1137,7 @@ Native* = {
                     Res<Value, LowerError> {
         bits: i64 = prim.match({
             "i8" => 8, "u8" => 8, "i16" => 16, "u16" => 16, "i32" => 32, "u32" => 32,
-            _ => 64,
+            "f32" => 32, _ => 64,
         });
         is_signed = prim.starts_with("i");
         value: Res<i64> = member.match({
@@ -1127,7 +1174,6 @@ Native* = {
 
     // Arrays and str index bytes with a bounds trap at the `[`.
     index_place* = (self :: @Self, x: Index, span: Span) Res<Place, LowerError> {
-        base_ty = self.type_of(x.base).try();
         base = self.place_of(x.base).try().match({
             Ok(p) => p,
             None  => {
@@ -1135,6 +1181,9 @@ Native* = {
                 self.spill(value)
             },
         });
+        // The place's own type decides the layout: a binding keeps the
+        // representation it was built with.
+        base_ty = base.ty;
         usize_ty = self.prim("usize").try();
         index = self.expr_as(x.index, usize_ty).try();
         s = self.shape(base_ty).try();

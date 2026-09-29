@@ -1,0 +1,3 @@
+Tag = tag.tag
+
+pick* = (t: Tag, x: i32) bool { x == 1 }

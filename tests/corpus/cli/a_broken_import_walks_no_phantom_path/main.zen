@@ -5,7 +5,7 @@ Alloc, AllocError = std.mem
 str = std.text
 FsError = std.env
 BuildArgs = std.build
-build = zen
+build = zen.zen_run
 
 BROKEN*: str = "A, B = 42\n"
 

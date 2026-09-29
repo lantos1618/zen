@@ -1,0 +1,12 @@
+// `pick = two` aliases the module `two`; it imports no function. a bare
+// call through the alias names a module, and must not fall through to
+// whichever exported `pick` travels with `Tag`, which was one's
+Tag = tag.tag
+o1 = one
+pick = two
+
+main = (env: Env) Res<i32, IoError> {
+    t = Tag(v: 0);
+    println("{}", pick(t, 2));
+    Ok(0);
+}

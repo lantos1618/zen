@@ -5,7 +5,7 @@ str = std.text
 FsError, fs_message = std.env
 
 scan, Source = std.lex
-render = fmt
+render = fmt.fmt
 
 FmtJob = zen.zen_cli
 

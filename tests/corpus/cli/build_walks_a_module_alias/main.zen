@@ -29,7 +29,7 @@
 Alloc, AllocError = std.mem
 str = std.text
 BuildArgs = std.build
-build = zen
+build = zen.zen_run
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

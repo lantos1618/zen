@@ -1,0 +1,5 @@
+// `pick` here is two's
+Tag = tag.tag
+pick = two.two
+
+via_two* = (t: Tag, x: i32) bool { pick(t, x) && t.pick(x) }

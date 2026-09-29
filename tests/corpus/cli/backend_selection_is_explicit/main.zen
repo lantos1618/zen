@@ -1,4 +1,4 @@
-cli = zen
+cli = zen.zen_cli
 
 show = (env: Env, words: Vec<str>) Res<(), AllocError> {
     a ::= env.mem.alloc();

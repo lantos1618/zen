@@ -179,18 +179,80 @@ CallCheck = {
     ) Res<TyId, AllocError> {
         cands ::= c.alloc.Vec<Cand>();
         c.cands_of(self.ctx.module, name, cands).try();
+        visible = cands.len;
         c.travelled_cands(name, recv, cands).try();
-        // Free-form UFCS also considers argument zero as the receiver.
+        // Free-form UFCS also considers argument zero as the receiver. A name
+        // this module binds to a module is not a function name here, so the
+        // travelled pool must not answer for it.
         recv.match({
             Ok(_) => Ok(()),
-            None  => actuals.get(0).match({
-                None  => Ok(()),
-                Ok(a) => c.travelled_cands(name, Ok(a.ty), cands),
+            None  => self.names_module(c, name).try().match({
+                true  => Ok(()),
+                false => actuals.get(0).match({
+                    None  => Ok(()),
+                    Ok(a) => c.travelled_cands(name, Ok(a.ty), cands),
+                }),
             }),
         }).try();
         self.first_matching(c, cands, actuals).try().match({
-            Ok(k) => self.chosen(c, k, actuals),
+            Ok(k) => {
+                self.travelled_collision(c, name, k, cands, visible, actuals)
+                    .try();
+                self.chosen(c, k, actuals)
+            },
             None  => self.construct_or_fail(c, name, recv, cands, recovery),
+        })
+    }
+
+    names_module = (self: @Self, c :: Checker, name: str)
+                   Res<bool, AllocError> {
+        defs ::= c.alloc.Vec<Def>();
+        c.world.defs_of(self.ctx.module, name, defs).try();
+        Ok(defs.find((d) {
+            c.alias_module(d.id).match({ Ok(_) => true, None => false })
+        }).match({ Ok(_) => true, None => false }))
+    }
+
+    // Candidates past `visible` were not imported; they travelled with the
+    // receiver type. Nothing ranks one module's export above another's, so
+    // a second module's candidate for the same first-parameter type that
+    // also accepts the call is a collision, not a choice.
+    travelled_collision = (
+        self    : @Self,
+        c       :: Checker,
+        name    : str,
+        k       : Cand,
+        cands   : Vec<Cand>,
+        visible : usize,
+        actuals : Vec<Actual>
+    ) Res<(), AllocError> {
+        imported = Range(0, visible).find((i) {
+            cands.get(i).match({ Ok(v) => v.id.eq(k.id), None => false })
+        }).match({ Ok(_) => true, None => false });
+        rival: Res<Cand> = None;
+        imported.match({
+            true  => (),
+            false => Range(visible, cands.len).loop((h, i) {
+                cands.get(i).match({
+                    None  => (),
+                    Ok(r) => c.rivals(k, r, actuals).try().then(() {
+                        rival = Ok(r);
+                        h.break();
+                    }),
+                });
+            }),
+        });
+        rival.match({
+            None  => Ok(()),
+            Ok(r) => c.report(
+                self.node.span.file,
+                self.node.span,
+                SemaFault.TravelledCollision(PairFault(
+                    name: name,
+                    first: k.span,
+                    second: r.span
+                ))
+            ),
         })
     }
 
@@ -1030,6 +1092,30 @@ infer_member_inst = (
 }
 
 BoundFit = BoundSatisfied | BoundUnresolved | BoundDisjoint
+
+// A rival comes from another module, takes the same first parameter, and
+// accepts the call as well as the chosen candidate does.
+rivals = (c :: Checker, k: Cand, r: Cand, actuals: Vec<Actual>)
+         Res<bool, AllocError> {
+    other = r.id.module.to_usize() != k.id.module.to_usize();
+    first = k.params.get(0).match({
+        None  => false,
+        Ok(x) => r.params.get(0).match({
+            None  => false,
+            Ok(y) => c.same_param(x, y),
+        }),
+    });
+    (other && first).match({
+        false => Ok(false),
+        true  => c.candidate_compatible(r, actuals).try().match({
+            false => Ok(false),
+            true  => Ok(c.actual_bound_fit(r, actuals).try().match({
+                BoundDisjoint => false,
+                _             => true,
+            })),
+        }),
+    })
+}
 
 first_matching = (
     site    : CallCheck,

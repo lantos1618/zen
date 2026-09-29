@@ -111,3 +111,23 @@ These checks do not attempt to establish entropy quality through statistics.
 
 Reference: [getentropy](https://man7.org/linux/man-pages/man3/getentropy.3.html).
 The macOS SDK declares the same interface in `sys/random.h`.
+
+## HTTP is a package dependency
+
+HTTP/1 and HTTP/2 are maintained in [zen-http](https://github.com/lantos1618/zen-http).
+`std.net.http`, `std.net.http2`, their top-level `std` re-exports, and
+`env.net.http()` have been removed. This is a breaking source change; there is
+no compatibility facade or hidden package download. The compiler bootstrap
+and standard library have no dependency on zen-http or zen-openssl.
+
+Applications import `HttpClient`, response/error types and `H2Client` from
+`http`, and construct `HttpClient()` explicitly. Register the package and its
+TLS backend in the application's build graph; the package README documents
+its current sibling-checkout and OpenSSL build requirements. HTTP-specific
+regression coverage is maintained with the package rather than duplicated
+inside compiler std tests. The native PSK client is an explicit package API;
+ordinary certificate-verified HTTPS continues to use zen-openssl.
+
+Socket, readiness, TCP, DNS and other shared OS primitives remain in std.
+The reserved `Net` capability retains its empty shape; it no longer constructs
+an HTTP client.

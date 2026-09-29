@@ -22,6 +22,7 @@ lower_match = gen.gen_c.gen_c_flow
 lower_try = gen.gen_c.gen_c_try
 declarator, is_unit, has_storage = gen.gen_c.gen_c_type
 expr, ty_of, spills = gen.gen_c.gen_c_expr
+declare_local_function = gen.gen_c.gen_c_inline
 enter_block, leave_block, note_drop, displace = gen.gen_c.gen_c_own
 
 Dest* = Discard | Return | Into(str)
@@ -366,11 +367,7 @@ stmt* = (be :: CBackend, s: Stmt, ctx: Ctx) Res<(), AllocError> {
         Bind(b)  => be.lower_bind(s, b, ctx),
         Expr(e)  => be.lower_expr_stmt(s, e.expr, ctx),
         Block(b) => be.lower_nested(b, ctx),
-        Decl(_)  => be.report(
-            s.span.file,
-            s.span,
-            GenFault.Unsupported("a declaration inside a body")
-        ),
+        Decl(d)  => be.local_decl(s, d, ctx),
     })
 }
 
@@ -524,4 +521,19 @@ store_displacing = (
     be.deliver(b.value, ctx, ty, Dest.Into(tmp.view())).try();
     be.displace(name).try();
     be.write_dest(Dest.Into(place.view()), tmp.view())
+}
+
+// A function declared in a body becomes a closure binding: no C storage,
+// its body inlined at each call (`gen_c_inline.declare_local_function`).
+// Any other declaration inside a body has no lowering.
+local_decl = (be :: CBackend, s: Stmt, d: Decl, ctx: Ctx)
+             Res<(), AllocError> {
+    d.kind.match({
+        Function(f) => be.declare_local_function(s, f, ctx),
+        _           => be.report(
+            s.span.file,
+            s.span,
+            GenFault.Unsupported("a declaration inside a body")
+        ),
+    })
 }

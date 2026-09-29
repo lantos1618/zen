@@ -1,0 +1,8 @@
+// A local function has no storage: it is called by name and inlined, and
+// is never copied into another binding.
+main = (env: Env) Res<i32, IoError> {
+    succ = (x: i64) i64 { x + 1 }
+    other = succ;
+    println("{}", succ(2));
+    Ok(0);
+}

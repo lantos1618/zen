@@ -6,19 +6,14 @@ tests/corpus/closures-capture/e_shadowing_bind_is_not_a_capture -- write_unpack 
 tests/corpus/closures-capture/f_loop_body_accumulates_through_a_captured_local -- loop-body store into an outer binding lowered as declare-fresh-per-pass: sum prints 16 (last term) not 30
 tests/corpus/closures-capture/g_inner_block_snapshot_outer_frame -- inner block registers on the OUTER record or shares its cell: inner/outer prints collapse to one value; live-frame read makes both say 7
 tests/corpus/closures-capture/h_lambda_argument_reads_the_live_binding -- run_lambda skips enter_frame(cl.floor) so the inlined lambda reads a stale copy: second call prints 45 again, deferred/live lines converge
+tests/corpus/closures-capture/i_local_function_reads_the_live_frame -- declare_local_function taking its home after binding its own name, or copying captures at the declaration, prints live 1 / stored 7
+tests/corpus/closures-capture/j_local_function_try_returns_from_its_writer -- lowering a local function with its own return target makes `.try()` return from pick: picked line prints and 3 comes back instead of -1
 
 NOTES ON WHAT THE PROBING FOUND
 
-1. Locally bound closures cannot be called directly:
-       bump = () { n = n + 5; }
-   does not even parse (`expected expression` after the return type --
-   `lambda_ahead` refuses a `(` return type in expression position), and
-   with the ret type omitted sema accepts it but codegen says "cannot
-   resolve `bump`". A closure must flow through a function-typed
-   parameter (`apply((x: i64) i64 { .. }, ..)`) to be called. Every test
-   here is written through that shape. Whether "a function-typed local
-   that is never callable" is intended is a language question, not a
-   codegen bug I could pin from stdout alone.
+1. A function declared in a body (`bump = (by: i64) { n = n + by; }`, no
+   `;`) is a local closure called by name: see i_ and j_ and DESIGN.md
+   "A function declared in a body is a local closure".
 
 2. `str + str` is rejected by cc, not by zen: `tag = tag + "b";` emits C
    with binary `+` on two zg_str structs ("invalid operands"). Zen has no
@@ -33,4 +28,4 @@ NOTES ON WHAT THE PROBING FOUND
    defaults to signed i64 and wraps. Plausible-by-design (literals settle
    i64), recording it here because a capture test tripped over it first.
 
-TESTS: 8
+TESTS: 10

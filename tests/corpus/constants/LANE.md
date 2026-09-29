@@ -95,9 +95,8 @@ refusal.
   territory, not probed further).
 - `str.len` is a FIELD; usize has no `.to_i64()`; bool has no `.to_i64()`
   (use `.match({true => 1, false => 0})`).
-- A function-typed local inside a body does not parse
-  (`twice = (x: i64) i64 {..};` inside main: "expected expression");
-  declare helpers at module level.
+- A function declared inside a body takes no `;`
+  (`twice = (x: i64) i64 {..}`); it is a local closure.
 - Folder rename trap while probing: `other/other.zen` was renamed dir-wise
   to `misc/other.zen` and silently became "nothing is at that path" --
   the FILE name must match the folder for `<folder>/<folder>.zen`.

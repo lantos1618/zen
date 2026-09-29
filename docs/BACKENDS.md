@@ -61,9 +61,11 @@ Both new backends share these language rules:
   failure model. Output preceding a trap is flushed before exit.
 
 Actors, allocator capabilities, dynamic strings, collections, structural
-results, closures, generic instantiation, foreign calls, named/default call
-arguments, wrapping arithmetic, and other numeric widths are not lowered by
-these backends yet. Unused generic functions need not be lowered, but the
+results, closures (including local functions declared in a body, refused as
+"nested declarations"), module-qualified constants, generic instantiation,
+foreign calls, named/default call arguments, wrapping arithmetic, floating
+point (and so the float conversions), and other numeric widths are not
+lowered by these backends yet. Unused generic functions need not be lowered, but the
 frontend still checks the entire imported source graph. JavaScript project
 recipes refuse native link dependencies.
 

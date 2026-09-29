@@ -119,9 +119,20 @@ impl_item = (p :: Parser, stmts :: Vec<Stmt>, m: Mark) Res<(), AllocError> {
     p.decl_item(stmts, m)
 }
 
+// A declaration, like its module-level form, ends at its body: a stray `;`
+// after a local function is named rather than read as a missing expression.
 decl_item = (p :: Parser, stmts :: Vec<Stmt>, m: Mark) Res<(), AllocError> {
     d = p.declaration(false).try();
-    p.push(stmts, StmtKind.Decl(d), m);
+    p.push(stmts, StmtKind.Decl(d), m).try();
+    p.at_kind(TokenKind.Semicolon).match({
+        false => Ok(()),
+        true  => {
+            p.error(
+                "a declaration takes no `;`: `name = (..) T { .. }` inside a body declares a local function"
+            ).try();
+            p.skip()
+        },
+    })
 }
 
 expr_item = (

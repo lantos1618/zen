@@ -1,0 +1,6 @@
+// A local function is a declaration, and a declaration ends at its body.
+main = (env: Env) Res<i32, IoError> {
+    succ = (x: i32) i32 { x + 1 };
+    println("{}", succ(2));
+    Ok(0);
+}

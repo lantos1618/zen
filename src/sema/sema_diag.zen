@@ -128,6 +128,7 @@ SemaFault* =
     | ArenaStored(NameFault)           // local storage escaped through a parameter
     | ArenaEscapes(NameFault)          // a view outlived the arena behind it
     | HandleNotAValue(NameFault)       // a loop handle names its loop, it is not a value
+    | LocalFunctionShape(NameFault)    // a function declared in a body is a plain, typed closure
     | ConsumedByCapture(CaptureFault)  // a capture outlives the consume
 
 Diag* = {
@@ -222,6 +223,7 @@ message* = (fault: SemaFault) str {
         ArenaStored(_)               => "a value backed by an arena this body made may not be stored through a borrowed parameter: the arena is dropped when this body ends — take the allocation owner as a parameter",
         ArenaEscapes(_)              => "a value backed by an arena this body made may not be returned: the arena is dropped at the end of this body, so the caller would read freed pages — take the arena as a parameter, or move it into the value you return",
         HandleNotAValue(_)           => "a loop handle is not a value: it names the loop it came from and has no storage, so only `h.break(..)` and `h.next()` may read it",
+        LocalFunctionShape(_)        => "a function declared in a body is a local closure: it takes no `*` and no type parameters, and has a body",
         ConsumedByCapture(_)         => "consume after capture:",
     });
 }
@@ -273,6 +275,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         ArenaStored(f)               => out.write_name(f),
         ArenaEscapes(f)              => out.write_name(f),
         HandleNotAValue(f)           => out.write_name(f),
+        LocalFunctionShape(f)        => out.write_name(f),
 
         ConsumedUse(f)               => out.write_place(
             f,

@@ -340,6 +340,16 @@ This is where `defer` lives, and it is why `defer` needs no keyword and no ambie
 
 **A closure registered on a scope keeps its captures in that scope's own storage**, and this is what non-escaping buys. A deferred closure outlives the frame that wrote it — `register(@scope, env)` returns long before its cleanup runs — so its captures cannot live in the caller's frame, and a general escaping closure would need a heap record, which law 1 forbids without an `Alloc`. But the block it is registered on outlives it by construction, so the block's own defer stack is exactly the right storage: sized at compile time, freed at block exit, no allocator. `defer` therefore needs no escaping-closure machinery at all — it needs the one guarantee `@scope` already makes. That is why the restriction is a feature and not a limitation.
 
+**A function declared in a body is a local closure.** Inside a body, `succ = (x: i32) i32 { x + 1 }` declares a local function exactly as the same line declares one at module level — a declaration, so it states its parameter types and takes no `;` — and `succ(2)` calls it. What it is follows from non-escaping, with no new machinery:
+
+- *Captures are the frame's own bindings, read live.* The body sees every binding visible where it was written and nothing written later; each call reads their current values, and a store to a captured `::=` binding writes the enclosing frame's storage. There is no closure record, no copy, and no allocation — the same guarantee a lambda passed to a function-typed parameter has, because a local function is lowered the same way: inlined at each call site in the frame that wrote it.
+- *Non-local exit goes to the writer.* `.try()` inside the body returns from the enclosing function, as it does in any non-escaping closure. The declared result type types the body's tail.
+- *It may run any number of times*, so it may not `consume` a captured binding — refused as it is in a loop body.
+- *It is not a value.* It has no storage, so it is only ever called by name: it cannot be copied into another binding, returned, stored, or captured by an escaping closure. Passing it to a function-typed parameter is not supported yet.
+- *It is plain.* No `*` (nothing outside the body can name it), no type parameters of its own (it may use the enclosing function's), a body, and no recursion — its name is bound after its body, so a call to itself is an undefined name.
+
+Rebinding a function (`op ::= add_i32` in the example program at the end of this document) needs function values, which are not implemented. The native (IR) backends refuse local functions with "nested declarations".
+
 ---
 
 # Errors

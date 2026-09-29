@@ -5,7 +5,7 @@
 // function where the lambda was written. `inline_ret` settles the call before
 // emission; an unresolved generic return is refused instead of guessed.
 
-ExprId, BlockId, Lambda, Param, TypeId, Paren = std.ast
+ExprId, BlockId, Lambda, Param, TypeId, Paren, Stmt = std.ast
 Function, Access, Call = std.ast
 AllocError = std.mem
 Vec = std.collections
@@ -17,6 +17,10 @@ Def = sema.sema_def
 Ctx, Binding = sema.sema_check
 Inst, has_var, owner_of = sema.sema_inst
 self_ctx = sema.sema_member
+stmt_type = sema.sema_type
+local_lambda = sema.sema_local
+param_type, ret_type = sema.sema_denote
+GenFault = gen.gen_diag
 sym_local, sym_gen = gen.gen_name
 CBackend = gen.gen_c.gen_c_state
 LocalSlot, Closure = gen.gen_c.gen_c_frame
@@ -447,6 +451,48 @@ fn_parts = (be :: CBackend, pty: TyId, ptys :: Vec<TyId>)
 copy_fn_types = (ft: TyFn, ptys :: Vec<TyId>) Res<TyId, AllocError> {
     ft.params.loop((h, t) { ptys.add(t).try() });
     Ok(ft.ret);
+}
+
+// A function declared in a body (`sema_local`). Its closure's home is
+// taken before the name is bound, so the body sees exactly the bindings
+// that were visible where it was written, and never itself. The checker
+// binds the name as it did during checking; lowering binds the closure.
+declare_local_function* = (be :: CBackend, s: Stmt, f: Function, ctx: Ctx)
+                          Res<(), AllocError> {
+    home       = be.mark();
+    check_home = be.check.mark();
+    be.check.stmt_type(s, ctx).try();
+    local_lambda(f).match({
+        None    => be.report(
+            s.span.file,
+            s.span,
+            GenFault.Unsupported("a local function without a body")
+        ),
+        Ok(lam) => {
+            ptys ::= be.alloc.Vec<TyId>();
+            f.params.loop((h, p) {
+                ptys.add(be.check.param_type(p, ctx).try()).try();
+            });
+            ret = be.check.ret_type(f, ctx).try();
+            // A copy of the enclosing instantiation: a generic body's
+            // local function names its type parameters as that body does.
+            captured = be.compose(be.alloc.Inst(), be.inst).try();
+            be.declare_closure(
+                f.name.text,
+                Closure(
+                    lam: lam,
+                    ptys: ptys,
+                    ret: ret,
+                    home: home,
+                    check_home: check_home,
+                    floor: be.floor,
+                    inst: captured,
+                    ctx: ctx,
+                    return_to: be.return_to,
+                )
+            )
+        },
+    })
 }
 
 // calling a closure

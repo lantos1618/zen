@@ -1,0 +1,7 @@
+// A local function is a closure over one frame and is inlined at its calls;
+// it has no type parameters of its own.
+main = (env: Env) Res<i32, IoError> {
+    id = <T>(x: T) T { x }
+    println("{}", id(2));
+    Ok(0);
+}

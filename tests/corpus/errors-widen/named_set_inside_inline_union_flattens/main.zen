@@ -1,0 +1,66 @@
+// A NAMED SET WRITTEN INSIDE AN INLINE UNION IS ITS MEMBERS: `Both | AllocError`
+// with `Both = Kind | Fail` is the set `AllocError | Fail | Kind`, so a `Fail`
+// or a `Kind` propagates into it by `.try()` with no conversion.
+//
+// An inline union that kept `Both` as one opaque member would refuse both
+// `.try()` sites ("no implicit error conversion"). Once admitted, each error
+// must be tagged as its own member of the flattened set: the three calls pin
+// the Ok value, then `Fail`, then `Kind` reaching its own arm, both through a
+// member arm (`Err(Fail)`) and through a match on the error itself down to the
+// nominal variant (`Worse`).
+
+Kind = | Bad | Worse
+Fail = | Broke
+Both = Kind | Fail
+
+one = (k: i32) Res<(), Fail> {
+    (k == 0).match({
+        true  => Ok(()),
+        false => Err(Fail.Broke),
+    });
+}
+
+two = (k: i32) Res<i32, Kind> {
+    (k == 0).match({
+        true  => Ok(4),
+        false => Err(Kind.Worse),
+    });
+}
+
+run = (k: i32) Res<i32, Both | AllocError> {
+    one(k % 2).try();
+    v = two(k / 2).try();
+    Ok(v);
+}
+
+by_arm = (env: Env, r: Res<i32, Both | AllocError>) {
+    r.match({
+        Ok(v)     => println("ok {}", v),
+        Err(Fail) => println("fail"),
+        Err(Kind) => println("kind"),
+        Err(_)    => println("other"),
+    });
+}
+
+by_member = (env: Env, r: Res<i32, Both | AllocError>) {
+    r.match({
+        Ok(v)  => println("ok {}", v),
+        Err(e) => e.match({
+            Fail(_)       => println("fail"),
+            Kind(k)       => k.match({
+                Bad   => println("kind bad"),
+                Worse => println("kind worse"),
+            }),
+            AllocError(_) => println("alloc"),
+        }),
+    });
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    by_arm(env, run(0));
+    by_arm(env, run(1));
+    by_arm(env, run(2));
+    by_member(env, run(1));
+    by_member(env, run(2));
+    Ok(0);
+}

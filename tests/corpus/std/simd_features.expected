@@ -1,0 +1,5 @@
+avx2 dispatch agrees: true
+aes known answer: true
+clmul known answer: true
+cast: 2
+mul_low32: 5 12884901885

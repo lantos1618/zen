@@ -1,0 +1,9 @@
+avx2, Avx2, splat_u32x8 = std.simd
+
+double = (v: u32x8) u32x8 { v.add_wrap(v) }
+
+fast = (cpu: Avx2, seed: u32) u32 { double(splat_u32x8(seed)).lane(0) }
+
+main = () {
+    avx2().match({ Ok(cpu) => println("{}", fast(cpu, 1)), None => println("2") });
+}

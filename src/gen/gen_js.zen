@@ -101,6 +101,8 @@ JavaScript = {
                 self.out.byte_string(value).try();
                 self.out.add(");\n")
             },
+            // gen_verify rejects machine operations; see gen_ir_machine.
+            Machine(_)         => Ok(()),
         })
     }
 

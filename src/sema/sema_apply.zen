@@ -24,9 +24,11 @@ check_ctor_shape = sema.sema_bound
 Found, members_of = sema.sema_member
 SemaFault, NameFault, TypeFault = sema.sema_diag
 catch_all_named = sema.sema_discriminant
+forged_capability = sema.sema_prim
 
 construct* = (c :: Checker, id: ExprId, call: Call, d: Def, ctx: Ctx)
             Res<TyId, AllocError> {
+    c.forged_capability(id, d, ctx).try();
     c.ctor_type_arg_arity_fits(call, d).try().match({
         false => {
             c.invalid_instantiation(id, d.name).try();

@@ -1,0 +1,46 @@
+Build = zen.zen_build
+Generation, Layout = gen.gen
+Codegen = std.build
+
+// A reachable machine primitive has no scalar lowering yet. JS and assembly
+// must refuse it by name, before publishing anything; C lowers it.
+refusal = (env: Env, a: Alloc, backend: Codegen) Res<str, AllocError> {
+    build ::= a.Build(env, "src/program");
+    build.set_std_root("src");
+    check = build.whole("program.zen", a.Map<str, str>()).try();
+    report ::= a.String().try();
+    generation = Generation(
+        alloc: a,
+        mem: env.mem,
+        tree: build.tree,
+        check: check,
+        backend: backend,
+        entry: 0,
+        layout: Layout.Single,
+        ffi: false,
+        symbols: false
+    );
+    called ::= false;
+    faults = generation.emit(report, (artifact) { called = true; Ok(0) }).try();
+    clean  = build.diag_count() == 0 && check.diag_count() == 0;
+    Ok((clean && faults > 0 && !called
+        && report.view().contains("runtime CPU feature detection")).match({
+        true  => "refused by name",
+        false => (clean && faults == 0 && called).match({
+            true  => "lowered",
+            false => "unexpected",
+        }),
+    }))
+}
+
+main = (env: Env) Res<(), AllocError> {
+    [Codegen, 3](Codegen.C, Codegen.Js, Codegen.Asm).loop((backend) {
+        a = env.mem.alloc();
+        println(
+            "{}: {}",
+            backend.stable_name(),
+            refusal(env, a, backend).try()
+        );
+    });
+    Ok(())
+}

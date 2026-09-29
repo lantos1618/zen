@@ -141,3 +141,79 @@ rotate_left* = (self: u64x4, count: usize) u64x4
 rotate_right* = (self: u64x4, count: usize) u64x4
 shuffle* = (self: u64x4, pattern: [usize, 4]) u64x4
 shuffle2* = (self: u64x4, other: u64x4, pattern: [usize, 4]) u64x4
+
+// The same bytes viewed as another vector of equal size (native order).
+cast_u32x4* = (self: u8x16) u32x4
+cast_u64x2* = (self: u8x16) u64x2
+cast_u8x16* = (self: u32x4) u8x16
+cast_u64x2* = (self: u32x4) u64x2
+cast_u8x16* = (self: u64x2) u8x16
+cast_u32x4* = (self: u64x2) u32x4
+cast_u32x8* = (self: u8x32) u32x8
+cast_u64x4* = (self: u8x32) u64x4
+cast_u8x32* = (self: u32x8) u8x32
+cast_u64x4* = (self: u32x8) u64x4
+cast_u8x32* = (self: u64x4) u8x32
+cast_u32x8* = (self: u64x4) u32x8
+
+// ---- CPU capabilities -------------------------------------------------------
+//
+// A capability value proves that runtime detection found the feature on the
+// running CPU; only this module constructs one. A function with a capability
+// parameter is compiled for that feature (C target attributes), and the
+// instructions below demand one, so feature-specific code cannot run where
+// detection failed. Dispatch is ordinary matching on the detection result:
+//
+//     avx2().match({ Ok(cpu) => blocks8(cpu, ..), None => blocks4(..) })
+//
+// Avx2: x86-64 AVX2. Ssse3: x86 SSSE3. Aes: AES rounds (x86 AES-NI with
+// SSSE3/SSE4.1, arm64 FEAT_AES). Clmul: 64x64 carry-less multiply (x86
+// PCLMULQDQ with SSSE3/SSE4.1, arm64 FEAT_PMULL). Neon: arm64 Advanced SIMD.
+// Detection is cheap but not free; hoist it out of per-block loops.
+Avx2* = { proof: u8 }
+Ssse3* = { proof: u8 }
+Aes* = { proof: u8 }
+Clmul* = { proof: u8 }
+Neon* = { proof: u8 }
+
+cpu_avx2* = () bool
+cpu_ssse3* = () bool
+cpu_aes* = () bool
+cpu_clmul* = () bool
+cpu_neon* = () bool
+
+avx2* = () Res<Avx2> { cpu_avx2().match({ true => Ok(Avx2(
+    proof: 1
+)), false => None }) }
+ssse3* = () Res<Ssse3> { cpu_ssse3().match({ true => Ok(Ssse3(
+    proof: 1
+)), false => None }) }
+aes* = () Res<Aes> { cpu_aes().match({ true => Ok(Aes(
+    proof: 1
+)), false => None }) }
+clmul* = () Res<Clmul> { cpu_clmul().match({ true => Ok(Clmul(
+    proof: 1
+)), false => None }) }
+neon* = () Res<Neon> { cpu_neon().match({ true => Ok(Neon(
+    proof: 1
+)), false => None }) }
+
+// One AES encryption round with x86 AESENC semantics:
+// MixColumns(SubBytes(ShiftRows(state))) xor key. The last round omits
+// MixColumns (AESENCLAST). A full AES-128 block is
+// state xor k0, nine aes_round, one aes_round_last. arm64 lowers to
+// AESE/AESMC with a zero round key followed by the xor.
+aes_round* = (self: u8x16, key: u8x16, cpu: Aes) u8x16
+aes_round_last* = (self: u8x16, key: u8x16, cpu: Aes) u8x16
+
+// 128-bit carry-less product of the low (clmul_low) or high (clmul_high)
+// 64-bit lanes: PCLMULQDQ 0x00 / 0x11, PMULL / PMULL2. Lane 0 holds the low
+// 64 bits of the product.
+clmul_low* = (self: u64x2, other: u64x2, cpu: Clmul) u64x2
+clmul_high* = (self: u64x2, other: u64x2, cpu: Clmul) u64x2
+
+// Full 64-bit products of the low 32 bits of each lane (PMULUDQ, UMULL): the
+// radix-2^26 multiply of vector Poly1305. The high 32 bits of both operands
+// are ignored.
+mul_low32* = (self: u64x2, other: u64x2) u64x2
+mul_low32* = (self: u64x4, other: u64x4) u64x4

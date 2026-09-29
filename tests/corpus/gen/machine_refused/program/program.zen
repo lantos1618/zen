@@ -1,0 +1,6 @@
+cpu_avx2 = std.simd
+
+main = () i32 {
+    fast = cpu_avx2();
+    fast.match({ true => 1, false => 0 })
+}

@@ -1,0 +1,144 @@
+// Machine operations shared by every backend: the semantic operations that
+// sema_prim and sema_numeric validate (wide multiply, truncation, unsigned
+// bit operations, std.simd vectors, volatile access, compiler barriers, CPU
+// capabilities and the AES / carry-less instructions they unlock). The C
+// backend lowers them from checked facts today. The scalar IR carries them
+// as `Instruction.Machine` so assembly targets implement one vocabulary;
+// until IR slots can hold u64, u128, vectors and pointers, lowering refuses
+// every call to one with a diagnostic naming the operation, and the
+// verifier rejects a Machine instruction.
+Vec = std.collections
+str = std.text
+Span = std.ast
+
+MachineOp* = MulWide
+    | Truncate
+    | BitXor
+    | BitAnd
+    | BitOr
+    | ShiftLeft
+    | ShiftRight
+    | RotateLeft
+    | RotateRight
+    | VectorAdd
+    | VectorSub
+    | VectorMul
+    | VectorMulLow32
+    | VectorSplat
+    | VectorLanes
+    | VectorLoad
+    | VectorStore
+    | VectorLane
+    | VectorWithLane
+    | VectorShuffle
+    | VectorShuffle2
+    | VectorCast
+    | VolatileLoad
+    | VolatileStore
+    | CompilerBarrier
+    | CpuHas
+    | AesRound
+    | AesRoundLast
+    | ClmulLow
+    | ClmulHigh
+
+// `outs` and `args` index Func.slots; `word` names the operand type as the
+// primitive's source spelling (`u64`, `u32x8`, `avx2`, ...), so a target can
+// select an instruction without consulting the checker.
+MachineCall* = {
+    op*: MachineOp,
+    word*: str,
+    outs*: Vec<usize>,
+    args*: Vec<usize>,
+    span*: Span,
+}
+
+// The operation a validated primitive name denotes; vector lane operations
+// share the scalar names and are distinguished by the operand type.
+machine_op* = (name: str, vector: bool) Res<MachineOp> {
+    name.match({
+        "mul_wide"         => Ok(MachineOp.MulWide),
+        "bit_xor"          => Ok(MachineOp.BitXor),
+        "bit_and"          => Ok(MachineOp.BitAnd),
+        "bit_or"           => Ok(MachineOp.BitOr),
+        "shift_left"       => Ok(MachineOp.ShiftLeft),
+        "shift_right"      => Ok(MachineOp.ShiftRight),
+        "rotate_left"      => Ok(MachineOp.RotateLeft),
+        "rotate_right"     => Ok(MachineOp.RotateRight),
+        "add_wrap"         => Ok(MachineOp.VectorAdd),
+        "sub_wrap"         => Ok(MachineOp.VectorSub),
+        "mul_wrap"         => Ok(MachineOp.VectorMul),
+        "mul_low32"        => Ok(MachineOp.VectorMulLow32),
+        "store"            => Ok(MachineOp.VectorStore),
+        "lane"             => Ok(MachineOp.VectorLane),
+        "with_lane"        => Ok(MachineOp.VectorWithLane),
+        "shuffle"          => Ok(MachineOp.VectorShuffle),
+        "shuffle2"         => Ok(MachineOp.VectorShuffle2),
+        "read_volatile"    => Ok(MachineOp.VolatileLoad),
+        "write_volatile"   => Ok(MachineOp.VolatileStore),
+        "compiler_barrier" => Ok(MachineOp.CompilerBarrier),
+        "aes_round"        => Ok(MachineOp.AesRound),
+        "aes_round_last"   => Ok(MachineOp.AesRoundLast),
+        "clmul_low"        => Ok(MachineOp.ClmulLow),
+        "clmul_high"       => Ok(MachineOp.ClmulHigh),
+        _                  => prefixed_op(name),
+    })
+}
+
+prefixed_op = (name: str) Res<MachineOp> {
+    name.starts_with("truncate_").match({
+        true  => Ok(MachineOp.Truncate),
+        false => name.starts_with("splat_").match({
+            true  => Ok(MachineOp.VectorSplat),
+            false => name.starts_with("lanes_").match({
+                true  => Ok(MachineOp.VectorLanes),
+                false => name.starts_with("load_").match({
+                    true  => Ok(MachineOp.VectorLoad),
+                    false => name.starts_with("cast_").match({
+                        true  => Ok(MachineOp.VectorCast),
+                        false => name.starts_with("cpu_").match({
+                            true  => Ok(MachineOp.CpuHas),
+                            false => None,
+                        }),
+                    }),
+                }),
+            }),
+        }),
+    })
+}
+
+// The diagnostic a backend without machine-operation support reports.
+machine_refusal* = (op: MachineOp) str {
+    op.match({
+        MulWide         => "the machine primitive mul_wide (64x64 -> 128)",
+        Truncate        => "the machine primitive truncate_*",
+        BitXor          => "the machine primitive bit_xor",
+        BitAnd          => "the machine primitive bit_and",
+        BitOr           => "the machine primitive bit_or",
+        ShiftLeft       => "the machine primitive shift_left",
+        ShiftRight      => "the machine primitive shift_right",
+        RotateLeft      => "the machine primitive rotate_left",
+        RotateRight     => "the machine primitive rotate_right",
+        VectorAdd       => "the std.simd operation add_wrap",
+        VectorSub       => "the std.simd operation sub_wrap",
+        VectorMul       => "the std.simd operation mul_wrap",
+        VectorMulLow32  => "the std.simd operation mul_low32",
+        VectorSplat     => "the std.simd operation splat_*",
+        VectorLanes     => "the std.simd operation lanes_*",
+        VectorLoad      => "the std.simd operation load_*",
+        VectorStore     => "the std.simd operation store",
+        VectorLane      => "the std.simd operation lane",
+        VectorWithLane  => "the std.simd operation with_lane",
+        VectorShuffle   => "the std.simd operation shuffle",
+        VectorShuffle2  => "the std.simd operation shuffle2",
+        VectorCast      => "the std.simd operation cast_*",
+        VolatileLoad    => "the machine primitive read_volatile",
+        VolatileStore   => "the machine primitive write_volatile",
+        CompilerBarrier => "the machine primitive compiler_barrier",
+        CpuHas          => "runtime CPU feature detection (std.simd cpu_*)",
+        AesRound        => "the std.simd instruction aes_round",
+        AesRoundLast    => "the std.simd instruction aes_round_last",
+        ClmulLow        => "the std.simd instruction clmul_low",
+        ClmulHigh       => "the std.simd instruction clmul_high",
+    })
+}

@@ -123,6 +123,8 @@ Check = {
             },
             PrintValue(value)  => self.expect(value.value, value.ty),
             Text(_)            => Ok(()),
+            // Scalar slots cannot hold a machine operation's operands.
+            Machine(_)         => Err(self.fault(IrReason.Type)),
         })
     }
 
@@ -174,6 +176,10 @@ Check = {
             },
             PrintValue(value)  => self.initialized(flags, value.value),
             Text(_)            => Ok(()),
+            Machine(call)      => {
+                call.args.loop((slot) { self.initialized(flags, slot).try(); });
+                Ok(())
+            },
         })
     }
 

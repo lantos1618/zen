@@ -32,4 +32,10 @@ shuffle count: false
 shuffle2: true
 simd owner: false
 scalar in simd: false
+cast: true
+cast size: false
+cast same: false
+cpu: true
+cpu result: false
+cpu unknown: false
 foreign: true

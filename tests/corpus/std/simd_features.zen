@@ -1,0 +1,97 @@
+// Runtime CPU-feature dispatch and the capability-gated AES and carry-less
+// multiply instructions. Every line prints the same on a CPU without a
+// feature: the portable path must agree with the dispatched one.
+avx2, aes, clmul, Avx2, Aes, Clmul = std.simd
+splat_u32x8, lanes_u32x8, load_u8x16, lanes_u64x2 = std.simd
+Ptr = std.mem
+
+// Compiled for AVX2: 32-byte vectors stay in YMM registers.
+mix8 = (cpu: Avx2, v: u32x8) u32x8 { v.add_wrap(v.rotate_left(16)).bit_xor(v) }
+
+digest8 = (cpu: Avx2, seed: u32) u32 {
+    v ::= splat_u32x8(seed).add_wrap(lanes_u32x8(0, 1, 2, 3, 4, 5, 6, 7));
+    Range(0, 100).loop((i) { v = mix8(cpu, v); });
+    v.lane(0) +% v.lane(3) +% v.lane(7)
+}
+
+// The same computation without a capability: two 16-byte halves.
+digest = (seed: u32) u32 {
+    v ::= splat_u32x8(seed).add_wrap(lanes_u32x8(0, 1, 2, 3, 4, 5, 6, 7));
+    Range(0, 100).loop((i) { v = v.add_wrap(v.rotate_left(16)).bit_xor(v); });
+    v.lane(0) +% v.lane(3) +% v.lane(7)
+}
+
+hex_nibble = (c: u8) u8 {
+    (c >= 97).match({ true => c - 87, false => c - 48 })
+}
+
+unhex = (text: str, out: Ptr<u8>) {
+    Range(0, text.len / 2).loop((i) {
+        out.write(
+            i,
+            hex_nibble(text.index(2 * i)) * 16 + hex_nibble(text.index(2 * i + 1))
+        );
+    });
+}
+
+// FIPS-197 Appendix B: AES-128 of 3243f6a8885a308d313198a2e0370734.
+encrypt = (cpu: Aes, keys: Ptr<u8>, block: u8x16) u8x16 {
+    s ::= block.bit_xor(load_u8x16(keys, 0));
+    Range(1, 10).loop((i) { s = s.aes_round(load_u8x16(keys, 16 * i), cpu); });
+    s.aes_round_last(load_u8x16(keys, 160), cpu)
+}
+
+aes_known_answer = (cpu: Aes, bytes: Ptr<u8>) bool {
+    unhex(
+        "2b7e151628aed2a6abf7158809cf4f3ca0fafe1788542cb123a339392a6c7605f2c295f27a96b9435935807a7359f67f3d80477d4716fe3e1e237e446d7a883bef44a541a8525b7fb671253bdb0bad00d4d1c6f87c839d87caf2b8bc11f915bc6d88a37a110b3efddbf98641ca0093fd4e54f70e5f5fc9f384a64fb24ea6dc4fead27321b58dbad2312bf5607f8d292fac7766f319fadc2128d12941575c006ed014f9a8c9ee2589e13f0cc8b6630ca6",
+        bytes
+    );
+    unhex("3243f6a8885a308d313198a2e0370734", bytes.offset(176));
+    unhex("3925841d02dc09fbdc118597196a0b32", bytes.offset(192));
+    got = encrypt(cpu, bytes, load_u8x16(bytes, 176));
+    same ::= true;
+    Range(0, 16).loop((i) { same = same && got.lane(i) == bytes.read(192 + i); });
+    same
+}
+
+// Bitwise carry-less product of two u64 values, low and high halves.
+clmul_reference = (a: u64, b: u64) u128 {
+    product: u128 ::= 0;
+    Range(0, 64).loop((i) {
+        bit = b.shift_right(i).bit_and(1);
+        (bit == 1).then(
+            () { product = product.bit_xor(a.to_u128().shift_left(i)); }
+        );
+    });
+    product
+}
+
+clmul_known_answer = (cpu: Clmul) bool {
+    a    = lanes_u64x2(81985529216486895, 18364758544493064720);
+    b    = lanes_u64x2(12297829382473034410, 1229782938247303441);
+    low  = a.clmul_low(b, cpu);
+    high = a.clmul_high(b, cpu);
+    lo   = clmul_reference(a.lane(0), b.lane(0));
+    hi   = clmul_reference(a.lane(1), b.lane(1));
+    low.lane(0) == lo.truncate_u64() && low.lane(1) == lo.shift_right(64).truncate_u64()
+        && high.lane(0) == hi.truncate_u64() && high.lane(1) == hi.shift_right(64).truncate_u64()
+}
+
+main = (env: Env) Res<(), AllocError> {
+    bytes      = env.mem.alloc().raw(256, 16).try();
+    dispatched = avx2().match({ Ok(cpu) => digest8(cpu, 7), None => digest(7) });
+    println("avx2 dispatch agrees: {}", dispatched == digest(7));
+    aes_ok = aes().match({ Ok(cpu) => aes_known_answer(
+        cpu,
+        bytes
+    ), None => true });
+    println("aes known answer: {}", aes_ok);
+    clmul_ok = clmul().match({ Ok(cpu) => clmul_known_answer(
+        cpu
+    ), None => true });
+    println("clmul known answer: {}", clmul_ok);
+    println("cast: {}", lanes_u64x2(4294967297, 2).cast_u32x4().lane(2));
+    low = lanes_u64x2(4294967297, 3).mul_low32(lanes_u64x2(5, 18446744073709551615));
+    println("mul_low32: {} {}", low.lane(0), low.lane(1));
+    Ok(())
+}

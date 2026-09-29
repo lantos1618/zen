@@ -236,6 +236,22 @@ main = (env: Env) Res<(), AllocError> {
         simd,
         false
     ).try();
+    a.row("cast", "cast_u64x2* = (self: u8x16) u64x2\n", simd, false).try();
+    a.row(
+        "cast size",
+        "cast_u64x4* = (self: u8x16) u64x4\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "cast same",
+        "cast_u8x16* = (self: u8x16) u8x16\n",
+        simd,
+        false
+    ).try();
+    a.row("cpu", "cpu_avx2* = () bool\n", simd, false).try();
+    a.row("cpu result", "cpu_avx2* = () u8\n", simd, false).try();
+    a.row("cpu unknown", "cpu_sse9* = () bool\n", simd, false).try();
     println("foreign: {}", foreign_keeps_binding(a).try());
     Ok(())
 }

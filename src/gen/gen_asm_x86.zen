@@ -93,6 +93,8 @@ Assembly = {
             Invoke(call)       => self.call(call),
             PrintValue(value)  => self.print(value),
             Text(bytes)        => self.text(bytes),
+            // gen_verify rejects machine operations; see gen_ir_machine.
+            Machine(_)         => Ok(()),
         })
     }
 

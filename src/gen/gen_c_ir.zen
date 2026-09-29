@@ -120,6 +120,8 @@ C = {
                 self.out.bytes(text).try();
                 self.out.fmt(", 1, {}, stdout);\n", text.len)
             },
+            // gen_verify rejects machine operations; see gen_ir_machine.
+            Machine(_)         => Ok(()),
         })
     }
 

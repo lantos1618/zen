@@ -4,6 +4,7 @@
 Vec = std.collections
 str = std.text
 Span = std.ast
+MachineCall = gen.gen_ir_machine
 
 Scalar* = I32 | Bool | Unit
 Op* = Add
@@ -34,6 +35,9 @@ Instruction* = Constant(Const)
     | Invoke(Invocation)
     | PrintValue(Print)
     | Text(str)
+    // A validated machine primitive (gen_ir_machine). Not yet produced:
+    // its operands need slot types beyond Scalar, so the verifier rejects it.
+    | Machine(MachineCall)
 
 Terminator* = Return(usize) | Jump(usize) | Branch(Branch)
 

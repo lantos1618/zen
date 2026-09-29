@@ -30,7 +30,7 @@ complete_inst = gen.gen_c.gen_c_infer
 ctype, is_unit, has_storage, c_prim, spellable, declared_ret = gen.gen_c.gen_c_type
 write_none = gen.gen_c.gen_c_type
 lower_numeric, lower_integer_bits = gen.gen_c.gen_c_num
-lower_primitive = gen.gen_c.gen_c_machine
+lower_primitive, avx2_boundary = gen.gen_c.gen_c_machine
 expr, ty_of, want_of = gen.gen_c.gen_c_expr
 value_held, holds = gen.gen_c.gen_c_expr
 Dest, deliver = gen.gen_c.gen_c_stmt
@@ -375,6 +375,21 @@ CallSite = {
     reachable = (self: @Self, be :: CBackend, d: Def, f: Function,
                  sig: Vec<TyId>, inst: Inst, out :: String)
                 Res<(), AllocError> {
+        unknown = be.check.types.unknown().try();
+        result  = be.ty_of(self.id, self.ctx, unknown).try();
+        be.avx2_boundary(sig, result).match({
+            true  => be.unsupported(
+                self.id,
+                "a 32-byte vector passed between AVX2 and baseline code: give both functions the Avx2 capability, or neither",
+                out
+            ),
+            false => self.linked(be, d, f, sig, inst, out),
+        })
+    }
+
+    linked = (self: @Self, be :: CBackend, d: Def, f: Function,
+              sig: Vec<TyId>, inst: Inst, out :: String)
+             Res<(), AllocError> {
         sym ::= be.alloc.String().try();
         sym_fn(sym, be.check.types, be.check.world, d.qname, sig, inst).try();
         be.need_function(d, inst, sym.view()).try();

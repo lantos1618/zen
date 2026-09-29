@@ -10,12 +10,12 @@ AllocError = std.mem
 Vec = std.collections
 String, str = std.text
 Range = std.core
-Primitive, unsigned_width = sema.sema_prim
+Primitive, unsigned_width, is_capability, vector_bytes = sema.sema_prim
 Ctx = sema.sema_check
 TyId = sema.sema_ty
 vector_lanes, vector_lane = sema.sema_ty
 const_int = sema.sema_const
-Emit = gen.gen_emit
+Emit, order = gen.gen_emit
 CBackend = gen.gen_c.gen_c_state
 comment = gen.gen_c.gen_c_runtime
 c_prim = gen.gen_c.gen_c_type
@@ -28,11 +28,11 @@ ELEMS = gen.gen_c.gen_c_array
 emit_machine* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     be.uses_machine().match({
         false => Ok(()),
-        true  => write_machine(out),
+        true  => be.write_machine(out),
     })
 }
 
-write_machine = (out :: Emit) Res<(), AllocError> {
+write_machine = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     comment(out, "machine floor: wide integers and vectors").try();
     out.say("#if defined(__SIZEOF_INT128__)").try();
     out.say("__extension__ typedef unsigned __int128 zg_u128;").try();
@@ -64,6 +64,33 @@ write_machine = (out :: Emit) Res<(), AllocError> {
     out.say(
         "typedef uint64_t zg_u64x4 __attribute__((vector_size(32), aligned(16)));"
     ).try();
+    // Full products of the low 32 bits of each 64-bit lane: PMULUDQ, UMULL.
+    out.say(
+        "#define ZG_MUL_LOW32_2(a, b) (__builtin_convertvector(__builtin_shufflevector((zg_u32x4)(a), (zg_u32x4)(a), 0, 2), zg_u64x2) * __builtin_convertvector(__builtin_shufflevector((zg_u32x4)(b), (zg_u32x4)(b), 0, 2), zg_u64x2))"
+    ).try();
+    out.say(
+        "#define ZG_MUL_LOW32_4(a, b) (__builtin_convertvector(__builtin_shufflevector((zg_u32x8)(a), (zg_u32x8)(a), 0, 2, 4, 6), zg_u64x4) * __builtin_convertvector(__builtin_shufflevector((zg_u32x8)(b), (zg_u32x8)(b), 0, 2, 4, 6), zg_u64x4))"
+    ).try();
+    // Rotation of u32 lanes by 16: a 16-bit lane swap is one REV32 on
+    // arm64, while x86 lowers the shift form to one PSHUFB with SSSE3.
+    out.say("#if defined(__aarch64__)").try();
+    out.say(
+        "#define ZG_ROT16_U32X4(v) ((zg_u32x4)__builtin_shufflevector((zg_u16x8)(v), (zg_u16x8)(v), 1, 0, 3, 2, 5, 4, 7, 6))"
+    ).try();
+    out.say(
+        "#define ZG_ROT16_U32X8(v) ((zg_u32x8)__builtin_shufflevector((zg_u16x16)(v), (zg_u16x16)(v), 1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14))"
+    ).try();
+    out.say("#else").try();
+    out.say("#define ZG_ROT16_U32X4(v) (((v) << 16) | ((v) >> 16))").try();
+    out.say("#define ZG_ROT16_U32X8(v) (((v) << 16) | ((v) >> 16))").try();
+    out.say("#endif").try();
+    // Lowering-internal views for 16-bit lane swaps.
+    out.say(
+        "typedef uint16_t zg_u16x8 __attribute__((vector_size(16)));"
+    ).try();
+    out.say(
+        "typedef uint16_t zg_u16x16 __attribute__((vector_size(32), aligned(16)));"
+    ).try();
     // Clang and GCC 12+ take constant indices; older GCC takes a mask vector.
     out.say("#if defined(__clang__) || __GNUC__ >= 12").try();
     out.say(
@@ -75,7 +102,238 @@ write_machine = (out :: Emit) Res<(), AllocError> {
     ).try();
     out.say("#endif").try();
     out.line().try();
+    write_features(out).try();
+    be.write_target_sets(out).try();
     Ok(())
+}
+
+// Runtime CPU detection and the instructions capabilities unlock. x86 asks
+// the compiler runtime (cpuid, including OS AVX state); arm64 Linux reads
+// AT_HWCAP and macOS reads hw.optional sysctls. NEON is baseline on arm64.
+// A capability cannot be obtained on another architecture, so there the
+// instruction helpers are unreachable and abort.
+write_features = (out :: Emit) Res<(), AllocError> {
+    comment(out, "machine floor: CPU features").try();
+    out.say("#if defined(__x86_64__) || defined(__i386__)").try();
+    out.say("#define ZG_X86 1").try();
+    out.say("#include <immintrin.h>").try();
+    out.say("#elif defined(__aarch64__)").try();
+    out.say("#include <arm_neon.h>").try();
+    out.say("#if defined(__APPLE__)").try();
+    out.say("#include <sys/sysctl.h>").try();
+    out.say("#elif defined(__linux__)").try();
+    out.say("#include <sys/auxv.h>").try();
+    out.say("#endif").try();
+    out.say("#if defined(__clang__)").try();
+    out.say("#define ZG_ARM_CRYPTO __attribute__((target(\"aes\")))").try();
+    out.say("#else").try();
+    out.say("#define ZG_ARM_CRYPTO __attribute__((target(\"+crypto\")))").try();
+    out.say("#endif").try();
+    out.say("#endif").try();
+    out.say("#if defined(ZG_X86)").try();
+    out.say(
+        "static int zg_cpu_has(int avx2, int ssse3, int aes, int clmul) {"
+    ).try();
+    out.say("    __builtin_cpu_init();").try();
+    out.say("    if (avx2 && !__builtin_cpu_supports(\"avx2\")) return 0;").try();
+    out.say(
+        "    if ((ssse3 || aes || clmul) && !__builtin_cpu_supports(\"ssse3\")) return 0;"
+    ).try();
+    out.say(
+        "    if ((aes || clmul) && !__builtin_cpu_supports(\"sse4.1\")) return 0;"
+    ).try();
+    out.say("    if (aes && !__builtin_cpu_supports(\"aes\")) return 0;").try();
+    out.say(
+        "    if (clmul && !__builtin_cpu_supports(\"pclmul\")) return 0;"
+    ).try();
+    out.say("    return 1;").try();
+    out.say("}").try();
+    out.say("#define zg_cpu_probe_avx2() zg_cpu_has(1, 0, 0, 0)").try();
+    out.say("#define zg_cpu_probe_ssse3() zg_cpu_has(0, 1, 0, 0)").try();
+    out.say("#define zg_cpu_probe_aes() zg_cpu_has(0, 0, 1, 0)").try();
+    out.say("#define zg_cpu_probe_clmul() zg_cpu_has(0, 0, 0, 1)").try();
+    out.say("#define zg_cpu_probe_neon() 0").try();
+    out.say(
+        "static inline __attribute__((target(\"aes,ssse3,sse4.1\"))) zg_u8x16 zg_aes_round(zg_u8x16 s, zg_u8x16 k) {"
+    ).try();
+    out.say(
+        "    return (zg_u8x16)_mm_aesenc_si128((__m128i)s, (__m128i)k);"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "static inline __attribute__((target(\"aes,ssse3,sse4.1\"))) zg_u8x16 zg_aes_round_last(zg_u8x16 s, zg_u8x16 k) {"
+    ).try();
+    out.say(
+        "    return (zg_u8x16)_mm_aesenclast_si128((__m128i)s, (__m128i)k);"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "static inline __attribute__((target(\"pclmul,ssse3,sse4.1\"))) zg_u64x2 zg_clmul_low(zg_u64x2 a, zg_u64x2 b) {"
+    ).try();
+    out.say(
+        "    return (zg_u64x2)_mm_clmulepi64_si128((__m128i)a, (__m128i)b, 0x00);"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "static inline __attribute__((target(\"pclmul,ssse3,sse4.1\"))) zg_u64x2 zg_clmul_high(zg_u64x2 a, zg_u64x2 b) {"
+    ).try();
+    out.say(
+        "    return (zg_u64x2)_mm_clmulepi64_si128((__m128i)a, (__m128i)b, 0x11);"
+    ).try();
+    out.say("}").try();
+    out.say("#elif defined(__aarch64__)").try();
+    out.say("#if defined(__APPLE__)").try();
+    out.say("static int zg_cpu_sysctl(const char *name) {").try();
+    out.say("    int value = 0;").try();
+    out.say("    size_t size = sizeof value;").try();
+    out.say(
+        "    return sysctlbyname(name, &value, &size, NULL, 0) == 0 && value != 0;"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "#define zg_cpu_probe_aes() zg_cpu_sysctl(\"hw.optional.arm.FEAT_AES\")"
+    ).try();
+    out.say(
+        "#define zg_cpu_probe_clmul() zg_cpu_sysctl(\"hw.optional.arm.FEAT_PMULL\")"
+    ).try();
+    out.say("#elif defined(__linux__)").try();
+    out.say(
+        "#define zg_cpu_probe_aes() ((getauxval(AT_HWCAP) & (1UL << 3)) != 0)"
+    ).try();
+    out.say(
+        "#define zg_cpu_probe_clmul() ((getauxval(AT_HWCAP) & (1UL << 4)) != 0)"
+    ).try();
+    out.say("#else").try();
+    out.say("#define zg_cpu_probe_aes() 0").try();
+    out.say("#define zg_cpu_probe_clmul() 0").try();
+    out.say("#endif").try();
+    out.say("#define zg_cpu_probe_avx2() 0").try();
+    out.say("#define zg_cpu_probe_ssse3() 0").try();
+    out.say("#define zg_cpu_probe_neon() 1").try();
+    out.say(
+        "static inline ZG_ARM_CRYPTO zg_u8x16 zg_aes_round(zg_u8x16 s, zg_u8x16 k) {"
+    ).try();
+    out.say(
+        "    return (zg_u8x16)vaesmcq_u8(vaeseq_u8((uint8x16_t)s, vdupq_n_u8(0))) ^ k;"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "static inline ZG_ARM_CRYPTO zg_u8x16 zg_aes_round_last(zg_u8x16 s, zg_u8x16 k) {"
+    ).try();
+    out.say(
+        "    return (zg_u8x16)vaeseq_u8((uint8x16_t)s, vdupq_n_u8(0)) ^ k;"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "static inline ZG_ARM_CRYPTO zg_u64x2 zg_clmul_low(zg_u64x2 a, zg_u64x2 b) {"
+    ).try();
+    out.say(
+        "    return (zg_u64x2)vmull_p64((poly64_t)a[0], (poly64_t)b[0]);"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "static inline ZG_ARM_CRYPTO zg_u64x2 zg_clmul_high(zg_u64x2 a, zg_u64x2 b) {"
+    ).try();
+    out.say(
+        "    return (zg_u64x2)vmull_high_p64((poly64x2_t)a, (poly64x2_t)b);"
+    ).try();
+    out.say("}").try();
+    out.say("#else").try();
+    out.say("#define zg_cpu_probe_avx2() 0").try();
+    out.say("#define zg_cpu_probe_ssse3() 0").try();
+    out.say("#define zg_cpu_probe_aes() 0").try();
+    out.say("#define zg_cpu_probe_clmul() 0").try();
+    out.say("#define zg_cpu_probe_neon() 0").try();
+    out.say(
+        "static zg_u8x16 zg_aes_round(zg_u8x16 s, zg_u8x16 k) { (void)s; (void)k; abort(); }"
+    ).try();
+    out.say(
+        "static zg_u8x16 zg_aes_round_last(zg_u8x16 s, zg_u8x16 k) { (void)s; (void)k; abort(); }"
+    ).try();
+    out.say(
+        "static zg_u64x2 zg_clmul_low(zg_u64x2 a, zg_u64x2 b) { (void)a; (void)b; abort(); }"
+    ).try();
+    out.say(
+        "static zg_u64x2 zg_clmul_high(zg_u64x2 a, zg_u64x2 b) { (void)a; (void)b; abort(); }"
+    ).try();
+    out.say("#endif").try();
+    // Detection runs once per feature; sysctl and cpuid are not free.
+    out.say(
+        "#define ZG_CPU_CACHED(name, probe) static __attribute__((unused)) int name(void) { \\"
+    ).try();
+    out.say(
+        "    static int known; int v = __atomic_load_n(&known, __ATOMIC_RELAXED); \\"
+    ).try();
+    out.say(
+        "    if (v == 0) { v = (probe) ? 2 : 1; __atomic_store_n(&known, v, __ATOMIC_RELAXED); } \\"
+    ).try();
+    out.say("    return v == 2; }").try();
+    out.say("ZG_CPU_CACHED(zg_cpu_avx2, zg_cpu_probe_avx2())").try();
+    out.say("ZG_CPU_CACHED(zg_cpu_ssse3, zg_cpu_probe_ssse3())").try();
+    out.say("ZG_CPU_CACHED(zg_cpu_aes, zg_cpu_probe_aes())").try();
+    out.say("ZG_CPU_CACHED(zg_cpu_clmul, zg_cpu_probe_clmul())").try();
+    out.say("ZG_CPU_CACHED(zg_cpu_neon, zg_cpu_probe_neon())").try();
+    out.line().try();
+    Ok(())
+}
+
+// One attribute macro per feature set a function asks for. Clang honours a
+// single target attribute, so each set is spelled as one combined list.
+write_target_sets = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+    seq = order(be.alloc, be.target_sets).try();
+    seq.loop((h, i) {
+        be.target_sets.get(i).match({
+            None    => Ok(()),
+            Ok(set) => be.write_target_set(out, set.view()),
+        }).try();
+    });
+    out.line().try();
+    Ok(())
+}
+
+write_target_set = (be :: CBackend, out :: Emit, set: str)
+                   Res<(), AllocError> {
+    x86 ::= be.alloc.String().try();
+    x86.add_feature(set, "_AVX2", "avx2").try();
+    x86.add_feature(set, "_SSSE3", "ssse3").try();
+    x86.add_feature(set, "_AES", "aes,ssse3,sse4.1").try();
+    x86.add_feature(set, "_CLMUL", "pclmul,ssse3,sse4.1").try();
+    crypto = set.contains("_AES") || set.contains("_CLMUL");
+    line ::= be.alloc.String().try();
+    out.say("#if defined(ZG_X86)").try();
+    (x86.len() > 0).match({
+        true  => line.fmt(
+            "#define ZG_TARGET{} __attribute__((target(\"{}\")))",
+            set,
+            x86.view()
+        ),
+        false => line.fmt("#define ZG_TARGET{}", set),
+    }).try();
+    out.say(line.view()).try();
+    out.say("#elif defined(__aarch64__)").try();
+    line.clear();
+    crypto.match({
+        true  => line.fmt("#define ZG_TARGET{} ZG_ARM_CRYPTO", set),
+        false => line.fmt("#define ZG_TARGET{}", set),
+    }).try();
+    out.say(line.view()).try();
+    out.say("#else").try();
+    line.clear();
+    line.fmt("#define ZG_TARGET{}", set).try();
+    out.say(line.view()).try();
+    out.say("#endif").try();
+    Ok(())
+}
+
+add_feature = (list :: String, set: str, token: str, features: str)
+              Res<(), AllocError> {
+    set.contains(token).match({
+        false => Ok(()),
+        true  => {
+            (list.len() > 0).then(() { list.add(",").try() });
+            list.add(features)
+        },
+    })
 }
 
 // One lowered call: the site's arguments in parameter order, receiver first.
@@ -186,7 +444,35 @@ render_primitive = (
             be.writeln("__asm__ __volatile__(\"\" ::: \"memory\");").try();
             out.add("((void)0)")
         },
-        _                  => be.render_scalar(site, held, literal, out),
+        _                  => be.render_feature(site, held, literal, out),
+    })
+}
+
+render_feature = (
+    be      :: CBackend,
+    site    : PrimSite,
+    held    : Vec<String>,
+    literal : bool,
+    out     :: String
+) Res<(), AllocError> {
+    name = site.p.name;
+    a    = operand(held, 0);
+    b    = operand(held, 1);
+    name.starts_with("cpu_").match({
+        true  => out.fmt("(zg_{}() != 0)", name),
+        false => name.is_in([
+            "aes_round", "aes_round_last", "clmul_low", "clmul_high"
+        ]).match({
+            true  => out.fmt("zg_{}({}, {})", name, a, b),
+            false => name.starts_with("cast_").match({
+                true  => out.fmt(
+                    "((zg_{}){})",
+                    be.check.prim_name(site.p.result),
+                    a
+                ),
+                false => be.render_scalar(site, held, literal, out),
+            }),
+        }),
     })
 }
 
@@ -232,13 +518,19 @@ render_vector = (
         "add_wrap"     => out.fmt("({} + {})", a, b),
         "sub_wrap"     => out.fmt("({} - {})", a, b),
         "mul_wrap"     => out.fmt("({} * {})", a, b),
+        "mul_low32"    => out.fmt(
+            "ZG_MUL_LOW32_{}({}, {})",
+            vector_lanes(v),
+            a,
+            b
+        ),
         "bit_xor"      => out.fmt("({} ^ {})", a, b),
         "bit_and"      => out.fmt("({} & {})", a, b),
         "bit_or"       => out.fmt("({} | {})", a, b),
         "shift_left"   => be.vector_shift(v, a, b, "<<", out),
         "shift_right"  => be.vector_shift(v, a, b, ">>", out),
-        "rotate_left"  => be.vector_rotate(v, a, b, "<<", ">>", out),
-        "rotate_right" => be.vector_rotate(v, a, b, ">>", "<<", out),
+        "rotate_left"  => be.rotate_or_swap(site, v, a, b, "<<", ">>", out),
+        "rotate_right" => be.rotate_or_swap(site, v, a, b, ">>", "<<", out),
         "store"        => out.fmt(
             "((void)memcpy({} + {}, &{}, sizeof {}))",
             b,
@@ -278,6 +570,32 @@ vector_shift = (be :: CBackend, v: str, a: str, n: str, op: str, out :: String)
         c_prim(lane),
         n
     )
+}
+
+// A constant rotation of u32 lanes by 16 swaps their 16-bit halves; the
+// floor's ZG_ROT16 picks the best spelling per architecture.
+rotate_or_swap = (
+    be   :: CBackend,
+    site : PrimSite,
+    v    : str,
+    a    : str,
+    n    : str,
+    near : str,
+    far  : str,
+    out  :: String
+) Res<(), AllocError> {
+    count  = site.value_at(1).match({
+        Ok(e) => be.check.const_int(e),
+        None  => None,
+    });
+    halves = vector_lane(v).eq("u32") && count.match({
+        Ok(k) => k == 16,
+        None  => false,
+    });
+    halves.match({
+        false => be.vector_rotate(v, a, n, near, far, out),
+        true  => out.fmt("ZG_ROT16_U32X{}({})", vector_lanes(v), a),
+    })
 }
 
 vector_rotate = (
@@ -448,14 +766,67 @@ vector_constructor = (
 // alike. `inline` functions are always inlined within one translation unit;
 // split output gives functions external linkage and calls cross files, so
 // there the request is dropped rather than turned into a C error.
+//
+// A parameter of a capability type compiles the function for that feature
+// (`ZG_TARGET_AVX2` and friends).
 function_attributes* = (
     be  :: CBackend,
     f   : Function,
     sig : Vec<TyId>,
+    ret : TyId,
     out :: String
 ) Res<(), AllocError> {
+    set ::= be.alloc.String().try();
+    be.add_capability(sig, "Aes", "_AES", set).try();
+    be.add_capability(sig, "Avx2", "_AVX2", set).try();
+    be.add_capability(sig, "Clmul", "_CLMUL", set).try();
+    be.add_capability(sig, "Neon", "_NEON", set).try();
+    be.add_capability(sig, "Ssse3", "_SSSE3", set).try();
+    be.set_lowering_avx2(set.view().contains("_AVX2"));
+    (set.len() > 0).then(() {
+        be.need_target(set.view()).try();
+        out.fmt("ZG_TARGET{} ", set.view()).try();
+    });
     (f.inline && be.linkage().eq("static ")).then(() {
         out.add("inline __attribute__((always_inline)) ").try();
     });
     Ok(())
+}
+
+// A call exchanging a 32-byte vector must not cross between AVX2 and
+// baseline code: x86 passes it in a YMM register only when AVX is enabled,
+// which is a Clang error and a silent GCC miscompile. Both sides must hold
+// the Avx2 capability, or neither.
+avx2_boundary* = (be :: CBackend, sig: Vec<TyId>, result: TyId) bool {
+    wide ::= be.wide_vector(result);
+    avx  ::= false;
+    sig.loop((t) {
+        wide = wide || be.wide_vector(t);
+        avx  = avx || be.capability(t).eq("Avx2");
+    });
+    wide && avx != be.lowering_avx2
+}
+
+add_capability = (
+    be   :: CBackend,
+    sig  : Vec<TyId>,
+    name : str,
+    tag  : str,
+    set  :: String
+) Res<(), AllocError> {
+    found ::= false;
+    sig.loop((t) { found = found || be.capability(t).eq(name); });
+    found.match({ true => set.add(tag), false => Ok(()) })
+}
+
+capability = (be :: CBackend, t: TyId) str {
+    be.check.types.at(t).match({
+        Named(n) => (be.check.world.module_name(n.decl).eq("std.simd")
+            && is_capability(n.name)).match({ true => n.name, false => "" }),
+        _        => "",
+    })
+}
+
+wide_vector = (be :: CBackend, t: TyId) bool {
+    vector_bytes(be.check.prim_name(t)) == 32
 }

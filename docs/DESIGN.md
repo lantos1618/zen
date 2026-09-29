@@ -1906,3 +1906,46 @@ calls cross translation units, so there the request is dropped rather than
 turned into a C error. Inlining changes no semantics: evaluation order,
 traps and ownership are those of an ordinary call. A recursive `inline`
 function is a C compiler error, which the backend does not yet diagnose.
+
+## Target features and runtime dispatch
+
+A CPU feature is a capability, in the same sense as the authority `Env`
+carries: `std.simd` declares `Avx2`, `Ssse3`, `Aes`, `Clmul` and `Neon`, and
+only `std.simd` may construct one (`ForgedCapability` otherwise). The
+detection functions `avx2()`, `ssse3()`, `aes()`, `clmul()` and `neon()`
+return `Res<Capability>` from a runtime check: cpuid through the compiler
+runtime on x86 (which includes the OS's AVX state), `AT_HWCAP` on Linux
+arm64 and `hw.optional.arm.*` sysctls on macOS. NEON is baseline on arm64.
+
+**The signature answers the question.** A function with a capability
+parameter is compiled for that feature: the C backend emits one combined
+`__attribute__((target(..)))` per feature set (Clang honours only one), and
+nothing on other architectures. Because the value can exist only after
+successful detection, such a function cannot run where the feature is
+missing, and dispatch is an ordinary match:
+
+```zen
+avx2().match({ Ok(cpu) => blocks8(cpu, ..), None => blocks4(..) })
+```
+
+Feature instructions take the capability as an argument:
+`aes_round(self: u8x16, key: u8x16, cpu: Aes)` and `aes_round_last` (x86
+AESENC/AESENCLAST semantics; AESE+AESMC then xor on arm64) and
+`clmul_low` / `clmul_high(self: u64x2, other: u64x2, cpu: Clmul)`
+(PCLMULQDQ 0x00/0x11, PMULL/PMULL2). `cast_V` views a vector's bytes as
+another vector of the same size.
+
+32-byte vectors never cross a C call between functions compiled for
+different features: x86 passes them in YMM registers only with AVX, so the
+mismatch is a Clang error and a silent GCC miscompile. A call that passes or
+returns a 32-byte vector between an `Avx2` function and one without the
+capability is refused with a diagnostic; give the helper the capability
+too (dolbeau-style code threads `cpu` through its helpers) or keep the
+vector in locals. Capability arguments are ordinary values and cost nothing
+once inlined. Detection results are cached per process (one cpuid or sysctl
+per feature, stored with relaxed atomics), so dispatching per call is cheap.
+
+`mul_low32(self: V, other: V) V` for V = u64x2 or u64x4 multiplies the low
+32 bits of each lane into a full 64-bit product (PMULUDQ, UMULL): the
+radix-2^26 limb product of vector Poly1305. A constant rotation of u32
+lanes by 16 lowers to a 16-bit lane swap (REV32 on arm64).

@@ -3,7 +3,7 @@
 // Like numeric conversions, only validated bodyless declarations in the
 // owning standard modules acquire an operation. Backends consume the
 // recorded Primitive by declaration identity, never by a callee's spelling.
-Function = std.ast
+Function, ExprId = std.ast
 AllocError = std.mem
 Vec = std.collections
 str, String = std.text
@@ -125,16 +125,15 @@ vector_shape = (name: str, ps: Vec<String>, r: str) bool {
         "shuffle2"  => is_vector(v) && ps.len == 3 && type_at(ps, 1).eq(v)
             && is_pattern(type_at(ps, 2), n) && r.eq(v),
         _           => lane_shape(name, ps, r)
-            || constructor_shape(name, ps, r),
+            || constructor_shape(name, ps, r) || feature_shape(name, ps, r)
+            || cast_shape(name, ps, r),
     })
 }
 
 // Lane-wise arithmetic wraps; shifts and rotations take one usize count.
 lane_shape = (name: str, ps: Vec<String>, r: str) bool {
     v       = type_at(ps, 0);
-    binary  = name.is_in([
-        "add_wrap", "sub_wrap", "mul_wrap", "bit_xor", "bit_and", "bit_or"
-    ]);
+    binary  = name.is_in(["add_wrap", "sub_wrap", "mul_wrap", "bit_xor", "bit_and", "bit_or"]) || (name.eq("mul_low32") && vector_lane(v).eq("u64"));
     counted = name.is_in([
         "shift_left", "shift_right", "rotate_left", "rotate_right"
     ]);
@@ -179,4 +178,64 @@ is_pattern = (shown: str, n: usize) bool {
             Ok(count) => count == n,
             None      => false,
         })
+}
+
+// CPU capabilities are std.simd structs whose values prove that runtime
+// detection succeeded. Functions taking one are compiled for the feature.
+is_capability* = (name: str) bool {
+    name.is_in(["Avx2", "Ssse3", "Aes", "Clmul", "Neon"])
+}
+
+forged_capability* = (c :: Checker, id: ExprId, d: Def, ctx: Ctx)
+                     Res<(), AllocError> {
+    owned = c.world.module_name(d.id).eq("std.simd") && is_capability(d.name);
+    (owned && !c.world.name_at(ctx.module).eq("std.simd")).match({
+        false => Ok(()),
+        true  => {
+            span = c.tree.expr_at(id).span;
+            c.report(
+                span.file,
+                span,
+                SemaFault.ForgedCapability(NameFault(name: d.name))
+            )
+        },
+    })
+}
+
+// CPU detection and the instructions a capability unlocks.
+feature_shape = (name: str, ps: Vec<String>, r: str) bool {
+    name.match({
+        "cpu_avx2"       => ps.len == 0 && r.eq("bool"),
+        "cpu_ssse3"      => ps.len == 0 && r.eq("bool"),
+        "cpu_aes"        => ps.len == 0 && r.eq("bool"),
+        "cpu_clmul"      => ps.len == 0 && r.eq("bool"),
+        "cpu_neon"       => ps.len == 0 && r.eq("bool"),
+        "aes_round"      => aes_shape(ps, r),
+        "aes_round_last" => aes_shape(ps, r),
+        "clmul_low"      => clmul_shape(ps, r),
+        "clmul_high"     => clmul_shape(ps, r),
+        _                => false,
+    })
+}
+
+aes_shape = (ps: Vec<String>, r: str) bool {
+    ps.len == 3 && type_at(ps, 0).eq("u8x16") && type_at(ps, 1).eq("u8x16")
+        && type_at(ps, 2).eq("Aes") && r.eq("u8x16")
+}
+
+clmul_shape = (ps: Vec<String>, r: str) bool {
+    ps.len == 3 && type_at(ps, 0).eq("u64x2") && type_at(ps, 1).eq("u64x2")
+        && type_at(ps, 2).eq("Clmul") && r.eq("u64x2")
+}
+
+// `v.cast_u64x2()`: the same bytes viewed as another vector of equal size.
+cast_shape = (name: str, ps: Vec<String>, r: str) bool {
+    from = type_at(ps, 0);
+    name.starts_with("cast_") && name.slice(5, name.len).eq(r) && ps.len == 1
+        && is_vector(from) && is_vector(r) && !from.eq(r)
+        && vector_bytes(from) == vector_bytes(r)
+}
+
+vector_bytes* = (name: str) usize {
+    vector_lanes(name) * unsigned_width(vector_lane(name)) / 8
 }

@@ -1,0 +1,5 @@
+widths 1..8 bytes and values: true
+full u64: true
+invalid overflow truncation are transactional: true
+null empty and invalid nonempty: true
+take borrows and advances: true

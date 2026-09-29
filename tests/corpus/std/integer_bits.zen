@@ -1,4 +1,4 @@
-bit_xor, rotate_right = std.core.num
+bit_xor, bit_and, rotate_right, shift_right = std.core.num
 
 once = (calls :: i32, value: u64) u64 {
     calls = calls + 1;
@@ -12,6 +12,38 @@ count_once = (calls :: i32) usize {
 }
 
 main = () () {
+    small: u32 = 2309737967;
+    println(
+        "u32 xor/and: {} {} {}",
+        small.bit_xor(u32.MAX),
+        small.bit_and(65535),
+        small.bit_and(0)
+    );
+    println(
+        "u32 rotate: {} {} {} {} {}",
+        small.rotate_right(0),
+        small.rotate_right(32),
+        small.rotate_right(33),
+        small.rotate_right(usize.MAX),
+        small.rotate_right(16)
+    );
+    println(
+        "u32 shift: {} {} {} {} {}",
+        small.shift_right(0),
+        small.shift_right(1),
+        small.shift_right(31),
+        small.shift_right(32),
+        small.shift_right(usize.MAX)
+    );
+    println(
+        "u64 shift/and: {} {} {} {} {} {}",
+        u64.MAX.shift_right(0),
+        u64.MAX.shift_right(63),
+        u64.MAX.shift_right(64),
+        u64.MAX.shift_right(usize.MAX),
+        u64.MAX.bit_and(9223372036854775808),
+        u64.MAX.bit_and(0)
+    );
     value: u64 = 81985529216486895;
     high: u64  = 9223372036854775808;
     println(
@@ -37,5 +69,8 @@ main = () () {
     skipped = false && once(calls, 1).bit_xor(once(calls, 2)) == 3;
     taken   = true || once(calls, 8).rotate_right(count_once(calls)) == 4;
     println("guards: {} {} {}", skipped, taken, calls);
+    mask  = once(calls, 15).bit_and(once(calls, 7));
+    shift = once(calls, 32).shift_right(65);
+    println("mask/shift once: {} {} {}", mask, shift, calls);
     println("free: {} {}", bit_xor(high, 1), rotate_right(high, 63));
 }

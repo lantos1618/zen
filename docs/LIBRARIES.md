@@ -61,3 +61,24 @@ A future generic pollable actor-result channel belongs in std once its
 lifecycle, backpressure and portability contracts are implemented and tested;
 this milestone does not claim that channel exists. Do not move speech policy
 or macOS run-loop behavior into the actor runtime.
+
+## Bounded binary cursors
+
+`std.bytes.ByteReader` and `ByteWriter` borrow a caller-owned `Ptr<u8>` and
+length. `open` accepts a null pointer only for zero length. They allocate
+nothing and do not extend memory lifetimes; the caller must supply a live
+region of the declared size, with writable storage for a writer.
+
+Readers expose `read_be(width)`, `read_le(width)` and `take(count)`;
+writers expose `write_be(value, width)` and `write_le(value, width)`.
+Widths are 1–8 bytes; decoded values are u64. A write rejects a value that
+cannot fit in the requested width. Invalid widths/values produce `Invalid`;
+insufficient remaining storage produces `Truncated`. Failure leaves the
+cursor position and destination bytes unchanged. `remaining`, `consumed`
+and `written` expose progress without allocation. `take` returns a borrowed
+`str` byte view; it does not validate UTF-8. These cursors are independent
+values, so copying one copies its position, not its storage.
+
+Integer/endian/cursor behavior belongs in std. SHA, AEAD, TLS transcript
+state and cryptographic key schedules remain in zen-crypto. Algorithm-specific
+fixed-size block loops need not be generalized solely to move them into std.

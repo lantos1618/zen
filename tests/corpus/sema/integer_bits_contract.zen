@@ -127,6 +127,70 @@ main = (env: Env) Res<(), AllocError> {
             "std.core.num"
         ).try()
     );
+    println(
+        "u32 xor: {}",
+        accepts(
+            a,
+            "bit_xor* = (self: u32, other: u32) u32\n",
+            "std.core.num"
+        ).try()
+    );
+    println(
+        "u32 rotate: {}",
+        accepts(
+            a,
+            "rotate_right* = (self: u32, count: usize) u32\n",
+            "std.core.num"
+        ).try()
+    );
+    println(
+        "u32 and: {}",
+        accepts(
+            a,
+            "bit_and* = (self: u32, other: u32) u32\n",
+            "std.core.num"
+        ).try()
+    );
+    println(
+        "u64 and: {}",
+        accepts(
+            a,
+            "bit_and* = (self: u64, other: u64) u64\n",
+            "std.core.num"
+        ).try()
+    );
+    println(
+        "shift: {}",
+        accepts(
+            a,
+            "shift_right* = (self: u32, count: usize) u32\n",
+            "std.core.num"
+        ).try()
+    );
+    println(
+        "mixed: {}",
+        accepts(
+            a,
+            "bit_and* = (self: u64, other: u32) u64\n",
+            "std.core.num"
+        ).try()
+    );
+    println(
+        "shift count: {}",
+        accepts(
+            a,
+            "shift_right* = (self: u64, count: u64) u64\n",
+            "std.core.num"
+        ).try()
+    );
+    println(
+        "and owner: {}",
+        accepts(
+            a,
+            "bit_and* = (self: u64, other: u64) u64\n",
+            "pretend.num"
+        ).try()
+    );
     println("foreign: {}", foreign_keeps_binding(a).try());
     Ok(())
 }

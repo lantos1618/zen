@@ -1,0 +1,9 @@
+// The code under mutation. Each guard names its own failure.
+Fail* = Low | High | Zero
+
+classify* = (n: i32) Res<i32, Fail> {
+    (n != 0).ensure(Fail.Zero).try();
+    (n < 100).ensure(Fail.High).try();
+    (n > -100).ensure(Fail.Low).try();
+    Ok(n * 2)
+}

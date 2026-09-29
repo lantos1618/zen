@@ -26,3 +26,6 @@ zen-new.c
 
 # Local linked checkouts are managed by git worktree.
 /.worktrees/
+
+# zen-mutate build output.
+/tools/mutate/build/

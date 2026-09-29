@@ -1,0 +1,11 @@
+// zen-mutate: mutation testing for Zen sources. See src/mutate.zen.
+Builder, BuildError = std.build
+
+build = (b :: Builder) Res<(), BuildError> {
+    b.exe("zen-mutate", {
+        src: Path("src/mutate.zen"),
+        deps: [],
+        out: Ok(Path("build/zen-mutate")),
+    }).try();
+    Ok(())
+}

@@ -151,7 +151,7 @@ lspcheck: build
 ## are built once per invocation, then formatting and determinism inspect the
 ## same compiler that ran the test suite.
 verify: override TEST_CACHE_ARGS := --result-cache "$(TEST_RESULTS)" --refresh-result-cache
-verify: warnings nativecheck test fmt determinism fixpoint differential runtimecheck ownershipcheck actorcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck
+verify: warnings nativecheck test fmt determinism fixpoint mutatecheck differential runtimecheck ownershipcheck actorcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck
 
 .PHONY: nativecheck
 nativecheck: build
@@ -167,6 +167,18 @@ poolcheck: build
 .PHONY: ownershipcheck
 ownershipcheck: build
 	$(PY) tests/quality/ownership_sanitizers.py --zen ./zen --cc "$(CC)"
+
+## mutatecheck: zen-mutate (tools/mutate) names exactly the survivors of its
+## deliberately hollow fixture, in a fixed order, and leaves the fixture intact.
+.PHONY: mutatecheck
+mutatecheck: build
+	cd tools/mutate && ZEN_STD="$(CURDIR)/src" ../../zen build .
+	rm -rf build/mutatecheck
+	status=0; tools/mutate/build/zen-mutate --root tools/mutate/example --file classify.zen \
+	  --build '"$(CURDIR)/zen" build . --std "$(CURDIR)/src" --emit-c -o t.c && $(CC) -w t.c -o t' \
+	  --test ./t --work build/mutatecheck > build/mutatecheck.out || status=$$?; \
+	  test $$status -eq 1 || { cat build/mutatecheck.out; echo "zen-mutate exited $$status, expected 1"; exit 1; }
+	diff -u tools/mutate/example.expected build/mutatecheck.out
 
 ## fixpoint: rebuilding the whole compiler preserves C and reproduces the seed.
 fixpoint: build

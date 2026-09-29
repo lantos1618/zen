@@ -324,7 +324,8 @@ fold_not = (width: Res<usize>, x: i64) Res<i64> {
 }
 
 shift_by = (a: u64, w: usize, op: BinOp, count: i64) Res<i64> {
-    n = count.to_usize().try();
+    (count >= 0).ensure().try();
+    n = len_of(count);
     (n >= w).match({
         true  => Ok(0),
         false => magnitude_i64(op.match({
@@ -336,8 +337,8 @@ shift_by = (a: u64, w: usize, op: BinOp, count: i64) Res<i64> {
 
 // A folded operand as its unsigned word, refused when it cannot be one.
 word_value = (w: usize, x: i64) Res<u64> {
-    (x != I64_MAX || w < 64).ensure().try();
-    value = x.to_usize().try().to_u64();
+    (x >= 0 && (x != I64_MAX || w < 64)).ensure().try();
+    value = len_of(x).to_u64();
     (value.bit_and(word_mask(w)) == value).match({
         true  => Ok(value),
         false => None,

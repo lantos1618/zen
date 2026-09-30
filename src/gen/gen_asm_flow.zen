@@ -81,7 +81,15 @@ written* = (instruction: Instruction) Res<usize> {
         Startup(value)     => Ok(value.out),
         MapPages(value)    => Ok(value.out),
         SysConst(value)    => Ok(value.out),
-        _                  => None,
+        // Listed one by one, without a default: an instruction added to the
+        // IR must say what it writes, or liveness would miss the write.
+        PrintValue(_)      => None,
+        Text(_)            => None,
+        StoreValue(_)      => None,
+        CopyBytes(_)       => None,
+        WriteOut(_)        => None,
+        UnmapPages(_)      => None,
+        Flush              => None,
     })
 }
 
@@ -119,24 +127,28 @@ pure* = (instruction: Instruction) bool {
 SMALL_AGGREGATE*: usize = 64
 
 // Instructions after which no caller-saved register survives: calls into
-// the program or the runtime, kernel calls, and copies of large aggregates.
+// the program or the runtime, kernel calls, copies of large aggregates, and
+// everything not known to be simple.
 // A value live across one, or read by one, must live in a callee-saved
 // register or in memory.
 clobbers* = (function: Func, instruction: Instruction) bool {
     instruction.match({
-        Invoke(_)         => true,
-        PrintValue(_)     => true,
-        Text(_)           => true,
-        CopyBytes(_)      => true,
-        WriteOut(_)       => true,
-        System(_)         => true,
-        MapPages(_)       => true,
-        UnmapPages(_)     => true,
-        Flush             => true,
+        Constant(_)       => false,
+        UnaryValue(_)     => false,
+        BinaryValue(_)    => false,
+        Cast(_)           => false,
+        AddressOf(_)      => false,
+        Bytes(_)          => false,
+        SysConst(_)       => false,
+        Startup(_)        => false,
         Copy(value)       => large(function, value.out),
         LoadValue(value)  => large(function, value.out),
         StoreValue(value) => large(function, value.value),
-        _                 => false,
+        // Calls, kernel calls, runtime routines, and any instruction this
+        // list does not know (an atomic, an indirect call): a renderer may
+        // use the argument registers for them, so nothing caller-saved is
+        // assumed to survive.
+        _                 => true,
     })
 }
 

@@ -24,6 +24,7 @@ Target = gen.gen_asm
 Sys, linux_x86_64, constant_value, Platform = gen.gen_sys
 Plan, Home, Pool, Address, Modes, plan = gen.gen_asm_regalloc
 prepare = gen.gen_asm_prepare
+peephole, Dialect = gen.gen_asm_peephole
 NONE, SMALL_AGGREGATE, log2, low_mask, modulo, bit_width, scale_of = gen.gen_asm_flow
 
 // This target fixes the instruction set, object dialect, OS and calling ABI:
@@ -56,7 +57,7 @@ X86_64Linux.impl(Target, {
             code: self.alloc.Vec<Instruction>()
         );
         writer.render().try();
-        Ok(writer.out)
+        peephole(self.alloc, writer.out.view(), Dialect.Att)
     }
 })
 

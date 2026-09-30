@@ -1,0 +1,161 @@
+// A last pass over a renderer's assembly text, looking at each instruction
+// together with the one before it. Instruction selection works one IR
+// instruction at a time, so the seams between them leave a few patterns a
+// window of two lines can clean up:
+//
+// - a word stored to a stack slot and loaded right back becomes a register
+//   move, or nothing when it lands in the same register;
+// - `mov a, b` right after `mov b, a` is dropped;
+// - an unconditional jump to the label on the next line is dropped.
+//
+// Only 64-bit moves are touched, and only between adjacent lines: a label,
+// a call or any other instruction in between ends the window, so no rule
+// needs to know what else may read or write the slot.
+Alloc, AllocError = std.mem
+str, String = std.text
+
+Dialect* = Att | Arm
+
+// A two-operand instruction line, split at its first ", ".
+Line = { mnemonic: str, first: str, second: str }
+
+// What becomes of an instruction line after the one before it.
+Action = Hold | Discard | Replace(Line)
+
+peephole* = (
+    alloc   : Alloc,
+    text    : str,
+    dialect : Dialect
+) Res<String, AllocError> {
+    out ::= alloc.String().try();
+    // The previous instruction line, not yet written.
+    held ::= "";
+    text.split('\n').loop((line) {
+        action = combine(held, line, dialect);
+        jumped = action.match({
+            Hold => (!held.is_empty()).match({
+                true  => target(held, dialect).match({
+                    Ok(name) => is_label(line, name),
+                    None     => false,
+                }),
+                false => false,
+            }),
+            _    => false,
+        });
+        // A jump to the next line is dropped.
+        (!held.is_empty() && !jumped).then(() {
+            out.add(held).try();
+            out.add("\n").try();
+        });
+        held = "";
+        action.match({
+            Discard       => (),
+            Replace(move) => {
+                dialect.match({
+                    Att => out.fmt("    movq {}, {}\n", move.first, move.second),
+                    Arm => out.fmt("    mov {}, {}\n", move.second, move.first),
+                }).try();
+            },
+            Hold          => instruction(line).match({
+                true  => { held = line; },
+                false => {
+                    out.add(line).try();
+                    out.add("\n").try();
+                },
+            }),
+        });
+    });
+    (!held.is_empty()).then(() {
+        out.add(held).try();
+        out.add("\n").try();
+    });
+    Ok(out)
+}
+
+instruction = (line: str) bool { line.starts_with("    ") }
+
+is_label = (line: str, name: str) bool {
+    line.len == name.len + 1 && line.starts_with(name) && line.ends_with(":")
+}
+
+// The label an unconditional jump names.
+target = (line: str, dialect: Dialect) Res<str> {
+    prefix = dialect.match({ Att => "    jmp ", Arm => "    b " });
+    line.starts_with(prefix).match({
+        true  => Ok(line.slice(prefix.len, line.len)),
+        false => None,
+    })
+}
+
+// `mnemonic first, second`, split at the first ", ".
+split = (line: str) Res<Line> {
+    body     = line.slice(4, line.len);
+    parts    = body.split_once(" ").try();
+    operands = parts.after.split_once(", ").try();
+    Ok(Line(
+        mnemonic: parts.before,
+        first: operands.before,
+        second: operands.after
+    ))
+}
+
+combine = (held: str, line: str, dialect: Dialect) Action {
+    (held.is_empty() || !instruction(line)).match({
+        true  => Action.Hold,
+        false => split(held).match({
+            None  => Action.Hold,
+            Ok(a) => split(line).match({
+                None  => Action.Hold,
+                Ok(b) => dialect.match({ Att => att(a, b), Arm => arm(a, b) }),
+            }),
+        }),
+    })
+}
+
+// AT&T: operands are `source, destination`.
+att = (a: Line, b: Line) Action {
+    moves    = a.mnemonic.eq("movq") && b.mnemonic.eq("movq");
+    register = a.first.starts_with("%") && b.second.starts_with("%");
+    (moves && register && a.second.eq(b.first)).match({
+        false => Action.Hold,
+        true  => a.first.eq(b.second).match({
+            // Straight back where it came from.
+            true  => (!a.second.contains('(') || a.second.ends_with("(%rbp)")).match({
+                true  => Action.Discard,
+                false => Action.Hold,
+            }),
+            // Reloaded from the stack slot just written.
+            false => a.second.ends_with("(%rbp)").match({
+                true  => Action.Replace(Line(
+                    mnemonic: "movq",
+                    first: a.first,
+                    second: b.second
+                )),
+                false => Action.Hold,
+            }),
+        }),
+    })
+}
+
+// AArch64: the register comes first, the stack slot second.
+arm = (a: Line, b: Line) Action {
+    words = a.first.starts_with("x") && b.first.starts_with("x");
+    a.mnemonic.eq("str").match({
+        true  => (b.mnemonic.eq("ldr") && words && a.second.eq(b.second) && a.second.starts_with("[sp, #")).match({
+            false => Action.Hold,
+            true  => a.first.eq(b.first).match({
+                true  => Action.Discard,
+                false => Action.Replace(Line(
+                    mnemonic: "mov",
+                    first: a.first,
+                    second: b.first
+                )),
+            }),
+        }),
+        false => (a.mnemonic.eq("mov") && b.mnemonic.eq("mov") && words && a.second.starts_with("x")
+            && a.first.eq(b.second) && a.second.eq(b.first)).match({
+            true  => Action.Discard,
+            false => Action.Hold,
+        }),
+    })
+}

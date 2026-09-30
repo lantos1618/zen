@@ -6,7 +6,8 @@ run = (env: Env, alloc: Alloc, target: str) Res<(), AllocError> {
         root: "src/app",
         target: target,
         std_root: "src",
-        argv: alloc.Vec<str>()
+        argv: alloc.Vec<str>(),
+        release: false
     );
     println("{} {}", target, project(env, alloc, job, Action.Run).try());
     Ok(())

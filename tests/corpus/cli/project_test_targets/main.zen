@@ -6,7 +6,8 @@ run = (env: Env, a: Alloc, target: str) Res<(), AllocError> {
         root: "src/app",
         target: target,
         std_root: "src",
-        argv: a.Vec<str>()
+        argv: a.Vec<str>(),
+        release: false
     );
     code = project(env, a, job, Action.Test).try();
     println("result {} {}", target, code);

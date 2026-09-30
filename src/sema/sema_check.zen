@@ -195,6 +195,12 @@ Checker* = {
         self.calls.get(id)
     }
 
+    // The resolution table itself, for passes that look up many calls
+    // without holding the checker.
+    call_resolutions* = (self: @Self) Map<ExprId, CallResolution> {
+        self.calls
+    }
+
     checked_call* = (self: @Self, id: ExprId) Res<CheckedCall> {
         self.calls.get(id).try().match({
             Checked(call) => Ok(call),

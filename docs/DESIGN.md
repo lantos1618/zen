@@ -31,12 +31,15 @@ The original Python frontend bootstrap is retired. The maintained build path is
 **C compiler → committed `seed/zen.c` → seed Zen executes `build.zen` → `./zen`**.
 `make build` and `make bootstrap` use the same path. Make owns only compiling the
 seed; the Zen project builder owns the source graph, C generation, native tool
-invocation, and publication. An existing `./zen` can run `./zen build .` to build
+invocation, and publication. An existing `./zen` can run `./zen build --release .` to build
 its own replacement. The compiler target has no unconditional network/TLS link
 dependencies. Python remains a test tool, not a compiler build orchestrator.
 
-Native project builds currently rebuild targets rather than maintaining the
-retired Python incremental cache. They lock their generated workspace, link to
+Native project builds skip the front end when the compiler executable,
+settings, source files read, and module probe answers match the target's last
+successful build, and skip the native compiler when the generated C and the
+complete compiler command match its last link. Without `--release` targets compile at `-O0`; with it each
+target's `optimize` setting applies. Builds lock their generated workspace, link to
 a candidate beside the requested executable, and rename after success. A failed
 frontend or native command preserves the previous executable, including one
 currently running. Inherited lock descriptors keep the workspace protected if

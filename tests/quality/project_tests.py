@@ -63,6 +63,122 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("zen test: 1 passed, 0 failed", result.stdout)
 
+    def counting_compiler(self):
+        """A CC that records each invocation; it refuses while cc.fail exists."""
+        compiler = self.root / "counting-cc"
+        compiler.write_text(f"#!{sys.executable}\nimport os, sys\n"
+                            f"open({str(self.root / 'cc.log')!r}, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+                            f"if os.path.exists({str(self.root / 'cc.fail')!r}): raise SystemExit(1)\n"
+                            f"os.execv({shutil.which('cc')!r}, [{shutil.which('cc')!r}, *sys.argv[1:]])\n")
+        compiler.chmod(0o755)
+        return str(compiler)
+
+    def links(self):
+        return len(self.link_commands())
+
+    def link_commands(self):
+        log = self.root / "cc.log"
+        return log.read_text().splitlines() if log.exists() else []
+
+    def build_with(self, compiler, cflags="", command=("build",)):
+        return subprocess.run([str(ZEN), *command], cwd=self.root,
+            env={**os.environ, "ZEN_STD": str(ROOT / "src"), "CC": compiler, "CFLAGS": cflags},
+            capture_output=True, text=True, timeout=90)
+
+    def exit_status(self):
+        return subprocess.run([str(self.root / "build/app")], timeout=10).returncode
+
+    def test_unchanged_build_skips_native_compiler(self):
+        self.build_file('b.exe("app", {src: Path("pass.zen"), deps: [], '
+                        'optimize: "debug", out: Ok(Path("build/app"))}).try();')
+        compiler = self.counting_compiler()
+        for expected, cflags in ((1, ""), (1, ""), (2, "-g")):
+            result = self.build_with(compiler, cflags)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(self.links(), expected)
+        self.write("pass.zen", "main = () i32 { 3 }\n")
+        self.build_with(compiler, "-g")
+        self.assertEqual((self.links(), self.exit_status()), (3, 3))
+        (self.root / "build/app").unlink()
+        self.build_with(compiler, "-g")
+        self.assertEqual((self.links(), self.exit_status()), (4, 3))
+
+    def test_failed_link_is_relinked_on_the_next_build(self):
+        self.build_file('b.exe("app", {src: Path("pass.zen"), deps: [], '
+                        'optimize: "debug", out: Ok(Path("build/app"))}).try();')
+        compiler = self.counting_compiler()
+        self.assertEqual(self.build_with(compiler).returncode, 0)
+        self.write("pass.zen", "main = () i32 { 5 }\n")
+        (self.root / "cc.fail").touch()
+        self.assertEqual(self.build_with(compiler).returncode, 1)
+        (self.root / "cc.fail").unlink()
+        self.assertEqual(self.exit_status(), 0)
+        self.assertEqual(self.build_with(compiler).returncode, 0)
+        self.assertEqual((self.links(), self.exit_status()), (3, 5))
+
+    def test_release_applies_declared_optimization(self):
+        self.build_file('b.exe("app", {src: Path("pass.zen"), deps: [], '
+                        'out: Ok(Path("build/app"))}).try();\n'
+                        'b.exe_test("check", {src: Path("pass.zen"), deps: []}).try();')
+        compiler = self.counting_compiler()
+        # Each command switches profile, so each must relink its target.
+        for command, level in ((("build",), "-O0"),
+                               (("build", "--release"), "-O2"),
+                               (("build", "."), "-O0"),
+                               (("build", ".", "--release"), "-O2"),
+                               (("run", "app"), "-O0"),
+                               (("run", "--release", "app"), "-O2"),
+                               (("run", "app"), "-O0"),
+                               (("run", "app", "--release"), "-O2"),
+                               (("test", "check"), "-O0"),
+                               (("test", "--release", "check"), "-O2"),
+                               (("test", "check"), "-O0"),
+                               (("test", ".", "check", "--release"), "-O2")):
+            before = self.links()
+            result = self.build_with(compiler, command=command)
+            self.assertEqual(result.returncode, 0, (command, result.stdout + result.stderr))
+            self.assertEqual(self.links(), before + 1, command)
+            words = self.link_commands()[-1].split()
+            self.assertIn(level, words, command)
+            self.assertNotIn({"-O0": "-O2", "-O2": "-O0"}[level], words, command)
+
+    def generated_mtime(self):
+        return (self.root / "build/.zen/app/program.c").stat().st_mtime_ns
+
+    def test_unchanged_sources_skip_the_front_end(self):
+        (self.root / "util").mkdir()
+        self.write("util/util.zen", "value* = () i32 { 4 }\n")
+        self.write("pass.zen", "util = util\nmain = () i32 { util.value() }\n")
+        self.build_file('b.exe("app", {src: Path("pass.zen"), deps: [], '
+                        'out: Ok(Path("build/app"))}).try();')
+        compiler = self.counting_compiler()
+        self.assertEqual(self.build_with(compiler).returncode, 0)
+        generated = self.generated_mtime()
+        self.assertEqual(self.build_with(compiler).returncode, 0)
+        self.assertEqual((self.generated_mtime(), self.links(), self.exit_status()), (generated, 1, 4))
+        # A new flat module shadows the folder module without changing any
+        # file the previous build read.
+        self.write("util.zen", "value* = () i32 { 6 }\n")
+        self.assertEqual(self.build_with(compiler).returncode, 0)
+        self.assertNotEqual(self.generated_mtime(), generated)
+        self.assertEqual((self.links(), self.exit_status()), (2, 6))
+        self.write("util.zen", "value* = () i32 { 7 }\n")
+        self.assertEqual(self.build_with(compiler).returncode, 0)
+        self.assertEqual((self.links(), self.exit_status()), (3, 7))
+
+    def test_failed_compile_is_not_reused(self):
+        self.build_file('b.exe("app", {src: Path("pass.zen"), deps: [], '
+                        'out: Ok(Path("build/app"))}).try();')
+        compiler = self.counting_compiler()
+        self.assertEqual(self.build_with(compiler).returncode, 0)
+        self.write("pass.zen", "main = () i32 { missing() }\n")
+        for _ in range(2):
+            self.assertEqual(self.build_with(compiler).returncode, 1)
+        self.write("pass.zen", "main = () i32 { 0 }\n")
+        result = self.build_with(compiler)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.exit_status(), 0)
+
     def test_empty_and_unknown_selections_fail(self):
         self.build_file('b.exe("app", {src: Path("pass.zen"), deps: []}).try();')
         for args in (("test",), ("test", "missing")):

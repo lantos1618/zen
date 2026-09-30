@@ -74,13 +74,16 @@ make verify      # all required gates; fresh test execution and full fixpoint
 
 The compiler's own target lives in `build.zen`. Make only compiles the committed
 C seed into `build/bootstrap/zen-seed`; that executable runs `build .` and builds
-`./zen` through the ordinary Zen project builder. Once built, `./zen build .`
+`./zen` through the ordinary Zen project builder. Once built, `./zen build --release .`
 rebuilds the compiler itself. No Python build driver or OpenSSL library is
 required for this path; Python and Node remain test-tool dependencies.
 
-Project builds currently regenerate and compile their targets on each invocation.
-The retired Python incremental cache is not used. Native outputs are linked to
-sibling candidates and atomically replaced only after success. `CC` and `CFLAGS`
+Project builds skip the front end when no source file, module probe, or
+compiler input changed, and skip the native compiler when the generated C and
+compiler command match the last successful link. Targets compile at `-O0` unless `--release` is given to `zen build`,
+`zen run`, or `zen test`, which applies each target's `optimize` setting.
+Native outputs are linked to sibling candidates and atomically replaced only
+after success. `CC` and `CFLAGS`
 accept quoted command words without shell evaluation. `ZEN_BUILD_OUTPUT` selects
 an isolated output for a single target; `ZEN_BUILD_DIR` isolates generated files.
 `make dev-build` and `make profile` use that same project path.

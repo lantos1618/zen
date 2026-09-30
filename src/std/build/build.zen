@@ -235,6 +235,10 @@ ProjectArgs* = {
     std_root* :: str = "",
     argv*: Vec<str>,
     args_at* :: usize = 0,
+
+    // Without `--release`, native targets compile unoptimized for fast
+    // rebuilds; with it, each target's `optimize` setting applies.
+    release*: bool,
 }
 
 BuildFlags* = {
@@ -363,6 +367,7 @@ FLAG_SYMBOL_MAP*: str = "--symbol-map"
 FLAG_REPEAT*: str = "--repeat"
 FLAG_PERMUTE*: str = "--permute"
 FLAG_FFI*: str = "--ffi"
+FLAG_RELEASE*: str = "--release"
 ZEN_STD_ENV*: str = "ZEN_STD"
 
 build_options* = (a: Alloc) Res<Options<BuildFlag>, AllocError> {

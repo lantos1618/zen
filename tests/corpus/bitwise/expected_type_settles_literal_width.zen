@@ -1,0 +1,28 @@
+// A bitwise expression over literals takes its width from the expected
+// type, folds at that width, and lowers at it.
+MASK: u32 = 1 << 4
+TOP: u8   = ~0
+
+Flags = {
+    bits: u16 = 0xF0 | 0x0F,
+}
+
+widen = (value: u64) u64 { value }
+
+high = () u64 { 1 << 63 }
+
+main = () {
+    all: u8      = ~0;
+    lost: u8     = 1 << 8;
+    edge: u16    = 1 << 15;
+    sum: u32     = (1 << 4) + 1;
+    mixed: u8    = (0xF0 ^ 0xFF) & 0x3C;
+    count: usize = 40;
+    moved: u64   = 1 << count;
+    println("constants: {} {}", MASK, TOP);
+    println("bindings: {} {} {} {} {}", all, lost, edge, sum, mixed);
+    println("runtime count: {}", moved);
+    println("parameter: {}", widen(1 << 40));
+    println("return: {}", high());
+    println("field: {}", Flags().bits);
+}

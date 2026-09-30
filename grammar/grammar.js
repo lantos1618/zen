@@ -91,6 +91,15 @@
 //     `+%` sits at exactly the precedence of `+`, `*%` of `*` — DESIGN.md
 //     calls them "the wrapping forms", so they are the same operation with a
 //     different overflow rule, not a different binding strength. (A-PREC)
+//     The bitwise operators sit between comparison and additive, `|` one row
+//     below `& ^ << >>` so that a represented enum's discriminant can end at
+//     the bar before its next variant. DESIGN.md ("Unsigned bit operations")
+//     requires parentheses whenever a bitwise operator meets a different
+//     binary operator, and forbids chained shifts; the compiler's parser
+//     reports those, so this grammar accepts a superset and the rows only
+//     shape code the compiler refuses. `<<` and `>>` are two adjacent angle
+//     tokens in the compiler; here they are tokens, which the context-aware
+//     lexer keeps out of type-argument lists.
 //
 // D2. `consume e` binds LOOSER than every other prefix operator and looser
 //     than binary operators (`prec.right(PREC.consume)`), so `consume f` and
@@ -190,11 +199,13 @@ const PREC = {
   and: 4,
   equality: 5,
   comparison: 6,
-  additive: 7,
-  multiplicative: 8,
-  unary: 9,
-  call: 10,
-  member: 11,
+  bitwise_or: 7,
+  bitwise: 8,
+  additive: 9,
+  multiplicative: 10,
+  unary: 11,
+  call: 12,
+  member: 13,
 };
 
 /** @param {RuleOrLiteral} rule */
@@ -217,6 +228,10 @@ module.exports = grammar({
     // `Foo(T)` — the first variant of an enum, or a call bound to a name?
     // Closes at the first `|` (R1), or never opens when the bar leads.
     [$.enum_variant, $._callee],
+    // `A | B` — an enum's variants, or a bitwise or of two names? Where both
+    // readings complete, the enum is preferred (`enum_body`'s dynamic
+    // precedence), matching the compiler: a binding ends at `;`.
+    [$.enum_variant, $._expression],
     // `Vec<i32>` — an alias target / a type, or `Vec < i32`? Decided at the
     // token after the `>`. (A-ANGLE)
     [$.generic_type, $._expression, $._callee],
@@ -365,10 +380,10 @@ module.exports = grammar({
     // no trailing-separator question and no "where does the list end". One
     // variant takes the LEADING bar; no bar at all is not an enum.
     enum_body: ($) =>
-      choice(
+      prec.dynamic(1, choice(
         seq('|', $.enum_variant, repeat(seq('|', $.enum_variant))),
         seq($.enum_variant, repeat1(seq('|', $.enum_variant))),
-      ),
+      )),
 
     // Payloads are types. A represented enum writes its external integer
     // discriminant separately: `FrameType = | Data = 0 | Unknown(u8)`.
@@ -382,11 +397,15 @@ module.exports = grammar({
         seq(
           field('name', $.identifier),
           optional(field('payload', $.variant_payload)),
-          optional(seq('=', field('discriminant', $._expression))),
+          optional(seq('=', field('discriminant', $._discriminant))),
         ),
       ),
 
     variant_payload: ($) => seq('(', field('type', $._type), ')'),
+
+    // A discriminant ends at the `|` that begins the next variant; a bitwise
+    // or inside one is parenthesized, as the compiler requires.
+    _discriminant: ($) => prec.left(PREC.bitwise_or, $._expression),
 
     // ------------------------------------------------------------------
     // statements — R2. Every one of these ends with `;` EXCEPT a nested
@@ -811,7 +830,7 @@ module.exports = grammar({
       prec.right(
         PREC.unary,
         seq(
-          field('operator', choice('!', '-', '&')),
+          field('operator', choice('!', '-', '&', '~')),
           field('operand', $._expression),
         ),
       ),
@@ -833,6 +852,11 @@ module.exports = grammar({
         [PREC.comparison, '>'],
         [PREC.comparison, '<='],
         [PREC.comparison, '>='],
+        [PREC.bitwise, '&'],
+        [PREC.bitwise_or, '|'],
+        [PREC.bitwise, '^'],
+        [PREC.bitwise, '<<'],
+        [PREC.bitwise, '>>'],
         [PREC.additive, '+'],
         [PREC.additive, '-'],
         [PREC.additive, '+%'],

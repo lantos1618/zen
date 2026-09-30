@@ -1,0 +1,6 @@
+constants: 16 255
+bindings: 255 0 32768 17 12
+runtime count: 1099511627776
+parameter: 1099511627776
+return: 9223372036854775808
+field: 255

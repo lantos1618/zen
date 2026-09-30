@@ -382,6 +382,7 @@ row = table.get("ada").ok_or(Error.NotFound).try();  // required form
 `Res` is for failure a caller can do something about — a file is missing, input is malformed. A bug is not that, and routing bugs through `Res` would put `.try()` on every arithmetic expression in the compiler and destroy the signal that makes `.try()` readable. So:
 
 - `+ - *` **trap** on overflow. `+% -% *%` wrap, for when wrapping is the intent.
+- Bit operations `& | ^ ~ << >>` never trap. They act on unsigned words only; a shift discards the bits it moves out, and a count at or above the width yields zero (see "Unsigned bit operations").
 - `/ %` **trap** on a zero divisor, and on `i32.MIN / -1` — which is an overflow wearing division's clothes, and faults identically on x86.
 - `buf[i]` on a fixed array is **bounds-checked and traps**. **The count is part of the type** — `[u8, 64]` and `[u8, 65]` are different types — which is what makes the check possible with no length stored beside the bytes, and what lets a literal index past a known length be the compile error below rather than a runtime trap. `Vec.get` still returns `Res<T>` — a lookup that can legitimately miss is not a bug.
 - A trap **aborts the process**: it prints `file:line:col: trap: <what>` to stderr and exits `134`. The three whats are `integer overflow`, `divide by zero`, `index out of bounds`, and the position is the **operator** token. Column is a 1-based byte offset.
@@ -528,7 +529,10 @@ The emitted C then fails to compile — `incompatible type for argument 2 of 'zg
 
 **The implemented rule is: a binary operator takes its left operand's type,
 and the right operand is not checked against it.** The return check can hide the
-gap when the left operand already matches the declared result.
+gap when the left operand already matches the declared result. The bitwise
+operators are the exception: `& | ^` check that both operands have the same
+unsigned type, and a shift checks that its count is unsigned (see "Unsigned bit
+operations").
 
 This remains a language decision, not a C-backend workaround: choose implicit
 numeric widening, explicit conversions only, or a rule between them, then add
@@ -1869,6 +1873,77 @@ with zero; counts greater than or equal to the width return zero (including
 usize.MAX). The C backend guards shifts and masks rotation counts to avoid
 undefined C shifts, and casts u8/u16 results back after C's int promotion.
 
+`& | ^` (and, or, xor), `<<` and `>>` (logical shifts), and prefix `~`
+(complement) are the syntax for these named operations: `a & b` is
+`a.bit_and(b)`, `a | b` is `a.bit_or(b)`, `a ^ b` is `a.bit_xor(b)`,
+`a << n` is `a.shift_left(n)` and `a >> n` is `a.shift_right(n)`; `~a` flips
+every bit of its word, as `a.bit_xor(W.MAX)` does. They take the same words,
+`u8`, `u16`, `u32`, `u64`, `u128` and `usize`, compile to the same code and
+fall under the same secret discipline. Signed integers, floats and `bool` are
+refused; convert a signed value explicitly, and use `&&`, `||` and `!=` on
+booleans. `>>` never applies to a signed word: the arithmetic shift below is
+spelled `shift_right` only.
+
+- `a & b`, `a | b` and `a ^ b` require both operands to have the same unsigned
+  type, which is the result's type. There is no implicit widening: `u32 | u64`
+  is an error naming both types. A literal takes the other operand's type and
+  must fit it.
+- `~a` has `a`'s type.
+- `word << count` and `word >> count` shift an unsigned word; the result has
+  the word's type. The count may be any unsigned type, independent of the
+  word's (the named form takes a `usize`); a literal count is checked against
+  `usize`. Signed and float counts are errors.
+- An expression whose operands are all literals — `1 << 4`, `~0`,
+  `0xF0 | 0x0F`, or a literal word shifted by a typed count — takes its width
+  from the expected type: an annotated binding or constant, a parameter, a
+  return type or a field. It folds at that width, so `lost: u8 = 1 << 8` is
+  `0` and `all: u8 = ~0` is `255`, and each literal operand must fit it. A
+  `u128` expression is not folded; it is computed at run time. With
+  no expected type (`x = 1 << 4`), or a type that is not unsigned
+  (`x: i32 = 1 << 4`), it is an error.
+
+Shifts are bit operations, not arithmetic, and never trap. Bits moved out of
+the word are discarded, `>>` fills with zero, and a count greater than or
+equal to the width yields zero, including `usize.MAX`. No backend may expose
+the underlying machine's shift behaviour: the C backend guards every count and
+converts narrow results back to their type, and constant folding computes the
+same values at the node's width.
+
+**A bitwise operator never relies on precedence.** Beside any different binary
+operator — comparison, arithmetic, logical, or another bitwise operator — the
+bitwise operand must be parenthesized, and shifts do not chain:
+
+```groovy fragment
+set  = flags & mask != 0;      // ERROR: write `(flags & mask) != 0`
+bits = a | b & c;              // ERROR: write `(a | b) & c` or `a | (b & c)`
+next = a << 2 + 1;             // ERROR: write `a << (2 + 1)` or `(a << 2) + 1`
+far  = a << 1 << 2;            // ERROR: write `(a << 1) << 2`
+all  = a | b | c;              // ok: one associative operator
+low  = ~a & b;                 // ok: `~` is a prefix operator, `(~a) & b`
+```
+
+The diagnostic spells out the parenthesized form. Chains of one associative
+operator — `a | b | c`, `a & b & c`, `a ^ b ^ c` — need no parentheses.
+
+**`<<` and `>>` are two adjacent angle tokens.** The lexer produces `<` and `>`
+only; in operator position the parser reads two of the same angle with no byte
+between them as a shift, so `Res<Ptr<u8>>` still closes two type-argument
+lists and `a > > b` is not a shift. A `<` immediately followed by another `<`
+never opens type arguments.
+
+**`|` is bitwise or only in an expression.** Type unions and enum variant lists
+keep their bars. Where a declaration and a binding share a shape, a run of
+`Name` or `Name(..)` joined by bars is a variant list unless it ends at `;` or
+an operator, or a bar is followed by something only an expression begins with:
+`mask = low | high;` in a body binds a value, while `Kind = Low | High`
+declares an enum. At module level an untyped `NAME = A | B` declares an enum;
+a written type makes it a constant, since an enum never writes one:
+`MASK: u8 = LOW | HIGH`. A represented enum's discriminant ends at the bar
+before the next variant, so a bitwise or there is parenthesized.
+
+`&` in prefix position is still the address-of operator; `&&` and `||` remain
+the short-circuit operators.
+
 ## Signed arithmetic shift
 
 `shift_right(self: S, count: usize) S` is also exported for signed words
@@ -1883,11 +1958,9 @@ Other bit operations remain unsigned-only; convert explicitly to mix them.
 These allocation-free compiler primitives evaluate operands once in source
 order. Only validated exported, nongeneric, immutable-parameter declarations
 with these exact signatures in `std.core.num` acquire primitive behavior.
-User functions with bodies may use the same names normally. This adds no
-new operator syntax, crypto dependency or constant-time compiler guarantee.
-Zen deliberately has no bitwise operator tokens: `|` separates enum variants
-and `^`, `&`, `<<`, `>>` are not in the lexer, so named operations are the
-whole surface rather than a stand-in for missing operators.
+User functions with bodies may use the same names normally. Neither the
+operators nor the primitives add a crypto dependency or a constant-time
+compiler guarantee.
 
 ## Wide integers and truncation
 
@@ -2091,7 +2164,7 @@ On a secret value sema refuses, at the exact expression:
 | short circuit | an operand of `&&` or `||` | `Choice.and`/`or` |
 | loop | a `loop` condition, a looped-over range or collection | public bounds |
 | index | `a[i]`, `Ptr.read`/`write`/`offset`/`back` index, SIMD lane index | `ct_lookup` |
-| shift | a secret shift or rotation count | public counts |
+| shift | a secret count of `<<`, `>>`, `shift_*` or `rotate_*` | public counts |
 | divide | either operand of `/` or `%` | Barrett/Montgomery reduction |
 | trap | checked `+ - *` and checked (`Res`-returning) conversions | `+% -% *%`, `truncate_*` |
 | compare | `== != < <= > >=` | `ct_eq`, `ct_lt`, ... |

@@ -168,7 +168,7 @@ FoldStack = {
                 false => self.finish(self.result),
             }),
             Unary(u)   => u.op.match({
-                Neg => (self.phases[at] == 0).match({
+                Neg    => (self.phases[at] == 0).match({
                     true  => { self.phases[at] = 1; self.descend(u.operand); },
                     false => self.finish(
                         self.result.match({None => None, Ok(v) => sub_i64(
@@ -177,14 +177,23 @@ FoldStack = {
                         )})
                     ),
                 }),
-                _   => self.finish(None),
+                BitNot => (self.phases[at] == 0).match({
+                    true  => { self.phases[at] = 1; self.descend(u.operand); },
+                    false => self.finish(
+                        self.result.match({None => None, Ok(v) => fold_not(
+                            c.word_bits(self.nodes[at]),
+                            v
+                        )})
+                    ),
+                }),
+                _      => self.finish(None),
             }),
-            Binary(b)  => self.binary(at, b),
+            Binary(b)  => self.binary(c, at, b),
             _          => self.finish(None),
         });
     }
 
-    binary = (self :: @Self, at: usize, b: Binary) {
+    binary = (self :: @Self, c: Checker, at: usize, b: Binary) {
         self.phases[at].match({
             0 => { self.phases[at] = 1; self.descend(b.lhs); },
             1 => self.result.match({
@@ -196,11 +205,15 @@ FoldStack = {
                 },
             }),
             _ => self.finish(
-                self.result.match({None => None, Ok(value) => fold(
-                    b.op,
-                    self.values[at],
-                    value
-                )})
+                self.result.match({None => None, Ok(value) => b.op.is_bitwise().match({
+                    true  => fold_bits(
+                        c.word_bits(self.nodes[at]),
+                        b.op,
+                        self.values[at],
+                        value
+                    ),
+                    false => fold(b.op, self.values[at], value),
+                })})
             ),
         });
     }
@@ -283,6 +296,78 @@ fold* = (op: BinOp, x: i64, y: i64) Res<i64> {
         Sub => sub_i64(x, y),
         Mul => mul_i64(x, y),
         _   => None,
+    })
+}
+
+// Bit operations fold at their node's unsigned width, with the runtime's
+// semantics: bits shifted out are discarded and a count at or above the width
+// yields zero. The folder holds `u64.MAX` and `usize.MAX` as `I64_MAX`, so a
+// 64-bit operand equal to it is not folded.
+fold_bits = (width: Res<usize>, op: BinOp, x: i64, y: i64) Res<i64> {
+    w = width.try();
+    op.is_shift().match({
+        true  => word_value(w, x).try().shift_by(w, op, y),
+        false => {
+            a = word_value(w, x).try();
+            b = word_value(w, y).try();
+            magnitude_i64(op.match({
+                BitAnd => a.bit_and(b),
+                BitXor => a.bit_xor(b),
+                _      => a.bit_xor(b).bit_xor(a.bit_and(b)),
+            }))
+        },
+    })
+}
+
+fold_not = (width: Res<usize>, x: i64) Res<i64> {
+    w = width.try();
+    magnitude_i64(word_value(w, x).try().bit_xor(word_mask(w)))
+}
+
+shift_by = (a: u64, w: usize, op: BinOp, count: i64) Res<i64> {
+    (count >= 0).ensure().try();
+    n = len_of(count);
+    (n >= w).match({
+        true  => Ok(0),
+        false => magnitude_i64(op.match({
+            ShiftLeft => (a *% pow2(n)).bit_and(word_mask(w)),
+            _         => a.shift_right(n),
+        })),
+    })
+}
+
+// A folded operand as its unsigned word, refused when it cannot be one.
+word_value = (w: usize, x: i64) Res<u64> {
+    (x >= 0 && (x != I64_MAX || w < 64)).ensure().try();
+    value = len_of(x).to_u64();
+    (value.bit_and(word_mask(w)) == value).match({
+        true  => Ok(value),
+        false => None,
+    })
+}
+
+word_mask = (w: usize) u64 {
+    (w >= 64).match({
+        true  => u64.MAX,
+        false => pow2(w) - 1,
+    })
+}
+
+// `1` moved left `n < 64` places.
+pow2 = (n: usize) u64 {
+    one: u64 = 1;
+    one.rotate_right((64 - n) % 64)
+}
+
+// The unsigned width sema gave a bitwise node.
+word_bits = (c: Checker, id: ExprId) Res<usize> {
+    c.prim_name(c.expr_memo.get(id).try()).match({
+        "u8"    => Ok(8),
+        "u16"   => Ok(16),
+        "u32"   => Ok(32),
+        "u64"   => Ok(64),
+        "usize" => Ok(64),
+        _       => None,
     })
 }
 

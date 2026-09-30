@@ -1,0 +1,17 @@
+// The constant folder and the generated code agree: the same expression over
+// primitive constants and over runtime bindings prints one value, and a
+// folded operand that fits does not trigger a proven-overflow refusal.
+MASK: u32 = 0xFF00
+
+main = () {
+    top: u8     = u8.MAX;
+    top16: u16  = u16.MAX;
+    top32: u32  = u32.MAX;
+    four: usize = 4;
+    println("xor: {} {}", (u8.MAX ^ 15) + 15, (top ^ 15) + 15);
+    println("not: {} {}", ~u16.MAX + 1, ~top16 + 1);
+    println("shl: {} {}", (u8.MAX << 4) + 15, (top << four) + 15);
+    println("shr: {} {}", (u32.MAX >> 28) * 2, (top32 >> 28) * 2);
+    println("and: {} {}", (u32.MAX & MASK) >> 8, (top32 & MASK) >> 8);
+    println("or: {} {}", (u8.MIN | 1) + 254, ((top ^ top) | 1) + 254);
+}

@@ -16,5 +16,7 @@ asm literal width true
 asm bool entry true
 js constant time refused true
 js split refused true
+js bitwise refused true
 asm constant time refused true
 asm split refused true
+asm bitwise refused true

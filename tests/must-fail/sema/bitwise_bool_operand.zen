@@ -1,0 +1,4 @@
+main = () {
+    ready = true;
+    both  = ready & false;
+}

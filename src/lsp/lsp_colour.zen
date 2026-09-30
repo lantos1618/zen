@@ -109,6 +109,8 @@ colour_of* = (kind: TokenKind) Res<Colour> {
         StarWrap     => Ok(Colour.operator),
         Slash        => Ok(Colour.operator),
         Percent      => Ok(Colour.operator),
+        Caret        => Ok(Colour.operator),
+        Tilde        => Ok(Colour.operator),
         Eof          => None,
     })
 }

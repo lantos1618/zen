@@ -50,6 +50,7 @@ TokenKind* =
     | Minus | MinusWrap
     | Star | StarWrap
     | Slash | Percent
+    | Caret | Tilde
 
     | Eof                // exactly one, always last, empty span
 
@@ -104,6 +105,8 @@ TokenKind.impl(Eq, {
             StarWrap     => other.match({ StarWrap => true, _ => false }),
             Slash        => other.match({ Slash => true, _ => false }),
             Percent      => other.match({ Percent => true, _ => false }),
+            Caret        => other.match({ Caret => true, _ => false }),
+            Tilde        => other.match({ Tilde => true, _ => false }),
             Eof          => other.match({ Eof => true, _ => false }),
         });
     }
@@ -178,6 +181,8 @@ kind_name* = (kind: TokenKind) str {
         StarWrap     => "`*%`",
         Slash        => "`/`",
         Percent      => "`%`",
+        Caret        => "`^`",
+        Tilde        => "`~`",
         Eof          => "end of file",
     });
 }

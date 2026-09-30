@@ -1,0 +1,28 @@
+// `<<` and `>>` are two adjacent angle tokens, so nested type arguments keep
+// closing with `>>` while expressions read the same pair as a shift.
+Box<T> = {
+    value: T,
+}
+
+wrap = <T>(value: T) Res<Res<T>> { Ok(Ok(value)) }
+
+unwrap_twice = (nested: Res<Res<u32>>) u32 {
+    nested.match({
+        Ok(inner) => inner.match({ Ok(v) => v, None => 0 }),
+        None      => 0,
+    })
+}
+
+pick = (low: u32, high: u32) u32 { low | high }
+
+main = () {
+    word: u32                 = 0x0F0;
+    count: usize              = 4;
+    boxed: Box<Res<Res<u32>>> = Box(value: wrap<u32>(word >> count));
+    println("nested: {}", unwrap_twice(boxed.value));
+    println("explicit: {}", unwrap_twice(wrap<u32>(word << count)));
+    // A shift beside a parenthesized count is not a call with type arguments.
+    println("args: {}", pick(word << 1, word >> (count)));
+    // A comparison and a shift in one expression need their parentheses.
+    println("compare: {}", (word >> count) < word);
+}

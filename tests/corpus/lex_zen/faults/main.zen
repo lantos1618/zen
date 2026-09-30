@@ -68,8 +68,8 @@ main = (env: Env) Res<i32, AllocError> {
     println("-- names and bytes");
     dump(env, alloc, "UnknownAtName     ", "x @foo").try();
     dump(env, alloc, "StrayByte         ", "x ? y").try();
-    // a maximal run, reported ONCE: `~~~` is one mistake and not three
-    dump(env, alloc, "StrayByte, one run", "x ~~~ y").try();
+    // a maximal run, reported ONCE: `$$$` is one mistake and not three
+    dump(env, alloc, "StrayByte, one run", "x $$$ y").try();
     // NOT at offset 0: anywhere else a byte-order mark is an ordinary
     // invalid byte sequence, and saying so beats a file that parses
     // differently depending on where an editor left a marker

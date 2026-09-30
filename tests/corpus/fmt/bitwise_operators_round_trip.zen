@@ -1,0 +1,37 @@
+// Formatting keeps every bitwise operator, the parentheses the language
+// requires around them, the adjacent angles of `<<` and `>>`, and the bars
+// of enums declared beside bitwise-or bindings.
+
+Alloc, AllocError = std.mem
+Range = std.core
+scan, Source = std.lex.lex
+render = fmt.fmt
+
+SOURCE: str = "LOW: u8  = 0x0F\nHIGH: u8 = 0xF0\nMASK: u8 = LOW | HIGH\n\nKind = Low | High\n\nflags = (word: u32, count: usize) Res<Res<u32>> {\n    Local = First | Second\n    mask       = word & 0xFF;\n    set        = (word & mask) != 0;\n    moved: u32 = (word << count) | (word >> 1);\n    Ok(Ok(~moved ^ mask))\n}\n"
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+
+    lexed = scan(a, Source(file: "in.zen", text: SOURCE)).try();
+    out   = render(a, lexed).try();
+
+    println("diagnostics: {}", out.diags.len);
+    println("faithful: {}", out.faithful);
+    println("unchanged: {}", out.text.view().eq(SOURCE));
+    println("---");
+    show(out.text.view());
+    println("---");
+    Ok(0);
+}
+
+show = (text: str) {
+    line ::= 0;
+    from ::= 0;
+    Range(0, text.len).loop((h, i) {
+        (text.index(i) == '\n').then(() {
+            line = line + 1;
+            println("{} |{}", line, text.slice(from, i));
+            from = i + 1;
+        });
+    });
+}

@@ -1,0 +1,2 @@
+different bitwise operators need parentheses: write `(a | b) & c` or `a | (b & c)`
+5:19

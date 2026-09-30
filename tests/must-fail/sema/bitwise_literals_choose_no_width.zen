@@ -1,0 +1,4 @@
+main = () {
+    mask = 1 | 2;
+    println("{}", mask);
+}

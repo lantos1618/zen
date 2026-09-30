@@ -19,30 +19,36 @@ BinOp, UnOp = std.ast.ast_node
 
 op_name = (op: BinOp) str {
     op.match({
-        Add       => "+",
-        Sub       => "-",
-        Mul       => "*",
-        Div       => "/",
-        Rem       => "%",
-        AddWrap   => "+%",
-        SubWrap   => "-%",
-        MulWrap   => "*%",
-        Equal     => "==",
-        NotEqual  => "!=",
-        Less      => "<",
-        LessEq    => "<=",
-        Greater   => ">",
-        GreaterEq => ">=",
-        And       => "&&",
-        Or        => "||",
+        Add        => "+",
+        Sub        => "-",
+        Mul        => "*",
+        Div        => "/",
+        Rem        => "%",
+        AddWrap    => "+%",
+        SubWrap    => "-%",
+        MulWrap    => "*%",
+        Equal      => "==",
+        NotEqual   => "!=",
+        Less       => "<",
+        LessEq     => "<=",
+        Greater    => ">",
+        GreaterEq  => ">=",
+        And        => "&&",
+        Or         => "||",
+        BitAnd     => "&",
+        BitOr      => "|",
+        BitXor     => "^",
+        ShiftLeft  => "<<",
+        ShiftRight => ">>",
     });
 }
 
 un_name = (op: UnOp) str {
     op.match({
-        Not  => "!",
-        Neg  => "neg",
-        Addr => "&",
+        Not    => "!",
+        Neg    => "neg",
+        Addr   => "&",
+        BitNot => "~",
     });
 }
 
@@ -100,5 +106,22 @@ main = (env: Env) Res<i32, AllocError> {
     run(env, alloc, "(2 + 3) * 4").try();        // parens override, and survive
     run(env, alloc, "-a + b").try();             // unary over binary
     run(env, alloc, "!x.ready").try();           // postfix over unary
+    run(
+        env,
+        alloc,
+        "a | b | c"
+    ).try();          // one bitwise operator chains left
+    run(env, alloc, "~a & b").try();             // `~` is a prefix operator
+    run(env, alloc, "a >> n").try();             // adjacent `>` `>` is a shift
+    run(
+        env,
+        alloc,
+        "(a & b) != 0"
+    ).try();       // parens satisfy the mixing rule
+    run(
+        env,
+        alloc,
+        "a & b != 0"
+    ).try();         // refused, bitwise tier over comparison
     Ok(0);
 }

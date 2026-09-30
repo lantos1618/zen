@@ -1,0 +1,2 @@
+a bitwise operator needs parentheses beside `+`: write `a << (2 + 1)` or `(a << 2) + 1`
+3:17

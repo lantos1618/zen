@@ -1,7 +1,7 @@
 Expr, ExprId, Literal = std.ast
 Decl, Const = std.ast
 Block, BlockId, Stmt = std.ast
-Binary, Unary, Bind, Match, Access, Call, Lambda = std.ast
+Binary, BinOp, Unary, Bind, Match, Access, Call, Lambda = std.ast
 ArrayLit, FixedArray, Index = std.ast
 AllocError = std.mem
 Vec = std.collections
@@ -27,7 +27,7 @@ element_agrees = sema.sema_trap
 check_arms, check_arms_agree = sema.sema_hoist
 check_statement = sema.sema_effect
 check_eq = sema.sema_bound
-operands_agree, check_neg = sema.sema_operand
+operands_agree, check_neg, check_bit_not = sema.sema_operand
 seed_left_spine, spine_ahead = sema.sema_spine
 type_from_ast, self_type, declared_or_alias = sema.sema_denote
 local_decl = sema.sema_local
@@ -64,8 +64,8 @@ expr_kind = (c :: Checker, id: ExprId, node: Expr, ctx: Ctx)
         SelfType      => c.self_type(ctx),
         Name(n)       => c.name_type(id, node, n.text, ctx),
         Paren(p)      => c.type_of(p.inner, ctx),
-        Binary(b)     => c.binary_type(node, b, ctx),
-        Unary(u)      => c.unary_type(node, u, ctx),
+        Binary(b)     => c.binary_type(id, node, b, ctx),
+        Unary(u)      => c.unary_type(id, node, u, ctx),
         Try(t)        => c.try_type(t.name_span, t.operand, t.error, ctx),
         Consume(x)    => c.type_of(x.operand, ctx),
         Block(b)      => c.block_type(b, ctx),
@@ -259,7 +259,7 @@ written_or_value = (c :: Checker, k: Const, ctx: Ctx) Res<TyId, AllocError> {
     })
 }
 
-binary_type* = (c :: Checker, node: Expr, b: Binary, ctx: Ctx)
+binary_type* = (c :: Checker, id: ExprId, node: Expr, b: Binary, ctx: Ctx)
               Res<TyId, AllocError> {
     c.spine_ahead(b.lhs).match({
         false => Ok(()),
@@ -267,7 +267,7 @@ binary_type* = (c :: Checker, node: Expr, b: Binary, ctx: Ctx)
     }).try();
     lhs     = c.type_of(b.lhs, ctx).try();
     rhs     = c.type_of(b.rhs, ctx).try();
-    operand = c.arith_type(lhs, rhs).try();
+    operand = c.operand_type(b.op, lhs, rhs).try();
     got     = is_predicate(b.op).match({
         true  => c.types.bool_ty(),
         false => Ok(operand),
@@ -276,10 +276,20 @@ binary_type* = (c :: Checker, node: Expr, b: Binary, ctx: Ctx)
     c.check_logical(b, lhs, rhs).try();
     c.check_eq(b, operand).try();
     // the pair, after each side on its own
-    c.operands_agree(b, lhs, rhs).try();
+    c.operands_agree(id, b, lhs, rhs).try();
     c.check_arms_agree(b.lhs).try();
     c.check_arms_agree(b.rhs).try();
     Ok(got);
+}
+
+// A shift's result is its word, whatever its count; otherwise a literal takes
+// the other side's type.
+operand_type = (c :: Checker, op: BinOp, lhs: TyId, rhs: TyId)
+               Res<TyId, AllocError> {
+    op.is_shift().match({
+        true  => Ok(lhs),
+        false => c.arith_type(lhs, rhs),
+    })
 }
 
 // A literal takes the other side's type.
@@ -291,13 +301,14 @@ arith_type = (c :: Checker, lhs: TyId, rhs: TyId) Res<TyId, AllocError> {
     }));
 }
 
-unary_type = (c :: Checker, node: Expr, u: Unary, ctx: Ctx)
+unary_type = (c :: Checker, id: ExprId, node: Expr, u: Unary, ctx: Ctx)
              Res<TyId, AllocError> {
     inner = c.type_of(u.operand, ctx).try();
     u.op.match({
-        Not  => c.check_not(u, inner),
-        Neg  => c.check_neg(u, inner),
-        Addr => c.addr_type(node, u, inner, ctx),
+        Not    => c.check_not(u, inner),
+        Neg    => c.check_neg(u, inner),
+        Addr   => c.addr_type(node, u, inner, ctx),
+        BitNot => c.check_bit_not(id, u, inner),
     })
 }
 

@@ -1,0 +1,5 @@
+main = () {
+    count: usize = 3;
+    moved        = 1 << count;
+    println("{}", moved);
+}

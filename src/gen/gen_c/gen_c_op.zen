@@ -35,10 +35,30 @@ lower_unary* = (
     out  :: String
 ) Res<(), AllocError> {
     u.op.match({
-        Not  => be.wrap_unary("!", u.operand, ctx, want, out),
-        Neg  => be.lower_negate(node, u, ctx, want, out),
-        Addr => be.unsupported(u.operand, "the address-of operator", out),
+        Not    => be.wrap_unary("!", u.operand, ctx, want, out),
+        Neg    => be.lower_negate(node, u, ctx, want, out),
+        Addr   => be.unsupported(u.operand, "the address-of operator", out),
+        BitNot => be.lower_bit_not(u, ctx, want, out),
     })
+}
+
+// `~` goes through a helper that converts back to the operand's type: C
+// promotes a narrow operand to `int` before complementing it.
+lower_bit_not = (
+    be   :: CBackend,
+    u    : Unary,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
+    operand = be.ty_of(u.operand, ctx, want).try();
+    // A literal operand complements at the expected width.
+    ty   = be.usable(operand).match({ true => operand, false => want });
+    prim = be.check.prim_name(ty);
+    be.need_helpers(prim, "not").try();
+    out.fmt("zg_not_{prim}(").try();
+    expr(be, u.operand, ctx, ty, out).try();
+    out.add(")")
 }
 
 wrap_unary = (
@@ -188,7 +208,7 @@ binary_type* = (be :: CBackend, b: Binary, ctx: Ctx, want: TyId)
 operand_answer = (be :: CBackend, b: Binary, ctx: Ctx, want: TyId)
                  Res<TyId, AllocError> {
     lhs = be.ty_of(b.lhs, ctx, want).try();
-    be.usable(lhs).match({
+    (be.usable(lhs) || b.op.is_shift()).match({
         true  => Ok(lhs),
         false => be.ty_of(b.rhs, ctx, want),
     })
@@ -288,7 +308,11 @@ operand_type = (be :: CBackend, b: Binary, ctx: Ctx, want: TyId)
     lhs = sub(be, be.check.type_of(b.lhs, ctx).try()).try();
     be.usable(lhs).match({
         true  => Ok(lhs),
-        false => be.rhs_type(b, ctx, want),
+        // A literal shifted word is the expected type, never its count's.
+        false => b.op.is_shift().match({
+            true  => Ok(want),
+            false => be.rhs_type(b, ctx, want),
+        }),
     })
 }
 
@@ -419,16 +443,22 @@ c_op* = (op: BinOp) str {
         Equal => "==", NotEqual => "!=",
         Less => "<", LessEq => "<=", Greater => ">", GreaterEq => ">=",
         And => "&&", Or => "||",
+        BitAnd => "&", BitOr => "|", BitXor => "^",
+        ShiftLeft => "<<", ShiftRight => ">>",
     })
 }
 
 // The helper an operator goes through. `+ - *` trap, `/ %` trap on a
-// zero divisor and on `MIN / -1`, and the wrapping forms do neither.
+// zero divisor and on `MIN / -1`, and the wrapping forms do neither. Bit
+// operations never trap; their helpers convert back to the word type and
+// shifts guard counts at or above the width.
 helper_stem* = (op: BinOp) str {
     op.match({
         Add => "add", Sub => "sub", Mul => "mul",
         Div => "div", Rem => "mod",
         AddWrap => "wadd", SubWrap => "wsub", MulWrap => "wmul",
+        BitAnd => "and", BitOr => "or", BitXor => "xor",
+        ShiftLeft => "shl", ShiftRight => "shr",
         _ => "",
     })
 }
@@ -436,7 +466,7 @@ helper_stem* = (op: BinOp) str {
 traps* = (op: BinOp) bool {
     op.match({
         AddWrap => false, SubWrap => false, MulWrap => false,
-        _ => true,
+        _ => !op.is_bitwise(),
     })
 }
 
@@ -469,7 +499,7 @@ close_helper = (
     out     :: String
 ) Res<(), AllocError> {
     out.add(", ").try();
-    expr(be, b.rhs, ctx, operand, out).try();
+    expr(be, b.rhs, ctx, be.rhs_want(b, ctx, operand).try(), out).try();
     // `.match` and not `.then`: a `.then` closure capturing more than
     // one of its enclosing parameters is inlined with the receiver
     // substituted into the wrong argument slot, which `cc` catches.
@@ -479,6 +509,24 @@ close_helper = (
     }).try();
     out.add(")").try();
     Ok(());
+}
+
+// A shift's count keeps its own unsigned type whatever word it moves; a
+// literal count is a `usize`.
+rhs_want = (be :: CBackend, b: Binary, ctx: Ctx, operand: TyId)
+           Res<TyId, AllocError> {
+    b.op.is_shift().match({
+        true  => be.count_type(b, ctx),
+        false => Ok(operand),
+    })
+}
+
+count_type = (be :: CBackend, b: Binary, ctx: Ctx) Res<TyId, AllocError> {
+    count = sub(be, be.check.type_of(b.rhs, ctx).try()).try();
+    be.usable(count).match({
+        true  => Ok(count),
+        false => be.check.types.prim("usize"),
+    })
 }
 
 write_trap_args = (be :: CBackend, node: Expr, b: Binary, out :: String)

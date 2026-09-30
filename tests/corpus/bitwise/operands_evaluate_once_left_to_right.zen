@@ -1,0 +1,29 @@
+// Each operand is evaluated exactly once, left before right, including a
+// shift's count, which the guarded lowering reads twice.
+step = (trace :: u64, digit: u64, value: u64) u64 {
+    trace = trace * 10 + digit;
+    value
+}
+
+count = (trace :: u64, digit: u64, value: usize) usize {
+    trace = trace * 10 + digit;
+    value
+}
+
+main = () {
+    trace: u64 ::= 0;
+    both = step(trace, 1, 12) | step(trace, 2, 3);
+    println("or: {} {}", both, trace);
+
+    trace = 0;
+    moved = step(trace, 1, 1) << count(trace, 2, 70);
+    println("shl: {} {}", moved, trace);
+
+    trace = 0;
+    low   = step(trace, 1, 256) >> count(trace, 2, 4);
+    println("shr: {} {}", low, trace);
+
+    trace   = 0;
+    flipped = ~step(trace, 3, 0) ^ step(trace, 4, 1);
+    println("not: {} {}", flipped, trace);
+}

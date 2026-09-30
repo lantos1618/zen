@@ -1,0 +1,38 @@
+// `& | ^ ~` on every unsigned width, with the high bit set on both sides so
+// a sign-extending or promoting backend shows up in the output.
+main = () {
+    a8: u8 = 0xF0;
+    b8: u8 = 0xCC;
+    z8: u8 = 0;
+    println("u8: {} {} {} {} {}", a8 & b8, a8 | b8, a8 ^ b8, ~a8, ~z8);
+
+    a16: u16 = 0xFF00;
+    b16: u16 = 0x8FF1;
+    z16: u16 = 0;
+    println("u16: {} {} {} {} {}", a16 & b16, a16 | b16, a16 ^ b16, ~a16, ~z16);
+
+    a32: u32 = 0xF0000000;
+    b32: u32 = 0x80000001;
+    z32: u32 = 0;
+    println("u32: {} {} {} {} {}", a32 & b32, a32 | b32, a32 ^ b32, ~a32, ~z32);
+
+    a64: u64 = 0xF000000000000000;
+    b64: u64 = 0x8000000000000001;
+    z64: u64 = 0;
+    println("u64: {} {} {} {} {}", a64 & b64, a64 | b64, a64 ^ b64, ~a64, ~z64);
+
+    aw: usize = 0xF000000000000000;
+    bw: usize = 0x8000000000000001;
+    zw: usize = 0;
+    println("usize: {} {} {} {} {}", aw & bw, aw | bw, aw ^ bw, ~aw, ~zw);
+
+    // A literal takes the other operand's type.
+    println("literal: {} {} {}", a8 & 0x3C, 0x0F | a8, a32 ^ 1);
+
+    // Chains of one associative operator need no parentheses.
+    c8: u8 = 0x0F;
+    println("chain: {} {} {}", a8 | b8 | c8, a8 & b8 & c8, a8 ^ b8 ^ c8);
+
+    // `~` binds like the other prefix operators.
+    println("prefix: {} {}", ~a8 & b8, ~(a8 & b8));
+}

@@ -1,0 +1,4 @@
+main = () {
+    flipped = ~0;
+    println("{}", flipped);
+}

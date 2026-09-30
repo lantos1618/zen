@@ -20,6 +20,13 @@ module_named_by* = (c :: Checker, ty: TyId) Res<usize> {
 }
 
 alias_module* = (c :: Checker, id: DeclId) Res<usize> {
+    c.world.module_alias(id).match({
+        Ok(mi) => Ok(mi),
+        None   => c.written_alias_module(id),
+    })
+}
+
+written_alias_module = (c :: Checker, id: DeclId) Res<usize> {
     decl_at(c.tree, id).match({
         None  => None,
         Ok(x) => x.kind.match({

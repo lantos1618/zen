@@ -35,6 +35,7 @@ SemaFault* =
     // resolution
       UndefinedName(NameFault)         // no binding of this name is in scope
     | NotExported(ExportFault)         // the name exists; `*` does not
+    | ImportShadowed(PairFault)        // imported and declared in one module
     | NotWritable(ExportFault)         // `*` on a field grants reading, never writing
     | ModuleNotAValue(ExportFault)     // a module is a namespace, not a value
     | NoSuchField(TypeFault)           // the type has no member of that name
@@ -151,6 +152,7 @@ message* = (fault: SemaFault) str {
         NotExported(_)               => "a name crosses a module boundary only with `*`",
         NotWritable(_)               => "`*` on a field means readable outside the module: mutation goes through exported methods",
         ModuleNotAValue(_)           => "a module is only usable qualified",
+        ImportShadowed(_)            => "imported and also declared in this module: a name has one meaning per module, so rename the declaration or bind the import under another name (`other = m.name`)",
         NoSuchField(_)               => "a member is resolved on the receiver's type, so a name declared on another type is not a candidate",
         MemberNeedsValue(_)          => "a union's member is the type it names, so the member alone is not a value",
         TypeMismatch(_)              => "type mismatch",
@@ -321,6 +323,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
 
         DuplicateSignature(f)        => out.write_pair(f),
         DuplicateField(f)            => out.write_pair(f),
+        ImportShadowed(f)            => out.write_pair(f),
         AmbiguousOverload(f)         => out.write_pair(f),
         AmbiguousMember(f)           => out.write_pair(f),
     }).try();

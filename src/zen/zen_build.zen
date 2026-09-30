@@ -13,8 +13,8 @@
 { FsError, fs_message } = std.env
 
 { Ast } = std.ast.ast_arena
-{ Module, Alias, Named } = std.ast.ast_node
-{ Pos, Span, QualifiedName } = std.ast.ast_span
+{ Module, Alias, Named, Import } = std.ast.ast_node
+{ Pos, Span, QualifiedName, Ident } = std.ast.ast_span
 
 { message } = std.lex.lex
 { Diag, diag } = std.parse.parse_diag
@@ -291,7 +291,10 @@ Build* = {
             m.decls.get(self.permute.index(m.decls.len, i)).match({
                 None  => Ok(()),
                 Ok(d) => d.kind.match({
-                    Import(im) => self.enqueue(im.module, seen),
+                    Import(im) => (im.names.len == 1).match({
+                        true  => self.enqueue_named(im, seen),
+                        false => self.enqueue(im.module, seen),
+                    }),
                     Alias(al)  => self.alias_of(al, seen),
                     _          => Ok(()),
                 }),
@@ -305,6 +308,67 @@ Build* = {
         self.library(q.segment_at(0)).match({
             None     => self.enqueue_source(q, seen),
             Ok(root) => self.enqueue_library(root, q, seen),
+        })
+    }
+
+    // `x = a.b.c` binds the module `a.b.c` when there is one, and otherwise
+    // the item `c` of module `a.b`. Sema prefers an exported item, so an
+    // existing `a.b` is still loaded; it is only required when `a.b.c` is
+    // not a module.
+    enqueue_named = (self :: @Self, im: Import, seen :: Vec<Unit>)
+                    Res<(), AllocError> {
+        whole = self.named_path(im).try();
+        self.library(whole.segment_at(0)).match({
+            Ok(_) => self.enqueue(im.module, seen),
+            None  => self.source_module(whole).try().match({
+                None     => self.enqueue(im.module, seen),
+                Ok(path) => {
+                    self.queue(path, seen).try();
+                    self.folder_root(path, seen).try();
+                    self.probe_module(im.module, seen)
+                },
+            }),
+        })
+    }
+
+    // The import's module path with the bound name's source appended.
+    named_path = (self :: @Self, im: Import) Res<QualifiedName, AllocError> {
+        segments ::= self.alloc.Vec<Ident>();
+        im.module.segments.loop((h, s) { segments.add(s).try() });
+        im.names.get(0).match({
+            None  => Ok(()),
+            Ok(n) => segments.add(n.source),
+        }).try();
+        Ok(QualifiedName(segments: segments, span: im.module.span))
+    }
+
+    // The source file of module `q`, flat or folder form, when it exists.
+    source_module = (self :: @Self, q: QualifiedName)
+                    Res<Res<str>, AllocError> {
+        empty = q.segments.find((s) { s.text.is_empty() }).match({
+            Ok(_) => true,
+            None  => false,
+        });
+        empty.match({
+            true  => Ok(None),
+            false => {
+                base   = self.import_root(q);
+                flat   = joined(self.alloc, base, q, false).try();
+                folder = joined(self.alloc, base, q, true).try();
+                Ok(self.import_path(flat, folder))
+            },
+        })
+    }
+
+    // Load module `q` if it exists, silently otherwise.
+    probe_module = (self :: @Self, q: QualifiedName, seen :: Vec<Unit>)
+                   Res<(), AllocError> {
+        self.source_module(q).try().match({
+            None     => Ok(()),
+            Ok(path) => {
+                self.queue(path, seen).try();
+                self.folder_root(path, seen)
+            },
         })
     }
 

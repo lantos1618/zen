@@ -1,5 +1,5 @@
 { Ast, Module, Decl, Ident, Span, QualifiedName, Member } = std.ast
-{ Import, Impl, Enum } = std.ast
+{ Import, ImportName, Impl, Enum } = std.ast
 { Alloc, AllocError, Ptr } = std.mem
 { Vec, Map } = std.collections
 { str, String } = std.text
@@ -57,10 +57,16 @@ World* = {
     tables :: Vec<ModuleTable>,
     exact :: Map<str, usize>,
     folders :: Map<str, usize>,
+    aliases :: Map<DeclId, usize>,
     index: Ptr<WorldIndex>,
     alloc: Alloc,
 
     count* = (self: @Self) usize { self.tables.len }
+
+    // The module a single-name import binds, when it binds a module.
+    module_alias* = (self: @Self, id: DeclId) Res<usize> {
+        self.aliases.get(id)
+    }
 
     table_at* = (self: @Self, i: usize) Res<ModuleTable> { self.tables.get(i) }
 
@@ -497,6 +503,7 @@ World* = (a: Alloc, tree: Ast) Res<World, AllocError> {
         tables: a.Vec<ModuleTable>(),
         exact: a.Map<str, usize>(),
         folders: a.Map<str, usize>(),
+        aliases: a.Map<DeclId, usize>(),
         index: slot,
         alloc: a,
     );
@@ -509,8 +516,136 @@ World* = (a: Alloc, tree: Ast) Res<World, AllocError> {
         }).try();
         module_id = module_id + 1;
     });
+    bind_module_aliases(w, index, a, tree).try();
     slot.write(0, index);
     Ok(w);
+}
+
+// A single-name import whose module exports no such item binds the module
+// its whole path names, if there is one: `shape = std.shape`. It needs
+// every table, so it runs once they all exist.
+bind_module_aliases = (w :: World, index :: WorldIndex, a: Alloc, tree: Ast)
+                      Res<(), AllocError> {
+    module_id: u32 ::= 0;
+    Range(0, tree.module_count()).loop((h, i) {
+        tree.module_at(i).match({
+            Ok(m) => bind_in_module(w, index, a, tree, m, i, module_id),
+            None  => Ok(()),
+        }).try();
+        module_id = module_id + 1;
+    });
+    Ok(());
+}
+
+bind_in_module = (
+    w     :: World,
+    index :: WorldIndex,
+    a     : Alloc,
+    tree  : Ast,
+    m     : Module,
+    i     : usize,
+    mi    : u32
+) Res<(), AllocError> {
+    decl_id: u32 ::= 0;
+    m.decls.loop((h, d) {
+        d.kind.match({
+            Import(im) => (im.names.len == 1).match({
+                true  => bind_named(
+                    w,
+                    index,
+                    a,
+                    tree,
+                    m,
+                    i,
+                    im,
+                    DeclId(module: mi, decl: decl_id)
+                ),
+                false => Ok(()),
+            }),
+            _          => Ok(()),
+        }).try();
+        decl_id = decl_id + 1;
+    });
+    Ok(());
+}
+
+bind_named = (
+    w     :: World,
+    index :: WorldIndex,
+    a     : Alloc,
+    tree  : Ast,
+    m     : Module,
+    i     : usize,
+    im    : Import,
+    id    : DeclId
+) Res<(), AllocError> {
+    im.names.get(0).match({
+        None  => Ok(()),
+        Ok(n) => {
+            path = dotted(a, im.module).try();
+            seen ::= a.Vec<usize>();
+            item = w.index_of(path).match({
+                None      => false,
+                Ok(owner) => w.exports_name(
+                    tree,
+                    owner,
+                    n.source.text,
+                    seen
+                ).try(),
+            });
+            whole ::= a.String("{}.{}", path, n.source.text).try();
+            (item == false).match({
+                false => Ok(()),
+                true  => w.index_of(whole.view()).match({
+                    None       => Ok(()),
+                    Ok(target) => bind_alias(w, index, a, m, i, n, id, target),
+                }),
+            })
+        },
+    })
+}
+
+// The binding becomes an alias definition of the module, like `sh = shape`.
+bind_alias = (
+    w      :: World,
+    index  :: WorldIndex,
+    a      : Alloc,
+    m      : Module,
+    i      : usize,
+    n      : ImportName,
+    id     : DeclId,
+    target : usize
+) Res<(), AllocError> {
+    w.tables.get(i).match({
+        None  => Ok(()),
+        Ok(t) => {
+            q ::= a.String("{}.{}", m.name, n.name.text).try();
+            def = Def(
+                name: n.name.text,
+                qname: q.view(),
+                kind: DefKind.AliasDef,
+                id: id,
+                exported: n.exported,
+                span: n.name.span,
+            );
+            defs ::= a.Vec<Def>();
+            t.defs.loop((h, d) { defs.add(d).try() });
+            defs.add(def).try();
+            at   = n.name.span.start;
+            kept = t.imports.filter(a, (b) {
+                (b.name.eq(n.name.text) && b.span.start.line == at.line
+                    && b.span.start.col == at.col) == false
+            }).try();
+            w.tables.set(i, ModuleTable(
+                name: t.name,
+                defs: defs,
+                imports: kept,
+                impls: t.impls,
+            )).match({ Ok(_) => (), None => () });
+            n.exported.then(() { index_export(index.exported, a, def).try() });
+            w.aliases.set(id, target)
+        },
+    })
 }
 
 add_module = (

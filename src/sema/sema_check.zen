@@ -8,10 +8,10 @@
 { DeclId } = sema.sema_id
 { TyId, Types, ResForm, TyRes, TyNamed, TyArray } = sema.sema_ty
 { is_integer, is_float } = sema.sema_ty
-{ World, ImportBinding } = sema.sema_def
+{ World, ImportBinding, ModuleTable } = sema.sema_def
 { module_display } = sema.sema_def
 { Diag, SemaFault, TypeFault } = sema.sema_diag
-{ ExportFault } = sema.sema_diag
+{ ExportFault, PairFault } = sema.sema_diag
 { Inst, InstEdge } = sema.sema_inst
 { DiscriminantCall } = sema.sema_discriminant
 { VariantNameCall } = sema.sema_variant_name
@@ -811,6 +811,32 @@ check_import_gate = (c :: Checker) Res<(), AllocError> {
         c.world.blocked_imports(c.tree, mi, blocked).try();
     });
     blocked.loop((h, b) { c.report_blocked(b).try() });
+    Range(0, c.world.count()).loop((h, mi) {
+        c.world.table_at(mi).match({
+            None  => Ok(()),
+            Ok(t) => c.report_shadowed(t),
+        }).try();
+    });
+    Ok(());
+}
+
+// An import and a declaration of one name in one module would each hide
+// the other, so neither wins silently.
+report_shadowed = (c :: Checker, t: ModuleTable) Res<(), AllocError> {
+    t.imports.loop((h, b) {
+        t.defs.find((d) { d.name.eq(b.name) }).match({
+            None  => Ok(()),
+            Ok(d) => c.report(
+                b.span.file,
+                b.span,
+                SemaFault.ImportShadowed(PairFault(
+                    name: b.name,
+                    first: b.span,
+                    second: d.span
+                ))
+            ),
+        }).try();
+    });
     Ok(());
 }
 

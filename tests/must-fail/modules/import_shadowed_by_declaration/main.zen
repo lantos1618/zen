@@ -1,0 +1,9 @@
+// `Alloc` is both imported and declared here. Either would hide the
+// other, so the module is rejected rather than one of them winning.
+{ Alloc } = std.mem
+
+Alloc = i32
+
+main = (env: Env) Res<i32, IoError> {
+    Ok(0);
+}

@@ -1,0 +1,2 @@
+// app's root exports nothing named shape, so `app.shape` names the module
+version* = () i32 { 1 }

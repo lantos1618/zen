@@ -113,15 +113,14 @@ digit = (c: u8) bool { c >= '0' && c <= '9' }
 // AT&T operands carry `%` register prefixes; arm64 instructions have none
 // (directives such as `.type f, %function` and comments such as
 // `; %bb.0:` aside).
-detect_isa = (body: Vec<str>) Isa {
-    body.find((line) {
+detect_isa_lines = (asm: str) Isa {
+    x86 ::= false;
+    asm.lines().loop((h, line) {
         text = line.trim().value_or(line);
-        !text.starts_with(".") && !text.starts_with(";") && !text.starts_with("#")
-            && !text.starts_with("/") && text.contains("%")
-    }).match({
-        Ok(_) => Isa.X86,
-        None  => Isa.Arm,
-    })
+        (!text.starts_with(".") && !text.starts_with(";") && !text.starts_with("#")
+            && !text.starts_with("/") && text.contains("%")).then(() { x86 = true; h.break(); });
+    });
+    x86.match({ true => Isa.X86, false => Isa.Arm })
 }
 
 X86_ARGS = [str, 6]("rdi", "rsi", "rdx", "rcx", "r8", "r9")
@@ -258,12 +257,15 @@ run_audit* = (
                 },
             });
             asm = env.fs.read(a, asm_path.view()).try();
+            // One compiler output is one ISA; a short function (a lone
+            // tail-call jmp) may not show which by itself.
+            file_isa = detect_isa_lines(asm.view());
             // What each audited function's body reads with this compiler
             // and level, for its callers' call rule.
             marked.loop((m) {
                 body = function_lines(a, asm.view(), m.symbol).try();
                 (body.len > 0).then(() {
-                    isa   = detect_isa(body);
+                    isa   = file_isa;
                     lines = parse_lines(a, isa, body).try();
                     isa.match({
                         X86 => { shapes_x86.get(m.symbol).when_ok((s) {
@@ -286,6 +288,7 @@ run_audit* = (
                     m,
                     cc,
                     level,
+                    file_isa,
                     shapes_x86,
                     shapes_arm
                 ).try();
@@ -308,6 +311,7 @@ audit_function = (
     m         : Marked,
     cc        : str,
     level     : str,
+    isa       : Isa,
     shapes_x86 : Map<str, CallShape>,
     shapes_arm : Map<str, CallShape>
 ) Res<Outcome, AuditError> {
@@ -329,7 +333,6 @@ audit_function = (
             })
         },
         false => {
-            isa     = detect_isa(body);
             lines   = parse_lines(a, isa, body).try();
             seed    = seed_of(a, isa, c, m).try();
             found   = analyze(

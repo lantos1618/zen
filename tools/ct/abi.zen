@@ -71,14 +71,17 @@ marked_functions* = (a: Alloc, c: str) Res<Vec<Marked>, AllocError> {
     Ok(out)
 }
 
-// An `inline` function's definition carries the always_inline attribute
-// (after any target attribute), and the runtime's CPU-feature helper the
-// unused attribute; their parentheses come before the parameter list, so
-// parsing reads the line without them.
+// An `inline` function's definition carries ZG_INLINE (in C from an older
+// Zen compiler, the always_inline attribute itself) after any target
+// attribute, and the runtime's CPU-feature helper the unused attribute.
+// Parsing reads the line without them: the attributes' parentheses come
+// before the parameter list, and a function forced out of line must not
+// keep always_inline.
 ALWAYS_INLINE*: str = "inline __attribute__((always_inline)) "
+ZG_INLINE: str = "ZG_INLINE "
 UNUSED: str = "__attribute__((unused)) "
 plain_definition* = (a: Alloc, line: str) Res<str, AllocError> {
-    without(a, without(a, line, ALWAYS_INLINE).try(), UNUSED)
+    without(a, without(a, without(a, line, ALWAYS_INLINE).try(), ZG_INLINE).try(), UNUSED)
 }
 
 without = (a: Alloc, line: str, attribute: str) Res<str, AllocError> {
@@ -183,8 +186,7 @@ last_identifier = (text: str) usize {
     at
 }
 
-// `static inline __attribute__((always_inline)) T` and
-// `static ZG_TARGET_AVX2 T` -> `T`.
+// `static ZG_INLINE T` and `static ZG_TARGET_AVX2 T` -> `T`.
 strip_qualifiers = (result: str) str {
     close = result.rfind(')');
     rest ::= close.match({

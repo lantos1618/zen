@@ -16,6 +16,7 @@ emit_actor_globals, write_actor_shutdown = gen.gen_c.gen_c_actor
 ctype, is_c_integer, write_zero = gen.gen_c.gen_c_type
 field_of = gen.gen_c.gen_c_type
 plain_ctx, return_type = gen.gen_c.gen_c_decl
+passes_address = gen.gen_c.gen_c_borrow
 
 emit_main* = (be :: CBackend, mi: usize, out :: Emit) Res<(), AllocError> {
     found ::= be.alloc.Vec<Def>();
@@ -51,7 +52,7 @@ write_entry = (be :: CBackend, d: Def, f: Function, out :: Emit)
     empty ::= be.alloc.Inst();
     sym_fn(call, be.check.types, be.check.world, d.qname, sig, empty).try();
     args ::= be.alloc.String().try();
-    be.write_entry_args(sig, args).try();
+    be.write_entry_args(f, sig, args).try();
     call.fmt("({})", args.view()).try();
     rows.get(0).match({
         None  => Ok(()),
@@ -99,10 +100,18 @@ add_sig = (be :: CBackend, t: TypeId, ctx: Ctx, sig :: Vec<TyId>)
 
 // Build `Env` with the argv value supplied by the C runtime. Other entry
 // parameters receive their type's zero value.
-write_entry_args = (be :: CBackend, sig: Vec<TyId>, out :: String)
-                   Res<(), AllocError> {
+write_entry_args = (
+    be  :: CBackend,
+    f   : Function,
+    sig : Vec<TyId>,
+    out :: String
+) Res<(), AllocError> {
     sig.loop((h, i, t) {
         (i > 0).then(() { out.add(", ").try() });
+        // A compound literal is an lvalue that lives until `main` returns,
+        // so a borrowed entry parameter (gen_c_borrow.zen) gets its address.
+        by_address = be.passes_address(f, i, t).try();
+        by_address.then(() { out.add("&").try() });
         be.write_entry_arg(t, out).try();
     });
     Ok(());

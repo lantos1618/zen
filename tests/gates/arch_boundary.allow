@@ -9,6 +9,7 @@
 # whose import is gone, and a count that differs from the ceiling. Adding a
 # line means a new AST/sema dependency in a backend: carry the fact in gen_ir
 # instead. Generated once from the tree at 890acb1c, sorted with LC_ALL=C.
+gen/gen_c/gen_c_actor.zen sema.sema_cand
 gen/gen_c/gen_c_actor.zen sema.sema_check
 gen/gen_c/gen_c_actor.zen sema.sema_copy
 gen/gen_c/gen_c_actor.zen sema.sema_def
@@ -40,6 +41,10 @@ gen/gen_c/gen_c_assoc.zen sema.sema_inst
 gen/gen_c/gen_c_assoc.zen sema.sema_module
 gen/gen_c/gen_c_assoc.zen sema.sema_ty
 gen/gen_c/gen_c_assoc.zen std.ast
+gen/gen_c/gen_c_borrow.zen sema.sema_check
+gen/gen_c/gen_c_borrow.zen sema.sema_def
+gen/gen_c/gen_c_borrow.zen sema.sema_ty
+gen/gen_c/gen_c_borrow.zen std.ast
 gen/gen_c/gen_c_bound.zen sema.sema_check
 gen/gen_c/gen_c_bound.zen sema.sema_denote
 gen/gen_c/gen_c_bound.zen sema.sema_inst
@@ -294,6 +299,9 @@ gen/gen_c/gen_c_stmt.zen sema.sema_place
 gen/gen_c/gen_c_stmt.zen sema.sema_ty
 gen/gen_c/gen_c_stmt.zen sema.sema_type
 gen/gen_c/gen_c_stmt.zen std.ast
+gen/gen_c/gen_c_table.zen sema.sema_check
+gen/gen_c/gen_c_table.zen sema.sema_ty
+gen/gen_c/gen_c_table.zen std.ast
 gen/gen_c/gen_c_threads.zen sema.sema_check
 gen/gen_c/gen_c_threads.zen sema.sema_denote
 gen/gen_c/gen_c_threads.zen sema.sema_ty

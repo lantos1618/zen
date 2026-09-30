@@ -29,6 +29,7 @@ Dest, deliver = gen.gen_c.gen_c_stmt
 res_type_of, write_c_literal = gen.gen_c.gen_c_expr
 is_str = gen.gen_c.gen_c_read
 write_position = gen.gen_c.gen_c_op
+lower_table = gen.gen_c.gen_c_table
 
 // One point in the pattern walk. Conditions and bindings traverse the
 // same type at the same C place; carrying that pair on the receiver keeps
@@ -311,6 +312,21 @@ PatternSite = {
 // match
 
 lower_match* = (
+    be   :: CBackend,
+    node : Expr,
+    m    : Match,
+    ctx  : Ctx,
+    ty   : TyId,
+    dst  : Dest
+) Res<(), AllocError> {
+    // A dense integer table of literals is one load (gen_c_table.zen).
+    be.lower_table(m, ctx, ty, dst).try().match({
+        true  => Ok(()),
+        false => be.lower_arms(node, m, ctx, ty, dst),
+    })
+}
+
+lower_arms = (
     be   :: CBackend,
     node : Expr,
     m    : Match,

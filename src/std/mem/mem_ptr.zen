@@ -21,6 +21,19 @@ Ptr*<T> = {
     // Copy `count` elements; source and destination may not overlap.
     copy_from* = (self: @Self, src: Ptr<T>, count: usize) ()
 
+    // Fixed-width integers at a byte offset of a `Ptr<u8>`, little- or
+    // big-endian, with no alignment requirement. Each is one machine load or
+    // store where the target allows it — what a byte-at-a-time loop with
+    // `* 256` arithmetic means, without the loop or its overflow checks.
+    read_le32* = (self: @Self, index: usize) u32
+    read_be32* = (self: @Self, index: usize) u32
+    read_le64* = (self: @Self, index: usize) u64
+    read_be64* = (self: @Self, index: usize) u64
+    write_le32* = (self: @Self, index: usize, value: u32) ()
+    write_be32* = (self: @Self, index: usize, value: u32) ()
+    write_le64* = (self: @Self, index: usize, value: u64) ()
+    write_be64* = (self: @Self, index: usize, value: u64) ()
+
     to* = <U>(self: @Self) Ptr<U>
 
     is_null* = (self: @Self) bool

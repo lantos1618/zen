@@ -1,0 +1,270 @@
+// Which immutable parameters a C function receives by address, and when a
+// call may hand the callee the caller's own storage instead of a copy.
+//
+// A `:` parameter is a borrow the callee can never write ("passing a Drop
+// value to a parameter is a borrow, not a move" — gen_c_own.zen), yet it
+// used to be a C by-value parameter, and C copies a by-value aggregate at
+// every call. Both x86-64 and AArch64 already pass anything over 16 bytes
+// through memory, so the copy bought nothing but its own cost: the
+// compiler's `be: CBackend` (9.5 KB) and `c: Checker` (5.7 KB) receivers
+// were memmoved on every call, a quarter of self-compilation time.
+//
+// So a WIDE `:` parameter is declared `const T *` and every read of it is a
+// dereference — the `LocalSlot.by_ref` rule a `::` parameter already uses.
+// Narrow values (ids, `str`, `Ptr`, small records) stay in registers.
+//
+// What the caller has to guarantee is that the storage it lends does not
+// change while the callee runs, because a by-value copy would not have.
+// `stays_put` is that proof, and when it fails the argument is copied into
+// a temporary and the temporary's address is passed — the old cost, never
+// a different answer.
+
+ExprId, Function = std.ast
+AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+TyId, TyNamed, TyRes, is_failure = sema.sema_ty
+Ctx = sema.sema_check
+decl_at = sema.sema_def
+CBackend = gen.gen_c.gen_c_state
+enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
+is_ptr_named, is_scope_named, is_native_record = gen.gen_c.gen_c_type
+is_foreign_opaque, decl_ctx, decl_inst = gen.gen_c.gen_c_type
+field_type, variant_type = gen.gen_c.gen_c_type
+is_fat, is_place, spill_address = gen.gen_c.gen_c_fat
+value_held, holdable = gen.gen_c.gen_c_expr
+
+// Larger than two machine words: what the C ABIs pass through memory.
+WIDE_BYTES: usize = 16
+
+// Whether parameter `i` of `f`, at its concrete type `ty`, is received by
+// address although it is `:`. Only a function with a body is lowered by
+// this backend; a bodyless one is foreign and keeps the C signature its
+// header declares.
+borrows* = (be :: CBackend, f: Function, i: usize, ty: TyId)
+           Res<bool, AllocError> {
+    lowered = f.body.match({ Ok(_) => true, None => false });
+    f.params.get(i).match({
+        None  => Ok(false),
+        Ok(p) => (lowered && (p.mutable == false)).match({
+            false => Ok(false),
+            true  => be.wide(ty),
+        }),
+    })
+}
+
+// Every parameter the callee receives as an address: `::` ones, which it
+// may write, and wide `:` ones, which it only reads.
+passes_address* = (be :: CBackend, f: Function, i: usize, ty: TyId)
+                  Res<bool, AllocError> {
+    f.params.get(i).match({
+        None  => Ok(false),
+        Ok(p) => p.mutable.match({
+            true  => Ok(true),
+            false => be.borrows(f, i, ty),
+        }),
+    })
+}
+
+// The argument for a borrowed parameter: the address of the caller's own
+// storage when nothing can change it during the call, otherwise the
+// address of a copy. A held argument (evaluation order, see `holds`) is
+// already a fresh temporary, which nothing else can reach.
+write_borrow* = (
+    be    :: CBackend,
+    value : ExprId,
+    hold  : bool,
+    f     : Function,
+    ctx   : Ctx,
+    want  : TyId,
+    out   :: String
+) Res<(), AllocError> {
+    code ::= be.alloc.String().try();
+    be.value_held(value, ctx, want, hold, code).try();
+    held = hold && be.holdable(value);
+    (is_place(code.view()) && (held || be.stays_put(value, f))).match({
+        true  => out.fmt("&({})", code.view()),
+        false => be.spill_address(code.view(), want, out),
+    })
+}
+
+// A place rooted in a binding that cannot be written while `f` runs.
+// An immutable binding cannot be written at all: Zen offers no address of
+// a local except a `::` argument, which only a mutable binding can supply,
+// and a `Ptr` only ever addresses allocated memory. A mutable binding can
+// be written during the call only through a `::` argument of that same
+// call; closures handed to a function are inlined rather than called, and
+// deferred ones run at scope exit, not inside the callee.
+stays_put = (be :: CBackend, value: ExprId, f: Function) bool {
+    be.place_root(value).match({
+        None     => false,
+        Ok(name) => be.check.lookup(name).match({
+            None  => false,
+            Ok(b) => (b.mutable == false) || (writes_through(f) == false),
+        }),
+    })
+}
+
+// A `::` argument rooted in a borrowed parameter. Sema accepts lending a
+// `:` binding to a `::` parameter, and while the parameter was a by-value
+// copy the callee's writes landed in that copy and stayed visible to the
+// rest of this body. Borrowed storage belongs to the caller, so the lend is
+// recorded and `gen_c_decl.own_lent` gives the parameter its own copy.
+note_lend* = (be :: CBackend, value: ExprId) Res<(), AllocError> {
+    be.place_root(value).match({
+        None     => Ok(()),
+        Ok(name) => be.slot_of(name).match({
+            None  => Ok(()),
+            Ok(s) => s.borrowed.match({
+                true  => be.note_lent(name),
+                false => Ok(()),
+            }),
+        }),
+    })
+}
+
+writes_through = (f: Function) bool {
+    f.params.find((p) { p.mutable }).match({ Ok(_) => true, None => false })
+}
+
+// The binding a field path starts from: `a`, `a.b.c`, `(a).b`. Anything
+// else — a call, an index, an operator — is not a stable place.
+place_root = (be :: CBackend, value: ExprId) Res<str> {
+    be.tree.expr_at(value).kind.match({
+        Name(n)   => Ok(n.text),
+        Access(a) => be.place_root(a.base),
+        Paren(p)  => be.place_root(p.inner),
+        _         => None,
+    })
+}
+
+// width
+
+// Only aggregates this backend lays out itself are borrowed. A `Ptr`, a
+// `Scope` and a bound (fat) value are already addresses; a header-owned
+// record or foreign opaque keeps the representation its C header chose.
+wide* = (be :: CBackend, ty: TyId) Res<bool, AllocError> {
+    be.borrowable(ty).match({
+        false => Ok(false),
+        true  => Ok(be.width(ty).try() > WIDE_BYTES),
+    })
+}
+
+borrowable = (be :: CBackend, ty: TyId) bool {
+    be.types().at(ty).match({
+        Named(n) => (is_ptr_named(n) || is_scope_named(n)
+            || be.is_fat(ty) || be.is_native_record(ty)
+            || be.is_foreign_opaque(ty)) == false,
+        Res(_)   => true,
+        Union(_) => true,
+        Array(_) => true,
+        _        => false,
+    })
+}
+
+// An estimate of the C size, without padding: good enough to tell an id
+// from a record, and deterministic, which is all the signature needs —
+// caller and callee ask the same question and get the same answer.
+width = (be :: CBackend, ty: TyId) Res<usize, AllocError> {
+    be.known_width(ty).match({
+        Ok(n) => Ok(n),
+        None  => {
+            n = be.measure(ty).try();
+            be.remember_width(ty, n).try();
+            Ok(n)
+        },
+    })
+}
+
+measure = (be :: CBackend, ty: TyId) Res<usize, AllocError> {
+    be.types().at(ty).match({
+        Prim(p)  => Ok(prim_width(p.name)),
+        Named(n) => be.named_width(ty, n),
+        Res(r)   => be.res_width(r),
+        Union(u) => Ok(TAG_BYTES + be.widest(u.members).try()),
+        Array(a) => Ok(a.count * be.width(a.elem).try()),
+        _        => Ok(8),
+    })
+}
+
+// The `int32_t zg_tag` in front of every tagged union, rounded to the
+// word its payload is usually aligned to.
+TAG_BYTES: usize = 8
+
+prim_width = (name: str) usize {
+    name.match({
+        "()"  => 0,
+        "str" => 16,
+        _     => name.is_in([
+            "u8", "i8", "bool", "c_char", "c_schar", "c_uchar"
+        ]).match({
+            true  => 1,
+            false => name.is_in(["u16", "i16", "c_short", "c_ushort"]).match({
+                true  => 2,
+                false => name.is_in([
+                    "u32", "i32", "f32", "c_int", "c_uint"
+                ]).match({
+                    true  => 4,
+                    false => 8,
+                }),
+            }),
+        }),
+    })
+}
+
+res_width = (be :: CBackend, r: TyRes) Res<usize, AllocError> {
+    value = be.width(r.value).try();
+    error = is_failure(r.form).match({
+        true  => be.width(r.error).try(),
+        false => 0,
+    });
+    Ok(TAG_BYTES + larger(value, error))
+}
+
+larger = (a: usize, b: usize) usize { (a > b).match({ true => a, false => b }) }
+
+widest = (be :: CBackend, members: Vec<TyId>) Res<usize, AllocError> {
+    most ::= 0;
+    members.loop((h, m) { most = larger(most, be.width(m).try()); });
+    Ok(most)
+}
+
+named_width = (be :: CBackend, ty: TyId, n: TyNamed)
+              Res<usize, AllocError> {
+    (is_ptr_named(n) || is_scope_named(n)).match({
+        true  => Ok(8),
+        false => decl_at(be.tree, n.decl).match({
+            None  => Ok(8),
+            Ok(d) => {
+                ctx  = be.decl_ctx(n);
+                inst = be.decl_inst(n).try();
+                mark = be.enter_struct_tparams(n.decl).try();
+                total ::= 0;
+                d.kind.match({
+                    Struct(s) => s.members.loop((h, m) {
+                        be.field_type(m, ctx, inst).match({
+                            None  => (),
+                            Ok(t) => { total = total + be.width(t).try(); },
+                        });
+                    }),
+                    Enum(e)   => {
+                        most ::= 0;
+                        e.variants.loop((h, v) {
+                            variant_type(be, n, v, ctx, inst).match({
+                                None  => (),
+                                Ok(t) => { most = larger(
+                                    most,
+                                    be.width(t).try()
+                                ); },
+                            });
+                        });
+                        total = TAG_BYTES + most;
+                    },
+                    _         => { total = 8; },
+                });
+                be.leave_tparams(mark).try();
+                Ok(total)
+            },
+        }),
+    })
+}

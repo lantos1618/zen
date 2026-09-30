@@ -254,6 +254,8 @@ write_env_field = (be :: CBackend, s: LocalSlot, text :: String)
     text.add("    ").try();
     cname ::= be.alloc.String().try();
     sym_local(cname, s.name, s.index).try();
+    // A borrowed parameter is the caller's storage: its address stays const.
+    s.borrowed.then(() { text.add("const ").try() });
     s.by_ref.match({
         false => be.declarator(s.ty, cname.view(), text),
         true  => be.ref_field(s.ty, cname.view(), text),
@@ -346,6 +348,7 @@ write_unpack_one = (be :: CBackend, s: LocalSlot) Res<(), AllocError> {
     line  ::= be.alloc.String().try();
     cname ::= be.alloc.String().try();
     sym_local(cname, s.name, s.index).try();
+    s.borrowed.then(() { line.add("const ").try() });
     s.by_ref.match({
         false => be.declarator(s.ty, cname.view(), line),
         true  => be.ref_field(s.ty, cname.view(), line),

@@ -1,0 +1,22 @@
+// A wide `:` parameter is received by address (gen_c_borrow.zen), yet it
+// keeps the meaning of a by-value parameter: lending it to a `::` parameter
+// writes this call's own copy, never the caller's, and a later read sees
+// the write. Reading a caller's mutable binding while a `::` argument of
+// the same call could change it passes a copy.
+Big = { a :: u64, b :: u64, c :: u64 }
+bump = (x :: Big) { x.a = x.a + 1; }
+lend = (x: Big) u64 { bump(x); x.a }
+lend_method = (x: Big) u64 { x.bump(); x.a }
+peek = (x: Big) u64 { x.a + x.b + x.c }
+peek_after = (x: Big, y :: Big) u64 { y.a = 100; x.a }
+nested = (x: Big) u64 { peek(x) + lend(x) + x.a }
+main = () {
+    b ::= Big(a: 1, b: 2, c: 3);
+    println("{}", lend(b));
+    println("{}", lend_method(b));
+    println("{}", b.a);
+    println("{}", peek(b));
+    println("{}", peek_after(b, b));
+    println("{}", b.a);
+    println("{}", nested(b));
+}

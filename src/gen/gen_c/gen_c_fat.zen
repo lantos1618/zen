@@ -28,6 +28,7 @@ ty_of = gen.gen_c.gen_c_expr
 init_temp = gen.gen_c.gen_c_flow
 Site, site_of, member_at = gen.gen_c.gen_c_member
 impl_member, bodied_fn = gen.gen_c.gen_c_impl
+borrows, passes_address = gen.gen_c.gen_c_borrow
 write_cast = gen.gen_c.gen_c_bound
 
 // which structs these are
@@ -524,7 +525,8 @@ thunk_param* = (be :: CBackend, p: TyId, stem: str, i: usize, out :: String)
 
 // `self :: @Self` takes the receiver by reference, so the shim hands
 // the pointer straight through; `self: @Self` takes it by value and the
-// shim dereferences. Every `Alloc` member is `:` — an allocator is a
+// shim dereferences, unless it is wide enough to be borrowed
+// (gen_c_borrow.zen), when the pointer goes through again. Every `Alloc` member is `:` — an allocator is a
 // handle and allocating never writes the handle's own bytes — and the
 // rule is read off the impl rather than assumed.
 thunk_body = (
@@ -540,7 +542,7 @@ thunk_body = (
     call ::= be.alloc.String().try();
     call.fmt("{sym}(").try();
     be.thunk_recv(cty, f, call).try();
-    s.params.loop((h, i, p) { be.thunk_arg(s, sig, i, call).try() });
+    s.params.loop((h, i, p) { be.thunk_arg(s, f, sig, i, call).try() });
     call.add(")").try();
     out.add("    ").try();
     be.is_unit(s.ret).match({
@@ -552,21 +554,19 @@ thunk_body = (
 
 thunk_recv = (be :: CBackend, cty: TyId, f: Function, out :: String)
              Res<(), AllocError> {
-    recv_by_ref(f).match({
+    // A borrowed receiver (gen_c_borrow.zen) wants the address too.
+    by_address = be.passes_address(f, 0, cty).try();
+    by_address.match({
         true  => out.add("("),
         false => out.add("(*("),
     }).try();
     be.ctype(cty, out).try();
     out.add(" *)zg_self").try();
-    recv_by_ref(f).match({
+    by_address.match({
         true  => Ok(()),
         false => out.add(")"),
     }).try();
     Ok(());
-}
-
-recv_by_ref = (f: Function) bool {
-    f.params.get(0).match({ Ok(p) => p.mutable, None => false })
 }
 
 // A count beside an erased pointer is an element count, but the impl
@@ -576,11 +576,16 @@ recv_by_ref = (f: Function) bool {
 thunk_arg = (
     be  :: CBackend,
     s   : Slot,
+    f   : Function,
     sig : Vec<TyId>,
     i   : usize,
     out :: String
 ) Res<(), AllocError> {
     out.add(", ").try();
+    // The shim's own parameter is a by-value copy, so lending its
+    // address to a borrowing impl is always safe.
+    want = sig.get(i + 1).match({ Ok(t) => t, None => TyId(index: 0) });
+    be.borrows(f, i + 1, want).try().then(() { out.add("&").try() });
     nm ::= be.alloc.String().try();
     sym_gen(nm, "a", i).try();
     be.scales(s, i).match({
@@ -689,7 +694,7 @@ write_amp = (code: str, out :: String) Res<(), AllocError> {
     out.fmt("&({code})")
 }
 
-spill_address = (be :: CBackend, code: str, cty: TyId, out :: String)
+spill_address* = (be :: CBackend, code: str, cty: TyId, out :: String)
                 Res<(), AllocError> {
     tmp ::= be.init_temp(cty, "t", code).try();
     out.fmt("&{}", tmp.view())
@@ -700,7 +705,7 @@ spill_address = (be :: CBackend, code: str, cty: TyId, out :: String)
 // recognised by an open paren following a name, which `(*p).x` is not.
 // Conservative in the safe direction: unrecognised text gets a
 // temporary, correct at the cost of one copy.
-is_place = (code: str) bool {
+is_place* = (code: str) bool {
     (code.len > 0) && place_bytes(code) && (has_call(code) == false)
 }
 

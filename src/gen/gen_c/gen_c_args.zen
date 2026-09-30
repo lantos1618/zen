@@ -24,6 +24,7 @@ write_none, write_zero, ctype = gen.gen_c.gen_c_type
 enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
 sym_member, sym_variant, RES_PATH = gen.gen_name
 unsupported = gen.gen_c.gen_c_report
+wide = gen.gen_c.gen_c_borrow
 
 ARGS_MODULE: str = "std.env.env_args"
 
@@ -96,6 +97,7 @@ args_named = (
                     dst: be.fresh_name("args").try(),
                     value: be.fresh_name("args_value").try(),
                     envv: be.fresh_name("args_env").try(),
+                    env_ty: rty,
                     mask: be.fresh_name("args_mask").try(),
                     done: be.next_tmp(),
                     slots: be.alloc.Vec<Slot>()
@@ -122,6 +124,7 @@ ArgsLower = {
     dst:       String,
     value:     String,
     envv:      String,
+    env_ty:    TyId,
     mask:      String,
     done:      usize,
     slots ::   Vec<Slot>,
@@ -199,13 +202,22 @@ ArgsLower = {
         Ok(())
     }
 
+    // Every std.env.env_args helper takes `env: Env` first. A wide `:`
+    // parameter is borrowed (gen_c_borrow.zen), and the temporary this
+    // lowering declared is the storage lent.
+    write_env = (self: @Self, be :: CBackend, out :: String)
+                Res<(), AllocError> {
+        be.wide(self.env_ty).try().then(() { out.add("&").try() });
+        out.add(self.envv.view())
+    }
+
     // Pass one: every flag and variable, claiming argv slots as it goes.
     flags = (self: @Self, be :: CBackend) Res<(), AllocError> {
         self.slots.loop((h, slot) {
             flag = be.flag_of(slot.name).try();
             name = be.env_of(slot.name).try();
             args ::= be.alloc.String().try();
-            args.add(self.envv.view()).try();
+            self.write_env(be, args).try();
             args.add(", ").try();
             be.lit(flag.view(), args).try();
             args.add(", ").try();
@@ -222,7 +234,7 @@ ArgsLower = {
                 ).try(),
             });
             claim ::= be.alloc.String().try();
-            claim.add(self.envv.view()).try();
+            self.write_env(be, claim).try();
             claim.add(", ").try();
             claim.add(self.mask.view()).try();
             claim.add(", ").try();
@@ -248,7 +260,8 @@ ArgsLower = {
                  Res<(), AllocError> {
         be.open_absent(slot.raw.view()).try();
         args ::= be.alloc.String().try();
-        args.fmt("{}, {}", self.envv.view(), self.mask.view()).try();
+        self.write_env(be, args).try();
+        args.fmt(", {}", self.mask.view()).try();
         be.call_into(slot.raw.view(), "word", args.view()).try();
         be.call_into(self.mask.view(), "take", args.view()).try();
         be.close()
@@ -350,6 +363,9 @@ ArgsLower = {
         got = be.fresh_name("args_got").try();
         be.declare_temp(be.helper_ret("required").try(), got.view()).try();
         args ::= be.alloc.String().try();
+        // The raw answer is a temporary this lowering owns; a borrowed
+        // `raw: Res<str>` (gen_c_borrow.zen) takes its address.
+        be.wide(be.helper_ret("text").try()).try().then(() { args.add("&").try() });
         args.add(slot.raw.view()).try();
         args.add(", ").try();
         be.lit(slot.name, args).try();
@@ -393,7 +409,8 @@ ArgsLower = {
         checked = be.fresh_name("args_end").try();
         be.declare_temp(be.helper_ret("finish").try(), checked.view()).try();
         args ::= be.alloc.String().try();
-        args.fmt("{}, {}, ", self.envv.view(), self.mask.view()).try();
+        self.write_env(be, args).try();
+        args.fmt(", {}, ", self.mask.view()).try();
         be.lit(last, args).try();
         be.call_into(checked.view(), "finish", args.view()).try();
         self.fail_unless_ok(be, checked.view())

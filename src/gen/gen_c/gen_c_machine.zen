@@ -449,13 +449,25 @@ render_primitive = (
     out     :: String
 ) Res<(), AllocError> {
     site.p.name.match({
-        "compiler_barrier" => {
+        "compiler_barrier"   => {
             // An empty asm with a memory clobber: no memory access moves
             // across it and no preceding store is treated as dead.
             be.writeln("__asm__ __volatile__(\"\" ::: \"memory\");").try();
             out.add("((void)0)")
         },
-        _                  => be.render_feature(site, held, literal, out),
+        "value_barrier"      => be.value_barrier(
+            site,
+            operand(held, 0),
+            "",
+            out
+        ),
+        "declassify_barrier" => be.value_barrier(
+            site,
+            operand(held, 0),
+            "/* zen:declassify",
+            out
+        ),
+        _                    => be.render_feature(site, held, literal, out),
     })
 }
 
@@ -485,6 +497,46 @@ render_feature = (
             }),
         }),
     })
+}
+
+// BoringSSL's value_barrier_w: an empty asm that claims to rewrite its
+// register operand. The value is unchanged, but the optimizer can no longer
+// prove anything about it (that it is 0 or 1, or came from a comparison), so
+// masks built from it are not folded back into branches or conditional
+// moves chosen by value. The operand is already a fresh temporary. A u128 is
+// passed as its two 64-bit halves, since a 128-bit "r" operand is not
+// accepted on every target. A declassification writes `/* zen:declassify
+// <register>... */` as the asm text: still no instruction, but the assembly
+// names the register whose value the program made public.
+value_barrier = (
+    be     :: CBackend,
+    site   : PrimSite,
+    held   : str,
+    marker : str,
+    out    :: String
+) Res<(), AllocError> {
+    wide     = be.check.prim_name(site.p.result).eq("u128");
+    template = marker.is_empty().match({
+        true  => "",
+        false => wide.match({ true => " %0 %1 */", false => " %0 */" }),
+    });
+    wide.match({
+        false => be.fmt(
+            "__asm__(\"{}{}\" : \"+r\"({}));\n",
+            marker,
+            template,
+            held
+        ).try(),
+        true  => be.fmt(
+            "{ uint64_t zg_lo = (uint64_t){}, zg_hi = (uint64_t)({} >> 64); __asm__(\"{}{}\" : \"+r\"(zg_lo), \"+r\"(zg_hi)); {} = ((zg_u128)zg_hi << 64) | zg_lo; }\n",
+            held,
+            held,
+            marker,
+            template,
+            held
+        ).try(),
+    });
+    out.add(held)
 }
 
 render_scalar = (

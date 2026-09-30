@@ -1,0 +1,235 @@
+// A dudect-style statistical timing test (Reparaz, Balasch and Verbauwhede,
+// "Dude, is my code constant time?", DATE 2017; no code is copied).
+//
+// The operation is timed on two classes of input, interleaved at random:
+// class 0 is one fixed input, class 1 is fresh random input. If the
+// running time does not depend on the input, the two timing distributions
+// are the same, and Welch's t statistic between them stays small however
+// many samples are taken. A leak shows as |t| growing with the sample
+// count. As in dudect, the test is also repeated on the measurements below
+// several percentiles of the first batch, because a leak confined to the
+// fast path is otherwise drowned by interrupts and cache misses in the
+// tail; the largest |t| over those tests is reported.
+//
+// Thresholds follow dudect and TVLA: |t| above 10 is a leak, below 4.5 is
+// no evidence of one, and between is inconclusive. A pass is evidence for
+// one machine, compiler and input distribution, not a proof. Run it pinned
+// to an otherwise idle core; tools/ct/timing does.
+Alloc, AllocError, Ptr = std.mem
+Rng = std.core
+sqrt = std.math
+to_i32, to_f64, truncate_u8 = std.core.num
+
+// The operation under test.
+Probe* = {
+    // Write one input of `class` (0: the fixed input, 1: a random one) to
+    // `input`, which holds the configured number of bytes.
+    prepare* = (self: @Self, class: u8, input: Ptr<u8>, rng :: Rng) ()
+
+    // Run the operation once. Keep its result observable (a volatile write
+    // to a sink), or the C compiler may delete the work being timed.
+    run* = (self: @Self, input: Ptr<u8>) ()
+}
+
+TimingConfig* = {
+    // Timed measurements in all, split between the classes at random.
+    measurements*: usize,
+    // Runs of the operation per measurement, so one reading of the
+    // monotonic clock covers several microseconds.
+    batch*: usize,
+    input_bytes*: usize,
+    seed*: u64,
+}
+
+Verdict* = | NoLeak | Inconclusive | Leak
+
+TimingResult* = {
+    max_t*: f64,
+    // Which test gave max_t: 0 is all measurements, k the k-th crop.
+    crop*: usize,
+    measurements*: usize,
+    fixed_mean_ns*: f64,
+    random_mean_ns*: f64,
+    verdict*: Verdict,
+}
+
+// Welford's running mean and variance, one per class.
+Moments = {
+    n :: f64,
+    mean :: f64,
+    m2 :: f64,
+
+    add = (self :: @Self, x: f64) {
+        self.n    = self.n + 1.0;
+        delta     = x - self.mean;
+        self.mean = self.mean + delta / self.n;
+        self.m2   = self.m2 + delta * (x - self.mean);
+    }
+
+    variance = (self: @Self) f64 {
+        (self.n > 1.0).match({ true => self.m2 / (self.n - 1.0), false => 0.0 })
+    }
+}
+
+// One Welch test over the measurements at or below `limit` nanoseconds.
+Test = {
+    limit: u64,
+    fixed :: Moments,
+    random :: Moments,
+
+    add = (self :: @Self, class: u8, ns: u64) {
+        (ns <= self.limit).then(() {
+            x = ns_f64(ns);
+            (class == 0).match({ true => self.fixed.add(x), false => self.random.add(x) });
+        });
+    }
+
+    t = (self: @Self) f64 {
+        (self.fixed.n > 10.0 && self.random.n > 10.0).match({
+            false => 0.0,
+            true  => {
+                spread = self.fixed.variance() / self.fixed.n + self.random.variance() / self.random.n;
+                (spread > 0.0).match({
+                    true  => (self.fixed.mean - self.random.mean) / sqrt(
+                        spread
+                    ),
+                    false => 0.0,
+                })
+            },
+        })
+    }
+}
+
+ns_f64 = (ns: u64) f64 { ns.to_i32().value_or(i32.MAX).to_f64() }
+
+size_f64 = (n: usize) f64 { n.to_u64().to_i32().value_or(i32.MAX).to_f64() }
+
+abs = (x: f64) f64 { (x < 0.0).match({ true => 0.0 - x, false => x }) }
+
+fresh = () Moments { Moments(n: 0.0, mean: 0.0, m2: 0.0) }
+
+// Crops at 1 - 0.5^k of the first batch's times, dudect's percentile ladder.
+CROPS: usize = 12
+
+// Measurements are taken in chunks of this many, inputs prepared first so
+// preparing them is never timed.
+CHUNK: usize = 20000
+
+measure* = <P: Probe>(env: Env, a: Alloc, probe: P, config: TimingConfig)
+           Res<TimingResult, AllocError> {
+    rng ::= Rng.seeded(config.seed);
+    chunk   = CHUNK.min(config.measurements);
+    inputs  = a.raw(chunk * config.input_bytes.max(1), 16).try();
+    classes = a.raw(chunk, 16).try();
+    times   = a.raw(chunk * 8, 16).try().to<u64>();
+    sorted  = a.raw(chunk * 8, 16).try().to<u64>();
+    tests      ::= a.Vec<Test>();
+    done       ::= 0;
+    fixed_all  ::= fresh();
+    random_all ::= fresh();
+    loop(() { done < config.measurements }, (h) {
+        n = chunk.min(config.measurements - done);
+        Range(0, n).loop((i) {
+            class = rng.below(2).truncate_u8();
+            classes.write(i, class);
+            probe.prepare(class, inputs.offset(i * config.input_bytes), rng);
+        });
+        Range(0, n).loop((i) {
+            input = inputs.offset(i * config.input_bytes);
+            start = env.clock.since_start().ns;
+            Range(0, config.batch).loop((k) { probe.run(input); });
+            times.write(i, env.clock.since_start().ns -% start);
+        });
+        // The first chunk fixes the crop limits.
+        (tests.len == 0).then(() {
+            Range(0, n).loop((i) { sorted.write(i, times.read(i)); });
+            sort(sorted, n);
+            tests.add(Test(
+                limit: u64.MAX,
+                fixed: fresh(),
+                random: fresh()
+            )).try();
+            Range(1, CROPS + 1).loop((k) {
+                // 1 - 0.5^k of the way through the sorted times.
+                keep  = n - n / pow2(k);
+                limit = sorted.read(keep.min(n - 1));
+                tests.add(Test(
+                    limit: limit,
+                    fixed: fresh(),
+                    random: fresh()
+                )).try();
+            });
+        });
+        Range(0, n).loop((i) {
+            class = classes.read(i);
+            ns    = times.read(i);
+            Range(0, tests.len).loop((k) {
+                test ::= tests.get(k).ok_or(AllocError.OutOfMemory).try();
+                test.add(class, ns);
+                tests.ptr().write(k, test);
+            });
+            (class == 0).match({ true => fixed_all.add(ns_f64(ns)), false => random_all.add(ns_f64(ns)) });
+        });
+        done = done + n;
+    });
+    best  ::= 0.0;
+    which ::= 0;
+    Range(0, tests.len).loop((k) {
+        t = abs(tests.get(k).ok_or(AllocError.OutOfMemory).try().t());
+        (t > best).then(() { best = t; which = k; });
+    });
+    per_run = size_f64(config.batch.max(1));
+    Ok(TimingResult(
+        max_t: best,
+        crop: which,
+        measurements: done,
+        fixed_mean_ns: fixed_all.mean / per_run,
+        random_mean_ns: random_all.mean / per_run,
+        verdict: (best > 10.0).match({
+            true  => Verdict.Leak,
+            false => (best > 4.5).match({ true => Verdict.Inconclusive, false => Verdict.NoLeak }),
+        })
+    ))
+}
+
+max = (
+    self  : usize,
+    other : usize
+) usize { (self > other).match({ true => self, false => other }) }
+
+pow2 = (k: usize) usize {
+    p ::= 1;
+    Range(0, k).loop((i) { p = p * 2; });
+    p
+}
+
+// Heapsort: no recursion and no extra storage.
+sort = (v: Ptr<u64>, n: usize) {
+    start ::= n / 2;
+    loop(() { start > 0 }, (h) {
+        start = start - 1;
+        sift(v, start, n);
+    });
+    end ::= n;
+    loop(() { end > 1 }, (h) {
+        end = end - 1;
+        top = v.read(0);
+        v.write(0, v.read(end));
+        v.write(end, top);
+        sift(v, 0, end);
+    });
+}
+
+sift = (v: Ptr<u64>, from: usize, n: usize) {
+    root ::= from;
+    loop((h) {
+        child ::= 2 * root + 1;
+        (child >= n).then(() { h.break(); });
+        (child + 1 < n && v.read(child) < v.read(child + 1)).then(() { child = child + 1; });
+        (v.read(root) >= v.read(child)).then(() { h.break(); });
+        swap = v.read(root);
+        v.write(root, v.read(child));
+        v.write(child, swap);
+        root = child;
+    });
+}

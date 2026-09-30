@@ -2000,3 +2000,134 @@ per feature, stored with relaxed atomics), so dispatching per call is cheap.
 32 bits of each lane into a full 64-bit product (PMULUDQ, UMULL): the
 radix-2^26 limb product of vector Poly1305. A constant rotation of u32
 lanes by 16 lowers to a 16-bit lane swap (REV32 on arm64).
+
+## Constant-time arithmetic
+
+`std.ct` is the library for code whose timing must not depend on secrets.
+A comparison returns a `Choice`, a 0/1 value that is deliberately not a
+`bool`: it cannot be matched, short-circuited or passed to `.then`, only
+combined (`and`, `or`, `xor`, `not`), spent in a select, or made public with
+`declassify_bool()`. The operations are `ct_is_zero`, `ct_eq`, `ct_ne`,
+`ct_lt` and `ct_gt` for u8, u16, u32, u64, u128 and usize; `ct_select`,
+`ct_cmov` and `ct_swap` on words and on spans of u8, u32 or u64 words;
+`ct_memeq` and `ct_memcmp` over bytes; and `ct_lookup`, which reads a whole
+table (of words, or of fixed-stride records) to return one entry. The
+formulas are BoringSSL's `constant_time_*` family; the shapes follow Rust's
+`subtle`, libsodium's `crypto_verify_n` and fiat-crypto's `cmovznz`.
+
+Everything rests on `value_barrier(x)`, a primitive owned by `std.ct` for
+each unsigned word. It returns `x` unchanged, and the optimizer may assume
+nothing about the result. Every `Choice` and every mask made from one passes
+through it, so a C compiler cannot rediscover that a mask is a boolean and
+compile the select as a branch. What each backend promises:
+
+- **C** lowers the barrier to `__asm__("" : "+r"(x))` (BoringSSL's
+  `value_barrier_w`), a u128 as its two 64-bit halves. It emits no
+  instruction. Source shape plus the barrier is the whole promise: the C
+  compiler still chooses instructions, and a CPU instruction whose latency
+  depends on its operands (division, some multipliers) is not prevented.
+  The evidence for a given compiler and target is `tools/ct`, which checks
+  the optimized assembly and measures timing.
+- **JavaScript** gives no constant-time guarantee: engines speculate,
+  specialize on observed values and represent integers differently by
+  magnitude. The backend refuses `std.ct` programs through its scalar type
+  check (unsigned words are outside its subset), and if that subset grows
+  it must keep refusing the barrier rather than lowering it to an identity.
+- **Assembly** refuses these types today. When it learns unsigned words it
+  must lower `value_barrier` as an opaque register redefinition and must not
+  turn the masked selects into branches: a renderer that pattern-matches
+  `ct_select` into a jump would reintroduce the leak the library exists to
+  prevent.
+
+## Secret values
+
+`std.ct.Secret<T>` marks a value whose timing must not reveal it. It is
+exactly `T` (a generic alias whose target is its own parameter), so every
+operation on `T` type-checks and lowers unchanged; what changes is what sema
+lets the program do with it. The marker may be written on a parameter, a
+local binding, a struct field or a return type (anywhere inside the written
+type, so `Res<Secret<u64>>` and `[Secret<u64>, 4]` count).
+
+A value is *secret* when it is marked, or when it is computed from a secret
+value: the taint follows bindings, operators, and field, element and
+pointer reads. A call's result is secret when the callee's written result
+type says so, or, for the operations of `std.ct`, `std.core.num` and `Ptr`,
+when an argument is; any other function is checked against its own
+signature, so a public result is a promise its body must keep. A write of a secret through
+a pointer or a `::` binding makes that binding secret too. `Choice` is not
+secret by itself; a Choice computed from a secret is. `declassify(v)` and
+`choice.declassify_bool()` are the only ways out, and are the audit points.
+`declassify` takes an unsigned word (marked in the assembly, see below), a
+bool, or a pointer (whose pointee becomes public).
+
+On a secret value sema refuses, at the exact expression:
+
+| rule | refused | instead |
+|---|---|---|
+| branch | `.match` scrutinee, `.then`/`.ensure` receiver, `.try()` operand | `ct_select`, `ct_cmov` |
+| short circuit | an operand of `&&` or `||` | `Choice.and`/`or` |
+| loop | a `loop` condition, a looped-over range or collection | public bounds |
+| index | `a[i]`, `Ptr.read`/`write`/`offset`/`back` index, SIMD lane index | `ct_lookup` |
+| shift | a secret shift or rotation count | public counts |
+| divide | either operand of `/` or `%` | Barrett/Montgomery reduction |
+| trap | checked `+ - *` and checked (`Res`-returning) conversions | `+% -% *%`, `truncate_*` |
+| compare | `== != < <= > >=` | `ct_eq`, `ct_lt`, ... |
+| call | a secret argument to a parameter not written `Secret` | mark the callee's parameter |
+| result | a secret tail value of a function whose result is not `Secret` | mark the result, or declassify |
+| store | a secret written through a parameter not written `Secret` | mark the parameter |
+
+Checked arithmetic is refused because its overflow test is itself a branch
+on the value. The call, result and store rules make the discipline
+modular: each function is checked alone, and a secret crosses a function
+boundary only where both sides say so. Calls into `std.ct`, the
+compiler-owned integer operations of `std.core.num` (bit operations,
+wrapping-safe widenings, `truncate_*`, `mul_wide`), `std.simd` lanes and the
+`Ptr` memory operations are accepted directly; they are either implemented
+with the discipline in mind or are single machine operations. `std.ct`
+itself is not checked: it is where the masks are built.
+
+The analysis is intraprocedural and flow-insensitive: names are resolved
+through block and closure scopes to the binding they denote, and once a
+binding is secret it is secret throughout the function, including in
+closures that capture it. Not tracked yet: values leaving a closure through `h.break(v)`,
+calls through function values, globals, and a generic function instantiated
+at a secret type (its parameters are not written `Secret`, so the call rule
+refuses the secret argument instead). None of this reaches the C backend:
+`Secret<T>` lowers as `T`, and `tools/ct` checks what the C compiler made of
+it.
+
+### Checking what the C compiler made of it
+
+`tools/ct` holds three checks, each with leaky negative controls that must
+be flagged, so a check that has stopped seeing anything fails:
+
+- `ct-asm --c program.c` compiles a program's generated C to assembly with
+  each `--cc` at `-O2` and `-O3`. The C backend writes
+  `/* zen:secret zu_l3key *zu_l3out */` after the parameter list of every
+  function with a Secret parameter; the tool keeps those functions out of
+  line, places their secret inputs by the SysV x86-64 or AAPCS64 convention,
+  and runs a forward taint analysis over the assembly (registers and stack
+  slots, joined at labels). `--manifest` names further functions and their
+  secret parameters, for shared arithmetic whose signature cannot say
+  Secret because public verification uses it too; `branches=N` on an entry
+  allows N secret-dependent branches, `?module` makes an entry optional.
+  `std.ct.declassify` of a word and `Choice.declassify_bool` pass through
+  `declassify_barrier`, whose asm text is `/* zen:declassify %reg */`: the
+  analysis treats that register as public from there on, so a program's
+  explicit declassifications are the only places its secrets may steer
+  code. A call taints its result only through the argument registers its C
+  prototype uses (and the second result register only for a two-register
+  result); calls that never return end their path. `CT_TRACE=<symbol>`
+  prints the analysis instruction by instruction. It fails on a conditional branch, a memory
+  address, a division or an indirect jump that depends on a secret. Memory
+  other than the stack and secret pointees is not modelled.
+- `ct-grind` is the ctgrind method: `std.ct.ct_grind.secret_bytes` marks
+  memory undefined for valgrind's memcheck, which then reports every branch
+  and address computed from it; `public_bytes` is the declassification.
+- `ct-timing` is a dudect-style statistical test (`std.ct.ct_timing`):
+  fixed against random inputs, interleaved, Welch's t over all measurements
+  and over dudect's percentile crops, run under `taskset` on one core after
+  the load average settles. |t| above 10 is a leak.
+
+`make ctcheck` runs the first two on their controls; the crypto package runs
+all three on its own functions.

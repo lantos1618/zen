@@ -1,0 +1,387 @@
+// Constant-time arithmetic for code that handles secrets.
+//
+// A function is constant time when neither its control flow nor the
+// addresses it touches depend on secret values, so its running time and
+// cache footprint reveal nothing about them. The helpers here keep secrets in
+// arithmetic only: comparisons produce a `Choice` (a 0/1 value, never a
+// bool), selections are masks, and table reads scan every entry.
+//
+// Modelled on BoringSSL crypto/internal.h (constant_time_* and
+// value_barrier_w; ISC/OpenSSL licence), libsodium sodium/utils.c and
+// crypto_verify (ISC), Rust's `subtle` crate (Choice, ConditionallySelectable,
+// ConstantTimeEq, black_box; BSD-3-Clause) and fiat-crypto's cmovznz
+// (MIT/Apache-2.0/BSD-1). No source is copied; the formulas are the standard
+// ones those projects document. docs/DESIGN.md "Constant-time arithmetic"
+// states the guarantee per backend.
+//
+// Guarantee. Every operation is branch-free in its source and routes its
+// masks through `value_barrier`, which the C backend lowers to an empty asm
+// that claims to rewrite a register (BoringSSL's value_barrier_w). That
+// stops the C optimizer from recognising a mask as a boolean and turning a
+// select back into a branch. It does not constrain the CPU: instructions
+// whose timing depends on their operands (variable-time multipliers,
+// division) remain the caller's concern, and the static and statistical
+// checks under tools/ct are the evidence for a given compiler and target.
+// The JavaScript backend has no constant-time guarantee at all and the
+// assembly backend refuses these types; see DESIGN.md.
+
+bit_xor, bit_and, bit_or, shift_right = std.core.num
+to_u16, to_u32, to_u64, to_u128, to_usize, to_i32 = std.core.num
+truncate_u8, truncate_u64 = std.core.num
+Ptr = std.mem
+Range = std.core
+
+// A value the secret discipline tracks (docs/DESIGN.md, "Secret values").
+// It is exactly T: no wrapper and no conversion, so every operation on T
+// applies, and sema checks what the program does with it.
+Secret*<T> = T
+
+// Make a secret value public: the one way a secret may become a branch
+// condition, an index or a public result. Every call is a place to audit.
+// A word passes through declassify_barrier, which names its register in the
+// assembly (`/* zen:declassify %reg */`) so tools/ct treats the value as
+// public from there on. A pointer's declassification makes its pointee
+// public; a bool is declassified as it is.
+declassify* = (value: u8) u8 { declassify_barrier(value) }
+declassify* = (value: u16) u16 { declassify_barrier(value) }
+declassify* = (value: u32) u32 { declassify_barrier(value) }
+declassify* = (value: u64) u64 { declassify_barrier(value) }
+declassify* = (value: u128) u128 { declassify_barrier(value) }
+declassify* = (value: usize) usize { declassify_barrier(value) }
+declassify* = (value: bool) bool { value }
+declassify* = <T>(value: Ptr<T>) Ptr<T> { value }
+
+// value_barrier that also marks a declassification in the assembly.
+declassify_barrier* = (value: u8) u8
+declassify_barrier* = (value: u16) u16
+declassify_barrier* = (value: u32) u32
+declassify_barrier* = (value: u64) u64
+declassify_barrier* = (value: u128) u128
+declassify_barrier* = (value: usize) usize
+
+// The optimizer may assume nothing about the result, which is the argument
+// unchanged. Lowered by each backend; see the module comment.
+value_barrier* = (value: u8) u8
+value_barrier* = (value: u16) u16
+value_barrier* = (value: u32) u32
+value_barrier* = (value: u64) u64
+value_barrier* = (value: u128) u128
+value_barrier* = (value: usize) usize
+
+// The result of a constant-time comparison: 1 for true, 0 for false. It is
+// deliberately not a bool, so it cannot be matched, used with && or ||, or
+// passed to .then; combine it with `and`/`or`/`not`, spend it in a select,
+// or declassify it.
+Choice* = {
+    bit: u8,
+
+    // Only the low bit of `bit` is kept.
+    from_bit* = (bit: u8) Choice { Choice(bit: value_barrier(bit.bit_and(1))) }
+}
+
+// 1 or 0 as an unsigned word, after a barrier.
+to_u8* = inline (self: Choice) u8 { value_barrier(self.bit) }
+
+// Make the decision public. The only way from a Choice to a bool.
+declassify_bool* = (self: Choice) bool { declassify_barrier(self.bit) == 1 }
+
+and* = inline (self: Choice, other: Choice) Choice {
+    Choice(bit: value_barrier(self.bit.bit_and(other.bit)))
+}
+or* = inline (self: Choice, other: Choice) Choice {
+    Choice(bit: value_barrier(self.bit.bit_or(other.bit)))
+}
+xor* = inline (self: Choice, other: Choice) Choice {
+    Choice(bit: value_barrier(self.bit.bit_xor(other.bit)))
+}
+not* = inline (self: Choice) Choice {
+    Choice(bit: value_barrier(self.bit.bit_xor(1)))
+}
+
+// All ones when the choice is 1, zero when it is 0.
+mask_u8* = inline (self: Choice) u8 { value_barrier(0 -% self.bit) }
+mask_u16* = inline (self: Choice) u16 { value_barrier(0 -% self.bit.to_u16()) }
+mask_u32* = inline (self: Choice) u32 { value_barrier(0 -% self.bit.to_u32()) }
+mask_u64* = inline (self: Choice) u64 { value_barrier(0 -% self.bit.to_u64()) }
+mask_u128* = inline (self: Choice) u128 {
+    value_barrier(0 -% self.bit.to_u64().to_u128())
+}
+mask_usize* = inline (self: Choice) usize {
+    value_barrier(0 -% self.bit.to_usize())
+}
+
+// A word's top bit as a Choice.
+top = inline (bit: u8) Choice { Choice(bit: value_barrier(bit)) }
+
+// x == 0: the top bit of ~x & (x - 1) is set only for zero.
+ct_is_zero* = inline (x: u8) Choice {
+    top(x.bit_xor(u8.MAX).bit_and(x -% 1).shift_right(7))
+}
+ct_is_zero* = inline (x: u16) Choice {
+    top(x.bit_xor(u16.MAX).bit_and(x -% 1).shift_right(15).truncate_u8())
+}
+ct_is_zero* = inline (x: u32) Choice {
+    top(x.bit_xor(u32.MAX).bit_and(x -% 1).shift_right(31).truncate_u8())
+}
+ct_is_zero* = inline (x: u64) Choice {
+    top(x.bit_xor(u64.MAX).bit_and(x -% 1).shift_right(63).truncate_u8())
+}
+ct_is_zero* = inline (x: u128) Choice {
+    ones: u128 = u128.MIN -% 1;
+    top(
+        x.bit_xor(ones).bit_and(x -% 1).shift_right(127).truncate_u64().truncate_u8()
+    )
+}
+ct_is_zero* = inline (x: usize) Choice {
+    top(x.bit_xor(usize.MAX).bit_and(x -% 1).shift_right(63).truncate_u8())
+}
+
+ct_eq* = inline (a: u8, b: u8) Choice { ct_is_zero(a.bit_xor(b)) }
+ct_eq* = inline (a: u16, b: u16) Choice { ct_is_zero(a.bit_xor(b)) }
+ct_eq* = inline (a: u32, b: u32) Choice { ct_is_zero(a.bit_xor(b)) }
+ct_eq* = inline (a: u64, b: u64) Choice { ct_is_zero(a.bit_xor(b)) }
+ct_eq* = inline (a: u128, b: u128) Choice { ct_is_zero(a.bit_xor(b)) }
+ct_eq* = inline (a: usize, b: usize) Choice { ct_is_zero(a.bit_xor(b)) }
+
+ct_ne* = inline (a: u8, b: u8) Choice { ct_eq(a, b).not() }
+ct_ne* = inline (a: u16, b: u16) Choice { ct_eq(a, b).not() }
+ct_ne* = inline (a: u32, b: u32) Choice { ct_eq(a, b).not() }
+ct_ne* = inline (a: u64, b: u64) Choice { ct_eq(a, b).not() }
+ct_ne* = inline (a: u128, b: u128) Choice { ct_eq(a, b).not() }
+ct_ne* = inline (a: usize, b: usize) Choice { ct_eq(a, b).not() }
+
+// a < b, unsigned: the top bit of a ^ ((a ^ b) | ((a - b) ^ a)), the borrow
+// out of a - b computed without a flag (BoringSSL constant_time_lt_w).
+ct_lt* = inline (a: u8, b: u8) Choice {
+    top(a.bit_xor(a.bit_xor(b).bit_or((a -% b).bit_xor(a))).shift_right(7))
+}
+ct_lt* = inline (a: u16, b: u16) Choice {
+    top(
+        a.bit_xor(a.bit_xor(b).bit_or((a -% b).bit_xor(a))).shift_right(15).truncate_u8()
+    )
+}
+ct_lt* = inline (a: u32, b: u32) Choice {
+    top(
+        a.bit_xor(a.bit_xor(b).bit_or((a -% b).bit_xor(a))).shift_right(31).truncate_u8()
+    )
+}
+ct_lt* = inline (a: u64, b: u64) Choice {
+    top(
+        a.bit_xor(a.bit_xor(b).bit_or((a -% b).bit_xor(a))).shift_right(63).truncate_u8()
+    )
+}
+ct_lt* = inline (a: u128, b: u128) Choice {
+    top(
+        a.bit_xor(a.bit_xor(b).bit_or((a -% b).bit_xor(a))).shift_right(127).truncate_u64().truncate_u8()
+    )
+}
+ct_lt* = inline (a: usize, b: usize) Choice {
+    top(
+        a.bit_xor(a.bit_xor(b).bit_or((a -% b).bit_xor(a))).shift_right(63).truncate_u8()
+    )
+}
+
+ct_gt* = inline (a: u8, b: u8) Choice { ct_lt(b, a) }
+ct_gt* = inline (a: u16, b: u16) Choice { ct_lt(b, a) }
+ct_gt* = inline (a: u32, b: u32) Choice { ct_lt(b, a) }
+ct_gt* = inline (a: u64, b: u64) Choice { ct_lt(b, a) }
+ct_gt* = inline (a: u128, b: u128) Choice { ct_lt(b, a) }
+ct_gt* = inline (a: usize, b: usize) Choice { ct_lt(b, a) }
+
+// `when` if the choice is 1, otherwise `otherwise`: b ^ (mask & (a ^ b)).
+ct_select* = inline (self: Choice, when: u8, otherwise: u8) u8 {
+    otherwise.bit_xor(self.mask_u8().bit_and(when.bit_xor(otherwise)))
+}
+ct_select* = inline (self: Choice, when: u16, otherwise: u16) u16 {
+    otherwise.bit_xor(self.mask_u16().bit_and(when.bit_xor(otherwise)))
+}
+ct_select* = inline (self: Choice, when: u32, otherwise: u32) u32 {
+    otherwise.bit_xor(self.mask_u32().bit_and(when.bit_xor(otherwise)))
+}
+ct_select* = inline (self: Choice, when: u64, otherwise: u64) u64 {
+    otherwise.bit_xor(self.mask_u64().bit_and(when.bit_xor(otherwise)))
+}
+ct_select* = inline (self: Choice, when: u128, otherwise: u128) u128 {
+    otherwise.bit_xor(self.mask_u128().bit_and(when.bit_xor(otherwise)))
+}
+ct_select* = inline (self: Choice, when: usize, otherwise: usize) usize {
+    otherwise.bit_xor(self.mask_usize().bit_and(when.bit_xor(otherwise)))
+}
+ct_select* = inline (self: Choice, when: Choice, otherwise: Choice) Choice {
+    Choice(bit: self.ct_select(when.bit, otherwise.bit))
+}
+
+// dst = src when the choice is 1; dst is unchanged otherwise.
+ct_cmov* = inline (dst :: u8, src: u8, c: Choice) {
+    dst = c.ct_select(src, dst);
+}
+ct_cmov* = inline (dst :: u16, src: u16, c: Choice) {
+    dst = c.ct_select(src, dst);
+}
+ct_cmov* = inline (dst :: u32, src: u32, c: Choice) {
+    dst = c.ct_select(src, dst);
+}
+ct_cmov* = inline (dst :: u64, src: u64, c: Choice) {
+    dst = c.ct_select(src, dst);
+}
+ct_cmov* = inline (dst :: u128, src: u128, c: Choice) {
+    dst = c.ct_select(src, dst);
+}
+ct_cmov* = inline (dst :: usize, src: usize, c: Choice) {
+    dst = c.ct_select(src, dst);
+}
+
+// Exchange a and b when the choice is 1 (the Montgomery-ladder cswap):
+// t = mask & (a ^ b); a ^= t; b ^= t.
+ct_swap* = inline (a :: u8, b :: u8, c: Choice) {
+    t = c.mask_u8().bit_and(a.bit_xor(b));
+    a = a.bit_xor(t);
+    b = b.bit_xor(t);
+}
+ct_swap* = inline (a :: u16, b :: u16, c: Choice) {
+    t = c.mask_u16().bit_and(a.bit_xor(b));
+    a = a.bit_xor(t);
+    b = b.bit_xor(t);
+}
+ct_swap* = inline (a :: u32, b :: u32, c: Choice) {
+    t = c.mask_u32().bit_and(a.bit_xor(b));
+    a = a.bit_xor(t);
+    b = b.bit_xor(t);
+}
+ct_swap* = inline (a :: u64, b :: u64, c: Choice) {
+    t = c.mask_u64().bit_and(a.bit_xor(b));
+    a = a.bit_xor(t);
+    b = b.bit_xor(t);
+}
+ct_swap* = inline (a :: u128, b :: u128, c: Choice) {
+    t = c.mask_u128().bit_and(a.bit_xor(b));
+    a = a.bit_xor(t);
+    b = b.bit_xor(t);
+}
+ct_swap* = inline (a :: usize, b :: usize, c: Choice) {
+    t = c.mask_usize().bit_and(a.bit_xor(b));
+    a = a.bit_xor(t);
+    b = b.bit_xor(t);
+}
+
+// Span forms: `count` words at `a` and `b`. The count is public; the mask is
+// computed once and every word is touched whatever the choice.
+ct_swap* = (a: Ptr<u8>, b: Ptr<u8>, count: usize, c: Choice) {
+    mask = c.mask_u8();
+    Range(0, count).loop((i) {
+        t = mask.bit_and(a.read(i).bit_xor(b.read(i)));
+        a.write(i, a.read(i).bit_xor(t));
+        b.write(i, b.read(i).bit_xor(t));
+    });
+}
+ct_swap* = (a: Ptr<u32>, b: Ptr<u32>, count: usize, c: Choice) {
+    mask = c.mask_u32();
+    Range(0, count).loop((i) {
+        t = mask.bit_and(a.read(i).bit_xor(b.read(i)));
+        a.write(i, a.read(i).bit_xor(t));
+        b.write(i, b.read(i).bit_xor(t));
+    });
+}
+ct_swap* = (a: Ptr<u64>, b: Ptr<u64>, count: usize, c: Choice) {
+    mask = c.mask_u64();
+    Range(0, count).loop((i) {
+        t = mask.bit_and(a.read(i).bit_xor(b.read(i)));
+        a.write(i, a.read(i).bit_xor(t));
+        b.write(i, b.read(i).bit_xor(t));
+    });
+}
+
+// Copy `count` words from src to dst when the choice is 1.
+ct_cmov* = (dst: Ptr<u8>, src: Ptr<u8>, count: usize, c: Choice) {
+    mask = c.mask_u8();
+    Range(0, count).loop((i) {
+        d = dst.read(i);
+        dst.write(i, d.bit_xor(mask.bit_and(src.read(i).bit_xor(d))));
+    });
+}
+ct_cmov* = (dst: Ptr<u32>, src: Ptr<u32>, count: usize, c: Choice) {
+    mask = c.mask_u32();
+    Range(0, count).loop((i) {
+        d = dst.read(i);
+        dst.write(i, d.bit_xor(mask.bit_and(src.read(i).bit_xor(d))));
+    });
+}
+ct_cmov* = (dst: Ptr<u64>, src: Ptr<u64>, count: usize, c: Choice) {
+    mask = c.mask_u64();
+    Range(0, count).loop((i) {
+        d = dst.read(i);
+        dst.write(i, d.bit_xor(mask.bit_and(src.read(i).bit_xor(d))));
+    });
+}
+
+// Whether `count` bytes at a and b are equal. Time depends on count only:
+// the differences are OR-accumulated and tested once (libsodium
+// crypto_verify_n, BoringSSL CRYPTO_memcmp).
+ct_memeq* = (a: Ptr<u8>, b: Ptr<u8>, count: usize) Choice {
+    d: u8 ::= 0;
+    Range(0, count).loop((i) { d = d.bit_or(a.read(i).bit_xor(b.read(i))); });
+    ct_is_zero(value_barrier(d))
+}
+
+// Lexicographic order of `count` bytes: -1, 0 or 1 as memcmp's sign, in time
+// that depends on count only. Every byte is compared; the first difference
+// is kept by masking later ones out once a decision is made.
+ct_memcmp* = (a: Ptr<u8>, b: Ptr<u8>, count: usize) i32 {
+    less    ::= Choice(bit: 0);
+    greater ::= Choice(bit: 0);
+    Range(0, count).loop((i) {
+        x       = a.read(i);
+        y       = b.read(i);
+        open    = less.or(greater).not();
+        less    = less.or(open.and(ct_lt(x, y)));
+        greater = greater.or(open.and(ct_gt(x, y)));
+    });
+    greater.to_u8().to_i32() -% less.to_u8().to_i32()
+}
+
+// table[index] among `count` words, reading every word so the address
+// pattern is independent of the index. An index at or past count yields 0.
+ct_lookup* = (table: Ptr<u8>, count: usize, index: usize) u8 {
+    out: u8 ::= 0;
+    Range(0, count).loop((i) { out = ct_eq(i, index).ct_select(table.read(i), out); });
+    out
+}
+ct_lookup* = (table: Ptr<u32>, count: usize, index: usize) u32 {
+    out: u32 ::= 0;
+    Range(0, count).loop((i) { out = ct_eq(i, index).ct_select(table.read(i), out); });
+    out
+}
+ct_lookup* = (table: Ptr<u64>, count: usize, index: usize) u64 {
+    out: u64 ::= 0;
+    Range(0, count).loop((i) { out = ct_eq(i, index).ct_select(table.read(i), out); });
+    out
+}
+
+// Record tables: entry `index` of `count` entries, each `stride` words, is
+// copied to `out` after scanning every entry. `out` is zeroed first, so an
+// out-of-range index yields zeros. Use `.to<u64>()` for a table of records
+// whose size is a whole number of words.
+ct_lookup* = (
+    out    : Ptr<u64>,
+    table  : Ptr<u64>,
+    stride : usize,
+    count  : usize,
+    index  : usize
+) {
+    Range(0, stride).loop((w) { out.write(w, 0); });
+    Range(0, count).loop((i) {
+        ct_cmov(out, table.offset(i * stride), stride, ct_eq(i, index));
+    });
+}
+ct_lookup* = (
+    out    : Ptr<u8>,
+    table  : Ptr<u8>,
+    stride : usize,
+    count  : usize,
+    index  : usize
+) {
+    Range(0, stride).loop((w) { out.write(w, 0); });
+    Range(0, count).loop((i) {
+        ct_cmov(out, table.offset(i * stride), stride, ct_eq(i, index));
+    });
+}

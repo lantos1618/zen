@@ -89,6 +89,7 @@ gen/gen_c/gen_c_decl.zen sema.sema_def
 gen/gen_c/gen_c_decl.zen sema.sema_denote
 gen/gen_c/gen_c_decl.zen sema.sema_inst
 gen/gen_c/gen_c_decl.zen sema.sema_member
+gen/gen_c/gen_c_decl.zen sema.sema_secret
 gen/gen_c/gen_c_decl.zen sema.sema_ty
 gen/gen_c/gen_c_decl.zen std.ast
 gen/gen_c/gen_c_discriminant.zen sema.sema_check

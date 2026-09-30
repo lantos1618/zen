@@ -1,0 +1,283 @@
+// ct-timing: the dudect-style timing test (std.ct.ct_timing) on std.ct's
+// helpers, with leaky negative controls that must be flagged.
+//
+//   ct-timing [--cpu 8] [--measurements 2000000] [--max-load 4]
+//
+// With --cpu the program re-runs itself under `taskset -c <cpu>` so every
+// measurement stays on one core. Before measuring it reads the load
+// average and waits while it is above --max-load, since other work on the
+// machine is the main source of false positives. Exit status 0 means every
+// constant-time probe showed no leak (|t| <= 10) and every control leaked.
+Ptr = std.mem
+Vec = std.collections
+str = std.text
+Rng = std.core
+ct_memeq, ct_lookup, ct_swap, ct_eq, Choice = std.ct
+Probe, TimingConfig, TimingResult, Verdict, measure = std.ct.ct_timing
+truncate_u8, to_u64, bit_and = std.core.num
+parse_usize = std.text
+
+// Every probe keeps its result in `sink` with a volatile write.
+Common = { reference: Ptr<u8>, table: Ptr<u8>, sink: Ptr<u8> }
+
+fill = (input: Ptr<u8>, n: usize, rng :: Rng) {
+    Range(0, n).loop((i) { input.write(i, rng.next_u64().truncate_u8()); });
+}
+
+// ct_memeq over 32 bytes: equal to the reference (fixed) or random.
+CtEqual = { c: Common }
+CtEqual.impl(Probe, {
+    prepare = (self: @Self, class: u8, input: Ptr<u8>, rng :: Rng) {
+        (class == 0).match({
+            true  => Range(0, 32).loop((i) { input.write(i, self.c.reference.read(i)); }),
+            false => fill(input, 32, rng),
+        });
+    }
+    run = (self: @Self, input: Ptr<u8>) {
+        self.c.sink.write_volatile(
+            0,
+            ct_memeq(input, self.c.reference, 32).to_u8()
+        );
+    }
+})
+
+// The negative control: a comparison that stops at the first difference.
+LeakyEqual = { c: Common }
+LeakyEqual.impl(Probe, {
+    prepare = (self: @Self, class: u8, input: Ptr<u8>, rng :: Rng) {
+        (class == 0).match({
+            true  => Range(0, 32).loop((i) { input.write(i, self.c.reference.read(i)); }),
+            false => fill(input, 32, rng),
+        });
+    }
+    run = (self: @Self, input: Ptr<u8>) {
+        same ::= 1;
+        Range(0, 32).loop((h, i) {
+            (input.read_volatile(i) != self.c.reference.read(i)).then(() {
+                same = 0;
+                h.break();
+            });
+        });
+        self.c.sink.write_volatile(0, same);
+    }
+})
+
+// ct_lookup at a secret index: index 0 (fixed) or random.
+CtLookup = { c: Common }
+CtLookup.impl(Probe, {
+    prepare = (self: @Self, class: u8, input: Ptr<u8>, rng :: Rng) {
+        (class == 0).match({ true => input.write(0, 0), false => fill(input, 1, rng) });
+    }
+    run = (self: @Self, input: Ptr<u8>) {
+        self.c.sink.write_volatile(
+            0,
+            ct_lookup(self.c.table, 256, input.read(0).to_usize())
+        );
+    }
+})
+
+// The Montgomery-ladder swap of two 10-word elements by a secret bit.
+CtSwap = { c: Common, x: Ptr<u64>, y: Ptr<u64> }
+CtSwap.impl(Probe, {
+    prepare = (self: @Self, class: u8, input: Ptr<u8>, rng :: Rng) {
+        (class == 0).match({ true => input.write(0, 0), false => fill(input, 1, rng) });
+    }
+    run = (self: @Self, input: Ptr<u8>) {
+        ct_swap(self.x, self.y, 10, ct_eq(input.read(0).bit_and(1), 1));
+        self.c.sink.write_volatile(0, self.x.read(0).truncate_u8());
+    }
+})
+
+// A second control: 64-bit division, whose latency depends on its operands
+// on most cores. Fixed dividend 1 against random 64-bit dividends.
+LeakyDivide = { c: Common }
+LeakyDivide.impl(Probe, {
+    prepare = (self: @Self, class: u8, input: Ptr<u8>, rng :: Rng) {
+        (class == 0).match({
+            true  => {
+                Range(0, 8).loop((i) { input.write(i, 0); });
+                input.write(0, 1);
+            },
+            false => fill(input, 8, rng),
+        });
+    }
+    run = (self: @Self, input: Ptr<u8>) {
+        dividend = input.to<u64>().read_volatile(0);
+        self.c.sink.write_volatile(0, (dividend / 7).truncate_u8());
+    }
+})
+
+Row = { name: str, result: TimingResult, control: bool }
+
+verdict_word = (v: Verdict) str {
+    v.match({ NoLeak => "no leak", Inconclusive => "inconclusive", Leak => "LEAK" })
+}
+
+report = (row: Row) bool {
+    r  = row.result;
+    ok = row.control.match({
+        true  => r.verdict.match({ Leak => true, _ => false }),
+        false => r.verdict.match({ Leak => false, _ => true }),
+    });
+    println(
+        "{} {}: max |t| = {} (crop {}), {} measurements, {} ns fixed vs {} ns random per run: {}{}",
+        ok.match({ true => "PASS", false => "FAIL" }),
+        row.name,
+        r.max_t,
+        r.crop,
+        r.measurements,
+        r.fixed_mean_ns,
+        r.random_mean_ns,
+        verdict_word(r.verdict),
+        row.control.match({ true => " (negative control)", false => "" })
+    );
+    ok
+}
+
+// The 1-minute load average, or None where /proc/loadavg does not exist.
+load_average = (env: Env, a: Alloc) Res<f64> {
+    text  = env.fs.read(a, "/proc/loadavg").match({ Ok(t) => Ok(t), Err(_) => None }).try();
+    first = text.view().split_once(' ').try().before;
+    whole = first.split_once('.').match({ Ok(p) => p.before, None => first });
+    frac  = first.split_once('.').match({ Ok(p) => p.after, None => "0" });
+    w     = whole.parse_usize().try();
+    f     = frac.slice(0, frac.len.min(2)).parse_usize().try();
+    Ok(small_f64(w) + small_f64(f) / 100.0)
+}
+
+small_f64 = (n: usize) f64 { n.to_u64().to_i32().value_or(0).to_f64() }
+
+arg_value = (env: Env, flag: str) Res<str> {
+    Range(1, env.argv.len).find((i) { env.argv.get(i).value_or("").eq(flag) }).match({
+        Ok(i) => env.argv.get(i + 1),
+        None  => None,
+    })
+}
+
+has_flag = (env: Env, flag: str) bool {
+    env.argv.find((a) { a.eq(flag) }).match({ Ok(_) => true, None => false })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a = env.mem.alloc();
+    arg_value(env, "--cpu").match({
+        Ok(cpu) => (!has_flag(env, "--pinned")).match({
+            true  => pin(env, a, cpu),
+            false => run_all(env, a),
+        }),
+        None    => run_all(env, a),
+    })
+}
+
+// Re-run this program on one core, relaying its output and status.
+pin = (env: Env, a: Alloc, cpu: str) Res<i32, AllocError> {
+    argv ::= a.Vec<str>();
+    argv.add("taskset").try();
+    argv.add("-c").try();
+    argv.add(cpu).try();
+    env.argv.loop((word) { argv.add(word).try(); });
+    argv.add("--pinned").try();
+    env.proc.run_argv(a, "", argv).match({
+        Ok(out) => {
+            print("{}", out.out.view());
+            print("{}", out.err.view());
+            Ok(out.code)
+        },
+        Err(_)  => {
+            println(
+                "ct-timing: could not run taskset; run without --cpu on this host"
+            );
+            Ok(2)
+        },
+    })
+}
+
+run_all = (env: Env, a: Alloc) Res<i32, AllocError> {
+    max_load = arg_value(env, "--max-load").match({ Ok(v) => v.parse_usize().value_or(4), None => 4 });
+    waited ::= 0;
+    loop((h) {
+        load_average(env, a).match({
+            None     => {
+                println("load average: unavailable on this host");
+                h.break();
+            },
+            Ok(load) => (load <= small_f64(max_load) || waited >= 40).match({
+                true  => {
+                    println(
+                        "load average (1 min): {} after waiting {} s; limit {}",
+                        load,
+                        waited * 30,
+                        max_load
+                    );
+                    h.break();
+                },
+                false => {
+                    println(
+                        "load average {} above {}: waiting 30 s",
+                        load,
+                        max_load
+                    );
+                    env.threads.sleep(30000);
+                    waited = waited + 1;
+                },
+            }),
+        });
+    });
+    measurements = arg_value(env, "--measurements").match({
+        Ok(v) => v.parse_usize().value_or(2000000),
+        None  => 2000000,
+    });
+    reference    = a.raw(32, 16).try();
+    table        = a.raw(256, 16).try();
+    sink         = a.raw(16, 16).try();
+    Range(0, 32).loop((i) { reference.write(i, i.truncate_u8() *% 37); });
+    Range(0, 256).loop((i) { table.write(i, i.truncate_u8() *% 29); });
+    words = a.raw(160, 16).try().to<u64>();
+    Range(0, 20).loop((i) { words.write(i, i.to_u64()); });
+    c      = Common(reference: reference, table: table, sink: sink);
+    config = TimingConfig(
+        measurements: measurements,
+        batch: 16,
+        input_bytes: 32,
+        seed: 1
+    );
+    rows ::= a.Vec<Row>();
+    rows.add(Row(
+        name: "ct_memeq 32 bytes",
+        result: measure(env, a, CtEqual(c: c), config).try(),
+        control: false
+    )).try();
+    rows.add(Row(
+        name: "ct_lookup 256 entries",
+        result: measure(env, a, CtLookup(c: c), config).try(),
+        control: false
+    )).try();
+    rows.add(Row(
+        name: "ct_swap 10 words",
+        result: measure(
+            env,
+            a,
+            CtSwap(c: c, x: words, y: words.offset(10)),
+            config
+        ).try(),
+        control: false
+    )).try();
+    rows.add(Row(
+        name: "early-exit compare",
+        result: measure(env, a, LeakyEqual(c: c), config).try(),
+        control: true
+    )).try();
+    rows.add(Row(
+        name: "64-bit division",
+        result: measure(env, a, LeakyDivide(c: c), config).try(),
+        control: true
+    )).try();
+    failed ::= 0;
+    rows.loop((row) { (!report(row)).then(() { failed = failed + 1; }); });
+    println(
+        "ct-timing: {} of {} rows as expected",
+        rows.len - failed,
+        rows.len
+    );
+    Ok((failed == 0).match({ true => 0, false => 1 }))
+}

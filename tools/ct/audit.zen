@@ -1,0 +1,335 @@
+// The static constant-time check: compile the generated C of a Zen program
+// to assembly with each requested compiler and optimisation level, keep
+// every function with a Secret parameter out of line so it can be found,
+// and run the taint analysis on each (tools/ct/taint.zen).
+//
+// A function passes when its assembly has no conditional branch, memory
+// address, division or indirect jump that depends on a secret input.
+// Functions named in `leaky` are negative controls: each must be flagged,
+// or the check itself is broken.
+ProcError = std.proc
+FsError = std.env
+Alloc, AllocError = std.mem
+Vec, Map = std.collections
+str, String, parse_usize = std.text
+Range = std.core
+Isa, Finding, function_lines, parse_lines, analyze = taint
+Marked, marked_functions, seed_of = abi
+Entry, manifest_entries, manifest_functions, register_arity = abi
+
+AuditError* = AllocError | ProcError | FsError | AuditFault
+AuditFault* = | NoMarkedFunctions
+    | CompileFailed
+    | MissingSymbol
+    | UnmatchedEntry
+
+Outcome* = { passed*: usize, failed*: usize, controls*: usize }
+
+Audit* = {
+    // Text of a manifest (tools/ct/abi.zen) naming unmarked functions to
+    // audit; empty for none.
+    manifest*: str,
+    // A symbol substring whose analysis is printed instruction by
+    // instruction (CT_TRACE), or "".
+    trace* :: str = "",
+    compilers*: Vec<str>,
+    levels*: Vec<str>,
+    leaky*: Vec<str>,
+    work*: str,
+}
+
+// Audited functions are forced out of line so their code can be read.
+out_of_line* = (a: Alloc, c: str, symbols: Vec<str>) Res<String, AllocError> {
+    out ::= a.String().try();
+    c.lines().loop((line) {
+        audited = line.starts_with("static ") && (line.contains("/* zen:secret")
+            || symbols.find(
+                (s) { line.contains(s) }
+            ).match({ Ok(_) => true, None => false }));
+        audited.match({
+            false => out.add(line).try(),
+            true  => {
+                rest = line.starts_with(
+                    "static inline __attribute__((always_inline)) "
+                ).match({
+                    true  => line.slice(46, line.len),
+                    false => line.slice(7, line.len),
+                });
+                out.add("static __attribute__((noinline,used)) ").try();
+                out.add(rest).try();
+            },
+        });
+        out.add("\n").try();
+    });
+    Ok(out)
+}
+
+is_leaky = (audit: Audit, symbol: str) bool {
+    audit.leaky.find(
+        (name) { symbol.contains(name) }
+    ).match({ Ok(_) => true, None => false })
+}
+
+// A short, stable name for reports: the Zen function name inside the
+// mangled symbol, or the symbol itself.
+short_name* = (symbol: str) str {
+    // zu_f<n>_ then n components spelled <length><text>; the last one is the
+    // function (or method) name.
+    (symbol.starts_with("zu_f")).match({
+        false => symbol,
+        true  => {
+            at ::= 4;
+            loop(
+                () { at < symbol.len && symbol.index(at) != '_' },
+                (h) { at = at + 1; }
+            );
+            at = at + 1;
+            last ::= symbol;
+            loop(() { at < symbol.len && digit(symbol.index(at)) }, (h) {
+                start ::= at;
+                loop(
+                    () { at < symbol.len && digit(symbol.index(at)) },
+                    (h2) { at = at + 1; }
+                );
+                n = symbol.slice(start, at).parse_usize().value_or(0);
+                (at + n <= symbol.len).match({
+                    true  => {
+                        last = symbol.slice(at, at + n);
+                        at   = at + n;
+                    },
+                    false => { at = symbol.len; },
+                });
+            });
+            last
+        },
+    })
+}
+
+digit = (c: u8) bool { c >= '0' && c <= '9' }
+
+// No findings beyond `branches` allowed conditional branches.
+within = (found: Vec<Finding>, branches: usize) bool {
+    count ::= 0;
+    other ::= false;
+    found.loop((f) {
+        f.kind.eq(
+            "branch"
+        ).match({ true => { count = count + 1; }, false => { other = true; } });
+    });
+    !other && count <= branches
+}
+
+run_audit* = (
+    env    : Env,
+    a      : Alloc,
+    audit  : Audit,
+    c_path : str
+) Res<Outcome, AuditError> {
+    source = env.fs.read(a, c_path).try();
+    marked ::= marked_functions(a, source.view()).try();
+    manifest_entries(a, audit.manifest).try().loop((e) {
+        found = manifest_functions(a, source.view(), e).try();
+        (found.len == 0 && !e.optional).then(() {
+            println(
+                "FAIL manifest entry {} {} matches no function in {}",
+                e.module,
+                e.function,
+                c_path
+            );
+            Err(AuditFault.UnmatchedEntry).try();
+        });
+        found.loop((m) {
+            // A function both marked and listed is audited once, as listed.
+            (marked.find(
+                (k) { k.symbol.eq(m.symbol) }
+            ).match({ Ok(_) => false, None => true }))
+                .then(() { marked.add(m).try(); });
+        });
+    });
+    (marked.len > 0).ensure(AuditFault.NoMarkedFunctions).try();
+    symbols ::= a.Vec<str>();
+    marked.loop((m) {
+        symbols.add(a.String("{}(", m.symbol).try().view()).try();
+    });
+    patched = out_of_line(a, source.view(), symbols).try();
+    audit_c = a.String("{}/audit.c", audit.work).try();
+    env.fs.write(audit_c.view(), patched.view()).try();
+    outcome ::= Outcome(passed: 0, failed: 0, controls: 0);
+    arity_x86 = register_arity(a, Isa.X86, source.view()).try();
+    arity_arm = register_arity(a, Isa.Arm, source.view()).try();
+    audit.compilers.loop((cc) {
+        audit.levels.loop((level) {
+            asm_path = a.String(
+                "{}/audit-{}{}.s",
+                audit.work,
+                cc.after_last('/'),
+                level
+            ).try();
+            argv ::= a.Vec<str>();
+            [str, 7](cc, level, "-S", "-w", audit_c.view(), "-o", asm_path.view())
+                .loop((word) { argv.add(word).try(); });
+            result = env.proc.run_argv(a, "", argv).try();
+            (result.code == 0).match({
+                true  => (),
+                false => {
+                    println(
+                        "FAIL {} {}: the C compiler rejected the audit file",
+                        cc,
+                        level
+                    );
+                    println("{}", result.err.view());
+                    Err(AuditFault.CompileFailed).try();
+                },
+            });
+            asm = env.fs.read(a, asm_path.view()).try();
+            marked.loop((m) {
+                one     = audit_function(
+                    a,
+                    audit,
+                    asm.view(),
+                    source.view(),
+                    m,
+                    cc,
+                    level,
+                    arity_x86,
+                    arity_arm
+                ).try();
+                outcome = Outcome(
+                    passed: outcome.passed + one.passed,
+                    failed: outcome.failed + one.failed,
+                    controls: outcome.controls + one.controls
+                );
+            });
+        });
+    });
+    Ok(outcome)
+}
+
+audit_function = (
+    a         : Alloc,
+    audit     : Audit,
+    asm       : str,
+    c         : str,
+    m         : Marked,
+    cc        : str,
+    level     : str,
+    arity_x86 : Map<str, usize>,
+    arity_arm : Map<str, usize>
+) Res<Outcome, AuditError> {
+    body = function_lines(a, asm, m.symbol).try();
+    // An unused function may be dropped entirely; that is not a failure,
+    // but a control must be present.
+    leaky = is_leaky(audit, m.symbol);
+    (body.len == 0).match({
+        true  => {
+            println(
+                "SKIP {} {} {}: not in the assembly (unused)",
+                cc,
+                level,
+                short_name(m.symbol)
+            );
+            leaky.match({
+                true  => Err(AuditFault.MissingSymbol),
+                false => Ok(Outcome(passed: 0, failed: 0, controls: 0)),
+            })
+        },
+        false => {
+            isa     = body.find(
+                (line) { line.contains("%r") || line.contains("%e") }
+            ).match({
+                Ok(_) => Isa.X86,
+                None  => Isa.Arm,
+            });
+            lines   = parse_lines(a, isa, body).try();
+            seed    = seed_of(a, isa, c, m).try();
+            found   = analyze(
+                a,
+                isa,
+                lines,
+                seed,
+                isa.match({ X86 => arity_x86, Arm => arity_arm }),
+                audit.trace.len > 0 && m.symbol.contains(audit.trace)
+            ).try();
+            arch    = isa.match({ X86 => "x86-64", Arm => "arm64" });
+            located = seed.values.len + seed.pointers.len + seed.slots.len + seed.pointer_slots.len > 0;
+            // A function whose secret inputs could not be placed would pass
+            // vacuously; that is a failure of the check, not a pass.
+            (!located).match({
+                true  => {
+                    println(
+                        "FAIL {} {} {} ({}): no secret input located in registers or on the stack",
+                        cc,
+                        level,
+                        short_name(m.symbol),
+                        arch
+                    );
+                    Ok(Outcome(passed: 0, failed: 1, controls: 0))
+                },
+                false => leaky.match({
+                true  => (found.len > 0).match({
+                    true  => {
+                        first = found.get(0).ok_or(AllocError.OutOfMemory).try();
+                        println(
+                            "PASS {} {} {} ({}): negative control flagged, {} finding(s), first {}: {}",
+                            cc,
+                            level,
+                            short_name(m.symbol),
+                            arch,
+                            found.len,
+                            first.kind,
+                            first.text
+                        );
+                        Ok(Outcome(passed: 0, failed: 0, controls: 1))
+                    },
+                    false => {
+                        println(
+                            "FAIL {} {} {} ({}): negative control NOT flagged",
+                            cc,
+                            level,
+                            short_name(m.symbol),
+                            arch
+                        );
+                        Ok(Outcome(passed: 0, failed: 1, controls: 0))
+                    },
+                }),
+                false => within(found, m.branches).match({
+                    true  => {
+                        (found.len == 0).match({
+                            true  => println(
+                                "PASS {} {} {} ({}): {} instructions, no secret-dependent branch, address or division",
+                                cc,
+                                level,
+                                short_name(m.symbol),
+                                arch,
+                                lines.len
+                            ),
+                            false => println(
+                                "PASS {} {} {} ({}): {} instructions, {} secret-dependent branch(es) within the {} allowed for its public outcome, no secret address or division",
+                                cc,
+                                level,
+                                short_name(m.symbol),
+                                arch,
+                                lines.len,
+                                found.len,
+                                m.branches
+                            ),
+                        });
+                        Ok(Outcome(passed: 1, failed: 0, controls: 0))
+                    },
+                    false => {
+                        println(
+                            "FAIL {} {} {} ({}):",
+                            cc,
+                            level,
+                            short_name(m.symbol),
+                            arch
+                        );
+                        found.loop((f) { println("    {}: {}", f.kind, f.text); });
+                        Ok(Outcome(passed: 0, failed: 1, controls: 0))
+                    },
+                }),
+            }),
+            })
+        },
+    })
+}

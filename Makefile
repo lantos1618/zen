@@ -153,7 +153,15 @@ lspcheck: build
 ## are built once per invocation, then formatting and determinism inspect the
 ## same compiler that ran the test suite.
 verify: override TEST_CACHE_ARGS := --result-cache "$(TEST_RESULTS)" --refresh-result-cache
-verify: warnings nativecheck test archcheck fmt determinism fixpoint differential runtimecheck ownershipcheck actorcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck
+verify: warnings nativecheck test archcheck fmt determinism fixpoint differential runtimecheck ownershipcheck actorcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck ctcheck
+
+.PHONY: ctcheck
+## ctcheck: the constant-time tooling's self-test (tools/ct/check.zen): the
+## static assembly check on tools/ct/controls at -O2 and -O3 with every
+## compiler in CT_CC, and the valgrind (ctgrind) cases where valgrind exists.
+## The timing test (build/ct-timing) is not here: it needs a quiet core.
+ctcheck: build
+	ZEN_STD=$(ZEN_STD) ./zen test tools/ct
 
 .PHONY: nativecheck
 nativecheck: build
@@ -278,7 +286,7 @@ cap: build
 ## ceiling from 306 for the gen_c edges that lang-gaps, cgen-opt, simd-u128,
 ## constant-time and match-safety added; zen-tracker issue #49 ("archcheck
 ## ratchet paydown") tracks migrating them to gen_ir and lowering it back.
-ARCH_GEN_C_CEILING := 324
+ARCH_GEN_C_CEILING := 325
 archcheck: build
 	@mkdir -p build/gates
 	@$(call gate,arch_boundary)

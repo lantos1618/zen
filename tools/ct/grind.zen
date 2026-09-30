@@ -1,0 +1,128 @@
+// ct-grind: the ctgrind check under valgrind memcheck (std.ct.ct_grind).
+//
+//   ct-grind            run every case under valgrind and check the verdicts
+//   ct-grind --case X   run one case (what valgrind is given)
+//
+// Each case marks its secret inputs undefined, runs one operation and marks
+// the result defined before reading it. A constant-time case must produce
+// no memcheck error; each leaky case must produce at least one. Linux only,
+// and only where valgrind is installed.
+Ptr = std.mem
+Vec = std.collections
+str = std.text
+ct_memeq, ct_lookup, ct_swap, ct_eq, ct_lt, ct_select, ct_memcmp = std.ct
+secret_bytes, public_bytes = std.ct.ct_grind
+truncate_u8, to_u64, bit_and = std.core.num
+
+Case = { name: str, leaky: bool }
+
+CASES = [Case, 8](
+    Case(name: "ct_memeq", leaky: false),
+    Case(name: "ct_memcmp", leaky: false),
+    Case(name: "ct_lookup", leaky: false),
+    Case(name: "ct_swap", leaky: false),
+    Case(name: "ct_select", leaky: false),
+    Case(name: "early_exit_compare", leaky: true),
+    Case(name: "secret_index", leaky: true),
+    Case(name: "secret_loop", leaky: true)
+)
+
+run_case* = (env: Env, a: Alloc, name: str) Res<i32, AllocError> {
+    key   = a.raw(32, 16).try();
+    other = a.raw(32, 16).try();
+    table = a.raw(256, 16).try();
+    out   = a.raw(16, 16).try();
+    Range(0, 32).loop((i) {
+        key.write(i, i.truncate_u8() *% 7);
+        other.write(i, i.truncate_u8() *% 7);
+    });
+    Range(0, 256).loop((i) { table.write(i, i.truncate_u8()); });
+    secret_bytes(key, 32);
+    name.match({
+        "ct_memeq"           => out.write(0, ct_memeq(key, other, 32).to_u8()),
+        "ct_memcmp"          => out.to<i32>().write(
+            0,
+            ct_memcmp(key, other, 32)
+        ),
+        "ct_lookup"          => out.write(
+            0,
+            ct_lookup(table, 256, key.read(3).to_usize())
+        ),
+        "ct_swap"            => {
+            ct_swap(key, other, 32, ct_eq(key.read(0).bit_and(1), 1));
+            out.write(0, other.read(1));
+        },
+        "ct_select"          => out.write(
+            0,
+            ct_lt(key.read(1), 100).ct_select(key.read(2), 9)
+        ),
+        "early_exit_compare" => {
+            same ::= 1;
+            Range(0, 32).loop((h, i) {
+                (key.read(i) != other.read(i)).then(() { same = 0; h.break(); });
+            });
+            out.write(0, same);
+        },
+        "secret_index"       => out.write(
+            0,
+            table.read(key.read(3).to_usize())
+        ),
+        _                    => {
+            // A loop whose trip count is secret: compilers cannot turn that
+            // into a select, unlike a two-way choice between constants.
+            count: usize ::= 0;
+            Range(0, key.read(5).to_usize()).loop((i) { out.write_volatile(1, i.truncate_u8()); count = count + 1; });
+            out.write(0, count.truncate_u8());
+        },
+    });
+    public_bytes(out, 4);
+    println("{} -> {}", name, out.read(0));
+    Ok(0)
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a = env.mem.alloc();
+    Range(1, env.argv.len).find((i) { env.argv.get(i).value_or("").eq("--case") }).match({
+        Ok(i) => run_case(env, a, env.argv.get(i + 1).value_or("")),
+        None  => drive(env, a),
+    })
+}
+
+drive* = (env: Env, a: Alloc) Res<i32, AllocError> {
+    self_path = env.argv.get(0).value_or("");
+    failed ::= 0;
+    CASES.loop((c) {
+        argv ::= a.Vec<str>();
+        [str, 7]("valgrind", "--error-exitcode=99", "--track-origins=yes", "-q", self_path, "--case", c.name)
+            .loop((w) { argv.add(w).try(); });
+        result = env.proc.run_argv(a, "", argv).match({
+            Ok(r)  => Ok(r),
+            Err(_) => None,
+        });
+        result.match({
+            None  => {
+                println("ct-grind: valgrind is not available on this host");
+                failed = failed + 1;
+            },
+            Ok(r) => {
+                errors  = r.err.view().count("depends on uninitialised")
+                    + r.err.view().count("Use of uninitialised value");
+                flagged = r.code == 99;
+                ok      = flagged == c.leaky;
+                println(
+                    "{} {}: {} memcheck report(s){}",
+                    ok.match({ true => "PASS", false => "FAIL" }),
+                    c.name,
+                    errors,
+                    c.leaky.match({ true => " (negative control)", false => "" })
+                );
+                (!ok).then(() {
+                    failed = failed + 1;
+                    println("{}", r.err.view());
+                });
+            },
+        });
+    });
+    println("ct-grind: {} of {} cases as expected", 8 - failed, 8);
+    Ok((failed == 0).match({ true => 0, false => 1 }))
+}

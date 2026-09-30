@@ -180,6 +180,11 @@ main = (env: Env) Res<(), AllocError> {
     [Codegen, 2](Codegen.Js, Codegen.Asm).loop((backend) {
         b = env.mem.alloc();
         println(
+            "{} constant time refused {}",
+            backend.stable_name(),
+            refused(env, a, backend, "constant_time.zen", Layout.Single).try()
+        );
+        println(
             "{} split refused {}",
             backend.stable_name(),
             refused(env, b, backend, "program.zen", Layout.Modules).try()

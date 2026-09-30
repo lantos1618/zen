@@ -42,8 +42,9 @@ emit_clock = gen.gen_c.gen_c_clock
 emit_native_features, emit_proc = gen.gen_c.gen_c_proc
 emit_threads, emit_spawn_envs = gen.gen_c.gen_c_threads
 emit_actor_floor, emit_actor_defs = gen.gen_c.gen_c_actor
-borrows = gen.gen_c.gen_c_borrow
+borrows, passes_address = gen.gen_c.gen_c_borrow
 emit_machine, function_attributes = gen.gen_c.gen_c_machine
+written_secret, written_pointer = sema.sema_secret
 
 // Bound the reachable set by functions lowered. Crossing it reports Overrun
 // instead of silently emitting an incomplete translation unit.
@@ -540,6 +541,7 @@ lower_shape = (
     proto ::= be.alloc.String().try();
     bind_params(be, f, sctx, sig).try();
     be.write_proto(qname, name, span, f, ret, sig, proto).try();
+    be.secret_marker(f, mi, sig, proto).try();
     be.open_buf().try();
     be.write_body(blk, mi, ret, self_ty, sctx.has_self).try();
     be.own_lent(f, sig).try();
@@ -711,6 +713,34 @@ write_proto = (
     be.write_params(f, sig, out).try();
     out.add(")").try();
     Ok(());
+}
+
+// ` /* zen:secret zu_l3key *zu_l3out */` after the parameter list names
+// the C parameters whose written type mentions std.ct.Secret, so tools/ct
+// can seed its assembly taint analysis; `*` marks a pointer whose pointee
+// is secret: a written Ptr, and also a parameter C receives by address
+// (`::`, or a wide `:` one, gen_c_borrow.zen), whose address is public.
+// Functions without Secret parameters get nothing.
+secret_marker = (be :: CBackend, f: Function, mi: usize, sig: Vec<TyId>, out :: String)
+                Res<(), AllocError> {
+    marked ::= false;
+    f.params.loop((h, i, p) {
+        p.type.when_ok((t) {
+            be.check.written_secret(t, mi).then(() {
+                (!marked).then(() { out.add(" /* zen:secret").try(); });
+                marked = true;
+                ty = sig.get(i).match({ Ok(s) => s, None => TyId(index: 0) });
+                address = be.check.written_pointer(t) || be.passes_address(f, i, ty).try();
+                out.add(address.match({
+                    true  => " *",
+                    false => " ",
+                })).try();
+                be.slot_index(p.name.text, p.name.span, out).try();
+            });
+        });
+    });
+    marked.then(() { out.add(" */").try(); });
+    Ok(())
 }
 
 write_params = (be :: CBackend, f: Function, sig: Vec<TyId>, out :: String)

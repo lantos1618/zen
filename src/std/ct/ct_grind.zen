@@ -1,0 +1,26 @@
+// Dynamic secret tracking under valgrind's memcheck, the ctgrind method
+// (Adam Langley, 2010): memory holding secrets is marked *undefined*, so
+// memcheck reports every conditional jump, and every address, computed
+// from it ("Conditional jump or move depends on uninitialised value",
+// "Use of uninitialised value"). Results are marked defined again, which is
+// the declassification point, before the program branches on or prints
+// them. Outside valgrind the client requests are a few no-op instructions.
+//
+// Needs <valgrind/memcheck.h> where a program calls these; programs that do
+// not call them do not include the header.
+Ptr = std.mem
+
+Memcheck = c.bind("valgrind/memcheck.h", {
+    VALGRIND_MAKE_MEM_UNDEFINED = (addr: Ptr<u8>, len: usize) usize
+    VALGRIND_MAKE_MEM_DEFINED = (addr: Ptr<u8>, len: usize) usize
+})
+
+// Treat `count` bytes at `bytes` as secret from here on.
+secret_bytes* = (bytes: Ptr<u8>, count: usize) {
+    Memcheck.VALGRIND_MAKE_MEM_UNDEFINED(bytes, count);
+}
+
+// Treat `count` bytes at `bytes` as public: the declassification point.
+public_bytes* = (bytes: Ptr<u8>, count: usize) {
+    Memcheck.VALGRIND_MAKE_MEM_DEFINED(bytes, count);
+}

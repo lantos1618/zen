@@ -1,0 +1,2 @@
+value_barrier* = (value: u64) u64
+main = () {}

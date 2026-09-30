@@ -343,8 +343,29 @@ alias_decl_type = (c :: Checker, d: Def, args: Vec<TyId>)
 alias_written_type = (c :: Checker, al: Alias, d: Def, args: Vec<TyId>)
                      Res<TyId, AllocError> {
     (al.tparams.len == 0).match({
-        false => c.named_or_union(d, args),
+        false => c.alias_parameter(al, args).match({
+            Ok(ty) => Ok(ty),
+            None   => c.named_or_union(d, args),
+        }),
         true  => c.alias_target_of(al, d),
+    })
+}
+
+// `Secret*<T> = T`: a generic alias whose whole target is one of its own
+// parameters is that argument, so the alias adds a name the checker can
+// read in written types (std.ct's secret discipline) without adding a type.
+alias_parameter = (c: Checker, al: Alias, args: Vec<TyId>) Res<TyId> {
+    c.tree.type_at(al.target).kind.match({
+        Named(n) => (n.args.len == 0 && al.tparams.len == args.len).match({
+            false => None,
+            true  => Range(0, al.tparams.len).find((i) {
+                al.tparams.get(i).match({
+                    Ok(p) => p.name.text.eq(n.name.text),
+                    None  => false,
+                })
+            }).match({ Ok(i) => args.get(i), None => None }),
+        }),
+        _        => None,
     })
 }
 

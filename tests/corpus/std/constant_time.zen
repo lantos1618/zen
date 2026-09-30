@@ -1,0 +1,222 @@
+// std.ct against the ordinary operators: exhaustive over every u8 pair and
+// every u16 value, boundary and pseudo-random pairs for the wider words, and
+// the span helpers against direct loops.
+Choice, ct_eq, ct_ne, ct_lt, ct_gt, ct_is_zero = std.ct
+ct_select, ct_cmov, ct_swap, ct_memeq, ct_memcmp, ct_lookup = std.ct
+value_barrier = std.ct
+Ptr = std.mem
+bit_xor, bit_and, shift_left, shift_right, rotate_left, to_u128 = std.core.num
+truncate_u8, truncate_u16, truncate_u32 = std.core.num
+
+bit = (b: bool) u8 { b.match({ true => 1, false => 0 }) }
+
+// xorshift64: deterministic wide operands.
+next = (state :: u64) u64 {
+    state = state.bit_xor(state.shift_left(13));
+    state = state.bit_xor(state.shift_right(7));
+    state = state.bit_xor(state.shift_left(17));
+    state
+}
+
+// Values near the edges of each width, where borrow tricks go wrong.
+edge = (i: usize) u64 {
+    i.match({
+        0  => 0,
+        1  => 1,
+        2  => 2,
+        3  => 127,
+        4  => 128,
+        5  => 255,
+        6  => 256,
+        7  => 32767,
+        8  => 32768,
+        9  => 65535,
+        10 => 2147483647,
+        11 => 2147483648,
+        12 => 4294967295,
+        13 => 4294967296,
+        14 => 9223372036854775807,
+        15 => 9223372036854775808,
+        16 => 18446744073709551614,
+        _  => 18446744073709551615,
+    })
+}
+
+main = (env: Env) Res<(), AllocError> {
+    // Every u8 pair: eq, ne, lt, gt and select.
+    bad: usize ::= 0;
+    Range(0, 256).loop((i) {
+        Range(0, 256).loop((j) {
+            a  = i.truncate_u8();
+            b  = j.truncate_u8();
+            ok = ct_eq(a, b).to_u8() == bit(a == b)
+                && ct_ne(a, b).to_u8() == bit(a != b)
+                && ct_lt(a, b).to_u8() == bit(a < b)
+                && ct_gt(a, b).to_u8() == bit(a > b)
+                && ct_lt(a, b).ct_select(a, b) == (a < b).match({ true => a, false => b });
+            (!ok).then(() { bad = bad + 1; });
+        });
+    });
+    println("u8 pairs: 65536 checked, {} wrong", bad);
+
+    // Every u16 value against zero, one and the maximum.
+    bad = 0;
+    Range(0, 65536).loop((i) {
+        x         = i.truncate_u16();
+        high: u16 = 65535;
+        ok        = ct_is_zero(x).to_u8() == bit(x == 0)
+            && ct_lt(x, high).to_u8() == bit(x < high)
+            && ct_gt(x, 1).to_u8() == bit(x > 1)
+            && ct_eq(x, 32768).to_u8() == bit(x == 32768);
+        (!ok).then(() { bad = bad + 1; });
+    });
+    println("u16 values: 65536 checked, {} wrong", bad);
+
+    // Edge pairs and xorshift pairs for u32, u64, u128 and usize.
+    bad = 0;
+    checked: usize ::= 0;
+    state: u64     ::= 88172645463325252;
+    Range(0, 18 + 4000).loop((i) {
+        Range(0, 18).loop((j) {
+            a   = (i < 18).match({ true => edge(i), false => next(state) });
+            b   = (i < 18).match({
+                true  => edge(j),
+                false => (j < 9).match({ true => next(
+                    state
+                ), false => a +% j.to_u64() -% 9 }),
+            });
+            a32 = a.truncate_u32();
+            b32 = b.truncate_u32();
+            aw  = a.to_u128().shift_left(64).bit_xor(b.to_u128());
+            bw  = b.to_u128().shift_left(64).bit_xor(a.to_u128());
+            au  = a.to_usize().match({ Ok(n) => n, None => 0 });
+            bu  = b.to_usize().match({ Ok(n) => n, None => 0 });
+            ok  = ct_eq(a, b).to_u8() == bit(a == b)
+                && ct_lt(a, b).to_u8() == bit(a < b)
+                && ct_gt(a, b).to_u8() == bit(a > b)
+                && ct_is_zero(a).to_u8() == bit(a == 0)
+                && ct_eq(a32, b32).to_u8() == bit(a32 == b32)
+                && ct_lt(a32, b32).to_u8() == bit(a32 < b32)
+                && ct_eq(aw, bw).to_u8() == bit(aw == bw)
+                && ct_lt(aw, bw).to_u8() == bit(aw < bw)
+                && ct_gt(aw, bw).to_u8() == bit(aw > bw)
+                && ct_is_zero(aw.bit_and(0)).to_u8() == 1
+                && ct_lt(au, bu).to_u8() == bit(au < bu)
+                && ct_ne(au, bu).to_u8() == bit(au != bu)
+                && ct_eq(a, b).ct_select(aw, bw) == (a == b).match({ true => aw, false => bw });
+            (!ok).then(() { bad = bad + 1; });
+            checked = checked + 1;
+        });
+    });
+    println("wide pairs: {} checked, {} wrong", checked, bad);
+
+    // Choice algebra over both inputs.
+    t = Choice.from_bit(1);
+    f = Choice.from_bit(0);
+    println(
+        "choice: and {}{} or {}{} xor {}{} not {}{} from_bit(3) {} declassify {}",
+        t.and(f).to_u8(),
+        t.and(t).to_u8(),
+        f.or(f).to_u8(),
+        t.or(f).to_u8(),
+        t.xor(t).to_u8(),
+        t.xor(f).to_u8(),
+        t.not().to_u8(),
+        f.not().to_u8(),
+        Choice.from_bit(3).to_u8(),
+        t.declassify_bool()
+    );
+    println(
+        "masks: {} {} {} {}",
+        t.mask_u8(),
+        t.mask_u32(),
+        t.mask_u64(),
+        f.mask_u64()
+    );
+    x: u64 ::= 10;
+    y: u64 ::= 20;
+    ct_swap(x, y, f);
+    println("swap(0): {} {}", x, y);
+    ct_swap(x, y, t);
+    println("swap(1): {} {}", x, y);
+    ct_cmov(x, 99, f);
+    println("cmov(0): {}", x);
+    ct_cmov(x, 99, t);
+    println("cmov(1): {}", x);
+    wide: u128 ::= 5;
+    ct_cmov(wide, u128.MIN -% 1, t);
+    println("u128 cmov: {}", wide == u128.MIN -% 1);
+    println(
+        "barrier: {} {}",
+        value_barrier(41) + 1,
+        value_barrier(wide).truncate_u32()
+    );
+
+    // Span helpers against direct loops.
+    a     = env.mem.alloc();
+    left  = a.raw(64, 16).try();
+    right = a.raw(64, 16).try();
+    Range(0, 64).loop((i) {
+        left.write(i, i.truncate_u8());
+        right.write(i, i.truncate_u8());
+    });
+    println(
+        "memeq: equal {} empty {}",
+        ct_memeq(left, right, 64).to_u8(),
+        ct_memeq(left, right, 0).to_u8()
+    );
+    bad = 0;
+    Range(0, 64).loop((i) {
+        right.write(i, right.read(i) +% 1);
+        ne     = ct_memeq(left, right, 64).to_u8() == 0;
+        before = ct_memeq(left, right, i).to_u8() == 1;
+        after  = ct_memcmp(left, right, 64) == -1 && ct_memcmp(right, left, 64) == 1;
+        (!(ne && before && after)).then(() { bad = bad + 1; });
+        right.write(i, right.read(i) -% 1);
+    });
+    println("memeq/memcmp: 64 single-byte differences, {} wrong", bad);
+    right.write(3, 200);
+    right.write(9, 0);
+    println(
+        "memcmp: first difference wins {} {} equal {}",
+        ct_memcmp(left, right, 64),
+        ct_memcmp(right, left, 64),
+        ct_memcmp(left, left, 64)
+    );
+
+    words = a.raw(64, 16).try().to<u64>();
+    Range(0, 8).loop((i) { words.write(i, i.to_u64() *% 1000003); });
+    bad = 0;
+    Range(0, 8).loop((i) {
+        (ct_lookup(words, 8, i) != i.to_u64() *% 1000003).then(() { bad = bad + 1; });
+    });
+    println(
+        "lookup: 8 indices, {} wrong, past end {}",
+        bad,
+        ct_lookup(words, 8, 8)
+    );
+    bytes = left;
+    println(
+        "byte lookup: {} {}",
+        ct_lookup(bytes, 64, 63),
+        ct_lookup(bytes, 64, 64)
+    );
+
+    // Record tables: 4 entries of 2 words each.
+    out = a.raw(16, 16).try().to<u64>();
+    ct_lookup(out, words, 2, 4, 2);
+    println("record lookup: {} {}", out.read(0), out.read(1));
+    ct_lookup(out, words, 2, 4, 9);
+    println("record past end: {} {}", out.read(0), out.read(1));
+
+    // Span swap and cmov.
+    p = words;
+    q = words.offset(4);
+    ct_swap(p, q, 4, f);
+    println("span swap(0): {} {}", p.read(0), q.read(0));
+    ct_swap(p, q, 4, t);
+    println("span swap(1): {} {}", p.read(0), q.read(0));
+    ct_cmov(p, q, 4, t);
+    println("span cmov(1): {} {}", p.read(3), q.read(3));
+    Ok(())
+}

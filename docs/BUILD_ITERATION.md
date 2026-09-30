@@ -5,14 +5,32 @@ The compiler is an ordinary Zen project defined by the root `build.zen`.
 that compiler's `build .` command. Zen checks the project graph, emits the
 compiler's C, invokes the native toolchain, and publishes `./zen`.
 `make bootstrap` uses the same path. Neither command needs Python or an
-installed Zen compiler. Once bootstrapped, `./zen build .` rebuilds itself.
+installed Zen compiler. Once bootstrapped, `./zen build --release .` rebuilds itself.
 Make supplies `ZEN_STD` (defaulting to the checkout's `src`) so the seed
 executable can locate the standard library from its bootstrap directory.
 
-Project builds currently regenerate and compile each selected target in full.
-The Python incremental driver and its cache have been retired. `J` controls
-parallel test/fixpoint work; it does not parallelize project C compilation.
-The Make seed compilation can use optional `ccache` through `CACHE`.
+Project builds reuse work from the target's last successful build, recorded
+beside its generated file. The front end is skipped when the compiler
+executable, the compilation settings, every source file read, and every module
+path probe (`program.c.inputs`, listed in `program.c.paths`) are unchanged; the
+probes make a newly created module that would shadow an existing one force a
+recompile. The native compiler is skipped when the generated C and the complete
+compiler command match the last link (`program.c.linked`). Targets that depend
+on C imports always recompile, and targets with extern C sources or C imports
+always relink, because their project headers are not recorded; neither are
+system headers or libraries found through search paths. A requested symbol map
+also forces a recompile. Delete the executable and the target's directory under
+`build/.zen/` to force a full rebuild. `J` controls parallel test/fixpoint work; it does not
+parallelize project C compilation. The Make seed compilation can use optional
+`ccache` through `CACHE`.
+
+`zen build`, `zen run`, and `zen test` compile native targets at `-O0` by
+default. `--release`, before or after the project or target word, applies each
+target's `optimize` setting (`speed` → `-O2`, `size` → `-Oz` with section
+garbage collection). `CFLAGS` follows the profile flag, so the Makefile's
+`CFLAGS=-O2` keeps compiler builds optimized. `make projectcheck` covers
+skipped and forced recompiles and relinks, module shadowing, failed builds, and
+the placement of `--release`.
 
 Native project builds hold a workspace lock while generating and linking.
 A competing build using that workspace fails explicitly. Native compiler
@@ -33,7 +51,7 @@ For an isolated build, run from the repository root:
 ```sh
 make dev-build DEV_DIR=build/lanes/example CFLAGS='-O0 -std=c99'
 # Or use an existing compiler directly:
-ZEN_BUILD_DIR=build/lanes/direct ZEN_BUILD_OUTPUT=build/lanes/direct/zen ./zen build .
+ZEN_BUILD_DIR=build/lanes/direct ZEN_BUILD_OUTPUT=build/lanes/direct/zen ./zen build --release .
 ```
 
 Batch related edits before rebuilding. `make` or `make check` combines a build

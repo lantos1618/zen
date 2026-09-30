@@ -7,7 +7,7 @@ Vec = std.collections
 Range = std.core
 Env = std.env
 BuildArgs, ProjectArgs, BuildFlags, BuildFlag, build_options = std.build
-FLAG_ENTRY, FLAG_STD, FLAG_FFI = std.build
+FLAG_ENTRY, FLAG_STD, FLAG_FFI, FLAG_RELEASE = std.build
 FLAG_EMIT_C, ZEN_STD_ENV = std.build
 Options, options, is_word, arg_at, OPTIONS_END = std.cli
 Command, command, ValueType = std.cli
@@ -49,7 +49,7 @@ FmtJob* = {
 // argv[0] is the program and argv[1] is the command.
 ARGS*: usize = 2
 
-USAGE*: str = "usage: zen build [<project-or-target>]\n       zen check <root> [--entry <file>] [--std <path>] [--ffi]\n       zen run [<project-or-target>] [-- <args>...]\n       zen build <root> [--entry <file>] [--std <path>] [--ffi] [--symbol-map <file>] --emit-c -o <file.c>\n       zen build <root> [--entry <file>] [--std <path>] [--ffi] [--symbol-map <file>] --emit-c-dir <dir>\n       zen fmt [--check] <file.zen>..."
+USAGE*: str = "usage: zen build [--release] [<project-or-target>]\n       zen check <root> [--entry <file>] [--std <path>] [--ffi]\n       zen run [--release] [<project-or-target>] [-- <args>...]\n       zen build <root> [--entry <file>] [--std <path>] [--ffi] [--symbol-map <file>] --emit-c -o <file.c>\n       zen build <root> [--entry <file>] [--std <path>] [--ffi] [--symbol-map <file>] --emit-c-dir <dir>\n       zen fmt [--check] <file.zen>..."
 
 HelpArg = Root
     | BuildRoot
@@ -66,6 +66,7 @@ HelpArg = Root
     | Check
     | Request
     | Reply
+    | Release
 
 // Runtime help comes from the same declarative surface applications use.
 // USAGE remains exported above for source compatibility, but the executable
@@ -117,6 +118,7 @@ help_model = (a: Alloc) Res<Command<HelpArg>, AllocError> {
         "Write generated source to FILE"
     ).try();
     build.source_help().try();
+    build.release_help().try();
     build.option(
         "--symbol-map",
         HelpArg.SymbolMap,
@@ -150,6 +152,7 @@ help_model = (a: Alloc) Res<Command<HelpArg>, AllocError> {
         ValueType.Text,
         "Project directory or target name"
     ).try();
+    run.release_help().try();
     run.trailing_args();
     app.subcommand(run).try();
 
@@ -185,6 +188,7 @@ help_model = (a: Alloc) Res<Command<HelpArg>, AllocError> {
         ValueType.Text,
         "Test target within the selected project"
     ).try();
+    test.release_help().try();
     test.trailing_args();
     app.subcommand(test).try();
 
@@ -228,6 +232,14 @@ source_help = (model :: Command<HelpArg>) Res<(), AllocError> {
         "Enable foreign-function interfaces"
     ).try();
     Ok(())
+}
+
+release_help = (model :: Command<HelpArg>) Res<(), AllocError> {
+    model.flag(
+        FLAG_RELEASE,
+        HelpArg.Release,
+        "Apply each target's optimize setting instead of -O0"
+    )
 }
 
 FLAG_FMT_CHECK: str = "--check"
@@ -391,18 +403,25 @@ scan_build = (argv: Vec<str>, declared: Options<BuildFlag>, std_root: str)
 }
 
 // Project configuration resolves its stdlib root when the build begins.
+// `--release` may precede or follow the project word.
 project_of = (env: Env, a: Alloc, argv: Vec<str>, run: bool)
              Res<Cli, AllocError> {
-    first = arg_at(argv, ARGS);
-    root   ::= ".";
-    target ::= "";
-    at     ::= ARGS;
+    root    ::= ".";
+    target  ::= "";
+    at      ::= ARGS;
+    release ::= arg_at(argv, at).eq(FLAG_RELEASE);
+    release.then(() { at = at + 1; });
+    first = arg_at(argv, at);
     (!first.is_empty() && !first.eq(OPTIONS_END)).then(() {
         holds_build_zen(env, a, first).match({
             true  => { root = first; },
             false => { target = first; },
         });
         at = at + 1;
+    });
+    (!release && arg_at(argv, at).eq(FLAG_RELEASE)).then(() {
+        release = true;
+        at      = at + 1;
     });
     arg_at(argv, at).eq(OPTIONS_END).then(() { at = at + 1; });
     bad = (!run && at < argv.len).match({
@@ -416,7 +435,8 @@ project_of = (env: Env, a: Alloc, argv: Vec<str>, run: bool)
                 root: root,
                 target: target,
                 argv: argv,
-                args_at: at
+                args_at: at,
+                release: release
             );
             run.match({ true => Ok(Cli.Run(job)), false => Ok(Cli.Project(job)) })
         },
@@ -436,11 +456,14 @@ verdict = (args: BuildFlags, bad: str) Cli {
 }
 
 // Only arguments following -- are passed to each selected test executable.
+// `--release` may precede or follow the project and target words.
 test_of = (env: Env, a: Alloc, argv: Vec<str>) Res<Cli, AllocError> {
-    root   ::= ".";
-    target ::= "";
-    at     ::= ARGS;
-    bad    ::= "";
+    root    ::= ".";
+    target  ::= "";
+    at      ::= ARGS;
+    bad     ::= "";
+    release ::= arg_at(argv, at).eq(FLAG_RELEASE);
+    release.then(() { at = at + 1; });
     first = arg_at(argv, at);
     (!first.is_empty() && !first.eq(OPTIONS_END) && !is_word(first)).then(() { bad = first; });
     (!first.is_empty() && !first.eq(OPTIONS_END)).then(() {
@@ -458,6 +481,10 @@ test_of = (env: Env, a: Alloc, argv: Vec<str>) Res<Cli, AllocError> {
         });
     });
     (!target.is_empty() && !is_word(target)).then(() { bad = target; });
+    (!release && arg_at(argv, at).eq(FLAG_RELEASE)).then(() {
+        release = true;
+        at      = at + 1;
+    });
     tail = arg_at(argv, at);
     (!tail.is_empty() && !tail.eq(OPTIONS_END)).then(() { bad = tail; });
     tail.eq(OPTIONS_END).then(() { at = at + 1; });
@@ -467,7 +494,8 @@ test_of = (env: Env, a: Alloc, argv: Vec<str>) Res<Cli, AllocError> {
             root: root,
             target: target,
             argv: argv,
-            args_at: at
+            args_at: at,
+            release: release
         ))),
     })
 }

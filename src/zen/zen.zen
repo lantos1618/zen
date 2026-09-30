@@ -49,7 +49,8 @@ project_cli = (env: Env, a: Alloc, job: ProjectArgs, action: Action)
         target: job.target,
         std_root: std_root,
         argv: job.argv,
-        args_at: job.args_at
+        args_at: job.args_at,
+        release: job.release
     );
     project(env, a, configured, action)
 }

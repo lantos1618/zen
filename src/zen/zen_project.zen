@@ -9,6 +9,7 @@ Map, Vec = std.collections
 BuildArgs, ProjectArgs, Emission, Target, Os, Arch, Abi, Dep, Codegen = std.build
 Build = zen.zen_build
 entry_of, holds_build_zen = zen.zen_path
+Inputs, inputs, replay = zen.zen_inputs
 BuildPlan, ExeNode, plan = zen.zen_build_plan
 
 Action* = Build | Run | Test
@@ -321,19 +322,100 @@ Project = {
                         (!self.ensure_parent(symbols).try()).then(() { done.break(); });
                     });
                     (!self.compile_exe(exe, generated).try()).then(() { done.break(); });
-                    (!self.link_exe(exe, generated, candidate.view()).try()).then(() { done.break(); });
-                    argv ::= self.a.Vec<str>();
-                    argv.add("mv").try();
-                    argv.add("-f").try();
-                    argv.add(candidate.view()).try();
-                    argv.add(output.view()).try();
-                    self.run_captured(argv).try().match({
-                        true => done.break(output), false => done.break(),
+                    self.link_exe(
+                        exe,
+                        generated,
+                        candidate.view()
+                    ).try().match({
+                        None     => { done.break(); },
+                        Ok(link) => self.publish(exe, generated, link, candidate.view(), output.view()).try().then(() { done.break(output); }),
                     });
+                    done.break();
                 });
                 Ok(result)
             },
         })
+    }
+
+    // The native compiler is skipped when the published executable exists and
+    // the link record matches: the same command words and generated source.
+    // Libraries found through search paths and system headers are not
+    // recorded; removing the executable forces a relink. The record is deleted
+    // before linking, so a failed or interrupted link never leaves a record
+    // that describes an executable it did not publish.
+    publish = (self: @Self, exe: ExeNode, generated: str, link: Vec<str>, candidate: str, output: str)
+              Res<bool, AllocError> {
+        record_path = self.a.String("{}.linked", generated).try();
+        record      = self.link_record(exe, generated, link).try();
+        current     = record.match({
+            None       => false,
+            Ok(expect) => self.env.fs.exists(output) && self.env.fs.read(self.a, record_path.view()).match({
+                Err(_)   => false,
+                Ok(text) => text.view().eq(expect.view()),
+            }),
+        });
+        current.match({
+            true  => Ok(true),
+            false => self.env.fs.remove(record_path.view()).match({
+                Err(_) => { println("zen: cannot clear link record `{}`", record_path.view()); Ok(false) },
+                Ok(_)  => {
+                    rename ::= self.a.Vec<str>();
+                    rename.add("mv").try();
+                    rename.add("-f").try();
+                    rename.add(candidate).try();
+                    rename.add(output).try();
+                    linked = self.run_captured(link).try() && self.run_captured(rename).try();
+                    linked.then(() {
+                        record.when_ok(
+                            (text) { self.env.fs.write(
+                                record_path.view(),
+                                text.view()
+                            ).ignore(); }
+                        );
+                    });
+                    Ok(linked)
+                },
+            }),
+        })
+    }
+
+    // None means the link cannot be proven current: extern C sources and C
+    // imports may include project headers this record does not observe, and
+    // an unreadable generated file has no content to compare. Length-prefixed
+    // command words keep word boundaries unambiguous.
+    link_record = (self: @Self, exe: ExeNode, generated: str, link: Vec<str>)
+                  Res<Res<String>, AllocError> {
+        self.links_c_sources(exe).match({
+            true  => Ok(None),
+            false => self.env.fs.read(self.a, generated).match({
+                Err(_)     => Ok(None),
+                Ok(source) => {
+                    record ::= self.a.String().try();
+                    link.loop(
+                        (word) { record.fmt("{}:{}\n", word.len, word).try(); }
+                    );
+                    record.fmt("{}:", source.view().len).try();
+                    record.add(source.view()).try();
+                    Ok(Ok(record))
+                },
+            }),
+        })
+    }
+
+    links_c_sources = (self: @Self, exe: ExeNode) bool {
+        self.imports_c_headers(exe) || exe.spec.deps.find((dep) {
+            self.planned.externs.find(
+                (node) { node.name.eq(dep.name) }
+            ).match({ Ok(_) => true, None => false })
+        }).match({ Ok(_) => true, None => false })
+    }
+
+    imports_c_headers = (self: @Self, exe: ExeNode) bool {
+        exe.spec.deps.find((dep) {
+            self.planned.imports.find(
+                (node) { node.name.eq(dep.name) }
+            ).match({ Ok(_) => true, None => false })
+        }).match({ Ok(_) => true, None => false })
     }
 
     compile_exe = (self: @Self, exe: ExeNode, generated: str)
@@ -351,7 +433,7 @@ Project = {
             root  = src_root.view();
             entry = source.view().slice(prefix.view().len, source.view().len);
         });
-        args = BuildArgs(
+        args        = BuildArgs(
             root: root,
             emission: Emission.File(generated),
             backend: exe.spec.backend,
@@ -360,26 +442,180 @@ Project = {
             symbol_map: self.env.var("ZEN_SYMBOL_MAP").value_or(""),
             ffi: true
         );
-        compiler ::= self.a.Build(self.env, root);
-        compiler.set_std_root(self.job.std_root);
-        compiler.enable_ffi();
-        exe.spec.deps.loop((dep) {
-            self.planned.libs.find((lib) { lib.name.eq(dep.name) }).match({
-                None    => (),
-                Ok(lib) => {
-                    path = self.project_path(lib.spec.src.text).try();
-                    compiler.register_library(lib.name, path.view()).try();
-                },
-            });
+        header      = self.compile_header(exe, args).try();
+        record_path = self.a.String("{}.inputs", generated).try();
+        paths_path  = self.a.String("{}.paths", generated).try();
+        reusable    = header.match({
+            None     => false,
+            Ok(head) => self.env.fs.exists(generated) && self.unchanged(head, record_path.view(), paths_path.view()).try(),
         });
-        compiler.walk(entry_of(self.env, self.a, root, entry).try()).try();
-        compiler.back_end(args).try();
-        compiler.tally();
-        Ok(compiler.code() == 0)
+        reusable.match({
+            true  => Ok(true),
+            false => self.env.fs.remove(record_path.view()).match({
+                Err(_) => { println("zen: cannot clear input record `{}`", record_path.view()); Ok(false) },
+                Ok(_)  => {
+                    compiler ::= self.a.Build(self.env, root);
+                    compiler.set_std_root(self.job.std_root);
+                    compiler.enable_ffi();
+                    header.match({ None => (), Ok(_) => compiler.record_inputs().try() });
+                    exe.spec.deps.loop((dep) {
+                        self.planned.libs.find(
+                            (lib) { lib.name.eq(dep.name) }
+                        ).match({
+                            None    => (),
+                            Ok(lib) => {
+                                path = self.project_path(
+                                    lib.spec.src.text
+                                ).try();
+                                compiler.register_library(
+                                    lib.name,
+                                    path.view()
+                                ).try();
+                            },
+                        });
+                    });
+                    compiler.walk(
+                        entry_of(self.env, self.a, root, entry).try()
+                    ).try();
+                    compiler.back_end(args).try();
+                    compiler.tally();
+                    compiled = compiler.code() == 0;
+                    compiled.then(() {
+                        header.match({
+                            None     => (),
+                            Ok(head) => self.save_inputs(
+                                head,
+                                compiler.inputs,
+                                record_path.view(),
+                                paths_path.view()
+                            ).try(),
+                        });
+                    });
+                    Ok(compiled)
+                },
+            }),
+        })
     }
 
+    // The front end is skipped when the generated file exists and its input
+    // record matches: the same compiler executable, compilation words, files
+    // read, and probe answers. The record is removed before compiling and
+    // written only after a successful compile, so it always describes the
+    // generated file beside it. None means the compile cannot be reused: C
+    // imports translate headers in a child process whose reads are not
+    // recorded, and a requested symbol map must be rewritten.
+    compile_header = (self: @Self, exe: ExeNode, args: BuildArgs)
+                     Res<Res<Inputs>, AllocError> {
+        result: Res<Inputs> = loop<Inputs>((done) {
+            (self.imports_c_headers(exe) || !args.symbol_map.is_empty()).then(() { done.break(); });
+            compiler = self.compiler_path().try();
+            binary   = self.env.fs.read(self.a, compiler.view());
+            binary.match({
+                Err(_)   => { done.break(); },
+                Ok(text) => {
+                    head ::= inputs(self.a).try();
+                    head.read(compiler.view(), text.view()).try();
+                    head.word(args.root).try();
+                    head.word(args.entry).try();
+                    head.word(args.std_root).try();
+                    head.word(
+                        args.backend.match({ C => "c", Js => "js", Asm => "asm" })
+                    ).try();
+                    exe.spec.deps.loop((dep) {
+                        self.planned.libs.find(
+                            (lib) { lib.name.eq(dep.name) }
+                        ).match({
+                            None    => (),
+                            Ok(lib) => {
+                                head.word(lib.name).try();
+                                head.word(lib.spec.src.text).try();
+                            },
+                        });
+                    });
+                    head.exact.then(() { done.break(head); });
+                },
+            });
+            done.break();
+        });
+        Ok(result)
+    }
+
+    // The running compiler: argv[0] as given when it names a path, otherwise
+    // its first match on PATH. An empty result cannot be read, so the
+    // compile is not reused.
+    compiler_path = (self: @Self) Res<String, AllocError> {
+        name = self.job.argv.get(0).value_or("");
+        (name.is_empty() || name.contains('/')).match({
+            true  => {
+                given ::= self.a.String().try();
+                given.add(name).try();
+                Ok(given)
+            },
+            false => {
+                found ::= self.a.String().try();
+                self.env.var("PATH").value_or("").split(':').loop((dir) {
+                    (found.view().is_empty() && !dir.is_empty()).then(() {
+                        path = join_path(self.a, dir, name).try();
+                        self.env.fs.exists(path.view()).then(() { found = path; });
+                    });
+                });
+                Ok(found)
+            },
+        })
+    }
+
+    unchanged = (self: @Self, head: Inputs, record_path: str, paths_path: str)
+                Res<bool, AllocError> {
+        stored  = self.env.fs.read(self.a, record_path);
+        listing = self.env.fs.read(self.a, paths_path);
+        stored.match({
+            Err(_)     => Ok(false),
+            Ok(record) => listing.match({
+                Err(_)    => Ok(false),
+                Ok(paths) => replay(
+                    self.env,
+                    self.a,
+                    paths.view()
+                ).try().match({
+                    None    => Ok(false),
+                    Ok(now) => {
+                        text = record.view();
+                        lead = head.record.view();
+                        Ok(text.starts_with(lead) && text.slice(lead.len, text.len).eq(now.record.view()))
+                    },
+                }),
+            }),
+        })
+    }
+
+    // The listing is written before the record, so a record on disk always
+    // has the listing it was built from.
+    save_inputs = (self: @Self, head: Inputs, body: Res<Inputs>, record_path: str, paths_path: str)
+                  Res<(), AllocError> {
+        body.match({
+            None         => Ok(()),
+            Ok(recorded) => recorded.exact.match({
+                false => Ok(()),
+                true  => {
+                    record ::= self.a.String().try();
+                    record.add(head.record.view()).try();
+                    record.add(recorded.record.view()).try();
+                    self.env.fs.write(paths_path, recorded.paths.view()).match({
+                        Err(_) => (),
+                        Ok(_)  => self.env.fs.write(
+                            record_path,
+                            record.view()
+                        ).ignore(),
+                    });
+                    Ok(())
+                },
+            }),
+        })
+    }
+
+    // The native compiler command that links `generated` into `output`.
     link_exe = (self: @Self, exe: ExeNode, generated: str, output: str)
-               Res<bool, AllocError> {
+               Res<Res<Vec<str>>, AllocError> {
         argv ::= self.a.Vec<str>();
         compiler = self.env.var("CC").value_or("cc");
         valid_cc = self.append_command(compiler, argv).try() && argv.len > 0;
@@ -389,20 +625,27 @@ Project = {
             flag_words
         ).try();
         (!valid_cc || !valid_flags || (!exe.spec.language.eq("c") && !exe.spec.language.eq("objective-c"))).match({
-            true  => { println("zen: invalid CC or CFLAGS command words"); Ok(false) },
-            false => self.link_command(
-                exe,
-                generated,
-                output,
-                argv,
-                flag_words
-            ),
+            true  => { println("zen: invalid CC or CFLAGS command words"); Ok(None) },
+            false => {
+                self.link_command(
+                    exe,
+                    generated,
+                    output,
+                    argv,
+                    flag_words
+                ).try();
+                Ok(Ok(argv))
+            },
         })
     }
 
     link_command = (self: @Self, exe: ExeNode, generated: str, output: str, argv :: Vec<str>, flags: Vec<str>)
-                   Res<bool, AllocError> {
-        argv.add(exe.spec.optimize.match({
+                   Res<(), AllocError> {
+        optimize = self.job.release.match({
+            true  => exe.spec.optimize,
+            false => "debug",
+        });
+        argv.add(optimize.match({
             "size"  => "-Oz",
             "debug" => "-O0",
             _       => "-O2",
@@ -411,7 +654,7 @@ Project = {
             C => argv.add("-std=c99").try(),
             _ => (),
         });
-        exe.spec.optimize.eq("size").then(() {
+        optimize.eq("size").then(() {
             argv.add("-ffunction-sections").try();
             argv.add("-fdata-sections").try();
             // Zen faults are values; unwind tables only cost size.
@@ -442,7 +685,7 @@ Project = {
         });
         argv.add("-o").try();
         argv.add(output).try();
-        self.run_captured(argv)
+        Ok(())
     }
 
     // CC/CFLAGS use quoted command words, never shell evaluation.

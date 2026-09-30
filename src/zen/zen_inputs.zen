@@ -1,0 +1,69 @@
+// Front-end inputs of one compilation: each file read, with the exact bytes the
+// compiler parsed, and each existence probe, with its answer. Probes matter
+// because creating a flat module file changes which of two candidate paths an
+// import resolves to. `paths` lists the entries in order so a later build can
+// rebuild the record from the filesystem; equal records mean the front end
+// would read the same program.
+
+Alloc, AllocError = std.mem
+str, String = std.text
+
+Inputs* = {
+    paths* :: String,
+    record* :: String,
+
+    // A path containing a newline cannot be listed in `paths`; such a record
+    // is never reused.
+    exact* :: bool = true,
+
+    read* = (self :: @Self, path: str, text: str) Res<(), AllocError> {
+        self.list('R', path).try();
+        self.record.fmt("R {}:{}\n{}:", path.len, path, text.len).try();
+        self.record.add(text)
+    }
+
+    probe* = (self :: @Self, path: str, found: bool) Res<(), AllocError> {
+        self.list('P', path).try();
+        self.record.fmt(
+            "P {}:{} {}\n",
+            path.len,
+            path,
+            found.match({ true => "1", false => "0" })
+        )
+    }
+
+    // Command words that select how the listed files are compiled.
+    word* = (self :: @Self, text: str) Res<(), AllocError> {
+        self.record.fmt("W {}:{}\n", text.len, text)
+    }
+
+    list = (self :: @Self, kind: u8, path: str) Res<(), AllocError> {
+        path.contains('\n').then(() { self.exact = false; });
+        self.paths.add(kind).try();
+        self.paths.fmt(" {}\n", path)
+    }
+}
+
+inputs* = (a: Alloc) Res<Inputs, AllocError> {
+    Ok(Inputs(paths: a.String().try(), record: a.String().try()))
+}
+
+// Rebuild the record for a `paths` listing from the filesystem. None means a
+// listed file can no longer be read, so the old record cannot match.
+replay* = (env: Env, a: Alloc, paths: str) Res<Res<Inputs>, AllocError> {
+    now      ::= inputs(a).try();
+    readable ::= true;
+    paths.split('\n').loop((line) {
+        (line.len > 2).then(() {
+            path = line.slice(2, line.len);
+            (line.index(0) == 'R').match({
+                true  => env.fs.read(a, path).match({
+                    Ok(text) => now.read(path, text.view()).try(),
+                    Err(_)   => { readable = false; },
+                }),
+                false => now.probe(path, env.fs.exists(path)).try(),
+            });
+        });
+    });
+    Ok(readable.match({ true => Ok(now), false => None }))
+}

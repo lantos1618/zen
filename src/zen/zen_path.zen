@@ -221,14 +221,32 @@ unit_at* = (a: Alloc, root: str, path: str) Res<Unit, AllocError> {
 // `<root>/<name>/<last>.zen`. When neither exists, return the flat candidate
 // so the eventual read reports the requested path.
 candidate* = (env: Env, a: Alloc, root: str, name: str) Res<Unit, AllocError> {
-    flat ::= a.String("{}/{}.zen", root, name).try();
-    last = Path(name).name();
-    nest ::= a.String("{}/{}/{}.zen", root, name, last).try();
-    take_flat = env.fs.exists(flat.view()) || !env.fs.exists(nest.view());
-    take_flat.match({
-        true  => unit_at(a, root, flat.view()),
-        false => unit_at(a, root, nest.view()),
-    })
+    paths     = candidate_paths(a, root, name).try();
+    take_flat = env.fs.exists(paths.flat) || !env.fs.exists(paths.nest);
+    paths.choose(a, root, take_flat)
+}
+
+// The two spellings a module name can take on disk.
+CandidatePaths* = {
+    flat*: str,
+    nest*: str,
+
+    choose* = (self: @Self, a: Alloc, root: str, flat: bool) Res<Unit, AllocError> {
+        flat.match({
+            true  => unit_at(a, root, self.flat),
+            false => unit_at(a, root, self.nest),
+        })
+    }
+}
+
+candidate_paths* = (
+    a    : Alloc,
+    root : str,
+    name : str
+) Res<CandidatePaths, AllocError> {
+    flat = a.String("{}/{}.zen", root, name).try();
+    nest = a.String("{}/{}/{}.zen", root, name, Path(name).name()).try();
+    Ok(CandidatePaths(flat: flat.view(), nest: nest.view()))
 }
 
 // Conventional program entry module and declaration name.

@@ -126,8 +126,7 @@ last_identifier = (text: str) usize {
     at
 }
 
-// `static inline __attribute__((always_inline)) T` and
-// `static ZG_TARGET_AVX2 T` -> `T`.
+// `static ZG_INLINE T` and `static ZG_TARGET_AVX2 T` -> `T`.
 strip_qualifiers = (result: str) str {
     close = result.rfind(')');
     rest ::= close.match({

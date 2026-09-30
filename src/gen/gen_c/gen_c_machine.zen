@@ -1117,7 +1117,7 @@ function_attributes* = (
         out.fmt("ZG_TARGET{} ", set.view()).try();
     });
     (f.inline && be.linkage().eq("static ")).then(() {
-        out.add("inline __attribute__((always_inline)) ").try();
+        out.add("ZG_INLINE ").try();
     });
     Ok(())
 }

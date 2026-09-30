@@ -52,10 +52,8 @@ out_of_line* = (a: Alloc, c: str, symbols: Vec<str>) Res<String, AllocError> {
         audited.match({
             false => out.add(line).try(),
             true  => {
-                rest = line.starts_with(
-                    "static inline __attribute__((always_inline)) "
-                ).match({
-                    true  => line.slice(46, line.len),
+                rest = line.starts_with("static ZG_INLINE ").match({
+                    true  => line.slice(17, line.len),
                     false => line.slice(7, line.len),
                 });
                 out.add("static __attribute__((noinline,noipa,used)) ").try();

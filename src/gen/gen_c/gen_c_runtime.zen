@@ -929,6 +929,7 @@ max_macro* = (prim: str) str {
         "u16"   => "UINT16_MAX",
         "u32"   => "UINT32_MAX",
         "u64"   => "UINT64_MAX",
+        "u128"  => "ZG_U128_MAX",
         "usize" => "SIZE_MAX",
         _       => "0",
     })

@@ -327,3 +327,20 @@ not assign a numerical rating or imply full-language support for scalar targets.
    target assumptions are explicit, and a new instruction or diagnostic has a
    clear home. Run `make verify`, including seed/fixpoint checks, for each
    integrated batch; reassess architecture separately from test results.
+
+## Machine operations
+
+The operations validated by `sema_prim` and `sema_numeric` — `mul_wide`,
+truncation, unsigned bit operations, `std.simd` vectors, volatile access,
+`compiler_barrier`, CPU capability detection and the AES / carry-less
+instructions — form one backend-neutral vocabulary in
+[gen_ir_machine](../src/gen/gen_ir_machine.zen). The C backend lowers them
+from checked facts (`gen_c_machine`). The scalar IR has an
+`Instruction.Machine` form for them, but scalar slots cannot yet hold u64,
+u128, vectors or pointers, so `gen_lower` refuses every reachable call to a
+machine operation with a diagnostic naming it (for example "unsupported by
+this backend: runtime CPU feature detection (std.simd cpu_*)"), and
+`gen_verify` rejects a Machine instruction. An assembly target implements
+the vocabulary once IR slots are widened; target selection follows the
+same capability rule as C (a function with a capability parameter is
+compiled for that feature).

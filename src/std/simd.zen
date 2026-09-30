@@ -1,0 +1,219 @@
+// Fixed-width SIMD vectors of unsigned lanes: u8x16, u8x32, u32x4, u32x8,
+// u64x2 and u64x4. Every operation below is a compiler primitive validated by
+// declaration identity (sema_prim); the C backend lowers vectors to GCC/Clang
+// vector extensions, so 32-byte vectors become two 16-byte registers unless a
+// function is compiled for a wider target (see `Avx2`).
+//
+// Lane arithmetic wraps; there is no trapping vector arithmetic. Shifts take
+// one count for every lane and yield zero at or above the lane width;
+// rotations reduce the count modulo the lane width. Shuffle patterns select
+// lanes by index, reduced modulo the lane count (`shuffle`) or twice the lane
+// count (`shuffle2`, whose indices at or above N select from `other`). A
+// pattern written as an array literal of integer literals lowers to one
+// native shuffle. Loads and stores are unaligned and use the target's native
+// byte order; every supported target is little-endian. `lane` and
+// `with_lane` trap on an index at or beyond the lane count.
+Ptr = std.mem
+
+// u8x16: 16 x u8
+splat_u8x16* = (value: u8) u8x16
+load_u8x16* = (bytes: Ptr<u8>, offset: usize) u8x16
+store* = (self: u8x16, bytes: Ptr<u8>, offset: usize) ()
+lane* = (self: u8x16, index: usize) u8
+with_lane* = (self: u8x16, index: usize, value: u8) u8x16
+add_wrap* = (self: u8x16, other: u8x16) u8x16
+sub_wrap* = (self: u8x16, other: u8x16) u8x16
+mul_wrap* = (self: u8x16, other: u8x16) u8x16
+bit_xor* = (self: u8x16, other: u8x16) u8x16
+bit_and* = (self: u8x16, other: u8x16) u8x16
+bit_or* = (self: u8x16, other: u8x16) u8x16
+shift_left* = (self: u8x16, count: usize) u8x16
+shift_right* = (self: u8x16, count: usize) u8x16
+rotate_left* = (self: u8x16, count: usize) u8x16
+rotate_right* = (self: u8x16, count: usize) u8x16
+shuffle* = (self: u8x16, pattern: [usize, 16]) u8x16
+shuffle2* = (self: u8x16, other: u8x16, pattern: [usize, 16]) u8x16
+
+// u8x32: 32 x u8
+splat_u8x32* = (value: u8) u8x32
+load_u8x32* = (bytes: Ptr<u8>, offset: usize) u8x32
+store* = (self: u8x32, bytes: Ptr<u8>, offset: usize) ()
+lane* = (self: u8x32, index: usize) u8
+with_lane* = (self: u8x32, index: usize, value: u8) u8x32
+add_wrap* = (self: u8x32, other: u8x32) u8x32
+sub_wrap* = (self: u8x32, other: u8x32) u8x32
+mul_wrap* = (self: u8x32, other: u8x32) u8x32
+bit_xor* = (self: u8x32, other: u8x32) u8x32
+bit_and* = (self: u8x32, other: u8x32) u8x32
+bit_or* = (self: u8x32, other: u8x32) u8x32
+shift_left* = (self: u8x32, count: usize) u8x32
+shift_right* = (self: u8x32, count: usize) u8x32
+rotate_left* = (self: u8x32, count: usize) u8x32
+rotate_right* = (self: u8x32, count: usize) u8x32
+shuffle* = (self: u8x32, pattern: [usize, 32]) u8x32
+shuffle2* = (self: u8x32, other: u8x32, pattern: [usize, 32]) u8x32
+
+// u32x4: 4 x u32
+splat_u32x4* = (value: u32) u32x4
+lanes_u32x4* = (l0: u32, l1: u32, l2: u32, l3: u32) u32x4
+load_u32x4* = (bytes: Ptr<u8>, offset: usize) u32x4
+store* = (self: u32x4, bytes: Ptr<u8>, offset: usize) ()
+lane* = (self: u32x4, index: usize) u32
+with_lane* = (self: u32x4, index: usize, value: u32) u32x4
+add_wrap* = (self: u32x4, other: u32x4) u32x4
+sub_wrap* = (self: u32x4, other: u32x4) u32x4
+mul_wrap* = (self: u32x4, other: u32x4) u32x4
+bit_xor* = (self: u32x4, other: u32x4) u32x4
+bit_and* = (self: u32x4, other: u32x4) u32x4
+bit_or* = (self: u32x4, other: u32x4) u32x4
+shift_left* = (self: u32x4, count: usize) u32x4
+shift_right* = (self: u32x4, count: usize) u32x4
+rotate_left* = (self: u32x4, count: usize) u32x4
+rotate_right* = (self: u32x4, count: usize) u32x4
+shuffle* = (self: u32x4, pattern: [usize, 4]) u32x4
+shuffle2* = (self: u32x4, other: u32x4, pattern: [usize, 4]) u32x4
+
+// u32x8: 8 x u32
+splat_u32x8* = (value: u32) u32x8
+lanes_u32x8* = (
+    l0 : u32,
+    l1 : u32,
+    l2 : u32,
+    l3 : u32,
+    l4 : u32,
+    l5 : u32,
+    l6 : u32,
+    l7 : u32
+) u32x8
+load_u32x8* = (bytes: Ptr<u8>, offset: usize) u32x8
+store* = (self: u32x8, bytes: Ptr<u8>, offset: usize) ()
+lane* = (self: u32x8, index: usize) u32
+with_lane* = (self: u32x8, index: usize, value: u32) u32x8
+add_wrap* = (self: u32x8, other: u32x8) u32x8
+sub_wrap* = (self: u32x8, other: u32x8) u32x8
+mul_wrap* = (self: u32x8, other: u32x8) u32x8
+bit_xor* = (self: u32x8, other: u32x8) u32x8
+bit_and* = (self: u32x8, other: u32x8) u32x8
+bit_or* = (self: u32x8, other: u32x8) u32x8
+shift_left* = (self: u32x8, count: usize) u32x8
+shift_right* = (self: u32x8, count: usize) u32x8
+rotate_left* = (self: u32x8, count: usize) u32x8
+rotate_right* = (self: u32x8, count: usize) u32x8
+shuffle* = (self: u32x8, pattern: [usize, 8]) u32x8
+shuffle2* = (self: u32x8, other: u32x8, pattern: [usize, 8]) u32x8
+
+// u64x2: 2 x u64
+splat_u64x2* = (value: u64) u64x2
+lanes_u64x2* = (l0: u64, l1: u64) u64x2
+load_u64x2* = (bytes: Ptr<u8>, offset: usize) u64x2
+store* = (self: u64x2, bytes: Ptr<u8>, offset: usize) ()
+lane* = (self: u64x2, index: usize) u64
+with_lane* = (self: u64x2, index: usize, value: u64) u64x2
+add_wrap* = (self: u64x2, other: u64x2) u64x2
+sub_wrap* = (self: u64x2, other: u64x2) u64x2
+mul_wrap* = (self: u64x2, other: u64x2) u64x2
+bit_xor* = (self: u64x2, other: u64x2) u64x2
+bit_and* = (self: u64x2, other: u64x2) u64x2
+bit_or* = (self: u64x2, other: u64x2) u64x2
+shift_left* = (self: u64x2, count: usize) u64x2
+shift_right* = (self: u64x2, count: usize) u64x2
+rotate_left* = (self: u64x2, count: usize) u64x2
+rotate_right* = (self: u64x2, count: usize) u64x2
+shuffle* = (self: u64x2, pattern: [usize, 2]) u64x2
+shuffle2* = (self: u64x2, other: u64x2, pattern: [usize, 2]) u64x2
+
+// u64x4: 4 x u64
+splat_u64x4* = (value: u64) u64x4
+lanes_u64x4* = (l0: u64, l1: u64, l2: u64, l3: u64) u64x4
+load_u64x4* = (bytes: Ptr<u8>, offset: usize) u64x4
+store* = (self: u64x4, bytes: Ptr<u8>, offset: usize) ()
+lane* = (self: u64x4, index: usize) u64
+with_lane* = (self: u64x4, index: usize, value: u64) u64x4
+add_wrap* = (self: u64x4, other: u64x4) u64x4
+sub_wrap* = (self: u64x4, other: u64x4) u64x4
+mul_wrap* = (self: u64x4, other: u64x4) u64x4
+bit_xor* = (self: u64x4, other: u64x4) u64x4
+bit_and* = (self: u64x4, other: u64x4) u64x4
+bit_or* = (self: u64x4, other: u64x4) u64x4
+shift_left* = (self: u64x4, count: usize) u64x4
+shift_right* = (self: u64x4, count: usize) u64x4
+rotate_left* = (self: u64x4, count: usize) u64x4
+rotate_right* = (self: u64x4, count: usize) u64x4
+shuffle* = (self: u64x4, pattern: [usize, 4]) u64x4
+shuffle2* = (self: u64x4, other: u64x4, pattern: [usize, 4]) u64x4
+
+// The same bytes viewed as another vector of equal size (native order).
+cast_u32x4* = (self: u8x16) u32x4
+cast_u64x2* = (self: u8x16) u64x2
+cast_u8x16* = (self: u32x4) u8x16
+cast_u64x2* = (self: u32x4) u64x2
+cast_u8x16* = (self: u64x2) u8x16
+cast_u32x4* = (self: u64x2) u32x4
+cast_u32x8* = (self: u8x32) u32x8
+cast_u64x4* = (self: u8x32) u64x4
+cast_u8x32* = (self: u32x8) u8x32
+cast_u64x4* = (self: u32x8) u64x4
+cast_u8x32* = (self: u64x4) u8x32
+cast_u32x8* = (self: u64x4) u32x8
+
+// ---- CPU capabilities -------------------------------------------------------
+//
+// A capability value proves that runtime detection found the feature on the
+// running CPU; only this module constructs one. A function with a capability
+// parameter is compiled for that feature (C target attributes), and the
+// instructions below demand one, so feature-specific code cannot run where
+// detection failed. Dispatch is ordinary matching on the detection result:
+//
+//     avx2().match({ Ok(cpu) => blocks8(cpu, ..), None => blocks4(..) })
+//
+// Avx2: x86-64 AVX2. Ssse3: x86 SSSE3. Aes: AES rounds (x86 AES-NI with
+// SSSE3/SSE4.1, arm64 FEAT_AES). Clmul: 64x64 carry-less multiply (x86
+// PCLMULQDQ with SSSE3/SSE4.1, arm64 FEAT_PMULL). Neon: arm64 Advanced SIMD.
+// Detection is cheap but not free; hoist it out of per-block loops.
+Avx2* = { proof: u8 }
+Ssse3* = { proof: u8 }
+Aes* = { proof: u8 }
+Clmul* = { proof: u8 }
+Neon* = { proof: u8 }
+
+cpu_avx2* = () bool
+cpu_ssse3* = () bool
+cpu_aes* = () bool
+cpu_clmul* = () bool
+cpu_neon* = () bool
+
+avx2* = () Res<Avx2> { cpu_avx2().match({ true => Ok(Avx2(
+    proof: 1
+)), false => None }) }
+ssse3* = () Res<Ssse3> { cpu_ssse3().match({ true => Ok(Ssse3(
+    proof: 1
+)), false => None }) }
+aes* = () Res<Aes> { cpu_aes().match({ true => Ok(Aes(
+    proof: 1
+)), false => None }) }
+clmul* = () Res<Clmul> { cpu_clmul().match({ true => Ok(Clmul(
+    proof: 1
+)), false => None }) }
+neon* = () Res<Neon> { cpu_neon().match({ true => Ok(Neon(
+    proof: 1
+)), false => None }) }
+
+// One AES encryption round with x86 AESENC semantics:
+// MixColumns(SubBytes(ShiftRows(state))) xor key. The last round omits
+// MixColumns (AESENCLAST). A full AES-128 block is
+// state xor k0, nine aes_round, one aes_round_last. arm64 lowers to
+// AESE/AESMC with a zero round key followed by the xor.
+aes_round* = (self: u8x16, key: u8x16, cpu: Aes) u8x16
+aes_round_last* = (self: u8x16, key: u8x16, cpu: Aes) u8x16
+
+// 128-bit carry-less product of the low (clmul_low) or high (clmul_high)
+// 64-bit lanes: PCLMULQDQ 0x00 / 0x11, PMULL / PMULL2. Lane 0 holds the low
+// 64 bits of the product.
+clmul_low* = (self: u64x2, other: u64x2, cpu: Clmul) u64x2
+clmul_high* = (self: u64x2, other: u64x2, cpu: Clmul) u64x2
+
+// Full 64-bit products of the low 32 bits of each lane (PMULUDQ, UMULL): the
+// radix-2^26 multiply of vector Poly1305. The high 32 bits of both operands
+// are ignored.
+mul_low32* = (self: u64x2, other: u64x2) u64x2
+mul_low32* = (self: u64x4, other: u64x4) u64x4

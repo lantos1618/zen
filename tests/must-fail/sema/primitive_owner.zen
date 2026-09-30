@@ -1,0 +1,2 @@
+mul_wide = (self: u64, other: u64) u128
+main = () {}

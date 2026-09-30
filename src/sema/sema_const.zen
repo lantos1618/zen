@@ -251,6 +251,7 @@ fits_magnitude* = (value: u64, name: str) Res<bool> {
         "u32"   => Ok(value <= 4294967295),
         "i64"   => Ok(value <= 9223372036854775807),
         "u64"   => Ok(true),
+        "u128"  => Ok(true),
         "usize" => Ok(true),
         _       => None,
     })
@@ -331,6 +332,7 @@ max_of = (name: str) Res<i64> {
         "u16"   => Ok(65535),
         "u32"   => Ok(4294967295),
         "u64"   => Ok(I64_MAX),
+        "u128"  => Ok(I64_MAX),
         "usize" => Ok(I64_MAX),
         _       => None,
     })
@@ -346,6 +348,7 @@ min_of* = (name: str) Res<i64> {
         "u16"   => Ok(0),
         "u32"   => Ok(0),
         "u64"   => Ok(0),
+        "u128"  => Ok(0),
         "usize" => Ok(0),
         _       => None,
     })
@@ -362,6 +365,7 @@ bits_of = (name: str) Res<i64> {
         "f32"   => Ok(32),
         "i64"   => Ok(64),
         "u64"   => Ok(64),
+        "u128"  => Ok(128),
         "usize" => Ok(64),
         "f64"   => Ok(64),
         _       => None,

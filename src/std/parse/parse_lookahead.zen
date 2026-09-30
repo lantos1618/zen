@@ -200,10 +200,26 @@ ident_shape = (p :: Parser, module_level: bool) ValueShape {
     p.bar_after(p.at).match({
         true  => ValueShape.EnumValue,
         false => module_level.match({
-            true  => p.path_or_alias(),
+            true  => p.inline_fn_ahead().match({
+                true  => ValueShape.FnValue,
+                false => p.path_or_alias(),
+            }),
             false => ValueShape.ExprValue,
         }),
     });
+}
+
+// `f = inline (..) T { .. }` at module level: the contextual word `inline`
+// directly before a function value. `inline(x)` followed by anything but a
+// return type or body remains an ordinary call of a name `inline`.
+inline_fn_ahead* = (p :: Parser) bool {
+    j = p.live_at(p.at + 1);
+    k = (p.token_kind_at(j) == TokenKind.Lt).match({
+        true  => p.live_at(p.angles_end_at(j)),
+        false => j,
+    });
+    p.at_text("inline") && p.token_kind_at(k) == TokenKind.ParenOpen
+        && p.live_kind(p.group_end_at(k)).fn_value_after()
 }
 
 // A plain enum places `|` after the payload; a represented enum places an

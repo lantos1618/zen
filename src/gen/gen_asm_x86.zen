@@ -240,6 +240,9 @@ Assembly = {
                 self.rax_slot = None;
                 self.store(value.out, "%rax")
             },
+            // gen_verify rejects machine operations (gen_ir_machine) before
+            // rendering; should one arrive anyway, the program faults here.
+            Machine(_)         => self.out.add("    ud2\n"),
         })
     }
 

@@ -1,0 +1,2 @@
+a 32-byte vector passed between AVX2 and baseline code
+5:37

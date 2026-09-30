@@ -9,7 +9,7 @@ AllocError = std.mem
 Vec = std.collections
 str, String = std.text
 Range = std.core
-TyId, TyNamed, TyRes, c_integer, is_failure = sema.sema_ty
+TyId, TyNamed, TyRes, c_integer, is_failure, is_vector = sema.sema_ty
 DeclId = sema.sema_id
 Def, decl_at = sema.sema_def
 Ctx = sema.sema_check
@@ -33,7 +33,10 @@ request_slots = gen.gen_c.gen_c_fat
 // types fall back to `int` so C remains parseable around the diagnostic.
 ctype* = (be :: CBackend, id: TyId, out :: String) Res<(), AllocError> {
     be.types().at(id).match({
-        Prim(p)  => out.add(c_prim(p.name)),
+        Prim(p)  => {
+            machine_prim(p.name).then(() { be.need_machine() });
+            out.add(c_prim(p.name))
+        },
         Named(n) => be.maybe_ptr(id, n, out),
         Res(_)   => be.named_ctype(id, out),
         Union(_) => be.named_ctype(id, out),
@@ -46,7 +49,10 @@ ctype* = (be :: CBackend, id: TyId, out :: String) Res<(), AllocError> {
 // The zero value used for a compiler-synthesised argument or field.
 write_zero* = (be :: CBackend, t: TyId, out :: String) Res<(), AllocError> {
     be.check.types.at(t).match({
-        Prim(_) => out.add("0"),
+        Prim(p) => is_vector(p.name).match({
+            true  => be.write_zero_struct(t, out),
+            false => out.add("0"),
+        }),
         _       => be.write_zero_struct(t, out),
     })
 }
@@ -367,6 +373,13 @@ c_prim* = (name: str) str {
         "u16"         => "uint16_t",
         "u32"         => "uint32_t",
         "u64"         => "uint64_t",
+        "u128"        => "zg_u128",
+        "u8x16"       => "zg_u8x16",
+        "u8x32"       => "zg_u8x32",
+        "u32x4"       => "zg_u32x4",
+        "u32x8"       => "zg_u32x8",
+        "u64x2"       => "zg_u64x2",
+        "u64x4"       => "zg_u64x4",
         "usize"       => "size_t",
         "c_char"      => "char",
         "c_schar"     => "signed char",
@@ -389,19 +402,26 @@ c_prim* = (name: str) str {
     })
 }
 
+// Types spelled by the machine floor's typedefs rather than a C header.
+machine_prim* = (name: str) bool {
+    name.eq("u128") || is_vector(name)
+}
+
 // `int` is the spelling an unspellable type falls back to, so it
 // cannot double as the answer for a Zen type that really is `int`.
 // The list is asked directly.
 c_prim_known* = (name: str) bool {
     is_c_integer(name)
         || c_integer(name)
+        || is_vector(name)
         || name.is_in(["c_char", "f32", "f64", "float", "bool", "str", "()"])
 }
 
 // The integer types a trapping operation can be emitted for.
 is_c_integer* = (name: str) bool {
     name.is_in([
-        "i8", "i16", "i32", "i64", "int", "u8", "u16", "u32", "u64", "usize"
+        "i8", "i16", "i32", "i64", "int", "u8", "u16", "u32", "u64", "u128",
+        "usize"
     ])
 }
 

@@ -10,10 +10,11 @@ TyId = sema.sema_ty
 Def, decl_at = sema.sema_def
 param_type, ret_type = sema.sema_denote
 SemaFault, NameFault = sema.sema_diag
+primitive_signature = sema.sema_prim
 
 IntegerBitOperation* = { name*: str, word*: TyId }
 
-NarrowTarget* = U8 | U16 | Usize | I32 | CInt
+NarrowTarget* = U8 | U16 | U64 | Usize | I32 | CInt
 // Widen: every value converts exactly. Checked: an integer range check.
 // Exact: an integer/float conversion that is None unless the value is
 // represented exactly. Round: `narrow_*`, the one lossy family, which always
@@ -77,7 +78,7 @@ conversion_name = (name: str) Res<str> {
     (start > 0).ensure().try();
     target = name.slice(start, name.len);
     target.is_in([
-        "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
+        "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "u128",
         "usize", "f32", "f64", "bool", "c_char", "c_schar", "c_uchar",
         "c_short", "c_ushort", "c_int", "c_uint", "c_long", "c_ulong",
         "c_longlong", "c_ulonglong", "int", "float", "str",
@@ -160,11 +161,12 @@ register_numeric = (
 conversion_kind = (source: str, target: str) Res<ConversionKind> {
     lossless = source.match({
         "u8"    => target.is_in([
-            "u16", "u32", "u64", "usize", "i32", "i64", "f32", "f64"
+            "u16", "u32", "u64", "u128", "usize", "i32", "i64", "f32", "f64"
         ]),
-        "u16"   => target.is_in(["u32", "u64", "usize", "i64", "f32", "f64"]),
-        "u32"   => target.is_in(["u64", "usize", "i64", "f64"]),
-        "usize" => target.eq("u64"),
+        "u16"   => target.is_in(["u32", "u64", "u128", "usize", "i64", "f32", "f64"]),
+        "u32"   => target.is_in(["u64", "u128", "usize", "i64", "f64"]),
+        "u64"   => target.eq("u128"),
+        "usize" => target.is_in(["u64", "u128"]),
         "i8"    => target.is_in(["i16", "i32", "i64", "f32", "f64"]),
         "i16"   => target.is_in(["i32", "i64", "f32", "f64"]),
         "i32"   => target.is_in(["i64", "f64"]),
@@ -178,6 +180,7 @@ conversion_kind = (source: str, target: str) Res<ConversionKind> {
             "u32"   => target.eq("u8"),
             "u64"   => target.is_in(["u16", "usize", "i32"]),
             "i64"   => target.is_in(["i32", "usize"]),
+            "u128"  => target.eq("u64"),
             "c_int" => target.eq("i32"),
             "i32"   => target.eq("c_int"),
             _       => false,
@@ -186,6 +189,7 @@ conversion_kind = (source: str, target: str) Res<ConversionKind> {
             Ok(_) => target.match({
                 "u8"    => Ok(ConversionKind.Checked(NarrowTarget.U8)),
                 "u16"   => Ok(ConversionKind.Checked(NarrowTarget.U16)),
+                "u64"   => Ok(ConversionKind.Checked(NarrowTarget.U64)),
                 "usize" => Ok(ConversionKind.Checked(NarrowTarget.Usize)),
                 "i32"   => Ok(ConversionKind.Checked(NarrowTarget.I32)),
                 "c_int" => Ok(ConversionKind.Checked(NarrowTarget.CInt)),
@@ -222,9 +226,8 @@ invalid_numeric = (c :: Checker, d: Def) Res<(), AllocError> {
 
 // Every bit operation takes an unsigned word; `shift_right` alone also takes a
 // signed one, where it is the arithmetic shift.
-bit_word = (name: str, word: str) bool {
-    word.is_in(["u32", "u64"])
-        || (name.eq("shift_right") && signed_shift_word(word))
+bit_operand = (name: str, word: str) bool {
+    bit_word(word) || (name.eq("shift_right") && signed_shift_word(word))
 }
 
 signed_shift_word* = (word: str) bool {
@@ -232,15 +235,28 @@ signed_shift_word* = (word: str) bool {
 }
 
 // Bit operations are compiler-owned only after validating their declaration.
+// `bit_*` combine two words of one type; shifts and rotations take a usize
+// count. Every name applies to every unsigned word below.
+integer_bit_name* = (name: str) bool {
+    name.is_in([
+        "bit_xor", "bit_and", "bit_or", "shift_right", "shift_left",
+        "rotate_right", "rotate_left",
+    ])
+}
+
+bit_word* = (name: str) bool {
+    name.is_in(["u8", "u16", "u32", "u64", "u128", "usize"])
+}
+
 integer_bit_signature = (
     c :: Checker,
     d : Def,
     f : Function
 ) Res<(), AllocError> {
-    f.name.text.is_in([
-        "bit_xor", "bit_and", "rotate_right", "shift_right"
-    ]).match({
-        false => Ok(()),
+    scalar = integer_bit_name(f.name.text)
+        && !c.world.module_name(d.id).eq("std.simd");
+    scalar.match({
+        false => c.primitive_signature(d, f),
         true  => {
             (c.world.module_name(d.id).eq("std.core.num") && f.exported
                 && f.params.len == 2 && f.tparams.len == 0).match({
@@ -256,10 +272,10 @@ integer_bit_signature = (
                     bt     = c.param_type(b, ctx).try();
                     rt     = c.ret_type(f, ctx).try();
                     word   = c.prim_name(at);
-                    second = f.name.text.is_in([
-                        "bit_xor", "bit_and"
-                    ]).match({true => word, false => "usize"});
-                    (!a.mutable && !b.mutable && bit_word(f.name.text, word)
+                    second = f.name.text.starts_with(
+                        "bit_"
+                    ).match({true => word, false => "usize"});
+                    (!a.mutable && !b.mutable && bit_operand(f.name.text, word)
                         && c.prim_name(bt).eq(second) && c.prim_name(rt).eq(word)).match({
                         false => c.invalid_numeric(d),
                         true  => c.integer_bits.set(

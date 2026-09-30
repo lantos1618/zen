@@ -1,0 +1,257 @@
+// Machine primitives are granted by validated standard declarations only.
+Source, scan = std.lex
+Parser = std.parse.parser
+module = std.parse.parse_decl
+Checker = sema.sema_check
+check_all = sema.sema_decl
+DeclId = sema.sema_id
+CHeader, CTypeBinding, CBinding = std.ast
+
+// The single declaration is checked in `owner`; `bits` selects the scalar
+// bit table rather than the machine primitive table.
+accepts = (a: Alloc, text: str, owner: str, bits: bool) Res<bool, AllocError> {
+    lexed = scan(a, Source(file: "prim.zen", text: text)).try();
+    parser ::= a.Parser(lexed);
+    parsed = parser.module(owner).try();
+    parser.tree.add_module(parsed).try();
+    checker ::= a.Checker(parser.tree).try();
+    checker.check_all().try();
+    id    = DeclId(module: 0, decl: 0);
+    found = bits.match({
+        true  => checker.integer_bits.get(
+            id
+        ).match({ Ok(_) => true, None => false }),
+        false => checker.primitives.get(
+            id
+        ).match({ Ok(_) => true, None => false }),
+    });
+    Ok(checker.diag_count() == 0 && found)
+}
+
+foreign_keeps_binding = (a: Alloc) Res<bool, AllocError> {
+    lexed = scan(
+        a,
+        Source(
+            file: "native.zen",
+            text: "mul_wide* = (a: c_int, b: c_int) c_int\n"
+        )
+    ).try();
+    parser ::= a.Parser(lexed);
+    parsed = parser.module("native").try();
+    parser.tree.add_c_module(
+        parsed,
+        CBinding(headers: a.Vec<CHeader>(), types: a.Vec<CTypeBinding>())
+    ).try();
+    checker ::= a.Checker(parser.tree).try();
+    checker.check_all().try();
+    Ok(
+        checker.diag_count() == 0 && checker.primitives.get(DeclId(
+            module: 0,
+            decl: 0
+        )).match({ None => true, _ => false })
+    )
+}
+
+row = (a: Alloc, label: str, text: str, owner: str, bits: bool)
+      Res<(), AllocError> {
+    println("{}: {}", label, accepts(a, text, owner, bits).try());
+    Ok(())
+}
+
+main = (env: Env) Res<(), AllocError> {
+    a   = env.mem.alloc();
+    num = "std.core.num";
+    a.row(
+        "mul_wide",
+        "mul_wide* = (self: u64, other: u64) u128\n",
+        num,
+        false
+    ).try();
+    a.row(
+        "mul_wide owner",
+        "mul_wide* = (self: u64, other: u64) u128\n",
+        "pretend.num",
+        false
+    ).try();
+    a.row(
+        "mul_wide result",
+        "mul_wide* = (self: u64, other: u64) u64\n",
+        num,
+        false
+    ).try();
+    a.row(
+        "mul_wide words",
+        "mul_wide* = (self: u32, other: u32) u128\n",
+        num,
+        false
+    ).try();
+    a.row(
+        "mul_wide private",
+        "mul_wide = (self: u64, other: u64) u128\n",
+        num,
+        false
+    ).try();
+    a.row(
+        "mul_wide mutable",
+        "mul_wide* = (self :: u64, other: u64) u128\n",
+        num,
+        false
+    ).try();
+    a.row("truncate", "truncate_u32* = (self: u64) u32\n", num, false).try();
+    a.row(
+        "truncate u128",
+        "truncate_u64* = (self: u128) u64\n",
+        num,
+        false
+    ).try();
+    a.row(
+        "truncate widening",
+        "truncate_u32* = (self: u16) u32\n",
+        num,
+        false
+    ).try();
+    a.row(
+        "truncate same",
+        "truncate_u64* = (self: usize) u64\n",
+        num,
+        false
+    ).try();
+    a.row(
+        "truncate name",
+        "truncate_u32* = (self: u64) u16\n",
+        num,
+        false
+    ).try();
+    a.row(
+        "truncate signed",
+        "truncate_u32* = (self: i64) u32\n",
+        num,
+        false
+    ).try();
+    a.row(
+        "truncate owner",
+        "truncate_u8* = (self: u64) u8\n",
+        "pretend.num",
+        false
+    ).try();
+    a.row("unknown", "mystery* = (self: u64) u64\n", num, false).try();
+    a.row("u8 or", "bit_or* = (self: u8, other: u8) u8\n", num, true).try();
+    a.row(
+        "u128 shift",
+        "shift_left* = (self: u128, count: usize) u128\n",
+        num,
+        true
+    ).try();
+    a.row(
+        "u16 rotate",
+        "rotate_left* = (self: u16, count: usize) u16\n",
+        num,
+        true
+    ).try();
+    a.row(
+        "usize xor",
+        "bit_xor* = (self: usize, other: usize) usize\n",
+        num,
+        true
+    ).try();
+    a.row("i64 or", "bit_or* = (self: i64, other: i64) i64\n", num, true).try();
+    simd = "std.simd";
+    a.row("splat", "splat_u32x4* = (value: u32) u32x4\n", simd, false).try();
+    a.row(
+        "splat lane",
+        "splat_u32x4* = (value: u64) u32x4\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "splat name",
+        "splat_u32x8* = (value: u32) u32x4\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "lanes",
+        "lanes_u64x2* = (a: u64, b: u64) u64x2\n",
+        simd,
+        false
+    ).try();
+    a.row("lanes count", "lanes_u64x2* = (a: u64) u64x2\n", simd, false).try();
+    a.row(
+        "lane",
+        "lane* = (self: u64x4, index: usize) u64\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "with_lane",
+        "with_lane* = (self: u8x16, index: usize, value: u8) u8x16\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "vector xor",
+        "bit_xor* = (self: u32x4, other: u32x4) u32x4\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "vector mixed",
+        "add_wrap* = (self: u32x4, other: u32x8) u32x4\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "vector rotate",
+        "rotate_left* = (self: u32x8, count: usize) u32x8\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "shuffle",
+        "shuffle* = (self: u32x4, pattern: [usize, 4]) u32x4\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "shuffle count",
+        "shuffle* = (self: u32x4, pattern: [usize, 3]) u32x4\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "shuffle2",
+        "shuffle2* = (self: u64x2, other: u64x2, pattern: [usize, 2]) u64x2\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "simd owner",
+        "add_wrap* = (self: u32x4, other: u32x4) u32x4\n",
+        "pretend.simd",
+        false
+    ).try();
+    a.row(
+        "scalar in simd",
+        "bit_xor* = (self: u32, other: u32) u32\n",
+        simd,
+        false
+    ).try();
+    a.row("cast", "cast_u64x2* = (self: u8x16) u64x2\n", simd, false).try();
+    a.row(
+        "cast size",
+        "cast_u64x4* = (self: u8x16) u64x4\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "cast same",
+        "cast_u8x16* = (self: u8x16) u8x16\n",
+        simd,
+        false
+    ).try();
+    a.row("cpu", "cpu_avx2* = () bool\n", simd, false).try();
+    a.row("cpu result", "cpu_avx2* = () u8\n", simd, false).try();
+    a.row("cpu unknown", "cpu_sse9* = () bool\n", simd, false).try();
+    println("foreign: {}", foreign_keeps_binding(a).try());
+    Ok(())
+}

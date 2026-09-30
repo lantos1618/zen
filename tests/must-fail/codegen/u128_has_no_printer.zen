@@ -1,0 +1,6 @@
+to_u128 = std.core.num
+main = () {
+    small: u64 = 5;
+    wide       = small.to_u128();
+    println("{}", wide);
+}

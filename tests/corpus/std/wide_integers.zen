@@ -1,0 +1,97 @@
+bit_or, bit_and, bit_xor, shift_left, shift_right = std.core.num
+rotate_left, rotate_right, mul_wide = std.core.num
+truncate_u8, truncate_u16, truncate_u32, truncate_u64 = std.core.num
+to_u128, to_u64 = std.core.num
+
+once = (calls :: i32, value: u64) u64 {
+    calls = calls + 1;
+    value
+}
+
+high = (value: u128) u64 { value.shift_right(64).truncate_u64() }
+
+low = (value: u128) u64 { value.truncate_u64() }
+
+main = () {
+    product = u64.MAX.mul_wide(u64.MAX);
+    println("max product: {} {}", high(product), low(product));
+    small = mul_wide(4294967296, 4294967296);
+    println("2^64: {} {}", high(small), low(small));
+    zero: u64  = 0;
+    seven: u64 = 7;
+    println(
+        "zero: {} {}",
+        high(zero.mul_wide(u64.MAX)),
+        low(seven.mul_wide(6))
+    );
+
+    // donna64-style accumulation: 128-bit sums and 44-bit limbs.
+    acc: u128 ::= 0;
+    acc   = acc + mul_wide(17592186044415, 17592186044415);
+    acc   = acc + mul_wide(4398046511103, 81985529216486895);
+    carry = acc.shift_right(44).truncate_u64();
+    limb  = acc.truncate_u64().bit_and(17592186044415);
+    println("limbs: {} {}", carry, limb);
+
+    wide = u64.MAX.to_u128().shift_left(64).bit_or(u64.MAX.to_u128());
+    println("all ones: {} {}", high(wide), low(wide));
+    println("wrap: {} {}", low(wide +% 1), high(wide +% 1));
+    println("u128 compare: {} {}", wide > product, product == small);
+    println(
+        "checked: {} {}",
+        u64.MAX.to_u128().to_u64().match({ Ok(n) => n, None => 0 }),
+        wide.to_u64().match({ Ok(n) => n, None => 7 })
+    );
+
+    word: u64 = 81985529216486895;
+    println(
+        "truncate: {} {} {} {}",
+        word.truncate_u32(),
+        word.truncate_u16(),
+        word.truncate_u8(),
+        wide.truncate_u32()
+    );
+    count: usize = 300;
+    println("usize truncate: {} {}", count.truncate_u8(), count.truncate_u16());
+
+    byte: u8 = 129;
+    println(
+        "u8: {} {} {} {} {}",
+        byte.shift_left(1),
+        byte.shift_left(8),
+        byte.shift_right(7),
+        byte.bit_or(6),
+        byte.bit_xor(255)
+    );
+    half: u16 = 32769;
+    println(
+        "u16: {} {} {}",
+        half.shift_left(1),
+        half.shift_left(15),
+        half.bit_and(255)
+    );
+    lane: u32 = 2309737967;
+    println(
+        "u32: {} {} {} {} {}",
+        lane.shift_left(4),
+        lane.shift_left(32),
+        lane.rotate_left(8),
+        lane.rotate_left(32),
+        lane.rotate_left(8).rotate_right(8)
+    );
+    println(
+        "u64: {} {} {} {}",
+        word.shift_left(60),
+        word.shift_left(usize.MAX),
+        word.rotate_left(4),
+        word.bit_or(u64.MAX)
+    );
+    index: usize = 5;
+    println("usize: {} {}", index.shift_left(3), index.bit_or(2));
+
+    calls: i32 ::= 0;
+    both = once(calls, 3).mul_wide(once(calls, 5));
+    println("once: {} {}", low(both), calls);
+    cut = once(calls, 4294967297).truncate_u32();
+    println("truncate once: {} {}", cut, calls);
+}

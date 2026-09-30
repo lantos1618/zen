@@ -21,6 +21,7 @@ Instruction, Terminator, Convert, Address, Load, Store, CopyMem, StaticBytes = g
 Write, Stream, TrapKind = gen.gen_ir
 word, integer, signed, same = gen.gen_ir
 LowerError, unsupported = gen.gen_lower
+machine_op, machine_refusal = gen.gen_ir_machine
 Lowerer, Value, Place, Base, LocalKind, LambdaRef, LoopTarget, Frame, Callee = gen.gen_lower_core
 DeferEntry, Local = gen.gen_lower_core
 member_call, mem_call, sys_call, resolve, to_bound, handle_for_place = gen.gen_lower_member
@@ -842,6 +843,15 @@ intrinsic = (lo :: Lowerer, id: ExprId, callee: Callee, sources: Vec<Source>, c:
     decl = callee.owner;
     module = lo.check.world.module_name(decl);
     name = callee.f.name.text;
+    // A machine primitive (std.simd, volatile access, u128 arithmetic) has
+    // no native lowering yet; name the operation instead of its operands.
+    lo.check.primitives.get(decl).match({
+        Ok(p) => machine_op(p.name, false).match({
+            Ok(op) => Err(unsupported(span, machine_refusal(op))),
+            None   => Ok(()),
+        }),
+        None  => Ok(()),
+    }).try();
     // Numeric operations are free functions validated by declaration.
     numeric = callee.member.match({ None => true, Ok(_) => false });
     conversion = numeric.match({ true => lo.check.numeric_conversions.get(decl), false => None });

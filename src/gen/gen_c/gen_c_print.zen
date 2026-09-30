@@ -416,8 +416,9 @@ number_printer = (prim: str, stream: str) str {
     })
 }
 
+// u128 has no decimal printer; `truncate_u64` or a Display impl says how.
 integer_printer = (prim: str, stream: str) str {
-    is_c_integer(prim).match({
+    (is_c_integer(prim) && !prim.eq("u128")).match({
         false => "",
         true  => signed_printer(prim, stream),
     })

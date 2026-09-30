@@ -12,6 +12,7 @@ Vec = std.collections
 str = std.text
 Span = std.ast
 Sys, SysConstant = gen.gen_sys
+MachineCall = gen.gen_ir_machine
 
 // Size and alignment of an aggregate slot, in bytes.
 Layout* = { size*: usize, align*: usize }
@@ -120,6 +121,9 @@ Instruction* = Constant(Const)
     | SysConst(SysValue)
     // Write out buffered standard output now (before blocking on input).
     | Flush
+    // A validated machine primitive (gen_ir_machine). Not yet produced:
+    // its operands need slot types beyond Scalar, so the verifier rejects it.
+    | Machine(MachineCall)
 
 // A terminator that ends the process with Zen's trap report.
 TrapKind* = Overflow | DivideByZero | OutOfBounds | Unreachable | OutOfMemory

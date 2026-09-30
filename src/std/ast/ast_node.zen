@@ -366,7 +366,8 @@ Alias* = {
 // `area* = (c: Circle) f64 { .. }`, `then* = <T>(b: bool, f: () T) Res<T>`.
 // `form` records `=` versus `::=`; `body` records whether `{ .. }` followed.
 // Required and Hook carry no body. A lambda may omit `ret`, but a declaration
-// must write one.
+// must write one. `inline` records a module-level `f = inline (..) T { .. }`:
+// the backend must inline every call rather than weigh it.
 Function* = {
     name*: Ident,
     exported*: bool,
@@ -376,6 +377,9 @@ Function* = {
     params_span*: Span,
     ret*: Res<TypeId>,
     body*: Res<BlockId>,
+    inline* :: bool = false,
+
+    force_inline* = (self :: @Self) { self.inline = true; }
 }
 
 Impl* = {

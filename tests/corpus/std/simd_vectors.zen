@@ -1,0 +1,120 @@
+splat_u32x4, lanes_u32x4, load_u32x4, lanes_u64x2, load_u64x2 = std.simd
+splat_u32x8, lanes_u32x8, load_u32x8, splat_u8x16, load_u8x16 = std.simd
+splat_u8x32, load_u8x32, lanes_u64x4, splat_u64x4 = std.simd
+Ptr = std.mem
+
+show = (v: u32x4) {
+    println("{} {} {} {}", v.lane(0), v.lane(1), v.lane(2), v.lane(3));
+}
+
+show8 = (v: u32x8) {
+    println(
+        "{} {} {} {} {} {} {} {}",
+        v.lane(0),
+        v.lane(1),
+        v.lane(2),
+        v.lane(3),
+        v.lane(4),
+        v.lane(5),
+        v.lane(6),
+        v.lane(7)
+    );
+}
+
+once = (calls :: i32, value: u32) u32 {
+    calls = calls + 1;
+    value
+}
+
+// One ChaCha20 quarter round per lane (RFC 8439 2.1.1 in lane 0).
+quarter = (a: u32x4, b: u32x4, c: u32x4, d: u32x4) u32x4 {
+    a1 = a.add_wrap(b);
+    d1 = d.bit_xor(a1).rotate_left(16);
+    c1 = c.add_wrap(d1);
+    b1 = b.bit_xor(c1).rotate_left(12);
+    a2 = a1.add_wrap(b1);
+    d2 = d1.bit_xor(a2).rotate_left(8);
+    c2 = c1.add_wrap(d2);
+    b2 = b1.bit_xor(c2).rotate_left(7);
+    lanes_u32x4(a2.lane(0), b2.lane(0), c2.lane(0), d2.lane(0))
+}
+
+main = (env: Env) Res<(), AllocError> {
+    a = lanes_u32x4(1, 2, 3, 4294967295);
+    b = splat_u32x4(16);
+    show(a.add_wrap(b));
+    show(a.sub_wrap(b));
+    show(a.mul_wrap(b));
+    show(a.bit_xor(b).bit_or(b).bit_and(a));
+    show(a.shift_left(4));
+    show(a.shift_left(32));
+    show(a.shift_right(1));
+    show(a.shift_right(usize.MAX));
+    show(a.rotate_left(8));
+    show(a.rotate_right(8));
+    show(a.rotate_left(32));
+    show(a.rotate_right(33));
+    show(a.shuffle([3, 2, 1, 0]));
+    show(a.shuffle([5, 6, 7, 8]));
+    show(a.shuffle2(b, [0, 4, 1, 5]));
+    pattern: [usize, 4] = [7, 0, 6, 1];
+    show(a.shuffle2(b, pattern));
+    show(a.shuffle(pattern));
+    show(a.with_lane(2, 99));
+    show(a);
+
+    quarter(
+        splat_u32x4(286331153),
+        splat_u32x4(16909060),
+        splat_u32x4(2609737539),
+        splat_u32x4(19088743)
+    ).show();
+
+    buf = env.mem.alloc().raw(64, 16).try();
+    Range(0, 64).loop((i) { buf.write(i, i.truncate_u8()); });
+    loaded = load_u32x4(buf, 1);
+    show(loaded);
+    loaded.bit_xor(splat_u32x4(4294967295)).store(buf, 3);
+    println(
+        "stored: {} {} {} {}",
+        buf.read(2),
+        buf.read(3),
+        buf.read(18),
+        buf.read(19)
+    );
+    wide = load_u32x8(buf, 32);
+    show8(wide);
+    show8(wide.shuffle2(splat_u32x8(7), [0, 1, 2, 3, 8, 9, 10, 11]));
+    show8(wide.shuffle([1, 0, 3, 2, 5, 4, 7, 6]).rotate_left(16));
+    show8(lanes_u32x8(1, 2, 3, 4, 5, 6, 7, 8).add_wrap(splat_u32x8(10)));
+
+    bytes = load_u8x16(buf, 0).add_wrap(splat_u8x16(250));
+    println(
+        "u8x16: {} {} {} {}",
+        bytes.lane(0),
+        bytes.lane(5),
+        bytes.lane(6),
+        bytes.lane(15)
+    );
+    rot = load_u8x16(buf, 0).shuffle([1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12]);
+    println("u8 shuffle: {} {} {}", rot.lane(0), rot.lane(3), rot.lane(15));
+    big = load_u8x32(buf, 32).bit_xor(splat_u8x32(255));
+    println("u8x32: {} {}", big.lane(0), big.lane(31));
+
+    w = lanes_u64x2(1, 18446744073709551615);
+    println("u64x2: {} {}", w.add_wrap(w).lane(0), w.add_wrap(w).lane(1));
+    q = lanes_u64x4(1, 2, 3, 4).mul_wrap(splat_u64x4(4294967296));
+    println("u64x4: {} {}", q.lane(0), q.shift_right(32).lane(3));
+    x = load_u64x2(buf, 8);
+    println("u64 load: {} {}", x.lane(0), x.rotate_right(8).lane(1));
+
+    calls: i32 ::= 0;
+    once_vec = lanes_u32x4(
+        once(calls, 1),
+        once(calls, 2),
+        once(calls, 3),
+        once(calls, 4)
+    );
+    println("once: {} {}", once_vec.lane(3), calls);
+    Ok(())
+}

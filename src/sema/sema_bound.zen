@@ -4,7 +4,7 @@ AllocError = std.mem
 Vec = std.collections
 str = std.text
 ImplId = sema.sema_id
-TyId, TyNamed, Prim, is_prim, literal_default = sema.sema_ty
+TyId, TyNamed, Prim, is_prim, is_vector, literal_default = sema.sema_ty
 Def, decl_at = sema.sema_def
 SemaFault, NameFault, TypeFault, ExportFault = sema.sema_diag
 Checker = sema.sema_check
@@ -453,7 +453,8 @@ dispatches_eq = (c: Checker, ty: TyId) bool {
 
 scalar_eq = (c: Checker, ty: TyId) bool {
     c.types.at(ty).match({
-        Prim(p) => p.name.eq("str") == false && p.name.eq("()") == false,
+        Prim(p) => p.name.eq("str") == false && p.name.eq("()") == false
+            && is_vector(p.name) == false,
         _       => false,
     })
 }

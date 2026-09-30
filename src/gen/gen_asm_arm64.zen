@@ -315,6 +315,9 @@ Assembly = {
                 self.x0_slot = None;
                 self.store(value.out, "x0")
             },
+            // gen_verify rejects machine operations (gen_ir_machine) before
+            // rendering; should one arrive anyway, the program faults here.
+            Machine(_)         => self.out.add("    brk #1\n"),
         })
     }
 

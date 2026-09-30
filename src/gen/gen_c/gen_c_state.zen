@@ -97,6 +97,12 @@ CBackend* = {
     env_used :: bool,
     clock_used :: bool,
     threads_used :: bool,
+    // u128, vector types, CPU feature tests and barriers share one floor.
+    machine_used :: bool,
+    // Target-feature sets named by function attributes, e.g. "_AES_AVX2".
+    target_sets* :: Vec<String>,
+    // Whether the function being lowered is compiled for AVX2.
+    lowering_avx2* :: bool,
 
     // Spawn capture records are heap-owned because the thread may outlive
     // the spawning frame.
@@ -313,6 +319,24 @@ CBackend* = {
     need_threads* = (self :: @Self) { self.threads_used = true; }
 
     uses_threads* = (self: @Self) bool { self.threads_used }
+
+    need_machine* = (self :: @Self) { self.machine_used = true; }
+
+    uses_machine* = (self: @Self) bool { self.machine_used }
+
+    set_lowering_avx2* = (self :: @Self, avx: bool) { self.lowering_avx2 = avx; }
+
+    need_target* = (self :: @Self, set: str) Res<(), AllocError> {
+        self.machine_used = true;
+        self.target_sets.find((s) { s.view().eq(set) }).match({
+            Ok(_) => Ok(()),
+            None  => {
+                owned ::= self.alloc.String().try();
+                owned.add(set).try();
+                self.target_sets.add(owned)
+            },
+        })
+    }
 
     need_spawn* = (self :: @Self) { self.spawn_used = true; }
 
@@ -1025,6 +1049,9 @@ CBackend* = (a: Alloc, tree: Ast, check: Checker) Res<CBackend, AllocError> {
         env_used: false,
         clock_used: false,
         threads_used: false,
+        machine_used: false,
+        target_sets: a.Vec<String>(),
+        lowering_avx2: false,
         spawn_used: false,
         spawn_envs: a.Vec<String>(),
         spawn_sites: 0,

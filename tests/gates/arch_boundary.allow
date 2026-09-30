@@ -197,6 +197,11 @@ gen/gen_c/gen_c_loop.zen sema.sema_check
 gen/gen_c/gen_c_loop.zen sema.sema_inst
 gen/gen_c/gen_c_loop.zen sema.sema_ty
 gen/gen_c/gen_c_loop.zen std.ast
+gen/gen_c/gen_c_machine.zen sema.sema_check
+gen/gen_c/gen_c_machine.zen sema.sema_const
+gen/gen_c/gen_c_machine.zen sema.sema_prim
+gen/gen_c/gen_c_machine.zen sema.sema_ty
+gen/gen_c/gen_c_machine.zen std.ast
 gen/gen_c/gen_c_main.zen sema.sema_check
 gen/gen_c/gen_c_main.zen sema.sema_def
 gen/gen_c/gen_c_main.zen sema.sema_inst
@@ -223,6 +228,7 @@ gen/gen_c/gen_c_mono.zen sema.sema_ty
 gen/gen_c/gen_c_mono.zen std.ast
 gen/gen_c/gen_c_num.zen sema.sema_check
 gen/gen_c/gen_c_num.zen sema.sema_numeric
+gen/gen_c/gen_c_num.zen sema.sema_prim
 gen/gen_c/gen_c_num.zen std.ast
 gen/gen_c/gen_c_op.zen sema.sema_check
 gen/gen_c/gen_c_op.zen sema.sema_ty

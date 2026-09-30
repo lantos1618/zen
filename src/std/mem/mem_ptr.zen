@@ -12,6 +12,11 @@ Ptr*<T> = {
     take* = (self: @Self, index: usize) T
     write* = (self: @Self, index: usize, value: T) ()
 
+    // Performed exactly once, in order with other volatile accesses: never
+    // elided, merged or invented. For secret erasure and device memory.
+    read_volatile* = (self: @Self, index: usize) T
+    write_volatile* = (self: @Self, index: usize, value: T) ()
+
     // Move by `count` elements, not bytes.
     offset* = (self: @Self, count: usize) Ptr<T>
     back* = (self: @Self, count: usize) Ptr<T>
@@ -42,3 +47,19 @@ Ptr*<T> = {
 }
 
 null_ptr* = <T>() Ptr<T>
+
+// No memory access is moved across this point by the compiler, and stores
+// before it are not dead. Emits no instruction; it is not a CPU fence.
+compiler_barrier* = () ()
+
+// Overwrite `count` bytes with zero so the stores survive optimization,
+// for erasing key material. Only these bytes are erased: copies elsewhere
+// (registers, spilled temporaries, other buffers) are not reached.
+wipe* = (bytes: Ptr<u8>, count: usize) {
+    i: usize ::= 0;
+    loop(() { i < count }, (h) {
+        bytes.write_volatile(i, 0);
+        i = i + 1;
+    });
+    compiler_barrier();
+}

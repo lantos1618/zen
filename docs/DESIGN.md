@@ -1856,14 +1856,15 @@ main = (env: Env) Res<i32, Error> {
 
 ## Unsigned bit operations
 
-`std.core.num` exports `bit_xor(self: W, other: W) W`,
-`bit_and(self: W, other: W) W`, `rotate_right(self: W, count: usize) W`,
-and `shift_right(self: W, count: usize) W` for unsigned words W = u32 or u64.
-All support free-function and receiver-call syntax. Binary operands must use
-the same word type. Rotation reduces the count modulo the word width; zero
-and width multiples preserve the input. Logical right shift fills with zero;
-counts greater than or equal to the width return zero (including usize.MAX).
-The C backend guards shifts and masks rotation counts to avoid undefined C shifts.
+`std.core.num` exports `bit_xor(self: W, other: W) W`, `bit_and`, `bit_or`,
+`shift_left(self: W, count: usize) W` and `shift_right` for unsigned words
+W = u8, u16, u32, u64, u128 or usize, plus `rotate_left` and `rotate_right`
+for u32 and u64. All support free-function and receiver-call syntax. Binary
+operands must use the same word type. Rotation reduces the count modulo the
+word width; zero and width multiples preserve the input. Logical shifts fill
+with zero; counts greater than or equal to the width return zero (including
+usize.MAX). The C backend guards shifts and masks rotation counts to avoid
+undefined C shifts, and casts u8/u16 results back after C's int promotion.
 
 ## Signed arithmetic shift
 
@@ -1881,3 +1882,121 @@ order. Only validated exported, nongeneric, immutable-parameter declarations
 with these exact signatures in `std.core.num` acquire primitive behavior.
 User functions with bodies may use the same names normally. This adds no
 new operator syntax, crypto dependency or constant-time compiler guarantee.
+Zen deliberately has no bitwise operator tokens: `|` separates enum variants
+and `^`, `&`, `<<`, `>>` are not in the lexer, so named operations are the
+whole surface rather than a stand-in for missing operators.
+
+## Wide integers and truncation
+
+`u128` is a fixed-width unsigned primitive. It supports the ordinary checked
+and wrapping arithmetic, comparisons, `Eq`, the bit operations above,
+lossless `to_u128` from every narrower unsigned word, and checked
+`to_u64(self: u128) Res<u64>`. Literals remain limited to the u64 range and
+there is no decimal printer: print `truncate_u64()` and a shifted high half.
+The C backend lowers it to `unsigned __int128` and refuses a C compiler
+without it with `#error`; every supported 64-bit GCC/Clang target has it.
+Checked `*` on u128 guards by division; hot paths use `*%` or `mul_wide`.
+
+`mul_wide(self: u64, other: u64) u128` returns the exact product and never
+traps. `truncate_u8/u16/u32/u64(self: W) T` keep the low bits of a strictly
+wider unsigned W; they are the one spelled way to discard high bits and never
+fail, unlike the checked `to_` conversions. Validation is by declaration
+identity exactly as for conversions (`sema_prim`); a bodyless `mul_wide` or
+`truncate_*` elsewhere is rejected. JS and assembly refuse these types
+through the scalar lowering's existing type check.
+
+## SIMD vectors
+
+`u8x16`, `u8x32`, `u32x4`, `u32x8`, `u64x2` and `u64x4` are primitive
+vectors of unsigned lanes. They have no operators, no `Eq` and no printer;
+`std.simd` supplies every operation as a validated bodyless declaration:
+
+| Operation | Meaning |
+| --- | --- |
+| `splat_V(value: E)`, `lanes_V(l0.., lN-1: E)` | construct (lanes_ for N <= 8) |
+| `load_V(bytes: Ptr<u8>, offset: usize)` | unaligned native-order load |
+| `v.store(bytes: Ptr<u8>, offset: usize)` | unaligned native-order store |
+| `v.lane(i)`, `v.with_lane(i, x)` | read / replace one lane; traps at i >= N |
+| `add_wrap`, `sub_wrap`, `mul_wrap`, `bit_xor`, `bit_and`, `bit_or` | lane-wise, wrapping |
+| `shift_left`, `shift_right(count: usize)` | same count per lane; zero at >= lane width |
+| `rotate_left`, `rotate_right(count: usize)` | count modulo lane width |
+| `v.shuffle(pattern: [usize, N])` | lane i = v[pattern[i] mod N] |
+| `v.shuffle2(w, pattern: [usize, N])` | lane i = (v ++ w)[pattern[i] mod 2N] |
+
+Every supported target is little-endian, so a load of `u32x4` reads four
+little-endian words. A shuffle whose pattern is an array literal of integer
+literals lowers to one `__builtin_shufflevector` (GCC 12+/Clang; older GCC
+uses `__builtin_shuffle`); any other pattern is evaluated once and selects
+lane by lane with the same modulo rule, so both paths agree. The C backend
+emits GNU vector-extension typedefs, capped at 16-byte alignment because
+arena storage guarantees no more; 32-byte vectors compile to two 16-byte
+registers unless their function is compiled for a wider target. Lane
+arithmetic never traps: vector code states wrapping by name. Vector
+operations evaluate operands once in source order. JS and assembly refuse
+vector types through the scalar lowering's type check.
+
+## Volatile access, compiler barriers and forced inlining
+
+`Ptr<T>` has `read_volatile(index)` and `write_volatile(index, value)`. Each
+is performed exactly once and in order with other volatile accesses; the C
+backend lowers them through a `volatile T *`. `std.mem.compiler_barrier()`
+prevents the compiler from moving memory accesses across it or treating
+earlier stores as dead (an empty `asm volatile` with a memory clobber); it
+emits no instruction and is not a CPU fence. `std.mem.wipe(bytes, count)`
+zeroes a span with volatile stores followed by a barrier. It erases only
+that span: copies in registers, spills or other buffers are not reached, so
+it is one part of a secret-lifetime contract, not the whole.
+
+A module-level function declared `name = inline (..) T { .. }` must be
+inlined into every caller. `inline` is contextual, not a keyword and not a
+new `@` name: it is recognized only directly before a function value in a
+declaration, so `inline(x)` elsewhere remains a call of a binding named
+`inline`. The C backend emits `static inline __attribute__((always_inline))`
+in single-file output. Split output gives functions external linkage and
+calls cross translation units, so there the request is dropped rather than
+turned into a C error. Inlining changes no semantics: evaluation order,
+traps and ownership are those of an ordinary call. A recursive `inline`
+function is a C compiler error, which the backend does not yet diagnose.
+
+## Target features and runtime dispatch
+
+A CPU feature is a capability, in the same sense as the authority `Env`
+carries: `std.simd` declares `Avx2`, `Ssse3`, `Aes`, `Clmul` and `Neon`, and
+only `std.simd` may construct one (`ForgedCapability` otherwise). The
+detection functions `avx2()`, `ssse3()`, `aes()`, `clmul()` and `neon()`
+return `Res<Capability>` from a runtime check: cpuid through the compiler
+runtime on x86 (which includes the OS's AVX state), `AT_HWCAP` on Linux
+arm64 and `hw.optional.arm.*` sysctls on macOS. NEON is baseline on arm64.
+
+**The signature answers the question.** A function with a capability
+parameter is compiled for that feature: the C backend emits one combined
+`__attribute__((target(..)))` per feature set (Clang honours only one), and
+nothing on other architectures. Because the value can exist only after
+successful detection, such a function cannot run where the feature is
+missing, and dispatch is an ordinary match:
+
+```zen
+avx2().match({ Ok(cpu) => blocks8(cpu, ..), None => blocks4(..) })
+```
+
+Feature instructions take the capability as an argument:
+`aes_round(self: u8x16, key: u8x16, cpu: Aes)` and `aes_round_last` (x86
+AESENC/AESENCLAST semantics; AESE+AESMC then xor on arm64) and
+`clmul_low` / `clmul_high(self: u64x2, other: u64x2, cpu: Clmul)`
+(PCLMULQDQ 0x00/0x11, PMULL/PMULL2). `cast_V` views a vector's bytes as
+another vector of the same size.
+
+32-byte vectors never cross a C call between functions compiled for
+different features: x86 passes them in YMM registers only with AVX, so the
+mismatch is a Clang error and a silent GCC miscompile. A call that passes or
+returns a 32-byte vector between an `Avx2` function and one without the
+capability is refused with a diagnostic; give the helper the capability
+too (dolbeau-style code threads `cpu` through its helpers) or keep the
+vector in locals. Capability arguments are ordinary values and cost nothing
+once inlined. Detection results are cached per process (one cpuid or sysctl
+per feature, stored with relaxed atomics), so dispatching per call is cheap.
+
+`mul_low32(self: V, other: V) V` for V = u64x2 or u64x4 multiplies the low
+32 bits of each lane into a full 64-bit product (PMULUDQ, UMULL): the
+radix-2^26 limb product of vector Poly1305. A constant rotation of u32
+lanes by 16 lowers to a 16-bit lane swap (REV32 on arm64).

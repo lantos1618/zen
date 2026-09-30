@@ -208,6 +208,8 @@ Check = {
                 ty = value.value.match({ Argc => Scalar.U64, _ => Scalar.Ptr });
                 self.expect(value.out, ty)
             },
+            // Scalar slots cannot hold a machine operation's operands.
+            Machine(_)         => Err(self.fault(IrReason.Type)),
         })
     }
 
@@ -346,6 +348,10 @@ Check = {
             UnmapPages(slot)   => self.initialized(flags, slot),
             SysConst(_)        => Ok(()),
             Flush              => Ok(()),
+            Machine(call)      => {
+                call.args.loop((slot) { self.initialized(flags, slot).try(); });
+                Ok(())
+            },
         })
     }
 

@@ -5,7 +5,7 @@ Res*, Ok*, Err*, None*, ok_or*, value_or*, map_err*, replace_err*, then*, ensure
 ignore*, without_err*, when_ok*, Rng* = std.core
 Drop*, Scope* = std.core
 i8*, i16*, i32*, i64* = std.core
-u8*, u16*, u32*, u64*, usize* = std.core
+u8*, u16*, u32*, u64*, u128*, usize* = std.core
 f32*, f64* = std.core
 loop*, find*, filter*, map*, LoopHandle*, Range* = std.core
 Eq*, Hash*, Hasher*, Display* = std.core

@@ -29,6 +29,7 @@ An `i16` receiver's `to_i32()` is lossless and returns `i32`. An `i64` receiver'
 | --- | --- |
 | `usize`, `u32` | `u8` |
 | `u64` | `u16`, `usize`, `i32` |
+| `u128` | `u64` |
 | `i64` | `i32` |
 | `i32` | `c_int` |
 | `c_int` | `i32` |
@@ -78,6 +79,10 @@ The existing `ToI64`, `ToU64`, and other widening bounds remain useful for
 functions accepting several losslessly convertible source types. Their
 `widen_*` members are implemented by the same standard conversion declarations.
 They do not promise checked narrowing or authorize new compiler operations.
+
+Explicit truncation (`truncate_u32` and friends) and `mul_wide` are separate
+machine primitives, not conversions; see DESIGN.md "Wide integers and
+truncation". They keep the conversion rule that nothing narrows implicitly.
 
 ## Compiler boundary
 

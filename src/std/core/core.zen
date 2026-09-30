@@ -11,7 +11,7 @@ Drop* = std.core.drop
 Scope* = std.core.scope
 
 i8*, i16*, i32*, i64* = std.core.num
-u8*, u16*, u32*, u64*, usize* = std.core.num
+u8*, u16*, u32*, u64*, u128*, usize* = std.core.num
 f32*, f64* = std.core.num
 pow2* = std.core.num
 

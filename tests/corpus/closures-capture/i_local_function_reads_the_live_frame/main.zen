@@ -1,0 +1,52 @@
+// A LOCAL FUNCTION IS A NAMED CLOSURE, INLINED WHERE IT IS CALLED.
+//
+// `name = (params) T { body }` inside a body declares it. It captures the
+// bindings visible where it was written and reads them LIVE at each call,
+// the same as a lambda handed to a function-typed parameter; a store to a
+// captured `::=` binding writes the caller's own storage.
+//
+//   - `add_base` reads `base`; `get` is written before `x` changes and must
+//     see the change (a copy made at the declaration would print 1);
+//   - `bump` stores into `n` twice and once per loop pass (15, not 7 or 1);
+//   - `inc2` calls an earlier local function, and a local function declared
+//     inside a loop body is a fresh closure on every pass;
+//   - a deferred closure calling a local function runs it at block exit.
+
+main = (env: Env) Res<i32, AllocError> {
+    succ = (x: i32) i32 { x + 1 }
+    println("succ {}", succ(2));
+
+    base: i64 = 10;
+    add_base = (x: i64) i64 { x + base }
+    println("base {} {}", add_base(1), add_base(add_base(2)));
+
+    x ::= 1;
+    get = () i64 { x }
+    x = 2;
+    println("live {}", get());
+
+    n ::= 0;
+    bump = (by: i64) { n = n + by; }
+    bump(5);
+    bump(7);
+    Range(0, 3).loop((h, i) { bump(1) });
+    println("stored {}", n);
+
+    inc = (v: i64) i64 { v + 1 }
+    inc2 = (v: i64) i64 { inc(inc(v)) }
+    println("nested {}", inc2(40));
+
+    total: usize ::= 0;
+    Range(0, 4).loop((h, i) {
+        square = (k: usize) usize { k * k }
+        total = total + square(i);
+    });
+    println("squares {}", total);
+
+    // a unit result may be omitted, as on any function declaration
+    say = (s: str) { println("say {}", s) }
+    say("hi");
+
+    @scope.defer(() { println("deferred {}", inc(n)) });
+    Ok(0);
+}

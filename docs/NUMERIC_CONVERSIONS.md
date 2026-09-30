@@ -6,8 +6,9 @@ Both spellings evaluate the operand once.
 
 Lossless widening returns the destination value directly. Checked conversion
 returns `Res<T>`: a fitting value becomes `Ok(value)`, and a value outside the
-destination range becomes `None`. No conversion in this surface allocates,
-truncates, wraps, saturates, or silently changes an error into absence.
+destination range becomes `None`. No `to_` conversion allocates, truncates,
+wraps, saturates, rounds, or silently changes an error into absence; the only
+rounding conversions are the explicit `narrow_` family below.
 
 ```zen
 to_i32 = std.core.num
@@ -31,6 +32,43 @@ An `i16` receiver's `to_i32()` is lossless and returns `i32`. An `i64` receiver'
 | `i64` | `i32` |
 | `i32` | `c_int` |
 | `c_int` | `i32` |
+
+## Floating-point conversions
+
+Every `to_f64` / `to_f32` whose source values all fit exactly is lossless and
+returns the float directly: `i8`, `i16`, `i32`, `u8`, `u16`, `u32` and `f32`
+to `f64`; `i8`, `i16`, `u8`, `u16` to `f32`.
+
+Conversions between an integer and `f64` that some values cannot survive are
+checked like integer narrowing and return `Res<T>`:
+
+| Source | Destination | `None` when |
+| --- | --- | --- |
+| `f64` | `i32`, `i64` | the value is fractional, NaN, infinite, or outside the range |
+| `i64`, `u64` | `f64` | the integer lies between two doubles (possible only beyond 2^53) |
+
+A caller that wants rounding says so: `std.math.round(x).to_i64()`.
+
+Rounding is a separate, explicit family spelled `narrow_`, so that a `to_`
+call always means "every value, or `None`":
+
+| Operation | Result |
+| --- | --- |
+| `f64.narrow_f32()` | `f32` |
+| `i64.narrow_f64()`, `u64.narrow_f64()` | `f64` |
+
+A narrowing always produces a value: the nearest representable one under
+IEEE 754 round-to-nearest, ties to even (Zen never changes the floating-point
+environment). An `f64` at or beyond `f32.MAX` plus half a unit in the last
+place becomes positive or negative infinity; one between `f32.MAX` and that
+bound becomes `f32.MAX`. NaN stays NaN and infinities stay infinite. The C
+backend tests the range before casting, so no input reaches C's undefined
+out-of-range float conversion. Composing `i64.narrow_f64().narrow_f32()`
+rounds twice and can differ from a single rounding by one ulp.
+
+There is no `to_f32` on `f64`, no conversion from `f32` straight to an
+integer (widen with `to_f64` first; that is exact), and no truncating
+float-to-integer operation.
 
 `usize` follows the target pointer width; current targets are 64-bit. The
 `u64` conversion keeps an optional result even on a 64-bit target. C integer

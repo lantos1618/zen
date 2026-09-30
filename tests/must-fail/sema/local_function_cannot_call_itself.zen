@@ -1,0 +1,9 @@
+// The name is bound after the body is checked: a local function inlines at
+// every call, so a recursive one would never finish inlining.
+main = (env: Env) Res<i32, IoError> {
+    fact = (n: i64) i64 {
+        (n < 2).match({ true => 1, false => n * fact(n - 1) })
+    }
+    println("{}", fact(5));
+    Ok(0);
+}

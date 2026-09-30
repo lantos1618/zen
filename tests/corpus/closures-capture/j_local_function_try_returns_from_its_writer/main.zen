@@ -1,0 +1,41 @@
+// `.try()` INSIDE A LOCAL FUNCTION RETURNS FROM THE FUNCTION IT WAS WRITTEN IN.
+//
+// A local function is a non-escaping closure, and a non-escaping closure
+// may return through its caller (DESIGN.md, "Non-local exit"). So `pick`'s
+// `None.try()` ends `sum_nonneg`, not `pick`: the second call prints the
+// fallback, and the line after the failing pick never runs.
+//
+// Its own declared result still types its tail: `num` answers i64 while the
+// enclosing function answers Res<i64, IoError>. And a local function inside
+// a generic body may name the body's type parameter and its closure
+// parameter.
+
+sum_nonneg = (xs: [i64, 3]) Res<i64> {
+    pick = (i: usize) i64 {
+        v = xs[i];
+        (v < 0).then(() { None.try() });
+        v
+    }
+    a = pick(0);
+    b = pick(1);
+    println("picked {} {}", a, b);
+    Ok(a + b + pick(2));
+}
+
+parse_pair = (a: str, b: str) Res<i64, IoError> {
+    num = (s: str) i64 { s.parse_i64().value_or(-1) }
+    Ok(num(a) + num(b));
+}
+
+twice = <T>(v: T, f: (x: T) T) T {
+    again = (y: T) T { f(f(y)) }
+    again(v)
+}
+
+main = (env: Env) Res<i32, IoError> {
+    println("{}", sum_nonneg([i64, 3](1, 2, 3)).value_or(-1));
+    println("{}", sum_nonneg([i64, 3](1, -2, 3)).value_or(-1));
+    println("{}", parse_pair("20", "22").try());
+    println("{}", twice(3, (x: i64) i64 { x * 2 }));
+    Ok(0);
+}

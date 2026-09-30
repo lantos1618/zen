@@ -26,9 +26,9 @@ CBackend, emit_program = gen.gen_c
 // one symbol and the linker would pick whichever body it saw last.
 UNSETTLED : str = "free = <T>() i32 { 0 }\nmain = (env: i32) i32 { free() }\n"
 
-// a lambda is not lowered: an escaping closure needs a record and a
-// non-escaping one needs inlining, and neither is written
-LAMBDA : str = "main = (env: i32) i32 { f = (a: i32) i32 { a }\n0 }\n"
+// a local function is a non-escaping closure inlined at its calls; it
+// has no storage, so reading it as a value has nothing to lower
+LAMBDA : str = "main = (env: i32) i32 { f = (a: i32) i32 { a }\ng = f;\n0 }\n"
 
 // `==` on two structs is not C. DESIGN.md DOES say `==` dispatches to an
 // Eq impl — it is the one operator that does — and this comment used to
@@ -64,7 +64,7 @@ report = (a: Alloc, label: str, text: str) Res<(), AllocError> {
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
     report(alloc, "a generic call nothing settles:", UNSETTLED).try();
-    report(alloc, "a lambda:", LAMBDA).try();
+    report(alloc, "a local function read as a value:", LAMBDA).try();
     report(alloc, "comparing two structs:", STRUCTS).try();
     report(alloc, "a field whose type was dropped:", DROPPED).try();
     println("layout refusal checked");

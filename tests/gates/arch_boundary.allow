@@ -169,10 +169,13 @@ gen/gen_c/gen_c_infer.zen sema.sema_vararg
 gen/gen_c/gen_c_infer.zen std.ast
 gen/gen_c/gen_c_inline.zen sema.sema_check
 gen/gen_c/gen_c_inline.zen sema.sema_def
+gen/gen_c/gen_c_inline.zen sema.sema_denote
 gen/gen_c/gen_c_inline.zen sema.sema_id
 gen/gen_c/gen_c_inline.zen sema.sema_inst
+gen/gen_c/gen_c_inline.zen sema.sema_local
 gen/gen_c/gen_c_inline.zen sema.sema_member
 gen/gen_c/gen_c_inline.zen sema.sema_ty
+gen/gen_c/gen_c_inline.zen sema.sema_type
 gen/gen_c/gen_c_inline.zen std.ast
 gen/gen_c/gen_c_json.zen sema.sema_check
 gen/gen_c/gen_c_json.zen sema.sema_def
@@ -244,6 +247,7 @@ gen/gen_c/gen_c_read.zen sema.sema_denote
 gen/gen_c/gen_c_read.zen sema.sema_id
 gen/gen_c/gen_c_read.zen sema.sema_inst
 gen/gen_c/gen_c_read.zen sema.sema_member
+gen/gen_c/gen_c_read.zen sema.sema_module
 gen/gen_c/gen_c_read.zen sema.sema_supply
 gen/gen_c/gen_c_read.zen sema.sema_ty
 gen/gen_c/gen_c_read.zen std.ast

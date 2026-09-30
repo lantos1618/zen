@@ -30,6 +30,7 @@ check_eq = sema.sema_bound
 operands_agree, check_neg = sema.sema_operand
 seed_left_spine, spine_ahead = sema.sema_spine
 type_from_ast, self_type, declared_or_alias = sema.sema_denote
+local_decl = sema.sema_local
 
 type_of* = (c :: Checker, id: ExprId, ctx: Ctx) Res<TyId, AllocError> {
     c.walk_projection_type(id, ctx).try().match({
@@ -398,6 +399,6 @@ stmt_type* = (c :: Checker, s: Stmt, ctx: Ctx) Res<TyId, AllocError> {
         Expr(e)  => c.type_of(e.expr, ctx),
         Bind(b)  => c.bind_stmt(b, ctx),
         Block(b) => c.block_type(b, ctx),
-        Decl(_)  => c.types.unit(),
+        Decl(d)  => c.local_decl(d, ctx),
     })
 }

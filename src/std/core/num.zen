@@ -107,8 +107,19 @@ to_i64* = (self: u8) i64
 to_i64* = (self: u16) i64
 to_i64* = (self: u32) i64
 
+// Lossless into floating point: every source value is exactly representable
+// (f32 carries 24 significand bits, f64 carries 53).
+to_f64* = (self: i8) f64
+to_f64* = (self: i16) f64
 to_f64* = (self: i32) f64
+to_f64* = (self: u8) f64
+to_f64* = (self: u16) f64
+to_f64* = (self: u32) f64
 to_f64* = (self: f32) f64
+to_f32* = (self: i8) f32
+to_f32* = (self: i16) f32
+to_f32* = (self: u8) f32
+to_f32* = (self: u16) f32
 
 // Checked conversions evaluate the receiver once and return None when its
 // value does not fit. They never truncate, wrap, saturate, or allocate.
@@ -123,6 +134,26 @@ to_i32* = (self: i64) Res<i32>
 // C int follows the native ABI; both directions check the destination range.
 to_c_int* = (self: i32) Res<c_int>
 to_i32* = (self: c_int) Res<i32>
+
+// Exact conversions between integers and f64 are checked the same way: the
+// result is None unless the value is represented exactly. A fractional,
+// infinite, NaN, or out-of-range f64 has no integer; an integer beyond 2^53
+// that falls between two doubles has no f64. Round explicitly first
+// (std.math.round) to convert a fractional value.
+to_i32* = (self: f64) Res<i32>
+to_i64* = (self: f64) Res<i64>
+to_f64* = (self: i64) Res<f64>
+to_f64* = (self: u64) Res<f64>
+
+// Rounding narrowing: always produces a value, rounded to the nearest
+// representable one (IEEE 754 round-to-nearest, ties to even; Zen never
+// changes the floating-point environment). f64 beyond the f32 range becomes
+// +/-infinity, never undefined behaviour; NaN stays NaN and infinities stay
+// infinite. `narrow_` is spelled apart from `to_` so a lossy conversion is
+// never mistaken for a lossless one at the call site.
+narrow_f32* = (self: f64) f32
+narrow_f64* = (self: i64) f64
+narrow_f64* = (self: u64) f64
 
 min* = (self: usize, other: usize) usize {
     (self < other).match({ true => self, false => other })
@@ -176,7 +207,12 @@ i16.impl(ToI32, { widen_i32 = to_i32 })
 i16.impl(ToI64, { widen_i64 = to_i64 })
 
 i32.impl(ToI64, { widen_i64 = to_i64 })
+i8.impl(ToF64, { widen_f64 = to_f64 })
+i16.impl(ToF64, { widen_f64 = to_f64 })
 i32.impl(ToF64, { widen_f64 = to_f64 })
+u8.impl(ToF64, { widen_f64 = to_f64 })
+u16.impl(ToF64, { widen_f64 = to_f64 })
+u32.impl(ToF64, { widen_f64 = to_f64 })
 
 f32.impl(ToF64, { widen_f64 = to_f64 })
 

@@ -1,0 +1,97 @@
+// Functions declared inside a body.
+//
+// `name = (params) T { body }` in a body binds a local function: a named,
+// non-escaping closure. It has no storage and no C symbol; each call is
+// inlined where it is written, exactly like a lambda handed to a
+// function-typed parameter. Its body is checked once, here, in the scope of
+// the declaration: free names are the enclosing bindings visible at this
+// point, read live at each call, and `.try()` returns from the enclosing
+// function. The name is bound after the body is checked, so a local function
+// cannot call itself.
+
+Decl, Function, Lambda = std.ast
+AllocError = std.mem
+TyId = sema.sema_ty
+Checker, Ctx = sema.sema_check
+SemaFault, NameFault = sema.sema_diag
+param_type, ret_type, signature_type = sema.sema_denote
+check_return = sema.sema_hoist
+block_type = sema.sema_type
+
+// A nested declaration's statement type. Only functions are given meaning
+// here; other nested declarations are refused by lowering.
+local_decl* = (c :: Checker, d: Decl, ctx: Ctx) Res<TyId, AllocError> {
+    d.kind.match({
+        Function(f) => c.local_function(f, ctx),
+        _           => c.types.unit(),
+    })
+}
+
+// What a closure cannot be: exported, generic, or bodyless. A parameter
+// without a type is already refused by the parser, since every declaration
+// states its parameter types.
+local_shape* = (f: Function) bool {
+    has_body = f.body.match({ Ok(_) => true, None => false });
+    has_body && !f.exported && (f.tparams.len == 0)
+}
+
+// The lambda a local function's declaration spells, for passes that treat
+// both alike.
+local_lambda* = (f: Function) Res<Lambda> {
+    f.body.match({
+        None     => None,
+        Ok(body) => Ok(Lambda(
+            tparams: f.tparams,
+            params: f.params,
+            params_span: f.params_span,
+            ret: f.ret,
+            body: body
+        )),
+    })
+}
+
+// A refused declaration still binds its name, as poison, so its calls do
+// not cascade into further diagnostics.
+local_function = (c :: Checker, f: Function, ctx: Ctx)
+                 Res<TyId, AllocError> {
+    sig = local_shape(f).match({
+        true  => {
+            c.local_body(f, ctx).try();
+            c.signature_type(f, ctx).try()
+        },
+        false => {
+            c.refuse(
+                f.name.span,
+                SemaFault.LocalFunctionShape(NameFault(name: f.name.text))
+            ).try();
+            c.types.unknown().try()
+        },
+    });
+    c.bind_at(f.name.text, sig, false, false, f.name.span).try();
+    c.types.unit()
+}
+
+// The tail is checked against the declared result, not the enclosing
+// function's; everything else in the body sees the enclosing context.
+local_body = (c :: Checker, f: Function, ctx: Ctx) Res<(), AllocError> {
+    f.body.match({
+        None     => Ok(()),
+        Ok(body) => {
+            smark = c.mark();
+            f.params.loop((h, p) {
+                ty = c.param_type(p, ctx).try();
+                c.bind(p.name.text, ty, p.mutable, true).try();
+            });
+            got = c.block_type(body, ctx).try();
+            own = Ctx(
+                module: ctx.module,
+                ret: c.ret_type(f, ctx).try(),
+                has_ret: ctx.has_ret,
+                self_ty: ctx.self_ty,
+                has_self: ctx.has_self
+            );
+            c.check_return(body, own, got).try();
+            c.release(smark)
+        },
+    })
+}

@@ -1,0 +1,31 @@
+// A MODULE-QUALIFIED CONSTANT IS THE MODULE'S EXPORT, WHEREVER IT IS READ.
+//
+// `Controller = controller` binds a name to the module; `Controller.LIMIT`
+// is then the module's exported constant. main declares its own LIMIT on
+// purpose: the qualified read must never answer with it, and the bare read
+// must never answer with the module's.
+
+Controller = controller
+
+LIMIT: i64 = 7
+
+// a constant of this module whose value is another module's constant
+HEADROOM: i64 = Controller.LIMIT - LIMIT
+
+twice = (n: i64) i64 { n * 2 }
+
+main = (env: Env) Res<i32, AllocError> {
+    // a str constant, printed and measured
+    println("{} {}", Controller.ATTACH_PATH, Controller.ATTACH_PATH.len);
+
+    // the qualified and the bare constant side by side
+    println("{} {}", Controller.LIMIT, LIMIT);
+
+    // in arithmetic, as an argument, and as a typed initializer
+    sum: i64 = Controller.LIMIT + LIMIT;
+    println("{} {}", sum, twice(Controller.LIMIT));
+
+    // a constant whose value names another constant in its own module
+    println("{} {}", Controller.RETRIES, HEADROOM);
+    Ok(0);
+}

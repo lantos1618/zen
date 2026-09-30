@@ -1,0 +1,8 @@
+// f64 to f32 rounds, so it is `narrow_f32`, never `to_f32`: a `to_` name
+// promises either every value or None, and this conversion keeps neither.
+main = (env: Env) Res<i32, AllocError> {
+    d: f64 = 0.1;
+    f: f32 = d.to_f32();
+    println("{}", f);
+    Ok(0);
+}

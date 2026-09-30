@@ -1,0 +1,17 @@
+exact half true
+tenth rounds true
+max is inf true
+min is -inf true
+below tie true
+tie is inf true
+nan stays nan true
+whole some some
+fraction none none
+beyond i32 some none
+nan to int none
+2^63 none -2^63 some
+2^53+1 none rounds true
+2^53 some
+i64 max none
+u64 max none rounds true
+widen true true true

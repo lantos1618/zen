@@ -19,6 +19,7 @@ arena_source, release_stored_arena, stored_arena_backed = sema.sema_scope
 Pin, pin_captured, refuse_pinned, refuse_pinned_at = sema.sema_pin
 check_drop_copy, is_drop_type = sema.sema_drop
 is_handle_ty, refuse_handle_at, spelled_name = sema.sema_handle
+local_lambda = sema.sema_local
 spelled_lambda, call_callee = sema.sema_call
 OwnCheck, call_stores, transfer_call_stores, actual, selected_summary = sema.sema_store
 append_path, strip_path, copy_allocation, Returned = sema.sema_store
@@ -744,7 +745,21 @@ own_stmt = (c :: Checker, o :: Own, s: Stmt, ctx: Ctx) Res<(), AllocError> {
         Bind(b)  => c.own_bind(o, b, ctx),
         Expr(e)  => c.own_expr(o, e.expr, ctx),
         Block(x) => c.own_block(o, x, ctx),
-        Decl(_)  => Ok(()),
+        Decl(d)  => c.own_local_decl(o, d, ctx),
+    })
+}
+
+// A local function may run any number of times, at any later point in its
+// scope, so its body is walked as a repeating closure: a capture it would
+// move is reported the way a loop body's is.
+own_local_decl = (c :: Checker, o :: Own, d: Decl, ctx: Ctx)
+                 Res<(), AllocError> {
+    d.kind.match({
+        Function(f) => local_lambda(f).match({
+            Ok(l) => c.own_lambda(o, l, ctx, true, false),
+            None  => Ok(()),
+        }),
+        _           => Ok(()),
     })
 }
 

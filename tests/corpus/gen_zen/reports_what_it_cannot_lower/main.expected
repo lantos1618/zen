@@ -1,8 +1,8 @@
 a generic call nothing settles:
 main.zen:2:25: codegen does not lower this yet: `a generic call whose type arguments nothing settles`
 
-a lambda:
-main.zen:1:25: codegen does not lower this yet: `a declaration inside a body`
+a local function read as a value:
+main.zen:2:5: codegen does not lower this yet: `a lambda read as a value`
 
 comparing two structs:
 main.zen:2:28: codegen does not lower this yet: `comparing values that are not scalars`

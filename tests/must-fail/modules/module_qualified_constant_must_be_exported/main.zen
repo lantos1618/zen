@@ -1,0 +1,10 @@
+// A qualified read reaches a constant through the module's exports only.
+// Lowering now resolves `Config.NAME` itself, so the `*` gate must still be
+// what refuses an unexported one, before any code is generated.
+
+Config = config
+
+main = (env: Env) Res<i32, IoError> {
+    println("{} {}", Config.PUBLIC, Config.SECRET);
+    Ok(0);
+}

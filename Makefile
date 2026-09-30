@@ -274,7 +274,11 @@ cap: build
 ## fails here before it can pass the real tree.
 ##
 ## DO NOT RAISE THIS NUMBER. Lower it when an import migrates to gen_ir.
-ARCH_GEN_C_CEILING := 306
+## ONE-TIME EXCEPTION (user-approved 2026-09-29): the merge train raised the
+## ceiling from 306 for the gen_c edges that lang-gaps, cgen-opt, simd-u128,
+## constant-time and match-safety added; zen-tracker "archcheck ratchet
+## paydown" tracks migrating them to gen_ir and lowering it back.
+ARCH_GEN_C_CEILING := 310
 archcheck: build
 	@mkdir -p build/gates
 	@$(call gate,arch_boundary)

@@ -1,0 +1,83 @@
+// f64 -> f32 ROUNDS; integer <-> f64 IS EXACT OR None.
+//
+// `narrow_f32` always yields a value: the nearest f32 (ties to even), with
+// everything at or beyond FLT_MAX + half an ulp becoming infinity. The
+// interesting points are the two sides of that bound: FLT_MAX + 2^102 still
+// rounds DOWN to FLT_MAX, FLT_MAX + 2^103 (the exact tie, whose even
+// neighbour is infinity) rounds UP. A backend that clamps, or that relies on
+// C's cast outside the float range, gets one of the two wrong.
+//
+// `to_i64`/`to_i32` on f64 and `to_f64` on i64/u64 are checked: a
+// fractional value, NaN, a value outside the destination range, or an
+// integer that falls between two doubles is None. `narrow_f64` is the
+// rounding spelling for the integer case: 2^53 + 1 ties to 2^53.
+//
+// {}'s float digit count is unspecified, so every line compares and prints
+// its verdict rather than the float itself.
+
+opt = (r: Res<i64>) str { r.match({ Ok(_) => "some", None => "none" }) }
+opt32 = (r: Res<i32>) str { r.match({ Ok(_) => "some", None => "none" }) }
+optf = (r: Res<f64>) str { r.match({ Ok(_) => "some", None => "none" }) }
+
+main = (env: Env) Res<i32, AllocError> {
+    half: f64 = 1.5;
+    println("exact half {}", half.narrow_f32().to_f64() == 1.5);
+    tenth: f64 = 0.1;
+    println("tenth rounds {}", tenth.narrow_f32().to_f64() != tenth);
+
+    // overflow saturates to infinity, both signs
+    top: f64 = f64.MAX;
+    println("max is inf {}", top.narrow_f32().to_f64() > f64.MAX);
+    bottom: f64 = f64.MIN;
+    println("min is -inf {}", bottom.narrow_f32().to_f64() < f64.MIN);
+
+    // FLT_MAX + 2^102 rounds down; FLT_MAX + 2^103 is the tie that goes up
+    below: f64 = 340282351709131260724621789471329746944.0;
+    println("below tie {}", below.narrow_f32().to_f64() == f32.MAX.to_f64());
+    tie: f64 = 340282356779733661637539395458142568448.0;
+    println("tie is inf {}", tie.narrow_f32().to_f64() > f64.MAX);
+
+    // NaN stays NaN: the one value unequal to itself
+    zero: f64 = 0.0;
+    nan       = zero / zero;
+    narrowed  = nan.narrow_f32();
+    println("nan stays nan {}", narrowed != narrowed);
+
+    whole: f64 = 42.0;
+    println("whole {} {}", opt(whole.to_i64()), opt32(whole.to_i32()));
+    frac: f64 = 42.5;
+    println("fraction {} {}", opt(frac.to_i64()), opt32(frac.to_i32()));
+    wide: f64 = 3000000000.0;
+    println("beyond i32 {} {}", opt(wide.to_i64()), opt32(wide.to_i32()));
+    println("nan to int {}", opt(nan.to_i64()));
+    two63: f64 = 9223372036854775808.0;
+    println("2^63 {} -2^63 {}", opt(two63.to_i64()), opt((-two63).to_i64()));
+
+    odd: i64 = 9007199254740993;
+    println(
+        "2^53+1 {} rounds {}",
+        optf(odd.to_f64()),
+        odd.narrow_f64() == 9007199254740992.0
+    );
+    even: i64 = 9007199254740992;
+    println("2^53 {}", optf(even.to_f64()));
+    println("i64 max {}", optf(i64.MAX.to_f64()));
+    umax: u64 = u64.MAX;
+    println(
+        "u64 max {} rounds {}",
+        optf(umax.to_f64()),
+        umax.narrow_f64() == 18446744073709551616.0
+    );
+
+    // the lossless widenings into floating point
+    s: i16 = -300;
+    b: u8  = 200;
+    w: u32 = 4000000000;
+    println(
+        "widen {} {} {}",
+        s.to_f64() == -300.0,
+        b.to_f32().to_f64() == 200.0,
+        w.to_f64() == 4000000000.0
+    );
+    Ok(0);
+}

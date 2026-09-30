@@ -1,4 +1,5 @@
-Ast, Module, Decl, Ident, Span, QualifiedName, Member = std.ast
+Ast, Module, Decl, Ident, QualifiedName, Member = std.ast
+Span = std.source
 Import, Impl, Enum, Alias = std.ast
 Alloc, AllocError, Ptr = std.mem
 Vec, Map = std.collections

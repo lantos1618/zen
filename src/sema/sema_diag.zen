@@ -1,4 +1,4 @@
-Span = std.ast.ast_span
+Span = std.source
 str, String = std.text
 AllocError = std.mem
 TyId, Types = sema.sema_ty

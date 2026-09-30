@@ -3,7 +3,8 @@
 
 str = std.text
 Range = std.core
-Pos, Span, Ident = std.ast.ast_span
+Ident = std.ast.ast_span
+Pos, Span = std.source
 ExprId, TypeId = std.ast.ast_id
 Ast = std.ast.ast_arena
 Decl, Function, Param, Member, Import, Bind = std.ast.ast_node

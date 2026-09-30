@@ -292,7 +292,7 @@ verifier failure, whichever backend was selected. The `ArmTrace` machinery in
 ### 3.1 The rule
 
 > **A backend consumes a `VerifiedProgram` and a `Target`, and nothing else.**
-> It never imports the AST (`std.ast`, except the `Span` type), the lexer, the
+> It never imports the AST (`std.ast`; source positions come from `std.source`), the lexer, the
 > parser, sema (`sema.*`), lowering (`gen.gen_lower*`), or the driver and tools
 > (`zen.*`, `fmt.*`, `lsp.*`), directly or through a helper.
 
@@ -541,8 +541,9 @@ rule:
   whose import has gone fails as stale, and its length must equal
   `ARCH_GEN_C_CEILING` in the Makefile. It can therefore shrink, and cannot
   grow without a visible edit to a number commented "DO NOT RAISE".
-- **Tests.** There are 11 fixture cases in `tests/gates/arch_fixtures/`
-  (`run.sh`), covering a clean tree, direct imports, the AST-type exception,
+- **Tests.** There are 12 fixture cases in `tests/gates/arch_fixtures/`
+  (`run.sh`), covering a clean tree, direct imports, `Span` imported from
+  `std.ast` (a violation since positions moved to `std.source`),
   new backend directories, two-hop transitive taint, and each ratchet failure
   (new edge, stale edge, out-of-scope entry, ceiling too high or too low), plus
   exit 2 for unparseable input and for a set with no backends. The fixtures run
@@ -701,8 +702,7 @@ yours.
    merges, or (b) right after merge, on this lane? *Recommendation: (b). It
    avoids asking an in-flight agent to restructure, and the gate makes the
    merge's four violations the explicit to-do list.*
-8. **Where `Span` lives.** The gate currently allows `Span` (and only
-   `Span`) from `std.ast`, because the IR carries source positions. Moving
-   `Span`/`Pos` to a neutral `std.src` module would remove that exception.
-   It is a mechanical change that touches every file that imports `Span`.
-   *Recommendation: do it in stage 1.*
+8. **Where `Span` lives.** *Decided and done:* `Pos`, `Span` and `nowhere`
+   live in `std.source`, and the gate no longer has an exception for `Span`
+   from `std.ast` (any `std.ast` import by a backend is a violation).
+   `std.ast` still re-exports the three names for frontend code.

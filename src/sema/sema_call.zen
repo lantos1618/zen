@@ -1,4 +1,5 @@
-Expr, ExprId, Call, Arg, Access, Lambda, Param, Span, Paren, nowhere = std.ast
+Expr, ExprId, Call, Arg, Access, Lambda, Param, Paren = std.ast
+Span, nowhere = std.source
 Struct, Function, BlockId = std.ast
 Ast = std.ast.ast_arena
 Alloc, AllocError = std.mem

@@ -4,7 +4,7 @@
 Alloc, AllocError = std.mem
 FsError = std.env
 ProcError, ProcOutput = std.proc
-Span, Pos = std.ast
+Span, Pos = std.source
 Program, Func, Instruction, BasicBlock, Terminator, Const, Binary, Op, Invocation, Print, Scalar, Branch, Move = gen.gen_ir
 Target = gen.gen_asm
 X86_64Linux = gen.gen_asm_x86

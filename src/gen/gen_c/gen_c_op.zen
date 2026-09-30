@@ -3,7 +3,8 @@
 // plain C. Equality may statically dispatch through `Eq`. Short-circuit
 // operands keep spills inside their branch so evaluation stays lazy.
 
-Expr, ExprId, Span = std.ast
+Expr, ExprId = std.ast
+Span = std.source
 Literal, BinOp, Binary, Unary = std.ast
 AllocError = std.mem
 Vec = std.collections

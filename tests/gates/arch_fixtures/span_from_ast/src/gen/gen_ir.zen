@@ -1,0 +1,3 @@
+// Positions come from std.source; importing even Span from the AST is an
+// AST import, since the exception for it went with the move.
+Span = std.ast

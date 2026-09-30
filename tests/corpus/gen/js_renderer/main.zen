@@ -4,7 +4,7 @@
 Program, Func, Instruction, Const, Unary, UnaryOp, Binary, Op, Scalar = gen.gen_ir
 BasicBlock, Terminator = gen.gen_ir
 emit_js = gen.gen_js
-Span, Pos = std.ast
+Span, Pos = std.source
 
 location = () Span {
     Span(

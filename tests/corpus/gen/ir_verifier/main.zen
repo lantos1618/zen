@@ -2,7 +2,7 @@ Program, Func, Scalar, BasicBlock, Terminator, Branch = gen.gen_ir
 Layout, Address, Load, Guards, TagGuard, PayloadRead = gen.gen_ir
 Instruction, Const, Move, Unary, UnaryOp, Binary, Op, Invocation, Print = gen.gen_ir
 verify, message = gen.gen_verify
-nowhere = std.ast
+nowhere = std.source
 
 Refuse = {}
 Refuse.impl(Alloc, {

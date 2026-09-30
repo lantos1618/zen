@@ -1,4 +1,5 @@
-Ast, Type, TypeKind, TypeId, nowhere, no_trivia = std.ast
+Ast, Type, TypeKind, TypeId, no_trivia = std.ast
+nowhere = std.source
 Checker = sema.sema_check
 
 AllocationProbe = { backing: Alloc, refuse: Ptr<bool>, calls: Ptr<usize>, bytes: Ptr<usize> }

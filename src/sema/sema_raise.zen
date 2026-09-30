@@ -1,4 +1,5 @@
-Function, TypeId, Span = std.ast
+Function, TypeId = std.ast
+Span = std.source
 AllocError = std.mem
 Vec = std.collections
 TyId, TyRes = sema.sema_ty

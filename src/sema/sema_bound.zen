@@ -1,5 +1,6 @@
 Decl, Struct, Impl, Member, Call, Arg, TypeId = std.ast
-Field, Const, Function, Span, Binary, BinOp = std.ast
+Field, Const, Function, Binary, BinOp = std.ast
+Span = std.source
 AllocError = std.mem
 Vec = std.collections
 str = std.text

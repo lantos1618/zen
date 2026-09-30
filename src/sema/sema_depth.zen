@@ -1,4 +1,5 @@
-Decl, Struct, Member, Field, Span, nowhere = std.ast
+Decl, Struct, Member, Field = std.ast
+Span, nowhere = std.source
 Alloc, AllocError = std.mem
 Vec, Map = std.collections
 str, String = std.text

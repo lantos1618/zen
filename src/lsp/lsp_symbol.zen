@@ -3,7 +3,8 @@
 str, String = std.text
 Vec = std.collections
 Alloc, AllocError = std.mem
-Decl, Span, Ident = std.ast
+Decl, Ident = std.ast
+Span = std.source
 TextRange, text_range = lsp.lsp_pos
 parse_standalone = lsp.lsp_query
 arr, Nest, to_json = std.json

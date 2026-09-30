@@ -30,7 +30,8 @@
 
 scan, Source = std.lex
 Parser = std.parse
-Ast, Span, Decl, Block, Expr = std.ast
+Ast, Decl, Block, Expr = std.ast
+Span = std.source
 Alloc, AllocError = std.mem
 str = std.text
 

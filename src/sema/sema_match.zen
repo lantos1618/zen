@@ -1,4 +1,5 @@
-Expr, ExprId, Span, Literal, nowhere = std.ast
+Expr, ExprId, Literal = std.ast
+Span, nowhere = std.source
 Pattern, PatName, Destructure, PatternId = std.ast
 Match, QualifiedName, Lambda = std.ast
 Alloc, AllocError = std.mem

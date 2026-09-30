@@ -1,4 +1,5 @@
-ExprId, Span, Lambda, Paren, Param = std.ast
+ExprId, Lambda, Paren, Param = std.ast
+Span = std.source
 AllocError = std.mem
 Vec = std.collections
 TyId, TyRes, ResForm = sema.sema_ty

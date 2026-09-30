@@ -1,7 +1,8 @@
 Expr, ExprId, Block, BlockId, Stmt, Bind = std.ast
 Decl, Member, Function, Param = std.ast
 Call, Arg, Access, Match, Arm, Lambda, Index, Consume = std.ast
-Span, Name, Paren, Try, Unary, Binary = std.ast
+Name, Paren, Try, Unary, Binary = std.ast
+Span = std.source
 Record, FixedArray, Field, Const = std.ast
 Alloc, AllocError = std.mem
 Vec = std.collections

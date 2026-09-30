@@ -3,7 +3,8 @@
 // are flattened while parsing in type position.
 
 AllocError = std.mem
-Span, no_trivia = std.ast.ast_span
+no_trivia = std.ast.ast_span
+Span = std.source
 TypeId = std.ast.ast_id
 Type, TypeKind, Named, Union, FnType, ArrayType, Param, TParam = std.ast.ast_node
 TokenKind, WILDCARD = std.parse.parse_token

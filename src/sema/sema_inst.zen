@@ -1,4 +1,5 @@
-Decl, Struct, Enum, TParam, Span = std.ast
+Decl, Struct, Enum, TParam = std.ast
+Span = std.source
 Alloc, AllocError = std.mem
 Vec = std.collections
 str, String = std.text

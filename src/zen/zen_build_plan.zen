@@ -6,8 +6,9 @@ str = std.text
 Vec = std.collections
 Path = std.core
 
-Ast, ExprId, Expr, Call, Access, Record, Block, Function, Span, Try = std.ast
-nowhere = std.ast
+Ast, ExprId, Expr, Call, Access, Record, Block, Function, Try = std.ast
+Span = std.source
+nowhere = std.source
 Stmt, Bind, Member, Field, Module = std.ast
 Checker, Ctx, type_of = sema.sema
 CImport, Lib, Extern, Exe, Dep, Target, Codegen, Package = std.build

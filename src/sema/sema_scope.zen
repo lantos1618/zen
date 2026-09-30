@@ -1,5 +1,6 @@
 ExprId, BlockId, Block, Call, Struct = std.ast
-Paren, Access, Member, Function, Param, Span, TypeId = std.ast
+Paren, Access, Member, Function, Param, TypeId = std.ast
+Span = std.source
 Try, Name, Expr = std.ast
 Vec = std.collections
 spelled_name = sema.sema_handle

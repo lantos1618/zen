@@ -39,10 +39,10 @@
 //                  diagnostics). Unchecked, but it participates in taint.
 //
 // FRONTEND means: `sema.*`, `std.lex*`, `std.parse*`, `gen.gen_lower*`, the
-// tool roots `zen.*`, `fmt.*`, `lsp.*`, and `std.ast*` — except an import that
-// binds only `Span`. A source position is IR data (every trap and debug line
-// carries one); the rest of the AST is not. When Span moves to a neutral
-// module (IR_ARCHITECTURE.md, open question) this exception goes.
+// tool roots `zen.*`, `fmt.*`, `lsp.*`, and `std.ast*`, with no exception. A
+// source position is IR data (every trap and debug line carries one), so
+// `Pos`, `Span` and `nowhere` live in `std.source`, which is not frontend; an
+// import of `Span` from `std.ast` is an AST import like any other.
 //
 // TAINT IS TRANSITIVE WITHIN gen/. A backend may not import a gen/ module that
 // itself reaches the frontend, or a helper would launder the edge. Modules
@@ -67,7 +67,7 @@ FsError = std.env
 
 scan, Source = std.lex.lex
 Parser = std.parse.parser
-ImportName, Module = std.ast.ast_node
+Module = std.ast.ast_node
 Ident = std.ast.ast_span
 
 GRANDFATHERED: str = "gen/gen_c/"
@@ -78,12 +78,10 @@ FIRST_FILE: usize = 4
 
 Role = Backend | Grandfathered | Shared
 
-// One import declaration. `span_only` is true when every name it binds is
-// `Span`, the one AST type the IR is allowed to carry.
+// One import declaration.
 Edge = {
     module*: str,
     line*: usize,
-    span_only*: bool,
 }
 
 Unit = {
@@ -257,20 +255,11 @@ imports = (a: Alloc, m: Module) Res<Vec<Edge>, AllocError> {
             Import(im) => edges.add(Edge(
                 module: joined(a, im.module.segments).try(),
                 line: d.span.start.line,
-                span_only: only_span(im.names),
             )).try(),
             _          => (),
         });
     });
     Ok(edges);
-}
-
-only_span = (names: Vec<ImportName>) bool {
-    all ::= names.len > 0;
-    names.loop((h, n) {
-        n.name.text.eq("Span").match({ true => (), false => { all = false; } });
-    });
-    all
 }
 
 joined = (a: Alloc, segments: Vec<Ident>) Res<str, AllocError> {
@@ -410,7 +399,7 @@ frontend = (e: Edge) bool {
     root_is(m, "sema") || root_is(m, "zen") || root_is(m, "fmt")
         || root_is(m, "lsp") || root_is(m, "std.lex") || root_is(m, "std.parse")
         || m.starts_with("gen.gen_lower")
-        || (root_is(m, "std.ast") && e.span_only == false)
+        || root_is(m, "std.ast")
 }
 
 // `m` is `root` or a module below it.

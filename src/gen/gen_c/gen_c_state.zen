@@ -2,7 +2,8 @@
 // stable insertion data, then sort by mangled name before output. Per-function
 // locals and temporary counters are reset at each body boundary.
 
-Ast, ExprId, Span = std.ast
+Ast, ExprId = std.ast
+Span = std.source
 str, String = std.text
 Alloc, AllocError = std.mem
 Vec, Map = std.collections

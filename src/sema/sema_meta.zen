@@ -1,5 +1,6 @@
 Expr, Type, TypeId, Access, Meta, Alias, Call, Struct = std.ast
-ExprId, Lambda, Param, Span = std.ast
+ExprId, Lambda, Param = std.ast
+Span = std.source
 AllocError = std.mem
 Vec = std.collections
 str = std.text

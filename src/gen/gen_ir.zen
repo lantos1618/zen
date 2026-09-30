@@ -9,7 +9,7 @@
 // part through `supports` (gen_ir_feature); there is no second IR.
 Vec = std.collections
 str = std.text
-Span = std.ast
+Span = std.source
 Sys, SysConstant = gen.gen_sys
 
 // Size and alignment of an aggregate slot, in bytes.

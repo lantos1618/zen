@@ -4,7 +4,8 @@
 
 Alloc, AllocError = std.mem
 Ast = std.ast.ast_arena
-Span, Pos, Trivia, TriviaKind, TriviaRun, no_trivia, Ident, QualifiedName = std.ast.ast_span
+Trivia, TriviaKind, TriviaRun, no_trivia, Ident, QualifiedName = std.ast.ast_span
+Span, Pos = std.source
 Token, TokenKind, Source, Lexed, is_trivia, empty_eof = std.parse.parse_token
 Diag, diag, diag_at, truncated = std.parse.parse_diag
 

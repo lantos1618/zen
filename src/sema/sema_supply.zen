@@ -1,4 +1,4 @@
-Span = std.ast
+Span = std.source
 Decl, Struct, Impl, Member, Field = std.ast
 Function = std.ast
 AllocError = std.mem

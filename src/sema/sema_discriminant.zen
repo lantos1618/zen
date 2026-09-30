@@ -2,7 +2,8 @@
 // dense and private.
 
 Enum, Variant, Expr, ExprId, TypeId = std.ast
-Call, Access, Span, Decl = std.ast
+Call, Access, Decl = std.ast
+Span = std.source
 AllocError = std.mem
 Vec = std.collections
 str = std.text

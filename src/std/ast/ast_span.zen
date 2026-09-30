@@ -1,71 +1,9 @@
-// AST source positions and trivia. Spans are half-open, include a node's
-// delimiters and children, and exclude leading trivia and following
-// separators. Statement spans include their semicolon.
-
-// A source point with a one-based line and byte column.
-Pos* = {
-    line*: usize,
-    col*: usize,
-
-    before* = (self: @Self, other: @Self) bool {
-        self.line < other.line
-            || (self.line == other.line && self.col < other.col)
-    }
-
-    at_or_after* = (self: @Self, other: @Self) bool {
-        !self.before(other)
-    }
-
-    // Byte offset in the original source. Invalid positions are refused,
-    // including columns beyond the line and lines beyond the final newline.
-    offset_in* = (self: @Self, text: str) Res<usize> {
-        (self.line > 0 && self.col > 0).ensure().try();
-        at: usize   ::= 0;
-        line: usize ::= 1;
-        loop(() { line < self.line }, (h) {
-            end = text.newline_in(at, text.len);
-            (end < text.len).ensure().try();
-            at   = end + 1;
-            line = line + 1;
-        });
-        end = text.newline_in(at, text.len);
-        (self.col - 1 <= end - at).ensure().try();
-        Ok(at + self.col - 1)
-    }
-}
-
-Pos.impl(Display, {
-    toString ::= (self: @Self, out :: Sink) Res<(), WriteError> {
-        out.fmt("{}:{}", self.line, self.col)
-    }
-})
-
-// Half-open `[start, end)` span. `file` is compilation-root-relative.
-Span* = {
-    file*: str,
-    start*: Pos,
-    end*: Pos,
-
-    // Borrow the half-open source span, using the parser's byte columns.
-    text_in* = (self: @Self, text: str) Res<str> {
-        from = self.start.offset_in(text).try();
-        to   = self.end.offset_in(text).try();
-        (from <= to).ensure().try();
-        Ok(text.slice(from, to))
-    }
-
-    // Whether `p` in `file` lies in this span.
-    covers* = (self: @Self, file: str, p: Pos) bool {
-        self.file.eq(file) && p.at_or_after(self.start) && p.before(self.end)
-    }
-
-    // Strictly inside `outer`: contained, and not the same span.
-    inside* = (self: @Self, outer: @Self) bool {
-        self.start.at_or_after(outer.start)
-            && outer.end.at_or_after(self.end)
-            && (outer.start.before(self.start) || self.end.before(outer.end))
-    }
-}
+// AST trivia and names. Source positions (`Pos`, `Span`, `nowhere`) live in
+// std.source, beside no AST type, so a backend can carry them without
+// importing the AST. AST spans are half-open, include a node's delimiters and
+// children, and exclude leading trivia and following separators. Statement
+// spans include their semicolon.
+Pos, Span = std.source
 
 // Blank represents one or more blank lines between source nodes.
 TriviaKind* = LineComment | BlockComment | Blank
@@ -84,11 +22,6 @@ TriviaRun* = {
 }
 
 no_trivia* = () TriviaRun { TriviaRun(at: 0, len: 0) }
-
-// Span for generated values with no source position. Line zero is the marker.
-nowhere* = () Span {
-    Span(file: "", start: Pos(line: 0, col: 0), end: Pos(line: 0, col: 0))
-}
 
 // Identifier text and the span of that text alone.
 Ident* = {

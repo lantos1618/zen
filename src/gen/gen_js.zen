@@ -4,7 +4,7 @@
 Alloc, AllocError = std.mem
 str, String = std.text
 Range = std.core
-Span = std.ast
+Span = std.source
 Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
 trap_message = gen.gen_ir
 IrFeature = gen.gen_ir_feature

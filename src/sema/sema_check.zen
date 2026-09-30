@@ -1,5 +1,6 @@
-Ast, ExprId, TypeId, Span, BlockId = std.ast
-nowhere = std.ast
+Ast, ExprId, TypeId, BlockId = std.ast
+Span = std.source
+nowhere = std.source
 BinOp, Unary, Binary, Access = std.ast
 Alloc, AllocError = std.mem
 Vec, Map = std.collections

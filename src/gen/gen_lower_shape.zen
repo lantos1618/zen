@@ -15,7 +15,7 @@ union_reading = sema.sema_union
 Scalar, Layout = gen.gen_ir
 Lowerer = gen.gen_lower_core
 LowerError, unsupported = gen.gen_lower
-nowhere = std.ast
+nowhere = std.source
 
 // Where a record field lives inside its aggregate.
 FieldAt* = { name*: str, ty*: TyId, offset*: usize }

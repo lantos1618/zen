@@ -3,7 +3,7 @@
 
 str = std.text
 Range = std.core
-Pos, Span = std.ast.ast_span
+Pos, Span = std.source
 codepoint_at, UTF8_MIN_4 = std.text.text_utf8
 
 Position* = {

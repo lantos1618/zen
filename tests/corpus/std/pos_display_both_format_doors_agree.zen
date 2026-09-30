@@ -12,7 +12,7 @@
 // that must NOT print -- an offset slices, it never speaks -- so the lex
 // half drives the REAL lexer over a real stray byte.
 scan, Source, message = std.lex.lex
-Pos = std.ast.ast_span
+Pos = std.source
 Console = std.env
 
 main = (env: Env) Res<i32, AllocError> {

@@ -393,13 +393,13 @@ Build* = {
                 false => self.library_module(root, whole).try().match({
                     None     => self.enqueue(im.module, seen),
                     Ok(unit) => {
-                        self.queue_unit(unit, seen).try();
+                        queue_unit(unit, seen).try();
                         (im.module.segments.len > 2).match({
                             false => Ok(()),
                             true  => self.library_module(root, im.module)
                                 .try().match({
                                     None  => Ok(()),
-                                    Ok(u) => self.queue_unit(u, seen),
+                                    Ok(u) => queue_unit(u, seen),
                                 }),
                         })
                     },
@@ -454,7 +454,7 @@ Build* = {
         (q.segments.len <= 2).match({
             true  => Ok(()),
             false => self.library_module(root, q).try().match({
-                Ok(unit) => self.queue_unit(unit, seen),
+                Ok(unit) => queue_unit(unit, seen),
                 None     => {
                     paths = self.library_paths(root, q).try();
                     self.missing_import(q, paths.flat, paths.folder)
@@ -500,14 +500,6 @@ Build* = {
             flat: flat.view(),
             folder: folder.view()
         ))
-    }
-
-    queue_unit = (self :: @Self, unit: Unit, seen :: Vec<Unit>)
-                 Res<(), AllocError> {
-        seen.find((u) { u.name.eq(unit.name) }).match({
-            Ok(_) => Ok(()),
-            None  => seen.add(unit),
-        })
     }
 
     enqueue_source = (self :: @Self, q: QualifiedName, seen :: Vec<Unit>)
@@ -912,4 +904,12 @@ check_build* = (
     docs.set(path, text).try();
     checked = check_workspace(env, a, root, rel, docs).try();
     Ok(CheckedBuild(root: root, rel: rel, c: checked.c));
+}
+
+// Add a dependency module to the walk unless it is already queued.
+queue_unit = (unit: Unit, seen :: Vec<Unit>) Res<(), AllocError> {
+    seen.find((u) { u.name.eq(unit.name) }).match({
+        Ok(_) => Ok(()),
+        None  => seen.add(unit),
+    })
 }

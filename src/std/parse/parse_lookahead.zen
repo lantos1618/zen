@@ -232,9 +232,9 @@ entry_bar_after = (p :: Parser, from: usize) bool {
 }
 
 typed_entry_bar = (p :: Parser, from: usize) bool {
-    angles ::= 0;
-    depth  ::= 0;
-    out    ::= false;
+    angles: usize ::= 0;
+    depth: usize  ::= 0;
+    out           ::= false;
     Range(from, p.tokens_len()).loop((h, k) {
         kind = p.token_kind_at(k);
         top  = angles == 0 && depth == 0;
@@ -265,8 +265,8 @@ valued_entry_bar = (p :: Parser, from: usize) bool {
     p.token_kind_at(from).is_in([TokenKind.ParenOpen, TokenKind.Lt]).match({
         true  => false,
         false => {
-            depth ::= 0;
-            out   ::= false;
+            depth: usize ::= 0;
+            out          ::= false;
             Range(from, p.tokens_len()).loop((h, k) {
                 kind = p.token_kind_at(k);
                 (depth == 0 && kind.ends_entry()).match({

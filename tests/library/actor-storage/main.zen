@@ -1,5 +1,5 @@
-Pool, HEADER_BYTES = std.mem.mem_pool
-Ptr, null_ptr = std.mem
+{ Pool, HEADER_BYTES } = std.mem.mem_pool
+{ Ptr, null_ptr } = std.mem
 main = (env: Env) Res<i32, AllocError> {
     pool ::= Pool();
     first = pool.take(64);

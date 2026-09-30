@@ -2,11 +2,11 @@
 // outside this module: callers feed arbitrary byte boundaries and receive
 // complete event data or retry controls.
 
-Alloc, AllocError = std.mem
-str, String, SplitPair, dup = std.text
-BOM_FIRST, BOM_SECOND, BOM_THIRD = std.text.text_utf8
-Vec = std.collections
-Range = std.core
+{ Alloc, AllocError } = std.mem
+{ str, String, SplitPair, dup } = std.text
+{ BOM_FIRST, BOM_SECOND, BOM_THIRD } = std.text.text_utf8
+{ Vec } = std.collections
+{ Range } = std.core
 
 SseMessage* = {
     data*: str,

@@ -1,4 +1,4 @@
-dup = std.text
+{ dup } = std.text
 
 allocator = (alloc: Alloc) Alloc { alloc }
 main = (env: Env) Res<i32, AllocError> {

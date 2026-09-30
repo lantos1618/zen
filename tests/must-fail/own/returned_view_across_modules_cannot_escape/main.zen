@@ -1,4 +1,4 @@
-Input, view = helpers.helpers
+{ Input, view } = helpers.helpers
 Box = { text :: str }
 put = (box :: Box, input: Input) { box.text = view(input); }
 bad = (env: Env, box :: Box) Res<(), AllocError> {

@@ -1,12 +1,12 @@
-Alloc, AllocError = std.mem
-str, String = std.text
-Range = std.core
-Source, scan = std.lex
-Parser = std.parse.parser
-module = std.parse.parse_decl
-Checker = sema.sema_check
-Emit = gen.gen_emit
-CBackend, emit_program = gen.gen_c
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Range } = std.core
+{ Source, scan } = std.lex
+{ Parser } = std.parse.parser
+{ module } = std.parse.parse_decl
+{ Checker } = sema.sema_check
+{ Emit } = gen.gen_emit
+{ CBackend, emit_program } = gen.gen_c
 
 PROGRAM : str = "Ptr*<T> = { to* = <U>(self: @Self) Ptr<U> bytes* = (self: @Self, count: usize) usize copy_from* = (self: @Self, src: Ptr<T>, count: usize) () is_null* = (self: @Self) bool }\nnull_ptr* = <T>() Ptr<T>\nfree = (p: Ptr<()>) ()\nhold = (p: Ptr<()>) Ptr<()> { p }\ncount = () usize { 3 }\nmain = (env: i32) i32 { p = hold(null_ptr<()>()); q = p.to<u8>().to<()>(); p.bytes(count()); q.copy_from(p, count()); free(q); p.is_null().match({ true => 0, false => 1 }) }\n"
 

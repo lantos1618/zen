@@ -5,7 +5,7 @@
 // one `int` argument and an `int` return. Calling it proves the prototype
 // is emitted above the bodies and that the program links.
 
-AllocError = std.mem
+{ AllocError } = std.mem
 
 isdigit = (c: i32) i32
 

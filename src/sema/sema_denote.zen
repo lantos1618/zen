@@ -1,18 +1,18 @@
-Type, TypeId, Ident, Alias, Decl, Function, TParam = std.ast
-Param, ArrayType, FnType = std.ast
-AllocError = std.mem
-Vec = std.collections
-TyId, is_prim = sema.sema_ty
-Def, decl_at = sema.sema_def
-named_or_union = sema.sema_union
-SemaFault, NameFault = sema.sema_diag
-Checker, Ctx, UNRESOLVED = sema.sema_check
-alias_module = sema.sema_module
-counted_array = sema.sema_const
-def_type = sema.sema_type
-Inst, push_tparams, module_name, tparam_vars, zip = sema.sema_inst
-TBound = sema.sema_cand
-inst_bounds_hold = sema.sema_bound
+{ Type, TypeId, Ident, Alias, Decl, Function, TParam } = std.ast
+{ Param, ArrayType, FnType } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ TyId, is_prim } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ named_or_union } = sema.sema_union
+{ SemaFault, NameFault } = sema.sema_diag
+{ Checker, Ctx, UNRESOLVED } = sema.sema_check
+{ alias_module } = sema.sema_module
+{ counted_array } = sema.sema_const
+{ def_type } = sema.sema_type
+{ Inst, push_tparams, module_name, tparam_vars, zip } = sema.sema_inst
+{ TBound } = sema.sema_cand
+{ inst_bounds_hold } = sema.sema_bound
 
 type_from_ast* = (c :: Checker, id: TypeId, ctx: Ctx)
                  Res<TyId, AllocError> {

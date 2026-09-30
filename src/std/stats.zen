@@ -1,6 +1,6 @@
 // Bounded statistics over nonnegative finite measurements, in caller-chosen units.
-Alloc, AllocError, Ptr, null_ptr = std.mem
-Range = std.core.range
+{ Alloc, AllocError, Ptr, null_ptr } = std.mem
+{ Range } = std.core.range
 
 Summary* = {
     count*: usize,

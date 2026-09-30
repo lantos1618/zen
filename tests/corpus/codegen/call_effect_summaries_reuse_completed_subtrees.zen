@@ -1,7 +1,7 @@
-scan, Source = std.lex
-Parser, module = std.parse
-ExprId = std.ast
-CallEffects = gen.gen_c.gen_c_effect
+{ scan, Source } = std.lex
+{ Parser, module } = std.parse
+{ ExprId } = std.ast
+{ CallEffects } = gen.gen_c.gen_c_effect
 
 CountAlloc = {
     base: Alloc,

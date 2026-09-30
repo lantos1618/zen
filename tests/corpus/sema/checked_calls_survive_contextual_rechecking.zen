@@ -1,9 +1,9 @@
-Source, scan = std.lex
-Parser, module = std.parse
-Checker, Ctx = sema.sema_check
-check_all = sema.sema_decl
-call_type = sema.sema_call
-ExprId, Call = std.ast
+{ Source, scan } = std.lex
+{ Parser, module } = std.parse
+{ Checker, Ctx } = sema.sema_check
+{ check_all } = sema.sema_decl
+{ call_type } = sema.sema_call
+{ ExprId, Call } = std.ast
 
 recheck = (c :: Checker, id: ExprId, call: Call, ty: str)
           Res<(), AllocError> {

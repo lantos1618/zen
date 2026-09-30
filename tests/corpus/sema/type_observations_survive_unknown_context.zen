@@ -1,6 +1,6 @@
-Ast, Type, TypeKind, nowhere, no_trivia = std.ast
-Checker, Ctx = sema.sema_check
-type_from_ast = sema.sema_denote
+{ Ast, Type, TypeKind, nowhere, no_trivia } = std.ast
+{ Checker, Ctx } = sema.sema_check
+{ type_from_ast } = sema.sema_denote
 
 main = (env: Env) Res<i32, AllocError> {
     a    ::= env.mem.alloc();

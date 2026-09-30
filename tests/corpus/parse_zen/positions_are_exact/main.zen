@@ -28,11 +28,11 @@
 // to the parser's answer, column by column. The expectation is the
 // source, not the output.
 
-scan, Source = std.lex
-Parser, module = std.parse
-Ast, Span, Decl, Block, Expr = std.ast
-Alloc, AllocError = std.mem
-str = std.text
+{ scan, Source } = std.lex
+{ Parser, module } = std.parse
+{ Ast, Span, Decl, Block, Expr } = std.ast
+{ Alloc, AllocError } = std.mem
+{ str } = std.text
 
 // The file being parsed, and the columns it is asserted at:
 //

@@ -46,14 +46,14 @@
 // opened is `-32602` and not an empty token list. An empty list means
 // "this file has no colour in it", which is a different sentence.
 
-str, String = std.text
-Vec = std.collections
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text, Jsons, JsonId, read = std.json
-source_position, run_of = lsp.lsp_pos
-Colour, index_of, write_legend = lsp.lsp_colour
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text, Jsons, JsonId, read } = std.json
+{ source_position, run_of } = lsp.lsp_pos
+{ Colour, index_of, write_legend } = lsp.lsp_colour
 
 DOC*: str = "// a note\nadd = (a: i32) i32 {\n    s = \"hé😀\" + a;\n    ok = true;\n    n = 42;\n    /* two\n\n       lines */\n    a\n}\n"
 

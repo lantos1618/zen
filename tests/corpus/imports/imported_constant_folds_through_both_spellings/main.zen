@@ -1,7 +1,7 @@
 // An imported struct-body constant has one value per type and folds through
 // both `Type.NAME` and `value.NAME`; it never becomes instance storage.
 
-Box = box.box
+{ Box } = box.box
 
 main = (env: Env) Res<i32, IoError> {
     b = Box();

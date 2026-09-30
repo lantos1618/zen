@@ -2,28 +2,28 @@
 // Recursive node families use typed arena ids. Trivia is stored once in source
 // order, while non-recursive child records are held by value.
 
-Pos*, Span*, TriviaKind*, Trivia*, TriviaRun*, no_trivia*, nowhere* = std.ast.ast_span
-Ident*, QualifiedName* = std.ast.ast_span
+{ Pos*, Span*, TriviaKind*, Trivia*, TriviaRun*, no_trivia*, nowhere* } = std.ast.ast_span
+{ Ident*, QualifiedName* } = std.ast.ast_span
 
-ExprId*, TypeId*, PatternId*, BlockId*, CBindingId* = std.ast.ast_id
+{ ExprId*, TypeId*, PatternId*, BlockId*, CBindingId* } = std.ast.ast_id
 
-BinOp*, UnOp*, Form*, LiteralKind*, Literal* = std.ast.ast_node
-Type*, TypeKind*, Named*, Union*, FnType*, ArrayType* = std.ast.ast_node
-Pattern*, PatternKind*, PatName*, Destructure* = std.ast.ast_node
-Expr*, ExprKind*, Name*, Paren*, ArrayLit*, FixedArray* = std.ast.ast_node
-Lambda*, Call*, Arg*, Match*, Arm*, Try*, Record* = std.ast.ast_node
-Access*, Index*, Unary*, Binary*, Consume*, Meta* = std.ast.ast_node
-Stmt*, StmtKind*, Bind*, ExprStmt*, Block* = std.ast.ast_node
-Decl*, DeclKind*, Struct*, Enum*, Variant*, Alias* = std.ast.ast_node
-Function*, Impl*, Import*, ImportName*, Const* = std.ast.ast_node
-Member*, MemberKind*, Field*, Param*, TParam* = std.ast.ast_node
-Module*, ModuleOrigin*, CHeader*, COpaque*, CTypeBinding*, CBinding* = std.ast.ast_node
+{ BinOp*, UnOp*, Form*, LiteralKind*, Literal* } = std.ast.ast_node
+{ Type*, TypeKind*, Named*, Union*, FnType*, ArrayType* } = std.ast.ast_node
+{ Pattern*, PatternKind*, PatName*, Destructure* } = std.ast.ast_node
+{ Expr*, ExprKind*, Name*, Paren*, ArrayLit*, FixedArray* } = std.ast.ast_node
+{ Lambda*, Call*, Arg*, Match*, Arm*, Try*, Record* } = std.ast.ast_node
+{ Access*, Index*, Unary*, Binary*, Consume*, Meta* } = std.ast.ast_node
+{ Stmt*, StmtKind*, Bind*, ExprStmt*, Block* } = std.ast.ast_node
+{ Decl*, DeclKind*, Struct*, Enum*, Variant*, Alias* } = std.ast.ast_node
+{ Function*, Impl*, Import*, ImportName*, Const* } = std.ast.ast_node
+{ Member*, MemberKind*, Field*, Param*, TParam* } = std.ast.ast_node
+{ Module*, ModuleOrigin*, CHeader*, COpaque*, CTypeBinding*, CBinding* } = std.ast.ast_node
 
-Ast* = std.ast.ast_arena
+{ Ast* } = std.ast.ast_arena
 
 // Cursor position to the node under it.
-NodeRef*, node_at*, expr_node_at* = std.ast.ast_find
+{ NodeRef*, node_at*, expr_node_at* } = std.ast.ast_find
 
 // Structural visitors preserve enclosing declarations, members, and blocks.
-DeclParent*, DeclSite*, MemberParent*, MemberSite* = std.ast.ast_walk
-DeclVisit*, MemberVisit*, StmtVisit*, WalkNode*, WalkEvent*, WalkVisitor*, walk* = std.ast.ast_walk
+{ DeclParent*, DeclSite*, MemberParent*, MemberSite* } = std.ast.ast_walk
+{ DeclVisit*, MemberVisit*, StmtVisit*, WalkNode*, WalkEvent*, WalkVisitor*, walk* } = std.ast.ast_walk

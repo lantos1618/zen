@@ -8,7 +8,7 @@
 // path must agree byte for byte, which catches a floor that reuses a
 // cursor or serves the second open from a stale descriptor.
 
-FsError = std.env
+{ FsError } = std.env
 
 main = (env: Env) Res<i32, FsError> {
     alloc ::= env.mem.alloc();

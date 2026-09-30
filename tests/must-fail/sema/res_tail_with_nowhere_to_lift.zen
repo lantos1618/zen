@@ -15,7 +15,7 @@
 // position: the tail expression, which is the value that does not fit —
 // not the signature that says what would.
 
-AllocError = std.mem
+{ AllocError } = std.mem
 
 hand = () Res<(), AllocError> { 3 }
 

@@ -1,6 +1,6 @@
 // Connect, partial reads, full writes and idempotent close over loopback.
 
-TcpStream, TcpError = std.net.tcp
+{ TcpStream, TcpError } = std.net.tcp
 
 // tests/run.py replaces this after binding its private IPv4 listener.
 HARNESS_PORT* : u16 = 0

@@ -1,8 +1,8 @@
 // Syntactic call summaries belong to the immutable AST, not a generic
 // instantiation. Completed child answers can be reused across all bodies.
-Ast, ExprId = std.ast
-Alloc, AllocError = std.mem
-Vec = std.collections
+{ Ast, ExprId } = std.ast
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
 
 UNKNOWN: u8 = 0
 PURE: u8 = 1

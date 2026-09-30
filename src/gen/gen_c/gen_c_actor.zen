@@ -1,35 +1,35 @@
-HEADER_BYTES = std.mem.mem_pool
-MAX_MESSAGES, MAX_MESSAGE_BYTES = std.actor.actor_limits
+{ HEADER_BYTES } = std.mem.mem_pool
+{ MAX_MESSAGES, MAX_MESSAGE_BYTES } = std.actor.actor_limits
 // C lowering for std.actor. Each actor owns one worker thread and one
 // bounded mailbox. Senders only enqueue; the worker is the sole caller of
 // lifecycle and behavior methods, so actor state is never entered twice.
 
-AllocError = std.mem
-Vec = std.collections
-Range = std.core
-str, String = std.text
-ExprId, Access, Call, Function, Member = std.ast
-Def = sema.sema_def
-ImplId = sema.sema_id
-TyId, TyNamed = sema.sema_ty
-Ctx = sema.sema_check
-Inst = sema.sema_inst
-Emit = gen.gen_emit
-sym_gen, sym_member, sym_variant, RES_PATH = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
-Site, site_of, method_sig, member_symbol = gen.gen_c.gen_c_member
-has_body, decl_name, impl_member = gen.gen_c.gen_c_impl
-impl_bound_type = sema.sema_supply
-ctype, field_of, pointee, request_type = gen.gen_c.gen_c_type
-expr, ty_of = gen.gen_c.gen_c_expr
-recv_inst, sub = gen.gen_c.gen_c_mono
-temp, payload_type, write_assign_ok, write_assign_err = gen.gen_c.gen_c_flow
-write_assign_ok_unit = gen.gen_c.gen_c_flow
-by_ref = gen.gen_c.gen_c_arg
-fat_value = gen.gen_c.gen_c_fat
-actor_byte_buffer, actor_payload_unsafe = sema.sema_copy
-def_type, type_of = sema.sema_type
-unsupported = gen.gen_c.gen_c_report
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Range } = std.core
+{ str, String } = std.text
+{ ExprId, Access, Call, Function, Member } = std.ast
+{ Def } = sema.sema_def
+{ ImplId } = sema.sema_id
+{ TyId, TyNamed } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ Inst } = sema.sema_inst
+{ Emit } = gen.gen_emit
+{ sym_gen, sym_member, sym_variant, RES_PATH } = gen.gen_name
+{ CBackend } = gen.gen_c.gen_c_state
+{ Site, site_of, method_sig, member_symbol } = gen.gen_c.gen_c_member
+{ has_body, decl_name, impl_member } = gen.gen_c.gen_c_impl
+{ impl_bound_type } = sema.sema_supply
+{ ctype, field_of, pointee, request_type } = gen.gen_c.gen_c_type
+{ expr, ty_of } = gen.gen_c.gen_c_expr
+{ recv_inst, sub } = gen.gen_c.gen_c_mono
+{ temp, payload_type, write_assign_ok, write_assign_err } = gen.gen_c.gen_c_flow
+{ write_assign_ok_unit } = gen.gen_c.gen_c_flow
+{ by_ref } = gen.gen_c.gen_c_arg
+{ fat_value } = gen.gen_c.gen_c_fat
+{ actor_byte_buffer, actor_payload_unsafe } = sema.sema_copy
+{ def_type, type_of } = sema.sema_type
+{ unsupported } = gen.gen_c.gen_c_report
 
 BehaviorHit* = {
     site*: Site,

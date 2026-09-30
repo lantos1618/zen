@@ -6,7 +6,7 @@ executed by the compiler's project driver. `std.build` defines the public types;
 The driver does not yet execute arbitrary Zen build functions.
 
 ```zen
-Builder, BuildError = std.build
+{ Builder, BuildError } = std.build
 build = (b :: Builder) Res<(), BuildError> {
     audio = b.add("audio", {
         url: "https://github.com/lantos1618/zen-audio.git",

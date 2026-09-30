@@ -1,8 +1,8 @@
 // Workspace roots and absolute overlays must identify the same standard
 // module, including when the executable supplies an absolute stdlib root.
-check_workspace = zen.zen_build
-anchored_path = zen.zen_path
-Built = lsp.lsp_built
+{ check_workspace } = zen.zen_build
+{ anchored_path } = zen.zen_path
+{ Built } = lsp.lsp_built
 
 main = (env: Env) Res<i32, AllocError | FsError> {
     a ::= env.mem.alloc();

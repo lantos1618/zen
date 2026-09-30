@@ -1,5 +1,5 @@
-Bag, Box = app.kit.kit
-Marker = app.kit
+{ Bag, Box } = app.kit.kit
+{ Marker } = app.kit
 
 Point* = {
     x*: i32,

@@ -1,6 +1,6 @@
 // Resolve loopback, then fail the first post-resolve allocation.
 
-DnsAddr, DnsError, resolve = std.net.dns
+{ DnsAddr, DnsError, resolve } = std.net.dns
 
 FailAlloc = {
     base: Alloc,

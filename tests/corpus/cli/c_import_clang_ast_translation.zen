@@ -1,4 +1,4 @@
-translate_ast = zen.zen_c_translate
+{ translate_ast } = zen.zen_c_translate
 
 good_ast = (a: Alloc) Res<String, AllocError> {
     out ::= a.String().try();

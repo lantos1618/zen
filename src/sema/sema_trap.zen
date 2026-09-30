@@ -1,12 +1,12 @@
-Expr, ExprId, Binary, Literal = std.ast
-Unary, Paren, Index, Match, ArrayLit = std.ast
-AllocError = std.mem
-str = std.text
-TyId, TyArray, is_integer = sema.sema_ty
-SemaFault, NameFault, TypeFault = sema.sema_diag
-Checker = sema.sema_check
-const_int, const_literal, fits, fits_magnitude, fold = sema.sema_const
-len_of, min_of = sema.sema_const
+{ Expr, ExprId, Binary, Literal } = std.ast
+{ Unary, Paren, Index, Match, ArrayLit } = std.ast
+{ AllocError } = std.mem
+{ str } = std.text
+{ TyId, TyArray, is_integer } = sema.sema_ty
+{ SemaFault, NameFault, TypeFault } = sema.sema_diag
+{ Checker } = sema.sema_check
+{ const_int, const_literal, fits, fits_magnitude, fold } = sema.sema_const
+{ len_of, min_of } = sema.sema_const
 check_binary* = (c :: Checker, b: Binary, ty: TyId) Res<(), AllocError> {
     b.op.match({
         Div => c.check_divisor(b, ty),

@@ -9,10 +9,10 @@
 // `faithful` is printed per case for the reason
 // a_long_argument_list_breaks_one_per_line.zen gives.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-scan, Source = std.lex.lex
-render = fmt.fmt
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ scan, Source } = std.lex.lex
+{ render } = fmt.fmt
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

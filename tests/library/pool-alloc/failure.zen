@@ -1,4 +1,4 @@
-Pool, PoolAlloc, PoolPolicy, Ptr, null_ptr = std.mem
+{ Pool, PoolAlloc, PoolPolicy, Ptr, null_ptr } = std.mem
 verify = (a: Alloc, pool: Ptr<Pool>) Res<(), AllocError> {
     old = a.realloc<u8>(null_ptr<u8>(), 16).try();
     Range(0, 16).loop((i) { old.write(i, 42); });

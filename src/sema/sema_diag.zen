@@ -1,7 +1,7 @@
-Span = std.ast.ast_span
-str, String = std.text
-AllocError = std.mem
-TyId, Types = sema.sema_ty
+{ Span } = std.ast.ast_span
+{ str, String } = std.text
+{ AllocError } = std.mem
+{ TyId, Types } = sema.sema_ty
 
 // Something the program named, or failed to.
 NameFault* = { name*: str }

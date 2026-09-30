@@ -8,7 +8,7 @@
 //
 // position: the impl declaration.
 
-Tag = tag.tag
+{ Tag } = tag.tag
 
 Tag.impl(Eq, {
     eq ::= (self: @Self, other: @Self) bool { self.n == other.n }

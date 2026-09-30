@@ -13,9 +13,9 @@
 // takes a u64, so it travels with u64 and not with Duration. See
 // DESIGN.md — this is what associated functions are for, and gen_c does
 // not lower them yet.
-Duration = std.core.time
-seconds, minutes, millis, micros, nanos = std.core.time
-Unit, suffix = std.core.time
+{ Duration } = std.core.time
+{ seconds, minutes, millis, micros, nanos } = std.core.time
+{ Unit, suffix } = std.core.time
 
 main = (env: Env) Res<i32, ArgError> {
     a = seconds(60);

@@ -1,6 +1,6 @@
 // Trusted hostname verification, rejected mismatch and owned close on loopback.
 
-TlsStream, TlsError = std.net.tls
+{ TlsStream, TlsError } = std.net.tls
 
 // tests/run.py replaces this after binding its private TLS listener.
 HARNESS_PORT* : u16 = 0

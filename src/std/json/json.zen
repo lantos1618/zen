@@ -1,8 +1,8 @@
-JsonId*, Run*, Pair*, Json*, Jsons*,
-    write_text*, written*, Nest*, obj*, arr* = std.json.json_write
+{ JsonId*, Run*, Pair*, Json*, Jsons*,
+    write_text*, written*, Nest*, obj*, arr* } = std.json.json_write
 
-JsonFault*, MAX_NESTING*, Reader*, read* = std.json.json_read
+{ JsonFault*, MAX_NESTING*, Reader*, read* } = std.json.json_read
 
-JsonEvent*, Decoder* = std.json.json_stream
+{ JsonEvent*, Decoder* } = std.json.json_stream
 
-to_json* = std.json.json_meta
+{ to_json* } = std.json.json_meta

@@ -15,7 +15,7 @@
 // position: the tail, which is the `.try()` whose value has nowhere to
 // go.
 
-AllocError = std.mem
+{ AllocError } = std.mem
 
 inner = () Res<i32, AllocError> { Ok(3) }
 

@@ -18,12 +18,12 @@
 // comments are named by nobody, 2 pieces go missing, the last line reads
 // UNOWNED TRIVIA, and main exits 1.
 
-scan, Source = std.lex.lex
-Parser, module = std.parse
-Ast = std.ast.ast_arena
-TriviaRun = std.ast.ast_span
-Decl, Block = std.ast.ast_node
-ExprId, TypeId, PatternId, BlockId = std.ast.ast_id
+{ scan, Source } = std.lex.lex
+{ Parser, module } = std.parse
+{ Ast } = std.ast.ast_arena
+{ TriviaRun } = std.ast.ast_span
+{ Decl, Block } = std.ast.ast_node
+{ ExprId, TypeId, PatternId, BlockId } = std.ast.ast_id
 
 SOURCE: str = "main = () () {\n    {\n        // lone in bare block\n    }\n}\n\nf = () () {\n    // lone in closure body\n}\n"
 

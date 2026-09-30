@@ -1,4 +1,4 @@
-Ordered, sort = std.collections
+{ Ordered, sort } = std.collections
 
 Item = { key: usize, index: usize, comparisons: Ptr<usize> }
 Item.impl(Ordered, {

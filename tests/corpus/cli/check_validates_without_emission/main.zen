@@ -1,5 +1,5 @@
-cli, build = zen
-help = zen.zen_cli
+{ cli, build } = zen
+{ help } = zen.zen_cli
 
 args = (a: Alloc, root: str, flag: str, value: str) Res<Vec<str>, AllocError> {
     words ::= a.Vec<str>();

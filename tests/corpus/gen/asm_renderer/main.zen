@@ -1,14 +1,14 @@
 HARNESS_NATIVE_ASM* : bool = false
 // Exercise the renderer directly so ABI and trap behavior cannot be hidden by
 // the source lowerer. Each executable is linked as PIE in the test's workspace.
-Alloc, AllocError = std.mem
-FsError = std.env
-ProcError, ProcOutput = std.proc
-Span, Pos = std.ast
-Program, Func, Instruction, BasicBlock, Terminator, Const, Binary, Op, Invocation, Print, Scalar, Branch, Move = gen.gen_ir
-Target = gen.gen_asm
-X86_64LinuxGnu = gen.gen_asm_x86
-verify, VerifyError = gen.gen_verify
+{ Alloc, AllocError } = std.mem
+{ FsError } = std.env
+{ ProcError, ProcOutput } = std.proc
+{ Span, Pos } = std.ast
+{ Program, Func, Instruction, BasicBlock, Terminator, Const, Binary, Op, Invocation, Print, Scalar, Branch, Move } = gen.gen_ir
+{ Target } = gen.gen_asm
+{ X86_64LinuxGnu } = gen.gen_asm_x86
+{ verify, VerifyError } = gen.gen_verify
 
 BuildFault = | Compile
 

@@ -1,11 +1,11 @@
 // Owned, growable text backed by Vec<u8>. `view` borrows the buffer; any later
 // `add` or `fmt` may reallocate it, so callers take a fresh view after writing.
 
-Vec = std.collections.collections
-Alloc, AllocError = std.mem.mem
-str, str_at = std.text.text_str
-Sink, WriteError = std.core.io
-Range = std.core.range
+{ Vec } = std.collections.collections
+{ Alloc, AllocError } = std.mem.mem
+{ str, str_at } = std.text.text_str
+{ Sink, WriteError } = std.core.io
+{ Range } = std.core.range
 
 String* = {
     data :: Vec<u8>,

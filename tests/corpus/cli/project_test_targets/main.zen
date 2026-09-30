@@ -1,5 +1,5 @@
-project, Action = zen.zen_project
-ProjectArgs = std.build
+{ project, Action } = zen.zen_project
+{ ProjectArgs } = std.build
 
 run = (env: Env, a: Alloc, target: str) Res<(), AllocError> {
     job  = ProjectArgs(

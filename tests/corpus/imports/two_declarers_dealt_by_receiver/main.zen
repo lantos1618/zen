@@ -15,9 +15,9 @@
 // One-line breaker: key overload resolution on the imported name
 // instead of the declared parameter type -> one number printed twice.
 
-Box, describe, make_box = box.box
+{ Box, describe, make_box } = box.box
 
-Box, describe, make_crate = crate.crate
+{ Box, describe, make_crate } = crate.crate
 
 main = (env: Env) Res<i32, IoError> {
     a = make_box(3);

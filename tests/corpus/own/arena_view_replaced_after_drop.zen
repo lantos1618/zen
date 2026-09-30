@@ -1,4 +1,4 @@
-dup = std.text
+{ dup } = std.text
 
 main = (env: Env) Res<i32, AllocError> {
     arena = env.mem.alloc();

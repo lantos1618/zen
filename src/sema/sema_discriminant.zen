@@ -1,22 +1,22 @@
 // External integer representations for nominal enums; internal tags stay
 // dense and private.
 
-Enum, Variant, Expr, ExprId, TypeId = std.ast
-Call, Access, Span, Decl = std.ast
-AllocError = std.mem
-Vec = std.collections
-str = std.text
-Range = std.core
-TyId, TyNamed, is_integer = sema.sema_ty
-DeclId = sema.sema_id
-decl_at = sema.sema_def
-Checker, Ctx = sema.sema_check
-Base = sema.sema_member
-SemaFault, NameFault, PairFault = sema.sema_diag
-type_from_ast = sema.sema_denote
-const_int, fits = sema.sema_const
-check_literal = sema.sema_trap
-type_of = sema.sema_type
+{ Enum, Variant, Expr, ExprId, TypeId } = std.ast
+{ Call, Access, Span, Decl } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Range } = std.core
+{ TyId, TyNamed, is_integer } = sema.sema_ty
+{ DeclId } = sema.sema_id
+{ decl_at } = sema.sema_def
+{ Checker, Ctx } = sema.sema_check
+{ Base } = sema.sema_member
+{ SemaFault, NameFault, PairFault } = sema.sema_diag
+{ type_from_ast } = sema.sema_denote
+{ const_int, fits } = sema.sema_const
+{ check_literal } = sema.sema_trap
+{ type_of } = sema.sema_type
 
 DiscriminantCall* = Encode(TyId) | Decode(TyId)
 DiscriminantAnswer* = DiscriminantAnswered(TyId) | NotDiscriminant

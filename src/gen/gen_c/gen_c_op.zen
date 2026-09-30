@@ -3,26 +3,26 @@
 // plain C. Equality may statically dispatch through `Eq`. Short-circuit
 // operands keep spills inside their branch so evaluation stays lazy.
 
-Expr, ExprId, Span = std.ast
-Literal, BinOp, Binary, Unary = std.ast
-AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Range = std.core
-TyId = sema.sema_ty
-Ctx, is_logical = sema.sema_check
-type_of = sema.sema_type
-CBackend = gen.gen_c.gen_c_state
-unsupported = gen.gen_c.gen_c_report
-sub = gen.gen_c.gen_c_mono
-is_c_integer = gen.gen_c.gen_c_type
-lower_eq_call = gen.gen_c.gen_c_member
-init_temp = gen.gen_c.gen_c_flow
-expr, ty_of, spills_anywhere, unparen = gen.gen_c.gen_c_expr
-infix_operand_held, value_held = gen.gen_c.gen_c_expr
-needs_set = gen.gen_c.gen_c_widen
-needs_hoist = gen.gen_c.gen_c_hoist
-needs_fat = gen.gen_c.gen_c_fat
+{ Expr, ExprId, Span } = std.ast
+{ Literal, BinOp, Binary, Unary } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Range } = std.core
+{ TyId } = sema.sema_ty
+{ Ctx, is_logical } = sema.sema_check
+{ type_of } = sema.sema_type
+{ CBackend } = gen.gen_c.gen_c_state
+{ unsupported } = gen.gen_c.gen_c_report
+{ sub } = gen.gen_c.gen_c_mono
+{ is_c_integer } = gen.gen_c.gen_c_type
+{ lower_eq_call } = gen.gen_c.gen_c_member
+{ init_temp } = gen.gen_c.gen_c_flow
+{ expr, ty_of, spills_anywhere, unparen } = gen.gen_c.gen_c_expr
+{ infix_operand_held, value_held } = gen.gen_c.gen_c_expr
+{ needs_set } = gen.gen_c.gen_c_widen
+{ needs_hoist } = gen.gen_c.gen_c_hoist
+{ needs_fat } = gen.gen_c.gen_c_fat
 
 // operators
 

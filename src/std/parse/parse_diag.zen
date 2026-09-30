@@ -1,6 +1,6 @@
 // Parser diagnostics are collected as values. Recovery avoids cascades, and
 // spans point to the token or delimiter a user needs to change.
-Pos, Span = std.ast.ast_span
+{ Pos, Span } = std.ast.ast_span
 
 // One secondary location related to a diagnostic.
 Note* = {

@@ -1,17 +1,17 @@
-Decl, Function, TParam, Span = std.ast
-AllocError = std.mem
-Vec = std.collections
-str = std.text
-Range = std.core
-DeclId = sema.sema_id
-TyId = sema.sema_ty
-Def, decl_at = sema.sema_def
-Checker, Ctx, UNRESOLVED = sema.sema_check
-tparam_vars, push_tparams = sema.sema_inst
-satisfies_bound = sema.sema_bound
-can_hoist = sema.sema_hoist
-type_from_ast, param_type = sema.sema_denote
-pack_elem, pack_slot = sema.sema_vararg
+{ Decl, Function, TParam, Span } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Range } = std.core
+{ DeclId } = sema.sema_id
+{ TyId } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ Checker, Ctx, UNRESOLVED } = sema.sema_check
+{ tparam_vars, push_tparams } = sema.sema_inst
+{ satisfies_bound } = sema.sema_bound
+{ can_hoist } = sema.sema_hoist
+{ type_from_ast, param_type } = sema.sema_denote
+{ pack_elem, pack_slot } = sema.sema_vararg
 
 // A free-function candidate for a call, with its signature resolved in
 // its declaring module.

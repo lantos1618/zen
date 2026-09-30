@@ -1,4 +1,4 @@
-Builder, BuildError, Codegen = std.build
+{ Builder, BuildError, Codegen } = std.build
 
 build = (b :: Builder) Res<(), BuildError> {
     b.exe("c", { src: Path("main.zen"), deps: [], backend: Codegen.C }).try();

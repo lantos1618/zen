@@ -4,13 +4,13 @@
 
 // `ast.ast_id`, not `ast`: a lone `ExprId = ast` reads as a type alias
 // named `ast` rather than an import.
-ExprId = std.ast.ast_id
-Span = std.ast.ast_span
-str, String = std.text
-AllocError = std.mem
-GenFault = gen.gen_diag
-CBackend = gen.gen_c.gen_c_state
-LocalSlot = gen.gen_c.gen_c_frame
+{ ExprId } = std.ast.ast_id
+{ Span } = std.ast.ast_span
+{ str, String } = std.text
+{ AllocError } = std.mem
+{ GenFault } = gen.gen_diag
+{ CBackend } = gen.gen_c.gen_c_state
+{ LocalSlot } = gen.gen_c.gen_c_frame
 
 closure_storage* = (
     be   :: CBackend,

@@ -2,26 +2,26 @@
 // queued definition once. Structural `Res` and union types are queued like
 // named types and use the same tag-and-payload representation.
 
-Decl, Struct, Enum, Variant, Member = std.ast
-COpaque, CTypeBinding = std.ast
-Function, TypeId = std.ast
-AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Range = std.core
-TyId, TyNamed, TyRes, c_integer, is_failure = sema.sema_ty
-DeclId = sema.sema_id
-Def, decl_at = sema.sema_def
-Ctx = sema.sema_check
-type_from_ast = sema.sema_denote
-union_reading = sema.sema_union
-sym_type, sym_variant, RES_PATH = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
-GenFault = gen.gen_diag
-Inst, inst_of_named = sema.sema_inst
-sub_with, enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
-intern_named = gen.gen_c.gen_c_mono
-request_slots = gen.gen_c.gen_c_fat
+{ Decl, Struct, Enum, Variant, Member } = std.ast
+{ COpaque, CTypeBinding } = std.ast
+{ Function, TypeId } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Range } = std.core
+{ TyId, TyNamed, TyRes, c_integer, is_failure } = sema.sema_ty
+{ DeclId } = sema.sema_id
+{ Def, decl_at } = sema.sema_def
+{ Ctx } = sema.sema_check
+{ type_from_ast } = sema.sema_denote
+{ union_reading } = sema.sema_union
+{ sym_type, sym_variant, RES_PATH } = gen.gen_name
+{ CBackend } = gen.gen_c.gen_c_state
+{ GenFault } = gen.gen_diag
+{ Inst, inst_of_named } = sema.sema_inst
+{ sub_with, enter_struct_tparams, leave_tparams } = gen.gen_c.gen_c_mono
+{ intern_named } = gen.gen_c.gen_c_mono
+{ request_slots } = gen.gen_c.gen_c_fat
 
 // spelling
 

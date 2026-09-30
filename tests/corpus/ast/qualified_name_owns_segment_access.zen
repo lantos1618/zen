@@ -3,8 +3,8 @@
 // after the first dot would produce `middle.leaf`, while the structured leaf
 // is exactly `leaf`. Missing and empty names are recovery shapes, not traps.
 
-Ident, Pos, QualifiedName, Span = std.ast.ast_span
-Alloc, AllocError = std.mem
+{ Ident, Pos, QualifiedName, Span } = std.ast.ast_span
+{ Alloc, AllocError } = std.mem
 
 at = () Span {
     Span(

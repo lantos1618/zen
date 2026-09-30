@@ -18,11 +18,11 @@
 // here is declared in the buffer itself, so the lone-module path is the
 // whole story. The imported case is the next test over.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text = std.json
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text } = std.json
 
 URI*: str = "file:///a.zen"
 

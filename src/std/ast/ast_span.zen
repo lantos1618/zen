@@ -1,4 +1,4 @@
-fmt = std.text.text_fmt
+{ fmt } = std.text.text_fmt
 // AST source positions and trivia. Spans are half-open, include a node's
 // delimiters and children, and exclude leading trivia and following
 // separators. Statement spans include their semicolon.

@@ -1,9 +1,9 @@
 // Repeated balanced-group lookahead returns the same boundary and remains
 // side-effect-free. The parser cache makes these repeated suffix scans cheap.
 
-scan, Source = std.lex.lex
-Parser = std.parse.parser
-group_end_at = std.parse.parse_lookahead
+{ scan, Source } = std.lex.lex
+{ Parser } = std.parse.parser
+{ group_end_at } = std.parse.parse_lookahead
 
 SOURCE: str = "value = (one + (two * three));\n"
 

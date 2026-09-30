@@ -19,7 +19,7 @@
 // payload without the tag says `Int(5) == Float`. Both print `true`
 // where this expects `false`, and neither is a compile error.
 
-TokenKind = std.lex.lex
+{ TokenKind } = std.lex.lex
 
 main = (env: Env) Res<i32, IoError> {
     println("same {}", TokenKind.BraceOpen == TokenKind.BraceOpen);

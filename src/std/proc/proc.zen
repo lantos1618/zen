@@ -1,9 +1,9 @@
 // Process policy lives in Zen. The C backend emits only the POSIX ABI floor.
 // Argument vectors execute directly; `run` explicitly uses /bin/sh -c.
-Alloc, AllocError, Ptr, null_ptr = std.mem
-str, String, str_at, c_text = std.text
-Vec = std.collections
-Res, ok_or, Sink, WriteError = std.core
+{ Alloc, AllocError, Ptr, null_ptr } = std.mem
+{ str, String, str_at, c_text } = std.text
+{ Vec } = std.collections
+{ Res, ok_or, Sink, WriteError } = std.core
 
 zg_os_proc_pipe = (fds: Ptr<i32>) i32
 zg_os_proc_close = (fd: i32) ()

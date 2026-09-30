@@ -1,7 +1,7 @@
 // Distinct source-ordered arena indices for mutually recursive AST families.
 // u32 converts losslessly both to usize for lookup and u64 for hashing.
 
-Eq, Hash, Hasher = std.core.core
+{ Eq, Hash, Hasher } = std.core.core
 
 ExprId* = { index*: u32 }
 

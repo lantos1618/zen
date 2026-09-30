@@ -1,5 +1,5 @@
 // Arguments stay literal, cwd is applied by spawn, and invalid inputs fail.
-Process, ProcError = std.proc
+{ Process, ProcError } = std.proc
 
 spawn_failed = <T>(result: Res<T, ProcError>) bool {
     result.match({ Ok(_) => false, Err(e) => e.match({ SpawnFailed => true, _ => false }) })

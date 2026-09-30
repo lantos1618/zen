@@ -1,5 +1,5 @@
 // Checked conversion preserves fitting values and refuses both range edges.
-to_i32, to_u16, to_usize, to_u8 = std.core.num
+{ to_i32, to_u16, to_usize, to_u8 } = std.core.num
 
 once = (count :: i32, value: i64) i64 {
     count = count + 1;

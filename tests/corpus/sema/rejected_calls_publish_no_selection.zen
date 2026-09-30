@@ -1,7 +1,7 @@
-Source, scan = std.lex
-Parser, module = std.parse
-Checker = sema.sema_check
-check_all = sema.sema_decl
+{ Source, scan } = std.lex
+{ Parser, module } = std.parse
+{ Checker } = sema.sema_check
+{ check_all } = sema.sema_decl
 
 inspect = (a: Alloc, name: str, source: str) Res<(), AllocError> {
     lexed = scan(a, Source(file: "calls.zen", text: source)).try();

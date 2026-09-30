@@ -2,9 +2,9 @@
 // these faults describe source forms or types that code generation could not
 // translate, plus the backend's explicit reachability bound.
 
-Span = std.ast.ast_span
-str, String = std.text
-AllocError = std.mem
+{ Span } = std.ast.ast_span
+{ str, String } = std.text
+{ AllocError } = std.mem
 
 GenFault* = Unsupported(str)     // a node form this backend does not lower yet
           | Unresolved(str)      // a name with no declaration behind it

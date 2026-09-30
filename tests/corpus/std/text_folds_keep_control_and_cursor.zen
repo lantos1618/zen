@@ -1,4 +1,4 @@
-Split, Lines = std.text
+{ Split, Lines } = std.text
 
 split_source = (calls :: usize) Split {
     calls = calls + 1;

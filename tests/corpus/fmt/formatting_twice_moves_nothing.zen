@@ -22,10 +22,10 @@
 // back bytes, so it touches no capability and a test can hand it source
 // no file on disk holds.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-scan, Source = std.lex.lex
-render = fmt.fmt
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ scan, Source } = std.lex.lex
+{ render } = fmt.fmt
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

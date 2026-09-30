@@ -1,6 +1,6 @@
-Alloc, AllocError = std.mem
-Vec = std.collections
-Cli, cli = zen
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Cli, cli } = zen
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

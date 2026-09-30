@@ -1,7 +1,7 @@
 // A type brings the members written in its body. `pick` is a free
 // function in one and two, not a member of `Tag`, so the dot does not
 // reach it until this module imports it.
-Tag = tag.tag
+{ Tag } = tag.tag
 o1 = one
 o2 = two
 

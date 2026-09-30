@@ -5,7 +5,7 @@ blocks; `PoolAlloc` supplies the standard `Alloc` interface to existing code.
 The caller supplies all three cache limits. There is no actor policy in this API.
 
 ```zen
-Pool, PoolPolicy, PoolAlloc, Ptr, null_ptr = std.mem
+{ Pool, PoolPolicy, PoolAlloc, Ptr, null_ptr } = std.mem
 
 use_buffer = (a: Alloc) Res<(), AllocError> {
     bytes = a.realloc<u8>(null_ptr<u8>(), 128).try();

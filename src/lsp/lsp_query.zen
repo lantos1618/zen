@@ -1,14 +1,14 @@
 // Creates checked state for one standalone buffer. Build-backed queries use
 // zen_build's checked workspace owner directly.
 
-str = std.text
-Alloc, AllocError = std.mem
-scan, Source = std.lex
-Parser = std.parse
-Ast = std.ast
-Checker = sema.sema_check
-check_all = sema.sema_decl
-module = std.parse.parse_decl
+{ str } = std.text
+{ Alloc, AllocError } = std.mem
+{ scan, Source } = std.lex
+{ Parser } = std.parse
+{ Ast } = std.ast
+{ Checker } = sema.sema_check
+{ check_all } = sema.sema_decl
+{ module } = std.parse.parse_decl
 
 parse_standalone* = (a: Alloc, name: str, text: str) Res<Parser, AllocError> {
     tree ::= a.Ast();

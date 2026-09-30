@@ -9,7 +9,7 @@
 // main.stdin holds "abcdefg\nhij" (11 bytes), none of it consumed by
 // the refused read.
 
-Vec    = std.collections
+{ Vec }    = std.collections
 
 Error = AllocError | IoError
 

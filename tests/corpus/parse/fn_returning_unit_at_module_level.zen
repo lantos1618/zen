@@ -1,8 +1,8 @@
 // Explicit unit returns remain valid parser input. Executable functions use
 // the canonical omitted annotation; the quoted source preserves the legacy
 // lookahead case where a second parenthesized group denotes the return type.
-scan, Source = std.lex
-Parser, module = std.parse
+{ scan, Source } = std.lex
+{ Parser, module } = std.parse
 
 SOURCE: str = "shout = (env: Env, n: i32) () {}\n"
 

@@ -1,31 +1,31 @@
 // Complete generic call instantiations left open after sema. Settled calls
 // pass through unchanged.
 
-ExprId, Decl, Function, Param = std.ast
-Access, Call, Member = std.ast
-AllocError = std.mem
-Vec = std.collections
-str = std.text
-TyId = sema.sema_ty
-Def, decl_at = sema.sema_def
-GenFault = gen.gen_diag
-Ctx = sema.sema_check
-Inst, tparam_vars, zip, owner_of = sema.sema_inst
-type_from_ast = sema.sema_denote
-pack_slot, pack_elem = sema.sema_vararg
-CBackend = gen.gen_c.gen_c_state
-declared_ret, struct_decl = gen.gen_c.gen_c_type
-inst_at, inst_open, settled_inst, enter_struct_tparams, any_open = gen.gen_c.gen_c_mono
-sub_with, unify, arg_type = gen.gen_c.gen_c_mono
-enter_tparams, leave_tparams = gen.gen_c.gen_c_mono
-fat_ret_type = gen.gen_c.gen_c_bound
-impl_member_at, bodied_fn = gen.gen_c.gen_c_impl
-bodyless = gen.gen_c.gen_c_sink
-site_of, method_sig = gen.gen_c.gen_c_member
-Site = gen.gen_c.gen_c_member
-recv_inst = gen.gen_c.gen_c_mono
-self_ctx = sema.sema_member
-ty_of = gen.gen_c.gen_c_expr
+{ ExprId, Decl, Function, Param } = std.ast
+{ Access, Call, Member } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ TyId } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ GenFault } = gen.gen_diag
+{ Ctx } = sema.sema_check
+{ Inst, tparam_vars, zip, owner_of } = sema.sema_inst
+{ type_from_ast } = sema.sema_denote
+{ pack_slot, pack_elem } = sema.sema_vararg
+{ CBackend } = gen.gen_c.gen_c_state
+{ declared_ret, struct_decl } = gen.gen_c.gen_c_type
+{ inst_at, inst_open, settled_inst, enter_struct_tparams, any_open } = gen.gen_c.gen_c_mono
+{ sub_with, unify, arg_type } = gen.gen_c.gen_c_mono
+{ enter_tparams, leave_tparams } = gen.gen_c.gen_c_mono
+{ fat_ret_type } = gen.gen_c.gen_c_bound
+{ impl_member_at, bodied_fn } = gen.gen_c.gen_c_impl
+{ bodyless } = gen.gen_c.gen_c_sink
+{ site_of, method_sig } = gen.gen_c.gen_c_member
+{ Site } = gen.gen_c.gen_c_member
+{ recv_inst } = gen.gen_c.gen_c_mono
+{ self_ctx } = sema.sema_member
+{ ty_of } = gen.gen_c.gen_c_expr
 
 // Stable call facts are receiver state; the backend and accumulating answer
 // remain explicit mutable borrows.

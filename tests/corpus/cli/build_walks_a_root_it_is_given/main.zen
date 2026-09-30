@@ -1,10 +1,10 @@
 // Building a supplied root probes its conventional entry points; a missing
 // root produces a diagnostic and nonzero result.
 
-Alloc, AllocError = std.mem
-str = std.text
-BuildArgs = std.build
-build = zen.zen_run
+{ Alloc, AllocError } = std.mem
+{ str } = std.text
+{ BuildArgs } = std.build
+{ build } = zen.zen_run
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

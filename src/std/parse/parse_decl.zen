@@ -6,22 +6,25 @@
 //     (..) T { .. }       function, with a body
 //     (..) T              function, signature only
 //     a.b.c               import
+//
+// `{ a, b } = a.b.c` destructures names out of a module; only a module-level
+// declaration may begin with `{`.
 //     Name / Name<T>      alias
 //     anything else       constant
 //
 // The leading bar distinguishes a one-variant enum from an alias.
 
-AllocError = std.mem
-Span, Pos, Ident, no_trivia = std.ast.ast_span
-ExprId, TypeId = std.ast.ast_id
-Decl, DeclKind, Struct, Enum, Alias, Impl, Import, Const = std.ast.ast_node
-Member, MemberKind, Field, Variant, ImportName, TParam, Module = std.ast.ast_node
-TokenKind = std.parse.parse_token
-Parser, Mark = std.parse.parser
-expr = std.parse.parse_expr
-type, written_type = std.parse.parse_type
-value_shape, delim_step = std.parse.parse_lookahead
-struct_members, record_body, type_params, fn_value = std.parse.parse_member
+{ AllocError } = std.mem
+{ Span, Pos, Ident, QualifiedName, no_trivia } = std.ast.ast_span
+{ ExprId, TypeId } = std.ast.ast_id
+{ Decl, DeclKind, Struct, Enum, Alias, Impl, Import, Const } = std.ast.ast_node
+{ Member, MemberKind, Field, Variant, ImportName, TParam, Module } = std.ast.ast_node
+{ TokenKind } = std.parse.parse_token
+{ Parser, Mark } = std.parse.parser
+{ expr } = std.parse.parse_expr
+{ type, written_type } = std.parse.parse_type
+{ value_shape, delim_step } = std.parse.parse_lookahead
+{ struct_members, record_body, type_params, fn_value } = std.parse.parse_member
 
 // Parse a whole module. Its span and trailing trivia cover the complete file.
 module* = (p :: Parser, name: str) Res<Module, AllocError> {
@@ -65,10 +68,44 @@ recover = (p :: Parser) Res<(), AllocError> {
 
 declaration* = (p :: Parser, module_level: bool) Res<Decl, AllocError> {
     m = p.open();
-    p.impl_ahead().match({
-        true  => p.impl_decl(m),
-        false => p.named_decl(m, module_level),
+    (module_level && p.at_kind(TokenKind.BraceOpen)).match({
+        true  => p.braced_import(m),
+        false => p.impl_ahead().match({
+            true  => p.impl_decl(m),
+            false => p.named_decl(m, module_level),
+        }),
     });
+}
+
+// `{ Bag, reseat* } = shape`: every name is looked up in the module by
+// itself, and a starred one is re-exported.
+braced_import = (p :: Parser, m: Mark) Res<Decl, AllocError> {
+    open = p.here_span();
+    p.bump().try();
+    names   ::= p.alloc.Vec<ImportName>();
+    tparams ::= p.alloc.Vec<TParam>();
+    running ::= !p.at_kind(TokenKind.BraceClose);
+    running.loop((h) {
+        names.add(p.one_decl_name(tparams).try()).try();
+        running = p.eat(TokenKind.Comma).try()
+            && !p.at_kind(TokenKind.BraceClose);
+    });
+    (tparams.len > 0).then(() {
+        p.error("an imported name takes no type parameters").try();
+    });
+    (names.len == 0).then(() {
+        p.error(
+            "expected a name between `{` and `}`: an import binds at least one"
+        ).try();
+    });
+    p.expect_close(
+        TokenKind.BraceClose,
+        "unclosed `{`: this import's name list is never closed",
+        open
+    ).try();
+    p.expect(TokenKind.Eq, "expected `=` and a module path after `}`").try();
+    module_name = p.qualified_name().try();
+    p.add_decl(DeclKind.Import(Import(names: names, module: module_name)), m);
 }
 
 // Parse `Circle.impl(Rect, { .. })` as an impl declaration.
@@ -145,6 +182,7 @@ one_decl_name = (
     end = p.prev_end;
     Ok(ImportName(
         name: name,
+        source: name,
         exported: exported,
         span: p.span_from(m.start),
         leading: m.leading,
@@ -307,6 +345,7 @@ head_name = (p: Parser, names: Vec<ImportName>) ImportName {
         Ok(n) => n,
         None  => ImportName(
             name: Ident(text: "", span: p.here_span()),
+            source: Ident(text: "", span: p.here_span()),
             exported: false,
             span: p.here_span(),
             leading: no_trivia(),
@@ -450,13 +489,70 @@ alias_decl = (
     )), m);
 }
 
+// `x = a.b.c` binds the item `c` of module `a.b` as `x`. Several names
+// are a destructure, which is written in braces.
 import_decl = (
     p     :: Parser,
     m     : Mark,
     names : Vec<ImportName>
 ) Res<Decl, AllocError> {
-    module_name = p.qualified_name().try();
-    p.add_decl(DeclKind.Import(Import(names: names, module: module_name)), m);
+    path = p.qualified_name().try();
+    (names.len > 1).match({
+        true  => {
+            first = names.get(0).ok_or(AllocError.OutOfMemory).try();
+            p.error_at(
+                "several imported names are a destructure: write `{ a, b } = module`",
+                first.span
+            ).try();
+            p.add_decl(DeclKind.Import(Import(names: names, module: path)), m)
+        },
+        // A path recovery left short was diagnosed where it was parsed.
+        false => (path.segments.len < 2).match({
+            true  => p.add_decl(
+                DeclKind.Import(Import(names: names, module: path)),
+                m
+            ),
+            false => p.item_import(m, names, path),
+        }),
+    })
+}
+
+item_import = (
+    p     :: Parser,
+    m     : Mark,
+    names : Vec<ImportName>,
+    path  : QualifiedName
+) Res<Decl, AllocError> {
+    n    = path.segments.len;
+    head = p.head_name(names);
+    item = path.segments.get(n - 1).ok_or(AllocError.OutOfMemory).try();
+    module ::= p.alloc.Vec<Ident>();
+    Range(0, n - 1).loop((i) {
+        module.add(
+            path.segments.get(i).ok_or(AllocError.OutOfMemory).try()
+        ).try();
+    });
+    last = module.get(module.len - 1).ok_or(AllocError.OutOfMemory).try();
+    one ::= p.alloc.Vec<ImportName>();
+    one.add(ImportName(
+        name: head.name,
+        source: item,
+        exported: head.exported,
+        span: head.span,
+        leading: head.leading,
+        trailing: head.trailing,
+    )).try();
+    p.add_decl(DeclKind.Import(Import(
+        names: one,
+        module: QualifiedName(
+            segments: module,
+            span: Span(
+                file: path.span.file,
+                start: path.span.start,
+                end: last.span.end
+            ),
+        ),
+    )), m);
 }
 
 const_decl = (

@@ -1,4 +1,4 @@
-Builder, BuildError, Codegen = std.build
+{ Builder, BuildError, Codegen } = std.build
 
 choose = () Codegen { Codegen.C }
 

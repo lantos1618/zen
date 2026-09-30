@@ -18,11 +18,11 @@
 // THE FRAME BODY IS PRINTED WHOLE, so the code, the message and the
 // echoed id are all asserted, and the absence of a `result` with them.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-write_text = std.json
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ write_text } = std.json
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
 
 // A document that opens, parses and checks. It exists so that the store
 // is not empty; nothing is ever asked about it.

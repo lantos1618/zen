@@ -14,8 +14,8 @@
 // One-line breaker: resolve duplicate bare imports by walk order
 // instead of declaration order -> 999999999999999.
 
-cap = alpha.alpha
-cap = beta.beta
+{ cap } = alpha.alpha
+{ cap } = beta.beta
 
 main = (env: Env) Res<i32, IoError> {
     println("{}", cap);

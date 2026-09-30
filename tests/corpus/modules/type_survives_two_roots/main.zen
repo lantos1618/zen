@@ -7,7 +7,7 @@
 // non-default values, a GENERIC reads the second of them, and the enum
 // that travels is matched on the variant that is not first -- a tag that
 // arrived as zero prints `once` and says so.
-Box, Tick, Once, Twice, unwrap, seen_of = deep.deep
+{ Box, Tick, Once, Twice, unwrap, seen_of } = deep.deep
 
 main = (env: Env) Res<i32, IoError> {
     b = Box<i32>(value: 91, seen: 7);

@@ -2,23 +2,23 @@
 // Cleanup for every exited block. Handles have no C storage; their bindings
 // Record loop depth and are resolved by name.
 
-ExprId, Access, Call = std.ast
-AllocError = std.mem
-str, String = std.text
-TyId = sema.sema_ty
-Ctx = sema.sema_check
-literal_overflows = sema.sema_trap
-sym_member, sym_variant = gen.gen_name
-RES_PATH = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
-LoopFrame = gen.gen_c.gen_c_frame
-GenFault = gen.gen_diag
-unsupported = gen.gen_c.gen_c_report
-ctype, is_unit = gen.gen_c.gen_c_type
-expr, ty_of = gen.gen_c.gen_c_expr
-bare_name = gen.gen_c.gen_c_stmt
-write_label = gen.gen_c.gen_c_loop
-unwind_to = gen.gen_c.gen_c_own
+{ ExprId, Access, Call } = std.ast
+{ AllocError } = std.mem
+{ str, String } = std.text
+{ TyId } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ literal_overflows } = sema.sema_trap
+{ sym_member, sym_variant } = gen.gen_name
+{ RES_PATH } = gen.gen_name
+{ CBackend } = gen.gen_c.gen_c_state
+{ LoopFrame } = gen.gen_c.gen_c_frame
+{ GenFault } = gen.gen_diag
+{ unsupported } = gen.gen_c.gen_c_report
+{ ctype, is_unit } = gen.gen_c.gen_c_type
+{ expr, ty_of } = gen.gen_c.gen_c_expr
+{ bare_name } = gen.gen_c.gen_c_stmt
+{ write_label } = gen.gen_c.gen_c_loop
+{ unwind_to } = gen.gen_c.gen_c_own
 
 // the two verbs — the same jump `.try()` is, one frame down
 

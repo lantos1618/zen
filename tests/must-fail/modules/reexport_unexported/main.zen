@@ -1,4 +1,4 @@
-visible = mid.mid
+{ visible } = mid.mid
 
 main = (env: Env) Res<i32, IoError> {
     println("{}", visible());

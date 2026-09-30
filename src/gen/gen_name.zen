@@ -4,15 +4,15 @@
 // C's reserved identifier class. Type codes depend only on canonical type
 // structure, not discovery order, so two runs write the same symbols.
 
-str, String = std.text
-Vec = std.collections
-Alloc, AllocError = std.mem
-Hasher, Range = std.core
-TyId, Types, TyNamed, TyRes, TyArray = sema.sema_ty
-res_arity, is_failure = sema.sema_ty
-World = sema.sema_def
-DeclId = sema.sema_id
-Inst = sema.sema_inst
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Alloc, AllocError } = std.mem
+{ Hasher, Range } = std.core
+{ TyId, Types, TyNamed, TyRes, TyArray } = sema.sema_ty
+{ res_arity, is_failure } = sema.sema_ty
+{ World } = sema.sema_def
+{ DeclId } = sema.sema_id
+{ Inst } = sema.sema_inst
 
 // Derived from a user name.
 USR* : str = "zu_"

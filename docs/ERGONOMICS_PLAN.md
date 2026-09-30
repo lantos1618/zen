@@ -366,7 +366,7 @@ only contains the returned descriptor. Passing the result through another
 helper does not copy its text or change its allocation region.
 
 ```zen
-to_json = std.json
+{ to_json } = std.json
 
 Status = Todo | Done
 Record = { status: str }

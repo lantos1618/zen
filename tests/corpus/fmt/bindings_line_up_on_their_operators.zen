@@ -27,10 +27,10 @@
 // arms_line_up_on_their_arrows.zen gives: a rule that computes a column
 // from bytes it just moved is the classic way to fail it.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-scan, Source = std.lex.lex
-render = fmt.fmt
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ scan, Source } = std.lex.lex
+{ render } = fmt.fmt
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

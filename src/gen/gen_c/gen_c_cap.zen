@@ -2,34 +2,34 @@
 // lowering initializes the private ArenaState representation at its allocation
 // boundary; other capability floors remain in their subject-specific files.
 
-ExprId, Function, Access, Call = std.ast
-AllocError = std.mem
-str, String = std.text
-TyId, TyNamed = sema.sema_ty
-Ctx = sema.sema_check
-sym_member, sym_gen = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
-unsupported = gen.gen_c.gen_c_report
-sub = gen.gen_c.gen_c_mono
-ctype, request_type, declared_ret, field_of, pointee = gen.gen_c.gen_c_type
-expr = gen.gen_c.gen_c_expr
-arg_text = gen.gen_c.gen_c_arg
-temp, payload_type, declare_temp = gen.gen_c.gen_c_flow
-write_assign_ok, write_assign_err = gen.gen_c.gen_c_flow
-close_else, close_brace, open_null_test = gen.gen_c.gen_c_flow
-lower_probe, lower_write, lower_read, lower_remove, lower_lock, lower_unlock = gen.gen_c.gen_c_fs
-lower_mkdir, lower_cwd = gen.gen_c.gen_c_fs
-lower_stdin_read = gen.gen_c.gen_c_stdin
-lower_env_var = gen.gen_c.gen_c_env
-lower_env_args = gen.gen_c.gen_c_args
-lower_console_print, lower_console_flush, is_console_print = gen.gen_c.gen_c_print
-is_defer, lower_defer = gen.gen_c.gen_c_scope
-write_position = gen.gen_c.gen_c_op
-lower_clock_read = gen.gen_c.gen_c_clock
-lower_sleep, lower_spawn, lower_join = gen.gen_c.gen_c_threads
-lower_actor_spawn, lower_actor_stop, lower_actor_join = gen.gen_c.gen_c_actor
-param_type = sema.sema_denote
-self_ctx = sema.sema_member
+{ ExprId, Function, Access, Call } = std.ast
+{ AllocError } = std.mem
+{ str, String } = std.text
+{ TyId, TyNamed } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ sym_member, sym_gen } = gen.gen_name
+{ CBackend } = gen.gen_c.gen_c_state
+{ unsupported } = gen.gen_c.gen_c_report
+{ sub } = gen.gen_c.gen_c_mono
+{ ctype, request_type, declared_ret, field_of, pointee } = gen.gen_c.gen_c_type
+{ expr } = gen.gen_c.gen_c_expr
+{ arg_text } = gen.gen_c.gen_c_arg
+{ temp, payload_type, declare_temp } = gen.gen_c.gen_c_flow
+{ write_assign_ok, write_assign_err } = gen.gen_c.gen_c_flow
+{ close_else, close_brace, open_null_test } = gen.gen_c.gen_c_flow
+{ lower_probe, lower_write, lower_read, lower_remove, lower_lock, lower_unlock } = gen.gen_c.gen_c_fs
+{ lower_mkdir, lower_cwd } = gen.gen_c.gen_c_fs
+{ lower_stdin_read } = gen.gen_c.gen_c_stdin
+{ lower_env_var } = gen.gen_c.gen_c_env
+{ lower_env_args } = gen.gen_c.gen_c_args
+{ lower_console_print, lower_console_flush, is_console_print } = gen.gen_c.gen_c_print
+{ is_defer, lower_defer } = gen.gen_c.gen_c_scope
+{ write_position } = gen.gen_c.gen_c_op
+{ lower_clock_read } = gen.gen_c.gen_c_clock
+{ lower_sleep, lower_spawn, lower_join } = gen.gen_c.gen_c_threads
+{ lower_actor_spawn, lower_actor_stop, lower_actor_join } = gen.gen_c.gen_c_actor
+{ param_type } = sema.sema_denote
+{ self_ctx } = sema.sema_member
 
 // Classification is closed and travels with MethodKind into lowering,
 // so receiver ownership and an overloaded name such as `read` are

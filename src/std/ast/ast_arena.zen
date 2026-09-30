@@ -2,14 +2,14 @@
 // non-recursive records are stored by value. Modules and trivia share the same
 // allocation lifetime.
 
-Alloc, AllocError, Ptr, null_ptr = std.mem
-str = std.text
-Range = std.core
-Trivia, TriviaRun = std.ast.ast_span
-ExprId, TypeId, PatternId, BlockId, CBindingId = std.ast.ast_id
-Expr, Type, Pattern, Block, Module = std.ast.ast_node
-ModuleOrigin, CBinding = std.ast.ast_node
-CTypeBinding = std.ast.ast_node
+{ Alloc, AllocError, Ptr, null_ptr } = std.mem
+{ str } = std.text
+{ Range } = std.core
+{ Trivia, TriviaRun } = std.ast.ast_span
+{ ExprId, TypeId, PatternId, BlockId, CBindingId } = std.ast.ast_id
+{ Expr, Type, Pattern, Block, Module } = std.ast.ast_node
+{ ModuleOrigin, CBinding } = std.ast.ast_node
+{ CTypeBinding } = std.ast.ast_node
 
 NODE_PAGE: usize = 256
 

@@ -1,13 +1,13 @@
 // `zen fmt`: read, format, compare or write explicitly named files.
 
-Alloc, AllocError = std.mem
-str = std.text
-FsError, fs_message = std.env
+{ Alloc, AllocError } = std.mem
+{ str } = std.text
+{ FsError, fs_message } = std.env
 
-scan, Source = std.lex
-render = fmt.fmt
+{ scan, Source } = std.lex
+{ render } = fmt.fmt
 
-FmtJob = zen.zen_cli
+{ FmtJob } = zen.zen_cli
 
 // A file can fail to format, or differ when running in check mode.
 Outcome = Same | Wrote | Differs | Failed

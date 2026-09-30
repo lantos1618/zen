@@ -1,4 +1,4 @@
-seed_even = even.even
+{ seed_even } = even.even
 
 main = (env: Env) Res<i32, IoError> {
     println("{}", seed_even);

@@ -1,10 +1,10 @@
 // A trap preserves earlier output, arbitrary text bytes, and the operation's
 // source location. A large payload exercises Node's pending stdout writes.
 
-Program, Func, Instruction, Const, Unary, UnaryOp, Binary, Op, Scalar = gen.gen_ir
-BasicBlock, Terminator = gen.gen_ir
-emit_js = gen.gen_js
-Span, Pos = std.ast
+{ Program, Func, Instruction, Const, Unary, UnaryOp, Binary, Op, Scalar } = gen.gen_ir
+{ BasicBlock, Terminator } = gen.gen_ir
+{ emit_js } = gen.gen_js
+{ Span, Pos } = std.ast
 
 location = () Span {
     Span(

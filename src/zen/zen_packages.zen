@@ -1,9 +1,9 @@
 // Pinned Git sources for the project driver. All storage belongs to its arena;
 // dependency code and dependency build scripts are never executed here.
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec, vararg = std.collections
-Package, Lib = std.build
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec, vararg } = std.collections
+{ Package, Lib } = std.build
 
 PackageFault* = InvalidSpec
     | FetchFailed

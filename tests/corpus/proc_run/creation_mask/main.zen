@@ -1,4 +1,4 @@
-CreationMask, Process = std.proc
+{ CreationMask, Process } = std.proc
 Failure = | WrongMask
 main = (env: Env) Res<(), Failure> {
     original = env.proc.creation_mask(CreationMask.OwnerOnly);

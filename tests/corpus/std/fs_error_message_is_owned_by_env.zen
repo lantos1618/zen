@@ -1,4 +1,4 @@
-fs_message = std.env
+{ fs_message } = std.env
 
 main = (env: Env) Res<(), AllocError> {
     println("{}", fs_message(FsError.NotFound));

@@ -2,8 +2,8 @@
 // a member's whole number with a fallback, an array's count. Each answers
 // with the fallback (or zero) for the wrong shape instead of stopping.
 
-Jsons = std.json.json_write
-read = std.json.json_read
+{ Jsons } = std.json.json_write
+{ read } = std.json.json_read
 
 TEXT: str = "{\"name\":\"zen\",\"n\":7,\"calls\":[1,2,3],\"nested\":{\"k\":\"v\"}}"
 

@@ -1,6 +1,6 @@
 // An unknown flag is Parse of the flag word itself.
 
-ArgError = std.env
+{ ArgError } = std.env
 
 // The shape the agent-zen entry point wants: switches, numbers with
 // defaults, a text default, a one-letter flag that is also the first

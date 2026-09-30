@@ -1,16 +1,16 @@
 // Lower checked scalar executables once for the JS and assembly renderers.
 // Unsupported reachable language constructs fail before any artifact is
 // published. Declaration identity and overload choices come from sema.
-Alloc, AllocError = std.mem
-Vec, Map = std.collections
-String, str = std.text
-fmt_at = std.text.text_fmt
-decode_literal = std.lex
-Ast, ExprId, BlockId, TypeId, Span, Function, Literal, Bind = std.ast
-BinOp, UnOp, Match, Call, nowhere = std.ast
-Checker, DeclId, Def, TyId, decl_at, const_int = sema.sema
-Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print, Branch = gen.gen_ir
-Instruction, Func, Program, BasicBlock, Terminator = gen.gen_ir
+{ Alloc, AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ String, str } = std.text
+{ fmt_at } = std.text.text_fmt
+{ decode_literal } = std.lex
+{ Ast, ExprId, BlockId, TypeId, Span, Function, Literal, Bind } = std.ast
+{ BinOp, UnOp, Match, Call, nowhere } = std.ast
+{ Checker, DeclId, Def, TyId, decl_at, const_int } = sema.sema
+{ Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print, Branch } = gen.gen_ir
+{ Instruction, Func, Program, BasicBlock, Terminator } = gen.gen_ir
 
 Fault* = { span*: Span, what*: str }
 LowerError* = OutOfMemory | Unsupported(Fault)

@@ -14,7 +14,7 @@
 // binary beside the staged tree), and stat'ing it proves the path exists
 // -- the miss below is a missing FILE, not a missing parent.
 
-FsError = std.env
+{ FsError } = std.env
 
 main = (env: Env) Res<i32, FsError> {
     alloc ::= env.mem.alloc();

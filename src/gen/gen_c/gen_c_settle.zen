@@ -5,28 +5,28 @@
 // element type. Query and lowering share `inline_ret` so instantiated result
 // types agree.
 
-ExprId, Lambda, Param = std.ast
-Decl, Function, Access, Call = std.ast
-AllocError = std.mem
-Vec = std.collections
-str = std.text
-Range = std.core
-TyId, TyRes = sema.sema_ty
-Def, decl_at = sema.sema_def
-Ctx = sema.sema_check
-tail_expr = sema.sema_hoist
-Inst, has_var = sema.sema_inst
-param_type, type_from_ast = sema.sema_denote
-CBackend = gen.gen_c.gen_c_state
-sub_with, inst_at, settled_inst, materialize_literal = gen.gen_c.gen_c_mono
-enter_tparams, leave_tparams = gen.gen_c.gen_c_mono
-declared_ret = gen.gen_c.gen_c_type
-ty_of = gen.gen_c.gen_c_expr
-selected_def = gen.gen_c.gen_c_call
-plain_ctx = gen.gen_c.gen_c_decl
-range_element_type = gen.gen_c.gen_c_range
-inlines, spelled_lambda = gen.gen_c.gen_c_inline
-recv_of = gen.gen_c.gen_c_shape
+{ ExprId, Lambda, Param } = std.ast
+{ Decl, Function, Access, Call } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Range } = std.core
+{ TyId, TyRes } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ Ctx } = sema.sema_check
+{ tail_expr } = sema.sema_hoist
+{ Inst, has_var } = sema.sema_inst
+{ param_type, type_from_ast } = sema.sema_denote
+{ CBackend } = gen.gen_c.gen_c_state
+{ sub_with, inst_at, settled_inst, materialize_literal } = gen.gen_c.gen_c_mono
+{ enter_tparams, leave_tparams } = gen.gen_c.gen_c_mono
+{ declared_ret } = gen.gen_c.gen_c_type
+{ ty_of } = gen.gen_c.gen_c_expr
+{ selected_def } = gen.gen_c.gen_c_call
+{ plain_ctx } = gen.gen_c.gen_c_decl
+{ range_element_type } = gen.gen_c.gen_c_range
+{ inlines, spelled_lambda } = gen.gen_c.gen_c_inline
+{ recv_of } = gen.gen_c.gen_c_shape
 
 // The receiver, if a ufcs call arrived through one, and then the
 // written arguments: `range.find(p)` and `find(range, p)` are one call

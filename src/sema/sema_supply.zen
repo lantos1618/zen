@@ -1,17 +1,17 @@
-Span = std.ast
-Decl, Struct, Impl, Member, Field = std.ast
-Function = std.ast
-AllocError = std.mem
-Vec = std.collections
-str = std.text
-Range = std.core
-ImplId = sema.sema_id
-TyId, TyNamed, Prim = sema.sema_ty
-Def, decl_at = sema.sema_def
-Checker, Ctx = sema.sema_check
-Found, member_type, supplied_found = sema.sema_member
-enter_struct_tvars, decl_span = sema.sema_member
-type_from_ast = sema.sema_denote
+{ Span } = std.ast
+{ Decl, Struct, Impl, Member, Field } = std.ast
+{ Function } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Range } = std.core
+{ ImplId } = sema.sema_id
+{ TyId, TyNamed, Prim } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ Checker, Ctx } = sema.sema_check
+{ Found, member_type, supplied_found } = sema.sema_member
+{ enter_struct_tvars, decl_span } = sema.sema_member
+{ type_from_ast } = sema.sema_denote
 
 // One impl declared beside its target type, with its bound resolved.
 LocalImpl* = {

@@ -1,4 +1,4 @@
-Actor, Ref, Context = std.actor
+{ Actor, Ref, Context } = std.actor
 
 Worker = {}
 

@@ -1,4 +1,4 @@
-dup, truncate_with = std.text
+{ dup, truncate_with } = std.text
 
 main = (env: Env) Res<(), AllocError> {
     a = env.mem.alloc();

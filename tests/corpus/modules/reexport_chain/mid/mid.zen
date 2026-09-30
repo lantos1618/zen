@@ -1,1 +1,1 @@
-depth*, label* = leaf.leaf
+{ depth*, label* } = leaf.leaf

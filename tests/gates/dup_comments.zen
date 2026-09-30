@@ -10,11 +10,11 @@
 // length: `std.env.Fs` has no listing, so a gate over a file SET cannot
 // compute its own inputs.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec = std.collections
-Range = std.core
-FsError = std.env
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Range } = std.core
+{ FsError } = std.env
 
 // Under three lines it is a label, not a paragraph, and two identical labels
 // over two declarations are ordinary.

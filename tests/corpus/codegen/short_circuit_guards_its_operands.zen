@@ -28,7 +28,7 @@
 // str.index's bound check; a backend that also broke the ORDER would
 // print true.
 
-str = std.text
+{ str } = std.text
 
 main = (env: Env) Res<i32, AllocError> {
     hay     ::= "abcde";

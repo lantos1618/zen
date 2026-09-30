@@ -1,4 +1,4 @@
-CfgError, read_cfg = cfg.cfg
+{ CfgError, read_cfg } = cfg.cfg
 
 main = (env: Env) Res<i32, CfgError> {
     println("{}", read_cfg("7").try());

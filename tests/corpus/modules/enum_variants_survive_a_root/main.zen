@@ -1,4 +1,4 @@
-Tag, One, Two, Three, Only, Single = mode.mode
+{ Tag, One, Two, Three, Only, Single } = mode.mode
 
 name = (t: Tag) str {
     t.match({

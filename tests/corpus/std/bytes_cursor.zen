@@ -1,5 +1,5 @@
 // Independent byte patterns, then round trips; failure must be transactional.
-ByteReader, ByteWriter, ByteError = std.bytes
+{ ByteReader, ByteWriter, ByteError } = std.bytes
 
 invalid = <T>(result: Res<T, ByteError>) bool {
     result.match({Err(e) => e.match({Invalid => true, _ => false}), _ => false})

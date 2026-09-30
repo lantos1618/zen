@@ -1,8 +1,8 @@
 // The legacy command-string path and both structured argv paths share the
 // process capability. Shell metacharacters in argv remain ordinary text.
 
-AllocError = std.mem
-ProcError = std.proc
+{ AllocError } = std.mem
+{ ProcError } = std.proc
 
 main = (env: Env) Res<i32, AllocError> {
     a   = env.mem.alloc();

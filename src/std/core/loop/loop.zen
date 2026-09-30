@@ -1,6 +1,6 @@
 // Public loop and range operations.
 
-Range*               = std.core.range
-LoopHandle*          = std.core.loop.loop_handle
-loop*                = std.core.loop.loop_iter
-find*, filter*, map* = std.core.loop.loop_find
+{ Range* }               = std.core.range
+{ LoopHandle* }          = std.core.loop.loop_handle
+{ loop* }                = std.core.loop.loop_iter
+{ find*, filter*, map* } = std.core.loop.loop_find

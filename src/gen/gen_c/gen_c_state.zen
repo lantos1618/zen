@@ -2,22 +2,22 @@
 // stable insertion data, then sort by mangled name before output. Per-function
 // locals and temporary counters are reset at each body boundary.
 
-Ast, ExprId, Span = std.ast
-str, String = std.text
-Alloc, AllocError = std.mem
-Vec, Map = std.collections
-Range = std.core
-DeclId = sema.sema_id
-TyId, Types = sema.sema_ty
-World, Def = sema.sema_def
-Checker, truncate = sema.sema_check
-Inst = sema.sema_inst
-CallEffects = gen.gen_c.gen_c_effect
-LoopSyntax = gen.gen_c.gen_c_shape
-Emit = gen.gen_emit
-GenDiag, GenFault = gen.gen_diag
-sym_gen = gen.gen_name
-LocalSlot, Closure, InlineReturn, LoopFrame, DropEntry, BlockFrame = gen.gen_c.gen_c_frame
+{ Ast, ExprId, Span } = std.ast
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ Range } = std.core
+{ DeclId } = sema.sema_id
+{ TyId, Types } = sema.sema_ty
+{ World, Def } = sema.sema_def
+{ Checker, truncate } = sema.sema_check
+{ Inst } = sema.sema_inst
+{ CallEffects } = gen.gen_c.gen_c_effect
+{ LoopSyntax } = gen.gen_c.gen_c_shape
+{ Emit } = gen.gen_emit
+{ GenDiag, GenFault } = gen.gen_diag
+{ sym_gen } = gen.gen_name
+{ LocalSlot, Closure, InlineReturn, LoopFrame, DropEntry, BlockFrame } = gen.gen_c.gen_c_frame
 
 // A member queue entry carries its full receiver-inclusive signature because
 // neither a member name nor its arity uniquely identifies an overload.

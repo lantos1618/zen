@@ -1,11 +1,11 @@
-scan, Source = std.lex
-Parser, module = std.parse
-ExprId = std.ast
-Checker, Ctx, CheckedCall, CallResolution = sema.sema_check
-Inst = sema.sema_inst
-DeclId = sema.sema_id
-CBackend = gen.gen_c.gen_c_state
-selected_def, lower_plain_call = gen.gen_c.gen_c_call
+{ scan, Source } = std.lex
+{ Parser, module } = std.parse
+{ ExprId } = std.ast
+{ Checker, Ctx, CheckedCall, CallResolution } = sema.sema_check
+{ Inst } = sema.sema_inst
+{ DeclId } = sema.sema_id
+{ CBackend } = gen.gen_c.gen_c_state
+{ selected_def, lower_plain_call } = gen.gen_c.gen_c_call
 
 SelectionAlloc = {
     base: Alloc,
@@ -24,7 +24,7 @@ SelectionAlloc.impl(Alloc, {
 
 main = (env: Env) Res<(), AllocError> {
     a      = env.mem.alloc();
-    source = "Unused = absent.module\nBox = {}\nmain = () { Box() }\n";
+    source = "{ Unused } = absent.module\nBox = {}\nmain = () { Box() }\n";
     lexed  = scan(a, Source(file: "calls.zen", text: source)).try();
     parser ::= a.Parser(lexed);
     parsed = parser.module("calls").try();

@@ -1,11 +1,11 @@
 // TCP policy over the portable owned socket handle.
 
-Alloc = std.mem
-str = std.text
-Res = std.core
-Drop = std.core
-Vec = std.collections
-Socket, SocketFault = std.net.socket
+{ Alloc } = std.mem
+{ str } = std.text
+{ Res } = std.core
+{ Drop } = std.core
+{ Vec } = std.collections
+{ Socket, SocketFault } = std.net.socket
 
 TcpError* = ConnectFailed | WriteFailed | ReadFailed | Closed
 

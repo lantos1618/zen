@@ -1,22 +1,22 @@
-Ast, ExprId, TypeId, Span, BlockId = std.ast
-nowhere = std.ast
-BinOp, Unary, Binary, Access = std.ast
-Alloc, AllocError = std.mem
-Vec, Map = std.collections
-str, String = std.text
-Range = std.core
-DeclId = sema.sema_id
-TyId, Types, ResForm, TyRes, TyNamed, TyArray = sema.sema_ty
-is_integer, is_float = sema.sema_ty
-World, ImportBinding = sema.sema_def
-module_display = sema.sema_def
-Diag, SemaFault, TypeFault = sema.sema_diag
-ExportFault = sema.sema_diag
-Inst, InstEdge = sema.sema_inst
-DiscriminantCall = sema.sema_discriminant
-VariantNameCall = sema.sema_variant_name
-NumericConversion, IntegerBitOperation = sema.sema_numeric
-OwnCheck, StoreEffects = sema.sema_store
+{ Ast, ExprId, TypeId, Span, BlockId } = std.ast
+{ nowhere } = std.ast
+{ BinOp, Unary, Binary, Access } = std.ast
+{ Alloc, AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ str, String } = std.text
+{ Range } = std.core
+{ DeclId } = sema.sema_id
+{ TyId, Types, ResForm, TyRes, TyNamed, TyArray } = sema.sema_ty
+{ is_integer, is_float } = sema.sema_ty
+{ World, ImportBinding } = sema.sema_def
+{ module_display } = sema.sema_def
+{ Diag, SemaFault, TypeFault } = sema.sema_diag
+{ ExportFault } = sema.sema_diag
+{ Inst, InstEdge } = sema.sema_inst
+{ DiscriminantCall } = sema.sema_discriminant
+{ VariantNameCall } = sema.sema_variant_name
+{ NumericConversion, IntegerBitOperation } = sema.sema_numeric
+{ OwnCheck, StoreEffects } = sema.sema_store
 
 // One scoped name. Mutability feeds receiver/ownership checks, param feeds LSP
 // classification, and span identifies the original binding in diagnostics.
@@ -819,7 +819,7 @@ report_blocked = (c :: Checker, b: ImportBinding) Res<(), AllocError> {
         b.span.file,
         b.span,
         SemaFault.NotExported(ExportFault(
-            name: b.name,
+            name: b.source,
             module: module_display(b.module)
         ))
     )

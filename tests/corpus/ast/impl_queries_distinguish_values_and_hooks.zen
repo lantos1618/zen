@@ -1,8 +1,8 @@
 // Syntax queries distinguish supplied values and bodies from required hooks.
 // These queries borrow parsed members and need no scratch allocator.
 
-scan, Source = std.lex
-Parser, module = std.parse
+{ scan, Source } = std.lex
+{ Parser, module } = std.parse
 
 SOURCE: str = "Window = { start: usize, end: usize }\nWindow.impl(Bounds, {\n    start: 2,\n    end: 5,\n    stop ::= (self: @Self) ()\n    at ::= (self: @Self, index: usize) Res<usize> { Ok(index) }\n})\n"
 

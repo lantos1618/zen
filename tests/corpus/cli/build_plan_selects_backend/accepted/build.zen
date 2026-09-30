@@ -1,4 +1,4 @@
-Builder, BuildError, Codegen = std.build
+{ Builder, BuildError, Codegen } = std.build
 
 build = (builder :: Builder) Res<(), BuildError> {
     selected = Codegen.C;

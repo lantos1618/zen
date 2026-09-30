@@ -1,8 +1,8 @@
 // two modules export `pick` for the same first-parameter type; each
 // importer calls the one it imported, in bare and dot form alike
-Tag = tag.tag
-via_one = wa.wa
-via_two = wb.wb
+{ Tag } = tag.tag
+{ via_one } = wa.wa
+{ via_two } = wb.wb
 
 main = (env: Env) Res<i32, IoError> {
     t = Tag(v: 0);

@@ -7,9 +7,9 @@
 // Common source data lives on the wrapper; variant data lives in the kind.
 // Child nodes are stored as typed arena ids rather than by value.
 
-Span, Ident, QualifiedName, TriviaRun = std.ast.ast_span
-ExprId, TypeId, PatternId, BlockId, CBindingId = std.ast.ast_id
-Alloc, AllocError = std.mem
+{ Span, Ident, QualifiedName, TriviaRun } = std.ast.ast_span
+{ ExprId, TypeId, PatternId, BlockId, CBindingId } = std.ast.ast_id
+{ Alloc, AllocError } = std.mem
 
 // `+ - *` trap on overflow; `+% -% *%` wrap.
 BinOp* = Add
@@ -407,14 +407,18 @@ Impl* = {
     }
 }
 
-// Starred import bindings are re-exported.
+// `{ a, b* } = m` binds each name from module `m`; `x = m.c` binds the
+// item `c` of module `m` as `x`. Starred bindings are re-exported.
 Import* = {
     names*: Vec<ImportName>,
     module*: QualifiedName,
 }
 
+// `name` is the local binding; `source` is what the module calls it, the
+// same identifier except in `x = m.c`.
 ImportName* = {
     name*: Ident,
+    source*: Ident,
     exported*: bool,
     span*: Span,
     leading*: TriviaRun,

@@ -10,8 +10,8 @@
 // instead of by parameter type -- `b.span()` answers 34 (P's body) instead
 // of 13.
 
-Box, span = box.box
-P, span = pt.pt
+{ Box, span } = box.box
+{ P, span } = pt.pt
 
 main = (env: Env) Res<i32, AllocError> {
     b = Box(w: 3, h: 4);

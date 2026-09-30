@@ -1,10 +1,10 @@
 // Structural traversal follows every child edge, including expressions in
 // types and defaults. Shared arena nodes are visited once per edge, preserving
 // their enclosing owner. Pending events use caller-chosen allocation.
-Ast = std.ast.ast_arena
-ExprId, TypeId, PatternId, BlockId = std.ast.ast_id
-Decl, Member, Stmt, Function, TParam, Param = std.ast.ast_node
-Alloc, AllocError = std.mem
+{ Ast } = std.ast.ast_arena
+{ ExprId, TypeId, PatternId, BlockId } = std.ast.ast_id
+{ Decl, Member, Stmt, Function, TParam, Param } = std.ast.ast_node
+{ Alloc, AllocError } = std.mem
 
 DeclParent* = Module(usize) | Block(BlockId)
 DeclSite* = { parent*: DeclParent, index*: usize }

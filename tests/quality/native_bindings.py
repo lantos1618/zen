@@ -32,7 +32,7 @@ class NativeBindings(unittest.TestCase):
 
     def test_header_functions_have_no_synthetic_wrappers(self):
         directory, output, _ = self.compile('''
-Ptr, null_ptr = std.mem
+{ Ptr, null_ptr } = std.mem
 C = c.bind("stdlib.h", {
     malloc* = (size: usize) Ptr<()>
     free* = (value: Ptr<()>) ()
@@ -80,7 +80,7 @@ main = () i32 { (C.getpid() > 0).match({true => 0, false => 1}) }
         self.addCleanup(temp.cleanup)
         root = Path(temp.name)
         (root / "posix.zen").write_text('C* = c.bind("unistd.h", { getpid* = () c_int })\nVERSION*: i32 = 1\n')
-        (root / "main.zen").write_text('C, VERSION = posix\nmain = () i32 { (C.getpid() > 0).match({true => 0, false => 1}) }\n')
+        (root / "main.zen").write_text('{ C, VERSION } = posix\nmain = () i32 { (C.getpid() > 0).match({true => 0, false => 1}) }\n')
         output = root / "program.c"
         result = subprocess.run([str(ZEN), "build", str(root), "--emit-c", "-o", str(output)],
                                 env={**os.environ, "ZEN_STD": str(ROOT / "src")}, capture_output=True, text=True, timeout=60)
@@ -114,7 +114,7 @@ main = () i32 { (C.getpid() > 0).match({true => 0, false => 1}) }
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
         (root / "build.zen").write_text(
-            "Builder, BuildError = std.build\n"
+            "{ Builder, BuildError } = std.build\n"
             "build = (b :: Builder) Res<(), BuildError> {\n"
             + registrations + "\nOk(())\n}\n")
         environment = {key: value for key, value in os.environ.items()
@@ -128,8 +128,8 @@ main = () i32 { (C.getpid() > 0).match({true => 0, false => 1}) }
         for child_path in ("vendor/sdk/detail.zen", "vendor/sdk/detail/detail.zen"):
             with self.subTest(child_path=child_path):
                 root, result = self.project_fixture({
-                    "main.zen": "answer, VERSION = sdk\nmain = () i32 { (answer() == 42).match({true => 0, false => 1}) }\n",
-                    "vendor/sdk/api.zen": "VALUE, FLAG = sdk.detail\nanswer* = () i32 { VALUE }\nVERSION*: i32 = 1\n",
+                    "main.zen": "{ answer, VERSION } = sdk\nmain = () i32 { (answer() == 42).match({true => 0, false => 1}) }\n",
+                    "vendor/sdk/api.zen": "{ VALUE, FLAG } = sdk.detail\nanswer* = () i32 { VALUE }\nVERSION*: i32 = 1\n",
                     child_path: "VALUE*: i32 = 42\nFLAG*: bool = true\n",
                 }, 'sdk = b.lib("sdk", {src: Path("vendor/sdk/api.zen"), libs: [], paths: []}).try();\n'
                    'b.lib("unused", {src: Path("missing/not-present.zen"), libs: [], paths: []}).try();\n'
@@ -151,7 +151,7 @@ main = () i32 { (C.getpid() > 0).match({true => 0, false => 1}) }
 
     def test_unselected_library_is_not_importable(self):
         _, result = self.project_fixture({
-            "main.zen": "answer, VERSION = sdk\nmain = () i32 { answer() }\n",
+            "main.zen": "{ answer, VERSION } = sdk\nmain = () i32 { answer() }\n",
             "vendor/sdk/api.zen": "answer* = () i32 { 0 }\nVERSION*: i32 = 1\n",
         }, 'b.lib("sdk", {src: Path("vendor/sdk/api.zen"), libs: [], paths: []}).try();\n'
            'b.exe("app", {src: Path("main.zen"), deps: [], out: Ok(Path("app"))}).try();')

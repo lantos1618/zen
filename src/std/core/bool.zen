@@ -3,7 +3,7 @@
 //
 //   (n > 0).then(() { n * 2 }).ok_or(Error.NotPositive).try();
 //
-Eq = std.core.eq
+{ Eq } = std.core.eq
 
 then* = <T>(b: bool, f: () T) Res<T> {
     b.match({

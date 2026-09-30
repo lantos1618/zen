@@ -1,6 +1,6 @@
 // `pick` here is one's, even though two exports a `pick` for the same
 // receiver type and is loaded too: an import binds locally
-Tag = tag.tag
-pick = one.one
+{ Tag } = tag.tag
+{ pick } = one.one
 
 via_one* = (t: Tag, x: i32) bool { pick(t, x) && t.pick(x) }

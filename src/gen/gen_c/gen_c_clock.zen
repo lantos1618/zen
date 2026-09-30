@@ -1,16 +1,16 @@
 // C floor and lowering for the Clock capability. Clock reads return Duration;
 // failures are platform failures and are not exposed as Zen error ordinals.
 
-Call = std.ast
-AllocError = std.mem
-str, String = std.text
-TyId = sema.sema_ty
-Ctx = sema.sema_check
-Emit = gen.gen_emit
-sym_member = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
-ctype, request_type = gen.gen_c.gen_c_type
-comment = gen.gen_c.gen_c_runtime
+{ Call } = std.ast
+{ AllocError } = std.mem
+{ str, String } = std.text
+{ TyId } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ Emit } = gen.gen_emit
+{ sym_member } = gen.gen_name
+{ CBackend } = gen.gen_c.gen_c_state
+{ ctype, request_type } = gen.gen_c.gen_c_type
+{ comment } = gen.gen_c.gen_c_runtime
 
 // Emit only when used. since_start uses CLOCK_MONOTONIC; unix uses
 // CLOCK_REALTIME. Both return nanoseconds in u64 arithmetic.

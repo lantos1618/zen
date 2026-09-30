@@ -7,10 +7,10 @@
 // untouched. One character more and the rule fires — the two break
 // tests are that character, several times over.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-scan, Source = std.lex.lex
-render = fmt.fmt
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ scan, Source } = std.lex.lex
+{ render } = fmt.fmt
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

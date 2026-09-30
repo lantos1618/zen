@@ -236,11 +236,11 @@ class ParallelRunnerTests(unittest.TestCase):
         sources = self.root / "compiler-src"
         files = {
             "std/core/core.zen": "Core = {}\n",
-            "std/parse/parse.zen": "Lex = std.lex\n",
+            "std/parse/parse.zen": "{ Lex } = std.lex\n",
             "std/lex/lex.zen": "Lex = {}\n",
             "std/ast/ast.zen": "Ast = {}\n",
-            "api/api.zen": "Worker = worker\nParse = std.parse\n",
-            "worker/worker.zen": "Core = std.core\n",
+            "api/api.zen": "Worker = worker\n{ Parse } = std.parse\n",
+            "worker/worker.zen": "{ Core } = std.core\n",
             "shadow/shadow.zen": "Wrong = {}\n",
         }
         for name, content in files.items():
@@ -291,7 +291,7 @@ class ParallelRunnerTests(unittest.TestCase):
         (staged / "std/runner_probe.zen").write_text(
             'value* = () str { "staged-library" }\n')
         source = staged / "main.zen"
-        source.write_text('value = std.runner_probe\n'
+        source.write_text('{ value } = std.runner_probe\n'
                           'main = (env: Env) Res<i32, AllocError> { '
                           'println("{}", value()); Ok(0) }\n')
         compiler = runner.REPO_ROOT / "zen"

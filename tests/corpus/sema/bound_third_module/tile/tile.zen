@@ -1,7 +1,7 @@
 // the type, and its impl of a bound declared in a DIFFERENT module.
 // importing Tile pulls its world along, impls included.
 
-Boxy = boxy.boxy
+{ Boxy } = boxy.boxy
 
 Tile* = {
     side: i32,

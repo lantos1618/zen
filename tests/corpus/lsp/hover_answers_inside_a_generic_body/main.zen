@@ -13,11 +13,11 @@
 // positions that answer `null` on purpose — a declaration site has no
 // `TypeId`. `T` USED as a type, one row down, hovers fine.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text = std.json
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text } = std.json
 
 // The program hovered over: one generic function, never called. Every
 // answered row below is a memo the declaration-time walk filled.

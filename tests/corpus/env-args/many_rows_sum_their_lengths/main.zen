@@ -13,7 +13,7 @@
 // byte mix-up moves the sum), walked twice — forward for the sum, then
 // by index for each length on its own line.
 
-count_codepoints, Utf8Error = std.text
+{ count_codepoints, Utf8Error } = std.text
 
 main = (env: Env) Res<i32, AllocError | Utf8Error> {
     a    ::= env.mem.alloc();

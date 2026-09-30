@@ -3,8 +3,8 @@
 // the shared ArenaState behind the handle. Individual frees are intentionally
 // no-ops, and abandoned reallocations remain live until arena drop.
 
-Alloc, AllocError = std.mem.mem_alloc
-Ptr, null_ptr = std.mem.mem_ptr
+{ Alloc, AllocError } = std.mem.mem_alloc
+{ Ptr, null_ptr } = std.mem.mem_ptr
 
 PAGE_BYTES: usize = 65536
 

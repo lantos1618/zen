@@ -3,17 +3,17 @@
 // value-carrying break, and next. The harness runs this inspector rather than
 // the program it emits, so assertions are properties of the generated C.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec = std.collections
-Source, scan = std.lex
-Parser = std.parse.parser
-module = std.parse.parse_decl
-Ast = std.ast.ast_arena
-Checker = sema.sema_check
-check_all = sema.sema_decl
-Emit = gen.gen_emit
-CBackend, emit_program = gen.gen_c
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Source, scan } = std.lex
+{ Parser } = std.parse.parser
+{ module } = std.parse.parse_decl
+{ Ast } = std.ast.ast_arena
+{ Checker } = sema.sema_check
+{ check_all } = sema.sema_decl
+{ Emit } = gen.gen_emit
+{ CBackend, emit_program } = gen.gen_c
 
 // Four traversal shapes, each written so a wrong lowering
 // shows in the C: a non-zero-based range, a condition whose variable

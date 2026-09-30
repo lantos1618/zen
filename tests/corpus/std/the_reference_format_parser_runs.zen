@@ -1,7 +1,7 @@
 // The shared format grammar preserves literal runs, hole roles, and malformed
 // named-hole boundaries. These inputs are text arguments, not format strings.
 
-FmtStep, fmt_next = std.text
+{ FmtStep, fmt_next } = std.text
 
 Error = AllocError | IoError
 

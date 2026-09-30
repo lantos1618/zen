@@ -1,14 +1,14 @@
 // Render sema-validated numeric operations. Widening preserves every value;
 // checked conversion evaluates its operand once and returns None on overflow.
-ExprId = std.ast
-AllocError = std.mem
-String, str = std.text
-NumericConversion, NarrowTarget, IntegerBitOperation = sema.sema_numeric
-Ctx = sema.sema_check
-CBackend = gen.gen_c.gen_c_state
-expr = gen.gen_c.gen_c_expr
-c_prim, request_type = gen.gen_c.gen_c_type
-temp, write_assign_none, write_assign_ok = gen.gen_c.gen_c_flow
+{ ExprId } = std.ast
+{ AllocError } = std.mem
+{ String, str } = std.text
+{ NumericConversion, NarrowTarget, IntegerBitOperation } = sema.sema_numeric
+{ Ctx } = sema.sema_check
+{ CBackend } = gen.gen_c.gen_c_state
+{ expr } = gen.gen_c.gen_c_expr
+{ c_prim, request_type } = gen.gen_c.gen_c_type
+{ temp, write_assign_none, write_assign_ok } = gen.gen_c.gen_c_flow
 
 lower_numeric* = (
     be        :: CBackend,

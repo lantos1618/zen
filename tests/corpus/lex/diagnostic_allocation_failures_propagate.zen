@@ -1,4 +1,4 @@
-scan, Source = std.lex
+{ scan, Source } = std.lex
 
 FailAt = {
     base: Alloc,

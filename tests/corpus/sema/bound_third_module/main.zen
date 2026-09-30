@@ -2,8 +2,8 @@
 // and neither is declared here. TESTING.md, Sema: "a bound satisfied by
 // an impl in another module".
 
-Boxy = boxy.boxy
-Tile = tile.tile
+{ Boxy } = boxy.boxy
+{ Tile } = tile.tile
 
 scale = <T: Boxy>(shape: T, k: i32) i32 { shape.area() * k }
 

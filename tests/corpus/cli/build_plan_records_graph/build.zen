@@ -1,4 +1,4 @@
-Builder, BuildError, Dep = std.build
+{ Builder, BuildError, Dep } = std.build
 
 build = (b :: Builder) Res<(), BuildError> {
     native  = b.c_import("sys.demo", {

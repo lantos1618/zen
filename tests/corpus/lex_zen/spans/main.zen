@@ -6,9 +6,9 @@
 // so `end.offset - start.offset` is the length and the text between them is
 // exactly the token.
 
-scan, Source, kind_name = std.lex.lex
-Alloc = std.mem
-str = std.text
+{ scan, Source, kind_name } = std.lex.lex
+{ Alloc } = std.mem
+{ str } = std.text
 
 dump = (env: Env, alloc: Alloc, label: str, text: str) Res<(), AllocError> {
     src = Source(file: "in.zen", text: text);

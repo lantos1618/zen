@@ -1,8 +1,8 @@
 // DNS policy over the same raw POSIX address lookup used by Socket.
 
-Alloc = std.mem
-Res = std.core
-ResolvedAddr, SocketFault, resolve_addr = std.net.socket
+{ Alloc } = std.mem
+{ Res } = std.core
+{ ResolvedAddr, SocketFault, resolve_addr } = std.net.socket
 
 DnsError* = NotFound | Failed
 

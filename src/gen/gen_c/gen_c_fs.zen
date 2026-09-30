@@ -2,24 +2,24 @@
 // floor supplies NUL termination. Read and cwd allocate through their `Alloc`
 // bound. Floor error ordinals are converted back to variants by name here.
 
-ExprId = std.ast
-Call, Access = std.ast
-AllocError = std.mem
-str, String = std.text
-TyId = sema.sema_ty
-Ctx = sema.sema_check
-sym_member, sym_variant, sym_gen, RES_PATH = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
-unsupported = gen.gen_c.gen_c_report
-ctype, request_type, field_of = gen.gen_c.gen_c_type
-declare_temp, init_temp, payload_type = gen.gen_c.gen_c_flow
-write_assign_ok, write_assign_ok_unit, write_assign_err = gen.gen_c.gen_c_flow
-close_else, close_brace, open_rc_test = gen.gen_c.gen_c_flow
-Slot = gen.gen_c.gen_c_fat
-slot_call = gen.gen_c.gen_c_bound
-address_of = gen.gen_c.gen_c_fat
-expr = gen.gen_c.gen_c_expr
-arg_text, str_arg = gen.gen_c.gen_c_arg
+{ ExprId } = std.ast
+{ Call, Access } = std.ast
+{ AllocError } = std.mem
+{ str, String } = std.text
+{ TyId } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ sym_member, sym_variant, sym_gen, RES_PATH } = gen.gen_name
+{ CBackend } = gen.gen_c.gen_c_state
+{ unsupported } = gen.gen_c.gen_c_report
+{ ctype, request_type, field_of } = gen.gen_c.gen_c_type
+{ declare_temp, init_temp, payload_type } = gen.gen_c.gen_c_flow
+{ write_assign_ok, write_assign_ok_unit, write_assign_err } = gen.gen_c.gen_c_flow
+{ close_else, close_brace, open_rc_test } = gen.gen_c.gen_c_flow
+{ Slot } = gen.gen_c.gen_c_fat
+{ slot_call } = gen.gen_c.gen_c_bound
+{ address_of } = gen.gen_c.gen_c_fat
+{ expr } = gen.gen_c.gen_c_expr
+{ arg_text, str_arg } = gen.gen_c.gen_c_arg
 
 // One filesystem result being assembled. The return type and the two C
 // temporaries stay fixed while its ordinal chain is written.

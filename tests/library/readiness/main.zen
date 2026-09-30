@@ -1,4 +1,4 @@
-Readiness, ReadinessError, WaitResult, Interest = std.net.readiness
+{ Readiness, ReadinessError, WaitResult, Interest } = std.net.readiness
 Native = c.bind("probe.h", {
     fixture_start = () i32
     fixture_fd = (index: i32) i32

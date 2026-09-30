@@ -20,16 +20,16 @@
 // full of C would go red on every unrelated spelling change and would
 // still not say which of the four collapsed.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec = std.collections
-Source, scan = std.lex
-Parser = std.parse.parser
-module = std.parse.parse_decl
-Ast = std.ast.ast_arena
-Checker = sema.sema_check
-Emit = gen.gen_emit
-CBackend, emit_program = gen.gen_c
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Source, scan } = std.lex
+{ Parser } = std.parse.parser
+{ module } = std.parse.parse_decl
+{ Ast } = std.ast.ast_arena
+{ Checker } = sema.sema_check
+{ Emit } = gen.gen_emit
+{ CBackend, emit_program } = gen.gen_c
 
 PROGRAM : str = "Box<T> = { held: T\n\n    get = (self: @Self) T { self.held }\n}\nfirst = <T>(a: T, b: T) T { a }\nmain = (env: i32) Res<i32> { bi = Box<i32>(held: 7); bu = Box<u8>(held: 3); n = first<i32>(bi.get(), 100); m = first<u8>(bu.get(), 9); Ok(n) }\n"
 

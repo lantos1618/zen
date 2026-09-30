@@ -1,8 +1,8 @@
 // Parse representative stdlib shapes through std.parse itself: comments in
 // lookahead, unit-returning signatures, generic members, and `<` expressions.
 
-scan, Source = std.lex.lex
-Parser, module = std.parse
+{ scan, Source } = std.lex.lex
+{ Parser, module } = std.parse
 
 SOURCE: str = "Handle = {\n    next* = (self: @Self) ()\n    stop* = (self: @Self) ()\n}\nKind =\n      Ident            // a comment between variants\n    | Int(u64)         // and another, after a payload\n    | Eof\nPtr*<T> = {\n    write* = (self: @Self, i: usize, v: T) ()\n    free*  ::= <U>(self: @Self) ()\n}\nat = (f: str, i: usize) bool {\n    (i + 1) < f.len;\n}\n"
 

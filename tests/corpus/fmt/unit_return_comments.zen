@@ -1,5 +1,5 @@
-render = fmt.fmt
-scan, Source = std.lex
+{ render } = fmt.fmt
+{ scan, Source } = std.lex
 SOURCE: str = "// f = () () {} remains comment text\nfirst = () /* before */ () /* after */ {}\ninside = () (/* unit */) {}\nlast = () () { /* () */ } // ()\n"
 WANTED: str = "// f = () () {} remains comment text\nfirst = () /* before */ /* after */ {}\ninside = () /* unit */ {}\nlast = () { /* () */ } // ()\n"
 main = (env: Env) Res<(), AllocError> {

@@ -2,21 +2,21 @@
 // holes are type-directed; non-primitive values write through `Display`.
 // Output helpers do not allocate in the generated program.
 
-ExprId, Literal = std.ast
-Call, Arg, Span, Pos = std.ast
-AllocError = std.mem
-literal_byte_len = std.lex
-str, String = std.text
-Range = std.core
-FmtAt, fmt_at, ends_run, arguments_taken = std.text.text_fmt
-TyId, is_float = sema.sema_ty
-Ctx = sema.sema_check
-GenFault = gen.gen_diag
-sym_variant, RES_PATH = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
-is_c_integer, is_signed, ctype = gen.gen_c.gen_c_type
-expr, ty_of, named_hole, write_c_literal = gen.gen_c.gen_c_expr
-console_display, stderr_console = gen.gen_c.gen_c_display
+{ ExprId, Literal } = std.ast
+{ Call, Arg, Span, Pos } = std.ast
+{ AllocError } = std.mem
+{ literal_byte_len } = std.lex
+{ str, String } = std.text
+{ Range } = std.core
+{ FmtAt, fmt_at, ends_run, arguments_taken } = std.text.text_fmt
+{ TyId, is_float } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ GenFault } = gen.gen_diag
+{ sym_variant, RES_PATH } = gen.gen_name
+{ CBackend } = gen.gen_c.gen_c_state
+{ is_c_integer, is_signed, ctype } = gen.gen_c.gen_c_type
+{ expr, ty_of, named_hole, write_c_literal } = gen.gen_c.gen_c_expr
+{ console_display, stderr_console } = gen.gen_c.gen_c_display
 
 // `print` omits the trailing newline.
 is_print* = (name: str) bool { name.eq("println") || name.eq("print") }

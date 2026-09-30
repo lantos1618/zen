@@ -27,8 +27,8 @@
 // If the two share a symbol, one definition wins and this prints it
 // twice.
 
-sub_run, Sub_Box = pkg.pkg
-run, Box         = pkg.pkg_sub
+{ sub_run, Sub_Box } = pkg.pkg
+{ run, Box }         = pkg.pkg_sub
 
 main = (env: Env) Res<i32, AllocError> {
     println("fns {} {}", sub_run(), run());

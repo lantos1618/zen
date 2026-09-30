@@ -1,8 +1,8 @@
 // Token kinds and half-open source positions. Offsets slice source bytes;
 // one-based line and byte-column values are used in diagnostics.
 
-str = std.text
-fmt = std.text.text_fmt
+{ str } = std.text
+{ fmt } = std.text.text_fmt
 
 // A byte position. `line` and `col` are one-based; `col` counts bytes.
 Pos* = {

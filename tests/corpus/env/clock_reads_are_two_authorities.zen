@@ -12,7 +12,7 @@
 // reads WORK and are ordered the way their authorities are. HARNESS_
 // EPOCH below is rewritten by the run to the epoch second just before
 // it executed, so "near" has a number to be near.
-Res = std.core
+{ Res } = std.core
 
 HARNESS_EPOCH* : u64 = 0
 

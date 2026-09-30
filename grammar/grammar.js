@@ -47,7 +47,7 @@
 //       variants with `|`   enum
 //       `(..) T { .. }`     function, with a body
 //       `(..) T`            function, signature only
-//       `a.b.c`             import (dotted path)
+//       `a.b.c`             import of the item `c` from module `a.b`
 //       `Name` / `Name<T>`  alias
 //       anything else       a constant (module level) / a binding (in a body)
 //
@@ -244,7 +244,8 @@ module.exports = grammar({
 
     // Module level is DECLARATIONS ONLY, so nothing here ends in `;` — R2.
     // `A.impl(B, {..})` is the one call-shaped thing that declares (D16).
-    _module_item: ($) => choice($.declaration, $.impl_declaration),
+    _module_item: ($) =>
+      choice($.declaration, $.impl_declaration, $.import_declaration),
 
     // ------------------------------------------------------------------
     // names
@@ -274,19 +275,17 @@ module.exports = grammar({
     //   Shape = Circle(Circle) | Unit        enum
     //   AllocError* = | OutOfMemory          enum, one variant
     //   Alias = Shape                        alias
-    //   Res*, Ok*, None* = std.core.result   import, re-exported
+    //   str = std.text.str                   import of one item
     //   area* = (c: Circle) f64 { .. }       function, with a body
     //   then* = <T>(b: bool, f: () T) Res<T> function, signature only
     //   json_pkg = Package(url: "..", ..)    module constant
     //
-    // The name list exists for imports: "Re-export is an import whose
-    // bindings are starred. No `export`, no `from`" (DESIGN.md:328).
     // No `;` — a declaration does not take one (R2).
     // ------------------------------------------------------------------
 
     declaration: ($) =>
       seq(
-        comma_sep1(field('name', $.declaration_name)),
+        field('name', $.declaration_name),
         optional(seq(':', field('type', $._type))),
         field('operator', choice('=', '::=')),
         field('value', $._declaration_value),
@@ -311,6 +310,27 @@ module.exports = grammar({
         optional(seq(field('symbol', $.string_literal), ',')),
         field('body', $.struct_body), optional(','), ')',
       )),
+
+    // `{ Res*, Ok*, None* } = std.core.result` destructures names out of a
+    // module; a starred name is re-exported. Only a module-level item begins
+    // with `{`, so the braces cannot be a block.
+    import_declaration: ($) =>
+      seq(
+        '{',
+        comma_sep1(field('name', $.import_name)),
+        optional(','),
+        '}',
+        '=',
+        field('module', $.module_path),
+      ),
+
+    import_name: ($) =>
+      seq(
+        field('name', $.identifier),
+        optional(field('exported', $.export_marker)),
+      ),
+
+    module_path: ($) => seq($.identifier, repeat(seq('.', $.identifier))),
 
     // `Circle.impl(Rect, { width: .., height: .. })` — D16. The shape is
     // fixed (a target, a trait, and a record) because that is the only shape

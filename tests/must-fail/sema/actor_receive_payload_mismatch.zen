@@ -1,4 +1,4 @@
-Actor, Context, Receive, Ref = std.actor
+{ Actor, Context, Receive, Ref } = std.actor
 
 Chunk = { n: i32 }
 Wrong = {}

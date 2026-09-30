@@ -1,20 +1,20 @@
-Expr, ExprId, Span, Literal, nowhere = std.ast
-Pattern, PatName, Destructure, PatternId = std.ast
-Match, QualifiedName, Lambda = std.ast
-Alloc, AllocError = std.mem
-Vec = std.collections
-str = std.text
-Range, is_upper = std.core
-TyId = sema.sema_ty
-member_of = sema.sema_union
-SemaFault, NameFault = sema.sema_diag
-Checker, Ctx, UNRESOLVED = sema.sema_check
-Case, cases_of, case_payload, case_arity = sema.sema_case
-is_case = sema.sema_case
-type_of, lambda_type = sema.sema_type
-join = sema.sema_join
-const_def = sema.sema_const
-push_tparams, module_name = sema.sema_inst
+{ Expr, ExprId, Span, Literal, nowhere } = std.ast
+{ Pattern, PatName, Destructure, PatternId } = std.ast
+{ Match, QualifiedName, Lambda } = std.ast
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Range, is_upper } = std.core
+{ TyId } = sema.sema_ty
+{ member_of } = sema.sema_union
+{ SemaFault, NameFault } = sema.sema_diag
+{ Checker, Ctx, UNRESOLVED } = sema.sema_check
+{ Case, cases_of, case_payload, case_arity } = sema.sema_case
+{ is_case } = sema.sema_case
+{ type_of, lambda_type } = sema.sema_type
+{ join } = sema.sema_join
+{ const_def } = sema.sema_const
+{ push_tparams, module_name } = sema.sema_inst
 
 PatKind* = WildPat | CtorPat | LitPat
 

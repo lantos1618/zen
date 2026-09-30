@@ -1,4 +1,4 @@
-Counter = counter.counter
+{ Counter } = counter.counter
 
 main = (env: Env) Res<i32, IoError> {
     c ::= Counter(total: 0);

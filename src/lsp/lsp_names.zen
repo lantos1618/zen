@@ -1,17 +1,17 @@
 // Converts semantic-checker memos into token classifications without running
 // another name-resolution pass.
 
-str = std.text
-Alloc, AllocError = std.mem
-Vec, sort = std.collections
-Range = std.core
-Ast, Module, Decl, Block = std.ast
-Struct, Enum, Alias, Impl, Member, Function, Named, Call, Match, Try = std.ast
-Span, ExprId, TypeId, BlockId = std.ast
-Checker = sema.sema_check
-decl_at = sema.sema_def
-Classed, Colour = lsp.lsp_colour
-written = std.json
+{ str } = std.text
+{ Alloc, AllocError } = std.mem
+{ Vec, sort } = std.collections
+{ Range } = std.core
+{ Ast, Module, Decl, Block } = std.ast
+{ Struct, Enum, Alias, Impl, Member, Function, Named, Call, Match, Try } = std.ast
+{ Span, ExprId, TypeId, BlockId } = std.ast
+{ Checker } = sema.sema_check
+{ decl_at } = sema.sema_def
+{ Classed, Colour } = lsp.lsp_colour
+{ written } = std.json
 
 classify* = (a: Alloc, c: Checker, file: str)
            Res<Vec<Classed>, AllocError> {

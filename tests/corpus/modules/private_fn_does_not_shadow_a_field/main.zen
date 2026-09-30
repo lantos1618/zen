@@ -13,7 +13,7 @@
 // `Fn` is deliberately NOT imported: `make`'s return type is what says what
 // `f` is, and that is a type question, not a scope one.
 
-make = pm.pm
+{ make } = pm.pm
 
 main = (env: Env) Res<i32, AllocError> {
     f = make(3);

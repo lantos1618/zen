@@ -1,4 +1,4 @@
-Pool, PoolStats = std.mem
+{ Pool, PoolStats } = std.mem
 Native = c.bind("stdlib.h", { abort* = () () })
 Reader = { received :: bool = false }
 Reader.impl(Actor, {

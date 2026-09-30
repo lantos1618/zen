@@ -1,9 +1,9 @@
 // Byte cursor with synchronized offset, line, and column. LF ends a line; CR
 // does not. Lines and byte columns are one-based.
 
-Pos = std.lex.lex_token
-BOM_FIRST, BOM_SECOND, BOM_THIRD = std.text.text_utf8
-str = std.text
+{ Pos } = std.lex.lex_token
+{ BOM_FIRST, BOM_SECOND, BOM_THIRD } = std.text.text_utf8
+{ str } = std.text
 
 Cursor* = {
     src: str,

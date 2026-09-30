@@ -1,11 +1,11 @@
 // Declarative terminal command model: one specification drives parsing,
 // validation, diagnostics, and help.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec = std.collections
-Range = std.core
-OPTIONS_END, is_flag, arg_at = std.cli.cli_scan
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Range } = std.core
+{ OPTIONS_END, is_flag, arg_at } = std.cli.cli_scan
 
 // The terminal-facing layer. `Options` above remains the small zero-policy
 // scanner used by older callers; a Command is the declarative surface for an

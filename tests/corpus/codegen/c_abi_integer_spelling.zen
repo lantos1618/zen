@@ -2,7 +2,7 @@
 // target-dependent widths are Zen's fixed-width arithmetic types.
 
 abs = (n: c_int) c_int
-to_c_int, to_i32 = std.core.num
+{ to_c_int, to_i32 } = std.core.num
 
 abi_signature = (
     sc    : c_schar,

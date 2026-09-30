@@ -1,12 +1,12 @@
-Ast = std.ast.ast_arena
-Pos, Span = std.ast.ast_span
-AllocError = std.mem
-String = std.text
-Checker = sema.sema_check
-CBackend, LocalSlot = gen.gen_c
-write_name_slot = gen.gen_c.gen_c_expr
-write_scope_slot = gen.gen_c.gen_c_scope
-write_param_slot = gen.gen_c.gen_c_decl
+{ Ast } = std.ast.ast_arena
+{ Pos, Span } = std.ast.ast_span
+{ AllocError } = std.mem
+{ String } = std.text
+{ Checker } = sema.sema_check
+{ CBackend, LocalSlot } = gen.gen_c
+{ write_name_slot } = gen.gen_c.gen_c_expr
+{ write_scope_slot } = gen.gen_c.gen_c_scope
+{ write_param_slot } = gen.gen_c.gen_c_decl
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

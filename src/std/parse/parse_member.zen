@@ -4,16 +4,16 @@
 // write member types; impl and record bodies supply values. The binder and
 // whether the body is typed determine field, constant, or method syntax.
 
-AllocError = std.mem
-Span, Ident = std.ast.ast_span
-TypeId, ExprId, BlockId = std.ast.ast_id
-Member, MemberKind, Field, Const, Param, TParam, Function, Form = std.ast.ast_node
-TokenKind = std.parse.parse_token
-Parser = std.parse.parser
-expr = std.parse.parse_expr
-type, written_type = std.parse.parse_type
-ret_ahead = std.parse.parse_lookahead
-body_block = std.parse.parse_stmt
+{ AllocError } = std.mem
+{ Span, Ident } = std.ast.ast_span
+{ TypeId, ExprId, BlockId } = std.ast.ast_id
+{ Member, MemberKind, Field, Const, Param, TParam, Function, Form } = std.ast.ast_node
+{ TokenKind } = std.parse.parse_token
+{ Parser } = std.parse.parser
+{ expr } = std.parse.parse_expr
+{ type, written_type } = std.parse.parse_type
+{ ret_ahead, braced_import_ahead } = std.parse.parse_lookahead
+{ body_block } = std.parse.parse_stmt
 
 // Commas between body members are optional.
 struct_members* = (p :: Parser, out :: Vec<Member>) Res<Span, AllocError> {
@@ -249,7 +249,7 @@ fn_value* = (
         true  => p.written_type(),
         false => Ok(None),
     }).try();
-    body = p.at_kind(TokenKind.BraceOpen).match({
+    body = (p.at_kind(TokenKind.BraceOpen) && !p.braced_import_ahead()).match({
         true  => p.fn_body(),
         false => Ok(None),
     }).try();

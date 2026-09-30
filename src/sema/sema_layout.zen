@@ -1,14 +1,14 @@
-Decl, Struct, Member, Field = std.ast
-Ident, TypeId = std.ast
-Alloc, AllocError = std.mem
-Vec = std.collections
-Range = std.core
-DeclId = sema.sema_id
-TyId = sema.sema_ty
-Def, ModuleTable, decl_at = sema.sema_def
-SemaFault, NameFault = sema.sema_diag
-Checker, Ctx = sema.sema_check
-type_from_ast = sema.sema_denote
+{ Decl, Struct, Member, Field } = std.ast
+{ Ident, TypeId } = std.ast
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Range } = std.core
+{ DeclId } = sema.sema_id
+{ TyId } = sema.sema_ty
+{ Def, ModuleTable, decl_at } = sema.sema_def
+{ SemaFault, NameFault } = sema.sema_diag
+{ Checker, Ctx } = sema.sema_check
+{ type_from_ast } = sema.sema_denote
 
 Frame = {
     id: DeclId,

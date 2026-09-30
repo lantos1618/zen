@@ -1,11 +1,11 @@
-Decl, Struct, Enum, TParam, Span = std.ast
-Alloc, AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Range = std.core
-TyId, TyNamed, TyRes, TyFn, TyArray, ResForm = sema.sema_ty
-decl_at = sema.sema_def
-Checker = sema.sema_check
+{ Decl, Struct, Enum, TParam, Span } = std.ast
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Range } = std.core
+{ TyId, TyNamed, TyRes, TyFn, TyArray, ResForm } = sema.sema_ty
+{ decl_at } = sema.sema_def
+{ Checker } = sema.sema_check
 
 Inst* = {
     vars :: Vec<TyId>,

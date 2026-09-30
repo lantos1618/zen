@@ -1,20 +1,20 @@
 // Cached workspace check shared by diagnostics and semantic queries.
 // Values retained in `cur` are owned by `arena` and die on rebuild.
 
-str, String, dup = std.text
-Vec, Map = std.collections
-Alloc, AllocError, Arena = std.mem
-Range = std.core
-Span = std.ast.ast_span
-Note = std.parse.parse_diag
-Checker = sema.sema_check
-message, write_detail = sema.sema_diag
-Build, check_workspace = zen.zen_build
-Classed = lsp.lsp_colour
-classify = lsp.lsp_names
-uri_at, path_of = lsp.lsp_uri
-written = std.json
-relative_to, anchored_path = zen.zen_path
+{ str, String, dup } = std.text
+{ Vec, Map } = std.collections
+{ Alloc, AllocError, Arena } = std.mem
+{ Range } = std.core
+{ Span } = std.ast.ast_span
+{ Note } = std.parse.parse_diag
+{ Checker } = sema.sema_check
+{ message, write_detail } = sema.sema_diag
+{ Build, check_workspace } = zen.zen_build
+{ Classed } = lsp.lsp_colour
+{ classify } = lsp.lsp_names
+{ uri_at, path_of } = lsp.lsp_uri
+{ written } = std.json
+{ relative_to, anchored_path } = zen.zen_path
 
 Spot* = {
     uri*: str,

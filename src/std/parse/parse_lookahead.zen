@@ -4,8 +4,8 @@
 // token. None advances the parser or records diagnostics. Trivia tokens
 // stay in the stream, so scans step with `live_at`.
 
-TokenKind, is_trivia = std.parse.parse_token
-Parser = std.parse.parser
+{ TokenKind, is_trivia } = std.parse.parse_token
+{ Parser } = std.parse.parser
 
 ValueShape* = StructValue
     | EnumValue
@@ -94,6 +94,28 @@ group_end_at* = (p :: Parser, from: usize) usize {
             out
         },
     });
+}
+
+// `{ a, b* } =` begins a braced import: only names, stars and commas sit
+// between the braces, and `=` follows. A function body is never followed by
+// `=`, so a signature without a body may precede an import directly.
+braced_import_ahead* = (p :: Parser) bool {
+    p.at_kind(TokenKind.BraceOpen).match({
+        false => false,
+        true  => {
+            close      = p.group_end_at(p.at);
+            names_only = Range(p.at + 1, close - 1).find((k) {
+                kind = p.token_kind_at(k);
+                !kind.is_trivia() && kind.is_in([
+                    TokenKind.Ident,
+                    TokenKind.Star,
+                    TokenKind.Comma,
+                ]) == false
+            }).match({ Ok(_) => false, None => true });
+            names_only && close > p.at + 2
+                && p.token_kind_at(p.live_at(close)) == TokenKind.Eq
+        },
+    })
 }
 
 // Index after a balanced angle group. Return `from` when a token invalidates

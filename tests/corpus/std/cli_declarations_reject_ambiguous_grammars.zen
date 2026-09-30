@@ -1,7 +1,7 @@
-Alloc, AllocError = std.mem
-Vec = std.collections
-str = std.text
-Command, command, DiagnosticKind, ValueType = std.cli
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Command, command, DiagnosticKind, ValueType } = std.cli
 
 Id = A | B
 

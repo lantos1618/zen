@@ -9,7 +9,7 @@
 // The gate is still a gate. `labelled` has the same arity and declares a
 // `str` first, so an `Arena` must not reach it, and a `str` receiver must.
 
-Box, boxed, labelled = box.box
+{ Box, boxed, labelled } = box.box
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

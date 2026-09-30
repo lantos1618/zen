@@ -2,15 +2,15 @@
 // reads the file from disk and the diagnostic previously published for the
 // buffer is explicitly cleared.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text = std.json
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text } = std.json
 
 APP_URI*: str = "file://src/app/app.zen"
 SHAPE_URI*: str = "file://src/app/shape.zen"
-APP*: str = "Point = app.shape\n\norigin = () Point { Point(x: 0) }\n"
+APP*: str = "{ Point } = app.shape\n\norigin = () Point { Point(x: 0) }\n"
 BROKEN*: str = "Point* = { x*: Missing }\n"
 
 main = (env: Env) Res<i32, AllocError> {

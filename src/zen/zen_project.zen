@@ -1,16 +1,16 @@
 // Project builds start at build.zen. This driver executes its checked target
 // graph, compiles each selected Zen entry, links it, and optionally runs it.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Path, Range, join_path = std.core
-Map, Vec = std.collections
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Path, Range, join_path } = std.core
+{ Map, Vec } = std.collections
 
-BuildArgs, ProjectArgs, Emission, Target, Os, Arch, Abi, Dep, Codegen = std.build
-Build = zen.zen_build
-entry_of, holds_build_zen = zen.zen_path
-BuildPlan, ExeNode, LibNode, plan = zen.zen_build_plan
-resolve, PackageFault = zen.zen_packages
+{ BuildArgs, ProjectArgs, Emission, Target, Os, Arch, Abi, Dep, Codegen } = std.build
+{ Build } = zen.zen_build
+{ entry_of, holds_build_zen } = zen.zen_path
+{ BuildPlan, ExeNode, LibNode, plan } = zen.zen_build_plan
+{ resolve, PackageFault } = zen.zen_packages
 
 Action* = Build | Run | Test
 

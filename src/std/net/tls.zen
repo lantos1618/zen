@@ -2,13 +2,13 @@
 // lifetime; build.zen supplies the ssl and crypto libraries. Stream is the one
 // shape HTTP clients dial over plain TCP or TLS.
 
-Alloc, AllocError, Ptr, null_ptr = std.mem
-str, c_text = std.text
-Res = std.core
-Drop = std.core
-Vec = std.collections
-Socket = std.net.socket
-TcpStream, TcpError = std.net.tcp
+{ Alloc, AllocError, Ptr, null_ptr } = std.mem
+{ str, c_text } = std.text
+{ Res } = std.core
+{ Drop } = std.core
+{ Vec } = std.collections
+{ Socket } = std.net.socket
+{ TcpStream, TcpError } = std.net.tcp
 
 SSL_VERIFY_PEER: i32 = 1
 SSL_CTRL_SET_TLSEXT_HOSTNAME: i32 = 55

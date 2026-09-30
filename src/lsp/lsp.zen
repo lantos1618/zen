@@ -2,6 +2,6 @@
 // `serve_stdio` runs it over stdin/stdout. Everything else is reached
 // through its own module.
 
-Server*, serve*                     = lsp.lsp_serve
-serve_stdio*                        = lsp.lsp_stdio
-frame_at*, short_by*, write_frame*  = lsp.lsp_frame
+{ Server*, serve* }                     = lsp.lsp_serve
+{ serve_stdio* }                        = lsp.lsp_stdio
+{ frame_at*, short_by*, write_frame* }  = lsp.lsp_frame

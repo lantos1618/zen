@@ -2,7 +2,7 @@
 // owned buffer. Decimal output has no padding; fixed hexadecimal output is
 // lowercase, left-padded, and writes nothing when its width is zero.
 
-c_text = std.text.text_string
+{ c_text } = std.text.text_string
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

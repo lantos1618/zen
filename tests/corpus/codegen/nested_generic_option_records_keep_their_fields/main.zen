@@ -1,4 +1,4 @@
-str = std.text
+{ str } = std.text
 
 // A local written in a generic method must be substituted at the method's
 // current instantiation. Otherwise both methods below declare one open

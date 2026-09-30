@@ -1,9 +1,9 @@
 // Read-only requests with visible diagnostics must allocate only in the turn.
-Server = lsp.lsp_serve
-Alloc, AllocError, Ptr = std.mem
-str = std.text
-Range = std.core
-to_json = std.json
+{ Server } = lsp.lsp_serve
+{ Alloc, AllocError, Ptr } = std.mem
+{ str } = std.text
+{ Range } = std.core
+{ to_json } = std.json
 
 Request<T> = { jsonrpc: str, id: i32, method: str, params: T }
 Notification<T> = { jsonrpc: str, method: str, params: T }

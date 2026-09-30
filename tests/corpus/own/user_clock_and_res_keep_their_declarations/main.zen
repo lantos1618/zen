@@ -1,4 +1,4 @@
-run = mine.mine
+{ run } = mine.mine
 
 Optional = { value: Res<i32> }
 

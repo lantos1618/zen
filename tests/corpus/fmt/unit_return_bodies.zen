@@ -1,5 +1,5 @@
-render = fmt.fmt
-scan, Source = std.lex
+{ render } = fmt.fmt
+{ scan, Source } = std.lex
 SOURCE: str = "plain = () () {}\ngeneric = <T>(value: T) () {}\nThing = {\n    run = (self: @Self) () {}\n    hook ::= (self: @Self) () {}\n}\nThing.impl(Drop, { drop = (self :: @Self) () {} })\n"
 WANTED: str = "plain = () {}\ngeneric = <T>(value: T) {}\nThing = {\n    run = (self: @Self) {}\n    hook ::= (self: @Self) {}\n}\nThing.impl(Drop, { drop = (self :: @Self) {} })\n"
 main = (env: Env) Res<(), AllocError> {

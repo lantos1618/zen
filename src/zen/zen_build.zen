@@ -6,36 +6,36 @@
 // paths determine the module tree without directory enumeration. Every module
 // is parsed into one shared Ast, making ids unique across the program.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec, Map = std.collections
-Range, Path = std.core
-FsError, fs_message = std.env
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec, Map } = std.collections
+{ Range, Path } = std.core
+{ FsError, fs_message } = std.env
 
-Ast = std.ast.ast_arena
-Module, Alias, Named = std.ast.ast_node
-Pos, Span, QualifiedName = std.ast.ast_span
+{ Ast } = std.ast.ast_arena
+{ Module, Alias, Named } = std.ast.ast_node
+{ Pos, Span, QualifiedName } = std.ast.ast_span
 
-message = std.lex.lex
-Diag, diag = std.parse.parse_diag
+{ message } = std.lex.lex
+{ Diag, diag } = std.parse.parse_diag
 
-scan, Source, Lexed = std.lex.lex
-Parser, module = std.parse.parse
-Checker, check_all = sema.sema
-PRELUDE = sema.sema
-check_module_graph = sema.sema
-Def = sema.sema
-Generation, Layout = gen.gen
+{ scan, Source, Lexed } = std.lex.lex
+{ Parser, module } = std.parse.parse
+{ Checker, check_all } = sema.sema
+{ PRELUDE } = sema.sema
+{ check_module_graph } = sema.sema
+{ Def } = sema.sema
+{ Generation, Layout } = gen.gen
 
-BuildArgs, Emission, Permutation, index = std.build
+{ BuildArgs, Emission, Permutation, index } = std.build
 
-slash_for, under = zen.zen_path
-unit_at, candidate, joined, relative_to = zen.zen_path
-root_for, std_root_for, SourceRoot, anchored_path = zen.zen_path
-ENTRY, entry_of = zen.zen_path
-Unit = zen.zen_path
+{ slash_for, under } = zen.zen_path
+{ unit_at, candidate, joined, relative_to } = zen.zen_path
+{ root_for, std_root_for, SourceRoot, anchored_path } = zen.zen_path
+{ ENTRY, entry_of } = zen.zen_path
+{ Unit } = zen.zen_path
 
-Publisher = zen.zen_write
+{ Publisher } = zen.zen_write
 
 // One build: the phase inputs and the fault tally that becomes the exit code.
 Build* = {

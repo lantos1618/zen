@@ -1,8 +1,8 @@
 // Build files are Zen programs. The mutable Builder records the target graph.
 
-Budget, Builder, BuildError, Function, Package = std.build
-Bencher, Tester = std.test
-seconds = std.core.time
+{ Budget, Builder, BuildError, Function, Package } = std.build
+{ Bencher, Tester } = std.test
+{ seconds } = std.core.time
 
 // Packages are hash-locked values; `zen add json` can add this declaration.
 json_pkg = Package(

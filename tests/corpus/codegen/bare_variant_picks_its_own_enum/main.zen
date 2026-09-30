@@ -2,7 +2,7 @@
 // Two enums share names at different tag indices so choosing the wrong owner
 // changes the matched arm while still producing valid C.
 
-Tag, Echo, One, Two, Three = tags.tags
+{ Tag, Echo, One, Two, Three } = tags.tags
 
 main = (env: Env) Res<i32, IoError> {
     t: Tag  = Two;

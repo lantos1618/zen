@@ -2,27 +2,27 @@
 // the shared sink-door walk to fill it. The walk remains in gen_c_sink;
 // only its WriteError-to-AllocError failure arm belongs here.
 
-ExprId, Function, Call = std.ast
-AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-TyId = sema.sema_ty
-Def, decl_at = sema.sema_def
-Ctx = sema.sema_check
-Inst = sema.sema_inst
-sym_member = gen.gen_name
-GenFault = gen.gen_diag
-CBackend = gen.gen_c.gen_c_state
-unsupported = gen.gen_c.gen_c_report
-expr = gen.gen_c.gen_c_expr
-declare_temp = gen.gen_c.gen_c_flow
-signature_of = gen.gen_c.gen_c_call
-recv_arg = gen.gen_c.gen_c_arg
-write_assign_err = gen.gen_c.gen_c_flow
-is_sink_door, lower_sink_door, bodyless = gen.gen_c.gen_c_sink
-last_is_variadic, call_symbol, lower_pieces_into = gen.gen_c.gen_c_sink
-write_jump_unless_ok, write_goto, write_done = gen.gen_c.gen_c_sink
-type_from_ast = sema.sema_denote
+{ ExprId, Function, Call } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ TyId } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ Ctx } = sema.sema_check
+{ Inst } = sema.sema_inst
+{ sym_member } = gen.gen_name
+{ GenFault } = gen.gen_diag
+{ CBackend } = gen.gen_c.gen_c_state
+{ unsupported } = gen.gen_c.gen_c_report
+{ expr } = gen.gen_c.gen_c_expr
+{ declare_temp } = gen.gen_c.gen_c_flow
+{ signature_of } = gen.gen_c.gen_c_call
+{ recv_arg } = gen.gen_c.gen_c_arg
+{ write_assign_err } = gen.gen_c.gen_c_flow
+{ is_sink_door, lower_sink_door, bodyless } = gen.gen_c.gen_c_sink
+{ last_is_variadic, call_symbol, lower_pieces_into } = gen.gen_c.gen_c_sink
+{ write_jump_unless_ok, write_goto, write_done } = gen.gen_c.gen_c_sink
+{ type_from_ast } = sema.sema_denote
 
 // Values that remain unchanged while one allocating door is lowered.
 // Keeping them together prevents the private lowering chain from

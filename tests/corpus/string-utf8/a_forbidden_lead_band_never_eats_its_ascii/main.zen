@@ -4,8 +4,8 @@
 // ANY of them (or one that reads a fixed 2 bytes instead of failing)
 // swallows the 'A' with it. The counts at the end are the proof:
 // rejected 66 AND ascii 66, both sides of the contract.
-String = std.text.text_string
-Utf8Error, codepoint_at = std.text.text_utf8
+{ String } = std.text.text_string
+{ Utf8Error, codepoint_at } = std.text.text_utf8
 
 probe = (s: str, at: usize) bool {
     codepoint_at(s, at).match({

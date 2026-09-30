@@ -1,4 +1,4 @@
-cos, sin, sqrt, log10, round = std.math
+{ cos, sin, sqrt, log10, round } = std.math
 near = (left: f64, right: f64) bool {
     difference = left - right;
     difference > -0.000000001 && difference < 0.000000001

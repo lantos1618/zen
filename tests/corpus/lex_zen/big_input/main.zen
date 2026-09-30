@@ -11,9 +11,9 @@
 // exercises the run scanner and the slice at the end of it; many small
 // tokens exercise the token Vec across every doubling it has.
 
-scan, Source, kind_name = std.lex.lex
-Alloc, AllocError = std.mem
-str, String = std.text
+{ scan, Source, kind_name } = std.lex.lex
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
 
 MEGABYTE: usize = 1048576
 TEN_MEGABYTES: usize = 10485760

@@ -1,5 +1,5 @@
-c_prim = gen.gen_c
-is_prim, is_integer, c_integer = sema.sema_ty
+{ c_prim } = gen.gen_c
+{ is_prim, is_integer, c_integer } = sema.sema_ty
 
 main = (env: Env) Res<i32, AllocError> {
     println(

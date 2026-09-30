@@ -1,7 +1,7 @@
-Ast = std.ast
-Checker = sema.sema_check
-CBackend = gen.gen_c
-TyId = sema.sema_ty
+{ Ast } = std.ast
+{ Checker } = sema.sema_check
+{ CBackend } = gen.gen_c
+{ TyId } = sema.sema_ty
 
 Refusal = {
     base: Alloc,

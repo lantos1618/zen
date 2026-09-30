@@ -1,4 +1,4 @@
-Tester, TestError = std.test
+{ Tester, TestError } = std.test
 
 Modulo = { value: i32 }
 Modulo.impl(Eq, {

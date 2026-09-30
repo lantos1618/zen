@@ -1,4 +1,4 @@
-decode_literal = std.lex
+{ decode_literal } = std.lex
 
 Refuse = {}
 Refuse.impl(Alloc, {

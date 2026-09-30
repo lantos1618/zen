@@ -1,11 +1,11 @@
 // C rendering of the shared scalar IR. The caller verifies the program before
 // rendering; this experimental path does not define Zen's foreign or aggregate ABI.
-Alloc, AllocError = std.mem
-String, str = std.text
-Vec = std.collections
-Range = std.core
-Span = std.ast
-Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
+{ Alloc, AllocError } = std.mem
+{ String, str } = std.text
+{ Vec } = std.collections
+{ Range } = std.core
+{ Span } = std.ast
+{ Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print } = gen.gen_ir
 
 emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
     writer ::= C(

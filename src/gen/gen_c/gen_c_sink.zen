@@ -5,38 +5,38 @@
 // Primitive writers are resolved in the door's module. Only `add_f64` is a
 // backend intrinsic; integer and boolean spelling remains library-owned.
 
-ExprId, Decl, Function, Param, Call = std.ast
-Literal, TypeId = std.ast
-AllocError = std.mem
-literal_byte_len = std.lex
-Vec = std.collections
-str, String = std.text
-Range = std.core
-TyId, is_float = sema.sema_ty
-Def, decl_at = sema.sema_def
-Ctx = sema.sema_check
-Inst = sema.sema_inst
-param_type, type_from_ast = sema.sema_denote
-satisfies_bound = sema.sema_bound
-sym_fn, sym_gen, sym_variant, RES_PATH = gen.gen_name
-GenFault = gen.gen_diag
-CBackend = gen.gen_c.gen_c_state
-unsupported = gen.gen_c.gen_c_report
-ctype = gen.gen_c.gen_c_type
-is_c_integer, is_signed = gen.gen_c.gen_c_type
-expr, ty_of, named_hole, write_c_literal = gen.gen_c.gen_c_expr
-declare_temp, is_variant, payload_type = gen.gen_c.gen_c_flow
-write_assign_err = gen.gen_c.gen_c_flow
-signature_of = gen.gen_c.gen_c_call
-recv_arg, arg_value, by_ref = gen.gen_c.gen_c_arg
-body_end, cast_of = gen.gen_c.gen_c_print
-FmtAt, ends_run, arguments_taken = std.text.text_fmt
-source_fmt_at = gen.gen_c.gen_c_print
-report_in_format, NOT_A_HOLE = gen.gen_c.gen_c_print
-HOLE_WITHOUT_ARGUMENT, ARGUMENT_WITHOUT_HOLE = gen.gen_c.gen_c_print
-slot_call = gen.gen_c.gen_c_bound
-fat_value = gen.gen_c.gen_c_fat
-sink_display = gen.gen_c.gen_c_display
+{ ExprId, Decl, Function, Param, Call } = std.ast
+{ Literal, TypeId } = std.ast
+{ AllocError } = std.mem
+{ literal_byte_len } = std.lex
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Range } = std.core
+{ TyId, is_float } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ Ctx } = sema.sema_check
+{ Inst } = sema.sema_inst
+{ param_type, type_from_ast } = sema.sema_denote
+{ satisfies_bound } = sema.sema_bound
+{ sym_fn, sym_gen, sym_variant, RES_PATH } = gen.gen_name
+{ GenFault } = gen.gen_diag
+{ CBackend } = gen.gen_c.gen_c_state
+{ unsupported } = gen.gen_c.gen_c_report
+{ ctype } = gen.gen_c.gen_c_type
+{ is_c_integer, is_signed } = gen.gen_c.gen_c_type
+{ expr, ty_of, named_hole, write_c_literal } = gen.gen_c.gen_c_expr
+{ declare_temp, is_variant, payload_type } = gen.gen_c.gen_c_flow
+{ write_assign_err } = gen.gen_c.gen_c_flow
+{ signature_of } = gen.gen_c.gen_c_call
+{ recv_arg, arg_value, by_ref } = gen.gen_c.gen_c_arg
+{ body_end, cast_of } = gen.gen_c.gen_c_print
+{ FmtAt, ends_run, arguments_taken } = std.text.text_fmt
+{ source_fmt_at } = gen.gen_c.gen_c_print
+{ report_in_format, NOT_A_HOLE } = gen.gen_c.gen_c_print
+{ HOLE_WITHOUT_ARGUMENT, ARGUMENT_WITHOUT_HOLE } = gen.gen_c.gen_c_print
+{ slot_call } = gen.gen_c.gen_c_bound
+{ fat_value } = gen.gen_c.gen_c_fat
+{ sink_display } = gen.gen_c.gen_c_display
 
 // recognising the door
 

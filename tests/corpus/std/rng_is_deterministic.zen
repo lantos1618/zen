@@ -1,7 +1,7 @@
 // The std has no entropy, so Rng is a generator the caller seeds: the same
 // seed replays the same sequence, and `below` never reaches its bound.
 
-Rng = std.core
+{ Rng } = std.core
 
 main = (env: Env) Res<i32, AllocError> {
     r1 ::= Rng.seeded(7);

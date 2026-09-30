@@ -28,19 +28,19 @@
 // `diagnostics_publish_and_clear` — a `Content-Length` header carries a
 // CR and a `.expected` may not (docs/TESTING.md).
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text = std.json
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text } = std.json
 
 // THE BUFFER, IMPORTING WHAT IS NOT THERE. `Absent` is used exactly
 // once, as a parameter type — the use is where sema reports an
 // undefined name, never the import line.
-BROKEN*: str = "Point = app.shape\nAbsent = app.absent\n\nnear = (p: Point, n: Absent) i32 {\n    p.x\n}\n"
+BROKEN*: str = "{ Point } = app.shape\n{ Absent } = app.absent\n\nnear = (p: Point, n: Absent) i32 {\n    p.x\n}\n"
 
 // The same buffer with the import gone — the file as it sits on disk.
-FIXED*: str = "Point = app.shape\n\nnear = (p: Point, n: i32) i32 {\n    s = p.x + n;\n    s\n}\n"
+FIXED*: str = "{ Point } = app.shape\n\nnear = (p: Point, n: i32) i32 {\n    s = p.x + n;\n    s\n}\n"
 
 // `tests/run.py` stages a directory test into `<work>/src` and runs the
 // program from `<work>`, so these are the paths the server will open.

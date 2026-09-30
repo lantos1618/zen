@@ -2,12 +2,12 @@
 // Phase order is parse modules -> run build.zen -> compile: a build may
 // inspect parsed declarations, but cannot call code from its project.
 
-Alloc = std.mem
-Env = std.env
-Vec = std.collections
-str = std.text
-Range = std.core
-Options, options = std.cli
+{ Alloc } = std.mem
+{ Env } = std.env
+{ Vec } = std.collections
+{ str } = std.text
+{ Range } = std.core
+{ Options, options } = std.cli
 
 Module* = {
     functions* = (self: @Self, a: Alloc) Res<Vec<Function>, AllocError>

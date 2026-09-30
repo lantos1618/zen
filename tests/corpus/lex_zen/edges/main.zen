@@ -2,9 +2,9 @@
 // nobody types on purpose. Each of these has produced a real bug in a real
 // compiler, and each costs one line to get right and an afternoon to find.
 
-scan, Source, kind_name, message = std.lex.lex
-Alloc, AllocError = std.mem
-str, String = std.text
+{ scan, Source, kind_name, message } = std.lex.lex
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
 
 dump = (env: Env, alloc: Alloc, label: str, text: str) Res<(), AllocError> {
     out = scan(alloc, Source(file: "in.zen", text: text)).try();

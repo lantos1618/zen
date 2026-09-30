@@ -2,21 +2,21 @@
 // Runtime error ordinals are mapped to `IoError` by variant name, so the
 // Source declaration may reorder its variants safely.
 
-ExprId = std.ast
-Call = std.ast
-AllocError = std.mem
-str, String = std.text
-TyId = sema.sema_ty
-Ctx = sema.sema_check
-sym_member = gen.gen_name
-Emit = gen.gen_emit
-CBackend = gen.gen_c.gen_c_state
-ctype, request_type = gen.gen_c.gen_c_type
-declare_temp = gen.gen_c.gen_c_flow
-comment = gen.gen_c.gen_c_runtime
-close_else, close_brace, open_rc_test = gen.gen_c.gen_c_flow
-arg_text = gen.gen_c.gen_c_arg
-write_assign_ok, write_assign_err = gen.gen_c.gen_c_flow
+{ ExprId } = std.ast
+{ Call } = std.ast
+{ AllocError } = std.mem
+{ str, String } = std.text
+{ TyId } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ sym_member } = gen.gen_name
+{ Emit } = gen.gen_emit
+{ CBackend } = gen.gen_c.gen_c_state
+{ ctype, request_type } = gen.gen_c.gen_c_type
+{ declare_temp } = gen.gen_c.gen_c_flow
+{ comment } = gen.gen_c.gen_c_runtime
+{ close_else, close_brace, open_rc_test } = gen.gen_c.gen_c_flow
+{ arg_text } = gen.gen_c.gen_c_arg
+{ write_assign_ok, write_assign_err } = gen.gen_c.gen_c_flow
 
 // The floor: `fread` on `stdin`, emitted only when a program reads one —
 // an uncalled `static` is a warning.

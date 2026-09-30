@@ -1,58 +1,58 @@
 // Language prelude re-exports.
 
-Res*, Ok*, Err*, None*, ok_or*, value_or*, map_err*, replace_err* = std.core.result
-ignore*, without_err*, when_ok* = std.core.result
-Rng* = std.core.rand
+{ Res*, Ok*, Err*, None*, ok_or*, value_or*, map_err*, replace_err* } = std.core.result
+{ ignore*, without_err*, when_ok* } = std.core.result
+{ Rng* } = std.core.rand
 
-then*, ensure*, bool* = std.core.bool
+{ then*, ensure*, bool* } = std.core.bool
 
-Drop* = std.core.drop
+{ Drop* } = std.core.drop
 
-Scope* = std.core.scope
+{ Scope* } = std.core.scope
 
-i8*, i16*, i32*, i64* = std.core.num
-u8*, u16*, u32*, u64*, usize* = std.core.num
-f32*, f64* = std.core.num
-pow2*, min* = std.core.num
+{ i8*, i16*, i32*, i64* } = std.core.num
+{ u8*, u16*, u32*, u64*, usize* } = std.core.num
+{ f32*, f64* } = std.core.num
+{ pow2*, min* } = std.core.num
 
 // Numeric conversions and bit operations are compiler-provided top-level
 // declarations, not members of the numeric types, so the prelude names them.
-to_u8*, to_u16*, to_u32*, to_u64*, to_usize*,
+{ to_u8*, to_u16*, to_u32*, to_u64*, to_usize*,
     to_i16*, to_i32*, to_i64*, to_f64*, to_c_int*,
-    bit_and*, bit_xor*, rotate_right*, shift_right* = std.core.num
+    bit_and*, bit_xor*, rotate_right*, shift_right* } = std.core.num
 
-ToU16*, ToU32*, ToU64*, ToUsize*,
-    ToI16*, ToI32*, ToI64*, ToF64* = std.core.num
+{ ToU16*, ToU32*, ToU64*, ToUsize*,
+    ToI16*, ToI32*, ToI64*, ToF64* } = std.core.num
 
-is_ascii*, is_digit*, is_lower*, is_upper*, is_alpha*, is_alnum*,
+{ is_ascii*, is_digit*, is_lower*, is_upper*, is_alpha*, is_alnum*,
     is_space*, is_ident_start*, is_ident_cont*, is_hex_digit*,
     digit_value*, digit*, hex_value*, hex_usize*,
-    to_lower*, to_upper*, hex_digit* = std.core.byte
+    to_lower*, to_upper*, hex_digit* } = std.core.byte
 
-loop*, find*, filter*, map*, LoopHandle* = std.core.loop
-Range* = std.core.range
+{ loop*, find*, filter*, map*, LoopHandle* } = std.core.loop
+{ Range* } = std.core.range
 
-Eq*, is_in* = std.core.eq
+{ Eq*, is_in* } = std.core.eq
 
-Hash*, Hasher* = std.core.hash
+{ Hash*, Hasher* } = std.core.hash
 
-Display* = std.core.display
+{ Display* } = std.core.display
 
-IoError*, WriteError*, Sink* = std.core.io
-Path*, join_path* = std.core.path
-Duration* = std.core.time
+{ IoError*, WriteError*, Sink* } = std.core.io
+{ Path*, join_path* } = std.core.path
+{ Duration* } = std.core.time
 
-str*, String* = std.text
+{ str*, String* } = std.text
 
 // Every Sink writes formatted values; Sink lives below std.text, so the
 // prelude names the operation instead of the type carrying it.
-fmt* = std.text.text_fmt
-Vec*, Map*, Ordered*, vararg*, OutOfBounds* = std.collections
-Alloc*, AllocError*, Arena*, Mem*, Ptr*, null_ptr* = std.mem
+{ fmt* } = std.text.text_fmt
+{ Vec*, Map*, Ordered*, vararg*, OutOfBounds* } = std.collections
+{ Alloc*, AllocError*, Arena*, Mem*, Ptr*, null_ptr* } = std.mem
 
-Env*, ArgError*,
+{ Env*, ArgError*,
     Console*, Stdin*, Fs*, FsError*,
-    Net*, Threads*, Thread*, ThreadError* = std.env
+    Net*, Threads*, Thread*, ThreadError* } = std.env
 
-Actor*, Ref*, ActorError*, ActorStartError* = std.actor.actor_core
-Context* = std.actor.actor_context
+{ Actor*, Ref*, ActorError*, ActorStartError* } = std.actor.actor_core
+{ Context* } = std.actor.actor_context

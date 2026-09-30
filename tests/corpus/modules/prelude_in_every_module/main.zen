@@ -1,4 +1,4 @@
-half = work.work
+{ half } = work.work
 
 main = (env: Env) Res<i32, IoError> {
     half(8).match({

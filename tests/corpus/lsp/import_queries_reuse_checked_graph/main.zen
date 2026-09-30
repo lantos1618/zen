@@ -1,6 +1,6 @@
 // Querying an imported module retains its entry's checked graph. Overlay
 // changes invalidate that graph, and independent entries still get checked.
-Diagnostics, Shared = lsp.lsp_diag
+{ Diagnostics, Shared } = lsp.lsp_diag
 
 entry_is = (shared: Shared, file: str) bool {
     shared.c.match({

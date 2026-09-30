@@ -15,7 +15,7 @@
 // is one mistake, and the suite's tolerance for extra output (#746)
 // must not blur that.
 
-Thing = nope.deep
+{ Thing } = nope.deep
 
 main = (env: Env) Res<i32, AllocError> {
     Ok(0);

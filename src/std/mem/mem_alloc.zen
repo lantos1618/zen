@@ -4,7 +4,7 @@
 // Alloc is a copied handle containing its receiver and operations. The owner
 // behind the handle controls lifetime and cleanup.
 
-Ptr = std.mem.mem_ptr
+{ Ptr } = std.mem.mem_ptr
 
 AllocError* = | OutOfMemory
 

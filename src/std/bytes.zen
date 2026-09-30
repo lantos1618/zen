@@ -1,7 +1,7 @@
 // Borrowed, bounded binary cursors. No allocation or retained ownership.
 // The caller keeps the declared memory region live throughout cursor use.
-Ptr = std.mem
-str, str_at = std.text
+{ Ptr } = std.mem
+{ str, str_at } = std.text
 ByteError* = Invalid | Truncated
 ByteReader* = {
     bytes: Ptr<u8>,

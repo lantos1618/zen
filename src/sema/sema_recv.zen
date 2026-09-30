@@ -1,13 +1,13 @@
-Expr, ExprId = std.ast
-Struct, Member, Function = std.ast
-Call, Access, Index, Name, Paren, Field, Const = std.ast
-AllocError = std.mem
-str = std.text
-TyId, TyNamed = sema.sema_ty
-decl_at = sema.sema_def
-Checker, Ctx = sema.sema_check
-SemaFault, NameFault = sema.sema_diag
-Own, path_root, place_type = sema.sema_own
+{ Expr, ExprId } = std.ast
+{ Struct, Member, Function } = std.ast
+{ Call, Access, Index, Name, Paren, Field, Const } = std.ast
+{ AllocError } = std.mem
+{ str } = std.text
+{ TyId, TyNamed } = sema.sema_ty
+{ decl_at } = sema.sema_def
+{ Checker, Ctx } = sema.sema_check
+{ SemaFault, NameFault } = sema.sema_diag
+{ Own, path_root, place_type } = sema.sema_own
 
 check_receiver* = (c :: Checker, o :: Own, k: Call, ctx: Ctx)
                   Res<(), AllocError> {

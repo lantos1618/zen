@@ -3,26 +3,26 @@
 // from at ends the walk. Bounds are recognized structurally, and synthesized
 // at calls inline the impl body with parameters bound to emitted C text.
 
-ExprId = std.ast
-Function = std.ast
-Impl = std.ast
-AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-DeclId, ImplId = sema.sema_id
-TyId, TyNamed, TyArray, Prim = sema.sema_ty
-Def = sema.sema_def
-Ctx = sema.sema_check
-self_ctx = sema.sema_member
-impl_bound_type = sema.sema_supply
-sym_local, sym_member, sym_variant = gen.gen_name
-RES_PATH = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
-declarator, declared_ret, struct_decl, res_value, is_res = gen.gen_c.gen_c_type
-intern_res_open, recv_inst, sub_with = gen.gen_c.gen_c_mono
-enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
-Dest, block, deliver = gen.gen_c.gen_c_stmt
-array_of = gen.gen_c.gen_c_array
+{ ExprId } = std.ast
+{ Function } = std.ast
+{ Impl } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ DeclId, ImplId } = sema.sema_id
+{ TyId, TyNamed, TyArray, Prim } = sema.sema_ty
+{ Def } = sema.sema_def
+{ Ctx } = sema.sema_check
+{ self_ctx } = sema.sema_member
+{ impl_bound_type } = sema.sema_supply
+{ sym_local, sym_member, sym_variant } = gen.gen_name
+{ RES_PATH } = gen.gen_name
+{ CBackend } = gen.gen_c.gen_c_state
+{ declarator, declared_ret, struct_decl, res_value, is_res } = gen.gen_c.gen_c_type
+{ intern_res_open, recv_inst, sub_with } = gen.gen_c.gen_c_mono
+{ enter_struct_tparams, leave_tparams } = gen.gen_c.gen_c_mono
+{ Dest, block, deliver } = gen.gen_c.gen_c_stmt
+{ array_of } = gen.gen_c.gen_c_array
 
 // A range that stores its bounds.
 

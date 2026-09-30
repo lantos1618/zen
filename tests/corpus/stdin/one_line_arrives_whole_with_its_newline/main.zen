@@ -8,8 +8,8 @@
 //
 // main.stdin holds exactly those 17 bytes.
 
-Vec    = std.collections
-str_at = std.text
+{ Vec }    = std.collections
+{ str_at } = std.text
 
 Error = AllocError | IoError
 

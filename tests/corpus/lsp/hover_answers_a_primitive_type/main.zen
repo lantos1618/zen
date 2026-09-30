@@ -1,11 +1,11 @@
 // Hover on a written primitive includes its prelude documentation and exported
 // members. Hover on a value remains its short resolved type name.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text = std.json
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text } = std.json
 
 // The program hovered over: one function whose every type is a
 // primitive the prelude declares.

@@ -16,12 +16,12 @@
 // deleted the blank line between two declarations would fail its own
 // round trip, so the derivation is asserted here beside the comments.
 
-scan, Source = std.lex.lex
-Parser, module = std.parse
-Ast = std.ast.ast_arena
-TriviaRun = std.ast.ast_span
-Decl, Block = std.ast.ast_node
-ExprId = std.ast.ast_id
+{ scan, Source } = std.lex.lex
+{ Parser, module } = std.parse
+{ Ast } = std.ast.ast_arena
+{ TriviaRun } = std.ast.ast_span
+{ Decl, Block } = std.ast.ast_node
+{ ExprId } = std.ast.ast_id
 
 //   1  // before the declaration
 //   2  Point = {

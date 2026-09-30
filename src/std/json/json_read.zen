@@ -1,12 +1,12 @@
 // Reads into the caller's `Jsons` arena. Syntax faults carry the failing byte
 // offset; allocation failures are JsonFault.NoMemory.
 
-str, String, push_utf8 = std.text
-Vec = std.collections
-Alloc = std.mem
-Range = std.core
-HEX_BASE = std.core.byte
-Jsons, Json, JsonId, Pair = std.json.json_write
+{ str, String, push_utf8 } = std.text
+{ Vec } = std.collections
+{ Alloc } = std.mem
+{ Range } = std.core
+{ HEX_BASE } = std.core.byte
+{ Jsons, Json, JsonId, Pair } = std.json.json_write
 
 JsonFault* = Unexpected(usize)   // a byte that cannot begin what is expected here
            | Truncated(usize)    // the document ended inside a value

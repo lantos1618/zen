@@ -35,7 +35,7 @@ argument can name a project directory or a target in the current project.
 Arguments after `--` are passed unchanged to every selected executable.
 
 ```zen
-Builder, BuildError = std.build
+{ Builder, BuildError } = std.build
 
 build = (b :: Builder) Res<(), BuildError> {
     b.exe_test("unit", {
@@ -56,7 +56,7 @@ paths. Ordinary `zen build` builds executable application targets, not tests.
 A test entry can use the standard assertion suite:
 
 ```zen
-Suite = std.test
+{ Suite } = std.test
 
 main = (env: Env) Res<i32, IoError> {
     suite ::= Suite(env: env);

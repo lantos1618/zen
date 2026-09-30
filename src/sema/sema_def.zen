@@ -1,10 +1,10 @@
-Ast, Module, Decl, Ident, Span, QualifiedName, Member = std.ast
-Import, Impl, Enum = std.ast
-Alloc, AllocError, Ptr = std.mem
-Vec, Map = std.collections
-str, String = std.text
-Range, Eq, Hash = std.core
-DeclId, ImplId = sema.sema_id
+{ Ast, Module, Decl, Ident, Span, QualifiedName, Member } = std.ast
+{ Import, Impl, Enum } = std.ast
+{ Alloc, AllocError, Ptr } = std.mem
+{ Vec, Map } = std.collections
+{ str, String } = std.text
+{ Range, Eq, Hash } = std.core
+{ DeclId, ImplId } = sema.sema_id
 
 DefKind* = StructDef | EnumDef | AliasDef | FunctionDef | ConstDef
 
@@ -17,8 +17,10 @@ Def* = {
     span*: Span,
 }
 
+// `name` is bound in this module to what `module` calls `source`.
 ImportBinding* = {
     name*: str,
+    source*: str,
     module*: str,
     exported*: bool,
     span*: Span,
@@ -200,7 +202,7 @@ World* = {
                     None      => (),
                     Ok(other) => self.first_exports(
                         other,
-                        name,
+                        binding.source,
                         seen
                     ).try().match({
                         None    => (),
@@ -337,16 +339,16 @@ World* = {
         t.imports.loop((h, binding) {
             crosses = binding.exported || (reexport == false);
             (crosses && binding.name.eq(name)).then(() {
-                self.follow_one(binding, name, out, seen).try();
+                self.follow_one(binding, out, seen).try();
             });
         });
         Ok(());
     }
 
-    follow_one = (self: @Self, binding: ImportBinding, name: str,
-                  out :: Vec<Def>, seen :: Vec<usize>) Res<(), AllocError> {
+    follow_one = (self: @Self, binding: ImportBinding, out :: Vec<Def>,
+                  seen :: Vec<usize>) Res<(), AllocError> {
         self.index_of(binding.module).match({
-            Ok(other) => self.exports_of(other, name, out, seen),
+            Ok(other) => self.exports_of(other, binding.source, out, seen),
             None      => Ok(()),
         }).try();
         Ok(());
@@ -387,7 +389,7 @@ World* = {
                     mi: usize, out :: Vec<ImportBinding>)
                    Res<(), AllocError> {
         seen ::= self.alloc.Vec<usize>();
-        crosses = self.exports_name(tree, other, b.name, seen).try();
+        crosses = self.exports_name(tree, other, b.source, seen).try();
         (crosses || (other == mi)).match({
             true  => Ok(()),
             false => out.add(b),
@@ -456,7 +458,7 @@ World* = {
         crosses = b.exported || (reexport == false);
         (crosses && b.name.eq(name)).match({
             false => Ok(()),
-            true  => self.variant_hop_to(tree, b.module, name, hits, seen),
+            true  => self.variant_hop_to(tree, b.module, b.source, hits, seen),
         })
     }
 
@@ -700,6 +702,7 @@ add_imports = (t :: ModuleTable, a: Alloc, im: Import) Res<(), AllocError> {
     im.names.loop((h, n) {
         t.imports.add(ImportBinding(
             name: n.name.text,
+            source: n.source.text,
             module: path,
             exported: n.exported,
             span: n.name.span,

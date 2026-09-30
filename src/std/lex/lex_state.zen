@@ -1,11 +1,11 @@
 // Mutable state for one lex pass. Tokens and diagnostics derive spans from the
 // same Cursor, and the caller supplies allocation for both result Vecs.
 
-Pos, Span, Token, TokenKind, Source = std.lex.lex_token
-Diag, LexFault = std.lex.lex_diag
-Cursor, cursor_at = std.lex.lex_cursor
-Alloc, AllocError = std.mem
-Vec = std.collections
+{ Pos, Span, Token, TokenKind, Source } = std.lex.lex_token
+{ Diag, LexFault } = std.lex.lex_diag
+{ Cursor, cursor_at } = std.lex.lex_cursor
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
 
 Lexer* = {
     source: Source,

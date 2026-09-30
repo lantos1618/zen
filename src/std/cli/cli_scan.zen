@@ -1,9 +1,9 @@
 // Typed command-line options: declare Specs, then scan argv into Items.
 
-Alloc, AllocError = std.mem
-str = std.text
-Vec = std.collections
-Range = std.core
+{ Alloc, AllocError } = std.mem
+{ str } = std.text
+{ Vec } = std.collections
+{ Range } = std.core
 
 OPTIONS_END*: str = "--"
 

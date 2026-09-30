@@ -1,11 +1,11 @@
 // JavaScript rendering of the shared scalar IR. Generated names come from
 // function and value IDs; source identifiers never become JavaScript syntax.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Range = std.core
-Span = std.ast
-Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Range } = std.core
+{ Span } = std.ast
+{ Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print } = gen.gen_ir
 
 // The caller verifies slot types, initialization, calls, and block targets
 // before rendering. Malformed IR is a compiler fault, not executable input.

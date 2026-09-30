@@ -12,7 +12,7 @@
 // One-line breaker: treat an import whose bindings are never read as a
 // name-table entry that never resolves -> 0 where MAX should be.
 
-Box, spare = box.box
+{ Box, spare } = box.box
 
 main = (env: Env) Res<i32, IoError> {
     b = Box(label: 6);

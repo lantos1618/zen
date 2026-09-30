@@ -7,7 +7,7 @@
 // line became `Alias Kind = leaf` and Pos and origin were dropped on
 // the floor with no diagnostic. The multi-name guard already accepted
 // the shape; only the dispatch disagreed.
-Kind, Pos, origin = leaf
+{ Kind, Pos, origin } = leaf
 
 main = (env: Env) Res<i32, ArgError> {
     p = origin();

@@ -1,4 +1,4 @@
-Builder, BuildError = std.build
+{ Builder, BuildError } = std.build
 
 build = (b :: Builder) Res<(), BuildError> {
     b.exe_test("passing", {src: Path("pass.zen"), deps: []}).try();

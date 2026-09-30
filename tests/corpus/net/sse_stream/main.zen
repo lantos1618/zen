@@ -1,4 +1,4 @@
-SseDecoder, SseEvent = std.net.sse
+{ SseDecoder, SseEvent } = std.net.sse
 
 show = (events: Vec<SseEvent>) {
     events.loop((h, event) {

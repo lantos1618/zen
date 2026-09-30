@@ -5,26 +5,26 @@
 // spelling rules; this file only decides, per field type, which of its
 // functions to call and where the answer lands.
 
-Struct, Member, Function, ExprId, Call, Access = std.ast
-AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Range = std.core
-TyId, TyNamed, is_failure = sema.sema_ty
-Def, decl_at = sema.sema_def
-Ctx = sema.sema_check
-Inst = sema.sema_inst
-GenFault = gen.gen_diag
-CBackend = gen.gen_c.gen_c_state
-expr, res_type_of = gen.gen_c.gen_c_expr
-declare_temp, write_assign_ok, payload_type = gen.gen_c.gen_c_flow
-write_goto, write_done, call_symbol = gen.gen_c.gen_c_sink
-field_type, request_type, decl_ctx, decl_inst = gen.gen_c.gen_c_type
-write_none, write_zero, ctype = gen.gen_c.gen_c_type
-enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
-sym_member, sym_variant, RES_PATH = gen.gen_name
-unsupported = gen.gen_c.gen_c_report
-type_from_ast = sema.sema_denote
+{ Struct, Member, Function, ExprId, Call, Access } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Range } = std.core
+{ TyId, TyNamed, is_failure } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ Ctx } = sema.sema_check
+{ Inst } = sema.sema_inst
+{ GenFault } = gen.gen_diag
+{ CBackend } = gen.gen_c.gen_c_state
+{ expr, res_type_of } = gen.gen_c.gen_c_expr
+{ declare_temp, write_assign_ok, payload_type } = gen.gen_c.gen_c_flow
+{ write_goto, write_done, call_symbol } = gen.gen_c.gen_c_sink
+{ field_type, request_type, decl_ctx, decl_inst } = gen.gen_c.gen_c_type
+{ write_none, write_zero, ctype } = gen.gen_c.gen_c_type
+{ enter_struct_tparams, leave_tparams } = gen.gen_c.gen_c_mono
+{ sym_member, sym_variant, RES_PATH } = gen.gen_name
+{ unsupported } = gen.gen_c.gen_c_report
+{ type_from_ast } = sema.sema_denote
 
 ARGS_MODULE: str = "std.env.env_args"
 

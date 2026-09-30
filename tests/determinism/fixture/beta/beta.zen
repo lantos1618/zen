@@ -6,7 +6,7 @@
 // in whichever buckets they hash to, and the emitted C reorders the moment
 // anything else in the tree changes.
 
-Item, Box, Kind, weight = gamma
+{ Item, Box, Kind, weight } = gamma
 
 name* = () str { "beta" }
 

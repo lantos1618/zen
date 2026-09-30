@@ -15,8 +15,8 @@
 // resolves to a different (or no) symbol than the dot form -- either line
 // changes.
 
-Box = box.box
-perimeter = box.box
+{ Box } = box.box
+{ perimeter } = box.box
 
 main = (env: Env) Res<i32, AllocError> {
     b = Box(w: 3, h: 4);

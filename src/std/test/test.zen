@@ -1,9 +1,9 @@
 // Test and benchmark contexts. Function names are used as test names in
 // failure output.
 
-Alloc = std.mem
-Env = std.env
-str = std.text
+{ Alloc } = std.mem
+{ Env } = std.env
+{ str } = std.text
 
 TestError* = | Failed(str)
 

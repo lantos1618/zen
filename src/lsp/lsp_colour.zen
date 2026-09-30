@@ -2,12 +2,12 @@
 // preceding token. The legend order in `write_legend` must match `index_of`.
 // A name the checker classified overrides the lexer's colour for an `Ident`.
 
-str, String = std.text
-Vec, Ordered = std.collections
-Alloc, AllocError = std.mem
-scan, Source, Token, TokenKind = std.lex
-write_text, written, obj, arr, Nest = std.json
-utf16_step_at, utf16_units, zero_based = lsp.lsp_pos
+{ str, String } = std.text
+{ Vec, Ordered } = std.collections
+{ Alloc, AllocError } = std.mem
+{ scan, Source, Token, TokenKind } = std.lex
+{ write_text, written, obj, arr, Nest } = std.json
+{ utf16_step_at, utf16_units, zero_based } = lsp.lsp_pos
 
 // Variant names are the protocol spelling; indices stay explicit below.
 Colour* = keyword

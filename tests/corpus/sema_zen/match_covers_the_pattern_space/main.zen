@@ -22,20 +22,20 @@
 // same reason: this is a test of sema, and routing it through a parser
 // would make a parser bug read as a sema bug.
 
-Checker, Ctx = sema.sema_check
-TyId, Types = sema.sema_ty
-Ast = std.ast.ast_arena
-Expr, ExprKind, Literal, LiteralKind, Name, Match, Arm = std.ast.ast_node
-Pattern, PatternKind, PatName, Destructure = std.ast.ast_node
-Type, TypeKind, Named = std.ast.ast_node
-Decl, DeclKind, Enum, Variant, Module, TParam = std.ast.ast_node
-Pos, Span, Ident, QualifiedName, no_trivia = std.ast.ast_span
-ExprId, TypeId, PatternId = std.ast.ast_id
-Alloc, AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-type_of = sema.sema_type
-type_from_ast = sema.sema_denote
+{ Checker, Ctx } = sema.sema_check
+{ TyId, Types } = sema.sema_ty
+{ Ast } = std.ast.ast_arena
+{ Expr, ExprKind, Literal, LiteralKind, Name, Match, Arm } = std.ast.ast_node
+{ Pattern, PatternKind, PatName, Destructure } = std.ast.ast_node
+{ Type, TypeKind, Named } = std.ast.ast_node
+{ Decl, DeclKind, Enum, Variant, Module, TParam } = std.ast.ast_node
+{ Pos, Span, Ident, QualifiedName, no_trivia } = std.ast.ast_span
+{ ExprId, TypeId, PatternId } = std.ast.ast_id
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ type_of } = sema.sema_type
+{ type_from_ast } = sema.sema_denote
 
 // every node in this file is at the same place: the test is about
 // coverage, and a distinct span per node would be noise

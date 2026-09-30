@@ -1,18 +1,18 @@
 // Command selection and argument parsing. argv and option values remain
 // borrowed. `--repeat` and `--permute` are internal determinism controls.
 
-Alloc, AllocError = std.mem
-str = std.text
-Vec = std.collections
-Range = std.core
-Env = std.env
-BuildArgs, ProjectArgs, BuildFlags, BuildFlag, build_options = std.build
-FLAG_ENTRY, FLAG_STD, FLAG_FFI = std.build
-FLAG_EMIT_C, ZEN_STD_ENV = std.build
-Options, options, is_word, arg_at, OPTIONS_END = std.cli
-Command, command, ValueType = std.cli
-String = std.text
-holds_build_zen = zen.zen_path
+{ Alloc, AllocError } = std.mem
+{ str } = std.text
+{ Vec } = std.collections
+{ Range } = std.core
+{ Env } = std.env
+{ BuildArgs, ProjectArgs, BuildFlags, BuildFlag, build_options } = std.build
+{ FLAG_ENTRY, FLAG_STD, FLAG_FFI } = std.build
+{ FLAG_EMIT_C, ZEN_STD_ENV } = std.build
+{ Options, options, is_word, arg_at, OPTIONS_END } = std.cli
+{ Command, command, ValueType } = std.cli
+{ String } = std.text
+{ holds_build_zen } = zen.zen_path
 
 Cli* = Build(BuildArgs)
      | Project(ProjectArgs)

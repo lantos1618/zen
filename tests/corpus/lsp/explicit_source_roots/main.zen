@@ -1,11 +1,11 @@
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text, Jsons, read = std.json
-SourceRoot, root_for, module_name = zen.zen_path
-FsError = std.env
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text, Jsons, read } = std.json
+{ SourceRoot, root_for, module_name } = zen.zen_path
+{ FsError } = std.env
 
-DOC: str = "Point = lib.helper\nmain = () i32 { item = Point(answer: 42); item.answer }\n"
-BAD: str = "Point = lib.helper\nmain = () i32 { missing }\n"
+DOC: str = "{ Point } = lib.helper\nmain = () i32 { item = Point(answer: 42); item.answer }\n"
+BAD: str = "{ Point } = lib.helper\nmain = () i32 { missing }\n"
 
 Protocol = {
     a: Alloc,
@@ -160,7 +160,7 @@ main = (env: Env) Res<(), AllocError | FsError> {
     partial ::= a.String().try();
     protocol.open(
         uri,
-        "Point = lib.helper\nmain = () i32 { item = Point(answer: 42); item. }\n",
+        "{ Point } = lib.helper\nmain = () i32 { item = Point(answer: 42); item. }\n",
         partial
     ).try();
     ignored ::= a.String().try();

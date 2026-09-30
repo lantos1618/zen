@@ -1,11 +1,11 @@
 // A malformed import reports its parse faults without walking an empty module
 // segment. The broken source is written at runtime so corpus formatting works.
 
-Alloc, AllocError = std.mem
-str = std.text
-FsError = std.env
-BuildArgs = std.build
-build = zen.zen_run
+{ Alloc, AllocError } = std.mem
+{ str } = std.text
+{ FsError } = std.env
+{ BuildArgs } = std.build
+{ build } = zen.zen_run
 
 BROKEN*: str = "A, B = 42\n"
 

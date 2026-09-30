@@ -2,12 +2,12 @@
 // text_utf8 decodes and encodes codepoints, text_fmt writes values as bytes.
 // Each file imports only those below it.
 
-str*, str_at*, Split*, SplitPair*, Lines* = std.text.text_str
+{ str*, str_at*, Split*, SplitPair*, Lines* } = std.text.text_str
 
-String*, replace_once*, dup*, truncate_with*, c_text* = std.text.text_string
+{ String*, replace_once*, dup*, truncate_with*, c_text* } = std.text.text_string
 
-Utf8Error*, Codepoint*, Codepoints*,
+{ Utf8Error*, Codepoint*, Codepoints*,
     codepoints*, codepoint_at*, validate_utf8*, count_codepoints*,
-    push_utf8* = std.text.text_utf8
+    push_utf8* } = std.text.text_utf8
 
-FmtStep*, fmt_next*, add_u64*, add_i64*, add_bool*, add_f64* = std.text.text_fmt
+{ FmtStep*, fmt_next*, add_u64*, add_i64*, add_bool*, add_f64* } = std.text.text_fmt

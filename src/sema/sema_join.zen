@@ -1,6 +1,6 @@
-AllocError = std.mem
-TyId, TyRes, is_failure = sema.sema_ty
-Checker = sema.sema_check
+{ AllocError } = std.mem
+{ TyId, TyRes, is_failure } = sema.sema_ty
+{ Checker } = sema.sema_check
 
 join* = (c :: Checker, a: TyId, b: TyId) Res<TyId, AllocError> {
     c.is_unknown(a).match({

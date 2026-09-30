@@ -15,9 +15,9 @@
 // and a positional word past the last field that takes one is `Parse` of
 // that field.
 
-str = std.text
-Vec = std.collections
-Range = std.core
+{ str } = std.text
+{ Vec } = std.collections
+{ Range } = std.core
 
 // Two faces and no third: a required field was absent, or it was there
 // and did not parse as its type. The payload is the field name.

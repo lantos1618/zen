@@ -1,5 +1,5 @@
-Ast, Type, TypeKind, TypeId, nowhere, no_trivia = std.ast
-Checker = sema.sema_check
+{ Ast, Type, TypeKind, TypeId, nowhere, no_trivia } = std.ast
+{ Checker } = sema.sema_check
 
 AllocationProbe = { backing: Alloc, refuse: Ptr<bool>, calls: Ptr<usize>, bytes: Ptr<usize> }
 AllocationProbe.impl(Alloc, {

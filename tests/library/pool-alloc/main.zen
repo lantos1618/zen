@@ -1,4 +1,4 @@
-Pool, PoolAlloc, PoolPolicy, Ptr, null_ptr = std.mem
+{ Pool, PoolAlloc, PoolPolicy, Ptr, null_ptr } = std.mem
 check = (a: Alloc, pool: Ptr<Pool>) Res<(), AllocError> {
     bytes = a.raw(0, 16).try();
     (!bytes.is_null()).ensure(AllocError.OutOfMemory).try();

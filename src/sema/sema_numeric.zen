@@ -1,15 +1,15 @@
 // The compiler/stdlib contract for primitive conversions. Only validated
 // declarations in std.core.num acquire an operation; renderers consume this
 // table by declaration identity instead of interpreting a callee's spelling.
-Function = std.ast
-AllocError = std.mem
-str = std.text
-Range = std.core
-Checker, Ctx = sema.sema_check
-TyId = sema.sema_ty
-Def, decl_at = sema.sema_def
-param_type, ret_type = sema.sema_denote
-SemaFault, NameFault = sema.sema_diag
+{ Function } = std.ast
+{ AllocError } = std.mem
+{ str } = std.text
+{ Range } = std.core
+{ Checker, Ctx } = sema.sema_check
+{ TyId } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ param_type, ret_type } = sema.sema_denote
+{ SemaFault, NameFault } = sema.sema_diag
 
 IntegerBitOperation* = { name*: str, word*: TyId }
 

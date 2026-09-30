@@ -24,7 +24,7 @@
 // a signed-char copy turns nothing at 47 but would corrupt bytes past
 // 127 in the multibyte tests beside this one.
 
-count_codepoints, Utf8Error = std.text
+{ count_codepoints, Utf8Error } = std.text
 
 main = (env: Env) Res<i32, AllocError | Utf8Error> {
     p ::= env.argv.get(0).ok_or(Utf8Error.Invalid(0)).try();

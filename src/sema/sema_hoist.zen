@@ -1,16 +1,16 @@
-Expr, ExprId, Block, BlockId, Stmt, Call, Arg, Span = std.ast
-Match = std.ast
-AllocError = std.mem
-Vec = std.collections
-str = std.text
-TyId, TyRes = sema.sema_ty
-SemaFault, NameFault, TypeFault = sema.sema_diag
-Checker, Ctx = sema.sema_check
-Found, members_of = sema.sema_member
-storage_seat_name = sema.sema_supply
-check_literal = sema.sema_trap
-refuse_handle_value = sema.sema_handle
-type_of = sema.sema_type
+{ Expr, ExprId, Block, BlockId, Stmt, Call, Arg, Span } = std.ast
+{ Match } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ TyId, TyRes } = sema.sema_ty
+{ SemaFault, NameFault, TypeFault } = sema.sema_diag
+{ Checker, Ctx } = sema.sema_check
+{ Found, members_of } = sema.sema_member
+{ storage_seat_name } = sema.sema_supply
+{ check_literal } = sema.sema_trap
+{ refuse_handle_value } = sema.sema_handle
+{ type_of } = sema.sema_type
 
 can_hoist* = (c: Checker, got: TyId, want: TyId) bool {
     c.types.at(want).match({

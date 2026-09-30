@@ -1,7 +1,7 @@
 // the type, and its impl of a bound declared in another module.
 // importing Wheel pulls its world along, impls included.
 
-Meter = meter.meter
+{ Meter } = meter.meter
 
 Wheel* = {
     psi: i32,

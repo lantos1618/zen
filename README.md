@@ -44,7 +44,7 @@ have to align with JSON tokens. Text, keys, and number events own their bytes;
 call `finish` once when the document ends.
 
 ```groovy
-JsonEvent, JsonFault = std.json
+{ JsonEvent, JsonFault } = std.json
 
 decode = (alloc: Alloc, first: str, second: str)
          Res<Vec<JsonEvent>, JsonFault> {

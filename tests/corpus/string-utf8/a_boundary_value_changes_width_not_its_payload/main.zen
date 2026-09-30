@@ -5,8 +5,8 @@
 // 80 80). An encoder with an off-by-one band test puts 0x800 in two
 // bytes, or re-sends 0x7FF's payload into the wider lead; either way
 // some printed number moves off 223 or 224.
-String = std.text.text_string
-Utf8Error, push_utf8 = std.text.text_utf8
+{ String } = std.text.text_string
+{ Utf8Error, push_utf8 } = std.text.text_utf8
 
 push = (v: u32, out :: String) Res<(), AllocError> {
     out.push_utf8(v).match({

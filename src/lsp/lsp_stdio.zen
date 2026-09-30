@@ -1,11 +1,11 @@
 // Runs the server over stdin/stdout. Partial envelopes remain buffered until
 // `Content-Length` bytes arrive; notifications produce no output frame.
 
-str, String, str_at = std.text
-Vec = std.collections
-Alloc, AllocError = std.mem
-Server = lsp.lsp_serve
-frame_at, short_by, partial = lsp.lsp_frame
+{ str, String, str_at } = std.text
+{ Vec } = std.collections
+{ Alloc, AllocError } = std.mem
+{ Server } = lsp.lsp_serve
+{ frame_at, short_by, partial } = lsp.lsp_frame
 
 Drain = {
     at: usize,

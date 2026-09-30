@@ -1,17 +1,17 @@
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec = std.collections
-Range = std.core
-Pos, TriviaRun = std.ast.ast_span
-Ast = std.ast.ast_arena
-Decl = std.ast.ast_node
-scan, Source, Lexed = std.lex.lex
-Diag, Parser, module = std.parse.parse
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Range } = std.core
+{ Pos, TriviaRun } = std.ast.ast_span
+{ Ast } = std.ast.ast_arena
+{ Decl } = std.ast.ast_node
+{ scan, Source, Lexed } = std.lex.lex
+{ Diag, Parser, module } = std.parse.parse
 
-Src, Parsed = fmt.fmt_src
-Aligned, align_columns = fmt.fmt_decl
-break_lines = fmt.fmt_break
-omit_unit_returns, UnitEdit = fmt.fmt_unit
+{ Src, Parsed } = fmt.fmt_src
+{ Aligned, align_columns } = fmt.fmt_decl
+{ break_lines } = fmt.fmt_break
+{ omit_unit_returns, UnitEdit } = fmt.fmt_unit
 
 FIRST: usize = 1
 

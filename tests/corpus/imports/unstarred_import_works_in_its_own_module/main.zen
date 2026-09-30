@@ -12,7 +12,7 @@
 // One-line breaker: drop unstarred bindings from the importing
 // module's own scope -> "cannot resolve `double`" (or 0 / 7 printed).
 
-quad = mid.mid
+{ quad } = mid.mid
 
 main = (env: Env) Res<i32, IoError> {
     println("{}", quad(2));

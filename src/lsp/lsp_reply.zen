@@ -2,12 +2,12 @@
 // capabilities. A message without an `id` is a notification and gets no
 // response.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Jsons, JsonId, write_text, written, obj, arr, Nest,
-    JsonFault, to_json = std.json
-write_bool = std.json.json_meta
-write_legend = lsp.lsp_colour
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Jsons, JsonId, write_text, written, obj, arr, Nest,
+    JsonFault, to_json } = std.json
+{ write_bool } = std.json.json_meta
+{ write_legend } = lsp.lsp_colour
 
 // Absent fields read as "" / 0 / the enclosing value.
 Decoded* = {

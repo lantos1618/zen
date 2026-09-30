@@ -1,13 +1,13 @@
 // Run one validated build invocation, including deterministic repetitions and
 // their numbered output paths. Compilation phases remain in zen_build.
 
-Alloc, AllocError = std.mem
-String = std.text
-Range = std.core
-BuildArgs, Emission = std.build
+{ Alloc, AllocError } = std.mem
+{ String } = std.text
+{ Range } = std.core
+{ BuildArgs, Emission } = std.build
 
-Build = zen.zen_build
-entry_of = zen.zen_path
+{ Build } = zen.zen_build
+{ entry_of } = zen.zen_path
 
 // Repeat the whole pipeline in one process. Later outputs are numbered before
 // run_once so compilation itself has no repetition policy.

@@ -9,7 +9,7 @@
 //
 // main.stdin holds exactly those 16 bytes.
 
-Vec    = std.collections
+{ Vec }    = std.collections
 
 Error = AllocError | IoError
 

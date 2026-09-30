@@ -4,8 +4,8 @@
 // top of the range separates them, so a decoder that skips that check
 // accepts values no encoder may produce. The valid side pins len 4 and
 // the exact value; the invalid side must be rejected.
-String = std.text.text_string
-Utf8Error, codepoint_at, validate_utf8 = std.text.text_utf8
+{ String } = std.text.text_string
+{ Utf8Error, codepoint_at, validate_utf8 } = std.text.text_utf8
 
 verdict = (s: str) i64 {
     s.validate_utf8().match({

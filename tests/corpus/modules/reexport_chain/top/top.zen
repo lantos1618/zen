@@ -1,1 +1,1 @@
-depth*, label* = mid.mid
+{ depth*, label* } = mid.mid

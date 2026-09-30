@@ -1,10 +1,10 @@
 // Output buffering and stable ordering for backends. `Emit` owns its
 // `String`: read it through `view`, or take it with `into_string`.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec, Ordered, sort = std.collections
-Range = std.core
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec, Ordered, sort } = std.collections
+{ Range } = std.core
 
 INDENT: str = "    "
 

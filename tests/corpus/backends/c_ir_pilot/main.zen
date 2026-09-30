@@ -2,16 +2,16 @@ HARNESS_NATIVE_ASM* : bool = false
 // Compare one checked input across both C paths and the other scalar renderers.
 // Each native output is compiled with warnings as errors and undefined-behavior
 // checks, then executed; matching source text alone would not prove parity.
-Build = zen.zen_build
-Generation, Layout = gen.gen
-Codegen = std.build
-Program, Func, BasicBlock, Instruction, Terminator, Const, Scalar, Binary, Op, Branch = gen.gen_ir
-nowhere = std.ast
-lower = gen.gen_lower
-verify = gen.gen_verify
-emit_c = gen.gen_c_ir
-emit_js = gen.gen_js
-X86_64LinuxGnu = gen.gen_asm_x86
+{ Build } = zen.zen_build
+{ Generation, Layout } = gen.gen
+{ Codegen } = std.build
+{ Program, Func, BasicBlock, Instruction, Terminator, Const, Scalar, Binary, Op, Branch } = gen.gen_ir
+{ nowhere } = std.ast
+{ lower } = gen.gen_lower
+{ verify } = gen.gen_verify
+{ emit_c } = gen.gen_c_ir
+{ emit_js } = gen.gen_js
+{ X86_64LinuxGnu } = gen.gen_asm_x86
 
 Backend = LegacyC | IrC | Js | Asm
 

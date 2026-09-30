@@ -24,11 +24,11 @@
 // THE FRAME BODY IS PRINTED WHOLE, so `"result":[]` is asserted and the
 // absence of `"error"` with it.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-write_text = std.json
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ write_text } = std.json
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
 
 // Unterminated string literal: the lexer reports and the parser is never
 // reached.

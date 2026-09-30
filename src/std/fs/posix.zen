@@ -1,8 +1,8 @@
 // POSIX streaming file operations. Descriptors are explicit native handles:
 // the caller closes each opened descriptor exactly once, after its last use.
 // No destructor or copy-ownership guarantee is implied. Paths use caller storage.
-Ptr = std.mem
-c_text, str_at = std.text
+{ Ptr } = std.mem
+{ c_text, str_at } = std.text
 
 Native = c.bind("unistd.h", {
     read = (fd: i32, bytes: Ptr<u8>, length: usize) i64

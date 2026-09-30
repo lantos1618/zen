@@ -1,9 +1,9 @@
-Alloc, AllocError = std.mem
-Range = std.core
-Vec = std.collections
-str = std.text
-Cli, cli = zen
-Emission = std.build
+{ Alloc, AllocError } = std.mem
+{ Range } = std.core
+{ Vec } = std.collections
+{ str } = std.text
+{ Cli, cli } = zen
+{ Emission } = std.build
 
 main = (env: Env) Res<i32, AllocError> {
     a     ::= env.mem.alloc();

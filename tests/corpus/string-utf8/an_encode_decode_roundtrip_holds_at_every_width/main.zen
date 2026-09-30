@@ -5,8 +5,8 @@
 // but a truncated u32 that still printed would fool nobody twice).
 // U+0000 is included on purpose: it is the ONE value where an overlong
 // encoder and the real thing disagree.
-String = std.text.text_string
-Utf8Error, push_utf8, codepoint_at = std.text.text_utf8
+{ String } = std.text.text_string
+{ Utf8Error, push_utf8, codepoint_at } = std.text.text_utf8
 
 push = (v: u32, out :: String) Res<(), AllocError> {
     out.push_utf8(v).match({

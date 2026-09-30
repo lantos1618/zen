@@ -2,12 +2,12 @@
 // Values. These rows are discarded between functions; backend work queues are
 // Deliberately not part of the frame.
 
-str = std.text
-Vec = std.collections
-TyId = sema.sema_ty
-Ctx = sema.sema_check
-Inst = sema.sema_inst
-Lambda = std.ast
+{ str } = std.text
+{ Vec } = std.collections
+{ TyId } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ Inst } = sema.sema_inst
+{ Lambda } = std.ast
 
 // One binding in scope, and the number that makes its C name unique
 // inside its function.

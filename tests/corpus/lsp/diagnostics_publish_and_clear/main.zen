@@ -3,17 +3,17 @@
 // and a batch of document changes triggers one publication round. Repeating
 // identical bytes produces no frames. The test prints JSON bodies, not framing.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text = std.json
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text } = std.json
 
 // The unclosed parenthesis produces a parse diagnostic with a related span.
-BROKEN*: str = "Point = app.shape\n\nnear = (q: Point, n: i32) i32 {\n    s = (q.x + n;\n    s\n}\n"
+BROKEN*: str = "{ Point } = app.shape\n\nnear = (q: Point, n: i32) i32 {\n    s = (q.x + n;\n    s\n}\n"
 
 // The corrected buffer.
-FIXED*: str = "Point = app.shape\n\nnear = (q: Point, n: i32) i32 {\n    s = q.x + n;\n    s\n}\n"
+FIXED*: str = "{ Point } = app.shape\n\nnear = (q: Point, n: i32) i32 {\n    s = q.x + n;\n    s\n}\n"
 
 // A second in-memory buffer carries a sema fault in the same round.
 SHAPE_BROKEN*: str = "Point* = {\n    x*: i32,\n    y*: i32,\n}\n\narea* = (p: Point) i32 {\n    p.x * missing\n}\n"

@@ -1,4 +1,4 @@
-fill_random, EntropyError = std.entropy
+{ fill_random, EntropyError } = std.entropy
 Probe = c.bind("probe.h", {
     entropy_probe_calls = () usize
     entropy_probe_reset = () ()

@@ -2,25 +2,25 @@
 // parameters, and settle their result type. A user function named `loop` is
 // not special.
 
-Ast, ExprId = std.ast
-Decl, Function, Param, TypeId = std.ast
-Access, Call, Span = std.ast
-Alloc, AllocError = std.mem
-Vec = std.collections
-str = std.text
-Range = std.core
-DeclId = sema.sema_id
-TyId = sema.sema_ty
-has_var = sema.sema_inst
-decl_at = sema.sema_def
-is_handle_ty = sema.sema_handle
-Ctx = sema.sema_check
-CBackend = gen.gen_c.gen_c_state
+{ Ast, ExprId } = std.ast
+{ Decl, Function, Param, TypeId } = std.ast
+{ Access, Call, Span } = std.ast
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Range } = std.core
+{ DeclId } = sema.sema_id
+{ TyId } = sema.sema_ty
+{ has_var } = sema.sema_inst
+{ decl_at } = sema.sema_def
+{ is_handle_ty } = sema.sema_handle
+{ Ctx } = sema.sema_check
+{ CBackend } = gen.gen_c.gen_c_state
 
-ty_of = gen.gen_c.gen_c_expr
-range_element_type = gen.gen_c.gen_c_range
-result_element = gen.gen_c.gen_c_fold
-settle_res = gen.gen_c.gen_c_loop
+{ ty_of } = gen.gen_c.gen_c_expr
+{ range_element_type } = gen.gen_c.gen_c_range
+{ result_element } = gen.gen_c.gen_c_fold
+{ settle_res } = gen.gen_c.gen_c_loop
 
 // A borrowed call argument view. UFCS contributes a leading receiver without
 // copying AST argument ids into an allocator-backed vector.

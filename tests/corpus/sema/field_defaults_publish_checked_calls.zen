@@ -1,7 +1,7 @@
-Source, scan = std.lex
-Parser, module = std.parse
-Checker = sema.sema_check
-check_all = sema.sema_decl
+{ Source, scan } = std.lex
+{ Parser, module } = std.parse
+{ Checker } = sema.sema_check
+{ check_all } = sema.sema_decl
 
 main = (env: Env) Res<(), AllocError> {
     a      = env.mem.alloc();

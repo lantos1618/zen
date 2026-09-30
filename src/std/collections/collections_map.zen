@@ -1,10 +1,10 @@
 // Insertion-ordered hash map. Dense entries preserve iteration order; a
 // separate open-addressed index narrows lookups before Eq confirms a key.
 
-Alloc, AllocError = std.mem
-Range = std.core.range
-Vec = std.collections.collections_vec
-LoopHandle = std.core.loop.loop_handle
+{ Alloc, AllocError } = std.mem
+{ Range } = std.core.range
+{ Vec } = std.collections.collections_vec
+{ LoopHandle } = std.core.loop.loop_handle
 
 // Slots store one-based entry positions; zero marks an empty slot.
 SLOT_EMPTY: usize = 0

@@ -174,7 +174,7 @@ Constructs the grammar must cover, all present in `DESIGN.md`:
 - generics `Vec<T>`, `Map<K, V>`, error unions `A | B`
 - `@Self`, `@meta`, `@scope`
 - `consume e`, `e.try()`, `+% -% *%`
-- module bindings and re-export: `Res*, Ok* = std.core.result`
+- module bindings and re-export: `{ Res*, Ok* } = std.core.result`
 
 **Gate:** `tree-sitter test` green on a corpus containing every **Zen** code block in `DESIGN.md` (the tree listing, the `.gitignore`, and the C source are not Zen), plus an `errors/` directory of things that must *fail* to parse. Both directions matter — a grammar that accepts everything is not a grammar.
 

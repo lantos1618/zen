@@ -143,6 +143,11 @@
 
 (enum_variant name: (identifier) @constructor)
 
+; `{ Bag, reseat } = shape`: the module path is a namespace, and each
+; destructured name is whatever the module declares it as, which the
+; grammar cannot see, so only the path is coloured.
+(import_declaration module: (module_path (identifier) @module))
+
 (member_declaration
   name: (declaration_name name: (identifier) @variable.member))
 

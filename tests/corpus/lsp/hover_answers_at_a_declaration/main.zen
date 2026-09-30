@@ -36,11 +36,11 @@
 // though `std.core.bool` now declares one. The richer answer is the
 // build's, and `hover_answers_a_primitive_type` holds it.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text = std.json
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text } = std.json
 
 // The program hovered over. `add` is the one the measurement was taken
 // on; `bad` is the same shape written against a type that does not

@@ -1,8 +1,8 @@
 // Operator and delimiter scanning. Multi-byte operators use maximal munch,
 // such as `::=` before `::` and `+%` before `+`.
 
-TokenKind = std.lex.lex_token
-Cursor = std.lex.lex_cursor
+{ TokenKind } = std.lex.lex_token
+{ Cursor } = std.lex.lex_cursor
 
 // Bytes that begin a punctuation token.
 is_punct* = (b: u8) bool {

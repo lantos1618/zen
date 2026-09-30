@@ -1,8 +1,8 @@
 // Reads and writes byte-counted `Content-Length` envelopes. Header names are
 // case-insensitive; `Envelope.next` identifies the next frame in the buffer.
 
-str, String = std.text
-AllocError = std.mem
+{ str, String } = std.text
+{ AllocError } = std.mem
 
 Envelope* = {
     body*: str,

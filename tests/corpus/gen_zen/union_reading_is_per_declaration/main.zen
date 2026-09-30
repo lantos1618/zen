@@ -2,16 +2,16 @@
 // type; otherwise the entire declaration is a nominal enum. The distinction
 // affects generated layout rather than runtime output, so this test inspects C.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec = std.collections
-Source, scan = std.lex
-Parser = std.parse.parser
-module = std.parse.parse_decl
-Ast = std.ast.ast_arena
-Checker = sema.sema_check
-Emit = gen.gen_emit
-CBackend, emit_program = gen.gen_c
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Source, scan } = std.lex
+{ Parser } = std.parse.parser
+{ module } = std.parse.parse_decl
+{ Ast } = std.ast.ast_arena
+{ Checker } = sema.sema_check
+{ Emit } = gen.gen_emit
+{ CBackend, emit_program } = gen.gen_c
 
 // `Kind` is NOMINAL: Ident and Arrow name nothing, so the declaration is
 // an enum and `Payload` is a bare tag like the other two.

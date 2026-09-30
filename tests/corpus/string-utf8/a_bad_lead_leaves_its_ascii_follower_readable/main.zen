@@ -5,8 +5,8 @@
 // (or that "fixed" the pair by decoding 0xC2 as if well-formed) loses a
 // real character from the middle of text -- validate says invalid either
 // way, so the second probe is what pins resynchronisation.
-String = std.text.text_string
-Utf8Error, codepoint_at, validate_utf8 = std.text.text_utf8
+{ String } = std.text.text_string
+{ Utf8Error, codepoint_at, validate_utf8 } = std.text.text_utf8
 
 verdict = (s: str) i64 {
     s.validate_utf8().match({

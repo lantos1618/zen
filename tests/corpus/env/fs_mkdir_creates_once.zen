@@ -3,7 +3,7 @@
 // work, an existing directory is Ok(false), and Err is reserved for a
 // name that cannot become a directory.
 
-FsError = std.env
+{ FsError } = std.env
 
 main = (env: Env) Res<i32, FsError> {
     env.fs.mkdir("made").match({

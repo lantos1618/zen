@@ -1,11 +1,11 @@
 // Validate the scalar IR before rendering. Structural checks cover every
 // block. Definite assignment intersects the outgoing facts of reachable
 // predecessors until stable, so a backedge cannot invent an initial value.
-Alloc = std.mem
-Vec = std.collections
-Range = std.core
-str = std.text
-Program, Func, Scalar, Instruction, Terminator = gen.gen_ir
+{ Alloc } = std.mem
+{ Vec } = std.collections
+{ Range } = std.core
+{ str } = std.text
+{ Program, Func, Scalar, Instruction, Terminator } = gen.gen_ir
 
 IrReason* = EntryFunction
     | EntryParameters

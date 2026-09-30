@@ -1,10 +1,10 @@
 // Borrowed bytes with no allocation, growth, or ownership. len, indexing, and
 // equality are byte-based; Unicode decoding is explicit through text_utf8.
 
-Ptr = std.mem.mem
-Eq, Hash, Hasher = std.core.core
-Range, loop, LoopHandle = std.core.core
-DIGIT_ZERO = std.core.byte
+{ Ptr } = std.mem.mem
+{ Eq, Hash, Hasher } = std.core.core
+{ Range, loop, LoopHandle } = std.core.core
+{ DIGIT_ZERO } = std.core.byte
 
 str* = {
     data: Ptr<u8>,

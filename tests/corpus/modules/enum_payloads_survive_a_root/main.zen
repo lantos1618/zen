@@ -3,7 +3,7 @@
 // in it. Naming the payload and never reading it left the second half
 // unobserved -- a compiler zeroing every payload printed the same three
 // lines -- so every arm reads what it bound and prints it.
-Pos, Node = shape.shape
+{ Pos, Node } = shape.shape
 
 show = (n: Node) {
     n.match({

@@ -1,13 +1,13 @@
 // Compile-time enum variant-name reflection. A successful call is recorded for
 // lowering; no runtime method or standard-library declaration is involved.
 
-Enum, Expr, ExprId, Call, Access = std.ast
-AllocError = std.mem
-TyId = sema.sema_ty
-decl_at = sema.sema_def
-Checker = sema.sema_check
-Base = sema.sema_member
-SemaFault, NameFault = sema.sema_diag
+{ Enum, Expr, ExprId, Call, Access } = std.ast
+{ AllocError } = std.mem
+{ TyId } = sema.sema_ty
+{ decl_at } = sema.sema_def
+{ Checker } = sema.sema_check
+{ Base } = sema.sema_member
+{ SemaFault, NameFault } = sema.sema_diag
 
 VariantNameCall* = { ty*: TyId }
 

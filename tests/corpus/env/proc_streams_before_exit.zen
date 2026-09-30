@@ -1,5 +1,5 @@
-Sink, WriteError = std.core
-ProcStreamError, Process = std.proc
+{ Sink, WriteError } = std.core
+{ ProcStreamError, Process } = std.proc
 
 Observe = {
     env: Env,

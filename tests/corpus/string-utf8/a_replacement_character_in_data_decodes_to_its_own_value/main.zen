@@ -3,8 +3,8 @@
 // print identical bytes here and look correct while corrupting valid
 // text. It must decode to exactly 65533, count once, and occupy 3
 // bytes; nothing in this input is invalid, so no substitution may fire.
-Utf8Error = std.text.text_utf8
-codepoint_at, count_codepoints = std.text
+{ Utf8Error } = std.text.text_utf8
+{ codepoint_at, count_codepoints } = std.text
 
 main = (env: Env) Res<i32, Utf8Error> {
     s = "�";

@@ -3,7 +3,7 @@
 // `require` names the miss with both numbers without shadowing the `at`
 // operation Vec already supplies as a Range.
 
-Vec, OutOfBounds = std.collections
+{ Vec, OutOfBounds } = std.collections
 
 main = (env: Env) Res<i32, AllocError> {
     a = env.mem.alloc();

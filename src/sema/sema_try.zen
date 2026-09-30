@@ -1,13 +1,13 @@
-ExprId, Span, Lambda, Paren, Param = std.ast
-AllocError = std.mem
-Vec = std.collections
-TyId, TyRes, ResForm = sema.sema_ty
-SemaFault, TypeFault = sema.sema_diag
-Checker, Ctx = sema.sema_check
-type_of = sema.sema_type
-block_type = sema.sema_type
-param_type, type_from_ast = sema.sema_denote
-push_tparams, module_name = sema.sema_inst
+{ ExprId, Span, Lambda, Paren, Param } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ TyId, TyRes, ResForm } = sema.sema_ty
+{ SemaFault, TypeFault } = sema.sema_diag
+{ Checker, Ctx } = sema.sema_check
+{ type_of } = sema.sema_type
+{ block_type } = sema.sema_type
+{ param_type, type_from_ast } = sema.sema_denote
+{ push_tparams, module_name } = sema.sema_inst
 
 try_type* = (
     c       :: Checker,

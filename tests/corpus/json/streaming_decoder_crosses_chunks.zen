@@ -1,4 +1,4 @@
-JsonEvent, JsonFault, Decoder = std.json
+{ JsonEvent, JsonFault, Decoder } = std.json
 
 show = (event: JsonEvent) {
     event.match({

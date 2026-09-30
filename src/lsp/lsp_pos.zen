@@ -1,10 +1,10 @@
 // Converts between Zen's 1-based byte columns and LSP's 0-based UTF-16
 // positions. Out-of-range positions clamp to valid line boundaries.
 
-str = std.text
-Range = std.core
-Pos, Span = std.ast.ast_span
-codepoint_at, UTF8_MIN_4 = std.text.text_utf8
+{ str } = std.text
+{ Range } = std.core
+{ Pos, Span } = std.ast.ast_span
+{ codepoint_at, UTF8_MIN_4 } = std.text.text_utf8
 
 Position* = {
     line*: usize,

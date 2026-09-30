@@ -1,16 +1,16 @@
 // Execute the dependency-graph subset of a checked build.zen AST. Unsupported
 // expression shapes are rejected at their source spans.
 
-Alloc, AllocError = std.mem
-str = std.text
-Vec = std.collections
-Path = std.core
+{ Alloc, AllocError } = std.mem
+{ str } = std.text
+{ Vec } = std.collections
+{ Path } = std.core
 
-Ast, ExprId, Expr, Call, Access, Record, Block, Function, Span, Try = std.ast
-nowhere = std.ast
-Stmt, Bind, Member, Field, Module = std.ast
-Checker, Ctx, type_of = sema.sema
-CImport, Lib, Extern, Exe, Dep, Target, Codegen, Package = std.build
+{ Ast, ExprId, Expr, Call, Access, Record, Block, Function, Span, Try } = std.ast
+{ nowhere } = std.ast
+{ Stmt, Bind, Member, Field, Module } = std.ast
+{ Checker, Ctx, type_of } = sema.sema
+{ CImport, Lib, Extern, Exe, Dep, Target, Codegen, Package } = std.build
 
 PlanFault* = MissingBuild(str)
     | CheckedFaults

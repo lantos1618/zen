@@ -2,9 +2,9 @@
 // payload supplies the integer domain, and the leading bar still distinguishes
 // a one-variant enum from an alias.
 
-scan, Source = std.lex
-Parser, module = std.parse
-Ast, Decl, ExprId = std.ast
+{ scan, Source } = std.lex
+{ Parser, module } = std.parse
+{ Ast, Decl, ExprId } = std.ast
 
 GrammarProbe = | Zero = 0 | Other = 7 | Raw(u8)
 

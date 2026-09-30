@@ -3,12 +3,12 @@
 // Recoverable faults may still emit a token; unterminated or unrepresentable
 // literals do not.
 
-Lexer = std.lex.lex_state
-Pos, TokenKind = std.lex.lex_token
-LexFault = std.lex.lex_diag
-is_escape, escape_value = std.lex.lex_byte
-Alloc, AllocError = std.mem
-str = std.text
+{ Lexer } = std.lex.lex_state
+{ Pos, TokenKind } = std.lex.lex_token
+{ LexFault } = std.lex.lex_diag
+{ is_escape, escape_value } = std.lex.lex_byte
+{ Alloc, AllocError } = std.mem
+{ str } = std.text
 
 LiteralError* = OutOfMemory | IncompleteEscape(usize) | UnknownEscape(usize)
 

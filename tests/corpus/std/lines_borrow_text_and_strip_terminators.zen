@@ -1,6 +1,6 @@
 // Byte-valued summaries make lone CR data visible without embedding CR in
 // expected output. Empty input differs deliberately from split('\n').
-Lines = std.text
+{ Lines } = std.text
 
 show = (name: str, input: str) {
     count: usize ::= 0;

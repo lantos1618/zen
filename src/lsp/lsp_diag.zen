@@ -1,18 +1,18 @@
 // Owns the workspace check used to publish diagnostics. A settle publishes
 // changed results and empty lists for files whose previous errors disappeared.
 
-str, String, dup = std.text
-Vec, Map = std.collections
-Alloc, AllocError, Arena = std.mem
-Note = std.parse.parse_diag
-Checker = sema.sema_check
-root_for, relative_to, SourceRoot = zen.zen_path
-TextRange, text_range = lsp.lsp_pos
-obj, arr, Nest, written, to_json = std.json
-write_frame = lsp.lsp_frame
-path_of, doc_text = lsp.lsp_uri
-Built, Spot* = lsp.lsp_built
-Classed = lsp.lsp_colour
+{ str, String, dup } = std.text
+{ Vec, Map } = std.collections
+{ Alloc, AllocError, Arena } = std.mem
+{ Note } = std.parse.parse_diag
+{ Checker } = sema.sema_check
+{ root_for, relative_to, SourceRoot } = zen.zen_path
+{ TextRange, text_range } = lsp.lsp_pos
+{ obj, arr, Nest, written, to_json } = std.json
+{ write_frame } = lsp.lsp_frame
+{ path_of, doc_text } = lsp.lsp_uri
+{ Built, Spot* } = lsp.lsp_built
+{ Classed } = lsp.lsp_colour
 
 Diagnostic = {
     range: TextRange,

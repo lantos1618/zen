@@ -1,16 +1,16 @@
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec = std.collections
-Source, scan = std.lex
-Parser = std.parse.parser
-module = std.parse.parse_decl
-Ast, CHeader, CTypeBinding, CBinding, ModuleOrigin = std.ast
-Checker = sema.sema_check
-Emit = gen.gen_emit
-CBackend, emit_program = gen.gen_c
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Source, scan } = std.lex
+{ Parser } = std.parse.parser
+{ module } = std.parse.parse_decl
+{ Ast, CHeader, CTypeBinding, CBinding, ModuleOrigin } = std.ast
+{ Checker } = sema.sema_check
+{ Emit } = gen.gen_emit
+{ CBackend, emit_program } = gen.gen_c
 
 RAW : str = "rand* = () c_int\n"
-PROGRAM : str = "rand = raw.raw\nmain = (env: i32) i32 { rand(); 0 }\n"
+PROGRAM : str = "{ rand } = raw.raw\nmain = (env: i32) i32 { rand(); 0 }\n"
 
 at_text = (hay: str, needle: str) Res<usize> {
     (needle.len > hay.len).match({

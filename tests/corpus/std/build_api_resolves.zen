@@ -2,9 +2,9 @@
 // Distinct field and variant values make layout or default-value regressions
 // observable, including Exe.out's default None.
 
-Builder, Module, Function = std.build
-Budget, Package, Dep, Exe, Os, Arch, BuildFault, BuildError = std.build
-Vec = std.collections
+{ Builder, Module, Function } = std.build
+{ Budget, Package, Dep, Exe, Os, Arch, BuildFault, BuildError } = std.build
+{ Vec } = std.collections
 
 main = (env: Env) Res<i32, BuildError> {
     alloc ::= env.mem.alloc();

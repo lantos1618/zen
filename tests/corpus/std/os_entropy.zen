@@ -1,4 +1,4 @@
-fill_random, EntropyError = std.entropy
+{ fill_random, EntropyError } = std.entropy
 main = (env: Env) Res<(), AllocError> {
     a     = env.mem.alloc();
     bytes = a.raw(515, 1).try();

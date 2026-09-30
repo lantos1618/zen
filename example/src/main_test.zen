@@ -1,7 +1,7 @@
 // Tests live beside code and are discovered by their Tester parameter.
 
-Bencher, TestError, Tester = std.test
-Circle, Rect, Shape = main
+{ Bencher, TestError, Tester } = std.test
+{ Circle, Rect, Shape } = main
 
 shape_prints* = (t: Tester) Res<(), TestError> {
     s   = Shape.Unit;

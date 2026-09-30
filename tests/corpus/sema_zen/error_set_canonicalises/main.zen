@@ -15,13 +15,13 @@
 // and the collapse: a set of one IS its member, so `Res<T, E>` never
 // changes shape.
 
-Types, TyId = sema.sema_ty
-DeclId = sema.sema_id
-Diag, SemaFault, TypeFault, NameFault = sema.sema_diag
-Pos, Span = std.ast.ast_span
-Alloc, AllocError = std.mem
-Vec = std.collections
-str, String = std.text
+{ Types, TyId } = sema.sema_ty
+{ DeclId } = sema.sema_id
+{ Diag, SemaFault, TypeFault, NameFault } = sema.sema_diag
+{ Pos, Span } = std.ast.ast_span
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
 
 // A CALLER BRINGS ITS OWN ALLOCATOR. `Types` keeps `kinds`, `keys`,
 // `by_key`, `count` and `alloc` unstarred — it is an intern store and

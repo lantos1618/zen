@@ -1,4 +1,4 @@
-Vec = vec.vec
+{ Vec } = vec.vec
 
 main = (env: Env) Res<i32, IoError> {
     v ::= Vec(len: 0);

@@ -1,4 +1,4 @@
-Socket, SocketFault, resolve_addr = std.net.socket
+{ Socket, SocketFault, resolve_addr } = std.net.socket
 Native = c.bind("probe.h", {
     probe_check* = (yes: i32) ()
     probe_cloexec* = (fd: i32) i32

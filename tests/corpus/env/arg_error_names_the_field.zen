@@ -29,7 +29,7 @@
 // plausible-looking answer. The Ok arm carries two fields of two types
 // so a match that took the error path at all stops printing `zen 7`.
 
-ArgError = std.env
+{ ArgError } = std.env
 
 Cfg = {
     name: str,

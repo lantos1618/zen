@@ -2,21 +2,21 @@
 // A temporary `String`. The console record has runtime write slots and a null
 // Receiver because stdout is not a Zen-owned value.
 
-Member, Function = std.ast
-AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-TyId = sema.sema_ty
-Def = sema.sema_def
-sym_variant, RES_PATH = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
-ctype, request_type = gen.gen_c.gen_c_type
-recv_inst = gen.gen_c.gen_c_mono
-Site, site_of, member_at = gen.gen_c.gen_c_member
-impl_member_of, by_arity = gen.gen_c.gen_c_impl
-by_ref = gen.gen_c.gen_c_arg
-method_sig, member_symbol = gen.gen_c.gen_c_member
-Slot, slots_of, thunk_param = gen.gen_c.gen_c_fat
+{ Member, Function } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ TyId } = sema.sema_ty
+{ Def } = sema.sema_def
+{ sym_variant, RES_PATH } = gen.gen_name
+{ CBackend } = gen.gen_c.gen_c_state
+{ ctype, request_type } = gen.gen_c.gen_c_type
+{ recv_inst } = gen.gen_c.gen_c_mono
+{ Site, site_of, member_at } = gen.gen_c.gen_c_member
+{ impl_member_of, by_arity } = gen.gen_c.gen_c_impl
+{ by_ref } = gen.gen_c.gen_c_arg
+{ method_sig, member_symbol } = gen.gen_c.gen_c_member
+{ Slot, slots_of, thunk_param } = gen.gen_c.gen_c_fat
 
 ConsoleStream = Stdout | Stderr
 

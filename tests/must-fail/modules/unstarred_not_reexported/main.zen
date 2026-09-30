@@ -1,4 +1,4 @@
-quad, double = mid.mid
+{ quad, double } = mid.mid
 
 main = (env: Env) Res<i32, IoError> {
     println("{}", quad(3));

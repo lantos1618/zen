@@ -1,4 +1,4 @@
-MailboxStorage*, MailboxOps* = std.actor.actor_storage
+{ MailboxStorage*, MailboxOps* } = std.actor.actor_storage
 ActorError* = Closed | Full
 ActorStartError* = OutOfMemory | Unavailable
 

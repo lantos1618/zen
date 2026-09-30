@@ -19,10 +19,10 @@
 // run moving nothing; both are printed per case because a golden output
 // that is not a fixpoint is a gate that goes red on its own second run.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-scan, Source = std.lex.lex
-render = fmt.fmt
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ scan, Source } = std.lex.lex
+{ render } = fmt.fmt
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

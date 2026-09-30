@@ -1,7 +1,7 @@
 HARNESS_NATIVE_ASM* : bool = false
-Build = zen.zen_build
-Generation, Layout = gen.gen
-Codegen = std.build
+{ Build } = zen.zen_build
+{ Generation, Layout } = gen.gen
+{ Codegen } = std.build
 
 // All three backends consume the same checked source. The output comparison
 // catches reordered mutable reads, short-circuit effects, recursion, shadowed

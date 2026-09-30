@@ -36,11 +36,11 @@
 // because it is what turns "I did not damage the string" from a claim
 // into a check.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Range = std.core
-scan, Source = std.lex.lex
-render = fmt.fmt
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Range } = std.core
+{ scan, Source } = std.lex.lex
+{ render } = fmt.fmt
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

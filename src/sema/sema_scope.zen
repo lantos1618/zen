@@ -1,20 +1,20 @@
-ExprId, BlockId, Block, Call, Struct = std.ast
-Paren, Access, Member, Function, Param, Span, TypeId = std.ast
-Try, Name, Expr = std.ast
-Vec = std.collections
-spelled_name = sema.sema_handle
-AllocError = std.mem
-str = std.text
-Range = std.core
-DeclId = sema.sema_id
-decl_at = sema.sema_def
-Checker, UNRESOLVED = sema.sema_check
-tail_expr = sema.sema_hoist
-SemaFault, NameFault = sema.sema_diag
-Own, place_type, path_root, joined_source, access_view, returned_view = sema.sema_own
-TyId = sema.sema_ty
-own_member = sema.sema_recv
-call_callee = sema.sema_call
+{ ExprId, BlockId, Block, Call, Struct } = std.ast
+{ Paren, Access, Member, Function, Param, Span, TypeId } = std.ast
+{ Try, Name, Expr } = std.ast
+{ Vec } = std.collections
+{ spelled_name } = sema.sema_handle
+{ AllocError } = std.mem
+{ str } = std.text
+{ Range } = std.core
+{ DeclId } = sema.sema_id
+{ decl_at } = sema.sema_def
+{ Checker, UNRESOLVED } = sema.sema_check
+{ tail_expr } = sema.sema_hoist
+{ SemaFault, NameFault } = sema.sema_diag
+{ Own, place_type, path_root, joined_source, access_view, returned_view } = sema.sema_own
+{ TyId } = sema.sema_ty
+{ own_member } = sema.sema_recv
+{ call_callee } = sema.sema_call
 
 // `@scope` names the enclosing block: it may be passed inward but never
 // returned, stored in a construction, or read by an escaping closure. A

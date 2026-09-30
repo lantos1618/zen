@@ -1,4 +1,4 @@
-Ordered, sort = std.collections
+{ Ordered, sort } = std.collections
 Key = { value: usize }
 Key.impl(Eq, { eq = (self: @Self, other: @Self) bool { self.value == other.value } })
 Key.impl(Hash, {

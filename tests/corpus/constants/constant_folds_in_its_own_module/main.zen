@@ -16,7 +16,7 @@
 // export it imports (`WIDTH, get_total = helper.helper`), renames
 // nothing, and cannot be dotted into.
 
-get_total, WIDTH = helper.helper
+{ get_total, WIDTH } = helper.helper
 
 WIDTH*: i64 = 100
 

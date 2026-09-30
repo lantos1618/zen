@@ -1,4 +1,4 @@
-JsonEvent, JsonFault, Jsons, read, Decoder = std.json
+{ JsonEvent, JsonFault, Jsons, read, Decoder } = std.json
 
 fault_at = (fault: JsonFault) usize {
     fault.match({

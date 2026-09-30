@@ -1,4 +1,4 @@
-JsonEvent, JsonFault, Decoder = std.json
+{ JsonEvent, JsonFault, Decoder } = std.json
 
 finished = (a: Alloc, text: str) Res<(), JsonFault> {
     decoder ::= a.Decoder().try();

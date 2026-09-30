@@ -7,7 +7,7 @@
 // way, and a staging change would report itself as NotFound rather
 // than as a wrong answer.
 
-FsError = std.env
+{ FsError } = std.env
 
 // the grow below can fail to allocate, and there is no From
 Error = FsError | AllocError | IoError

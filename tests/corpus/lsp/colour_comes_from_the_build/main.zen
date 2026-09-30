@@ -40,22 +40,22 @@
 // `source_position`, the INVERSE conversion, so the last column of every row is
 // the bytes that group actually colours.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text, Jsons, JsonId, read = std.json
-source_position, run_of = lsp.lsp_pos
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text, Jsons, JsonId, read } = std.json
+{ source_position, run_of } = lsp.lsp_pos
 
 // THE BUFFER. One type used across a module boundary, one function
 // called, parameters used, a local and a field that must NOT move off
 // `variable`.
-CLEAN*: str = "Point = app.shape\n\nnear = (q: Point, n: i32) i32 {\n    s = q.x + n;\n    s\n}\n\nfar = (p: Point) i32 {\n    near(p, 1)\n}\n\nedge = (p: Point) Res<i32> {\n    n = (far(p) > 0).match({ true => Ok(1), false => None }).try();\n    Ok(n)\n}\n"
+CLEAN*: str = "{ Point } = app.shape\n\nnear = (q: Point, n: i32) i32 {\n    s = q.x + n;\n    s\n}\n\nfar = (p: Point) i32 {\n    near(p, 1)\n}\n\nedge = (p: Point) Res<i32> {\n    n = (far(p) > 0).match({ true => Ok(1), false => None }).try();\n    Ok(n)\n}\n"
 
 // The same buffer with one name nobody declares. A SEMA fault, not a
 // parse one: the file still lexes and parses, so every token is there
 // to be coloured — lexically.
-BROKEN*: str = "Point = app.shape\n\nnear = (q: Point, n: i32) i32 {\n    s = q.x + missing;\n    s\n}\n\nfar = (p: Point) i32 {\n    near(p, 1)\n}\n\nedge = (p: Point) Res<i32> {\n    n = (far(p) > 0).match({ true => Ok(1), false => None }).try();\n    Ok(n)\n}\n"
+BROKEN*: str = "{ Point } = app.shape\n\nnear = (q: Point, n: i32) i32 {\n    s = q.x + missing;\n    s\n}\n\nfar = (p: Point) i32 {\n    near(p, 1)\n}\n\nedge = (p: Point) Res<i32> {\n    n = (far(p) > 0).match({ true => Ok(1), false => None }).try();\n    Ok(n)\n}\n"
 
 // `tests/run.py` stages a directory test into `<work>/src` and runs the
 // program from `<work>`, so these are the paths the server will open.

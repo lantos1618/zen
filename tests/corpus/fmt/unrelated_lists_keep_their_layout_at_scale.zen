@@ -1,5 +1,5 @@
-render = fmt.fmt
-scan, Source = std.lex
+{ render } = fmt.fmt
+{ scan, Source } = std.lex
 
 check = (env: Env, count: usize) Res<(), AllocError> {
     a = env.mem.alloc();

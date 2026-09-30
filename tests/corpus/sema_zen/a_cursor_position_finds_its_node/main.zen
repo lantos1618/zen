@@ -2,14 +2,14 @@
 // position -> smallest containing node -> memoized semantic type -> name.
 // Parsed spans are half-open; a position outside every node returns `None`.
 
-scan, Source = std.lex
-Parser, module = std.parse
-Ast, Pos, ExprId, NodeRef, expr_node_at, node_at = std.ast
-Checker = sema.sema_check
-check_all = sema.sema_decl
-Types = sema.sema_ty
-Alloc, AllocError = std.mem
-str, String = std.text
+{ scan, Source } = std.lex
+{ Parser, module } = std.parse
+{ Ast, Pos, ExprId, NodeRef, expr_node_at, node_at } = std.ast
+{ Checker } = sema.sema_check
+{ check_all } = sema.sema_decl
+{ Types } = sema.sema_ty
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
 
 SRC: str = "add = (a: i32, b: i32) i32 { a + b }\npick = (n: i32) i32 { [i32, 4](2, 3, 5, 7)[n] }\n"
 

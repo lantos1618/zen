@@ -1,4 +1,4 @@
-Res = std.core.result
+{ Res } = std.core.result
 
 // A half-open interval `[start, end)`. Implementations may map each index to a
 // value with `at`; None ends iteration early.

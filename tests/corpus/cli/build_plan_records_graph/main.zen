@@ -1,7 +1,7 @@
-Build = zen.zen_build
-plan = zen.zen_build_plan
-Target, Os, Arch, Abi = std.build
-Map = std.collections
+{ Build } = zen.zen_build
+{ plan } = zen.zen_build_plan
+{ Target, Os, Arch, Abi } = std.build
+{ Map } = std.collections
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

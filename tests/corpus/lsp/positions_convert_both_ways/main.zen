@@ -32,10 +32,10 @@
 // between the two bytes of an `é`, and a conversion that invents one
 // hands the compiler a span slicing a codepoint in half.
 
-str = std.text
-AllocError = std.mem
-Pos = std.ast.ast_span
-source_position, lsp_position = lsp.lsp_pos
+{ str } = std.text
+{ AllocError } = std.mem
+{ Pos } = std.ast.ast_span
+{ source_position, lsp_position } = lsp.lsp_pos
 
 // line 0  "ab"     ASCII
 // line 1  "é1"     2-byte lead

@@ -1,9 +1,9 @@
 // Scalar executable IR shared by the JavaScript and assembly renderers.
 // The caller owns every vector and text buffer. Renderers consume a verified
 // program synchronously; retaining a view does not extend that allocation.
-Vec = std.collections
-str = std.text
-Span = std.ast
+{ Vec } = std.collections
+{ str } = std.text
+{ Span } = std.ast
 
 Scalar* = I32 | Bool | Unit
 Op* = Add

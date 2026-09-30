@@ -1,7 +1,7 @@
 // Duration stores an unsigned nanosecond count. Constructor units are
 // normalized immediately and are not retained.
 
-Res = std.core.result
+{ Res } = std.core.result
 
 NS_PER_MICRO*  : u64 = 1000
 NS_PER_MILLI*  : u64 = 1000000

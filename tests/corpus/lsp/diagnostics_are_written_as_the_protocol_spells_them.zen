@@ -36,13 +36,13 @@
 // carries a CR and a `.expected` may not (docs/TESTING.md); every byte
 // of the envelope is `a_session_is_answered_frame_by_frame`'s subject.
 
-str, String = std.text
-Vec = std.collections
-Alloc, AllocError = std.mem
-Pos, Span = std.ast.ast_span
-Note = std.parse.parse_diag
-Spot, publish = lsp.lsp_diag
-frame_at = lsp.lsp_frame
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Alloc, AllocError } = std.mem
+{ Pos, Span } = std.ast.ast_span
+{ Note } = std.parse.parse_diag
+{ Spot, publish } = lsp.lsp_diag
+{ frame_at } = lsp.lsp_frame
 
 // Line 2 opens with a two-byte `é`, which is the whole reason the
 // conversion is visible in the output.

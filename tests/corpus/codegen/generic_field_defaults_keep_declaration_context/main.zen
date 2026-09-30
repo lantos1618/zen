@@ -1,4 +1,4 @@
-Bundle = schema.schema
+{ Bundle } = schema.schema
 
 carry = <T>(value: T) T { value }
 

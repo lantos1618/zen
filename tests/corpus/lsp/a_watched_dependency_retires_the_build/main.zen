@@ -1,13 +1,13 @@
 // A cached build includes modules read from disk. A watched-file event must
 // retire it even when every open buffer is byte-identical.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text = std.json
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text } = std.json
 
-DOC*: str = "Point = app.shape\n\norigin = () Point { Point(x: 0) }\n"
+DOC*: str = "{ Point } = app.shape\n\norigin = () Point { Point(x: 0) }\n"
 URI*: str = "file://src/app/app.zen"
 ROOT_URI*: str = "file://."
 BROKEN*: str = "Point* = {\n"

@@ -1,4 +1,4 @@
-Suite = std.test
+{ Suite } = std.test
 
 main = (env: Env) Res<i32, IoError> {
     suite ::= Suite(env: env);

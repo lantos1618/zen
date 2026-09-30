@@ -1,9 +1,9 @@
-Function, TypeId, Span = std.ast
-AllocError = std.mem
-Vec = std.collections
-TyId, TyRes = sema.sema_ty
-Checker, Ctx = sema.sema_check
-SemaFault, NameFault = sema.sema_diag
+{ Function, TypeId, Span } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ TyId, TyRes } = sema.sema_ty
+{ Checker, Ctx } = sema.sema_check
+{ SemaFault, NameFault } = sema.sema_diag
 
 // Called once per body, with the mark taken before it was walked.
 // Everything raised since then belongs to this function.

@@ -6,7 +6,7 @@
 //
 // positionS: the second binding inside the lambda, then BOTH of its sides.
 
-Range = std.core.range
+{ Range } = std.core.range
 
 main = (env: Env) Res<i32, AllocError> {
     Range(0, 1).loop((h, i) {

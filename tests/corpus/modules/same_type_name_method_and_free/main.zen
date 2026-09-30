@@ -14,8 +14,8 @@
 //
 // The old workaround renamed one declaration. This keeps the unrenamed
 // shape under the corpus gate.
-Diag, render = alpha.alpha
-shout = gamma.gamma
+{ Diag, render } = alpha.alpha
+{ shout } = gamma.gamma
 
 main = (env: Env) Res<i32, AllocError> {
     a = Diag(code: 5);

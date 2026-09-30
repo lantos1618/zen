@@ -10,7 +10,7 @@
 //
 // main.stdin holds exactly those 86 bytes.
 
-Vec    = std.collections
+{ Vec }    = std.collections
 
 CHUNK: usize = 7
 

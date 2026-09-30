@@ -1,15 +1,15 @@
-Expr, Access, Span, TypeId, Named = std.ast
-Alias, Function = std.ast
-AllocError = std.mem
-Vec = std.collections
-str = std.text
-DeclId = sema.sema_id
-TyId = sema.sema_ty
-Def, decl_at, module_display = sema.sema_def
-SemaFault, ExportFault = sema.sema_diag
-Checker, Ctx = sema.sema_check
-def_type, decl_as_type = sema.sema_type
-signature_type = sema.sema_denote
+{ Expr, Access, Span, TypeId, Named } = std.ast
+{ Alias, Function } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ DeclId } = sema.sema_id
+{ TyId } = sema.sema_ty
+{ Def, decl_at, module_display } = sema.sema_def
+{ SemaFault, ExportFault } = sema.sema_diag
+{ Checker, Ctx } = sema.sema_check
+{ def_type, decl_as_type } = sema.sema_type
+{ signature_type } = sema.sema_denote
 
 // The module a base names, when the base is an alias for one.
 module_named_by* = (c :: Checker, ty: TyId) Res<usize> {

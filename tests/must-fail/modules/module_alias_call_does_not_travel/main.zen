@@ -1,7 +1,7 @@
 // `pick = two` aliases the module `two`; it imports no function. a bare
 // call through the alias names a module, not a function, so it is
 // rejected rather than resolved against any exported `pick`
-Tag = tag.tag
+{ Tag } = tag.tag
 o1 = one
 pick = two
 

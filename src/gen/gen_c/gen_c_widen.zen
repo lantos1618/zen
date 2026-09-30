@@ -3,19 +3,19 @@
 // Set-to-larger-set retagging remains statement lowering in gen_c_try because
 // the two sets may assign different tag numbers.
 
-ExprId = std.ast
-AllocError = std.mem
-str, String = std.text
-TyId, TyRes, is_failure = sema.sema_ty
-Ctx = sema.sema_check
-CBackend = gen.gen_c.gen_c_state
+{ ExprId } = std.ast
+{ AllocError } = std.mem
+{ str, String } = std.text
+{ TyId, TyRes, is_failure } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ CBackend } = gen.gen_c.gen_c_state
 
-expr, ty_of, value_expr = gen.gen_c.gen_c_expr
-convert = gen.gen_c.gen_c_bound
-carrier, wrap_error = gen.gen_c.gen_c_try
-ctype = gen.gen_c.gen_c_type
-sym_union_variant, sym_union_member = gen.gen_name
-has_var = sema.sema_inst
+{ expr, ty_of, value_expr } = gen.gen_c.gen_c_expr
+{ convert } = gen.gen_c.gen_c_bound
+{ carrier, wrap_error } = gen.gen_c.gen_c_try
+{ ctype } = gen.gen_c.gen_c_type
+{ sym_union_variant, sym_union_member } = gen.gen_name
+{ has_var } = sema.sema_inst
 
 // Whether the value has to be rebuilt to reach the `Res` that is wanted.
 needs_widen* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)

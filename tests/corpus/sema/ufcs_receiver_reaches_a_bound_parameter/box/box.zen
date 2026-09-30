@@ -1,8 +1,8 @@
 // A type and two free functions over it. `boxed` declares an `Alloc`;
 // the caller holds an `Arena`. `labelled` declares a `str` first.
 
-Alloc, AllocError = std.mem
-str = std.text
+{ Alloc, AllocError } = std.mem
+{ str } = std.text
 
 Box* = {
     n*: i32,

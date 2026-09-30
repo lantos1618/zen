@@ -1,5 +1,5 @@
-Samples, Summary = std.stats
-sqrt, log10 = std.math
+{ Samples, Summary } = std.stats
+{ sqrt, log10 } = std.math
 
 main = (env: Env) Res<i32, AllocError> {
     a = env.mem.alloc();

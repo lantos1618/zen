@@ -14,14 +14,14 @@
 // probed here: both fields are starred, and `first_hidden`'s gate is
 // sema's own, tested in `tests/must-fail/`.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text = std.json
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text } = std.json
 
 // THE BUFFER, mid-edit: `q.` where the disk has `q.x`.
-DOC*: str = "Point = app.shape\n\nnear = (q: Point) i32 {\n    q.\n}\n"
+DOC*: str = "{ Point } = app.shape\n\nnear = (q: Point) i32 {\n    q.\n}\n"
 
 // `tests/run.py` stages a directory test into `<work>/src` and runs the
 // program from `<work>`, so these are the paths the server will open.

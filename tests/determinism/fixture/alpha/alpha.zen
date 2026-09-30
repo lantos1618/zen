@@ -9,7 +9,7 @@
 // be emitted exactly once, and in the same place regardless of which module
 // the compiler walked first.
 
-Item, Box, Kind, weight = gamma
+{ Item, Box, Kind, weight } = gamma
 
 name* = () str { "alpha" }
 

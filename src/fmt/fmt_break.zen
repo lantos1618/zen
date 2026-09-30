@@ -1,12 +1,12 @@
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec, sort, Ordered = std.collections
-Range = std.core
-Span = std.ast.ast_span
-Ast = std.ast.ast_arena
-ExprId, TypeId, BlockId = std.ast.ast_id
-Module, Decl, Type, Expr, Call, ArrayLit, Union, Enum, Param = std.ast.ast_node
-Src, Parsed = fmt.fmt_src
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec, sort, Ordered } = std.collections
+{ Range } = std.core
+{ Span } = std.ast.ast_span
+{ Ast } = std.ast.ast_arena
+{ ExprId, TypeId, BlockId } = std.ast.ast_id
+{ Module, Decl, Type, Expr, Call, ArrayLit, Union, Enum, Param } = std.ast.ast_node
+{ Src, Parsed } = fmt.fmt_src
 
 // The formatter's single line-width policy.
 WIDTH: usize = 80

@@ -1,12 +1,12 @@
 // GNU x86-64 Linux System V assembly for the scalar IR. Each value has a
 // four-byte stack slot; calls preserve those slots without register spilling.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Range = std.core
-Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
-Span = std.ast
-Target = gen.gen_asm
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Range } = std.core
+{ Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print } = gen.gen_ir
+{ Span } = std.ast
+{ Target } = gen.gen_asm
 
 // This target fixes the instruction set, object dialect, OS and calling ABI.
 X86_64LinuxGnu* = { alloc*: Alloc }

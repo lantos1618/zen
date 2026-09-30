@@ -36,10 +36,10 @@
 // `errors-widen` lane's territory). Ok-versus-Err is what a build file
 // can ask, so it is what this file asks.
 
-Builder, Lib, Extern, CImport, Test, Bench = std.build
-Budget, Dep, Exe, Function, Os, Arch, Abi, Target = std.build
-BuildFault, BuildError = std.build
-Vec = std.collections
+{ Builder, Lib, Extern, CImport, Test, Bench } = std.build
+{ Budget, Dep, Exe, Function, Os, Arch, Abi, Target } = std.build
+{ BuildFault, BuildError } = std.build
+{ Vec } = std.collections
 
 // one signature carrying both members of the union: `.try()` merges
 // the allocator's failure in, and the build's own failure is raised

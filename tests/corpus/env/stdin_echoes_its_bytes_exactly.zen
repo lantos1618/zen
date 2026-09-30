@@ -14,8 +14,8 @@
 //
 // `print` and not `println`: `println` appends exactly one `\n`
 // (docs/TESTING.md) and that is precisely why it cannot carry a frame.
-Vec = std.collections
-str_at = std.text
+{ Vec } = std.collections
+{ str_at } = std.text
 
 // The chunk asked for per read. Small on purpose — the input is longer
 // than one chunk, so the loop really loops and a reader that answers

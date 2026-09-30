@@ -14,11 +14,11 @@
 // `selectionRange`. An import and an impl bind no name of their own and
 // are not rows; there is no hierarchical DocumentSymbol form.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text = std.json
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text } = std.json
 
 // The module outlined. One of each named declaration form, in an order
 // that is not the kind order, so the reply's order is provably the

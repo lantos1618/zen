@@ -1,16 +1,16 @@
 // Shared call-argument rendering. Native capability calls use `arg_text` and
 // `str_arg`; ordinary calls use declared parameter types and mutability.
 
-ExprId, Call, Function = std.ast
-AllocError = std.mem
-Vec = std.collections
-String = std.text
-TyId = sema.sema_ty
-Ctx = sema.sema_check
-CBackend = gen.gen_c.gen_c_state
-expr, value_held = gen.gen_c.gen_c_expr
-declare_temp = gen.gen_c.gen_c_flow
-address_of = gen.gen_c.gen_c_fat
+{ ExprId, Call, Function } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ String } = std.text
+{ TyId } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ CBackend } = gen.gen_c.gen_c_state
+{ expr, value_held } = gen.gen_c.gen_c_expr
+{ declare_temp } = gen.gen_c.gen_c_flow
+{ address_of } = gen.gen_c.gen_c_fat
 
 arg_text* = (
     be   :: CBackend,

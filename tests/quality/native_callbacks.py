@@ -14,8 +14,8 @@ class NativeCallbacks(unittest.TestCase):
 
     def test_qsort_calls_zen_function(self):
         directory, output, _ = self.compile('''
-Ptr, null_ptr = std.mem
-callback = std.native
+{ Ptr, null_ptr } = std.mem
+{ callback } = std.native
 C = c.bind("stdlib.h", "qsort", {
     sort* = (base: Ptr<()>, count: usize, size: usize, compare: Ptr<()>) ()
 })
@@ -37,8 +37,8 @@ main = (env: Env) Res<i32, AllocError> {
 
     def test_omitted_unit_return_callback(self):
         directory, output, _ = self.compile(r'''
-Ptr = std.mem
-callback = std.native
+{ Ptr } = std.mem
+{ callback } = std.native
 C = c.bind("stdlib.h", { atexit = (handler: Ptr<()>) i32 })
 IO = c.bind("unistd.h", { write = (fd: i32, bytes: Ptr<u8>, count: usize) i64 })
 finished = () {
@@ -52,7 +52,7 @@ main = () i32 { C.atexit(callback(finished)) }
 
     def test_rejects_capturing_lambda(self):
         self.compile('''
-callback = std.native
+{ callback } = std.native
 main = () i32 {
     value = 4;
     callback(() i32 { value });
@@ -73,13 +73,13 @@ main = () i32 {
         for declaration in cases:
             with self.subTest(declaration=declaration):
                 _, _, result = self.compile(
-                    'callback = std.native\n' + declaration +
+                    '{ callback } = std.native\n' + declaration +
                     '\nmain = () i32 { callback(f); 0 }\n', False)
                 self.assertIn('callback', result.stdout + result.stderr)
 
     def test_rejects_shadowing_local(self):
         self.compile('''
-callback = std.native
+{ callback } = std.native
 f = (x: i32) i32 { x }
 main = () i32 {
     f = (x: i32) i32 { x + 1 };

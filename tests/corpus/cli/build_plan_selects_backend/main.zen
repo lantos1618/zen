@@ -1,6 +1,6 @@
-Build = zen.zen_build
-plan = zen.zen_build_plan
-Target, Os, Arch, Abi = std.build
+{ Build } = zen.zen_build
+{ plan } = zen.zen_build_plan
+{ Target, Os, Arch, Abi } = std.build
 
 show = (env: Env, alloc: Alloc, root: str) Res<(), AllocError> {
     build ::= alloc.Build(env, root);

@@ -14,8 +14,8 @@
 // Byte writes do not interpret braces: String.add("]}}") writes two closing
 // braces, while String.fmt("]}}") writes one.
 
-str = std.text.text_str
-Sink, WriteError = std.core.io
+{ str } = std.text.text_str
+{ Sink, WriteError } = std.core.io
 
 // One format step. `literal` borrows a slice of the format string.
 FmtStep* = {

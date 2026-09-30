@@ -4,11 +4,11 @@
 // undefined behavior. Traps print the source position and exit 134. Compiler
 // builtins are optional fast paths; portable checks preserve C99 behavior.
 
-AllocError = std.mem
-str, String = std.text
-Emit, order = gen.gen_emit
-CBackend = gen.gen_c.gen_c_state
-c_prim, is_signed = gen.gen_c.gen_c_type
+{ AllocError } = std.mem
+{ str, String } = std.text
+{ Emit, order } = gen.gen_emit
+{ CBackend } = gen.gen_c.gen_c_state
+{ c_prim, is_signed } = gen.gen_c.gen_c_type
 
 // The C standard this backend targets, stated in exactly one place.
 C_STANDARD* : str = "C99 (ISO/IEC 9899:1999)"

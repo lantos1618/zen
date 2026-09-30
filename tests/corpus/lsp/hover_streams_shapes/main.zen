@@ -1,8 +1,8 @@
 // Shape notes stream to the final buffer without leaking a previous signature,
 // repeating overload names, or adding punctuation for empty/unknown parts.
-Alloc, AllocError = std.mem
-String, str = std.text
-hover_at = lsp.lsp_hover
+{ Alloc, AllocError } = std.mem
+{ String, str } = std.text
+{ hover_at } = lsp.lsp_hover
 
 show = (a: Alloc, label: str, declaration: str, name: str)
        Res<(), AllocError> {

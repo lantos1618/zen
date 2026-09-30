@@ -2,20 +2,20 @@
 // publish each borrowed artifact synchronously; no filesystem policy lives here.
 // Direct C entry points remain available to compiler tools and backend tests.
 
-Emit*, order* = gen.gen_emit
-CBackend*, emit_program*, render_symbol_map* = gen.gen_c
-lower_program*, emit_header*, emit_unit*, group_bodies*, ModuleBodies* = gen.gen_c
+{ Emit*, order* } = gen.gen_emit
+{ CBackend*, emit_program*, render_symbol_map* } = gen.gen_c
+{ lower_program*, emit_header*, emit_unit*, group_bodies*, ModuleBodies* } = gen.gen_c
 
-Alloc, AllocError, Mem = std.mem
-Ast = std.ast
-Checker = sema.sema
-Codegen = std.build
-String, str = std.text
-lower = gen.gen_lower
-Program = gen.gen_ir
-emit_js = gen.gen_js
-X86_64LinuxGnu = gen.gen_asm_x86
-verify, message = gen.gen_verify
+{ Alloc, AllocError, Mem } = std.mem
+{ Ast } = std.ast
+{ Checker } = sema.sema
+{ Codegen } = std.build
+{ String, str } = std.text
+{ lower } = gen.gen_lower
+{ Program } = gen.gen_ir
+{ emit_js } = gen.gen_js
+{ X86_64LinuxGnu } = gen.gen_asm_x86
+{ verify, message } = gen.gen_verify
 
 Layout* = Single | Modules
 ArtifactKind* = Source | Symbols

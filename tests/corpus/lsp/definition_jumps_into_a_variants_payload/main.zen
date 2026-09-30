@@ -22,12 +22,12 @@
 // SECOND batch, off the build batch one settled, exactly as
 // `colour_comes_from_the_build` does; its decoder is this file's.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text, Jsons, JsonId, read = std.json
-source_position, run_of = lsp.lsp_pos
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text, Jsons, JsonId, read } = std.json
+{ source_position, run_of } = lsp.lsp_pos
 
 // The buffer. `ArrayLit` is declared above and named as a payload below,
 // and NOTHING MATCHES ON `Expr` — a match would resolve the payload as a

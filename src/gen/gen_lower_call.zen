@@ -150,7 +150,13 @@ dot_call_on = (lo :: Lowerer, id: ExprId, c: Call, a: Access, base: Expr, span: 
                 Ok(checked) => checked.declaration.match({ Ok(_) => true, None => false }),
                 None        => false,
             });
-            (type_base && !declared).match({
+            // A function sema checked against a type's body (`Summary.parse(..)`)
+            // is a static member, not a variant or a construction.
+            static_body = type_base && selected.match({
+                Ok(checked) => checked.body.match({ Ok(_) => true, None => false }),
+                None        => false,
+            });
+            (type_base && !declared && !static_body).match({
                 // `Type.Variant(payload)` or a construction through a type.
                 true  => {
                     ty = lo.settled_type(id).try();
@@ -160,14 +166,32 @@ dot_call_on = (lo :: Lowerer, id: ExprId, c: Call, a: Access, base: Expr, span: 
                         _         => lo.variant_call(ty, c, a.name.text, span),
                     })
                 },
-                false => {
-                    checked = selected.ok_or(unsupported(span, "a call without successful semantic checking")).try();
-                    receiver: Res<ExprId> = type_base.match({ true => None, false => Ok(a.base) });
-                    lo.checked_invoke(id, c, checked, receiver, span)
-                },
+                false => static_body.match({
+                    true  => lo.static_call(id, c, a, base, selected, span),
+                    false => {
+                        checked = selected.ok_or(unsupported(span, "a call without successful semantic checking")).try();
+                        receiver: Res<ExprId> = type_base.match({ true => None, false => Ok(a.base) });
+                        lo.checked_invoke(id, c, checked, receiver, span)
+                    },
+                }),
             })
         },
     })
+}
+
+// `Type.member(args)` for a function declared in the type's own body.
+static_call = (lo :: Lowerer, id: ExprId, c: Call, a: Access, base: Expr, selected: Res<CheckedCall>,
+               span: Span) Res<Value, LowerError> {
+    checked = selected.ok_or(unsupported(span, "a call without successful semantic checking")).try();
+    name = base.kind.match({ Name(n) => n.text, _ => "" });
+    defs ::= lo.alloc.Vec<Def>();
+    lo.check.world.defs_of(lo.here().module, name, defs).try(LowerError.OutOfMemory);
+    d = defs.find((d) { d.kind.match({ StructDef => true, EnumDef => true, _ => false }) })
+        .ok_or(unsupported(span, "a static member of a type this backend cannot find")).try();
+    ty = lo.check.def_type(d).try(LowerError.OutOfMemory);
+    callee = lo.resolve(ty, a.name.text, checked.body, c.args.len, lo.call_inst(checked.inst).try(), None, span).try();
+    sources = lo.bind_sources(callee.f, c, None, span).try();
+    lo.invoke(id, callee, sources, c, span)
 }
 
 // ---------------------------------------------------------------------

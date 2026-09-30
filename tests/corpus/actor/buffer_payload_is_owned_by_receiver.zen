@@ -1,0 +1,57 @@
+// The worker cannot enter a turn until the sender arena has died. Retaining
+// and growing the accepted buffers must use receiver-owned storage, including
+// an empty buffer. A copied sender alias must not change admitted bytes.
+// (own/send_consumed_buffer, with each check printed instead of aborting.)
+Worker = { saved :: Res<Vec<u8>> = None, turns :: usize = 0 }
+Worker.impl(Actor, {
+    started = (self :: @Self, ctx: Context) {
+        loop(
+            !ctx.env.fs.exists("sender-finished"),
+            (h) { ctx.env.threads.sleep(1); }
+        );
+    }
+    process = (self :: @Self, ctx: Context, data: Vec<u8>) {
+        self.turns = self.turns + 1;
+        self.saved.match({
+            None         => (),
+            Ok(previous) => {
+                (previous.len == 2 && previous.get(0).match({ Ok(b) => b == 7, None => false }) && previous.get(1).match({ Ok(b) => b == 8, None => false })).match({ true => println("retained 7 8"), false => println("wrong") });
+            },
+        });
+        buffer ::= data;
+        buffer.add(8).match({ Ok(_) => (), Err(_) => println("wrong") });
+        self.saved = Ok(consume buffer);
+    }
+    stopped = (self :: @Self, ctx: Context) {
+        self.saved.match({
+            None     => println("wrong"),
+            Ok(last) => {
+                (self.turns == 2 && last.len == 1 && last.get(0).match({ Ok(b) => b == 8, None => false })).match({ true => println("empty grew 8"), false => println("wrong") });
+            },
+        });
+    }
+})
+Error = AllocError | IoError | FsError | ActorStartError | ActorError
+send = (env: Env, worker: Ref<Worker>) Res<(), Error> {
+    arena ::= env.mem.alloc();
+    buf   ::= arena.Vec<u8>();
+    buf.add(7).try();
+    alias ::= buf;
+    worker.process(consume buf).try();
+    alias.set(0, 99).match({ Ok(_) => (), None => println("wrong") });
+    empty ::= arena.Vec<u8>();
+    worker.process(consume empty).try();
+    Ok(())
+}
+main = (env: Env) Res<i32, Error> {
+    worker = env.spawn(Worker()).try();
+    sent   = send(env, worker);
+    env.fs.write(
+        "sender-finished",
+        "done"
+    ).match({ Ok(_) => (), Err(_) => println("wrong") });
+    sent.try();
+    worker.stop();
+    worker.join();
+    Ok(0)
+}

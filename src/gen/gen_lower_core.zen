@@ -292,7 +292,9 @@ Lowerer* = {
     }
 
     // A checked type at this frame's instantiation. Inside a bound's default
-    // body the bound's own type stands for the implementing Self.
+    // body the bound's own type stands for the implementing Self; inside an
+    // impl of a generic type, the type named without arguments (`Holder`
+    // for `Holder.impl(..)`) is Self at this instantiation too.
     concrete* = (self :: @Self, ty: TyId) Res<TyId, LowerError> {
         frame = self.here();
         settled = self.check.subst(ty, frame.inst).try(LowerError.OutOfMemory);
@@ -301,7 +303,10 @@ Lowerer* = {
             Ok(callee)   => callee.self_ty.match({
                 None       => settled,
                 Ok(self_ty) => self.check.types.at(settled).match({
-                    Named(n) => (n.decl == callee.owner).match({ true => self_ty, false => settled }),
+                    Named(n) => {
+                        bare_owner = n.args.len == 0 && callee.generic_owner.match({ Ok(g) => g == n.decl, None => false });
+                        (n.decl == callee.owner || bare_owner).match({ true => self_ty, false => settled })
+                    },
                     _        => settled,
                 }),
             }),

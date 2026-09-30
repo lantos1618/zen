@@ -131,7 +131,7 @@ registry = (shutdown: usize) Ptr<Registry> {
     });
     loop(
         () { atomic_load_u32(once) != 2 },
-        (h) { nanosleep_ns(1000).ignore_code(); }
+        (h) { nanosleep_ns(1000).discard(); }
     );
     pointer_at(block.offset(REGISTRY_AT).to<usize>().read(0)).to<Registry>()
 }
@@ -744,4 +744,5 @@ actor_shutdown* = () {
     });
 }
 
-ignore_code = (code: i64) { (code == 0).match({ true => (), false => () }); }
+// A result the caller has no use for (a short sleep that may be cut short).
+discard = (code: i64) {}

@@ -14,6 +14,12 @@
 // `(record: Ptr<u8>, data: Ptr<u8>) ()`: a turn per behavior send site
 // (data is the message's payload record), and the started and stopped
 // hooks (data unused). The stopped hook also drops the state and the arena.
+//
+// A direct str argument travels as bytes copied into the message. So does a
+// byte buffer (`Vec<u8>`), which the turn then moves into the actor's own
+// allocator before the behavior runs, so the behavior may keep and grow it;
+// like the C backend's receiver-owned arenas, that memory lives until the
+// actor's arena is dropped after `stopped`.
 
 Vec = std.collections
 String, str = std.text
@@ -23,14 +29,14 @@ nowhere = std.ast
 TyId, Def, DeclId, CheckedCall = sema.sema
 actor_byte_buffer, actor_payload_unsafe = sema.sema_copy
 Scalar, Layout, Op, Move, Binary, Instruction, Store, Address, Convert = gen.gen_ir
-CodeRef, Func, Pages = gen.gen_ir
+CodeRef, Func, Pages, CopyMem, TrapKind = gen.gen_ir
 LowerError, unsupported = gen.gen_lower
 Lowerer, Value, Place, Base, Callee, to_i64_bits = gen.gen_lower_core
 Source, argument_value, param_type, real_call = gen.gen_lower_call
-resolve, handle_for_place, payload_type, pointee_of = gen.gen_lower_member
+resolve, handle_for_place, payload_type, pointee_of, bound_of, dispatch = gen.gen_lower_member
 size_of, align_of, round_up, class_of, FieldAt = gen.gen_lower_shape
 Synth, std_call, std_function, enqueue_synth, begin_synth, finish_synth = gen.gen_lower_thread
-succeeded, is_null, byte_pointer = gen.gen_lower_thread
+succeeded, is_null, byte_pointer, ok_payload = gen.gen_lower_thread
 
 // The generated record of one actor type.
 ActorLayout* = {
@@ -53,6 +59,8 @@ ActorEntry* = {
     layout*: ActorLayout,
     hook*: Res<Callee>,
     fields*: Vec<FieldAt>,
+    // Which fields are byte buffers to move into the actor's allocator.
+    buffers*: Vec<bool>,
 }
 
 // A str argument's slice descriptor (std.sys.sys_actor.Slice).
@@ -322,7 +330,8 @@ hook_code = (
                     kind: kind,
                     layout: layout,
                     hook: hook,
-                    fields: lo.alloc.Vec<FieldAt>()
+                    fields: lo.alloc.Vec<FieldAt>(),
+                    buffers: lo.alloc.Vec<bool>()
                 ))
             ).try();
             lo.code_of(index)
@@ -476,6 +485,7 @@ send = (
         .ok_or(unsupported(span, "an unresolved actor behavior")).try();
     layout = lo.layout_of(actor_ty, span).try();
     fields        ::= lo.alloc.Vec<FieldAt>();
+    buffers       ::= lo.alloc.Vec<bool>();
     at: usize     ::= 0;
     widest: usize ::= 1;
     strs: usize   ::= 0;
@@ -491,8 +501,11 @@ send = (
             ty: formal,
             offset: at
         )).try(LowerError.OutOfMemory);
+        buffers.add(lo.check.actor_byte_buffer(
+            formal
+        )).try(LowerError.OutOfMemory);
         at = at + size_of(class);
-        lo.is_str(formal).then(() { strs = strs + 1; });
+        lo.copied(formal).then(() { strs = strs + 1; });
     });
     // As C lays out the payload struct (one byte when there are no fields).
     size    = (fields.len == 0).match({ true => 1, false => round_up(
@@ -527,7 +540,7 @@ send = (
             offset: field.offset,
             value: value.slot
         ))).try();
-        lo.is_str(field.ty).then(() {
+        lo.copied(field.ty).then(() {
             lo.describe(
                 descriptors,
                 slice * SLICE_BYTES,
@@ -544,7 +557,8 @@ send = (
             kind: EntryKind.Turn,
             layout: layout,
             hook: Ok(hook),
-            fields: fields
+            fields: fields,
+            buffers: buffers
         ))
     ).try();
     usize_ty   = lo.prim("usize").try();
@@ -664,23 +678,28 @@ is_str = (lo :: Lowerer, ty: TyId) bool {
     lo.check.types.at(ty).match({ Prim(p) => p.name.eq("str"), _ => false })
 }
 
-// The C backend's transfer rule: a direct str is copied into the message;
-// any other payload must be free of borrowed memory. Byte buffers, which C
-// moves into a receiver-owned arena, are not lowered here yet.
+// Whether an argument's bytes are copied into the message: a direct str or
+// a byte buffer (both have `data` and `len`).
+copied = (lo :: Lowerer, ty: TyId) bool {
+    lo.is_str(ty) || lo.check.actor_byte_buffer(ty)
+}
+
+// The C backend's transfer rule: a direct str or byte buffer is copied;
+// any other payload must be free of borrowed memory. The argument's own
+// representation must agree, so a conversion cannot hide a buffer.
 transferable = (
     lo     :: Lowerer,
     formal : TyId,
     actual : TyId,
     span   : Span
 ) Res<(), LowerError> {
-    (!lo.check.actor_byte_buffer(formal) && !lo.check.actor_byte_buffer(actual))
-        .ensure(unsupported(span, "an actor byte-buffer payload")).try();
-    (lo.is_str(formal) == lo.is_str(actual))
-        .ensure(unsupported(
-            span,
-            "an actor payload without a concrete mailbox transfer"
-        )).try();
-    (lo.is_str(formal) || !lo.check.actor_payload_unsafe(formal).try(LowerError.OutOfMemory))
+    same_shape = lo.check.actor_byte_buffer(formal) == lo.check.actor_byte_buffer(actual)
+        && lo.is_str(formal) == lo.is_str(actual);
+    same_shape.ensure(unsupported(
+        span,
+        "an actor payload without a concrete mailbox transfer"
+    )).try();
+    (lo.copied(formal) || !lo.check.actor_payload_unsafe(formal).try(LowerError.OutOfMemory))
         .ensure(unsupported(
             span,
             "an actor payload without a concrete mailbox transfer"
@@ -713,6 +732,15 @@ actor_function* = (lo :: Lowerer, entry: ActorEntry) Res<Func, LowerError> {
         offset: layout.context,
         ty: layout.context_ty
     );
+    entry.fields.loop((h, i, f) {
+        entry.buffers.get(i).value_or(false).then(() {
+            lo.own_buffer(
+                layout,
+                record,
+                Place(base: Base.Through(data), offset: f.offset, ty: f.ty)
+            ).try();
+        });
+    });
     entry.hook.when_ok((hook) {
         sources ::= lo.alloc.Vec<Source>();
         sources.add(Source.Located(state)).try(LowerError.OutOfMemory);
@@ -743,4 +771,87 @@ actor_function* = (lo :: Lowerer, entry: ActorEntry) Res<Func, LowerError> {
     done = lo.unit().try();
     name = entry.kind.match({ Turn => "actor_turn", Started => "actor_started", Stopped => "actor_stopped" });
     lo.finish_synth(name, entry_block, 2, done.slot, Scalar.Unit)
+}
+
+// Move a byte buffer's bytes from the message into the actor's allocator
+// (Context.alloc) and make that allocator the buffer's own. An empty buffer
+// keeps no memory. Allocation failure traps, as native allocations do.
+own_buffer = (
+    lo     :: Lowerer,
+    layout : ActorLayout,
+    record : usize,
+    buffer : Place
+) Res<(), LowerError> {
+    span    = nowhere();
+    context = Place(
+        base: Base.Through(record),
+        offset: layout.context,
+        ty: layout.context_ty
+    );
+    handle  = lo.read(lo.field_place(context, "alloc", span).try()).try();
+    data    = lo.field_place(buffer, "data", span).try();
+    len     = lo.read(lo.field_place(buffer, "len", span).try()).try();
+    zero    = lo.word_const(Scalar.U64, 0).try();
+    empty   = lo.slot_of(Scalar.Bool).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: empty,
+        left: len.slot,
+        right: zero,
+        op: Op.Equal,
+        span: span
+    ))).try();
+    none = lo.label().try();
+    some = lo.label().try();
+    done = lo.label().try();
+    lo.branch_to(empty, none, some).try();
+    lo.start(none);
+    lo.write(
+        data,
+        Value(slot: lo.word_const(Scalar.Ptr, 0).try(), ty: data.ty)
+    ).try();
+    lo.jump(done).try();
+    lo.start(some);
+    bound     = lo.bound_of(layout.alloc_ty).try().ok_or(unsupported(span, "an Alloc that is not a bound")).try();
+    error_ty  = lo.std_type(
+        "AllocError",
+        "std.mem.mem_alloc.AllocError",
+        span
+    ).try();
+    result_ty = lo.check.types.res_failure(
+        data.ty,
+        error_ty
+    ).try(LowerError.OutOfMemory);
+    usize_ty  = lo.prim("usize").try();
+    args ::= lo.one(Source.Computed(len)).try();
+    args.more(Source.Computed(Value(
+        slot: lo.word_const(Scalar.U64, 1).try(),
+        ty: usize_ty
+    ))).try();
+    got     = lo.dispatch(
+        bound,
+        handle,
+        "raw",
+        args,
+        lo.alloc.Inst(),
+        result_ty,
+        span
+    ).try();
+    have    = lo.label().try();
+    refused = lo.label().try();
+    lo.branch_to(lo.succeeded(got).try(), have, refused).try();
+    lo.start(refused);
+    lo.trap(TrapKind.OutOfMemory, span).try();
+    lo.start(have);
+    bytes  = lo.ok_payload(got).try();
+    source = lo.read(data).try();
+    lo.add(Instruction.CopyBytes(CopyMem(
+        dest: bytes.slot,
+        source: source.slot,
+        bytes: len.slot
+    ))).try();
+    lo.write(data, bytes).try();
+    lo.jump(done).try();
+    lo.start(done);
+    lo.write(lo.field_place(buffer, "capacity", span).try(), len).try();
+    lo.write(lo.field_place(buffer, "alloc", span).try(), handle)
 }

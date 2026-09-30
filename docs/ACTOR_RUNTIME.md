@@ -26,6 +26,18 @@ This preserves lifetime safety but can serialize independent senders. A worker
 pool or narrower lock design needs a separately proven lifetime/reservation
 protocol; bounded mailbox memory alone does not establish scalability.
 
+## Native backend
+
+The asm backend runs the same semantics through `std.sys.sys_actor`, a Zen
+runtime over `std.sys.sys_thread` (futexes and `clone` on Linux, pthreads on
+macOS); `NATIVE_BACKEND.md` describes it. Admission limits and the mailbox
+cache limits come from `std.actor.actor_limits` on both backends, and the
+native runtime charges the same header and storage overhead per message, so
+the same sends are refused. It caches retired message blocks per actor
+itself rather than through `std.mem.Pool`, which needs the C heap. A
+byte-buffer argument is copied into the message and moved into the actor's
+own allocator by its turn, rather than into a per-message arena.
+
 ## Executable checks
 
 `make actorcheck` runs admission/overflow/fault injection, concurrent joins,

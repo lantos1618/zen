@@ -9,13 +9,13 @@ no C.
 
 ## Run it
 
-The compiler must be this branch's `./zen` (`make build`). From the zen-ui
+The compiler is unified-rooms' `./zen` (`make build` in ../zen-unified). From the zen-ui
 checkout:
 
 ```sh
-ZEN_STD=../zen-web/src ../zen-web/zen build web-counter   # build/web/ (JS backend)
-ZEN_STD=../zen-web/src ../zen-web/zen build web-serve     # build/web-serve (asm backend)
-./build/web-serve 8765                                    # open http://127.0.0.1:8765/
+ZEN_STD=../zen-unified/src ../zen-unified/zen build web-counter   # build/web/ (JS backend)
+ZEN_STD=../zen-unified/src ../zen-unified/zen build web-serve     # build/web-serve (asm backend)
+./build/web-serve 8765                                            # open http://127.0.0.1:8765/
 ```
 
 `web-counter` is declared in zen-ui's `build.zen` with `backend: Codegen.Js,

@@ -133,7 +133,7 @@ Round = {
 
     collect = (self :: @Self, tree: Ast, m: Module) Res<(), AllocError> {
         id ::= ExprId(index: 0);
-        Range(0, tree.expr_ids()).loop((h, i) {
+        Range(0, tree.expr_ids()).loop((h, _) {
             e = tree.expr_at(id);
             e.kind.match({
                 Call(c)   => self.add_call(c),
@@ -144,7 +144,7 @@ Round = {
             id = ExprId(index: id.index + 1);
         });
         tid ::= TypeId(index: 0);
-        Range(0, tree.type_ids()).loop((h, i) {
+        Range(0, tree.type_ids()).loop((h, _) {
             t = tree.type_at(tid);
             t.kind.match({
                 Union(u) => self.add_union(tree, t, u),
@@ -153,10 +153,10 @@ Round = {
             }).try();
             tid = TypeId(index: tid.index + 1);
         });
-        m.decls.loop((h, i, d) { self.add_decl(d).try(); });
+        m.decls.loop((h, d) { self.add_decl(d).try(); });
         bid ::= BlockId(index: 0);
-        Range(0, tree.block_ids()).loop((h, i) {
-            tree.block_at(bid).stmts.loop((g, j, s) {
+        Range(0, tree.block_ids()).loop((h, _) {
+            tree.block_at(bid).stmts.loop((g, s) {
                 s.kind.match({
                     Decl(d) => self.add_decl(d),
                     _       => Ok(()),
@@ -173,7 +173,7 @@ Round = {
             true  => Ok(()),
             false => {
                 items ::= self.a.Vec<Item>();
-                c.args.loop((h, i, arg) {
+                c.args.loop((h, arg) {
                     items.add(self.src.Item(arg.span)).try();
                 });
                 self.add(c.args_span, Form.Stacked, items)
@@ -187,7 +187,7 @@ Round = {
             true  => Ok(()),
             false => {
                 items ::= self.a.Vec<Item>();
-                al.elems.loop((h, i, eid) {
+                al.elems.loop((h, eid) {
                     items.add(self.src.Item(tree.expr_at(eid).span)).try();
                 });
                 self.add(e.span, Form.Filled, items)
@@ -209,7 +209,7 @@ Round = {
             true  => Ok(()),
             false => {
                 items ::= self.a.Vec<Item>();
-                ps.loop((h, i, p) { items.add(self.src.Item(p.span)).try(); });
+                ps.loop((h, p) { items.add(self.src.Item(p.span)).try(); });
                 self.add(span, Form.Columnar, items)
             },
         })
@@ -218,7 +218,7 @@ Round = {
     add_union = (self :: @Self, tree: Ast, t: Type, u: Union)
                 Res<(), AllocError> {
         items ::= self.a.Vec<Item>();
-        u.members.loop((h, i, mid) {
+        u.members.loop((h, mid) {
             items.add(self.src.Item(tree.type_at(mid).span)).try();
         });
         self.add(t.span, Form.Barred, items)
@@ -231,7 +231,7 @@ Round = {
             true  => Ok(()),
             false => {
                 items ::= self.a.Vec<Item>();
-                e.variants.loop((h, i, v) {
+                e.variants.loop((h, v) {
                     items.add(self.src.Item(v.span)).try();
                 });
                 first = e.variants.ptr().read(0);
@@ -405,7 +405,7 @@ Round = {
     apply = (self: @Self, text: str) Res<String, AllocError> {
         out ::= self.a.String().try();
         at  ::= 0;
-        self.edits.loop((h, i, e) {
+        self.edits.loop((h, e) {
             out.fmt("{}{}", text.slice(at, e.from), e.text.view()).try();
             at = e.to;
         });

@@ -273,14 +273,14 @@ write_actor_floor = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     out.say("    return 0;").try();
     out.say("}").try();
     out.line().try();
-    be.write_actor_worker(out).try();
-    be.write_actor_send_floor(out).try();
-    be.write_actor_start_floor(out).try();
-    be.write_actor_stop_floor(out).try();
+    write_actor_worker(out).try();
+    write_actor_send_floor(out).try();
+    write_actor_start_floor(out).try();
+    write_actor_stop_floor(out).try();
     Ok(())
 }
 
-write_actor_worker = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+write_actor_worker = (out :: Emit) Res<(), AllocError> {
     out.say("static void *zg_actor_worker(void *raw) {").try();
     out.say("    zg_actor *a = (zg_actor *)raw;").try();
     out.say("    if (a->started) a->started(a);").try();
@@ -325,7 +325,7 @@ write_actor_worker = (be :: CBackend, out :: Emit) Res<(), AllocError> {
 }
 
 // 0 accepted, 1 closed, 2 full (including allocation refusal).
-write_actor_send_floor = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+write_actor_send_floor = (out :: Emit) Res<(), AllocError> {
     out.say(
         "static int zg_actor_send_owned(zg_actor *a, zg_actor_turn turn, const void *data, size_t size, const zg_actor_slice *slices, size_t slice_count, int (*prepare)(zg_actor *, void *, zg_actor_owned **)) {"
     ).try();
@@ -445,7 +445,7 @@ write_actor_send_floor = (be :: CBackend, out :: Emit) Res<(), AllocError> {
 }
 
 // 0 started, 1 allocation/setup failure, 2 worker unavailable.
-write_actor_start_floor = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+write_actor_start_floor = (out :: Emit) Res<(), AllocError> {
     out.say("static int zg_actor_start(zg_actor *a) {").try();
     out.say("    if (pthread_mutex_init(&a->lock, NULL) != 0) return 1;").try();
     out.say(
@@ -474,7 +474,7 @@ write_actor_start_floor = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     Ok(())
 }
 
-write_actor_stop_floor = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+write_actor_stop_floor = (out :: Emit) Res<(), AllocError> {
     out.say("static void zg_actor_stop_worker(zg_actor *a) {").try();
     out.say("    if (!a) return;").try();
     out.say("    pthread_mutex_lock(&a->lock);").try();

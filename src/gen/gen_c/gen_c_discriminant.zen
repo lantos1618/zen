@@ -186,7 +186,7 @@ write_decode_fallback = (
 ) Res<(), AllocError> {
     be.writeln("else {").try();
     be.indent();
-    be.catch_all_variant(shape.value).match({
+    catch_all_variant(shape.value).match({
         None  => be.set_closed_none(ret, dst),
         Ok(v) => {
             value = be.unknown_enum_value(shape, qname, v, raw).try();
@@ -248,7 +248,7 @@ unknown_enum_value = (
     Ok(out)
 }
 
-catch_all_variant = (be: CBackend, e: Enum) Res<Variant> {
+catch_all_variant = (e: Enum) Res<Variant> {
     e.variants.find((v) { is_discriminant_catch_all(v) }).match({
         None  => None,
         Ok(v) => Ok(v),

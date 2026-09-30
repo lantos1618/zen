@@ -746,7 +746,7 @@ MatchCoverage = {
         filler : usize
     ) Res<(), AllocError> {
         row ::= self.pats.alloc.Vec<usize>();
-        Range(0, arity).loop((h, k) { row.add(filler).try() });
+        Range(0, arity).loop((h, _) { row.add(filler).try() });
         Range(1, m.width).loop((h, k) { row.add(m.at(r, k)).try() });
         out.add_row(row)
     }

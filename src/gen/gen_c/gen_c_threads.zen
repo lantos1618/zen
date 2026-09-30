@@ -32,7 +32,7 @@ settled = gen.gen_c.gen_c_settle
 emit_threads* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     be.uses_threads().match({
         false => Ok(()),
-        true  => be.write_sleep(out),
+        true  => write_sleep(out),
     }).try();
     be.uses_spawn().match({
         false => Ok(()),
@@ -40,7 +40,7 @@ emit_threads* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     })
 }
 
-write_sleep = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+write_sleep = (out :: Emit) Res<(), AllocError> {
     out.say("#include <errno.h>").try();
     out.line().try();
     comment(out, "the sleep floor is POSIX nanosleep").try();

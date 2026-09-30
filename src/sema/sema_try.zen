@@ -184,7 +184,7 @@ try_mapper_arity = (
     expected = c.types.fn_ty(expected_params, into).try();
     hole     = c.types.infer().try();
     actual_params ::= c.alloc.Vec<TyId>();
-    l.params.loop((h, p) { actual_params.add(hole).try() });
+    l.params.loop((h, _) { actual_params.add(hole).try() });
     actual = c.types.fn_ty(actual_params, hole).try();
     node   = c.tree.expr_at(id);
     c.mismatch(node.span.file, node.span, actual, expected, "")

@@ -170,7 +170,7 @@ Map*<K: Eq + Hash, V> = {
 empty_slots = (a: Alloc, n: usize) Res<Vec<usize>, AllocError> {
     fresh ::= a.Vec<usize>();
     fresh.reserve(n).try();
-    Range(0, n).loop((h, i) { fresh.add(SLOT_EMPTY).try(); });
+    Range(0, n).loop((h, _) { fresh.add(SLOT_EMPTY).try(); });
     Ok(fresh);
 }
 

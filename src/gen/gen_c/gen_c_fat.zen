@@ -291,7 +291,7 @@ slot_field* = (be :: CBackend, s: Slot, out :: String)
     be.ctype(s.ret, out).try();
     out.fmt(" (*{})(void *", s.sym.view()).try();
     s.params.loop((h, p) { be.slot_param(p, out).try() });
-    Range(0, s.elems).loop((h, i) { out.add(", size_t").try() });
+    Range(0, s.elems).loop((h, _) { out.add(", size_t").try() });
     out.add(");").try();
     Ok(());
 }
@@ -542,7 +542,7 @@ thunk_body = (
     call ::= be.alloc.String().try();
     call.fmt("{sym}(").try();
     be.thunk_recv(cty, f, call).try();
-    s.params.loop((h, i, p) { be.thunk_arg(s, f, sig, i, call).try() });
+    s.params.loop((h, i, _) { be.thunk_arg(s, f, sig, i, call).try() });
     call.add(")").try();
     out.add("    ").try();
     be.is_unit(s.ret).match({

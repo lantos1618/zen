@@ -59,7 +59,7 @@ lower_scope_ref* = (be :: CBackend, id: ExprId, out :: String)
     rec = be.innermost_record();
     (rec == 0).match({
         true  => be.unsupported(id, "`@scope` where no block is open", out),
-        false => be.write_record_ref(rec, out),
+        false => write_record_ref(rec, out),
     })
 }
 
@@ -77,7 +77,7 @@ record_of = (be :: CBackend, i: usize) usize {
     })
 }
 
-write_record_ref = (be :: CBackend, rec: usize, out :: String)
+write_record_ref = (rec: usize, out :: String)
                    Res<(), AllocError> {
     out.add("&").try();
     sym_gen(out, "b", rec)
@@ -412,13 +412,13 @@ write_defer_call = (
     line ::= be.alloc.String().try();
     line.fmt("zg_defer({recv}, ").try();
     sym_gen(line, "d", n).try();
-    be.write_defer_env_args(cell, line).try();
+    write_defer_env_args(cell, line).try();
     line.add(", ").try();
     be.write_position(node.span.file, node.span, line).try();
     be.fmt("{});\n", line.view())
 }
 
-write_defer_env_args = (be :: CBackend, cell: str, line :: String)
+write_defer_env_args = (cell: str, line :: String)
                        Res<(), AllocError> {
     (cell.len == 0).match({
         true  => line.add(", 0, 0"),
@@ -536,11 +536,11 @@ keep_capture = (be :: CBackend, name: str, out :: Vec<LocalSlot>)
                Res<(), AllocError> {
     be.slot_of(name).match({
         None  => Ok(()),
-        Ok(s) => be.keep_value_slot(s, out),
+        Ok(s) => keep_value_slot(s, out),
     })
 }
 
-keep_value_slot = (be :: CBackend, s: LocalSlot, out :: Vec<LocalSlot>)
+keep_value_slot = (s: LocalSlot, out :: Vec<LocalSlot>)
                   Res<(), AllocError> {
     (s.is_value() && (held(out, s) == false)).match({
         false => Ok(()),

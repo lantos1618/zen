@@ -325,7 +325,7 @@ Completion = {
         eid  ::= ExprId(index: 0);
         hit  ::= false;
         best ::= no_access();
-        Range(0, self.c.tree.expr_ids()).loop((h, i) {
+        Range(0, self.c.tree.expr_ids()).loop((h, _) {
             self.c.tree.expr_at(eid).kind.match({
                 Access(ac) => ac.name.text.eq(name).match({
                     true  => { best = ac; hit = true; },

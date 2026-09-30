@@ -130,7 +130,7 @@ loop_result_type* = (
 ) Res<TyId, AllocError> {
     be.loop_fn_at(id).match({
         None  => Ok(got),
-        Ok(f) => be.settled_loop_type(id, ctx, got, want),
+        Ok(_) => be.settled_loop_type(id, ctx, got, want),
     })
 }
 

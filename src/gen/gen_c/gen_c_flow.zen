@@ -24,7 +24,7 @@ GenFault = gen.gen_diag
 CBackend = gen.gen_c.gen_c_state
 enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
 declarator, is_unit, variant_type, decl_ctx = gen.gen_c.gen_c_type
-decl_inst = gen.gen_c.gen_c_type
+decl_inst, void_discard = gen.gen_c.gen_c_type
 write_qname = gen.gen_c.gen_c_layout
 Dest, deliver = gen.gen_c.gen_c_stmt
 res_type_of, write_c_literal = gen.gen_c.gen_c_expr
@@ -612,11 +612,12 @@ bind_local = (be :: CBackend, name: str, ty: TyId, init: str)
              Res<(), AllocError> {
     n = be.declare(name, ty, false).try();
     be.check.bind(name, ty, false, false).try();
+    cname ::= be.alloc.String().try();
+    sym_local(cname, name, n).try();
     decl ::= be.alloc.String().try();
-    be.ctype(ty, decl).try();
-    decl.add(" ").try();
-    sym_local(decl, name, n).try();
-    be.fmt("{} = {init};\n", decl.view())
+    be.declarator(ty, cname.view(), decl).try();
+    be.fmt("{} = {init};\n", decl.view()).try();
+    be.void_discard(name, cname.view())
 }
 
 // what an enum's variants are

@@ -447,7 +447,7 @@ lower_unlock* = (
     ptr.add(addr.view()).try();
     ptr.add(")").try();
     field ::= be.alloc.String().try();
-    be.arrow_field(ptr.view(), "fd", field).try();
+    arrow_field(ptr.view(), "fd", field).try();
     be.unlock_line(field.view()).try();
     out.add("0").try();
     Ok(())
@@ -464,7 +464,7 @@ unlock_line = (be :: CBackend, field: str) Res<(), AllocError> {
 
 // `<addr>-><name>` — the fd through a Lock pointer, spelled with the
 // member mangler so the C name cannot drift from the type's own.
-arrow_field = (be :: CBackend, addr: str, name: str, out :: String)
+arrow_field = (addr: str, name: str, out :: String)
               Res<(), AllocError> {
     out.add(addr).try();
     out.add("->").try();
@@ -626,12 +626,11 @@ write_vec_field = (
 ) Res<(), AllocError> {
     be.field_of(vty, name).try().match({
         None  => Ok(()),
-        Ok(_) => be.write_named_init(name, value, out, first),
+        Ok(_) => write_named_init(name, value, out, first),
     })
 }
 
 write_named_init = (
-    be    :: CBackend,
     name  : str,
     value : str,
     out   :: String,

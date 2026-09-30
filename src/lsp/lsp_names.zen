@@ -61,7 +61,7 @@ Classes = {
 
     nested_sites = (self :: @Self) Res<(), AllocError> {
         bid ::= BlockId(index: 0);
-        Range(0, self.c.tree.block_ids()).loop((h, i) {
+        Range(0, self.c.tree.block_ids()).loop((h, _) {
             self.block_sites(self.c.tree.block_at(bid)).try();
             bid = BlockId(index: bid.index + 1);
         });
@@ -113,7 +113,7 @@ Classes = {
 
     written_types = (self :: @Self) Res<(), AllocError> {
         tid ::= TypeId(index: 0);
-        Range(0, self.c.tree.type_ids()).loop((h, i) {
+        Range(0, self.c.tree.type_ids()).loop((h, _) {
             self.c.tree.type_at(tid).kind.match({
                 Named(n) => self.named_site(tid, n),
                 _        => written(),
@@ -133,7 +133,7 @@ Classes = {
 
     expr_sites = (self :: @Self) Res<(), AllocError> {
         eid ::= ExprId(index: 0);
-        Range(0, self.c.tree.expr_ids()).loop((h, i) {
+        Range(0, self.c.tree.expr_ids()).loop((h, _) {
             self.expr_site(eid).try();
             eid = ExprId(index: eid.index + 1);
         });

@@ -19,6 +19,7 @@ sym_local, sym_member, sym_variant = gen.gen_name
 RES_PATH = gen.gen_name
 CBackend = gen.gen_c.gen_c_state
 declarator, declared_ret, struct_decl, res_value, is_res = gen.gen_c.gen_c_type
+void_discard = gen.gen_c.gen_c_type
 intern_res_open, recv_inst, sub_with = gen.gen_c.gen_c_mono
 enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
 Dest, block, deliver = gen.gen_c.gen_c_stmt
@@ -235,14 +236,14 @@ range_element_type* = (be :: CBackend, rty: TyId)
 // shadow an enclosing self in the loop body.
 bind_self = (be :: CBackend, ri: RangeImpl, rty: TyId, rng: str)
             Res<(), AllocError> {
-    be.bind_text(be.self_name(ri), rty, rng)
+    be.bind_text(self_name(ri), rty, rng)
 }
 
 // What the impl calls its receiver. Read off `at`'s own first parameter
 // rather than assumed to be `self`, because `start: self.len` and
 // `at ::= (self: @Self, ..)` name it in one place and the declaration
 // is that place.
-self_name = (be :: CBackend, ri: RangeImpl) str {
+self_name = (ri: RangeImpl) str {
     ri.at.match({ Ok(f) => first_param_name(f), None => "self" })
 }
 
@@ -261,7 +262,8 @@ bind_text* = (be :: CBackend, name: str, ty: TyId, text: str)
     sym_local(cname, name, n).try();
     decl ::= be.alloc.String().try();
     be.declarator(ty, cname.view(), decl).try();
-    be.fmt("{} = {text};\n", decl.view())
+    be.fmt("{} = {text};\n", decl.view()).try();
+    be.void_discard(name, cname.view())
 }
 
 // `start: 0` and `end: self.len`, evaluated in the module that wrote

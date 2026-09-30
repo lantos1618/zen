@@ -421,7 +421,7 @@ CBackend* = {
 
     forget_drops = (self :: @Self, mark: usize) Res<(), AllocError> {
         extra = self.drops.len - mark;
-        Range(0, extra).loop((h, i) {
+        Range(0, extra).loop((h, _) {
             self.drops.take(self.drops.len - 1);
         });
         Ok(());
@@ -679,7 +679,7 @@ CBackend* = {
 
     release* = (self :: @Self, mark: usize) Res<(), AllocError> {
         extra = self.locals.len - mark;
-        Range(0, extra).loop((h, i) {
+        Range(0, extra).loop((h, _) {
             self.locals.take(self.locals.len - 1);
         });
         Ok(());
@@ -796,7 +796,7 @@ CBackend* = {
     detach* = (self :: @Self, mark: usize, saved :: Vec<LocalSlot>)
               Res<(), AllocError> {
         extra = self.locals.len - mark;
-        Range(0, extra).loop((h, i) {
+        Range(0, extra).loop((h, _) {
             self.locals.take(self.locals.len - 1).match({
                 Ok(s) => saved.add(s).try(),
                 None  => (),
@@ -886,7 +886,7 @@ CBackend* = {
 
     // the loop stack
     //
-    // A stack and not a field: `range.loop((h, r) { r.loop((g, c) { .. }) })`
+    // A stack and not a field: `range.loop((h, r) { r.loop((g, _) { .. }) })`
     // has two loops open at once, and `h.break` in the inner body must
     // reach the outer one's labels rather than the innermost.
 
@@ -977,20 +977,20 @@ CBackend* = {
         self.release(0).try();
         self.lent.truncate(0);
         extra = self.declared.len;
-        Range(0, extra).loop((h, i) {
+        Range(0, extra).loop((h, _) {
             self.declared.take(self.declared.len - 1);
         });
         open = self.loops.len;
-        Range(0, open).loop((h, i) {
+        Range(0, open).loop((h, _) {
             self.loops.take(self.loops.len - 1);
         });
         held = self.closures.len;
-        Range(0, held).loop((h, i) {
+        Range(0, held).loop((h, _) {
             self.closures.take(self.closures.len - 1);
         });
         self.forget_drops(0).try();
         nested = self.blocks.len;
-        Range(0, nested).loop((h, i) {
+        Range(0, nested).loop((h, _) {
             self.blocks.take(self.blocks.len - 1);
         });
         self.inline_returns.truncate(0);

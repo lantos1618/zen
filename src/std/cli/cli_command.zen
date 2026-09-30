@@ -666,7 +666,7 @@ Command*<T> = {
                         self.check_parameter_links(parameter).when_ok((diagnostic) {
                             found = Ok(diagnostic);
                         });
-                        self.colliding_parameter(parameter, i + 1).when_ok((other) {
+                        self.colliding_parameter(parameter, i + 1).when_ok((_) {
                             found = self.bad_declaration(
                                 parameter.name,
                                 "duplicate name or alias"

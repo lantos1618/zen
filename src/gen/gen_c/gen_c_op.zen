@@ -325,11 +325,11 @@ lower_eq_op = (
             "comparing values that are not scalars",
             out
         ),
-        true  => be.write_equality(b.op, text.view(), out),
+        true  => write_equality(b.op, text.view(), out),
     })
 }
 
-write_equality = (be :: CBackend, op: BinOp, text: str, out :: String)
+write_equality = (op: BinOp, text: str, out :: String)
                  Res<(), AllocError> {
     is_negated(op).then(() { out.add("!").try() });
     out.fmt("({text})").try();

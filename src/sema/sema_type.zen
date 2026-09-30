@@ -83,7 +83,7 @@ expr_kind = (c :: Checker, id: ExprId, node: Expr, ctx: Ctx)
 lambda_type* = (c :: Checker, l: Lambda) Res<TyId, AllocError> {
     hole = c.types.infer().try();
     params ::= c.alloc.Vec<TyId>();
-    l.params.loop((h, p) { params.add(hole).try() });
+    l.params.loop((h, _) { params.add(hole).try() });
     c.types.fn_ty(params, hole)
 }
 

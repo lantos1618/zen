@@ -193,12 +193,12 @@ is_fold = (be :: CBackend, f: Function) bool {
 
 seed_before_body = (be :: CBackend, id: ExprId) Res<ExprId> {
     be.tree.expr_at(id).kind.match({
-        Call(c) => be.call_seed(c),
+        Call(c) => call_seed(c),
         _       => None,
     })
 }
 
-call_seed = (be :: CBackend, c: Call) Res<ExprId> {
+call_seed = (c: Call) Res<ExprId> {
     arg_value(c, c.args.len -% 2)
 }
 

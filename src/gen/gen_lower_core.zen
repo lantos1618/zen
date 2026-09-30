@@ -708,7 +708,7 @@ Lowerer* = {
             Var(_)   => false,
             Infer    => false,
             Unknown  => false,
-            Prim(p)  => true,
+            Prim(_)  => true,
             Named(n) => n.args.find((a) { !self.settled(a) }).match({ Ok(_) => false, None => true }),
             Res(r)   => self.settled(r.value) && r.form.match({
                 Failure => self.settled(r.error),
@@ -981,8 +981,6 @@ Lowerer* = {
     // Byte-wise str equality: lengths, then each byte.
     str_equal* = (self :: @Self, left: Value, right: Value) Res<Value, LowerError> {
         bool_ty = self.prim("bool").try();
-        usize_ty = self.prim("usize").try();
-        u8_ty   = self.prim("u8").try();
         out     = self.constant(bool_ty, 0).try();
         lp = self.address(self.spill(left)).try();
         rp = self.address(self.spill(right)).try();
@@ -1537,7 +1535,6 @@ Lowerer* = {
         subject = self.expr_as(m.scrutinee, subject_ty).try();
         out   = self.temp(ty).try();
         done  = self.label().try();
-        s     = self.shape(subject_ty).try();
         m.arms.loop((arm) {
             next = self.label().try();
             body = self.label().try();
@@ -1762,7 +1759,7 @@ Lowerer* = {
                   Res<Value, LowerError> {
         target = self.err_type(ret).try();
         self.tree.expr_at(e).kind.match({
-            Lambda(l) => {
+            Lambda(_) => {
                 lambda = LambdaRef(expr: e, frame: self.frame);
                 args ::= self.alloc.Vec<Value>();
                 original.when_ok((o) { args.add(o).try(LowerError.OutOfMemory); });
@@ -2029,7 +2026,7 @@ Lowerer* = {
     // A function that cannot run: same signature, a trap for a body.
     stub = (self :: @Self, callee: Callee) Res<Func, LowerError> {
         self.slots = self.alloc.Vec<Scalar>();
-        callee.f.params.loop((h, i, p) {
+        callee.f.params.loop((h, p) {
             ty = p.type.ok_or(unsupported(p.span, "an inferred parameter type")).try();
             t = self.callee_type(callee, ty).try();
             class = p.mutable.match({ true => Scalar.Ptr, false => self.class_of(t).try() });
@@ -2057,7 +2054,6 @@ Lowerer* = {
     // main's result as a process status: an integer is the status, unit is
     // zero, Ok(n) is n (or zero for a non-integer payload), anything else 1.
     exit_code = (self :: @Self, value: Value) Res<usize, LowerError> {
-        i32_ty = self.prim("i32").try();
         s = self.shape(value.ty).try();
         s.class.match({
             Unit     => self.word_const(Scalar.I32, 0),
@@ -2166,7 +2162,7 @@ float_bits* = (a: Alloc, text: str) Res<Res<i64>, AllocError> {
             value = high * 1073741824.0 + low;
             ten ::= 1.0;
             steps = (power < 0).match({ true => 0 - power, false => power });
-            Range(0, steps.to_usize().value_or(0)).loop((k) { ten = ten * 10.0; });
+            Range(0, steps.to_usize().value_or(0)).loop((_) { ten = ten * 10.0; });
             exact = (power < 0).match({ true => value / ten, false => value * ten });
             cell = a.realloc<f64>(null_ptr<f64>(), 1).try();
             cell.write(0, exact);

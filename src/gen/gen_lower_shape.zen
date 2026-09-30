@@ -138,7 +138,7 @@ compute_shape = (lo :: Lowerer, ty: TyId) Res<Shape, LowerError> {
                 None      => Err(unsupported(nowhere(), "f32 values")),
             }),
         }),
-        Res(r)   => {
+        Res(_)   => {
             cases ::= lo.alloc.Vec<Case>();
             lo.check.cases_of(ty, cases).try(LowerError.OutOfMemory);
             lo.tagged(cases)
@@ -165,7 +165,7 @@ compute_shape = (lo :: Lowerer, ty: TyId) Res<Shape, LowerError> {
         // loop that never breaks with a value, `Err(e)` before its Ok type
         // is known) holds no bytes; conversions to a settled type carry
         // only the alternatives that exist.
-        Var(v)   => Ok(Shape(class: Scalar.Unit, form: Form.Plain)),
+        Var(_)   => Ok(Shape(class: Scalar.Unit, form: Form.Plain)),
         Infer    => Ok(Shape(class: Scalar.Unit, form: Form.Plain)),
         Unknown  => Err(unsupported(nowhere(), "a type sema did not settle")),
     })

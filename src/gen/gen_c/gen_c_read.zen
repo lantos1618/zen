@@ -362,12 +362,11 @@ collect_type_const = (
 ) Res<(), AllocError> {
     decl_at(be.tree, d.id).match({
         None  => Ok(()),
-        Ok(x) => be.collect_decl_const(x, d, name, out),
+        Ok(x) => collect_decl_const(x, d, name, out),
     })
 }
 
 collect_decl_const = (
-    be   :: CBackend,
     x    : Decl,
     d    : Def,
     name : str,

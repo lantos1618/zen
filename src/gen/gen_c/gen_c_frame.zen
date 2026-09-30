@@ -61,7 +61,7 @@ LocalSlot* = {
 // The frame is the half that is easy to get wrong: a closure's free
 // names mean what they meant where it was written, and inlining puts
 // the body inside the callee's frame — where `find`'s own
-// `range.loop((h, value) { .. })` would otherwise silently capture a
+// `range.loop((h, _) { .. })` would otherwise silently capture a
 // caller's `h` with a different value, rather than erroring. So `home`
 // and `check_home` are the two scope stacks' depths when the lambda
 // was written, and the inliner rewinds both.

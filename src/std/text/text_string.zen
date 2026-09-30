@@ -44,8 +44,8 @@ String* = {
         digits : usize
     ) Res<(), AllocError> {
         place: u64 ::= 1;
-        Range(1, digits).loop((h, i) { place = place * 16; });
-        Range(0, digits).loop((h, i) {
+        Range(1, digits).loop((h, _) { place = place * 16; });
+        Range(0, digits).loop((h, _) {
             self.add(((value / place) % 16).hex_digit()).try();
             place = place / 16;
         });

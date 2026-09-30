@@ -60,7 +60,7 @@ Decoder* = {
         bytes  : B,
         events :: Vec<JsonEvent>
     ) Res<(), JsonFault> {
-        bytes.loop((h, i, byte) {
+        bytes.loop((h, byte) {
             self.consume_byte(byte, events).try();
         });
         Ok(())

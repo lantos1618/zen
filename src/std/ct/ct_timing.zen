@@ -137,7 +137,7 @@ measure* = <P: Probe>(env: Env, a: Alloc, probe: P, config: TimingConfig)
         Range(0, n).loop((i) {
             input = inputs.offset(i * config.input_bytes);
             start = env.clock.since_start().ns;
-            Range(0, config.batch).loop((k) { probe.run(input); });
+            Range(0, config.batch).loop((_) { probe.run(input); });
             times.write(i, env.clock.since_start().ns -% start);
         });
         // The first chunk fixes the crop limits.
@@ -199,7 +199,7 @@ max = (
 
 pow2 = (k: usize) usize {
     p ::= 1;
-    Range(0, k).loop((i) { p = p * 2; });
+    Range(0, k).loop((_) { p = p * 2; });
     p
 }
 

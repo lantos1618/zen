@@ -1108,11 +1108,11 @@ write_local = (be :: CBackend, text: str, slot: LocalSlot, out :: String)
               Res<(), AllocError> {
     slot.by_ref.match({
         false => sym_local(out, text, slot.index),
-        true  => be.write_deref(text, slot, out),
+        true  => write_deref(text, slot, out),
     })
 }
 
-write_deref = (be :: CBackend, text: str, slot: LocalSlot, out :: String)
+write_deref = (text: str, slot: LocalSlot, out :: String)
               Res<(), AllocError> {
     out.add("(*").try();
     sym_local(out, text, slot.index).try();

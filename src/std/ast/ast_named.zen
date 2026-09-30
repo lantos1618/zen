@@ -82,7 +82,7 @@ Probe = {
                 ),
             });
         });
-        self.tree.blocks_each((bid, block) {
+        self.tree.blocks_each((_, block) {
             block.stmts.loop((h2, s) {
                 s.kind.match({
                     Decl(d) => { found = found.or(self.decl(d)); },
@@ -176,7 +176,7 @@ Probe = {
     expr = (self: @Self, e: ExprId) Tell {
         span = self.tree.expr_at(e).span;
         found ::= told(span, None, Ok(e));
-        self.tree.blocks_each((bid, block) {
+        self.tree.blocks_each((_, block) {
             block.stmts.loop((h2, s) {
                 s.kind.match({
                     Bind(b) => {

@@ -439,7 +439,7 @@ Checker* = {
     detach_locals* = (self :: @Self, mark: usize, saved :: Vec<Binding>)
                      Res<(), AllocError> {
         extra = self.locals.len - mark;
-        Range(0, extra).loop((h, i) {
+        Range(0, extra).loop((h, _) {
             self.locals.take(self.locals.len - 1).match({
                 Ok(b) => saved.add(b).try(),
                 None  => (),

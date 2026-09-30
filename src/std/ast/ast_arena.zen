@@ -173,7 +173,7 @@ Ast* = {
 
     exprs_each* = (self: @Self, body: (id: ExprId, node: Expr) ()) {
         id ::= ExprId(index: 0);
-        Range(0, self.exprs.len).loop((h, i) {
+        Range(0, self.exprs.len).loop((h, _) {
             body(id, self.expr_at(id));
             id = ExprId(index: id.index + 1);
         });
@@ -181,7 +181,7 @@ Ast* = {
 
     types_each* = (self: @Self, body: (id: TypeId, node: Type) ()) {
         id ::= TypeId(index: 0);
-        Range(0, self.types.len).loop((h, i) {
+        Range(0, self.types.len).loop((h, _) {
             body(id, self.type_at(id));
             id = TypeId(index: id.index + 1);
         });
@@ -191,7 +191,7 @@ Ast* = {
     types_where* = (self: @Self, keep: (node: Type) bool, out :: Vec<TypeId>)
                    Res<(), AllocError> {
         id ::= TypeId(index: 0);
-        Range(0, self.types.len).loop((h, i) {
+        Range(0, self.types.len).loop((h, _) {
             keep(self.type_at(id)).then(() { out.add(id).try() });
             id = TypeId(index: id.index + 1);
         });
@@ -200,7 +200,7 @@ Ast* = {
 
     patterns_each* = (self: @Self, body: (id: PatternId, node: Pattern) ()) {
         id ::= PatternId(index: 0);
-        Range(0, self.patterns.len).loop((h, i) {
+        Range(0, self.patterns.len).loop((h, _) {
             body(id, self.pattern_at(id));
             id = PatternId(index: id.index + 1);
         });
@@ -208,7 +208,7 @@ Ast* = {
 
     blocks_each* = (self: @Self, body: (id: BlockId, node: Block) ()) {
         id ::= BlockId(index: 0);
-        Range(0, self.blocks.len).loop((h, i) {
+        Range(0, self.blocks.len).loop((h, _) {
             body(id, self.block_at(id));
             id = BlockId(index: id.index + 1);
         });

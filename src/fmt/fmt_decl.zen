@@ -36,7 +36,8 @@ Aligned* = {
     // One entry per source line by construction; a line past the table
     // is dropped.
     record = (self :: @Self, line: usize, p: Pad) Res<(), AllocError> {
-        self.pads.set(line, p).match({ _ => Ok(()) })
+        self.pads.set(line, p);
+        Ok(())
     }
 
     pad_at = (self: @Self, line: usize) Pad {
@@ -55,7 +56,7 @@ Aligned* = {
             p    = self.pad_at(ln);
             (p.to > at && p.to <= stop && p.from >= at).then(() {
                 out.add(self.src.slice_at(at, p.from)).try();
-                Range(0, p.width).loop((g, k) { out.add(' ').try() });
+                Range(0, p.width).loop((g, _) { out.add(' ').try() });
                 at = p.to;
             });
             out.add(self.src.slice_at(at, stop)).try();
@@ -143,7 +144,7 @@ Aligned* = {
             });
         });
         self.align(ops, from, ops.len).try();
-        b.stmts.loop((h, i, s) {
+        b.stmts.loop((h, s) {
             s.kind.match({
                 Decl(d) => self.align_decl(a, d),
                 _       => Ok(()),
@@ -155,21 +156,21 @@ Aligned* = {
 
 Aligned* = (a: Alloc, p: Parsed) Res<Aligned, AllocError> {
     pads ::= a.Vec<Pad>();
-    Range(0, p.src.lines() + 2).loop((h, i) { pads.add(no_pad()).try() });
+    Range(0, p.src.lines() + 2).loop((h, _) { pads.add(no_pad()).try() });
     table ::= Aligned(src: p.src, pads: pads);
     id    ::= ExprId(index: 0);
-    Range(0, p.tree.expr_ids()).loop((h, i) {
+    Range(0, p.tree.expr_ids()).loop((h, _) {
         table.align_expr(a, p.tree, p.tree.expr_at(id)).try();
         id = ExprId(index: id.index + 1);
     });
     tid ::= TypeId(index: 0);
-    Range(0, p.tree.type_ids()).loop((h, i) {
+    Range(0, p.tree.type_ids()).loop((h, _) {
         table.align_type(a, p.tree.type_at(tid)).try();
         tid = TypeId(index: tid.index + 1);
     });
-    p.m.decls.loop((h, i, d) { table.align_decl(a, d).try(); });
+    p.m.decls.loop((h, d) { table.align_decl(a, d).try(); });
     bid ::= BlockId(index: 0);
-    Range(0, p.tree.block_ids()).loop((h, i) {
+    Range(0, p.tree.block_ids()).loop((h, _) {
         table.align_block(a, p.tree, p.tree.block_at(bid)).try();
         bid = BlockId(index: bid.index + 1);
     });
@@ -212,7 +213,7 @@ next_arm_line = (mt: Match, i: usize) usize {
 stmt_ops = (src: Src, a: Alloc, tree: Ast, b: Block)
            Res<Vec<Op>, AllocError> {
     ops ::= a.Vec<Op>();
-    b.stmts.loop((h, i, s) {
+    b.stmts.loop((h, s) {
         ops.add(s.kind.match({
             Bind(bd) => src.op_after(s.span.start, name_end(tree, bd), "=:"),
             _        => no_op(),
@@ -250,7 +251,7 @@ name_end = (tree: Ast, bd: Bind) Pos {
 // One op per parameter, at its `:` or `::`.
 param_ops = (src: Src, a: Alloc, ps: Vec<Param>) Res<Vec<Op>, AllocError> {
     ops ::= a.Vec<Op>();
-    ps.loop((h, i, p) {
+    ps.loop((h, p) {
         ops.add(src.op_after(p.span.start, p.name.span.end, ":")).try();
     });
     Ok(ops);

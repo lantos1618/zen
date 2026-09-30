@@ -131,7 +131,7 @@ Out = {
 
     say_at = (self :: @Self, col: usize, s: str) Res<(), AllocError> {
         self.open().try();
-        Range(FIRST, col).loop((h, i) { self.text.add(' ').try() });
+        Range(FIRST, col).loop((h, _) { self.text.add(' ').try() });
         self.text.add(s).try();
         self.text.add('\n')
     }

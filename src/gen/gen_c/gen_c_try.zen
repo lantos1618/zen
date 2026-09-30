@@ -19,6 +19,7 @@ GenFault = gen.gen_diag
 CBackend = gen.gen_c.gen_c_state
 enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
 ctype, declarator, is_unit, variant_type, decl_ctx, decl_inst = gen.gen_c.gen_c_type
+void_discard = gen.gen_c.gen_c_type
 write_qname = gen.gen_c.gen_c_layout
 Dest, write_dest, deliver, block = gen.gen_c.gen_c_stmt
 res_type_of = gen.gen_c.gen_c_expr
@@ -121,7 +122,8 @@ bind_try_error = (be :: CBackend, p: Param, ty: TyId, tmp: str)
     be.declarator(ty, cname.view(), decl).try();
     value ::= be.alloc.String().try();
     read_error(tmp, value).try();
-    be.fmt("{} = {};\n", decl.view(), value.view())
+    be.fmt("{} = {};\n", decl.view(), value.view()).try();
+    be.void_discard(p.name.text, cname.view())
 }
 
 // Fixed facts for one failed `.try()`. The mapper must run while locals are

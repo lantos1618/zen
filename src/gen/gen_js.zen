@@ -164,7 +164,7 @@ JavaScript = {
     // aggregates) homes in the frame; everything else stays a local.
     layout_frame = (self :: @Self, function: Func) {
         self.homes.clear();
-        function.slots.loop((ty) { self.homes.add(LOCAL).ignore(); });
+        function.slots.loop((_) { self.homes.add(LOCAL).ignore(); });
         function.blocks.loop((block) {
             block.code.loop((instruction) {
                 instruction.match({
@@ -1243,7 +1243,7 @@ JavaScript = {
 
     arguments = (self :: @Self, call: Invocation, result: Scalar) Res<(), AllocError> {
         first ::= true;
-        call.args.loop((h, i, slot) {
+        call.args.loop((h, slot) {
             (!first).then(() { self.out.add(", ").try(); });
             first = false;
             ty    = self.slot_type(slot);

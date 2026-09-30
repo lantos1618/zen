@@ -67,7 +67,7 @@ ByteWriter* = {
         (width > 0 && width <= 8).ensure(ByteError.Invalid).try();
         (width <= self.remaining()).ensure(ByteError.Truncated).try();
         rest ::= value;
-        Range(0, width).loop((i) { rest = rest / 256; });
+        Range(0, width).loop((_) { rest = rest / 256; });
         (rest == 0).ensure(ByteError.Invalid).try();
         rest = value;
         Range(0, width).loop((i) {

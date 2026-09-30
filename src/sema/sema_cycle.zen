@@ -217,7 +217,7 @@ Graph = {
     add_edges = (self :: @Self) Res<(), AllocError> {
         sites = self.const_sites().try();
         eid ::= ExprId(index: 0);
-        Range(0, self.tree.expr_ids()).loop((h, i) {
+        Range(0, self.tree.expr_ids()).loop((h, _) {
             e = self.tree.expr_at(eid);
             e.kind.match({
                 Name(n) => self.name_edges(sites, e.span, n.text),

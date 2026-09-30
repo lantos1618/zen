@@ -288,7 +288,7 @@ lower_array_walk* = (
     be.fmt("while ({} < {}) {\n", counter.view(), n.view()).try();
     be.indent();
     value ::= be.alloc.String().try();
-    be.write_pass_value(rng.view(), counter.view(), value).try();
+    write_pass_value(rng.view(), counter.view(), value).try();
     // an array always starts at zero, so `index` and the counter are
     // the same number and there is nothing to subtract
     be.run_body(
@@ -307,7 +307,7 @@ lower_array_walk* = (
 
 // The element at the counter, read straight through the member — no
 // helper call, since the walk never leaves the range being checked.
-write_pass_value = (be :: CBackend, rng: str, counter: str, out :: String)
+write_pass_value = (rng: str, counter: str, out :: String)
                    Res<(), AllocError> {
     out.fmt("{rng}.{}[{counter}]", ELEMS)
 }

@@ -865,7 +865,7 @@ inline_call* = (lo :: Lowerer, open: Callee, sources: Vec<Source>, span: Span)
 settle_closures = (lo :: Lowerer, callee: Callee, sources: Vec<Source>, span: Span)
                   Res<Callee, LowerError> {
     extra ::= lo.alloc.Inst();
-    callee.f.params.loop((h, i, p) {
+    callee.f.params.loop((h, i, _) {
         ty = lo.param_type(callee, i).try();
         lo.check.types.at(ty).match({
             Fn(signature) => lo.check.types.at(signature.ret).match({
@@ -1395,7 +1395,7 @@ std_call* = (lo :: Lowerer, module_name: str, name: str, args: Vec<Value>, span:
     callee = Callee(f: f, owner: def.id, member: None, module: module, inst: lo.alloc.Inst(), self_ty: None, generic_owner: None);
     index = lo.enqueue(callee).try();
     slots ::= lo.alloc.Vec<usize>();
-    f.params.loop((h, i, p) {
+    f.params.loop((h, i, _) {
         want = lo.param_type(callee, i).try();
         value = args.get(i).ok_or(unsupported(span, "a missing std argument")).try();
         slots.add(lo.coerce(value, want).try().slot).try(LowerError.OutOfMemory);

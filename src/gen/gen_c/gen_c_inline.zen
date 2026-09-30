@@ -29,7 +29,7 @@ has_body = gen.gen_c.gen_c_impl
 handle_depth = gen.gen_c.gen_c_handle
 inst_at, settled_inst, sub, sub_with = gen.gen_c.gen_c_mono
 enter_tparams, leave_tparams, enter_struct_tparams = gen.gen_c.gen_c_mono
-declarator, is_unit, write_none = gen.gen_c.gen_c_type
+declarator, is_unit, write_none, void_discard = gen.gen_c.gen_c_type
 expr = gen.gen_c.gen_c_expr
 Dest, block = gen.gen_c.gen_c_stmt
 plain_ctx, body_ctx, self_body_ctx, ref_declarator = gen.gen_c.gen_c_decl
@@ -440,7 +440,8 @@ InlineSite = {
             true  => be.ref_declarator(self.ty, cname.view(), line),
             false => be.declarator(self.ty, cname.view(), line),
         }).try();
-        be.fmt("{} = {};\n", line.view(), text.view())
+        be.fmt("{} = {};\n", line.view(), text.view()).try();
+        be.void_discard(self.param.name.text, cname.view())
     }
 }
 
@@ -781,7 +782,8 @@ declare_bound = (be :: CBackend, p: Param, ty: TyId, text: str)
     sym_local(cname, p.name.text, n).try();
     line ::= be.alloc.String().try();
     be.declarator(ty, cname.view(), line).try();
-    be.fmt("{} = {text};\n", line.view())
+    be.fmt("{} = {text};\n", line.view()).try();
+    be.void_discard(p.name.text, cname.view())
 }
 
 // What an inlined call evaluates to: `gen_c_settle.zen`, `inline_ret`.

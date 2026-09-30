@@ -69,7 +69,7 @@ Emit* = {
 
     open_line = (self :: @Self) Res<(), AllocError> {
         self.fresh.then(() {
-            Range(0, self.depth).loop((h, i) {
+            Range(0, self.depth).loop((h, _) {
                 self.text.add(INDENT).try();
             });
             self.fresh = false;

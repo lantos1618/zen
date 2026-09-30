@@ -275,14 +275,14 @@ ptr_ctype = (be :: CBackend, n: TyNamed, out :: String)
 elem_ctype = (be :: CBackend, t: TyId, out :: String) Res<(), AllocError> {
     be.types().at(t).match({
         Named(n) => be.foreign_binding(n).match({
-            Ok(raw) => be.write_opaque_ptr(raw, out),
+            Ok(raw) => write_opaque_ptr(raw, out),
             None    => be.write_elem_ctype(t, out),
         }),
         _        => be.write_elem_ctype(t, out),
     })
 }
 
-write_opaque_ptr = (be :: CBackend, raw: COpaque, out :: String)
+write_opaque_ptr = (raw: COpaque, out :: String)
                    Res<(), AllocError> {
     raw.spelling.is_identifier().match({
         true  => out.add(raw.spelling),
@@ -310,6 +310,15 @@ declarator* = (be :: CBackend, id: TyId, name: str, out :: String)
     cty ::= be.alloc.String().try();
     be.ctype(id, cty).try();
     out.fmt("{} {name}", cty.view())
+}
+
+// A `_` binding is still declared so its initializer runs; the cast says
+// the value is dropped on purpose.
+void_discard* = (be :: CBackend, name: str, cname: str) Res<(), AllocError> {
+    name.eq("_").match({
+        true  => be.fmt("(void){cname};\n"),
+        false => Ok(()),
+    })
 }
 
 // Whether the type can be spelled at all, asked wherever a diagnostic

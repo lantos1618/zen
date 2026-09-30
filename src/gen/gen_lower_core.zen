@@ -28,7 +28,7 @@ Scalar, Layout, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print = gen
 Branch, Instruction, Func, Program, BasicBlock, Terminator = gen.gen_ir
 Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault = gen.gen_ir
 Guards, TagGuard, PayloadRead = gen.gen_ir
-word, integer, same = gen.gen_ir
+word, integer, same, width = gen.gen_ir
 LowerError, unsupported = gen.gen_lower
 Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of = gen.gen_lower_shape
 to_bound, resolve = gen.gen_lower_member
@@ -313,12 +313,61 @@ Lowerer* = {
     }
 
     // The checked type of an expression at this frame's instantiation.
+    // Sema types a generic body once, and a name it could not type there (a
+    // closure parameter of a `loop` reached through a bound, `(h, v)` in
+    // `is_in`) is left open, with every call on it. At an instance the name
+    // has the type of the local this instance bound it to, and a method
+    // call on such a receiver has the result type of the method the
+    // receiver's type resolves it to.
     type_of* = (self :: @Self, id: ExprId) Res<TyId, LowerError> {
-        raw = self.check.expr_memo.get(id).ok_or(unsupported(
-            self.tree.expr_at(id).span,
-            "an expression without a checked type"
-        )).try();
-        self.concrete(raw)
+        raw = self.check.expr_memo.get(id).match({
+            Ok(t) => t,
+            // Arguments of a call sema could not resolve go unchecked.
+            None  => {
+                return_open = self.local_type(id).ok_or(unsupported(
+                    self.tree.expr_at(id).span,
+                    "an expression without a checked type"
+                )).try();
+                return_open
+            },
+        });
+        checked = self.concrete(raw).try();
+        self.settled(checked).match({
+            true  => Ok(checked),
+            false => Ok(self.local_type(id).value_or(checked)),
+        })
+    }
+
+    local_type = (self :: @Self, id: ExprId) Res<TyId> {
+        self.tree.expr_at(id).kind.match({
+            Paren(p) => self.local_type(p.inner),
+            // Literals sema never visited have their literal types.
+            Literal(l) => self.prim(l.kind.match({
+                Bool  => "bool",
+                Str   => "str",
+                Char  => "u8",
+                Int   => "int",
+                Float => "float",
+            })).match({ Ok(t) => Ok(t), Err(_) => None }),
+            Call(c)  => self.tree.expr_at(c.callee).kind.match({
+                Name(n)   => self.function_result(n.text, c.args.len),
+                Access(a) => self.handle_named(a.base).match({
+                    // `h.break()` and `h.next()` leave; as values they are unit.
+                    true  => Ok(self.unit_ty),
+                    false => self.method_result(a, c.args.len + 1),
+                }),
+                _         => None,
+            }),
+            Name(n) => self.lookup(n.text).match({
+                Ok(kind) => kind.match({
+                    Direct(value) => self.settled(value.ty).match({ true => Ok(value.ty), false => None }),
+                    Ref(place)    => self.settled(place.ty).match({ true => Ok(place.ty), false => None }),
+                    _             => None,
+                }),
+                None     => None,
+            }),
+            _       => None,
+        })
     }
 
     // A written type in this frame, with its function's (and owner's) type
@@ -536,13 +585,22 @@ Lowerer* = {
     }
 
     ptr_u8* = (self :: @Self) Res<TyId, LowerError> {
-        defs ::= self.alloc.Vec<Def>();
-        self.check.world.exported_named("Ptr", defs).try(LowerError.OutOfMemory);
-        ptr = defs.find((d) { self.check.world.module_name(d.id).eq("std.mem.mem_ptr") })
-            .ok_or(unsupported(nowhere(), "the std Ptr declaration")).try();
+        self.ptr_to(self.prim("u8").try())
+    }
+
+    ptr_to* = (self :: @Self, elem: TyId) Res<TyId, LowerError> {
         args ::= self.alloc.Vec<TyId>();
-        args.add(self.prim("u8").try()).try(LowerError.OutOfMemory);
-        self.check.types.named(ptr.id, ptr.qname, ptr.name, args).try(LowerError.OutOfMemory)
+        args.add(elem).try(LowerError.OutOfMemory);
+        self.std_named("Ptr", "std.mem.mem_ptr", args)
+    }
+
+    // A std type by its declaring module, at `args`.
+    std_named* = (self :: @Self, name: str, module: str, args: Vec<TyId>) Res<TyId, LowerError> {
+        defs ::= self.alloc.Vec<Def>();
+        self.check.world.exported_named(name, defs).try(LowerError.OutOfMemory);
+        decl = defs.find((d) { self.check.world.module_name(d.id).eq(module) })
+            .ok_or(unsupported(nowhere(), "a std declaration")).try();
+        self.check.types.named(decl.id, decl.qname, decl.name, args).try(LowerError.OutOfMemory)
     }
 
     // The place an expression denotes, when it has one.
@@ -616,7 +674,10 @@ Lowerer* = {
             Literal(l)    => self.literal(id, l, e.span),
             Unit          => self.unit(),
             Paren(p)      => self.expr(p.inner),
-            Block(b)      => self.block_want(b, self.narrowed(id).try()),
+            Block(b)      => self.expected_of(id).match({
+                Ok(_)  => self.block_want(b, self.narrowed(id).try()),
+                None   => self.block(b),
+            }),
             Unary(u)      => self.unary(id, u.op, u.operand, u.op_span),
             Binary(b)     => self.binary(id, b.op, b.lhs, b.rhs, b.op_span),
             Match(m)      => self.match_expr(id, m, e.span),
@@ -887,6 +948,28 @@ Lowerer* = {
         Ok(out)
     }
 
+    // `~value`: xor with the all-ones word of the value's width. Bitwise
+    // complement is unsigned-only, so the mask is the type's maximum.
+    complement* = (self :: @Self, operand: ExprId, ty: TyId, span: Span)
+                  Res<Value, LowerError> {
+        value = self.expr_as(operand, ty).try();
+        ones  = self.constant(ty, width(self.class_of(ty).try()).match({
+            1 => 255,
+            2 => 65535,
+            4 => 4294967295,
+            _ => -1,
+        })).try();
+        out = self.temp(ty).try();
+        self.add(Instruction.BinaryValue(Binary(
+            out: out.slot,
+            left: value.slot,
+            right: ones.slot,
+            op: Op.Xor,
+            span: span
+        ))).try();
+        Ok(out)
+    }
+
     unary = (self :: @Self, id: ExprId, op: UnOp, operand: ExprId, span: Span)
             Res<Value, LowerError> {
         ty = self.type_of(id).try();
@@ -957,23 +1040,7 @@ Lowerer* = {
                 (compare && !word(self.class_of(operand).try())).match({
                     true  => self.equal_values(op, left, right, span),
                     false => {
-                        operation = op.match({
-                            Add       => Op.Add,
-                            Sub       => Op.Sub,
-                            Mul       => Op.Mul,
-                            Div       => Op.Div,
-                            Rem       => Op.Rem,
-                            AddWrap   => Op.WrapAdd,
-                            SubWrap   => Op.WrapSub,
-                            MulWrap   => Op.WrapMul,
-                            Equal     => Op.Equal,
-                            NotEqual  => Op.NotEqual,
-                            Less      => Op.Less,
-                            LessEq    => Op.LessEqual,
-                            Greater   => Op.Greater,
-                            GreaterEq => Op.GreaterEqual,
-                            _         => Op.Equal,
-                        });
+                        operation = binary_op(op).ok_or(unsupported(span, "this operator")).try();
                         out = self.temp(ty).try();
                         self.add(Instruction.BinaryValue(Binary(
                             out: out.slot,
@@ -1133,6 +1200,50 @@ Lowerer* = {
         Ok(wanted.value_or(own))
     }
 
+    handle_named = (self: @Self, id: ExprId) bool {
+        self.tree.expr_at(id).kind.match({
+            Name(n) => self.lookup(n.text).match({
+                Ok(kind) => kind.match({ Handle(_) => true, _ => false }),
+                None     => false,
+            }),
+            _       => false,
+        })
+    }
+
+    // The written result type of the one visible function `name` taking
+    // `arity` arguments, when it names no type parameter.
+    function_result = (self :: @Self, name: str, arity: usize) Res<TyId> {
+        defs ::= self.alloc.Vec<Def>();
+        self.check.world.defs_of(self.here().module, name, defs).match({ Ok(_) => (), Err(_) => () });
+        (defs.len == 1).ensure().try();
+        d = defs.get(0).try();
+        f = decl_at(self.tree, d.id).try().kind.match({ Function(f) => Ok(f), _ => None }).try();
+        (f.params.len == arity && f.tparams.len == 0).ensure().try();
+        written = f.ret.try();
+        probe = Callee(f: f, owner: d.id, member: None, module: d.id.module.to_usize(),
+                       inst: self.alloc.Inst(), self_ty: None, generic_owner: None);
+        ty = self.callee_type(probe, written).match({ Ok(t) => Ok(t), Err(_) => None }).try();
+        self.settled(ty).match({ true => Ok(ty), false => None })
+    }
+
+    // The result type of `receiver.name(..)` resolved on the receiver's
+    // type at this instance, when that settles it.
+    method_result = (self :: @Self, a: Access, arity: usize) Res<TyId> {
+        receiver = self.type_of(a.base).match({ Ok(t) => Ok(t), Err(_) => None }).try();
+        self.settled(receiver).ensure().try();
+        callee = self.resolve(receiver, a.name.text, None, arity, self.alloc.Inst(), None, nowhere())
+            .match({ Ok(c) => Ok(c), Err(_) => None }).try();
+        written = callee.f.ret.try();
+        ty = self.callee_type(callee, written).match({ Ok(t) => Ok(t), Err(_) => None }).try();
+        self.settled(ty).match({ true => Ok(ty), false => None })
+    }
+
+    // The type the context asked for this expression, if it asked.
+    expected_of = (self: @Self, id: ExprId) Res<TyId> {
+        want = self.expected.try();
+        (want.id == id).match({ true => Ok(want.ty), false => None })
+    }
+
     integer_type = (self :: @Self, ty: TyId) bool {
         self.settled(ty) && self.class_of(ty).match({ Ok(class) => integer(class), Err(_) => false })
     }
@@ -1153,7 +1264,8 @@ Lowerer* = {
                     false => { self.expr(e.expr).try(); self.unit() },
                 }),
                 Bind(b)  => { self.bind(b, s.span).try(); self.unit() },
-                Block(b) => self.block_as(b, tail && used, None),
+                // A final nested block is the block's value, at its type.
+                Block(b) => self.block_as(b, tail && used, tail.match({ true => want, false => None })),
                 Decl(_)  => Err(unsupported(s.span, "nested declarations")),
             }).try();
         });
@@ -2013,16 +2125,23 @@ Lowerer* = {
     // frame that wrote it.
     inline_lambda* = (self :: @Self, lambda: LambdaRef, args: Vec<Value>, want: TyId)
                      Res<Value, LowerError> {
+        kinds ::= self.alloc.Vec<LocalKind>();
+        args.loop((arg) { kinds.add(LocalKind.Direct(self.copy_value(arg).try())).try(LowerError.OutOfMemory); });
+        self.inline_bound(lambda, kinds, want)
+    }
+
+    // Inline a closure body with each parameter bound as given: a copied
+    // value, or a loop handle passed through (`body(h, value)` hands the
+    // caller's `h` on, and `h.break()` in the body leaves that loop).
+    inline_bound* = (self :: @Self, lambda: LambdaRef, args: Vec<LocalKind>, want: TyId)
+                    Res<Value, LowerError> {
         l = self.tree.expr_at(lambda.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
             .ok_or(unsupported(nowhere(), "a closure that is not a lambda")).try();
         saved = self.frame;
         self.frame = lambda.frame;
         mark = self.locals.len;
         l.params.loop((h, i, p) {
-            args.get(i).when_ok((arg) {
-                copy = self.copy_value(arg).try();
-                self.bind_local(p.name.text, LocalKind.Direct(copy)).try();
-            });
+            args.get(i).when_ok((arg) { self.bind_local(p.name.text, arg).try(); });
         });
         value = self.block(l.body).try();
         self.release_locals(mark);
@@ -2258,6 +2377,32 @@ Lowerer* = {
     }
 }
 
+// The IR operation of a source operator, listed operator by operator: an
+// operator missing here is refused, never read as another one. `&&` and
+// `||` short-circuit before reaching it, so they have no single operation.
+// (Bitwise operators map here too when they land: `&`/`|`/`^` to And/Or/Xor,
+// `<<`/`>>` to Shl/Shr with a `usize` count, and `~` through `complement`.)
+binary_op = (op: BinOp) Res<Op> {
+    op.match({
+        Add       => Ok(Op.Add),
+        Sub       => Ok(Op.Sub),
+        Mul       => Ok(Op.Mul),
+        Div       => Ok(Op.Div),
+        Rem       => Ok(Op.Rem),
+        AddWrap   => Ok(Op.WrapAdd),
+        SubWrap   => Ok(Op.WrapSub),
+        MulWrap   => Ok(Op.WrapMul),
+        Equal     => Ok(Op.Equal),
+        NotEqual  => Ok(Op.NotEqual),
+        Less      => Ok(Op.Less),
+        LessEq    => Ok(Op.LessEqual),
+        Greater   => Ok(Op.Greater),
+        GreaterEq => Ok(Op.GreaterEqual),
+        And       => None,
+        Or        => None,
+    })
+}
+
 // Whether a reading binds a name anywhere beneath `at`.
 binds = (reading: PatReading, at: usize) bool {
     p = reading.pats.at(at);
@@ -2318,7 +2463,7 @@ NameFinder.impl(WalkVisitor, {
     }
 })
 
-lower* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
+lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
                 Res<Program, LowerError> {
     module = tree.module_at(entry).ok_or(unsupported(nowhere(), "a missing entry module")).try();
     mains ::= alloc.Vec<DeclId>();

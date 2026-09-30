@@ -252,6 +252,12 @@ or linker rejected the output).
 | x86_64-linux (dev-box) | 638 (66.3%) | 0 | 324 | 0 | 962 |
 | aarch64-linux (qemu-user) | 638 (66.3%) | 0 | 324 | 0 | 962 |
 | arm64-darwin (this Mac) | 638 (66.3%) | 1 | 323 | 0 | 962 |
+| x86_64-linux, `shared-lowering` | 708 (72.4%) | 1 | 269 | 0 | 978 |
+
+The `shared-lowering` row is after the lowering merge and the gap work
+below; at the merge point (2b70b639) the same runner read 643 / 3 / 331 of
+977. The remaining failure, `env/fs_read_special_file_with_zero_stat_size`,
+also fails on Linux: the program sees 0 bytes from a zero-stat-size file.
 
 The one macOS failure, `env/fs_read_special_file_with_zero_stat_size`, reads
 a file under `/proc`, which exists only on Linux; its expectation was recorded
@@ -262,13 +268,35 @@ re-run with less parallelism.
 Run it: `cd tests/native && ../../zen build`, then from the repository root
 `tests/native/build/<os>-<arch>/native-corpus ./zen <target> [filter] [shard shards]`.
 
-Refused constructs, by the first one each unsupported program reaches
-(x86_64-linux, 324 programs): types sema left unsettled in generic corners
-(34), other `Env` operations (actors, threads, fs.lock/cwd/mkdir, args
-schema: 27), floats (19), value conversions not modelled yet (19), loop
-handles used as values (10), unknown variants (10), native-only
-expressions (10), folding loops (9), and about 40 compiler-internal test
-roots that import `gen`/`sema`/`lsp` modules the runner does not stage.
+Refused constructs on `shared-lowering`, by the first one each unsupported
+program reaches (x86_64-linux, 269 programs): compiler-internal test roots
+that import `gen`/`sema`/`lsp`/`zen` modules the runner does not stage (117),
+other `Env` operations (actors, threads, fs.lock/cwd/mkdir, args schema: 30),
+floats (19), value conversions not modelled yet (15: `str` to `u8`, AST
+`Variant` to `Member`, unit results into records), unknown variants (11),
+expressions sema left unchecked below a call it could not type (11; mostly
+`alloc.create<T>()` on a bound in `main`, whose result sema leaves open, and
+closure captures), native-only expressions (10), `invalid IR` type mismatches
+in `.then`/`.try()` compositions and the cli library (9), impl-computed fields
+(`width: self.side` in an impl; 5), and a tail of single causes.
+
+Resolved on this branch: unsettled types in generic corners (35 to 1; a name
+sema left open takes its instance local's type, and a method call on it the
+result type of the method its type resolves to, including UFCS free functions
+such as `bool.then`), folding loops, loop handles passed into closures,
+`create<T>()` typed from its type argument, generic enum payloads (`Opt<T>`
+substituted per instance), and the error-set match failures.
+
+Not yet lowered, from branches that have not merged here: module-qualified
+constants such as `Controller.LIMIT` (lang-gaps; `type_member` would send
+them to the variant lookup, so they must go through `global_const`), local
+functions `name = (params) T { .. }` inside a body (lang-gaps; inlined at each
+call with live captures, `.try()` returning from the enclosing function), the
+float conversions `narrow_f32`/`narrow_f64` and checked f64/int conversions
+(lang-gaps), and the bitwise operators `& | ^ ~ << >>` (bitwise-operators:
+the lowering's operator table is now explicit, and `complement` is the `~`
+lowering). Floats themselves need an `F64` slot class, which the JavaScript
+branch adds to the IR and the lowering; the assembly renderers still refuse it.
 
 The runner stages each program as `tests/run.py` does: it runs as
 `<scratch>/prog` in a directory where its root is visible as `src`, with the

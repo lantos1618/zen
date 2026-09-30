@@ -194,8 +194,16 @@ named_shape = (lo :: Lowerer, n: TyNamed, ty: TyId) Res<Shape, LowerError> {
                         false => lo.record(n, s),
                     }),
                     Enum(_)   => {
+                        found ::= lo.alloc.Vec<Case>();
+                        lo.check.cases_of(ty, found).try(LowerError.OutOfMemory);
+                        // Payloads are read off the declaration (`Some(T)`);
+                        // this instance fixes the parameters (`Opt<i32>`).
+                        inst = lo.check.inst_of_named(n).try(LowerError.OutOfMemory);
                         cases ::= lo.alloc.Vec<Case>();
-                        lo.check.cases_of(ty, cases).try(LowerError.OutOfMemory);
+                        found.loop((c) {
+                            payload = lo.check.subst(c.payload, inst).try(LowerError.OutOfMemory);
+                            cases.add(Case(name: c.name, payload: payload, has_payload: c.has_payload)).try(LowerError.OutOfMemory);
+                        });
                         // A declared set (`Both = Kind | Fail`) shares the
                         // layout of every other spelling of its members.
                         lo.check.union_reading(n.decl).then(() { by_name(cases); });

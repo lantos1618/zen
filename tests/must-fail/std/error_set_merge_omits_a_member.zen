@@ -17,7 +17,7 @@
 // arm naming a member of a union-of-enums is a catch-all (issue #735), so
 // `Err(_)` is the only arm a caller can spell.
 
-ParseError = | NotANumber
+ParseError = { | NotANumber }
 
 format_label = (out :: Sink) Res<(), WriteError> {
     out.fmt("label {}", 1)

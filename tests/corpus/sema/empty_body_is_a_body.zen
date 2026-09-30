@@ -9,7 +9,7 @@
 // last statement that yields nothing is a statement, not the value
 // `main` returns, so it does not have to fit `Res<i32, CfgError>`.
 
-CfgError = Missing | Bad
+CfgError = { Missing | Bad }
 
 nothing = () { }
 

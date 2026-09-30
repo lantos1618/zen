@@ -23,7 +23,7 @@
 
 Error = AllocError | IoError
 
-Shade = Red | Green | Blue
+Shade = { Red | Green | Blue }
 
 Box = {
     n*: i32,

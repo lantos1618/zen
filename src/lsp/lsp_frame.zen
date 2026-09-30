@@ -9,7 +9,10 @@ Envelope* = {
     next*: usize,
 }
 
-FrameFault* = NoBlank(usize) | NoLength(usize) | BadLength(usize) | Short(usize)
+FrameFault* = { NoBlank: usize
+    | NoLength: usize
+    | BadLength: usize
+    | Short: usize }
 
 byte* = (f: FrameFault) usize {
     f.match({

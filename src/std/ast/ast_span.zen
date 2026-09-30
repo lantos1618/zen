@@ -69,7 +69,7 @@ Span* = {
 }
 
 // Blank represents one or more blank lines between source nodes.
-TriviaKind* = LineComment | BlockComment | Blank
+TriviaKind* = { LineComment | BlockComment | Blank }
 
 // Raw source trivia, including comment markers.
 Trivia* = {

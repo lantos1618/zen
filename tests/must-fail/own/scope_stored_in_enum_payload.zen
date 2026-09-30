@@ -2,7 +2,7 @@
 // constructor, not a struct construction, so the old decl_is_struct gate
 // never saw it and the block left the frame inside an enum payload.
 
-Box = Held(Scope) | Empty
+Box = { Held: Scope | Empty }
 
 here = () Box {
     Box.Held(@scope)

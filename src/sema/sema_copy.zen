@@ -10,7 +10,7 @@
 { type_from_ast } = sema.sema_denote
 { is_drop_type } = sema.sema_drop
 
-PayloadPolicy = ActorMessage | OwningCopy
+PayloadPolicy = { ActorMessage | OwningCopy }
 
 // Copying inline fields duplicates their owners; pointer/allocator handles
 // remain copyable because they do not own their pointees.

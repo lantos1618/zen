@@ -3,7 +3,7 @@
 { str } = std.text
 { Command, command, Matches } = std.cli
 
-Id = | Dry
+Id = { | Dry }
 
 main = (env: Env) Res<i32, AllocError> {
     a   ::= env.mem.alloc();

@@ -6,13 +6,13 @@
 { str, String } = std.text
 { AllocError } = std.mem
 
-GenFault* = Unsupported(str)     // a node form this backend does not lower yet
-          | Unresolved(str)      // a name with no declaration behind it
-          | Ambiguous(str)       // a name with more than one, and no overload rule
-          | Untyped(str)         // sema returned no type and context supplied none
-          | Unspellable(str)     // a type with no C spelling yet
-          | CopyFromPointer(str)
-          | Overrun(usize)       // more functions reachable than the backend's bound
+GenFault* = { Unsupported: str     // a node form this backend does not lower yet
+          | Unresolved: str      // a name with no declaration behind it
+          | Ambiguous: str       // a name with more than one, and no overload rule
+          | Untyped: str         // sema returned no type and context supplied none
+          | Unspellable: str     // a type with no C spelling yet
+          | CopyFromPointer: str
+          | Overrun: usize }       // more functions reachable than the backend's bound
 
 GenDiag* = {
     file*: str,

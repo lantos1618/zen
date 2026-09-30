@@ -10,7 +10,7 @@
 { FmtJob } = zen.zen_cli
 
 // A file can fail to format, or differ when running in check mode.
-Outcome = Same | Wrote | Differs | Failed
+Outcome = { Same | Wrote | Differs | Failed }
 
 // One run; the tallies become the exit code.
 Fmt = {

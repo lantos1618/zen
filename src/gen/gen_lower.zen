@@ -13,7 +13,7 @@
 { Instruction, Func, Program, BasicBlock, Terminator } = gen.gen_ir
 
 Fault* = { span*: Span, what*: str }
-LowerError* = OutOfMemory | Unsupported(Fault)
+LowerError* = { OutOfMemory | Unsupported: Fault }
 
 unsupported = (span: Span, what: str) LowerError {
     LowerError.Unsupported(Fault(span: span, what: what))

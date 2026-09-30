@@ -32,7 +32,7 @@ MethodRef* = {
 
 // Real declarations have source positions; generated adapters do not. Keep
 // that distinction rather than guessing an origin from a mangled name.
-FnOrigin* = Generated | Source(Span)
+FnOrigin* = { Generated | Source: Span }
 
 // Saved while a lifted closure lowers with its own cleanup depth.
 Cleanup* = {

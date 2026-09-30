@@ -15,7 +15,7 @@
 // any run reaching the println below adds a line no correct build has.
 
 // a trap never lifts into Res: it aborts the process
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 at = (a: [i32, 4], i: usize) i32 { a[i] }
 

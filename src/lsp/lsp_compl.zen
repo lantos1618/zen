@@ -25,7 +25,7 @@
 { KEYWORD_COUNT, keyword_at } = std.lex
 
 // Protocol values belong to the kind; convert only when writing JSON.
-CompletionKind* = | Method = 2
+CompletionKind* = { | Method = 2
     | Function = 3
     | Field = 5
     | Class = 7       // LSP has no type-alias completion kind.
@@ -33,7 +33,7 @@ CompletionKind* = | Method = 2
     | Keyword = 14
     | EnumMember = 20
     | Constant = 21
-    | Struct = 22
+    | Struct = 22 }
 
 Item* = {
     label*: str,

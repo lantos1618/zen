@@ -78,7 +78,7 @@ TyVar* = {
     owner*: str,
 }
 
-ResForm* = Absence | Failure | Open
+ResForm* = { Absence | Failure | Open }
 
 res_arity* = (form: ResForm) usize {
     form.match({ Failure => 2, Absence => 1, Open => 1 })
@@ -94,15 +94,15 @@ TyRes* = {
     form*: ResForm,
 }
 
-Ty* = Prim(Prim)
-    | Res(TyRes)
-    | Named(TyNamed)
-    | Fn(TyFn)
-    | Union(TyUnion)
-    | Array(TyArray)
-    | Var(TyVar)
+Ty* = { Prim: Prim
+    | Res: TyRes
+    | Named: TyNamed
+    | Fn: TyFn
+    | Union: TyUnion
+    | Array: TyArray
+    | Var: TyVar
     | Infer
-    | Unknown
+    | Unknown }
 
 Types* = {
     kinds :: Vec<Ty>,

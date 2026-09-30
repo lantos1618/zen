@@ -1,5 +1,5 @@
 // A lifted thread has its own native return target even inside an inlined caller.
-Fault = | Failed
+Fault = { | Failed }
 fail = () Res<i64, Fault> { Err(Fault.Failed) }
 helper = (body: () ()) Res<i64, Fault> {
     body();

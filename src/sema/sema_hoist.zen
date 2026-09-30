@@ -252,7 +252,7 @@ check_arms_agree* = (c :: Checker, id: ExprId) Res<(), AllocError> {
     })
 }
 
-Blame* = Position | Arms
+Blame* = { Position | Arms }
 
 arms_owe = (c :: Checker, id: ExprId, want: TyId, blame: Blame)
            Res<(), AllocError> {

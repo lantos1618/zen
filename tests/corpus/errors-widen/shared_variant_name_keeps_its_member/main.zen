@@ -9,8 +9,8 @@
 // payload types so the binder types check out only when the member is
 // read correctly too.
 
-FaultA = | Hit | Miss
-SnagB  = | Hit
+FaultA = { | Hit | Miss }
+SnagB  = { | Hit }
 
 Wide2 = FaultA | SnagB
 

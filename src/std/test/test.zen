@@ -5,7 +5,7 @@
 { Env } = std.env
 { str } = std.text
 
-TestError* = | Failed(str)
+TestError* = { | Failed: str }
 
 Tester* = {
     env*: Env,

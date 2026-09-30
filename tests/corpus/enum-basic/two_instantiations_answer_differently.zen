@@ -7,7 +7,7 @@
 // Opt<str>'s payload is a str; seven() hands the literal back through an
 // annotated return so the callee owns its type. Prints 41 then seven.
 
-Opt<T> = Some(T) | None
+Opt<T> = { Some: T | None }
 
 pick_i32 = (o: Opt<i32>) i32 { o.match({ Some(v) => v, None => 0 }) }
 

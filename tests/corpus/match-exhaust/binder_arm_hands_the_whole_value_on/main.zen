@@ -16,7 +16,7 @@
 // scrutinee -- sort's answers become "lost"/garbage while the Red arm still
 // prints "red".
 
-Pill = Red(i64) | Blue | Green
+Pill = { Red: i64 | Blue | Green }
 
 sort = (p: Pill) str {
     p.match({

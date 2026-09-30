@@ -33,8 +33,8 @@
 // panic. `true => return 7` is a syntax error in both compilers, so
 // there is no divergent arm to exempt.
 
-Fault = | Bad
-Snag  = | Low
+Fault = { | Bad }
+Snag  = { | Low }
 
 fails = (n: usize) Res<(), Fault> {
     (n == 0).match({ true => Err(Fault.Bad), false => Ok(()) });

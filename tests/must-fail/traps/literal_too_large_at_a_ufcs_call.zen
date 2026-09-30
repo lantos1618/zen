@@ -17,7 +17,7 @@
 // the bootstrapper rejected it. A divergence no differential run could
 // find, because it takes a must-fail test to notice that one compiler
 // said nothing.
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 Box = { v: i32 }
 

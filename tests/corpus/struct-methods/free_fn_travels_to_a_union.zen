@@ -13,7 +13,7 @@
 // Breaks if: the world does not travel to unions -- the dot line rejects
 // or answers a different arm.
 
-Color = Red | Green | Blue
+Color = { Red | Green | Blue }
 
 name = (c: Color) str {
     c.match({

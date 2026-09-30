@@ -19,7 +19,7 @@
 // SAME variants through different arm positions (first arm and `_`
 // fallback respectively).
 
-Shape = Circle(i32) | Square(i32) | Unit
+Shape = { Circle: i32 | Square: i32 | Unit }
 
 area = (s: Shape) i32 {
     s.match({

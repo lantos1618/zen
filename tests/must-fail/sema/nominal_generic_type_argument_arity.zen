@@ -3,7 +3,7 @@
 // source of evidence: bare, short and surplus applications are all invalid.
 
 Box<T, U> = { left: T, right: U }
-Maybe<T, U> = First(T) | Second(U)
+Maybe<T, U> = { First: T | Second: U }
 
 bare_box = (value: Box) {}
 short_box = (value: Box<i32>) {}

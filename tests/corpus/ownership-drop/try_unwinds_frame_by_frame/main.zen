@@ -8,7 +8,7 @@
 // prints the same four lines in a different order, which is exactly
 // what makes this worth an expectation.
 
-Fail = | Boom
+Fail = { | Boom }
 
 Noisy = {
     env: Env,

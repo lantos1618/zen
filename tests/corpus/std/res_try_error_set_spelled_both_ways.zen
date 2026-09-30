@@ -16,8 +16,8 @@
 // Neither error carries a payload, because what is being checked is
 // which member the tag says it is and nothing else.
 
-AErr = | AOnly
-BErr = | BOnly
+AErr = { | AOnly }
+BErr = { | BOnly }
 
 Flip = BErr | AErr
 Wide = AErr | BErr

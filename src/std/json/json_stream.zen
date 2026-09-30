@@ -8,26 +8,26 @@
 { Range } = std.core
 { JsonFault, TextByte, decode_text_token, number_token, MAX_NESTING, is_json_space, shifted, text_byte, unescaped } = std.json.json_read
 
-JsonEvent* = ObjectStart
+JsonEvent* = { ObjectStart
     | ObjectEnd
     | ArrayStart
     | ArrayEnd
-    | Key(String)
-    | Text(String)
-    | Number(String)
-    | Bool(bool)
-    | Null
+    | Key: String
+    | Text: String
+    | Number: String
+    | Bool: bool
+    | Null }
 
-Mode = Ready | Quoted | Atom
+Mode = { Ready | Quoted | Atom }
 
-Phase = ObjectKeyOrEnd
+Phase = { ObjectKeyOrEnd
     | ObjectKey
     | ObjectColon
     | ObjectValue
     | ObjectCommaOrEnd
     | ArrayValueOrEnd
     | ArrayValue
-    | ArrayCommaOrEnd
+    | ArrayCommaOrEnd }
 
 Decoder* = {
     a: Alloc,

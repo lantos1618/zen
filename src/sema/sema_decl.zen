@@ -1,5 +1,5 @@
 { Module, Decl, Function, TParam, BlockId, Ident } = std.ast
-{ Struct, Impl, Member, Enum } = std.ast
+{ Struct, Impl, Member, Enum, Variant } = std.ast
 { ExprId, TypeId, Const, Field } = std.ast
 { AllocError } = std.mem
 { Vec } = std.collections
@@ -149,43 +149,58 @@ enum_payloads = (c :: Checker, e: Enum, mi: usize) Res<(), AllocError> {
     c.release_tvars(tmark)
 }
 
+// A braced body declares an enum's own variants. Without braces, `|` joins
+// existing types into a union: every name must be a type, and anything an
+// enum would write there is reported with the braced form as the fix.
 check_members = (c :: Checker, e: Enum, mi: usize)
                 Res<(), AllocError> {
-    miss_at    ::= e.variants.len;   // sentinel: no bare member missed
-    miss_count ::= 0;
-    types      ::= 0;
-    values     ::= 0;
-    Range(0, e.variants.len).loop((h, i) {
-        v = e.variants.get(i).ok_or(AllocError.OutOfMemory).try();
-        v.payload.match({
-            // a variant with a payload cannot be a member name
-            Ok(_) => (),
-            None  => c.binds_nothing(mi, v.name.text).try().match({
-                true  => {
-                    miss_count = miss_count + 1;
-                    (miss_count == 1).then(() { miss_at = i; });
-                },
+    e.braced.match({
+        true  => Ok(()),
+        false => c.check_union_members(e, mi),
+    })
+}
+
+// Names that bind nothing are misspelled union members when others are
+// types, and an enum written without braces when none is.
+check_union_members = (c :: Checker, e: Enum, mi: usize)
+                      Res<(), AllocError> {
+    enum_like ::= e.variants.len < 2 || e.leading_bar.match({
+        Ok(_) => true,
+        None  => false,
+    });
+    types     ::= 0;
+    misses    ::= c.alloc.Vec<Variant>();
+    e.variants.loop((h, v) {
+        written = v.payload.match({ Ok(_) => true, None => false })
+            || v.discriminant.match({ Ok(_) => true, None => false });
+        written.match({
+            true  => { enum_like = true; },
+            false => c.binds_nothing(mi, v.name.text).try().match({
+                true  => misses.add(v).try(),
                 false => c.binds_a_type(mi, v.name.text).try().match({
                     true  => { types = types + 1; },
-                    false => { values = values + 1; },
+                    false => { enum_like = true; },
                 }),
             }),
         });
     });
-    ((miss_count == 1) && (types > 0) && (values == 0)).match({
-        false => Ok(()),
-        true  => c.report_member_miss(e, miss_at),
+    (enum_like || types == 0).match({
+        true  => c.report(
+            e.name.span.file,
+            e.name.span,
+            SemaFault.BareEnum(NameFault(name: e.name.text))
+        ),
+        false => {
+            misses.loop((h, v) {
+                c.report(
+                    v.name.span.file,
+                    v.name.span,
+                    SemaFault.UndefinedName(NameFault(name: v.name.text))
+                ).try();
+            });
+            Ok(())
+        },
     })
-}
-
-report_member_miss = (c :: Checker, e: Enum, at: usize)
-                     Res<(), AllocError> {
-    name = e.variants.get(at).ok_or(AllocError.OutOfMemory).try().name;
-    c.report(
-        name.span.file,
-        name.span,
-        SemaFault.UndefinedName(NameFault(name: name.text))
-    )
 }
 
 // Whether the name binds nothing at all in the declaring module --

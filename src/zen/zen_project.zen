@@ -12,7 +12,7 @@
 { BuildPlan, ExeNode, LibNode, plan } = zen.zen_build_plan
 { resolve, PackageFault } = zen.zen_packages
 
-Action* = Build | Run | Test
+Action* = { Build | Run | Test }
 
 project* = (env: Env, a: Alloc, job: ProjectArgs, action: Action)
            Res<i32, AllocError> {

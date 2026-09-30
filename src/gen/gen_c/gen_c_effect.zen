@@ -10,7 +10,7 @@ MAY_CALL: u8 = 2
 
 CallVisit = { id: ExprId, finish: bool }
 CallPair = { left: ExprId, right: ExprId }
-CallChildren = Leaf(bool) | One(ExprId) | Two(CallPair)
+CallChildren = { Leaf: bool | One: ExprId | Two: CallPair }
 
 CallEffects* = {
     tree: Ast,

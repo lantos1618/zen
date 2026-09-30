@@ -23,7 +23,7 @@
 // call one -- see must-fail/std/the_frameworks_expect_eq_does_not_lower,
 // which pins why (expect lowers now; expect_eq's body is #742).
 
-Error = | Boom
+Error = { | Boom }
 
 { BenchStats } = std.test
 

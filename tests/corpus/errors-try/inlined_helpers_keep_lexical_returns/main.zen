@@ -1,8 +1,8 @@
 // Helper failures return to the helper call; caller callbacks retain their lexical exit.
 // Every exited helper cleans up, while a caller handling the error remains alive.
 
-Fault = | Bad(i32)
-Other = Replaced | Mapped(i32)
+Fault = { | Bad: i32 }
+Other = { Replaced | Mapped: i32 }
 Noisy = { tag: str }
 Noisy.impl(Drop, {
     drop = (self :: @Self) { println("drop {}", self.tag) }

@@ -12,7 +12,7 @@
 // INNER match first. Wrap carries TWO variants so it stays a nominal enum
 // -- with one variant the declaration reads as something else entirely.
 
-Wrap = Wrap(Res<i64>) | Empty
+Wrap = { Wrap: Res<i64> | Empty }
 
 main = (env: Env) Res<i32, AllocError> {
     n: u64   = 99;

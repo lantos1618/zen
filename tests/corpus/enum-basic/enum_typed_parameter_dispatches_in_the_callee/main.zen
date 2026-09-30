@@ -10,7 +10,7 @@
 // readable. Three distinct arguments stop any single misdispatch from
 // looking like consistency.
 
-Word = Zebra | Yonder | Apple
+Word = { Zebra | Yonder | Apple }
 
 name_of = (w: Word) str {
     w.match({

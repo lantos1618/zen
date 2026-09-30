@@ -3,7 +3,7 @@
 // program — falling off the end, `h.next()`, `h.break()`, and `.try()`
 // returning through a frame.
 
-Fail = | Boom
+Fail = { | Boom }
 
 fails = () Res<i32, Fail> {
     Err(Fail.Boom);

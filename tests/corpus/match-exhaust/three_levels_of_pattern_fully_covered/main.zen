@@ -14,11 +14,11 @@
 // Breaks if: specialisation loses or misreads a column below depth two --
 // Right's three answers collapse onto Left's, or Gone's 77 drifts too.
 
-Inner = Num(i64) | Flag
+Inner = { Num: i64 | Flag }
 
-Mid = Wrap(Inner) | Empty
+Mid = { Wrap: Inner | Empty }
 
-Slot = Left(Mid) | Right(Mid) | Gone
+Slot = { Left: Mid | Right: Mid | Gone }
 
 depth3 = (s: Slot) i64 {
     s.match({

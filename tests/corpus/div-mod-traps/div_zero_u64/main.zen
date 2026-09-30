@@ -13,7 +13,7 @@
 // turn this into the compile-time error a visible zero would be
 // (DESIGN.md: a provable trap is a compile error, not a runtime one).
 
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 main = (env: Env) Res<i32, Error> {
     a: u64 = u64.MAX;

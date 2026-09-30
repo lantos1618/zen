@@ -5,7 +5,7 @@
 //
 // position: the pattern that binds.
 
-Colour = Red | Green | Blue
+Colour = { Red | Green | Blue }
 
 name = (c: Colour) str {
     c.match({

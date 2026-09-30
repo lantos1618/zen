@@ -19,7 +19,7 @@ Signals = c.bind("signal.h", {
 Wait = c.bind("sys/wait.h", {
     waitpid = (pid: i32, status: Ptr<i32>, options: i32) i32
 })
-Failure = | Check
+Failure = { | Check }
 interrupted = (number: i32) {}
 
 main = (env: Env) Res<i32, AllocError | FileError | FsError | Failure> {

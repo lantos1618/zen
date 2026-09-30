@@ -18,8 +18,8 @@
 { check_literal } = sema.sema_trap
 { type_of } = sema.sema_type
 
-DiscriminantCall* = Encode(TyId) | Decode(TyId)
-DiscriminantAnswer* = DiscriminantAnswered(TyId) | NotDiscriminant
+DiscriminantCall* = { Encode: TyId | Decode: TyId }
+DiscriminantAnswer* = { DiscriminantAnswered: TyId | NotDiscriminant }
 
 RepresentedEnum* = {
     ty*: TyId,

@@ -12,7 +12,7 @@
 // vanished entirely cannot pass by printing nothing.
 
 // a trap never lifts into Res: it aborts the process
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 cut = (s: str, from: usize, to: usize) str { s.slice(from, to) }
 

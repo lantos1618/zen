@@ -6,7 +6,7 @@
 // function travels with its first parameter's type, so a `Marked` that
 // wrongly WERE this `Ring` would find this `label` and print through it
 // with nothing to report.
-Ring* = Small | Large
+Ring* = { Small | Large }
 
 label* = (r: Ring) str {
     r.match({

@@ -1,6 +1,6 @@
 { MailboxStorage*, MailboxOps* } = std.actor.actor_storage
-ActorError* = Closed | Full
-ActorStartError* = OutOfMemory | Unavailable
+ActorError* = { Closed | Full }
+ActorStartError* = { OutOfMemory | Unavailable }
 
 // An address to A. Calling one of A's behavior methods through a Ref enqueues
 // its arguments as a message; the call never enters actor state directly.

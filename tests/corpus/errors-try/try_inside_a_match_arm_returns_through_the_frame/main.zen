@@ -14,8 +14,8 @@
 // close with the payload -- not fall into the error path because the
 // tag was read once and never cleared.
 
-Inner = | InnerBoom
-Outer = | OuterBoom
+Inner = { | InnerBoom }
+Outer = { | OuterBoom }
 Any = Inner | Outer
 
 leaf = (n: i64) Res<i64, Outer> {

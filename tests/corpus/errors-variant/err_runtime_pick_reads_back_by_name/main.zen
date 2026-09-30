@@ -10,8 +10,8 @@
 // pins: NotFound and Denied are separate types, so nothing but the tag
 // says which one crossed.
 
-NotFound = | NotFound
-Denied   = | Denied
+NotFound = { | NotFound }
+Denied   = { | Denied }
 Set      = Denied | NotFound
 
 raise = (n: i32) Res<i32, Set> {

@@ -11,8 +11,8 @@
 // members, and an argument. Reading back the member by name pins that
 // the tag, not just the C type, was built.
 
-Narrow = | Nope
-Other  = | Boom
+Narrow = { | Nope }
+Other  = { | Boom }
 Mid    = Narrow | Other
 
 make  = (n: i32) Res<i32, Narrow> { (n > 0).match({ true => Ok(n), false => Err(Narrow.Nope) }) }

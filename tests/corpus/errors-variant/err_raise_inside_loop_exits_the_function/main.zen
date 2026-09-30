@@ -10,8 +10,8 @@
 // a number. 22 - 20 pins both that `Over` arrived (not `Miss`, not Ok)
 // and that it carried the iteration it was raised in.
 
-A = | Miss(i64)
-B = | Over(i64)
+A = { | Miss: i64 }
+B = { | Over: i64 }
 Set = B | A
 
 scan = (limit: i64) Res<i64, Set> {

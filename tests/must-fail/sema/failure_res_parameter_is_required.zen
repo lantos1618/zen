@@ -1,4 +1,4 @@
-Fault = | Bad
+Fault = { | Bad }
 
 read = (value: Res<i32, Fault>) i32 {
     value.match({ Ok(n) => n, Err(_) => 0 })

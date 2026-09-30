@@ -685,13 +685,13 @@ MethodCallSite = {
 // Which of seven kinds a method call is, decided once. A variant carries
 // what deciding it computed, so that value is built in the branch that
 // needs it and threaded nowhere else.
-MethodKind = Inlined
-    | PtrMember(TyId)
-    | Cap(CapabilityKind)
+MethodKind = { Inlined
+    | PtrMember: TyId
+    | Cap: CapabilityKind
     | AllocCreate
     | FloorDoor
     | FatSlot
-    | Ordinary
+    | Ordinary }
 
 // Classifies method calls in precedence order: inlined bodies, pointer
 // Primitives, capability floors, format doors, dynamic bound slots, then

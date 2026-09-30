@@ -2,12 +2,12 @@
 // a statement ends with `;`. a declaration does not. that is the
 // whole rule — no newline sensitivity, no insertion.
 
-Error = | Failed
+Error = { | Failed }
 
 // declarations: no semicolon
 Point = { x: i32, y: i32 }
 
-Kind = Small | Large
+Kind = { Small | Large }
 
 double* = (n: i32) i32 { n * 2 }
 

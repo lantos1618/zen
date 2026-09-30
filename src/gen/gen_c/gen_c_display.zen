@@ -18,7 +18,7 @@
 { method_sig, member_symbol } = gen.gen_c.gen_c_member
 { Slot, slots_of, thunk_param } = gen.gen_c.gen_c_fat
 
-ConsoleStream = Stdout | Stderr
+ConsoleStream = { Stdout | Stderr }
 
 DISPLAY_MEMBER: str = "toString"
 SINK_NAME: str = "Sink"

@@ -18,7 +18,7 @@ carry no `Eq` impl by design. Each test below pins one link of that chain.
 Program (rejected):
 
 ```zen
-Shape = Rect | Dot
+Shape = { Rect | Dot }
 Rect = { w*: i64, h*: i64 }
 Dot  = { r*: i64 }
 Shape.impl(Eq, { eq* = (self: @Self, other: @Self) bool {

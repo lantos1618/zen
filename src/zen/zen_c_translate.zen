@@ -18,18 +18,18 @@ ClangExit* = {
     message*: str,
 }
 
-CTranslateFault* = NoMemory
-    | Process(ProcError)
-    | ClangFailed(ClangExit)
+CTranslateFault* = { NoMemory
+    | Process: ProcError
+    | ClangFailed: ClangExit
     | OneHeaderRequired
     | UnsupportedTarget
-    | UnsafeArgument(str)
-    | InvalidAst(str)
-    | UnsupportedFunction(str)
-    | UnsupportedType(str)
+    | UnsafeArgument: str
+    | InvalidAst: str
+    | UnsupportedFunction: str
+    | UnsupportedType: str
     | IdentityMismatch
-    | GeneratedLex(usize)
-    | GeneratedParse(usize)
+    | GeneratedLex: usize
+    | GeneratedParse: usize }
 
 CModule* = {
     source*: String,

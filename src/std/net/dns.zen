@@ -4,7 +4,7 @@
 { Res } = std.core
 { ResolvedAddr, SocketFault, resolve_addr } = std.net.socket
 
-DnsError* = NotFound | Failed
+DnsError* = { NotFound | Failed }
 
 DnsAddr* = {
     ip*: String,

@@ -6,7 +6,7 @@
 
 { Ptr } = std.mem.mem_ptr
 
-AllocError* = | OutOfMemory
+AllocError* = { | OutOfMemory }
 
 // Allocator interface implemented by arenas, fixed buffers, or foreign heaps.
 Alloc* = {

@@ -1,7 +1,7 @@
 // A variant call applies the enum head at exactly its declared type arity.
 
-Duo<T, U> = First(T) | Second(U)
-Plain = Yes | No
+Duo<T, U> = { First: T | Second: U }
+Plain = { Yes | No }
 
 main = (env: Env) Res<i32, AllocError> {
     println("{}", Duo.First<i32>(1));

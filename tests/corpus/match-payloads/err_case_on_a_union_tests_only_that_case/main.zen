@@ -11,8 +11,8 @@
 // members are read off its declaration rather than the inline spelling,
 // and through member names (`Err(Fail)`), which test the member tag.
 
-Kind = Io | Protocol | Authentication
-Fail = Mismatch | Accepted
+Kind = { Io | Protocol | Authentication }
+Fail = { Mismatch | Accepted }
 Both = Kind | Fail
 
 pick = (n: i32) Res<i32, Kind | Fail> {

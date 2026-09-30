@@ -16,7 +16,7 @@
 // position: the argument that carries no answer, where the call asks
 // what `x` is.
 
-Opt<T> = Some(T) | None
+Opt<T> = { Some: T | None }
 
 pick = (o: Opt<i32>) i32 { o.match({ Some(v) => v, None => 0 }) }
 

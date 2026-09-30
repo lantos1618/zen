@@ -17,7 +17,7 @@
 // has to survive into the generated C.
 
 // a trap never lifts into Res: it aborts the process
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 main = (env: Env) Res<i32, Error> {
     zero: i32 = env.var("ZEN_TRAP_NEVER_SET").match({

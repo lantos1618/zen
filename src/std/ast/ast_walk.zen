@@ -6,9 +6,9 @@
 { Decl, Member, Stmt, Function, TParam, Param } = std.ast.ast_node
 { Alloc, AllocError } = std.mem
 
-DeclParent* = Module(usize) | Block(BlockId)
+DeclParent* = { Module: usize | Block: BlockId }
 DeclSite* = { parent*: DeclParent, index*: usize }
-MemberParent* = Declaration(DeclSite) | Record(ExprId)
+MemberParent* = { Declaration: DeclSite | Record: ExprId }
 MemberSite* = { parent*: MemberParent, index*: usize }
 DeclVisit* = { site*: DeclSite, value*: Decl }
 MemberVisit* = { site*: MemberSite, value*: Member }
@@ -16,14 +16,14 @@ StmtVisit* = { block*: BlockId, index*: usize, value*: Stmt }
 
 // Non-arena nodes carry their value and exact structural position. A lambda
 // is an Expr whose kind is Lambda; its event encloses its signature and body.
-WalkNode* = Declaration(DeclVisit)
-    | Member(MemberVisit)
-    | Statement(StmtVisit)
-    | Expr(ExprId)
-    | Type(TypeId)
-    | Pattern(PatternId)
-    | Block(BlockId)
-WalkEvent* = Enter(WalkNode) | Leave(WalkNode)
+WalkNode* = { Declaration: DeclVisit
+    | Member: MemberVisit
+    | Statement: StmtVisit
+    | Expr: ExprId
+    | Type: TypeId
+    | Pattern: PatternId
+    | Block: BlockId }
+WalkEvent* = { Enter: WalkNode | Leave: WalkNode }
 
 // A synchronous visitor borrows its mutable state for the traversal.
 WalkVisitor* = {

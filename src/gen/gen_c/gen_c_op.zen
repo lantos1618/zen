@@ -56,7 +56,7 @@ wrap_unary = (
 }
 
 // What a `-` writes, in the order `negate_kind` asks for them.
-NegKind = Float | Folded(str) | Checked
+NegKind = { Float | Folded: str | Checked }
 
 // Negation on an integer is `0 - x`, and it traps: `-i32.MIN` is an
 // overflow like any other. On a float it is the C operator, which
@@ -204,7 +204,7 @@ is_comparison* = (op: BinOp) bool {
 
 // The lowering forms for binary operators. `op_kind` tests them in language
 // precedence order.
-OpKind = ShortCircuit | Infix | Helper(str) | Dispatched | Refused
+OpKind = { ShortCircuit | Infix | Helper: str | Dispatched | Refused }
 
 // Short-circuit operators use an explicit branch whenever either operand must
 // be held or the right subtree emits statements. `spills_anywhere` is required:

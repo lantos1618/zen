@@ -11,7 +11,7 @@
 //   1
 //   2
 //   3
-Color = | Red | Green | Blue
+Color = { | Red | Green | Blue }
 
 code = (c: Color) i32 {
     c.match({

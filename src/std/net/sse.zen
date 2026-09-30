@@ -14,7 +14,7 @@ SseMessage* = {
     id*:   str,
 }
 
-SseEvent* = Message(SseMessage) | Retry(usize)
+SseEvent* = { Message: SseMessage | Retry: usize }
 
 SseDecoder* = {
     line :: String,

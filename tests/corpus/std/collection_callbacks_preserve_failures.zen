@@ -1,6 +1,6 @@
 // Collection helpers own allocation failures; callback failures leave their
 // lexical caller. Both stop before visiting any later element.
-Failure = | BadInput(str)
+Failure = { | BadInput: str }
 
 Refuse = {}
 Refuse.impl(Alloc, {

@@ -12,14 +12,14 @@
 { Checker, Ctx, type_of } = sema.sema
 { CImport, Lib, Extern, Exe, Dep, Target, Codegen, Package } = std.build
 
-PlanFault* = MissingBuild(str)
+PlanFault* = { MissingBuild: str
     | CheckedFaults
-    | MissingField(Span)
-    | UnknownName(Span)
-    | DuplicateTarget(str)
-    | Unsupported(Span)
+    | MissingField: Span
+    | UnknownName: Span
+    | DuplicateTarget: str
+    | Unsupported: Span }
 
-PlanError* = OutOfMemory | Refused(PlanFault)
+PlanError* = { OutOfMemory | Refused: PlanFault }
 
 refused = (fault: PlanFault) PlanError { PlanError.Refused(fault) }
 
@@ -63,20 +63,20 @@ BuildPlan* = {
     tests* :: Vec<ExeNode>,
 }
 
-ExecutableRole = Program | Test
+ExecutableRole = { Program | Test }
 
-Value = UnitValue
+Value = { UnitValue
     | BuilderValue
-    | TextValue(str)
-    | BoolValue(bool)
-    | PathValue(Path)
-    | TargetValue(Target)
-    | BackendValue(Codegen)
-    | DepValue(Dep)
+    | TextValue: str
+    | BoolValue: bool
+    | PathValue: Path
+    | TargetValue: Target
+    | BackendValue: Codegen
+    | DepValue: Dep
     | EmptyList
-    | TextList(Vec<str>)
-    | DepList(Vec<Dep>)
-    | PathOption(Res<Path>)
+    | TextList: Vec<str>
+    | DepList: Vec<Dep>
+    | PathOption: Res<Path> }
 
 Local = {
     name: str,

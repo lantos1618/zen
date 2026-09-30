@@ -11,8 +11,8 @@
 // The two spellings are written in opposite orders on purpose; numbered
 // by declaration, A is 0 in one set and 1 in the other.
 
-A = | Hit(i32)
-B = | Miss(i32)
+A = { | Hit: i32 }
+B = { | Miss: i32 }
 S1 = A | B
 S2 = B | A
 

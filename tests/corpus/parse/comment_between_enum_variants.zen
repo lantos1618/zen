@@ -12,9 +12,9 @@
 // made it parse, which is what made the pair look unrelated.
 
 Kind =
-      Word          // a bare name
-    | Number(u64)   // a name and how many
-    | Blank
+      { Word          // a bare name
+    | Number: u64   // a name and how many
+    | Blank }
 
 name = (k: Kind) str {
     k.match({

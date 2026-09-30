@@ -3,7 +3,7 @@
 // `Opt<i32>` or `Opt<str>` layout, not the open memo shared by both copies.
 // Otherwise Zen accepts this but C sees three incompatible Opt structures.
 
-Opt<T> = Some(T) | None
+Opt<T> = { Some: T | None }
 
 some = <T>(value: T) Opt<T> { Opt.Some(value) }
 

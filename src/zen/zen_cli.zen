@@ -14,16 +14,16 @@
 { String } = std.text
 { holds_build_zen } = zen.zen_path
 
-Cli* = Build(BuildArgs)
-     | Project(ProjectArgs)
-     | Run(ProjectArgs)
-     | Test(ProjectArgs)
-     | Fmt(FmtJob)
-     | Later(str)     // LSP transport arguments are handled by the server driver
-     | Version(str)
-     | Usage(str)     // the word that made no sense; empty means nothing was said
-     | UnavailableBackend(str)
-     | Missing(str)   // a flag the build needs and did not get
+Cli* = { Build: BuildArgs
+     | Project: ProjectArgs
+     | Run: ProjectArgs
+     | Test: ProjectArgs
+     | Fmt: FmtJob
+     | Later: str     // LSP transport arguments are handled by the server driver
+     | Version: str
+     | Usage: str     // the word that made no sense; empty means nothing was said
+     | UnavailableBackend: str
+     | Missing: str }   // a flag the build needs and did not get
 
 // `zen fmt` takes files; zen_fmt validates that they are not directories.
 FmtJob* = {
@@ -51,7 +51,7 @@ ARGS*: usize = 2
 
 USAGE*: str = "usage: zen build [<project-or-target>]\n       zen check <root> [--entry <file>] [--std <path>] [--ffi]\n       zen run [<project-or-target>] [-- <args>...]\n       zen build <root> [--entry <file>] [--std <path>] [--ffi] [--symbol-map <file>] --emit-c -o <file.c>\n       zen build <root> [--entry <file>] [--std <path>] [--ffi] [--symbol-map <file>] --emit-c-dir <dir>\n       zen fmt [--check] <file.zen>..."
 
-HelpArg = Root
+HelpArg = { Root
     | BuildRoot
     | EmitC
     | EmitDir
@@ -65,7 +65,7 @@ HelpArg = Root
     | Path
     | Check
     | Request
-    | Reply
+    | Reply }
 
 // Runtime help comes from the same declarative surface applications use.
 // USAGE remains exported above for source compatibility, but the executable
@@ -239,7 +239,7 @@ HELP_FMT: str = "@help/fmt"
 HELP_TEST: str = "@help/test"
 HELP_LSP: str = "@help/lsp"
 
-FmtFlag = | Check
+FmtFlag = { | Check }
 
 cli* = (env: Env, alloc: Alloc, argv: Vec<str>) Res<Cli, AllocError> {
     argv.get(1).match({

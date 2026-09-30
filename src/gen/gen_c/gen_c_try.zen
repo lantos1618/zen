@@ -590,7 +590,7 @@ report_widening = (be :: CBackend, node: Expr) Res<(), AllocError> {
 
 // Declared variants and structural members need distinct cases because their
 // C initialisers name different things.
-Carry = Same | Variant(str) | Member(TyId) | Copy | Retag
+Carry = { Same | Variant: str | Member: TyId | Copy | Retag }
 
 write_return = (be :: CBackend, w: str) Res<(), AllocError> {
     be.return_to.match({

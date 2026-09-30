@@ -5,8 +5,8 @@
 { String } = std.text.text_string
 { AllocError } = std.mem.mem
 
-Utf8Error* = | Invalid(usize)         // byte offset of the first invalid byte
-             | InvalidCodepoint(u32)  // the scalar that cannot be encoded
+Utf8Error* = { | Invalid: usize         // byte offset of the first invalid byte
+             | InvalidCodepoint: u32 }  // the scalar that cannot be encoded
 
 Codepoint* = {
     value*: u32,

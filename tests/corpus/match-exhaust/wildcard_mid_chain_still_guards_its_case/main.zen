@@ -14,9 +14,9 @@
 // guard (as the final else of everything above it) -- the last line
 // answers "RO" instead of "G".
 
-Cell = Full(i64) | Blank | Mark(i64)
+Cell = { Full: i64 | Blank | Mark: i64 }
 
-Slot = Left(Cell) | Right(Cell) | Gone
+Slot = { Left: Cell | Right: Cell | Gone }
 
 word = (s: Slot) str {
     s.match({

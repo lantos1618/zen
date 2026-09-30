@@ -5,8 +5,8 @@
 { str } = std.text
 { Span } = std.ast
 
-Scalar* = I32 | Bool | Unit
-Op* = Add
+Scalar* = { I32 | Bool | Unit }
+Op* = { Add
     | Sub
     | Mul
     | Div
@@ -16,8 +16,8 @@ Op* = Add
     | Less
     | LessEqual
     | Greater
-    | GreaterEqual
-UnaryOp* = Neg | Not
+    | GreaterEqual }
+UnaryOp* = { Neg | Not }
 
 Const* = { out*: usize, value*: i32 }
 Move* = { out*: usize, source*: usize }
@@ -27,15 +27,15 @@ Invocation* = { out*: usize, function*: usize, args*: Vec<usize> }
 Print* = { value*: usize, ty*: Scalar }
 Branch* = { value*: usize, yes*: usize, no*: usize }
 
-Instruction* = Constant(Const)
-    | Copy(Move)
-    | UnaryValue(Unary)
-    | BinaryValue(Binary)
-    | Invoke(Invocation)
-    | PrintValue(Print)
-    | Text(str)
+Instruction* = { Constant: Const
+    | Copy: Move
+    | UnaryValue: Unary
+    | BinaryValue: Binary
+    | Invoke: Invocation
+    | PrintValue: Print
+    | Text: str }
 
-Terminator* = Return(usize) | Jump(usize) | Branch(Branch)
+Terminator* = { Return: usize | Jump: usize | Branch: Branch }
 
 // Every block has exactly one terminator; its targets index Func.blocks.
 BasicBlock* = {

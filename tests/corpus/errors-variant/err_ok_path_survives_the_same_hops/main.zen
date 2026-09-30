@@ -8,7 +8,7 @@
 // truncation) and the negative Err payload both have to arrive intact.
 // One call each way, same code path, different halves exercised.
 
-A = | Miss(i64)
+A = { | Miss: i64 }
 Set = A | AllocError
 
 deep = (ok: bool) Res<i64, Set> {

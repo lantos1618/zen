@@ -11,7 +11,7 @@
 // plausible wrong output: all lines equal, a zero line, or a missing
 // line (an earlier hop's value clobbered by a later one).
 
-ChainError = | Nope
+ChainError = { | Nope }
 
 main = (env: Env) Res<i32, ChainError> {
     v ::= (4 > 3).then(() { 40 }).ok_or(ChainError.Nope).try();

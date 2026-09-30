@@ -9,8 +9,8 @@
 // a real failure follows on the same path so the function still
 // propagates what it is given.
 
-Kind = Io | Protocol
-Fail = Mismatch | Accepted
+Kind = { Io | Protocol }
+Fail = { Mismatch | Accepted }
 
 input = (n: i32) Res<i32, Kind | Fail> {
     n.match({ 0 => Err(Kind.Protocol), 1 => Err(Fail.Accepted), _ => Ok(n) })

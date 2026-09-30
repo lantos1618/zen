@@ -9,9 +9,9 @@
 { DeclId } = sema.sema_id
 { obj, arr, Nest, write_text } = std.json
 
-RootPolicy* = Main | LoadedExports
-UsageError* = OutOfMemory | InvalidInput | InvalidRoots
-CallKind* = Direct | Constructor | Intrinsic | Unresolved
+RootPolicy* = { Main | LoadedExports }
+UsageError* = { OutOfMemory | InvalidInput | InvalidRoots }
+CallKind* = { Direct | Constructor | Intrinsic | Unresolved }
 
 Declaration* = {
     id*: DeclId,

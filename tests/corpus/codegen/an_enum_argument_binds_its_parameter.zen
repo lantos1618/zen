@@ -24,7 +24,7 @@
 // matter — the arm must see `Wide`, and the printed sums must be the
 // values written.
 
-Hold<E> = A(E) | B
+Hold<E> = { A: E | B }
 
 Wide = {
     a: i64,

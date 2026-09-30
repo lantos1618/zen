@@ -23,8 +23,8 @@
 // a pointer.
 
 Leaf = { v: i64 }
-Node = End(Leaf) | More(Ptr<Node>)
-Vine = Tip(Leaf) | Crawl(Ptr<Vine>)
+Node = { End: Leaf | More: Ptr<Node> }
+Vine = { Tip: Leaf | Crawl: Ptr<Vine> }
 
 unwind_node = (n: Node) i64 {
     n.match({

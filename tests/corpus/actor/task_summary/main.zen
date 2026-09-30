@@ -1,7 +1,7 @@
 // A task actor borrows its message, builds a result in request-local storage,
 // and reports malformed input before printing any partial summary.
 
-Status = Todo | Done
+Status = { Todo | Done }
 
 Task = {
     status: Status,
@@ -19,7 +19,7 @@ Task = {
     }
 }
 
-SummaryError = InvalidLine(usize) | OutOfMemory
+SummaryError = { InvalidLine: usize | OutOfMemory }
 
 Summary = {
     done :: usize = 0,

@@ -16,11 +16,11 @@
 // in a GENERIC ARGUMENT rather than named directly. `.count 3` says every
 // one of them is reached and that none of them cascades.
 
-Sole = | Array(ArrayLit)
+Sole = { | Array: ArrayLit }
 
-Later = Unit | Second | Third(MissingThird)
+Later = { Unit | Second | Third: MissingThird }
 
-Nested = | Wrapped(Vec<MissingInner>)
+Nested = { | Wrapped: Vec<MissingInner> }
 
 
 main = (env: Env) Res<i32, AllocError> {

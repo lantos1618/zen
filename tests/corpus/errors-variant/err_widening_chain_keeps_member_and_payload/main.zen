@@ -11,9 +11,9 @@
 // changes. Each member carries its own number as payload, so the arm
 // taken and the value read identify exactly which member survived.
 
-A = | AOnly(i64)
-B = | BOnly(i64)
-C = | COnly(i64)
+A = { | AOnly: i64 }
+B = { | BOnly: i64 }
+C = { | COnly: i64 }
 
 Narrow = A | C
 Mid    = C | A            // same members, opposite order: a copy

@@ -1,8 +1,8 @@
-SourceError = | Bad(i32)
+SourceError = { | Bad: i32 }
 
-TargetError = Replaced | Mapped(i32)
+TargetError = { Replaced | Mapped: i32 }
 
-OtherError = | Other
+OtherError = { | Other }
 
 WideError = TargetError | OtherError
 

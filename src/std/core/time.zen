@@ -9,7 +9,7 @@ NS_PER_SECOND* : u64 = 1000000000
 NS_PER_MINUTE* : u64 = 60000000000
 
 // Presentation unit; it is not stored in Duration.
-Unit* = Nano | Micro | Milli | Second | Minute
+Unit* = { Nano | Micro | Milli | Second | Minute }
 
 Duration* = {
     ns*: u64,

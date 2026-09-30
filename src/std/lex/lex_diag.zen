@@ -5,7 +5,7 @@
 { str } = std.text
 
 LexFault* =
-      UnterminatedString       // end of file inside "..."
+      { UnterminatedString       // end of file inside "..."
     | StringSpansLine          // a newline inside "..."
     | UnterminatedChar         // end of file inside '...'
     | CharSpansLine            // a newline inside '...'
@@ -21,7 +21,7 @@ LexFault* =
     | IntegerOutOfRange        // exceeds u64
     | UnknownAtName            // @foo
     | MisplacedBom             // a byte-order mark past offset 0
-    | StrayByte                // a byte that begins no token
+    | StrayByte }                // a byte that begins no token
 
 Diag* = {
     file*: str,

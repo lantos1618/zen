@@ -1,9 +1,9 @@
 // Enum variant names are compile-time-known borrowed text. Lowercase wire
 // variants demonstrate that the declaration itself can own protocol spelling.
 
-Role = system | user | assistant | tool
-Shape = Circle(i32) | Rect
-Opt<T> = Some(T) | None
+Role = { system | user | assistant | tool }
+Shape = { Circle: i32 | Rect }
+Opt<T> = { Some: T | None }
 
 made_role = () Role {
     println("made once");

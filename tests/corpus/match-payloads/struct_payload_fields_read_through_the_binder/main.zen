@@ -11,8 +11,8 @@
 
 Pos = { line: i64, col: u8 }
 
-Found = At(Pos) | Nowhere
-Mark  = At(u64) | Gone
+Found = { At: Pos | Nowhere }
+Mark  = { At: u64 | Gone }
 
 main = (env: Env) Res<i32, AllocError> {
     f: Found = Found.At(Pos(line: 12, col: 34));

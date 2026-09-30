@@ -23,7 +23,7 @@ guard = (n: usize) Res<usize, AllocError> {
     n
 }
 
-Fault = | TooBig
+Fault = { | TooBig }
 
 checked = (n: usize) Res<usize, Fault> {
     (n < 100).then(() { n }).ok_or(Fault.TooBig).try();    // for propagation

@@ -29,7 +29,7 @@
 { TestError } = std.test
 
 // A runner has more than one way to stop; a test has one.
-Halted  = | OutOfTime
+Halted  = { | OutOfTime }
 Harness = Halted | TestError
 
 // Shaped like `Tester.expect`: the condition decides, and the reason

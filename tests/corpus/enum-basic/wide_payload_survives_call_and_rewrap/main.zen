@@ -9,7 +9,7 @@
 // this lane's most plausible wrong answer: 12884901891 cannot be reached
 // from a 32-bit payload by luck.
 
-Wide = Vast(i64) | Modest(i64)
+Wide = { Vast: i64 | Modest: i64 }
 
 loud = (n: i64) Wide {
     (n == 0).match({

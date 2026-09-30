@@ -9,7 +9,7 @@
 // "The error type of a `Res` is a union, and propagation merges sets"
 // (DESIGN.md, Errors) is the rule; it applies across arms too.
 
-Fault = | Bad
+Fault = { | Bad }
 
 fails = (n: usize) Res<(), AllocError> {
     (n == 0).match({

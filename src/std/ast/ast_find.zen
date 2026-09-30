@@ -6,10 +6,10 @@
 { Ast } = std.ast.ast_arena
 
 // Typed reference to the arena family containing a result.
-NodeRef* = ExprNode(ExprId)
-    | TypeNode(TypeId)
-    | PatternNode(PatternId)
-    | BlockNode(BlockId)
+NodeRef* = { ExprNode: ExprId
+    | TypeNode: TypeId
+    | PatternNode: PatternId
+    | BlockNode: BlockId }
 
 // The smallest span seen so far that covers the cursor. A later candidate
 // replaces it only when nested strictly inside it.

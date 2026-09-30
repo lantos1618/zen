@@ -23,7 +23,7 @@ Refusal.impl(Alloc, {
     }
 })
 
-Operation = Function | Foreign | Type
+Operation = { Function | Foreign | Type }
 Observation = { allocations: usize, refused: bool, intact: bool }
 
 publish = (

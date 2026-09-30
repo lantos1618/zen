@@ -17,10 +17,10 @@
 { X86_64LinuxGnu } = gen.gen_asm_x86
 { verify, message } = gen.gen_verify
 
-Layout* = Single | Modules
-ArtifactKind* = Source | Symbols
+Layout* = { Single | Modules }
+ArtifactKind* = { Source | Symbols }
 
-ScalarBackend = Js | Asm
+ScalarBackend = { Js | Asm }
 
 // Names and bytes borrow the renderer's current buffer. Consumers must write
 // or copy them during the callback; retaining this record extends no lifetime.

@@ -26,7 +26,7 @@ Item = (src: Src, s: Span) Item {
 // elements) sit in brackets with commas; `Columnar` (parameters) too, but
 // is packed only from one line and blocks no neighbour; `Barred` (union
 // members, enum variants) is `|`-separated with no brackets.
-Form = Stacked | Filled | Columnar | Barred
+Form = { Stacked | Filled | Columnar | Barred }
 
 // A list one round may repack: its bytes, the lines it spans, its form.
 Cand = {

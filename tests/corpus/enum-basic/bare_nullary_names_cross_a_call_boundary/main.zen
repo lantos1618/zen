@@ -12,7 +12,7 @@
 // all three indices are asked for through a nested bool-match so no
 // construction site sits at index 0 by luck.
 
-Word = Zebra | Yonder | Apple
+Word = { Zebra | Yonder | Apple }
 
 pick = (n: i64) Word {
     (n == 0).match({

@@ -41,7 +41,7 @@
 
 // A recovery signature supplies expected types to argument diagnostics, but
 // it cannot make a call valid when its declared parameters do not match.
-SignatureFit = Exact | Recovery(str)
+SignatureFit = { Exact | Recovery: str }
 
 RecoverySig = {
     ty: TyId,
@@ -1019,7 +1019,7 @@ infer_member_inst = (
     Ok(())
 }
 
-BoundFit = BoundSatisfied | BoundUnresolved | BoundDisjoint
+BoundFit = { BoundSatisfied | BoundUnresolved | BoundDisjoint }
 
 first_matching = (
     site    : CallCheck,

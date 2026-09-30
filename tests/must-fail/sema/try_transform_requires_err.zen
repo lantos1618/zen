@@ -1,4 +1,4 @@
-TargetError = | Changed
+TargetError = { | Changed }
 
 maybe = () Res<i32> { None }
 

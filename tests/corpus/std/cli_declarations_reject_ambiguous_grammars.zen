@@ -3,7 +3,7 @@
 { str } = std.text
 { Command, command, DiagnosticKind, ValueType } = std.cli
 
-Id = A | B
+Id = { A | B }
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

@@ -15,7 +15,7 @@
 // one the tags were assigned in -- at least one arm misdispatches and the
 // line reads something other than "11 22 30" / "63".
 
-Tag = Zulu | Mike | Alpha
+Tag = { Zulu | Mike | Alpha }
 
 pick = (t: Tag) i32 {
     t.match({

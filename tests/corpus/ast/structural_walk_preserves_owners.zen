@@ -3,7 +3,7 @@
 { Ast, WalkNode, WalkEvent, WalkVisitor, DeclVisit, DeclSite, DeclParent, walk } = std.ast
 { AllocError } = std.mem
 
-SOURCE: str = "Box<T: Bound<[i32, bound_count()]>> = {\n    value :: [i32, count()] = default_value()\n    method = (self: @Self) i32 { member_body() }\n}\nAlias = Holder<[i32, alias_count()]>\nChoice = One([i32, payload_count()]) | Two = 4\nBox.impl(Bound<[i32, impl_count()]>, { value = impl_default() })\nouter = (input: [i32, parameter_count()]) [i32, return_count()] {\n    nested = () i32 { nested_body() }\n    invoke(() i32 { callback_body() });\n    consume_record({ value = record_value(), method = () i32 { record_body() } });\n    local: [i32, local_count()] = local_value();\n    items = [i32, fixed_count()](1, 2);\n    reflected = @meta(meta_value());\n    (input[0] + -1).match({ 0 => matched(), _ => fallback().try((e) { recovered() }) })\n}\n"
+SOURCE: str = "Box<T: Bound<[i32, bound_count()]>> = {\n    value :: [i32, count()] = default_value()\n    method = (self: @Self) i32 { member_body() }\n}\nAlias = Holder<[i32, alias_count()]>\nChoice = { One: [i32, payload_count()] | Two = 4 }\nBox.impl(Bound<[i32, impl_count()]>, { value = impl_default() })\nouter = (input: [i32, parameter_count()]) [i32, return_count()] {\n    nested = () i32 { nested_body() }\n    invoke(() i32 { callback_body() });\n    consume_record({ value = record_value(), method = () i32 { record_body() } });\n    local: [i32, local_count()] = local_value();\n    items = [i32, fixed_count()](1, 2);\n    reflected = @meta(meta_value());\n    (input[0] + -1).match({ 0 => matched(), _ => fallback().try((e) { recovered() }) })\n}\n"
 
 Trace = {
     tree: Ast,

@@ -12,18 +12,18 @@
 // application. The same Parameter records drive parsing, validation and help,
 // so the accepted grammar cannot silently drift away from its usage text.
 
-ValueType* = Text | I32 | I64 | U16 | Usize
+ValueType* = { Text | I32 | I64 | U16 | Usize }
 
-ParameterKind* = Switch | Setting(ValueType) | Positional(ValueType)
+ParameterKind* = { Switch | Setting: ValueType | Positional: ValueType }
 
-CliValue* = On
-    | TextValue(str)
-    | I32Value(i32)
-    | I64Value(i64)
-    | U16Value(u16)
-    | UsizeValue(usize)
+CliValue* = { On
+    | TextValue: str
+    | I32Value: i32
+    | I64Value: i64
+    | U16Value: u16
+    | UsizeValue: usize }
 
-DiagnosticKind* = HelpRequested
+DiagnosticKind* = { HelpRequested
     | VersionRequested
     | UnknownOption
     | UnknownCommand
@@ -34,7 +34,7 @@ DiagnosticKind* = HelpRequested
     | RequiredBy
     | Conflict
     | Duplicate
-    | InvalidDeclaration
+    | InvalidDeclaration }
 
 // `word` is always the token or declaration at fault. `other` is populated
 // for Conflict and is otherwise empty. `command` names the active command.

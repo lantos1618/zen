@@ -11,7 +11,7 @@
 
 VariantNameCall* = { ty*: TyId }
 
-VariantNameAnswer* = VariantNameAnswered(TyId) | NotVariantName
+VariantNameAnswer* = { VariantNameAnswered: TyId | NotVariantName }
 
 EnumValue* = {
     ty*: TyId,

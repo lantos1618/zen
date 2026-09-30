@@ -13,7 +13,7 @@
 // stdout above it exercises the in-range nibbles, so a hex_digit that
 // trapped on EVERY input, or answered the wrong byte for the legal ones,
 // is red here rather than green on the trap alone.
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 main = (env: Env) Res<i32, Error> {
     println(

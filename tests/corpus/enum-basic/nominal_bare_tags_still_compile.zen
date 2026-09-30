@@ -7,7 +7,7 @@
 //
 // position: the declaration compiles, runs, and prints.
 
-Color = Red | Green | Blue
+Color = { Red | Green | Blue }
 
 pick = (c: Color) str {
     c.match({

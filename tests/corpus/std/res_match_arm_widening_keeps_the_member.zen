@@ -30,8 +30,8 @@
 // spelling are not part of its identity", so `Both` is the set `either`
 // already answers with and `.try()` carries the value into it unchanged.
 
-Fault = | Bad | Worse
-Snag  = | Low | High
+Fault = { | Bad | Worse }
+Snag  = { | Low | High }
 
 Both = Fault | Snag
 

@@ -22,9 +22,9 @@
 // and `nested` puts a qualified pattern under a qualified pattern, where
 // the inner path is read against the payload's type and not the outer's.
 
-Shape = Circle(i32) | Square(i32) | Dot
+Shape = { Circle: i32 | Square: i32 | Dot }
 
-Cell = Full(Shape) | Blank
+Cell = { Full: Shape | Blank }
 
 kind = (s: Shape) i32 {
     s.match({

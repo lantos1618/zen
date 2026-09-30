@@ -1,5 +1,5 @@
-SourceError = | Bad
-TargetError = | Changed
+SourceError = { | Bad }
+TargetError = { | Changed }
 
 raise = () Res<i32, SourceError> { Err(SourceError.Bad) }
 

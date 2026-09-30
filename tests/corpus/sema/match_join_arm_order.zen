@@ -13,7 +13,7 @@
 // written type to settle them from the outside, so the join is the only
 // thing that can. They must type the same.
 
-Op = Not | Neg
+Op = { Not | Neg }
 
 name_of = (o: Op) str {
     o.match({ Not => "not", Neg => "neg" })

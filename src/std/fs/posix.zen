@@ -22,13 +22,13 @@ Temporary = c.bind("stdlib.h", {
 })
 Errors = c.bind("errno.h", { errno: i32, EINTR: i32 })
 
-FileError* = InvalidPath
+FileError* = { InvalidPath
     | OpenFailed
     | ReadFailed
     | UnexpectedEnd
     | WriteFailed
     | SeekFailed
-    | CloseFailed
+    | CloseFailed }
 
 Descriptor* = {
     fd*: i32,

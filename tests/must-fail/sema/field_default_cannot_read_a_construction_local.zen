@@ -1,4 +1,4 @@
-Shade = Red | Green | Blue
+Shade = { Red | Green | Blue }
 Bad = { value :: Shade = local }
 
 main = () {

@@ -1,4 +1,4 @@
-Opt<T> = Some(T) | None
+Opt<T> = { Some: T | None }
 
 value = (o: Opt<i64>) i64 { o.match({ Some(v) => v, None => 0 }) }
 

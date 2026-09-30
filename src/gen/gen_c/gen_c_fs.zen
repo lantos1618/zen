@@ -245,7 +245,7 @@ FsSite = {
     }
 }
 
-FsBytes = File(str) | Directory(str)
+FsBytes = { File: str | Directory: str }
 
 // The C names and settled types for a filesystem operation returning bytes.
 // Allocation, the floor call and result construction all consume this one

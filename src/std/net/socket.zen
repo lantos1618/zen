@@ -51,7 +51,7 @@ with_flag = (flags: i32, bit: i32) i32 {
     (bit > 0 && (flags / bit) % 2 == 0).match({true => flags + bit, false => flags})
 }
 
-SocketFault* = ConnectFault | WriteFault | ReadFault | PeerClosed
+SocketFault* = { ConnectFault | WriteFault | ReadFault | PeerClosed }
 
 ResolvedAddr* = {
     ip*: String,

@@ -8,13 +8,13 @@
 { HEX_BASE } = std.core.byte
 { Jsons, Json, JsonId, Pair } = std.json.json_write
 
-JsonFault* = Unexpected(usize)   // a byte that cannot begin what is expected here
-           | Truncated(usize)    // the document ended inside a value
-           | BadEscape(usize)    // a backslash sequence that is not one
-           | BadNumber(usize)    // digits that are not JSON's number grammar
-           | TooDeep(usize)      // nested past MAX_NESTING
-           | Trailing(usize)     // a complete value, and then more bytes
-           | NoMemory            // the arena could not grow
+JsonFault* = { Unexpected: usize   // a byte that cannot begin what is expected here
+           | Truncated: usize    // the document ended inside a value
+           | BadEscape: usize    // a backslash sequence that is not one
+           | BadNumber: usize    // digits that are not JSON's number grammar
+           | TooDeep: usize      // nested past MAX_NESTING
+           | Trailing: usize     // a complete value, and then more bytes
+           | NoMemory }            // the arena could not grow
 
 // Bounds recursive DOM reads and the incremental decoder's frame stack.
 MAX_NESTING*: usize = 64
@@ -398,7 +398,7 @@ unescaped* = (b: u8) Res<u8> {
     })
 }
 
-TextByte* = TextEnd | TextEscape | TextPlain
+TextByte* = { TextEnd | TextEscape | TextPlain }
 
 // A byte inside a quoted string; raw controls are Unexpected.
 text_byte* = (b: u8, at: usize) Res<TextByte, JsonFault> {

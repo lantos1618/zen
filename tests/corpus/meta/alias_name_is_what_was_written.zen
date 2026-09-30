@@ -14,7 +14,7 @@ Point = {
     y: i64,
 }
 
-Color = Red | Green
+Color = { Red | Green }
 
 P2    = Point
 Colors = Color

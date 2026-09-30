@@ -7,12 +7,12 @@
 { TokenKind, is_trivia } = std.parse.parse_token
 { Parser } = std.parse.parser
 
-ValueShape* = StructValue
+ValueShape* = { StructValue
     | EnumValue
     | FnValue
     | PathValue
     | AliasValue
-    | ExprValue
+    | ExprValue }
 
 // First non-trivia token index at or after `from`.
 live_at = (p :: Parser, from: usize) usize {

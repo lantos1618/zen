@@ -3,7 +3,7 @@
 { str, String } = std.text
 { Command, command, Matches, CliValue, DiagnosticKind, ValueType } = std
 
-Id = Verbose | Quiet | Jobs | Input | Define
+Id = { Verbose | Quiet | Jobs | Input | Define }
 
 main = (env: Env) Res<i32, AllocError> {
     a   ::= env.mem.alloc();

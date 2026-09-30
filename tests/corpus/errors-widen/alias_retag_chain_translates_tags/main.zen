@@ -9,9 +9,9 @@
 // arm of the final match. The Ok line proves the value survived both
 // hops; the Err line proves the identity did too.
 
-Narrow = | Nope
-Other  = | Also
-Big    = | Boom
+Narrow = { | Nope }
+Other  = { | Also }
+Big    = { | Boom }
 Mid    = Narrow | Other
 All    = Big | Other | Narrow
 

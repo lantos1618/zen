@@ -10,7 +10,7 @@
 // must-fail/sema/print_sugar_returns_nothing is the same two lines with
 // one byte removed.
 
-CfgError = Missing | Bad
+CfgError = { Missing | Bad }
 
 noisy = () i32 {
     println("noisy");

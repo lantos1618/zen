@@ -6,7 +6,7 @@
 { Parser, module } = std.parse
 { Ast, Decl, ExprId } = std.ast
 
-GrammarProbe = | Zero = 0 | Other = 7 | Raw(u8)
+GrammarProbe = { | Zero = 0 | Other = 7 | Raw: u8 }
 
 SOURCE: str = "FrameType* = | Data = 0 | Headers = (1 + 1) | Unknown(u8)\nSolo = | Only = 7\nholder = () () { Local = | Low = 3 | High = 4 }\n"
 

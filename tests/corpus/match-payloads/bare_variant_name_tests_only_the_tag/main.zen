@@ -10,7 +10,7 @@
 // same distinction on the structural type, whose variants are read off its
 // FORM rather than any declaration.
 
-Carry = Bare | Carry(i64)
+Carry = { Bare | Carry: i64 }
 
 main = (env: Env) Res<i32, AllocError> {
     c1: Carry = Carry.Bare;

@@ -13,8 +13,8 @@
 // the Ok edge ran prints "total 42". The Err arm naming Outer is what
 // proves the second run actually failed.
 
-Inner = | InnerBoom
-Outer = | OuterBoom
+Inner = { | InnerBoom }
+Outer = { | OuterBoom }
 Any = Inner | Outer
 
 source = (n: i64) Res<i64, Outer> {

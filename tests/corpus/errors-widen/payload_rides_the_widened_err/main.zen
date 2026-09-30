@@ -9,7 +9,7 @@
 // members of different sizes, and the read goes through the member's
 // own field — reachable only when the tag said Big.
 
-Small = | Tiny
+Small = { | Tiny }
 Big   = {
     n: i64,
 }

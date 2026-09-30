@@ -1,5 +1,5 @@
-Frame = | Data = 0x0 | Ping = 0x6 | Unknown(u8)
-Closed = | Red = 1 | Blue = 2
+Frame = { | Data = 0x0 | Ping = 0x6 | Unknown: u8 }
+Closed = { | Red = 1 | Blue = 2 }
 
 main = (env: Env) Res<i32, IoError> {
     ping    = Frame.from_discriminant(0x6);

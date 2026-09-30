@@ -7,7 +7,7 @@
 { str } = std.text
 { Program, Func, Scalar, Instruction, Terminator } = gen.gen_ir
 
-IrReason* = EntryFunction
+IrReason* = { EntryFunction
     | EntryParameters
     | ParameterSlots
     | MissingBlock
@@ -17,7 +17,7 @@ IrReason* = EntryFunction
     | Callee
     | Arguments
     | Target
-    | Uninitialized
+    | Uninitialized }
 
 message* = (reason: IrReason) str {
     reason.match({
@@ -36,7 +36,7 @@ message* = (reason: IrReason) str {
 }
 
 IrFault* = { function*: usize, block*: usize, reason*: IrReason }
-VerifyError* = OutOfMemory | Invalid(IrFault)
+VerifyError* = { OutOfMemory | Invalid: IrFault }
 
 same = (left: Scalar, right: Scalar) bool {
     left.match({

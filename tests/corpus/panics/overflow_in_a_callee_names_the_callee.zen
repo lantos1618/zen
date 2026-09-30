@@ -18,7 +18,7 @@
 // which is the silent answer this file exists to make impossible.
 
 // a trap never lifts into Res: it aborts the process
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 scale = (a: i32, b: i32) i32 {
     a * b

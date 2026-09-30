@@ -10,7 +10,7 @@
 { Alloc, AllocError } = std.mem
 { str } = std.text
 
-LiteralError* = OutOfMemory | IncompleteEscape(usize) | UnknownEscape(usize)
+LiteralError* = { OutOfMemory | IncompleteEscape: usize | UnknownEscape: usize }
 
 // Byte length of an unquoted, lexer-validated literal body or format fragment.
 // Each Zen escape denotes one byte; counting needs no decoded allocation.

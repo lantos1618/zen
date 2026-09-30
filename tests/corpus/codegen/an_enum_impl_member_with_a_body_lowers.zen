@@ -13,7 +13,7 @@ RGB<T> = { r: T, g: T, b: T }
 
 Coloured* = { rgb* = (self: @Self) RGB<u8> }
 
-Color = Red | Green | Blue
+Color = { Red | Green | Blue }
 
 Color.impl(Coloured, {
     rgb = (self: @Self) RGB<u8> {
@@ -25,7 +25,7 @@ Color.impl(Coloured, {
     }
 })
 
-Ink = Cyan | Magenta
+Ink = { Cyan | Magenta }
 
 Ink.impl(Coloured, {
     rgb = (self: @Self) RGB<u8> {

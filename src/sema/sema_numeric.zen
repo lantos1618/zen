@@ -13,8 +13,8 @@
 
 IntegerBitOperation* = { name*: str, word*: TyId }
 
-NarrowTarget* = U8 | U16 | Usize | I32 | CInt
-ConversionKind* = Widen | Checked(NarrowTarget)
+NarrowTarget* = { U8 | U16 | Usize | I32 | CInt }
+ConversionKind* = { Widen | Checked: NarrowTarget }
 
 NumericConversion* = {
     source*: TyId,

@@ -15,8 +15,8 @@
 // drops the payload prints 0 or garbage. Only the right unwrap prints
 // 2147483647.
 
-Inner = | InnerBoom
-Outer = | OuterBoom
+Inner = { | InnerBoom }
+Outer = { | OuterBoom }
 Any = Inner | Outer
 
 leaf = (n: i64) Res<i64, Inner> {

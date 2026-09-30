@@ -11,7 +11,7 @@
 //
 // position: the `==` expression, whose first byte is `a`.
 
-K = A | B(usize)
+K = { A | B: usize }
 
 main = (env: Env) Res<i32, AllocError> {
     a = K.A;

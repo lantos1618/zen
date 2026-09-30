@@ -4,7 +4,7 @@
 // dropped, and `Sh.A(7, 9)` printed 7 with exit 0.
 // position: the first argument with no seat.
 
-Sh = | A(i32) | B
+Sh = { | A: i32 | B }
 
 main = (env: Env) Res<i32, AllocError> {
     v = Sh.A(7, 9);

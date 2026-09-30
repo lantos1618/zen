@@ -16,7 +16,7 @@
 { const_def } = sema.sema_const
 { push_tparams, module_name } = sema.sema_inst
 
-PatKind* = WildPat | CtorPat | LitPat
+PatKind* = { WildPat | CtorPat | LitPat }
 
 Pat* = {
     kind*: PatKind,

@@ -3,7 +3,7 @@
 A systems language: Pony's actors and capabilities, Zig's explicitness, and one rule for everything else.
 
 ```groovy
-Shape = Circle(Circle) | Rect(Rect) | Unit
+Shape = { Circle: Circle | Rect: Rect | Unit }
 
 Shape.impl(Display, {
     toString ::= (self: @Self, out :: Sink) Res<(), WriteError> {

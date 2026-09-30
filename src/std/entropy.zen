@@ -9,7 +9,7 @@ Native = c.bind("stdlib.h", {
 })
 // Invalid: a null pointer with a nonzero count. Unavailable is kept so existing
 // matches still compile, but the arc4random_buf source never produces it.
-EntropyError* = Invalid | Unavailable
+EntropyError* = { Invalid | Unavailable }
 
 // Fill a live writable span using the OS CSPRNG on macOS/iOS/Linux. Empty spans
 // succeed without touching the OS; nonempty spans require a non-null pointer.

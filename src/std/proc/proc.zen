@@ -21,14 +21,14 @@ zg_os_proc_kill = (pid: i32) ()
 
 // File-creation policy is process-wide, including native libraries and children.
 // Set at startup before concurrent work; this is not an actor-local setting.
-CreationMask* = OwnerOnly | Bits(u32)
+CreationMask* = { OwnerOnly | Bits: u32 }
 FileCreation = c.bind("sys/stat.h", {
     umask = (mask: u32) u32
     S_IRWXG: u32
     S_IRWXO: u32
 })
 
-ProcError* = SpawnFailed | WaitFailed | ReadFailed
+ProcError* = { SpawnFailed | WaitFailed | ReadFailed }
 ProcStreamError* = ProcError | AllocError | IoError
 ProcOutput* = { code*: i32, out*: String, err*: String }
 

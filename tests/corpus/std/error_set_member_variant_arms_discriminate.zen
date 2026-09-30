@@ -15,7 +15,7 @@
 
 Trouble = AllocError | ParseError
 
-ParseError = | NotANumber | TooBig
+ParseError = { | NotANumber | TooBig }
 
 pick = (b: bool) Res<i32, Trouble> {
     b.match({

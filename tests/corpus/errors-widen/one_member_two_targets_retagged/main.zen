@@ -8,9 +8,9 @@
 // Mid orders [Narrow, Other], Wide3 orders [Other, Big, Narrow], and the
 // Err arm of each read names the member that arrived.
 
-Narrow = | Nope
-Other  = | Also
-Big    = | Boom
+Narrow = { | Nope }
+Other  = { | Also }
+Big    = { | Boom }
 Mid    = Narrow | Other
 Wide3  = Other | Big | Narrow
 

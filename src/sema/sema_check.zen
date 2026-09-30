@@ -68,7 +68,7 @@ CheckedCall* = {
 
 // An absent entry has no recorded call check. In-progress and
 // rejected calls expose no selection, including after a contextual recheck.
-CallResolution* = Checking | Rejected | Checked(CheckedCall)
+CallResolution* = { Checking | Rejected | Checked: CheckedCall }
 
 Checker* = {
     tree*: Ast,

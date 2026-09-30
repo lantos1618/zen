@@ -175,32 +175,33 @@ A field the construction omits **is its default**, not zero. `Cursor()` on a `Cu
 
 The corner this closes is sharp and was found by a parser: `*` is also multiplication, so a statement beginning `n *` has to be either an exported declaration or a product, and the parser cannot ask which until it has read further. Restricting `*` to the two places it has meaning removes the fork entirely at body level, which is the only place the ambiguity is reachable.
 
-**Sum types are written with `|`, always.** A nominal enum and an error union are the same construct — the doc already says a union "is an anonymous enum of two variants" — so they get one syntax and not two:
+**Sum types are written with `|`. Braces make an enum; without them `|` joins existing types into a union.**
 
 ```groovy
-Shape = Circle(Circle) | Rect(Rect) | Unit      // nominal, with payloads
+Shape = { Circle: Circle | Rect: Rect | Unit }  // an enum, with payloads
 Error = AllocError | IoError | ArgError         // a union of existing types
-AllocError* = | OutOfMemory                     // one variant: the bar leads
+AllocError* = { | OutOfMemory }                 // one variant: the bar leads
 Alias = Shape                                   // no bar, so an alias. unambiguous.
 ```
 
-**A variant name that is also a type in scope must be reported, not silently reinterpreted.** What separates `Error = AllocError | IoError` (a union of existing types) from `Signal = Start | Stop` (a nominal enum) is whether every variant name *is* a type. That rule is what lets one syntax serve both, and it has a sharp edge: the answer depends on what else is in scope, so **adding an import to an unrelated module can change what a declaration in this one means.** Found by writing `DefKind = Struct | Enum | ..` in a module that imports `std.ast`, where every one of those names is a type — the declaration silently became a union of `std.ast`'s types rather than the enum it was written as.
+**A body's separator decides its kind.** Inside braces, `|` joins an enum's variants and `,` joins a struct's fields, and a body mixing them is rejected. A variant's payload is written like a field, `Circle: Circle`; a variant takes no `::`, because it is not a binding; and `= n` gives it a discriminant. After the `,` that ends the variants come the enum's methods and constants, exactly as in a struct body, so an enum's behaviour travels with it the way a struct's does:
 
-The rule stays, because the alternative is a second syntax for a distinction nobody wants to spell twice. The *silence* goes: when a variant name collides with a type in scope, the compiler says so and names both, exactly as it does for an impl collision. An author who meant the union renames nothing; an author who meant the enum renames the variant. Cost to accept knowingly: a nominal enum cannot use a name that is a type in scope without being told about it.
+```groovy
+Permutation* = {
+    Natural | Reverse | Rotate: usize,
+    index* = (self: @Self, n: usize, i: usize) usize { .. }
+}
+```
 
-**Cost to accept knowingly:** a declaration does not terminate and nothing is newline-sensitive, so a trailing bar swallows the next declaration's name as a variant. `Shape = Circle | Square |` followed by `main = ..` reads as `Shape = Circle | Square | main` with a stray `=`, and the diagnostic lands on the `=` rather than on the bar. That is the parser being right. The alternative — ending a declaration with a token, or making a newline mean something — costs more everywhere than this costs here.
+**Why braces and not one syntax for both.** An earlier rule used one spelling: `A | B` was a union when every name was a type in scope and an enum otherwise. That made **an import in one module able to change what a declaration in another means** — writing `DefKind = Struct | Enum | ..` in a module that imports `std.ast` silently turned the enum into a union of `std.ast`'s types. Braces remove the question: an enum says so where it is written, and a bare `|` whose names are not all types is an error naming the braced form as the fix. Inside a body a top-level `|` always separates variants, so a union-typed field or payload is declared under a name first (`Num = u32 | i64`).
 
 **An alias is the type, not a name that forwards to it.** `Alias = Shape` binds `Alias` to `Shape` itself, so `Alias.Circle` is `Shape.Circle` and a value of one is a value of the other — there is no conversion, because there are not two types. This is what makes the pair above observably different: under the alias reading `Alias.Circle` exists, and under the one-variant-enum reading it does not.
 
-**Which of the two readings applies is not local to the file, and that is the sharp edge.** `A | B` is a union of existing types when *every* variant names a type in scope, and a nominal enum otherwise — so `DefKind = Struct | Enum | Alias` is nominal until someone imports types with those names into the same module, at which point the declaration silently becomes a union of them. An import in one place changes what a declaration means in another; the compiler has previously worked around the ambiguity by renaming variants.
-
-The rule, so the surprise is a diagnostic rather than a silent reinterpretation: **when every variant of an enum names a type in scope, the declaration IS a union of those types.** If that is not what was meant, the variant names collide with types and one of them must be renamed — and the compiler must say so, naming the variant and the type it collided with, rather than quietly picking the other reading. The alternative — two spellings, one per reading — was rejected because a nominal enum and an error union really are the same construct, and paying for a second syntax to disambiguate a case this rare is the worse trade.
-
-**A union is its members. Order and spelling are not part of its identity.** `WriteError = IoError | AllocError` and `Error = AllocError | IoError` are the same type, and so is the `IoError | AllocError` an inferred error set arrives at with no declaration behind it at all. This is not a new rule; it is the two above read together. The union reading says the declaration *is* a union of those types, not a fresh nominal type wrapping them — and the alias rule says a name does not create identity. A union of the same members, however it was spelled or in whatever order, is one type.
+**A union is its members. Order and spelling are not part of its identity.** `WriteError = IoError | AllocError` and `Error = AllocError | IoError` are the same type, and so is the `IoError | AllocError` an inferred error set arrives at with no declaration behind it at all. This is not a new rule; it is the two above read together. A bare `|` declaration *is* a union of those types, not a fresh nominal type wrapping them — and the alias rule says a name does not create identity. A union of the same members, however it was spelled or in whatever order, is one type.
 
 The consequence is a layout rule, and it is the reason to state this explicitly rather than leave it derivable: **a union's tags are numbered by a canonical order over its members, never by declaration order.** Number them by declaration and two spellings of one set get different tags, so `.try()` from one into the other needs a runtime map to renumber — a per-member switch at every widening site, for a difference that the type system says does not exist. Canonical numbering makes the widening a copy. The tag is internal either way: a program matches variants by name and can no more observe a tag's value than it can observe a struct's padding.
 
-Nominal enums are unaffected. `Signal = Start | Stop` is not a union, its variants name no types, and there is no second spelling of it to agree with — so it is numbered by declaration order, which is the order its author wrote and the order its exhaustiveness diagnostics read best in.
+Enums are unaffected. `Signal = { Start | Stop }` is not a union, its variants name no types, and there is no second spelling of it to agree with — so it is numbered by declaration order, which is the order its author wrote and the order its exhaustiveness diagnostics read best in.
 
 **A nominal enum may assign integer discriminants for a wire or file format.** Every known variant writes one unique compile-time integer. A final payload variant both preserves unassigned values and states the external domain; a closed represented enum uses `u64`:
 
@@ -303,7 +304,7 @@ A `Sink` dissolves it. A console is a sink, a `String` is a sink, and `println` 
 
 ```groovy fragment
 Vec*<T> = { .. }                 // declaration: struct. no semicolon.
-Shape = Circle(Circle) | Unit    // declaration: enum. no semicolon.
+Shape = { Circle: Circle | Unit }  // declaration: enum. no semicolon.
 area* = (c: Circle) f64 { .. }   // declaration: function with a body. no semicolon.
 
 v ::= alloc.Vec<i32>();          // statement. semicolon.
@@ -841,9 +842,9 @@ Display* = {
 
 // std.core (prelude, auto-imported)
 
-Res*<T> = Ok(T) | None
+Res*<T> = { Ok: T | None }
 
-Res*<T, E> = Ok(T) | Err(E)
+Res*<T, E> = { Ok: T | Err: E }
 
 // hoisting: a bare T lifts into Res<T> wherever a Res is
 // expected, so the obvious thing just works:
@@ -914,8 +915,8 @@ Scope* = {
 // resolved BY TYPE, not by the name of the binding. no Env in
 // scope is a compile error, so printing exists exactly where the
 // capability does and the law is not bent to make hello-world short
-ArgError* = Missing(str)   // required field absent; names the field
-          | Parse(str)     // value present but not the field's type
+ArgError* = { Missing: str   // required field absent; names the field
+          | Parse: str }   // value present but not the field's type
 
 // the disk. Each member earns its place: a compiler reads a whole
 // file at once, never streams and never seeks, so there is no
@@ -931,7 +932,7 @@ ArgError* = Missing(str)   // required field absent; names the field
 // missing file is a caller's problem and not a bug, and is `:`
 // because a handle's methods are `:` -- a bitwise copy of an Fs sees
 // the same filesystem.
-FsError* = NotFound | Denied | IsDir | Failed | OutOfMemory
+FsError* = { NotFound | Denied | IsDir | Failed | OutOfMemory }
 
 Fs* = {
     read*   = (self: @Self, a: Alloc, path: str) Res<String, FsError>
@@ -1142,7 +1143,7 @@ Map*<K: Eq + Hash, V> = {
 // proposed. Today `zen test` runs explicit Builder.exe_test(Exe) targets, and
 // std.test.Suite supplies per-callback arenas and assertion reporting.
 
-TestError* = | Failed(str)
+TestError* = { | Failed: str }
 
 Tester* = {
     env: Env,
@@ -1331,7 +1332,7 @@ and an incompatible already-typed argument is still rejected.
 // Records are retained until runtime shutdown, including stopped actors.
 // This does not provide bounded actor churn or checked raw-pointer lifetimes.
 
-ActorError* = Closed | Full
+ActorError* = { Closed | Full }
 
 // the address of an actor. freely sendable. behavior calls on
 // a Ref are messages. every Ref also carries:
@@ -1369,7 +1370,7 @@ Actor* = {}
 // creator — so it hangs off Env like io and pages do. there is
 // no ambient thread.spawn
 
-ThreadError* = SpawnFailed | Panicked
+ThreadError* = { SpawnFailed | Panicked }
 
 Thread* = {
     id: u64,
@@ -1577,7 +1578,7 @@ Rect = {
 
 // variants carry payload types; a default payload and a
 // discriminant are different things and are written apart
-Shape = Circle(Circle) | Rect(Rect) | Unit
+Shape = { Circle: Circle | Rect: Rect | Unit }
 
 Shape.impl(Display, {
     // defining the outlined toString: pretty output for {}.

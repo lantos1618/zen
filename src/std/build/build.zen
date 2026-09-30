@@ -15,15 +15,15 @@ Module* = {
 
 Function* = {}
 
-BuildFault* = NotFound | FetchFailed | VersionConflict | HashMismatch
+BuildFault* = { NotFound | FetchFailed | VersionConflict | HashMismatch }
 
 BuildError* = BuildFault | AllocError
 
-Os* = Macos | Linux | Windows
+Os* = { Macos | Linux | Windows }
 
-Arch* = X86_64 | Arm64
+Arch* = { X86_64 | Arm64 }
 
-Abi* = Gnu | Musl | Msvc | Darwin
+Abi* = { Gnu | Musl | Msvc | Darwin }
 
 StableName* = {
     stable_name* ::= (self: @Self) str
@@ -155,7 +155,7 @@ Budget* = {
 
 // Generator choice is independent of artifact delivery and OS/arch/ABI.
 // Only implemented generators are admitted; unknown names never fall back.
-Codegen* = C | Js | Asm
+Codegen* = { C | Js | Asm }
 
 Codegen* = (name: str) Res<Codegen> {
     name.match({
@@ -168,9 +168,9 @@ Codegen.impl(StableName, {
 })
 
 // Check emits nothing. Other modes describe where generated artifacts go.
-Emission* = Check | Stdout | File(str) | Directory(str)
+Emission* = { Check | Stdout | File: str | Directory: str }
 
-Permutation* = Natural | Reverse | Rotate | Interleave
+Permutation* = { Natural | Reverse | Rotate | Interleave }
 
 Permutation.impl(StableName, {
     stable_name = (self: @Self) str {
@@ -342,9 +342,9 @@ BuildFlags* = {
     }
 }
 
-BuildArgFault* = MissingRoot | MissingEmit | UnavailableBackend(str)
+BuildArgFault* = { MissingRoot | MissingEmit | UnavailableBackend: str }
 
-BuildFlag* = EmitC
+BuildFlag* = { EmitC
     | EmitDir
     | Out
     | Entry
@@ -353,7 +353,7 @@ BuildFlag* = EmitC
     | SymbolMap
     | Repeat
     | Permute
-    | Ffi
+    | Ffi }
 
 FLAG_EMIT_C*: str = "--emit-c"
 FLAG_EMIT_DIR*: str = "--emit-c-dir"

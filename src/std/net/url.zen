@@ -4,7 +4,7 @@
 { str } = std.text
 { Res, ok_or } = std.core
 
-UrlError* = | Invalid
+UrlError* = { | Invalid }
 
 ParsedUrl* = {
     scheme*: str,

@@ -5,12 +5,12 @@
 { Vec, vararg } = std.collections
 { Package, Lib } = std.build
 
-PackageFault* = InvalidSpec
+PackageFault* = { InvalidSpec
     | FetchFailed
     | CacheMismatch
     | DirtyCache
     | Unavailable
-    | MissingSource
+    | MissingSource }
 PackageError* = PackageFault | AllocError
 
 resolve* = (

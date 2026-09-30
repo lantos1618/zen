@@ -10,7 +10,7 @@ HARNESS_NATIVE_ASM* : bool = false
 { X86_64LinuxGnu } = gen.gen_asm_x86
 { verify, VerifyError } = gen.gen_verify
 
-BuildFault = | Compile
+BuildFault = { | Compile }
 
 binary = (out: usize, left: usize, op: Op, right: usize) Instruction {
     Instruction.BinaryValue(Binary(

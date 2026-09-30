@@ -30,7 +30,7 @@ ARGS_MODULE: str = "std.env.env_args"
 
 // What one field asks of argv, decided from its type. `Num` and `OptNum`
 // carry the std parser's name for the primitive.
-Ask = Switch | Text | OptText | Num(str) | OptNum(str) | Unknown
+Ask = { Switch | Text | OptText | Num: str | OptNum: str | Unknown }
 
 // One field of the record, with the temporaries its lowering owns.
 Slot = {

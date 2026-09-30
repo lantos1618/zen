@@ -34,7 +34,7 @@
 // Classification is closed and travels with MethodKind into lowering,
 // so receiver ownership and an overloaded name such as `read` are
 // decided once rather than reconstructed by a second boolean chain.
-CapabilityKind* = NotCapability
+CapabilityKind* = { NotCapability
     | MemAlloc
     | MemPage
     | MemRelease
@@ -58,7 +58,7 @@ CapabilityKind* = NotCapability
     | ConsolePrint
     | ConsoleFlush
     | StdinRead
-    | ScopeDefer
+    | ScopeDefer }
 
 // All source facts for one classified capability call. They are resolved
 // together in gen_c_member and remain fixed until lowering has emitted the

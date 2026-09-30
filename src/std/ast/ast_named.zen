@@ -20,11 +20,11 @@ ValueAt* = {
 }
 
 // Import bindings resolve definitions but have no local type or expression.
-Tell* = Nothing
-    | Sig(Function)
-    | OfType(TypeAt)
-    | OfValue(ValueAt)
-    | Imported(Ident)
+Tell* = { Nothing
+    | Sig: Function
+    | OfType: TypeAt
+    | OfValue: ValueAt
+    | Imported: Ident }
 
 told_at* = (tree: Ast, file: str, p: Pos) Tell {
     probe = Probe(tree: tree, file: file, p: p);

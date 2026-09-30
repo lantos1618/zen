@@ -24,7 +24,7 @@
 { expr, ty_of, spills } = gen.gen_c.gen_c_expr
 { enter_block, leave_block, note_drop, displace, has_drop } = gen.gen_c.gen_c_own
 
-Dest* = Discard | Return | Into(str)
+Dest* = { Discard | Return | Into: str }
 
 // A block yields its explicit trailing value, or its last expression statement
 // when the parser represents a semicolon-terminated tail that way.

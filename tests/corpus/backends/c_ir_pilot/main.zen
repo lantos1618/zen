@@ -13,7 +13,7 @@ HARNESS_NATIVE_ASM* : bool = false
 { emit_js } = gen.gen_js
 { X86_64LinuxGnu } = gen.gen_asm_x86
 
-Backend = LegacyC | IrC | Js | Asm
+Backend = { LegacyC | IrC | Js | Asm }
 
 name = (self: Backend) str {
     self.match({ LegacyC => "legacy C", IrC => "IR C", Js => "JS", Asm => "ASM" })

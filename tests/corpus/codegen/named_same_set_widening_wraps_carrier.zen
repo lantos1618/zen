@@ -3,8 +3,8 @@
 // same-set payload copy overreads Inner and leaves Outer's tag at A. The Err
 // path must instead construct Outer.Inner and preserve B's text payload.
 
-A = | AValue(i32)
-B = | BValue(str)
+A = { | AValue: i32 }
+B = { | BValue: str }
 Inner = A | B
 Outer = A | Inner
 

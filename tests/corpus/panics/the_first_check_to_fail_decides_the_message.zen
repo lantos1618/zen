@@ -20,7 +20,7 @@
 // turn any of this into a compile-time question.
 
 // a trap never lifts into Res: it aborts the process
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 main = (env: Env) Res<i32, Error> {
     primes      = [i32, 4](2, 3, 5, 7);

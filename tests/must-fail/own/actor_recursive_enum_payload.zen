@@ -1,7 +1,7 @@
 // Recursive payloads terminate classification, while an unsafe branch later
 // in the same enum is still found.
 
-Message = End | Next(Message) | Bytes(Vec<u8>)
+Message = { End | Next: Message | Bytes: Vec<u8> }
 
 Worker = {}
 

@@ -14,7 +14,7 @@
 // The ambiguous case is must-fail/sema/hoist_ambiguous, where BOTH slots
 // are settled and both are `i32`.
 
-CalcError = | Negative
+CalcError = { | Negative }
 
 wrap = <E>(n: i32) Res<i32, E> {
     n * 2;

@@ -3,8 +3,8 @@
 // A local written in a generic method must be substituted at the method's
 // current instantiation. Otherwise both methods below declare one open
 // Res<Spec<T>> while their signatures return two concrete specializations.
-BuildFlag = Emit | Out
-FmtFlag = FormatCheck | FormatOther
+BuildFlag = { Emit | Out }
+FmtFlag = { FormatCheck | FormatOther }
 
 Spec<T> = {
     name: str,

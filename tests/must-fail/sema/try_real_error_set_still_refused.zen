@@ -3,7 +3,7 @@
 // declares no error. Allowing an open `_` through must not widen into
 // allowing a named set through -- there is no From, and this is the
 // test that says the relaxation did not become a hole.
-Boom = | Bad
+Boom = { | Bad }
 
 raises = (n: usize) Res<usize, Boom> { Err(Boom.Bad) }
 

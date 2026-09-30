@@ -244,7 +244,7 @@ is_count_chain* = (c :: Checker, ac: Access) bool {
     })
 }
 
-WalkName* = WalkNone | WalkHandle | WalkField
+WalkName* = { WalkNone | WalkHandle | WalkField }
 
 walk_name* = (c: Checker, text: str) WalkName {
     c.walk_row().match({
@@ -281,7 +281,7 @@ meta_name_fold* = (c :: Checker, id: ExprId, node: Expr, ac: Access)
     })
 }
 
-MetaCall* = Answered(TyId) | Ordinary
+MetaCall* = { Answered: TyId | Ordinary }
 
 meta_member_call* = (
     c    :: Checker,

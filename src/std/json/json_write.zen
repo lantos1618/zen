@@ -22,12 +22,12 @@ Pair* = {
     value*: JsonId,
 }
 
-Json* = Null
-      | Bool(bool)
-      | Num(str)      // the lexeme, verbatim
-      | Text(str)     // the decoded bytes
-      | Arr(Run)      // a run of `items`
-      | Obj(Run)      // a run of `pairs`
+Json* = { Null
+      | Bool: bool
+      | Num: str      // the lexeme, verbatim
+      | Text: str     // the decoded bytes
+      | Arr: Run      // a run of `items`
+      | Obj: Run }      // a run of `pairs`
 
 // Owns JSON values and the contiguous child runs referenced by arrays/objects.
 Jsons* = {

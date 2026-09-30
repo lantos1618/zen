@@ -1,4 +1,4 @@
-Failure = Missing(usize) | Other
+Failure = { Missing: usize | Other }
 
 accepted = (byte: u8) Res<u8> {
     (byte != '?').match({ true => Ok(byte), false => None })

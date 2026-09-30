@@ -21,8 +21,8 @@
 // unwrapped. The gate asks the resolved set now, and builds the declared
 // spelling the way `.try()` propagation always built one: tagged with
 // the variant that carries the member.
-IoError = | IsADirectory
-ParseError = | NotANumber
+IoError = { | IsADirectory }
+ParseError = { | NotANumber }
 Trouble = IoError | ParseError
 
 say = (door: str, t: Trouble) {

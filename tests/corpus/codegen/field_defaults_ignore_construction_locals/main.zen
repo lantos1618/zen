@@ -1,4 +1,4 @@
-Shade = Red | Green
+Shade = { Red | Green }
 Box = { shade :: Shade = Green }
 
 main = () {

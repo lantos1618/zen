@@ -13,7 +13,7 @@
 // nothing after `println("start")` runs: the trap is an abort, not a
 // value any caller can match.
 
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 div_twice = (a: i32, b: i32) i32 {
     (a / b) / b

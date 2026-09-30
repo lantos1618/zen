@@ -9,8 +9,8 @@
 // leaves one of the caller's lines unreachable. The order (true first,
 // then false) pins which member each arm contributed.
 
-Small = | Tiny
-Big   = | Huge
+Small = { | Tiny }
+Big   = { | Huge }
 Both  = Small | Big
 
 small_fail = () Res<i32, Small> { Err(Small.Tiny); }

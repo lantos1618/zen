@@ -16,7 +16,7 @@
 //
 // position: each call to the supplied member.
 
-Boxed<T> = Empty | Full(T)
+Boxed<T> = { Empty | Full: T }
 
 Sized* = { size* = (self: @Self) i64 }
 

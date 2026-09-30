@@ -18,8 +18,8 @@
 // 55 and "outer" are exact; 54, 45, "total 0" and "ok 0" are all things
 // a near-miss lowering prints without complaint.
 
-Inner = | InnerBoom
-Outer = | OuterBoom
+Inner = { | InnerBoom }
+Outer = { | OuterBoom }
 Any = Inner | Outer
 
 boom = () Res<i64, Outer> {

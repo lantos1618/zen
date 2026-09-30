@@ -4,7 +4,7 @@
 Boxy = { width: i32 }
 Dot = {}
 
-Choice<T: Boxy> = Some(T) | None
+Choice<T: Boxy> = { Some: T | None }
 
 main = (env: Env) Res<i32, AllocError> {
     choice = Choice.Some<Dot>(Dot());

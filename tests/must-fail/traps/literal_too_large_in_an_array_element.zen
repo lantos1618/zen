@@ -7,7 +7,7 @@
 // The written form `[u8, 3](1, 2, 300)` has been checked since
 // `fixed_array_type` landed; this is the form that takes its type from
 // the position instead of from beside the values.
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 main = (env: Env) Res<i32, Error> {
     xs: [u8, 3] = [1, 2, 300];

@@ -13,9 +13,9 @@ Native = c.bind("zen_readiness.h", {
     zen_ready_interrupted = (error: i32) i32
 })
 Io = c.bind("unistd.h", { close = (fd: i32) i32 })
-ReadinessError* = Invalid | Allocation | Closed | System(i32)
-Interest* = Read | Write
-WaitResult* = Ready(usize) | Interrupted
+ReadinessError* = { Invalid | Allocation | Closed | System: i32 }
+Interest* = { Read | Write }
+WaitResult* = { Ready: usize | Interrupted }
 
 Readiness* = {
     alloc: Alloc,

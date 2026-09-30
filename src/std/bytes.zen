@@ -2,7 +2,7 @@
 // The caller keeps the declared memory region live throughout cursor use.
 { Ptr } = std.mem
 { str, str_at } = std.text
-ByteError* = Invalid | Truncated
+ByteError* = { Invalid | Truncated }
 ByteReader* = {
     bytes: Ptr<u8>,
     length: usize,

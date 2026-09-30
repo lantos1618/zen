@@ -237,7 +237,7 @@ ty_of* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
 // frame before the backend, the backend before sema, sema before the
 // context's expectation. Each variant carries the type its own source
 // computed, so nothing below asks a second time.
-TySource = ScopeRef | Frame(TyId) | Backend(TyId) | Sema(TyId) | Unanswered
+TySource = { ScopeRef | Frame: TyId | Backend: TyId | Sema: TyId | Unanswered }
 
 ty_source = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
             Res<TySource, AllocError> {
@@ -632,7 +632,7 @@ render_expr = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId, out :: String)
 }
 
 // Conversion precedence is hoist, widen, then bound-value construction.
-Door = Set | Hoist | Widen | Fat | Plain
+Door = { Set | Hoist | Widen | Fat | Plain }
 
 door_of = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
           Res<Door, AllocError> {
@@ -713,7 +713,7 @@ spill_temp = (
 // What a spilled value can be held in, in the order asked: a type
 // nothing settled has no C declaration to make, and a `()` has no
 // storage to make one in.
-Spill = Unsettled | Effect | Valued
+Spill = { Unsettled | Effect | Valued }
 
 spill_of = (be :: CBackend, ty: TyId) Spill {
     be.settled_place(ty).match({

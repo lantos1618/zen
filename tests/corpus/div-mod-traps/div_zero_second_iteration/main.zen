@@ -11,7 +11,7 @@
 // `println` inside the loop body also pins that stdout before a trap
 // survives.
 
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 main = (env: Env) Res<i32, Error> {
     ds = [i32, 2](6, 0);

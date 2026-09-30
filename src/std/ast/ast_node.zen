@@ -12,7 +12,7 @@
 { Alloc, AllocError } = std.mem
 
 // `+ - *` trap on overflow; `+% -% *%` wrap.
-BinOp* = Add
+BinOp* = { Add
     | Sub
     | Mul
     | Div
@@ -27,10 +27,10 @@ BinOp* = Add
     | Greater
     | GreaterEq
     | And
-    | Or
+    | Or }
 
 // Unary `!`, `-`, and address-of `&`.
-UnOp* = Not | Neg | Addr
+UnOp* = { Not | Neg | Addr }
 
 // Method forms. Export (`*`) is stored on the member.
 //     Required   `= sig`        impl must provide it
@@ -39,9 +39,9 @@ UnOp* = Not | Neg | Addr
 //     Hook       `::= sig`      optional, impl may provide it
 //
 // A top-level function with a body also uses Sealed.
-Form* = Required | Sealed | Default | Hook
+Form* = { Required | Sealed | Default | Hook }
 
-LiteralKind* = Int | Float | Str | Char | Bool
+LiteralKind* = { Int | Float | Str | Char | Bool }
 
 // `text` is the raw source slice, including quotes and escapes. `integer`
 // is the lexer's value of an Int literal, decimal or hexadecimal.
@@ -60,14 +60,14 @@ Type* = {
 
 // `Unit` is `()`, `SelfType` is `@Self`, `Infer` is `_`, and `Variadic` is
 // `...`.
-TypeKind* = Named(Named)
-    | Union(Union)
-    | Fn(FnType)
-    | Array(ArrayType)
+TypeKind* = { Named: Named
+    | Union: Union
+    | Fn: FnType
+    | Array: ArrayType
     | Unit
     | SelfType
     | Infer
-    | Variadic
+    | Variadic }
 
 Named* = {
     name*: Ident,
@@ -102,10 +102,10 @@ Pattern* = {
 }
 
 // Sema resolves whether a pattern name is a value or binder.
-PatternKind* = Name(PatName)
-    | Destructure(Destructure)
+PatternKind* = { Name: PatName
+    | Destructure: Destructure
     | Wild
-    | Literal(Literal)
+    | Literal: Literal }
 
 PatName* = {
     name*: QualifiedName,
@@ -124,26 +124,26 @@ Expr* = {
     trailing*: TriviaRun,
 }
 
-ExprKind* = Name(Name)
-    | Literal(Literal)
+ExprKind* = { Name: Name
+    | Literal: Literal
     | Unit
     | SelfType
     | Scope
-    | Meta(Meta)
-    | Paren(Paren)
-    | Array(ArrayLit)
-    | FixedArray(FixedArray)
-    | Lambda(Lambda)
-    | Call(Call)
-    | Match(Match)
-    | Try(Try)
-    | Record(Record)
-    | Access(Access)
-    | Index(Index)
-    | Unary(Unary)
-    | Binary(Binary)
-    | Consume(Consume)
-    | Block(BlockId)
+    | Meta: Meta
+    | Paren: Paren
+    | Array: ArrayLit
+    | FixedArray: FixedArray
+    | Lambda: Lambda
+    | Call: Call
+    | Match: Match
+    | Try: Try
+    | Record: Record
+    | Access: Access
+    | Index: Index
+    | Unary: Unary
+    | Binary: Binary
+    | Consume: Consume
+    | Block: BlockId }
 
 // Bare identifier text; the enclosing Expr carries its span.
 Name* = {
@@ -275,7 +275,7 @@ Stmt* = {
 }
 
 // Declarations may be nested and do not take a semicolon.
-StmtKind* = Bind(Bind) | Expr(ExprStmt) | Decl(Decl) | Block(BlockId)
+StmtKind* = { Bind: Bind | Expr: ExprStmt | Decl: Decl | Block: BlockId }
 
 // `x = e;`, `x ::= e;`, `x: T = e;`, `self.len = self.len + 1;`. The target
 // is an expression: a member and an index are binding targets too.
@@ -318,13 +318,13 @@ Decl* = {
 }
 
 // Imports remain interleaved with declarations in source order.
-DeclKind* = Struct(Struct)
-    | Enum(Enum)
-    | Alias(Alias)
-    | Function(Function)
-    | Impl(Impl)
-    | Import(Import)
-    | Const(Const)
+DeclKind* = { Struct: Struct
+    | Enum: Enum
+    | Alias: Alias
+    | Function: Function
+    | Impl: Impl
+    | Import: Import
+    | Const: Const }
 
 // `body_span` includes a struct's braces for faithful formatting.
 Struct* = {
@@ -486,7 +486,7 @@ Member* = {
 // (immutable) is a constant and `name :: T = value` (mutable) is a field
 // with a default. In an impl body or record literal `name: value` supplies
 // a field, so Const does not appear there.
-MemberKind* = Field(Field) | Const(Const) | Function(Function)
+MemberKind* = { Field: Field | Const: Const | Function: Function }
 
 // `width: f64`, `len* :: usize = 0`, and — in an impl or record —
 // `width: self.radius * 2.0`, where type is absent because the field
@@ -536,14 +536,14 @@ COpaque* = {
     spelling*: str,
 }
 
-CTypeBinding* = | Opaque(COpaque)
+CTypeBinding* = { | Opaque: COpaque }
 
 CBinding* = {
     headers*: Vec<CHeader>,
     types*: Vec<CTypeBinding>,
 }
 
-ModuleOrigin* = Source | CBinding(CBindingId)
+ModuleOrigin* = { Source | CBinding: CBindingId }
 
 // `name` is the dotted module path (`std.core.result`); the source file is
 // `span.file`. `trailing` holds an end-of-file comment.

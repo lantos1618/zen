@@ -19,7 +19,7 @@
 // to the SECOND subscript and not to subscripting as such.
 
 // a trap never lifts into Res: it aborts the process
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 at = (a: [i32, 4], i: usize) i32 {
     a[i]

@@ -19,3 +19,4 @@ main  schedule_mix         **s *out
 main  lookup               *table
 main  leaky_libcall       key
 main  leaky_jump_table   key
+main  leaky_offset_read  *key

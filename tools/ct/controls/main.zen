@@ -225,6 +225,13 @@ leaky_jump_table* = (selector: u64, key: u64, table: Ptr<u8>, sink: Ptr<u64>) u8
     })
 }
 
+// Reads key material at a public offset and uses it as an address. Clang
+// on x86-64 addresses the byte as (%rdx,%rdi): the pointer to the key is
+// the index register, the doubled offset the base.
+leaky_offset_read* = (key: Ptr<u8>, table: Ptr<u8>, n: usize) u8 {
+    table.read(key.offset(n).read(n).to_usize())
+}
+
 main = (env: Env) Res<(), AllocError> {
     a     = env.mem.alloc();
     bytes = a.raw(256, 16).try();
@@ -271,6 +278,7 @@ main = (env: Env) Res<(), AllocError> {
     println("{} {}", leaky_call(bytes, bytes), leaky_result(bytes));
     println("{}", leaky_libcall(1234, 97, bytes));
     println("{}", leaky_jump_table(2, 77, bytes, words));
+    println("{}", leaky_offset_read(bytes, bytes, 4));
     chained = carry_chain(x, y, x);
     adx().match({
         Ok(fast) => bmi2().match({

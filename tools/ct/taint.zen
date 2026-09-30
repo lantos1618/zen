@@ -1270,6 +1270,13 @@ x86_mem = (a: Alloc, op: str) Res<X86Mem> {
 
 x86_is_mem = (op: str) bool { op.contains('(') }
 
+// Whether the base or the index register of `m` is in `set`: a compiler
+// may put the pointer in either (`(%rdx,%rdi)` for key + 2n).
+x86_mem_in = (m: X86Mem, set: Vec<str>) bool {
+    m.base.match({ Ok(b) => has(set, b), None => false })
+        || m.index.match({ Ok(i) => has(set, i), None => false })
+}
+
 // The entry-relative stack address a register holds, if the analysis knows.
 x86_base_at = (cur: State, base: str) Res<i64> {
     base.eq("rsp").match({
@@ -1337,7 +1344,7 @@ x86_value = (
         true  => {
             m = x86_mem(an.alloc, op).ok_or(AllocError.OutOfMemory).try();
             an.x86_address(cur, m, line).try();
-            base_points = m.base.match({ Ok(b) => has(cur.pts, b), None => false });
+            base_points = x86_mem_in(m, cur.pts);
             Ok(base_points || stack_secret(cur, x86_place(cur, m), width))
         },
         false => Ok(
@@ -1376,7 +1383,7 @@ x86_points = (an :: Analysis, cur: State, op: str, width: usize) bool {
         // it is pointer-sized.
         true  => x86_mem(an.alloc, op).match({
             Ok(m) => stack_points(cur, x86_place(cur, m), width)
-                || (width == 8 && m.base.match({ Ok(b) => has(cur.pts2, b), None => false })),
+                || (width == 8 && x86_mem_in(m, cur.pts2)),
             None  => false,
         }),
         false => x86_reg(an.alloc, op).match({ Ok(r) => has(cur.pts, r), None => false }),
@@ -1417,7 +1424,7 @@ x86_write = (
         true  => {
             m = x86_mem(an.alloc, op).ok_or(AllocError.OutOfMemory).try();
             an.x86_address(cur, m, line).try();
-            (secret && m.base.match({ Ok(b) => has(cur.rps, b), None => false })).then(() {
+            (secret && x86_mem_in(m, cur.rps)).then(() {
                 an.report("result", line.text).try();
             });
             stack_store(cur, x86_place(cur, m), width, secret, points).try();
@@ -1571,10 +1578,7 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             mem    = x86_mem(an.alloc, first).ok_or(AllocError.OutOfMemory).try();
             secret = mem.base.match({ Ok(b) => has(cur.val, b), None => false })
                 || mem.index.match({ Ok(i) => has(cur.val, i), None => false });
-            points = mem.base.match({ Ok(b) => has(
-                cur.pts,
-                b
-            ), None => false });
+            points = x86_mem_in(mem, cur.pts);
             // `lea d(%rsp), %rbp`-style frame setup.
             (mem.base.value_or("").eq("rsp") && last.eq("%rbp")).then(() {
                 cur.frame = Ok(mem.disp - cur.delta);
@@ -1586,10 +1590,10 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
                     None  => None,
                 }),
             });
-            points2 = mem.index.match({ Ok(_) => false, None => mem.base.match({ Ok(b) => has(cur.pts2, b), None => false }) });
+            points2 = x86_mem_in(mem, cur.pts2);
             stacky = mem.base.match({ Ok(b) => on_stack(cur, b) || b.eq("rsp"), None => false })
                 || mem.index.match({ Ok(i) => on_stack(cur, i), None => false });
-            result_pointer = mem.index.match({ Ok(_) => false, None => mem.base.match({ Ok(b) => has(cur.rps, b), None => false }) });
+            result_pointer = x86_mem_in(mem, cur.rps);
             an.x86_write(cur, last, secret, points, l, 8).try();
             an.x86_mark_points2(cur, last, 8, points2).try();
             x86_reg(an.alloc, last).when_ok((r) { put(cur.rps, r, result_pointer).try(); });
@@ -2001,8 +2005,11 @@ arm_memory = (
         }),
         None  => stacky.match({ true => Place.Somewhere, false => Place.Elsewhere }),
     });
-    points_in  = mem.base.match({ Ok(b) => has(cur.pts, b), None => false });
-    points2_in = mem.base.match({ Ok(b) => has(cur.pts2, b), None => false });
+    // The pointer may be either register of `[x0, x1]`.
+    points_in  = mem.base.match({ Ok(b) => has(cur.pts, b), None => false })
+        || mem.index.match({ Ok(i) => has(cur.pts, i), None => false });
+    points2_in = mem.base.match({ Ok(b) => has(cur.pts2, b), None => false })
+        || mem.index.match({ Ok(i) => has(cur.pts2, i), None => false });
     block = l.mnemonic.starts_with("ld2") || l.mnemonic.starts_with("ld3") || l.mnemonic.starts_with("ld4")
         || l.mnemonic.starts_with("st2") || l.mnemonic.starts_with("st3") || l.mnemonic.starts_with("st4");
     total ::= 0;
@@ -2023,7 +2030,8 @@ arm_memory = (
         span = block.match({ true => total, false => t.width });
         store.match({
             true  => {
-                (mem.base.match({ Ok(b) => has(cur.rps, b), None => false })
+                ((mem.base.match({ Ok(b) => has(cur.rps, b), None => false })
+                    || mem.index.match({ Ok(i) => has(cur.rps, i), None => false }))
                     && block.match({ true => any_secret, false => has(cur.val, t.reg) })).then(() {
                     an.report("result", l.text).try();
                 });

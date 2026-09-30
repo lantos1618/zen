@@ -231,6 +231,21 @@ split_operands = (a: Alloc, text: str) Res<Vec<str>, AllocError> {
     Ok(out)
 }
 
+// An x86 instruction without the prefixes that leave its effect alone:
+// `notrack` (CET, on GCC's jump-table `notrack jmp *%rax`) and `bnd`.
+without_prefix = (line: str) str {
+    rest ::= line;
+    loop((h) {
+        cut = Range(0, rest.len).find((i) { rest.index(i) == ' ' || rest.index(i) == '\t' });
+        word = cut.match({ Ok(i) => rest.slice(0, i), None => rest });
+        (cut.match({ Ok(_) => true, None => false }) && (word.eq("notrack") || word.eq("bnd"))).match({
+            true  => { rest = rest.slice(word.len, rest.len).trim().value_or(rest); },
+            false => h.break(),
+        });
+    });
+    rest
+}
+
 parse_lines* = (a: Alloc, isa: Isa, body: Vec<str>) Res<Vec<Line>, AllocError> {
     out ::= a.Vec<Line>();
     body.loop((raw) {
@@ -259,6 +274,7 @@ parse_lines* = (a: Alloc, isa: Isa, body: Vec<str>) Res<Vec<Line>, AllocError> {
                     text: raw
                 )).try(),
                 false => { (line.len > 0).then(() {
+                    line = without_prefix(line);
                     space    = Range(0, line.len).find((i) {
                         line.index(i) == ' ' || line.index(i) == '\t'
                     });
@@ -772,6 +788,9 @@ show_bytes = (shown :: String, bits: Vec<u64>) Res<(), AllocError> {
 
 pass = (an :: Analysis, seed: Seed) Res<(), AllocError> {
     cur ::= entry_state(an.alloc, seed).try();
+    // A label no path reaches, while instructions follow it: code the
+    // analysis never saw, reported rather than passed.
+    unreached: Res<str> ::= None;
     an.lines.loop((l) {
         (l.label.len > 0).match({
             true  => {
@@ -783,8 +802,18 @@ pass = (an :: Analysis, seed: Seed) Res<(), AllocError> {
                     grew.then(() { an.grew = true; });
                     cur = copy_state(an.alloc, here).try();
                 });
+                unreached = cur.live.match({ true => None, false => Ok(l.text) });
             },
-            false => { cur.live.then(() {
+            false => { cur.live.match({
+                false => {
+                    (an.reporting && !l.mnemonic.eq("zen:declassify")).then(() {
+                        unreached.when_ok((label) {
+                            an.report("unreached", an.alloc.String("{} (first instruction: {})", label.trim().value_or(label), l.text).try().view()).try();
+                        });
+                    });
+                    unreached = None;
+                },
+                true  => {
                 (an.trace && an.reporting).then(() {
                     shown ::= an.alloc.String().try();
                     shown.fmt("flags={} smear={} secret:", cur.flags, cur.smear).try();
@@ -799,9 +828,18 @@ pass = (an :: Analysis, seed: Seed) Res<(), AllocError> {
                     X86 => an.x86(cur, l).try(),
                     Arm => an.arm(cur, l).try(),
                 });
+                },
             }); },
         });
     });
+    Ok(())
+}
+
+// An indirect jump that is not a return (a jump table, a computed goto, a
+// tail call through a pointer): its targets are not written, so every
+// label of the function may be one.
+flow_everywhere = (an :: Analysis, cur: State) Res<(), AllocError> {
+    an.labels.loop((label) { an.flow(label, cur).try(); });
     Ok(())
 }
 
@@ -1468,6 +1506,7 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
                         true  => {
                             target = last.slice(1, last.len);
                             (an.x86_value(cur, target, l, 8).try()).then(() { an.report("indirect", l.text).try(); });
+                            an.flow_everywhere(cur).try();
                         },
                         false => an.state_at(last).match({
                             Ok(_)  => an.flow(last, cur).try(),
@@ -2127,6 +2166,7 @@ arm = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
         });
         (m.eq("br")).then(() {
             dst.match({ Ok(r) => has(cur.val, r), None => false }).then(() { an.report("indirect", l.text).try(); });
+            an.flow_everywhere(cur).try();
             cur.live = false;
             h.break();
         });

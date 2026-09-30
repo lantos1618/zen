@@ -209,6 +209,22 @@ leaky_libcall* = (key: u64, d: u64, table: Ptr<u8>) u8 {
     table.read((key.to_u128().shift_left(64) % d.to_u128()).truncate_u64().truncate_u8().to_usize())
 }
 
+// A match on a public selector, compiled to a jump table: the arm that
+// reads the table at a secret index is reached only through the indirect
+// jump.
+leaky_jump_table* = (selector: u64, key: u64, table: Ptr<u8>, sink: Ptr<u64>) u8 {
+    selector.match({
+        0 => { sink.write(0, 11); 3 },
+        1 => { sink.write(0, 12); 5 },
+        2 => { sink.write(0, 13); table.read(key.truncate_u8().to_usize()) },
+        3 => { sink.write(0, 14); 9 },
+        4 => { sink.write(0, 15); 13 },
+        5 => { sink.write(0, 16); 17 },
+        6 => { sink.write(0, 17); 19 },
+        _ => 0,
+    })
+}
+
 main = (env: Env) Res<(), AllocError> {
     a     = env.mem.alloc();
     bytes = a.raw(256, 16).try();
@@ -254,6 +270,7 @@ main = (env: Env) Res<(), AllocError> {
     });
     println("{} {}", leaky_call(bytes, bytes), leaky_result(bytes));
     println("{}", leaky_libcall(1234, 97, bytes));
+    println("{}", leaky_jump_table(2, 77, bytes, words));
     chained = carry_chain(x, y, x);
     adx().match({
         Ok(fast) => bmi2().match({

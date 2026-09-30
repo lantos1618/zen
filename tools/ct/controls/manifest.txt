@@ -18,3 +18,4 @@ main  schedule_mix         **s *out
 # lookup's index is public by its audit; its table holds secrets.
 main  lookup               *table
 main  leaky_libcall       key
+main  leaky_jump_table   key

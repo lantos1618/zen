@@ -1,0 +1,2 @@
+// The other module exporting `digest(x: u64)`.
+digest* = (x: u64) u64 { x * 100 }

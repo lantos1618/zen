@@ -17,7 +17,10 @@ SYMBOL_MAP ?=
 PY      ?= python3
 TREE_SITTER ?= npx tree-sitter
 ROOT    ?= src
-ZEN_STD ?= $(CURDIR)/src
+# The compiler and its standard library are versioned together, so the seed
+# builds build.zen against this checkout's `src/std` whatever ZEN_STD the shell
+# exports for other work. `make ZEN_STD=<dir>` still selects another tree.
+ZEN_STD := $(CURDIR)/src
 
 # Development lanes isolate generated C and the compiler output.
 # Canonical build/verify paths remain fixed; lane variables affect dev-* only.

@@ -3,7 +3,7 @@
 ExprId = std.ast
 AllocError = std.mem
 String, str = std.text
-NumericConversion, NarrowTarget, IntegerBitOperation = sema.sema_numeric
+NumericConversion, NarrowTarget, IntegerBitOperation, signed_shift_word = sema.sema_numeric
 Ctx = sema.sema_check
 CBackend = gen.gen_c.gen_c_state
 expr = gen.gen_c.gen_c_expr
@@ -90,10 +90,10 @@ lower_integer_bits* = (
     ctx       : Ctx,
     out       :: String
 ) Res<(), AllocError> {
-    lt           = operation.word;
-    word         = be.check.prim_name(lt);
-    width: usize = word.eq("u32").match({true => 32, false => 64});
-    rt           = be.check.types.prim(
+    lt    = operation.word;
+    word  = be.check.prim_name(lt);
+    width = word_width(word);
+    rt    = be.check.types.prim(
         operation.name.is_in([
             "bit_xor", "bit_and"
         ]).match({true => word, false => "usize"})
@@ -109,14 +109,17 @@ lower_integer_bits* = (
     operation.name.match({
         "bit_xor"     => out.fmt("({} ^ {})", lv.view(), rv.view()),
         "bit_and"     => out.fmt("({} & {})", lv.view(), rv.view()),
-        // A logical shift by the width or more yields zero. Guard the C shift.
-        "shift_right" => out.fmt(
-            "({} >= {}u ? 0 : ({} >> {}))",
-            rv.view(),
-            width,
-            lv.view(),
-            rv.view()
-        ),
+        "shift_right" => signed_shift_word(word).match({
+            true  => arithmetic_shift(lv.view(), rv.view(), word, width, out),
+            // A logical shift by the width or more yields zero. Guard the C shift.
+            false => out.fmt(
+                "({} >= {}u ? 0 : ({} >> {}))",
+                rv.view(),
+                width,
+                lv.view(),
+                rv.view()
+            ),
+        }),
         _             => out.fmt(
             "(({} >> ({} & {}u)) | ({} << (({}u - ({} & {}u)) & {}u)))",
             lv.view(),
@@ -129,4 +132,38 @@ lower_integer_bits* = (
             width - 1
         ),
     })
+}
+
+word_width = (word: str) usize {
+    word.match({ "i8" => 8, "i16" => 16, "u32" => 32, "i32" => 32, _ => 64 })
+}
+
+// C leaves `>>` of a negative value implementation-defined, so a negative
+// input shifts its complement, which is non-negative, and complements back.
+// Clamping the count to width - 1 gives the sign fill for larger counts.
+arithmetic_shift = (
+    value : str,
+    count : str,
+    word  : str,
+    width : usize,
+    out   :: String
+) Res<(), AllocError> {
+    ct  = c_prim(word);
+    top = width - 1;
+    out.fmt(
+        "({} < 0 ? ({})~(~{} >> ({} >= {}u ? {}u : {})) : ({})({} >> ({} >= {}u ? {}u : {})))",
+        value,
+        ct,
+        value,
+        count,
+        top,
+        top,
+        count,
+        ct,
+        value,
+        count,
+        top,
+        top,
+        count
+    )
 }

@@ -49,8 +49,8 @@ spelled_lambda* = (be: CBackend, id: ExprId) Res<Lambda> {
     })
 }
 
-// A body to inline, and a lambda written at the call site to inline it
-// for.
+// A body to inline, and a lambda to inline it for: one written at the call
+// site, or a closure the caller was itself handed.
 inlines* = (be: CBackend, c: Call, f: Function) bool {
     has_body(f) && be.takes_lambda(c)
 }
@@ -58,9 +58,34 @@ inlines* = (be: CBackend, c: Call, f: Function) bool {
 takes_lambda* = (be: CBackend, c: Call) bool {
     got ::= false;
     c.args.loop((h, a) {
-        be.is_lambda(a.value).then(() { got = true; h.break(); });
+        (be.is_lambda(a.value) || be.is_forwarded(a.value)).then(() {
+            got = true;
+            h.break();
+        });
     });
     got
+}
+
+is_forwarded = (be: CBackend, id: ExprId) bool {
+    be.forwarded_closure(id).match({ Ok(_) => true, None => false })
+}
+
+// A name bound to a closure, passed on as an argument. It is still a body
+// rather than a value, so the callee's parameter binds the same closure
+// record: its body keeps the lexical home and context where it was written.
+forwarded_closure = (be: CBackend, id: ExprId) Res<Closure> {
+    be.tree.expr_at(id).kind.match({
+        Name(n)  => be.slot_of(n.text).match({
+            Ok(s) => be.closure_of(s),
+            None  => None,
+        }),
+        Paren(p) => be.forwarded_closure(p.inner),
+        _        => None,
+    })
+}
+
+closure_of = (be: CBackend, s: LocalSlot) Res<Closure> {
+    s.is_closure().match({ true => be.closure_at(s.closure), false => None })
 }
 
 is_lambda* = (be: CBackend, id: ExprId) bool {
@@ -371,40 +396,47 @@ InlineSite = {
                     )
                 )
             },
-            // A value is lowered before its parameter can shadow a caller
-            // name, then declared in the callee frame.
-            None  => {
-                text ::= be.alloc.String().try();
-                self.param.mutable.match({
-                    true  => be.write_address(
-                        self.value,
-                        self.ctx,
-                        self.ty,
-                        text
-                    ),
-                    false => expr(be, self.value, self.ctx, self.ty, text),
-                }).try();
-                n = be.declare(
-                    self.param.name.text,
-                    self.ty,
-                    self.param.mutable
-                ).try();
-                be.check.bind(
-                    self.param.name.text,
-                    self.ty,
-                    self.param.mutable,
-                    true
-                ).try();
-                cname ::= be.alloc.String().try();
-                sym_local(cname, self.param.name.text, n).try();
-                line ::= be.alloc.String().try();
-                self.param.mutable.match({
-                    true  => be.ref_declarator(self.ty, cname.view(), line),
-                    false => be.declarator(self.ty, cname.view(), line),
-                }).try();
-                be.fmt("{} = {};\n", line.view(), text.view())
-            },
+            None  => self.forwarded(be).try().match({
+                Ok(cl) => be.declare_closure(self.param.name.text, cl),
+                None   => self.bind_value(be),
+            }),
         })
+    }
+
+    // The argument names a binding of the caller, so the callee parameters
+    // already bound are set aside while it is looked up: in `h(1, f)` with
+    // `h = (f: i64, g: (v: i64) i64)`, the forwarded `f` is the caller's.
+    forwarded = (self: @Self, be :: CBackend) Res<Res<Closure>, AllocError> {
+        callee ::= be.alloc.Vec<LocalSlot>();
+        be.detach(self.home, callee).try();
+        found = be.forwarded_closure(self.value);
+        be.reattach(callee).try();
+        Ok(found)
+    }
+
+    // A value is lowered before its parameter can shadow a caller name, then
+    // declared in the callee frame.
+    bind_value = (self: @Self, be :: CBackend) Res<(), AllocError> {
+        text ::= be.alloc.String().try();
+        self.param.mutable.match({
+            true  => be.write_address(self.value, self.ctx, self.ty, text),
+            false => expr(be, self.value, self.ctx, self.ty, text),
+        }).try();
+        n = be.declare(self.param.name.text, self.ty, self.param.mutable).try();
+        be.check.bind(
+            self.param.name.text,
+            self.ty,
+            self.param.mutable,
+            true
+        ).try();
+        cname ::= be.alloc.String().try();
+        sym_local(cname, self.param.name.text, n).try();
+        line ::= be.alloc.String().try();
+        self.param.mutable.match({
+            true  => be.ref_declarator(self.ty, cname.view(), line),
+            false => be.declarator(self.ty, cname.view(), line),
+        }).try();
+        be.fmt("{} = {};\n", line.view(), text.view())
     }
 }
 

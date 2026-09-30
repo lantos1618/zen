@@ -1,0 +1,66 @@
+// A member body of `Holder<P: Profile>` sees `P` with its bound, as a generic
+// function's body sees its own parameter: `self.profile.step(n)` is typed from
+// `Profile.step`, so its result can be matched, compared, or tried directly
+// without first being bound to an annotated local. The struct's own methods
+// and an impl supplied on it are both covered.
+//
+// Were the bound missing from the member scope, the call would have no type:
+// a match scrutinee would be declared as a C `int` with `void` binders, and a
+// `.try()` would have no operand type to unwrap.
+
+Step = Wait | Go
+Fault = | Broke
+
+Profile = {
+    step* = (self: @Self, n: i32) Res<Step, Fault>
+    cap*  = (self: @Self) i32
+}
+
+Plain = { limit: i32 }
+
+Plain.impl(Profile, {
+    step = (self: @Self, n: i32) Res<Step, Fault> {
+        (n > self.limit).match({ true => Ok(Step.Go), false => Ok(Step.Wait) })
+    },
+    cap  = (self: @Self) i32 { self.limit },
+})
+
+Show = {
+    show* = (self: @Self, n: i32) i32
+}
+
+Holder<P: Profile> = {
+    profile: P,
+
+    direct = (self: @Self, n: i32) i32 {
+        self.profile.step(n).match({
+            Err(_) => -1,
+            Ok(s)  => s.match({ Wait => 0, Go => 1 }),
+        })
+    }
+
+    at_cap = (self: @Self, n: i32) bool { self.profile.cap() == n }
+
+    tried = (self: @Self, n: i32) Res<i32, Fault> {
+        s = self.profile.step(n).try();
+        Ok(s.match({ Wait => 10, Go => 11 }))
+    }
+}
+
+Holder.impl(Show, {
+    show = (self: @Self, n: i32) i32 {
+        self.profile.step(n).match({
+            Err(_) => -1,
+            Ok(s)  => s.match({ Wait => 20, Go => 21 }),
+        })
+    },
+})
+
+main = (env: Env) Res<i32, AllocError> {
+    h = Holder(profile: Plain(limit: 3));
+    println("{} {}", h.direct(1), h.direct(5));
+    println("{} {}", h.at_cap(3), h.at_cap(4));
+    println("{}", h.tried(9).match({ Ok(v) => v, Err(_) => -1 }));
+    println("{} {}", h.show(1), h.show(5));
+    Ok(0);
+}

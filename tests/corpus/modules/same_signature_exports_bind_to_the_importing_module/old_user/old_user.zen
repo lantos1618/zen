@@ -1,0 +1,4 @@
+// Imports alpha's digest by name, so both call forms bind to alpha.
+digest, ALPHA = alpha
+old_call* = (x: u64) u64 { digest(x) }
+old_dot* = (x: u64) u64 { x.digest() }

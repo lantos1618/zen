@@ -148,6 +148,9 @@ CBackend* = {
     // First local belonging to the current inlined body.
     floor* :: usize,
     tmp* :: usize,
+    // Program-wide counter for native-constant macros. They live in the shared
+    // C header block, so unlike `tmp` (reset per function) it never resets.
+    native_macros* :: usize,
 
     alloc*: Alloc,
 
@@ -917,6 +920,14 @@ CBackend* = {
         self.tmp
     }
 
+    // A macro name unique in the whole translation unit.
+    fresh_native_macro* = (self :: @Self) Res<String, AllocError> {
+        self.native_macros = self.native_macros + 1;
+        name ::= self.alloc.String().try();
+        sym_gen(name, "native_constant", self.native_macros).try();
+        Ok(name)
+    }
+
     fresh_name* = (self :: @Self, stem: str) Res<String, AllocError> {
         name ::= self.alloc.String().try();
         sym_gen(name, stem, self.next_tmp()).try();
@@ -987,6 +998,7 @@ CBackend* = (a: Alloc, tree: Ast, check: Checker) Res<CBackend, AllocError> {
         depth: 0,
         floor: 0,
         tmp: 0,
+        native_macros: 0,
         alloc: a,
     ));
 }

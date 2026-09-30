@@ -1,0 +1,18 @@
+// Two modules export `digest(x: u64)`. Each importer names the one it means,
+// and every call binds to that module whichever was loaded first: both
+// importers list their module second here so a load-order pick would give
+// both the same function. Module-qualified calls reach each module directly.
+// The unimported case is refused: must-fail/modules/
+// same_signature_from_two_modules_is_not_chosen_by_load_order.
+
+new_call, new_dot = new_user
+old_call, old_dot = old_user
+a = alpha
+b = beta
+
+main = (env: Env) Res<i32, AllocError> {
+    println("old {} {}", old_call(7), old_dot(7));
+    println("new {} {}", new_call(7), new_dot(7));
+    println("qualified {} {}", a.digest(7), b.digest(7));
+    Ok(0);
+}

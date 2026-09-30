@@ -54,12 +54,15 @@ SemaFault* =
     | InvalidEnumDiscriminant(NameFault)
     | DuplicateEnumDiscriminant(PairFault)
     | CatchAllConstruction(NameFault)
+    | BareNoneBinding(NameFault)       // a binding declared from a bare `None`
+    | LiteralLent(NameFault)           // an unannotated number passed to a `::` parameter
 
     // overloading
     | NoOverload(NameFault)            // no candidate of that arity or those types
     | InvalidInstantiation(NameFault)   // written or inferred type arguments do not fit
     | DuplicateSignature(PairFault)    // param names are not identity
     | AmbiguousOverload(PairFault)     // two signatures accept the same call
+    | TravelledTie(PairFault)          // two modules export one signature to a call importing neither
 
     // impls and bounds
     | ImplMissingField(NameFault)      // an impl supplies every field, or it is not one
@@ -169,6 +172,7 @@ message* = (fault: SemaFault) str {
         InvalidInstantiation(_)      => "invalid generic instantiation: type arguments must match the declaration and every use of one parameter must agree",
         DuplicateSignature(_)        => "duplicate signature: parameter names are documentation, not identity",
         AmbiguousOverload(_)         => "ambiguous overload: these two signatures accept the same call",
+        TravelledTie(_)              => "ambiguous call: two modules export this signature and this module imports neither, so import the one you mean by name",
         ImplMissingField(_)          => "impl is missing field",
         CtorMissingField(_)          => "construction is missing a required field",
         CtorNamesNoMember(_)         => "construction names no member: every argument must name a field of the type, so a name it does not declare is not an argument to discard",
@@ -223,6 +227,8 @@ message* = (fault: SemaFault) str {
         ArenaEscapes(_)              => "a value backed by an arena this body made may not be returned: the arena is dropped at the end of this body, so the caller would read freed pages — take the arena as a parameter, or move it into the value you return",
         HandleNotAValue(_)           => "a loop handle is not a value: it names the loop it came from and has no storage, so only `h.break(..)` and `h.next()` may read it",
         ConsumedByCapture(_)         => "consume after capture:",
+        BareNoneBinding(_)           => "`None` alone does not say which Res this is: annotate the binding",
+        LiteralLent(_)               => "an unannotated number cannot be passed to the `::` parameter",
     });
 }
 
@@ -273,6 +279,8 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         ArenaStored(f)               => out.write_name(f),
         ArenaEscapes(f)              => out.write_name(f),
         HandleNotAValue(f)           => out.write_name(f),
+        BareNoneBinding(f)           => out.write_bare_none_binding(f),
+        LiteralLent(f)               => out.write_literal_lent(f),
 
         ConsumedUse(f)               => out.write_place(
             f,
@@ -322,6 +330,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         DuplicateSignature(f)        => out.write_pair(f),
         DuplicateField(f)            => out.write_pair(f),
         AmbiguousOverload(f)         => out.write_pair(f),
+        TravelledTie(f)              => out.write_pair(f),
         AmbiguousMember(f)           => out.write_pair(f),
     }).try();
     Ok(());
@@ -329,6 +338,20 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
 
 write_name = (out :: String, f: NameFault) Res<(), AllocError> {
     out.quote(f.name)
+}
+
+write_bare_none_binding = (out :: String, f: NameFault) Res<(), AllocError> {
+    out.quote(f.name).try();
+    out.add(
+        ": `None` names no payload type, and a binding's type is fixed where it is declared, so a later use cannot supply one"
+    )
+}
+
+write_literal_lent = (out :: String, f: NameFault) Res<(), AllocError> {
+    out.quote(f.name).try();
+    out.add(
+        ": the parameter borrows the argument's storage, and a number with no written type is stored as an i64 (a float as an f64), not as the parameter's type — annotate the binding"
+    )
 }
 
 write_ctor_missing = (out :: String, f: NameFault) Res<(), AllocError> {

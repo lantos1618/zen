@@ -215,7 +215,8 @@ struct_bodies = (c :: Checker, s: Struct, m: Module, mi: usize)
     c.check_fields(s).try();
     self_ty = c.named_self(s.name.text, mi).try();
     tmark   = c.tvar_mark();
-    c.enter_struct_tvars(s, mi).try();
+    bmark   = c.bound_mark();
+    c.enter_struct_generics(s, mi).try();
     c.check_member_overloads(s, self_ty, mi).try();
     s.members.loop((mem) {
         c.member_body(mem, self_ty, m, mi).try();
@@ -227,6 +228,7 @@ struct_bodies = (c :: Checker, s: Struct, m: Module, mi: usize)
             _            => Ok(()),
         }).try();
     });
+    c.release_bounds(bmark).try();
     c.release_tvars(tmark).try();
     Ok(());
 }
@@ -496,9 +498,11 @@ impl_bodies = (c :: Checker, im: Impl, m: Module, mi: usize)
     name    = im.target.text;
     self_ty = c.named_self(name, mi).try();
     tmark   = c.tvar_mark();
+    bmark   = c.bound_mark();
     c.enter_target_tvars(name, mi).try();
     im.members.loop((h, mem) { c.member_body(mem, self_ty, m, mi).try() });
     im.members.loop((h, mem) { c.field_value(mem, im, self_ty, mi).try() });
+    c.release_bounds(bmark).try();
     c.release_tvars(tmark).try();
     Ok(());
 }
@@ -578,9 +582,21 @@ target_tvars = (c :: Checker, d: Def, mi: usize) Res<(), AllocError> {
 target_decl_tvars = (c :: Checker, d: Decl, mi: usize)
                     Res<(), AllocError> {
     d.kind.match({
-        Struct(s) => c.enter_struct_tvars(s, mi),
+        Struct(s) => c.enter_struct_generics(s, mi),
         _         => Ok(()),
     })
+}
+
+// Member bodies see the struct's parameters with their bounds, as a generic
+// function's body sees its own: `self.profile.step(n)` on a field of type
+// `P: Profile` resolves through `Profile` rather than typing as unknown.
+enter_struct_generics = (c :: Checker, s: Struct, mi: usize)
+                        Res<(), AllocError> {
+    c.enter_struct_tvars(s, mi).try();
+    poison = c.types.unknown().try();
+    ctx    = Ctx(mi, poison);
+    s.tparams.loop((h, tp) { c.push_bounds(tp, ctx).try() });
+    Ok(());
 }
 
 member_body = (

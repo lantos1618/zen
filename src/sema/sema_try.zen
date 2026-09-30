@@ -8,6 +8,7 @@ type_of = sema.sema_type
 block_type = sema.sema_type
 param_type, type_from_ast = sema.sema_denote
 push_tparams, module_name = sema.sema_inst
+check_arms_agree = sema.sema_hoist
 
 try_type* = (
     c       :: Checker,
@@ -18,6 +19,9 @@ try_type* = (
 )
            Res<TyId, AllocError> {
     got = c.type_of(operand, ctx).try();
+    // The join of a match's arms widens their error sets but keeps the first
+    // arm's success type, so each arm must still fit the joined `Res`.
+    c.check_arms_agree(operand).try();
     c.types.at(got).match({
         Res(r) => c.try_res(at, r, got, error, ctx),
         _      => c.try_not_res(at, got, ctx),

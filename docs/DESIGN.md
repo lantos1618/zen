@@ -489,6 +489,8 @@ buf.add(2).try();              // ERROR: buf was consumed
 
 Names are qualified by path, imports bind locally, and two modules may define the same top-level name without colliding.
 
+**A one-segment path imports when the module it names exports the binding's name, and aliases the module otherwise.** `Circle = shapes` imports `Circle` from `shapes`, exactly as `Circle, area = shapes` would; `sh = shape` makes `sh` a qualifier for module `shape`, because `shape` exports no `sh`. A local declaration or visible name spelled like the path's segment still wins, so `Chosen = model` beside a local `model` type is a type alias.
+
 **A name that is not imported is not visible, and the prelude is the only exception.** That exception is what "auto-imported" means: `std.core` is imported into every module, so `Res`, `Ok`, `Vec`, `Map`, `str`, `Env` and the rest are in scope everywhere without a line. Everything else needs its import, and this is not a formality — a compiler that resolves any exported top-level name program-wide makes "two modules may define the same top-level name" impossible, which is the property the flat namespace exists to provide. A whole-program name table also hides missing imports until the day two modules disagree, which is the worst day to find out.
 
 **That rule is about BARE names. A UFCS function is reached through a value, so it travels with the value's type.** `x.f(..)` never names `f`, so it cannot collide with anything and needs no import: the candidates are the members of `x`'s type, its impls' and its bounds' methods, and every exported free function whose **first parameter type** is `x`'s type. Two modules may both declare `size` as long as they take different first parameters — and if they take the same one, that is a real collision and is reported. This is what "importing a type pulls its world along" means, said as a rule rather than as a comment in an example: the world travels with the *type*, and you are holding one.
@@ -1851,6 +1853,17 @@ the same word type. Rotation reduces the count modulo the word width; zero
 and width multiples preserve the input. Logical right shift fills with zero;
 counts greater than or equal to the width return zero (including usize.MAX).
 The C backend guards shifts and masks rotation counts to avoid undefined C shifts.
+
+## Signed arithmetic shift
+
+`shift_right(self: S, count: usize) S` is also exported for signed words
+S = i8, i16, i32 or i64, where it is the arithmetic shift: vacated high bits
+copy the sign bit, so a negative value stays negative and rounds toward
+negative infinity (`-7` shifted by 1 is `-4`). A count at or above the width
+yields 0 for a non-negative value and -1 for a negative one, the limit of
+shifting one bit at a time. The C backend never shifts a negative value
+(implementation-defined in C): it shifts the complement and complements back.
+Other bit operations remain unsigned-only; convert explicitly to mix them.
 
 These allocation-free compiler primitives evaluate operands once in source
 order. Only validated exported, nongeneric, immutable-parameter declarations

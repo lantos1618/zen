@@ -1,0 +1,32 @@
+// A generic actor calls its bound `close` on a field of the bound type. The
+// call must dispatch to the bound's impl (`Thing.close`), not to another
+// `close` a free function exports: `std.net.tls` is imported below, and its
+// `Stream.close` reaches every call by name. Before the impl body saw `W`'s
+// bound, the call went to `Stream.close` with a `Thing` argument, which
+// only the C compiler caught. `closed` reads the state `close` wrote.
+
+Closer = {
+    closed* = (self: @Self) i32
+    close* = (self :: @Self) ()
+}
+Thing = { n :: i32 = 0 }
+Thing.impl(Closer, {
+    close = (self :: @Self) { self.n = 7; },
+    closed = (self: @Self) i32 { self.n },
+})
+Holder<W: Closer> = { inner :: W }
+Holder.impl(Actor, {
+    finish = (self :: @Self, ctx: Context) {
+        self.inner.close();
+        ctx.env.out.println("closed {}", self.inner.closed()).ignore();
+    }
+})
+Stream = std.net.tls
+
+main = (env: Env) Res<i32, ActorStartError | ActorError> {
+    h = env.spawn(Holder<Thing>(inner: Thing())).try();
+    h.finish().try();
+    h.stop();
+    h.join();
+    Ok(0)
+}

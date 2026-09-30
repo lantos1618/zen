@@ -6,7 +6,7 @@
 // types agree.
 
 ExprId, Lambda, Param = std.ast
-Decl, Function, Access, Call = std.ast
+Decl, Function, Access, Call, Member = std.ast
 AllocError = std.mem
 Vec = std.collections
 str = std.text
@@ -15,11 +15,14 @@ TyId, TyRes = sema.sema_ty
 Def, decl_at = sema.sema_def
 Ctx = sema.sema_check
 tail_expr = sema.sema_hoist
-Inst, has_var = sema.sema_inst
+Inst, has_var, owner_of = sema.sema_inst
 param_type, type_from_ast = sema.sema_denote
 CBackend = gen.gen_c.gen_c_state
 sub_with, inst_at, settled_inst, materialize_literal = gen.gen_c.gen_c_mono
-enter_tparams, leave_tparams = gen.gen_c.gen_c_mono
+enter_tparams, enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
+sub, method_inst = gen.gen_c.gen_c_mono
+Site, site_of, site_member = gen.gen_c.gen_c_member
+ref_of_actor = gen.gen_c.gen_c_actor
 declared_ret = gen.gen_c.gen_c_type
 ty_of = gen.gen_c.gen_c_expr
 selected_def = gen.gen_c.gen_c_call
@@ -464,23 +467,101 @@ inline_result_type* = (be :: CBackend, id: ExprId, ctx: Ctx, got: TyId)
 
 call_result = (be :: CBackend, id: ExprId, c: Call, ctx: Ctx, got: TyId)
               Res<TyId, AllocError> {
-    be.callee_name(c).match({
-        Ok(n) => be.named_result(id, c, n, ctx, got),
-        None  => Ok(got),
-    })
-}
-
-// A bare name, or the name after a dot: `find(range, p)` and
-// `range.find(p)` are one call written two ways, and only the second
-// carries a receiver.
-callee_name = (be :: CBackend, c: Call) Res<str> {
     be.tree.expr_at(c.callee).kind.match({
-        Name(n)   => Ok(n.text),
-        Access(a) => Ok(a.name.text),
-        _         => None,
+        Access(a) => be.dot_result(id, c, a, ctx, got),
+        Name(n)   => be.named_result(id, c, n.text, ctx, got),
+        _         => Ok(got),
     })
 }
 
+// `x.m(f)` reaches a member of x's type before any free `m` through UFCS, the
+// order `gen_c_member.zen` lowers it in. An actor handle's dot call is a
+// message send, never an inlined body, so it keeps sema's answer.
+dot_result = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    a   : Access,
+    ctx : Ctx,
+    got : TyId
+) Res<TyId, AllocError> {
+    unknown = be.check.types.unknown().try();
+    raw     = be.ty_of(a.base, ctx, unknown).try();
+    rty     = be.materialize_literal(be.sub(raw).try()).try();
+    member  = be.ref_of_actor(rty).try().match({
+        Ok(_) => Ok(None),
+        None  => be.receiver_member(c, a, rty, ctx),
+    }).try();
+    member.match({
+        Ok(found) => be.member_result(id, c, found, ctx, got),
+        None      => be.named_result(id, c, a.name.text, ctx, got),
+    })
+}
+
+// The receiver's site and the member the call selects there.
+MemberAt = {
+    site: Site,
+    member: Member,
+}
+
+receiver_member = (be :: CBackend, c: Call, a: Access, rty: TyId, ctx: Ctx)
+                  Res<Res<MemberAt>, AllocError> {
+    be.site_of(rty).try().match({
+        None  => Ok(None),
+        Ok(s) => be.site_member(c, s, a.name.text, ctx).try().match({
+            None  => Ok(None),
+            Ok(m) => Ok(Ok(MemberAt(site: s, member: m))),
+        }),
+    })
+}
+
+member_result = (
+    be    :: CBackend,
+    id    : ExprId,
+    c     : Call,
+    found : MemberAt,
+    ctx   : Ctx,
+    got   : TyId
+) Res<TyId, AllocError> {
+    found.member.kind.match({
+        Function(f) => be.inlines(c, f).match({
+            true  => be.method_result(id, c, found.site, f, ctx),
+            false => Ok(got),
+        }),
+        _           => Ok(got),
+    })
+}
+
+// `inline_member`'s settlement asked as a query: the receiver's type
+// arguments, the member's own, and what the written arguments bind.
+method_result = (
+    be  :: CBackend,
+    id  : ExprId,
+    c   : Call,
+    s   : Site,
+    f   : Function,
+    ctx : Ctx
+) Res<TyId, AllocError> {
+    mi    = s.decl.module.to_usize();
+    sctx  = be.check.self_ctx(mi, s.ty).try();
+    inst  = be.method_inst(id, c, s.ty, s.decl, f, ctx).try();
+    mark  = be.enter_struct_tparams(s.decl).try();
+    owner = owner_of(be.check, mi, f.name.text).try();
+    be.enter_tparams(f.tparams, owner).try();
+    argv ::= be.alloc.Vec<ExprId>();
+    be.arguments(c, be.recv_of(c.callee), argv).try();
+    raws ::= be.alloc.Vec<TyId>();
+    be.param_types(f, sctx, inst, raws).try();
+    extra ::= be.alloc.Inst();
+    be.call_bindings(argv, raws, ctx, extra).try();
+    ret = be.inline_ret(f, sctx, inst, extra, argv, ctx).try();
+    be.leave_tparams(mark).try();
+    Ok(ret);
+}
+
+// A bare name, or the name after a dot that no member claimed:
+// `find(range, p)` and `range.find(p)` are one call written two ways, and
+// only the second carries a receiver.
 named_result = (
     be   :: CBackend,
     id   : ExprId,

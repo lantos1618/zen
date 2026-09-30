@@ -1,0 +1,43 @@
+// A generic method whose type parameter only its lambda argument settles is
+// typed the way the equivalent free function is: from the inlined body, before
+// the call is lowered. So `b.with((v) { v * 5 })` can be printed, compared, or
+// matched directly with no annotated local to supply `T`, on a plain struct and
+// on a generic one whose receiver instantiation also enters the result.
+//
+// Were the result asked of sema alone, it would still be the open `T`: the
+// printer and `==` would have no type to lower, and a match scrutinee's
+// temporary would be declared at an unresolved type.
+
+Buf = {
+    n: i32,
+
+    with = <T>(self: @Self, f: (v: i32) T) T { f(self.n) },
+}
+
+Box<U> = {
+    u: U,
+
+    map = <T>(self: @Self, f: (v: U) T) T { f(self.u) },
+}
+
+with_free = <T>(b: Buf, f: (v: i32) T) T { f(b.n) }
+
+main = (env: Env) Res<i32, AllocError> {
+    b = Buf(n: 7);
+    println("{}", with_free(b, (v) { v * 2 }));
+    println("{}", b.with((v) { v * 5 }));
+    println("{}", b.with<i32>((v) { v * 6 }));
+    println("{}", b.with((v) { v > 3 }));
+    println("{}", b.with((v) { v * 2 }) == 14);
+    b.with((v) { v > 3 }).match({
+        true  => println("big"),
+        false => println("small"),
+    });
+    x = Box(u: 4);
+    println("{}", x.map((v) { v + 1 }));
+    x.map((v) { v * 10 }).match({
+        40 => println("forty"),
+        _  => println("other"),
+    });
+    Ok(0);
+}

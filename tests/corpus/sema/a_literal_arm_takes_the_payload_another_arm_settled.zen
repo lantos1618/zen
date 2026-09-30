@@ -1,0 +1,41 @@
+// Two arms of one match produce `Res<usize>` (`Ok(n)`, with `n: usize`) and
+// `Res<int, Fault>` (a nested match's `Ok(0)` beside `Err(e)`). The literal
+// payload takes the payload the other arm settled, so the match is
+// `Res<usize, Fault>` whether it is bound, returned through `.try()`, or
+// passed on. Joining the arms without that settlement kept the literal
+// payload and refused the first arm as "match arms disagree".
+
+Fault = | Closed | Other
+
+read = (k: i32) Res<usize, Fault> {
+    (k == 0).match({
+        true  => Ok(5),
+        false => (k == 1).match({ true => Err(Fault.Closed), false => Err(Fault.Other) }),
+    })
+}
+
+bound = (k: i32) Res<usize, Fault> {
+    got = read(k).match({
+        Ok(n)  => Ok(n),
+        Err(e) => e.match({ Closed => Ok(0), _ => Err(e) }),
+    });
+    got
+}
+
+tried = (k: i32) Res<usize, Fault> {
+    got = read(k).match({
+        Ok(n)  => Ok(n),
+        Err(e) => e.match({ Closed => Ok(0), _ => Err(e) }),
+    }).try();
+    Ok(got + 1)
+}
+
+show = (r: Res<usize, Fault>) usize {
+    r.match({ Ok(v) => v, Err(_) => 99 })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("bound {} {} {}", show(bound(0)), show(bound(1)), show(bound(2)));
+    println("tried {} {} {}", show(tried(0)), show(tried(1)), show(tried(2)));
+    Ok(0);
+}

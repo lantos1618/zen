@@ -21,6 +21,10 @@ tests/corpus/errors-widen/member_tail_reaches_a_named_set -- ask `is_set`/`conve
     wanted NAME instead of its resolved set: a returned `.ensure(..)`, bare tail call, direct
     `Err(member)`, typed local, two-member match and argument all emit the narrow struct raw
     and cc rejects the program.
+tests/corpus/errors-widen/named_set_inside_inline_union_flattens -- keep a named set as one
+    opaque member of an inline union (`Both | AllocError`) instead of flattening it to its
+    members and sema refuses both `.try()` sites; a wrong tag sends `Fail`/`Kind` to the
+    wrong arm of the member-arm match or of the match on the error itself.
 
 ## Compiler bugs found (programs admitted by sema, rejected by cc -- no stdout exists,
 so they cannot be encoded as .expected; kept out of corpus per instructions)
@@ -70,4 +74,4 @@ members; payload integrity through widening (i64 across a tag boundary); inferre
 middle sets flattening into a declared union; canonical containment refusals
 (`expected AllocError, found All`) are correct sema behaviour, not bugs.
 
-TESTS: 5
+TESTS: 6

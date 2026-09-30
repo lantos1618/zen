@@ -179,6 +179,7 @@ CallCheck = {
     ) Res<TyId, AllocError> {
         cands ::= c.alloc.Vec<Cand>();
         c.cands_of(self.ctx.module, name, cands).try();
+        visible = cands.len;
         c.travelled_cands(name, recv, cands).try();
         // Free-form UFCS also considers argument zero as the receiver.
         recv.match({
@@ -189,8 +190,53 @@ CallCheck = {
             }),
         }).try();
         self.first_matching(c, cands, actuals).try().match({
-            Ok(k) => self.chosen(c, k, actuals),
+            Ok(k) => {
+                self.refuse_travelled_tie(c, name, cands, visible, k).try();
+                self.chosen(c, k, actuals)
+            },
             None  => self.construct_or_fail(c, name, recv, cands, recovery),
+        })
+    }
+
+    // Candidates after `visible` travelled in from other modules' exports, so
+    // none outranks another. When the pick is one of them and another module
+    // exports the same parameter list, list order would decide which module
+    // runs; the call is refused instead, and importing the intended function
+    // by name makes it visible and settles the choice.
+    refuse_travelled_tie = (
+        self    : @Self,
+        c       :: Checker,
+        name    : str,
+        cands   : Vec<Cand>,
+        visible : usize,
+        k       : Cand
+    ) Res<(), AllocError> {
+        travelled = Range(visible, cands.len).find((i) {
+            cands.get(i).match({ Ok(x) => x.id.eq(k.id), None => false })
+        }).match({ Ok(_) => true, None => false });
+        rival     = Range(visible, cands.len).find((i) {
+            cands.get(i).match({
+                Ok(x) => !x.id.eq(k.id) && c.same_signature(x, k),
+                None  => false,
+            })
+        });
+        travelled.match({
+            false => Ok(()),
+            true  => rival.match({
+                None  => Ok(()),
+                Ok(i) => cands.get(i).match({
+                    None      => Ok(()),
+                    Ok(other) => c.report(
+                        self.node.span.file,
+                        self.node.span,
+                        SemaFault.TravelledTie(PairFault(
+                            name: name,
+                            first: k.span,
+                            second: other.span
+                        ))
+                    ),
+                }),
+            }),
         })
     }
 
@@ -286,6 +332,7 @@ CallCheck = {
                 c.arg_lambdas(self.call.args, params, off, self.ctx).try();
                 c.args_handle_check(self.call.args, params, off, self.ctx)
                     .try();
+                c.refuse_literal_lends(k, params, actuals).try();
                 k.generic.then(() {
                     self.edge = Ok(c.call_edge(self.id, k, self.inst).try());
                 });
@@ -1269,6 +1316,48 @@ args_handle_check = (
 ) Res<(), AllocError> {
     args.loop((h, i, a) {
         c.refuse_handle_argument(a, params.ty_at(i + off), ctx).try();
+    });
+    Ok(());
+}
+
+// A `::` parameter receives the argument's address, so the argument's storage
+// must already have the parameter's type. An unannotated integer is stored as
+// an i64 whatever a later use wants (a float as an f64), and C converts values
+// between widths but not the pointers to them.
+refuse_literal_lends = (
+    c       :: Checker,
+    k       : Cand,
+    params  : Vec<TyId>,
+    actuals : Vec<Actual>
+) Res<(), AllocError> {
+    c.tree.decl_at(k.id).match({
+        None       => Ok(()),
+        Ok(callee) => callee.kind.match({
+            Function(f) => c.literal_lends(f, params, actuals),
+            _           => Ok(()),
+        }),
+    })
+}
+
+literal_lends = (
+    c       :: Checker,
+    f       : Function,
+    params  : Vec<TyId>,
+    actuals : Vec<Actual>
+) Res<(), AllocError> {
+    actuals.loop((h, i, a) {
+        lent   = f.params.get(i).match({ Ok(p) => p.mutable, None => false });
+        stored = c.prim_name(a.ty).eq("int").match({ true => "i64", false => "f64" });
+        wanted = params.get(i).match({ Ok(t) => c.prim_name(t), None => stored });
+        (lent && c.is_literal_ty(a.ty) && !wanted.eq(stored)).then(() {
+            c.refuse(
+                a.span,
+                SemaFault.LiteralLent(NameFault(name: f.params.get(i).match({
+                    Ok(p) => p.name.text,
+                    None  => "",
+                })))
+            ).try();
+        });
     });
     Ok(());
 }

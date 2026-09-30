@@ -1,0 +1,18 @@
+// MUST FAIL: an unannotated number is passed to a `::` parameter. A
+// literal-initialized binding has no written type; its storage is the
+// literal default width, i64, whatever a later use wants. A by-value
+// argument converts, but a `::` parameter borrows the argument's storage,
+// so `bump` would write a `usize` through the address of an `i64`.
+// Written `active: usize ::= 0`, the program is fine; by-value uses of an
+// unannotated number are unaffected.
+//
+// position: the argument that lends the unsettled storage.
+
+bump = (n :: usize) { n = n + 1; }
+
+main = (env: Env) Res<i32, AllocError> {
+    active ::= 0;
+    bump(active);
+    println("active {}", active);
+    Ok(0);
+}

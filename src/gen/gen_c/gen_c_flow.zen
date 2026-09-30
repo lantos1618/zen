@@ -16,6 +16,7 @@ decl_at = sema.sema_def
 Ctx = sema.sema_check
 Inst = sema.sema_inst
 member_of = sema.sema_union
+arm_disagreement = sema.sema_arm_trace
 sym_local, sym_member, sym_variant = gen.gen_name
 sym_union_member, sym_union_variant = gen.gen_name
 RES_PATH = gen.gen_name
@@ -37,18 +38,31 @@ lower_table = gen.gen_c.gen_c_table
 // comparisons joined by &&; the enclosing if supplies their parentheses.
 // Equality binds more tightly than &&, preserving tag-before-payload guards
 // without producing Clang's redundant-parenthesized-equality warning.
+//
+// Every tag or literal comparison is also recorded in `be.arm_trace` at
+// `slot`, the site's position in the pattern tree, and the recorded shape
+// must match exactly what sema's reading of the pattern matches. A test
+// written to C without being recorded defeats that check.
 PatternSite = {
     ty: TyId,
     place: str,
+    slot: usize,
 
     at = (self: @Self, ty: TyId, place: str) PatternSite {
-        PatternSite(ty: ty, place: place)
+        PatternSite(ty: ty, place: place, slot: self.slot)
     }
 
-    open = (self: @Self, be :: CBackend, arm: Arm, i: usize)
+    // The payload behind a tag test recorded as `slot`.
+    under = (self: @Self, ty: TyId, place: str, slot: usize) PatternSite {
+        PatternSite(ty: ty, place: place, slot: slot)
+    }
+
+    open = (self: @Self, be :: CBackend, arm: Arm, i: usize, ctx: Ctx)
            Res<(), AllocError> {
         cond ::= be.alloc.String().try();
+        be.arm_trace.restart();
         self.cond(be, arm.pattern, cond).try();
+        be.check_arm(arm.pattern, self.ty, ctx).try();
         (i > 0).match({
             true  => be.chain_arm(cond.view()),
             false => be.first_arm(cond.view()),
@@ -83,8 +97,8 @@ PatternSite = {
 
     plain_ctor_cond = (self: @Self, be :: CBackend, d: Destructure,
                        out :: String) Res<(), AllocError> {
-        self.tag_name(be, d.name.last_segment(), out).try();
-        self.payload_cond(be, d, out)
+        child = self.tag_name(be, d.name.last_segment(), out).try();
+        self.payload_cond(be, d, child, out)
     }
 
     member_ctor_cond = (self: @Self, be :: CBackend, d: Destructure,
@@ -98,10 +112,10 @@ PatternSite = {
     member_leaf_cond = (self: @Self, be :: CBackend, d: Destructure,
                         mty: TyId, out :: String) Res<(), AllocError> {
         member = d.name.last_segment();
-        self.tag_name(be, member, out).try();
+        child  = self.tag_name(be, member, out).try();
         place ::= be.alloc.String().try();
         be.set_member_place(mty, self.place, place).try();
-        self.at(mty, place.view()).leaf_cond(be, d.binder, out)
+        self.under(mty, place.view(), child).leaf_cond(be, d.binder, out)
     }
 
     // `Err(Protocol(c))` on `Kind | Fail`, where `Protocol(i32)` is a case
@@ -111,11 +125,11 @@ PatternSite = {
     member_case_cond = (self: @Self, be :: CBackend, d: Destructure,
                         mty: TyId, out :: String) Res<(), AllocError> {
         leaf ::= be.leaf_name_of(mty).try();
-        self.tag_name(be, leaf, out).try();
+        child = self.tag_name(be, leaf, out).try();
         place ::= be.alloc.String().try();
         be.set_member_place(mty, self.place, place).try();
         out.add(" && ").try();
-        self.at(mty, place.view()).plain_ctor_cond(be, d, out)
+        self.under(mty, place.view(), child).plain_ctor_cond(be, d, out)
     }
 
     leaf_cond = (self: @Self, be :: CBackend, pid: PatternId,
@@ -128,31 +142,34 @@ PatternSite = {
     }
 
     payload_cond = (self: @Self, be :: CBackend, d: Destructure,
-                    out :: String) Res<(), AllocError> {
+                    child: usize, out :: String) Res<(), AllocError> {
         be.payload_type(self.ty, d.name.last_segment()).match({
             None  => be.bare_payload(d),
-            Ok(t) => self.nested_cond(be, d, t, out),
+            Ok(t) => self.nested_cond(be, d, t, child, out),
         })
     }
 
     nested_cond = (self: @Self, be :: CBackend, d: Destructure,
-                   ty: TyId, out :: String) Res<(), AllocError> {
+                   ty: TyId, child: usize, out :: String)
+                  Res<(), AllocError> {
         be.narrows(d.binder, ty).match({
             false => Ok(()),
-            true  => self.write_nested_cond(be, d, ty, out),
+            true  => self.write_nested_cond(be, d, ty, child, out),
         })
     }
 
     write_nested_cond = (self: @Self, be :: CBackend, d: Destructure,
-                         ty: TyId, out :: String) Res<(), AllocError> {
+                         ty: TyId, child: usize, out :: String)
+                        Res<(), AllocError> {
         place ::= be.alloc.String().try();
         be.payload_place(d.name.last_segment(), self.place, place).try();
         out.add(" && ").try();
-        self.at(ty, place.view()).cond(be, d.binder, out)
+        self.under(ty, place.view(), child).cond(be, d.binder, out)
     }
 
     literal_cond = (self: @Self, be :: CBackend, pat: Pattern,
                     l: Literal, out :: String) Res<(), AllocError> {
+        self.trace_literal(be, l).try();
         l.kind.match({
             Bool  => bool_cond(l.text, self.place, out),
             Int   => equality(self.place, l.text, out),
@@ -160,6 +177,22 @@ PatternSite = {
             Float => equality(self.place, l.text, out),
             Str   => self.str_cond(be, pat, l, out),
         })
+    }
+
+    // `true` and `false` are the two cases of `bool`; other literals are
+    // compared by their text, as sema compares them.
+    trace_literal = (self: @Self, be :: CBackend, l: Literal)
+                    Res<(), AllocError> {
+        l.kind.match({
+            Bool => self.trace_case(be, l.text),
+            _    => be.arm_trace.literal(self.slot, l.text),
+        })
+    }
+
+    trace_case = (self: @Self, be :: CBackend, name: str)
+                 Res<(), AllocError> {
+        be.arm_trace.tag(self.slot, name).try();
+        Ok(())
     }
 
     str_cond = (self: @Self, be :: CBackend, pat: Pattern, l: Literal,
@@ -189,12 +222,13 @@ PatternSite = {
     set_name_arm = (self: @Self, be :: CBackend, mty: TyId, text: str,
                     out :: String) Res<(), AllocError> {
         leaf ::= be.leaf_name_of(mty).try();
-        self.tag_name(be, leaf, out).try();
+        child = self.tag_name(be, leaf, out).try();
         place ::= be.alloc.String().try();
         be.set_member_place(mty, self.place, place).try();
         be.check.is_case(mty, text).try().match({
             false => Ok(()),
-            true  => self.at(mty, place.view()).leaf_case_cond(be, text, out),
+            true  => self.under(mty, place.view(), child)
+                .leaf_case_cond(be, text, out),
         })
     }
 
@@ -202,38 +236,45 @@ PatternSite = {
                       out :: String) Res<(), AllocError> {
         qname ::= be.alloc.String().try();
         be.enum_path(self.ty, qname).try();
+        be.arm_trace.tag(self.slot, case).try();
         out.fmt(" && {}.zg_tag == ", self.place).try();
         out.sym_variant(qname.view(), case)
     }
 
     tag_cond = (self: @Self, be :: CBackend, q: QualifiedName,
                 out :: String) Res<(), AllocError> {
-        self.tag_name(be, q.last_segment(), out)
+        self.tag_name(be, q.last_segment(), out).try();
+        Ok(())
     }
 
+    // Writes the tag comparison and returns the trace slot of the payload
+    // it guards. On a structural set the constant is the member's, so the
+    // member is what the trace records, whatever name selected it.
     tag_name = (self: @Self, be :: CBackend, name: str, out :: String)
-               Res<(), AllocError> {
+               Res<usize, AllocError> {
         out.fmt("{}.zg_tag == ", self.place).try();
         be.check.types.at(self.ty).match({
             Union(_) => member_of(be.check, self.ty, name).match({
-                Ok(member) => sym_union_variant(
-                    out,
-                    be.types(),
-                    be.world(),
-                    self.ty,
-                    member
-                ),
+                Ok(member) => self.member_tag(be, member, out),
                 None       => self.nominal_tag(be, name, out),
             }),
             _        => self.nominal_tag(be, name, out),
         })
     }
 
+    member_tag = (self: @Self, be :: CBackend, member: TyId,
+                  out :: String) Res<usize, AllocError> {
+        sym_union_variant(out, be.types(), be.world(), self.ty, member).try();
+        leaf ::= be.leaf_name_of(member).try();
+        be.arm_trace.tag(self.slot, leaf)
+    }
+
     nominal_tag = (self: @Self, be :: CBackend, name: str, out :: String)
-                  Res<(), AllocError> {
+                  Res<usize, AllocError> {
         qname ::= be.alloc.String().try();
         be.enum_path(self.ty, qname).try();
-        out.sym_variant(qname.view(), name)
+        out.sym_variant(qname.view(), name).try();
+        be.arm_trace.tag(self.slot, name)
     }
 
     bind = (self: @Self, be :: CBackend, pid: PatternId)
@@ -342,8 +383,8 @@ lower_arms = (
     // can leave its closed-branch slot on top of the binding stack.
     m.arms.loop((h, i, arm) {
         lmark = be.mark();
-        site  = PatternSite(ty: st, place: scrut.view());
-        site.open(be, arm, i).try();
+        site  = PatternSite(ty: st, place: scrut.view(), slot: 0);
+        site.open(be, arm, i, ctx).try();
         be.deliver(arm.body, ctx, ty, dst).try();
         be.release(lmark).try();
     });
@@ -411,6 +452,22 @@ write_unreachable = (be :: CBackend, node: Expr, m: Match)
 }
 
 // patterns
+
+// The arm's recorded tests against sema's reading of its pattern. A
+// disagreement means the emitted C selects different values than coverage
+// and reachability were proved for, so it is refused, never compiled.
+check_arm = (be :: CBackend, pid: PatternId, st: TyId, ctx: Ctx)
+            Res<(), AllocError> {
+    be.check.arm_disagreement(be.arm_trace, pid, st, ctx).try().match({
+        None    => Ok(()),
+        Ok(why) => be.report_arm(pid, why),
+    })
+}
+
+report_arm = (be :: CBackend, pid: PatternId, why: str) Res<(), AllocError> {
+    pat = be.tree.pattern_at(pid);
+    be.report(pat.span.file, pat.span, GenFault.ArmDisagrees(why))
+}
 
 // A variant with no payload cannot have a literal one, and reaching
 // `.zg_data` for it would be a union member nothing declared. The arm

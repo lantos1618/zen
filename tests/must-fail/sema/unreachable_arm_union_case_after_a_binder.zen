@@ -1,0 +1,17 @@
+// `Err(e)` binds every error; a case below it never runs.
+
+Kind = Io | Protocol
+Fail = Mismatch | Accepted
+
+name = (r: Res<i32, Kind | Fail>) str {
+    r.match({
+        Err(e)        => "error",
+        Err(Protocol) => "protocol",
+        Ok(_)         => "ok",
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", name(Err(Kind.Io)));
+    Ok(0);
+}

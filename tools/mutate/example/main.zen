@@ -1,0 +1,13 @@
+// A deliberately hollow suite: the out-of-range case accepts ANY error and
+// nothing probes the boundaries or the low side, so mutants of those guards
+// survive. zen-mutate must name exactly them.
+Fail, classify = classify
+
+main = (env: Env) Res<i32, AllocError> {
+    ok ::= true;
+    ok = ok && classify(5).match({ Ok(v) => v == 10, Err(_) => false });
+    ok = ok && classify(0).match({ Err(Zero) => true, _ => false });
+    ok = ok && classify(200).match({ Err(_) => true, _ => false });
+    println("{}", ok);
+    ok.match({ true => Ok(0), false => Ok(1) })
+}

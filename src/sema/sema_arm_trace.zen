@@ -1,0 +1,151 @@
+// What code generation tests for one match arm, and whether that is the
+// arm's pattern. Sema decides coverage and reachability from its reading of
+// each pattern; code generation emits its own tag and literal tests. The
+// two once disagreed silently: `Err(Authentication)` on `Kind | Fail` was a
+// constructor to sema and no test at all to C, so the first such arm caught
+// every error and the arms below it were dead. Code generation records each
+// test as it emits it, and the checker compares the recorded shape with the
+// pattern using the same usefulness engine that proves arms reachable.
+Span, PatternId = std.ast
+Alloc, AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+TyId = sema.sema_ty
+Checker, Ctx = sema.sema_check
+Pats, Pat, quiet_pats, norm_pattern, covers, checkable = sema.sema_match
+ctor_pat, sub_pat, lit_pat = sema.sema_match
+
+// One emitted test: a tag or literal comparison at `slot`. A tag test's
+// payload is tested, if at all, at `child`. Slot 0 is the scrutinee.
+ArmTest* = {
+    slot*: usize,
+    child*: usize,
+    name*: str,
+    literal*: bool,
+}
+
+ArmTrace* = {
+    tests :: Vec<ArmTest>,
+    slots :: usize,
+
+    // A fresh arm: nothing is tested yet.
+    restart* = (self :: @Self) {
+        self.tests.clear();
+        self.slots = 1;
+    }
+
+    // A tag comparison at `slot`, naming the case the emitted constant
+    // denotes; returns the slot of the payload behind that tag.
+    tag* = (self :: @Self, slot: usize, name: str) Res<usize, AllocError> {
+        child      = self.slots;
+        self.slots = child + 1;
+        self.tests.add(ArmTest(
+            slot: slot,
+            child: child,
+            name: name,
+            literal: false
+        )).try();
+        Ok(child)
+    }
+
+    literal* = (self :: @Self, slot: usize, text: str) Res<(), AllocError> {
+        self.tests.add(ArmTest(slot: slot, child: 0, name: text, literal: true))
+    }
+
+    // The recorded tests as a pattern: a slot nothing tested matches
+    // everything, exactly as the C condition does.
+    pattern = (self: @Self, ps :: Pats, slot: usize, span: Span)
+              Res<usize, AllocError> {
+        self.tests.find((t) { t.slot == slot }).match({
+            None  => ps.wild(span),
+            Ok(t) => self.test_pattern(ps, t, span),
+        })
+    }
+
+    test_pattern = (self: @Self, ps :: Pats, t: ArmTest, span: Span)
+                   Res<usize, AllocError> {
+        t.literal.match({
+            true  => ps.add(lit_pat(t.name, span)),
+            false => self.tag_pattern(ps, t, span),
+        })
+    }
+
+    tag_pattern = (self: @Self, ps :: Pats, t: ArmTest, span: Span)
+                  Res<usize, AllocError> {
+        self.tests.find((u) { u.slot == t.child }).match({
+            None  => ps.add(ctor_pat(t.name, span)),
+            Ok(_) => {
+                sub = self.pattern(ps, t.child, span).try();
+                ps.add(sub_pat(t.name, sub, span))
+            },
+        })
+    }
+}
+
+ArmTrace* = (a: Alloc) ArmTrace {
+    ArmTrace(tests: a.Vec<ArmTest>(), slots: 1)
+}
+
+// Nothing when the recorded tests match exactly the values the arm's
+// pattern does; otherwise both readings, for the report. A type with no
+// case list has no coverage to disagree with.
+arm_disagreement* = (
+    c     :: Checker,
+    trace : ArmTrace,
+    pid   : PatternId,
+    ty    : TyId,
+    ctx   : Ctx
+) Res<Res<str>, AllocError> {
+    c.checkable(ty).match({
+        false => Ok(None),
+        true  => c.compare_arm(trace, pid, ty, ctx),
+    })
+}
+
+compare_arm = (
+    c     :: Checker,
+    trace : ArmTrace,
+    pid   : PatternId,
+    ty    : TyId,
+    ctx   : Ctx
+) Res<Res<str>, AllocError> {
+    ps ::= c.alloc.quiet_pats();
+    span = c.tree.pattern_at(pid).span;
+    want = c.norm_pattern(ps, pid, ty, ctx).try();
+    got  = trace.pattern(ps, 0, span).try();
+    wide = c.covers(ps, got, want, ty).try();
+    same = wide && c.covers(ps, want, got, ty).try();
+    same.match({
+        true  => Ok(None),
+        false => Ok(Ok(describe(c, ps, want, got).try())),
+    })
+}
+
+describe = (c :: Checker, ps: Pats, want: usize, got: usize)
+           Res<str, AllocError> {
+    out ::= c.alloc.String().try();
+    out.add("sema reads ").try();
+    write_pat(ps, want, out).try();
+    out.add(", the C condition tests ").try();
+    write_pat(ps, got, out).try();
+    Ok(out.view())
+}
+
+write_pat = (ps: Pats, i: usize, out :: String) Res<(), AllocError> {
+    p = ps.at(i);
+    p.kind.match({
+        WildPat => out.add("_"),
+        LitPat  => out.add(p.name),
+        CtorPat => write_ctor(ps, p, out),
+    })
+}
+
+write_ctor = (ps: Pats, p: Pat, out :: String) Res<(), AllocError> {
+    out.add(p.name).try();
+    p.has_sub.then(() {
+        out.add("(").try();
+        write_pat(ps, p.sub, out).try();
+        out.add(")").try();
+    });
+    Ok(())
+}

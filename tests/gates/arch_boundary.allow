@@ -127,6 +127,7 @@ gen/gen_c/gen_c_floor.zen sema.sema_inst
 gen/gen_c/gen_c_floor.zen sema.sema_member
 gen/gen_c/gen_c_floor.zen sema.sema_ty
 gen/gen_c/gen_c_floor.zen std.ast
+gen/gen_c/gen_c_flow.zen sema.sema_arm_trace
 gen/gen_c/gen_c_flow.zen sema.sema_check
 gen/gen_c/gen_c_flow.zen sema.sema_def
 gen/gen_c/gen_c_flow.zen sema.sema_inst
@@ -290,6 +291,7 @@ gen/gen_c/gen_c_sink.zen sema.sema_inst
 gen/gen_c/gen_c_sink.zen sema.sema_ty
 gen/gen_c/gen_c_sink.zen std.ast
 gen/gen_c/gen_c_sink.zen std.lex
+gen/gen_c/gen_c_state.zen sema.sema_arm_trace
 gen/gen_c/gen_c_state.zen sema.sema_check
 gen/gen_c/gen_c_state.zen sema.sema_def
 gen/gen_c/gen_c_state.zen sema.sema_id

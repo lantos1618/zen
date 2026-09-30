@@ -13,6 +13,7 @@ GenFault* = Unsupported(str)     // a node form this backend does not lower yet
           | Unspellable(str)     // a type with no C spelling yet
           | CopyFromPointer(str)
           | Overrun(usize)       // more functions reachable than the backend's bound
+          | ArmDisagrees(str)    // an arm's emitted test is not its pattern: a compiler bug
 
 GenDiag* = {
     file*: str,
@@ -42,6 +43,7 @@ message = (fault: GenFault) str {
         Untyped(_)         => "codegen has no type for",
         Unspellable(_)     => "codegen cannot spell the type",
         Overrun(_)         => "codegen reached its bound on the functions one program may lower:",
+        ArmDisagrees(_)    => "internal compiler error: codegen's test for this match arm selects different values than its pattern:",
     })
 }
 
@@ -54,6 +56,7 @@ detail = (fault: GenFault, out :: String) Res<(), AllocError> {
         Untyped(w)         => out.write_quoted(w),
         Unspellable(w)     => out.write_quoted(w),
         Overrun(n)         => out.write_bound(n),
+        ArmDisagrees(w)    => out.fmt(" {w}"),
     })
 }
 

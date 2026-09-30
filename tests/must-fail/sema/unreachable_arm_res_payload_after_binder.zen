@@ -1,0 +1,16 @@
+// `Ok(v)` already takes every success, so `Ok(0)` below it never runs.
+//
+// position: the unreachable arm's pattern.
+
+read = (r: Res<i32, AllocError>) i32 {
+    r.match({
+        Ok(v)  => v,
+        Err(_) => -1,
+        Ok(0)  => 0,
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", read(Ok(3)));
+    Ok(0);
+}

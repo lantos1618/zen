@@ -1,0 +1,308 @@
+// zen-mutate: mutation testing for Zen sources.
+//
+//   zen-mutate --root DIR --file PATH --test CMD [--build CMD]
+//              [--work DIR] [--max N] [--only OPERATOR] [--timeout SECONDS]
+//              [--list] [--keep]
+//
+// Every mutant of DIR/PATH is applied to a fresh copy of DIR made under the
+// work directory (never to DIR itself), `--build` and then `--test` run
+// inside that copy through /bin/sh, and the copy is removed. A mutant whose
+// tests all pass SURVIVED: no test tells it from the original, which marks
+// a hollow or missing test. The original is built and tested first; a
+// failing baseline stops the run. Mutants are numbered in a fixed order and
+// at most `--max` run, evenly spaced over the full list, so two runs on the
+// same file run the same mutants.
+//
+// Exit status: 0 nothing survived, 1 some mutant survived, 2 the run could
+// not be carried out.
+Alloc, AllocError = std.mem
+Vec = std.collections
+Range = std.core
+str, String = std.text
+Mutant, operator_name, collect = mutate_site
+Runner, Plan, Outcome, outcome_name, run_message = mutate_run
+
+Cli = {
+    root:        str,
+    file:        str,
+    test:        str,
+    build ::     str   = "",
+    work ::      str   = "build/mutate",
+    max ::       usize = 200,
+    only ::      str   = "",
+    timeout ::   usize = 60,
+    list ::      bool  = false,
+    keep ::      bool  = false,
+}
+
+USAGE: str = "usage: zen-mutate --root DIR --file PATH --test CMD [--build CMD] [--work DIR] [--max N] [--only OPERATOR] [--timeout SECONDS] [--list] [--keep]"
+
+Tally = {
+    survived :: usize,
+    killed :: usize,
+    timed_out :: usize,
+    stillborn :: usize,
+
+    count = (self :: @Self, o: Outcome) {
+        o.match({
+            Survived  => { self.survived = self.survived + 1; },
+            Killed    => { self.killed = self.killed + 1; },
+            TimedOut  => { self.timed_out = self.timed_out + 1; },
+            Stillborn => { self.stillborn = self.stillborn + 1; },
+        });
+    }
+}
+
+// The first line of a replaced span, cut to a readable length.
+snippet = (text: str) str {
+    line = text.find('\n').match({ Ok(n) => text.slice(0, n), None => text });
+    (line.len > 60).match({ true => line.slice(0, 60), false => line })
+}
+
+describe = (m: Mutant, text: str, out :: String) Res<(), AllocError> {
+    out.fmt(
+        "{}:{}  `{}` -> `{}`",
+        m.line,
+        m.col,
+        snippet(text.slice(m.start, m.end)),
+        snippet(m.replacement)
+    )
+}
+
+// Which mutants run: those of the `--only` operator (every operator when
+// it is empty), all of them or `max` evenly spaced. Numbers stay the
+// file's, so a filtered run names the same mutants as a full one.
+chosen = (a: Alloc, mutants: Vec<Mutant>, only: str, max: usize)
+         Res<Vec<usize>, AllocError> {
+    eligible ::= a.Vec<usize>();
+    mutants.loop((h, i, m) {
+        (only.is_empty() || operator_name(m.op).eq(only)).then(() {
+            eligible.add(i).try();
+        });
+    });
+    total = eligible.len;
+    out ::= a.Vec<usize>();
+    (total <= max).match({
+        true  => eligible.loop((h, i) { out.add(i).try(); }),
+        false => Range(0, max).loop((h, k) {
+            out.add(eligible.get(k * total / max).value_or(0)).try();
+        }),
+    });
+    Ok(out)
+}
+
+// A path inside the root would be copied into every mutant, and a path
+// leaving it could name a file that is not the project's.
+safe_paths = (cli: Cli, cwd: str, a: Alloc) Res<bool, AllocError> {
+    root ::= a.String().try();
+    work ::= a.String().try();
+    absolute(cwd, cli.root, root).try();
+    absolute(cwd, cli.work, work).try();
+    root.add("/").try();
+    work.add("/").try();
+    escapes = cli.file.contains("..") || cli.file.starts_with("/");
+    nested  = work.view().starts_with(root.view()) || root.view().starts_with(work.view());
+    Ok(!escapes && !nested)
+}
+
+absolute = (cwd: str, path: str, out :: String) Res<(), AllocError> {
+    path.starts_with("/").match({
+        true  => out.add(path),
+        false => out.fmt("{}/{}", cwd, path),
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    env.args<Cli>().match({
+        Ok(cli) => mutate(env, a, cli),
+        Err(_)  => { println("{}", USAGE); Ok(2) },
+    })
+}
+
+mutate = (env: Env, a: Alloc, cli: Cli) Res<i32, AllocError> {
+    cwd = env.fs.cwd(a).match({ Ok(s) => s.view(), Err(_) => "" });
+    path ::= a.String().try();
+    path.fmt("{}/{}", cli.root, cli.file).try();
+    loop<i32>((h) {
+        safe_paths(cli, cwd, a).try().match({
+            true  => (),
+            false => {
+                println(
+                    "zen-mutate: --file must stay inside --root, and --work must be outside it"
+                );
+                h.break(2);
+            },
+        });
+        text    = env.fs.read(a, path.view()).match({
+            Ok(t)  => t.view(),
+            Err(_) => { println("zen-mutate: cannot read {}", path.view()); h.break(2); "" },
+        });
+        mutants = collect(a, cli.file, text).match({
+            Ok(m)  => m,
+            Err(_) => { println("zen-mutate: {} does not parse", path.view()); h.break(2); a.Vec<Mutant>() },
+        });
+        picked  = chosen(a, mutants, cli.only, cli.max).try();
+        println(
+            "zen-mutate: {} mutants of {}, running {}",
+            mutants.len,
+            path.view(),
+            picked.len
+        );
+        cli.list.then(
+            () { list(a, cli, text, mutants, picked).try(); h.break(0); }
+        );
+        h.break(run_all(env, a, cli, text, mutants, picked).try());
+    }).value_or(2)
+}
+
+list = (a: Alloc, cli: Cli, text: str, mutants: Vec<Mutant>, picked: Vec<usize>)
+       Res<(), AllocError> {
+    picked.loop((h, i) {
+        m = mutants.get(i).ok_or(AllocError.OutOfMemory).try();
+        line ::= a.String().try();
+        describe(m, text, line).try();
+        println(
+            "m{}  {}  {}:{}",
+            i + 1,
+            operator_name(m.op),
+            cli.file,
+            line.view()
+        );
+    });
+    Ok(())
+}
+
+run_all = (
+    env     : Env,
+    a       : Alloc,
+    cli     : Cli,
+    text    : str,
+    mutants : Vec<Mutant>,
+    picked  : Vec<usize>
+) Res<i32, AllocError> {
+    plan   = Plan(
+        root: cli.root,
+        file: cli.file,
+        build: cli.build,
+        test: cli.test,
+        work: cli.work,
+        timeout: cli.timeout,
+        keep: cli.keep
+    );
+    runner = Runner(env: env, alloc: a, plan: plan);
+    loop<i32>((h) {
+        runner.prepare().match({ Ok(_) => (), Err(e) => { println("zen-mutate: {}", run_message(e)); h.break(2); } });
+        base = runner.run(0, text).match({
+            Ok(o)  => o,
+            Err(e) => { println("zen-mutate: {}", run_message(e)); h.break(2); Outcome.Stillborn },
+        });
+        base.match({
+            Survived => (),
+            _        => {
+                println(
+                    "zen-mutate: the unmutated baseline did not pass ({}); fix the tests first",
+                    outcome_name(base)
+                );
+                h.break(2);
+            },
+        });
+        println("baseline passes");
+        h.break(each_mutant(env, a, cli, runner, text, mutants, picked).try());
+    }).value_or(2)
+}
+
+each_mutant = (
+    env     : Env,
+    a       : Alloc,
+    cli     : Cli,
+    runner  : Runner,
+    text    : str,
+    mutants : Vec<Mutant>,
+    picked  : Vec<usize>
+) Res<i32, AllocError> {
+    tally     ::= Tally(survived: 0, killed: 0, timed_out: 0, stillborn: 0);
+    survivors ::= a.Vec<usize>();
+    failed    ::= false;
+    picked.loop((h, i) {
+        m       = mutants.get(i).ok_or(AllocError.OutOfMemory).try();
+        mutated = m.apply(a, text).try();
+        outcome = runner.run(i + 1, mutated.view()).match({
+            Ok(o)  => o,
+            Err(e) => { println(
+                "zen-mutate: {}",
+                run_message(e)
+            ); failed = true; h.break(); Outcome.Stillborn },
+        });
+        tally.count(outcome);
+        outcome.match({ Survived => survivors.add(i).try(), _ => () });
+        line ::= a.String().try();
+        describe(m, text, line).try();
+        println(
+            "m{}  {}  {}  {}:{}",
+            i + 1,
+            outcome_name(outcome),
+            operator_name(m.op),
+            cli.file,
+            line.view()
+        );
+    });
+    report(a, cli, text, mutants, survivors, tally).try();
+    intact = env.fs.read(a, original_path(a, cli).try().view())
+        .match({ Ok(t) => t.view().eq(text), Err(_) => false });
+    println(
+        "original {}: {}",
+        cli.file,
+        intact.match({ true => "unchanged", false => "CHANGED" })
+    );
+    Ok(failed.match({
+        true  => 2,
+        false => (tally.survived > 0).match({ true => 1, false => 0 }),
+    }))
+}
+
+original_path = (a: Alloc, cli: Cli) Res<String, AllocError> {
+    out ::= a.String().try();
+    out.fmt("{}/{}", cli.root, cli.file).try();
+    Ok(out)
+}
+
+report = (
+    a         : Alloc,
+    cli       : Cli,
+    text      : str,
+    mutants   : Vec<Mutant>,
+    survivors : Vec<usize>,
+    tally     : Tally
+) Res<(), AllocError> {
+    judged = tally.survived + tally.killed + tally.timed_out;
+    println(
+        "summary: {} killed, {} timed out, {} survived, {} stillborn (did not build)",
+        tally.killed,
+        tally.timed_out,
+        tally.survived,
+        tally.stillborn
+    );
+    (judged > 0).then(() {
+        println(
+            "mutation score: {}%",
+            (tally.killed + tally.timed_out) * 100 / judged
+        );
+    });
+    (survivors.len > 0).then(
+        () { println("survivors (no test failed with this change):"); }
+    );
+    survivors.loop((h, i) {
+        m = mutants.get(i).ok_or(AllocError.OutOfMemory).try();
+        line ::= a.String().try();
+        describe(m, text, line).try();
+        println(
+            "  m{}  {}  {}:{}",
+            i + 1,
+            operator_name(m.op),
+            cli.file,
+            line.view()
+        );
+    });
+    Ok(())
+}

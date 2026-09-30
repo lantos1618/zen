@@ -1,0 +1,138 @@
+// Running one mutant: a fresh copy of the project root under the work
+// directory, the mutated text written into the copy, the build and test
+// commands run inside it, and the copy removed. The original root is only
+// ever read.
+Alloc, AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+
+// Survived: every test passed with the mutation in place, so no test
+// distinguishes it from the original. Stillborn: the mutant did not build,
+// which says nothing about the tests.
+Outcome* = Survived | Killed | TimedOut | Stillborn
+
+outcome_name* = (o: Outcome) str {
+    o.match({
+        Survived  => "SURVIVED",
+        Killed    => "killed",
+        TimedOut  => "timeout",
+        Stillborn => "stillborn",
+    })
+}
+
+RunError* = Copy | Write | Spawn | OutOfMemory
+
+run_message* = (e: RunError) str {
+    e.match({
+        Copy        => "could not copy the project root into the work directory",
+        Write       => "could not write the mutated file into its copy",
+        Spawn       => "could not start a command",
+        OutOfMemory => "out of memory",
+    })
+}
+
+Plan* = {
+    root*: str,
+    file*: str,
+    build*: str,
+    test*: str,
+    work*: str,
+    timeout*: usize,
+    keep*: bool,
+}
+
+// A signal from the CPU-time limit (SIGXCPU) or the kill that follows it.
+timed_out = (code: i32) bool { code == 152 || code == 137 }
+
+Runner* = {
+    env: Env,
+    alloc: Alloc,
+    plan: Plan,
+
+    // `mNNNN` under the work directory; 0 is the unmutated baseline.
+    dir = (self: @Self, index: usize) Res<String, AllocError> {
+        out ::= self.alloc.String().try();
+        out.fmt("{}/m", self.plan.work).try();
+        (index < 1000).then(() { out.add("0").try(); });
+        (index < 100).then(() { out.add("0").try(); });
+        (index < 10).then(() { out.add("0").try(); });
+        out.fmt("{}", index).try();
+        Ok(out)
+    }
+
+    argv = (self: @Self, words: [str, 4]) Res<Vec<str>, AllocError> {
+        out ::= self.alloc.Vec<str>();
+        words.loop((w) { (w.len > 0).then(() { out.add(w).try(); }); });
+        Ok(out)
+    }
+
+    exec = (self: @Self, words: [str, 4]) Res<i32, RunError> {
+        args = self.argv(words).try(RunError.OutOfMemory);
+        got  = self.env.proc.run_argv(self.alloc, "", args).try(RunError.Spawn);
+        Ok(got.code)
+    }
+
+    // The copy never exists before this call: a previous one is removed
+    // first, so a stale file cannot leak into this mutant.
+    stage = (self: @Self, dir: str, text: str) Res<(), RunError> {
+        self.exec([str, 4]("rm", "-rf", dir, "")).try();
+        (self.exec([str, 4]("cp", "-R", self.plan.root, dir)).try() == 0)
+            .ensure(RunError.Copy).try();
+        path ::= self.alloc.String().try(RunError.OutOfMemory);
+        path.fmt("{}/{}", dir, self.plan.file).try(RunError.OutOfMemory);
+        self.env.fs.write(path.view(), text).try(RunError.Write);
+        Ok(())
+    }
+
+    shell = (self: @Self, dir: str, cmd: str) Res<i32, RunError> {
+        got = self.env.proc.run(self.alloc, dir, cmd).try(RunError.Spawn);
+        Ok(got.code)
+    }
+
+    // The test runs under a CPU-time limit, so a mutant that turns a loop
+    // infinite is stopped and counted, not waited on forever.
+    test = (self: @Self, dir: str) Res<i32, RunError> {
+        cmd ::= self.alloc.String().try(RunError.OutOfMemory);
+        cmd.fmt("ulimit -t {}; {}", self.plan.timeout, self.plan.test)
+            .try(RunError.OutOfMemory);
+        self.shell(dir, cmd.view())
+    }
+
+    built = (self: @Self, dir: str) Res<bool, RunError> {
+        (self.plan.build.len == 0).match({
+            true  => Ok(true),
+            false => Ok(self.shell(dir, self.plan.build).try() == 0),
+        })
+    }
+
+    run* = (self: @Self, index: usize, text: str) Res<Outcome, RunError> {
+        dir = self.dir(index).try(RunError.OutOfMemory);
+        self.stage(dir.view(), text).try();
+        outcome = self.judge(dir.view()).try();
+        (self.plan.keep == false).then(() {
+            self.exec([str, 4]("rm", "-rf", dir.view(), "")).try();
+        });
+        Ok(outcome)
+    }
+
+    judge = (self: @Self, dir: str) Res<Outcome, RunError> {
+        self.built(dir).try().match({
+            false => Ok(Outcome.Stillborn),
+            true  => {
+                code = self.test(dir).try();
+                Ok((code == 0).match({
+                    true  => Outcome.Survived,
+                    false => timed_out(code).match({
+                        true  => Outcome.TimedOut,
+                        false => Outcome.Killed,
+                    }),
+                }))
+            },
+        })
+    }
+
+    prepare* = (self: @Self) Res<(), RunError> {
+        (self.exec([str, 4]("mkdir", "-p", self.plan.work, "")).try() == 0)
+            .ensure(RunError.Copy)
+    }
+}

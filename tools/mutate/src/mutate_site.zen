@@ -1,0 +1,325 @@
+// Where a source file can be mutated, and into what. Sites come from the
+// parsed AST rather than from text search, so an operator inside a string or
+// a comment is never a site, and every replacement covers exactly the node
+// it names. Mutants are numbered in AST walk order, error-variant swaps
+// last, so the same file always yields the same numbered mutants.
+scan, Source = std.lex
+Parser = std.parse
+Ast, Span, Expr, ExprId, Stmt, Decl, Match, Call, Binary = std.ast
+WalkNode, WalkEvent, WalkVisitor, DeclVisit, DeclSite, DeclParent = std.ast
+Alloc, AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+
+Operator* = SwapError
+    | FlipEquality
+    | FlipOrder
+    | Negate
+    | Constant
+    | DeleteStatement
+    | SwapArms
+
+operator_name* = (op: Operator) str {
+    op.match({
+        SwapError       => "swap-error",
+        FlipEquality    => "flip-equality",
+        FlipOrder       => "flip-order",
+        Negate          => "negate",
+        Constant        => "constant",
+        DeleteStatement => "delete-statement",
+        SwapArms        => "swap-arms",
+    })
+}
+
+// One edit: replace bytes [start, end) of the original with `replacement`.
+Mutant* = {
+    op*: Operator,
+    start*: usize,
+    end*: usize,
+    replacement*: str,
+    line*: usize,
+    col*: usize,
+
+    // The whole mutated file, in `a`; the original is untouched.
+    apply* = (self: @Self, a: Alloc, text: str) Res<String, AllocError> {
+        out ::= a.String().try();
+        out.add(text.slice(0, self.start)).try();
+        out.add(self.replacement).try();
+        out.add(text.slice(self.end, text.len)).try();
+        Ok(out)
+    }
+}
+
+// An error variant named where a failure is chosen: `Err(Group.Variant)`,
+// `Err(Group.Variant(..))` or `.ensure(Group.Variant)`.
+ErrorUse = {
+    group: str,
+    variant: str,
+    span: Span,
+}
+
+ParseFailed* = Lexical | Syntax | OutOfMemory
+
+// Every mutant of `text`, or why the file does not parse.
+collect* = (a: Alloc, file: str, text: str) Res<Vec<Mutant>, ParseFailed> {
+    lexed = scan(
+        a,
+        Source(file: file, text: text)
+    ).try(ParseFailed.OutOfMemory);
+    lexed.is_clean().ensure(ParseFailed.Lexical).try();
+    p ::= a.Parser(lexed);
+    m = p.module(file).try(ParseFailed.OutOfMemory);
+    (p.diags.len == 0).ensure(ParseFailed.Syntax).try();
+    sites ::= a.Sites(p.tree, text).try(ParseFailed.OutOfMemory);
+    m.decls.loop((h, i, decl) {
+        sites.declared(decl).try(ParseFailed.OutOfMemory);
+        root = WalkNode.Declaration(DeclVisit(
+            site: DeclSite(parent: DeclParent.Module(0), index: i),
+            value: decl
+        ));
+        p.tree.walk(a, root, sites).try(ParseFailed.OutOfMemory);
+    });
+    sites.swap_errors().try(ParseFailed.OutOfMemory);
+    Ok(sites.found)
+}
+
+Sites = {
+    tree: Ast,
+    text: str,
+    alloc: Alloc,
+    found :: Vec<Mutant>,
+    errors :: Vec<ErrorUse>,
+    // Variants of enums declared in this file, as `Group.Variant` pairs.
+    variants :: Vec<ErrorUse>,
+
+    add = (self :: @Self, op: Operator, span: Span, replacement: str)
+          Res<(), AllocError> {
+        from = span.start.offset_in(self.text).value_or(0);
+        to   = span.end.offset_in(self.text).value_or(0);
+        (to > from).then(() {
+            self.found.add(Mutant(
+                op: op,
+                start: from,
+                end: to,
+                replacement: replacement,
+                line: span.start.line,
+                col: span.start.col
+            )).try();
+        });
+        Ok(())
+    }
+
+    source = (self: @Self, span: Span) str {
+        span.text_in(self.text).value_or("")
+    }
+
+    declared = (self :: @Self, decl: Decl) Res<(), AllocError> {
+        decl.kind.match({
+            Enum(e) => e.variants.loop((h, v) {
+                self.variants.add(ErrorUse(
+                    group: e.name.text,
+                    variant: v.name.text,
+                    span: v.name.span
+                )).try();
+            }),
+            _       => (),
+        });
+        Ok(())
+    }
+
+    expr = (self :: @Self, id: ExprId) Res<(), AllocError> {
+        node = self.tree.expr_at(id);
+        node.kind.match({
+            Binary(b)  => self.binary(b),
+            Unary(u)   => u.op.match({
+                Not => self.add(Operator.Negate, u.op_span, ""),
+                _   => Ok(()),
+            }),
+            Literal(l) => self.constant(node, l.text),
+            Call(c)    => self.call(c),
+            Match(m)   => self.arms(m),
+            _          => Ok(()),
+        })
+    }
+
+    binary = (self :: @Self, b: Binary) Res<(), AllocError> {
+        b.op.match({
+            Equal     => self.add(Operator.FlipEquality, b.op_span, "!="),
+            NotEqual  => self.add(Operator.FlipEquality, b.op_span, "=="),
+            Less      => self.add(Operator.FlipOrder, b.op_span, "<="),
+            LessEq    => self.add(Operator.FlipOrder, b.op_span, "<"),
+            Greater   => self.add(Operator.FlipOrder, b.op_span, ">="),
+            GreaterEq => self.add(Operator.FlipOrder, b.op_span, ">"),
+            _         => Ok(()),
+        })
+    }
+
+    constant = (self :: @Self, node: Expr, text: str) Res<(), AllocError> {
+        text.match({
+            "0" => self.add(Operator.Constant, node.span, "1"),
+            "1" => self.add(Operator.Constant, node.span, "0"),
+            _   => Ok(()),
+        })
+    }
+
+    // `cond.ensure(..)` and `cond.then(..)` read their receiver as the
+    // condition; `Err(..)` and `.ensure(..)` name the failure.
+    call = (self :: @Self, c: Call) Res<(), AllocError> {
+        self.tree.expr_at(c.callee).kind.match({
+            Access(x) => self.method_call(c, x.base, x.name.text),
+            Name(n)   => n.text.eq("Err").then(() {
+                self.failure_args(c).try();
+            }),
+            _         => (),
+        });
+        Ok(())
+    }
+
+    method_call = (self :: @Self, c: Call, base: ExprId, name: str)
+                  Res<(), AllocError> {
+        (name.eq("ensure") || name.eq("then")).then(() {
+            self.negate(base).try();
+        });
+        name.eq("ensure").then(() { self.failure_args(c).try(); });
+        Ok(())
+    }
+
+    negate = (self :: @Self, base: ExprId) Res<(), AllocError> {
+        span = self.tree.expr_at(base).span;
+        out ::= self.alloc.String().try();
+        out.fmt("(!({}))", self.source(span)).try();
+        self.add(Operator.Negate, span, out.view())
+    }
+
+    failure_args = (self :: @Self, c: Call) Res<(), AllocError> {
+        c.args.loop((h, arg) { self.failure(arg.value).try(); });
+        Ok(())
+    }
+
+    // `Group.Variant`, or the callee of `Group.Variant(payload)`.
+    failure = (self :: @Self, id: ExprId) Res<(), AllocError> {
+        self.tree.expr_at(id).kind.match({
+            Access(x)   => self.tree.expr_at(x.base).kind.match({
+                Name(g) => self.errors.add(ErrorUse(
+                    group: g.text,
+                    variant: x.name.text,
+                    span: x.name.span
+                )).try(),
+                _       => (),
+            }),
+            Call(inner) => self.failure(inner.callee).try(),
+            _           => (),
+        });
+        Ok(())
+    }
+
+    // Adjacent arms exchange bodies: the text from the first body's start
+    // to the second body's end is rewritten with the two bodies swapped.
+    arms = (self :: @Self, m: Match) Res<(), AllocError> {
+        m.arms.loop((h, i, arm) {
+            (i > 0).then(() { self.swap_with_previous(m, i).try(); });
+        });
+        Ok(())
+    }
+
+    swap_with_previous = (self :: @Self, m: Match, i: usize)
+                         Res<(), AllocError> {
+        before = m.arms.get(i - 1).ok_or(AllocError.OutOfMemory).try();
+        after  = m.arms.get(i).ok_or(AllocError.OutOfMemory).try();
+        self.swap(
+            self.tree.expr_at(before.body).span,
+            self.tree.expr_at(after.body).span
+        )
+    }
+
+    swap = (self :: @Self, first: Span, second: Span) Res<(), AllocError> {
+        a       = self.source(first);
+        b       = self.source(second);
+        between = Span(file: first.file, start: first.end, end: second.start);
+        out ::= self.alloc.String().try();
+        out.add(b).try();
+        out.add(self.source(between)).try();
+        out.add(a).try();
+        whole = Span(file: first.file, start: first.start, end: second.end);
+        (a.eq(b) == false).then(() {
+            self.add(Operator.SwapArms, whole, out.view()).try();
+        });
+        Ok(())
+    }
+
+    // A statement evaluated for its effect (`check().try();`,
+    // `ok.ensure(E.Bad).try();`) is removed with its semicolon.
+    statement = (self :: @Self, s: Stmt) Res<(), AllocError> {
+        s.kind.match({
+            Expr(_) => self.add(Operator.DeleteStatement, s.span, ""),
+            _       => Ok(()),
+        })
+    }
+
+    // Each failure named in the file becomes the next other variant of its
+    // group, in sorted order, drawn from every variant the file declares or
+    // names. A group with one known variant has nothing to swap to.
+    swap_errors = (self :: @Self) Res<(), AllocError> {
+        self.errors.loop((h, use) {
+            self.next_variant(use).match({
+                None    => (),
+                Ok(alt) => self.add(Operator.SwapError, use.span, alt).try(),
+            });
+        });
+        Ok(())
+    }
+
+    next_variant = (self: @Self, use: ErrorUse) Res<str> {
+        above: Res<str>  ::= None;
+        lowest: Res<str> ::= None;
+        self.each_variant(use.group, (name) {
+            (name.before(use.variant) == false && name.eq(use.variant) == false).then(() {
+                above = earlier(above, name);
+            });
+            (name.eq(use.variant) == false).then(() {
+                lowest = earlier(lowest, name);
+            });
+        });
+        above.match({ Ok(n) => Ok(n), None => lowest })
+    }
+
+    each_variant = (self: @Self, group: str, body: (name: str) ()) {
+        self.variants.loop(
+            (h, v) { v.group.eq(group).then(() { body(v.variant) }); }
+        );
+        self.errors.loop(
+            (h, v) { v.group.eq(group).then(() { body(v.variant) }); }
+        );
+    }
+}
+
+earlier = (best: Res<str>, name: str) Res<str> {
+    best.match({
+        None    => Ok(name),
+        Ok(cur) => name.before(cur).match({ true => Ok(name), false => Ok(cur) }),
+    })
+}
+
+Sites = (a: Alloc, tree: Ast, text: str) Res<Sites, AllocError> {
+    Ok(Sites(
+        tree: tree,
+        text: text,
+        alloc: a,
+        found: a.Vec<Mutant>(),
+        errors: a.Vec<ErrorUse>(),
+        variants: a.Vec<ErrorUse>()
+    ))
+}
+
+Sites.impl(WalkVisitor, {
+    visit = (self :: @Self, event: WalkEvent) Res<(), AllocError> {
+        event.match({
+            Enter(node) => node.match({
+                Expr(id)     => self.expr(id),
+                Statement(s) => self.statement(s.value),
+                _            => Ok(()),
+            }),
+            Leave(_)    => Ok(()),
+        })
+    }
+})

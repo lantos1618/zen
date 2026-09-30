@@ -16,6 +16,7 @@ with" column is the one-line compiler change that would fail the test.
 - arm_binding_scrutinee_of_a_nested_match — leave the inner match's binder (or the outer arm's binding feeding it) on the checker scope stack after the arm closes: inner values misresolve or trailing `outer 99` prints a branch-local value. Two variants on Wrap are load-bearing: with one variant the declaration stops parsing as a nominal enum.
 - err_case_on_a_union_tests_only_that_case — make `narrows` ask only `is_variant` again (a bare case name under `Err` on `Kind | Fail` adds no condition): the first `Err(Case)` arm swallows every error, every line prints "authentication" and `expect_protocol` accepts any failure.
 - err_payload_case_on_a_union_reads_the_case — resolve `Err(Protocol(c))` to its member `Kind` instead of the case (drop `names_member_case`): `Err(Protocol(_))` catches `Io`, and binding `c` to the whole `Kind` is rejected by cc.
+- union_payload_cases_cover_their_member — in `norm_set_ctor` (`sema_match.zen`) normalize `Err(Protocol(c))` as a constructor `Protocol` of the set instead of `Kind(Protocol(c))`: the checker rejects both matches as not exhaustive, and codegen's arm cross-check reports that sema's reading differs from the C condition.
 
 ## Suspected compiler bug (NOT encoded in any test)
 

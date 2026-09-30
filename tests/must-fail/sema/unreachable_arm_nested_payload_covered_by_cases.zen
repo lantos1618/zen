@@ -1,0 +1,15 @@
+// `Ok(true)` and `Ok(false)` cover every success, so `Ok(_)` is dead.
+
+read = (r: Res<bool, AllocError>) i32 {
+    r.match({
+        Ok(true)  => 1,
+        Ok(false) => 0,
+        Ok(_)     => 2,
+        Err(_)    => -1,
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", read(Ok(true)));
+    Ok(0);
+}

@@ -1,0 +1,20 @@
+// The same rule through a declared set: on `Both = Kind | Fail`,
+// `Err(Kind)` covers `Err(Authentication)`.
+
+Kind = Io | Protocol | Authentication
+Fail = Mismatch | Accepted
+Both = Kind | Fail
+
+name = (r: Res<i32, Both>) str {
+    r.match({
+        Err(Kind)           => "kind",
+        Err(Authentication) => "authentication",
+        Err(Fail)           => "fail",
+        Ok(_)               => "ok",
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", name(Err(Kind.Io)));
+    Ok(0);
+}

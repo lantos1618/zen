@@ -1,0 +1,14 @@
+// `bool` has two cases; a third arm repeats one.
+
+pick = (b: bool) i32 {
+    b.match({
+        true  => 1,
+        false => 0,
+        true  => 2,
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", pick(true));
+    Ok(0);
+}

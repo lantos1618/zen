@@ -24,6 +24,8 @@ The same suite is the only one that could ask about a *pattern* naming a constan
 
 Two uses of it, both from 2026-08-17. **Proving an existing guard is load-bearing**: replacing `run_for_effect`'s dispatch in `gen_c_call.zen` with `Ok(())` — dropping a unit payload's side effect — still *built and bootstrapped cleanly*, `make build` exit 0, and reddened 113 corpus tests. The build is not an oracle for whether the compiler still does the thing; only the corpus is. **Proving a NEW rule is not vacuous**: `SemaFault.ConstPattern` reported zero sites across 60k lines of `src/`, which reads identically to a check that never fires, so it was mutated three ways before the zero was believed — an arm naming an *imported* constant was added to prove the cross-module path live, the rule was widened to any module-level declaration, and the local-shadow gate was removed. Zero each time. **A clean tree and a dead gate are the same observation until you make the gate go red on purpose.**
 
+The same question asked of a Zen program's own tests is answered by `zen-mutate` (`tools/mutate`, written in Zen). It parses one source file, applies one mutation at a time to a fresh copy of the project root — an error variant in `Err(..)`/`.ensure(..)` swapped for a sibling, `==`/`!=` and `<`/`<=` flipped, an `.ensure`/`.then` condition negated, `0`/`1` exchanged, an effect statement deleted, adjacent match-arm bodies swapped — rebuilds, runs the test command, and lists the mutants no test killed. Mutant numbering is fixed by the file, the run count is bounded by `--max` (evenly spaced), each mutant runs in its own copy under `--work` with a CPU-time limit, and the original file is only read. A survivor is a candidate hollow test. `make mutatecheck` pins its behaviour on a deliberately hollow fixture.
+
 ---
 
 ## Project test targets
@@ -180,7 +182,8 @@ Each of these has produced real bugs in real compilers. Write the test when you 
 - **infinite monomorphisation**: `f<T> = (x: T) { f<Vec<T>>(..) }`. Must terminate with an error, not consume all memory. Every monomorphising compiler has hit this.
 - recursive types: `Node = { next: Ptr<Node> }` works; `Node = { next: Node }` must be rejected, not loop
 - exhaustiveness with nested patterns, and with `_` in every position
-- unreachable arms (an arm after `_`)
+- unreachable arms (an arm after `_`), and every shape of them: a repeated case, bool or literal; a payload arm under a binder; a union case under its member (`Err(Protocol)` after `Err(Kind)`) and a member covered by its cases. `must-fail/sema/unreachable_arm_*` holds one file per shape.
+- **sema and codegen must read a pattern the same way.** Coverage and reachability are proved on sema's reading; C executes codegen's. Every C match arm records the tag and literal tests it emits (`ArmTrace`, `src/sema/sema_arm_trace.zen`) and the usefulness engine checks that they select exactly the values of sema's reading, both ways, on every compile. A disagreement is an internal compiler error naming both readings. This is how `Err(Authentication)` on `Kind | Fail` passed for any error: sema read a case, C tested only the `Err` tag, and the first such arm swallowed every error in silence. Reverting that fix now fails `match-payloads/err_case_on_a_union_tests_only_that_case` at compile time.
 - impl collision resolved by the bound in scope; and the no-bound case, which must error naming both
 - a bound not satisfied; a bound satisfied by an impl in another module
 - inference order: `Res<Cfg, _>` inferred from a body containing a call whose own error set is inferred

@@ -687,6 +687,18 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             an.x86_write(cur, last, secret, false, l).try();
             h.break();
         });
+        // `leave` is `mov %rbp, %rsp; pop %rbp`: the stack pointer returns to
+        // the frame, whatever realignment (`and $-32, %rsp`) came after it.
+        (m.eq("leave") || m.eq("leaveq")).then(() {
+            cur.frame.when_ok((f) { cur.delta = 0 - f; });
+            secret    = has_slot(cur.slots, 0 - cur.delta);
+            points    = has_slot(cur.pslots, 0 - cur.delta);
+            cur.delta = cur.delta - 8;
+            put(cur.val, "rbp", secret).try();
+            put(cur.pts, "rbp", points).try();
+            cur.frame = None;
+            h.break();
+        });
         (m.starts_with("lea")).then(() {
             mem    = x86_mem(an.alloc, first).ok_or(AllocError.OutOfMemory).try();
             secret = mem.base.match({ Ok(b) => has(cur.val, b), None => false })

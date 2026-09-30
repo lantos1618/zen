@@ -1,0 +1,22 @@
+// A method of `Shard<B: Io>` converts the `i64` a bound method returns with
+// `to_usize`. The body sees `B` with its bound, so `self.backend.io()` is an
+// `i64` and the conversion resolves; without the bound the call had no type
+// and codegen could not resolve `to_usize`.
+
+Io = { io* = (self: @Self) i64 }
+Plain = {}
+Plain.impl(Io, { io = (self: @Self) i64 { 5 } })
+Negative = {}
+Negative.impl(Io, { io = (self: @Self) i64 { -1 } })
+Shard<B: Io> = {
+    backend: B,
+    moved = (self: @Self) usize { self.backend.io().to_usize().value_or(0) }
+}
+
+main = (env: Env) {
+    println(
+        "{} {}",
+        Shard<Plain>(backend: Plain()).moved(),
+        Shard<Negative>(backend: Negative()).moved()
+    );
+}

@@ -277,6 +277,8 @@ launch = (cell: Ptr<u8>, worker: usize, shutdown: usize) i32 {
         false => {
             r ::= reg.read(0);
             mutex_lock(r.lock);
+            // Read the registry again now that it is held.
+            r = reg.read(0);
             available   = r.shutting_down == 0 && r.pending < usize.MAX;
             result: i32 = available.match({
                 false => 2,
@@ -472,8 +474,9 @@ actor_send* = (
     reg.is_null().match({
         true  => 1,
         false => {
+            lock = reg.read(0).lock;
+            mutex_lock(lock);
             r = reg.read(0);
-            mutex_lock(r.lock);
             result = registered(r, cell).match({
                 false => 1,
                 true  => admit(
@@ -609,10 +612,10 @@ enqueue = (
 actor_stop* = (cell: Ptr<u8>) {
     reg = existing_registry();
     (!reg.is_null()).then(() {
-        r = reg.read(0);
-        mutex_lock(r.lock);
-        registered(r, cell).then(() { close(cell); });
-        mutex_unlock(r.lock);
+        lock = reg.read(0).lock;
+        mutex_lock(lock);
+        registered(reg.read(0), cell).then(() { close(cell); });
+        mutex_unlock(lock);
     });
 }
 
@@ -633,6 +636,7 @@ actor_join* = (cell: Ptr<u8>) {
     (!reg.is_null()).then(() {
         r ::= reg.read(0);
         mutex_lock(r.lock);
+        r = reg.read(0);
         live = registered(r, cell);
         live.then(() {
             r.borrowers = r.borrowers + 1;

@@ -209,12 +209,16 @@ Check = {
                         Number  => integer(ty) || float(ty),
                         Flag    => same(ty, Scalar.Bool),
                         Text    => ty.match({ Block(l) => l.size == 16, _ => false }),
+                        Bytes   => ty.match({ Block(l) => l.size == 16, _ => false }),
                         Handle  => same(ty, Scalar.U32),
                         Handler => same(ty, Scalar.U32),
                         Nothing => false,
                     });
                     fits.ensure(self.fault(IrReason.Type)).try();
                 });
+                // A runtime operation names one the JavaScript runtime has.
+                known = call.member.eq("release") || call.member.eq("copy");
+                (!call.runtime || (known && call.object.is_empty())).ensure(self.fault(IrReason.Arguments)).try();
                 out = self.slot(call.out).try();
                 call.result.match({
                     Number  => integer(out) || float(out),

@@ -232,6 +232,7 @@ marshal_of = (lo :: Lowerer, ty: TyId) Res<Marshal> {
                 Ok(q)  => q.view().match({
                     "std.js.js.Ref"     => Ok(Marshal.Handle),
                     "std.js.js.Handler" => Ok(Marshal.Handler),
+                    "std.js.js.Bytes"   => Ok(Marshal.Bytes),
                     _                   => None,
                 }),
                 Err(_) => None,
@@ -284,7 +285,7 @@ host_call = (lo :: Lowerer, id: ExprId, c: Call, binding: StructDecl, name: str,
     });
     result_ty = lo.type_of(id).try();
     result = marshal_of(lo, result_ty).ok_or(unsupported(span, lo.described("a result that cannot cross from JavaScript", result_ty))).try();
-    (result.match({ Text => false, Handler => false, _ => true })).ensure(unsupported(span, "a js.bind result of this type")).try();
+    (result.match({ Text => false, Bytes => false, Handler => false, _ => true })).ensure(unsupported(span, "a js.bind result of this type")).try();
     host_out = result.match({
         Handle => lo.slot_of(Scalar.U32).try(),
         _      => lo.temp(result_ty).try().slot,
@@ -294,6 +295,7 @@ host_call = (lo :: Lowerer, id: ExprId, c: Call, binding: StructDecl, name: str,
         object: binding.s.native_header.value_or(""),
         member: name,
         receiver: receiver,
+        runtime: false,
         args: args,
         marshal: kinds,
         result: result
@@ -308,6 +310,54 @@ host_call = (lo :: Lowerer, id: ExprId, c: Call, binding: StructDecl, name: str,
         },
         _      => Ok(Value(slot: host_out, ty: result_ty)),
     })
+}
+
+// std.js's own operations, which the JavaScript runtime implements. They
+// cross the boundary exactly as a binding's arguments do, so they are host
+// calls marked `runtime`:
+//   `ref.release()`              -> zrelease(id)
+//   `copy(source, offset, into)` -> zcopyin(object, offset, view), a count
+js_runtime_call = (lo :: Lowerer, id: ExprId, name: str, sources: Vec<Source>, span: Span)
+                  Res<Value, LowerError> {
+    args ::= lo.alloc.Vec<usize>();
+    kinds ::= lo.alloc.Vec<Marshal>();
+    name.match({
+        "release" => {
+            // The id crosses as a number: the runtime needs the id itself,
+            // not the object it names.
+            receiver = lo.expr(sources.source_expr(0, span).try()).try();
+            args.add(lo.read(lo.field_place(lo.spill(receiver), "id", span).try()).try().slot).try(LowerError.OutOfMemory);
+            kinds.add(Marshal.Number).try(LowerError.OutOfMemory);
+            Ok(())
+        },
+        "copy"    => {
+            source = lo.expr(sources.source_expr(0, span).try()).try();
+            args.add(lo.read(lo.field_place(lo.spill(source), "id", span).try()).try().slot).try(LowerError.OutOfMemory);
+            kinds.add(Marshal.Handle).try(LowerError.OutOfMemory);
+            offset = lo.expr_as(sources.source_expr(1, span).try(), lo.prim("usize").try()).try();
+            args.add(offset.slot).try(LowerError.OutOfMemory);
+            kinds.add(Marshal.Number).try(LowerError.OutOfMemory);
+            into = lo.expr(sources.source_expr(2, span).try()).try();
+            args.add(into.slot).try(LowerError.OutOfMemory);
+            kinds.add(Marshal.Bytes).try(LowerError.OutOfMemory);
+            Ok(())
+        },
+        _         => Err(unsupported(span, "this std.js operation")),
+    }).try();
+    result_ty = lo.type_of(id).try();
+    result = name.eq("copy").match({ true => Marshal.Number, false => Marshal.Nothing });
+    out = lo.temp(result_ty).try();
+    lo.add(Instruction.Host(HostCall(
+        out: out.slot,
+        object: "",
+        member: name,
+        receiver: false,
+        runtime: true,
+        args: args,
+        marshal: kinds,
+        result: result
+    ))).try();
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------
@@ -1005,7 +1055,7 @@ intrinsic = (lo :: Lowerer, id: ExprId, callee: Callee, sources: Vec<Source>, c:
                         lo.add(Instruction.Wait(out.slot)).try();
                         Ok(out)
                     },
-                    false => Err(unsupported(span, "this std.js operation")),
+                    false => js_runtime_call(lo, id, name, sources, span),
                 }),
                 "std.text.text_string"      => lo.string_call(id, name, c, sources, span),
                 "std.text.text_fmt"         => name.eq("fmt").match({

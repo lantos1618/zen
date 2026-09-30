@@ -6,9 +6,12 @@
 // - Darwin: Mach-O, `_main` entered from dyld, and libSystem calls, because
 //   Darwin's system-call numbers are not a stable ABI. No C is compiled.
 //
-// Frame: slots are addressed from `sp` above a preallocated outgoing
-// argument area, so `sp` never moves in a body. Word slots take eight bytes
-// and hold their value extended to 64 bits. An aggregate argument is passed
+// Homes: `gen_asm_regalloc` places each word slot in a register, as a
+// constant, or in the frame. Frame slots are addressed from `sp` above a
+// preallocated outgoing argument area, so `sp` never moves in a body. Words
+// hold their value extended to 64 bits wherever they live. x0-x3, x8, x9
+// and x16 are this renderer's scratch registers and are never allocated.
+// An aggregate argument is passed
 // as a pointer to the caller's copy; an aggregate result is written through
 // the indirect-result register x8, as AAPCS64 does for large composites.
 
@@ -16,13 +19,14 @@ Alloc, AllocError = std.mem
 str, String = std.text
 Range = std.core
 Vec = std.collections
-Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
+Program, Func, BasicBlock, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
 Scalar, Layout, Op, TrapKind, Fault = gen.gen_ir
 Convert, Load, Store, SysCall, Start, Stream = gen.gen_ir
 width, signed, word, trap_message = gen.gen_ir
 Span = std.ast
 Target = gen.gen_asm
 Sys, linux_arm64, darwin_symbol, constant_value, Platform = gen.gen_sys
+Plan, Home, Pool, plan = gen.gen_asm_regalloc
 
 Arm64Os* = Linux | Darwin
 
@@ -39,7 +43,14 @@ Arm64.impl(Target, {
             scratch: self.alloc.String().try(),
             traps: self.alloc.Vec<TrapSite>(),
             offsets: self.alloc.Vec<usize>(),
-            next_label: 0
+            next_label: 0,
+            plan: Plan(
+                function: Func(name: "", parameters: 0, slots: self.alloc.Vec<Scalar>(), blocks: self.alloc.Vec<BasicBlock>(), result: Scalar.Unit),
+                homes: self.alloc.Vec<Home>(),
+                saved: self.alloc.Vec<usize>(),
+                uses: self.alloc.Vec<usize>()
+            ),
+            save_offsets: self.alloc.Vec<usize>()
         );
         writer.render().try();
         Ok(writer.out)
@@ -64,6 +75,10 @@ Assembly = {
     frame :: usize = 0,
     // Where the hidden aggregate-result pointer (x8) is saved.
     result_offset :: usize = 0,
+    // The current function's allocation and where its callee-saved
+    // registers are kept, above `sp`.
+    plan :: Plan,
+    save_offsets :: Vec<usize>,
     // Slots remain authoritative; x0 caches one slot within a block.
     x0_slot :: Res<usize> = None,
 
@@ -137,10 +152,7 @@ Assembly = {
     }
 
     slot_type = (self: @Self, slot: usize) Scalar {
-        self.program.functions.get(self.function_id).match({
-            Ok(f) => f.slots.get(slot).value_or(Scalar.Unit),
-            None  => Scalar.Unit,
-        })
+        self.plan.function.slots.get(slot).value_or(Scalar.Unit)
     }
 
     offset = (self: @Self, slot: usize) usize {
@@ -165,19 +177,33 @@ Assembly = {
         cursor ::= round_up(outgoing, 16);
         self.result_offset = cursor;
         cursor = cursor + 8;
+        self.save_offsets.clear();
+        self.plan.saved.loop((r) {
+            self.save_offsets.add(cursor).ignore();
+            cursor = cursor + 8;
+        });
         self.offsets.clear();
-        function.slots.loop((ty) {
-            align = ty.match({ Block(l) => (l.align > 8).match({ true => 16, false => 8 }), _ => 8 });
-            cursor = round_up(cursor, align);
-            self.offsets.add(cursor).ignore();
-            cursor = cursor + round_up(at_least_word(stored_size(ty)), 8);
+        // Slots with a register or constant home take no frame space.
+        function.slots.loop((h, i, ty) {
+            framed = self.plan.home(i).match({ Frame => true, _ => false });
+            framed.match({
+                true  => {
+                    align = ty.match({ Block(l) => (l.align > 8).match({ true => 16, false => 8 }), _ => 8 });
+                    cursor = round_up(cursor, align);
+                    self.offsets.add(cursor).ignore();
+                    cursor = cursor + round_up(at_least_word(stored_size(ty)), 8);
+                },
+                false => { self.offsets.add(0).ignore(); },
+            });
         });
         self.frame = round_up(cursor, 16);
     }
 
-    function = (self :: @Self, id: usize, function: Func)
+    function = (self :: @Self, id: usize, original: Func)
                Res<(), AllocError> {
         self.function_id = id;
+        self.plan = plan(self.alloc, original, Pool(caller: 10, callee: 10)).try();
+        function = self.plan.function;
         self.layout_frame(function);
         self.darwin().match({
             true  => self.out.fmt(".p2align 2\nza_fn_{}:\n", id),
@@ -192,20 +218,11 @@ Assembly = {
         is_block(function.result).then(() {
             self.memory("str", "x8", self.result_offset).try();
         });
-        // Spill every incoming word first; an aggregate slot briefly holds
-        // the caller's pointer to its value.
-        Range(0, function.parameters).loop((i) {
-            (i < REGISTER_ARGUMENTS).match({
-                true  => self.memory("str", argument_register(i), self.offset(i)),
-                false => {
-                    self.out.fmt(
-                        "    ldr x9, [x29, #{}]\n",
-                        16 + (i - REGISTER_ARGUMENTS) * 8
-                    ).try();
-                    self.memory("str", "x9", self.offset(i))
-                },
-            }).try();
+        self.plan.saved.loop((sh, k, r) {
+            self.memory("str", pool_register(r), self.save_offsets.get(k).value_or(0)).try();
         });
+        self.parameters(function).try();
+        // An aggregate slot briefly holds the caller's pointer to its value.
         Range(0, function.parameters).loop((i) {
             ty = function.slots.get(i).value_or(Scalar.Unit);
             is_block(ty).then(() {
@@ -246,10 +263,14 @@ Assembly = {
     instruction = (self :: @Self, instruction: Instruction)
                   Res<(), AllocError> {
         instruction.match({
-            Constant(value)    => {
-                self.immediate("x0", bits64(value.value)).try();
-                self.store(value.out, "x0")
-            },
+            Constant(value)    => self.plan.home(value.out).match({
+                // The constant is materialized where it is read.
+                Fixed(_) => Ok(()),
+                _        => {
+                    self.immediate("x0", bits64(value.value)).try();
+                    self.store(value.out, "x0")
+                },
+            }),
             Copy(value)        => self.copy(value.out, value.source),
             UnaryValue(value)  => self.unary(value),
             BinaryValue(value) => self.binary(value),
@@ -331,6 +352,9 @@ Assembly = {
                     },
                     false => self.load(value, "x0"),
                 }).try();
+                self.plan.saved.loop((sh, k, r) {
+                    self.memory("ldr", pool_register(r), self.save_offsets.get(k).value_or(0)).try();
+                });
                 self.out.add(
                     "    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n"
                 )
@@ -692,7 +716,7 @@ Assembly = {
     system = (self :: @Self, call: SysCall) Res<(), AllocError> {
         self.x0_slot = None;
         call.args.loop((h, i, slot) {
-            self.memory("ldr", argument_register(i), self.offset(slot)).try();
+            self.load_plain(slot, argument_register(i)).try();
         });
         self.x0_slot = None;
         self.darwin().match({
@@ -857,12 +881,95 @@ Assembly = {
                 });
             },
             false => {
-                self.memory("ldr", register, self.offset(slot)).try();
+                self.fetch(slot, register).try();
                 self.x0_slot = register.eq("x0").match({
                     true  => Ok(slot),
                     false => self.x0_slot,
                 });
             },
+        });
+        Ok(())
+    }
+
+    // Read a slot's value from its home into `register`.
+    fetch = (self :: @Self, slot: usize, register: str) Res<(), AllocError> {
+        self.plan.home(slot).match({
+            Register(r)  => (!register.eq(pool_register(r))).match({
+                true  => self.out.fmt("    mov {}, {}\n", register, pool_register(r)),
+                false => Ok(()),
+            }),
+            Fixed(value) => self.immediate(register, bits64(value)),
+            Frame        => self.memory("ldr", register, self.offset(slot)),
+        })
+    }
+
+    // Move incoming arguments to their homes. Register-to-register moves
+    // form a parallel assignment (a home may be another argument's incoming
+    // register), ordered so no source is overwritten before it is read and
+    // with x16 breaking any cycle.
+    parameters = (self :: @Self, function: Func) Res<(), AllocError> {
+        sources ::= self.alloc.Vec<usize>();
+        targets ::= self.alloc.Vec<usize>();
+        Range(0, function.parameters).loop((i) {
+            (i < REGISTER_ARGUMENTS).then(() {
+                self.plan.home(i).match({
+                    Register(r) => {
+                        sources.add(i).try();
+                        targets.add(register_number(r)).try();
+                    },
+                    Fixed(_)    => (),
+                    Frame       => self.memory("str", argument_register(i), self.offset(i)).try(),
+                });
+            });
+        });
+        done ::= self.alloc.Vec<bool>();
+        sources.loop((h, i, source) { done.add(source == targets.get(i).value_or(source)).try(); });
+        pending ::= 0;
+        done.loop((d) { (!d).then(() { pending = pending + 1; }); });
+        loop(() { pending > 0 }, (h) {
+            progressed ::= false;
+            Range(0, sources.len).loop((i) {
+                (!done.get(i).value_or(true)).then(() {
+                    target = targets.get(i).value_or(0);
+                    blocked ::= false;
+                    Range(0, sources.len).loop((j) {
+                        (j != i && !done.get(j).value_or(true) && sources.get(j).value_or(0) == target)
+                            .then(() { blocked = true; });
+                    });
+                    (!blocked).then(() {
+                        self.out.fmt("    mov x{}, x{}\n", target, sources.get(i).value_or(0)).try();
+                        done.set(i, true);
+                        pending = pending - 1;
+                        progressed = true;
+                    });
+                });
+            });
+            (!progressed).then(() {
+                // Every pending target is still to be read: park one in x16.
+                Range(0, sources.len).loop((ih, i) {
+                    (!done.get(i).value_or(true)).then(() {
+                        target = targets.get(i).value_or(0);
+                        self.out.fmt("    mov x16, x{}\n", target).try();
+                        Range(0, sources.len).loop((j) {
+                            (!done.get(j).value_or(true) && sources.get(j).value_or(0) == target)
+                                .then(() { sources.set(j, 16); });
+                        });
+                        ih.break();
+                    });
+                });
+            });
+        });
+        Range(0, function.parameters).loop((i) {
+            (i >= REGISTER_ARGUMENTS).then(() {
+                self.plan.home(i).match({
+                    Register(r) => self.out.fmt("    ldr {}, [x29, #{}]\n", pool_register(r), 16 + (i - REGISTER_ARGUMENTS) * 8).try(),
+                    Fixed(_)    => (),
+                    Frame       => {
+                        self.out.fmt("    ldr x9, [x29, #{}]\n", 16 + (i - REGISTER_ARGUMENTS) * 8).try();
+                        self.memory("str", "x9", self.offset(i)).try();
+                    },
+                });
+            });
         });
         Ok(())
     }
@@ -877,14 +984,22 @@ Assembly = {
                 cached = self.x0_slot.match({ Ok(value) => value == slot, None => false });
                 cached.match({
                     true  => self.out.fmt("    mov {}, x0\n", register),
-                    false => self.memory("ldr", register, self.offset(slot)),
+                    false => self.fetch(slot, register),
                 })
             },
         })
     }
 
     store = (self :: @Self, slot: usize, register: str) Res<(), AllocError> {
-        self.memory("str", register, self.offset(slot)).try();
+        self.plan.home(slot).match({
+            Register(r) => (!register.eq(pool_register(r))).then(() {
+                self.out.fmt("    mov {}, {}\n", pool_register(r), register).try();
+            }),
+            // Only the defining `Constant` writes a fixed slot, and it
+            // emits nothing.
+            Fixed(_)    => (),
+            Frame       => self.memory("str", register, self.offset(slot)).try(),
+        });
         self.x0_slot = register.eq("x0").match({ true => Ok(slot), false => None });
         Ok(())
     }
@@ -1095,6 +1210,40 @@ bits64 = (value: i64) u64 {
 }
 
 REGISTER_ARGUMENTS: usize = 8
+
+// Allocatable registers in pool order: caller-saved x4-x7 and x10-x15,
+// then callee-saved x19-x28.
+register_number = (r: usize) usize {
+    (r < 4).match({
+        true  => r + 4,
+        false => (r < 10).match({ true => r + 6, false => r + 9 }),
+    })
+}
+
+pool_register = (r: usize) str {
+    r.match({
+        0  => "x4",
+        1  => "x5",
+        2  => "x6",
+        3  => "x7",
+        4  => "x10",
+        5  => "x11",
+        6  => "x12",
+        7  => "x13",
+        8  => "x14",
+        9  => "x15",
+        10 => "x19",
+        11 => "x20",
+        12 => "x21",
+        13 => "x22",
+        14 => "x23",
+        15 => "x24",
+        16 => "x25",
+        17 => "x26",
+        18 => "x27",
+        _  => "x28",
+    })
+}
 
 // Called only for the register prefix; later arguments use the stack.
 argument_register = (index: usize) str {

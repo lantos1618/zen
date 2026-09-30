@@ -1,0 +1,625 @@
+// The machine-level pass between the verified native IR and a renderer:
+// simplification, then linear-scan register allocation over one function.
+//
+// Simplification only renames, folds and removes; it never changes what
+// the program does. Copies are propagated (within a block while neither
+// side is rewritten, and across the function when both sides are written
+// exactly once, which definite assignment makes safe); a conversion of a
+// constant that already fits its output class becomes that constant; and
+// instructions whose only effect is an output nobody reads are removed.
+// Checked arithmetic, memory access, calls and every effect stay.
+//
+// Allocation gives each local slot (see `gen_asm_flow`) a home: a register
+// from the target's pool, its constant when it is written once by a
+// `Constant`, or its frame slot. A unit slot is the constant zero.
+// Registers are numbered for the target:
+// `0 .. caller` are caller-saved, `caller .. caller + callee` callee-saved.
+// A slot whose interval contains a clobbering instruction (a call, a
+// kernel call, an aggregate copy) only ever gets a callee-saved register,
+// so the renderer never has to save anything around a call and a call's
+// arguments never sit in the registers the call is loaded through.
+Alloc, AllocError = std.mem
+Vec = std.collections
+Range = std.core
+Func, BasicBlock, Instruction, Terminator, Scalar, same = gen.gen_ir
+Move, Unary, Binary, Invocation, Print, Convert, Load, Store, CopyMem = gen.gen_ir
+Write, SysCall, Pages, Branch, Op, Const = gen.gen_ir
+Flow, flow, reads, written, exit_read, pure, clobbers, aggregate, zeros, NONE = gen.gen_asm_flow
+
+Home* = Frame | Register(usize) | Fixed(i64)
+
+Pool* = { caller*: usize, callee*: usize }
+
+Plan* = {
+    // The simplified function; its signature and slot numbering are the
+    // original's.
+    function*: Func,
+    homes*: Vec<Home>,
+    // Callee-saved registers (pool numbers) the function writes.
+    saved*: Vec<usize>,
+    // Named reads of each slot in `function`, terminators included.
+    uses*: Vec<usize>,
+
+    home* = (self: @Self, slot: usize) Home {
+        self.homes.get(slot).value_or(Home.Frame)
+    }
+
+    reads_of* = (self: @Self, slot: usize) usize {
+        self.uses.get(slot).value_or(0)
+    }
+}
+
+plan* = (alloc: Alloc, function: Func, pool: Pool) Res<Plan, AllocError> {
+    current ::= function;
+    info    ::= flow(alloc, current).try();
+    rounds  ::= 0;
+    loop(() { rounds < 4 }, (h) {
+        current = propagate(alloc, info).try();
+        info    = flow(alloc, current).try();
+        pruned  = prune(alloc, info).try();
+        pruned.match({
+            Ok(next) => {
+                current = next;
+                info    = flow(alloc, current).try();
+            },
+            None     => { h.break(); },
+        });
+        rounds = rounds + 1;
+    });
+    scan ::= Scan(
+        alloc: alloc,
+        flow: info,
+        pool: pool,
+        homes: alloc.Vec<Home>(),
+        holder: zeros(alloc, pool.caller + pool.callee).try(),
+        active: alloc.Vec<usize>(),
+        hint: alloc.Vec<usize>(),
+        crossing: alloc.Vec<usize>(),
+        used: alloc.Vec<bool>()
+    );
+    scan.run().try();
+    saved ::= alloc.Vec<usize>();
+    Range(pool.caller, pool.caller + pool.callee).loop((r) {
+        scan.used.get(r).value_or(false).then(() { saved.add(r).try(); });
+    });
+    Ok(Plan(
+        function: current,
+        homes: scan.homes,
+        saved: saved,
+        uses: count_reads(alloc, current).try()
+    ))
+}
+
+count_reads = (alloc: Alloc, function: Func) Res<Vec<usize>, AllocError> {
+    uses     ::= zeros(alloc, function.slots.len).try();
+    operands ::= alloc.Vec<usize>();
+    function.blocks.loop((block) {
+        block.code.loop((instruction) {
+            operands.clear();
+            reads(instruction, operands).try();
+            operands.loop(
+                (slot) { uses.set(slot, uses.get(slot).value_or(0) + 1); }
+            );
+        });
+        exit_read(block.exit).when_ok((slot) { uses.set(slot, uses.get(slot).value_or(0) + 1); });
+    });
+    Ok(uses)
+}
+
+// Copy propagation. `alias` is the function-wide rewrite for slots written
+// once by a copy of a slot written once. Within a block, `source[t]` is
+// the slot `t` was last copied from; the entry holds while `mapped[t]` is
+// this block's stamp and the source's `version` (its write count so far)
+// is unchanged.
+Propagate = {
+    flow: Flow,
+    alias :: Vec<usize>,
+    source :: Vec<usize>,
+    source_version :: Vec<usize>,
+    mapped :: Vec<usize>,
+    version :: Vec<usize>,
+    stamp :: usize = 0,
+    // Per slot: whether it is a local written once by a `Constant`, and
+    // that constant.
+    known :: Vec<bool>,
+    value :: Vec<i64>,
+
+    at = (self: @Self, slot: usize) usize {
+        local = (self.mapped.get(slot).value_or(0) == self.stamp).match({
+            true  => {
+                from = self.source.get(slot).value_or(slot);
+                (self.version.get(from).value_or(0) == self.source_version.get(slot).value_or(NONE)).match({
+                    true  => from,
+                    false => slot,
+                })
+            },
+            false => slot,
+        });
+        self.alias.get(local).value_or(local)
+    }
+
+    all = (self: @Self, alloc: Alloc, slots: Vec<usize>) Res<Vec<usize>, AllocError> {
+        out ::= alloc.Vec<usize>();
+        slots.loop((slot) { out.add(self.at(slot)).try(); });
+        Ok(out)
+    }
+
+    rename = (self: @Self, alloc: Alloc, instruction: Instruction) Res<Instruction, AllocError> {
+        Ok(instruction.match({
+            Constant(_)      => instruction,
+            Copy(v)          => Instruction.Copy(Move(
+                out: v.out,
+                source: self.at(v.source)
+            )),
+            UnaryValue(v)    => Instruction.UnaryValue(Unary(
+                out: v.out,
+                input: self.at(v.input),
+                op: v.op,
+                span: v.span
+            )),
+            BinaryValue(v)   => Instruction.BinaryValue(Binary(
+                out: v.out,
+                left: self.at(v.left),
+                right: self.at(v.right),
+                op: v.op,
+                span: v.span
+            )),
+            Invoke(call)     => Instruction.Invoke(Invocation(
+                out: call.out,
+                function: call.function,
+                args: self.all(alloc, call.args).try()
+            )),
+            PrintValue(v)    => Instruction.PrintValue(Print(
+                value: self.at(v.value),
+                ty: v.ty,
+                stream: v.stream
+            )),
+            Text(_)          => instruction,
+            Cast(v)          => self.fold(v.out, self.at(v.input)),
+            AddressOf(_)     => instruction,
+            LoadValue(v)     => Instruction.LoadValue(Load(
+                out: v.out,
+                base: self.at(v.base),
+                offset: v.offset
+            )),
+            StoreValue(v)    => Instruction.StoreValue(Store(
+                base: self.at(v.base),
+                offset: v.offset,
+                value: self.at(v.value)
+            )),
+            CopyBytes(v)     => Instruction.CopyBytes(CopyMem(
+                dest: self.at(v.dest),
+                source: self.at(v.source),
+                bytes: self.at(v.bytes)
+            )),
+            Bytes(_)         => instruction,
+            WriteOut(v)      => Instruction.WriteOut(Write(
+                data: self.at(v.data),
+                len: self.at(v.len),
+                stream: v.stream
+            )),
+            System(call)     => Instruction.System(SysCall(
+                out: call.out,
+                call: call.call,
+                args: self.all(alloc, call.args).try()
+            )),
+            Startup(_)       => instruction,
+            MapPages(v)      => Instruction.MapPages(Pages(
+                out: v.out,
+                bytes: self.at(v.bytes)
+            )),
+            UnmapPages(slot) => Instruction.UnmapPages(self.at(slot)),
+            SysConst(_)      => instruction,
+            Flush            => instruction,
+        }))
+    }
+
+    exit = (self: @Self, exit: Terminator) Terminator {
+        exit.match({
+            Return(slot)   => Terminator.Return(self.at(slot)),
+            Branch(branch) => Terminator.Branch(Branch(
+                value: self.at(branch.value),
+                yes: branch.yes,
+                no: branch.no
+            )),
+            _              => exit,
+        })
+    }
+
+    // A conversion of a known constant that already fits the output class
+    // is that constant: truncation and extension leave it unchanged.
+    fold = (self: @Self, out: usize, input: usize) Instruction {
+        function = self.flow.function;
+        to       = function.slots.get(out).value_or(Scalar.Unit);
+        v        = self.value.get(input).value_or(0);
+        (self.known.get(input).value_or(false) && fits(to, v)).match({
+            true  => Instruction.Constant(Const(out: out, value: v)),
+            false => Instruction.Cast(Convert(out: out, input: input)),
+        })
+    }
+
+    remember = (self :: @Self, instruction: Instruction) {
+        instruction.match({
+            Constant(c) => (self.flow.is_local(c.out) && self.flow.defs.get(c.out).value_or(0) == 1).then(() {
+                self.known.set(c.out, true);
+                self.value.set(c.out, c.value);
+            }),
+            _           => (),
+        });
+    }
+
+    // A write to `slot` ends every block-local copy fact that names it.
+    wrote = (self :: @Self, slot: usize) {
+        self.version.set(slot, self.version.get(slot).value_or(0) + 1);
+        self.mapped.set(slot, 0);
+    }
+}
+
+propagate = (alloc: Alloc, info: Flow) Res<Func, AllocError> {
+    function = info.function;
+    slots    = function.slots.len;
+    alias ::= alloc.Vec<usize>();
+    Range(0, slots).loop((i) { alias.add(i).try(); });
+    function.blocks.loop((block) {
+        block.code.loop((instruction) {
+            instruction.match({
+                Copy(v) => {
+                    (info.is_local(v.out) && info.defs.get(v.out).value_or(0) == 1
+                        && info.is_local(v.source) && info.defs.get(v.source).value_or(0) == 1).then(() {
+                        alias.set(v.out, v.source);
+                    });
+                },
+                _       => (),
+            });
+        });
+    });
+    // Resolve chains; a cycle cannot pass verification, but the bound keeps
+    // this total.
+    Range(0, slots).loop((t) {
+        at    ::= t;
+        steps ::= 0;
+        loop(() { alias.get(at).value_or(at) != at && steps < slots }, (h) {
+            at    = alias.get(at).value_or(at);
+            steps = steps + 1;
+        });
+        alias.set(t, at);
+    });
+    state ::= Propagate(
+        flow: info,
+        alias: alias,
+        source: zeros(alloc, slots).try(),
+        source_version: zeros(alloc, slots).try(),
+        mapped: zeros(alloc, slots).try(),
+        version: zeros(alloc, slots).try(),
+        known: alloc.Vec<bool>(),
+        value: alloc.Vec<i64>()
+    );
+    Range(0, slots).loop((_) {
+        state.known.add(false).try();
+        state.value.add(0).try();
+    });
+    function.blocks.loop(
+        (block) { block.code.loop(
+            (instruction) { state.remember(instruction); }
+        ); }
+    );
+    blocks ::= alloc.Vec<BasicBlock>();
+    function.blocks.loop((h, b, block) {
+        state.stamp = b + 1;
+        code ::= alloc.Vec<Instruction>();
+        block.code.loop((instruction) {
+            renamed = state.rename(alloc, instruction).try();
+            renamed.match({
+                Copy(v) => (v.out != v.source).then(() {
+                    code.add(renamed).try();
+                    state.wrote(v.out);
+                    (info.is_local(v.out) && info.is_local(v.source)).then(() {
+                        state.source.set(v.out, v.source);
+                        state.source_version.set(
+                            v.out,
+                            state.version.get(v.source).value_or(0)
+                        );
+                        state.mapped.set(v.out, state.stamp);
+                    });
+                }),
+                _       => {
+                    code.add(renamed).try();
+                    state.remember(renamed);
+                    written(renamed).when_ok((slot) { state.wrote(slot); });
+                },
+            });
+        });
+        blocks.add(BasicBlock(code: code, exit: state.exit(block.exit))).try();
+    });
+    Ok(Func(
+        name: function.name,
+        parameters: function.parameters,
+        slots: function.slots,
+        blocks: blocks,
+        result: function.result
+    ))
+}
+
+// Remove pure instructions whose local output is dead. None when nothing
+// was removed.
+prune = (alloc: Alloc, info: Flow) Res<Res<Func>, AllocError> {
+    function = info.function;
+    live     ::= zeros(alloc, function.slots.len).try();
+    keep     ::= alloc.Vec<bool>();
+    operands ::= alloc.Vec<usize>();
+    removed  ::= false;
+    blocks   ::= alloc.Vec<BasicBlock>();
+    function.blocks.loop((h, b, block) {
+        stamp = b + 1;
+        Range(info.live_from(b), info.live_from(b + 1)).loop((i) {
+            live.set(info.live_slot(i), stamp);
+        });
+        exit_read(block.exit).when_ok((slot) { live.set(slot, stamp); });
+        keep.clear();
+        Range(0, block.code.len).loop((_) { keep.add(true).try(); });
+        n = block.code.len;
+        Range(0, n).loop((i) {
+            k = n - 1 - i;
+            block.code.get(k).when_ok((instruction) {
+                out  = written(instruction);
+                dead = out.match({
+                    Ok(slot) => info.is_local(slot) && live.get(slot).value_or(0) != stamp && pure(instruction),
+                    None     => false,
+                });
+                dead.match({
+                    true  => {
+                        keep.set(k, false);
+                        removed = true;
+                    },
+                    false => {
+                        out.when_ok((slot) { live.set(slot, 0); });
+                        operands.clear();
+                        reads(instruction, operands).try();
+                        operands.loop((slot) { live.set(slot, stamp); });
+                    },
+                });
+            });
+        });
+        code ::= alloc.Vec<Instruction>();
+        block.code.loop((ih, k, instruction) {
+            keep.get(k).value_or(true).then(() { code.add(instruction).try(); });
+        });
+        blocks.add(BasicBlock(code: code, exit: block.exit)).try();
+    });
+    removed.match({
+        false => Ok(None),
+        true  => Ok(Ok(Func(
+            name: function.name,
+            parameters: function.parameters,
+            slots: function.slots,
+            blocks: blocks,
+            result: function.result
+        ))),
+    })
+}
+
+// Linear scan over intervals in order of their first position.
+Scan = {
+    alloc: Alloc,
+    flow: Flow,
+    pool: Pool,
+    homes :: Vec<Home>,
+    // Per register: the slot holding it, plus one; zero when free.
+    holder :: Vec<usize>,
+    active :: Vec<usize>,
+    // Per slot: a slot whose register would suit it (the source of its
+    // first write), plus one.
+    hint :: Vec<usize>,
+    // Clobbering positions at or before each position.
+    crossing :: Vec<usize>,
+    used :: Vec<bool>,
+
+    run = (self :: @Self) Res<(), AllocError> {
+        function = self.flow.function;
+        slots    = function.slots.len;
+        limit    = self.flow.limit();
+        Range(0, slots).loop((_) {
+            self.homes.add(Home.Frame).try();
+            self.hint.add(0).try();
+        });
+        Range(0, self.pool.caller + self.pool.callee).loop((_) { self.used.add(false).try(); });
+        self.constants_and_hints().try();
+        self.clobber_map(limit).try();
+        // Bucket intervals by their first position.
+        head ::= self.alloc.Vec<usize>();
+        Range(0, limit + 1).loop((_) { head.add(0).try(); });
+        next ::= zeros(self.alloc, slots).try();
+        Range(0, slots).loop((i) {
+            v         = slots - 1 - i;
+            first     = self.flow.first.get(v).value_or(NONE);
+            candidate = self.flow.is_local(v) && first != NONE && first <= limit
+                && self.homes.get(v).value_or(Home.Frame).match({ Fixed(_) => false, _ => true });
+            candidate.then(() {
+                next.set(v, head.get(first).value_or(0));
+                head.set(first, v + 1);
+            });
+        });
+        Range(0, limit + 1).loop((position) {
+            at ::= head.get(position).value_or(0);
+            loop(() { at != 0 }, (h) {
+                v = at - 1;
+                self.assign(v).try();
+                at = next.get(v).value_or(0);
+            });
+        });
+        Ok(())
+    }
+
+    constants_and_hints = (self :: @Self) Res<(), AllocError> {
+        // A unit value has no bits; reading one yields zero. A unit slot
+        // whose address is taken keeps its frame slot.
+        taken ::= self.alloc.Vec<bool>();
+        self.flow.function.slots.loop((_) { taken.add(false).try(); });
+        self.flow.function.blocks.loop((block) {
+            block.code.loop((instruction) {
+                instruction.match({
+                    AddressOf(v) => { taken.set(v.slot, true); },
+                    _            => (),
+                });
+            });
+        });
+        self.flow.function.slots.loop((h, i, ty) {
+            (same(ty, Scalar.Unit) && !taken.get(i).value_or(true)).then(() {
+                self.homes.set(i, Home.Fixed(0));
+            });
+        });
+        self.flow.function.blocks.loop((block) {
+            block.code.loop((instruction) {
+                instruction.match({
+                    Constant(v)    => {
+                        (self.flow.is_local(v.out) && self.flow.defs.get(v.out).value_or(0) == 1).then(() {
+                            self.homes.set(v.out, Home.Fixed(v.value));
+                        });
+                    },
+                    Copy(v)        => { self.suggest(v.out, v.source); },
+                    UnaryValue(v)  => { self.suggest(v.out, v.input); },
+                    BinaryValue(v) => { self.suggest(v.out, v.left); },
+                    Cast(v)        => { self.suggest(v.out, v.input); },
+                    _              => (),
+                });
+            });
+        });
+        Ok(())
+    }
+
+    suggest = (self :: @Self, out: usize, from: usize) {
+        (self.hint.get(out).value_or(0) == 0).then(() { self.hint.set(out, from + 1); });
+    }
+
+    clobber_map = (self :: @Self, limit: usize) Res<(), AllocError> {
+        function = self.flow.function;
+        marks ::= zeros(self.alloc, limit + 1).try();
+        // Aggregate parameters are copied in on entry, through registers
+        // that may hold incoming words.
+        Range(0, function.parameters).loop((p) {
+            aggregate(function, p).then(() { marks.set(1, 1); });
+        });
+        function.blocks.loop((h, b, block) {
+            block.code.loop((ih, k, instruction) {
+                clobbers(function, instruction).then(() {
+                    marks.set(self.flow.start_of(b) + 2 * k, 1);
+                });
+            });
+        });
+        total ::= 0;
+        self.crossing.clear();
+        marks.loop((m) {
+            total = total + m;
+            self.crossing.add(total).try();
+        });
+        Ok(())
+    }
+
+    crosses = (self: @Self, slot: usize) bool {
+        first  = self.flow.first.get(slot).value_or(0);
+        last   = self.flow.last.get(slot).value_or(0);
+        before = (first == 0).match({ true => 0, false => self.crossing.get(first - 1).value_or(0) });
+        self.crossing.get(last).value_or(0) > before
+    }
+
+    free = (self: @Self, register: usize) bool {
+        self.holder.get(register).value_or(1) == 0
+    }
+
+    assign = (self :: @Self, v: usize) Res<(), AllocError> {
+        first = self.flow.first.get(v).value_or(0);
+        // Expire intervals that ended before this one starts.
+        kept ::= self.alloc.Vec<usize>();
+        self.active.loop((a) {
+            (self.flow.last.get(a).value_or(0) < first).match({
+                true  => self.home(a).match({
+                    Register(r) => { self.holder.set(r, 0); },
+                    _           => (),
+                }),
+                false => { kept.add(a).try(); },
+            });
+        });
+        self.active = kept;
+        callee_only = self.crosses(v);
+        lowest      = callee_only.match({ true => self.pool.caller, false => 0 });
+        total       = self.pool.caller + self.pool.callee;
+        // The hint's register when it is free and acceptable, else the
+        // first free register (caller-saved first: they cost no save).
+        hinted = self.hint.get(v).value_or(0);
+        choice ::= NONE;
+        (hinted != 0).then(() {
+            self.home(hinted - 1).match({
+                Register(r) => (r >= lowest && self.free(r)).then(() { choice = r; }),
+                _           => (),
+            });
+        });
+        (choice == NONE).then(() {
+            Range(lowest, total).loop((h, r) {
+                self.free(r).then(() {
+                    choice = r;
+                    h.break();
+                });
+            });
+        });
+        (choice == NONE).then(() {
+            // Spill whichever acceptable interval ends last.
+            victim     ::= NONE;
+            victim_end ::= self.flow.last.get(v).value_or(0);
+            self.active.loop((a) {
+                self.home(a).match({
+                    Register(r) => {
+                        end = self.flow.last.get(a).value_or(0);
+                        (r >= lowest && end > victim_end).then(() {
+                            victim     = a;
+                            victim_end = end;
+                        });
+                    },
+                    _           => (),
+                });
+            });
+            (victim != NONE).then(() {
+                self.home(victim).match({
+                    Register(r) => { choice = r; },
+                    _           => (),
+                });
+                self.homes.set(victim, Home.Frame);
+                self.drop_active(victim).try();
+            });
+        });
+        (choice != NONE).then(() {
+            self.homes.set(v, Home.Register(choice));
+            self.holder.set(choice, v + 1);
+            self.used.set(choice, true);
+            self.active.add(v).try();
+        });
+        Ok(())
+    }
+
+    drop_active = (self :: @Self, slot: usize) Res<(), AllocError> {
+        kept ::= self.alloc.Vec<usize>();
+        self.active.loop((a) { (a != slot).then(() { kept.add(a).try(); }); });
+        self.active = kept;
+        Ok(())
+    }
+
+    home = (self: @Self, slot: usize) Home {
+        self.homes.get(slot).value_or(Home.Frame)
+    }
+}
+
+// Whether a constant's bits are already the canonical value of `ty`.
+fits = (ty: Scalar, value: i64) bool {
+    ty.match({
+        I32  => value >= -2147483648 && value <= 2147483647,
+        Bool => value == 0 || value == 1,
+        I8   => value >= -128 && value <= 127,
+        U8   => value >= 0 && value <= 255,
+        I16  => value >= -32768 && value <= 32767,
+        U16  => value >= 0 && value <= 65535,
+        U32  => value >= 0 && value <= 4294967295,
+        I64  => true,
+        U64  => true,
+        Ptr  => true,
+        _    => false,
+    })
+}

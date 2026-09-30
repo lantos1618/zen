@@ -1,0 +1,25 @@
+// BLAKE2b throughput: zen-crypto's blake2b.zen, unchanged, built with the C
+// backend and the native asm backend. Hashes a 1 MiB buffer `rounds` times
+// (argument, default 64), chaining each digest into the next input, and
+// prints the final digest so both builds can be checked for identical output
+// before timing.
+blake2b_candidate = blake2b
+Ptr = std.mem
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    size: usize = 1048576;
+    rounds = env.argv.get(1).match({ Ok(s) => s.parse_usize().value_or(64), None => 64 });
+    input = a.raw(size, 16).try();
+    Range(0, size).loop((i) { input.write(i, (i % 251).to_u8().value_or(0)); });
+    scratch = a.raw(40 * 8, 16).try().to<u64>();
+    out = a.raw(64, 16).try();
+    Range(0, rounds).loop((r) {
+        blake2b_candidate(out, 64, 64, input, size, input, 0, scratch, 40);
+        input.write(0, out.read(0));
+    });
+    hex ::= a.String().try();
+    Range(0, 64).loop((i) { hex.write_hex_fixed(out.read(i).to_u64(), 2).try(); });
+    println("{} MiB blake2b {}", rounds, hex.view());
+    Ok(0);
+}

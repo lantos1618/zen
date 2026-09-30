@@ -268,7 +268,7 @@ for the tests that need them.
 
 ### Stage 4: SHA-256 on both backends
 
-`tests/native/bench` builds zen-crypto's `sha256.zen` unchanged with the C
+`tests/native/bench/sha256` builds zen-crypto's `sha256.zen` unchanged with the C
 backend (`cc -O2`) and with the asm backend, hashes 16 MiB, and checks that
 both print the same digest (`5d91165a…484186`). On dev-box (x86-64): C 0.07 s,
 asm 1.70 s, about 24x slower. The asm renderers keep every value in a stack

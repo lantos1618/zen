@@ -1,0 +1,463 @@
+// Facts about one native IR function that the machine passes share: which
+// slots an instruction reads and writes, which slots only named reads and
+// writes can reach, and where each such slot is live.
+//
+// Positions number the function in block order, the order the renderers
+// emit. Block `b` starts at `start_of(b)`; its instruction `k` reads at
+// `start_of(b) + 2k` and writes at the following odd position; the
+// terminator reads after the last instruction, and `end_of(b)` closes the
+// block. Parameters are written at position 1, before block 0. A slot's
+// interval is the hull of every position where it is read, written, live
+// into a block or live out of one, so an operand that dies at an
+// instruction and the value that instruction writes never overlap.
+Alloc, AllocError = std.mem
+Vec = std.collections
+Range = std.core
+Func, Instruction, Terminator, Scalar, Op, UnaryOp = gen.gen_ir
+word = gen.gen_ir
+
+NONE*: usize = 18446744073709551615
+
+// Append the slots `instruction` reads to `out`.
+reads* = (instruction: Instruction, out :: Vec<usize>) Res<(), AllocError> {
+    instruction.match({
+        Constant(_)        => Ok(()),
+        Copy(value)        => out.add(value.source),
+        UnaryValue(value)  => out.add(value.input),
+        BinaryValue(value) => {
+            out.add(value.left).try();
+            out.add(value.right)
+        },
+        Invoke(call)       => {
+            call.args.loop((slot) { out.add(slot).try(); });
+            Ok(())
+        },
+        PrintValue(value)  => out.add(value.value),
+        Text(_)            => Ok(()),
+        Cast(value)        => out.add(value.input),
+        AddressOf(_)       => Ok(()),
+        LoadValue(value)   => out.add(value.base),
+        StoreValue(value)  => {
+            out.add(value.base).try();
+            out.add(value.value)
+        },
+        CopyBytes(value)   => {
+            out.add(value.dest).try();
+            out.add(value.source).try();
+            out.add(value.bytes)
+        },
+        Bytes(_)           => Ok(()),
+        WriteOut(value)    => {
+            out.add(value.data).try();
+            out.add(value.len)
+        },
+        System(call)       => {
+            call.args.loop((slot) { out.add(slot).try(); });
+            Ok(())
+        },
+        Startup(_)         => Ok(()),
+        MapPages(value)    => out.add(value.bytes),
+        UnmapPages(slot)   => out.add(slot),
+        SysConst(_)        => Ok(()),
+        Flush              => Ok(()),
+    })
+}
+
+// The slot `instruction` writes by name, if any. `AddressOf` writes its
+// pointer; the slot it points at can change later through that pointer,
+// which `Flow.local` accounts for.
+written* = (instruction: Instruction) Res<usize> {
+    instruction.match({
+        Constant(value)    => Ok(value.out),
+        Copy(value)        => Ok(value.out),
+        UnaryValue(value)  => Ok(value.out),
+        BinaryValue(value) => Ok(value.out),
+        Invoke(call)       => Ok(call.out),
+        Cast(value)        => Ok(value.out),
+        AddressOf(value)   => Ok(value.out),
+        LoadValue(value)   => Ok(value.out),
+        Bytes(value)       => Ok(value.out),
+        System(call)       => Ok(call.out),
+        Startup(value)     => Ok(value.out),
+        MapPages(value)    => Ok(value.out),
+        SysConst(value)    => Ok(value.out),
+        _                  => None,
+    })
+}
+
+exit_read* = (exit: Terminator) Res<usize> {
+    exit.match({
+        Return(slot)   => Ok(slot),
+        Branch(branch) => Ok(branch.value),
+        Jump(_)        => None,
+        Trap(_)        => None,
+    })
+}
+
+// Instructions with no effect beyond their output: removable when that
+// output is dead. Checked arithmetic can trap, and memory reads can fault,
+// so both stay.
+pure* = (instruction: Instruction) bool {
+    instruction.match({
+        Constant(_)        => true,
+        Copy(_)            => true,
+        Cast(_)            => true,
+        Bytes(_)           => true,
+        SysConst(_)        => true,
+        Startup(_)         => true,
+        UnaryValue(value)  => value.op.match({ Not => true, Neg => false }),
+        BinaryValue(value) => value.op.match({
+            Add => false, Sub => false, Mul => false, Div => false, Rem => false,
+            _ => true,
+        }),
+        _                  => false,
+    })
+}
+
+// Instructions after which no caller-saved register survives: calls into
+// the program or the runtime, kernel calls, and aggregate copies (which
+// use the argument registers as scratch). A value live across one, or
+// read by one, must live in a callee-saved register or in memory.
+clobbers* = (function: Func, instruction: Instruction) bool {
+    instruction.match({
+        Invoke(_)         => true,
+        PrintValue(_)     => true,
+        Text(_)           => true,
+        CopyBytes(_)      => true,
+        WriteOut(_)       => true,
+        System(_)         => true,
+        MapPages(_)       => true,
+        UnmapPages(_)     => true,
+        Flush             => true,
+        Copy(value)       => aggregate(function, value.out),
+        LoadValue(value)  => aggregate(function, value.out),
+        StoreValue(value) => aggregate(function, value.value),
+        _                 => false,
+    })
+}
+
+aggregate* = (function: Func, slot: usize) bool {
+    function.slots.get(slot).match({
+        Ok(ty) => ty.match({ Block(_) => true, _ => false }),
+        None   => false,
+    })
+}
+
+// Blocks that `exit` may transfer to.
+successors* = (exit: Terminator, out :: Vec<usize>) Res<(), AllocError> {
+    exit.match({
+        Jump(to)       => out.add(to),
+        Branch(branch) => {
+            out.add(branch.yes).try();
+            out.add(branch.no)
+        },
+        Return(_)      => Ok(()),
+        Trap(_)        => Ok(()),
+    })
+}
+
+// Liveness of the local slots of one function. `local` slots are words whose
+// address is never taken: only named reads and writes reach them, so
+// they can be renamed, removed or kept in registers. Every other slot stays
+// in frame memory and is left alone.
+Flow* = {
+    alloc: Alloc,
+    function*: Func,
+    local* :: Vec<bool>,
+    // Named writes per slot; a parameter counts its incoming value.
+    defs* :: Vec<usize>,
+    // Predecessors of each block, as ranges of `pred_list`.
+    pred_at :: Vec<usize>,
+    pred_list :: Vec<usize>,
+    base :: Vec<usize>,
+    // Local slots live on exit from each block, as ranges of `out_list`.
+    out_at :: Vec<usize>,
+    out_list :: Vec<usize>,
+    // Interval per slot; `first` is NONE for a slot that is never live.
+    first* :: Vec<usize>,
+    last* :: Vec<usize>,
+    scratch :: Vec<usize>,
+    // Scan state: per slot, the last block (plus one) that read it before
+    // writing it, and that wrote it; the pairs found, in scan order.
+    seen_read :: Vec<usize>,
+    seen_write :: Vec<usize>,
+    ue_slot :: Vec<usize>,
+    ue_block :: Vec<usize>,
+    wr_slot :: Vec<usize>,
+    wr_block :: Vec<usize>,
+
+    start_of* = (self: @Self, block: usize) usize { self.base.get(block).value_or(0) }
+
+    end_of* = (self: @Self, block: usize) usize {
+        self.function.blocks.get(block).match({
+            Ok(b) => self.start_of(block) + 2 * b.code.len + 1,
+            None  => 0,
+        })
+    }
+
+    // One past the last position.
+    limit* = (self: @Self) usize {
+        self.base.get(self.function.blocks.len).value_or(2)
+    }
+
+    is_local* = (self: @Self, slot: usize) bool { self.local.get(slot).value_or(false) }
+
+    // Local slots live when `block` exits are `live_slot(i)` for `i` in
+    // `live_from(block) .. live_from(block + 1)`.
+    live_from* = (self: @Self, block: usize) usize { self.out_at.get(block).value_or(0) }
+    live_slot* = (self: @Self, i: usize) usize { self.out_list.get(i).value_or(0) }
+
+    // Classify slots and count their writes. Recomputed per round because
+    // simplification removes writes.
+    classify = (self :: @Self) Res<(), AllocError> {
+        self.local.clear();
+        self.defs.clear();
+        self.function.slots.loop((h, i, ty) {
+            self.local.add(word(ty)).try();
+            self.defs.add(
+                (i < self.function.parameters).match({ true => 1, false => 0 })
+            ).try();
+        });
+        self.function.blocks.loop((block) {
+            block.code.loop((instruction) {
+                written(instruction).when_ok((slot) {
+                    self.defs.set(slot, self.defs.get(slot).value_or(0) + 1);
+                });
+                instruction.match({
+                    AddressOf(value) => { self.local.set(value.slot, false); },
+                    _                => (),
+                });
+            });
+        });
+        Ok(())
+    }
+
+    positions = (self :: @Self) Res<(), AllocError> {
+        self.base.clear();
+        at ::= 2;
+        self.function.blocks.loop((block) {
+            self.base.add(at).try();
+            at = at + 2 * block.code.len + 2;
+        });
+        self.base.add(at).try();
+        Ok(())
+    }
+
+    predecessors = (self :: @Self) Res<(), AllocError> {
+        count = self.function.blocks.len;
+        self.pred_at.clear();
+        self.pred_list.clear();
+        Range(0, count + 1).loop((_) { self.pred_at.add(0).try(); });
+        next ::= self.scratch;
+        self.function.blocks.loop((block) {
+            next.clear();
+            successors(block.exit, next).try();
+            next.loop((to) {
+                self.pred_at.set(
+                    to + 1,
+                    self.pred_at.get(to + 1).value_or(0) + 1
+                );
+            });
+        });
+        Range(0, count).loop((b) {
+            self.pred_at.set(
+                b + 1,
+                self.pred_at.get(b + 1).value_or(0) + self.pred_at.get(b).value_or(0)
+            );
+        });
+        fill ::= self.alloc.Vec<usize>();
+        Range(0, count + 1).loop((b) { fill.add(self.pred_at.get(b).value_or(0)).try(); });
+        Range(0, self.pred_at.get(count).value_or(0)).loop((_) { self.pred_list.add(0).try(); });
+        self.function.blocks.loop((h, from, block) {
+            next.clear();
+            successors(block.exit, next).try();
+            next.loop((to) {
+                at = fill.get(to).value_or(0);
+                self.pred_list.set(at, from);
+                fill.set(to, at + 1);
+            });
+        });
+        self.scratch = next;
+        Ok(())
+    }
+
+    // Liveness per local slot by walking backwards from each read that is
+    // not preceded by a write in its block; the walk stops at blocks that
+    // write the slot. The cost is the size of the answer rather than
+    // blocks times slots.
+    solve* = (self :: @Self) Res<(), AllocError> {
+        self.classify().try();
+        self.positions().try();
+        self.predecessors().try();
+        slots  = self.function.slots.len;
+        blocks = self.function.blocks.len;
+        // Upward-exposed reads and writing blocks, grouped by slot.
+        self.seen_read  = zeros(self.alloc, slots).try();
+        self.seen_write = zeros(self.alloc, slots).try();
+        self.ue_slot.clear();
+        self.ue_block.clear();
+        self.wr_slot.clear();
+        self.wr_block.clear();
+        self.first.clear();
+        self.last.clear();
+        Range(0, slots).loop((_) {
+            self.first.add(NONE).try();
+            self.last.add(0).try();
+        });
+        Range(0, self.function.parameters).loop((p) { self.touch(p, 1); });
+        operands ::= self.alloc.Vec<usize>();
+        self.function.blocks.loop((h, b, block) {
+            block.code.loop((ih, k, instruction) {
+                at = self.start_of(b) + 2 * k;
+                operands.clear();
+                reads(instruction, operands).try();
+                operands.loop((slot) { self.note_read(b, slot, at).try(); });
+                written(instruction).when_ok((slot) { self.note_write(b, slot, at + 1).try(); });
+            });
+            exit_read(block.exit).when_ok((slot) {
+                self.note_read(
+                    b,
+                    slot,
+                    self.start_of(b) + 2 * block.code.len
+                ).try();
+            });
+        });
+        ue_first = group(self.alloc, self.ue_slot, self.ue_block, slots).try();
+        wr_first = group(self.alloc, self.wr_slot, self.wr_block, slots).try();
+        // Per-slot walk. Marks hold `slot + 1` so they need no clearing.
+        live_in   ::= zeros(self.alloc, blocks).try();
+        live_out  ::= zeros(self.alloc, blocks).try();
+        writes    ::= zeros(self.alloc, blocks).try();
+        work      ::= self.alloc.Vec<usize>();
+        out_slot  ::= self.alloc.Vec<usize>();
+        out_block ::= self.alloc.Vec<usize>();
+        Range(0, slots).loop((v) {
+            mark = v + 1;
+            Range(wr_first.at(v), wr_first.at(v + 1)).loop((i) {
+                writes.set(wr_first.value(i), mark);
+            });
+            work.clear();
+            Range(ue_first.at(v), ue_first.at(v + 1)).loop((i) {
+                b = ue_first.value(i);
+                live_in.set(b, mark);
+                work.add(b).try();
+            });
+            loop(() { work.len > 0 }, (wh) {
+                b = work.get(work.len - 1).value_or(0);
+                work.take(work.len - 1);
+                self.touch(v, self.start_of(b));
+                Range(self.pred_at.get(b).value_or(0), self.pred_at.get(b + 1).value_or(0)).loop((i) {
+                    p = self.pred_list.get(i).value_or(0);
+                    (live_out.get(p).value_or(0) != mark).then(() {
+                        live_out.set(p, mark);
+                        self.touch(v, self.end_of(p));
+                        out_slot.add(v).try();
+                        out_block.add(p).try();
+                    });
+                    (live_in.get(p).value_or(0) != mark && writes.get(p).value_or(0) != mark).then(() {
+                        live_in.set(p, mark);
+                        work.add(p).try();
+                    });
+                });
+            });
+        });
+        grouped       = group(self.alloc, out_block, out_slot, blocks).try();
+        self.out_at   = grouped.starts;
+        self.out_list = grouped.values;
+        Ok(())
+    }
+
+    note_read = (self :: @Self, block: usize, slot: usize, at: usize) Res<(), AllocError> {
+        stamp = block + 1;
+        self.is_local(slot).then(() {
+            self.touch(slot, at);
+            (self.seen_write.get(slot).value_or(0) != stamp && self.seen_read.get(slot).value_or(0) != stamp).then(() {
+                self.seen_read.set(slot, stamp);
+                self.ue_slot.add(slot).try();
+                self.ue_block.add(block).try();
+            });
+        });
+        Ok(())
+    }
+
+    note_write = (self :: @Self, block: usize, slot: usize, at: usize) Res<(), AllocError> {
+        stamp = block + 1;
+        self.is_local(slot).then(() {
+            self.touch(slot, at);
+            (self.seen_write.get(slot).value_or(0) != stamp).then(() {
+                self.seen_write.set(slot, stamp);
+                self.wr_slot.add(slot).try();
+                self.wr_block.add(block).try();
+            });
+        });
+        Ok(())
+    }
+
+    touch = (self :: @Self, slot: usize, at: usize) {
+        (at < self.first.get(slot).value_or(NONE)).then(() { self.first.set(slot, at); });
+        (at > self.last.get(slot).value_or(0)).then(() { self.last.set(slot, at); });
+    }
+}
+
+flow* = (alloc: Alloc, function: Func) Res<Flow, AllocError> {
+    result ::= Flow(
+        alloc: alloc,
+        function: function,
+        local: alloc.Vec<bool>(),
+        defs: alloc.Vec<usize>(),
+        pred_at: alloc.Vec<usize>(),
+        pred_list: alloc.Vec<usize>(),
+        base: alloc.Vec<usize>(),
+        out_at: alloc.Vec<usize>(),
+        out_list: alloc.Vec<usize>(),
+        first: alloc.Vec<usize>(),
+        last: alloc.Vec<usize>(),
+        scratch: alloc.Vec<usize>(),
+        seen_read: alloc.Vec<usize>(),
+        seen_write: alloc.Vec<usize>(),
+        ue_slot: alloc.Vec<usize>(),
+        ue_block: alloc.Vec<usize>(),
+        wr_slot: alloc.Vec<usize>(),
+        wr_block: alloc.Vec<usize>()
+    );
+    result.solve().try();
+    Ok(result)
+}
+
+// Pairs grouped by key: the values for key `k` are
+// `values[starts[k] .. starts[k + 1]]`, in insertion order.
+Groups* = {
+    starts*: Vec<usize>,
+    values*: Vec<usize>,
+
+    at* = (self: @Self, key: usize) usize { self.starts.get(key).value_or(0) }
+    value* = (self: @Self, i: usize) usize { self.values.get(i).value_or(0) }
+}
+
+group* = (alloc: Alloc, keys: Vec<usize>, values: Vec<usize>, count: usize)
+         Res<Groups, AllocError> {
+    starts ::= zeros(alloc, count + 1).try();
+    keys.loop((k) { starts.set(k + 1, starts.get(k + 1).value_or(0) + 1); });
+    Range(0, count).loop((k) {
+        starts.set(
+            k + 1,
+            starts.get(k + 1).value_or(0) + starts.get(k).value_or(0)
+        );
+    });
+    fill ::= zeros(alloc, count).try();
+    Range(0, count).loop((k) { fill.set(k, starts.get(k).value_or(0)); });
+    out ::= zeros(alloc, keys.len).try();
+    keys.loop((h, i, k) {
+        at = fill.get(k).value_or(0);
+        out.set(at, values.get(i).value_or(0));
+        fill.set(k, at + 1);
+    });
+    Ok(Groups(starts: starts, values: out))
+}
+
+zeros* = (alloc: Alloc, count: usize) Res<Vec<usize>, AllocError> {
+    out ::= alloc.Vec<usize>();
+    out.reserve(count).try();
+    Range(0, count).loop((_) { out.add(0).try(); });
+    Ok(out)
+}

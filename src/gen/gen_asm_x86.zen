@@ -2,8 +2,11 @@
 // freestanding: its own `_start`, raw `syscall` instructions and a small
 // runtime emitted beside the program. No C library is linked.
 //
-// Frame: every slot lives below %rbp. Word slots take eight bytes and hold
-// their value extended to 64 bits; aggregate slots take their rounded size.
+// Homes: `gen_asm_regalloc` places each word slot in a register, as a
+// constant, or in the frame below %rbp. Words hold their value extended to
+// 64 bits wherever they live; aggregate slots take their rounded size in
+// the frame. %rax, %rcx and %rdx are this renderer's scratch registers and
+// are never allocated.
 // Calls follow System V for words; an aggregate argument is passed as a
 // pointer to the caller's copy, and an aggregate result is written through a
 // hidden pointer passed in %rdi, as System V does for MEMORY-class values.
@@ -12,13 +15,14 @@ Alloc, AllocError = std.mem
 str, String = std.text
 Range = std.core
 Vec = std.collections
-Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
+Program, Func, BasicBlock, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
 Scalar, Layout, Op, TrapKind, Fault = gen.gen_ir
 Convert, Load, Store, SysCall, Start, Stream = gen.gen_ir
 width, signed, word, trap_message = gen.gen_ir
 Span = std.ast
 Target = gen.gen_asm
 Sys, linux_x86_64, constant_value, Platform = gen.gen_sys
+Plan, Home, Pool, plan = gen.gen_asm_regalloc
 
 // This target fixes the instruction set, object dialect, OS and calling ABI:
 // x86-64, ELF with GNU assembler syntax, Linux system calls, System V calls.
@@ -34,7 +38,14 @@ X86_64Linux.impl(Target, {
             scratch: self.alloc.String().try(),
             traps: self.alloc.Vec<TrapSite>(),
             offsets: self.alloc.Vec<usize>(),
-            next_label: 0
+            next_label: 0,
+            plan: Plan(
+                function: Func(name: "", parameters: 0, slots: self.alloc.Vec<Scalar>(), blocks: self.alloc.Vec<BasicBlock>(), result: Scalar.Unit),
+                homes: self.alloc.Vec<Home>(),
+                saved: self.alloc.Vec<usize>(),
+                uses: self.alloc.Vec<usize>()
+            ),
+            save_offsets: self.alloc.Vec<usize>()
         );
         writer.render().try();
         Ok(writer.out)
@@ -59,8 +70,12 @@ Assembly = {
     function_id :: usize = 0,
     // Where the hidden aggregate-result pointer is saved, below %rbp.
     result_offset :: usize = 0,
-    // Slots remain authoritative. This fact holds only within one basic
-    // block and is discarded across calls and stores through pointers.
+    // The current function's allocation and where its callee-saved
+    // registers are kept, below %rbp.
+    plan :: Plan,
+    save_offsets :: Vec<usize>,
+    // Which slot %rax holds a copy of. This fact holds only within one
+    // basic block and is discarded across calls and stores through pointers.
     rax_slot :: Res<usize> = None,
 
     render = (self :: @Self) Res<(), AllocError> {
@@ -84,33 +99,44 @@ Assembly = {
     }
 
     slot_type = (self: @Self, slot: usize) Scalar {
-        self.program.functions.get(self.function_id).match({
-            Ok(f) => f.slots.get(slot).value_or(Scalar.Unit),
-            None  => Scalar.Unit,
-        })
+        self.plan.function.slots.get(slot).value_or(Scalar.Unit)
     }
 
     offset = (self: @Self, slot: usize) usize {
         self.offsets.get(slot).value_or(0)
     }
 
-    // Aggregates are laid out upward from their lowest address.
+    // Aggregates are laid out upward from their lowest address. Slots with
+    // a register or constant home take no frame space.
     layout_frame = (self :: @Self, function: Func) usize {
         self.offsets.clear();
+        self.save_offsets.clear();
         cursor ::= 8;
         self.result_offset = cursor;
-        function.slots.loop((ty) {
-            size  = round_up(at_least_word(stored_size(ty)), 8);
-            align = ty.match({ Block(l) => (l.align > 8).match({ true => 16, false => 8 }), _ => 8 });
-            cursor = round_up(cursor + size, align);
-            self.offsets.add(cursor).ignore();
+        self.plan.saved.loop((r) {
+            cursor = cursor + 8;
+            self.save_offsets.add(cursor).ignore();
+        });
+        function.slots.loop((h, i, ty) {
+            framed = self.plan.home(i).match({ Frame => true, _ => false });
+            framed.match({
+                true  => {
+                    size  = round_up(at_least_word(stored_size(ty)), 8);
+                    align = ty.match({ Block(l) => (l.align > 8).match({ true => 16, false => 8 }), _ => 8 });
+                    cursor = round_up(cursor + size, align);
+                    self.offsets.add(cursor).ignore();
+                },
+                false => { self.offsets.add(0).ignore(); },
+            });
         });
         round_up(cursor, 16)
     }
 
-    function = (self :: @Self, id: usize, function: Func)
+    function = (self :: @Self, id: usize, original: Func)
                Res<(), AllocError> {
         self.function_id = id;
+        self.plan = plan(self.alloc, original, Pool(caller: 6, callee: 5)).try();
+        function = self.plan.function;
         frame = self.layout_frame(function);
         self.out.fmt(
             ".type za_fn_{}, @function\nza_fn_{}:\n    pushq %rbp\n    movq %rsp, %rbp\n    subq ${}, %rsp\n",
@@ -122,25 +148,11 @@ Assembly = {
         hidden.then(() {
             self.out.fmt("    movq %rdi, -{}(%rbp)\n", self.result_offset).try();
         });
-        first = hidden.match({ true => 1, false => 0 });
-        // Spill every incoming word first: an aggregate's copy below uses
-        // registers that may still hold later arguments. An aggregate slot
-        // briefly holds the caller's pointer to its value.
-        Range(0, function.parameters).loop((i) {
-            position = i + first;
-            (position < REGISTER_ARGUMENTS).match({
-                true  => self.out.fmt(
-                    "    movq {}, -{}(%rbp)\n",
-                    argument_register(position),
-                    self.offset(i)
-                ),
-                false => self.out.fmt(
-                    "    movq {}(%rbp), %rax\n    movq %rax, -{}(%rbp)\n",
-                    16 + (position - REGISTER_ARGUMENTS) * 8,
-                    self.offset(i)
-                ),
-            }).try();
+        self.plan.saved.loop((sh, k, r) {
+            self.out.fmt("    movq {}, -{}(%rbp)\n", pool_register(r), self.save_offsets.get(k).value_or(0)).try();
         });
+        self.parameters(function, hidden.match({ true => 1, false => 0 })).try();
+        // An aggregate slot briefly holds the caller's pointer to its value.
         Range(0, function.parameters).loop((i) {
             ty = function.slots.get(i).value_or(Scalar.Unit);
             is_block(ty).then(() {
@@ -164,13 +176,14 @@ Assembly = {
     instruction = (self :: @Self, instruction: Instruction)
                   Res<(), AllocError> {
         instruction.match({
-            Constant(value)    => {
-                (value.value >= -2147483648 && value.value <= 2147483647).match({
-                    true  => self.out.fmt("    movq ${}, %rax\n", value.value),
-                    false => self.out.fmt("    movabsq ${}, %rax\n", value.value),
-                }).try();
-                self.store(value.out, "%rax")
-            },
+            Constant(value)    => self.plan.home(value.out).match({
+                // The constant is materialized where it is read.
+                Fixed(_) => Ok(()),
+                _        => {
+                    self.immediate(value.value, "%rax").try();
+                    self.store(value.out, "%rax")
+                },
+            }),
             Copy(value)        => self.copy(value.out, value.source),
             UnaryValue(value)  => self.unary(value),
             BinaryValue(value) => self.binary(value),
@@ -256,6 +269,9 @@ Assembly = {
                     },
                     false => self.load(value, "%rax"),
                 }).try();
+                self.plan.saved.loop((sh, k, r) {
+                    self.out.fmt("    movq -{}(%rbp), {}\n", self.save_offsets.get(k).value_or(0), pool_register(r)).try();
+                });
                 self.out.add("    leave\n    ret\n")
             },
             Jump(block)    => self.out.fmt(
@@ -478,9 +494,9 @@ Assembly = {
 
     load_memory = (self :: @Self, value: Load) Res<(), AllocError> {
         ty = self.slot_type(value.out);
-        self.load(value.base, "%rsi").try();
         is_block(ty).match({
             true  => {
+                self.load(value.base, "%rsi").try();
                 (value.offset > 0).then(() {
                     self.out.fmt("    addq ${}, %rsi\n", value.offset).try();
                 });
@@ -504,7 +520,10 @@ Assembly = {
                 });
                 ty.match({
                     Unit => self.out.add("    xorl %eax, %eax\n"),
-                    _    => self.out.fmt("    {} {}(%rsi), {}\n", op, value.offset, dest),
+                    _    => {
+                        self.load(value.base, "%rcx").try();
+                        self.out.fmt("    {} {}(%rcx), {}\n", op, value.offset, dest)
+                    },
                 }).try();
                 self.rax_slot = None;
                 self.store(value.out, "%rax")
@@ -514,9 +533,9 @@ Assembly = {
 
     store_memory = (self :: @Self, value: Store) Res<(), AllocError> {
         ty = self.slot_type(value.value);
-        self.load(value.base, "%rdi").try();
         is_block(ty).match({
             true  => {
+                self.load(value.base, "%rdi").try();
                 (value.offset > 0).then(() {
                     self.out.fmt("    addq ${}, %rdi\n", value.offset).try();
                 });
@@ -524,13 +543,14 @@ Assembly = {
                 self.copy_block("%rdi", "%rsi", stored_size(ty)).try();
             },
             false => {
+                self.load(value.base, "%rcx").try();
                 self.load(value.value, "%rax").try();
                 width(ty).match({
                     0 => Ok(()),
-                    1 => self.out.fmt("    movb %al, {}(%rdi)\n", value.offset),
-                    2 => self.out.fmt("    movw %ax, {}(%rdi)\n", value.offset),
-                    4 => self.out.fmt("    movl %eax, {}(%rdi)\n", value.offset),
-                    _ => self.out.fmt("    movq %rax, {}(%rdi)\n", value.offset),
+                    1 => self.out.fmt("    movb %al, {}(%rcx)\n", value.offset),
+                    2 => self.out.fmt("    movw %ax, {}(%rcx)\n", value.offset),
+                    4 => self.out.fmt("    movl %eax, {}(%rcx)\n", value.offset),
+                    _ => self.out.fmt("    movq %rax, {}(%rcx)\n", value.offset),
                 }).try();
             },
         });
@@ -722,11 +742,17 @@ Assembly = {
                 });
             },
             false => {
-                self.out.fmt(
-                    "    movq -{}(%rbp), {}\n",
-                    self.offset(slot),
-                    register
-                ).try();
+                self.plan.home(slot).match({
+                    Register(r) => (!register.eq(pool_register(r))).then(() {
+                        self.out.fmt("    movq {}, {}\n", pool_register(r), register).try();
+                    }),
+                    Fixed(value) => self.immediate(value, register).try(),
+                    Frame        => self.out.fmt(
+                        "    movq -{}(%rbp), {}\n",
+                        self.offset(slot),
+                        register
+                    ).try(),
+                });
                 register.eq("%rax").then(() { self.rax_slot = Ok(slot); });
             },
         });
@@ -734,12 +760,73 @@ Assembly = {
     }
 
     store = (self :: @Self, slot: usize, register: str) Res<(), AllocError> {
-        self.out.fmt(
-            "    movq {}, -{}(%rbp)\n",
-            register,
-            self.offset(slot)
-        ).try();
+        self.plan.home(slot).match({
+            Register(r) => (!register.eq(pool_register(r))).then(() {
+                self.out.fmt("    movq {}, {}\n", register, pool_register(r)).try();
+            }),
+            // Only the defining `Constant` writes a fixed slot, and it
+            // emits nothing.
+            Fixed(_)    => (),
+            Frame       => self.out.fmt(
+                "    movq {}, -{}(%rbp)\n",
+                register,
+                self.offset(slot)
+            ).try(),
+        });
         self.rax_slot = register.eq("%rax").match({ true => Ok(slot), false => None });
+        Ok(())
+    }
+
+    immediate = (self :: @Self, value: i64, register: str) Res<(), AllocError> {
+        (value == 0).match({
+            true  => self.out.fmt("    xorl {}, {}\n", low32(register), low32(register)),
+            false => (value >= -2147483648 && value <= 2147483647).match({
+                true  => self.out.fmt("    movq ${}, {}\n", value, register),
+                false => self.out.fmt("    movabsq ${}, {}\n", value, register),
+            }),
+        })
+    }
+
+    // Move incoming arguments to their homes. Register-to-register moves
+    // form a parallel assignment (a home may be another argument's incoming
+    // register), ordered so no source is overwritten before it is read and
+    // with %rax breaking any cycle.
+    parameters = (self :: @Self, function: Func, first: usize) Res<(), AllocError> {
+        sources ::= self.alloc.Vec<usize>();
+        targets ::= self.alloc.Vec<usize>();
+        Range(0, function.parameters).loop((i) {
+            position = i + first;
+            (position < REGISTER_ARGUMENTS).then(() {
+                incoming = argument_number(position);
+                self.plan.home(i).match({
+                    Register(r) => {
+                        sources.add(incoming).try();
+                        targets.add(register_number(r)).try();
+                    },
+                    Fixed(_)    => (),
+                    Frame       => self.out.fmt(
+                        "    movq {}, -{}(%rbp)\n",
+                        hardware_name(incoming),
+                        self.offset(i)
+                    ).try(),
+                });
+            });
+        });
+        parallel_moves(self.alloc, self.out, sources, targets).try();
+        Range(0, function.parameters).loop((i) {
+            position = i + first;
+            (position >= REGISTER_ARGUMENTS).then(() {
+                self.plan.home(i).match({
+                    Register(r) => self.out.fmt("    movq {}(%rbp), {}\n", 16 + (position - REGISTER_ARGUMENTS) * 8, pool_register(r)).try(),
+                    Fixed(_)    => (),
+                    Frame       => self.out.fmt(
+                        "    movq {}(%rbp), %rax\n    movq %rax, -{}(%rbp)\n",
+                        16 + (position - REGISTER_ARGUMENTS) * 8,
+                        self.offset(i)
+                    ).try(),
+                });
+            });
+        });
         Ok(())
     }
 
@@ -865,6 +952,115 @@ minimum = (ty: Scalar) i64 {
 }
 
 REGISTER_ARGUMENTS: usize = 6
+
+// Allocatable registers in pool order: caller-saved %rsi %rdi %r8-%r11,
+// then callee-saved %rbx %r12-%r15. Numbers are hardware encodings.
+register_number = (r: usize) usize {
+    r.match({
+        0 => 6,
+        1 => 7,
+        2 => 8,
+        3 => 9,
+        4 => 10,
+        5 => 11,
+        6 => 3,
+        7 => 12,
+        8 => 13,
+        9 => 14,
+        _ => 15,
+    })
+}
+
+pool_register = (r: usize) str { hardware_name(register_number(r)) }
+
+hardware_name = (n: usize) str {
+    n.match({
+        0  => "%rax",
+        1  => "%rcx",
+        2  => "%rdx",
+        3  => "%rbx",
+        4  => "%rsp",
+        5  => "%rbp",
+        6  => "%rsi",
+        7  => "%rdi",
+        8  => "%r8",
+        9  => "%r9",
+        10 => "%r10",
+        11 => "%r11",
+        12 => "%r12",
+        13 => "%r13",
+        14 => "%r14",
+        _  => "%r15",
+    })
+}
+
+// The 32-bit name of a 64-bit register.
+low32 = (register: str) str {
+    register.match({
+        "%rax" => "%eax",
+        "%rcx" => "%ecx",
+        "%rdx" => "%edx",
+        "%rbx" => "%ebx",
+        "%rsi" => "%esi",
+        "%rdi" => "%edi",
+        "%r8"  => "%r8d",
+        "%r9"  => "%r9d",
+        "%r10" => "%r10d",
+        "%r11" => "%r11d",
+        "%r12" => "%r12d",
+        "%r13" => "%r13d",
+        "%r14" => "%r14d",
+        _      => "%r15d",
+    })
+}
+
+argument_number = (index: usize) usize {
+    index.match({ 0 => 7, 1 => 6, 2 => 2, 3 => 1, 4 => 8, _ => 9 })
+}
+
+// Emit `targets[i] = sources[i]` for every i at once. Targets are
+// distinct and no target is %rax.
+parallel_moves = (alloc: Alloc, out :: String, sources :: Vec<usize>, targets :: Vec<usize>)
+                 Res<(), AllocError> {
+    done ::= alloc.Vec<bool>();
+    sources.loop((h, i, s) { done.add(s == targets.get(i).value_or(s)).try(); });
+    pending ::= 0;
+    done.loop((d) { (!d).then(() { pending = pending + 1; }); });
+    loop(() { pending > 0 }, (h) {
+        progressed ::= false;
+        Range(0, sources.len).loop((i) {
+            (!done.get(i).value_or(true)).then(() {
+                target = targets.get(i).value_or(0);
+                blocked ::= false;
+                Range(0, sources.len).loop((j) {
+                    (j != i && !done.get(j).value_or(true) && sources.get(j).value_or(0) == target)
+                        .then(() { blocked = true; });
+                });
+                (!blocked).then(() {
+                    out.fmt("    movq {}, {}\n", hardware_name(sources.get(i).value_or(0)), hardware_name(target)).try();
+                    done.set(i, true);
+                    pending = pending - 1;
+                    progressed = true;
+                });
+            });
+        });
+        (!progressed).then(() {
+            // Every pending target is still to be read: park one in %rax.
+            Range(0, sources.len).loop((ih, i) {
+                (!done.get(i).value_or(true)).then(() {
+                    target = targets.get(i).value_or(0);
+                    out.fmt("    movq {}, %rax\n", hardware_name(target)).try();
+                    Range(0, sources.len).loop((j) {
+                        (!done.get(j).value_or(true) && sources.get(j).value_or(0) == target)
+                            .then(() { sources.set(j, 0); });
+                    });
+                    ih.break();
+                });
+            });
+        });
+    });
+    Ok(())
+}
 
 // Called only for the register prefix; later arguments use the stack.
 argument_register = (index: usize) str {

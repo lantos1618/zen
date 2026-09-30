@@ -26,6 +26,7 @@
 { field_of, is_native_record } = gen.gen_c.gen_c_type
 { base_of } = sema.sema_member
 { lower_const_value } = gen.gen_c.gen_c_const
+{ Case, cases_of, find_case } = sema.sema_case
 { type_from_ast } = sema.sema_denote
 
 // The base's resolved kind separates declaration reads from value fields.
@@ -40,10 +41,20 @@ lower_access* = (
     be.native_constant(id, a, ctx, out).try().match({
         true  => Ok(()),
         false => be.base_decl(a.base, ctx).match({
-            Ok(ty) => be.write_variant_value(id, ty, want, a.name.text, out),
+            Ok(ty) => be.names_case(ty, a.name.text).try().match({
+                true  => be.write_variant_value(id, ty, want, a.name.text, out),
+                false => be.lower_type_or_field(id, a, ctx, want, out),
+            }),
             None   => be.lower_type_or_field(id, a, ctx, want, out),
         }),
     })
+}
+
+// An enum's body may declare constants beside its variants.
+names_case = (be :: CBackend, ty: TyId, name: str) Res<bool, AllocError> {
+    cases ::= be.alloc.Vec<Case>();
+    be.check.cases_of(ty, cases).try();
+    Ok(find_case(cases, name).match({ Ok(_) => true, None => false }))
 }
 
 // Header constants are runtime reads of the target C implementation. A field
@@ -288,19 +299,19 @@ collect_decl_const = (
     name : str,
     out  :: Vec<TypeConst>
 ) Res<(), AllocError> {
-    x.kind.match({
-        Struct(s) => collect_struct_const(s, d, name, out),
-        _         => Ok(()),
+    x.body_members().match({
+        Ok(members) => collect_body_const(members, d, name, out),
+        None        => Ok(()),
     })
 }
 
-collect_struct_const = (
-    s    : Struct,
-    d    : Def,
-    name : str,
-    out  :: Vec<TypeConst>
+collect_body_const = (
+    members : Vec<Member>,
+    d       : Def,
+    name    : str,
+    out     :: Vec<TypeConst>
 ) Res<(), AllocError> {
-    s.members.loop((h, m) { keep_const(m, d, name, out).try() });
+    members.loop((h, m) { keep_const(m, d, name, out).try() });
     Ok(());
 }
 
@@ -554,15 +565,18 @@ named_supplied = (
 }
 
 declares_own = (be: CBackend, id: DeclId, name: str) bool {
-    struct_decl(be, id).match({
-        Ok(s) => struct_has_member(s, name),
+    decl_at(be.tree, id).match({
+        Ok(x) => x.body_members().match({
+            Ok(members) => has_member(members, name),
+            None        => false,
+        }),
         None  => false,
     })
 }
 
-struct_has_member = (s: Struct, name: str) bool {
+has_member = (members: Vec<Member>, name: str) bool {
     got ::= false;
-    s.members.loop((h, m) { m.named(name).then(() { got = true; }) });
+    members.loop((h, m) { m.named(name).then(() { got = true; }) });
     got
 }
 

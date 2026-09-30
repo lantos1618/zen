@@ -1,0 +1,6 @@
+// `|` joins variants and `,` joins fields; one body uses one.
+Mixed = { Natural: u32, Reverse: i32 | Rotate }
+
+main = (env: Env) Res<i32, IoError> {
+    Ok(0);
+}

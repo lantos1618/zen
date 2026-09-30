@@ -263,7 +263,11 @@ ShapeNote = {
                 s.members.loop((h, m) { self.member(m, out).try(); });
                 Ok(())
             },
-            Enum(e)   => self.variants(e.variants, out),
+            Enum(e)   => {
+                self.variants(e.variants, out).try();
+                e.members.loop((h, m) { self.member(m, out).try(); });
+                Ok(())
+            },
             _         => Ok(()),
         })
     }

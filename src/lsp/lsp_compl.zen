@@ -400,9 +400,9 @@ Completion = {
                     Res<(), AllocError> {
         decl_at(self.c.tree, n.decl).match({
             None  => written(),
-            Ok(d) => d.kind.match({
-                Struct(s) => s.members.member_names(cands),
-                _         => written(),
+            Ok(d) => d.body_members().match({
+                Ok(members) => members.member_names(cands),
+                None        => written(),
             }),
         }).try();
         self.collect_impls(n, cands)

@@ -103,7 +103,7 @@ Probe = {
             Alias(al)   => self.answer(al.name.span, Ok(al.target), None),
             Struct(st)  => self.members(st.members),
             Impl(im)    => self.members(im.members),
-            Enum(_)     => Tell.Nothing,
+            Enum(en)    => self.members(en.members),
             Import(im)  => self.import(im),
         })
     }

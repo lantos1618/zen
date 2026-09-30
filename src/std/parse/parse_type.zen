@@ -19,6 +19,15 @@ type* = (p :: Parser) Res<TypeId, AllocError> {
     Ok(id);
 }
 
+// A variant payload is one type. In an enum body `|` separates variants, so
+// a union payload is declared under a name first: `Num = u32 | i64`.
+payload_type* = (p :: Parser) Res<TypeId, AllocError> {
+    p.enter().try();
+    id = p.primary_type().try();
+    p.leave();
+    Ok(id);
+}
+
 written_type* = (p :: Parser) Res<Res<TypeId>, AllocError> {
     t = p.type().try();
     Ok(Ok(t));

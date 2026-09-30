@@ -1809,12 +1809,13 @@ ambiguous = (c :: Checker, name: str, a: Cand, b: Cand) Res<(), AllocError> {
     )
 }
 
-// The function a struct declares under `name`, for its parameter list.
+// The function a struct or enum body declares under `name`, for its
+// parameter list.
 member_fn = (c: Checker, ty: TyId, name: str, at: Span) Res<Function> {
     c.types.at(ty).match({
         Named(n) => c.tree.decl_at(n.decl).match({
-            Ok(decl) => decl.kind.match({
-                Struct(st) => st.members.find((m) {
+            Ok(decl) => decl.body_members().match({
+                Ok(members) => members.find((m) {
                     m.named(name) && member_span_eq(m.span, at)
                 }).match({
                     Ok(m) => m.kind.match({
@@ -1823,7 +1824,7 @@ member_fn = (c: Checker, ty: TyId, name: str, at: Span) Res<Function> {
                     }),
                     None  => None,
                 }),
-                _          => None,
+                None        => None,
             }),
             None     => None,
         }),

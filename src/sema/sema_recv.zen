@@ -175,12 +175,12 @@ named_member = (c: Checker, n: TyNamed, name: str) Res<Member> {
         None     => None,
         Ok(rows) => c.tree.decl_at(n.decl).match({
             None  => None,
-            Ok(d) => d.kind.match({
-                Struct(st) => rows.get(0).match({
+            Ok(d) => d.body_members().match({
+                Ok(members) => rows.get(0).match({
                     None  => None,
-                    Ok(i) => st.members.get(i),
+                    Ok(i) => members.get(i),
                 }),
-                _          => None,
+                None        => None,
             }),
         }),
     })

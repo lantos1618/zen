@@ -306,16 +306,13 @@ lower_method_ref = (be :: CBackend, m: MethodRef) Res<(), AllocError> {
     })
 }
 
-// An enum carries members the way a struct does — `Color.impl(Coloured,
-// { rgb = (self: @Self) rgb<u8> { .. } })` is the encoding for values on
-// variants — but it declares none of its own (a variant is not a
-// member), so everything it answers is what an impl supplies.
+// A struct's or enum's own body members first; `method_member` falls back
+// to what an impl supplies.
 method_in_decl = (be :: CBackend, m: MethodRef, x: Decl)
                  Res<(), AllocError> {
-    x.kind.match({
-        Struct(s) => be.method_member(m, s),
-        Enum(_)   => be.supplied_member(m),
-        _         => Ok(()),
+    x.body_members().match({
+        Ok(members) => be.method_member(m, members),
+        None        => Ok(()),
     })
 }
 
@@ -325,10 +322,10 @@ method_in_decl = (be :: CBackend, m: MethodRef, x: Decl)
 // has none. and at the signature the call site resolved — same rule
 // `pick_member` reads a receiver's members by: a name naming two members
 // names neither on its own.
-method_member = (be :: CBackend, m: MethodRef, s: Struct)
+method_member = (be :: CBackend, m: MethodRef, members: Vec<Member>)
                 Res<(), AllocError> {
     found ::= be.alloc.Vec<Member>();
-    s.members.loop((h, mem) {
+    members.loop((h, mem) {
         mem.named(m.name).then(() { found.add(mem).try() });
     });
     be.by_sig(m, found).try().match({

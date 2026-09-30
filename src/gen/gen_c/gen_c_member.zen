@@ -607,15 +607,17 @@ member_at* = (be :: CBackend, s: Site, name: str, out :: Vec<Member>)
     Ok(());
 }
 
+// What a struct or enum body declares under `name`.
 struct_member = (d: Decl, name: str, out :: Vec<Member>) Res<(), AllocError> {
-    d.kind.match({
-        Struct(st) => keep_named(st, name, out),
-        _          => Ok(()),
+    d.body_members().match({
+        Ok(members) => keep_named(members, name, out),
+        None        => Ok(()),
     })
 }
 
-keep_named = (st: Struct, name: str, out :: Vec<Member>) Res<(), AllocError> {
-    st.members.loop((h, m) {
+keep_named = (members: Vec<Member>, name: str, out :: Vec<Member>)
+             Res<(), AllocError> {
+    members.loop((h, m) {
         m.named(name).then(() { out.add(m).try() });
     });
     Ok(());

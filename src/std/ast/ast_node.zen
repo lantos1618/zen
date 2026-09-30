@@ -305,6 +305,16 @@ Decl* = {
     span*: Span,
     leading*: TriviaRun,
     trailing*: TriviaRun,
+
+    // The members a type's body declares: a struct's, or an enum's after the
+    // `,` that ends its variants.
+    body_members* = (self: @Self) Res<Vec<Member>> {
+        self.kind.match({
+            Struct(s) => Ok(s.members),
+            Enum(e)   => Ok(e.members),
+            _         => None,
+        })
+    }
 }
 
 // Imports remain interleaved with declarations in source order.
@@ -338,12 +348,16 @@ Struct* = {
 }
 
 // leading_bar preserves one-variant enum syntax for formatting.
+// `braced` is the body form `{ A: T | B, members }`; its members follow the
+// `,` that ends the variants.
 Enum* = {
     name*: Ident,
     exported*: bool,
     tparams*: Vec<TParam>,
     variants*: Vec<Variant>,
     leading_bar*: Res<Span>,
+    members*: Vec<Member>,
+    braced*: bool,
 }
 
 // A variant accepts at most one type payload and one external discriminant.

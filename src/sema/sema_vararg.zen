@@ -137,6 +137,7 @@ decl_tails = (d: Decl, out :: Vec<TypeId>) Res<(), AllocError> {
     d.kind.match({
         Function(f) => f.fn_tail(out),
         Struct(s)   => s.members.member_tails(out),
+        Enum(e)     => e.members.member_tails(out),
         Impl(im)    => im.members.member_tails(out),
         _           => Ok(()),
     })

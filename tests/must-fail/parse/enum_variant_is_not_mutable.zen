@@ -1,0 +1,6 @@
+// a variant is not a binding, so it has no `::`.
+Holder = { Value :: u32 | Empty }
+
+main = (env: Env) Res<i32, IoError> {
+    Ok(0);
+}

@@ -28,7 +28,7 @@
 { Expr, ExprKind, Literal, LiteralKind, Name, Match, Arm } = std.ast.ast_node
 { Pattern, PatternKind, PatName, Destructure } = std.ast.ast_node
 { Type, TypeKind, Named } = std.ast.ast_node
-{ Decl, DeclKind, Enum, Variant, Module, TParam } = std.ast.ast_node
+{ Decl, DeclKind, Enum, Variant, Module, TParam, Member } = std.ast.ast_node
 { Pos, Span, Ident, QualifiedName, no_trivia } = std.ast.ast_span
 { ExprId, TypeId, PatternId } = std.ast.ast_id
 { Alloc, AllocError } = std.mem
@@ -81,7 +81,9 @@ enum_decl = (a: Alloc, text: str, variants: Vec<Variant>)
             exported: true,
             tparams: tparams,
             variants: variants,
-            leading_bar: None
+            leading_bar: None,
+            members: a.Vec<Member>(),
+            braced: true
         )),
         span: at(),
         leading: no_trivia(),

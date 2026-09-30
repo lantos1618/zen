@@ -194,13 +194,101 @@ down = (d: usize) usize {
 
 value_shape* = (p :: Parser, module_level: bool) ValueShape {
     p.peek().kind.match({
-        BraceOpen => ValueShape.StructValue,
+        BraceOpen => p.brace_shape(),
         Bar       => ValueShape.EnumValue,
         ParenOpen => p.paren_shape(),
         Lt        => p.angle_shape(),
         Ident     => p.ident_shape(module_level),
         _         => ValueShape.ExprValue,
     });
+}
+
+// `{` opens an enum body when it begins with a bar or its first entry ends
+// at a `|`; otherwise a struct body. Angle brackets are skipped because a
+// type argument may hold a union: `x: Res<(), A | B>,` is a field.
+brace_shape = (p :: Parser) ValueShape {
+    first = p.live_at(p.at + 1);
+    p.token_kind_at(first).match({
+        Bar   => ValueShape.EnumValue,
+        Ident => p.entry_bar_after(p.live_at(first + 1)).match({
+            true  => ValueShape.EnumValue,
+            false => ValueShape.StructValue,
+        }),
+        _     => ValueShape.StructValue,
+    });
+}
+
+// Whether the body entry continuing at `from` ends at a `|`.
+entry_bar_after = (p :: Parser, from: usize) bool {
+    p.token_kind_at(from).match({
+        Bar        => true,
+        Star       => p.entry_bar_after(p.live_at(from + 1)),
+        ParenOpen  => p.entry_bar_after(p.live_at(p.group_end_at(from))),
+        Colon      => p.typed_entry_bar(from + 1),
+        ColonColon => p.typed_entry_bar(from + 1),
+        Eq         => p.valued_entry_bar(p.live_at(from + 1)),
+        _          => false,
+    });
+}
+
+typed_entry_bar = (p :: Parser, from: usize) bool {
+    angles ::= 0;
+    depth  ::= 0;
+    out    ::= false;
+    Range(from, p.tokens_len()).loop((h, k) {
+        kind = p.token_kind_at(k);
+        top  = angles == 0 && depth == 0;
+        (top && kind.ends_entry()).match({
+            true  => h.break(),
+            false => (top && kind == TokenKind.Bar).match({
+                true  => { out = true; h.break(); },
+                false => (top && kind == TokenKind.Eq).match({
+                    true  => {
+                        out = p.valued_entry_bar(p.live_at(k + 1));
+                        h.break();
+                    },
+                    false => kind.match({
+                        Lt => { angles = angles + 1; },
+                        Gt => { angles = down(angles); },
+                        _  => { depth = kind.delim_step(depth); },
+                    }),
+                }),
+            }),
+        });
+    });
+    out;
+}
+
+// A value that opens with `(` or `<` is a method, which only a struct body
+// can begin with; otherwise a discriminant runs to its `|` or `,`.
+valued_entry_bar = (p :: Parser, from: usize) bool {
+    p.token_kind_at(from).is_in([TokenKind.ParenOpen, TokenKind.Lt]).match({
+        true  => false,
+        false => {
+            depth ::= 0;
+            out   ::= false;
+            Range(from, p.tokens_len()).loop((h, k) {
+                kind = p.token_kind_at(k);
+                (depth == 0 && kind.ends_entry()).match({
+                    true  => h.break(),
+                    false => (depth == 0 && kind == TokenKind.Bar).match({
+                        true  => { out = true; h.break(); },
+                        false => { depth = kind.delim_step(depth); },
+                    }),
+                });
+            });
+            out
+        },
+    });
+}
+
+ends_entry = (kind: TokenKind) bool {
+    kind.is_in([
+        TokenKind.Comma,
+        TokenKind.BraceClose,
+        TokenKind.Semicolon,
+        TokenKind.Eof,
+    ])
 }
 
 paren_shape = (p :: Parser) ValueShape {

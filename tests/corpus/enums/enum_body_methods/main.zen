@@ -1,0 +1,45 @@
+// An enum body lists its variants joined by `|`, then after the first `,`
+// its members, the way a struct body does. Methods and constants come with
+// the type, a generic enum's methods see its parameter, and `Type.NAME`
+// reaches a constant rather than being read as a variant.
+Permutation* = {
+    Natural | Reverse | Rotate: usize,
+
+    SIZE*: usize = 3,
+
+    index* = (self: @Self, n: usize, i: usize) usize {
+        self.match({
+            Natural   => i,
+            Reverse   => n - 1 - i,
+            Rotate(k) => (i + k) % n,
+        })
+    }
+
+    name* = (self: @Self) str {
+        self.match({
+            Natural   => "natural",
+            Reverse   => "reverse",
+            Rotate(_) => "rotate",
+        })
+    }
+}
+
+Maybe<T> = {
+    Some: T | Nothing,
+
+    or* = (self: @Self, fallback: T) T {
+        self.match({ Some(v) => v, Nothing => fallback })
+    }
+}
+
+main = (env: Env) Res<i32, IoError> {
+    p = Permutation.Reverse;
+    println("{} {}", p.name(), p.index(10, 2));
+    r = Permutation.Rotate(4);
+    println("{} {}", r.name(), r.index(10, 8));
+    println("{}", Permutation.SIZE);
+    m: Maybe<i32> = Maybe.Some(5);
+    n: Maybe<i32> = Maybe.Nothing;
+    println("{} {}", m.or(0), n.or(9));
+    Ok(0);
+}

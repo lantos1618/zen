@@ -162,6 +162,15 @@ declaration = (walker :: Walker, d: DeclVisit) Res<(), AllocError> {
                     (value) { walker.node(WalkNode.Expr(value)).try(); }
                 );
             });
+            e.members.loop((h, index, member) {
+                walker.node(WalkNode.Member(MemberVisit(
+                    site: MemberSite(
+                        parent: MemberParent.Declaration(d.site),
+                        index: index
+                    ),
+                    value: member
+                ))).try();
+            });
         },
         Alias(a)    => {
             a.tparams.loop((p) {

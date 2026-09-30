@@ -22,9 +22,9 @@
 { TokenKind } = std.parse.parse_token
 { Parser, Mark } = std.parse.parser
 { expr } = std.parse.parse_expr
-{ type, written_type } = std.parse.parse_type
+{ type, written_type, payload_type } = std.parse.parse_type
 { value_shape, delim_step } = std.parse.parse_lookahead
-{ struct_members, record_body, type_params, fn_value } = std.parse.parse_member
+{ struct_members, record_body, type_params, fn_value, member_run } = std.parse.parse_member
 
 // Parse a whole module. Its span and trailing trivia cover the complete file.
 module* = (p :: Parser, name: str) Res<Module, AllocError> {
@@ -387,6 +387,14 @@ enum_decl = (
         ),
         None  => Ok(()),
     }).try();
+    p.at_kind(TokenKind.BraceOpen).match({
+        true  => p.braced_enum(m, head, tparams),
+        false => p.bare_enum(m, head, tparams),
+    })
+}
+
+bare_enum = (p :: Parser, m: Mark, head: ImportName, tparams: Vec<TParam>)
+            Res<Decl, AllocError> {
     bar = p.at_kind(TokenKind.Bar).match({
         true  => p.bar_span(),
         false => Ok(None),
@@ -414,7 +422,114 @@ enum_decl = (
         tparams: tparams,
         variants: variants,
         leading_bar: bar,
+        members: p.alloc.Vec<Member>(),
+        braced: false,
     )), m);
+}
+
+// `{ A: T | B = 2, method* = (self: @Self) .. }`: variants joined by `|`,
+// then after the first `,` the enum's methods and constants.
+braced_enum = (p :: Parser, m: Mark, head: ImportName, tparams: Vec<TParam>)
+              Res<Decl, AllocError> {
+    open = p.here_span();
+    p.bump().try();
+    bar = p.at_kind(TokenKind.Bar).match({
+        true  => p.bar_span(),
+        false => Ok(None),
+    }).try();
+    variants ::= p.alloc.Vec<Variant>();
+    variants.add(p.braced_variant().try()).try();
+    running ::= p.at_kind(TokenKind.Bar);
+    running.loop((h) {
+        at_bar = p.here_span();
+        p.bump().try();
+        another = p.at_kind(TokenKind.Ident);
+        another.match({
+            true  => variants.add(p.braced_variant().try()).try(),
+            false => p.error_at(
+                "expected variant: a `|` promises another one",
+                at_bar
+            ).try(),
+        });
+        running = another && p.at_kind(TokenKind.Bar);
+    });
+    members ::= p.alloc.Vec<Member>();
+    p.eat(TokenKind.Comma).try().then(() { p.member_run(members).try(); });
+    p.expect_close(
+        TokenKind.BraceClose,
+        "unclosed `{`: this enum's body is never closed",
+        open
+    ).try();
+    members.loop((h, mem) {
+        p.enum_member(mem).try();
+        variants.find((v) { v.name.text.eq(mem.name().text) }).match({
+            None  => Ok(()),
+            Ok(_) => p.error_at(
+                "a member and a variant share this name, and `Type.name` could mean either: rename one",
+                mem.span
+            ),
+        }).try();
+    });
+    p.add_decl(DeclKind.Enum(Enum(
+        name: head.name,
+        exported: head.exported,
+        tparams: tparams,
+        variants: variants,
+        leading_bar: bar,
+        members: members,
+        braced: true,
+    )), m);
+}
+
+// `Name`, `Name: T`, `Name = 2` or `Name: T = 2`. A variant is not a
+// binding, so it has no `::`, and its payload is written like a field's.
+braced_variant = (p :: Parser) Res<Variant, AllocError> {
+    m    = p.open();
+    name = p.ident("expected a variant name").try();
+    p.at_kind(TokenKind.ColonColon).then(() {
+        p.error(
+            "a variant's payload is written `Name: T`: `::` marks a mutable binding, and a variant is not one"
+        ).try();
+    });
+    payload      = p.at_kind(TokenKind.ParenOpen).match({
+        true  => {
+            p.error("a variant's payload is written `Name: T`").try();
+            p.variant_payload()
+        },
+        false => (p.eat(TokenKind.Colon).try()
+            || p.eat(TokenKind.ColonColon).try()).match({
+            true  => Ok(Ok(p.payload_type().try())),
+            false => Ok(None),
+        }),
+    }).try();
+    discriminant = p.eat(TokenKind.Eq).try().match({
+        true  => p.variant_discriminant(),
+        false => Ok(None),
+    }).try();
+    end          = p.prev_end;
+    Ok(Variant(
+        name: name,
+        payload: payload,
+        discriminant: discriminant,
+        span: p.span_from(m.start),
+        leading: m.leading,
+        trailing: p.claim_trailing(end),
+    ));
+}
+
+// An enum has no storage beyond its variants, and its methods have bodies.
+enum_member = (p :: Parser, mem: Member) Res<(), AllocError> {
+    mem.kind.match({
+        Field(_)    => p.error_at(
+            "an enum stores only its variants: after the `,` that ends them come methods and constants, not fields",
+            mem.span
+        ),
+        Function(f) => f.body.match({
+            Ok(_) => Ok(()),
+            None  => p.error_at("an enum's method needs a body", mem.span),
+        }),
+        _           => Ok(()),
+    })
 }
 
 bar_span = (p :: Parser) Res<Res<Span>, AllocError> {

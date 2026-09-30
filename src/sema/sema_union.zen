@@ -175,7 +175,8 @@ union_reading* = (c :: Checker, decl: DeclId) bool {
 
 enum_union_reading = (c :: Checker, decl: DeclId, d: Decl) bool {
     d.kind.match({
-        Enum(e) => e.enum_has_discriminants().match({
+        // Braces write an enum; only the bare `A | B` form joins types.
+        Enum(e) => (e.braced || e.enum_has_discriminants()).match({
             true  => false,
             false => c.no_nominal_variant(decl, e),
         }),

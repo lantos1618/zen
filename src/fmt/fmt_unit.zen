@@ -66,6 +66,7 @@ omit_unit_returns* = (
         d.kind.match({
             Function(f) => edits.function(f).try(),
             Struct(s)   => edits.members(s.members).try(),
+            Enum(e)     => edits.members(e.members).try(),
             Impl(i)     => edits.members(i.members).try(),
             _           => {},
         });

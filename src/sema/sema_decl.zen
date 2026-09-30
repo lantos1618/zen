@@ -19,7 +19,7 @@
 { bound_member_type } = sema.sema
 { type_from_ast, param_type, ret_type, type_decl } = sema.sema_denote
 { decl_as_type } = sema.sema_type
-{ enter_struct_tvars, member_type, self_ctx } = sema.sema_member
+{ enter_struct_tvars, enter_type_tvars, member_type, self_ctx } = sema.sema_member
 { settle_variant_at } = sema.sema_apply
 { variant_payload } = sema.sema_case
 { owner_of, push_tparams } = sema.sema_inst
@@ -110,7 +110,8 @@ check_decl = (c :: Checker, d: Decl, m: Module, mi: usize)
         Enum(e)     => {
             c.enum_payloads(e, mi).try();
             c.check_enum_discriminants(e, mi).try();
-            c.check_members(e, mi)
+            c.check_members(e, mi).try();
+            c.enum_bodies(e, m, mi)
         },
         Impl(im)    => c.impl_bodies(im, m, mi),
         Const(k)    => c.const_body(k, mi),
@@ -218,7 +219,7 @@ struct_bodies = (c :: Checker, s: Struct, m: Module, mi: usize)
     self_ty = c.named_self(s.name.text, mi).try();
     tmark   = c.tvar_mark();
     c.enter_struct_tvars(s, mi).try();
-    c.check_member_overloads(s, self_ty, mi).try();
+    c.check_member_overloads(s.members, self_ty, mi).try();
     s.members.loop((mem) {
         c.member_body(mem, self_ty, m, mi).try();
         mem.kind.match({
@@ -231,6 +232,23 @@ struct_bodies = (c :: Checker, s: Struct, m: Module, mi: usize)
     });
     c.release_tvars(tmark).try();
     Ok(());
+}
+
+// An enum body's methods and constants get the same checks as a struct's.
+enum_bodies = (c :: Checker, e: Enum, m: Module, mi: usize)
+              Res<(), AllocError> {
+    (e.members.len == 0).match({
+        true  => Ok(()),
+        false => {
+            self_ty = c.named_self(e.name.text, mi).try();
+            tmark   = c.tvar_mark();
+            c.enter_type_tvars(e.name, e.tparams, mi).try();
+            c.check_member_overloads(e.members, self_ty, mi).try();
+            e.members.loop((mem) { c.member_body(mem, self_ty, m, mi).try(); });
+            c.release_tvars(tmark).try();
+            Ok(())
+        },
+    })
 }
 
 // The parser restricts native fallbacks to integer literals. Fixed-width
@@ -273,10 +291,14 @@ field_default = (c :: Checker, field: Field, self_ty: TyId, mi: usize)
     Ok(())
 }
 
-check_member_overloads = (c :: Checker, s: Struct, self_ty: TyId, mi: usize)
-                         Res<(), AllocError> {
+check_member_overloads = (
+    c       :: Checker,
+    members : Vec<Member>,
+    self_ty : TyId,
+    mi      : usize
+) Res<(), AllocError> {
     seen ::= c.alloc.Vec<Member>();
-    s.members.loop((h, m) {
+    members.loop((h, m) {
         m.kind.match({
             Function(_) => {
                 seen.loop((h2, first) {
@@ -287,7 +309,7 @@ check_member_overloads = (c :: Checker, s: Struct, self_ty: TyId, mi: usize)
             _           => Ok(()),
         }).try();
     });
-    s.members.loop((h, m) {
+    members.loop((h, m) {
         c.check_free_member_overloads(m, self_ty, mi).try();
     });
     Ok(())
@@ -581,6 +603,7 @@ target_decl_tvars = (c :: Checker, d: Decl, mi: usize)
                     Res<(), AllocError> {
     d.kind.match({
         Struct(s) => c.enter_struct_tvars(s, mi),
+        Enum(e)   => c.enter_type_tvars(e.name, e.tparams, mi),
         _         => Ok(()),
     })
 }

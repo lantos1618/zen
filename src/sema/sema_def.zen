@@ -698,6 +698,13 @@ index_table = (index :: WorldIndex, a: Alloc, tree: Ast, t: ModuleTable)
                 }),
                 None     => Ok(()),
             }),
+            EnumDef   => decl_at(tree, d.id).match({
+                Ok(decl) => decl.kind.match({
+                    Enum(e) => index_members(index.members, a, d.id, e.members),
+                    _       => Ok(()),
+                }),
+                None     => Ok(()),
+            }),
             _         => Ok(()),
         }).try();
     });

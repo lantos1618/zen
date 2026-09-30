@@ -1,0 +1,6 @@
+// a braced enum writes its payload like a field: `Circle: f64`.
+Shape = { Circle(f64) | Dot }
+
+main = (env: Env) Res<i32, IoError> {
+    Ok(0);
+}

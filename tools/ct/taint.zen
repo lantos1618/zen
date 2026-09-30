@@ -1164,11 +1164,13 @@ unknown_shape* = (a: Alloc, isa: Isa) CallShape {
     )
 }
 
-// memcpy, memmove and memset: they read the source pointer (or the fill
-// byte) and the length, and write only through the destination, whose
-// incoming bytes they never read.
+// memcpy, memmove, memset and bzero: they read the source pointer (or the
+// fill byte) and the length, and write only through the destination, whose
+// incoming bytes they never read. bzero (what Clang calls for a zero fill
+// on Darwin) takes two arguments and returns nothing.
 library_shape = (a: Alloc, conv: Convention, target: str) CallShape {
-    fill = call_target(target).ends_with("memset");
+    zero = clears(target);
+    fill = zero || call_target(target).ends_with("memset");
     writable ::= a.Vec<Writable>();
     writable.add(Writable(index: 0, bytes: 0)).match({ _ => () });
     ignored ::= a.Vec<str>();
@@ -1176,10 +1178,10 @@ library_shape = (a: Alloc, conv: Convention, target: str) CallShape {
     pointers ::= a.Vec<str>();
     (!fill).then(() { pointers.add(conv.gprs.get(1).value_or("")).match({ _ => () }); });
     CallShape(
-        gprs: 3,
+        gprs: zero.match({ true => 2, false => 3 }),
         vectors: 0,
         stack: 0,
-        returns: true,
+        returns: !zero,
         pair: false,
         vector_result: false,
         vector_results: 0,
@@ -1276,7 +1278,7 @@ call = (
     // A GCC clone (`f.isra.0`, `f.constprop.0`, `f.part.0`) may take its
     // arguments differently from f's prototype: ISRA passes fields of an
     // aggregate in registers of their own.
-    shape = returns_first(target).match({
+    shape = (returns_first(target) || clears(target)).match({
         true  => library_shape(an.alloc, conv, target),
         false => clone_call(target).match({
             true  => unknown_shape(an.alloc, an.isa),
@@ -1443,6 +1445,13 @@ data_blind = (op: str) bool {
     bare = name.starts_with("_").match({ true => name.slice(1, name.len), false => name });
     list = ["bzero", "explicit_bzero", "memset_s", "arc4random_buf", "getentropy", "__cpu_indicator_init"];
     name.is_in(list) || bare.is_in(list)
+}
+
+// The C library's zero fills.
+clears = (op: str) bool {
+    name = call_target(op);
+    bare = name.starts_with("_").match({ true => name.slice(1, name.len), false => name });
+    name.is_in(["bzero", "explicit_bzero"]) || bare.is_in(["bzero", "explicit_bzero"])
 }
 
 // The C library's copies and fills, whose result is their first argument.

@@ -30,3 +30,4 @@ main  leaky_stack_walk   *key
 # pick's index is public by its audit; its table holds secrets.
 main  pick               *table
 main  leaky_call_if      key
+main  leaky_wide_divide  key

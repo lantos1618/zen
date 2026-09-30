@@ -38,11 +38,14 @@
 // Reported, as in ctgrind and the constant-time literature:
 //   branch    a conditional branch whose flags or register are secret
 //   address   a load or store whose base or index register is secret
-//   divide    a division with a secret operand (variable latency)
+//   divide    a division with a secret operand (variable latency), or a
+//             call of the runtime library's 128-bit division given one
 //   indirect  an indirect jump or call through a secret register
 //   call      a secret passed to an audited callee that was not seeded
 //             with it
 //   result    a secret returned by a function audited as public-result
+//   unaudited a secret passed to a callee nobody audited (a helper the
+//             compiler kept out of line, or a library routine)
 //   repeat    a rep string instruction with a secret count
 //   unreached code after a label no path reaches (never analysed)
 //   unconverged  taint still growing when the analysis gave up
@@ -1315,6 +1318,18 @@ call = (
     stray.then(() {
         an.report("call", an.alloc.String("{} (unseeded:{})", line.text, which.view()).try().view()).try();
     });
+    // A callee nobody audited was handed a secret: its own branches and
+    // addresses were never checked. The runtime library's wide divisions
+    // are divisions; the copies and fills, the entropy source and calls
+    // that never return are known not to depend on the data.
+    (secret && !shape.audited).then(() {
+        wide_division(target).match({
+            true  => an.report("divide", line.text).try(),
+            false => { (!returns_first(target) && !no_return(target) && !data_blind(target)).then(() {
+                an.report("unaudited", line.text).try();
+            }); },
+        });
+    });
     out = secret && !(shape.audited && shape.public_result && !stray);
     // Memory behind a hidden result pointer holds the result: marked when
     // it is a known part of this frame; somewhere in the frame smears it;
@@ -1381,6 +1396,23 @@ call = (
     cur.flags = false;
     cur.carry = false;
     Ok(())
+}
+
+// The runtime library's 128-bit divisions, which take variable time.
+wide_division = (op: str) bool {
+    name = call_target(op);
+    bare = name.starts_with("_").match({ true => name.slice(1, name.len), false => name });
+    list = ["__udivti3", "__umodti3", "__divti3", "__modti3", "__udivmodti4", "__divmodti4"];
+    name.is_in(list) || bare.is_in(list)
+}
+
+// Library calls whose timing does not depend on the data they are given:
+// clearing, the entropy source and the CPU feature probe.
+data_blind = (op: str) bool {
+    name = call_target(op);
+    bare = name.starts_with("_").match({ true => name.slice(1, name.len), false => name });
+    list = ["bzero", "explicit_bzero", "memset_s", "arc4random_buf", "getentropy", "__cpu_indicator_init"];
+    name.is_in(list) || bare.is_in(list)
 }
 
 // The C library's copies and fills, whose result is their first argument.

@@ -13,7 +13,7 @@ Alloc, AllocError = std.mem
 Vec, Map = std.collections
 str, String, parse_usize = std.text
 Range = std.core
-Isa, Finding, CallShape, function_lines, parse_lines, analyze = taint
+Isa, Finding, CallShape, function_lines, parse_lines, analyze, argument_reads = taint
 Marked, marked_functions, seed_of, result_registers = abi
 Entry, manifest_entries, manifest_functions, call_shapes, audited_shape = abi
 
@@ -110,6 +110,70 @@ short_name* = (symbol: str) str {
 
 digit = (c: u8) bool { c >= '0' && c <= '9' }
 
+// AT&T operands carry `%` register prefixes; arm64 instructions have none
+// (directives such as `.type f, %function` and comments such as
+// `; %bb.0:` aside).
+detect_isa = (body: Vec<str>) Isa {
+    body.find((line) {
+        text = line.trim().value_or(line);
+        !text.starts_with(".") && !text.starts_with(";") && !text.starts_with("#")
+            && !text.starts_with("/") && text.contains("%")
+    }).match({
+        Ok(_) => Isa.X86,
+        None  => Isa.Arm,
+    })
+}
+
+X86_ARGS = [str, 6]("rdi", "rsi", "rdx", "rcx", "r8", "r9")
+
+// A shape's argument registers its audit did not seed: the ones whose use
+// the call rule must establish.
+unseeded = (a: Alloc, isa: Isa, s: CallShape) Res<Vec<str>, AllocError> {
+    out ::= a.Vec<str>();
+    Range(0, s.gprs).loop((i) {
+        r = isa.match({
+            X86 => (i < 6).match({ true => X86_ARGS[i], false => "" }),
+            Arm => a.String("x{}", i).try().view(),
+        });
+        (r.len > 0 && !r.is_in(s.values) && !r.is_in(s.pointers) && !r.is_in(s.pointers2)).then(() { out.add(r).try(); });
+    });
+    Range(0, s.vectors).loop((i) {
+        r = isa.match({ X86 => a.String("mm{}", i).try().view(), Arm => a.String("v{}", i).try().view() });
+        (!r.is_in(s.values)).then(() { out.add(r).try(); });
+    });
+    Ok(out)
+}
+
+// The seeded registers count as read: only unseeded ones were measured.
+with_reads = (s: CallShape, measured: Vec<str>) CallShape {
+    reads ::= measured;
+    s.values.loop((r) { (!r.is_in(reads)).then(() { reads.add(r).match({ _ => () }); }); });
+    s.pointers.loop((r) { (!r.is_in(reads)).then(() { reads.add(r).match({ _ => () }); }); });
+    s.pointers2.loop((r) { (!r.is_in(reads)).then(() { reads.add(r).match({ _ => () }); }); });
+    CallShape(
+        gprs: s.gprs,
+        vectors: s.vectors,
+        stack: s.stack,
+        returns: s.returns,
+        pair: s.pair,
+        vector_result: s.vector_result,
+        hidden: s.hidden,
+        writable: s.writable,
+        ignored: s.ignored,
+        pointer_args: s.pointer_args,
+        known: s.known,
+        reads: reads,
+        reads_known: true,
+        audited: s.audited,
+        public_result: s.public_result,
+        values: s.values,
+        pointers: s.pointers,
+        slots: s.slots,
+        pointer_slots: s.pointer_slots,
+        pointers2: s.pointers2
+    )
+}
+
 // No findings beyond `branches` allowed conditional branches.
 within = (found: Vec<Finding>, branches: usize) bool {
     count ::= 0;
@@ -194,6 +258,25 @@ run_audit* = (
                 },
             });
             asm = env.fs.read(a, asm_path.view()).try();
+            // What each audited function's body reads with this compiler
+            // and level, for its callers' call rule.
+            marked.loop((m) {
+                body = function_lines(a, asm.view(), m.symbol).try();
+                (body.len > 0).then(() {
+                    isa   = detect_isa(body);
+                    lines = parse_lines(a, isa, body).try();
+                    isa.match({
+                        X86 => { shapes_x86.get(m.symbol).when_ok((s) {
+                            reads = argument_reads(a, isa, lines, shapes_x86, unseeded(a, Isa.X86, s).try()).try();
+                            shapes_x86.set(m.symbol, with_reads(s, reads)).try();
+                        }); },
+                        Arm => { shapes_arm.get(m.symbol).when_ok((s) {
+                            reads = argument_reads(a, isa, lines, shapes_arm, unseeded(a, Isa.Arm, s).try()).try();
+                            shapes_arm.set(m.symbol, with_reads(s, reads)).try();
+                        }); },
+                    });
+                });
+            });
             marked.loop((m) {
                 one     = audit_function(
                     a,
@@ -246,17 +329,7 @@ audit_function = (
             })
         },
         false => {
-            // AT&T operands carry `%` register prefixes; arm64 instructions
-            // have none (directives such as `.type f, %function` and
-            // comments such as `; %bb.0:` aside).
-            isa     = body.find((line) {
-                text = line.trim().value_or(line);
-                !text.starts_with(".") && !text.starts_with(";") && !text.starts_with("#")
-                    && !text.starts_with("/") && text.contains("%")
-            }).match({
-                Ok(_) => Isa.X86,
-                None  => Isa.Arm,
-            });
+            isa     = detect_isa(body);
             lines   = parse_lines(a, isa, body).try();
             seed    = seed_of(a, isa, c, m).try();
             found   = analyze(

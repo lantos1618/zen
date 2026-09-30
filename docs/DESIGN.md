@@ -2131,11 +2131,21 @@ be flagged, so a check that has stopped seeing anything fails:
   code. A call passes secrets through the integer and vector argument
   registers and stack arguments its C prototype uses. An audited callee must
   have been seeded with every secret it is passed, or the call is reported;
-  its result is public only when its audit proved it (`public-result`).
-  Otherwise the result, and memory behind a hidden result pointer, is
-  secret when any argument is secret or points at secrets, and a
-  secret-bearing call that passes a writable stack address smears the
-  stack. Calls that never return end their path. `CT_TRACE=<symbol>` prints
+  only argument registers its body actually consumes count (measured on its
+  own assembly for the same compiler and level), a register merely holding
+  the address of secret memory counts only for a pointer parameter, and
+  std.simd capability arguments, which carry no data, never count. Its
+  result is public only when its audit proved it (`public-result`, which
+  also forbids returning a pointer into secret memory); otherwise the
+  result, and memory behind a hidden result pointer, is secret when any
+  argument is secret or points at secrets. A secret-bearing call that
+  passes a writable stack address marks the one value a `::` borrow names
+  (its extent is read from the mangled parameter types) or, for a Ptr<T>,
+  smears the stack. A function's own hidden result pointer addresses memory
+  that may hold secrets. On x86-64 a byte written over a secret register
+  (`sete %al`) makes only its low byte public, which is what a byte-sized
+  read, spill or `bool` result sees. Calls that never return end their
+  path. `CT_TRACE=<symbol>` prints
   the analysis instruction by instruction. It fails on a conditional branch,
   a memory address, a division or an indirect jump that depends on a
   secret, a secret passed to an audited callee unseeded, and a secret
@@ -2143,7 +2153,11 @@ be flagged, so a check that has stopped seeing anything fails:
   secret pointees is not modelled.
 - `ct-grind` is the ctgrind method: `std.ct.ct_grind.secret_bytes` marks
   memory undefined for valgrind's memcheck, which then reports every branch
-  and address computed from it; `public_bytes` is the declassification.
+  and address computed from it; `public_bytes` is the declassification. A
+  program compiled with `-DZEN_CT_GRIND` also marks every `std.ct.declassify`
+  result defined (`ZG_CT_PUBLIC`, a valgrind client request next to the asm
+  marker), so memcheck and the static check agree on where secrets may
+  steer code.
 - `ct-timing` is a dudect-style statistical test (`std.ct.ct_timing`):
   fixed against random inputs, interleaved, Welch's t over all measurements
   and over dudect's percentile crops, run under `taskset` on one core after

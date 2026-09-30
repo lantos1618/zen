@@ -73,16 +73,36 @@ Seed* = {
     pointers2*: Vec<str>,
 }
 
+// An integer argument register holding a pointer the callee may write
+// through; `bytes` is the extent of the one value it borrows (a `::`
+// parameter), or 0 when the extent is unknown (a Ptr<T>).
+Writable* = { index*: usize, bytes*: usize }
+
 // How a callee takes its arguments and returns its result (tools/ct/abi),
 // and, for an audited callee, what its audit assumed and proved.
 CallShape* = {
     gprs*: usize,             // integer argument registers
     vectors*: usize,          // vector argument registers
     stack*: usize,            // bytes of stack arguments
+    returns*: bool,           // a result in registers (not void, not hidden)
     pair*: bool,              // an integer result in a register pair
     vector_result*: bool,     // a result in the first vector register
     hidden*: usize,           // bytes returned through a hidden pointer
-    writable*: Vec<usize>,    // integer argument registers the callee may write through
+    writable*: Vec<Writable>, // pointers the callee may write through
+    // Argument registers holding a std.simd CPU capability: a proof token
+    // with no data, which compilers need not even load, so whatever the
+    // register holds is not an input.
+    ignored*: Vec<str>,
+    // Argument registers whose C parameter is a pointer. A register that
+    // merely holds the address of secret memory is a public number, so it
+    // carries nothing into a parameter that is not dereferenced.
+    pointer_args*: Vec<str>,
+    known*: bool,             // from a prototype in the file
+    // For an audited callee, the argument registers its body reads (from
+    // its assembly for this compiler and level); `reads_known` is false
+    // until that is computed.
+    reads*: Vec<str>,
+    reads_known*: bool,
     audited*: bool,
     public_result*: bool,     // the audit proved the result register public
     values*: Vec<str>,        // argument registers the audit seeded as secret
@@ -100,6 +120,9 @@ StackAddr = { reg: str, at: i64, exact: bool }
 State = {
     live :: bool,
     val :: Vec<str>,
+    // Secret registers whose low byte is public (x86: `sete %al` over a
+    // secret %rax). A byte-sized read or result sees only that byte.
+    low :: Vec<str>,
     pts :: Vec<str>,
     // Bitmap of entry-relative stack bytes holding secrets (bytes WINDOW_LOW
     // upward).
@@ -488,6 +511,7 @@ copy_state = (a: Alloc, s: State) Res<State, AllocError> {
     Ok(State(
         live: s.live,
         val: s.val.map(a, (x) { x }).try(),
+        low: s.low.map(a, (x) { x }).try(),
         pts: s.pts.map(a, (x) { x }).try(),
         slots: s.slots.map(a, (x) { x }).try(),
         pslots: s.pslots.map(a, (x) { x }).try(),
@@ -505,6 +529,7 @@ dead_state = (a: Alloc) State {
     State(
         live: false,
         val: a.Vec<str>(),
+        low: a.Vec<str>(),
         pts: a.Vec<str>(),
         slots: a.Vec<u64>(),
         pslots: a.Vec<i64>(),
@@ -548,6 +573,17 @@ join = (a: Alloc, into :: State, from: State) Res<bool, AllocError> {
             });
             into.addr = kept;
         });
+        // A low byte stays public where every path agrees (a path on
+        // which the register is public agrees).
+        was_low ::= a.Vec<str>();
+        into.low.loop((x) {
+            (!has(from.val, x) || has(from.low, x)).then(() { was_low.add(x).try(); });
+        });
+        from.low.loop((x) {
+            (!has(into.val, x) && !has(was_low, x)).then(() { was_low.add(x).try(); });
+        });
+        (was_low.len < into.low.len).then(() { grew = true; });
+        into.low = was_low;
         from.val.loop(
             (x) { (!has(into.val, x)).then(() { into.val.add(x).try(); grew = true; }); }
         );
@@ -595,12 +631,15 @@ Analysis* = {
     // Print every instruction of the final pass with the tainted registers
     // and stack slots before it (ct-asm's CT_TRACE).
     trace: bool,
+    // Some instruction consumed a tainted register (argument_reads).
+    observed :: bool,
 
     state_at = (self: @Self, label: str) Res<usize> {
         Range(0, self.labels.len).find((i) { self.labels.get(i).value_or("").eq(label) })
     }
 
     report = (self :: @Self, kind: str, text: str) Res<(), AllocError> {
+        self.observed = true;
         self.reporting.match({
             false => Ok(()),
             true  => self.findings.add(Finding(kind: kind, text: text)),
@@ -618,10 +657,18 @@ Analysis* = {
         Ok(())
     }
 
-    // A return: a public-result function must not return a secret.
+    // A return: a public-result function must not return a secret, nor a
+    // pointer into secret memory (callers take its result as plain data).
     returns = (self :: @Self, cur: State, line: Line) Res<(), AllocError> {
-        self.result_check.loop((r) {
-            has(cur.val, r).then(() { self.report("result", line.text).try(); });
+        [str, 6]("rax", "rdx", "mm0", "x0", "x1", "v0").loop((r) {
+            has(cur.val, r).then(() { self.observed = true; });
+        });
+        self.result_check.loop((entry) {
+            // `rax/1`: a byte-sized result, only its low byte returned.
+            byte = entry.ends_with("/1");
+            r = byte.match({ true => entry.slice(0, entry.len - 2), false => entry });
+            secret = has(cur.val, r) && !(byte && has(cur.low, r));
+            (secret || has(cur.pts, r) || has(cur.pts2, r)).then(() { self.report("result", line.text).try(); });
         });
         Ok(())
     }
@@ -648,7 +695,8 @@ analyze* = (
         grew: false,
         shapes: shapes,
         result_check: result_check,
-        trace: trace
+        trace: trace,
+        observed: false
     );
     lines.loop((l) {
         (l.label.len > 0).then(() {
@@ -813,16 +861,22 @@ call_target* = (op: str) str {
 
 // What a callee is assumed to take when its prototype is unknown.
 unknown_shape = (a: Alloc, isa: Isa) CallShape {
-    writable ::= a.Vec<usize>();
-    Range(0, isa.match({ X86 => 6, Arm => 8 })).loop((i) { writable.add(i).match({ _ => () }); });
+    writable ::= a.Vec<Writable>();
+    Range(0, isa.match({ X86 => 6, Arm => 8 })).loop((i) { writable.add(Writable(index: i, bytes: 0)).match({ _ => () }); });
     CallShape(
         gprs: isa.match({ X86 => 6, Arm => 8 }),
         vectors: 8,
         stack: 0,
+        returns: true,
         pair: true,
         vector_result: true,
         hidden: 0,
         writable: writable,
+        ignored: a.Vec<str>(),
+        pointer_args: a.Vec<str>(),
+        known: false,
+        reads: a.Vec<str>(),
+        reads_known: false,
         audited: false,
         public_result: false,
         values: a.Vec<str>(),
@@ -912,22 +966,31 @@ call = (
     secret ::= false;   // some argument is secret or points at secrets
     points ::= false;   // some argument points at secrets
     stray  ::= false;   // a secret reached an audited callee unseeded
+    which  ::= an.alloc.String().try();
     Range(0, shape.gprs.min(conv.gprs.len)).loop((i) {
         r = conv.gprs.get(i).value_or("");
-        v = has(cur.val, r);
-        p = has(cur.pts, r);
-        q = has(cur.pts2, r);
+        dead = has(shape.ignored, r) || (shape.reads_known && !has(shape.reads, r));
+        deref = !shape.known || has(shape.pointer_args, r);
+        v = has(cur.val, r) && !dead;
+        p = has(cur.pts, r) && !dead && deref;
+        q = has(cur.pts2, r) && !dead && deref;
         secret = secret || v || p || q;
         points = points || p;
         (shape.audited && ((v && !has(shape.values, r))
             || (p && !has(shape.values, r) && !has(shape.pointers, r))
-            || (q && !has(shape.pointers2, r)))).then(() { stray = true; });
+            || (q && !has(shape.pointers2, r)))).then(() {
+            stray = true;
+            which.fmt(" {}", r).try();
+        });
     });
     Range(0, shape.vectors.min(conv.vectors.len)).loop((i) {
         r = conv.vectors.get(i).value_or("");
-        v = has(cur.val, r);
+        v = has(cur.val, r) && !(shape.reads_known && !has(shape.reads, r));
         secret = secret || v;
-        (shape.audited && v && !has(shape.values, r)).then(() { stray = true; });
+        (shape.audited && v && !has(shape.values, r)).then(() {
+            stray = true;
+            which.fmt(" {}", r).try();
+        });
     });
     Range(0, shape.stack / 8).loop((k) {
         at     = 0 - cur.delta + wide(8 * k);
@@ -937,38 +1000,114 @@ call = (
         secret = secret || v || p;
         points = points || p;
         (shape.audited && ((v && !has_slot(shape.slots, callee))
-            || (p && !has_slot(shape.slots, callee) && !has_slot(shape.pointer_slots, callee)))).then(() { stray = true; });
+            || (p && !has_slot(shape.slots, callee) && !has_slot(shape.pointer_slots, callee)))).then(() {
+            stray = true;
+            which.fmt(" stack+{}", callee).try();
+        });
     });
-    stray.then(() { an.report("call", line.text).try(); });
+    secret.then(() { an.observed = true; });
+    stray.then(() {
+        an.report("call", an.alloc.String("{} (unseeded:{})", line.text, which.view()).try().view()).try();
+    });
     out = secret && !(shape.audited && shape.public_result && !stray);
-    // Memory behind a hidden result pointer holds the result.
+    // Memory behind a hidden result pointer holds the result: marked when
+    // it is a known part of this frame; somewhere in the frame smears it;
+    // other memory (this function's own result, which its hidden pointer
+    // seeds as holding secrets) is not tracked.
     (shape.hidden > 0).then(() {
         addr_of(cur, conv.hidden_reg).match({
             Ok(o)  => stack_store(cur, Place.Exact(o), shape.hidden, out, false).try(),
-            None => { out.then(() { cur.smear = true; }); },
+            None   => { (out && on_stack(cur, conv.hidden_reg)).then(() { cur.smear = true; }); },
         });
     });
     // A callee given secrets may write what it derives from them through
-    // any writable pointer, including one to this frame.
-    shape.writable.loop((i) {
-        r = conv.gprs.get(i).value_or("");
-        (secret && on_stack(cur, r)
-            && !(shape.hidden > 0 && r.eq(conv.hidden_reg))).then(() { cur.smear = true; });
+    // any writable pointer, including one to this frame: the one value a
+    // borrow names, or anywhere.
+    shape.writable.loop((w) {
+        r = conv.gprs.get(w.index).value_or("");
+        (secret && on_stack(cur, r) && !(shape.hidden > 0 && r.eq(conv.hidden_reg))).then(() {
+            (w.bytes > 0).match({
+                true  => addr_of(cur, r).match({
+                    Ok(o) => { mark(cur.slots, o, w.bytes, true).try().match({ true => (), false => { cur.smear = true; } }); },
+                    None  => { cur.smear = true; },
+                }),
+                false => { cur.smear = true; },
+            });
+        });
     });
     conv.clobbered.loop((r) {
         put(cur.val, r, false).try();
+        put(cur.low, r, false).try();
         put(cur.pts, r, false).try();
         put(cur.pts2, r, false).try();
         set_addr(cur.addr, r, None).try();
     });
+    // An audited callee's result is never a pointer into secret memory
+    // (a public-result audit checks that at its returns); an unknown
+    // callee's may be whenever it was given one.
     first  = conv.results.get(0).value_or("");
     second = conv.results.get(1).value_or("");
-    put(cur.val, first, out).try();
-    put(cur.pts, first, points).try();
-    put(cur.val, second, out && shape.pair).try();
-    put(cur.val, conv.vector_result, out && shape.vector_result).try();
+    integer = shape.returns && !shape.vector_result;
+    put(cur.val, first, out && integer).try();
+    put(cur.pts, first, points && integer && !shape.audited).try();
+    put(cur.val, second, out && integer && shape.pair).try();
+    put(cur.val, conv.vector_result, out && shape.returns && shape.vector_result).try();
     cur.flags = false;
     Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Which argument registers a function reads
+// ---------------------------------------------------------------------
+
+// The argument registers among `candidates` whose incoming value the body
+// uses: each is seeded alone as secret and the analysis notes whether that
+// value is ever consumed (an operand, an address, a store, a call
+// argument, a returned register). A register that is overwritten or never
+// mentioned is not an input, whatever the caller left in it; compilers
+// need not set up an argument the callee ignores.
+argument_reads* = (
+    a          : Alloc,
+    isa        : Isa,
+    lines      : Vec<Line>,
+    shapes     : Map<str, CallShape>,
+    candidates : Vec<str>
+) Res<Vec<str>, AllocError> {
+    read ::= a.Vec<str>();
+    candidates.loop((r) {
+        values ::= a.Vec<str>();
+        values.add(r).try();
+        seed = Seed(values: values, pointers: a.Vec<str>(), slots: a.Vec<i64>(), pointer_slots: a.Vec<i64>(), pointers2: a.Vec<str>());
+        an ::= Analysis(
+            alloc: a,
+            isa: isa,
+            lines: lines,
+            labels: a.Vec<str>(),
+            states: a.Vec<State>(),
+            findings: a.Vec<Finding>(),
+            reporting: false,
+            grew: false,
+            shapes: shapes,
+            result_check: a.Vec<str>(),
+            trace: false,
+            observed: false
+        );
+        lines.loop((l) {
+            (l.label.len > 0).then(() {
+                an.labels.add(l.label).try();
+                an.states.add(dead_state(a)).try();
+            });
+        });
+        rounds ::= 0;
+        loop((h) {
+            an.grew = false;
+            an.pass(seed).try();
+            rounds = rounds + 1;
+            (an.observed || !an.grew || rounds > 64).then(() { h.break(); });
+        });
+        an.observed.then(() { read.add(r).try(); });
+    });
+    Ok(read)
 }
 
 // ---------------------------------------------------------------------
@@ -1066,9 +1205,21 @@ x86_value = (
             Ok(base_points || stack_secret(cur, x86_place(cur, m), width))
         },
         false => Ok(
-            x86_reg(an.alloc, op).match({ Ok(r) => has(cur.val, r), None => false })
+            x86_reg(an.alloc, op).match({
+                Ok(r)  => {
+                    secret = has(cur.val, r) && !(x86_low_byte(op) && has(cur.low, r));
+                    secret.then(() { an.observed = true; });
+                    secret
+                },
+                None   => false,
+            })
         ),
     })
+}
+
+// %al, %sil, %r8b: the register's bits 0-7 (not %ah and friends).
+x86_low_byte = (op: str) bool {
+    !x86_vector_reg(op) && op.starts_with("%") && x86_reg_width(op) == 1 && !op.ends_with("h")
 }
 
 x86_address = (
@@ -1133,6 +1284,9 @@ x86_write = (
         false => { x86_reg(an.alloc, op).when_ok((r) {
             keep = x86_partial_reg(op) && has(cur.val, r);
             put(cur.val, r, secret || keep).try();
+            // A public byte written over a secret register: the rest is
+            // still secret, the low byte is not.
+            put(cur.low, r, keep && !secret && x86_low_byte(op)).try();
             put(cur.pts, r, points).try();
             put(cur.pts2, r, false).try();
             set_addr(cur.addr, r, None).try();
@@ -1189,8 +1343,14 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
     same  = n == 2 && first.eq(last) && !x86_is_mem(first);
     loop((h) {
         (m.eq("zen:declassify")).then(() {
+            // The declassified value's register is public as a whole: a
+            // narrower value's upper bits are undefined in C, so no
+            // compiled branch or address depends on them.
             ops.loop((op) {
-                x86_reg(an.alloc, op).when_ok((r) { put(cur.val, r, false).try(); });
+                x86_reg(an.alloc, op).when_ok((r) {
+                    put(cur.val, r, false).try();
+                    put(cur.low, r, false).try();
+                });
             });
             h.break();
         });
@@ -1307,6 +1467,7 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             h.break();
         });
         (m.starts_with("div") || m.starts_with("idiv")).then(() {
+            (has(cur.val, "rax") || has(cur.val, "rdx")).then(() { an.observed = true; });
             secret = an.x86_value(cur, first, l, width).try() || has(cur.val, "rax") || has(cur.val, "rdx");
             secret.then(() { an.report("divide", l.text).try(); });
             put(cur.val, "rax", secret).try();
@@ -1314,6 +1475,7 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             h.break();
         });
         ((m.starts_with("mul") || m.starts_with("imul")) && n == 1).then(() {
+            has(cur.val, "rax").then(() { an.observed = true; });
             secret = an.x86_value(cur, first, l, width).try() || has(cur.val, "rax");
             put(cur.val, "rax", secret).try();
             put(cur.val, "rdx", secret).try();
@@ -1321,6 +1483,7 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             h.break();
         });
         (m.is_in(["cqto", "cqo", "cltd", "cdq", "cltq", "cdqe", "cwtl"])).then(() {
+            has(cur.val, "rax").then(() { an.observed = true; });
             put(cur.val, "rdx", has(cur.val, "rax")).try();
             h.break();
         });
@@ -1365,8 +1528,26 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
                 });
                 source_at: Res<i64> = source.match({ Ok(r) => x86_base_at(cur, r), None => None });
                 source_stack = source.match({ Ok(r) => on_stack(cur, r) || r.eq("rsp"), None => false });
+                // A source whose only secret bytes are above its low byte
+                // keeps that shape in a register copy or a spill.
+                low_source = !merge && !x86_is_mem(first) && x86_reg(an.alloc, first).match({
+                    Ok(r) => has(cur.val, r) && has(cur.low, r),
+                    None  => false,
+                });
                 an.x86_write(cur, last, secret, points, l, width).try();
                 an.x86_mark_points2(cur, last, width, points2).try();
+                (low_source && secret && m.starts_with("mov")).then(() {
+                    x86_is_mem(last).match({
+                        true  => { x86_mem(an.alloc, last).when_ok((mem) {
+                            x86_place(cur, mem).match({
+                                Exact(o)  => { mark(cur.slots, o, 1, false).try(); },
+                                Somewhere => (),
+                                Elsewhere => (),
+                            });
+                        }); },
+                        false => { x86_reg(an.alloc, last).when_ok((r) { put(cur.low, r, true).try(); }); },
+                    });
+                });
                 (m.starts_with("mov") && width == 8 && !x86_is_mem(last)).then(() {
                     x86_reg(an.alloc, last).when_ok((r) {
                         source_at.match({
@@ -1590,6 +1771,7 @@ arm_address = (
 arm_set = (an :: Analysis, cur :: State, reg: str, secret: bool, points: bool)
                    Res<(), AllocError> {
     put(cur.val, reg, secret).try();
+    put(cur.low, reg, false).try();
     put(cur.pts, reg, points).try();
     put(cur.pts2, reg, false).try();
     set_addr(cur.addr, reg, None).try();
@@ -1640,6 +1822,7 @@ arm_memory = (
     moved.loop((t) { total = total + t.width; });
     any_secret ::= false;
     moved.loop((t) { any_secret = any_secret || has(cur.val, t.reg); });
+    (store && any_secret).then(() { an.observed = true; });
     offset ::= 0;
     moved.loop((t) {
         here = block.match({
@@ -1691,6 +1874,7 @@ arm_reads = (
     Range(from, ops.len).loop((i) {
         an.arm_regs(ops.get(i).value_or("")).try().loop((r) { secret = secret || has(cur.val, r); });
     });
+    secret.then(() { an.observed = true; });
     Ok(secret)
 }
 

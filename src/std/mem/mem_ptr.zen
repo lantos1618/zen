@@ -63,3 +63,15 @@ wipe* = (bytes: Ptr<u8>, count: usize) {
     });
     compiler_barrier();
 }
+
+// The same for `count` whole u64 words, one volatile store per word, for
+// key schedules and scratch held as aligned words (an eighth of the stores
+// of the byte form).
+wipe* = (words: Ptr<u64>, count: usize) {
+    i: usize ::= 0;
+    loop(() { i < count }, (h) {
+        words.write_volatile(i, 0);
+        i = i + 1;
+    });
+    compiler_barrier();
+}

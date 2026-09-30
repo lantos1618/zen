@@ -20,12 +20,12 @@ with tempfile.TemporaryDirectory(prefix='zen-actor-buffers-') as folder:
                        env=dict(os.environ, ZEN_STD=str(ROOT / 'src')), check=True, timeout=120)
         return (work / 'generated.c').read_text()
 
-    def check(name, source, expected=None, failure=False, timeout=20, timeout_failure=False):
+    def check(name, source, expected=None, failure=False, timeout=20, timeout_failure=False, sanitizers='undefined'):
         (work / 'sender-finished').unlink(missing_ok=True)
         path = work / f'{name}.c'
         path.write_text(source)
         subprocess.run(['clang', '-O1', '-g', '-pthread', '-Wno-parentheses-equality',
-                        '-fsanitize=undefined', '-fno-sanitize-recover=all', '-I', str(work), str(path), '-o', str(work / name)],
+                        '-fsanitize=' + sanitizers, '-fno-sanitize-recover=all', '-I', str(work), str(path), '-o', str(work / name)],
                        check=True, timeout=120)
         try:
             result = subprocess.run([str(work / name)], cwd=work, capture_output=True, text=True, timeout=timeout)
@@ -49,9 +49,12 @@ with tempfile.TemporaryDirectory(prefix='zen-actor-buffers-') as folder:
     assert count == 2, count
     check('corrupted-transfer-control', broken, failure=True)
     # Freeing transfer arenas after a turn invalidates values retained by state.
+    # The freed bytes can still read back unchanged, so only ASan makes the
+    # retained read fail reliably.
     marker = 'm->turn(a, m->data);'
     assert marker in source
-    check('premature-release-control', source.replace(marker, marker + '\n zg_actor_release_owned(a->owned); a->owned = NULL;', 1), failure=True)
+    check('premature-release-control', source.replace(marker, marker + '\n zg_actor_release_owned(a->owned); a->owned = NULL;', 1),
+          failure=True, sanitizers='address,undefined')
 
     paired = generate("""
 Native = c.bind("stdlib.h", { abort* = () () })

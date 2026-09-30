@@ -6,7 +6,7 @@ Vec = std.collections
 Range = std.core
 str = std.text
 Program, Func, Scalar, Instruction, Terminator, Op = gen.gen_ir
-same, word, integer, signed = gen.gen_ir
+same, word, integer, signed, width = gen.gen_ir
 arity = gen.gen_sys
 
 IrReason* = EntryFunction
@@ -41,6 +41,10 @@ message* = (reason: IrReason) str {
 
 IrFault* = { function*: usize, block*: usize, reason*: IrReason }
 VerifyError* = OutOfMemory | Invalid(IrFault)
+
+// The most arguments an indirect call may pass: the smallest register
+// argument count among the targets (System V has six).
+INDIRECT_ARGUMENTS*: usize = 6
 
 // Whether a constant's bits are a value of its slot class.
 fits = (ty: Scalar, value: i64) bool {
@@ -208,7 +212,54 @@ Check = {
                 ty = value.value.match({ Argc => Scalar.U64, _ => Scalar.Ptr });
                 self.expect(value.out, ty)
             },
+            AtomicLoad(value)  => {
+                self.native_only().try();
+                self.atomic_word(value.out).try();
+                self.expect(value.base, Scalar.Ptr)
+            },
+            AtomicStore(value) => {
+                self.native_only().try();
+                self.atomic_word(value.value).try();
+                self.expect(value.base, Scalar.Ptr)
+            },
+            AtomicUpdate(value) => {
+                self.native_only().try();
+                ty = self.atomic_word(value.out).try();
+                value.op.match({ Add => integer(ty), Swap => true })
+                    .ensure(self.fault(IrReason.Type)).try();
+                self.expect(value.value, ty).try();
+                self.expect(value.base, Scalar.Ptr)
+            },
+            CompareSwap(value) => {
+                self.native_only().try();
+                ty = self.atomic_word(value.out).try();
+                self.expect(value.expected, ty).try();
+                self.expect(value.desired, ty).try();
+                self.expect(value.base, Scalar.Ptr)
+            },
+            CodeAddress(value) => {
+                self.native_only().try();
+                self.program.functions.get(value.function).ok_or(self.fault(IrReason.Callee)).try();
+                self.expect(value.out, Scalar.Ptr)
+            },
+            InvokeAt(call)     => {
+                self.native_only().try();
+                self.expect(call.target, Scalar.Ptr).try();
+                // Every renderer passes these in argument registers.
+                (call.args.len <= INDIRECT_ARGUMENTS).ensure(self.fault(IrReason.Arguments)).try();
+                call.args.loop((slot) { self.word_slot(slot).try(); });
+                out = self.slot(call.out).try();
+                (word(out) || same(out, Scalar.Unit)).ensure(self.fault(IrReason.Type)).try();
+                Ok(())
+            },
         })
+    }
+
+    // Atomic operations act on whole 4- or 8-byte words.
+    atomic_word = (self: @Self, index: usize) Res<Scalar, VerifyError> {
+        ty = self.word_slot(index).try();
+        (width(ty) == 4 || width(ty) == 8).ensure(self.fault(IrReason.Type)).try();
+        Ok(ty)
     }
 
     // Scalar renderers keep the original i32 arithmetic and comparisons.
@@ -346,6 +397,26 @@ Check = {
             UnmapPages(slot)   => self.initialized(flags, slot),
             SysConst(_)        => Ok(()),
             Flush              => Ok(()),
+            AtomicLoad(value)  => self.initialized(flags, value.base),
+            AtomicStore(value) => {
+                self.initialized(flags, value.base).try();
+                self.initialized(flags, value.value)
+            },
+            AtomicUpdate(value) => {
+                self.initialized(flags, value.base).try();
+                self.initialized(flags, value.value)
+            },
+            CompareSwap(value) => {
+                self.initialized(flags, value.base).try();
+                self.initialized(flags, value.expected).try();
+                self.initialized(flags, value.desired)
+            },
+            CodeAddress(_)     => Ok(()),
+            InvokeAt(call)     => {
+                self.initialized(flags, call.target).try();
+                call.args.loop((slot) { self.initialized(flags, slot).try(); });
+                Ok(())
+            },
         })
     }
 
@@ -385,6 +456,11 @@ write = (flags :: Vec<bool>, instruction: Instruction) {
         Startup(value)     => { flags.set(value.out, true); },
         MapPages(value)    => { flags.set(value.out, true); },
         SysConst(value)    => { flags.set(value.out, true); },
+        AtomicLoad(value)  => { flags.set(value.out, true); },
+        AtomicUpdate(value) => { flags.set(value.out, true); },
+        CompareSwap(value) => { flags.set(value.out, true); },
+        CodeAddress(value) => { flags.set(value.out, true); },
+        InvokeAt(value)    => { flags.set(value.out, true); },
         _                  => (),
     });
 }

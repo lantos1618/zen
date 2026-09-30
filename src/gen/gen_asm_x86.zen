@@ -19,6 +19,8 @@ width, signed, word, trap_message = gen.gen_ir
 Span = std.ast
 Target = gen.gen_asm
 Sys, linux_x86_64, constant_value, Platform = gen.gen_sys
+LINUX_X86_64_EXIT, LINUX_X86_64_ARCH_PRCTL = gen.gen_sys
+Update, Compare, IndirectCall = gen.gen_ir
 
 // This target fixes the instruction set, object dialect, OS and calling ABI:
 // x86-64, ELF with GNU assembler syntax, Linux system calls, System V calls.
@@ -71,14 +73,15 @@ Assembly = {
         // The kernel enters with %rsp at argc, 16-byte aligned; `call`
         // leaves the entry function its System V alignment.
         self.out.fmt(
-            ".globl _start\n.type _start, @function\n_start:\n    xorl %ebp, %ebp\n    movq %rsp, za_start_sp(%rip)\n    andq $-16, %rsp\n    call za_fn_{}\n    movl %eax, %edi\n    jmp za_exit\n.size _start, .-_start\n",
+            ".globl _start\n.type _start, @function\n_start:\n    xorl %ebp, %ebp\n    movq %rsp, za_start_sp(%rip)\n    andq $-16, %rsp\n    leaq za_main_tcb(%rip), %rsi\n    movq %rsi, (%rsi)\n    movl $0x1002, %edi\n    movl ${}, %eax\n    syscall\n    call za_fn_{}\n    movl %eax, %edi\n    jmp za_exit\n.size _start, .-_start\n",
+            LINUX_X86_64_ARCH_PRCTL,
             self.program.entry
         ).try();
         self.runtime().try();
         self.out.add(".section .rodata\n").try();
         self.out.add(self.data.view()).try();
         self.out.add(
-            ".bss\n.p2align 4\nza_out_buf:\n    .zero 65536\nza_out_len:\n    .zero 8\nza_start_sp:\n    .zero 8\n"
+            ".bss\n.p2align 4\nza_out_buf:\n    .zero 65536\nza_out_len:\n    .zero 8\nza_start_sp:\n    .zero 8\nza_out_lock:\n    .zero 8\n.p2align 4\nza_globals:\n    .zero 256\nza_main_tcb:\n    .zero 64\n"
         ).try();
         self.out.add(".section .note.GNU-stack,\"\",@progbits\n")
     }
@@ -229,18 +232,92 @@ Assembly = {
                 self.store(value.out, "%rax")
             },
             Startup(value)     => {
-                self.out.add("    movq za_start_sp(%rip), %rcx\n").try();
                 value.value.match({
-                    Argc => self.out.add("    movq (%rcx), %rax\n"),
-                    Argv => self.out.add("    leaq 8(%rcx), %rax\n"),
-                    Envp => self.out.add(
-                        "    movq (%rcx), %rax\n    leaq 16(%rcx,%rax,8), %rax\n"
+                    Argc    => self.out.add("    movq za_start_sp(%rip), %rcx\n    movq (%rcx), %rax\n"),
+                    Argv    => self.out.add("    movq za_start_sp(%rip), %rcx\n    leaq 8(%rcx), %rax\n"),
+                    Envp    => self.out.add(
+                        "    movq za_start_sp(%rip), %rcx\n    movq (%rcx), %rax\n    leaq 16(%rcx,%rax,8), %rax\n"
                     ),
+                    Globals => self.out.add("    leaq za_globals(%rip), %rax\n"),
                 }).try();
                 self.rax_slot = None;
                 self.store(value.out, "%rax")
             },
+            AtomicLoad(value)  => self.atomic_load(value),
+            AtomicStore(value) => self.atomic_store(value),
+            AtomicUpdate(value) => self.atomic_update(value),
+            CompareSwap(value) => self.compare_swap(value),
+            CodeAddress(value) => {
+                self.out.fmt("    leaq za_fn_{}(%rip), %rax\n", value.function).try();
+                self.rax_slot = None;
+                self.store(value.out, "%rax")
+            },
+            InvokeAt(call)     => self.call_at(call),
         })
+    }
+
+    // Sequentially consistent atomics. A plain load is enough on x86-64;
+    // every write is an implicitly locked `xchg` or a `lock`-prefixed update,
+    // which also orders it before later loads.
+    atomic_load = (self :: @Self, value: Load) Res<(), AllocError> {
+        ty = self.slot_type(value.out);
+        self.load(value.base, "%rcx").try();
+        (width(ty) == 4).match({
+            true  => self.out.fmt("    movl {}(%rcx), %eax\n", value.offset),
+            false => self.out.fmt("    movq {}(%rcx), %rax\n", value.offset),
+        }).try();
+        self.rax_slot = None;
+        self.canon(ty).try();
+        self.store(value.out, "%rax")
+    }
+
+    atomic_store = (self :: @Self, value: Store) Res<(), AllocError> {
+        ty = self.slot_type(value.value);
+        self.load(value.base, "%rcx").try();
+        self.load(value.value, "%rax").try();
+        (width(ty) == 4).match({
+            true  => self.out.fmt("    xchgl %eax, {}(%rcx)\n", value.offset),
+            false => self.out.fmt("    xchgq %rax, {}(%rcx)\n", value.offset),
+        }).try();
+        self.rax_slot = None;
+        Ok(())
+    }
+
+    atomic_update = (self :: @Self, value: Update) Res<(), AllocError> {
+        ty = self.slot_type(value.out);
+        self.load(value.base, "%rcx").try();
+        self.load(value.value, "%rax").try();
+        op = value.op.match({ Swap => "xchg", Add => "lock xadd" });
+        (width(ty) == 4).match({
+            true  => self.out.fmt("    {}l %eax, (%rcx)\n", op),
+            false => self.out.fmt("    {}q %rax, (%rcx)\n", op),
+        }).try();
+        self.rax_slot = None;
+        self.canon(ty).try();
+        self.store(value.out, "%rax")
+    }
+
+    compare_swap = (self :: @Self, value: Compare) Res<(), AllocError> {
+        ty = self.slot_type(value.out);
+        self.load(value.base, "%rcx").try();
+        self.load(value.desired, "%rdx").try();
+        self.load(value.expected, "%rax").try();
+        (width(ty) == 4).match({
+            true  => self.out.add("    lock cmpxchgl %edx, (%rcx)\n"),
+            false => self.out.add("    lock cmpxchgq %rdx, (%rcx)\n"),
+        }).try();
+        self.rax_slot = None;
+        self.canon(ty).try();
+        self.store(value.out, "%rax")
+    }
+
+    // A call through a code address: word arguments in registers only.
+    call_at = (self :: @Self, call: IndirectCall) Res<(), AllocError> {
+        call.args.loop((h, i, slot) { self.load(slot, argument_register(i)).try(); });
+        self.load(call.target, "%r11").try();
+        self.out.add("    call *%r11\n").try();
+        self.rax_slot = None;
+        self.store(call.out, "%rax")
     }
 
     terminator = (self :: @Self, function_id: usize, function: Func,
@@ -628,10 +705,16 @@ Assembly = {
             self.load(slot, system_register(i)).try();
         });
         self.rax_slot = None;
-        linux_x86_64(call.call).match({
-            Ok(number) => self.out.fmt("    movl ${}, %eax\n    syscall\n", number),
-            // The kernel has no such call: answer -ENOSYS without trapping.
-            None       => self.out.add("    movq $-38, %rax\n"),
+        call.call.match({
+            // The first word of every thread control block is its own
+            // address, and %fs points at the running thread's block.
+            ThreadSelf  => self.out.add("    movq %fs:0, %rax\n"),
+            CloneThread => self.out.add("    call za_clone\n"),
+            _           => linux_x86_64(call.call).match({
+                Ok(number) => self.out.fmt("    movl ${}, %eax\n    syscall\n", number),
+                // The kernel has no such call: answer -ENOSYS without trapping.
+                None       => self.out.add("    movq $-38, %rax\n"),
+            }),
         }).try();
         self.store(call.out, "%rax")
     }
@@ -794,8 +877,10 @@ Assembly = {
     runtime = (self :: @Self) Res<(), AllocError> {
         write     = linux_x86_64(Sys.Write).value_or(0);
         exit      = linux_x86_64(Sys.ExitGroup).value_or(0);
+        // exit(edi status): run the exit hook installed in za_globals, if
+        // any, then flush standard output and end the process.
         self.out.fmt(
-            "za_exit:\n    pushq %rdi\n    call za_flush\n    popq %rdi\n    movl ${}, %eax\n    syscall\n    ud2\n",
+            "za_exit:\n    pushq %rdi\n    subq $8, %rsp\n    movq za_globals(%rip), %rax\n    testq %rax, %rax\n    jz 1f\n    call *%rax\n1:\n    call za_flush\n    addq $8, %rsp\n    popq %rdi\n    movl ${}, %eax\n    syscall\n    ud2\n",
             exit
         ).try();
         // write_all(edi fd, rsi bytes, rdx length): retry EINTR and short
@@ -804,13 +889,22 @@ Assembly = {
             "za_write_all:\n0:\n    testq %rdx, %rdx\n    jz 2f\n    movl ${}, %eax\n    syscall\n    cmpq $-4, %rax\n    je 0b\n    testq %rax, %rax\n    jle 2f\n    addq %rax, %rsi\n    subq %rax, %rdx\n    jmp 0b\n2:\n    ret\n",
             write
         ).try();
+        // Standard output is one buffer shared by every thread. `za_out_lock`
+        // is a futex word (0 free, 1 held, 2 held with waiters); `_held`
+        // routines run with it taken.
         self.out.add(
-            "za_flush:\n    movq za_out_len(%rip), %rdx\n    testq %rdx, %rdx\n    jz 1f\n    movl $1, %edi\n    leaq za_out_buf(%rip), %rsi\n    call za_write_all\n    movq $0, za_out_len(%rip)\n1:\n    ret\n"
+            "za_lock_out:\n    movl $1, %ecx\n    xorl %eax, %eax\n    lock cmpxchgl %ecx, za_out_lock(%rip)\n    jnz 1f\n    ret\n1:\n    movl $2, %eax\n    xchgl %eax, za_out_lock(%rip)\n    testl %eax, %eax\n    jz 2f\n    leaq za_out_lock(%rip), %rdi\n    movl $128, %esi\n    movl $2, %edx\n    xorl %r10d, %r10d\n    movl $202, %eax\n    syscall\n    jmp 1b\n2:\n    ret\nza_unlock_out:\n    xorl %eax, %eax\n    xchgl %eax, za_out_lock(%rip)\n    cmpl $2, %eax\n    jne 1f\n    leaq za_out_lock(%rip), %rdi\n    movl $129, %esi\n    movl $1, %edx\n    movl $202, %eax\n    syscall\n1:\n    ret\n"
         ).try();
-        // out(rdi bytes, rsi length) appends to the stdout buffer. A run
-        // larger than the buffer is written through after a flush.
         self.out.add(
-            "za_out:\n    movq za_out_len(%rip), %rax\n    leaq (%rax,%rsi), %rcx\n    cmpq $65536, %rcx\n    jbe 1f\n    pushq %rdi\n    pushq %rsi\n    call za_flush\n    popq %rsi\n    popq %rdi\n    cmpq $65536, %rsi\n    jbe 0f\n    movq %rsi, %rdx\n    movq %rdi, %rsi\n    movl $1, %edi\n    jmp za_write_all\n0:\n    xorl %eax, %eax\n1:\n    leaq za_out_buf(%rip), %rcx\n    addq %rax, %rcx\n    addq %rsi, %rax\n    movq %rax, za_out_len(%rip)\n    movq %rdi, %r8\n    movq %rcx, %rdi\n    movq %rsi, %rcx\n    movq %r8, %rsi\n    rep movsb\n    ret\n"
+            "za_flush:\n    subq $8, %rsp\n    call za_lock_out\n    call za_flush_held\n    call za_unlock_out\n    addq $8, %rsp\n    ret\nza_out:\n    pushq %rdi\n    pushq %rsi\n    subq $8, %rsp\n    call za_lock_out\n    movq 8(%rsp), %rsi\n    movq 16(%rsp), %rdi\n    call za_out_held\n    call za_unlock_out\n    addq $24, %rsp\n    ret\n"
+        ).try();
+        self.out.add(
+            "za_flush_held:\n    movq za_out_len(%rip), %rdx\n    testq %rdx, %rdx\n    jz 1f\n    movl $1, %edi\n    leaq za_out_buf(%rip), %rsi\n    call za_write_all\n    movq $0, za_out_len(%rip)\n1:\n    ret\n"
+        ).try();
+        // out_held(rdi bytes, rsi length) appends to the stdout buffer. A
+        // run larger than the buffer is written through after a flush.
+        self.out.add(
+            "za_out_held:\n    movq za_out_len(%rip), %rax\n    leaq (%rax,%rsi), %rcx\n    cmpq $65536, %rcx\n    jbe 1f\n    pushq %rdi\n    pushq %rsi\n    call za_flush_held\n    popq %rsi\n    popq %rdi\n    cmpq $65536, %rsi\n    jbe 0f\n    movq %rsi, %rdx\n    movq %rdi, %rsi\n    movl $1, %edi\n    jmp za_write_all\n0:\n    xorl %eax, %eax\n1:\n    leaq za_out_buf(%rip), %rcx\n    addq %rax, %rcx\n    addq %rsi, %rax\n    movq %rax, za_out_len(%rip)\n    movq %rdi, %r8\n    movq %rcx, %rdi\n    movq %rsi, %rcx\n    movq %r8, %rsi\n    rep movsb\n    ret\n"
         ).try();
         // map(rdi bytes) -> rax: anonymous pages behind a 16-byte header
         // holding the mapping's length; null on failure. unmap(rdi).
@@ -829,6 +923,18 @@ Assembly = {
         // unsigned.
         self.out.add(
             "za_print_u64:\n    xorl %r9d, %r9d\n    movq %rdi, %rax\n    jmp 1f\nza_print_i64:\n    movq %rdi, %r9\n    movq %rdi, %rax\n    testq %rax, %rax\n    jns 1f\n    negq %rax\n1:\n    movl %esi, %r10d\n    subq $40, %rsp\n    leaq 32(%rsp), %rsi\n    movl $10, %ecx\n2:\n    xorl %edx, %edx\n    divq %rcx\n    addb $48, %dl\n    decq %rsi\n    movb %dl, (%rsi)\n    testq %rax, %rax\n    jnz 2b\n    testq %r9, %r9\n    jns 3f\n    decq %rsi\n    movb $45, (%rsi)\n3:\n    leaq 32(%rsp), %rdx\n    subq %rsi, %rdx\n    movq %rsi, %rdi\n    movq %rdx, %rsi\n    movl %r10d, %edx\n    call za_emit\n    addq $40, %rsp\n    ret\n"
+        ).try();
+        // clone(rdi flags, rsi stack top, rdx control block): start a thread
+        // sharing this process on the given stack. The kernel stores the new
+        // thread's id in the block's word at 24 and clears it (waking futex
+        // waiters) when the thread exits; %fs of the new thread points at
+        // the block. The child calls block.entry(block.arg) and then leaves
+        // with exit, ending only itself. %r9 carries the block across the
+        // system call into the child.
+        self.out.fmt(
+            "za_clone:\n    movq %rdx, %r9\n    leaq 24(%r9), %rdx\n    leaq 24(%r9), %r10\n    movq %r9, %r8\n    movl ${}, %eax\n    syscall\n    testq %rax, %rax\n    jz 1f\n    ret\n1:\n    xorl %ebp, %ebp\n    movq 8(%r9), %rax\n    movq 16(%r9), %rdi\n    call *%rax\n    xorl %edi, %edi\n    movl ${}, %eax\n    syscall\n    ud2\n",
+            linux_x86_64(Sys.Clone).value_or(0),
+            LINUX_X86_64_EXIT
         ).try();
         // trap(rdi/rsi report): flush stdout first so output preceding the
         // fault is not lost, then report on stderr and exit 134.

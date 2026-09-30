@@ -23,6 +23,8 @@ width, signed, word, trap_message = gen.gen_ir
 Span = std.ast
 Target = gen.gen_asm
 Sys, linux_arm64, darwin_symbol, constant_value, Platform = gen.gen_sys
+darwin_result, LINUX_ARM64_EXIT = gen.gen_sys
+Update, Compare, IndirectCall = gen.gen_ir
 
 Arm64Os* = Linux | Darwin
 
@@ -91,14 +93,14 @@ Assembly = {
                 self.out.add(".section __TEXT,__const\n").try();
                 self.out.add(self.data.view()).try();
                 self.out.add(
-                    ".zerofill __DATA,__bss,za_out_buf,65536,4\n.zerofill __DATA,__bss,za_out_len,8,3\n.zerofill __DATA,__bss,za_argc,8,3\n.zerofill __DATA,__bss,za_argv,8,3\n.zerofill __DATA,__bss,za_envp,8,3\n"
+                    ".zerofill __DATA,__bss,za_out_buf,65536,4\n.zerofill __DATA,__bss,za_out_len,8,3\n.zerofill __DATA,__bss,za_argc,8,3\n.zerofill __DATA,__bss,za_argv,8,3\n.zerofill __DATA,__bss,za_envp,8,3\n.zerofill __DATA,__bss,za_out_lock,8,3\n.zerofill __DATA,__bss,za_globals,256,4\n"
                 )
             },
             false => {
                 self.out.add(".section .rodata\n").try();
                 self.out.add(self.data.view()).try();
                 self.out.add(
-                    ".bss\n.p2align 4\nza_out_buf:\n    .zero 65536\nza_out_len:\n    .zero 8\nza_argc:\n    .zero 8\nza_argv:\n    .zero 8\nza_envp:\n    .zero 8\n.section .note.GNU-stack,\"\",@progbits\n"
+                    ".bss\n.p2align 4\nza_out_buf:\n    .zero 65536\nza_out_len:\n    .zero 8\nza_argc:\n    .zero 8\nza_argv:\n    .zero 8\nza_envp:\n    .zero 8\nza_out_lock:\n    .zero 8\n.p2align 4\nza_globals:\n    .zero 256\nza_main_tcb:\n    .zero 64\n.section .note.GNU-stack,\"\",@progbits\n"
                 )
             },
         })
@@ -131,6 +133,10 @@ Assembly = {
                 self.out.add("    str x1, [x9]\n").try();
                 self.address("x9", "za_envp").try();
                 self.out.add("    str x2, [x9]\n").try();
+                // The main thread's control block; its first word is its
+                // own address, as for every thread std.sys starts.
+                self.address("x9", "za_main_tcb").try();
+                self.out.add("    str x9, [x9]\n    msr tpidr_el0, x9\n").try();
             },
         });
         self.out.fmt("    bl za_fn_{}\n    b za_exit\n", self.program.entry)
@@ -309,13 +315,98 @@ Assembly = {
                 self.store(value.out, "x0")
             },
             Startup(value)     => {
-                symbol = value.value.match({ Argc => "za_argc", Argv => "za_argv", Envp => "za_envp" });
-                self.address("x9", symbol).try();
-                self.out.add("    ldr x0, [x9]\n").try();
+                value.value.match({
+                    Globals => self.address("x0", "za_globals"),
+                    _       => {
+                        symbol = value.value.match({ Argc => "za_argc", Argv => "za_argv", _ => "za_envp" });
+                        self.address("x9", symbol).try();
+                        self.out.add("    ldr x0, [x9]\n")
+                    },
+                }).try();
                 self.x0_slot = None;
                 self.store(value.out, "x0")
             },
+            AtomicLoad(value)  => self.atomic_load(value),
+            AtomicStore(value) => self.atomic_store(value),
+            AtomicUpdate(value) => self.atomic_update(value),
+            CompareSwap(value) => self.compare_swap(value),
+            CodeAddress(value) => {
+                name = self.alloc.String("za_fn_{}", value.function).try();
+                self.address("x0", name.view()).try();
+                self.x0_slot = None;
+                self.store(value.out, "x0")
+            },
+            InvokeAt(call)     => self.call_at(call),
         })
+    }
+
+    // Sequentially consistent atomics: load-acquire and store-release
+    // (RCsc on AArch64), and read-modify-write as exclusive-pair loops.
+    // They use only ARMv8.0 instructions, so no CPU feature check is needed.
+    atomic_address = (self :: @Self, base: usize, offset: usize) Res<(), AllocError> {
+        self.load_plain(base, "x1").try();
+        self.add_offset("x1", offset)
+    }
+
+    atomic_load = (self :: @Self, value: Load) Res<(), AllocError> {
+        ty = self.slot_type(value.out);
+        self.atomic_address(value.base, value.offset).try();
+        self.x0_slot = None;
+        self.out.fmt("    ldar {}0, [x1]\n", register_width(ty)).try();
+        self.canon(ty).try();
+        self.store(value.out, "x0")
+    }
+
+    atomic_store = (self :: @Self, value: Store) Res<(), AllocError> {
+        ty = self.slot_type(value.value);
+        self.atomic_address(value.base, value.offset).try();
+        self.load_plain(value.value, "x2").try();
+        self.out.fmt("    stlr {}2, [x1]\n", register_width(ty)).try();
+        self.x0_slot = None;
+        Ok(())
+    }
+
+    atomic_update = (self :: @Self, value: Update) Res<(), AllocError> {
+        ty = self.slot_type(value.out);
+        r = register_width(ty);
+        self.atomic_address(value.base, 0).try();
+        self.load_plain(value.value, "x2").try();
+        self.x0_slot = None;
+        value.op.match({
+            Swap => self.out.fmt(
+                "1:\n    ldaxr {r}0, [x1]\n    stlxr w3, {r}2, [x1]\n    cbnz w3, 1b\n"
+            ),
+            Add  => self.out.fmt(
+                "1:\n    ldaxr {r}0, [x1]\n    add {r}4, {r}0, {r}2\n    stlxr w3, {r}4, [x1]\n    cbnz w3, 1b\n"
+            ),
+        }).try();
+        self.canon(ty).try();
+        self.store(value.out, "x0")
+    }
+
+    compare_swap = (self :: @Self, value: Compare) Res<(), AllocError> {
+        ty = self.slot_type(value.out);
+        r = register_width(ty);
+        self.atomic_address(value.base, 0).try();
+        self.load_plain(value.expected, "x2").try();
+        self.load_plain(value.desired, "x3").try();
+        self.x0_slot = None;
+        self.out.fmt(
+            "1:\n    ldaxr {r}0, [x1]\n    cmp {r}0, {r}2\n    b.ne 2f\n    stlxr w4, {r}3, [x1]\n    cbnz w4, 1b\n2:\n"
+        ).try();
+        self.canon(ty).try();
+        self.store(value.out, "x0")
+    }
+
+    // A call through a code address: word arguments in registers only. The
+    // target is loaded last, into x17, which no argument load uses.
+    call_at = (self :: @Self, call: IndirectCall) Res<(), AllocError> {
+        self.x0_slot = None;
+        call.args.loop((h, i, slot) { self.load_plain(slot, argument_register(i)).try(); });
+        self.memory("ldr", "x17", self.offset(call.target)).try();
+        self.out.add("    blr x17\n").try();
+        self.x0_slot = None;
+        self.store(call.out, "x0")
     }
 
     terminator = (self :: @Self, function_id: usize, function: Func,
@@ -696,22 +787,33 @@ Assembly = {
         });
         self.x0_slot = None;
         self.darwin().match({
-            // openat's mode is variadic (on the stack) and getentropy caps
-            // its length, so both go through runtime adapters.
+            // openat's mode is variadic (on the stack), getentropy caps its
+            // length and pthread_create needs a C entry point and stack size,
+            // so these go through runtime adapters.
             true  => call.call.match({
-                Openat    => self.out.add("    bl za_d_openat\n    cmn x0, #1\n    b.ne 1f\n    bl ___error\n    ldrsw x0, [x0]\n    neg x0, x0\n1:\n"),
-                Getrandom => self.out.add("    bl za_d_getrandom\n"),
-                _         => darwin_symbol(call.call).match({
-                    Ok(symbol) => self.out.fmt(
-                        "    bl _{}\n    cmn x0, #1\n    b.ne 1f\n    bl ___error\n    ldrsw x0, [x0]\n    neg x0, x0\n1:\n",
-                        symbol
-                    ),
+                Openat       => self.out.add("    bl za_d_openat\n    cmn x0, #1\n    b.ne 1f\n    bl ___error\n    ldrsw x0, [x0]\n    neg x0, x0\n1:\n"),
+                Getrandom    => self.out.add("    bl za_d_getrandom\n"),
+                PthreadStart => self.out.add("    bl za_d_thread_start\n"),
+                _            => darwin_symbol(call.call).match({
+                    Ok(symbol) => darwin_result(call.call).match({
+                        Errno    => self.out.fmt(
+                            "    bl _{}\n    cmn x0, #1\n    b.ne 1f\n    bl ___error\n    ldrsw x0, [x0]\n    neg x0, x0\n1:\n",
+                            symbol
+                        ),
+                        Returned => self.out.fmt("    bl _{}\n    neg x0, x0\n", symbol),
+                        Handle   => self.out.fmt("    bl _{}\n", symbol),
+                    }),
                     None       => self.out.add("    mov x0, #-78\n"),
                 }),
             }),
-            false => linux_arm64(call.call).match({
-                Ok(number) => self.out.fmt("    mov x8, #{}\n    svc #0\n", number),
-                None       => self.out.add("    mov x0, #-38\n"),
+            false => call.call.match({
+                // The running thread's control block is its TLS pointer.
+                ThreadSelf  => self.out.add("    mrs x0, tpidr_el0\n"),
+                CloneThread => self.out.add("    bl za_clone\n"),
+                _           => linux_arm64(call.call).match({
+                    Ok(number) => self.out.fmt("    mov x8, #{}\n    svc #0\n", number),
+                    None       => self.out.add("    mov x0, #-38\n"),
+                }),
             }),
         }).try();
         self.store(call.out, "x0")
@@ -972,14 +1074,71 @@ Assembly = {
         })
     }
 
+    // Standard output is one buffer shared by every thread; `_held`
+    // routines run with `za_out_lock` taken. On Linux the lock is a futex
+    // word (0 free, 1 held, 2 held with waiters); on Darwin it is an
+    // os_unfair_lock, whose zero value is its initial state.
+    stdout_lock = (self :: @Self) Res<(), AllocError> {
+        self.out.add("za_lock_out:\n").try();
+        self.address("x0", "za_out_lock").try();
+        self.darwin().match({
+            true  => self.out.add("    b _os_unfair_lock_lock\n"),
+            false => self.out.add(
+                "    mov w1, #1\n1:\n    ldaxr w2, [x0]\n    cbnz w2, 2f\n    stxr w3, w1, [x0]\n    cbnz w3, 1b\n    ret\n2:\n    mov w1, #2\n3:\n    ldaxr w2, [x0]\n    stxr w3, w1, [x0]\n    cbnz w3, 3b\n    cbz w2, 4f\n    mov x9, x0\n    mov x1, #128\n    mov x2, #2\n    mov x3, #0\n    mov x8, #98\n    svc #0\n    mov x0, x9\n    b 2b\n4:\n    ret\n"
+            ),
+        }).try();
+        self.out.add("za_unlock_out:\n").try();
+        self.address("x0", "za_out_lock").try();
+        self.darwin().match({
+            true  => self.out.add("    b _os_unfair_lock_unlock\n"),
+            false => self.out.add(
+                "1:\n    ldxr w1, [x0]\n    stlxr w2, wzr, [x0]\n    cbnz w2, 1b\n    cmp w1, #2\n    b.ne 2f\n    mov x1, #129\n    mov x2, #1\n    mov x8, #98\n    svc #0\n2:\n    ret\n"
+            ),
+        }).try();
+        self.out.add(
+            "za_flush:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    bl za_lock_out\n    bl za_flush_held\n    bl za_unlock_out\n    ldp x29, x30, [sp], #16\n    ret\nza_out:\n    stp x29, x30, [sp, #-32]!\n    mov x29, sp\n    stp x0, x1, [sp, #16]\n    bl za_lock_out\n    ldp x0, x1, [sp, #16]\n    bl za_out_held\n    bl za_unlock_out\n    ldp x29, x30, [sp], #32\n    ret\n"
+        )
+    }
+
+    // Thread start. Every thread begins at `entry(arg)` read from its
+    // control block (entry at +8, argument at +16; see std.sys.sys_thread).
+    thread_runtime = (self :: @Self) Res<(), AllocError> {
+        self.darwin().match({
+            // thread_start(x0 block) -> 0 or -errno: pthread_create with an
+            // 8 MiB stack, storing the pthread_t at block+32. The C entry
+            // point saves the callee-saved registers AAPCS64 lets the Zen
+            // code clobber.
+            true  => self.out.add(
+                "za_d_thread_start:\n    stp x29, x30, [sp, #-96]!\n    mov x29, sp\n    str x19, [sp, #16]\n    mov x19, x0\n    add x0, sp, #32\n    bl _pthread_attr_init\n    cbnz x0, 1f\n    add x0, sp, #32\n    mov x1, #0x800000\n    bl _pthread_attr_setstacksize\n    add x0, x19, #32\n    add x1, sp, #32\n    adrp x2, za_thread_entry@PAGE\n    add x2, x2, za_thread_entry@PAGEOFF\n    mov x3, x19\n    bl _pthread_create\n    mov x19, x0\n    add x0, sp, #32\n    bl _pthread_attr_destroy\n    mov x0, x19\n1:\n    neg x0, x0\n    ldr x19, [sp, #16]\n    ldp x29, x30, [sp], #96\n    ret\nza_thread_entry:\n    stp x29, x30, [sp, #-160]!\n    mov x29, sp\n    stp x19, x20, [sp, #16]\n    stp x21, x22, [sp, #32]\n    stp x23, x24, [sp, #48]\n    stp x25, x26, [sp, #64]\n    stp x27, x28, [sp, #80]\n    stp d8, d9, [sp, #96]\n    stp d10, d11, [sp, #112]\n    stp d12, d13, [sp, #128]\n    stp d14, d15, [sp, #144]\n    ldr x16, [x0, #8]\n    ldr x0, [x0, #16]\n    blr x16\n    ldp x19, x20, [sp, #16]\n    ldp x21, x22, [sp, #32]\n    ldp x23, x24, [sp, #48]\n    ldp x25, x26, [sp, #64]\n    ldp x27, x28, [sp, #80]\n    ldp d8, d9, [sp, #96]\n    ldp d10, d11, [sp, #112]\n    ldp d12, d13, [sp, #128]\n    ldp d14, d15, [sp, #144]\n    mov x0, #0\n    ldp x29, x30, [sp], #160\n    ret\n"
+            ),
+            // clone(x0 flags, x1 stack top, x2 block): the kernel stores the
+            // new thread's id at block+24, clears it and wakes futex waiters
+            // when the thread exits, and makes the block the thread's TLS
+            // (AArch64 passes tls before the child id). x9 carries the block
+            // into the child, which calls entry(arg) and exits alone.
+            false => self.out.fmt(
+                "za_clone:\n    mov x9, x2\n    add x2, x9, #24\n    mov x3, x9\n    add x4, x9, #24\n    mov x8, #{}\n    svc #0\n    cbz x0, 1f\n    ret\n1:\n    mov x29, #0\n    mov x30, #0\n    ldr x16, [x9, #8]\n    ldr x0, [x9, #16]\n    blr x16\n    mov x0, #0\n    mov x8, #{}\n    svc #0\n    brk #1\n",
+                linux_arm64(Sys.Clone).value_or(0),
+                LINUX_ARM64_EXIT
+            ),
+        })
+    }
+
     // Buffered standard output, decimal integers, traps and exit. Routines
     // may clobber caller-saved registers; no value stays live in one.
     runtime = (self :: @Self) Res<(), AllocError> {
         self.out.add(".p2align 2\n").try();
         self.syscalls().try();
         self.out.add(
-            "za_exit:\n    mov x19, x0\n    bl za_flush\n    mov x0, x19\n    bl za_sys_exit\n"
+            "za_exit:\n    str x0, [sp, #-16]!\n"
         ).try();
+        // exit(x0 status), continued: run the exit hook installed in
+        // za_globals, if any, then flush standard output and exit.
+        self.address("x9", "za_globals").try();
+        self.out.add(
+            "    ldr x9, [x9]\n    cbz x9, 1f\n    blr x9\n1:\n    bl za_flush\n    ldr x0, [sp], #16\n    bl za_sys_exit\n"
+        ).try();
+        self.thread_runtime().try();
         // copy(x0 dest, x1 source, x2 bytes): doublewords, then bytes.
         self.out.add(
             "za_copy:\n    lsr x3, x2, #3\n    cbz x3, 2f\n1:\n    ldr x4, [x1], #8\n    str x4, [x0], #8\n    subs x3, x3, #1\n    b.ne 1b\n2:\n    ands x2, x2, #7\n    b.eq 4f\n3:\n    ldrb w4, [x1], #1\n    strb w4, [x0], #1\n    subs x2, x2, #1\n    b.ne 3b\n4:\n    ret\n"
@@ -989,8 +1148,9 @@ Assembly = {
         self.out.add(
             "za_write_all:\n    stp x29, x30, [sp, #-48]!\n    mov x29, sp\n    stp x19, x20, [sp, #16]\n    str x21, [sp, #32]\n    mov x19, x0\n    mov x20, x1\n    mov x21, x2\n0:\n    cbz x21, 2f\n    mov x0, x19\n    mov x1, x20\n    mov x2, x21\n    bl za_sys_write\n    cmn x0, #4\n    b.eq 0b\n    cmp x0, #0\n    b.le 2f\n    add x20, x20, x0\n    sub x21, x21, x0\n    b 0b\n2:\n    ldp x19, x20, [sp, #16]\n    ldr x21, [sp, #32]\n    ldp x29, x30, [sp], #48\n    ret\n"
         ).try();
+        self.stdout_lock().try();
         self.out.add(
-            "za_flush:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n"
+            "za_flush_held:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n"
         ).try();
         self.address("x9", "za_out_len").try();
         self.out.add("    ldr x2, [x9]\n    cbz x2, 1f\n    str xzr, [x9]\n    mov x0, #1\n").try();
@@ -998,14 +1158,14 @@ Assembly = {
         self.out.add(
             "    bl za_write_all\n1:\n    ldp x29, x30, [sp], #16\n    ret\n"
         ).try();
-        // out(x0 bytes, x1 length) appends to the stdout buffer. A run
+        // out_held(x0 bytes, x1 length) appends to the stdout buffer. A run
         // larger than the buffer is written through after a flush.
         self.out.add(
-            "za_out:\n    stp x29, x30, [sp, #-32]!\n    mov x29, sp\n"
+            "za_out_held:\n    stp x29, x30, [sp, #-32]!\n    mov x29, sp\n"
         ).try();
         self.address("x9", "za_out_len").try();
         self.out.add(
-            "    ldr x3, [x9]\n    add x4, x3, x1\n    mov x5, #65536\n    cmp x4, x5\n    b.ls 1f\n    stp x0, x1, [sp, #16]\n    bl za_flush\n    ldp x0, x1, [sp, #16]\n    mov x5, #65536\n    cmp x1, x5\n    b.ls 0f\n    mov x2, x1\n    mov x1, x0\n    mov x0, #1\n    ldp x29, x30, [sp], #32\n    b za_write_all\n0:\n    mov x3, #0\n"
+            "    ldr x3, [x9]\n    add x4, x3, x1\n    mov x5, #65536\n    cmp x4, x5\n    b.ls 1f\n    stp x0, x1, [sp, #16]\n    bl za_flush_held\n    ldp x0, x1, [sp, #16]\n    mov x5, #65536\n    cmp x1, x5\n    b.ls 0f\n    mov x2, x1\n    mov x1, x0\n    mov x0, #1\n    ldp x29, x30, [sp], #32\n    b za_write_all\n0:\n    mov x3, #0\n"
         ).try();
         self.address("x9", "za_out_len").try();
         self.out.add("1:\n    add x4, x3, x1\n    str x4, [x9]\n    mov x2, x1\n    mov x1, x0\n").try();
@@ -1048,6 +1208,11 @@ Assembly = {
         ).try();
         self.data.add("za_true:\n    .ascii \"true\"\nza_false:\n    .ascii \"false\"\n")
     }
+}
+
+// The register prefix for a 4- or 8-byte word.
+register_width = (ty: Scalar) str {
+    (width(ty) == 4).match({ true => "w", false => "x" })
 }
 
 descriptor = (stream: Stream) usize { stream.match({ Out => 1, Err => 2 }) }

@@ -79,7 +79,7 @@ class ProjectTests(unittest.TestCase):
         return result.stdout
 
     def package_manifest(self, repo, rev, src="sample.zen", used=True):
-        self.write("client.zen", '{ answer, marker } = sample\nmain = () i32 { answer() - 42 }\n')
+        self.write("client.zen", '{ answer, marker } = deps.sample\nmain = () i32 { answer() - 42 }\n')
         target_src = "client.zen" if used else "pass.zen"
         deps = "[sample]" if used else "[]"
         self.build_file(f'sample = b.add("sample", {{url: "{repo.as_uri()}", rev: "{rev}", '

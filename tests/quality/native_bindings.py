@@ -128,8 +128,8 @@ main = () i32 { (C.getpid() > 0).match({true => 0, false => 1}) }
         for child_path in ("vendor/sdk/detail.zen", "vendor/sdk/detail/detail.zen"):
             with self.subTest(child_path=child_path):
                 root, result = self.project_fixture({
-                    "main.zen": "{ answer, VERSION } = sdk\nmain = () i32 { (answer() == 42).match({true => 0, false => 1}) }\n",
-                    "vendor/sdk/api.zen": "{ VALUE, FLAG } = sdk.detail\nanswer* = () i32 { VALUE }\nVERSION*: i32 = 1\n",
+                    "main.zen": "{ answer, VERSION } = deps.sdk\nmain = () i32 { (answer() == 42).match({true => 0, false => 1}) }\n",
+                    "vendor/sdk/api.zen": "{ VALUE, FLAG } = deps.sdk.detail\nanswer* = () i32 { VALUE }\nVERSION*: i32 = 1\n",
                     child_path: "VALUE*: i32 = 42\nFLAG*: bool = true\n",
                 }, 'sdk = b.lib("sdk", {src: Path("vendor/sdk/api.zen"), libs: [], paths: []}).try();\n'
                    'b.lib("unused", {src: Path("missing/not-present.zen"), libs: [], paths: []}).try();\n'
@@ -151,12 +151,21 @@ main = () i32 { (C.getpid() > 0).match({true => 0, false => 1}) }
 
     def test_unselected_library_is_not_importable(self):
         _, result = self.project_fixture({
-            "main.zen": "{ answer, VERSION } = sdk\nmain = () i32 { answer() }\n",
+            "main.zen": "{ answer, VERSION } = deps.sdk\nmain = () i32 { answer() }\n",
             "vendor/sdk/api.zen": "answer* = () i32 { 0 }\nVERSION*: i32 = 1\n",
         }, 'b.lib("sdk", {src: Path("vendor/sdk/api.zen"), libs: [], paths: []}).try();\n'
            'b.exe("app", {src: Path("main.zen"), deps: [], out: Ok(Path("app"))}).try();')
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("nothing is at that path", result.stdout + result.stderr)
+        self.assertIn("`sdk` is not a dependency of this target", result.stdout + result.stderr)
+
+    def test_dependency_is_reached_through_deps(self):
+        _, result = self.project_fixture({
+            "main.zen": "{ answer } = sdk\nmain = () i32 { answer() }\n",
+            "vendor/sdk/api.zen": "answer* = () i32 { 0 }\n",
+        }, 'sdk = b.lib("sdk", {src: Path("vendor/sdk/api.zen"), libs: [], paths: []}).try();\n'
+           'b.exe("app", {src: Path("main.zen"), deps: [sdk], out: Ok(Path("app"))}).try();')
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("`sdk` is a dependency, reached as `deps.sdk`", result.stdout + result.stderr)
 
     def test_rejects_typed_or_mutable_native_namespace(self):
         for declaration in ("C: i32 =", "C ::="):

@@ -21,6 +21,19 @@ build = (b :: Builder) Res<(), BuildError> {
 }
 ```
 
+A target's modules reach each dependency its `deps` list names through the
+`deps` root, under the name given to `b.add` or `b.lib`:
+
+```zen
+{ play } = deps.audio        // an item from the dependency's entry module
+mixer = deps.audio.mixer     // a module beside the entry, bound as a module
+```
+
+The dependency's entry is module `deps.audio`; a module beside it is
+`deps.audio.mixer`, flat or folder form. A name the target's `deps` does not
+list is an error that says so, and a dependency is never reachable by its bare
+name, so it cannot collide with a project folder of the same name.
+
 `exe` and `exe_test` return `Res<Builder, BuildError>`. `.try()` propagates a
 failed registration before evaluating the next one. Existing standalone calls
 remain valid. The evaluator visits each receiver once and retains declaration

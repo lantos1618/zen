@@ -5,8 +5,8 @@ Circle = {
     radius: f64,
 }
 
-// ufcs: a free function whose first parameter is Circle, so it
-// travels with Circle when imported and calls like a method
+// ufcs: a free function whose first parameter is Circle calls like a
+// method wherever it is declared or imported
 area* = (c: Circle) f64 {
     c.radius * c.radius * 3.14159
 }

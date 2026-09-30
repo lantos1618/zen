@@ -1463,7 +1463,7 @@ build = (b :: Builder) Res<(), BuildError> {
     });
 
     // deps are wired per target, swift-style: main.zen may only
-    // import from pkg what this list declares. out defaults to
+    // import through `deps.` what this list declares. out defaults to
     // build/{os}-{arch}/{name} if omitted; gitignore covers build/
     b.exe("example_zen", {
         src: Path("src/main.zen"),
@@ -1545,17 +1545,18 @@ vec_add* = (bn: Bencher) Res<(), TestError> {
 ```groovy
 // ~/example_zen/src/main.zen
 
-// imports are just bindings; std and pkg are namespaces.
-// pkg contains exactly what build.zen declared for THIS target,
-// importing anything else is a compile error.
+// imports are just bindings, with three roots: a project folder,
+// `std`, and `deps`. deps holds exactly what build.zen's `deps`
+// list granted THIS target; any other name under deps is an error,
+// and a dependency is never reachable by its bare name.
 //
 // importing a type brings what its body declares: its methods,
 // its associated functions, and its impls. a free function over
 // the type is imported by name, like any other function.
 // * is the one gate — it means "this name crosses a module
 // boundary" — so Vec brings add/get but never grow or Entry
-{ json } = pkg.json
-{ sodium } = pkg.libsodium
+json = deps.json
+sodium = deps.libsodium
 
 Circle = {
     radius: f64,

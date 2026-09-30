@@ -59,6 +59,7 @@ detectable: if two names collapse, the sum moves.
 | `struct_return_zero_field.zen` | a zero-field struct (illegal in ISO C) |
 | `struct_return_large.zen` | 16/17/64-byte and mixed INTEGER+SSE returns |
 | `struct_return_behavior.zen` | a struct crossing an actor message boundary (stage 5) |
+| `large_read_only_params.zen` | a large record passed by address to read-only parameters |
 | `literal_boundaries_signed.zen` | signed literals at the exact type boundary |
 | `literal_boundaries_unsigned.zen` | `u64` literals that do not fit a C `long` |
 | `nesting_expr.zen` | 256 nested parenthesised additions |

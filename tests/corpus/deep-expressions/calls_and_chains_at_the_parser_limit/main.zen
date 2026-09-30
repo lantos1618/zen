@@ -1,0 +1,19 @@
+// Nested calls, a method chain and nested indexing as deep as the parser
+// reads. Each level of call lowering and ownership checking must fit the
+// default 8 MB stack with room to spare.
+
+bump = (n: i64) i64 { n + 1 }
+
+main = (env: Env) Res<i32, AllocError> {
+    calls = bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(bump(
+        0
+    )))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
+    println("calls {}", calls);
+    start: i64 = 0;
+    chained    = start.bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump().bump();
+    println("chained {}", chained);
+    slots: [usize, 2] = [1, 0];
+    indexed           = slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[slots[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]];
+    println("indexed {}", indexed);
+    Ok(0);
+}

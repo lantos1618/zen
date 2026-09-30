@@ -15,7 +15,8 @@ type_from_ast, param_type = sema.sema_denote
 CBackend = gen.gen_c.gen_c_state
 unsupported = gen.gen_c.gen_c_report
 declare_temp = gen.gen_c.gen_c_flow
-arg_value, write_arg, by_ref = gen.gen_c.gen_c_arg
+arg_value, write_arg = gen.gen_c.gen_c_arg
+mutable_param = gen.gen_c.gen_c_param
 Site, member_at, method_sig, member_symbol = gen.gen_c.gen_c_member
 recv_inst, inst_open, any_open = gen.gen_c.gen_c_mono
 Piece, write_pieces, write_ok, write_done = gen.gen_c.gen_c_sink
@@ -109,7 +110,7 @@ keep_floor_fn = (
 
 floor_shape = (be :: CBackend, g: Function, sctx: Ctx)
               Res<bool, AllocError> {
-    ((bodyless(g) == false) && (g.params.len == 2) && by_ref(g, 0)).match({
+    ((bodyless(g) == false) && (g.params.len == 2) && mutable_param(g, 0)).match({
         false => Ok(false),
         true  => be.takes_str(g, sctx),
     })

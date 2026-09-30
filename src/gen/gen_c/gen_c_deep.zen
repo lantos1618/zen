@@ -1,0 +1,585 @@
+// Deep operator trees. Parens, unary and binary operators may nest as deep
+// as the parser reads, and written as one C expression that depth becomes C
+// bracket nesting: C99 promises only 63 levels and Clang refuses more than
+// 256. A call-free tree deeper than DEEP_OPERATORS is lowered here with an
+// explicit stack instead of recursion. Each operator is written exactly as
+// `gen_c_op` writes it, and a level whose text reaches SEGMENT_NEST brackets
+// is assigned to a temporary; the temporaries form a comma sequence at the
+// tree's own position:
+//     (zg_s1 = <segment>, zg_s2 = <segment reading zg_s1>, <rest>)
+// Operands evaluate inside their own segment, after the temporaries they
+// read, so no evaluation moves across the tree's position. The right operand
+// of `&&` or `||` runs only on one outcome of the left, so it is a region
+// with its own comma sequence, written inside the operand; a chain of one
+// logical operator is written flat, which C reads with the same
+// short-circuit order. As in ordinary lowering, C leaves the order of two
+// call-free sibling operands open.
+
+Ast, ExprId, Expr, Unary, Binary = std.ast
+Alloc, AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+TyId = sema.sema_ty
+Ctx, is_logical = sema.sema_check
+CBackend = gen.gen_c.gen_c_state
+expr, ty_of, door_of, plain_paren = gen.gen_c.gen_c_expr
+holding_type, declare_temp = gen.gen_c.gen_c_expr
+level_type, op_kind, negate_kind = gen.gen_c.gen_c_op
+write_negative_literal, write_position = gen.gen_c.gen_c_op
+c_op, helper_stem, traps = gen.gen_c.gen_c_op
+
+// Operator levels a tree may nest before it is lowered here.
+DEEP_OPERATORS: usize = 32
+
+// Bracket depth one segment of a deep tree may reach.
+SEGMENT_NEST: usize = 32
+
+// Operator nesting per expression, read from the immutable AST: a paren,
+// unary or binary operator is one level above its operands, anything else
+// none. Answers are cached, and computed iteratively because a left spine
+// may be thousands of levels deep.
+OperatorDepths* = {
+    tree: Ast,
+    alloc: Alloc,
+    // Depth plus one; zero while unknown.
+    known: Vec<usize>,
+
+    // Allocation failure answers zero, which leaves a tree to ordinary
+    // lowering.
+    depth* = (self: @Self, id: ExprId) usize {
+        self.answer(id).match({
+            Ok(d) => d,
+            None  => self.measure(id).match({ Ok(d) => d, Err(_) => 0 }),
+        })
+    }
+
+    answer = (self: @Self, id: ExprId) Res<usize> {
+        stored = self.known.get(id.index.to_usize()).try();
+        (stored > 0).ensure().try();
+        Ok(stored - 1)
+    }
+
+    remember = (self: @Self, id: ExprId, d: usize) {
+        self.known.ptr().write(id.index.to_usize(), d + 1);
+    }
+
+    measure = (self: @Self, root: ExprId) Res<usize, AllocError> {
+        work ::= self.alloc.Vec<DepthVisit>();
+        work.add(DepthVisit(id: root, finish: false)).try();
+        loop(() { work.len > 0 }, (h) {
+            work.take(work.len - 1).match({
+                None  => h.break(),
+                Ok(v) => self.answer(v.id).match({
+                    Ok(_) => (),
+                    None  => self.visit(v, work).try(),
+                }),
+            });
+        });
+        Ok(self.answer(root).match({ Ok(d) => d, None => 0 }))
+    }
+
+    visit = (self: @Self, v: DepthVisit, work :: Vec<DepthVisit>)
+            Res<(), AllocError> {
+        first  = self.first_operand(v.id);
+        second = self.second_operand(v.id);
+        first.match({
+            None    => { self.remember(v.id, 0); Ok(()) },
+            Ok(one) => v.finish.match({
+                true  => {
+                    below = self.depth(one).max(second.match({
+                        Ok(two) => self.depth(two),
+                        None    => 0,
+                    }));
+                    self.remember(v.id, below + 1);
+                    Ok(())
+                },
+                false => {
+                    work.add(DepthVisit(id: v.id, finish: true)).try();
+                    second.when_ok((two) {
+                        work.add(DepthVisit(id: two, finish: false)).try();
+                    });
+                    work.add(DepthVisit(id: one, finish: false))
+                },
+            }),
+        })
+    }
+
+    first_operand = (self: @Self, id: ExprId) Res<ExprId> {
+        self.tree.expr_at(id).kind.match({
+            Paren(p)  => Ok(p.inner),
+            Unary(u)  => Ok(u.operand),
+            Binary(b) => Ok(b.lhs),
+            _         => None,
+        })
+    }
+
+    second_operand = (self: @Self, id: ExprId) Res<ExprId> {
+        self.tree.expr_at(id).kind.match({
+            Binary(b) => Ok(b.rhs),
+            _         => None,
+        })
+    }
+}
+
+OperatorDepths* = (a: Alloc, tree: Ast) Res<OperatorDepths, AllocError> {
+    known ::= a.Vec<usize>();
+    known.reserve(tree.expr_ids()).try();
+    loop(() { known.len < tree.expr_ids() }, (h) { known.add(0).try(); });
+    Ok(OperatorDepths(tree: tree, alloc: a, known: known))
+}
+
+DepthVisit = { id: ExprId, finish: bool }
+
+// Whether `expr` lowers this node here: a call-free operator tree deeper
+// than DEEP_OPERATORS whose root is itself written as an operator.
+deep_root* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
+             Res<bool, AllocError> {
+    deep = be.operator_depths.depth(id) > DEEP_OPERATORS;
+    (deep && !be.call_effects.has_call(id)).match({
+        false => Ok(false),
+        true  => be.level_of(
+            Operand(id: id, want: want, region: false),
+            ctx
+        ).try().match({
+            Ok(_) => Ok(true),
+            None  => Ok(false),
+        }),
+    })
+}
+
+lower_deep* = (
+    be   :: CBackend,
+    root : ExprId,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+)
+              Res<(), AllocError> {
+    tree ::= DeepTree(
+        work: be.alloc.Vec<DeepVisit>(),
+        values: be.alloc.Vec<Written>(),
+        sequences: be.alloc.Vec<String>()
+    );
+    tree.sequences.add(be.alloc.String().try()).try();
+    tree.work.add(DeepVisit.Enter(Operand(
+        id: root,
+        want: want,
+        region: false
+    ))).try();
+    loop(() { tree.work.len > 0 }, (h) {
+        tree.work.take(tree.work.len - 1).match({
+            None  => h.break(),
+            Ok(v) => v.match({
+                Enter(o) => tree.enter(be, o, ctx).try(),
+                Leave(l) => tree.leave(be, l, ctx).try(),
+                Close    => tree.close(be).try(),
+            }),
+        });
+    });
+    top      = tree.values.take(tree.values.len - 1).ok_or(AllocError.OutOfMemory).try();
+    sequence = tree.sequences.take(0).ok_or(AllocError.OutOfMemory).try();
+    (sequence.len() == 0).match({
+        true  => out.add(top.text.view()),
+        false => out.fmt("({}{})", sequence.view(), top.text.view()),
+    })
+}
+
+// `region` marks an operand that runs conditionally: its temporaries are
+// assigned inside it rather than ahead of the whole tree.
+Operand = { id: ExprId, want: TyId, region: bool }
+
+// One operator's text around its operands: `open`, the first operand,
+// `between`, the second, `close`. A paren has one operand and writes its
+// own parentheses only around an operand that is not already delimited.
+Level = {
+    at: Operand,
+    open: String,
+    between: String,
+    close: String,
+    operands: usize,
+    paren: bool,
+    // `&&` or `||` for a logical operator, whose same-operator operands
+    // are spliced in flat; empty otherwise.
+    chain: str,
+    left: Operand,
+    right: Operand,
+}
+
+DeepVisit = Enter(Operand) | Leave(Level) | Close
+
+// A written operand and the bracket depth its text reaches. Operator text
+// and temporaries are delimited; a leaf may not be. `chain` names the
+// logical operator a parenthesized flat chain is written with.
+Written = { text: String, nest: usize, delimited: bool, chain: str }
+
+DeepTree = {
+    work :: Vec<DeepVisit>,
+    values :: Vec<Written>,
+    // The innermost region's sequence is last.
+    sequences :: Vec<String>,
+
+    enter = (self :: @Self, be :: CBackend, o: Operand, ctx: Ctx)
+            Res<(), AllocError> {
+        o.region.then(
+            () { self.sequences.add(be.alloc.String().try()).try(); }
+        );
+        be.level_of(o, ctx).try().match({
+            None  => {
+                text ::= be.alloc.String().try();
+                expr(be, o.id, ctx, o.want, text).try();
+                self.values.add(Written(
+                    text: text,
+                    nest: bracket_depth(text.view()),
+                    delimited: false,
+                    chain: ""
+                ))
+            },
+            Ok(l) => {
+                self.work.add(DeepVisit.Leave(l)).try();
+                (l.operands == 2).then(() {
+                    l.right.region.then(() {
+                        self.work.add(DeepVisit.Close).try();
+                    });
+                    self.work.add(DeepVisit.Enter(l.right)).try();
+                });
+                (l.operands > 0).match({
+                    true  => self.work.add(DeepVisit.Enter(l.left)),
+                    false => Ok(()),
+                })
+            },
+        })
+    }
+
+    leave = (self :: @Self, be :: CBackend, l: Level, ctx: Ctx)
+            Res<(), AllocError> {
+        second = self.operand_value(l.operands == 2).try();
+        first  = self.operand_value(l.operands > 0).try();
+        l.paren.match({
+            true  => self.values.add(parenthesized(be, first).try()),
+            false => {
+                text ::= be.alloc.String().try();
+                text.add(l.open.view()).try();
+                first.when_ok((w) { text.add(spliced(w, l.chain)).try(); });
+                second.when_ok((w) {
+                    text.add(l.between.view()).try();
+                    text.add(spliced(w, l.chain)).try();
+                });
+                text.add(l.close.view()).try();
+                nest = 1 + inner_nest(first, l.chain).max(inner_nest(second, l.chain));
+                self.settle(be, l, text, nest, ctx)
+            },
+        })
+    }
+
+    // A region's value is its own sequence ahead of its text.
+    close = (self :: @Self, be :: CBackend) Res<(), AllocError> {
+        value    = self.values.take(self.values.len - 1).ok_or(AllocError.OutOfMemory).try();
+        sequence = self.sequences.take(self.sequences.len - 1).ok_or(AllocError.OutOfMemory).try();
+        (sequence.len() == 0).match({
+            true  => self.values.add(value),
+            false => {
+                text ::= be.alloc.String().try();
+                text.fmt("({}{})", sequence.view(), value.text.view()).try();
+                self.values.add(Written(
+                    text: text,
+                    nest: bracket_depth(text.view()),
+                    delimited: true,
+                    chain: ""
+                ))
+            },
+        })
+    }
+
+    operand_value = (self :: @Self, present: bool)
+                    Res<Res<Written>, AllocError> {
+        present.match({
+            false => Ok(None),
+            true  => Ok(Ok(
+                self.values.take(self.values.len - 1).ok_or(AllocError.OutOfMemory).try()
+            )),
+        })
+    }
+
+    // A level at the segment limit is assigned to a temporary, when its
+    // value can be held; the level above reads the temporary.
+    settle = (
+        self :: @Self,
+        be   :: CBackend,
+        l    : Level,
+        text : String,
+        nest : usize,
+        ctx  : Ctx
+    ) Res<(), AllocError> {
+        held = (nest >= SEGMENT_NEST).match({
+            false => Ok(None),
+            true  => be.holding_type(l.at.id, ctx, l.at.want),
+        }).try();
+        held.match({
+            None   => self.values.add(Written(
+                text: text,
+                nest: nest,
+                delimited: true,
+                chain: l.chain
+            )),
+            Ok(ty) => {
+                tmp = be.declare_temp(ty).try();
+                sequence ::= self.sequences.take(self.sequences.len - 1).ok_or(AllocError.OutOfMemory).try();
+                sequence.fmt("{} = {}, ", tmp.view(), text.view()).try();
+                self.sequences.add(sequence).try();
+                self.values.add(Written(
+                    text: tmp,
+                    nest: 0,
+                    delimited: true,
+                    chain: ""
+                ))
+            },
+        })
+    }
+}
+
+// An operand's text inside a level: a flat chain of the level's own
+// logical operator loses its parentheses and joins the level's chain.
+spliced = (w: Written, chain: str) str {
+    joins(w, chain).match({
+        true  => w.text.view().slice(1, w.text.len() - 1),
+        false => w.text.view(),
+    })
+}
+
+inner_nest = (w: Res<Written>, chain: str) usize {
+    w.match({
+        None    => 0,
+        Ok(one) => joins(one, chain).match({
+            true  => one.nest - 1,
+            false => one.nest,
+        }),
+    })
+}
+
+joins = (w: Written, chain: str) bool {
+    (chain.len > 0) && w.chain.eq(chain)
+}
+
+parenthesized = (be :: CBackend, w: Res<Written>) Res<Written, AllocError> {
+    one = w.ok_or(AllocError.OutOfMemory).try();
+    one.delimited.match({
+        true  => Ok(one),
+        false => {
+            text ::= be.alloc.String().try();
+            text.fmt("({})", one.text.view()).try();
+            Ok(Written(
+                text: text,
+                nest: one.nest + 1,
+                delimited: true,
+                chain: ""
+            ))
+        },
+    })
+}
+
+// The deepest bracket nesting in C text, outside string and character
+// literals.
+bracket_depth = (text: str) usize {
+    depth: usize   ::= 0;
+    deepest: usize ::= 0;
+    quote: u8      ::= 0;
+    escaped        ::= false;
+    Range(0, text.len).loop((h, i) {
+        b = text.index(i);
+        (quote != 0).match({
+            true  => {
+                escaped.match({
+                    true  => { escaped = false; },
+                    false => {
+                        (b == '\\').then(() { escaped = true; });
+                        (b == quote).then(() { quote = 0; });
+                    },
+                });
+            },
+            false => {
+                (b.is_in(['"', '\''])).then(() { quote = b; });
+                (b.is_in(['(', '[', '{'])).then(() {
+                    depth   = depth + 1;
+                    deepest = deepest.max(depth);
+                });
+                (b.is_in([')', ']', '}']) && depth > 0).then(() {
+                    depth = depth - 1;
+                });
+            },
+        });
+    });
+    deepest
+}
+
+// How `expr` would write this node, when it is an operator this file can
+// write level by level: a plain paren, `!`, negation, a checked helper or a
+// C infix operator. Everything else is a leaf lowered by `expr`.
+level_of = (be :: CBackend, o: Operand, ctx: Ctx) Res<Res<Level>, AllocError> {
+    node = be.tree.expr_at(o.id);
+    node.kind.match({
+        Paren(p)  => be.plain_paren(o.id, ctx, o.want).try().match({
+            false => Ok(None),
+            true  => Ok(Ok(
+                be.one_operand(
+                    o,
+                    "",
+                    "",
+                    Operand(id: p.inner, want: o.want, region: false),
+                    true
+                ).try()
+            )),
+        }),
+        Unary(u)  => be.plain_door(o, ctx).try().match({
+            false => Ok(None),
+            true  => be.unary_level(o, node, u, ctx),
+        }),
+        Binary(b) => be.plain_door(o, ctx).try().match({
+            false => Ok(None),
+            true  => be.binary_level(o, node, b, ctx),
+        }),
+        _         => Ok(None),
+    })
+}
+
+plain_door = (be :: CBackend, o: Operand, ctx: Ctx) Res<bool, AllocError> {
+    door = be.door_of(o.id, ctx, o.want).try();
+    Ok(door.match({ Plain => true, _ => false }))
+}
+
+// `lower_unary` and `lower_negate`, one level at a time.
+unary_level = (be :: CBackend, o: Operand, node: Expr, u: Unary, ctx: Ctx)
+              Res<Res<Level>, AllocError> {
+    u.op.match({
+        Not  => Ok(Ok(
+            be.one_operand(
+                o,
+                "(!",
+                ")",
+                Operand(id: u.operand, want: o.want, region: false),
+                false
+            ).try()
+        )),
+        Neg  => {
+            ty   = be.ty_of(u.operand, ctx, o.want).try();
+            prim = be.check.prim_name(ty);
+            be.negate_kind(u, prim).match({
+                Float     => Ok(Ok(
+                    be.one_operand(
+                        o,
+                        "(-",
+                        ")",
+                        Operand(id: u.operand, want: o.want, region: false),
+                        false
+                    ).try()
+                )),
+                Folded(d) => {
+                    text ::= be.alloc.String().try();
+                    write_negative_literal(d, text).try();
+                    Ok(Ok(Level(
+                        at: o,
+                        open: text,
+                        between: be.alloc.String().try(),
+                        close: be.alloc.String().try(),
+                        operands: 0,
+                        paren: false,
+                        chain: "",
+                        left: o,
+                        right: o
+                    )))
+                },
+                Checked   => {
+                    be.need_helpers(prim, "sub").try();
+                    open ::= be.alloc.String().try();
+                    open.fmt("zg_sub_{prim}(0, ").try();
+                    close ::= be.alloc.String().try();
+                    close.add(", ").try();
+                    be.write_position(node.span.file, u.op_span, close).try();
+                    close.add(")").try();
+                    Ok(Ok(Level(
+                        at: o,
+                        open: open,
+                        between: be.alloc.String().try(),
+                        close: close,
+                        operands: 1,
+                        paren: false,
+                        chain: "",
+                        left: Operand(id: u.operand, want: ty, region: false),
+                        right: o
+                    )))
+                },
+            })
+        },
+        Addr => Ok(None),
+    })
+}
+
+// `write_infix` and `call_helper`, one level at a time.
+binary_level = (be :: CBackend, o: Operand, node: Expr, b: Binary, ctx: Ctx)
+               Res<Res<Level>, AllocError> {
+    operand = be.level_type(b, ctx, o.want).try();
+    left    = Operand(id: b.lhs, want: operand, region: false);
+    right   = Operand(id: b.rhs, want: operand, region: is_logical(b.op));
+    be.op_kind(b, operand).match({
+        Infix        => {
+            close ::= be.alloc.String().try();
+            close.add(")").try();
+            between ::= be.alloc.String().try();
+            between.fmt(" {} ", c_op(b.op)).try();
+            Ok(Ok(Level(
+                at: o,
+                open: be.alloc.String("(").try(),
+                between: between,
+                close: close,
+                operands: 2,
+                paren: false,
+                chain: is_logical(b.op).match({ true => c_op(b.op), false => "" }),
+                left: left,
+                right: right
+            )))
+        },
+        Helper(prim) => {
+            be.need_helpers(prim, helper_stem(b.op)).try();
+            open ::= be.alloc.String().try();
+            open.fmt("zg_{}_{prim}(", helper_stem(b.op)).try();
+            close ::= be.alloc.String().try();
+            traps(b.op).then(() {
+                close.add(", ").try();
+                be.write_position(node.span.file, b.op_span, close).try();
+            });
+            close.add(")").try();
+            Ok(Ok(Level(
+                at: o,
+                open: open,
+                between: be.alloc.String(", ").try(),
+                close: close,
+                operands: 2,
+                paren: false,
+                chain: "",
+                left: left,
+                right: right
+            )))
+        },
+        _            => Ok(None),
+    })
+}
+
+one_operand = (
+    be      :: CBackend,
+    o       : Operand,
+    open    : str,
+    close   : str,
+    operand : Operand,
+    paren   : bool
+) Res<Level, AllocError> {
+    Ok(Level(
+        at: o,
+        open: be.alloc.String(open).try(),
+        between: be.alloc.String().try(),
+        close: be.alloc.String(close).try(),
+        operands: 1,
+        paren: paren,
+        chain: "",
+        left: operand,
+        right: operand
+    ))
+}

@@ -50,6 +50,7 @@ inline_result_type = gen.gen_c.gen_c_settle
 needs_fat, write_fat_value = gen.gen_c.gen_c_fat
 release_binding = gen.gen_c.gen_c_own
 lower_scope_ref, is_scope_ref, scope_type = gen.gen_c.gen_c_scope
+deep_root, lower_deep = gen.gen_c.gen_c_deep
 lower_global_value = gen.gen_c.gen_c_const
 
 // expressions
@@ -541,9 +542,9 @@ expr* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId, out :: String)
 }
 
 // Conversion precedence is hoist, widen, then bound-value construction.
-Door = Set | Hoist | Widen | Fat | Plain
+Door* = Set | Hoist | Widen | Fat | Plain
 
-door_of = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
+door_of* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
           Res<Door, AllocError> {
     found: Res<Door> = loop<Door>((h) {
         be.needs_set(id, ctx, want).try().then(() { h.break(Door.Set) });
@@ -719,6 +720,19 @@ write_expr = (
     want : TyId,
     out  :: String
 ) Res<(), AllocError> {
+    be.deep_root(id, ctx, want).try().match({
+        true  => be.lower_deep(id, ctx, want, out),
+        false => be.write_node(id, ctx, want, out),
+    })
+}
+
+write_node = (
+    be   :: CBackend,
+    id   : ExprId,
+    ctx  : Ctx,
+    want : TyId,
+    out  :: String
+) Res<(), AllocError> {
     node = be.tree.expr_at(id);
     node.kind.match({
         Literal(l)    => lower_literal(l, out),
@@ -798,7 +812,7 @@ unparened* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
 
 // Whether `expr` lowers this paren as parentheses around its inner
 // expression at the same expected type.
-plain_paren = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
+plain_paren* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
               Res<bool, AllocError> {
     door = be.door_of(id, ctx, want).try();
     Ok(door.match({ Plain => !be.spills(id), _ => false }))

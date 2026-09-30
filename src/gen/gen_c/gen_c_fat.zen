@@ -29,6 +29,7 @@ init_temp = gen.gen_c.gen_c_flow
 Site, site_of, member_at = gen.gen_c.gen_c_member
 impl_member, bodied_fn = gen.gen_c.gen_c_impl
 write_cast = gen.gen_c.gen_c_bound
+passes_address = gen.gen_c.gen_c_param
 
 // which structs these are
 
@@ -522,11 +523,11 @@ thunk_param* = (be :: CBackend, p: TyId, stem: str, i: usize, out :: String)
     Ok(());
 }
 
-// `self :: @Self` takes the receiver by reference, so the shim hands
-// the pointer straight through; `self: @Self` takes it by value and the
-// shim dereferences. Every `Alloc` member is `:` — an allocator is a
-// handle and allocating never writes the handle's own bytes — and the
-// rule is read off the impl rather than assumed.
+// A receiver the impl takes by address (`self :: @Self`, or a large
+// record) gets the pointer straight through; otherwise the shim
+// dereferences. Every `Alloc` member is `:` — an allocator is a handle and
+// allocating never writes the handle's own bytes — and the rule is read
+// off the impl rather than assumed.
 thunk_body = (
     be  :: CBackend,
     s   : Slot,
@@ -539,8 +540,8 @@ thunk_body = (
              Res<(), AllocError> {
     call ::= be.alloc.String().try();
     call.fmt("{sym}(").try();
-    be.thunk_recv(cty, f, call).try();
-    s.params.loop((h, i, p) { be.thunk_arg(s, sig, i, call).try() });
+    be.thunk_recv(cty, f, sig, call).try();
+    s.params.loop((h, i, p) { be.thunk_arg(s, f, sig, i, call).try() });
     call.add(")").try();
     out.add("    ").try();
     be.is_unit(s.ret).match({
@@ -550,23 +551,26 @@ thunk_body = (
     out.fmt("{};\n", call.view())
 }
 
-thunk_recv = (be :: CBackend, cty: TyId, f: Function, out :: String)
-             Res<(), AllocError> {
-    recv_by_ref(f).match({
+thunk_recv = (
+    be  :: CBackend,
+    cty : TyId,
+    f   : Function,
+    sig : Vec<TyId>,
+    out :: String
+) Res<(), AllocError> {
+    recv    = sig.get(0).match({ Ok(t) => t, None => cty });
+    address = be.passes_address(f, 0, recv).try();
+    address.match({
         true  => out.add("("),
         false => out.add("(*("),
     }).try();
     be.ctype(cty, out).try();
     out.add(" *)zg_self").try();
-    recv_by_ref(f).match({
+    address.match({
         true  => Ok(()),
         false => out.add(")"),
     }).try();
     Ok(());
-}
-
-recv_by_ref = (f: Function) bool {
-    f.params.get(0).match({ Ok(p) => p.mutable, None => false })
 }
 
 // A count beside an erased pointer is an element count, but the impl
@@ -576,6 +580,7 @@ recv_by_ref = (f: Function) bool {
 thunk_arg = (
     be  :: CBackend,
     s   : Slot,
+    f   : Function,
     sig : Vec<TyId>,
     i   : usize,
     out :: String
@@ -583,6 +588,8 @@ thunk_arg = (
     out.add(", ").try();
     nm ::= be.alloc.String().try();
     sym_gen(nm, "a", i).try();
+    want = sig.get(i + 1).match({ Ok(t) => t, None => TyId(index: 0) });
+    be.passes_address(f, i + 1, want).try().then(() { out.add("&").try() });
     be.scales(s, i).match({
         true  => be.scaled_arg(nm.view(), out),
         false => be.cast_arg(s, sig, i, nm.view(), out),

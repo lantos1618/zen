@@ -28,7 +28,8 @@ expr, ty_of, named_hole, write_c_literal = gen.gen_c.gen_c_expr
 declare_temp, is_variant, payload_type = gen.gen_c.gen_c_flow
 write_assign_err = gen.gen_c.gen_c_flow
 signature_of = gen.gen_c.gen_c_call
-recv_arg, arg_value, by_ref = gen.gen_c.gen_c_arg
+recv_arg, arg_value = gen.gen_c.gen_c_arg
+mutable_param = gen.gen_c.gen_c_param
 body_end, cast_of = gen.gen_c.gen_c_print
 FmtAt, ends_run, arguments_taken = std.text.text_fmt
 source_fmt_at = gen.gen_c.gen_c_print
@@ -57,7 +58,7 @@ is_sink_door* = (be: CBackend, d: Def, f: Function) bool {
 // access. Stated once so the two forms cannot drift into recognising
 // different declarations.
 sink_door_shape* = (be: CBackend, f: Function) bool {
-    bodyless(f) && (f.params.len == 3) && by_ref(f, 0)
+    bodyless(f) && (f.params.len == 3) && mutable_param(f, 0)
         && be.last_is_variadic(f)
 }
 

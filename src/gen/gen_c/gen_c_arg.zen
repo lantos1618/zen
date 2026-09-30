@@ -11,6 +11,7 @@ CBackend = gen.gen_c.gen_c_state
 expr, value_held = gen.gen_c.gen_c_expr
 declare_temp = gen.gen_c.gen_c_flow
 address_of = gen.gen_c.gen_c_fat
+passes_address, mutable_param = gen.gen_c.gen_c_param
 
 arg_text* = (
     be   :: CBackend,
@@ -79,14 +80,44 @@ write_arg_at* = (
     out   :: String
 ) Res<(), AllocError> {
     want = sig.get(i).match({ Ok(t) => t, None => TyId(index: 0) });
-    by_ref(f, i).match({
+    be.passes_address(f, i, want).try().match({
         false => be.value_held(value, ctx, want, hold, out),
-        true  => be.write_address(value, ctx, want, out),
+        true  => mutable_param(f, i).match({
+            true  => be.write_address(value, ctx, want, out),
+            false => be.write_read_address(
+                value,
+                ctx,
+                want,
+                held(f, hold),
+                out
+            ),
+        }),
     })
 }
 
-by_ref* = (f: Function, i: usize) bool {
-    f.params.get(i).match({ Ok(p) => p.mutable, None => false })
+// A large read-only argument passes the address of the value it would
+// otherwise copy. A held value is copied first, so the callee reads it as it
+// was at its position.
+write_read_address = (
+    be    :: CBackend,
+    value : ExprId,
+    ctx   : Ctx,
+    want  : TyId,
+    hold  : bool,
+    out   :: String
+) Res<(), AllocError> {
+    code ::= be.alloc.String().try();
+    be.value_held(value, ctx, want, hold, code).try();
+    be.address_of(code.view(), want, out)
+}
+
+// A callee that also takes a `::` argument could write the caller's value
+// while reading it through a read-only address, so such calls copy it.
+held = (f: Function, hold: bool) bool {
+    hold || f.params.find((p) { p.mutable }).match({
+        Ok(_) => true,
+        None  => false,
+    })
 }
 
 write_address* = (

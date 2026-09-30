@@ -25,7 +25,8 @@ expr = gen.gen_c.gen_c_expr
 recv_inst = gen.gen_c.gen_c_mono
 temp, payload_type, write_assign_ok, write_assign_err = gen.gen_c.gen_c_flow
 write_assign_ok_unit = gen.gen_c.gen_c_flow
-by_ref = gen.gen_c.gen_c_arg
+passes_address = gen.gen_c.gen_c_param
+ty_at = sema.sema_cand
 fat_value = gen.gen_c.gen_c_fat
 
 BehaviorHit* = {
@@ -619,10 +620,15 @@ ActorSend = {
             context_c.view()
         ).try();
         body.fmt("    {payload} *zg_msg = ({payload} *)zg_raw;\n").try();
-        body.fmt("    (void)({}(zg_state, *zg_ctx", sym.view()).try();
+        body.fmt("    (void)({}(", sym.view()).try();
+        be.write_place_arg(self.hit.f, sig, 0, "(*zg_state)", body).try();
+        body.add(", ").try();
+        be.write_place_arg(self.hit.f, sig, 1, "(*zg_ctx)", body).try();
         Range(2, sig.len).loop((h, i) {
             body.add(", ").try();
-            by_ref(self.hit.f, i).then(() { body.add("&").try() });
+            be.passes_address(self.hit.f, i, sig.ty_at(i)).try().then(() {
+                body.add("&").try()
+            });
             body.add("zg_msg->zg_arg").try();
             body.write_usize(i - 2).try();
         });
@@ -1078,19 +1084,50 @@ add_lifecycle_callback = (
     context : bool
 )
                          Res<(), AllocError> {
-    sym = be.behavior_symbol(actor, hit).try();
     proto ::= be.alloc.String().try();
     proto.fmt("{}void {}(zg_actor *zg_base)", be.linkage(), name.view()).try();
     body ::= be.alloc.String().try();
     body.fmt("    {rec} *zg_self = ({rec} *)zg_base;\n").try();
-    context.match({
-        true  => body.fmt(
-            "    (void)({}(&zg_self->zg_state, zg_self->zg_ctx));\n",
-            sym.view()
-        ),
-        false => body.fmt("    (void)({}(&zg_self->zg_state));\n", sym.view()),
-    }).try();
+    be.write_lifecycle_call(actor, hit, context, body).try();
     be.add_function(name, proto, body)
+}
+
+// `hook(state[, ctx])` from a record's own fields, each passed as the
+// behavior's signature takes it.
+write_lifecycle_call = (
+    be      :: CBackend,
+    actor   : TyId,
+    hit     : BehaviorHit,
+    context : bool,
+    out     :: String
+) Res<(), AllocError> {
+    inst = be.recv_inst(actor).try();
+    sig ::= be.alloc.Vec<TyId>();
+    be.method_sig(actor, hit.site.decl, hit.f, hit.mi, inst, sig).try();
+    sym = be.member_symbol(actor, hit.site, hit.f.name.text, sig, inst).try();
+    out.fmt("    (void)({}(", sym.view()).try();
+    be.write_place_arg(hit.f, sig, 0, "zg_self->zg_state", out).try();
+    context.then(() {
+        out.add(", ").try();
+        be.write_place_arg(hit.f, sig, 1, "zg_self->zg_ctx", out).try();
+    });
+    out.add("));\n")
+}
+
+// A place the runtime owns, passed by address or by value as the callee's
+// parameter takes it.
+write_place_arg = (
+    be    :: CBackend,
+    f     : Function,
+    sig   : Vec<TyId>,
+    i     : usize,
+    place : str,
+    out   :: String
+) Res<(), AllocError> {
+    be.passes_address(f, i, sig.ty_at(i)).try().match({
+        true  => out.fmt("&({place})"),
+        false => out.add(place),
+    })
 }
 
 behavior_symbol = (be :: CBackend, actor: TyId, hit: BehaviorHit)
@@ -1117,13 +1154,7 @@ write_stopped_callback = (
     body.fmt("    {rec} *zg_self = ({rec} *)zg_base;\n").try();
     be.behavior_of(actor, "stopped").try().match({
         None    => Ok(()),
-        Ok(hit) => {
-            sym = be.behavior_symbol(actor, hit).try();
-            body.fmt(
-                "    (void)({}(&zg_self->zg_state, zg_self->zg_ctx));\n",
-                sym.view()
-            )
-        },
+        Ok(hit) => be.write_lifecycle_call(actor, hit, true, body),
     }).try();
     be.drop_symbol(actor).try().match({
         None    => Ok(()),

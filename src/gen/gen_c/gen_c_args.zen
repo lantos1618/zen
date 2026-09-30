@@ -24,6 +24,7 @@ write_none, write_zero, ctype = gen.gen_c.gen_c_type
 enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
 sym_member, sym_variant, RES_PATH = gen.gen_name
 unsupported = gen.gen_c.gen_c_report
+passes_address = gen.gen_c.gen_c_param
 
 ARGS_MODULE: str = "std.env.env_args"
 
@@ -96,6 +97,7 @@ args_named = (
                     dst: be.fresh_name("args").try(),
                     value: be.fresh_name("args_value").try(),
                     envv: be.fresh_name("args_env").try(),
+                    env_ty: rty,
                     mask: be.fresh_name("args_mask").try(),
                     done: be.next_tmp(),
                     slots: be.alloc.Vec<Slot>()
@@ -122,6 +124,7 @@ ArgsLower = {
     dst:       String,
     value:     String,
     envv:      String,
+    env_ty:    TyId,
     mask:      String,
     done:      usize,
     slots ::   Vec<Slot>,
@@ -199,38 +202,57 @@ ArgsLower = {
         Ok(())
     }
 
+    // `<dst> = <helper>(<env>, <rest>)`, the environment written as the
+    // helper's first parameter takes it.
+    call_env = (
+        self   : @Self,
+        be     :: CBackend,
+        dst    : str,
+        helper : str,
+        rest   : str
+    ) Res<(), AllocError> {
+        args ::= be.alloc.String().try();
+        be.helper_takes_address(helper, self.env_ty).try().then(() {
+            args.add("&").try()
+        });
+        args.fmt("{}, {rest}", self.envv.view()).try();
+        be.call_into(dst, helper, args.view())
+    }
+
     // Pass one: every flag and variable, claiming argv slots as it goes.
     flags = (self: @Self, be :: CBackend) Res<(), AllocError> {
         self.slots.loop((h, slot) {
             flag = be.flag_of(slot.name).try();
             name = be.env_of(slot.name).try();
             args ::= be.alloc.String().try();
-            args.add(self.envv.view()).try();
-            args.add(", ").try();
             be.lit(flag.view(), args).try();
             args.add(", ").try();
             be.lit(name.view(), args).try();
             slot.ask.match({
                 Switch => {
                     place = self.place(be, slot.name).try();
-                    be.call_into(place.view(), "switch", args.view()).try();
+                    self.call_env(
+                        be,
+                        place.view(),
+                        "switch",
+                        args.view()
+                    ).try();
                 },
-                _      => be.call_into(
+                _      => self.call_env(
+                    be,
                     slot.raw.view(),
                     "text",
                     args.view()
                 ).try(),
             });
             claim ::= be.alloc.String().try();
-            claim.add(self.envv.view()).try();
-            claim.add(", ").try();
             claim.add(self.mask.view()).try();
             claim.add(", ").try();
             be.lit(flag.view(), claim).try();
             claim.add(
                 slot.ask.match({ Switch => ", false", _ => ", true" })
             ).try();
-            be.call_into(self.mask.view(), "claim", claim.view()).try();
+            self.call_env(be, self.mask.view(), "claim", claim.view()).try();
         });
         Ok(())
     }
@@ -247,10 +269,8 @@ ArgsLower = {
     positional = (self: @Self, be :: CBackend, slot: Slot)
                  Res<(), AllocError> {
         be.open_absent(slot.raw.view()).try();
-        args ::= be.alloc.String().try();
-        args.fmt("{}, {}", self.envv.view(), self.mask.view()).try();
-        be.call_into(slot.raw.view(), "word", args.view()).try();
-        be.call_into(self.mask.view(), "take", args.view()).try();
+        self.call_env(be, slot.raw.view(), "word", self.mask.view()).try();
+        self.call_env(be, self.mask.view(), "take", self.mask.view()).try();
         be.close()
     }
 
@@ -393,9 +413,9 @@ ArgsLower = {
         checked = be.fresh_name("args_end").try();
         be.declare_temp(be.helper_ret("finish").try(), checked.view()).try();
         args ::= be.alloc.String().try();
-        args.fmt("{}, {}, ", self.envv.view(), self.mask.view()).try();
+        args.fmt("{}, ", self.mask.view()).try();
         be.lit(last, args).try();
-        be.call_into(checked.view(), "finish", args.view()).try();
+        self.call_env(be, checked.view(), "finish", args.view()).try();
         self.fail_unless_ok(be, checked.view())
     }
 
@@ -560,6 +580,20 @@ call_into = (be :: CBackend, dst: str, helper: str, args: str)
             call.fmt("({})", args).try();
             be.set_line(dst, call.view())
         },
+    })
+}
+
+helper_takes_address = (be :: CBackend, name: str, env_ty: TyId)
+                       Res<bool, AllocError> {
+    be.args_helper(name).try().match({
+        None    => Ok(false),
+        Ok(def) => decl_at(be.tree, def.id).match({
+            None  => Ok(false),
+            Ok(d) => d.kind.match({
+                Function(f) => be.passes_address(f, 0, env_ty),
+                _           => Ok(false),
+            }),
+        }),
     })
 }
 

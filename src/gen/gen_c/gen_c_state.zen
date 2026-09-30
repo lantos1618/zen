@@ -13,6 +13,8 @@ World, Def = sema.sema_def
 Checker = sema.sema_check
 Inst = sema.sema_inst
 CallEffects = gen.gen_c.gen_c_effect
+ParamPassing = gen.gen_c.gen_c_param
+OperatorDepths = gen.gen_c.gen_c_deep
 LoopSyntax = gen.gen_c.gen_c_shape
 Emit = gen.gen_emit
 GenDiag, GenFault = gen.gen_diag
@@ -67,6 +69,12 @@ CBackend* = {
     // Lazily indexed loop syntax from the immutable parsed tree.
     loop_syntax :: Res<LoopSyntax>,
     call_effects*: CallEffects,
+    // Type sizes and parameter uses that decide which parameters cross C
+    // calls by address.
+    params* :: ParamPassing,
+    // Operator nesting per expression, for trees too deep for one C
+    // expression.
+    operator_depths*: OperatorDepths,
 
     // Scratch output for the current function.
     buf :: Emit,
@@ -933,6 +941,8 @@ CBackend* = (a: Alloc, tree: Ast, check: Checker) Res<CBackend, AllocError> {
         check: check,
         loop_syntax: None,
         call_effects: a.CallEffects(tree).try(),
+        params: a.ParamPassing(),
+        operator_depths: a.OperatorDepths(tree).try(),
         buf: a.Emit().try(),
         diags: a.Vec<GenDiag>(),
         type_queue: a.Vec<QueuedType>(),

@@ -1,0 +1,81 @@
+// A record larger than a few words is passed to a read-only parameter by
+// address, so a deep recursion carrying one costs a pointer per level rather
+// than a copy. The callee still sees the value it was given: a body that
+// assigns its parameter works on its own copy, and a call that also takes a
+// `::` argument reads the value as it was before that argument is written.
+
+Big = { f0: i64, f1: i64, f2: i64, f3: i64, f4: i64, f5: i64, f6: i64, f7: i64, f8: i64, f9: i64, f10: i64, f11: i64, f12: i64, f13: i64, f14: i64, f15: i64, f16: i64, f17: i64, f18: i64, f19: i64, f20: i64, f21: i64, f22: i64, f23: i64, f24: i64, f25: i64, f26: i64, f27: i64, f28: i64, f29: i64, f30: i64, f31: i64, f32: i64, f33: i64, f34: i64, f35: i64, f36: i64, f37: i64, f38: i64, f39: i64 }
+
+big = (first: i64) Big {
+    Big(
+        f0: first,
+        f1: 0,
+        f2: 0,
+        f3: 0,
+        f4: 0,
+        f5: 0,
+        f6: 0,
+        f7: 0,
+        f8: 0,
+        f9: 0,
+        f10: 0,
+        f11: 0,
+        f12: 0,
+        f13: 0,
+        f14: 0,
+        f15: 0,
+        f16: 0,
+        f17: 0,
+        f18: 0,
+        f19: 0,
+        f20: 0,
+        f21: 0,
+        f22: 0,
+        f23: 0,
+        f24: 0,
+        f25: 0,
+        f26: 0,
+        f27: 0,
+        f28: 0,
+        f29: 0,
+        f30: 0,
+        f31: 0,
+        f32: 0,
+        f33: 0,
+        f34: 0,
+        f35: 0,
+        f36: 0,
+        f37: 0,
+        f38: 0,
+        f39: 0
+    )
+}
+
+read = (b: Big) i64 { b.f0 }
+
+rebound = (b: Big) i64 {
+    b = big(9);
+    b.f0
+}
+
+written_beside = (b: Big, target :: Big) i64 {
+    target = big(b.f0 + 1);
+    b.f0
+}
+
+depth = (b: Big, n: i64) i64 {
+    (n == 0).match({
+        true  => b.f0,
+        false => depth(b, n - 1) + 1,
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    v ::= big(1);
+    println("read {}", read(v));
+    println("rebound {} then {}", rebound(v), v.f0);
+    println("beside {} then {}", written_beside(v, v), v.f0);
+    println("temporary {}", read(big(7)));
+    println("depth {}", depth(v, 50000));
+    Ok(0);
+}

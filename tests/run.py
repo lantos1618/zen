@@ -1937,7 +1937,32 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+# The stack every compiler and program run gets: the common default main
+# thread stack. Children inherit it, so a stack overflow reproduces the same
+# way whatever launched the harness; GNU Make 3.81 on macOS gives its recipes
+# a 64 MB stack, which hides overflows a direct run would hit.
+TEST_STACK_BYTES = 8 * 1024 * 1024
+
+
+def limit_stack(argv: Sequence[str]) -> None:
+    soft, hard = resource.getrlimit(resource.RLIMIT_STACK)
+    if soft != resource.RLIM_INFINITY and soft <= TEST_STACK_BYTES:
+        return
+    try:
+        resource.setrlimit(resource.RLIMIT_STACK, (TEST_STACK_BYTES, hard))
+        return
+    except (ValueError, OSError):
+        pass
+    # macOS will not shrink the limit of a process whose stack is already
+    # reserved larger, so the harness restarts once under the smaller limit.
+    os.execv("/bin/sh", [
+        "sh", "-c", f'ulimit -s {TEST_STACK_BYTES // 1024} && exec "$@"',
+        "sh", sys.executable, os.path.abspath(__file__), *argv,
+    ])
+
+
 def main(argv: Sequence[str]) -> int:
+    limit_stack(argv)
     args = parse_args(argv)
 
     if args.self_check:

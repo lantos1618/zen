@@ -1,0 +1,17 @@
+// `Vec` keeps the `Alloc` it was made with, so a vector made from a
+// by-value allocator keeps a pointer to this body's copy of it.
+Counting = { base: Alloc, tag: usize }
+Counting.impl(Alloc, {
+    raw = (self: @Self, count: usize, alignment: usize) Res<Ptr<u8>, AllocError> {
+        self.base.raw(count, alignment)
+    }
+    realloc = <T>(self: @Self, p: Ptr<T>, count: usize) Res<Ptr<T>, AllocError> {
+        self.base.realloc(p, count)
+    }
+})
+numbers = (counting: Counting) Vec<i32> { counting.Vec<i32>() }
+main = (env: Env) Res<(), AllocError> {
+    v ::= numbers(Counting(base: env.mem.alloc(), tag: 1));
+    v.add(1).try();
+    Ok(())
+}

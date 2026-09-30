@@ -361,20 +361,25 @@ Server* = {
     }
 
     // Only descriptors are rebuilt. Other documents keep their own text arenas.
+    // The descriptors are built inside `docs_arena` where it lives: a map
+    // built in another arena and moved here would keep that arena's old
+    // address as its allocator. Nothing may read the retired arena, so the
+    // fields are emptied before it is dropped.
     refresh_docs = (self :: @Self, excluded: Res<usize>) Res<(), AllocError> {
-        fresh_arena ::= self.env.mem.alloc();
-        docs        ::= fresh_arena.Map<str, str>();
-        uris        ::= fresh_arena.Vec<str>();
+        self.docs = self.a.Map<str, str>();
+        self.open = self.a.Vec<str>();
+        self.docs_arena.drop();
+        self.docs_arena = self.env.mem.alloc();
+        docs ::= self.docs_arena.Map<str, str>();
+        uris ::= self.docs_arena.Vec<str>();
         self.buffers.views.loop((h, index, buffer) {
             excluded.match({ None => true, Ok(at) => index != at }).then(() {
                 docs.set(buffer.uri, buffer.text).try();
                 uris.add(buffer.uri).try();
             });
         });
-        self.docs_arena.drop();
-        self.docs_arena = consume fresh_arena;
-        self.docs       = docs;
-        self.open       = uris;
+        self.docs = docs;
+        self.open = uris;
         written()
     }
 
@@ -726,22 +731,19 @@ Server.impl(Drop, {
     }
 })
 
+// The server is returned, so nothing in it may point at its own fields:
+// `docs` starts empty in the caller's allocator, and `refresh_docs`
+// rebuilds it inside `docs_arena` once the server has its final home.
 Server* = (a: Alloc, env: Env) Server {
-    docs_arena ::= env.mem.alloc();
-    server_with_docs(a, env, consume docs_arena)
-}
-
-server_with_docs = (a: Alloc, env: Env, docs_arena :: Arena) Server {
-    docs = docs_arena.Map<str, str>();
     Server(
         a: a,
         env: env,
-        docs_arena: consume docs_arena,
+        docs_arena: env.mem.alloc(),
         workspace: "",
-        docs: docs,
+        docs: a.Map<str, str>(),
         buffers: a.Documents(),
         open: a.Vec<str>(),
-        notes: env.Diagnostics(),
+        notes: env.Diagnostics(a),
         members: env.MemberCache(),
         ready: false,
         stopping: false,

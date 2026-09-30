@@ -138,6 +138,16 @@ Checker* = {
     // Contextual substitutions for lambda expressions, separate from calls.
     lambda_insts :: Map<ExprId, Inst>,
 
+    // Arguments whose concrete value reaches a bound-typed parameter or
+    // field. The backend builds the bound value over the argument's
+    // address, so the ownership walk treats the result as a view of that
+    // storage: `true` when it is this frame's (`sema_scope`, bound values),
+    // `false` when it is a `::` parameter's, which the caller owns.
+    bound_views* :: Map<ExprId, bool>,
+
+    // `sema_copy.carries_bound`, once per type.
+    carrier_memo* :: Map<TyId, bool>,
+
     // Instantiation edges in resolution order.
     edges :: Vec<InstEdge>,
 
@@ -796,6 +806,8 @@ Checker* = (a: Alloc, tree: Ast) Res<Checker, AllocError> {
         param_memo: a.Map<ExprId, bool>(),
         callee_access: a.Map<ExprId, bool>(),
         lambda_insts: a.Map<ExprId, Inst>(),
+        bound_views: a.Map<ExprId, bool>(),
+        carrier_memo: a.Map<TyId, bool>(),
         edges: a.Vec<InstEdge>(),
         set_memo: a.Map<TyId, TyId>(),
         raised: a.Vec<TyId>(),

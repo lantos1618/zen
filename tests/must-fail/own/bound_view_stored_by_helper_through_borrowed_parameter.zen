@@ -1,0 +1,20 @@
+Counting = { base: Alloc, tag: usize }
+Counting.impl(Alloc, {
+    raw = (self: @Self, count: usize, alignment: usize) Res<Ptr<u8>, AllocError> {
+        self.base.raw(count, alignment)
+    }
+    realloc = <T>(self: @Self, p: Ptr<T>, count: usize) Res<Ptr<T>, AllocError> {
+        self.base.realloc(p, count)
+    }
+})
+Holder = { alloc: Alloc }
+Box = { held :: Holder }
+put = (out :: Box, alloc: Alloc) { out.held = Holder(alloc: alloc); }
+fill = (out :: Box, counting: Counting) { put(out, counting); }
+main = (env: Env) Res<(), AllocError> {
+    base = env.mem.alloc();
+    out ::= Box(held: Holder(alloc: base));
+    fill(out, Counting(base: base, tag: 1));
+    out.held.alloc.raw(8, 8).try();
+    Ok(())
+}

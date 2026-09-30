@@ -422,6 +422,8 @@ add*    = (v :: Vec<T>, value: T) Res<(), AllocError> { ... }   // identical
 
 So `::` on a receiver means the method mutates it, and it is not a receiver rule at all — it is the ordinary binding marker doing its ordinary job on the ordinary first parameter. One function form, one binding rule, nothing added.
 
+The rule therefore holds at **every** `::` parameter, not only the first: `bump(counter)` against `bump = (c :: Counter)` needs `counter` — and every field on the path to it — to be `::`, exactly as `counter.bump()` does. There is no copy-in: a `::` parameter is the caller's storage, and a `:` binding lent to one would either be written behind its declaration or have the write silently dropped. A value that is not a place (a call, a construction, a literal) may still be passed; it is a fresh temporary no one else can see.
+
 This is **shallow**: `::` means the method writes the receiver's *own bytes*, and nothing more. So **a handle's methods are `:`, even when they change the world.** `Alloc.raw` is `self: @Self` — allocating changes the arena behind the handle, not the two words of the handle. Same for `@scope.defer` (the closure stack lives in the block), `Ref` behavior calls (the mailbox is behind the address), and `Env.spawn`.
 
 That is not a nicety, it is what makes the system consistent. `Vec.alloc` is a `:` field, and `Vec.grow` calls `self.alloc.realloc(..)` through it. If `realloc` demanded `:: Alloc`, that call would be illegal and every collection would need a mutable allocator field — the shallowness would buy nothing. It compiles precisely because `realloc` writes the arena, not the handle. Same reason `foo.receive_msg(..)` is legal on a `foo = env.spawn(..).try()`.
@@ -448,9 +450,10 @@ refusal cleanup do not yet satisfy this contract.
 The maintained failing cases are in `tests/library/ownership-storage`; owning
 lookup checks must not be presented as end-to-end container ownership safety.
 
-Three consequences worth stating, because each one is a place the rule looks like it bites and does not:
+Four consequences worth stating; three are places the rule looks like it bites and does not, and one is a place it does:
 
 - **A handle is not a `Drop` value.** `Alloc` is an interface, so an `Alloc` value is a fat value pointing at an arena. The *arena* is `Drop`; the handle is two words and copies freely. That is why `Vec` can store `alloc: Alloc` by value and why `fill(alloc, v)` is not an illegal copy.
+- **A handle built from a concrete value points at that value's storage.** Passing an `Arena` or any other implementor where an `Alloc` (or any interface) is wanted builds the handle over the argument's address: a local, this body's copy of a by-value parameter, or a temporary. That handle — and anything that keeps it, such as a `Vec` made from it — may be used inside the body and passed inward, but may not be returned or stored through a `::` parameter, and a value that keeps it may not follow the owner when the owner is moved. Take the interface type as the parameter, so the caller that owns the value builds the handle; a place reached through a `::` parameter is the caller's own storage and may be handed back, but may not then be moved out from under the handle. Values that only drew on the handle — a `str` or `Ptr` allocated through it — point at the allocator's memory, not at the handle, and are unaffected; so is an implementor with no storage, which has nothing to point at.
 - **Passing a `Drop` value to a parameter is a borrow, not a move.** `v.add(1)` does not consume `v`, and a receiver is just the first parameter — so nothing else could be true. A move is spelled `consume` at the call site, and only there.
 - **The compiler-inserted `drop` is exempt from the receiver rule.** `drop` is declared `(self :: @Self)`, but scope exit runs it on `:` bindings too. Destroying a value is not mutating it through a binding.
 

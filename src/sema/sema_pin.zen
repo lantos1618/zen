@@ -1,13 +1,36 @@
-Expr, Span = std.ast
+Expr, ExprId, Span = std.ast
 Checker = sema.sema_check
 SemaFault, CaptureFault = sema.sema_diag
-Own = sema.sema_own
+Own, ViewRoot, path_root = sema.sema_own
 
 // A capture that forbids every later move of a binding: the binding, and
-// where the capture was written.
+// where the capture was written. A bound value built over a `::`
+// parameter's place pins it the same way: the record holds that address,
+// and a move would leave it pointing at the moved-from place.
 Pin* = {
     root*: usize,
     span*: Span,
+    view*: bool,
+}
+
+// A record over this frame's binding is tracked as a view of the frame
+// (`sema_own.rehome_arena`). A record over a `::` parameter's place may
+// leave with the result, so that place must stay where the record points.
+pin_viewed* = (c :: Checker, o :: Own, id: ExprId) Res<(), AllocError> {
+    c.bound_views.get(id).match({
+        None      => Ok(()),
+        Ok(local) => c.path_root(o, id).match({
+            None  => Ok(()),
+            Ok(i) => local.match({
+                true  => o.views.add(ViewRoot(root: i, at: id)),
+                false => o.pinned.add(Pin(
+                    root: i,
+                    span: c.tree.expr_at(id).span,
+                    view: true
+                )),
+            }),
+        }),
+    })
 }
 
 pin_captured* = (c :: Checker, o :: Own, node: Expr, text: str)
@@ -16,7 +39,7 @@ pin_captured* = (c :: Checker, o :: Own, node: Expr, text: str)
         None  => Ok(()),
         Ok(i) => ((i < o.escaped) && o.owned_at(i)).match({
             false => Ok(()),
-            true  => o.pinned.add(Pin(root: i, span: node.span)),
+            true  => o.pinned.add(Pin(root: i, span: node.span, view: false)),
         }),
     })
 }
@@ -40,13 +63,16 @@ refuse_pinned_at* = (c :: Checker, o :: Own, span: Span, root: usize)
         None    => Ok(()),
         Ok(pin) => c.place_name(o, pin.root, "").match({
             Err(_)    => Ok(()),
-            Ok(place) => c.refuse(
-                span,
-                SemaFault.ConsumedByCapture(CaptureFault(
+            Ok(place) => c.refuse(span, pin.view.match({
+                true  => SemaFault.ConsumedUnderView(CaptureFault(
                     place: place,
                     at: pin.span
-                ))
-            ),
+                )),
+                false => SemaFault.ConsumedByCapture(CaptureFault(
+                    place: place,
+                    at: pin.span
+                )),
+            })),
         }),
     })
 }

@@ -54,9 +54,9 @@ definition_at* = (
     line      : usize,
     character : usize
 ) Res<Target, AllocError> {
-    c ::= check_standalone(a, uri, text).try();
-    seek = Seek(c: c, a: a, file: uri);
-    d    = seek.sought(source_position(text, line, character)).try();
+    c    ::= check_standalone(a, uri, text).try();
+    seek ::= Seek(c: c, a: a, file: uri);
+    d = seek.sought(source_position(text, line, character)).try();
     Ok(Target(
         found: d.found,
         uri: uri,
@@ -77,8 +77,8 @@ definition_in* = (
 )
                  Res<Target, AllocError> {
     checked = check_build(env, a, workspace, path, text).try();
-    seek    = Seek(c: checked.c, a: a, file: checked.rel);
-    d       = seek.sought(source_position(text, line, character)).try();
+    seek ::= Seek(c: checked.c, a: a, file: checked.rel);
+    d = seek.sought(source_position(text, line, character)).try();
     DefinitionSource(env: env, alloc: a, root: checked.root, docs: None, uri: uri, text: text, rel: checked.rel).place(d)
 }
 
@@ -95,8 +95,8 @@ definition_with* = (
     character : usize
 )
                    Res<Target, AllocError> {
-    seek = Seek(c: c, a: a, file: rel);
-    d    = seek.sought(source_position(text, line, character)).try();
+    seek ::= Seek(c: c, a: a, file: rel);
+    d = seek.sought(source_position(text, line, character)).try();
     DefinitionSource(env: env, alloc: a, root: root, docs: Ok(docs), uri: uri, text: text, rel: rel).place(d)
 }
 
@@ -147,11 +147,11 @@ DefinitionSource = {
 // One definition lookup: the checker, the allocator for scratch, and the
 // file the position is in.
 Seek = {
-    c    : Checker,
+    c    :: Checker,
     a    : Alloc,
     file : str,
 
-    sought = (self: @Self, p: Pos) Res<Defn, AllocError> {
+    sought = (self :: @Self, p: Pos) Res<Defn, AllocError> {
         module = self.import_module_defn(p).try();
         module.found.match({
             true  => Ok(module),
@@ -222,7 +222,7 @@ Seek = {
         })
     }
 
-    value_defn = (self: @Self, id: ExprId, p: Pos) Res<Defn, AllocError> {
+    value_defn = (self :: @Self, id: ExprId, p: Pos) Res<Defn, AllocError> {
         e = self.c.tree.expr_at(id);
         e.span.covers(self.file, p).match({
             false => no_defn(),
@@ -256,7 +256,7 @@ Seek = {
         })
     }
 
-    access_defn = (self: @Self, id: ExprId, ac: Access, p: Pos)
+    access_defn = (self :: @Self, id: ExprId, ac: Access, p: Pos)
                   Res<Defn, AllocError> {
         ac.name.span.covers(self.file, p).match({
             false => no_defn(),
@@ -267,7 +267,7 @@ Seek = {
         })
     }
 
-    member_defn = (self: @Self, ac: Access) Res<Defn, AllocError> {
+    member_defn = (self :: @Self, ac: Access) Res<Defn, AllocError> {
         self.c.expr_memo.get(ac.base).match({
             Ok(ty) => self.found_defn(ty, ac.name.text),
             None   => self.c.tree.expr_at(ac.base).kind.match({
@@ -277,7 +277,7 @@ Seek = {
         })
     }
 
-    typed_base_defn = (self: @Self, base: str, name: str)
+    typed_base_defn = (self :: @Self, base: str, name: str)
                       Res<Defn, AllocError> {
         self.first_def(base).try().match({
             None  => no_defn(),
@@ -301,7 +301,7 @@ Seek = {
         })
     }
 
-    found_defn = (self: @Self, ty: TyId, name: str) Res<Defn, AllocError> {
+    found_defn = (self :: @Self, ty: TyId, name: str) Res<Defn, AllocError> {
         found ::= self.a.Vec<Found>();
         self.c.members_of(ty, name, found).try();
         first_found(found).match({

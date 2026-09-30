@@ -1,4 +1,4 @@
-Decl, Struct, Impl, Member, Call, Arg, TypeId = std.ast
+Decl, Struct, Impl, Member, Call, Arg, TypeId, ExprId = std.ast
 Field, Const, Function, Span, Binary, BinOp = std.ast
 AllocError = std.mem
 Vec = std.collections
@@ -165,7 +165,14 @@ fits_or_refuse = (c :: Checker, a: Arg, got: TyId, want: TyId)
                  Res<(), AllocError> {
     (c.assignable(got, want) || c.want_is_res(want)).match({
         true  => Ok(()),
-        false => c.refuse_unless_bound(c.tree.expr_at(a.value).span, got, want),
+        false => {
+            c.refuse_unless_bound(
+                c.tree.expr_at(a.value).span,
+                got,
+                want
+            ).try();
+            c.note_bound_view(a.value, want)
+        },
     })
 }
 
@@ -179,6 +186,103 @@ refuse_unless_bound = (c :: Checker, span: Span, got: TyId, want: TyId)
         true  => Ok(()),
         false => c.coerce(span.file, span, got, want, ""),
     })
+}
+
+// bound values built from concrete ones
+
+// A concrete value accepted where a bound is wanted becomes a bound value:
+// a receiver pointer to the value plus the impl's function pointers. The
+// backend takes that pointer in the frame that evaluates the argument — a
+// local, a parameter's own copy, or a spilled temporary — so the bound value
+// is only as long-lived as that frame. Recording the argument here lets the
+// ownership walk refuse the bound value wherever it would outlive the frame.
+note_bound_view* = (c :: Checker, value: ExprId, want: TyId)
+                   Res<(), AllocError> {
+    c.expr_memo.get(value).match({
+        None    => Ok(()),
+        Ok(got) => c.builds_bound_view(got, want).try().match({
+            false => Ok(()),
+            true  => c.bound_views.set(value, !c.in_lent_param(value)),
+        }),
+    })
+}
+
+// A place reached through a `::` parameter is the caller's storage, which
+// outlives this call: a record built over it may leave with the result.
+// What it may not survive is the owner moving out from under it, which
+// `sema_pin` refuses.
+in_lent_param = (c :: Checker, id: ExprId) bool {
+    c.tree.expr_at(id).kind.match({
+        Name(n)   => c.lookup(n.text).match({
+            Ok(b) => b.param && b.mutable,
+            None  => false,
+        }),
+        Paren(p)  => c.in_lent_param(p.inner),
+        Access(a) => c.in_lent_param(a.base),
+        _         => false,
+    })
+}
+
+// A bound value passed on is a copy of the handle and builds nothing. A type
+// variable counts: an instantiation may supply a concrete type, and the
+// monomorphised body then builds the record over the parameter's copy.
+builds_bound_view = (c :: Checker, got: TyId, want: TyId)
+                    Res<bool, AllocError> {
+    c.is_bound_ty(want).match({
+        false => Ok(false),
+        true  => c.types.at(got).match({
+            Named(_) => c.is_bound_ty(got).match({
+                true  => Ok(false),
+                false => Ok(!c.stateless(got).try()),
+            }),
+            Var(_)   => Ok(true),
+            _        => Ok(false),
+        }),
+    })
+}
+
+// A struct with no storage (`Pages = {}`) has no state for the record's
+// receiver to point at: every copy of it is the same value, so a record
+// that outlives the copy it was built over still behaves identically.
+stateless = (c :: Checker, ty: TyId) Res<bool, AllocError> {
+    c.types.at(ty).match({
+        Named(n) => decl_at(c.tree, n.decl).match({
+            None    => Ok(false),
+            Ok(dec) => dec.kind.match({
+                Struct(_) => Ok(c.storage_seat_name(ty, 0).try().is_empty()),
+                _         => Ok(false),
+            }),
+        }),
+        _        => Ok(false),
+    })
+}
+
+// A bound is a struct that declares behaviour and no storage — the shape
+// `gen_c_fat.is_fat` lowers to a receiver plus function pointers.
+is_bound_ty* = (c: Checker, ty: TyId) bool {
+    c.types.at(ty).match({
+        Named(n) => decl_at(c.tree, n.decl).match({
+            None    => false,
+            Ok(dec) => dec.kind.match({
+                Struct(s) => behaviour_only(s),
+                _         => false,
+            }),
+        }),
+        _        => false,
+    })
+}
+
+behaviour_only = (s: Struct) bool {
+    methods ::= false;
+    storage ::= false;
+    s.members.loop((m) {
+        m.kind.match({
+            Function(_) => { methods = true; },
+            Field(_)    => { storage = true; },
+            _           => {},
+        });
+    });
+    methods && !storage
 }
 
 absent_fields = (c :: Checker, call: Call, ty: TyId, span: Span)

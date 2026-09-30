@@ -133,7 +133,7 @@ signature_type* = (c :: Checker, f: Function, ctx: Ctx)
 }
 
 // The declaration a named type points at.
-type_decl* = (c :: Checker, ty: TyId) Res<Decl> {
+type_decl* = (c: Checker, ty: TyId) Res<Decl> {
     c.types.at(ty).match({
         Named(n) => decl_at(c.tree, n.decl),
         _        => None,

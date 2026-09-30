@@ -105,11 +105,13 @@ stays_put = (be :: CBackend, value: ExprId, f: Function) bool {
     })
 }
 
-// A `::` argument rooted in a borrowed parameter. Sema accepts lending a
-// `:` binding to a `::` parameter, and while the parameter was a by-value
-// copy the callee's writes landed in that copy and stayed visible to the
-// rest of this body. Borrowed storage belongs to the caller, so the lend is
-// recorded and `gen_c_decl.own_lent` gives the parameter its own copy.
+// A `::` argument, or a bound value, rooted in a borrowed parameter.
+// Sema refuses lending a `:` place to a `::` parameter or field
+// (`sema_recv.check_lent_args`), so no write is expected through either
+// path. Borrowed storage belongs to the caller, though, and must never be
+// written from here; the lend is recorded and `gen_c_decl.own_lent` gives
+// the parameter its own copy, so a write this rule does not see lands in
+// this call's copy rather than in the caller's value.
 note_lend* = (be :: CBackend, value: ExprId) Res<(), AllocError> {
     be.place_root(value).match({
         None     => Ok(()),

@@ -1,0 +1,61 @@
+// A bound value built from a concrete one is a view of the storage it was
+// built over, and is accepted wherever it does not outlive that storage:
+// used in the frame that built it, passed inward, or handed back when the
+// bound itself came in as a parameter. Text allocated through the bound
+// lives in the allocator's pages and may leave; a value with no storage
+// has nothing for the bound to point at.
+Counting = { base: Alloc, calls: Ptr<usize> }
+Counting.impl(Alloc, {
+    raw = (self: @Self, count: usize, alignment: usize) Res<Ptr<u8>, AllocError> {
+        self.calls.write(0, self.calls.read(0) + 1);
+        self.base.raw(count, alignment)
+    }
+    realloc = <T>(self: @Self, p: Ptr<T>, count: usize) Res<Ptr<T>, AllocError> {
+        self.calls.write(0, self.calls.read(0) + 1);
+        self.base.realloc(p, count)
+    }
+})
+Refusing = {}
+Refusing.impl(Alloc, {
+    raw = (self: @Self, count: usize, alignment: usize) Res<Ptr<u8>, AllocError> {
+        Err(AllocError.OutOfMemory)
+    }
+    realloc = <T>(self: @Self, p: Ptr<T>, count: usize) Res<Ptr<T>, AllocError> {
+        Err(AllocError.OutOfMemory)
+    }
+})
+Holder = { alloc: Alloc }
+keep = (alloc: Alloc) Holder { Holder(alloc: alloc) }
+forward = (alloc: Alloc) Holder { keep(alloc) }
+label = (counting: Counting) Res<str, AllocError> {
+    text ::= counting.String().try();
+    text.add("seven").try();
+    Ok(text.view())
+}
+sum = (counting: Counting) Res<i32, AllocError> {
+    v ::= counting.Vec<i32>();
+    v.add(3).try();
+    v.add(4).try();
+    Ok(v.get(0).value_or(0) + v.get(1).value_or(0))
+}
+refusing = () Holder { keep(Refusing()) }
+main = (env: Env) Res<(), AllocError> {
+    base  = env.mem.alloc();
+    calls = base.realloc<usize>(null_ptr<usize>(), 1).try();
+    calls.write(0, 0);
+    counting = Counting(base: base, calls: calls);
+    held     = keep(counting);
+    held.alloc.raw(8, 8).try();
+    forward(held.alloc).alloc.raw(8, 8).try();
+    println("{}", sum(counting).try());
+    println("{}", label(counting).try());
+    println(
+        "{}",
+        refusing().alloc.raw(
+            1,
+            1
+        ).match({ Ok(_) => "allocated", Err(_) => "refused" })
+    );
+    println("{}", calls.read(0) >= 4);
+    Ok(())
+}

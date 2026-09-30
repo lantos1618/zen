@@ -25,7 +25,7 @@ materialize_receiver = sema.sema_member
 is_type_def, opaque, first_found, named_as = sema.sema_member
 static_access = sema.sema_static
 filter_visible, hidden_member = sema.sema_member
-inst_bounds_hold, satisfies_bound = sema.sema_bound
+inst_bounds_hold, satisfies_bound, note_bound_view = sema.sema_bound
 check_literal = sema.sema_trap
 check_arms, check_arms_agree, hoist_at = sema.sema_hoist
 bound_declares = sema.sema_supply
@@ -332,6 +332,7 @@ CallCheck = {
                 c.arg_lambdas(self.call.args, params, off, self.ctx).try();
                 c.args_handle_check(self.call.args, params, off, self.ctx)
                     .try();
+                c.note_receiver_view(self.receiver_expr(c, off), params).try();
                 c.refuse_literal_lends(k, params, actuals).try();
                 k.generic.then(() {
                     self.edge = Ok(c.call_edge(self.id, k, self.inst).try());
@@ -873,6 +874,7 @@ CallCheck = {
         got = use.finish(c).try();
         fit.match({
             Exact       => {
+                c.note_receiver_view(self.receiver_expr(c, off), params).try();
                 self.checked_signature = Ok(CallSignature(
                     params: params,
                     receiver: self.receiver_expr(c, off)
@@ -1316,8 +1318,19 @@ args_handle_check = (
 ) Res<(), AllocError> {
     args.loop((h, i, a) {
         c.refuse_handle_argument(a, params.ty_at(i + off), ctx).try();
+        c.note_bound_view(a.value, params.ty_at(i + off)).try();
     });
     Ok(());
+}
+
+// A receiver is parameter zero, so a concrete receiver reaching a bound
+// `self` builds a bound value exactly as an argument does.
+note_receiver_view = (c :: Checker, receiver: Res<ExprId>, params: Vec<TyId>)
+                     Res<(), AllocError> {
+    receiver.match({
+        None    => Ok(()),
+        Ok(rid) => c.note_bound_view(rid, params.ty_at(0)),
+    })
 }
 
 // A `::` parameter receives the argument's address, so the argument's storage

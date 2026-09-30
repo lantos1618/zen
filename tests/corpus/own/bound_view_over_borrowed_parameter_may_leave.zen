@@ -1,0 +1,23 @@
+// A place reached through a `::` parameter is the caller's storage, which
+// outlives the call, so a bound value built over it may be returned to
+// that caller.
+Counting = { base: Alloc, calls :: usize }
+Counting.impl(Alloc, {
+    raw = (self: @Self, count: usize, alignment: usize) Res<Ptr<u8>, AllocError> {
+        self.base.raw(count, alignment)
+    }
+    realloc = <T>(self: @Self, p: Ptr<T>, count: usize) Res<Ptr<T>, AllocError> {
+        self.base.realloc(p, count)
+    }
+})
+Owner = { counting :: Counting }
+Holder = { alloc: Alloc }
+lend = (owner :: Owner) Holder { Holder(alloc: owner.counting) }
+main = (env: Env) Res<(), AllocError> {
+    owner ::= Owner(counting: Counting(base: env.mem.alloc(), calls: 0));
+    held = lend(owner);
+    p    = held.alloc.raw(16, 8).try();
+    p.write(0, 42);
+    println("{}", p.read(0));
+    Ok(())
+}

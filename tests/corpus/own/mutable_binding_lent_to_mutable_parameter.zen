@@ -1,0 +1,17 @@
+// A `::` parameter writes the caller's value: through a `::` binding, a
+// `::` field path, method syntax, or into a fresh temporary.
+Counter = { n :: i32 }
+Pair = { inner :: Counter }
+bump = (counter :: Counter) { counter.n = counter.n + 1; }
+twice = (counter :: Counter) { bump(counter); counter.bump(); }
+main = (env: Env) Res<(), AllocError> {
+    counter ::= Counter(n: 1);
+    bump(counter);
+    counter.bump();
+    twice(counter);
+    pair ::= Pair(inner: Counter(n: 10));
+    bump(pair.inner);
+    bump(Counter(n: 100));
+    println("{} {}", counter.n, pair.inner.n);
+    Ok(())
+}

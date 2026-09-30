@@ -10,8 +10,10 @@ DeclId = sema.sema_id
 decl_at = sema.sema_def
 Checker, UNRESOLVED = sema.sema_check
 tail_expr = sema.sema_hoist
-SemaFault, NameFault = sema.sema_diag
+SemaFault, NameFault, FrameViewFault = sema.sema_diag
+carries_bound = sema.sema_copy
 Own, place_type, path_root, joined_source, access_view, returned_view = sema.sema_own
+rehome_arena = sema.sema_own
 TyId = sema.sema_ty
 own_member = sema.sema_recv
 call_callee = sema.sema_call
@@ -19,6 +21,21 @@ call_callee = sema.sema_call
 // `@scope` names the enclosing block: it may be passed inward but never
 // returned, stored in a construction, or read by an escaping closure. A
 // value backed by an arena this body made may not be returned either.
+//
+// A bound value built from a concrete one is the third frame-bound origin.
+// `Holder(alloc: tracking)` and `keep(tracking)` against an `Alloc`
+// parameter lower to a record whose receiver is the address of `tracking`
+// in this frame — the local, this body's copy of a parameter, or a spilled
+// temporary — so the record dies with the frame exactly as an arena view
+// does. It rides the arena origin through bindings, fields and call
+// summaries, with the conversion itself as its source; where it would leave
+// the frame it is refused as a bound view, and only when the leaving value's
+// type can hold a bound at all (`carries_bound`): a `str` allocated through
+// the bound points at the allocator's pages, not at the frame. A place
+// reached through a `::` parameter is the caller's storage and may leave,
+// but may not then move out from under the record (`sema_pin`); an arena
+// moved into caller storage leaves the records over its binding behind as
+// views of this frame (`sema_own.rehome_arena`).
 
 check_scope_returned* = (c :: Checker, o :: Own, id: BlockId, b: Block)
                          Res<(), AllocError> {
@@ -232,18 +249,121 @@ check_arena_returned* = (c :: Checker, o :: Own, id: BlockId, b: Block)
 refuse_if_arena = (c :: Checker, o :: Own, id: ExprId) Res<(), AllocError> {
     c.arena_name(o, id).match({
         None  => Ok(()),
-        Ok(n) => c.refuse(
+        Ok(n) => c.frame_view_at(c.arena_source(o, id)).match({
+            Ok(formed) => c.refuse_frame_view(o, formed, id, id, false),
+            None       => c.frame_view_within(id).match({
+                None       => c.refuse(
+                    c.tree.expr_at(id).span,
+                    SemaFault.ArenaEscapes(NameFault(name: n))
+                ),
+                Ok(formed) => c.refuse_mixed_view(o, formed, id, n),
+            }),
+        }),
+    })
+}
+
+// bound values over this frame
+
+// An argument the backend turns into a bound value over storage in the
+// frame that evaluates it (`Checker.bound_views`).
+frame_bound_view* = (c: Checker, id: ExprId) bool {
+    c.bound_views.get(id).match({ Ok(local) => local, None => false })
+}
+
+// The conversion an origin names, when the origin is one.
+frame_view_at* = (c: Checker, source: Res<ExprId>) Res<ExprId> {
+    source.match({
+        None     => None,
+        Ok(from) => c.frame_bound_view(from).match({
+            true  => Ok(from),
+            false => None,
+        }),
+    })
+}
+
+// Origins joined from two conversions, or a conversion and an arena, keep
+// no single source. The bound-view message is used when a conversion is
+// spelled inside the returned expression and the value can hold a bound;
+// otherwise the arena refusal stands, so an ambiguous origin is never
+// excused by the `carries_bound` filter.
+refuse_mixed_view = (c :: Checker, o :: Own, formed: ExprId, id: ExprId, n: str)
+                    Res<(), AllocError> {
+    c.carries_bound(c.place_type(o, id)).try().match({
+        true  => c.refuse_frame_view(o, formed, id, id, false),
+        false => c.refuse(
             c.tree.expr_at(id).span,
             SemaFault.ArenaEscapes(NameFault(name: n))
         ),
     })
 }
 
+// The first conversion spelled within an expression, through the forms a
+// returned value is assembled from.
+frame_view_within = (c: Checker, id: ExprId) Res<ExprId> {
+    c.frame_bound_view(id).match({
+        true  => Ok(id),
+        false => c.tree.expr_at(id).kind.match({
+            Paren(p) => c.frame_view_within(p.inner),
+            Try(t)   => c.frame_view_within(t.operand),
+            Match(m) => {
+                found: Res<ExprId> ::= None;
+                m.arms.loop((h, arm) {
+                    c.frame_view_within(arm.body).when_ok((at) { found = Ok(at); h.break(); });
+                });
+                found
+            },
+            Call(k)  => {
+                found: Res<ExprId> ::= None;
+                k.args.loop((h, arg) {
+                    c.frame_view_within(arg.value).when_ok((at) { found = Ok(at); h.break(); });
+                });
+                found
+            },
+            _        => None,
+        }),
+    })
+}
+
+// Reported at the conversion, which is where the fix goes, naming the place
+// the bound value would leave through. `value` is what leaves; a value whose
+// type cannot hold a bound only drew on it and leaves nothing behind.
+refuse_frame_view* = (
+    c      :: Checker,
+    o      :: Own,
+    formed : ExprId,
+    value  : ExprId,
+    at     : ExprId,
+    stored : bool
+) Res<(), AllocError> {
+    c.carries_bound(c.place_type(o, value)).try().match({
+        false => Ok(()),
+        true  => {
+            fault = FrameViewFault(
+                place: c.field_root_name(formed),
+                at: c.tree.expr_at(at).span
+            );
+            c.refuse(c.tree.expr_at(formed).span, stored.match({
+                true  => SemaFault.BoundViewStored(fault),
+                false => SemaFault.BoundViewEscapes(fault),
+            }))
+        },
+    })
+}
+
 // A binding's initialiser: the arena itself (`env.mem.alloc()`, typed
-// `Arena`) or anything drawn from one already tainted.
+// `Arena`) or anything drawn from one already tainted — including a bound
+// value built over this frame.
 is_arena_backed* = (c :: Checker, o :: Own, id: ExprId) bool {
     c.holds_pointer(o, id) &&
         (c.is_arena_ty(c.place_type(o, id)) || c.draws_on_arena(o, id))
+}
+
+// The same question without the bound-view origin: an arena (or a value
+// drawn from one) already dies with the frame, and keeps its own source so
+// that moving the arena out still releases what it backs.
+arena_backed_only = (c :: Checker, o :: Own, id: ExprId) bool {
+    c.holds_pointer(o, id) && (c.is_arena_ty(c.place_type(o, id))
+        || c.arena_name_of(o, id).match({ Ok(_) => true, None => false }))
 }
 
 is_arena_ty* = (c :: Checker, ty: TyId) bool {
@@ -261,7 +381,13 @@ draws_on_arena = (c :: Checker, o :: Own, id: ExprId) bool {
 arena_name = (c :: Checker, o :: Own, id: ExprId) Res<str> {
     c.holds_pointer(o, id).match({
         false => None,
-        true  => c.arena_name_of(o, id),
+        true  => c.arena_name_of(o, id).match({
+            Ok(n) => Ok(n),
+            None  => c.frame_bound_view(id).match({
+                true  => Ok(c.field_root_name(id)),
+                false => None,
+            }),
+        }),
     })
 }
 
@@ -271,7 +397,17 @@ arena_name_of = (c :: Checker, o :: Own, id: ExprId) Res<str> {
         Paren(p)      => c.arena_name(o, p.inner),
         Try(t)        => c.arena_name(o, t.operand),
         Access(_)     => c.arena_field_name(o, id),
-        Index(x)      => c.arena_name(o, x.base),
+        Index(x)      => c.arena_name(o, x.base).match({
+            None   => None,
+            Ok(nm) => c.sheds_frame_view(
+                o,
+                id,
+                c.arena_source(o, x.base)
+            ).match({
+                true  => None,
+                false => Ok(nm),
+            }),
+        }),
         Array(a)      => c.arena_name_in_values(o, a.elems),
         FixedArray(a) => c.arena_name_in_values(o, a.elems),
         Match(m)      => m.arms.find(
@@ -281,7 +417,7 @@ arena_name_of = (c :: Checker, o :: Own, id: ExprId) Res<str> {
         }),
         Block(b)      => o.block_arena(b),
         Call(k)       => c.returned_view(o, id, k, "").match({
-            None     => c.arena_name_in_call(o, k),
+            None     => c.arena_name_in_call(o, id, k),
             Ok(view) => view.arena.match({ true => Ok(""), false => None }),
         }),
         _             => None,
@@ -289,7 +425,8 @@ arena_name_of = (c :: Checker, o :: Own, id: ExprId) Res<str> {
 }
 
 arena_field_name = (c :: Checker, o :: Own, id: ExprId) Res<str> {
-    c.access_view(o, id).arena.ensure().try();
+    view = c.access_view(o, id);
+    (view.arena && !c.sheds_frame_view(o, id, view.source)).ensure().try();
     Ok(c.field_root_name(id))
 }
 
@@ -299,24 +436,52 @@ arena_name_in_values = (c :: Checker, o :: Own, values: Vec<ExprId>) Res<str> {
     })
 }
 
-arena_name_in_call = (c :: Checker, o :: Own, k: Call) Res<str> {
-    c.arena_name_of_callee(o, k).match({
+arena_name_in_call = (c :: Checker, o :: Own, id: ExprId, k: Call) Res<str> {
+    c.arena_name_of_callee(o, id, k).match({
         Ok(n) => Ok(n),
-        None  => c.arena_name_in_args(o, k),
+        None  => c.arena_name_in_args(o, id, k),
     })
 }
 
-arena_name_of_callee = (c :: Checker, o :: Own, k: Call) Res<str> {
+arena_name_of_callee = (c :: Checker, o :: Own, id: ExprId, k: Call) Res<str> {
     c.tree.call_callee(k).kind.match({
-        Access(a) => c.arena_name(o, a.base),
+        Access(a) => c.call_draws(o, id, a.base).match({
+            true  => c.arena_name(o, a.base),
+            false => None,
+        }),
         _         => None,
     })
 }
 
-arena_name_in_args = (c :: Checker, o :: Own, k: Call) Res<str> {
-    k.args.find((a) { c.draws_on_arena(o, a.value) }).match({
+arena_name_in_args = (c :: Checker, o :: Own, id: ExprId, k: Call) Res<str> {
+    k.args.find((a) { c.call_draws(o, id, a.value) }).match({
         None  => None,
         Ok(a) => c.arena_name(o, a.value),
+    })
+}
+
+// Whether call `id`'s result keeps what `input` draws on. A result that
+// cannot hold a bound keeps nothing of a bound view it was computed through.
+call_draws = (c :: Checker, o :: Own, id: ExprId, input: ExprId) bool {
+    c.draws_on_arena(o, input) && !c.sheds_frame_view(o, id, c.arena_source(o, input))
+}
+
+// A value whose type cannot hold a bound value sheds a bound-view origin:
+// `tracking.String().view()` is text in the allocator's pages, and nothing
+// in it points at `tracking`. Arena origins are never shed — pages die with
+// their arena whatever type views them.
+sheds_frame_view* = (
+    c      :: Checker,
+    o      :: Own,
+    id     : ExprId,
+    source : Res<ExprId>
+) bool {
+    c.frame_view_at(source).match({
+        None  => false,
+        Ok(_) => c.carries_bound(c.place_type(o, id)).match({
+            Ok(carries) => !carries,
+            Err(_)      => false,
+        }),
     })
 }
 
@@ -354,10 +519,19 @@ check_arena_stored* = (
             true  => Ok(()),
             false => c.arena_name(o, value).match({
                 None     => Ok(()),
-                Ok(name) => c.refuse(
-                    c.tree.expr_at(target).span,
-                    SemaFault.ArenaStored(NameFault(name: name))
-                ),
+                Ok(name) => c.frame_view_at(c.arena_source(o, value)).match({
+                    None       => c.refuse(
+                        c.tree.expr_at(target).span,
+                        SemaFault.ArenaStored(NameFault(name: name))
+                    ),
+                    Ok(formed) => c.refuse_frame_view(
+                        o,
+                        formed,
+                        value,
+                        target,
+                        true
+                    ),
+                }),
             }),
         }),
     })
@@ -380,6 +554,13 @@ Sources = {
 }
 
 arena_source* = (c :: Checker, o :: Own, id: ExprId) Res<ExprId> {
+    (c.frame_bound_view(id) && !c.arena_backed_only(o, id)).match({
+        true  => Ok(id),
+        false => c.arena_source_of(o, id),
+    })
+}
+
+arena_source_of = (c :: Checker, o :: Own, id: ExprId) Res<ExprId> {
     c.is_arena_backed(o, id).match({
         false => None,
         true  => c.tree.expr_at(id).kind.match({
@@ -404,10 +585,12 @@ arena_source* = (c :: Checker, o :: Own, id: ExprId) Res<ExprId> {
                     None     => {
                     found ::= Sources(local: false, source: None);
                     c.tree.call_callee(k).kind.match({
-                        Access(a) => found.add(c, o, a.base),
+                        Access(a) => c.call_draws(o, id, a.base).then(() { found.add(c, o, a.base); }),
                         _         => (),
                     });
-                    k.args.loop((arg) { found.add(c, o, arg.value); });
+                    k.args.loop((arg) {
+                        c.call_draws(o, id, arg.value).then(() { found.add(c, o, arg.value); });
+                    });
                     found.source
                     },
                 })
@@ -448,7 +631,12 @@ release_stored_arena* = (c :: Checker, o :: Own, target: ExprId, value: ExprId)
                 Consume(x) => c.is_arena_ty(c.place_type(o, x.operand)).match({
                     false => Ok(()),
                     true  => c.arena_source(o, x.operand).match({
-                        None => Ok(()), Ok(source) => o.release_arena(source),
+                        None       => Ok(()),
+                        Ok(source) => c.rehome_arena(
+                            o,
+                            source,
+                            c.path_root(o, x.operand)
+                        ),
                     }),
                 }),
                 _          => Ok(()),

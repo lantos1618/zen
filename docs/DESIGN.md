@@ -2136,13 +2136,19 @@ be flagged, so a check that has stopped seeing anything fails:
   the address of secret memory counts only for a pointer parameter, and
   std.simd capability arguments, which carry no data, never count. Its
   result is public only when its audit proved it (`public-result`, which
-  also forbids returning a pointer into secret memory); otherwise the
+  also forbids returning a pointer into secret memory, and for a result
+  returned through a hidden pointer forbids storing a secret through it or
+  handing it to a callee given secrets); otherwise the
   result, and memory behind a hidden result pointer, is secret when any
   argument is secret or points at secrets. A secret-bearing call that
   passes a writable stack address marks the one value a `::` borrow names
   (its extent is read from the mangled parameter types) or, for a Ptr<T>,
   smears the stack. A function's own hidden result pointer addresses memory
-  that may hold secrets. On x86-64 a byte written over a secret register
+  that may hold secrets. A load through a `**` pointer yields a pointer to
+  secrets only when it is pointer-sized. The stack protector's guard (from
+  `%fs:40`, or `___stack_chk_guard` through the GOT) is tracked into its
+  slot, which stays public when the stack is smeared, since only the
+  prologue writes it. On x86-64 a byte written over a secret register
   (`sete %al`) makes only its low byte public, which is what a byte-sized
   read, spill or `bool` result sees. Calls that never return end their
   path. `CT_TRACE=<symbol>` prints

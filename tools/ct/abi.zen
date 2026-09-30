@@ -421,10 +421,11 @@ seed_of* = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Seed, AllocError> {
     pslots   ::= a.Vec<i64>();
     pointers2 ::= a.Vec<str>();
     // The hidden result pointer addresses memory that will hold the
-    // result, which the body may build there and read back.
-    (hidden_result(a, isa, c, m.result, m.avx) > 0).then(() {
-        pointers.add(isa.match({ X86 => "rdi", Arm => "x8" })).try();
-    });
+    // result, which the body may build there and read back. A public
+    // result returned that way must not have secrets stored into it.
+    hidden = hidden_result(a, isa, c, m.result, m.avx) > 0;
+    hidden_reg = isa.match({ X86 => "rdi", Arm => "x8" });
+    hidden.then(() { pointers.add(hidden_reg).try(); });
     placements(a, isa, c, m).try().loop((pl) {
         marked_value = pl.param.name.is_in(m.secret);
         point2 = pl.param.name.is_in(m.pointee2);
@@ -458,7 +459,8 @@ seed_of* = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Seed, AllocError> {
         pointers: pointers,
         slots: slots,
         pointer_slots: pslots,
-        pointers2: pointers2
+        pointers2: pointers2,
+        result_pointer: (hidden && m.public_result).match({ true => hidden_reg, false => "" })
     ))
 }
 
@@ -525,7 +527,8 @@ vector_name = (a: Alloc, isa: Isa, i: usize) Res<str, AllocError> {
 // module is written `?module`: the program may not reach that module.
 // `branches=N` allows N secret-dependent conditional branches (see Marked);
 // `public-result` requires the result register to be public at every
-// return, which lets callers treat it as public. `**name` is a pointer to
+// return (for a result returned through a hidden pointer: that no secret is
+// stored through it), which lets callers treat it as public. `**name` is a pointer to
 // memory whose words point at secret memory (a struct of key-schedule
 // pointers): a load through it yields a pointer to secrets.
 Entry* = {

@@ -91,12 +91,45 @@ without = (a: Alloc, line: str, attribute: str) Res<str, AllocError> {
     })
 }
 
+// The parenthesis that opens a definition's parameter list: the first one
+// outside any `__attribute__((...))` written before the name (the runtime's
+// `static __attribute__((unused)) int zg_cpu_masked(...)` and its
+// `__attribute__((target("aes")))` helpers).
+param_open* = (line: str) Res<usize> {
+    at    ::= 0;
+    found: Res<usize> ::= None;
+    loop(() { at < line.len }, (h) {
+        line.slice(at, line.len).starts_with("__attribute__").match({
+            true  => {
+                // Skip to the parenthesis that closes the attribute.
+                depth ::= 0;
+                j     ::= at + 13;
+                loop(() { j < line.len }, (h2) {
+                    c = line.index(j);
+                    (c == '(').then(() { depth = depth + 1; });
+                    (c == ')').then(() {
+                        depth = depth - 1;
+                        (depth == 0).then(() { h2.break(); });
+                    });
+                    j = j + 1;
+                });
+                at = j + 1;
+            },
+            false => {
+                (line.index(at) == '(').then(() { found = Ok(at); h.break(); });
+                at = at + 1;
+            },
+        });
+    });
+    found
+}
+
 targets_avx = (line: str) bool {
     line.contains("ZG_TARGET_AVX") || line.contains("target(\"avx")
 }
 
 parse_definition = (a: Alloc, line: str) Res<Marked> {
-    open   = line.find('(').try();
+    open   = param_open(line).try();
     mark   = line.find(MARK).try();
     close  = line.slice(0, mark).rfind(')').try();
     head   = line.slice(0, open).trim().try();
@@ -501,21 +534,32 @@ result_registers* = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Vec<str>, AllocE
     m.public_result.then(() {
         layout_of(a, c, m.result).when_ok((l) {
             in_result_registers(isa, l, vector_type(m.result), m.avx).then(() {
-                l.vector.match({
-                    true  => out.add(vector_name(a, isa, 0).try()).try(),
-                    false => {
-                        // A byte-sized result (bool, u8) is only its low byte.
-                        out.add(isa.match({
-                            X86 => (l.size == 1).match({ true => "rax/1", false => "rax" }),
-                            Arm => "x0",
-                        })).try();
-                        (l.size > 8).then(() { out.add(isa.match({ X86 => "rdx", Arm => "x1" })).try(); });
-                    },
+                l.vector.then(() {
+                    Range(0, result_vectors(isa, l, vector_type(m.result))).loop((i) {
+                        out.add(vector_name(a, isa, i).try()).try();
+                    });
+                });
+                (!l.vector).then(() {
+                    // A byte-sized result (bool, u8) is only its low byte.
+                    out.add(isa.match({
+                        X86 => (l.size == 1).match({ true => "rax/1", false => "rax" }),
+                        Arm => "x0",
+                    })).try();
+                    (l.size > 8).then(() { out.add(isa.match({ X86 => "rdx", Arm => "x1" })).try(); });
                 });
             });
         });
     });
     Ok(out)
+}
+
+// Vector registers a vector-class result returned in registers takes: an
+// arm64 aggregate of 16-byte vectors takes one each (v0..v3).
+result_vectors = (isa: Isa, l: Layout, vector: bool) usize {
+    isa.match({
+        X86 => 1,
+        Arm => (!vector && l.size > 16).match({ true => l.size / 16, false => 1 }),
+    })
 }
 
 wide = (n: usize) i64 { n.truncate_u32().to_i64() }
@@ -655,7 +699,7 @@ manifest_functions* = (
     c.lines().loop((raw) {
         (raw.starts_with("static ") && raw.ends_with("{")).then(() {
             line   = plain_definition(a, raw).try();
-            open   = line.find('(').value_or(0);
+            open   = param_open(line).value_or(0);
             head   = line.slice(0, open);
             space  = head.rfind(' ').value_or(0);
             symbol = head.slice(space + 1, head.len);
@@ -843,6 +887,7 @@ shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
     vectors: usize ::= 0;
     stack: usize ::= 0;
     writable ::= a.Vec<Writable>();
+    extents  ::= a.Vec<Writable>();
     ignored  ::= a.Vec<str>();
     // A `::` or lent parameter names exactly one value; a Ptr<T> any extent.
     kinds: Res<Vec<bool>> = pointer_params(a, m.symbol);
@@ -866,6 +911,12 @@ shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
                         false => layout_of(a, c, pointee).match({ Ok(l) => l.size, None => 0 }),
                     });
                     writable.add(Writable(index: i, bytes: bytes)).try();
+                    (bytes > 0).then(() { extents.add(Writable(index: i, bytes: bytes)).try(); });
+                });
+                // A lent by-value parameter: exactly one value behind it.
+                (pl.param.ctype.ends_with("*") && pl.param.ctype.starts_with("const ")).then(() {
+                    pointee = pl.param.ctype.slice(6, pl.param.ctype.len - 1).trim().value_or("");
+                    layout_of(a, c, pointee).when_ok((l) { extents.add(Writable(index: i, bytes: l.size)).try(); });
                 });
             },
             Vreg(i)          => { vectors = vectors.max(i + pl.regs); },
@@ -873,6 +924,7 @@ shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
             GprPointer(i)    => {
                 gprs = gprs.max(i + 1);
                 pointer_args.add(reg_name(a, isa, i).try()).try();
+                extents.add(Writable(index: i, bytes: pl.layout.size)).try();
             },
             StackPointer(at) => { stack = stack.max(at + 8 - base); },
         });
@@ -885,8 +937,13 @@ shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
         returns: result.match({ Ok(_) => hidden == 0, None => false }),
         pair: result.match({ Ok(l) => !l.vector && l.size > 8 && l.size <= 16, None => false }),
         vector_result: result.match({ Ok(l) => l.vector && hidden == 0, None => false }),
+        vector_results: result.match({
+            Ok(l) => (l.vector && hidden == 0).match({ true => result_vectors(isa, l, vector_type(m.result)), false => 0 }),
+            None  => 0,
+        }),
         hidden: hidden,
         writable: writable,
+        extents: extents,
         ignored: ignored,
         pointer_args: pointer_args,
         known: true,
@@ -923,8 +980,10 @@ audited_shape* = (
         returns: shape.returns,
         pair: shape.pair,
         vector_result: shape.vector_result,
+        vector_results: shape.vector_results,
         hidden: shape.hidden,
         writable: shape.writable,
+        extents: shape.extents,
         ignored: shape.ignored,
         pointer_args: shape.pointer_args,
         known: true,

@@ -182,8 +182,10 @@ with_reads = (s: CallShape, measured: Vec<str>) CallShape {
         returns: s.returns,
         pair: s.pair,
         vector_result: s.vector_result,
+        vector_results: s.vector_results,
         hidden: s.hidden,
         writable: s.writable,
+        extents: s.extents,
         ignored: s.ignored,
         pointer_args: s.pointer_args,
         known: s.known,
@@ -553,7 +555,7 @@ audit_function = (
     m.public_only.then(() {
         println("PUBLIC {} {} {}: declared public-only by the manifest, not analysed", cc, level, name);
     });
-    (m.public_only).match({ true => Ok(Outcome(passed: 0, failed: 0, controls: 0)), false => audit_body(a, audit, asm, c, m, name, cc, level, isa, shapes_x86, shapes_arm) })
+    (m.public_only).match({ true => Ok(Outcome(passed: 0, failed: 0, controls: 0)), false => audit_body(a, audit, asm, c, m, name, label.len == 0, cc, level, isa, shapes_x86, shapes_arm) })
 }
 
 audit_body = (
@@ -563,6 +565,8 @@ audit_body = (
     c         : str,
     m         : Marked,
     name      : str,
+    // Neither a root nor forced: compiled with its own attributes.
+    free      : bool,
     cc        : str,
     level     : str,
     isa       : Isa,
@@ -570,48 +574,43 @@ audit_body = (
     shapes_arm : Map<str, CallShape>
 ) Res<Outcome, AuditError> {
     body = function_lines(a, asm, m.symbol).try();
-    // An unused function may be dropped entirely, and in the inlined audit
-    // a function inlined into every caller has no copy of its own; neither
-    // is a failure, but a control must be present. A function present only
-    // as a GCC clone (.isra, .constprop, .part) has a body nobody audits.
+    // In the default audit every audited definition is compiled `used`
+    // (out_of_line), and so are the roots and forced functions of the
+    // inlined audit: a body not found there is one the parser missed, and
+    // passing it would pass code nobody read. Any other function of the
+    // inlined audit may be inlined into every caller, leaving no copy of
+    // its own; it is audited inside them. One present only as a GCC clone
+    // (.isra, .constprop, .part) has a body nobody audits.
     leaky = is_leaky(audit, m.symbol, cc);
     (body.len == 0).match({
         true  => {
             clone = clone_of(a, asm, m.symbol).try();
-            (clone.len > 0).match({
+            (audit.roots.len > 0 && free && clone.len == 0 && !leaky).match({
                 true  => {
                     println(
-                        "FAIL {} {} {}: only the clone {} is in the assembly, and its body is not audited",
+                        "INLINED {} {} {}: no out-of-line copy, audited inside its callers",
                         cc,
                         level,
-                        name,
-                        clone
+                        name
                     );
-                    Ok(Outcome(passed: 0, failed: 1, controls: 0))
+                    Ok(Outcome(passed: 0, failed: 0, controls: 0, inlined: 1))
                 },
-                false => (audit.roots.len > 0 && !leaky).match({
-                    true  => {
-                        println(
-                            "INLINED {} {} {}: no out-of-line copy, audited inside its callers",
+                false => {
+                    (clone.len > 0).match({
+                        true  => println(
+                            "FAIL {} {} {}: only the clone {} is in the assembly, and its body is not audited",
                             cc,
                             level,
-                            name
-                        );
-                        Ok(Outcome(passed: 0, failed: 0, controls: 0, inlined: 1))
-                    },
-                    false => {
-                        println(
-                            "SKIP {} {} {}: not in the assembly (unused)",
-                            cc,
-                            level,
-                            name
-                        );
-                        leaky.match({
-                            true  => Err(AuditFault.MissingSymbol),
-                            false => Ok(Outcome(passed: 0, failed: 0, controls: 0)),
-                        })
-                    },
-                }),
+                            name,
+                            clone
+                        ),
+                        false => println("FAIL {} {} {}: not found in the assembly", cc, level, name),
+                    });
+                    leaky.match({
+                        true  => Err(AuditFault.MissingSymbol),
+                        false => Ok(Outcome(passed: 0, failed: 1, controls: 0)),
+                    })
+                },
             })
         },
         false => {

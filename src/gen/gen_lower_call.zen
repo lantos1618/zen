@@ -152,7 +152,7 @@ dot_call_on = (lo :: Lowerer, id: ExprId, c: Call, a: Access, base: Expr, span: 
             });
             // A function sema checked against a type's body (`Summary.parse(..)`)
             // is a static member, not a variant or a construction.
-            static_body = type_base && selected.match({
+            static_body = type_base && !declared && selected.match({
                 Ok(checked) => checked.body.match({ Ok(_) => true, None => false }),
                 None        => false,
             });

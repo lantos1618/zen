@@ -964,6 +964,13 @@ sign_agrees = (lo :: Lowerer, from: Value, to: Value) Res<usize, LowerError> {
 bit_operation = (lo :: Lowerer, id: ExprId, name: str, sources: Vec<Source>, span: Span)
                 Res<Value, LowerError> {
     ty = lo.type_of(id).try();
+    // `shift_right` on a signed word is arithmetic; the IR's `Shr` is the
+    // logical shift, so a signed receiver has no lowering yet.
+    arithmetic = name.eq("shift_right") && signed(lo.class_of(ty).try());
+    arithmetic.match({
+        true  => Err(unsupported(span, "an arithmetic shift of a signed word")),
+        false => Ok(()),
+    }).try();
     left = lo.expr_as(sources.source_expr(0, span).try(), ty).try();
     count_ty = name.is_in(["bit_xor", "bit_and"]).match({ true => ty, false => lo.prim("usize").try() });
     right = lo.expr_as(sources.source_expr(1, span).try(), count_ty).try();

@@ -76,11 +76,14 @@ self_type* = (c :: Checker, ctx: Ctx) Res<TyId, AllocError> {
     })
 }
 
+// A member naming a set contributes that set's members, so `Both | AllocError`
+// with `Both = Kind | Fail` is the union `AllocError | Fail | Kind`.
 union_type = (c :: Checker, members: Vec<TypeId>, ctx: Ctx)
              Res<TyId, AllocError> {
     parts ::= c.alloc.Vec<TyId>();
     members.loop((h, m) {
-        parts.add(c.type_from_ast(m, ctx).try()).try();
+        member = c.type_from_ast(m, ctx).try();
+        parts.add(c.set_of(member)).try();
     });
     c.types.union_ty(parts)
 }

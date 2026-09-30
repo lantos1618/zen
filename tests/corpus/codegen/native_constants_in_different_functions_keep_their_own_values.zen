@@ -1,0 +1,26 @@
+// Each native constant read becomes a `#define` in the C header block that
+// every function shares, so its macro name must be unique across the whole
+// program, not just within the function that reads it. Were two functions
+// to hand out the same name, the later `#define` would replace the earlier
+// and one function would silently read the other's constant.
+//
+// The ZEN_TEST_ constants exist in no header, so each reads its written
+// fallback; ENOENT and EACCES exist, with these values, on Linux and macOS.
+// Every value differs, so any two readers sharing a macro print a repeat.
+Errno = c.bind("errno.h", {
+    ZEN_TEST_ABSENT_FIRST*: i32 = 11
+    ZEN_TEST_ABSENT_SECOND*: i32 = 22
+    ENOENT*: i32 = 0
+    EACCES*: i32 = 0
+})
+
+first = () i32 { Errno.ZEN_TEST_ABSENT_FIRST }
+second = () i32 { Errno.ZEN_TEST_ABSENT_SECOND }
+missing = () i32 { Errno.ENOENT }
+denied = () i32 { Errno.EACCES }
+
+main = (env: Env) Res<i32, AllocError> {
+    println("fallbacks {} {}", first(), second());
+    println("defined {} {}", missing(), denied());
+    Ok(0)
+}

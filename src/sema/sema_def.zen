@@ -1,5 +1,5 @@
 Ast, Module, Decl, Ident, Span, QualifiedName, Member = std.ast
-Import, Impl, Enum = std.ast
+Import, Impl, Enum, Alias = std.ast
 Alloc, AllocError, Ptr = std.mem
 Vec, Map = std.collections
 str, String = std.text
@@ -502,24 +502,21 @@ World* = (a: Alloc, tree: Ast) Res<World, AllocError> {
     module_id: u32 ::= 0;
     Range(0, tree.module_count()).loop((h, i) {
         tree.module_at(i).match({
-            Ok(m) => add_module(w, index, a, tree, m, i, module_id),
+            Ok(m) => add_module(w, a, m, i, module_id),
             None  => Ok(()),
         }).try();
         module_id = module_id + 1;
     });
+    // Whether a one-segment path imports a name depends on what the module
+    // it names exports, so every table exists before any is read that way.
+    Range(0, w.tables.len).loop((h, mi) { path_imports(w, a, tree, mi).try() });
+    w.tables.loop((h, t) { index_table(index, a, tree, t).try() });
     slot.write(0, index);
     Ok(w);
 }
 
-add_module = (
-    w     :: World,
-    index :: WorldIndex,
-    a     : Alloc,
-    tree  : Ast,
-    m     : Module,
-    i     : usize,
-    mi    : u32
-) Res<(), AllocError> {
+add_module = (w :: World, a: Alloc, m: Module, i: usize, mi: u32)
+             Res<(), AllocError> {
     t            ::= ModuleTable(
         name: m.name,
         defs: a.Vec<Def>(),
@@ -534,7 +531,6 @@ add_module = (
         }).try();
         decl_id = decl_id + 1;
     });
-    index_table(index, a, tree, t).try();
     w.tables.add(t).try();
     set_first(w.exact, m.name, i).try();
     alias = module_display(m.name);
@@ -542,6 +538,101 @@ add_module = (
         set_first(w.folders, alias, i).try();
     });
     Ok(());
+}
+
+// `Name = module` imports `Name` when `module` exports it, exactly as
+// `Name, Other = module` would, and aliases the module otherwise.
+path_imports = (w :: World, a: Alloc, tree: Ast, mi: usize)
+               Res<(), AllocError> {
+    w.tables.get(mi).match({
+        None  => Ok(()),
+        Ok(t) => {
+            kept    ::= a.Vec<Def>();
+            imports ::= t.imports;
+            t.defs.loop((h, d) {
+                path_import(w, tree, mi, t, d).try().match({
+                    None    => kept.add(d).try(),
+                    Ok(imp) => imports.add(imp).try(),
+                });
+            });
+            w.tables.set(mi, ModuleTable(
+                name: t.name,
+                defs: kept,
+                imports: imports,
+                impls: t.impls,
+            ));
+            Ok(())
+        },
+    })
+}
+
+// The import a declaration makes, when it is `Name = module` and `module`
+// exports `Name`.
+path_import = (w: World, tree: Ast, mi: usize, t: ModuleTable, d: Def)
+              Res<Res<ImportBinding>, AllocError> {
+    decl_at(tree, d.id).match({
+        None  => Ok(None),
+        Ok(x) => x.kind.match({
+            Alias(al) => (al.tparams.len == 0).match({
+                true  => path_target(w, tree, mi, t, d, al),
+                false => Ok(None),
+            }),
+            _         => Ok(None),
+        }),
+    })
+}
+
+path_target = (
+    w    : World,
+    tree : Ast,
+    mi   : usize,
+    t    : ModuleTable,
+    d    : Def,
+    al   : Alias
+) Res<Res<ImportBinding>, AllocError> {
+    tree.type_at(al.target).kind.match({
+        Named(n) => (n.args.len == 0 && !names_local(w, mi, t, d, n.name.text))
+            .match({
+                true  => path_module(w, tree, mi, d, al, n.name.text),
+                false => Ok(None),
+            }),
+        _        => Ok(None),
+    })
+}
+
+// A declaration of the target's name, other than this binding, or a name
+// the module already sees under it, makes the target that name rather than
+// the module.
+names_local = (w: World, mi: usize, t: ModuleTable, d: Def, target: str)
+              bool {
+    t.defs.find((o) { o.name.eq(target) }).match({
+        Ok(_) => t.defs.find((o) {
+            o.name.eq(target) && o.id.eq(d.id) == false
+        }).match({ Ok(_) => true, None => false }),
+        None  => w.defines(mi, target),
+    })
+}
+
+path_module = (w: World, tree: Ast, mi: usize, d: Def, al: Alias, target: str)
+              Res<Res<ImportBinding>, AllocError> {
+    w.index_of(target).match({
+        None      => Ok(None),
+        Ok(other) => (other == mi).match({
+            true  => Ok(None),
+            false => {
+                seen ::= w.alloc.Vec<usize>();
+                (w.exports_name(tree, other, d.name, seen).try()).match({
+                    false => Ok(None),
+                    true  => Ok(Ok(ImportBinding(
+                        name: d.name,
+                        module: target,
+                        exported: d.exported,
+                        span: al.name.span,
+                    ))),
+                })
+            },
+        }),
+    })
 }
 
 index_table = (index :: WorldIndex, a: Alloc, tree: Ast, t: ModuleTable)

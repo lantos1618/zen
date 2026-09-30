@@ -51,9 +51,11 @@ settled_res = (c :: Checker, a: TyId, b: TyId) Res<TyId, AllocError> {
     })
 }
 
+// An arm's literal payload (`Ok(0)`) takes the concrete payload another arm
+// settled (`Ok(n)` with `n: usize`), as a literal arm does outside a `Res`.
 settled_form = (c :: Checker, a: TyId, b: TyId, rb: TyRes)
                Res<TyId, AllocError> {
-    c.unsettled(rb.value).match({
+    (c.unsettled(rb.value) || c.literal_meets_open(rb.value, a)).match({
         false => Ok(b),
         true  => c.carried_value(a, b, rb),
     })
@@ -116,6 +118,13 @@ merged_failure = (c :: Checker, ra: TyRes, rb: TyRes) Res<TyId, AllocError> {
 
 settled_of = (c: Checker, a: TyId, b: TyId) TyId {
     c.unsettled(a).match({ true => b, false => a })
+}
+
+literal_meets_open = (c: Checker, literal: TyId, open: TyId) bool {
+    c.is_literal_ty(literal) && c.open_value(open).match({
+        Ok(v) => c.concrete(v) && c.assignable(literal, v),
+        None  => false,
+    })
 }
 
 // The payload an open `Res` carries, when it carries a settled one.

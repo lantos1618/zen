@@ -1,0 +1,24 @@
+// An unannotated number still passes BY VALUE to parameters of any
+// integer width, and by reference to an `i64` parameter, the width it is
+// stored at. Any other `::` parameter, which borrows the argument's
+// storage, is reached through a binding whose type is written. The
+// refused form, an unannotated number lent to `::`, is
+// must-fail/sema/literal_binding_lent_to_a_mutable_parameter.
+
+bump = (n :: usize) { n = n + 1; }
+bump64 = (n :: i64) { n = n + 10; }
+widen = (n: usize) usize { n * 2 }
+narrow = (n: u8) u8 { n + 1 }
+
+main = (env: Env) Res<i32, AllocError> {
+    count ::= 20;
+    println("by value {} {}", widen(count), narrow(count));
+    active: usize ::= 0;
+    bump(active);
+    bump(active);
+    println("active {}", active);
+    plain ::= 5;
+    bump64(plain);
+    println("plain {}", plain);
+    Ok(0);
+}

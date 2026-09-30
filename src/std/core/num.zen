@@ -202,3 +202,11 @@ bit_and* = (self: u64, other: u64) u64
 rotate_right* = (self: u32, count: usize) u32
 shift_right* = (self: u32, count: usize) u32
 shift_right* = (self: u64, count: usize) u64
+
+// Arithmetic shifts copy the sign bit into the vacated high bits. A count at
+// or above the word width yields 0 for a non-negative value and -1 for a
+// negative one, as though the value were shifted one bit at a time.
+shift_right* = (self: i8, count: usize) i8
+shift_right* = (self: i16, count: usize) i16
+shift_right* = (self: i32, count: usize) i32
+shift_right* = (self: i64, count: usize) i64

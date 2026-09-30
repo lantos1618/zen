@@ -563,11 +563,11 @@ Payloads = {
     }
 
     genuine = (self: @Self, g: TagGuard) bool {
-        branch = self.function.blocks.get(g.block).match({
+        branch: Res<usize> = self.function.blocks.get(g.block).match({
             None    => None,
             Ok(b)   => b.exit.match({ Branch(br) => Ok(br.value), _ => None }),
         });
-        test = branch.match({ Ok(v) => self.only_def(v), None => None });
+        test: Res<Instruction> = branch.match({ Ok(v) => self.only_def(v), None => None });
         compare: Res<Binary> = test.match({
             Ok(i) => i.match({ BinaryValue(b) => b.op.match({ Equal => Ok(b), _ => None }), _ => None }),
             None  => None,

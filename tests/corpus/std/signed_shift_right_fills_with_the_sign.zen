@@ -1,0 +1,62 @@
+// `shift_right` on a signed word is the arithmetic shift: the vacated high
+// bits copy the sign, so a negative value stays negative and rounds toward
+// negative infinity (-7 >> 1 is -4, not -3). A logical shift of the same
+// bits would print a large positive number. A count at or above the width
+// is the limit of shifting one bit at a time: 0 for a non-negative value,
+// -1 for a negative one. The narrow words pin that the result is cast back
+// after C's promotion to int, and the once-counters that the receiver and
+// the count are each evaluated once, receiver first.
+shift_right = std.core.num
+
+once = (calls :: i32, value: i64) i64 {
+    calls = calls + 1;
+    value
+}
+
+count_once = (calls :: i32) usize {
+    calls = calls + 1;
+    (calls == 2).match({ true => 3, false => 0 })
+}
+
+main = () {
+    minus: i64 = -7;
+    plus: i64  = 7;
+    println(
+        "i64: {} {} {} {} {} {}",
+        minus.shift_right(0),
+        minus.shift_right(1),
+        minus.shift_right(2),
+        plus.shift_right(1),
+        i64.MIN.shift_right(63),
+        i64.MAX.shift_right(62)
+    );
+    println(
+        "i64 wide counts: {} {} {} {}",
+        minus.shift_right(64),
+        minus.shift_right(usize.MAX),
+        plus.shift_right(64),
+        plus.shift_right(usize.MAX)
+    );
+    limb: i32 = -67108865;
+    println(
+        "i32: {} {} {} {}",
+        limb.shift_right(26),
+        limb.shift_right(25),
+        i32.MIN.shift_right(31),
+        i32.MIN.shift_right(32)
+    );
+    small: i16 = -300;
+    tiny: i8   = -128;
+    println(
+        "narrow: {} {} {} {} {}",
+        small.shift_right(4),
+        small.shift_right(16),
+        tiny.shift_right(1),
+        tiny.shift_right(7),
+        tiny.shift_right(8)
+    );
+    calls: i32 ::= 0;
+    shifted = once(calls, -64).shift_right(count_once(calls));
+    println("once: {} {}", shifted, calls);
+    println("free: {}", shift_right(minus, 1));
+}

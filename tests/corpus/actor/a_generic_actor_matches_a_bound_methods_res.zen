@@ -1,0 +1,24 @@
+// A generic actor's behavior matches the `Res` a bound method returns,
+// directly and without an annotated local. The impl body sees `W` with its
+// bound, so `self.inner.open()` is typed `Res<(), AllocError>`; without the
+// bound the call had no type and the match scrutinee was emitted as a C
+// `int`, which the C compiler refused.
+
+Opener = { open* = (self :: @Self) Res<(), AllocError> }
+Thing = { n :: i32 = 0 }
+Thing.impl(Opener, { open = (self :: @Self) Res<(), AllocError> { Ok(()) } })
+Holder<W: Opener> = { inner :: W }
+Holder.impl(Actor, {
+    go = (self :: @Self, ctx: Context) {
+        ok = self.inner.open().match({ Ok(_) => true, Err(_) => false });
+        ctx.env.out.println("opened {}", ok).ignore();
+    }
+})
+
+main = (env: Env) Res<i32, ActorStartError | ActorError> {
+    h = env.spawn(Holder<Thing>(inner: Thing())).try();
+    h.go().try();
+    h.stop();
+    h.join();
+    Ok(0)
+}

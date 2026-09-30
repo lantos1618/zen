@@ -50,17 +50,26 @@ class SelfBuildTests(unittest.TestCase):
         return str(path)
 
     def test_fresh_make_bootstrap_uses_build_graph_without_python(self):
-        # No ./zen, Python driver, src/ tree or generated C units exist here.
+        # No ./zen, Python driver, src/ tree or generated C units exist here,
+        # so the standard library is named on the make command line.
         # The graph deliberately selects an entry different from src/zen/zen.zen.
         (self.root / "seed").mkdir()
         shutil.copyfile(ROOT / "seed/zen.c", self.root / "seed/zen.c")
         shutil.copyfile(ROOT / "Makefile", self.root / "Makefile")
-        result = subprocess.run(["make", "build", "PY=/no-python-for-building",
-                                 "CFLAGS=-O0 -std=c99", "CACHE="], cwd=self.root,
+        make = ["make", "build", "PY=/no-python-for-building", "CFLAGS=-O0 -std=c99", "CACHE="]
+        result = subprocess.run([*make, f"ZEN_STD={ROOT / 'src'}"], cwd=self.root,
                                 env=self.environment, capture_output=True, text=True, timeout=180)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue((self.root / "build/bootstrap/zen-seed").is_file())
         self.assertEqual(self.status(), 3)
+        # With a src/ tree of its own, the checkout's library wins over a
+        # ZEN_STD the shell exports for other work, even one naming no tree.
+        (self.root / "src").symlink_to(ROOT / "src", target_is_directory=True)
+        self.source.write_text("main = () i32 { 5 }\n")
+        result = subprocess.run(make, cwd=self.root, capture_output=True, text=True, timeout=180,
+                                env={**self.environment, "ZEN_STD": str(self.root / "no-such-std")})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.status(), 5)
         self.source.write_text("main = () i32 { 8 }\n")
         result = self.build()
         self.assertEqual(self.status(), 8)

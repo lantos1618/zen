@@ -154,6 +154,7 @@ with_reads = (s: CallShape, measured: Vec<str>) CallShape {
         vector_result: s.vector_result,
         hidden: s.hidden,
         writable: s.writable,
+        extents: s.extents,
         ignored: s.ignored,
         pointer_args: s.pointer_args,
         known: s.known,

@@ -28,8 +28,9 @@
 // argument registers and the stack argument area its C prototype implies
 // (tools/ct/abi). A callee that is itself audited must be seeded with every
 // secret the call passes it, or the call is reported, since its audit did
-// not assume that input secret. Its result is public only when its audit
-// proved that; otherwise the result, and memory behind a hidden result
+// not assume that input secret. An argument holding the address of secret
+// bytes in this frame points at secrets. Its result is public only when its
+// audit proved that; otherwise the result, and memory behind a hidden result
 // pointer, is secret whenever any argument is secret or points at secrets.
 // A secret-bearing call that passes a writable stack address smears the
 // stack.
@@ -93,6 +94,10 @@ CallShape* = {
     vector_result*: bool,     // a result in the first vector register
     hidden*: usize,           // bytes returned through a hidden pointer
     writable*: Vec<Writable>, // pointers the callee may write through
+    // Pointer arguments that name one value, with its size: a `::` or lent
+    // parameter, or arm64's hidden pointer to a by-value copy. Any other
+    // pointer may reach any extent.
+    extents*: Vec<Writable>,
     // Argument registers holding a std.simd CPU capability: a proof token
     // with no data, which compilers need not even load, so whatever the
     // register holds is not an input.
@@ -952,6 +957,40 @@ call_target* = (op: str) str {
     (base.starts_with("_zu_") || base.starts_with("_zg_")).match({ true => base.slice(1, base.len), false => base })
 }
 
+// Whether `reg` holds an address in this frame with secret bytes in the
+// `bytes` it reaches, or, when that is 0 (unknown), at or above it: up to
+// the return address for a local (no object lies across it), anywhere
+// above for the incoming arguments, and anywhere at all when the offset is
+// not known.
+stack_behind = (cur: State, reg: str, bytes: usize) bool {
+    entry_of(cur, reg).match({
+        None    => false,
+        Ok(e)   => cur.smear || e.exact.match({
+            false => any_marked(cur.slots),
+            true  => (bytes > 0).match({
+                true  => marked(cur.slots, e.at, bytes),
+                false => marked_between(cur.slots, e.at, (e.at < 0).match({ true => 0, false => WINDOW_LOW + WINDOW_SPAN })),
+            }),
+        }),
+    })
+}
+
+// Whether any byte in [from, to) is marked.
+marked_between = (bits: Vec<u64>, from: i64, to: i64) bool {
+    start = bit_of(from).value_or(0);
+    stop  = bit_of(to).value_or(bits.len * 64).min(bits.len * 64);
+    at ::= start;
+    found ::= false;
+    loop(() { at < stop && !found }, (h) {
+        word = bits.get(at / 64).value_or(0);
+        (at % 64 == 0 && at + 64 <= stop).match({
+            true  => { found = word != 0; at = at + 64; },
+            false => { found = word.shift_right(at % 64).bit_and(1) == 1; at = at + 1; },
+        });
+    });
+    found
+}
+
 // A direct call of a compiler-made clone: a `.` suffix on the symbol.
 clone_call = (op: str) bool {
     plain = op.split_once('@').match({ Ok(p) => p.before, None => op });
@@ -971,9 +1010,46 @@ unknown_shape = (a: Alloc, isa: Isa) CallShape {
         vector_result: true,
         hidden: 0,
         writable: writable,
+        extents: a.Vec<Writable>(),
         ignored: a.Vec<str>(),
         pointer_args: a.Vec<str>(),
         known: false,
+        reads: a.Vec<str>(),
+        reads_known: false,
+        audited: false,
+        public_result: false,
+        values: a.Vec<str>(),
+        pointers: a.Vec<str>(),
+        slots: a.Vec<i64>(),
+        pointer_slots: a.Vec<i64>(),
+        pointers2: a.Vec<str>()
+    )
+}
+
+// memcpy, memmove and memset: they read the source pointer (or the fill
+// byte) and the length, and write only through the destination, whose
+// incoming bytes they never read.
+library_shape = (a: Alloc, conv: Convention, target: str) CallShape {
+    fill = call_target(target).ends_with("memset");
+    writable ::= a.Vec<Writable>();
+    writable.add(Writable(index: 0, bytes: 0)).match({ _ => () });
+    ignored ::= a.Vec<str>();
+    ignored.add(conv.gprs.get(0).value_or("")).match({ _ => () });
+    pointers ::= a.Vec<str>();
+    (!fill).then(() { pointers.add(conv.gprs.get(1).value_or("")).match({ _ => () }); });
+    CallShape(
+        gprs: 3,
+        vectors: 0,
+        stack: 0,
+        returns: true,
+        pair: false,
+        vector_result: false,
+        hidden: 0,
+        writable: writable,
+        extents: a.Vec<Writable>(),
+        ignored: ignored,
+        pointer_args: pointers,
+        known: true,
         reads: a.Vec<str>(),
         reads_known: false,
         audited: false,
@@ -1061,11 +1137,14 @@ call = (
     // A GCC clone (`f.isra.0`, `f.constprop.0`, `f.part.0`) may take its
     // arguments differently from f's prototype: ISRA passes fields of an
     // aggregate in registers of their own.
-    shape = clone_call(target).match({
-        true  => unknown_shape(an.alloc, an.isa),
-        false => an.shapes.get(call_target(target)).match({
-            Ok(s)  => s,
-            None => unknown_shape(an.alloc, an.isa),
+    shape = returns_first(target).match({
+        true  => library_shape(an.alloc, conv, target),
+        false => clone_call(target).match({
+            true  => unknown_shape(an.alloc, an.isa),
+            false => an.shapes.get(call_target(target)).match({
+                Ok(s)  => s,
+                None => unknown_shape(an.alloc, an.isa),
+            }),
         }),
     });
     secret ::= false;   // some argument is secret or points at secrets
@@ -1077,12 +1156,22 @@ call = (
         dead = has(shape.ignored, r) || (shape.reads_known && !has(shape.reads, r));
         deref = !shape.known || has(shape.pointer_args, r);
         v = has(cur.val, r) && !dead;
-        p = has(cur.pts, r) && !dead && deref;
+        // The address of secret bytes in this frame hands the callee those
+        // secrets as surely as a pointer to secret memory does. The hidden
+        // result pointer is only written.
+        extent = shape.extents.find((w) { w.index == i }).match({ Ok(w) => w.bytes, None => 0 });
+        behind = !(shape.hidden > 0 && r.eq(conv.hidden_reg)) && stack_behind(cur, r, extent);
+        p = (has(cur.pts, r) || behind) && !dead && deref;
         q = has(cur.pts2, r) && !dead && deref;
         secret = secret || v || p || q;
         points = points || p;
+        // A callee seeded with `**r` takes the words behind r as pointers
+        // to secret memory (the manifest vouches for that); this frame's
+        // copy of such a struct, filled by a callee whose result counts
+        // as secret, satisfies it.
+        lent = behind && !has(cur.pts, r) && has(shape.pointers2, r);
         (shape.audited && ((v && !has(shape.values, r))
-            || (p && !has(shape.values, r) && !has(shape.pointers, r))
+            || (p && !lent && !has(shape.values, r) && !has(shape.pointers, r))
             || (q && !has(shape.pointers2, r)))).then(() {
             stray = true;
             which.fmt(" {}", r).try();

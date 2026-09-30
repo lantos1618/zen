@@ -232,6 +232,18 @@ leaky_offset_read* = (key: Ptr<u8>, table: Ptr<u8>, n: usize) u8 {
     table.read(key.offset(n).read(n).to_usize())
 }
 
+// Reads its buffer's first byte as an address; its audit takes the buffer
+// as public.
+peek_first* = (buf :: [u8, 16], table: Ptr<u8>) u8 { table.read(buf[0].to_usize()) }
+
+// Copies a key byte into a local buffer and lends the buffer to
+// peek_first: the call hands the callee the secret through its address.
+leaky_lend* = (key: Ptr<u8>, table: Ptr<u8>) u8 {
+    buf ::= [u8, 16](0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    buf[0] = key.read(0);
+    peek_first(buf, table)
+}
+
 main = (env: Env) Res<(), AllocError> {
     a     = env.mem.alloc();
     bytes = a.raw(256, 16).try();
@@ -279,6 +291,7 @@ main = (env: Env) Res<(), AllocError> {
     println("{}", leaky_libcall(1234, 97, bytes));
     println("{}", leaky_jump_table(2, 77, bytes, words));
     println("{}", leaky_offset_read(bytes, bytes, 4));
+    println("{}", leaky_lend(bytes, bytes));
     chained = carry_chain(x, y, x);
     adx().match({
         Ok(fast) => bmi2().match({

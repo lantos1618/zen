@@ -20,3 +20,6 @@ main  lookup               *table
 main  leaky_libcall       key
 main  leaky_jump_table   key
 main  leaky_offset_read  *key
+# peek_first reads its lent buffer as public; its table holds secrets.
+main  peek_first         *table
+main  leaky_lend         *key

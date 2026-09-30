@@ -856,6 +856,7 @@ shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
     vectors: usize ::= 0;
     stack: usize ::= 0;
     writable ::= a.Vec<Writable>();
+    extents  ::= a.Vec<Writable>();
     ignored  ::= a.Vec<str>();
     // A `::` or lent parameter names exactly one value; a Ptr<T> any extent.
     kinds: Res<Vec<bool>> = pointer_params(a, m.symbol);
@@ -879,6 +880,12 @@ shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
                         false => layout_of(a, c, pointee).match({ Ok(l) => l.size, None => 0 }),
                     });
                     writable.add(Writable(index: i, bytes: bytes)).try();
+                    (bytes > 0).then(() { extents.add(Writable(index: i, bytes: bytes)).try(); });
+                });
+                // A lent by-value parameter: exactly one value behind it.
+                (pl.param.ctype.ends_with("*") && pl.param.ctype.starts_with("const ")).then(() {
+                    pointee = pl.param.ctype.slice(6, pl.param.ctype.len - 1).trim().value_or("");
+                    layout_of(a, c, pointee).when_ok((l) { extents.add(Writable(index: i, bytes: l.size)).try(); });
                 });
             },
             Vreg(i)          => { vectors = vectors.max(i + pl.regs); },
@@ -886,6 +893,7 @@ shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
             GprPointer(i)    => {
                 gprs = gprs.max(i + 1);
                 pointer_args.add(reg_name(a, isa, i).try()).try();
+                extents.add(Writable(index: i, bytes: pl.layout.size)).try();
             },
             StackPointer(at) => { stack = stack.max(at + 8 - base); },
         });
@@ -900,6 +908,7 @@ shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
         vector_result: result.match({ Ok(l) => l.vector && hidden == 0, None => false }),
         hidden: hidden,
         writable: writable,
+        extents: extents,
         ignored: ignored,
         pointer_args: pointer_args,
         known: true,
@@ -938,6 +947,7 @@ audited_shape* = (
         vector_result: shape.vector_result,
         hidden: shape.hidden,
         writable: shape.writable,
+        extents: shape.extents,
         ignored: shape.ignored,
         pointer_args: shape.pointer_args,
         known: true,

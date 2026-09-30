@@ -1,0 +1,23 @@
+// A `std.js.Bytes` that reaches past the heap traps at the boundary
+// instead of handing JavaScript a shorter view than the program asked for.
+Ref, Bytes = std.js
+Ptr, null_ptr = std.mem
+
+Typed = js.bind("Uint8Array", {
+    from* = (source: Bytes) Ref
+})
+Views = js.bind("Uint8Array", {
+    get_byteLength* = (this: Ref) u32
+})
+
+main = (env: Env) Res<i32, AllocError> {
+    a = env.mem.alloc();
+    p = a.realloc<u8>(null_ptr<u8>(), 16).try();
+    println(
+        "inside {}",
+        Views.get_byteLength(Typed.from(Bytes(at: p, len: 16)))
+    );
+    outside = Typed.from(Bytes(at: p, len: 4294967295));
+    println("not reached {}", outside.id);
+    Ok(0)
+}

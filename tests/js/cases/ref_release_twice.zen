@@ -1,0 +1,21 @@
+// Releasing a js.Ref a second time traps: the first release emptied its
+// slot, and the second must not take a reference from whatever object is
+// there now.
+Ref = std.js
+
+Objects = js.bind("Object", {
+    create* = (proto: Ref) Ref
+})
+
+main = (env: Env) Res<i32, AllocError> {
+    held = Objects.create(Ref(id: 0));
+    copy = held;
+    held.release();
+    println("released once");
+    // The slot is reused by a new object before the stale copy is released.
+    other = Objects.create(Ref(id: 0));
+    println("reused {}", other.id % 1048576 == copy.id % 1048576);
+    copy.release();
+    println("not reached");
+    Ok(0)
+}

@@ -1,0 +1,81 @@
+// Bulk bytes across the js.bind boundary under Node: `std.js.Bytes` passes
+// heap bytes as a Uint8Array view (no copy), and `std.js.copy` copies an
+// ArrayBuffer or typed array into the heap in one call. Also: the heap
+// growing between transfers keeps Zen's bytes and detaches views that
+// JavaScript kept, rather than leaving them reading moved memory.
+Ref, Bytes, copy = std.js
+Ptr, null_ptr = std.mem
+
+Typed = js.bind("Uint8Array", {
+    from* = (source: Bytes) Ref
+})
+Views = js.bind("Uint8Array", {
+    get_byteLength* = (this: Ref) u32
+    get_buffer* = (this: Ref) Ref
+    at* = (this: Ref, index: i32) u32
+})
+Lists = js.bind("Array", {
+    of* = (view: Bytes) Ref
+})
+Items = js.bind("Array", {
+    at* = (this: Ref, index: i32) Ref
+})
+
+fill = (p: Ptr<u8>, n: usize) {
+    Range(0, n).loop((i) { p.write(i, ((i * 7 + 3) % 251).to_u64().to_u16().value_or(0).to_u32().to_u8().value_or(0)); });
+}
+
+// Whether `p[0..n]` holds the pattern starting at `from`.
+holds = (p: Ptr<u8>, n: usize, from: usize) bool {
+    ok ::= true;
+    Range(0, n).loop((i) { ok = ok && p.read(i).to_usize() == ((from + i) * 7 + 3) % 251; });
+    ok
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a        = env.mem.alloc();
+    n: usize = 100000;
+    source   = a.realloc<u8>(null_ptr<u8>(), n).try();
+    fill(source, n);
+
+    // Out through a view: Uint8Array.from copies what the view shows.
+    js_copy = Typed.from(Bytes(at: source, len: n));
+    println("view length {}", Views.get_byteLength(js_copy));
+    println("byte 12345 {}", Views.at(js_copy, 12345));
+
+    // Back in one copy, whole, from an offset, clamped to the destination.
+    back = a.realloc<u8>(null_ptr<u8>(), n).try();
+    println("copied {}", copy(js_copy, 0, Bytes(at: back, len: n)));
+    println("round trip {}", holds(back, n, 0));
+    println("from offset {}", copy(js_copy, 99990, Bytes(at: back, len: n)));
+    println("offset bytes {}", holds(back, 10, 99990));
+    println("clamped {}", copy(js_copy, 5, Bytes(at: back, len: 16)));
+    println("clamped bytes {}", holds(back, 16, 5));
+    println("past the end {}", copy(js_copy, n, Bytes(at: back, len: n)));
+    println("empty view {}", copy(js_copy, 0, Bytes(at: back, len: 0)));
+
+    // An ArrayBuffer source, and null.
+    buffer = Views.get_buffer(js_copy);
+    println("from ArrayBuffer {}", copy(buffer, 1, Bytes(at: back, len: 8)));
+    println("ArrayBuffer bytes {}", holds(back, 8, 1));
+    println("from null {}", copy(Ref(id: 0), 0, Bytes(at: back, len: 8)));
+    buffer.release();
+
+    // JavaScript keeps a view (wrongly: it is valid for the call only),
+    // then the heap grows. Zen's bytes move with it; the kept view is
+    // detached instead of showing whatever the old range holds later.
+    kept       = Lists.of(Bytes(at: source, len: n));
+    big: usize = 64 * 1048576;
+    far        = a.realloc<u8>(null_ptr<u8>(), big).try();
+    view       = Items.at(kept, 0);
+    println("kept view after growth {}", Views.get_byteLength(view));
+    println("source intact {}", holds(source, n, 0));
+    // A copy into memory past the old end of the heap.
+    at = far.offset(big - n);
+    println("copied past old end {}", copy(js_copy, 0, Bytes(at: at, len: n)));
+    println("far bytes {}", holds(at, n, 0));
+    view.release();
+    kept.release();
+    js_copy.release();
+    Ok(0)
+}

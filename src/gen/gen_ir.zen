@@ -107,19 +107,26 @@ Pages* = { out*: usize, bytes*: usize }
 // How a value crosses into the JavaScript host (`js.bind`, see std.js):
 // `Number` an integer or f64 word, `Flag` a Bool, `Text` a `str` aggregate
 // (pointer and length, decoded to a JavaScript string at the boundary),
-// `Handle` a U32 index into the host's object table, `Handler` a U32 event
+// `Bytes` a `std.js.Bytes` aggregate of the same shape passed as a
+// Uint8Array view of those heap bytes (no copy, valid for the call only),
+// `Handle` a U32 id in the host's object table, `Handler` a U32 event
 // handler id, `Nothing` no value (results only).
-Marshal* = Number | Flag | Text | Handle | Handler | Nothing
+Marshal* = Number | Flag | Text | Bytes | Handle | Handler | Nothing
 
 // A call of a `js.bind` member. `object` is the binding's object path; with
 // `receiver` the first argument is the object and the path after its first
 // segment is followed from it. A `member` spelled `set_x`/`get_x` assigns or
 // reads property `x`; any other member is a method call.
+//
+// With `runtime` the call is one of std.js's own operations instead
+// (`Ref.release`, `copy`): `member` names it, `object` is empty, and the
+// renderer calls its runtime's implementation with the same marshalling.
 HostCall* = {
     out*: usize,
     object*: str,
     member*: str,
     receiver*: bool,
+    runtime*: bool,
     args*: Vec<usize>,
     marshal*: Vec<Marshal>,
     result*: Marshal,

@@ -1098,8 +1098,9 @@ JavaScript = {
             (i > 0).then(() { self.out.add(", ").try(); });
             ty = self.slot_type(slot);
             call.marshal.get(i).value_or(Marshal.Nothing).match({
-                Text => self.at(slot),
-                _    => wide(ty).match({
+                Text  => self.at(slot),
+                Bytes => self.at(slot),
+                _     => wide(ty).match({
                     true  => {
                         self.out.add("znum(").try();
                         self.pair(slot).try();
@@ -1116,10 +1117,11 @@ JavaScript = {
     stub = (self :: @Self, call: HostCall) Res<usize, AllocError> {
         key ::= self.alloc.String().try();
         key.fmt(
-            "{}|{}|{}|{}|",
+            "{}|{}|{}|{}|{}|",
             call.object,
             call.member,
             call.receiver,
+            call.runtime,
             marshal_name(call.result)
         ).try();
         call.marshal.loop((m) { key.fmt("{},", marshal_name(m)).try(); });
@@ -1149,6 +1151,31 @@ JavaScript = {
             self.data.fmt("a{}", i).try();
         });
         self.data.add(") {\n").try();
+        call.runtime.match({
+            true  => self.write_runtime_stub(call),
+            false => self.write_binding_stub(call),
+        })
+    }
+
+    // function zjN(a0, a1, a2) { return +(zcopyin(zobj(a0), a1, zview(a2))); }
+    // A std.js operation: the runtime function the verifier admitted.
+    write_runtime_stub = (self :: @Self, call: HostCall) Res<(), AllocError> {
+        self.data.add("  return ").try();
+        self.data.add(result_open(call.result)).try();
+        release = call.member.eq("release");
+        self.data.add(
+            release.match({ true => "zrelease(", false => "zcopyin(" })
+        ).try();
+        Range(0, call.args.len).loop((i) {
+            (i > 0).then(() { self.data.add(", ").try(); });
+            self.argument_js(call, i).try();
+        });
+        self.data.add(")").try();
+        self.data.add(result_close(call.result)).try();
+        self.data.add(";\n}\n")
+    }
+
+    write_binding_stub = (self :: @Self, call: HostCall) Res<(), AllocError> {
         valid ::= identifier(call.member);
         call.object.split('.').loop((segment) { valid = valid && identifier(segment); });
         valid.match({
@@ -1207,6 +1234,7 @@ JavaScript = {
             Number  => self.data.fmt("a{}", i),
             Flag    => self.data.fmt("(a{} !== 0)", i),
             Text    => self.data.fmt("zstr(a{})", i),
+            Bytes   => self.data.fmt("zview(a{})", i),
             Handle  => self.data.fmt("zobj(a{})", i),
             Handler => self.data.fmt("zhandler(a{})", i),
             Nothing => self.data.add("undefined"),
@@ -1350,7 +1378,7 @@ result_close = (m: Marshal) str {
 }
 
 marshal_name = (m: Marshal) str {
-    m.match({ Number => "n", Flag => "b", Text => "s", Handle => "r", Handler => "h", Nothing => "-" })
+    m.match({ Number => "n", Flag => "b", Text => "s", Bytes => "v", Handle => "r", Handler => "h", Nothing => "-" })
 }
 
 // A JavaScript identifier made only of ASCII letters, digits, `_` and `$`.

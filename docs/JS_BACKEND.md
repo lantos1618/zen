@@ -90,9 +90,21 @@ returns zeros instead of faulting, and an access past the heap raises a JS
 from 8 MiB (overflow into the data traps), mapped pages lie above it.
 Frame aggregates (`Block` slots, and any slot whose address is taken) live in
 a downward-growing stack region of the same heap with an explicit stack
-pointer; the frame is released on return. `MapPages` grows the heap
-(`ArrayBuffer.prototype.resize` on a resizable buffer, so existing views stay
-valid) and returns zeroed pages; `UnmapPages` returns them to a free list.
+pointer; the frame is released on return. `MapPages` grows the heap and
+returns zeroed pages; `UnmapPages` returns them to a free list.
+
+The heap is a fixed-length `ArrayBuffer`. Growing replaces it with a longer
+one (`ArrayBuffer.prototype.transfer`, which can extend the allocation in
+place) and rebuilds the runtime's `zm`/`zb` views; the old buffer is
+detached. It was a resizable buffer at first, which kept views valid across
+growth, but Web APIs refuse views of resizable buffers (`Blob`,
+`XMLHttpRequest.send`, `TextDecoder`, `crypto.getRandomValues`), so every
+byte had to be copied before it could leave the heap; and V8 reads a
+fixed-length buffer faster. Measured on Node 24.4 (a loop filling and
+summing a 1 Mi-entry `u32` array 40 times): 7.35 s resizable, 4.60 s
+fixed-length. The rule this imposes: no view of the heap survives anything
+that can allocate. Generated code always goes through `zm`/`zb`, and a view
+given to JavaScript (`std.js.Bytes`) is valid only during its call.
 Every Zen-visible allocation therefore goes through Zen's own `Alloc` over
 pages, exactly as on the native targets; the JS garbage collector never owns
 a Zen value, and `str`/`String` are byte ranges in the heap (UTF-8 bytes, not
@@ -184,11 +196,38 @@ flavor of IR_ARCHITECTURE §3.1.
 declares a header (contract in `src/std/js/js.zen`). Lowering turns each
 call into a `Host` instruction that names the object path, the member,
 whether the first argument is the receiver, and each argument's boundary
-form (`Marshal`: number, bool, `str`, handle, handler). The renderer emits
-one stub per distinct signature; the stub converts arguments (`zstr` decodes
-a UTF-8 slice, `zobj` looks a handle up, `zhandler` makes a listener that
-queues an id), makes the call or property access, and converts the result
-back (`zref` registers an object in the handle table).
+form (`Marshal`: number, bool, `str`, bytes, handle, handler). The renderer
+emits one stub per distinct signature; the stub converts arguments (`zstr`
+decodes a UTF-8 slice, `zview` makes a `Uint8Array` view of a
+`std.js.Bytes` slice, `zobj` looks a handle up, `zhandler` makes a listener
+that queues an id), makes the call or property access, and converts the
+result back (`zref` registers an object in the handle table).
+
+**Handle table.** An id is `slot + generation * 2^20`. A live object always
+has the same id; each time a binding returns it, its slot counts one more
+reference. `Ref.release()` (a `Host` instruction marked `runtime`, rendered
+as `zrelease`) gives one back; at zero the slot drops the object, advances
+its generation and joins a free list. An id whose generation no longer
+matches traps (`use of a released js.Ref`, `js.Ref released twice`), so a
+stale id can never reach the object that reuses its slot. After 4095 reuses
+a slot is retired rather than letting its 12-bit generation wrap, so no id
+is ever issued twice. Releasing id 0 does nothing. `Ref` stays a plain
+handle, not a `Drop` owner: web code copies Refs into fields and arrays
+freely, which `Drop`'s no-copy rule would forbid, and a copy shares the
+one reference it was handed.
+
+**Bulk bytes.** `std.js.Bytes { at, len }` crosses as a view of those heap
+bytes (bounds-checked; no copy). `std.js.copy(source, offset, into)`
+(runtime `zcopyin`) copies an `ArrayBuffer` or typed array into a `Bytes`
+with one `Uint8Array.prototype.set` and answers the count. Measured under
+Node against the byte-at-a-time paths the web host used before
+(`charCodeAt` per byte in, `Array.push` per byte out):
+
+| Body | In: old / new | Out: old / new |
+| --- | --- | --- |
+| 32 KiB | 10.5 ms / 0.06 ms | 8.4 ms / 0.25 ms |
+| 1 MiB | 110 ms / 0.09 ms | 40 ms / 0.39 ms |
+| 7.6 MB | 757 ms / 0.20 ms | 311 ms / 0.79 ms |
 
 `std.js.wait()` is the only way to receive events. It lowers to `Wait`; the
 renderer makes every function that can reach a `Wait` a generator

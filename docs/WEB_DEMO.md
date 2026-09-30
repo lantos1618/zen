@@ -125,10 +125,14 @@ StyleNumber = js.bind("Element.style", {
   a stub that throws.
 - Marshalling is explicit and closed. Integers, `f64` and `bool` cross as
   numbers. `str` crosses as a UTF-8 slice of Zen's heap (pointer and
-  length) that the stub decodes. Host objects cross as `Ref`, a u32 index
-  into the runtime's handle table: 0 is `null`/`undefined`, and the same
-  object always has the same index. `Handler`, a u32 id, crosses as a
-  listener that queues that id. Nothing else may cross, and a `str` or a
+  length) that the stub decodes; `std.js.Bytes` crosses as a `Uint8Array`
+  view of heap bytes, valid for the call. Host objects cross as `Ref`, a
+  u32 id in the runtime's handle table: 0 is `null`/`undefined`, and the
+  same live object always has the same id. The table holds each object
+  until the program calls `release()` on its Ref; a released id traps if
+  it is used again. `std.js.copy` copies an `ArrayBuffer` or typed array
+  into heap bytes in one call. `Handler`, a u32 id, crosses as a listener
+  that queues that id. Nothing else may cross, and a `str`, `Bytes` or
   `Handler` never comes back.
 - Events never call into Zen from JavaScript. `std.js.wait()` suspends the
   program until a handler fires and answers its id (0 when no event can

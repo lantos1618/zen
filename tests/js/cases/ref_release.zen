@@ -1,0 +1,81 @@
+// js.Ref release under Node: the handle table's reference counts, slot
+// reuse with a new generation, and slot retirement once a slot's
+// generations are used up. Misuse (a second release, a stale id) traps;
+// those are the ref_release_twice and ref_use_after_release cases.
+Ref = std.js
+
+Objects = js.bind("Object", {
+    create* = (proto: Ref) Ref
+})
+Global = js.bind("globalThis", {
+    get_Math* = () Ref
+})
+MathJs = js.bind("Math", {
+    abs* = (x: f64) f64
+})
+Props = js.bind("Object", {
+    set_tag* = (this: Ref, tag: u32) ()
+    get_tag* = (this: Ref) u32
+})
+
+SLOT: u32 = 1048576
+
+slot = (r: Ref) u32 { r.id % SLOT }
+generation = (r: Ref) u32 { r.id / SLOT }
+
+fresh = () Ref { Objects.create(Ref(id: 0)) }
+
+main = (env: Env) Res<i32, AllocError> {
+    // Releasing null does nothing.
+    Ref(id: 0).release();
+
+    // A released slot is reused for the next object, one generation on.
+    first = fresh();
+    Props.set_tag(first, 7);
+    println("first tag {}", Props.get_tag(first));
+    first_slot = slot(first);
+    first.release();
+    second = fresh();
+    println("slot reused {}", slot(second) == first_slot);
+    println(
+        "generation advanced {}",
+        generation(second) == generation(first) + 1
+    );
+    println("new id {}", second.id != first.id);
+    println("new object has no tag {}", Props.get_tag(second) == 0);
+    second.release();
+
+    // The same object returned twice is one id with two references: after
+    // one release the other still works, after both it is gone.
+    a = Global.get_Math();
+    b = Global.get_Math();
+    println("same id {}", a.id == b.id);
+    a.release();
+    println("still usable {}", MathJs.abs(-2.5));
+    Props.set_tag(b, 3);
+    println("tag through the other {}", Props.get_tag(b));
+    b.release();
+    again = Global.get_Math();
+    println("new id after both released {}", again.id != a.id);
+    again.release();
+
+    // A slot is reused for 4095 generations and then retired: its ids are
+    // never issued again, so the next object gets a fresh slot.
+    probe = fresh();
+    home  = slot(probe);
+    probe.release();
+    last: u32  ::= generation(probe);
+    moved      ::= false;
+    tries: u32 ::= 0;
+    loop(() { !moved && tries < 5000 }, (h) {
+        next = fresh();
+        (slot(next) == home).match({
+            true  => { last = generation(next); },
+            false => { moved = true; },
+        });
+        next.release();
+        tries = tries + 1;
+    });
+    println("slot retired {} after generation {}", moved, last);
+    Ok(0)
+}

@@ -1,0 +1,23 @@
+// Using a released js.Ref traps even after its slot holds another object:
+// the id's generation no longer matches, so it cannot reach the new one.
+Ref = std.js
+
+Objects = js.bind("Object", {
+    create* = (proto: Ref) Ref
+})
+Props = js.bind("Object", {
+    set_tag* = (this: Ref, tag: u32) ()
+    get_tag* = (this: Ref) u32
+})
+
+main = (env: Env) Res<i32, AllocError> {
+    stale = Objects.create(Ref(id: 0));
+    Props.set_tag(stale, 1);
+    stale.release();
+    fresh = Objects.create(Ref(id: 0));
+    Props.set_tag(fresh, 2);
+    println("same slot {}", fresh.id % 1048576 == stale.id % 1048576);
+    tag = Props.get_tag(stale);
+    println("not reached {}", tag);
+    Ok(0)
+}

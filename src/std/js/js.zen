@@ -18,15 +18,51 @@
 // any other member is a method call. Values cross the boundary explicitly:
 // integers, `f64` and `bool` as numbers; `str` as UTF-8 bytes in Zen's heap
 // (pointer and length) decoded to a JavaScript string by the call's stub;
-// host objects as `Ref`s, small integers indexing the runtime's handle
-// table; event handlers as `Handler` ids. Nothing else may cross.
+// host objects as `Ref`s, ids into the runtime's handle table; heap bytes
+// as `Bytes`, a Uint8Array view; event handlers as `Handler` ids. Nothing
+// else may cross.
 //
 // Events never run Zen code from inside JavaScript: a listener registered
 // with a `Handler` only queues that handler's id, and `wait` suspends the
 // program until an id is queued. Zen stays one synchronous thread.
 
+Ptr = std.mem.mem
+
 // A host object in the runtime's handle table. Id 0 is `null`/`undefined`.
-Ref* = { id*: u32 }
+//
+// The table keeps the object alive (the JavaScript collector cannot see
+// Zen's copies of an id), so a program that is done with an object calls
+// `release`. Every Ref a binding returns counts as one reference, even when
+// the same object comes back again with the same id; `release` gives one
+// back, and the object leaves the table when none are left. Its id then
+// never names another object: using it, or releasing it again, traps.
+// A Ref is a handle, not a `Drop` owner: copies are free and share the
+// same reference, so exactly one of them is released.
+Ref* = {
+    id*: u32,
+
+    // Give back this reference. Releasing id 0 does nothing.
+    // Compiler-provided.
+    release* = (self: @Self) ()
+}
+
+// `len` bytes of Zen's heap at `at`, passed to a binding as a Uint8Array
+// view of those bytes (no copy). The view is valid only during the call:
+// the heap may move when it grows, so JavaScript must not keep it (Blob,
+// XMLHttpRequest.send, TextDecoder and typed-array `set` copy at once).
+Bytes* = {
+    at*: Ptr<u8>,
+    len*: usize,
+
+    // The bytes of `text`, borrowed from it.
+    of* = (text: str) Bytes { Bytes(at: text.ptr(), len: text.len) }
+}
+
+// Copy bytes of `source` (an ArrayBuffer or typed array; null counts as
+// empty) from byte `offset` into `into`, as many as fit, in one copy.
+// Answers the number copied: 0 when `offset` is at or past the end.
+// Compiler-provided.
+copy* = (source: Ref, offset: usize, into: Bytes) usize
 
 // A registered event handler; `wait` answers its id when its event fires.
 Handler* = { id*: u32 }

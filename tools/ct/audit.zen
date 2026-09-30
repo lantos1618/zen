@@ -13,9 +13,9 @@ Alloc, AllocError = std.mem
 Vec, Map = std.collections
 str, String, parse_usize = std.text
 Range = std.core
-Isa, Finding, function_lines, parse_lines, analyze = taint
-Marked, marked_functions, seed_of = abi
-Entry, manifest_entries, manifest_functions, register_arity = abi
+Isa, Finding, CallShape, function_lines, parse_lines, analyze = taint
+Marked, marked_functions, seed_of, result_registers = abi
+Entry, manifest_entries, manifest_functions, call_shapes, audited_shape = abi
 
 AuditError* = AllocError | ProcError | FsError | AuditFault
 AuditFault* = | NoMarkedFunctions
@@ -38,7 +38,10 @@ Audit* = {
     work*: str,
 }
 
-// Audited functions are forced out of line so their code can be read.
+// Audited functions are forced out of line so their code can be read, and
+// kept whole: `noipa` stops GCC from cloning one with its parameters
+// changed (.isra, .constprop), which would leave the audited body unused.
+// Clang ignores the attribute.
 out_of_line* = (a: Alloc, c: str, symbols: Vec<str>) Res<String, AllocError> {
     out ::= a.String().try();
     c.lines().loop((line) {
@@ -55,7 +58,7 @@ out_of_line* = (a: Alloc, c: str, symbols: Vec<str>) Res<String, AllocError> {
                     true  => line.slice(46, line.len),
                     false => line.slice(7, line.len),
                 });
-                out.add("static __attribute__((noinline,used)) ").try();
+                out.add("static __attribute__((noinline,noipa,used)) ").try();
                 out.add(rest).try();
             },
         });
@@ -155,8 +158,17 @@ run_audit* = (
     audit_c = a.String("{}/audit.c", audit.work).try();
     env.fs.write(audit_c.view(), patched.view()).try();
     outcome ::= Outcome(passed: 0, failed: 0, controls: 0);
-    arity_x86 = register_arity(a, Isa.X86, source.view()).try();
-    arity_arm = register_arity(a, Isa.Arm, source.view()).try();
+    shapes_x86 ::= call_shapes(a, Isa.X86, source.view()).try();
+    shapes_arm ::= call_shapes(a, Isa.Arm, source.view()).try();
+    // Callers rely on what each audited callee's audit assumes and proves.
+    marked.loop((m) {
+        shapes_x86.get(m.symbol).when_ok((s) {
+            shapes_x86.set(m.symbol, audited_shape(a, Isa.X86, source.view(), m, s).try()).try();
+        });
+        shapes_arm.get(m.symbol).when_ok((s) {
+            shapes_arm.set(m.symbol, audited_shape(a, Isa.Arm, source.view(), m, s).try()).try();
+        });
+    });
     audit.compilers.loop((cc) {
         audit.levels.loop((level) {
             asm_path = a.String(
@@ -191,8 +203,8 @@ run_audit* = (
                     m,
                     cc,
                     level,
-                    arity_x86,
-                    arity_arm
+                    shapes_x86,
+                    shapes_arm
                 ).try();
                 outcome = Outcome(
                     passed: outcome.passed + one.passed,
@@ -213,8 +225,8 @@ audit_function = (
     m         : Marked,
     cc        : str,
     level     : str,
-    arity_x86 : Map<str, usize>,
-    arity_arm : Map<str, usize>
+    shapes_x86 : Map<str, CallShape>,
+    shapes_arm : Map<str, CallShape>
 ) Res<Outcome, AuditError> {
     body = function_lines(a, asm, m.symbol).try();
     // An unused function may be dropped entirely; that is not a failure,
@@ -234,9 +246,14 @@ audit_function = (
             })
         },
         false => {
-            isa     = body.find(
-                (line) { line.contains("%r") || line.contains("%e") }
-            ).match({
+            // AT&T operands carry `%` register prefixes; arm64 instructions
+            // have none (directives such as `.type f, %function` and
+            // comments such as `; %bb.0:` aside).
+            isa     = body.find((line) {
+                text = line.trim().value_or(line);
+                !text.starts_with(".") && !text.starts_with(";") && !text.starts_with("#")
+                    && !text.starts_with("/") && text.contains("%")
+            }).match({
                 Ok(_) => Isa.X86,
                 None  => Isa.Arm,
             });
@@ -247,11 +264,12 @@ audit_function = (
                 isa,
                 lines,
                 seed,
-                isa.match({ X86 => arity_x86, Arm => arity_arm }),
+                isa.match({ X86 => shapes_x86, Arm => shapes_arm }),
+                result_registers(a, isa, c, m).try(),
                 audit.trace.len > 0 && m.symbol.contains(audit.trace)
             ).try();
             arch    = isa.match({ X86 => "x86-64", Arm => "arm64" });
-            located = seed.values.len + seed.pointers.len + seed.slots.len + seed.pointer_slots.len > 0;
+            located = seed.values.len + seed.pointers.len + seed.slots.len + seed.pointer_slots.len + seed.pointers2.len > 0;
             // A function whose secret inputs could not be placed would pass
             // vacuously; that is a failure of the check, not a pass.
             (!located).match({

@@ -3,3 +3,16 @@ main  leaky_compare  *tag
 main  leaky_index    index
 main  leaky_limb     x
 main  leaky_divide   key
+main  leaky_vector_index   *key
+main  leaky_vector_branch  *key
+main  leaky_vector_param   v
+main  leaky_lane_spill     v
+main  leaky_accumulate     acc
+main  leaky_clmul          x
+main  leaky_call           *key
+main  leaky_result         *key  public-result
+main  leaky_schedule       **s
+# schedule_mix reads round keys through a struct of pointers.
+main  schedule_mix         **s *out
+# lookup's index is public by its audit; its table holds secrets.
+main  lookup               *table

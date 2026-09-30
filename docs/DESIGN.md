@@ -2105,22 +2105,42 @@ be flagged, so a check that has stopped seeing anything fails:
   each `--cc` at `-O2` and `-O3`. The C backend writes
   `/* zen:secret zu_l3key *zu_l3out */` after the parameter list of every
   function with a Secret parameter; the tool keeps those functions out of
-  line, places their secret inputs by the SysV x86-64 or AAPCS64 convention,
-  and runs a forward taint analysis over the assembly (registers and stack
-  slots, joined at labels). `--manifest` names further functions and their
-  secret parameters, for shared arithmetic whose signature cannot say
-  Secret because public verification uses it too; `branches=N` on an entry
-  allows N secret-dependent branches, `?module` makes an entry optional.
+  line (`noinline`, and `noipa` so GCC cannot run a clone instead), places
+  their secret inputs by the SysV x86-64 or AAPCS64 convention, and runs a
+  forward taint analysis over the assembly, joined at labels. Registers are
+  tracked whole, vector registers included (%xmm/%ymm/%zmm n are one
+  register, as are b/h/s/d/q/v n on arm64), with the vector forms that also
+  read their destination (legacy-SSE two-address forms with an immediate,
+  NEON accumulates and lane inserts, AESE) and vector instructions leaving
+  the flags alone; std.simd vectors passed by value arrive in XMM/YMM or V
+  registers, and a by-value struct the backend lends as `const T *` holds
+  its secret bytes behind the pointer. The stack is tracked byte by byte, so
+  a spilled vector's lanes keep their taint when reloaded narrower; a store
+  at an offset the analysis cannot place smears the stack (every later stack
+  load is secret). `--manifest` names further functions and their secret
+  parameters (`*p` a pointer to secret memory, `**p` a pointer to memory
+  holding pointers to secret memory), for shared arithmetic whose signature
+  cannot say Secret because public verification uses it too; `branches=N`
+  on an entry allows N secret-dependent branches, `public-result` requires
+  the result register to be public at every return, `?module` makes an
+  entry optional.
   `std.ct.declassify` of a word and `Choice.declassify_bool` pass through
   `declassify_barrier`, whose asm text is `/* zen:declassify %reg */`: the
   analysis treats that register as public from there on, so a program's
   explicit declassifications are the only places its secrets may steer
-  code. A call taints its result only through the argument registers its C
-  prototype uses (and the second result register only for a two-register
-  result); calls that never return end their path. `CT_TRACE=<symbol>`
-  prints the analysis instruction by instruction. It fails on a conditional branch, a memory
-  address, a division or an indirect jump that depends on a secret. Memory
-  other than the stack and secret pointees is not modelled.
+  code. A call passes secrets through the integer and vector argument
+  registers and stack arguments its C prototype uses. An audited callee must
+  have been seeded with every secret it is passed, or the call is reported;
+  its result is public only when its audit proved it (`public-result`).
+  Otherwise the result, and memory behind a hidden result pointer, is
+  secret when any argument is secret or points at secrets, and a
+  secret-bearing call that passes a writable stack address smears the
+  stack. Calls that never return end their path. `CT_TRACE=<symbol>` prints
+  the analysis instruction by instruction. It fails on a conditional branch,
+  a memory address, a division or an indirect jump that depends on a
+  secret, a secret passed to an audited callee unseeded, and a secret
+  returned by a public-result function. Memory other than the stack and
+  secret pointees is not modelled.
 - `ct-grind` is the ctgrind method: `std.ct.ct_grind.secret_bytes` marks
   memory undefined for valgrind's memcheck, which then reports every branch
   and address computed from it; `public_bytes` is the declassification.

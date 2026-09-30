@@ -2,12 +2,16 @@
 // and must pass every static and dynamic check. The `leaky_` group is code
 // nobody marked Secret, so sema's discipline cannot see its secrets;
 // controls/manifest.txt names its secret parameters, and every check must
-// flag it.
+// flag it. Both groups include vector (std.simd) code: secrets in XMM/YMM
+// and V registers, vectors passed by value, spilled to the stack and
+// combined by instructions that also read their destination.
 Secret, declassify, Choice = std.ct
 ct_eq, ct_lt, ct_select, ct_swap, ct_memeq, ct_lookup = std.ct
 bit_xor, bit_and, shift_right, mul_wide, truncate_u64, truncate_u8 = std.core.num
 to_u64, to_usize = std.core.num
 Ptr = std.mem
+Avx2, Clmul, avx2, clmul = std.simd
+load_u8x16, load_u32x4, load_u64x2, load_u32x8, lanes_u64x2, splat_u32x4 = std.simd
 
 // Branch-free selection on a secret comparison.
 select_min* = (a: Secret<u64>, b: Secret<u64>) Secret<u64> {
@@ -47,6 +51,55 @@ declassified_index* = (key: Secret<u64>, table: Ptr<u8>) u8 {
     table.read(declassify(key).truncate_u8().to_usize())
 }
 
+// ChaCha-style vector rounds on a secret key: loads, adds, xors, lane
+// rotations and shuffles, stored back to secret memory.
+vector_rounds* = (key: Secret<Ptr<u8>>, out: Secret<Ptr<u8>>) {
+    a ::= load_u32x4(key, 0);
+    b ::= load_u32x4(key, 16);
+    c ::= load_u32x4(key, 32);
+    d ::= load_u32x4(key, 48);
+    Range(0, 10).loop((i) {
+        a = a.add_wrap(b); d = d.bit_xor(a).rotate_left(16);
+        c = c.add_wrap(d); b = b.bit_xor(c).rotate_left(12);
+        a = a.add_wrap(b); d = d.bit_xor(a).rotate_left(8);
+        c = c.add_wrap(d); b = b.bit_xor(c).rotate_left(7);
+        b = b.shuffle([1, 2, 3, 0]);
+        c = c.shuffle([2, 3, 0, 1]);
+        d = d.shuffle([3, 0, 1, 2]);
+    });
+    a.store(out, 0);
+    b.store(out, 16);
+    c.store(out, 32);
+    d.store(out, 48);
+}
+
+// Secret vectors by value in and out (XMM/V registers).
+vector_value* = (x: Secret<u64x2>, y: Secret<u64x2>) Secret<u64x2> {
+    x.mul_low32(y).add_wrap(x.shift_right(32).mul_low32(y.shuffle([1, 0])))
+}
+
+// Eight-lane rounds compiled for AVX2 (YMM registers on x86-64).
+wide_rounds* = (cpu: Avx2, key: Secret<Ptr<u8>>, out: Secret<Ptr<u8>>) {
+    a ::= load_u32x8(key, 0);
+    b ::= load_u32x8(key, 32);
+    Range(0, 8).loop((i) {
+        a = a.add_wrap(b).rotate_left(16);
+        b = b.bit_xor(a).rotate_left(7).shuffle([7, 0, 1, 2, 3, 4, 5, 6]);
+    });
+    a.bit_xor(b).store(out, 0);
+}
+
+// A key schedule reached through a lent struct of pointers, as the
+// hardware AES-GCM code passes its round keys.
+Schedule* = { keys*: Ptr<u8>, powers*: Ptr<u8>, rounds*: usize }
+
+// XORs every round key into a block: constant time.
+schedule_mix* = (s: Schedule, out: Ptr<u8>) {
+    b ::= load_u8x16(out, 0);
+    Range(0, s.rounds).loop((r) { b = b.bit_xor(load_u8x16(s.keys, 16 * r)); });
+    b.store(out, 0);
+}
+
 // Leaks through an early exit: the loop stops at the first difference.
 leaky_compare* = (tag: Ptr<u8>, expected: Ptr<u8>) bool {
     same: bool ::= true;
@@ -73,6 +126,57 @@ leaky_limb* = (x: [u64, 4], table: Ptr<u8>) u8 {
 // Leaks through division latency.
 leaky_divide* = (key: u64, divisor: u64) u64 { key / divisor }
 
+// Leaks through the cache: a lane of a secret vector chooses the address.
+leaky_vector_index* = (key: Ptr<u8>, table: Ptr<u8>) u8 {
+    v = load_u8x16(key, 0).bit_xor(load_u8x16(key, 16)).shuffle([3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9, 3]);
+    table.read(v.lane(5).to_usize())
+}
+
+// Leaks through a branch on a vector comparison.
+leaky_vector_branch* = (key: Ptr<u8>, other: Ptr<u8>, sink: Ptr<u8>) {
+    d = load_u64x2(key, 0).bit_xor(load_u64x2(other, 0));
+    (d.lane(0).bit_or(d.lane(1)) == 0).then(() {
+        Range(0, 64).loop((i) { sink.write_volatile(i, i.truncate_u8()); });
+    });
+}
+
+// Leaks through the cache from a secret vector passed by value.
+leaky_vector_param* = (v: u32x4, table: Ptr<u8>) u8 {
+    table.read(v.lane(2).bit_and(255).to_usize())
+}
+
+// A lane chosen at run time: the vector goes to the stack and one byte of
+// it comes back, which then chooses an address.
+leaky_lane_spill* = (v: u8x16, i: usize, table: Ptr<u8>) u8 {
+    table.read(v.lane(i % 16).to_usize())
+}
+
+// Multiply-accumulate into a secret accumulator (UMLAL on arm64, which
+// reads its destination), then an address from the sum.
+leaky_accumulate* = (acc: u64x2, x: u64x2, y: u64x2, table: Ptr<u8>) u8 {
+    table.read(acc.add_wrap(x.mul_low32(y)).lane(0).truncate_u8().to_usize())
+}
+
+// A carry-less product whose secret operand is the destination of the
+// two-address PCLMULQDQ on x86-64, then an address from the product.
+leaky_clmul* = (cpu: Clmul, x: u64x2, h: u64x2, table: Ptr<u8>) u8 {
+    table.read(x.clmul_low(h, cpu).lane(0).truncate_u8().to_usize())
+}
+
+// A table lookup whose index parameter is public by its audit.
+lookup* = (table: Ptr<u8>, index: u8) u8 { table.read(index.to_usize()) }
+
+// Passes a secret to lookup's public index: the call is the leak.
+leaky_call* = (key: Ptr<u8>, table: Ptr<u8>) u8 { lookup(table, key.read(0)) }
+
+// A round-key byte, read through the lent schedule, chooses an address.
+leaky_schedule* = (s: Schedule, table: Ptr<u8>) u8 {
+    table.read(s.keys.read(s.rounds).to_usize())
+}
+
+// Audited as returning a public value, but returns key material.
+leaky_result* = (key: Ptr<u8>) u64 { key.read_le64(0) }
+
 main = (env: Env) Res<(), AllocError> {
     a     = env.mem.alloc();
     bytes = a.raw(256, 16).try();
@@ -98,5 +202,27 @@ main = (env: Env) Res<(), AllocError> {
         leaky_index(bytes, 300),
         leaky_divide(1000, 7)
     );
+    mixed = a.raw(64, 16).try();
+    vector_rounds(bytes, mixed);
+    avx2().match({ Ok(cpu) => wide_rounds(cpu, bytes, mixed), None => () });
+    leaky_vector_branch(bytes, bytes.offset(16), mixed);
+    product = vector_value(lanes_u64x2(3, 5), lanes_u64x2(7, 11));
+    println(
+        "{} {} {} {} {} {}",
+        mixed.read(0),
+        declassify(product.lane(0)),
+        leaky_vector_index(bytes, bytes),
+        leaky_vector_param(splat_u32x4(9), bytes),
+        leaky_lane_spill(load_u8x16(bytes, 0), 7, bytes),
+        leaky_accumulate(lanes_u64x2(1, 2), lanes_u64x2(3, 4), lanes_u64x2(5, 6), bytes)
+    );
+    clmul().match({
+        Ok(cpu) => println("{}", leaky_clmul(cpu, lanes_u64x2(3, 4), lanes_u64x2(5, 6), bytes)),
+        None    => (),
+    });
+    println("{} {}", leaky_call(bytes, bytes), leaky_result(bytes));
+    schedule = Schedule(keys: bytes, powers: bytes.offset(128), rounds: 3);
+    schedule_mix(schedule, mixed);
+    println("{} {}", mixed.read(1), leaky_schedule(schedule, bytes));
     Ok(())
 }

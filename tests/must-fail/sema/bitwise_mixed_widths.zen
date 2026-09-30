@@ -1,0 +1,5 @@
+main = () {
+    narrow: u32 = 6;
+    wide: u64   = 2;
+    both        = narrow | wide;
+}

@@ -1,0 +1,118 @@
+// Logical shifts at counts 0, width - 1, width, width + 1 and usize.MAX.
+// Bits moved out are discarded without a trap, and a count at or above the
+// width yields zero.
+main = () {
+    zero: usize = 0;
+    big: usize  = usize.MAX;
+
+    one8: u8  = 1;
+    max8: u8  = u8.MAX;
+    w8: usize = 8;
+    println(
+        "u8 <<: {} {} {} {} {}",
+        one8 << zero,
+        one8 << (w8 - 1),
+        one8 << w8,
+        one8 << (w8 + 1),
+        one8 << big
+    );
+    println(
+        "u8 >>: {} {} {} {} {}",
+        max8 >> zero,
+        max8 >> (w8 - 1),
+        max8 >> w8,
+        max8 >> (w8 + 1),
+        max8 >> big
+    );
+
+    one16: u16 = 1;
+    max16: u16 = u16.MAX;
+    w16: usize = 16;
+    println(
+        "u16 <<: {} {} {} {} {}",
+        one16 << zero,
+        one16 << (w16 - 1),
+        one16 << w16,
+        one16 << (w16 + 1),
+        one16 << big
+    );
+    println(
+        "u16 >>: {} {} {} {} {}",
+        max16 >> zero,
+        max16 >> (w16 - 1),
+        max16 >> w16,
+        max16 >> (w16 + 1),
+        max16 >> big
+    );
+
+    one32: u32 = 1;
+    max32: u32 = u32.MAX;
+    w32: usize = 32;
+    println(
+        "u32 <<: {} {} {} {} {}",
+        one32 << zero,
+        one32 << (w32 - 1),
+        one32 << w32,
+        one32 << (w32 + 1),
+        one32 << big
+    );
+    println(
+        "u32 >>: {} {} {} {} {}",
+        max32 >> zero,
+        max32 >> (w32 - 1),
+        max32 >> w32,
+        max32 >> (w32 + 1),
+        max32 >> big
+    );
+
+    one64: u64 = 1;
+    max64: u64 = u64.MAX;
+    w64: usize = 64;
+    println(
+        "u64 <<: {} {} {} {} {}",
+        one64 << zero,
+        one64 << (w64 - 1),
+        one64 << w64,
+        one64 << (w64 + 1),
+        one64 << big
+    );
+    println(
+        "u64 >>: {} {} {} {} {}",
+        max64 >> zero,
+        max64 >> (w64 - 1),
+        max64 >> w64,
+        max64 >> (w64 + 1),
+        max64 >> big
+    );
+
+    onew: usize = 1;
+    maxw: usize = usize.MAX;
+    println(
+        "usize <<: {} {} {} {} {}",
+        onew << zero,
+        onew << (w64 - 1),
+        onew << w64,
+        onew << (w64 + 1),
+        onew << big
+    );
+    println(
+        "usize >>: {} {} {} {} {}",
+        maxw >> zero,
+        maxw >> (w64 - 1),
+        maxw >> w64,
+        maxw >> (w64 + 1),
+        maxw >> big
+    );
+
+    // Left shifts drop the high bits instead of trapping.
+    b8: u8   = 0xAB;
+    b16: u16 = 0xABCD;
+    b32: u32 = 0xDEADBEEF;
+    b64: u64 = 0xDEADBEEFCAFEF00D;
+    println("discard: {} {} {} {}", b8 << 4, b16 << 12, b32 << 16, b64 << 32);
+
+    // The high bit moves right with zero fill.
+    h8: u8   = 0x80;
+    h64: u64 = 0x8000000000000000;
+    println("fill: {} {}", h8 >> 1, h64 >> 63);
+}

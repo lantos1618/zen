@@ -12,6 +12,7 @@ CBackend = gen.gen_c.gen_c_state
 expr = gen.gen_c.gen_c_expr
 c_prim = gen.gen_c.gen_c_type
 temp, write_assign_none, write_assign_ok = gen.gen_c.gen_c_flow
+lower_bits = gen.gen_c.gen_c_op
 unsigned_width = sema.sema_prim
 
 lower_numeric* = (
@@ -186,10 +187,9 @@ rounded_numeric = (
     })
 }
 
-// Hold both inputs in source order: rotation references each more than once.
-// Mask rotation counts so zero and width multiples never shift by the word
-// width; guard shifts, whose counts at or above the width yield zero. The
-// result is cast back because C promotes u8 and u16 operands to int.
+// A named bit operation, and every bit operator, lowers through `lower_bits`,
+// which holds both inputs in source order: rotation references each more than
+// once.
 lower_integer_bits* = (
     be        :: CBackend,
     left      : ExprId,
@@ -198,27 +198,25 @@ lower_integer_bits* = (
     ctx       : Ctx,
     out       :: String
 ) Res<(), AllocError> {
-    lt    = operation.word;
-    word  = be.check.prim_name(lt);
-    ct    = c_prim(word);
-    width = word_width(word);
-    mask  = width - 1;
-    rt    = be.check.types.prim(
+    word  = be.check.prim_name(operation.word);
+    count = be.check.types.prim(
         operation.name.starts_with(
             "bit_"
         ).match({true => word, false => "usize"})
     ).try();
-    lc ::= be.alloc.String().try();
-    be.expr(left, ctx, lt, lc).try();
-    lv = be.temp(lt, "bits").try();
-    be.set_line(lv.view(), lc.view()).try();
-    rc ::= be.alloc.String().try();
-    be.expr(right, ctx, rt, rc).try();
-    rv = be.temp(rt, "bits").try();
-    be.set_line(rv.view(), rc.view()).try();
-    l = lv.view();
-    r = rv.view();
-    operation.name.match({
+    be.lower_bits(left, right, operation.name, operation.word, count, ctx, out)
+}
+
+// The C for one bit operation over held operands `l` and `r`. Rotation counts
+// are masked so zero and width multiples never shift by the word width;
+// shifts are guarded, since a count at or above the width yields zero. The
+// result is cast back because C promotes u8 and u16 operands to int.
+write_bits* = (name: str, word: str, l: str, r: str, out :: String)
+              Res<(), AllocError> {
+    ct    = c_prim(word);
+    width = word_width(word);
+    mask  = width - 1;
+    name.match({
         "bit_xor"     => out.fmt("(({})({} ^ {}))", ct, l, r),
         "bit_and"     => out.fmt("(({})({} & {}))", ct, l, r),
         "bit_or"      => out.fmt("(({})({} | {}))", ct, l, r),

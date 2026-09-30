@@ -1,0 +1,4 @@
+main = () {
+    count: i64 = 6;
+    flipped    = ~count;
+}

@@ -1,0 +1,34 @@
+// The operators reach u128 as the named operations do. There is no u128
+// printer, so each result prints as its high and low halves.
+truncate_u64 = std.core.num
+
+halves = (label: str, v: u128) {
+    println("{}: {} {}", label, (v >> 64).truncate_u64(), v.truncate_u64());
+}
+
+main = () {
+    a: u128 = 0xF0F0F0F0F0F0F0F0;
+    b: u128 = 0xFF00FF00FF00FF00;
+    high    = a << 64;
+    halves("and", (high | a) & (b << 64));
+    halves("or", high | b);
+    halves("xor", (high | a) ^ (high | b));
+    halves("not", ~a);
+    // Shifts cross the 64-bit halves; a count at or above 128 yields zero.
+    c64: usize = 64;
+    c127: u8   = 127;
+    c128: u32  = 128;
+    big: u128  = 1;
+    halves("shl 127", big << c127);
+    halves("shr 64", high >> c64);
+    halves("shl 128", big << c128);
+    halves("shr 128", high >> c128);
+    // A u128 count is an unsigned count like any other.
+    wide_count: u128 = 70;
+    halves("u128 count", big << wide_count);
+    // Literals alone take the expected u128 width and are computed there.
+    top: u128 = 1 << 100;
+    halves("literal", top);
+    ones: u128 = ~0;
+    halves("literal not", ones);
+}

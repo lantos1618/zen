@@ -1,4 +1,4 @@
-Expr, ExprId, Binary, Literal = std.ast
+Expr, ExprId, Binary, Literal, Span = std.ast
 Unary, Paren, Index, Match, ArrayLit = std.ast
 AllocError = std.mem
 str = std.text
@@ -107,6 +107,7 @@ overflow = (c :: Checker, b: Binary, name: str) Res<(), AllocError> {
 // The literal's own type is always `int`; only `want` matters.
 check_literal* = (c :: Checker, id: ExprId, want: TyId)
                  Res<(), AllocError> {
+    c.settle_widths(id, want).try();
     is_integer(c.prim_name(want)).match({
         true  => c.literal_within(id, want),
         false => c.elements_within(id, want),
@@ -319,4 +320,151 @@ written_index = (c: Checker, x: Index) str {
         Literal(l) => l.text,
         _          => "",
     })
+}
+
+// A bitwise expression over literals alone has no width of its own. It is
+// recorded here and takes its width from the first expected type it meets:
+// an unsigned word settles it and becomes its type, so folding and lowering
+// see that width; any other settled type refuses it. One never settled is
+// refused after checking, because no context chose its width.
+defer_width* = (c :: Checker, id: ExprId) Res<(), AllocError> {
+    c.bit_widths.get(id).match({
+        Ok(_) => Ok(()),
+        None  => c.bit_widths.set(id, false),
+    })
+}
+
+unsigned_word* = (c: Checker, ty: TyId) bool {
+    c.prim_name(ty).is_in(["u8", "u16", "u32", "u64", "u128", "usize"])
+}
+
+settle_widths = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
+    (c.bit_widths.len() == 0 || c.is_literal_ty(want)
+        || c.askable_width(want) == false).match({
+        true  => Ok(()),
+        false => c.settle_under(id, want),
+    })
+}
+
+askable_width = (c: Checker, ty: TyId) bool {
+    (c.is_unknown(ty) || c.is_infer(ty) || c.is_var(ty)) == false
+}
+
+// Walk the literal-typed part of an expression: arithmetic may enclose a
+// parenthesized bitwise operation, as in `(1 << 4) + 1`.
+settle_under = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
+    literal = c.expr_memo.get(id).match({
+        Ok(ty) => c.is_literal_ty(ty),
+        None   => false,
+    });
+    literal.match({
+        false => Ok(()),
+        true  => c.tree.expr_at(id).kind.match({
+            Paren(p)  => c.settle_under(p.inner, want),
+            Binary(b) => {
+                c.settle_node(id, want).try();
+                c.settle_under(b.lhs, want).try();
+                // A shift's count keeps its own type.
+                b.op.is_shift().match({
+                    true  => Ok(()),
+                    false => c.settle_under(b.rhs, want),
+                })
+            },
+            Unary(u)  => {
+                c.settle_node(id, want).try();
+                c.settle_under(u.operand, want)
+            },
+            _         => Ok(()),
+        }),
+    })
+}
+
+settle_node = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
+    c.bit_widths.get(id).match({
+        Ok(false) => c.unsigned_word(want).match({
+            true  => {
+                c.bit_widths.set(id, true).try();
+                c.expr_memo.set(id, want).try();
+                c.settle_operands(id, want)
+            },
+            false => {
+                c.bit_widths.set(id, true).try();
+                c.refuse_bit_operand(id, want, c.bit_glyph(id))
+            },
+        }),
+        _         => Ok(()),
+    })
+}
+
+// Each literal operand must fit the width the expression settled at.
+settle_operands = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
+    c.tree.expr_at(id).kind.match({
+        Binary(b) => {
+            c.fits_width(b.lhs, want).try();
+            b.op.is_shift().match({
+                true  => Ok(()),
+                false => c.fits_width(b.rhs, want),
+            })
+        },
+        Unary(u)  => c.fits_width(u.operand, want),
+        _         => Ok(()),
+    })
+}
+
+fits_width = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
+    c.tree.expr_at(id).kind.match({
+        Literal(l) => c.literal_kind_within(id, l, want),
+        _          => Ok(()),
+    })
+}
+
+bit_glyph = (c: Checker, id: ExprId) str {
+    c.tree.expr_at(id).kind.match({
+        Binary(b) => b.op.glyph(),
+        _         => "~",
+    })
+}
+
+bit_span = (c: Checker, id: ExprId) Span {
+    node = c.tree.expr_at(id);
+    node.kind.match({
+        Binary(b) => b.op_span,
+        Unary(u)  => u.op_span,
+        _         => node.span,
+    })
+}
+
+refuse_bit_operand* = (c :: Checker, id: ExprId, ty: TyId, glyph: str)
+                      Res<(), AllocError> {
+    at = c.tree.expr_at(id).span;
+    c.report(
+        at.file,
+        at,
+        SemaFault.BitwiseOperand(TypeFault(
+            name: glyph,
+            expected: ty,
+            found: ty
+        ))
+    )
+}
+
+report_unsettled_widths* = (c :: Checker) Res<(), AllocError> {
+    open ::= c.alloc.Vec<ExprId>();
+    c.bit_widths.pairs((h, id, settled) {
+        (!settled).then(() { open.add(id).try(); });
+    });
+    open.loop((h, id) {
+        at = c.bit_span(id);
+        ty = c.expr_memo.get(id).ok_or(AllocError.OutOfMemory).try();
+        c.report(
+            at.file,
+            at,
+            SemaFault.BitwiseUntyped(TypeFault(
+                name: c.bit_glyph(id),
+                expected: ty,
+                found: ty
+            ))
+        ).try();
+    });
+    Ok(())
 }

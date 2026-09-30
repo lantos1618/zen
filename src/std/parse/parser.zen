@@ -58,6 +58,10 @@ Parser* = {
     // Whether this statement or declaration has already emitted a diagnostic.
     said :: bool = false,
 
+    // Whether a top-level `|` ends the expression being parsed: it begins a
+    // represented enum's next variant rather than a bitwise or.
+    bar_ends* :: bool = false,
+
     alloc*: Alloc,
 
     // Current token. Past the end, continue returning Eof.
@@ -414,6 +418,16 @@ Parser* = {
     }
 
     run_until* = (self :: @Self, was: usize) { self.run_base = was; }
+
+    // Set whether a top-level `|` ends the expression, returning the outer
+    // setting for `bar_ends_until`.
+    bar_ends_from* = (self :: @Self, ends: bool) bool {
+        was           = self.bar_ends;
+        self.bar_ends = ends;
+        was;
+    }
+
+    bar_ends_until* = (self :: @Self, was: bool) { self.bar_ends = was; }
 
     leave* = (self :: @Self) { self.depth = self.depth - 1; }
 

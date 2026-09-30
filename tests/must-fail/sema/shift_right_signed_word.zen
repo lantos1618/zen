@@ -1,0 +1,5 @@
+// `>>` is the logical shift only; the arithmetic shift is `shift_right`.
+main = () {
+    word: i32 = -8;
+    half      = word >> 1;
+}

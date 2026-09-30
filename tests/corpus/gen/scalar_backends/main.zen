@@ -85,7 +85,16 @@ run = (
     Ok(good.value_or(false))
 }
 
-refused = (env: Env, a: Alloc, backend: Codegen, source: str, layout: Layout)
+// A refused program publishes nothing and reports at least one fault; when
+// `what` is not empty, the report must name it.
+refused = (
+    env     : Env,
+    a       : Alloc,
+    backend : Codegen,
+    source  : str,
+    layout  : Layout,
+    what    : str
+)
           Res<bool, AllocError> {
     build ::= a.Build(env, "src/program");
     build.set_std_root("src");
@@ -110,7 +119,8 @@ refused = (env: Env, a: Alloc, backend: Codegen, source: str, layout: Layout)
     called ::= false;
     faults = generation.emit(report, (artifact) { called = true; Ok(0) }).try();
     Ok(build.diag_count() == 0 && check.diag_count() == 0 && faults > 0
-        && !called && !report.view().is_empty())
+        && !called && !report.view().is_empty()
+        && (what.is_empty() || report.view().contains(what)))
 }
 
 // Construct expected NUL bytes independently of source literal spelling.
@@ -181,12 +191,56 @@ main = (env: Env) Res<(), AllocError> {
         println(
             "{} constant time refused {}",
             backend.stable_name(),
-            refused(env, a, backend, "constant_time.zen", Layout.Single).try()
+            refused(
+                env,
+                a,
+                backend,
+                "constant_time.zen",
+                Layout.Single,
+                ""
+            ).try()
         );
         println(
             "{} split refused {}",
             backend.stable_name(),
-            refused(env, b, backend, "program.zen", Layout.Modules).try()
+            refused(env, b, backend, "program.zen", Layout.Modules, "").try()
+        );
+        // Each bit operator is refused by name, never lowered as another.
+        println(
+            "{} bitwise refused {}",
+            backend.stable_name(),
+            refused(
+                env,
+                a,
+                backend,
+                "bitwise.zen",
+                Layout.Single,
+                "the `&` operator"
+            ).try()
+        );
+        println(
+            "{} shift refused {}",
+            backend.stable_name(),
+            refused(
+                env,
+                a,
+                backend,
+                "shift.zen",
+                Layout.Single,
+                "the `>>` operator"
+            ).try()
+        );
+        println(
+            "{} complement refused {}",
+            backend.stable_name(),
+            refused(
+                env,
+                a,
+                backend,
+                "complement.zen",
+                Layout.Single,
+                "the `~` operator"
+            ).try()
         );
     });
     Ok(())

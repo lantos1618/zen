@@ -1,0 +1,2 @@
+a bitwise operator needs parentheses beside `!=`: write `(flags & mask) != 0`
+4:17

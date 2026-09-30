@@ -1,0 +1,2 @@
+shifts do not chain: write `(a << 1) << 2`
+3:22

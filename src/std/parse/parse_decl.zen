@@ -18,9 +18,9 @@ Decl, DeclKind, Struct, Enum, Alias, Impl, Import, Const = std.ast.ast_node
 Member, MemberKind, Field, Variant, ImportName, TParam, Module = std.ast.ast_node
 TokenKind = std.parse.parse_token
 Parser, Mark = std.parse.parser
-expr = std.parse.parse_expr
+expr, expr_before_bar = std.parse.parse_expr
 type, written_type = std.parse.parse_type
-value_shape, delim_step, inline_fn_ahead = std.parse.parse_lookahead
+value_shape, delim_step, inline_fn_ahead, bar_operands_ahead = std.parse.parse_lookahead
 struct_members, record_body, type_params, fn_value = std.parse.parse_member
 
 // Parse a whole module. Its span and trailing trivia cover the complete file.
@@ -176,7 +176,10 @@ decl_value = (
             },
             false => p.value_shape(module_level).match({
             StructValue => p.struct_decl(m, head, tparams),
-            EnumValue   => p.enum_decl(m, head, tparams, written),
+            EnumValue   => p.typed_bits_ahead(module_level, written).match({
+                true  => p.const_decl(m, head, written, mutable),
+                false => p.enum_decl(m, head, tparams, written),
+            }),
             FnValue     => p.fn_decl(m, head, tparams, mutable),
             PathValue   => p.import_decl(m, names),
             AliasValue  => p.alias_decl(m, head, tparams),
@@ -184,6 +187,14 @@ decl_value = (
             }),
         }),
     });
+}
+
+// An enum never writes a type, so a typed module constant may begin with
+// `Name |`: `MASK: u8 = LOW | HIGH`. Untyped, that shape declares an enum.
+typed_bits_ahead = (p :: Parser, module_level: bool, written: Res<TypeId>)
+                   bool {
+    module_level && written.match({ Ok(_) => true, None => false })
+        && p.bar_operands_ahead()
 }
 
 // A header binding is a namespace of explicitly written native signatures:
@@ -415,7 +426,7 @@ one_variant = (p :: Parser) Res<Variant, AllocError> {
 }
 
 variant_discriminant = (p :: Parser) Res<Res<ExprId>, AllocError> {
-    value = p.expr().try();
+    value = p.expr_before_bar().try();
     Ok(Ok(value));
 }
 

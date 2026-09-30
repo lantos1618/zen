@@ -1,0 +1,5 @@
+main = () {
+    flags: u32 = 6;
+    mask: u32  = 2;
+    set = flags & mask != 0;
+}

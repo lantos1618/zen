@@ -73,3 +73,36 @@ lex 0 parse 0
 1 .ready
 2 x
 lex 0 parse 0
+== a | b | c
+0 |
+1 |
+2 a
+2 b
+1 c
+lex 0 parse 0
+== ~a & b
+0 &
+1 ~
+2 a
+1 b
+lex 0 parse 0
+== a >> n
+0 >>
+1 a
+1 n
+lex 0 parse 0
+== (a & b) != 0
+0 !=
+1 paren
+2 &
+3 a
+3 b
+1 0
+lex 0 parse 0
+== a & b != 0
+0 !=
+1 &
+2 a
+2 b
+1 0
+lex 0 parse 1

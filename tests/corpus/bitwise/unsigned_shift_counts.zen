@@ -1,0 +1,24 @@
+// A shift count may be any unsigned type; counts at or above the width
+// still yield zero, and a narrow count does not truncate the check.
+main = () {
+    word: u32  = 0x80000001;
+    wide: u64  = 1;
+    c8: u8     = 31;
+    w8: u8     = 32;
+    big8: u8   = 255;
+    c16: u16   = 1;
+    c32: u32   = 63;
+    w32: u32   = 64;
+    max32: u32 = u32.MAX;
+    c64: u64   = 4;
+    println(
+        "u8 counts: {} {} {} {}",
+        word >> c8,
+        word << c8,
+        word >> w8,
+        word << big8
+    );
+    println("u16 count: {}", word << c16);
+    println("u32 counts: {} {} {}", wide << c32, wide << w32, wide << max32);
+    println("u64 count: {}", word >> c64);
+}

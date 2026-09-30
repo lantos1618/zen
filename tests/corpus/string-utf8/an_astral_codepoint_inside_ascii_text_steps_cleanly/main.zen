@@ -5,6 +5,7 @@
 // still print plausible numbers here; the explicit `at 6` and the
 // done-flag are what catch it.
 Utf8Error = std.text.text_utf8
+codepoints = std.text
 
 main = (env: Env) Res<i32, Utf8Error> {
     s = "x😀y";

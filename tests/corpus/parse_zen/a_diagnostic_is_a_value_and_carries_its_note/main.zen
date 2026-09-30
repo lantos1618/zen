@@ -31,7 +31,7 @@
 // would print nothing at all.
 
 scan, Source = std.lex
-Parser = std.parse
+Parser, module = std.parse
 Ast = std.ast
 Diag = std.parse.parse_diag
 Alloc, AllocError = std.mem

@@ -34,6 +34,8 @@ ExprId, TypeId, PatternId = std.ast.ast_id
 Alloc, AllocError = std.mem
 Vec = std.collections
 str, String = std.text
+type_of = sema.sema_type
+type_from_ast = sema.sema_denote
 
 // every node in this file is at the same place: the test is about
 // coverage, and a distinct span per node would be noise

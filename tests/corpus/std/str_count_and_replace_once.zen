@@ -3,6 +3,8 @@
 // replacement changes only the first hit, preserves a miss, and treats an
 // empty needle as insertion at the first boundary.
 
+replace_once = std.text
+
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
 

@@ -16,8 +16,7 @@ IoError*, WriteError*, Sink*, Path*, join_path*, Duration* = std.core
 AllocError*, Alloc*, Arena*, Mem*, Ptr*, null_ptr* = std.mem
 
 // str is borrowed bytes; String is owned, growable, and IS the Vec
-str*, String*, replace_once*, dup*, truncate_with*,
-    parse_i32*, parse_i64*, parse_u16*, parse_usize* = std.text
+str*, String*, replace_once*, dup*, truncate_with* = std.text
 
 // Entry has no star: collections are sealed
 Vec*, Map*, OutOfBounds* = std.collections

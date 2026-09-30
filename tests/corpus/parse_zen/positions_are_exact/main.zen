@@ -29,7 +29,7 @@
 // source, not the output.
 
 scan, Source = std.lex
-Parser = std.parse
+Parser, module = std.parse
 Ast, Span, Decl, Block, Expr = std.ast
 Alloc, AllocError = std.mem
 str = std.text

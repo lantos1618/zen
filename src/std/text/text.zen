@@ -1,6 +1,6 @@
 // std.text's surface. text_str borrows bytes, text_string owns and grows them,
-// text_utf8 decodes and encodes codepoints, text_fmt writes values as bytes,
-// text_num parses integers. Each file imports only those below it.
+// text_utf8 decodes and encodes codepoints, text_fmt writes values as bytes.
+// Each file imports only those below it.
 
 str*, str_at*, Split*, SplitPair*, Lines* = std.text.text_str
 
@@ -11,5 +11,3 @@ Utf8Error*, Codepoint*, Codepoints*,
     push_utf8* = std.text.text_utf8
 
 FmtStep*, fmt_next*, add_u64*, add_i64*, add_bool*, add_f64* = std.text.text_fmt
-
-parse_i32*, parse_i64*, parse_u16*, parse_u64*, parse_u64_radix*, parse_usize* = std.text.text_num

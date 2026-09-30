@@ -9,7 +9,7 @@ Checker = sema.sema_check
 Emit = gen.gen_emit
 CBackend, emit_program = gen.gen_c
 Cli, cli = zen
-Build = zen
+Build = zen.zen_build
 BuildArgs, Emission, Permutation = std.build
 entry_of = zen.zen_path
 

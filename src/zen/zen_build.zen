@@ -27,7 +27,7 @@ check_module_graph = sema.sema
 Def = sema.sema
 Generation, Layout = gen.gen
 
-BuildArgs, Emission, Permutation = std.build
+BuildArgs, Emission, Permutation, index = std.build
 
 slash_for, under = zen.zen_path
 unit_at, candidate, joined, relative_to = zen.zen_path

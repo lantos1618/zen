@@ -3,6 +3,7 @@
 
 scan, Source = std.lex.lex
 Parser = std.parse.parser
+group_end_at = std.parse.parse_lookahead
 
 SOURCE: str = "value = (one + (two * three));\n"
 

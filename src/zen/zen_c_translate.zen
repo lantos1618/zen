@@ -10,7 +10,7 @@ ProcError = std.proc
 CImport = std.build
 Ast, Module = std.ast
 Source, Lexed, scan, is_zen_name = std.lex
-Parser = std.parse
+Parser, module = std.parse
 CImportRequest, CImportModule = zen.zen_c_import
 
 ClangExit* = {

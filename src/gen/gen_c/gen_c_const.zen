@@ -17,6 +17,7 @@ intern_named, write_variant_value = gen.gen_c.gen_c_read
 plain_ctx = gen.gen_c.gen_c_decl
 is_null_ptr = gen.gen_c.gen_c_ptr
 selected_def = gen.gen_c.gen_c_call
+type_from_ast = sema.sema_denote
 
 // Module constants are inlined at each use and therefore admit only C constant
 // Expressions. Calls are rejected because they would run once per use rather

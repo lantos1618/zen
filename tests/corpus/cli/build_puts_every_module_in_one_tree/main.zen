@@ -29,7 +29,7 @@
 
 Alloc, AllocError = std.mem
 str = std.text
-Build = zen
+Build = zen.zen_build
 BuildArgs = std.build
 entry_of = zen.zen_path
 

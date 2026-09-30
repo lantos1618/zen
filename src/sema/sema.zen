@@ -56,7 +56,7 @@ check_impl*, satisfies_bound*            = sema.sema_bound
 // which declaration a call means
 call_type*, check_overloads*             = sema.sema_call
 Cand*, TBound*, Actual*                  = sema.sema_cand
-cands_of*, matches*, travelled_cands*    = sema.sema_cand
+cands_of*, matches*                      = sema.sema_cand
 
 // a trap the compiler can prove will fire
 check_binary*                            = sema.sema_trap

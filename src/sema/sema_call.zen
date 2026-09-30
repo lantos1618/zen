@@ -18,7 +18,7 @@ variant_name_member_call, VariantNameAnswer = sema.sema_variant_name
 construct, instantiate, variant_call_type, call_edge = sema.sema_apply
 refuse_variant_surplus, call_inst, callback_types_fit, annotated_callback = sema.sema_apply
 infer_callback_targs = sema.sema_apply
-Inst, InstEdge, subst, subst_list, unify_list, tparam_vars, zip, owner_of = sema.sema_inst
+Inst, InstEdge, subst, subst_list, unify_list, tparam_vars, zip, owner_of, unify = sema.sema_inst
 is_case = sema.sema_case
 Found, Base, base_of, members_of, actor_spawn_ret, ref_of_actor = sema.sema_member
 materialize_receiver = sema.sema_member
@@ -34,7 +34,7 @@ push_tparams, module_name = sema.sema_inst
 param_type, type_from_ast = sema.sema_denote
 alias_module, module_not_a_value, module_named_by = sema.sema_module
 Cand, TBound, Actual, cands_of, exported_cands = sema.sema_cand
-travelled_cands, matches = sema.sema_cand
+matches = sema.sema_cand
 ty_at, is_tvar, sig_fits, signature_matches = sema.sema_cand
 omittable_tail, collect_bounds, tail_swallows = sema.sema_cand
 actor_payload_unsafe, actor_byte_buffer, contains_drop = sema.sema_copy
@@ -179,80 +179,9 @@ CallCheck = {
     ) Res<TyId, AllocError> {
         cands ::= c.alloc.Vec<Cand>();
         c.cands_of(self.ctx.module, name, cands).try();
-        visible = cands.len;
-        c.travelled_cands(name, recv, cands).try();
-        // Free-form UFCS also considers argument zero as the receiver. A name
-        // this module binds to a module is not a function name here, so the
-        // travelled pool must not answer for it.
-        recv.match({
-            Ok(_) => Ok(()),
-            None  => self.names_module(c, name).try().match({
-                true  => Ok(()),
-                false => actuals.get(0).match({
-                    None  => Ok(()),
-                    Ok(a) => c.travelled_cands(name, Ok(a.ty), cands),
-                }),
-            }),
-        }).try();
         self.first_matching(c, cands, actuals).try().match({
-            Ok(k) => {
-                self.travelled_collision(c, name, k, cands, visible, actuals)
-                    .try();
-                self.chosen(c, k, actuals)
-            },
+            Ok(k) => self.chosen(c, k, actuals),
             None  => self.construct_or_fail(c, name, recv, cands, recovery),
-        })
-    }
-
-    names_module = (self: @Self, c :: Checker, name: str)
-                   Res<bool, AllocError> {
-        defs ::= c.alloc.Vec<Def>();
-        c.world.defs_of(self.ctx.module, name, defs).try();
-        Ok(defs.find((d) {
-            c.alias_module(d.id).match({ Ok(_) => true, None => false })
-        }).match({ Ok(_) => true, None => false }))
-    }
-
-    // Candidates past `visible` were not imported; they travelled with the
-    // receiver type. Nothing ranks one module's export above another's, so
-    // a second module's candidate for the same first-parameter type that
-    // also accepts the call is a collision, not a choice.
-    travelled_collision = (
-        self    : @Self,
-        c       :: Checker,
-        name    : str,
-        k       : Cand,
-        cands   : Vec<Cand>,
-        visible : usize,
-        actuals : Vec<Actual>
-    ) Res<(), AllocError> {
-        imported = Range(0, visible).find((i) {
-            cands.get(i).match({ Ok(v) => v.id.eq(k.id), None => false })
-        }).match({ Ok(_) => true, None => false });
-        rival: Res<Cand> = None;
-        imported.match({
-            true  => (),
-            false => Range(visible, cands.len).loop((h, i) {
-                cands.get(i).match({
-                    None  => (),
-                    Ok(r) => c.rivals(k, r, actuals).try().then(() {
-                        rival = Ok(r);
-                        h.break();
-                    }),
-                });
-            }),
-        });
-        rival.match({
-            None  => Ok(()),
-            Ok(r) => c.report(
-                self.node.span.file,
-                self.node.span,
-                SemaFault.TravelledCollision(PairFault(
-                    name: name,
-                    first: k.span,
-                    second: r.span
-                ))
-            ),
         })
     }
 
@@ -533,12 +462,11 @@ CallCheck = {
     }
 
     // Generic UFCS inference gets the literal family before the primitive
-    // default is used to discover methods travelling with a concrete type.
+    // default settles which concrete member applies.
     contextual_literal_receiver = (self :: @Self, c :: Checker, ac: Access,
                                    b: Base) Res<TyId, AllocError> {
         cands ::= c.alloc.Vec<Cand>();
         c.cands_of(self.ctx.module, ac.name.text, cands).try();
-        c.travelled_cands(ac.name.text, Ok(b.ty), cands).try();
         generic = cands.filter(
             c.alloc,
             (candidate) { candidate.generic }
@@ -1092,30 +1020,6 @@ infer_member_inst = (
 }
 
 BoundFit = BoundSatisfied | BoundUnresolved | BoundDisjoint
-
-// A rival comes from another module, takes the same first parameter, and
-// accepts the call as well as the chosen candidate does.
-rivals = (c :: Checker, k: Cand, r: Cand, actuals: Vec<Actual>)
-         Res<bool, AllocError> {
-    other = r.id.module.to_usize() != k.id.module.to_usize();
-    first = k.params.get(0).match({
-        None  => false,
-        Ok(x) => r.params.get(0).match({
-            None  => false,
-            Ok(y) => c.same_param(x, y),
-        }),
-    });
-    (other && first).match({
-        false => Ok(false),
-        true  => c.candidate_compatible(r, actuals).try().match({
-            false => Ok(false),
-            true  => Ok(c.actual_bound_fit(r, actuals).try().match({
-                BoundDisjoint => false,
-                _             => true,
-            })),
-        }),
-    })
-}
 
 first_matching = (
     site    : CallCheck,

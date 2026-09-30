@@ -2,6 +2,8 @@
 // This file deliberately imports nothing.
 
 // one failure set for main: allocation, printing, and files all land here
+sort = std.collections
+
 Fail = AllocError | IoError | FsError
 
 // A helper that prints takes the capability it uses, spelled Console.

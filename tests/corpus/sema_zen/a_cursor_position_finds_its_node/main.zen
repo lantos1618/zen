@@ -3,8 +3,8 @@
 // Parsed spans are half-open; a position outside every node returns `None`.
 
 scan, Source = std.lex
-Parser = std.parse
-Ast, Pos, ExprId, NodeRef = std.ast
+Parser, module = std.parse
+Ast, Pos, ExprId, NodeRef, expr_node_at, node_at = std.ast
 Checker = sema.sema_check
 check_all = sema.sema_decl
 Types = sema.sema_ty

@@ -14,7 +14,7 @@
 // the seam under it — the same `str` shape argv hands over is what the
 // decoder walks, so the two must agree about where one character ends.
 
-count_codepoints, Utf8Error = std.text
+count_codepoints, Utf8Error, codepoints = std.text
 
 main = (env: Env) Res<i32, AllocError | Utf8Error> {
     nihon ::= "日本";

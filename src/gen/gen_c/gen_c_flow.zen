@@ -22,13 +22,14 @@ RES_PATH = gen.gen_name
 GenFault = gen.gen_diag
 CBackend = gen.gen_c.gen_c_state
 enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
-declarator, is_unit, variant_type, decl_ctx = gen.gen_c.gen_c_type
+declarator, is_unit, variant_type, decl_ctx, ctype = gen.gen_c.gen_c_type
 decl_inst = gen.gen_c.gen_c_type
 write_qname = gen.gen_c.gen_c_layout
 Dest, deliver = gen.gen_c.gen_c_stmt
 res_type_of, write_c_literal = gen.gen_c.gen_c_expr
 is_str = gen.gen_c.gen_c_read
 write_position = gen.gen_c.gen_c_op
+is_case = sema.sema_case
 
 // One point in the pattern walk. Conditions and bindings traverse the
 // same type at the same C place; carrying that pair on the receiver keeps

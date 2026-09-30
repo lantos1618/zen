@@ -40,6 +40,7 @@ Pos, Span, Ident, QualifiedName, no_trivia = std.ast.ast_span
 Alloc, AllocError = std.mem
 Vec = std.collections
 str, String = std.text
+type_of = sema.sema_type
 
 at = () Span {
     Span(file: "in.zen", start: Pos(line: 1, col: 1), end: Pos(line: 1, col: 2))

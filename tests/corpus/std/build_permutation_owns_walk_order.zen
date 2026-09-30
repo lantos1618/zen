@@ -1,4 +1,4 @@
-Permutation, permutation = std.build
+Permutation, permutation, index = std.build
 
 show = (p: Permutation) {
     println(

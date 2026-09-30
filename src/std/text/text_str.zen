@@ -4,6 +4,7 @@
 Ptr = std.mem.mem
 Eq, Hash, Hasher = std.core.core
 Range, loop, LoopHandle = std.core.core
+DIGIT_ZERO = std.core.byte
 
 str* = {
     data: Ptr<u8>,
@@ -222,6 +223,94 @@ str* = {
             (left != right).then(() { ordered = left < right; h.break(); });
         });
         ordered;
+    }
+
+    // Complete decimal integer parsing, without allocation. Empty, malformed,
+    // plus-prefixed, or out-of-range input returns None. Signed parsing
+    // accumulates a negative value so i64.MIN is representable.
+    parse_i64* = (self: @Self) Res<i64> {
+        parsed: Res<i64> = loop<i64>((h) {
+            (self.len == 0).then(() { h.break() });
+
+            negative ::= self.index(0) == '-';
+            first    ::= negative.match({
+                true  => 1,
+                false => 0,
+            });
+
+            count : usize = 0;
+            stop  : usize = self.len;
+            Range(first, self.len).loop((hh, i) {
+                self.index(i).is_digit().match({
+                    true  => { count = count + 1; },
+                    false => { stop = i; hh.break(); },
+                });
+            });
+
+            (count == 0 || stop != self.len).then(() { h.break() });
+
+            // Check quotient and sign-specific final digit before multiplying.
+            edge ::= i64.MAX / 10;
+            limit : u8     = negative.match({ true => 8, false => 7 });
+            acc     : i64  = 0;
+            overrun : bool = false;
+            Range(first, self.len).loop((hh, i) {
+                d ::= self.index(i) - DIGIT_ZERO;
+                (acc < 0 - edge || (acc == 0 - edge && d > limit)).then(() {
+                    overrun = true;
+                    hh.break();
+                });
+                acc = acc * 10 - d.to_i64();
+            });
+
+            overrun.then(() { h.break() });
+
+            // Without a sign, a magnitude of exactly MIN is one past MAX.
+            (!negative).then(() {
+                (acc == i64.MIN).then(() { h.break() });
+            });
+
+            h.break(negative.match({
+                true  => acc,
+                false => 0 - acc,
+            }));
+        });
+        parsed;
+    }
+
+    parse_i32* = (self: @Self) Res<i32> {
+        self.parse_i64().try().to_i32()
+    }
+
+    // Complete unsigned integer in `base`, 2 through 16, digits `0-9a-fA-F`.
+    parse_u64_radix* = (self: @Self, base: u64) Res<u64> {
+        (base >= 2 && base <= 16).ensure().try();
+        n: u64 ::= 0;
+        ok     ::= !self.is_empty();
+        Range(0, self.len).loop((h, i) {
+            digit: Res<u8> = self.index(i).hex_value();
+            digit.match({
+                None  => { ok = false; h.break(); },
+                Ok(d) => {
+                    v: u64 = d.to_u64();
+                    (v >= base || n > (u64.MAX - v) / base).match({
+                        true  => { ok = false; h.break(); },
+                        false => { n = n * base + v; },
+                    });
+                },
+            });
+        });
+        ok.match({ true => Ok(n), false => None })
+    }
+
+    parse_u64* = (self: @Self) Res<u64> { self.parse_u64_radix(10) }
+
+    parse_usize* = (self: @Self) Res<usize> {
+        self.parse_u64().try().to_usize()
+    }
+
+    parse_u16* = (self: @Self) Res<u16> {
+        self.parse_u64().try().to_u16()
     }
 }
 

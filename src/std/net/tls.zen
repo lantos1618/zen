@@ -3,7 +3,7 @@
 // shape HTTP clients dial over plain TCP or TLS.
 
 Alloc, AllocError, Ptr, null_ptr = std.mem
-str = std.text
+str, c_text = std.text
 Res = std.core
 Drop = std.core
 Vec = std.collections

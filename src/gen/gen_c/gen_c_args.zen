@@ -24,6 +24,7 @@ write_none, write_zero, ctype = gen.gen_c.gen_c_type
 enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
 sym_member, sym_variant, RES_PATH = gen.gen_name
 unsupported = gen.gen_c.gen_c_report
+type_from_ast = sema.sema_denote
 
 ARGS_MODULE: str = "std.env.env_args"
 

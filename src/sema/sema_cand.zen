@@ -45,67 +45,6 @@ Actual* = {
 
 // Candidate collection.
 
-// A dot includes exported UFCS functions travelling with the receiver type;
-// ordinary calls remain limited to declarations visible in their module.
-travelled_cands* = (
-    c    :: Checker,
-    name : str,
-    recv : Res<TyId>,
-    out  :: Vec<Cand>
-) Res<(), AllocError> {
-    recv.match({
-        Ok(rty) => c.travelled_of(name, rty, out),
-        None    => Ok(()),
-    })
-}
-
-travelled_of = (c :: Checker, name: str, rty: TyId, out :: Vec<Cand>)
-               Res<(), AllocError> {
-    defs ::= c.alloc.Vec<Def>();
-    c.world.exported_named(name, defs).try();
-    defs.loop((h, d) { c.travelled_def(d, rty, out).try() });
-    Ok(());
-}
-
-travelled_def = (c :: Checker, d: Def, rty: TyId, out :: Vec<Cand>)
-                Res<(), AllocError> {
-    c.tree.decl_at(d.id).match({
-        None    => Ok(()),
-        Ok(dec) => dec.kind.match({
-            Function(f) => c.keep_travelled(
-                c.make_cand(d, dec, f).try(),
-                rty,
-                out
-            ),
-            _           => Ok(()),
-        }),
-    }).try();
-    Ok(())
-}
-
-keep_travelled = (c :: Checker, k: Cand, rty: TyId, out :: Vec<Cand>)
-                 Res<(), AllocError> {
-    takes = c.takes_receiver(k, rty).try();
-    (takes && (out.has_cand(k.id) == false)).match({
-        true  => out.add(k),
-        false => Ok(()),
-    })
-}
-
-takes_receiver = (c :: Checker, k: Cand, rty: TyId) Res<bool, AllocError> {
-    k.params.get(0).match({
-        None  => Ok(false),
-        Ok(t) => c.is_tvar(t).match({
-            true  => Ok(true),
-            false => c.satisfies_bound(rty, t),
-        }),
-    })
-}
-
-has_cand = (out: Vec<Cand>, id: DeclId) bool {
-    out.find((k) { k.id.eq(id) }).match({ Ok(_) => true, None => false })
-}
-
 cands_of* = (c :: Checker, mi: usize, name: str, out :: Vec<Cand>)
             Res<(), AllocError> {
     defs ::= c.alloc.Vec<Def>();

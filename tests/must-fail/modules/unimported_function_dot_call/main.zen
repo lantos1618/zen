@@ -1,0 +1,12 @@
+// A type brings the members written in its body. `pick` is a free
+// function in one and two, not a member of `Tag`, so the dot does not
+// reach it until this module imports it.
+Tag = tag.tag
+o1 = one
+o2 = two
+
+main = (env: Env) Res<i32, IoError> {
+    t = Tag(v: 0);
+    println("{}", t.pick(2));
+    Ok(0);
+}

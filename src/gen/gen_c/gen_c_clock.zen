@@ -9,7 +9,7 @@ Ctx = sema.sema_check
 Emit = gen.gen_emit
 sym_member = gen.gen_name
 CBackend = gen.gen_c.gen_c_state
-ctype = gen.gen_c.gen_c_type
+ctype, request_type = gen.gen_c.gen_c_type
 comment = gen.gen_c.gen_c_runtime
 
 // Emit only when used. since_start uses CLOCK_MONOTONIC; unix uses

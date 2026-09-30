@@ -16,6 +16,7 @@ emit_actor_globals, write_actor_shutdown = gen.gen_c.gen_c_actor
 ctype, is_c_integer, write_zero = gen.gen_c.gen_c_type
 field_of = gen.gen_c.gen_c_type
 plain_ctx, return_type = gen.gen_c.gen_c_decl
+type_from_ast = sema.sema_denote
 
 emit_main* = (be :: CBackend, mi: usize, out :: Emit) Res<(), AllocError> {
     found ::= be.alloc.Vec<Def>();

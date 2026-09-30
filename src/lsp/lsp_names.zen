@@ -3,7 +3,7 @@
 
 str = std.text
 Alloc, AllocError = std.mem
-Vec = std.collections
+Vec, sort = std.collections
 Range = std.core
 Ast, Module, Decl, Block = std.ast
 Struct, Enum, Alias, Impl, Member, Function, Named, Call, Match, Try = std.ast

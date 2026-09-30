@@ -491,9 +491,9 @@ Names are qualified by path, imports bind locally, and two modules may define th
 
 **A name that is not imported is not visible, and the prelude is the only exception.** That exception is what "auto-imported" means: `std.core` is imported into every module, so `Res`, `Ok`, `Vec`, `Map`, `str`, `Env` and the rest are in scope everywhere without a line. Everything else needs its import, and this is not a formality — a compiler that resolves any exported top-level name program-wide makes "two modules may define the same top-level name" impossible, which is the property the flat namespace exists to provide. A whole-program name table also hides missing imports until the day two modules disagree, which is the worst day to find out.
 
-**That rule is about BARE names. A UFCS function is reached through a value, so it travels with the value's type.** `x.f(..)` never names `f`, so it cannot collide with anything and needs no import: the candidates are the members of `x`'s type, its impls' and its bounds' methods, and every exported free function whose **first parameter type** is `x`'s type. Two modules may both declare `size` as long as they take different first parameters — and if they take the same one, that is a real collision and is reported. This is what "importing a type pulls its world along" means, said as a rule rather than as a comment in an example: the world travels with the *type*, and you are holding one.
+**The dot does not relax that rule. A type brings what its body declares, and nothing else.** `x.f(..)` finds the members written in `x`'s type — its body's methods and associated functions, its impls, and its bounds' methods — and otherwise the free functions this module already sees: its own declarations, its imports, and the prelude. A free function declared in another module is not reachable until it is imported, however its first parameter is typed. Nothing is gathered program-wide, so two modules may both export `size` for the same first parameter without colliding: a module that imports one calls that one, and a module that imports both has an ordinary overload set that must tell them apart.
 
-The two halves fit together because they answer different questions. A bare name asks "what is `Vec` here", which two modules can disagree about, so it needs an import. `x.get(0)` asks "what can this value do", which only `x`'s type can answer.
+The two questions have different answers. A bare name asks "what is `Vec` here", which this module's imports answer. `x.get(0)` asks "what can this value do", which `x`'s type answers for its members and this module's imports answer for everything else — so what a call means is always readable from two files, the type's and the caller's.
 
 **Where behavior lives follows from that rule, and there is no third form.** A fact every consumer asks of a type — a member's name, its exportedness — is a struct-body method, written once, in the type's file. An operation one consumer owns is a free function in that consumer's file, *called on* its receiver: the dot finds the calling module's own names whether they are exported or not, so the call reads `c.check_args(..)` while the declaration never leaves the module that owns the operation. There is deliberately **no out-of-line `impl Member { .. }`** — no block that adds methods to a type from another file, the mechanism Rust scatters a type's surface across a crate with — because the dot already gives the call its method shape without moving the declaration, and `A.impl(B, {..})` exists only to satisfy a bound and lives with `A`. The dividing rule: a fact two modules would both write belongs on the type; an operation one module owns stays in that module and is dot-called. **Cost to accept knowingly:** a type's full callable surface is not readable from its file — what `x` can do depends on what the calling module has in scope — which is the same scatter Rust has, resolved by import rather than aggregated crate-wide, and without a second declaration form to learn.
 
@@ -552,7 +552,7 @@ original layout.
 
 The information already exists at the call site: whoever invokes the compiler knows which file is the entry. So `zen build <root> --entry <file>` is the answer, and the capability surface does not grow. A build is still a root — the entry names where to start inside it, and everything else follows imports as it always did.
 
-**A constructor does not travel with the type it constructs, and that is the hole associated functions fill.** `seconds(n: u64) Duration` takes a `u64`, so by the rule above it travels with `u64` — which means `Duration = std.core.time` gives you every method and no way to make one. The two obvious answers are both wrong: listing the constructors in every import is the noise this rule exists to remove, and letting them travel with `u64` puts `.seconds()`, `.minutes()` and every other module's `u64`-taking function on every integer in every program, because `u64` is in the prelude.
+**A constructor belongs to the type it constructs, and that is the hole associated functions fill.** A free `seconds(n: u64) Duration` takes a `u64`, so by the rule above `Duration = std.core.time` gives you every method and no way to make one until `seconds` is imported too. The two obvious answers are both wrong: listing the constructors in every import is noise, and making them visible wherever a `u64` is puts `.seconds()`, `.minutes()` and every other module's `u64`-taking function on every integer in every program, because `u64` is in the prelude.
 
 The answer is that a struct body may bind a **function**, read as `Type.name(..)` — `Duration.seconds(60)`. This is the existing "a struct body may bind a name to a value, read as `Type.NAME`" rule plus the fact that a function *is* a value here, and it puts the constructor in the one namespace that is already exactly right: the type it constructs. A name that is neither a variant nor a receiverless member is still refused rather than guessed at — `src/gen/gen_c/gen_c_member.zen` raises a positioned `codegen does not lower this yet`, because a backend that emits C for a form it does not understand turns one diagnostic into a C compiler's.
 
@@ -564,7 +564,7 @@ The answer is that a struct body may bind a **function**, read as `Type.name(..)
 // src/std/core/core.zen
 Res, Ok, None = std.core.result     // imported, local to this module
 Res*, Ok*, None* = std.core.result  // imported AND re-exported
-str*, String* = std.text.string     // types travel with their methods and impls
+str*, String* = std.text.string     // a type brings its body's methods and its impls
 ```
 
 A folder root is then just a file of starred bindings, which is why re-export is what makes folders work — and why the prelude can span several files instead of being one enormous one.
@@ -1547,11 +1547,11 @@ vec_add* = (bn: Bencher) Res<(), TestError> {
 // pkg contains exactly what build.zen declared for THIS target,
 // importing anything else is a compile error.
 //
-// importing a type pulls its world along: its methods, its
-// trait impls, and exported ufcs functions (a free function
-// whose first param is the type is callable as a method).
+// importing a type brings what its body declares: its methods,
+// its associated functions, and its impls. a free function over
+// the type is imported by name, like any other function.
 // * is the one gate — it means "this name crosses a module
-// boundary" — so Vec travels with add/get but never grow or Entry
+// boundary" — so Vec brings add/get but never grow or Entry
 json = pkg.json
 sodium = pkg.libsodium
 
@@ -1559,8 +1559,8 @@ Circle = {
     radius: f64,
 }
 
-// ufcs: a free function whose first param is Circle, so it
-// travels with Circle when imported and calls like a method.
+// ufcs: a free function whose first param is Circle calls like a
+// method in any module that declares or imports it.
 // this IS the method form — a method is a ufcs function whose
 // first parameter is named self and whose type is inferred
 area* = (c: Circle) f64 {

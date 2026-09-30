@@ -36,7 +36,7 @@ unsettled = gen.gen_c.gen_c_mono
 lower_plain_call, write_call_args = gen.gen_c.gen_c_call
 write_arg, write_arg_at = gen.gen_c.gen_c_arg
 handle_depth, lower_handle_call = gen.gen_c.gen_c_handle
-inlines, inline_method = gen.gen_c.gen_c_inline
+inlines, inline_method, spelled_lambda = gen.gen_c.gen_c_inline
 is_ptr_member, lower_ptr_member = gen.gen_c.gen_c_ptr
 lower_create, alloc_raw = gen.gen_c.gen_c_alloc
 CapabilityCall, CapabilityKind, capability_kind, lower_capability = gen.gen_c.gen_c_cap
@@ -54,6 +54,8 @@ generic_enum = gen.gen_c.gen_c_impl
 ref_of_actor, lower_actor_send = gen.gen_c.gen_c_actor
 lower_discriminant_call = gen.gen_c.gen_c_discriminant
 lower_variant_name_call = gen.gen_c.gen_c_variant_name
+param_type = sema.sema_denote
+type_of = sema.sema_type
 
 // the entry point
 

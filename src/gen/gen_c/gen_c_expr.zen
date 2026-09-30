@@ -52,6 +52,7 @@ needs_fat, write_fat_value = gen.gen_c.gen_c_fat
 release_binding = gen.gen_c.gen_c_own
 lower_scope_ref, is_scope_ref, scope_type = gen.gen_c.gen_c_scope
 lower_global_value = gen.gen_c.gen_c_const
+is_count_chain = sema.sema_meta
 
 // expressions
 

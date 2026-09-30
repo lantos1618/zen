@@ -1,0 +1,12 @@
+// one and two both export `pick` for `Tag`, and this module imports
+// neither. A free function is visible only where it is imported, so a
+// bare call finds nothing, whatever its arguments' types are.
+Tag = tag.tag
+o1 = one
+o2 = two
+
+main = (env: Env) Res<i32, IoError> {
+    t = Tag(v: 0);
+    println("{}", pick(t, 2));
+    Ok(0);
+}

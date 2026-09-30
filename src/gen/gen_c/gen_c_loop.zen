@@ -14,11 +14,11 @@ sym_member, sym_gen, sym_variant = gen.gen_name
 RES_PATH = gen.gen_name
 CBackend = gen.gen_c.gen_c_state
 LoopFrame = gen.gen_c.gen_c_frame
-Shape, LoopArgs, shape_of = gen.gen_c.gen_c_shape
+Shape, LoopArgs, shape_of, broken_element, loop_element = gen.gen_c.gen_c_shape
 Fold, no_fold, lower_fold, bind_acc = gen.gen_c.gen_c_fold
 write_fold_result = gen.gen_c.gen_c_fold
 unsupported = gen.gen_c.gen_c_report
-ctype, declarator = gen.gen_c.gen_c_type
+ctype, declarator, res_value = gen.gen_c.gen_c_type
 intern_res_open = gen.gen_c.gen_c_mono
 has_var = sema.sema_inst
 expr, ty_of = gen.gen_c.gen_c_expr
@@ -29,6 +29,7 @@ is_res = gen.gen_c.gen_c_type
 RangeImpl, range_impl, range_pass_type = gen.gen_c.gen_c_range
 supplied_bound, take_pass = gen.gen_c.gen_c_range
 array_of, lower_array_walk = gen.gen_c.gen_c_array
+spelled_lambda = gen.gen_c.gen_c_inline
 
 // Lowering.
 

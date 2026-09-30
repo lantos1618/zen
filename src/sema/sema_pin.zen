@@ -1,7 +1,7 @@
 Expr, Span = std.ast
 Checker = sema.sema_check
 SemaFault, CaptureFault = sema.sema_diag
-Own = sema.sema_own
+Own, place_name = sema.sema_own
 
 // A capture that forbids every later move of a binding: the binding, and
 // where the capture was written.

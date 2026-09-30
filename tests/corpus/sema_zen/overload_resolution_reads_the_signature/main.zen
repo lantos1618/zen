@@ -37,6 +37,7 @@ ExprId, TypeId, BlockId = std.ast.ast_id
 Alloc, AllocError = std.mem
 Vec = std.collections
 str, String = std.text
+type_of = sema.sema_type
 
 // a declaration's span is the one thing that has to differ per line:
 // the duplicate-signature diagnostic names BOTH declarations, and a

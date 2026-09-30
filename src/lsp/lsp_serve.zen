@@ -2,7 +2,7 @@
 // Full-sync document contents are retained as an in-memory build overlay.
 
 str, String = std.text
-Vec, Map = std.collections
+Vec, Map, sort = std.collections
 Range = std.core
 Alloc, AllocError, Arena = std.mem
 Checker = sema.sema_check

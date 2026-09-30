@@ -23,6 +23,7 @@ Pos, Span, no_trivia = std.ast.ast_span
 ExprId = std.ast.ast_id
 Alloc, AllocError = std.mem
 str, String = std.text
+type_of = sema.sema_type
 
 // every node in this file is at the same place: the test is about types,
 // and a distinct span per node would be noise in the diagnostics

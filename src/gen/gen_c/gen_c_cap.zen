@@ -14,7 +14,7 @@ sub = gen.gen_c.gen_c_mono
 ctype, request_type, declared_ret, field_of, pointee = gen.gen_c.gen_c_type
 expr = gen.gen_c.gen_c_expr
 arg_text = gen.gen_c.gen_c_arg
-temp, payload_type = gen.gen_c.gen_c_flow
+temp, payload_type, declare_temp = gen.gen_c.gen_c_flow
 write_assign_ok, write_assign_err = gen.gen_c.gen_c_flow
 close_else, close_brace, open_null_test = gen.gen_c.gen_c_flow
 lower_probe, lower_write, lower_read, lower_remove, lower_lock, lower_unlock = gen.gen_c.gen_c_fs
@@ -28,6 +28,8 @@ write_position = gen.gen_c.gen_c_op
 lower_clock_read = gen.gen_c.gen_c_clock
 lower_sleep, lower_spawn, lower_join = gen.gen_c.gen_c_threads
 lower_actor_spawn, lower_actor_stop, lower_actor_join = gen.gen_c.gen_c_actor
+param_type = sema.sema_denote
+self_ctx = sema.sema_member
 
 // Classification is closed and travels with MethodKind into lowering,
 // so receiver ownership and an overloaded name such as `read` are

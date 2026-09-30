@@ -1,7 +1,7 @@
 // Owns one POSIX socket and closes it on drop.
 
 Alloc, AllocError, Ptr, null_ptr = std.mem
-str, String, str_at = std.text
+str, String, str_at, c_text = std.text
 Res = std.core
 Drop = std.core
 Vec = std.collections

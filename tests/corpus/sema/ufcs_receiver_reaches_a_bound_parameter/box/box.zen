@@ -1,0 +1,15 @@
+// A type and two free functions over it. `boxed` declares an `Alloc`;
+// the caller holds an `Arena`. `labelled` declares a `str` first.
+
+Alloc, AllocError = std.mem
+str = std.text
+
+Box* = {
+    n*: i32,
+
+    twice* = (self: @Self) i32 { self.n * 2 }
+}
+
+boxed* = (a: Alloc, n: i32) Box { Box(n: n) }
+
+labelled* = (s: str, n: i32) Box { Box(n: n + 3) }

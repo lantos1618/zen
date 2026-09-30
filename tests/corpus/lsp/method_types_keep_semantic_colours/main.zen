@@ -8,6 +8,7 @@ classify = lsp.lsp_names
 hover_at = lsp.lsp_hover
 definition_at = lsp.lsp_def
 Colour, index_of = lsp.lsp_colour
+module = std.parse
 
 VALID: str = "Vec<T> = {}\nBox = {\n    key = (self: @Self, ranks: Vec<Vec<usize>>, id: usize) usize { id }\n    pick = <U>(self: @Self, item: U, items: Vec<U>) U { item }\n}\nsmaller = (id: usize) usize { id }\n"
 INVALID: str = "Box = {\n    key = (self: @Self, value: Missing, id: usize) usize { id }\n}\n"

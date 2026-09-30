@@ -1,7 +1,7 @@
 CImport, Target, Os, Arch, Abi = std.build
 Ast, CHeader, ModuleOrigin = std.ast
 Source, scan = std.lex
-Parser = std.parse
+Parser, module = std.parse
 request = zen.zen_c_import
 
 spec = (a: Alloc, headers: Vec<str>) Res<CImport, AllocError> {

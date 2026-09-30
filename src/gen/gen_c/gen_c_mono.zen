@@ -17,6 +17,7 @@ tparam_vars = sema.sema_inst
 self_ctx = sema.sema_member
 CBackend = gen.gen_c.gen_c_state
 ty_of = gen.gen_c.gen_c_expr
+param_type, type_from_ast = sema.sema_denote
 
 // The type a declaration names, applied to `args`.
 intern_named* = (c :: Checker, d: Def, args: Vec<TyId>)

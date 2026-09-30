@@ -5,7 +5,7 @@ str, String, str_at = std.text
 Vec = std.collections
 Alloc, AllocError = std.mem
 Server = lsp.lsp_serve
-frame_at, short_by = lsp.lsp_frame
+frame_at, short_by, partial = lsp.lsp_frame
 
 Drain = {
     at: usize,

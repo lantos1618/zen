@@ -1,6 +1,6 @@
 scan, Source = std.lex
 Parser, module = std.parse
-WalkNode, WalkEvent, WalkVisitor, DeclVisit, DeclSite, DeclParent = std.ast
+WalkNode, WalkEvent, WalkVisitor, DeclVisit, DeclSite, DeclParent, walk = std.ast
 
 FailAt = {
     base: Alloc,

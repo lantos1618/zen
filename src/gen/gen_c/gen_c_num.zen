@@ -7,7 +7,7 @@ NumericConversion, NarrowTarget, IntegerBitOperation = sema.sema_numeric
 Ctx = sema.sema_check
 CBackend = gen.gen_c.gen_c_state
 expr = gen.gen_c.gen_c_expr
-c_prim = gen.gen_c.gen_c_type
+c_prim, request_type = gen.gen_c.gen_c_type
 temp, write_assign_none, write_assign_ok = gen.gen_c.gen_c_flow
 
 lower_numeric* = (

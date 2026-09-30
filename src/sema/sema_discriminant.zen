@@ -15,6 +15,8 @@ Base = sema.sema_member
 SemaFault, NameFault, PairFault = sema.sema_diag
 type_from_ast = sema.sema_denote
 const_int, fits = sema.sema_const
+check_literal = sema.sema_trap
+type_of = sema.sema_type
 
 DiscriminantCall* = Encode(TyId) | Decode(TyId)
 DiscriminantAnswer* = DiscriminantAnswered(TyId) | NotDiscriminant

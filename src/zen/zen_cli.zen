@@ -244,11 +244,11 @@ FmtFlag = | Check
 cli* = (env: Env, alloc: Alloc, argv: Vec<str>) Res<Cli, AllocError> {
     argv.get(1).match({
         None     => Ok(Cli.Usage("")),
-        Ok(name) => command(env, alloc, argv, name),
+        Ok(name) => cli_for(env, alloc, argv, name),
     })
 }
 
-command = (env: Env, a: Alloc, argv: Vec<str>, name: str)
+cli_for = (env: Env, a: Alloc, argv: Vec<str>, name: str)
           Res<Cli, AllocError> {
     name.match({
         "--version" => Ok(Cli.Version("0.1.0")),

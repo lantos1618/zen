@@ -19,6 +19,7 @@ intern_named = gen.gen_c.gen_c_mono
 ctype, declarator, is_scope_named = gen.gen_c.gen_c_type
 Dest, block = gen.gen_c.gen_c_stmt
 write_position = gen.gen_c.gen_c_op
+spelled_lambda = gen.gen_c.gen_c_inline
 
 // the `Scope` type
 // Sema does not type `@scope` and the backend does not ask it to. A

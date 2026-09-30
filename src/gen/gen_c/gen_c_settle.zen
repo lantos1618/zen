@@ -25,7 +25,7 @@ ty_of = gen.gen_c.gen_c_expr
 selected_def = gen.gen_c.gen_c_call
 plain_ctx = gen.gen_c.gen_c_decl
 range_element_type = gen.gen_c.gen_c_range
-inlines = gen.gen_c.gen_c_inline
+inlines, spelled_lambda = gen.gen_c.gen_c_inline
 recv_of = gen.gen_c.gen_c_shape
 
 // The receiver, if a ufcs call arrived through one, and then the

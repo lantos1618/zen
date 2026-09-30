@@ -2104,26 +2104,68 @@ be flagged, so a check that has stopped seeing anything fails:
 - `ct-asm --c program.c` compiles a program's generated C to assembly with
   each `--cc` at `-O2` and `-O3`. The C backend writes
   `/* zen:secret zu_l3key *zu_l3out */` after the parameter list of every
-  function with a Secret parameter; the tool keeps those functions out of
-  line, places their secret inputs by the SysV x86-64 or AAPCS64 convention,
-  and runs a forward taint analysis over the assembly (registers and stack
-  slots, joined at labels). `--manifest` names further functions and their
-  secret parameters, for shared arithmetic whose signature cannot say
-  Secret because public verification uses it too; `branches=N` on an entry
-  allows N secret-dependent branches, `?module` makes an entry optional.
+  function with a Secret parameter, ending in `public-result` when the
+  result is not written Secret (sema's discipline makes it public, and the
+  tool checks it); the tool keeps those functions out of
+  line (`noinline`, and `noipa` so GCC cannot run a clone instead), places
+  their secret inputs by the SysV x86-64 or AAPCS64 convention, and runs a
+  forward taint analysis over the assembly, joined at labels. Registers are
+  tracked whole, vector registers included (%xmm/%ymm/%zmm n are one
+  register, as are b/h/s/d/q/v n on arm64), with the vector forms that also
+  read their destination (legacy-SSE two-address forms with an immediate,
+  NEON accumulates and lane inserts, AESE) and vector instructions leaving
+  the flags alone; std.simd vectors passed by value arrive in XMM/YMM or V
+  registers, and a by-value struct the backend lends as `const T *` holds
+  its secret bytes behind the pointer. The stack is tracked byte by byte, so
+  a spilled vector's lanes keep their taint when reloaded narrower; a store
+  at an offset the analysis cannot place smears the stack (every later stack
+  load is secret). `--manifest` names further functions and their secret
+  parameters (`*p` a pointer to secret memory, `**p` a pointer to memory
+  holding pointers to secret memory), for shared arithmetic whose signature
+  cannot say Secret because public verification uses it too; `branches=N`
+  on an entry allows N secret-dependent branches, `public-result` requires
+  the result register to be public at every return, `?module` makes an
+  entry optional.
   `std.ct.declassify` of a word and `Choice.declassify_bool` pass through
   `declassify_barrier`, whose asm text is `/* zen:declassify %reg */`: the
   analysis treats that register as public from there on, so a program's
   explicit declassifications are the only places its secrets may steer
-  code. A call taints its result only through the argument registers its C
-  prototype uses (and the second result register only for a two-register
-  result); calls that never return end their path. `CT_TRACE=<symbol>`
-  prints the analysis instruction by instruction. It fails on a conditional branch, a memory
-  address, a division or an indirect jump that depends on a secret. Memory
-  other than the stack and secret pointees is not modelled.
+  code. A call passes secrets through the integer and vector argument
+  registers and stack arguments its C prototype uses. An audited callee must
+  have been seeded with every secret it is passed, or the call is reported;
+  only argument registers its body actually consumes count (measured on its
+  own assembly for the same compiler and level), a register merely holding
+  the address of secret memory counts only for a pointer parameter, and
+  std.simd capability arguments, which carry no data, never count. Its
+  result is public only when its audit proved it (`public-result`, which
+  also forbids returning a pointer into secret memory, and for a result
+  returned through a hidden pointer forbids storing a secret through it or
+  handing it to a callee given secrets); otherwise the
+  result, and memory behind a hidden result pointer, is secret when any
+  argument is secret or points at secrets. A secret-bearing call that
+  passes a writable stack address marks the one value a `::` borrow names
+  (its extent is read from the mangled parameter types) or, for a Ptr<T>,
+  smears the stack. A function's own hidden result pointer addresses memory
+  that may hold secrets. A load through a `**` pointer yields a pointer to
+  secrets only when it is pointer-sized. The stack protector's guard (from
+  `%fs:40`, or `___stack_chk_guard` through the GOT) is tracked into its
+  slot, which stays public when the stack is smeared, since only the
+  prologue writes it. On x86-64 a byte written over a secret register
+  (`sete %al`) makes only its low byte public, which is what a byte-sized
+  read, spill or `bool` result sees. Calls that never return end their
+  path. `CT_TRACE=<symbol>` prints the analysis instruction by
+  instruction. It fails on a conditional branch,
+  a memory address, a division or an indirect jump that depends on a
+  secret, a secret passed to an audited callee unseeded, and a secret
+  returned by a public-result function. Memory other than the stack and
+  secret pointees is not modelled.
 - `ct-grind` is the ctgrind method: `std.ct.ct_grind.secret_bytes` marks
   memory undefined for valgrind's memcheck, which then reports every branch
-  and address computed from it; `public_bytes` is the declassification.
+  and address computed from it; `public_bytes` is the declassification. A
+  program compiled with `-DZEN_CT_GRIND` also marks every `std.ct.declassify`
+  result defined (`ZG_CT_PUBLIC`, a valgrind client request next to the asm
+  marker), so memcheck and the static check agree on where secrets may
+  steer code.
 - `ct-timing` is a dudect-style statistical test (`std.ct.ct_timing`):
   fixed against random inputs, interleaved, Welch's t over all measurements
   and over dudect's percentile crops, run under `taskset` on one core after

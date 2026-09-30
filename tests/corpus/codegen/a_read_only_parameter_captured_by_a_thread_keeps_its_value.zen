@@ -1,0 +1,36 @@
+// A thread spawned inside a call captures a large read-only parameter as
+// the value it had at the spawn. The thread may outlive the call; the
+// caller changes its own binding and only then joins, and the thread still
+// reads the captured value. A deferred body in the same call sees it too.
+
+Big = {
+    a :: i64,
+    b :: i64,
+    c :: i64,
+    d :: i64,
+    e :: i64,
+    f :: i64,
+    g :: i64,
+    h :: i64,
+    i :: i64,
+}
+
+start = (env: Env, arena: Alloc, big: Big) Res<Thread, ThreadError> {
+    @scope.defer(() { println("deferred {}", big.a) });
+    env.threads.spawn(arena, () Res<i64, ThreadError> {
+        env.threads.sleep(20);
+        Ok(big.a + big.i)
+    })
+}
+
+main = (env: Env) Res<i32, ThreadError> {
+    arena ::= env.mem.alloc();
+    big   ::= Big(a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9);
+    thread = start(env, arena, big).try();
+    big.a  = 500;
+    big.i  = 500;
+    got    = thread.join<i64>().try();
+    println("thread {}", got);
+    println("caller {}", big.a);
+    Ok(0);
+}

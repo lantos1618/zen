@@ -34,7 +34,8 @@ expr, ty_of, want_of = gen.gen_c.gen_c_expr
 has_call, holds = gen.gen_c.gen_c_expr
 unsettled = gen.gen_c.gen_c_mono
 lower_plain_call, write_call_args = gen.gen_c.gen_c_call
-write_arg, write_arg_at = gen.gen_c.gen_c_arg
+write_arg, write_arg_at, lend_arg_at = gen.gen_c.gen_c_arg
+CallPlaces = gen.gen_c.gen_c_borrow
 handle_depth, lower_handle_call = gen.gen_c.gen_c_handle
 inlines, inline_method = gen.gen_c.gen_c_inline
 is_ptr_member, lower_ptr_member = gen.gen_c.gen_c_ptr
@@ -657,18 +658,17 @@ MethodCallSite = {
         ).try();
         args ::= be.alloc.String().try();
         hold = be.holds(self.dot.c, 0, 1);
-        be.write_arg_at(
-            self.dot.a.base,
-            0,
-            hold,
-            self.function,
-            self.sig,
-            self.ctx,
-            args
-        ).try();
+        call = CallPlaces(
+            recv: Ok(self.dot.a.base),
+            c: self.dot.c,
+            first: 1,
+            f: self.function,
+            sig: self.sig
+        );
+        be.lend_arg_at(self.dot.a.base, 0, hold, call, self.ctx, args).try();
         be.write_call_args(
             self.dot.c,
-            1,
+            Ok(self.dot.a.base),
             self.function,
             self.sig,
             self.ctx,

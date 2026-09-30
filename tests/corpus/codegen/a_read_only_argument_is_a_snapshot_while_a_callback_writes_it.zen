@@ -1,0 +1,39 @@
+// A read-only argument keeps the value it had when the call began while a
+// callback argument writes the caller's binding, and while the callee hands
+// it on to a function that runs that callback between two reads.
+
+Big = {
+    a :: i64,
+    b :: i64,
+    c :: i64,
+    d :: i64,
+    e :: i64,
+    f :: i64,
+    g :: i64,
+    h :: i64,
+    i :: i64,
+}
+
+// Takes a body, so it is inlined at each call.
+apply = (seen: Big, change: () ()) i64 {
+    before = seen.a;
+    change();
+    seen.a - before
+}
+
+// An ordinary function reached from inside the inlined body.
+reread = (seen: Big) i64 { seen.a }
+
+around = (seen: Big, change: () ()) i64 {
+    change();
+    reread(seen)
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    big ::= Big(a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9);
+    println("{}", apply(big, () { big.a = big.a + 5; }));
+    println("{}", big.a);
+    println("{}", around(big, () { big.a = big.a + 50; }));
+    println("{}", big.a);
+    Ok(0);
+}

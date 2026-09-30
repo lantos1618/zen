@@ -19,6 +19,7 @@ intern_named = gen.gen_c.gen_c_mono
 ctype, declarator, is_scope_named = gen.gen_c.gen_c_type
 Dest, block = gen.gen_c.gen_c_stmt
 write_position = gen.gen_c.gen_c_op
+const_ref_declarator = gen.gen_c.gen_c_decl
 
 // the `Scope` type
 // Sema does not type `@scope` and the backend does not ask it to. A
@@ -254,7 +255,7 @@ write_env_field = (be :: CBackend, s: LocalSlot, text :: String)
     text.add("    ").try();
     cname ::= be.alloc.String().try();
     sym_local(cname, s.name, s.index).try();
-    s.by_ref.match({
+    (s.by_ref && (s.borrowed == false)).match({
         false => be.declarator(s.ty, cname.view(), text),
         true  => be.ref_field(s.ty, cname.view(), text),
     }).try();
@@ -264,7 +265,10 @@ write_env_field = (be :: CBackend, s: LocalSlot, text :: String)
 
 // A `::` binding is an address everywhere else, so what the record
 // copies is the address and the prologue puts back a pointer of the
-// same name — which is what keeps `(*p)` reading the same storage.
+// same name — which is what keeps `(*p)` reading the same storage. A
+// borrowed parameter is captured by value like any read-only binding: a
+// deferred body may run after the call that lent it has returned, so the
+// prologue points the name at the record's copy.
 ref_field = (be :: CBackend, ty: TyId, name: str, text :: String)
             Res<(), AllocError> {
     be.ctype(ty, text).try();
@@ -346,11 +350,19 @@ write_unpack_one = (be :: CBackend, s: LocalSlot) Res<(), AllocError> {
     line  ::= be.alloc.String().try();
     cname ::= be.alloc.String().try();
     sym_local(cname, s.name, s.index).try();
-    s.by_ref.match({
-        false => be.declarator(s.ty, cname.view(), line),
-        true  => be.ref_field(s.ty, cname.view(), line),
+    s.borrowed.match({
+        true  => {
+            be.const_ref_declarator(s.ty, cname.view(), line).try();
+            be.fmt("{} = &zg_e->{};\n", line.view(), cname.view())
+        },
+        false => {
+            s.by_ref.match({
+                false => be.declarator(s.ty, cname.view(), line),
+                true  => be.ref_field(s.ty, cname.view(), line),
+            }).try();
+            be.fmt("{} = zg_e->{};\n", line.view(), cname.view())
+        },
     }).try();
-    be.fmt("{} = zg_e->{};\n", line.view(), cname.view()).try();
     // Native lowering can erase a captured receiver while retaining its call.
     be.fmt("(void){};\n", cname.view())
 }
@@ -391,7 +403,10 @@ copy_capture = (be :: CBackend, s: LocalSlot, cell: str)
                Res<(), AllocError> {
     cname ::= be.alloc.String().try();
     sym_local(cname, s.name, s.index).try();
-    be.fmt("{cell}.{} = {};\n", cname.view(), cname.view())
+    s.borrowed.match({
+        true  => be.fmt("{cell}.{} = *{};\n", cname.view(), cname.view()),
+        false => be.fmt("{cell}.{} = {};\n", cname.view(), cname.view()),
+    })
 }
 
 // The position travels with the registration because the two things

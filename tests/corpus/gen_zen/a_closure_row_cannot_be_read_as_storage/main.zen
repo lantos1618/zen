@@ -19,6 +19,8 @@ main = (env: Env) Res<i32, AllocError> {
         index: 0,
         ty: ty,
         by_ref: false,
+        borrowed: false,
+        from_caller: false,
         handle: 0,
         closure: 1
     );
@@ -27,6 +29,8 @@ main = (env: Env) Res<i32, AllocError> {
         index: 7,
         ty: ty,
         by_ref: false,
+        borrowed: false,
+        from_caller: false,
         handle: 0,
         closure: 0
     );

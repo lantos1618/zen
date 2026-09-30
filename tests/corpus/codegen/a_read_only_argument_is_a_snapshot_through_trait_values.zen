@@ -1,0 +1,68 @@
+// Large read-only arguments through trait dispatch, and beside trait values
+// that write the argument's storage. A trait value holds its receiver's
+// address, so a callee that is handed one can write the caller's binding
+// while it reads its own read-only argument; that argument must still be
+// the value it had when the call began.
+
+Big = {
+    a :: i64,
+    b :: i64,
+    c :: i64,
+    d :: i64,
+    e :: i64,
+    f :: i64,
+    g :: i64,
+    h :: i64,
+    i :: i64,
+}
+
+Reader = {
+    read = (self: @Self, other: Big) i64,
+}
+
+Big.impl(Reader, {
+    read = (self: @Self, other: Big) i64 { self.a * 100 + other.a },
+})
+
+Bump = {
+    step = (self :: @Self) i64,
+}
+
+Big.impl(Bump, {
+    step = (self :: @Self) i64 {
+        self.a = self.a + 1000;
+        self.a
+    },
+})
+
+Holder = {
+    bump :: Bump,
+}
+
+through_trait = (r: Reader, other: Big) i64 { r.read(other) }
+
+// The trait value is an argument of the same call.
+peek = (seen: Big, s :: Bump) i64 {
+    before = seen.a;
+    s.step();
+    seen.a - before
+}
+
+// The trait value is reached through another argument.
+peek_held = (seen: Big, holder :: Holder) i64 {
+    before = seen.a;
+    holder.bump.step();
+    seen.a - before
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    one ::= Big(a: 1, b: 0, c: 0, d: 0, e: 0, f: 0, g: 0, h: 0, i: 0);
+    two ::= Big(a: 2, b: 0, c: 0, d: 0, e: 0, f: 0, g: 0, h: 0, i: 0);
+    println("{}", through_trait(one, two));
+    println("{}", peek(one, one));
+    println("{}", one.a);
+    holder ::= Holder(bump: two);
+    println("{}", peek_held(two, holder));
+    println("{}", two.a);
+    Ok(0);
+}

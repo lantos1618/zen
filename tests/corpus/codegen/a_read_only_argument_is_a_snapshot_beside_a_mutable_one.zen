@@ -1,0 +1,67 @@
+// A read-only argument is the value it had when the call began, even when
+// another argument of the same call writes the same storage through `::`.
+// `Big` is large enough to be passed by address, so each call below must
+// hand the callee a copy rather than the caller's own bytes.
+
+Counter = {
+    n :: i64,
+
+    // The receiver is a field of `whole`: `b.counter.bump(b)`.
+    bump = (self :: @Self, whole: Big) i64 {
+        self.n = self.n + 100;
+        whole.counter.n
+    }
+}
+
+Big = {
+    counter :: Counter,
+    b :: i64,
+    c :: i64,
+    d :: i64,
+    e :: i64,
+    f :: i64,
+    g :: i64,
+    h :: i64,
+    i :: i64,
+}
+
+Outer = {
+    big :: Big,
+    tag :: i64,
+}
+
+// A `::` argument and a read-only argument rooted at one binding.
+touch = (n :: i64, seen: Big) i64 {
+    n = n + 10;
+    seen.counter.n
+}
+
+// The same shape reached through `::` parameters of the caller.
+through = (big :: Big) i64 { touch(big.counter.n, big) }
+
+// Two distinct `::` parameters whose storage overlaps: `outer` contains
+// `big` at the call below.
+rewrite = (outer :: Outer, seen: Big) i64 {
+    outer.big.counter.n = outer.big.counter.n + 1000;
+    seen.counter.n
+}
+
+overlapping = (outer :: Outer, big :: Big) i64 { rewrite(outer, big) }
+
+make = (n: i64) Big {
+    Big(counter: Counter(n: n), b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9)
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    local ::= make(1);
+    println("{}", touch(local.counter.n, local));
+    println("{}", local.counter.n);
+    println("{}", local.counter.bump(local));
+    println("{}", local.counter.n);
+    println("{}", through(local));
+    println("{}", local.counter.n);
+    outer ::= Outer(big: make(5), tag: 0);
+    println("{}", overlapping(outer, outer.big));
+    println("{}", outer.big.counter.n);
+    Ok(0);
+}

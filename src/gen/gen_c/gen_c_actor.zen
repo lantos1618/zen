@@ -25,7 +25,8 @@ expr = gen.gen_c.gen_c_expr
 recv_inst = gen.gen_c.gen_c_mono
 temp, payload_type, write_assign_ok, write_assign_err = gen.gen_c.gen_c_flow
 write_assign_ok_unit = gen.gen_c.gen_c_flow
-by_ref = gen.gen_c.gen_c_arg
+copy_address = gen.gen_c.gen_c_arg
+passing = gen.gen_c.gen_c_borrow
 fat_value = gen.gen_c.gen_c_fat
 
 BehaviorHit* = {
@@ -619,10 +620,20 @@ ActorSend = {
             context_c.view()
         ).try();
         body.fmt("    {payload} *zg_msg = ({payload} *)zg_raw;\n").try();
-        body.fmt("    (void)({}(zg_state, *zg_ctx", sym.view()).try();
+        body.fmt("    (void)({}(zg_state, ", sym.view()).try();
+        be.passing(self.hit.f, 1, context_ty).try().match({
+            Borrowed => be.copy_address("*zg_ctx", context_ty, body),
+            _        => body.add("*zg_ctx"),
+        }).try();
+        // The message record belongs to this turn alone, so a `::` or
+        // borrowed parameter is handed its field's address.
         Range(2, sig.len).loop((h, i) {
             body.add(", ").try();
-            by_ref(self.hit.f, i).then(() { body.add("&").try() });
+            want = sig.get(i).match({ Ok(t) => t, None => TyId(index: 0) });
+            be.passing(self.hit.f, i, want).try().match({
+                Value => (),
+                _     => { body.add("&").try(); },
+            });
             body.add("zg_msg->zg_arg").try();
             body.write_usize(i - 2).try();
         });
@@ -1084,13 +1095,31 @@ add_lifecycle_callback = (
     body ::= be.alloc.String().try();
     body.fmt("    {rec} *zg_self = ({rec} *)zg_base;\n").try();
     context.match({
-        true  => body.fmt(
-            "    (void)({}(&zg_self->zg_state, zg_self->zg_ctx));\n",
-            sym.view()
-        ),
+        true  => be.write_context_call(actor, hit, sym.view(), body),
         false => body.fmt("    (void)({}(&zg_self->zg_state));\n", sym.view()),
     }).try();
     be.add_function(name, proto, body)
+}
+
+// A lifecycle behavior's context is the runtime's; a borrowed context
+// parameter is handed a copy of it.
+write_context_call = (
+    be    :: CBackend,
+    actor : TyId,
+    hit   : BehaviorHit,
+    sym   : str,
+    body  :: String
+) Res<(), AllocError> {
+    inst = be.recv_inst(actor).try();
+    sig ::= be.alloc.Vec<TyId>();
+    be.method_sig(actor, hit.site.decl, hit.f, hit.mi, inst, sig).try();
+    context_ty = sig.get(1).match({ Ok(t) => t, None => TyId(index: 0) });
+    body.fmt("    (void)({sym}(&zg_self->zg_state, ").try();
+    be.passing(hit.f, 1, context_ty).try().match({
+        Borrowed => be.copy_address("zg_self->zg_ctx", context_ty, body),
+        _        => body.add("zg_self->zg_ctx"),
+    }).try();
+    body.add("));\n")
 }
 
 behavior_symbol = (be :: CBackend, actor: TyId, hit: BehaviorHit)
@@ -1119,10 +1148,7 @@ write_stopped_callback = (
         None    => Ok(()),
         Ok(hit) => {
             sym = be.behavior_symbol(actor, hit).try();
-            body.fmt(
-                "    (void)({}(&zg_self->zg_state, zg_self->zg_ctx));\n",
-                sym.view()
-            )
+            be.write_context_call(actor, hit, sym.view(), body)
         },
     }).try();
     be.drop_symbol(actor).try().match({

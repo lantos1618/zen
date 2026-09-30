@@ -24,6 +24,8 @@ write_none, write_zero, ctype = gen.gen_c.gen_c_type
 enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
 sym_member, sym_variant, RES_PATH = gen.gen_name
 unsupported = gen.gen_c.gen_c_report
+signature_of = gen.gen_c.gen_c_call
+passing = gen.gen_c.gen_c_borrow
 
 ARGS_MODULE: str = "std.env.env_args"
 
@@ -202,10 +204,11 @@ ArgsLower = {
     // Pass one: every flag and variable, claiming argv slots as it goes.
     flags = (self: @Self, be :: CBackend) Res<(), AllocError> {
         self.slots.loop((h, slot) {
-            flag = be.flag_of(slot.name).try();
-            name = be.env_of(slot.name).try();
+            flag   = be.flag_of(slot.name).try();
+            name   = be.env_of(slot.name).try();
+            helper = slot.ask.match({ Switch => "switch", _ => "text" });
             args ::= be.alloc.String().try();
-            args.add(self.envv.view()).try();
+            be.env_arg(helper, self.envv.view(), args).try();
             args.add(", ").try();
             be.lit(flag.view(), args).try();
             args.add(", ").try();
@@ -213,16 +216,16 @@ ArgsLower = {
             slot.ask.match({
                 Switch => {
                     place = self.place(be, slot.name).try();
-                    be.call_into(place.view(), "switch", args.view()).try();
+                    be.call_into(place.view(), helper, args.view()).try();
                 },
                 _      => be.call_into(
                     slot.raw.view(),
-                    "text",
+                    helper,
                     args.view()
                 ).try(),
             });
             claim ::= be.alloc.String().try();
-            claim.add(self.envv.view()).try();
+            be.env_arg("claim", self.envv.view(), claim).try();
             claim.add(", ").try();
             claim.add(self.mask.view()).try();
             claim.add(", ").try();
@@ -248,9 +251,13 @@ ArgsLower = {
                  Res<(), AllocError> {
         be.open_absent(slot.raw.view()).try();
         args ::= be.alloc.String().try();
-        args.fmt("{}, {}", self.envv.view(), self.mask.view()).try();
+        be.env_arg("word", self.envv.view(), args).try();
+        args.fmt(", {}", self.mask.view()).try();
         be.call_into(slot.raw.view(), "word", args.view()).try();
-        be.call_into(self.mask.view(), "take", args.view()).try();
+        taken ::= be.alloc.String().try();
+        be.env_arg("take", self.envv.view(), taken).try();
+        taken.fmt(", {}", self.mask.view()).try();
+        be.call_into(self.mask.view(), "take", taken.view()).try();
         be.close()
     }
 
@@ -393,7 +400,8 @@ ArgsLower = {
         checked = be.fresh_name("args_end").try();
         be.declare_temp(be.helper_ret("finish").try(), checked.view()).try();
         args ::= be.alloc.String().try();
-        args.fmt("{}, {}, ", self.envv.view(), self.mask.view()).try();
+        be.env_arg("finish", self.envv.view(), args).try();
+        args.fmt(", {}, ", self.mask.view()).try();
         be.lit(last, args).try();
         be.call_into(checked.view(), "finish", args.view()).try();
         self.fail_unless_ok(be, checked.view())
@@ -560,6 +568,42 @@ call_into = (be :: CBackend, dst: str, helper: str, args: str)
             call.fmt("({})", args).try();
             be.set_line(dst, call.view())
         },
+    })
+}
+
+// The generated `Env` temporary as a helper's first parameter takes it. A
+// borrowed parameter (`gen_c_borrow.zen`) receives the temporary's address:
+// the helpers only read it, and no other argument can write it.
+env_arg = (be :: CBackend, helper: str, envv: str, out :: String)
+          Res<(), AllocError> {
+    be.env_borrowed(helper).try().match({
+        true  => out.fmt("&{envv}"),
+        false => out.add(envv),
+    })
+}
+
+env_borrowed = (be :: CBackend, helper: str) Res<bool, AllocError> {
+    be.args_helper(helper).try().match({
+        None    => Ok(false),
+        Ok(def) => decl_at(be.tree, def.id).match({
+            None  => Ok(false),
+            Ok(d) => d.kind.match({
+                Function(f) => be.first_borrowed(def, f),
+                _           => Ok(false),
+            }),
+        }),
+    })
+}
+
+first_borrowed = (be :: CBackend, def: Def, f: Function)
+                 Res<bool, AllocError> {
+    inst ::= be.alloc.Inst();
+    sig  ::= be.alloc.Vec<TyId>();
+    be.signature_of(def, inst, sig).try();
+    first = sig.get(0).match({ Ok(t) => t, None => TyId(index: 0) });
+    be.passing(f, 0, first).try().match({
+        Borrowed => Ok(true),
+        _        => Ok(false),
     })
 }
 

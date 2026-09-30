@@ -25,6 +25,7 @@ temp, payload_type = gen.gen_c.gen_c_flow
 Dest, block = gen.gen_c.gen_c_stmt
 write_assign_ok, write_assign_err = gen.gen_c.gen_c_flow
 settled = gen.gen_c.gen_c_settle
+const_ref_declarator = gen.gen_c.gen_c_decl
 
 // the floors
 
@@ -273,12 +274,15 @@ write_spawn_struct = (be :: CBackend, n: usize, caps: Vec<LocalSlot>)
     be.add_spawn_env(text)
 }
 
+// A borrowed parameter's storage belongs to a caller that may return
+// before the thread runs, so the record holds a copy of the value and the
+// thread reads it through a pointer of the same name.
 write_spawn_field = (be :: CBackend, s: LocalSlot, text :: String)
                     Res<(), AllocError> {
     text.add("    ").try();
     cname ::= be.alloc.String().try();
     sym_local(cname, s.name, s.index).try();
-    s.by_ref.match({
+    (s.by_ref && (s.borrowed == false)).match({
         false => be.declarator(s.ty, cname.view(), text),
         true  => be.spawn_ref_field(s.ty, cname.view(), text),
     }).try();
@@ -383,11 +387,19 @@ write_spawn_unpack_one = (be :: CBackend, s: LocalSlot)
     line  ::= be.alloc.String().try();
     cname ::= be.alloc.String().try();
     sym_local(cname, s.name, s.index).try();
-    s.by_ref.match({
-        false => be.declarator(s.ty, cname.view(), line),
-        true  => be.spawn_ref_field(s.ty, cname.view(), line),
-    }).try();
-    be.fmt("{} = zg_e->{};\n", line.view(), cname.view())
+    s.borrowed.match({
+        true  => {
+            be.const_ref_declarator(s.ty, cname.view(), line).try();
+            be.fmt("{} = &zg_e->{};\n", line.view(), cname.view())
+        },
+        false => {
+            s.by_ref.match({
+                false => be.declarator(s.ty, cname.view(), line),
+                true  => be.spawn_ref_field(s.ty, cname.view(), line),
+            }).try();
+            be.fmt("{} = zg_e->{};\n", line.view(), cname.view())
+        },
+    })
 }
 
 // the trampoline
@@ -508,7 +520,10 @@ copy_spawn_capture = (be :: CBackend, s: LocalSlot, cell: str)
                      Res<(), AllocError> {
     cname ::= be.alloc.String().try();
     sym_local(cname, s.name, s.index).try();
-    be.fmt("{cell}->{} = {};\n", cname.view(), cname.view())
+    s.borrowed.match({
+        true  => be.fmt("{cell}->{} = *{};\n", cname.view(), cname.view()),
+        false => be.fmt("{cell}->{} = {};\n", cname.view(), cname.view()),
+    })
 }
 
 write_spawn_ok = (be :: CBackend, ret: TyId, pt: str, dst: str)

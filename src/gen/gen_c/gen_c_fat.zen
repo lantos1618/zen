@@ -29,6 +29,8 @@ init_temp = gen.gen_c.gen_c_flow
 Site, site_of, member_at = gen.gen_c.gen_c_member
 impl_member, bodied_fn = gen.gen_c.gen_c_impl
 write_cast = gen.gen_c.gen_c_bound
+passing = gen.gen_c.gen_c_borrow
+copy_address = gen.gen_c.gen_c_arg
 
 // which structs these are
 
@@ -524,7 +526,9 @@ thunk_param* = (be :: CBackend, p: TyId, stem: str, i: usize, out :: String)
 
 // `self :: @Self` takes the receiver by reference, so the shim hands
 // the pointer straight through; `self: @Self` takes it by value and the
-// shim dereferences. Every `Alloc` member is `:` — an allocator is a
+// shim dereferences. A borrowed receiver gets the address of a copy: other
+// trait values may point at the same receiver and write it during the call.
+// Every `Alloc` member is `:` — an allocator is a
 // handle and allocating never writes the handle's own bytes — and the
 // rule is read off the impl rather than assumed.
 thunk_body = (
@@ -539,8 +543,8 @@ thunk_body = (
              Res<(), AllocError> {
     call ::= be.alloc.String().try();
     call.fmt("{sym}(").try();
-    be.thunk_recv(cty, f, call).try();
-    s.params.loop((h, i, p) { be.thunk_arg(s, sig, i, call).try() });
+    be.thunk_recv(cty, f, sig, call).try();
+    s.params.loop((h, i, p) { be.thunk_arg(s, f, sig, i, call).try() });
     call.add(")").try();
     out.add("    ").try();
     be.is_unit(s.ret).match({
@@ -550,32 +554,37 @@ thunk_body = (
     out.fmt("{};\n", call.view())
 }
 
-thunk_recv = (be :: CBackend, cty: TyId, f: Function, out :: String)
-             Res<(), AllocError> {
-    recv_by_ref(f).match({
-        true  => out.add("("),
-        false => out.add("(*("),
-    }).try();
-    be.ctype(cty, out).try();
-    out.add(" *)zg_self").try();
-    recv_by_ref(f).match({
-        true  => Ok(()),
-        false => out.add(")"),
-    }).try();
-    Ok(());
-}
-
-recv_by_ref = (f: Function) bool {
-    f.params.get(0).match({ Ok(p) => p.mutable, None => false })
+thunk_recv = (
+    be  :: CBackend,
+    cty : TyId,
+    f   : Function,
+    sig : Vec<TyId>,
+    out :: String
+) Res<(), AllocError> {
+    self_ty = sig.get(0).match({ Ok(t) => t, None => cty });
+    pointer ::= be.alloc.String("(").try();
+    be.ctype(cty, pointer).try();
+    pointer.add(" *)zg_self").try();
+    be.passing(f, 0, self_ty).try().match({
+        Mutable  => out.add(pointer.view()),
+        Value    => out.fmt("(*{})", pointer.view()),
+        Borrowed => {
+            value ::= be.alloc.String().try();
+            value.fmt("*{}", pointer.view()).try();
+            be.copy_address(value.view(), self_ty, out)
+        },
+    })
 }
 
 // A count beside an erased pointer is an element count, but the impl
 // this shim calls was compiled for bytes. The size erasure dropped is
 // the argument that puts it back — the multiplication happens here and
-// nowhere else, so a call site never has to know the rule.
+// nowhere else, so a call site never has to know the rule. A borrowed
+// parameter gets the address of the shim's own by-value copy.
 thunk_arg = (
     be  :: CBackend,
     s   : Slot,
+    f   : Function,
     sig : Vec<TyId>,
     i   : usize,
     out :: String
@@ -583,9 +592,13 @@ thunk_arg = (
     out.add(", ").try();
     nm ::= be.alloc.String().try();
     sym_gen(nm, "a", i).try();
-    be.scales(s, i).match({
-        true  => be.scaled_arg(nm.view(), out),
-        false => be.cast_arg(s, sig, i, nm.view(), out),
+    want = sig.get(i + 1).match({ Ok(t) => t, None => TyId(index: 0) });
+    be.passing(f, i + 1, want).try().match({
+        Borrowed => out.fmt("&{}", nm.view()),
+        _        => be.scales(s, i).match({
+            true  => be.scaled_arg(nm.view(), out),
+            false => be.cast_arg(s, sig, i, nm.view(), out),
+        }),
     })
 }
 
@@ -700,7 +713,7 @@ spill_address = (be :: CBackend, code: str, cty: TyId, out :: String)
 // recognised by an open paren following a name, which `(*p).x` is not.
 // Conservative in the safe direction: unrecognised text gets a
 // temporary, correct at the cost of one copy.
-is_place = (code: str) bool {
+is_place* = (code: str) bool {
     (code.len > 0) && place_bytes(code) && (has_call(code) == false)
 }
 

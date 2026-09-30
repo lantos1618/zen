@@ -9,7 +9,7 @@ main = () {
     ).loop((name) {
         println(
             "{}",
-            machine_op(name, true).match({ Ok(op) => machine_refusal(op), None => "unmapped" })
+            machine_op(name).match({ Ok(op) => machine_refusal(op), None => "unmapped" })
         );
     });
 }

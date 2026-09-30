@@ -298,7 +298,11 @@ AssocSite = {
         });
         host.match({
             true  => {
-                be.unsupported(self.id, "a js.bind member (JavaScript host only)", out).try();
+                be.unsupported(
+                    self.id,
+                    "a js.bind member (JavaScript host only)",
+                    out
+                ).try();
                 Ok(true)
             },
             false => header.match({

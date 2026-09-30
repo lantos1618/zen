@@ -748,7 +748,10 @@ secret_marker = (
     // Sema's secret discipline refuses a secret tail value unless the result
     // is written Secret, so any other result of a checked function is
     // public; tools/ct lets callers rely on that and checks it at returns.
-    public = f.ret.match({ Ok(t) => !be.check.written_secret(t, mi), None => true });
+    public = f.ret.match({
+        Ok(t) => !be.check.written_secret(t, mi),
+        None  => true,
+    });
     (marked && public).then(() { out.add(" public-result").try(); });
     marked.then(() { out.add(" */").try(); });
     Ok(())

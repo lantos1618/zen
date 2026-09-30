@@ -781,7 +781,9 @@ value_barrier = (
             held
         ).try(),
     });
-    (!marker.is_empty()).then(() { be.fmt("ZG_CT_PUBLIC({});\n", held).try(); });
+    (!marker.is_empty()).then(
+        () { be.fmt("ZG_CT_PUBLIC({});\n", held).try(); }
+    );
     out.add(held)
 }
 

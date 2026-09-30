@@ -190,7 +190,7 @@ decl_value = (
 // `c.bind("header.h", {..})`, `c.record(..)`, or `js.bind("document", {..})`
 // for an object of the JavaScript host.
 native_binding_ahead = (p: Parser) bool {
-    c_form = p.at_text("c")
+    c_form  = p.at_text("c")
         && (p.text(p.peek_n(2)).eq("bind") || p.text(p.peek_n(2)).eq("record"));
     js_form = p.at_text("js") && p.text(p.peek_n(2)).eq("bind");
     (c_form || js_form) && p.peek_n(1).kind == TokenKind.Dot && p.peek_n(3).kind == TokenKind.ParenOpen
@@ -211,7 +211,7 @@ native_text = (p :: Parser) Res<str, AllocError> {
 native_binding = (p :: Parser, m: Mark, head: ImportName, tparams: Vec<TParam>)
                  Res<Decl, AllocError> {
     native_record = p.text(p.peek_n(2)).eq("record");
-    native_host = p.at_text("js");
+    native_host   = p.at_text("js");
     p.bump().try(); p.bump().try(); p.bump().try();
     open = p.here_span();
     p.bump().try();

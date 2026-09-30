@@ -114,10 +114,14 @@ pure* = (instruction: Instruction) bool {
     })
 }
 
+// Aggregates up to this size are copied through a renderer's scratch
+// registers; larger ones use the argument registers or a runtime routine.
+SMALL_AGGREGATE*: usize = 64
+
 // Instructions after which no caller-saved register survives: calls into
-// the program or the runtime, kernel calls, and aggregate copies (which
-// use the argument registers as scratch). A value live across one, or
-// read by one, must live in a callee-saved register or in memory.
+// the program or the runtime, kernel calls, and copies of large aggregates.
+// A value live across one, or read by one, must live in a callee-saved
+// register or in memory.
 clobbers* = (function: Func, instruction: Instruction) bool {
     instruction.match({
         Invoke(_)         => true,
@@ -129,10 +133,17 @@ clobbers* = (function: Func, instruction: Instruction) bool {
         MapPages(_)       => true,
         UnmapPages(_)     => true,
         Flush             => true,
-        Copy(value)       => aggregate(function, value.out),
-        LoadValue(value)  => aggregate(function, value.out),
-        StoreValue(value) => aggregate(function, value.value),
+        Copy(value)       => large(function, value.out),
+        LoadValue(value)  => large(function, value.out),
+        StoreValue(value) => large(function, value.value),
         _                 => false,
+    })
+}
+
+large = (function: Func, slot: usize) bool {
+    function.slots.get(slot).match({
+        Ok(ty) => ty.match({ Block(l) => l.size > SMALL_AGGREGATE, _ => false }),
+        None   => false,
     })
 }
 
@@ -166,6 +177,12 @@ Flow* = {
     local* :: Vec<bool>,
     // Named writes per slot; a parameter counts its incoming value.
     defs* :: Vec<usize>,
+    // Per slot: how many writes are `Constant`s of the value in `value`,
+    // or `AddressOf`s of the slot in `target` (NONE once two disagree).
+    constants :: Vec<usize>,
+    value :: Vec<i64>,
+    addresses :: Vec<usize>,
+    target :: Vec<usize>,
     // Predecessors of each block, as ranges of `pred_list`.
     pred_at :: Vec<usize>,
     pred_list :: Vec<usize>,
@@ -202,6 +219,26 @@ Flow* = {
 
     is_local* = (self: @Self, slot: usize) bool { self.local.get(slot).value_or(false) }
 
+    // The constant a local slot always holds: every write to it is a
+    // `Constant` of the same value.
+    fixed* = (self: @Self, slot: usize) Res<i64> {
+        count = self.constants.get(slot).value_or(0);
+        (self.is_local(slot) && count != 0 && count == self.defs.get(slot).value_or(0)).match({
+            true  => Ok(self.value.get(slot).value_or(0)),
+            false => None,
+        })
+    }
+
+    // The slot whose address a local slot always holds: every write to it
+    // is an `AddressOf` that slot.
+    pointer* = (self: @Self, slot: usize) Res<usize> {
+        count = self.addresses.get(slot).value_or(0);
+        (self.is_local(slot) && count != 0 && count == self.defs.get(slot).value_or(0)).match({
+            true  => Ok(self.target.get(slot).value_or(0)),
+            false => None,
+        })
+    }
+
     // Local slots live when `block` exits are `live_slot(i)` for `i` in
     // `live_from(block) .. live_from(block + 1)`.
     live_from* = (self: @Self, block: usize) usize { self.out_at.get(block).value_or(0) }
@@ -212,11 +249,19 @@ Flow* = {
     classify = (self :: @Self) Res<(), AllocError> {
         self.local.clear();
         self.defs.clear();
+        self.constants.clear();
+        self.value.clear();
+        self.addresses.clear();
+        self.target.clear();
         self.function.slots.loop((h, i, ty) {
             self.local.add(word(ty)).try();
             self.defs.add(
                 (i < self.function.parameters).match({ true => 1, false => 0 })
             ).try();
+            self.constants.add(0).try();
+            self.value.add(0).try();
+            self.addresses.add(0).try();
+            self.target.add(0).try();
         });
         self.function.blocks.loop((block) {
             block.code.loop((instruction) {
@@ -224,8 +269,28 @@ Flow* = {
                     self.defs.set(slot, self.defs.get(slot).value_or(0) + 1);
                 });
                 instruction.match({
-                    AddressOf(value) => { self.local.set(value.slot, false); },
-                    _                => (),
+                    AddressOf(v) => {
+                        self.local.set(v.slot, false);
+                        n = self.addresses.get(v.out).value_or(0);
+                        (n == 0 || (n != NONE && self.target.get(v.out).value_or(NONE) == v.slot)).match({
+                            true  => {
+                                self.addresses.set(v.out, n + 1);
+                                self.target.set(v.out, v.slot);
+                            },
+                            false => { self.addresses.set(v.out, NONE); },
+                        });
+                    },
+                    Constant(v)  => {
+                        n = self.constants.get(v.out).value_or(0);
+                        (n == 0 || (n != NONE && self.value.get(v.out).value_or(0) == v.value)).match({
+                            true  => {
+                                self.constants.set(v.out, n + 1);
+                                self.value.set(v.out, v.value);
+                            },
+                            false => { self.constants.set(v.out, NONE); },
+                        });
+                    },
+                    _            => (),
                 });
             });
         });
@@ -405,6 +470,10 @@ flow* = (alloc: Alloc, function: Func) Res<Flow, AllocError> {
         function: function,
         local: alloc.Vec<bool>(),
         defs: alloc.Vec<usize>(),
+        constants: alloc.Vec<usize>(),
+        value: alloc.Vec<i64>(),
+        addresses: alloc.Vec<usize>(),
+        target: alloc.Vec<usize>(),
         pred_at: alloc.Vec<usize>(),
         pred_list: alloc.Vec<usize>(),
         base: alloc.Vec<usize>(),
@@ -460,4 +529,51 @@ zeros* = (alloc: Alloc, count: usize) Res<Vec<usize>, AllocError> {
     out.reserve(count).try();
     Range(0, count).loop((_) { out.add(0).try(); });
     Ok(out)
+}
+
+// Two's-complement bits of an unsigned count as a signed constant. The
+// value is split into 31-bit digits because only checked narrowing to i32
+// exists between these widths.
+bits* = (value: usize) i64 {
+    wide = value.to_u64();
+    low  = (wide % 2147483648).to_i32().value_or(0).to_i64();
+    mid  = ((wide / 2147483648) % 2147483648).to_i32().value_or(0).to_i64();
+    high = (wide / 4611686018427387904).to_i32().value_or(0).to_i64();
+    (high *% 4611686018427387904) +% (mid * 2147483648) +% low
+}
+
+// k when `value` is 2^k for k below 63, else NONE.
+log2* = (value: i64) usize {
+    k     ::= 0;
+    v     ::= value;
+    found ::= NONE;
+    loop(() { v > 0 && k < 63 }, (h) {
+        (v == 1).then(() {
+            found = k;
+            h.break();
+        });
+        (v % 2 != 0).then(() { h.break(); });
+        v = v / 2;
+        k = k + 1;
+    });
+    found
+}
+
+// 2^k - 1 for k below 31.
+low_mask* = (k: usize) i64 {
+    mask: i64 ::= 0;
+    Range(0, k).loop((_) { mask = mask * 2 + 1; });
+    mask
+}
+
+// `value` modulo a power of two `m`, for a count read as unsigned.
+modulo* = (value: i64, m: i64) i64 { ((value % m) + m) % m }
+
+bit_width* = (size: usize) i64 {
+    size.match({ 1 => 8, 2 => 16, 4 => 32, _ => 64 })
+}
+
+// A power-of-two scale (1, 2, 4 or 8) as a signed count.
+scale_of* = (scale: usize) i64 {
+    scale.match({ 1 => 1, 2 => 2, 4 => 4, _ => 8 })
 }

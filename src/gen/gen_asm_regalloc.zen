@@ -21,12 +21,24 @@
 Alloc, AllocError = std.mem
 Vec = std.collections
 Range = std.core
-Func, BasicBlock, Instruction, Terminator, Scalar, same = gen.gen_ir
+Func, BasicBlock, Instruction, Terminator, Scalar, same, signed = gen.gen_ir
 Move, Unary, Binary, Invocation, Print, Convert, Load, Store, CopyMem = gen.gen_ir
 Write, SysCall, Pages, Branch, Op, Const = gen.gen_ir
-Flow, flow, reads, written, exit_read, pure, clobbers, aggregate, zeros, NONE = gen.gen_asm_flow
+Flow, flow, reads, written, exit_read, successors, pure, clobbers, aggregate, zeros, group, NONE = gen.gen_asm_flow
 
-Home* = Frame | Register(usize) | Fixed(i64)
+// Where a slot's value lives. `Fixed` is a constant and `Pointer(slot)`
+// the address of another slot's frame storage; both are materialized where
+// they are read, and their single writing instruction emits nothing.
+Home* = Frame | Register(usize) | Fixed(i64) | Pointer(usize)
+
+// A memory operand `base + index * scale + displacement`; `index` is NONE
+// when there is none. `absorbed` counts the instructions just before the
+// access whose only purpose was computing this address.
+Address* = { base*: usize, index*: usize, scale*: usize, displacement*: i64, absorbed*: usize }
+
+// What a target's addressing modes accept: any scale of 1, 2, 4 or 8
+// (x86-64), or only the access width (AArch64).
+Modes* = { any_scale*: bool }
 
 Pool* = { caller*: usize, callee*: usize }
 
@@ -39,6 +51,8 @@ Plan* = {
     saved*: Vec<usize>,
     // Named reads of each slot in `function`, terminators included.
     uses*: Vec<usize>,
+    // Slots only named reads and writes reach (see `gen_asm_flow`).
+    local*: Vec<bool>,
 
     home* = (self: @Self, slot: usize) Home {
         self.homes.get(slot).value_or(Home.Frame)
@@ -47,25 +61,104 @@ Plan* = {
     reads_of* = (self: @Self, slot: usize) usize {
         self.uses.get(slot).value_or(0)
     }
+
+    is_local* = (self: @Self, slot: usize) bool {
+        self.local.get(slot).value_or(false)
+    }
+
+    // A slot read only once, by the instruction consuming it.
+    single* = (self: @Self, slot: usize) bool {
+        self.is_local(slot) && self.reads_of(slot) == 1
+    }
+
+    // The address read by the memory access at `k` in `block`, whose base
+    // pointer is `base` and whose access is `width` bytes. The pointer
+    // arithmetic `base = pointer +% index *% scale` (or `+% constant`)
+    // immediately before the access is absorbed when nothing else reads
+    // its intermediate values; the absorbed instructions' operands are
+    // not written in between, so they still hold their values here.
+    address* = (self: @Self, block: BasicBlock, k: usize, base: usize, width: usize, modes: Modes) Address {
+        plain = Address(
+            base: base,
+            index: NONE,
+            scale: 1,
+            displacement: 0,
+            absorbed: 0
+        );
+        (k >= 1 && self.single(base)).match({
+            false => plain,
+            true  => block.code.get(k - 1).match({
+                Ok(before) => before.match({
+                    BinaryValue(add) => (add.out == base && add.left != base && add.right != base
+                        && add.op.match({ WrapAdd => true, _ => false })).match({
+                        false => plain,
+                        true  => self.scaled(block, k, add.left, add.right, width, modes).value_or(plain),
+                    }),
+                    _                => plain,
+                }),
+                None       => plain,
+            }),
+        })
+    }
+
+    // `pointer + offset` where `offset` is a constant, a single-use
+    // `index *% scale` computed just before, or any other word.
+    scaled = (self: @Self, block: BasicBlock, k: usize, pointer: usize, offset: usize, width: usize, modes: Modes) Res<Address> {
+        self.home(offset).match({
+            Fixed(c) => (c > -2147483648 && c < 2147483648).match({
+                true  => Ok(Address(
+                    base: pointer,
+                    index: NONE,
+                    scale: 1,
+                    displacement: c,
+                    absorbed: 1
+                )),
+                false => None,
+            }),
+            _        => {
+                by_one = Address(
+                    base: pointer,
+                    index: offset,
+                    scale: 1,
+                    displacement: 0,
+                    absorbed: 1
+                );
+                (k >= 2 && self.single(offset)).match({
+                    false => Ok(by_one),
+                    true  => block.code.get(k - 2).match({
+                        Ok(before) => before.match({
+                            BinaryValue(mul) => {
+                                factor = self.home(
+                                    mul.right
+                                ).match({ Fixed(c) => c, _ => 0 });
+                                usable = mul.out == offset && mul.left != offset && mul.left != pointer
+                                    && mul.op.match({ WrapMul => true, _ => false })
+                                    && (factor == 1 || factor == 2 || factor == 4 || factor == 8)
+                                    && (modes.any_scale || factor == width.match({ 1 => 1, 2 => 2, 4 => 4, _ => 8 }));
+                                usable.match({
+                                    true  => Ok(Address(
+                                        base: pointer,
+                                        index: mul.left,
+                                        scale: factor.to_usize().value_or(1),
+                                        displacement: 0,
+                                        absorbed: 2
+                                    )),
+                                    false => Ok(by_one),
+                                })
+                            },
+                            _                => Ok(by_one),
+                        }),
+                        None       => Ok(by_one),
+                    }),
+                })
+            },
+        })
+    }
 }
 
 plan* = (alloc: Alloc, function: Func, pool: Pool) Res<Plan, AllocError> {
-    current ::= function;
-    info    ::= flow(alloc, current).try();
-    rounds  ::= 0;
-    loop(() { rounds < 4 }, (h) {
-        current = propagate(alloc, info).try();
-        info    = flow(alloc, current).try();
-        pruned  = prune(alloc, info).try();
-        pruned.match({
-            Ok(next) => {
-                current = next;
-                info    = flow(alloc, current).try();
-            },
-            None     => { h.break(); },
-        });
-        rounds = rounds + 1;
-    });
+    current = simplify(alloc, function).try();
+    info    = flow(alloc, current).try();
     scan ::= Scan(
         alloc: alloc,
         flow: info,
@@ -75,6 +168,7 @@ plan* = (alloc: Alloc, function: Func, pool: Pool) Res<Plan, AllocError> {
         active: alloc.Vec<usize>(),
         hint: alloc.Vec<usize>(),
         crossing: alloc.Vec<usize>(),
+        weight: alloc.Vec<usize>(),
         used: alloc.Vec<bool>()
     );
     scan.run().try();
@@ -86,8 +180,143 @@ plan* = (alloc: Alloc, function: Func, pool: Pool) Res<Plan, AllocError> {
         function: current,
         homes: scan.homes,
         saved: saved,
-        uses: count_reads(alloc, current).try()
+        uses: count_reads(alloc, current).try(),
+        local: info.local
     ))
+}
+
+// Propagate, fold and remove until nothing changes (at most four rounds).
+simplify* = (alloc: Alloc, function: Func) Res<Func, AllocError> {
+    current ::= function;
+    info    ::= flow(alloc, current).try();
+    rounds  ::= 0;
+    loop(() { rounds < 4 }, (h) {
+        current = propagate(alloc, info).try();
+        info    = flow(alloc, current).try();
+        sweep(alloc, info).try().when_ok((next) {
+            current = next;
+            info    = flow(alloc, current).try();
+        });
+        pruned = prune(alloc, info).try();
+        pruned.match({
+            Ok(next) => {
+                current = next;
+                info    = flow(alloc, current).try();
+            },
+            None     => { h.break(); },
+        });
+        rounds = rounds + 1;
+    });
+    sink(alloc, info).try().when_ok((next) { current = next; });
+    Ok(current)
+}
+
+// How far, in instructions, `sink` looks for the reader of a value.
+SINK_DISTANCE: usize = 64
+
+// Move each pure instruction whose output is read once, later in the same
+// block, to just before that read, when nothing in between writes its
+// operands. Address arithmetic then sits beside its memory access, where a
+// renderer can fold it into an addressing mode, and values live for less
+// time. Operands must be local, so no store or call can change them either.
+sink = (alloc: Alloc, info: Flow) Res<Res<Func>, AllocError> {
+    function = info.function;
+    uses     = count_reads(alloc, function).try();
+    operands ::= alloc.Vec<usize>();
+    moved    ::= false;
+    blocks   ::= alloc.Vec<BasicBlock>();
+    function.blocks.loop((block) {
+        code ::= alloc.Vec<Instruction>();
+        block.code.loop((instruction) { code.add(instruction).try(); });
+        n = code.len;
+        Range(0, n).loop((i) {
+            at          = n - 1 - i;
+            instruction = code.get(at).value_or(Instruction.Flush);
+            out         = written(instruction).value_or(NONE);
+            operands.clear();
+            reads(instruction, operands).try();
+            movable ::= pure(instruction) && out != NONE && info.is_local(out)
+                && uses.get(out).value_or(0) == 1;
+            operands.loop(
+                (slot) { (!info.is_local(slot)).then(() { movable = false; }); }
+            );
+            reader = movable.match({
+                true  => reader_of(alloc, code, at, out, operands).try(),
+                false => NONE,
+            });
+            (reader != NONE && reader > at + 1).then(() {
+                next ::= alloc.Vec<Instruction>();
+                code.loop((h, k, other) {
+                    (k == reader).then(() { next.add(instruction).try(); });
+                    (k != at).then(() { next.add(other).try(); });
+                });
+                code  = next;
+                moved = true;
+            });
+        });
+        blocks.add(BasicBlock(code: code, exit: block.exit)).try();
+    });
+    moved.match({
+        false => Ok(None),
+        true  => Ok(Ok(Func(
+            name: function.name,
+            parameters: function.parameters,
+            slots: function.slots,
+            blocks: blocks,
+            result: function.result
+        ))),
+    })
+}
+
+// The first instruction after `at` that reads `out`, within the sinking
+// distance and before anything writes `out` or one of `operands`; NONE if
+// there is none.
+reader_of = (
+    alloc    : Alloc,
+    code     : Vec<Instruction>,
+    at       : usize,
+    out      : usize,
+    operands : Vec<usize>
+)
+            Res<usize, AllocError> {
+    between ::= alloc.Vec<usize>();
+    found   ::= NONE;
+    stop    ::= false;
+    k       ::= at + 1;
+    limit = (at + 1 + SINK_DISTANCE).min(code.len);
+    loop(() { k < limit && found == NONE && !stop }, (h) {
+        later = code.get(k).value_or(Instruction.Flush);
+        between.clear();
+        reads(later, between).try();
+        between.loop((slot) { (slot == out).then(() { found = k; }); });
+        w = written(later).value_or(NONE);
+        (found == NONE && w != NONE).then(() {
+            (w == out).then(() { stop = true; });
+            operands.loop((slot) { (slot == w).then(() { stop = true; }); });
+        });
+        k = k + 1;
+    });
+    // Already in place when everything in between is pure and feeds the
+    // reader, directly or through each other: moving would only reorder
+    // the reader's operands (and a later pass would move them back).
+    (found != NONE).then(() {
+        feeding ::= true;
+        Range(at + 1, found).loop((j) {
+            other = code.get(j).value_or(Instruction.Flush);
+            w     = written(other).value_or(NONE);
+            feeds ::= false;
+            Range(j + 1, found + 1).loop((m) {
+                between.clear();
+                code.get(m).when_ok((user) { reads(user, between).try(); });
+                between.loop(
+                    (slot) { (slot == w).then(() { feeds = true; }); }
+                );
+            });
+            (!(pure(other) && feeds)).then(() { feeding = false; });
+        });
+        feeding.then(() { found = NONE; });
+    });
+    Ok(found)
 }
 
 count_reads = (alloc: Alloc, function: Func) Res<Vec<usize>, AllocError> {
@@ -157,7 +386,7 @@ Propagate = {
                 op: v.op,
                 span: v.span
             )),
-            BinaryValue(v)   => Instruction.BinaryValue(Binary(
+            BinaryValue(v)   => self.fold_binary(Binary(
                 out: v.out,
                 left: self.at(v.left),
                 right: self.at(v.right),
@@ -238,12 +467,63 @@ Propagate = {
         })
     }
 
+    // An operation on two known constants whose result the compiler can
+    // compute exactly: operands below 2^31 in magnitude (and not negative
+    // for unsigned classes, whose large values are stored negative), so no
+    // step of the arithmetic here overflows, and a result that fits the
+    // output class unchanged. A checked operation whose result would not
+    // fit keeps its runtime trap.
+    fold_binary = (self: @Self, value: Binary) Instruction {
+        known            = self.known.get(value.left).value_or(false) && self.known.get(value.right).value_or(false);
+        a                = self.value.get(value.left).value_or(0);
+        b                = self.value.get(value.right).value_or(0);
+        from             = self.flow.function.slots.get(value.left).value_or(Scalar.Unit);
+        checked          = value.op.match({ Add => true, Sub => true, Mul => true, _ => false });
+        small            = a > -2147483648 && a < 2147483648 && b > -2147483648 && b < 2147483648
+            && (signed(
+                from
+            ) || (a >= 0 && b >= 0 && !(checked && a < b && value.op.match({ Sub => true, _ => false }))));
+        result: Res<i64> = (known && small).match({
+            false => None,
+            true  => value.op.match({
+                Add          => Ok(a + b),
+                WrapAdd      => Ok(a + b),
+                Sub          => Ok(a - b),
+                WrapSub      => Ok(a - b),
+                Mul          => Ok(a * b),
+                WrapMul      => Ok(a * b),
+                Equal        => Ok(truth(a == b)),
+                NotEqual     => Ok(truth(a != b)),
+                Less         => Ok(truth(a < b)),
+                LessEqual    => Ok(truth(a <= b)),
+                Greater      => Ok(truth(a > b)),
+                GreaterEqual => Ok(truth(a >= b)),
+                _            => None,
+            }),
+        });
+        to               = self.flow.function.slots.get(value.out).value_or(Scalar.Unit);
+        result.match({
+            Ok(r) => fits(to, r).match({
+                true  => Instruction.Constant(Const(out: value.out, value: r)),
+                false => Instruction.BinaryValue(value),
+            }),
+            None  => Instruction.BinaryValue(value),
+        })
+    }
+
     remember = (self :: @Self, instruction: Instruction) {
         instruction.match({
-            Constant(c) => (self.flow.is_local(c.out) && self.flow.defs.get(c.out).value_or(0) == 1).then(() {
-                self.known.set(c.out, true);
-                self.value.set(c.out, c.value);
-            }),
+            Constant(c) => {
+                known = self.flow.fixed(c.out).match({
+                    Ok(v) => v == c.value,
+                    // A folded conversion is its output's only write.
+                    None  => self.flow.is_local(c.out) && self.flow.defs.get(c.out).value_or(0) == 1,
+                });
+                known.then(() {
+                    self.known.set(c.out, true);
+                    self.value.set(c.out, c.value);
+                });
+            },
             _           => (),
         });
     }
@@ -340,8 +620,100 @@ propagate = (alloc: Alloc, info: Flow) Res<Func, AllocError> {
     ))
 }
 
-// Remove pure instructions whose local output is dead. None when nothing
-// was removed.
+// Remove pure instructions whose output no effect ever depends on, however
+// many other pure instructions read it (a counter that only feeds itself
+// is dead). Slots are marked needed from the reads of every instruction
+// that has an effect or writes a non-local slot, and of every terminator,
+// then backwards through the pure instructions that write needed slots.
+sweep = (alloc: Alloc, info: Flow) Res<Res<Func>, AllocError> {
+    function = info.function;
+    slots    = function.slots.len;
+    needed ::= alloc.Vec<bool>();
+    Range(0, slots).loop((_) { needed.add(false).try(); });
+    work     ::= alloc.Vec<usize>();
+    operands ::= alloc.Vec<usize>();
+    // Pure local writers, grouped by the slot they write.
+    writer_slot ::= alloc.Vec<usize>();
+    writer_at   ::= alloc.Vec<usize>();
+    flat        ::= alloc.Vec<Instruction>();
+    function.blocks.loop((block) {
+        block.code.loop((instruction) {
+            essential = written(instruction).match({
+                Ok(slot) => !(pure(instruction) && info.is_local(slot)),
+                None     => true,
+            });
+            essential.match({
+                true  => {
+                    operands.clear();
+                    reads(instruction, operands).try();
+                    operands.loop((slot) {
+                        (!needed.get(slot).value_or(true)).then(() {
+                            needed.set(slot, true);
+                            work.add(slot).try();
+                        });
+                    });
+                },
+                false => written(instruction).when_ok((slot) {
+                    writer_slot.add(slot).try();
+                    writer_at.add(flat.len).try();
+                    flat.add(instruction).try();
+                }),
+            });
+        });
+        exit_read(block.exit).when_ok((slot) {
+            (!needed.get(slot).value_or(true)).then(() {
+                needed.set(slot, true);
+                work.add(slot).try();
+            });
+        });
+    });
+    writers = group(alloc, writer_slot, writer_at, slots).try();
+    loop(() { work.len > 0 }, (h) {
+        slot = work.get(work.len - 1).value_or(0);
+        work.take(work.len - 1);
+        Range(writers.at(slot), writers.at(slot + 1)).loop((i) {
+            flat.get(writers.value(i)).when_ok((instruction) {
+                operands.clear();
+                reads(instruction, operands).try();
+                operands.loop((read) {
+                    (!needed.get(read).value_or(true)).then(() {
+                        needed.set(read, true);
+                        work.add(read).try();
+                    });
+                });
+            });
+        });
+    });
+    removed ::= false;
+    blocks  ::= alloc.Vec<BasicBlock>();
+    function.blocks.loop((block) {
+        code ::= alloc.Vec<Instruction>();
+        block.code.loop((instruction) {
+            dead = written(instruction).match({
+                Ok(slot) => pure(instruction) && info.is_local(slot) && !needed.get(slot).value_or(true),
+                None     => false,
+            });
+            dead.match({
+                true  => { removed = true; },
+                false => { code.add(instruction).try(); },
+            });
+        });
+        blocks.add(BasicBlock(code: code, exit: block.exit)).try();
+    });
+    removed.match({
+        false => Ok(None),
+        true  => Ok(Ok(Func(
+            name: function.name,
+            parameters: function.parameters,
+            slots: function.slots,
+            blocks: blocks,
+            result: function.result
+        ))),
+    })
+}
+
+// Remove pure instructions whose local output is dead at that point. None
+// when nothing was removed.
 prune = (alloc: Alloc, info: Flow) Res<Res<Func>, AllocError> {
     function = info.function;
     live     ::= zeros(alloc, function.slots.len).try();
@@ -412,6 +784,8 @@ Scan = {
     hint :: Vec<usize>,
     // Clobbering positions at or before each position.
     crossing :: Vec<usize>,
+    // Per slot: its reads and writes, each counted 8^loop depth.
+    weight :: Vec<usize>,
     used :: Vec<bool>,
 
     run = (self :: @Self) Res<(), AllocError> {
@@ -425,6 +799,7 @@ Scan = {
         Range(0, self.pool.caller + self.pool.callee).loop((_) { self.used.add(false).try(); });
         self.constants_and_hints().try();
         self.clobber_map(limit).try();
+        self.weigh().try();
         // Bucket intervals by their first position.
         head ::= self.alloc.Vec<usize>();
         Range(0, limit + 1).loop((_) { head.add(0).try(); });
@@ -433,7 +808,7 @@ Scan = {
             v         = slots - 1 - i;
             first     = self.flow.first.get(v).value_or(NONE);
             candidate = self.flow.is_local(v) && first != NONE && first <= limit
-                && self.homes.get(v).value_or(Home.Frame).match({ Fixed(_) => false, _ => true });
+                && self.homes.get(v).value_or(Home.Frame).match({ Fixed(_) => false, Pointer(_) => false, _ => true });
             candidate.then(() {
                 next.set(v, head.get(first).value_or(0));
                 head.set(first, v + 1);
@@ -448,6 +823,55 @@ Scan = {
             });
         });
         Ok(())
+    }
+
+    // Loop depth comes from back edges in emission order: a branch to an
+    // earlier (or the same) block closes a loop over the blocks between.
+    weigh = (self :: @Self) Res<(), AllocError> {
+        function = self.flow.function;
+        blocks   = function.blocks.len;
+        opens   ::= zeros(self.alloc, blocks + 1).try();
+        closes  ::= zeros(self.alloc, blocks + 1).try();
+        targets ::= self.alloc.Vec<usize>();
+        function.blocks.loop((h, b, block) {
+            targets.clear();
+            successors(block.exit, targets).try();
+            targets.loop((t) {
+                (t <= b).then(() {
+                    opens.set(t, opens.get(t).value_or(0) + 1);
+                    closes.set(b + 1, closes.get(b + 1).value_or(0) + 1);
+                });
+            });
+        });
+        self.weight.clear();
+        function.slots.loop((_) { self.weight.add(0).try(); });
+        depth: usize ::= 0;
+        operands     ::= self.alloc.Vec<usize>();
+        function.blocks.loop((h, b, block) {
+            depth = depth + opens.get(b).value_or(0) - closes.get(b).value_or(0);
+            cost ::= 1;
+            Range(0, depth.min(3)).loop((_) { cost = cost * 8; });
+            block.code.loop((instruction) {
+                operands.clear();
+                reads(instruction, operands).try();
+                written(instruction).when_ok((slot) { operands.add(slot).try(); });
+                operands.loop(
+                    (slot) { self.weight.set(
+                        slot,
+                        self.weight.get(slot).value_or(0) + cost
+                    ); }
+                );
+            });
+            exit_read(block.exit).when_ok((slot) { self.weight.set(slot, self.weight.get(slot).value_or(0) + cost); });
+        });
+        Ok(())
+    }
+
+    // Uses per position of an interval, scaled: the cost of keeping it in
+    // memory relative to the room it takes.
+    density = (self: @Self, slot: usize) usize {
+        span = self.flow.last.get(slot).value_or(0) - self.flow.first.get(slot).value_or(0) + 1;
+        self.weight.get(slot).value_or(0) * 1024 / span
     }
 
     constants_and_hints = (self :: @Self) Res<(), AllocError> {
@@ -472,9 +896,10 @@ Scan = {
             block.code.loop((instruction) {
                 instruction.match({
                     Constant(v)    => {
-                        (self.flow.is_local(v.out) && self.flow.defs.get(v.out).value_or(0) == 1).then(() {
-                            self.homes.set(v.out, Home.Fixed(v.value));
-                        });
+                        self.flow.fixed(v.out).when_ok((value) { self.homes.set(v.out, Home.Fixed(value)); });
+                    },
+                    AddressOf(v)   => {
+                        self.flow.pointer(v.out).when_ok((target) { self.homes.set(v.out, Home.Pointer(target)); });
                     },
                     Copy(v)        => { self.suggest(v.out, v.source); },
                     UnaryValue(v)  => { self.suggest(v.out, v.input); },
@@ -562,16 +987,17 @@ Scan = {
             });
         });
         (choice == NONE).then(() {
-            // Spill whichever acceptable interval ends last.
-            victim     ::= NONE;
-            victim_end ::= self.flow.last.get(v).value_or(0);
+            // Spill whichever acceptable interval is used least densely,
+            // this one included.
+            victim      ::= NONE;
+            victim_cost ::= self.density(v);
             self.active.loop((a) {
                 self.home(a).match({
                     Register(r) => {
-                        end = self.flow.last.get(a).value_or(0);
-                        (r >= lowest && end > victim_end).then(() {
-                            victim     = a;
-                            victim_end = end;
+                        cost = self.density(a);
+                        (r >= lowest && cost < victim_cost).then(() {
+                            victim      = a;
+                            victim_cost = cost;
                         });
                     },
                     _           => (),
@@ -623,3 +1049,5 @@ fits = (ty: Scalar, value: i64) bool {
         _    => false,
     })
 }
+
+truth = (value: bool) i64 { value.match({ true => 1, false => 0 }) }

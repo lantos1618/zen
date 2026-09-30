@@ -43,6 +43,7 @@ Runner = {
     zen: str,
     work: str,
     darwin: bool,
+    keep: bool,
 
     run = (self: @Self, argv: Vec<str>) Res<ProcOutput, AllocError> {
         self.env.proc.run_argv(self.a, "", argv).match({
@@ -93,9 +94,10 @@ Runner = {
     // `<run dir>/prog` (the name argv[0] tests pin; Node runs an
     // extensionless script as CommonJS), with the symlink loop and the two
     // over-long variables the harness supplies to the tests that need them.
-    execute = (self: @Self, c: Case, script: str, index: usize) Res<ProcOutput, AllocError> {
+    // Stages the run directory and returns the shell command that runs it.
+    launch = (self: @Self, c: Case, script: str, dir: str) Res<String, AllocError> {
         here = self.env.fs.cwd(self.a).match({ Ok(s) => s.view(), Err(_) => "." });
-        run_dir = self.a.String("{}/{}/run{}", here, self.work, index).try();
+        run_dir = self.a.String("{}/{}/run", here, dir).try();
         setup ::= self.a.String("rm -rf '{}' && mkdir -p '{}' && ln -sfn '{}/{}' '{}/src' && cp '{}' '{}/prog'", run_dir.view(), run_dir.view(), here, c.root, run_dir.view(), script, run_dir.view()).try();
         c.base.ends_with("symlink_loop_is_failed/main").then(() {
             setup.fmt(" && ln -sfn loop '{}/loop'", run_dir.view()).try();
@@ -128,8 +130,12 @@ Runner = {
             true  => command.fmt(" < '{}/{}'", here, stdin.view()),
             false => command.add(" < /dev/null"),
         }).try();
+        Ok(command)
+    }
+
+    shell = (self: @Self, command: str) Res<ProcOutput, AllocError> {
         argv ::= self.a.Vec<str>();
-        ["/bin/sh", "-c", command.view()].loop((w) { argv.add(w).try(); });
+        ["/bin/sh", "-c", command].loop((w) { argv.add(w).try(); });
         self.run(argv)
     }
 
@@ -165,13 +171,13 @@ Runner = {
 
     // The harness rewrites this test's epoch to the current second, as
     // tests/run.py does, in a staged copy.
-    staged = (self: @Self, c: Case, index: usize) Res<Case, AllocError> {
+    staged = (self: @Self, c: Case, work: str) Res<Case, AllocError> {
         c.base.ends_with("clock_reads_are_two_authorities").match({
             false => Ok(c),
             true  => {
                 source = self.a.String("{}/{}", c.root, c.entry).try();
                 text = self.read(source.view()).value_or("");
-                dir = self.a.String("{}/stage{}", self.work, index).try();
+                dir = self.a.String("{}/stage", work).try();
                 mkdir ::= self.a.Vec<str>();
                 ["mkdir", "-p", dir.view()].loop((w) { mkdir.add(w).try(); });
                 self.run(mkdir).try();
@@ -192,29 +198,73 @@ Runner = {
         })
     }
 
-    case = (self: @Self, original: Case, index: usize) Res<Outcome, AllocError> {
-        c = self.staged(original, index).try();
-        script = self.a.String("{}/t{}.js", self.work, index).try();
+    // Each test works in `<work>/<test base with / as _>/`: the script, the
+    // run directory and any staged copy. A pass deletes it; any other verdict
+    // leaves it in place with `command.sh` (the exact compile and run
+    // commands), `stdout`, `stderr` and `verdict.txt`, so everything left
+    // under the work root after a run is a test that did not pass.
+    case = (self: @Self, original: Case) Res<Outcome, AllocError> {
+        dir = self.a.String("{}/{}", self.work, slug(self.a, original.base).try().view()).try();
+        mkdir ::= self.a.Vec<str>();
+        ["mkdir", "-p", dir.view()].loop((w) { mkdir.add(w).try(); });
+        self.run(mkdir).try();
+        c = self.staged(original, dir.view()).try();
+        script = self.a.String("{}/prog.js", dir.view()).try();
         lane = lane_of(c.base);
+        compile = self.a.String("'{}' build '{}' --entry '{}' --std src --backend js -o '{}'", self.zen, c.root, c.entry, script.view()).try();
         self.compile(c, script.view()).try().match({
-            Ok(reason) => Ok(Outcome(base: c.base, lane: lane, verdict: Verdict.Unsupported, reason: first_line(reason))),
+            Ok(reason) => {
+                outcome = Outcome(base: c.base, lane: lane, verdict: Verdict.Unsupported, reason: first_line(reason));
+                self.settle(dir.view(), outcome, compile.view(), "", "", reason).try();
+                Ok(outcome)
+            },
             None       => {
-                result = self.execute(c, script.view(), index).try();
+                command = self.launch(c, script.view(), dir.view()).try();
+                result = self.shell(command.view()).try();
                 // A JavaScript exception escaping the generated program prints
                 // a stack; Zen traps never do. That is a backend bug.
                 broken = result.err.view().contains("\n    at ");
-                broken.match({
-                    true  => Ok(Outcome(base: c.base, lane: lane, verdict: Verdict.Broken, reason: first_line(result.err.view()))),
-                    false => {
-                        problem = self.compare(c, result).try();
-                        problem.is_empty().match({
-                            true  => Ok(Outcome(base: c.base, lane: lane, verdict: Verdict.Pass, reason: "")),
-                            false => Ok(Outcome(base: c.base, lane: lane, verdict: Verdict.Fail, reason: problem)),
-                        })
-                    },
-                })
+                problem = self.compare(c, result).try();
+                outcome = broken.match({
+                    true  => Outcome(base: c.base, lane: lane, verdict: Verdict.Broken, reason: first_line(result.err.view())),
+                    false => problem.is_empty().match({
+                        true  => Outcome(base: c.base, lane: lane, verdict: Verdict.Pass, reason: ""),
+                        false => Outcome(base: c.base, lane: lane, verdict: Verdict.Fail, reason: problem),
+                    }),
+                });
+                self.settle(dir.view(), outcome, compile.view(), command.view(), result.out.view(), result.err.view()).try();
+                Ok(outcome)
             },
         })
+    }
+
+    // KEEP_ARTIFACTS=1 keeps a passing test's directory too.
+    settle = (self: @Self, dir: str, o: Outcome, compile: str, run: str, out: str, err: str) Res<(), AllocError> {
+        is_pass(o.verdict).match({
+            true  => {
+                (!self.keep).then(() {
+                    remove ::= self.a.Vec<str>();
+                    ["rm", "-rf", dir].loop((w) { remove.add(w).try(); });
+                    self.run(remove).try();
+                });
+            },
+            false => {
+                script ::= self.a.String("#!/bin/sh\n# {}: {}\n# from the repository root\n{}\n", o.base, verdict_name(o.verdict), compile).try();
+                (!run.is_empty()).then(() { script.fmt("{}\n", run).try(); });
+                self.write(dir, "command.sh", script.view());
+                self.write(dir, "stdout", out);
+                self.write(dir, "stderr", err);
+                self.write(dir, "verdict.txt", self.a.String("{} {}\n", verdict_name(o.verdict), o.reason).try().view());
+            },
+        });
+        Ok(())
+    }
+
+    write = (self: @Self, dir: str, name: str, text: str) {
+        self.a.String("{}/{}", dir, name).match({
+            Ok(path) => self.env.fs.write(path.view(), text).ignore(),
+            Err(_)   => (),
+        });
     }
 }
 
@@ -228,6 +278,16 @@ is_pass = (v: Verdict) bool { v.match({ Pass => true, _ => false }) }
 repeat = (a: Alloc, byte: u8, n: usize) Res<String, AllocError> {
     out ::= a.String().try();
     Range(0, n).loop((k) { out.add(byte).try(); });
+    Ok(out)
+}
+
+// A test base as one directory name: `tests/corpus/a/b` -> `tests_corpus_a_b`.
+slug = (a: Alloc, base: str) Res<String, AllocError> {
+    out ::= a.String().try();
+    Range(0, base.len).loop((k) {
+        b = base.index(k);
+        out.add((b == '/').match({ true => '_', false => b })).try();
+    });
     Ok(out)
 }
 
@@ -324,7 +384,8 @@ gate = (env: Env, a: Alloc, zen: str, gaps_path: str, filter: str, shrink: bool,
     });
     work = "build/js-corpus";
     mkdir ::= a.Vec<str>();
-    ["mkdir", "-p", work].loop((w) { mkdir.add(w).try(); });
+    // What an earlier run left is stale: start from an empty work root.
+    ["/bin/sh", "-c", "rm -rf build/js-corpus && mkdir -p build/js-corpus"].loop((w) { mkdir.add(w).try(); });
     env.proc.run_argv(a, "", mkdir).ignore();
 
     gaps_exist = env.fs.exists(gaps_path);
@@ -342,12 +403,14 @@ gate = (env: Env, a: Alloc, zen: str, gaps_path: str, filter: str, shrink: bool,
     });
     sort(paths, a).try();
 
-    runner = Runner(env: env, a: a, zen: zen, work: work, darwin: darwin);
+    keep_flag = env.var("KEEP_ARTIFACTS").value_or("");
+    runner = Runner(env: env, a: a, zen: zen, work: work, darwin: darwin,
+                    keep: !keep_flag.eq("") && !keep_flag.eq("0"));
     outcomes ::= a.Vec<Outcome>();
     paths.loop((h, i, path) {
         case_of(a, path.text).try().when_ok((c) {
             (!runner.has_sidecar(c, "stage")).then(() {
-                outcome = runner.case(c, i).try();
+                outcome = runner.case(c).try();
                 outcomes.add(outcome).try();
                 (verbose || !is_pass(outcome.verdict)).then(() {
                     println("{} {} {}", verdict_name(outcome.verdict), outcome.base, outcome.reason);
@@ -395,6 +458,16 @@ gate = (env: Env, a: Alloc, zen: str, gaps_path: str, filter: str, shrink: bool,
             Ok(_)  => println("js-corpus: wrote {}", gaps_path),
             Err(_) => println("js-corpus: cannot write {}", gaps_path),
         });
+    });
+
+    // Only tests that did not pass are left; the root goes when none are.
+    tidy ::= a.Vec<str>();
+    ["rmdir", work].loop((w) { tidy.add(w).try(); });
+    env.proc.run_argv(a, "", tidy).match({
+        Ok(out) => (out.code != 0).then(() {
+            println("js-corpus: each test that did not pass is kept under {}/<test>/ (command.sh, stdout, stderr)", work);
+        }),
+        Err(_)  => (),
     });
 
     failed = regressions + stale;

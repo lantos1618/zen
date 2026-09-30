@@ -238,6 +238,9 @@ class Result:
     cached: bool = False
     cacheable: bool = True
     artifact_cached: bool = False
+    # Every process the test ran, in order, as (cwd, Run). Only read when the
+    # test fails: `preserve_failure` writes it out as the exact commands.
+    steps: list = field(default_factory=list, repr=False)
 
 
 @dataclass
@@ -655,7 +658,8 @@ def make_toolchain(args: argparse.Namespace) -> Toolchain:
         raise HarnessError(f"no executable zen compiler at {binary}. Build one (`make build`).")
     return Toolchain("zen", [str(binary)], src_root=REPO_ROOT / "src",
                      c_compiler=CCompiler(args.cc, shlex.split(args.cc_flags),
-                                          args.cc_cache, args.cc_work_dir, args.timeout))
+                                          args.cc_cache, args.cc_work_dir, args.timeout,
+                                          keep=args.keep))
 
 
 # ------------------------------------------------------------------- running
@@ -669,6 +673,20 @@ class Run:
     stderr: bytes
     timed_out: bool
     signalled: bool
+
+
+# The processes the current test has run. A worker thread runs one test at a
+# time, so a thread-local list is exactly that test's history; `task` installs
+# it and moves it onto the Result. None outside a test (the self-check, the
+# cache's toolchain probes), where nothing is recorded.
+_STEPS = threading.local()
+
+
+def _record(cwd: Path | None, run: Run) -> Run:
+    steps = getattr(_STEPS, "steps", None)
+    if steps is not None:
+        steps.append((cwd, run))
+    return run
 
 
 def run_process(
@@ -702,12 +720,12 @@ def run_process(
     except PermissionError as exc:
         raise HarnessError(f"cannot execute {argv[0]!r}: {exc}") from exc
     except subprocess.TimeoutExpired as exc:
-        return Run(argv, 124, exc.stdout or b"", exc.stderr or b"", True, False)
+        return _record(cwd, Run(argv, 124, exc.stdout or b"", exc.stderr or b"", True, False))
     code = proc.returncode
     signalled = code < 0
     if signalled:
         code = 128 + (-code)
-    return Run(argv, code, proc.stdout, proc.stderr, False, signalled)
+    return _record(cwd, Run(argv, code, proc.stdout, proc.stderr, False, signalled))
 
 
 @dataclass
@@ -717,6 +735,10 @@ class CCompiler:
     cache: str
     work_dir: Path
     timeout: float
+    # False (the default) deletes the staged C and object once the object is
+    # copied out. The directory and its lock stay: they are what keeps the C
+    # path stable for ccache and serialises concurrent runs of the same test.
+    keep: bool = False
 
     def build(self, tid: str, source: Path, binary: Path, native: list[str]) -> Run:
         openssl_root = os.environ.get("OPENSSL_ROOT")
@@ -757,6 +779,9 @@ class CCompiler:
             if not staged_object.is_file():
                 raise HarnessError("C compiler succeeded without producing an object")
             shutil.copyfile(staged_object, object_file)
+            if not self.keep:
+                staged_c.unlink(missing_ok=True)
+                staged_object.unlink(missing_ok=True)
         # Link and execute on every invocation; only C compilation is cached.
         linked = run_process([self.command, *self.flags, str(object_file), *native,
                               "-o", str(binary)], self.timeout)
@@ -996,6 +1021,11 @@ class ResultCache:
             return False
 
     def remember_binary(self, test: Test, work: Path) -> None:
+        # Stored executables only pay off when the same compiler reruns the
+        # same test, which is the `make check` loop; a gate run would leave
+        # one copy of every such program behind per compiler build.
+        if not getattr(self.args, "cache_executables", False):
+            return
         key = self.keys.get(test.tid)
         if key is None or test.tid in self.REWRITTEN:
             return
@@ -1032,6 +1062,7 @@ class ResultCache:
         if self.context() != self.identity or any(self.key(test) != key for test, key in self.checked):
             raise HarnessError("test cache inputs changed during this run; rerun after edits finish")
         if not self.pending and not self.artifacts:
+            self.prune_executables()
             return
         self.directory.mkdir(parents=True, exist_ok=True)
         for key, detail in self.pending:
@@ -1051,6 +1082,25 @@ class ResultCache:
                 fcntl.flock(lock, fcntl.LOCK_EX)
                 shutil.rmtree(destination, ignore_errors=True)
                 os.rename(directory, destination)
+        self.prune_executables()
+
+    def prune_executables(self) -> None:
+        """Drop stored executables no test in this run would look up.
+
+        Every compiler build changes every key, so without this each rebuild
+        leaves a full generation of executables behind. Only a run over the
+        whole suite knows which keys are live; a filtered run leaves the rest.
+        """
+        if not getattr(self.args, "full_selection", False) or not self.directory.is_dir():
+            return
+        live = set(self.keys.values())
+        for entry in self.directory.glob("*.artifact"):
+            key = entry.name[:-len(".artifact")]
+            if key in live:
+                continue
+            with (self.directory / (key + ".lock")).open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                shutil.rmtree(entry, ignore_errors=True)
 
 
 def deterministic_binary(binary: Path, timeout: float) -> bool:
@@ -1602,10 +1652,9 @@ def run_corpus(test: Test, tool: Toolchain, work: Path, args: argparse.Namespace
             if loopback is not None:
                 loopback.close()
             # A rejected translation unit is a codegen bug, not harness noise.
-            note = clip(diagnostics(cc))
-            if args.keep:
-                note += f"\ngenerated C kept at: {out_c}"
-            return Result(test, False, [f"the C compiler rejected the generated C (exit {cc.code})"], note)
+            # Its out.c is kept with the rest of the failure (`settle_work`).
+            return Result(test, False, [f"the C compiler rejected the generated C (exit {cc.code})"],
+                          clip(diagnostics(cc)))
 
     # Run in the work directory: a program that writes a file must not write it
     # into the test tree.
@@ -1782,16 +1831,63 @@ def stage_verdict(result: Result, current: int) -> tuple[Result, bool]:
             [f"deferred to stage {stage_at}, but it passes at stage {current}: "
              f"delete {name} -- the stage arrived"],
             seconds=result.seconds,
+            steps=result.steps,
         ), False
     return result, True
 
 
+def work_name(test: Test) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", test.tid)
+
+
 def run_one(test: Test, tool: Toolchain, workroot: Path, args: argparse.Namespace) -> Result:
-    work = workroot / re.sub(r"[^A-Za-z0-9_.-]", "_", test.tid)
+    work = workroot / work_name(test)
     work.mkdir(parents=True, exist_ok=True)
     if test.kind in (CORPUS, EXAMPLE):
         return run_corpus(test, tool, work, args)
     return run_must_fail(test, tool, work, args)
+
+
+def settle_work(result: Result, failed: bool, workroot: Path, args: argparse.Namespace) -> Path | None:
+    """Delete a finished test's scratch, or move it to the failures directory.
+
+    Called once per test, after its verdict (including `.stage`) is final.
+    A passing or deferred test leaves nothing behind. A failing one gets
+    `<failures-dir>/<test>/`: its work directory as the run left it (staged
+    sources, out.c, the binary, anything it wrote), plus `commands.sh` naming
+    every process it ran with its cwd and exit status, each process's stdout
+    and stderr, and `verdict.txt` with the reasons printed below. Returns that
+    directory for a failure. `--keep` keeps every work directory as well.
+    """
+    work = workroot / work_name(result.test)
+    kept = args.failures_dir / work_name(result.test)
+    shutil.rmtree(kept, ignore_errors=True)  # a record from an earlier run is stale
+    if not failed:
+        if not args.keep:
+            shutil.rmtree(work, ignore_errors=True)
+        return None
+    kept.parent.mkdir(parents=True, exist_ok=True)
+    if work.is_dir():
+        if args.keep:
+            shutil.copytree(work, kept, symlinks=True)
+        else:
+            shutil.move(str(work), str(kept))
+    else:
+        kept.mkdir()
+    # The commands named the scratch directory, which is now `kept`; rewrite
+    # them so the file reruns the test in place.
+    lines = ["#!/bin/sh", f"# {result.test.tid}: the processes this test ran, in order.", ""]
+    for index, (cwd, run) in enumerate(result.steps, 1):
+        status = "timed out" if run.timed_out else f"exit {run.code}"
+        lines.append(f"# step {index}: {status}; output in step{index}.stdout, step{index}.stderr")
+        line = (f"cd {shlex.quote(str(cwd))} && " if cwd else "") + shlex.join(run.argv)
+        lines.append(line.replace(str(work), str(kept)))
+        (kept / f"step{index}.stdout").write_bytes(run.stdout)
+        (kept / f"step{index}.stderr").write_bytes(run.stderr)
+    (kept / "commands.sh").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (kept / "verdict.txt").write_text(
+        "\n".join([*result.reasons, "", result.detail]).rstrip() + "\n", encoding="utf-8")
+    return kept
 
 
 # ------------------------------------------------------------- self-check
@@ -1990,7 +2086,15 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
                         "ahead of it is deferred rather than failed")
     p.add_argument("--timeout", type=float, default=120.0, help="seconds for one compile")
     p.add_argument("--run-timeout", type=float, default=20.0, help="seconds for one program")
-    p.add_argument("--keep", action="store_true", help="keep the work directory")
+    p.add_argument("--keep", action="store_true",
+                   default=os.environ.get("KEEP_ARTIFACTS", "") not in ("", "0"),
+                   help="keep every test's work directory and staged C, passing or not "
+                        "(default from KEEP_ARTIFACTS=1)")
+    p.add_argument("--failures-dir", type=Path, default=REPO_ROOT / "build/test-failures",
+                   help="where a failing test's work directory, commands and output are kept")
+    p.add_argument("--cache-executables", action="store_true",
+                   help="with --result-cache, also store executables whose runs cannot be "
+                        "cached, so an unchanged rerun skips compiling them (make check)")
     p.add_argument("--self-check", action="store_true",
                    help="assert the must-fail gate itself goes red exactly "
                         "when it must; needs no compiler")
@@ -2080,16 +2184,20 @@ def main(argv: Sequence[str]) -> int:
     verdict_cache = (ResultCache(args.result_cache, tool, args)
                      if args.result_cache and not args.no_result_cache else None)
     args.verdict_cache = verdict_cache
+    args.full_selection = not args.filter and args.shard is None
+    args.failures_dir = args.failures_dir.resolve()
     if verdict_cache and verdict_cache.identity is None:
         print("run.py: result cache disabled: unsupported native toolchain/platform configuration")
     workroot = Path(tempfile.mkdtemp(prefix="zen-tests."))
     results: list[Result] = []
     deferred: list[Result] = []
     harness_errors: list[str] = []
+    kept_at: dict[str, Path] = {}
     started = time.perf_counter()
 
     def task(test: Test) -> Result:
         test_started = time.perf_counter()
+        _STEPS.steps = []
         try:
             key = verdict_cache.key(test) if verdict_cache else None
             result = verdict_cache.lookup(test, key) if verdict_cache else None
@@ -2104,6 +2212,7 @@ def main(argv: Sequence[str]) -> int:
             harness_errors.append(f"{test.tid}: {type(exc).__name__}: {exc}")
             result = Result(test, False, [f"harness error: {type(exc).__name__}: {exc}"])
         result.seconds = time.perf_counter() - test_started
+        result.steps, _STEPS.steps = _STEPS.steps, None
         return result
 
     try:
@@ -2115,6 +2224,12 @@ def main(argv: Sequence[str]) -> int:
             for raw in pool.map(task, selected):
                 result, is_deferred = stage_verdict(raw, args.stage)
                 results.append(result)
+                try:
+                    kept = settle_work(result, not result.ok and not is_deferred, workroot, args)
+                    if kept is not None:
+                        kept_at[result.test.tid] = kept
+                except OSError as exc:
+                    harness_errors.append(f"{result.test.tid}: cannot settle work directory: {exc}")
                 if is_deferred:
                     deferred.append(result)
                     if args.verbose:
@@ -2135,6 +2250,10 @@ def main(argv: Sequence[str]) -> int:
             print(f"run.py: work directory kept at {workroot}")
         else:
             shutil.rmtree(workroot, ignore_errors=True)
+        try:
+            args.failures_dir.rmdir()  # only succeeds when nothing failed
+        except OSError:
+            pass
 
     try:
         tool.check_source_state()
@@ -2158,6 +2277,8 @@ def main(argv: Sequence[str]) -> int:
             if result.detail:
                 for line in result.detail.splitlines():
                     print(f"    | {line}")
+            if result.test.tid in kept_at:
+                print(f"    kept: {display_path(kept_at[result.test.tid])}")
 
     if found.uncollected:
         print("\nuncollected (a .zen file that belongs to no test, so it never runs):")

@@ -402,6 +402,17 @@ class NativeCacheTests(unittest.TestCase):
         with self.assertRaisesRegex(runner.HarnessError, "without producing an object"):
             self.compile("int main(void) { return 1; }\n")
 
+    def test_staged_c_and_object_are_deleted_unless_kept(self):
+        result, _ = self.compile("int main(void) { return 0; }\n")
+        self.assertEqual(result.code, 0, result.stderr)
+        staged = [path.name for path in self.compiler.work_dir.rglob("*") if path.is_file()]
+        self.assertEqual(staged, ["compile.lock"])
+        self.compiler.keep = True
+        result, _ = self.compile("int main(void) { return 1; }\n")
+        self.assertEqual(result.code, 0, result.stderr)
+        staged = sorted(path.name for path in self.compiler.work_dir.rglob("*") if path.is_file())
+        self.assertEqual(staged, ["compile.lock", "out.c", "out.o"])
+
     def test_path_sensitive_c_keeps_original_include_and_file_semantics(self):
         source = self.root / "original.c"
         (self.root / "local.h").write_text("#define VALUE 3\n")
@@ -458,7 +469,8 @@ class ResultCacheTests(unittest.TestCase):
             path = self.sources / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
-        self.args = runner.parse_args(["--result-cache", str(self.root / "results"), "--stage", "4"])
+        self.args = runner.parse_args(["--result-cache", str(self.root / "results"), "--stage", "4",
+                                       "--cache-executables"])
         self.context = patch.object(runner.ResultCache, "context", return_value="fixture-toolchain")
         self.context.start()
         self.addCleanup(self.context.stop)
@@ -735,6 +747,75 @@ class ResultCacheTests(unittest.TestCase):
             subprocess.run(["cc", str(source), "-o", str(binary)], check=True)
             self.assertEqual(runner.deterministic_binary(binary, 10), allowed)
 
+    def test_executables_are_stored_only_on_request_and_stale_ones_pruned(self):
+        work = self.root / "work"
+        work.mkdir()
+        (work / "out.c").write_text("int main(void) { return 0; }\n")
+        (work / "prog").write_bytes(b"executable bytes")
+        (work / "prog").chmod(0o755)
+        self.args.cache_executables = False
+        cache = self.cache()
+        key = cache.key(self.test)
+        cache.lookup(self.test, key)
+        cache.remember_binary(self.test, work)
+        self.assertEqual(cache.artifacts, [])
+        self.args.cache_executables = True
+        stale = self.args.result_cache / ("0" * 64 + ".artifact")
+        stale.mkdir(parents=True)
+        # A filtered run cannot tell a stale executable from another test's.
+        self.args.full_selection = False
+        cache = self.cache()
+        cache.lookup(self.test, key)
+        cache.remember_binary(self.test, work)
+        cache.publish()
+        self.assertTrue(stale.is_dir())
+        self.args.full_selection = True
+        cache = self.cache()
+        cache.lookup(self.test, key)
+        cache.publish()
+        self.assertFalse(stale.exists())
+        self.assertTrue((self.args.result_cache / (key + ".artifact")).is_dir())
+
+    def test_passing_work_is_deleted_and_a_failure_keeps_what_debugging_needs(self):
+        self.args.failures_dir = self.root / "failures"
+        workroot = self.root / "workroot"
+        work = workroot / runner.work_name(self.test)
+        work.mkdir(parents=True)
+        (work / "prog").write_bytes(b"binary")
+        (work / "loop").symlink_to("loop")
+        step = runner.Run(["./prog", "an arg"], 3, b"out\n", b"err\n", False, False)
+        failed = runner.Result(self.test, False, ["exit code 3, expected 0"], "detail",
+                               steps=[(work, step)])
+        kept = runner.settle_work(failed, True, workroot, self.args)
+        self.assertEqual(kept, self.args.failures_dir / runner.work_name(self.test))
+        self.assertFalse(work.exists())
+        self.assertEqual((kept / "prog").read_bytes(), b"binary")
+        self.assertTrue((kept / "loop").is_symlink())
+        self.assertEqual((kept / "step1.stdout").read_bytes(), b"out\n")
+        self.assertEqual((kept / "step1.stderr").read_bytes(), b"err\n")
+        commands = (kept / "commands.sh").read_text()
+        self.assertIn("exit 3", commands)
+        self.assertIn("./prog 'an arg'", commands)
+        self.assertIn("exit code 3, expected 0", (kept / "verdict.txt").read_text())
+        # The next run's pass clears the stale record and its own scratch.
+        work.mkdir()
+        self.assertIsNone(runner.settle_work(runner.Result(self.test, True), False,
+                                             workroot, self.args))
+        self.assertFalse(work.exists())
+        self.assertFalse(kept.exists())
+        # --keep / KEEP_ARTIFACTS=1 leaves the work directory in place too.
+        work.mkdir()
+        self.args.keep = True
+        runner.settle_work(runner.Result(self.test, True), False, workroot, self.args)
+        self.assertTrue(work.is_dir())
+        kept = runner.settle_work(failed, True, workroot, self.args)
+        self.assertTrue(work.is_dir())
+        self.assertTrue((kept / "commands.sh").is_file())
+
+    def test_keep_artifacts_environment_sets_keep(self):
+        for value, keep in (("1", True), ("0", False), ("", False)):
+            with self.subTest(value=value), patch.dict(os.environ, {"KEEP_ARTIFACTS": value}):
+                self.assertEqual(runner.parse_args([]).keep, keep)
 
 if __name__ == "__main__":
     unittest.main()

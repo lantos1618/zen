@@ -74,9 +74,12 @@ build: $(BOOTSTRAP_ZEN)
 
 ## check: self-hosted build and cached tests; the default development command.
 ## FILTER selects test IDs; TEST_ARGS='--no-result-cache' forces execution.
+## The corpus runners delete a passing test's binary and generated C and keeps a
+## failing one's under build/test-failures (docs/TEST_ITERATION.md);
+## KEEP_ARTIFACTS=1 keeps everything.
 check: build
 	$(PY) tests/run.py --zen ./zen --cc "$(CC)" --cc-cache "$(CACHE)" --jobs "$(TEST_J)" \
-	  $(TEST_CACHE_ARGS) $(if $(strip $(FILTER)),--filter "$(FILTER)") $(TEST_ARGS)
+	  $(TEST_CACHE_ARGS) --cache-executables $(if $(strip $(FILTER)),--filter "$(FILTER)") $(TEST_ARGS)
 
 ## dev-build: the same build.zen graph with isolated artifacts and output.
 dev-build: export CC := $(CC)
@@ -94,7 +97,7 @@ dev-check: dev-build
 ## An empty FILTER runs the corpus; make verify remains the complete required gate.
 dev-check dev-run:
 	$(PY) tests/run.py --zen "$(DEV_ZEN)" --cc "$(CC)" --cc-cache "$(CACHE)" --jobs "$(TEST_J)" \
-	  $(TEST_CACHE_ARGS) $(if $(strip $(FILTER)),--filter "$(FILTER)") $(TEST_ARGS)
+	  $(TEST_CACHE_ARGS) --cache-executables $(if $(strip $(FILTER)),--filter "$(FILTER)") $(TEST_ARGS)
 
 ## buildcheck: native project builds, toolchain settings and atomic publication.
 buildcheck: build
@@ -479,7 +482,7 @@ clean-obj:
 
 ## clean-reports: remove generated test, profile, review, and source-health reports.
 clean-reports:
-	rm -rf build/test-results build/profiles build/review build/reviews build/source_health
+	rm -rf build/test-results build/test-failures build/profiles build/review build/reviews build/source_health
 	rm -rf build/*.log build/*.json build/*.tsv
 
 ## clean-all: remove the complete local build workspace and generated executables.

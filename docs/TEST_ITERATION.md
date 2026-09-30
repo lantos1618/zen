@@ -34,6 +34,12 @@ with fresh fixture staging and runtime assertions. Unsupported toolchain and
 path-sensitive configurations rebuild and execute normally. Failed and deferred
 results are never cached.
 
+Executables are stored only when the runner is given `--cache-executables`,
+which `make check`, `dev-check` and `dev-run` pass; `make test` and `make
+verify` store verdicts only. A run over the whole suite deletes stored
+executables that no test in it looked up, so a compiler rebuild does not leave
+the previous build's executables behind.
+
 `--refresh-result-cache` executes tests fresh and updates the cache after
 validation. `make verify` uses this mode: prior cached results and executables
 cannot satisfy verification, but its successful work speeds subsequent
@@ -157,6 +163,27 @@ compiler diagnostics, and native C support is relinked from its current sources
 on every run. Use ccache's standard `CCACHE_DIR` to choose object storage;
 `--cc-work-dir` controls only the stable compilation scratch paths. Keep these
 scratch paths stable between runs and remove them only when no runner uses them.
+Once the object is copied back, the staged C and object are deleted; the
+directory and its lock file stay, and together they are a few bytes per test.
+
+## What a run leaves behind
+
+A passing test's work directory -- staged sources, generated C, binary and
+anything the program wrote -- is deleted as soon as its verdict is final. A
+failing test's is moved to `build/test-failures/<test id>/` (`--failures-dir`)
+with `commands.sh` (every process the test ran, its working directory and exit
+status), `stepN.stdout`/`stepN.stderr` for each of them, and `verdict.txt` (the
+reasons printed in the summary). The summary's `kept:` line names it. A later
+run deletes the record of any selected test that no longer fails, and removes
+the directory when it is empty.
+
+`KEEP_ARTIFACTS=1` (or `--keep`) keeps everything instead: every work
+directory, reported at the end of the run, and the staged C and object under
+`build/test-native`. The JavaScript and native corpus runners (`tests/js`,
+`tests/native`) follow the same rule: `build/js-corpus/<test>/` and
+`build/native-corpus/<target>-<shard>/<test>/` are deleted on a pass and kept
+with `command.sh`, `stdout`, `stderr` and `verdict.txt` otherwise, and read the
+same `KEEP_ARTIFACTS`.
 
 ## Split one selection across workers or agents
 

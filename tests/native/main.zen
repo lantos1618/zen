@@ -60,6 +60,7 @@ Runner = {
     target: Target,
     work: str,
     sdk: str,
+    keep_all: bool,
 
     run = (self: @Self, argv: Vec<str>) Res<ProcOutput, AllocError> {
         self.env.proc.run_argv(self.a, "", argv).match({
@@ -90,27 +91,35 @@ Runner = {
         })
     }
 
-    link = (self: @Self, source: str, object: str, binary: str) Res<Res<str>, AllocError> {
+    assemble_argv = (self: @Self, source: str, object: str) Res<Vec<str>, AllocError> {
         assemble ::= self.a.Vec<str>();
         assembler = self.a.String("{}as", self.target.cross).try();
         assemble.add(assembler.view()).try();
         self.target.os.eq("darwin").then(() { assemble.add("-arch").try(); assemble.add("arm64").try(); });
         [source, "-o", object].loop((w) { assemble.add(w).try(); });
-        first = self.run(assemble).try();
+        Ok(assemble)
+    }
+
+    link_argv = (self: @Self, object: str, binary: str) Res<Vec<str>, AllocError> {
+        link ::= self.a.Vec<str>();
+        linker = self.a.String("{}ld", self.target.cross).try();
+        link.add(linker.view()).try();
+        self.target.os.eq("darwin").match({
+            true  => {
+                ["-arch", "arm64", "-platform_version", "macos", "11.0", "11.0", "-e", "_main", "-lSystem", "-syslibroot", self.sdk].loop((w) { link.add(w).try(); });
+            },
+            false => link.add("-static").try(),
+        });
+        [object, "-o", binary].loop((w) { link.add(w).try(); });
+        Ok(link)
+    }
+
+    link = (self: @Self, source: str, object: str, binary: str) Res<Res<str>, AllocError> {
+        first = self.run(self.assemble_argv(source, object).try()).try();
         (first.code == 0).match({
             false => Ok(Ok(first.err.view())),
             true  => {
-                link ::= self.a.Vec<str>();
-                linker = self.a.String("{}ld", self.target.cross).try();
-                link.add(linker.view()).try();
-                self.target.os.eq("darwin").match({
-                    true  => {
-                        ["-arch", "arm64", "-platform_version", "macos", "11.0", "11.0", "-e", "_main", "-lSystem", "-syslibroot", self.sdk].loop((w) { link.add(w).try(); });
-                    },
-                    false => link.add("-static").try(),
-                });
-                [object, "-o", binary].loop((w) { link.add(w).try(); });
-                second = self.run(link).try();
+                second = self.run(self.link_argv(object, binary).try()).try();
                 (second.code == 0).match({ true => Ok(None), false => Ok(Ok(second.err.view())) })
             },
         })
@@ -118,11 +127,12 @@ Runner = {
 
     // Launch under a 10 s alarm, with the test's arguments, environment
     // and stdin; a POSIX shell only performs the redirection.
-    execute = (self: @Self, c: Case, binary: str, index: usize) Res<ProcOutput, AllocError> {
+    // Stages the run directory and returns the shell command that runs it.
+    launch = (self: @Self, c: Case, binary: str, dir: str) Res<String, AllocError> {
         // As tests/run.py stages it: the program runs in a scratch
         // directory where its root is visible as `src`.
         here = self.env.fs.cwd(self.a).match({ Ok(s) => s.view(), Err(_) => "." });
-        run_dir = self.a.String("{}/{}/run{}", here, self.work, index).try();
+        run_dir = self.a.String("{}/{}/run", here, dir).try();
         setup ::= self.a.Vec<str>();
         // The program is invoked as `<run dir>/prog`, the name argv[0] tests
         // pin, and the symlink-loop test finds its loop staged beside it.
@@ -159,8 +169,12 @@ Runner = {
             true  => command.fmt(" < '{}/{}'", here, stdin.view()),
             false => command.add(" < /dev/null"),
         }).try();
+        Ok(command)
+    }
+
+    shell = (self: @Self, command: str) Res<ProcOutput, AllocError> {
         argv ::= self.a.Vec<str>();
-        ["/bin/sh", "-c", command.view()].loop((w) { argv.add(w).try(); });
+        ["/bin/sh", "-c", command].loop((w) { argv.add(w).try(); });
         self.run(argv)
     }
 
@@ -173,13 +187,13 @@ Runner = {
 
     // The harness rewrites this test's epoch to the current second, as
     // tests/run.py does, in a staged copy.
-    staged = (self: @Self, c: Case, index: usize) Res<Case, AllocError> {
+    staged = (self: @Self, c: Case, work: str) Res<Case, AllocError> {
         c.base.ends_with("clock_reads_are_two_authorities").match({
             false => Ok(c),
             true  => {
                 source = self.a.String("{}/{}", c.root, c.entry).try();
                 text = self.read(source.view()).value_or("");
-                dir = self.a.String("{}/stage{}", self.work, index).try();
+                dir = self.a.String("{}/stage", work).try();
                 mkdir ::= self.a.Vec<str>();
                 ["mkdir", "-p", dir.view()].loop((w) { mkdir.add(w).try(); });
                 self.run(mkdir).try();
@@ -200,33 +214,77 @@ Runner = {
         })
     }
 
-    // One test's verdict line.
-    case = (self: @Self, original: Case, index: usize, tally :: Tally) Res<(), AllocError> {
-        c = self.staged(original, index).try();
-        source = self.a.String("{}/t{}.s", self.work, index).try();
-        object = self.a.String("{}/t{}.o", self.work, index).try();
-        binary = self.a.String("{}/t{}", self.work, index).try();
+    // One test's verdict line. Each test works in `<work>/<test base with /
+    // as _>/`: the assembly, object, binary, run directory and any staged
+    // copy. A pass deletes it; any other verdict leaves it in place with
+    // `command.sh` (the exact compile, assemble, link and run commands),
+    // `stdout`, `stderr` and `verdict.txt`, so everything left under the work
+    // root after a run is a test that did not pass.
+    case = (self: @Self, original: Case, tally :: Tally) Res<(), AllocError> {
+        dir = self.a.String("{}/{}", self.work, slug(self.a, original.base).try().view()).try();
+        mkdir ::= self.a.Vec<str>();
+        ["mkdir", "-p", dir.view()].loop((w) { mkdir.add(w).try(); });
+        self.run(mkdir).try();
+        c = self.staged(original, dir.view()).try();
+        source = self.a.String("{}/prog.s", dir.view()).try();
+        object = self.a.String("{}/prog.o", dir.view()).try();
+        binary = self.a.String("{}/prog", dir.view()).try();
+        commands ::= self.a.String("'{}' build '{}' --entry '{}' --std src --backend asm --target '{}' -o '{}'\n", self.zen, c.root, c.entry, self.target_name, source.view()).try();
         self.compile(c, source.view()).try().match({
             Ok(reason) => {
                 tally.unsupported = tally.unsupported + 1;
                 println("UNSUPPORTED {} :: {}", c.base, first_line(reason));
+                self.keep(dir.view(), c.base, "UNSUPPORTED", commands.view(), "", reason, first_line(reason));
             },
-            None       => self.link(source.view(), object.view(), binary.view()).try().match({
-                Ok(reason) => {
-                    tally.broken = tally.broken + 1;
-                    println("BROKEN {} :: {}", c.base, first_line(reason));
-                },
-                None       => {
-                    result = self.execute(c, binary.view(), index).try();
-                    verdict = self.compare(c, result).try();
-                    verdict.is_empty().match({
-                        true  => { tally.pass = tally.pass + 1; println("PASS {}", c.base); },
-                        false => { tally.fail = tally.fail + 1; println("FAIL {} :: {}", c.base, verdict); },
-                    });
-                },
-            }),
+            None       => {
+                commands.add(quoted(self.a, self.assemble_argv(source.view(), object.view()).try()).try().view()).try();
+                commands.add(quoted(self.a, self.link_argv(object.view(), binary.view()).try()).try().view()).try();
+                self.link(source.view(), object.view(), binary.view()).try().match({
+                    Ok(reason) => {
+                        tally.broken = tally.broken + 1;
+                        println("BROKEN {} :: {}", c.base, first_line(reason));
+                        self.keep(dir.view(), c.base, "BROKEN", commands.view(), "", reason, first_line(reason));
+                    },
+                    None       => {
+                        command = self.launch(c, binary.view(), dir.view()).try();
+                        commands.fmt("{}\n", command.view()).try();
+                        result = self.shell(command.view()).try();
+                        verdict = self.compare(c, result).try();
+                        verdict.is_empty().match({
+                            true  => {
+                                tally.pass = tally.pass + 1;
+                                println("PASS {}", c.base);
+                                (!self.keep_all).then(() {
+                                    remove ::= self.a.Vec<str>();
+                                    ["rm", "-rf", dir.view()].loop((w) { remove.add(w).try(); });
+                                    self.run(remove).try();
+                                });
+                            },
+                            false => {
+                                tally.fail = tally.fail + 1;
+                                println("FAIL {} :: {}", c.base, verdict);
+                                self.keep(dir.view(), c.base, "FAIL", commands.view(), result.out.view(), result.err.view(), verdict);
+                            },
+                        });
+                    },
+                });
+            },
         });
         Ok(())
+    }
+
+    keep = (self: @Self, dir: str, base: str, verdict: str, commands: str, out: str, err: str, reason: str) {
+        self.write(dir, "command.sh", self.a.String("#!/bin/sh\n# {}: {}\n# from the repository root\n{}", base, verdict, commands).match({ Ok(t) => t.view(), Err(_) => "" }));
+        self.write(dir, "stdout", out);
+        self.write(dir, "stderr", err);
+        self.write(dir, "verdict.txt", self.a.String("{} {}\n", verdict, reason).match({ Ok(t) => t.view(), Err(_) => "" }));
+    }
+
+    write = (self: @Self, dir: str, name: str, text: str) {
+        self.a.String("{}/{}", dir, name).match({
+            Ok(path) => self.env.fs.write(path.view(), text).ignore(),
+            Err(_)   => (),
+        });
     }
 
     compare = (self: @Self, c: Case, result: ProcOutput) Res<str, AllocError> {
@@ -258,6 +316,27 @@ repeat = (a: Alloc, byte: u8, n: usize) Res<String, AllocError> {
     out ::= a.String().try();
     Range(0, n).loop((_) { out.add(byte).try(); });
     Ok(out)
+}
+
+// A test base as one directory name: `tests/corpus/a/b` -> `tests_corpus_a_b`.
+slug = (a: Alloc, base: str) Res<String, AllocError> {
+    out ::= a.String().try();
+    Range(0, base.len).loop((k) {
+        b = base.index(k);
+        out.add((b == '/').match({ true => '_', false => b })).try();
+    });
+    Ok(out)
+}
+
+// An argv as one shell line, each word single-quoted.
+quoted = (a: Alloc, argv: Vec<str>) Res<String, AllocError> {
+    line ::= a.String().try();
+    argv.loop((h, i, w) {
+        (i > 0).then(() { line.add(" ").try(); });
+        line.fmt("'{}'", w).try();
+    });
+    line.add("\n").try();
+    Ok(line)
 }
 
 first_line = (text: str) str {
@@ -309,7 +388,8 @@ main = (env: Env) Res<i32, AllocError> {
     });
     work = a.String("build/native-corpus/{}-{}", target_name, shard).try();
     mkdir ::= a.Vec<str>();
-    ["mkdir", "-p", work.view()].loop((w) { mkdir.add(w).try(); });
+    // What an earlier run of this target and shard left is stale.
+    ["/bin/sh", "-c", a.String("rm -rf '{}' && mkdir -p '{}'", work.view(), work.view()).try().view()].loop((w) { mkdir.add(w).try(); });
     env.proc.run_argv(a, "", mkdir).ignore();
     sdk = target.os.eq("darwin").match({
         true  => {
@@ -326,11 +406,13 @@ main = (env: Env) Res<i32, AllocError> {
     listed.split('\n').loop((line) {
         (!line.is_empty() && line.contains(filter)).then(() { paths.add(line).try(); });
     });
-    runner = Runner(env: env, a: a, zen: zen, target_name: target_name, target: target, work: work.view(), sdk: sdk);
+    keep_flag = env.var("KEEP_ARTIFACTS").value_or("");
+    runner = Runner(env: env, a: a, zen: zen, target_name: target_name, target: target, work: work.view(), sdk: sdk,
+                    keep_all: !keep_flag.eq("") && !keep_flag.eq("0"));
     tally ::= Tally();
     paths.loop((h, i, path) {
         (i % shards == shard).then(() {
-            case_of(a, path).try().when_ok((c) { runner.case(c, i, tally).try(); });
+            case_of(a, path).try().when_ok((c) { runner.case(c, tally).try(); });
         });
     });
     total = tally.pass + tally.fail + tally.unsupported + tally.broken;
@@ -343,5 +425,14 @@ main = (env: Env) Res<i32, AllocError> {
         tally.broken,
         total
     );
+    // Only tests that did not pass are left; the root goes when none are.
+    tidy ::= a.Vec<str>();
+    ["rmdir", work.view()].loop((w) { tidy.add(w).try(); });
+    env.proc.run_argv(a, "", tidy).match({
+        Ok(out) => (out.code != 0).then(() {
+            println("native-corpus: each test that did not pass is kept under {}/<test>/ (command.sh, stdout, stderr)", work.view());
+        }),
+        Err(_)  => (),
+    });
     Ok(0)
 }

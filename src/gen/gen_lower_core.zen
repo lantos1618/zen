@@ -22,10 +22,12 @@ PatternId = std.ast
 nowhere = std.ast
 Checker, DeclId, Def, TyId, Ctx, Inst, decl_at = sema.sema
 subst, type_from_ast, is_prim, const_int, fits = sema.sema
+Pat, PatReading, read_pattern = sema.sema
 is_drop_type = sema.sema_drop
 Scalar, Layout, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print = gen.gen_ir
 Branch, Instruction, Func, Program, BasicBlock, Terminator = gen.gen_ir
 Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault = gen.gen_ir
+Guards, TagGuard, PayloadRead = gen.gen_ir
 word, integer, same = gen.gen_ir
 LowerError, unsupported = gen.gen_lower
 Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of = gen.gen_lower_shape
@@ -62,6 +64,12 @@ Expected* = { id*: ExprId, ty*: TyId }
 Tail = Expression(ExprId) | Nested(BlockId) | Nothing
 
 Broken* = { ty*: TyId, fault*: LowerError }
+
+// The payload a pattern test read for the reading at index `at`.
+TestedPayload* = { at*: usize, value*: Value }
+
+// A Bool slot holding `subject`'s tag compared with alternative `variant`.
+CaseTest* = { test*: usize, subject*: usize, variant*: usize, otherwise*: Res<usize> }
 
 // One lexical function body: the real function or an inlined callee. Names,
 // types and `.try()` resolve in the frame that wrote them. `scope` says
@@ -144,6 +152,12 @@ Lowerer* = {
     vias* :: Vec<Res<TyId>>,
     made* :: Vec<TyId>,
     broken* :: Vec<Broken>,
+    // Per real function: the tag tests and payload reads the verifier
+    // checks against each other (gen_ir.Guards). `case_tests` remembers
+    // which Bool slots hold a tag test until a branch consumes one.
+    case_tests* :: Vec<CaseTest>,
+    tag_guards* :: Vec<TagGuard>,
+    payload_reads* :: Vec<PayloadRead>,
 
     // -------------------------------------------------------------------
     // blocks and slots
@@ -195,6 +209,18 @@ Lowerer* = {
 
     branch_to* = (self :: @Self, value: usize, yes: usize, no: usize)
                  Res<(), LowerError> {
+        // A branch on a tag test is a guard the verifier can hold payload
+        // reads to.
+        self.current.when_ok((block) {
+            self.case_tests.find((t) { t.test == value }).when_ok((t) {
+                self.tag_guards.add(TagGuard(
+                    block: block,
+                    subject: t.subject,
+                    variant: t.variant,
+                    otherwise: t.otherwise
+                )).try(LowerError.OutOfMemory);
+            });
+        });
         self.finish(Terminator.Branch(Branch(value: value, yes: yes, no: no)))
     }
 
@@ -1087,15 +1113,18 @@ Lowerer* = {
         self.block_as(id, true, Ok(want))
     }
 
-    // The integer type a context wants for an expression sema left at the
-    // open literal type `int` (a `match` or block whose results are
-    // literals), else the expression's own type. Lowering the results at
-    // the wanted type lets them fold to constants of that type.
+    // The type a context wants for a `match` or block expression when sema
+    // left the expression's own type open: an unsettled one (a `None` arm
+    // joined with an arm returning `Res<str>` is `Res<?>`), or the open
+    // literal type `int` where an integer type is wanted. Lowering the arms
+    // at the wanted type gives every arm one layout, and lets literal arms
+    // fold to constants of that type.
     narrowed = (self :: @Self, id: ExprId) Res<TyId, LowerError> {
         own = self.type_of(id).try();
         wanted = self.expected.match({
-            Ok(want) => (want.id == id && self.prim_name(own).eq("int")
-                && !self.prim_name(want.ty).eq("int") && self.integer_type(want.ty)).match({
+            Ok(want) => (want.id == id && self.settled(want.ty) && (!self.settled(own)
+                || (self.prim_name(own).eq("int") && !self.prim_name(want.ty).eq("int")
+                    && self.integer_type(want.ty)))).match({
                 true  => Ok(want.ty),
                 false => None,
             }),
@@ -1585,23 +1614,35 @@ Lowerer* = {
             .ok_or(unsupported(nowhere(), self.described("a payload of a value without one", value.ty))).try();
         variant = tagged.variants.get(tag).ok_or(unsupported(nowhere(), "a missing variant")).try();
         ty = variant.payload.ok_or(unsupported(nowhere(), "a payload-free variant")).try();
+        self.current.when_ok((block) {
+            self.payload_reads.add(PayloadRead(block: block, at: self.code.len, subject: value.slot, variant: tag))
+                .try(LowerError.OutOfMemory);
+        });
         self.read(Place(base: Base.InSlot(value.slot), offset: tagged.payload, ty: ty))
     }
 
+    // Each arm's tests come from sema's reading of its pattern (the tree its
+    // coverage check used), not from the pattern's spelling: whether a name
+    // is a binder, a case, or a case of one member of an error set is sema's
+    // decision, and the lowering only follows it. A case the reading names
+    // that the lowered layout lacks is a compiler error, never a binder.
     match_expr = (self :: @Self, id: ExprId, m: Match, span: Span) Res<Value, LowerError> {
         ty    = self.narrowed(id).try();
         subject_ty = self.type_of(m.scrutinee).try();
         subject = self.expr_as(m.scrutinee, subject_ty).try();
         out   = self.temp(ty).try();
         done  = self.label().try();
-        s     = self.shape(subject_ty).try();
         m.arms.loop((arm) {
+            reading = self.check.read_pattern(arm.pattern, subject_ty, self.ctx()).try(LowerError.OutOfMemory);
             next = self.label().try();
             body = self.label().try();
             mark = self.locals.len;
-            self.test_pattern(arm.pattern, subject, body, next).try();
+            // Payloads the tests read, by reading index; the binders take
+            // these same values, which the tests' guards cover.
+            read ::= self.alloc.Vec<TestedPayload>();
+            self.test_pattern(reading, reading.root, arm.pattern, subject, body, next, read).try();
             self.start(body);
-            self.bind_pattern(arm.pattern, subject).try();
+            self.bind_pattern(reading, reading.root, arm.pattern, subject, read).try();
             value = self.expr_as(arm.body, ty).try();
             self.add(Instruction.Copy(Move(out: out.slot, source: value.slot))).try();
             self.release_locals(mark);
@@ -1614,37 +1655,73 @@ Lowerer* = {
         Ok(out)
     }
 
-    // Branch to `yes` when the pattern matches, else to `no`. A nested
-    // pattern tests the payload only after its variant matched.
-    test_pattern = (self :: @Self, id: PatternId, subject: Value, yes: usize, no: usize)
-                   Res<(), LowerError> {
-        p = self.tree.pattern_at(id);
+    // Branch to `yes` when the reading `at` matches `subject`, else to `no`.
+    // `node` is the written pattern the reading came from, consulted only
+    // for a literal's value. A nested reading tests the payload only after
+    // its case matched.
+    test_pattern = (self :: @Self, reading: PatReading, at: usize, node: PatternId,
+                    subject: Value, yes: usize, no: usize, read :: Vec<TestedPayload>) Res<(), LowerError> {
+        p = reading.pats.at(at);
         p.kind.match({
-            Wild           => self.jump(yes),
-            Literal(l)     => {
-                expected = self.literal_pattern(l, subject.ty, p.span).try();
-                test = self.equal_test(subject, expected).try();
+            WildPat => self.jump(yes),
+            LitPat  => {
+                test = self.literal_test(node, subject).try();
                 self.branch_to(test, yes, no)
             },
-            Name(n)        => self.variant_position(subject.ty, n.name.last_segment()).match({
-                // A binder always matches.
-                None        => self.jump(yes),
-                Ok(index)   => {
-                    test = self.tag_test(subject, index).try();
+            CtorPat => self.tree.pattern_at(node).kind.match({
+                // `true`/`false` are sema's constructors of bool.
+                Literal(_) => {
+                    test = self.literal_test(node, subject).try();
                     self.branch_to(test, yes, no)
                 },
+                _          => {
+                    index = self.case_index(subject.ty, p).try();
+                    test = self.tag_test(subject, index).try();
+                    sub = p.has_sub.match({ true => Ok(reading.pats.at(p.sub)), false => None });
+                    open = sub.match({ Ok(q) => q.kind.match({ WildPat => false, _ => true }), None => false });
+                    open.match({
+                        false => self.branch_to(test, yes, no),
+                        true  => {
+                            inner = self.label().try();
+                            self.branch_to(test, inner, no).try();
+                            self.start(inner);
+                            payload = self.payload_of(subject, index).try();
+                            read.add(TestedPayload(at: p.sub, value: payload)).try(LowerError.OutOfMemory);
+                            self.test_pattern(reading, p.sub, self.sub_node(node, p), payload, yes, no, read)
+                        },
+                    })
+                },
             }),
-            Destructure(d) => {
-                index = self.variant_position(subject.ty, d.name.last_segment())
-                    .ok_or(unsupported(p.span, "an unknown variant pattern")).try();
-                test = self.tag_test(subject, index).try();
-                inner = self.label().try();
-                self.branch_to(test, inner, no).try();
-                self.start(inner);
-                payload = self.payload_of(subject, index).try();
-                self.test_pattern(d.binder, payload, yes, no)
-            },
         })
+    }
+
+    // The tag of the case a constructor reading names. Sema read a case
+    // here; if the layout has no such alternative the two disagree, and the
+    // program is refused rather than matched by the tag alone.
+    case_index = (self :: @Self, ty: TyId, p: Pat) Res<usize, LowerError> {
+        self.variant_position(ty, p.name).ok_or(unsupported(
+            p.span,
+            self.described("a case sema read in this pattern that the lowered layout lacks", ty)
+        ))
+    }
+
+    // The written pattern beneath a constructor reading. `Err(e)` reads as
+    // `Err` over `e`; `Err(Authentication)` on an error set reads as `Err`
+    // over `Kind(Authentication)`, where `Kind` has no spelling of its own,
+    // so the member level keeps the node that spelled the case.
+    sub_node = (self: @Self, node: PatternId, p: Pat) PatternId {
+        self.tree.pattern_at(node).kind.match({
+            Destructure(d) => d.name.last_segment().eq(p.name).match({ true => d.binder, false => node }),
+            _              => node,
+        })
+    }
+
+    literal_test = (self :: @Self, node: PatternId, subject: Value) Res<usize, LowerError> {
+        written = self.tree.pattern_at(node);
+        l = written.kind.match({ Literal(l) => Ok(l), _ => None })
+            .ok_or(unsupported(written.span, "a literal reading of a pattern that is not a literal")).try();
+        expected = self.literal_pattern(l, subject.ty, written.span).try();
+        self.equal_test(subject, expected)
     }
 
     variant_position = (self :: @Self, ty: TyId, name: str) Res<usize> {
@@ -1657,11 +1734,23 @@ Lowerer* = {
         })
     }
 
-    tag_test = (self :: @Self, subject: Value, index: usize) Res<usize, LowerError> {
+    // A Bool slot that is true when `subject` holds alternative `index`.
+    // For a value with payloads the test is remembered, so the branch that
+    // consumes it becomes a guard (see `branch_to`).
+    tag_test* = (self :: @Self, subject: Value, index: usize) Res<usize, LowerError> {
         tag = self.tag_of(subject).try();
         expected = self.word_const(Scalar.U32, index.to_i64_bits()).try();
         test = self.slot_of(Scalar.Bool).try();
         self.add(Instruction.BinaryValue(Binary(out: test, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+        self.shape(subject.ty).try().form.match({
+            Variants(t) => {
+                // With two alternatives, failing the test proves the other.
+                otherwise: Res<usize> = (t.variants.len == 2).match({ true => Ok(1 - index), false => None });
+                self.case_tests.add(CaseTest(test: test, subject: subject.slot, variant: index, otherwise: otherwise))
+                    .try(LowerError.OutOfMemory);
+            },
+            _           => (),
+        });
         Ok(test)
     }
 
@@ -1723,32 +1812,34 @@ Lowerer* = {
         })
     }
 
-    // Binders: a bare name that is not a variant binds the whole subject; a
-    // destructure binds the payload.
-    bind_pattern = (self :: @Self, id: PatternId, subject: Value) Res<(), LowerError> {
-        p = self.tree.pattern_at(id);
+    // Binders come from the reading too: a wildcard with a name binds the
+    // whole subject, a constructor binds inside its payload. A payload is
+    // read only when something beneath it binds.
+    bind_pattern = (self :: @Self, reading: PatReading, at: usize, node: PatternId,
+                    subject: Value, read :: Vec<TestedPayload>) Res<(), LowerError> {
+        p = reading.pats.at(at);
         p.kind.match({
-            Name(n)        => {
-                is_variant = self.variants_of(subject.ty).match({
-                    Ok(v)  => variant_index(v, n.name.last_segment()).match({ Ok(_) => true, None => false }),
-                    Err(_) => false,
-                });
-                is_variant.match({
-                    true  => Ok(()),
-                    false => {
-                        copy = self.copy_value(subject).try();
-                        self.bind_local(n.name.last_segment(), LocalKind.Direct(copy))
-                    },
-                })
-            },
-            Destructure(d) => {
-                variants = self.variants_of(subject.ty).try();
-                index = variant_index(variants, d.name.last_segment())
-                    .ok_or(unsupported(p.span, "an unknown variant pattern")).try();
-                payload = self.payload_of(subject, index).try();
-                self.bind_pattern(d.binder, payload)
-            },
-            _              => Ok(()),
+            WildPat => p.binder.is_empty().match({
+                true  => Ok(()),
+                false => {
+                    copy = self.copy_value(subject).try();
+                    self.bind_local(p.binder, LocalKind.Direct(copy))
+                },
+            }),
+            CtorPat => (p.has_sub && binds(reading, p.sub)).match({
+                false => Ok(()),
+                true  => {
+                    payload = read.find((t) { t.at == p.sub }).match({
+                        Ok(t) => t.value,
+                        None  => {
+                            index = self.case_index(subject.ty, p).try();
+                            self.payload_of(subject, index).try()
+                        },
+                    });
+                    self.bind_pattern(reading, p.sub, self.sub_node(node, p), payload, read)
+                },
+            }),
+            LitPat  => Ok(()),
         })
     }
 
@@ -1763,10 +1854,7 @@ Lowerer* = {
         value = self.expr(operand).try();
         variants = self.variants_of(value.ty).try();
         ok_tag = variant_index(variants, "Ok").ok_or(unsupported(span, "try on a value without Ok")).try();
-        tag = self.tag_of(value).try();
-        expected = self.word_const(Scalar.U32, ok_tag.to_i64_bits()).try();
-        is_ok = self.slot_of(Scalar.Bool).try();
-        self.add(Instruction.BinaryValue(Binary(out: is_ok, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+        is_ok = self.tag_test(value, ok_tag).try();
         good = self.label().try();
         bad  = self.label().try();
         self.branch_to(is_ok, good, bad).try();
@@ -1878,13 +1966,10 @@ Lowerer* = {
         source = self.variants_of(value.ty).try();
         out = self.temp(target).try();
         done = self.label().try();
-        tag = self.tag_of(value).try();
         source.loop((h, i, variant) {
             yes  = self.label().try();
             next = self.label().try();
-            expected = self.word_const(Scalar.U32, i.to_i64_bits()).try();
-            test = self.slot_of(Scalar.Bool).try();
-            self.add(Instruction.BinaryValue(Binary(out: test, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+            test = self.tag_test(value, i).try();
             self.branch_to(test, yes, next).try();
             self.start(yes);
             target_variants = self.variants_of(target).try();
@@ -2010,6 +2095,9 @@ Lowerer* = {
         self.scopes  = self.alloc.Vec<Cleanup>();
         self.drops   = self.alloc.Vec<DropEntry>();
         self.defers  = self.alloc.Vec<DeferEntry>();
+        self.case_tests = self.alloc.Vec<CaseTest>();
+        self.tag_guards = self.alloc.Vec<TagGuard>();
+        self.payload_reads = self.alloc.Vec<PayloadRead>();
         self.depth   = 0;
         self.prologue = self.alloc.Vec<Instruction>();
         entry_block = self.label().try();
@@ -2052,9 +2140,10 @@ Lowerer* = {
         params.loop((h, i, p) {
             kinds.get(i).when_ok((k) { self.bind_local(p.name.text, k).try(); });
         });
-        // An integer result lowers the body's value at that type, so an
-        // open literal result is a constant of it.
-        value = self.integer_type(ret_ty).match({
+        // The body's value is lowered at the result type, so an open
+        // literal result is a constant of it and an open `match` result
+        // takes its layout.
+        value = self.settled(ret_ty).match({
             true  => self.block_want(body, ret_ty),
             false => self.block(body),
         }).try();
@@ -2084,7 +2173,8 @@ Lowerer* = {
             parameters: parameters,
             slots: self.slots,
             blocks: blocks,
-            result: result_class
+            result: result_class,
+            guards: Ok(Guards(tests: self.tag_guards, reads: self.payload_reads))
         ))
     }
 
@@ -2127,10 +2217,7 @@ Lowerer* = {
                 variants = self.variants_of(value.ty).try();
                 ok = variant_index(variants, "Ok").ok_or(unsupported(nowhere(), "a main result without Ok")).try();
                 out = self.word_const(Scalar.I32, 1).try();
-                tag = self.tag_of(value).try();
-                expected = self.word_const(Scalar.U32, ok.to_i64_bits()).try();
-                test = self.slot_of(Scalar.Bool).try();
-                self.add(Instruction.BinaryValue(Binary(out: test, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+                test = self.tag_test(value, ok).try();
                 yes  = self.label().try();
                 done = self.label().try();
                 self.branch_to(test, yes, done).try();
@@ -2169,6 +2256,16 @@ Lowerer* = {
             },
         })
     }
+}
+
+// Whether a reading binds a name anywhere beneath `at`.
+binds = (reading: PatReading, at: usize) bool {
+    p = reading.pats.at(at);
+    p.kind.match({
+        WildPat => !p.binder.is_empty(),
+        CtorPat => p.has_sub && binds(reading, p.sub),
+        LitPat  => false,
+    })
 }
 
 // Two's-complement bits of an unsigned value as a signed constant. The
@@ -2254,7 +2351,10 @@ lower* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
         defers: alloc.Vec<DeferEntry>(),
         vias: alloc.Vec<Res<TyId>>(),
         made: alloc.Vec<TyId>(),
-        broken: alloc.Vec<Broken>()
+        broken: alloc.Vec<Broken>(),
+        case_tests: alloc.Vec<CaseTest>(),
+        tag_guards: alloc.Vec<TagGuard>(),
+        payload_reads: alloc.Vec<PayloadRead>()
     );
     main_decl = decl_at(tree, main).ok_or(unsupported(module.span, "a missing main function")).try();
     main_fn = main_decl.kind.match({ Function(f) => Ok(f), _ => None })

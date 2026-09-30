@@ -471,7 +471,9 @@ the `VerifiedProgram` token. Its rules, beyond what `gen_verify` checks today
    `Drop` of a possibly moved place requires its drop flag.
 3. **Payload guard (§2.6).** Every `Payload(v)` is dominated by a
    discriminant `Switch` edge for `v` on the same place, with no intervening
-   write.
+   write. *Implemented* over today's IR: the lowering records its tag tests
+   and payload reads in `Func.guards`, and `gen_verify` checks each test's
+   shape and each read's dominating fact.
 4. **Bounds guard.** Every `Index` and every vector `Lane`/`WithLane` is
    dominated by its bounds check, or indexes with a constant below a
    statically known length.

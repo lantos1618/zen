@@ -26,3 +26,7 @@ both predecessors ok
 missing predecessor 0:3 slot is read before initialization on a reachable path
 initialized loop ok
 circular initialization 0:1 slot is read before initialization on a reachable path
+guarded payload ok
+payload of another alternative 0:1 a payload is read without a test for its alternative on every path
+payload on the failing edge 0:2 a payload is read without a test for its alternative on every path
+guard that tests another alternative 0:0 a recorded tag guard does not branch on that slot's tag

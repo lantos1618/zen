@@ -144,6 +144,12 @@ compute_shape = (lo :: Lowerer, ty: TyId) Res<Shape, LowerError> {
         Union(_) => {
             cases ::= lo.alloc.Vec<Case>();
             lo.check.cases_of(ty, cases).try(LowerError.OutOfMemory);
+            // One set reached through different spellings (`Kind | Fail`
+            // in a signature, `Both` declared as `Kind | Fail`) can arrive
+            // as different types listing its members in different orders.
+            // Tags follow member names, so every spelling shares a layout
+            // and a value built under one is read correctly under another.
+            by_name(cases);
             lo.tagged(cases)
         },
         Array(a) => {
@@ -190,6 +196,9 @@ named_shape = (lo :: Lowerer, n: TyNamed, ty: TyId) Res<Shape, LowerError> {
                     Enum(_)   => {
                         cases ::= lo.alloc.Vec<Case>();
                         lo.check.cases_of(ty, cases).try(LowerError.OutOfMemory);
+                        // A declared set (`Both = Kind | Fail`) shares the
+                        // layout of every other spelling of its members.
+                        lo.check.union_reading(n.decl).then(() { by_name(cases); });
                         lo.tagged(cases)
                     },
                     _         => Err(unsupported(decl.span, "this kind of type declaration")),
@@ -284,6 +293,29 @@ tagged = (lo :: Lowerer, cases: Vec<Case>) Res<Shape, LowerError> {
                 form: Form.Variants(Tagged(variants: variants, payload: offset))
             ))
         },
+    })
+}
+
+// Insertion sort by case name; sets have a handful of members.
+by_name = (cases :: Vec<Case>) {
+    Range(1, cases.len).loop((i) {
+        j ::= i;
+        loop(() { j > 0 && name_before(cases, j, j - 1) }, (h) {
+            cases.get(j).when_ok((right) {
+                cases.get(j - 1).when_ok((left) {
+                    cases.set(j - 1, right);
+                    cases.set(j, left);
+                });
+            });
+            j = j - 1;
+        });
+    });
+}
+
+name_before = (cases: Vec<Case>, a: usize, b: usize) bool {
+    cases.get(a).match({
+        None    => false,
+        Ok(one) => cases.get(b).match({ None => false, Ok(two) => one.name.before(two.name) }),
     })
 }
 

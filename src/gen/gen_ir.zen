@@ -140,7 +140,25 @@ Func* = {
     // Execution starts at block zero. Slots are mutable within one invocation.
     blocks*: Vec<BasicBlock>,
     result*: Scalar,
+    // The lowering's claims about tagged values, which the verifier checks
+    // (see `Guards`). Renderers ignore them. None for hand-built IR.
+    guards* :: Res<Guards> = None,
 }
+
+// A payload is only meaningful for the alternative a tagged value holds, and
+// reading it as another alternative reinterprets bytes. The lowering says
+// where it tests a tag and where it reads a payload; the verifier requires
+// every read to sit behind a test of that same slot for that same
+// alternative on every path, with no write to the slot in between.
+//
+// `block` ends in a Branch on `Equal(Load(AddressOf(subject), 0),
+// Const(variant))`; its yes edge proves `subject` holds `variant`, and its no
+// edge proves `otherwise` when the value has exactly two alternatives.
+TagGuard* = { block*: usize, subject*: usize, variant*: usize, otherwise*: Res<usize> }
+// A read of `subject`'s payload as `variant`, in `block` before instruction
+// `at`.
+PayloadRead* = { block*: usize, at*: usize, subject*: usize, variant*: usize }
+Guards* = { tests*: Vec<TagGuard>, reads*: Vec<PayloadRead> }
 
 Program* = {
     functions*: Vec<Func>,

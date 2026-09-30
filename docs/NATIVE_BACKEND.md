@@ -133,6 +133,16 @@ former scalar-only lowering is gone.
   expressions, patterns (nested), `.try()` across frames, error-set
   widening, coercions (literal widths, `Ok` lifting, union membership,
   same-named alternatives), instantiation of functions per substitution.
+* Matches: each arm's tests are compiled from sema's reading of its pattern
+  (`sema.read_pattern`, the tree coverage checking used), never from the
+  pattern's spelling, so `Err(Authentication)` on `Res<T, Kind | Fail>`
+  tests the member `Kind` and then its case; a case the reading names that
+  the layout lacks refuses the program. Error-set members are tagged in name
+  order, so `Kind | Fail` and a declared `Both = Kind | Fail` share a layout.
+  Every tag test the lowering branches on and every payload read is recorded
+  in `Func.guards`, and `gen_verify` refuses a payload read that is not
+  behind a test of that slot for that alternative on every path
+  (IR_ARCHITECTURE §4.1 rule 3).
 * `gen_lower_call` — calls: arguments in written order, mutable parameters by
   address, closure-taking callees inlined in the frame that wrote the
   closure (so `.try()` and `h.break()` keep their meaning), `loop`

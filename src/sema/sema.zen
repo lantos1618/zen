@@ -39,7 +39,7 @@ type_from_ast*                           = sema.sema_denote
 Case*, cases_of*, case_payload*          = sema.sema_case
 is_case*                                 = sema.sema_case
 PatKind*, Pat*, Pats*, PatMatrix*        = sema.sema_match
-match_type*                              = sema.sema_match
+match_type*, PatReading*, read_pattern*    = sema.sema_match
 join*                                    = sema.sema_join
 
 // what a dot reaches

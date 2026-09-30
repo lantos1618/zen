@@ -677,12 +677,29 @@ Payloads = {
 
     forget = (self: @Self, state :: Vec<usize>, instruction: Instruction) {
         written(instruction).when_ok((slot) { state.set(slot, KNOWN_NONE); });
+        // Writes through a pointer, listed without a fallback for the same
+        // reason as `written`.
         instruction.match({
-            StoreValue(s) => self.forget_through(state, s.base),
-            CopyBytes(c)  => self.forget_through(state, c.dest),
-            Invoke(c)     => c.args.loop((a) { self.forget_argument(state, a); }),
-            System(c)     => c.args.loop((a) { self.forget_argument(state, a); }),
-            _             => (),
+            StoreValue(s)  => self.forget_through(state, s.base),
+            CopyBytes(c)   => self.forget_through(state, c.dest),
+            Invoke(c)      => c.args.loop((a) { self.forget_argument(state, a); }),
+            System(c)      => c.args.loop((a) { self.forget_argument(state, a); }),
+            Constant(_)    => (),
+            Copy(_)        => (),
+            UnaryValue(_)  => (),
+            BinaryValue(_) => (),
+            PrintValue(_)  => (),
+            Text(_)        => (),
+            Cast(_)        => (),
+            AddressOf(_)   => (),
+            LoadValue(_)   => (),
+            Bytes(_)       => (),
+            WriteOut(_)    => (),
+            Startup(_)     => (),
+            MapPages(_)    => (),
+            UnmapPages(_)  => (),
+            SysConst(_)    => (),
+            Flush          => (),
         });
     }
 
@@ -703,7 +720,9 @@ Payloads = {
     }
 }
 
-// The slot an instruction writes, if any.
+// The slot an instruction writes, if any. Every instruction is listed, with
+// no fallback: a new instruction that writes a slot must say so here, or a
+// payload fact about that slot would outlive the write.
 written = (instruction: Instruction) Res<usize> {
     instruction.match({
         Constant(v)    => Ok(v.out),
@@ -719,7 +738,13 @@ written = (instruction: Instruction) Res<usize> {
         Startup(v)     => Ok(v.out),
         MapPages(v)    => Ok(v.out),
         SysConst(v)    => Ok(v.out),
-        _              => None,
+        PrintValue(_)  => None,
+        Text(_)        => None,
+        StoreValue(_)  => None,
+        CopyBytes(_)   => None,
+        WriteOut(_)    => None,
+        UnmapPages(_)  => None,
+        Flush          => None,
     })
 }
 

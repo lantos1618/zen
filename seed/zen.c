@@ -24584,10 +24584,22 @@ static zu_tRes_ef6b1e51b943ec0f zu_f3_3gen10gen_verify7writtenO1_t3_3gen6gen_ir1
     } else if (zg_s1.zg_tag == zu_e4_3gen6gen_ir11Instruction8SysConst) {
         zu_tSysValue_8e659d2883b63dfe zu_l1v_13 = zg_s1.zg_data.zu_m8SysConst;
         return (zu_tRes_ef6b1e51b943ec0f){ .zg_tag = zu_e5_3std4core6result3Res2Ok, .zg_data.zu_m2Ok = zu_l1v_13.zu_m3out };
-    } else if (1) {
+    } else if (zg_s1.zg_tag == zu_e4_3gen6gen_ir11Instruction10PrintValue) {
+        return (zu_tRes_ef6b1e51b943ec0f){ .zg_tag = zu_e5_3std4core6result3Res4None };
+    } else if (zg_s1.zg_tag == zu_e4_3gen6gen_ir11Instruction4Text) {
+        return (zu_tRes_ef6b1e51b943ec0f){ .zg_tag = zu_e5_3std4core6result3Res4None };
+    } else if (zg_s1.zg_tag == zu_e4_3gen6gen_ir11Instruction10StoreValue) {
+        return (zu_tRes_ef6b1e51b943ec0f){ .zg_tag = zu_e5_3std4core6result3Res4None };
+    } else if (zg_s1.zg_tag == zu_e4_3gen6gen_ir11Instruction9CopyBytes) {
+        return (zu_tRes_ef6b1e51b943ec0f){ .zg_tag = zu_e5_3std4core6result3Res4None };
+    } else if (zg_s1.zg_tag == zu_e4_3gen6gen_ir11Instruction8WriteOut) {
+        return (zu_tRes_ef6b1e51b943ec0f){ .zg_tag = zu_e5_3std4core6result3Res4None };
+    } else if (zg_s1.zg_tag == zu_e4_3gen6gen_ir11Instruction10UnmapPages) {
+        return (zu_tRes_ef6b1e51b943ec0f){ .zg_tag = zu_e5_3std4core6result3Res4None };
+    } else if (zg_s1.zg_tag == zu_e4_3gen6gen_ir11Instruction5Flush) {
         return (zu_tRes_ef6b1e51b943ec0f){ .zg_tag = zu_e5_3std4core6result3Res4None };
     } else {
-        zg_unreachable("gen/gen_verify.zen", 708, 17);
+        zg_unreachable("gen/gen_verify.zen", 727, 17);
     }
 }
 
@@ -91065,7 +91077,7 @@ static void zu_f4_3gen10gen_verify8Payloads14forget_throughO3_t3_3gen10gen_verif
         zg_n2 = zg_v7;
         (void)(zg_n2);
     } else {
-        zg_unreachable("gen/gen_verify.zen", 697, 31);
+        zg_unreachable("gen/gen_verify.zen", 714, 31);
     }
 }
 
@@ -91081,12 +91093,12 @@ static void zu_f4_3gen10gen_verify8Payloads15forget_argumentO3_t3_3gen10gen_veri
         } else if (1) {
             (void)(0);
         } else {
-            zg_unreachable("gen/gen_verify.zen", 691, 26);
+            zg_unreachable("gen/gen_verify.zen", 708, 26);
         }
     } else if (zg_s1.zg_tag == zu_e5_3std4core6result3Res4None) {
         (void)(0);
     } else {
-        zg_unreachable("gen/gen_verify.zen", 690, 39);
+        zg_unreachable("gen/gen_verify.zen", 707, 39);
     }
 }
 
@@ -91639,10 +91651,40 @@ static void zu_f4_3gen10gen_verify8Payloads6forgetO3_t3_3gen10gen_verify8Payload
         }
         zg_n17 = zg_v22;
         (void)(zg_n17);
-    } else if (1) {
+    } else if (zg_s5.zg_tag == zu_e4_3gen6gen_ir11Instruction8Constant) {
+        (void)(0);
+    } else if (zg_s5.zg_tag == zu_e4_3gen6gen_ir11Instruction4Copy) {
+        (void)(0);
+    } else if (zg_s5.zg_tag == zu_e4_3gen6gen_ir11Instruction10UnaryValue) {
+        (void)(0);
+    } else if (zg_s5.zg_tag == zu_e4_3gen6gen_ir11Instruction11BinaryValue) {
+        (void)(0);
+    } else if (zg_s5.zg_tag == zu_e4_3gen6gen_ir11Instruction10PrintValue) {
+        (void)(0);
+    } else if (zg_s5.zg_tag == zu_e4_3gen6gen_ir11Instruction4Text) {
+        (void)(0);
+    } else if (zg_s5.zg_tag == zu_e4_3gen6gen_ir11Instruction4Cast) {
+        (void)(0);
+    } else if (zg_s5.zg_tag == zu_e4_3gen6gen_ir11Instruction9AddressOf) {
+        (void)(0);
+    } else if (zg_s5.zg_tag == zu_e4_3gen6gen_ir11Instruction9LoadValue) {
+        (void)(0);
+    } else if (zg_s5.zg_tag == zu_e4_3gen6gen_ir11Instruction5Bytes) {
+        (void)(0);
+    } else if (zg_s5.zg_tag == zu_e4_3gen6gen_ir11Instruction8WriteOut) {
+        (void)(0);
+    } else if (zg_s5.zg_tag == zu_e4_3gen6gen_ir11Instruction7Startup) {
+        (void)(0);
+    } else if (zg_s5.zg_tag == zu_e4_3gen6gen_ir11Instruction8MapPages) {
+        (void)(0);
+    } else if (zg_s5.zg_tag == zu_e4_3gen6gen_ir11Instruction10UnmapPages) {
+        (void)(0);
+    } else if (zg_s5.zg_tag == zu_e4_3gen6gen_ir11Instruction8SysConst) {
+        (void)(0);
+    } else if (zg_s5.zg_tag == zu_e4_3gen6gen_ir11Instruction5Flush) {
         (void)(0);
     } else {
-        zg_unreachable("gen/gen_verify.zen", 680, 21);
+        zg_unreachable("gen/gen_verify.zen", 682, 21);
     }
 }
 

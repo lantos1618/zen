@@ -127,6 +127,7 @@ tests/corpus/gen/asm_renderer/main # UNSUPPORTED: main.zen:8:114: nothing is at 
 tests/corpus/gen/asm_traps/main # UNSUPPORTED: main.zen:9:81: nothing is at that path: tried `gen/gen_ir.zen` and `gen/gen_ir/gen_ir.zen`
 tests/corpus/gen/ir_verifier/main # UNSUPPORTED: main.zen:1:57: nothing is at that path: tried `gen/gen_ir.zen` and `gen/gen_ir/gen_ir.zen`
 tests/corpus/gen/js_renderer/main # UNSUPPORTED: main.zen:4:73: nothing is at that path: tried `gen/gen_ir.zen` and `gen/gen_ir/gen_ir.zen`
+tests/corpus/gen/machine_carry_vocabulary # UNSUPPORTED: machine_carry_vocabulary.zen:4:31: nothing is at that path: tried `gen/gen_ir_machine.zen` and `gen/
 tests/corpus/gen/machine_refused/main # UNSUPPORTED: main.zen:1:9: nothing is at that path: tried `zen/zen_build.zen` and `zen/zen_build/zen_build.zen`
 tests/corpus/gen/machine_sha_vocabulary # UNSUPPORTED: machine_sha_vocabulary.zen:3:31: nothing is at that path: tried `gen/gen_ir_machine.zen` and `gen/ge
 tests/corpus/gen/scalar_backends/main # UNSUPPORTED: main.zen:1:22: nothing is at that path: tried `zen/zen_build.zen` and `zen/zen_build/zen_build.zen`
@@ -303,6 +304,7 @@ tests/corpus/std/a_user_type_is_a_sink # UNSUPPORTED: a_user_type_is_a_sink.zen:
 tests/corpus/std/bool_then_composes_with_try # UNSUPPORTED: compiler error: invalid IR at function 1 (checked_double), block 3: instruction types do not agree
 tests/corpus/std/build_api_resolves # UNSUPPORTED: build_api_resolves.zen:14:9: construction names no member: every argument must name a field of the t
 tests/corpus/std/byte_ascii_questions # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/std/carry_limbs # UNSUPPORTED: carry_limbs.zen:32:9: error: unsupported by this backend: the machine primitive add_carry
 tests/corpus/std/cli_command_model_parses_and_writes_help # UNSUPPORTED: compiler error: invalid IR at function 25 (run), block 37: instruction types do not agree
 tests/corpus/std/cli_constraints_use_explicit_presence # UNSUPPORTED: compiler error: invalid IR at function 22 (run), block 37: instruction types do not agree
 tests/corpus/std/cli_declarations_reject_ambiguous_grammars # UNSUPPORTED: compiler error: invalid IR at function 32 (run), block 37: instruction types do not agree

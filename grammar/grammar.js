@@ -237,6 +237,10 @@ module.exports = grammar({
     // an expression that may or may not turn out to be a callee: decided at
     // the `(` — or at the `<` of a type argument list — that may follow.
     [$._expression, $._callee],
+    // `(..) T` then `{` — a function body, or a signature followed by a
+    // braced import? Decided after the matching `}`: only an import is
+    // followed by `=`.
+    [$.function, $.function_signature],
   ],
 
   rules: {
@@ -490,12 +494,10 @@ module.exports = grammar({
     // rather than an empty parameter list — otherwise `Res<(), IoError>` reads
     // as a function type.
     function_signature: ($) =>
-      prec.right(
-        seq(
-          optional(field('type_parameters', $.type_parameters)),
-          field('parameters', $.parameters),
-          field('return_type', $._type),
-        ),
+      seq(
+        optional(field('type_parameters', $.type_parameters)),
+        field('parameters', $.parameters),
+        field('return_type', $._type),
       ),
 
     parameters: ($) => seq('(', comma_list($.parameter), ')'),

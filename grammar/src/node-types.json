@@ -855,7 +855,7 @@
     "named": true,
     "fields": {
       "name": {
-        "multiple": true,
+        "multiple": false,
         "required": true,
         "types": [
           {
@@ -1659,6 +1659,58 @@
           },
           {
             "type": "variadic_type",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "import_declaration",
+    "named": true,
+    "fields": {
+      "module": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "module_path",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": true,
+        "required": true,
+        "types": [
+          {
+            "type": "import_name",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "import_name",
+    "named": true,
+    "fields": {
+      "exported": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "export_marker",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
             "named": true
           }
         ]
@@ -2534,6 +2586,21 @@
     }
   },
   {
+    "type": "module_path",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "named_argument",
     "named": true,
     "fields": {
@@ -3028,6 +3095,10 @@
         },
         {
           "type": "impl_declaration",
+          "named": true
+        },
+        {
+          "type": "import_declaration",
           "named": true
         }
       ]

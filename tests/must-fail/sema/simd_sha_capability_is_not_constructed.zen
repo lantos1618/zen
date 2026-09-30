@@ -1,0 +1,4 @@
+ArmSha512 = std.simd
+main = () {
+    forged = ArmSha512(proof: 1);
+}

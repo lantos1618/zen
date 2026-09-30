@@ -1,0 +1,5 @@
+sha-ni matches the SDM model: true
+sha-ni abc: true
+arm sha256 matches the Arm ARM model: true
+arm sha256 abc: true
+arm sha512 matches the Arm ARM model: true

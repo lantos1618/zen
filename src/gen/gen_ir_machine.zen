@@ -1,7 +1,7 @@
 // Machine operations shared by every backend: the semantic operations that
 // sema_prim and sema_numeric validate (wide multiply, truncation, unsigned
 // bit operations, std.simd vectors, volatile access, compiler barriers, CPU
-// capabilities and the AES / carry-less instructions they unlock). The C
+// capabilities and the AES, carry-less and SHA instructions they unlock). The C
 // backend lowers them from checked facts today. The scalar IR carries them
 // as `Instruction.Machine` so assembly targets implement one vocabulary;
 // until IR slots can hold u64, u128, vectors and pointers, lowering refuses
@@ -41,6 +41,17 @@ MachineOp* = MulWide
     | AesRoundLast
     | ClmulLow
     | ClmulHigh
+    | Sha256Rnds2
+    | Sha256Msg1
+    | Sha256Msg2
+    | Sha256H
+    | Sha256H2
+    | Sha256Su0
+    | Sha256Su1
+    | Sha512H
+    | Sha512H2
+    | Sha512Su0
+    | Sha512Su1
 
 // `outs` and `args` index Func.slots; `word` names the operand type as the
 // primitive's source spelling (`u64`, `u32x8`, `avx2`, ...), so a target can
@@ -81,6 +92,17 @@ machine_op* = (name: str) Res<MachineOp> {
         "aes_round_last"   => Ok(MachineOp.AesRoundLast),
         "clmul_low"        => Ok(MachineOp.ClmulLow),
         "clmul_high"       => Ok(MachineOp.ClmulHigh),
+        "sha256_rnds2"     => Ok(MachineOp.Sha256Rnds2),
+        "sha256_msg1"      => Ok(MachineOp.Sha256Msg1),
+        "sha256_msg2"      => Ok(MachineOp.Sha256Msg2),
+        "sha256h"          => Ok(MachineOp.Sha256H),
+        "sha256h2"         => Ok(MachineOp.Sha256H2),
+        "sha256su0"        => Ok(MachineOp.Sha256Su0),
+        "sha256su1"        => Ok(MachineOp.Sha256Su1),
+        "sha512h"          => Ok(MachineOp.Sha512H),
+        "sha512h2"         => Ok(MachineOp.Sha512H2),
+        "sha512su0"        => Ok(MachineOp.Sha512Su0),
+        "sha512su1"        => Ok(MachineOp.Sha512Su1),
         _                  => prefixed_op(name),
     })
 }
@@ -140,5 +162,16 @@ machine_refusal* = (op: MachineOp) str {
         AesRoundLast    => "the std.simd instruction aes_round_last",
         ClmulLow        => "the std.simd instruction clmul_low",
         ClmulHigh       => "the std.simd instruction clmul_high",
+        Sha256Rnds2     => "the std.simd instruction sha256_rnds2",
+        Sha256Msg1      => "the std.simd instruction sha256_msg1",
+        Sha256Msg2      => "the std.simd instruction sha256_msg2",
+        Sha256H         => "the std.simd instruction sha256h",
+        Sha256H2        => "the std.simd instruction sha256h2",
+        Sha256Su0       => "the std.simd instruction sha256su0",
+        Sha256Su1       => "the std.simd instruction sha256su1",
+        Sha512H         => "the std.simd instruction sha512h",
+        Sha512H2        => "the std.simd instruction sha512h2",
+        Sha512Su0       => "the std.simd instruction sha512su0",
+        Sha512Su1       => "the std.simd instruction sha512su1",
     })
 }

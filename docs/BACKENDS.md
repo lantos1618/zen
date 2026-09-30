@@ -332,8 +332,8 @@ not assign a numerical rating or imply full-language support for scalar targets.
 
 The operations validated by `sema_prim` and `sema_numeric` — `mul_wide`,
 truncation, unsigned bit operations, `std.simd` vectors, volatile access,
-`compiler_barrier`, CPU capability detection and the AES / carry-less
-instructions — form one backend-neutral vocabulary in
+`compiler_barrier`, CPU capability detection and the AES, carry-less and
+SHA instructions — form one backend-neutral vocabulary in
 [gen_ir_machine](../src/gen/gen_ir_machine.zen). The C backend lowers them
 from checked facts (`gen_c_machine`). The scalar IR has an
 `Instruction.Machine` form for them, but scalar slots cannot yet hold u64,

@@ -1,0 +1,7 @@
+arm_sha2, ArmSha2, splat_u32x4 = std.simd
+
+wrong = (cpu: ArmSha2) u32x4 { splat_u32x4(1).sha256_rnds2(splat_u32x4(2), splat_u32x4(3), cpu) }
+
+main = () {
+    arm_sha2().match({ Ok(cpu) => println("{}", wrong(cpu).lane(0)), None => println("0") });
+}

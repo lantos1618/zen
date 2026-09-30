@@ -64,6 +64,17 @@ write_machine = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     out.say(
         "typedef uint64_t zg_u64x4 __attribute__((vector_size(32), aligned(16)));"
     ).try();
+    // A ctgrind build (-DZEN_CT_GRIND) tells valgrind's memcheck where the
+    // program declassifies, as the asm marker tells tools/ct: the value is
+    // marked defined, so only undeclared uses of secrets are reported.
+    out.say("#if defined(ZEN_CT_GRIND)").try();
+    out.say("#include <valgrind/memcheck.h>").try();
+    out.say(
+        "#define ZG_CT_PUBLIC(x) ((void)VALGRIND_MAKE_MEM_DEFINED(&(x), sizeof(x)))"
+    ).try();
+    out.say("#else").try();
+    out.say("#define ZG_CT_PUBLIC(x) ((void)0)").try();
+    out.say("#endif").try();
     // Full products of the low 32 bits of each 64-bit lane: PMULUDQ on x86
     // (matched from the widening form), UMULL on arm64 (spelled directly:
     // the widening form is scalarized when an operand is a splat).
@@ -114,20 +125,24 @@ write_machine = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     out.say("#endif").try();
     out.line().try();
     write_features(out).try();
+    be.write_sha(out).try();
     be.write_target_sets(out).try();
     Ok(())
 }
 
 // Runtime CPU detection and the instructions capabilities unlock. x86 asks
-// the compiler runtime (cpuid, including OS AVX state); arm64 Linux reads
-// AT_HWCAP and macOS reads hw.optional sysctls. NEON is baseline on arm64.
-// A capability cannot be obtained on another architecture, so there the
-// instruction helpers are unreachable and abort.
+// the compiler runtime (cpuid, including OS AVX state) and reads CPUID leaf
+// 7 for the SHA extensions, which not every compiler's
+// __builtin_cpu_supports names; arm64 Linux reads AT_HWCAP and macOS reads
+// hw.optional sysctls. NEON is baseline on arm64. A capability cannot be
+// obtained on another architecture, so there the instruction helpers are
+// unreachable and abort.
 write_features = (out :: Emit) Res<(), AllocError> {
     comment(out, "machine floor: CPU features").try();
     out.say("#if defined(__x86_64__) || defined(__i386__)").try();
     out.say("#define ZG_X86 1").try();
     out.say("#include <immintrin.h>").try();
+    out.say("#include <cpuid.h>").try();
     out.say("#elif defined(__aarch64__)").try();
     out.say("#include <arm_neon.h>").try();
     out.say("#if defined(__APPLE__)").try();
@@ -137,8 +152,14 @@ write_features = (out :: Emit) Res<(), AllocError> {
     out.say("#endif").try();
     out.say("#if defined(__clang__)").try();
     out.say("#define ZG_ARM_CRYPTO __attribute__((target(\"aes\")))").try();
+    out.say("#define ZG_ARM_SHA2 __attribute__((target(\"sha2\")))").try();
+    out.say(
+        "#define ZG_ARM_SHA512 __attribute__((target(\"sha2,sha3\")))"
+    ).try();
     out.say("#else").try();
     out.say("#define ZG_ARM_CRYPTO __attribute__((target(\"+crypto\")))").try();
+    out.say("#define ZG_ARM_SHA2 __attribute__((target(\"+sha2\")))").try();
+    out.say("#define ZG_ARM_SHA512 __attribute__((target(\"+sha3\")))").try();
     out.say("#endif").try();
     out.say("#endif").try();
     out.say("#if defined(ZG_X86)").try();
@@ -161,9 +182,23 @@ write_features = (out :: Emit) Res<(), AllocError> {
     out.say("}").try();
     out.say("#define zg_cpu_probe_avx2() zg_cpu_has(1, 0, 0, 0)").try();
     out.say("#define zg_cpu_probe_ssse3() zg_cpu_has(0, 1, 0, 0)").try();
+    out.say(
+        "#define zg_cpu_probe_bmi2() (__builtin_cpu_supports(\"bmi\") && __builtin_cpu_supports(\"bmi2\"))"
+    ).try();
     out.say("#define zg_cpu_probe_aes() zg_cpu_has(0, 0, 1, 0)").try();
     out.say("#define zg_cpu_probe_clmul() zg_cpu_has(0, 0, 0, 1)").try();
     out.say("#define zg_cpu_probe_neon() 0").try();
+    out.say("static int zg_cpu_probe_sha_ni(void) {").try();
+    out.say("    unsigned int a, b, c, d;").try();
+    out.say("    __builtin_cpu_init();").try();
+    out.say(
+        "    if (!__builtin_cpu_supports(\"ssse3\") || !__builtin_cpu_supports(\"sse4.1\")) return 0;"
+    ).try();
+    out.say("    if (!__get_cpuid_count(7, 0, &a, &b, &c, &d)) return 0;").try();
+    out.say("    return (b >> 29) & 1;").try();
+    out.say("}").try();
+    out.say("#define zg_cpu_probe_arm_sha2() 0").try();
+    out.say("#define zg_cpu_probe_arm_sha512() 0").try();
     out.say(
         "static inline __attribute__((target(\"aes,ssse3,sse4.1\"))) zg_u8x16 zg_aes_round(zg_u8x16 s, zg_u8x16 k) {"
     ).try();
@@ -207,6 +242,12 @@ write_features = (out :: Emit) Res<(), AllocError> {
     out.say(
         "#define zg_cpu_probe_clmul() zg_cpu_sysctl(\"hw.optional.arm.FEAT_PMULL\")"
     ).try();
+    out.say(
+        "#define zg_cpu_probe_arm_sha2() zg_cpu_sysctl(\"hw.optional.arm.FEAT_SHA256\")"
+    ).try();
+    out.say(
+        "#define zg_cpu_probe_arm_sha512() zg_cpu_sysctl(\"hw.optional.arm.FEAT_SHA512\")"
+    ).try();
     out.say("#elif defined(__linux__)").try();
     out.say(
         "#define zg_cpu_probe_aes() ((getauxval(AT_HWCAP) & (1UL << 3)) != 0)"
@@ -214,13 +255,23 @@ write_features = (out :: Emit) Res<(), AllocError> {
     out.say(
         "#define zg_cpu_probe_clmul() ((getauxval(AT_HWCAP) & (1UL << 4)) != 0)"
     ).try();
+    out.say(
+        "#define zg_cpu_probe_arm_sha2() ((getauxval(AT_HWCAP) & (1UL << 6)) != 0)"
+    ).try();
+    out.say(
+        "#define zg_cpu_probe_arm_sha512() ((getauxval(AT_HWCAP) & (1UL << 21)) != 0)"
+    ).try();
     out.say("#else").try();
     out.say("#define zg_cpu_probe_aes() 0").try();
     out.say("#define zg_cpu_probe_clmul() 0").try();
+    out.say("#define zg_cpu_probe_arm_sha2() 0").try();
+    out.say("#define zg_cpu_probe_arm_sha512() 0").try();
     out.say("#endif").try();
     out.say("#define zg_cpu_probe_avx2() 0").try();
     out.say("#define zg_cpu_probe_ssse3() 0").try();
+    out.say("#define zg_cpu_probe_bmi2() 0").try();
     out.say("#define zg_cpu_probe_neon() 1").try();
+    out.say("#define zg_cpu_probe_sha_ni() 0").try();
     out.say(
         "static inline ZG_ARM_CRYPTO zg_u8x16 zg_aes_round(zg_u8x16 s, zg_u8x16 k) {"
     ).try();
@@ -252,9 +303,13 @@ write_features = (out :: Emit) Res<(), AllocError> {
     out.say("#else").try();
     out.say("#define zg_cpu_probe_avx2() 0").try();
     out.say("#define zg_cpu_probe_ssse3() 0").try();
+    out.say("#define zg_cpu_probe_bmi2() 0").try();
     out.say("#define zg_cpu_probe_aes() 0").try();
     out.say("#define zg_cpu_probe_clmul() 0").try();
     out.say("#define zg_cpu_probe_neon() 0").try();
+    out.say("#define zg_cpu_probe_sha_ni() 0").try();
+    out.say("#define zg_cpu_probe_arm_sha2() 0").try();
+    out.say("#define zg_cpu_probe_arm_sha512() 0").try();
     out.say(
         "static zg_u8x16 zg_aes_round(zg_u8x16 s, zg_u8x16 k) { (void)s; (void)k; abort(); }"
     ).try();
@@ -269,23 +324,176 @@ write_features = (out :: Emit) Res<(), AllocError> {
     ).try();
     out.say("#endif").try();
     // Detection runs once per feature; sysctl and cpuid are not free.
+    // ZEN_CPU_DISABLE lists features (avx2, ssse3, bmi2, aes, clmul, neon,
+    // sha, sha512, or all) that detection reports absent, as OPENSSL_ia32cap
+    // masks OpenSSL's dispatch: every portable path can be exercised on one
+    // machine. It can only remove features, never claim one the CPU lacks.
+    // `sha` masks the SHA-256 instructions of both architectures.
     out.say(
-        "#define ZG_CPU_CACHED(name, probe) static __attribute__((unused)) int name(void) { \\"
+        "static __attribute__((unused)) int zg_cpu_masked(const char *feature) {"
+    ).try();
+    out.say("    const char *list = getenv(\"ZEN_CPU_DISABLE\");").try();
+    out.say("    size_t n = strlen(feature);").try();
+    out.say("    while (list != NULL && *list != 0) {").try();
+    out.say("        const char *end = strchr(list, ',');").try();
+    out.say(
+        "        size_t len = end != NULL ? (size_t)(end - list) : strlen(list);"
+    ).try();
+    out.say(
+        "        if ((len == n && strncmp(list, feature, n) == 0) || (len == 3 && strncmp(list, \"all\", 3) == 0)) return 1;"
+    ).try();
+    out.say("        list = end != NULL ? end + 1 : NULL;").try();
+    out.say("    }").try();
+    out.say("    return 0;").try();
+    out.say("}").try();
+    out.say(
+        "#define ZG_CPU_CACHED(name, feature, probe) static __attribute__((unused)) int name(void) { \\"
     ).try();
     out.say(
         "    static int known; int v = __atomic_load_n(&known, __ATOMIC_RELAXED); \\"
     ).try();
     out.say(
-        "    if (v == 0) { v = (probe) ? 2 : 1; __atomic_store_n(&known, v, __ATOMIC_RELAXED); } \\"
+        "    if (v == 0) { v = (!zg_cpu_masked(feature) && (probe)) ? 2 : 1; __atomic_store_n(&known, v, __ATOMIC_RELAXED); } \\"
     ).try();
     out.say("    return v == 2; }").try();
-    out.say("ZG_CPU_CACHED(zg_cpu_avx2, zg_cpu_probe_avx2())").try();
-    out.say("ZG_CPU_CACHED(zg_cpu_ssse3, zg_cpu_probe_ssse3())").try();
-    out.say("ZG_CPU_CACHED(zg_cpu_aes, zg_cpu_probe_aes())").try();
-    out.say("ZG_CPU_CACHED(zg_cpu_clmul, zg_cpu_probe_clmul())").try();
-    out.say("ZG_CPU_CACHED(zg_cpu_neon, zg_cpu_probe_neon())").try();
+    out.say("ZG_CPU_CACHED(zg_cpu_avx2, \"avx2\", zg_cpu_probe_avx2())").try();
+    out.say(
+        "ZG_CPU_CACHED(zg_cpu_ssse3, \"ssse3\", zg_cpu_probe_ssse3())"
+    ).try();
+    out.say("ZG_CPU_CACHED(zg_cpu_bmi2, \"bmi2\", zg_cpu_probe_bmi2())").try();
+    out.say("ZG_CPU_CACHED(zg_cpu_aes, \"aes\", zg_cpu_probe_aes())").try();
+    out.say(
+        "ZG_CPU_CACHED(zg_cpu_clmul, \"clmul\", zg_cpu_probe_clmul())"
+    ).try();
+    out.say("ZG_CPU_CACHED(zg_cpu_neon, \"neon\", zg_cpu_probe_neon())").try();
+    out.say(
+        "ZG_CPU_CACHED(zg_cpu_sha_ni, \"sha\", zg_cpu_probe_sha_ni())"
+    ).try();
+    out.say(
+        "ZG_CPU_CACHED(zg_cpu_arm_sha2, \"sha\", zg_cpu_probe_arm_sha2())"
+    ).try();
+    out.say(
+        "ZG_CPU_CACHED(zg_cpu_arm_sha512, \"sha512\", zg_cpu_probe_arm_sha512())"
+    ).try();
     out.line().try();
     Ok(())
+}
+
+// The SHA instructions. Each architecture implements its own set; the other
+// architecture's set is unreachable there, since its capability is never
+// detected, and aborts.
+write_sha = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+    comment(out, "machine floor: SHA instructions").try();
+    out.say("#if defined(ZG_X86)").try();
+    write_x86_sha(out).try();
+    be.sha_stubs(out, false, true).try();
+    out.say("#elif defined(__aarch64__)").try();
+    be.sha_stubs(out, true, false).try();
+    write_arm_sha(out).try();
+    out.say("#else").try();
+    be.sha_stubs(out, true, true).try();
+    out.say("#endif").try();
+    out.line().try();
+    Ok(())
+}
+
+write_x86_sha = (out :: Emit) Res<(), AllocError> {
+    out.say(
+        "static inline __attribute__((target(\"sha,ssse3,sse4.1\"))) zg_u32x4 zg_sha256_rnds2(zg_u32x4 cdgh, zg_u32x4 abef, zg_u32x4 wk) {"
+    ).try();
+    out.say(
+        "    return (zg_u32x4)_mm_sha256rnds2_epu32((__m128i)cdgh, (__m128i)abef, (__m128i)wk);"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "static inline __attribute__((target(\"sha,ssse3,sse4.1\"))) zg_u32x4 zg_sha256_msg1(zg_u32x4 a, zg_u32x4 b) {"
+    ).try();
+    out.say(
+        "    return (zg_u32x4)_mm_sha256msg1_epu32((__m128i)a, (__m128i)b);"
+    ).try();
+    out.say("}").try();
+    out.say(
+        "static inline __attribute__((target(\"sha,ssse3,sse4.1\"))) zg_u32x4 zg_sha256_msg2(zg_u32x4 a, zg_u32x4 b) {"
+    ).try();
+    out.say(
+        "    return (zg_u32x4)_mm_sha256msg2_epu32((__m128i)a, (__m128i)b);"
+    ).try();
+    out.say("}").try();
+    Ok(())
+}
+
+// ACLE intrinsics in the instruction's operand order: the destination's
+// incoming value first.
+write_arm_sha = (out :: Emit) Res<(), AllocError> {
+    out.say(
+        "static inline ZG_ARM_SHA2 zg_u32x4 zg_sha256h(zg_u32x4 a, zg_u32x4 b, zg_u32x4 c) { return (zg_u32x4)vsha256hq_u32((uint32x4_t)a, (uint32x4_t)b, (uint32x4_t)c); }"
+    ).try();
+    out.say(
+        "static inline ZG_ARM_SHA2 zg_u32x4 zg_sha256h2(zg_u32x4 a, zg_u32x4 b, zg_u32x4 c) { return (zg_u32x4)vsha256h2q_u32((uint32x4_t)a, (uint32x4_t)b, (uint32x4_t)c); }"
+    ).try();
+    out.say(
+        "static inline ZG_ARM_SHA2 zg_u32x4 zg_sha256su0(zg_u32x4 a, zg_u32x4 b) { return (zg_u32x4)vsha256su0q_u32((uint32x4_t)a, (uint32x4_t)b); }"
+    ).try();
+    out.say(
+        "static inline ZG_ARM_SHA2 zg_u32x4 zg_sha256su1(zg_u32x4 a, zg_u32x4 b, zg_u32x4 c) { return (zg_u32x4)vsha256su1q_u32((uint32x4_t)a, (uint32x4_t)b, (uint32x4_t)c); }"
+    ).try();
+    out.say(
+        "static inline ZG_ARM_SHA512 zg_u64x2 zg_sha512h(zg_u64x2 a, zg_u64x2 b, zg_u64x2 c) { return (zg_u64x2)vsha512hq_u64((uint64x2_t)a, (uint64x2_t)b, (uint64x2_t)c); }"
+    ).try();
+    out.say(
+        "static inline ZG_ARM_SHA512 zg_u64x2 zg_sha512h2(zg_u64x2 a, zg_u64x2 b, zg_u64x2 c) { return (zg_u64x2)vsha512h2q_u64((uint64x2_t)a, (uint64x2_t)b, (uint64x2_t)c); }"
+    ).try();
+    out.say(
+        "static inline ZG_ARM_SHA512 zg_u64x2 zg_sha512su0(zg_u64x2 a, zg_u64x2 b) { return (zg_u64x2)vsha512su0q_u64((uint64x2_t)a, (uint64x2_t)b); }"
+    ).try();
+    out.say(
+        "static inline ZG_ARM_SHA512 zg_u64x2 zg_sha512su1(zg_u64x2 a, zg_u64x2 b, zg_u64x2 c) { return (zg_u64x2)vsha512su1q_u64((uint64x2_t)a, (uint64x2_t)b, (uint64x2_t)c); }"
+    ).try();
+    Ok(())
+}
+
+// Aborting definitions of the x86 set, the arm64 set, or both.
+sha_stubs = (be :: CBackend, out :: Emit, x86: bool, arm: bool)
+            Res<(), AllocError> {
+    x86.then(() {
+        be.sha_stub(out, "sha256_rnds2", "u32x4", 3).try();
+        be.sha_stub(out, "sha256_msg1", "u32x4", 2).try();
+        be.sha_stub(out, "sha256_msg2", "u32x4", 2).try();
+    });
+    arm.then(() {
+        be.sha_stub(out, "sha256h", "u32x4", 3).try();
+        be.sha_stub(out, "sha256h2", "u32x4", 3).try();
+        be.sha_stub(out, "sha256su0", "u32x4", 2).try();
+        be.sha_stub(out, "sha256su1", "u32x4", 3).try();
+        be.sha_stub(out, "sha512h", "u64x2", 3).try();
+        be.sha_stub(out, "sha512h2", "u64x2", 3).try();
+        be.sha_stub(out, "sha512su0", "u64x2", 2).try();
+        be.sha_stub(out, "sha512su1", "u64x2", 3).try();
+    });
+    Ok(())
+}
+
+sha_stub = (be :: CBackend, out :: Emit, name: str, v: str, arity: usize)
+           Res<(), AllocError> {
+    line ::= be.alloc.String().try();
+    (arity == 3).match({
+        true  => line.fmt(
+            "static zg_{} zg_{}(zg_{} a, zg_{} b, zg_{} c) { (void)a; (void)b; (void)c; abort(); }",
+            v,
+            name,
+            v,
+            v,
+            v
+        ),
+        false => line.fmt(
+            "static zg_{} zg_{}(zg_{} a, zg_{} b) { (void)a; (void)b; abort(); }",
+            v,
+            name,
+            v,
+            v
+        ),
+    }).try();
+    out.say(line.view())
 }
 
 // One attribute macro per feature set a function asks for. Clang honours a
@@ -307,9 +515,30 @@ write_target_set = (be :: CBackend, out :: Emit, set: str)
     x86 ::= be.alloc.String().try();
     x86.add_feature(set, "_AVX2", "avx2").try();
     x86.add_feature(set, "_SSSE3", "ssse3").try();
+    x86.add_feature(set, "_BMI2", "bmi,bmi2").try();
     x86.add_feature(set, "_AES", "aes,ssse3,sse4.1").try();
     x86.add_feature(set, "_CLMUL", "pclmul,ssse3,sse4.1").try();
+    x86.add_feature(set, "_SHANI", "sha,ssse3,sse4.1").try();
+    // arm64 feature names differ between Clang and GCC.
+    clang ::= be.alloc.String().try();
+    gcc   ::= be.alloc.String().try();
     crypto = set.contains("_AES") || set.contains("_CLMUL");
+    crypto.then(() {
+        clang.add("aes").try();
+        gcc.add("+crypto").try();
+    });
+    set.contains("_ARMSHA2").then(() {
+        clang.add(
+            (clang.len() > 0).match({ true => ",sha2", false => "sha2" })
+        ).try();
+        gcc.add("+sha2").try();
+    });
+    set.contains("_ARMSHA512").then(() {
+        clang.add(
+            (clang.len() > 0).match({ true => ",sha2,sha3", false => "sha2,sha3" })
+        ).try();
+        gcc.add("+sha3").try();
+    });
     line ::= be.alloc.String().try();
     out.say("#if defined(ZG_X86)").try();
     (x86.len() > 0).match({
@@ -321,10 +550,25 @@ write_target_set = (be :: CBackend, out :: Emit, set: str)
         false => line.fmt("#define ZG_TARGET{}", set),
     }).try();
     out.say(line.view()).try();
+    out.say("#elif defined(__aarch64__) && defined(__clang__)").try();
+    line.clear();
+    (clang.len() > 0).match({
+        true  => line.fmt(
+            "#define ZG_TARGET{} __attribute__((target(\"{}\")))",
+            set,
+            clang.view()
+        ),
+        false => line.fmt("#define ZG_TARGET{}", set),
+    }).try();
+    out.say(line.view()).try();
     out.say("#elif defined(__aarch64__)").try();
     line.clear();
-    crypto.match({
-        true  => line.fmt("#define ZG_TARGET{} ZG_ARM_CRYPTO", set),
+    (gcc.len() > 0).match({
+        true  => line.fmt(
+            "#define ZG_TARGET{} __attribute__((target(\"{}\")))",
+            set,
+            gcc.view()
+        ),
         false => line.fmt("#define ZG_TARGET{}", set),
     }).try();
     out.say(line.view()).try();
@@ -483,11 +727,10 @@ render_feature = (
     b    = operand(held, 1);
     name.starts_with("cpu_").match({
         true  => out.fmt("(zg_{}() != 0)", name),
-        false => name.is_in([
-            "aes_round", "aes_round_last", "clmul_low", "clmul_high"
-        ]).match({
-            true  => out.fmt("zg_{}({}, {})", name, a, b),
-            false => name.starts_with("cast_").match({
+        false => instruction_operands(name).match({
+            2 => out.fmt("zg_{}({}, {})", name, a, b),
+            3 => out.fmt("zg_{}({}, {}, {})", name, a, b, operand(held, 2)),
+            _ => name.starts_with("cast_").match({
                 true  => out.fmt(
                     "((zg_{}){})",
                     be.check.prim_name(site.p.result),
@@ -520,6 +763,8 @@ value_barrier = (
         true  => "",
         false => wide.match({ true => " %0 %1 */", false => " %0 */" }),
     });
+    // ZG_CT_PUBLIC lives in the machine floor.
+    be.need_machine();
     wide.match({
         false => be.fmt(
             "__asm__(\"{}{}\" : \"+r\"({}));\n",
@@ -536,7 +781,24 @@ value_barrier = (
             held
         ).try(),
     });
+    (!marker.is_empty()).then(() { be.fmt("ZG_CT_PUBLIC({});\n", held).try(); });
     out.add(held)
+}
+
+// Vector operands of a capability-gated instruction, which lowers to the
+// floor helper of the same name (the capability is not passed); 0 for any
+// other primitive.
+instruction_operands = (name: str) usize {
+    name.is_in([
+        "aes_round", "aes_round_last", "clmul_low", "clmul_high", "sha256_msg1",
+        "sha256_msg2", "sha256su0", "sha512su0"
+    ]).match({
+        true  => 2,
+        false => name.is_in([
+            "sha256_rnds2", "sha256h", "sha256h2", "sha256su1", "sha512h",
+            "sha512h2", "sha512su1"
+        ]).match({ true => 3, false => 0 }),
+    })
 }
 
 render_scalar = (
@@ -838,9 +1100,13 @@ function_attributes* = (
 ) Res<(), AllocError> {
     set ::= be.alloc.String().try();
     be.add_capability(sig, "Aes", "_AES", set).try();
+    be.add_capability(sig, "ArmSha2", "_ARMSHA2", set).try();
+    be.add_capability(sig, "ArmSha512", "_ARMSHA512", set).try();
     be.add_capability(sig, "Avx2", "_AVX2", set).try();
+    be.add_capability(sig, "Bmi2", "_BMI2", set).try();
     be.add_capability(sig, "Clmul", "_CLMUL", set).try();
     be.add_capability(sig, "Neon", "_NEON", set).try();
+    be.add_capability(sig, "ShaNi", "_SHANI", set).try();
     be.add_capability(sig, "Ssse3", "_SSSE3", set).try();
     be.set_lowering_avx2(set.view().contains("_AVX2"));
     (set.len() > 0).then(() {

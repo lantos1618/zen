@@ -2,24 +2,31 @@
 //
 // The Zen C backend writes ` /* zen:secret zu_l3key *zu_l3out */` after the
 // parameter list of every function with a parameter written std.ct.Secret
-// (`*` marks a pointer whose pointee is secret). This module reads those
+// (`*` marks a pointer whose pointee is secret), with `public-result` when
+// the result is not written Secret (sema's discipline makes it public). This module reads those
 // definitions, sizes the parameter types from the struct definitions in
 // the same file, and assigns them to registers and stack slots by the
 // SysV x86-64 or AAPCS64 calling convention, which is what the assembly
 // taint analysis is seeded with.
 //
-// Covered: integers, pointers, bool, u128 (a register pair), and structs
-// and fixed arrays of those (by value: in one or two registers up to 16
-// bytes, otherwise on the stack on x86-64 and through a hidden pointer on
-// arm64). Floating-point parameters are treated as public. A result struct
-// larger than 16 bytes takes %rdi for its return pointer on x86-64.
+// Covered: integers, pointers, bool, u128 (a register pair), std.simd
+// vectors (the zg_u<bits>x<lanes> types: an XMM/YMM or V register, a
+// 32-byte vector on the stack on x86-64 outside AVX functions and through a
+// hidden pointer on arm64), and structs and fixed arrays of those (by
+// value: in one or two registers up to 16 bytes, otherwise on the stack on
+// x86-64 and through a hidden pointer on arm64; a small struct of vectors
+// in vector registers). A by-value parameter the C backend lends as a
+// `const T *` holds its secret bytes behind the pointer. Floating-point
+// parameters take vector registers and are treated as public. A result
+// larger than 16 bytes takes %rdi for its return pointer on x86-64 (x8 on
+// arm64, which takes no argument register).
 Alloc, AllocError = std.mem
 Vec, Map = std.collections
 str, String = std.text
 Range = std.core
 parse_usize = std.text
 truncate_u32, to_i64 = std.core.num
-Isa, Seed, PAIR = taint
+Isa, Seed, CallShape, Writable = taint
 
 Param* = { ctype*: str, name*: str }
 
@@ -30,12 +37,22 @@ Marked* = {
     params*: Vec<Param>,
     secret*: Vec<str>,     // C names of secret-valued parameters
     pointee*: Vec<str>,    // C names of pointers to secret memory
+    // C names of pointers to memory holding pointers to secret memory
+    // (manifest `**name`).
+    pointee2*: Vec<str>,
     // Secret-dependent conditional branches allowed, for a function whose
     // one decision is a public outcome (an AEAD open's authentication).
     branches* :: usize = 0,
+    // Compiled for AVX (x86-64): 32-byte vectors travel in YMM registers.
+    avx* :: bool = false,
+    // The result register must be public at every return; callers may
+    // rely on that.
+    public_result* :: bool = false,
 }
 
-Layout = { size: usize, align: usize }
+// `vector`: passed in the SIMD&FP registers (a vector, a float, or a small
+// struct made only of those).
+Layout* = { size*: usize, align*: usize, vector*: bool }
 
 MARK: str = "/* zen:secret"
 
@@ -48,6 +65,10 @@ marked_functions* = (a: Alloc, c: str) Res<Vec<Marked>, AllocError> {
         });
     });
     Ok(out)
+}
+
+targets_avx = (line: str) bool {
+    line.contains("ZG_TARGET_AVX") || line.contains("target(\"avx")
 }
 
 parse_definition = (a: Alloc, line: str) Res<Marked> {
@@ -86,7 +107,12 @@ parse_definition = (a: Alloc, line: str) Res<Marked> {
         result: strip_qualifiers(result),
         params: params,
         secret: secret,
-        pointee: pointee
+        pointee: pointee,
+        pointee2: a.Vec<str>(),
+        avx: targets_avx(line),
+        // The backend writes `public-result` for a checked function whose
+        // result is not written Secret.
+        public_result: words.contains(" public-result")
     ))
 }
 
@@ -100,52 +126,67 @@ last_identifier = (text: str) usize {
     at
 }
 
-// `static inline __attribute__((always_inline)) T` -> `T`.
+// `static inline __attribute__((always_inline)) T` and
+// `static ZG_TARGET_AVX2 T` -> `T`.
 strip_qualifiers = (result: str) str {
     close = result.rfind(')');
-    close.match({
+    rest ::= close.match({
         Ok(i) => result.slice(i + 1, result.len).trim().value_or(result),
-        None  => result.starts_with("static ").match({
-            true  => result.slice(7, result.len).trim().value_or(result),
-            false => result,
-        }),
-    })
+        None  => result,
+    });
+    loop((h) {
+        word = rest.find(' ').match({ Ok(i) => rest.slice(0, i), None => rest });
+        (word.eq("static") || word.eq("inline") || word.starts_with("ZG_")).match({
+            true  => {
+                (word.len == rest.len).match({
+                    true  => h.break(),
+                    false => { rest = rest.slice(word.len + 1, rest.len).trim().value_or(rest); },
+                });
+            },
+            false => h.break(),
+        });
+    });
+    rest
 }
 
 // ---------------------------------------------------------------------
 // Type layout
 // ---------------------------------------------------------------------
 
+// `zg_u32x8` -> 32 bytes. The C backend aligns every vector type to 16.
+vector_layout = (ctype: str) Res<Layout> {
+    (ctype.starts_with("zg_u") && ctype.contains('x')).ensure().try();
+    body  = ctype.slice(4, ctype.len);
+    cross = body.find('x').try();
+    bits  = body.slice(0, cross).parse_usize().try();
+    lanes = body.slice(cross + 1, body.len).parse_usize().try();
+    Ok(Layout(size: bits / 8 * lanes, align: 16, vector: true))
+}
+
 scalar_layout = (ctype: str) Res<Layout> {
     ctype.contains('*').match({
-        true  => Ok(Layout(size: 8, align: 8)),
+        true  => Ok(Layout(size: 8, align: 8, vector: false)),
         false => ctype.match({
-            "uint8_t"       => Ok(Layout(size: 1, align: 1)),
-            "int8_t"        => Ok(Layout(size: 1, align: 1)),
-            "bool"          => Ok(Layout(size: 1, align: 1)),
-            "char"          => Ok(Layout(size: 1, align: 1)),
-            "unsigned char" => Ok(Layout(size: 1, align: 1)),
-            "uint16_t"      => Ok(Layout(size: 2, align: 2)),
-            "int16_t"       => Ok(Layout(size: 2, align: 2)),
-            "uint32_t"      => Ok(Layout(size: 4, align: 4)),
-            "int32_t"       => Ok(Layout(size: 4, align: 4)),
-            "int"           => Ok(Layout(size: 4, align: 4)),
-            "unsigned"      => Ok(Layout(size: 4, align: 4)),
-            "float"         => Ok(Layout(size: 4, align: 4)),
-            "uint64_t"      => Ok(Layout(size: 8, align: 8)),
-            "int64_t"       => Ok(Layout(size: 8, align: 8)),
-            "size_t"        => Ok(Layout(size: 8, align: 8)),
-            "long"          => Ok(Layout(size: 8, align: 8)),
-            "double"        => Ok(Layout(size: 8, align: 8)),
-            "zg_u128"       => Ok(Layout(size: 16, align: 16)),
-            "zg_str"        => Ok(Layout(size: 16, align: 8)),
-            _               => (ctype.starts_with("zg_u") && ctype.contains('x')).match({
-                true  => ctype.ends_with("x16").match({
-                    true  => Ok(Layout(size: 16, align: 16)),
-                    false => Ok(Layout(size: 32, align: 16)),
-                }),
-                false => None,
-            }),
+            "uint8_t"       => Ok(Layout(size: 1, align: 1, vector: false)),
+            "int8_t"        => Ok(Layout(size: 1, align: 1, vector: false)),
+            "bool"          => Ok(Layout(size: 1, align: 1, vector: false)),
+            "char"          => Ok(Layout(size: 1, align: 1, vector: false)),
+            "unsigned char" => Ok(Layout(size: 1, align: 1, vector: false)),
+            "uint16_t"      => Ok(Layout(size: 2, align: 2, vector: false)),
+            "int16_t"       => Ok(Layout(size: 2, align: 2, vector: false)),
+            "uint32_t"      => Ok(Layout(size: 4, align: 4, vector: false)),
+            "int32_t"       => Ok(Layout(size: 4, align: 4, vector: false)),
+            "int"           => Ok(Layout(size: 4, align: 4, vector: false)),
+            "unsigned"      => Ok(Layout(size: 4, align: 4, vector: false)),
+            "float"         => Ok(Layout(size: 4, align: 4, vector: true)),
+            "uint64_t"      => Ok(Layout(size: 8, align: 8, vector: false)),
+            "int64_t"       => Ok(Layout(size: 8, align: 8, vector: false)),
+            "size_t"        => Ok(Layout(size: 8, align: 8, vector: false)),
+            "long"          => Ok(Layout(size: 8, align: 8, vector: false)),
+            "double"        => Ok(Layout(size: 8, align: 8, vector: true)),
+            "zg_u128"       => Ok(Layout(size: 16, align: 16, vector: false)),
+            "zg_str"        => Ok(Layout(size: 16, align: 8, vector: false)),
+            _               => vector_layout(ctype),
         }),
     })
 }
@@ -205,6 +246,7 @@ aggregate = (
 ) Res<Layout> {
     size: usize  ::= 0;
     align: usize ::= 1;
+    vector       ::= true;
     i            ::= from;
     ok           ::= true;
     loop(() { i < to && ok }, (h) {
@@ -224,8 +266,9 @@ aggregate = (
                 inner = aggregate(a, c, body, i + 1, j - 1, line.eq("union {"));
                 inner.match({
                     Ok(l) => {
-                        align = align.max(l.align);
-                        size  = union.match({ true => size.max(l.size), false => round_up(size, l.align) + l.size });
+                        align  = align.max(l.align);
+                        size   = union.match({ true => size.max(l.size), false => round_up(size, l.align) + l.size });
+                        vector = vector && l.vector;
                     },
                     None  => { ok = false; },
                 });
@@ -234,8 +277,9 @@ aggregate = (
             false => {
                 field(a, c, line).match({
                     Ok(l) => {
-                        align = align.max(l.align);
-                        size  = union.match({ true => size.max(l.size), false => round_up(size, l.align) + l.size });
+                        align  = align.max(l.align);
+                        size   = union.match({ true => size.max(l.size), false => round_up(size, l.align) + l.size });
+                        vector = vector && l.vector;
                     },
                     None  => { ok = false; },
                 });
@@ -244,7 +288,7 @@ aggregate = (
         });
     });
     ok.ensure().try();
-    Ok(Layout(size: round_up(size, align), align: align))
+    Ok(Layout(size: round_up(size, align), align: align, vector: vector && size > 0))
 }
 
 max = (
@@ -266,7 +310,7 @@ field = (a: Alloc, c: str, line: str) Res<Layout> {
     cut   = last_identifier(decl);
     ctype = decl.slice(0, cut).trim().try();
     l     = layout_of(a, c, ctype).try();
-    Ok(Layout(size: l.size * count, align: l.align))
+    Ok(Layout(size: l.size * count, align: l.align, vector: l.vector))
 }
 
 // ---------------------------------------------------------------------
@@ -275,83 +319,196 @@ field = (a: Alloc, c: str, line: str) Res<Layout> {
 
 X86_ARGS = [str, 6]("rdi", "rsi", "rdx", "rcx", "r8", "r9")
 
+// Where one parameter arrives. Gpr and Vreg carry the first register and
+// Placed.regs the count; Stack the entry-relative offset of its bytes;
+// the *Pointer forms a hidden pointer to a copy (arm64 aggregates over 16
+// bytes and 32-byte vectors).
+Where = | Gpr(usize) | Vreg(usize) | Stack(usize) | GprPointer(usize) | StackPointer(usize)
+
+Placed = { param: Param, layout: Layout, at: Where, regs: usize }
+
+// Every parameter's location under the target's calling convention.
+placements = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Vec<Placed>, AllocError> {
+    out   ::= a.Vec<Placed>();
+    next  ::= 0;
+    vnext ::= 0;
+    // Stack arguments start above the return address on x86-64 and at the
+    // stack pointer on arm64.
+    stack: usize ::= isa.match({ X86 => 8, Arm => 0 });
+    limit: usize = isa.match({ X86 => 6, Arm => 8 });
+    x86 = isa.match({ X86 => true, Arm => false });
+    (x86 && hidden_result(a, isa, c, m.result, m.avx) > 0).then(() { next = 1; });
+    m.params.loop((p) {
+        l = layout_of(a, c, p.ctype).match({ Ok(v) => v, None => Layout(size: 8, align: 8, vector: false) });
+        // Registers a vector-class parameter needs: one per vector on
+        // arm64 (a homogeneous aggregate of up to four), one on x86-64.
+        vregs = x86.match({
+            true  => 1,
+            false => (l.size > 16 && l.size % 16 == 0 && l.size <= 64).match({ true => l.size / 16, false => 1 }),
+        });
+        fits_vreg = l.vector && x86.match({
+            true  => l.size <= 16 || (l.size <= 32 && m.avx && l.align >= 16 && vector_type(p.ctype)),
+            false => l.size <= 16 || (l.size <= 64 && l.size % 16 == 0 && !vector_type(p.ctype)),
+        });
+        where: Where = (fits_vreg && vnext + vregs <= 8).match({
+            true  => {
+                w = Where.Vreg(vnext);
+                vnext = vnext + vregs;
+                w
+            },
+            false => {
+                regs     = (l.size + 7) / 8;
+                // arm64 puts a 16-byte-aligned pair in an even register pair.
+                (!x86 && !l.vector && l.align == 16 && next % 2 == 1 && l.size <= 16).then(() {
+                    next = next + 1;
+                });
+                indirect = !x86 && l.size > 16;
+                in_regs  = !l.vector && l.size <= 16 && next + regs <= limit;
+                (in_regs || (indirect && next < limit)).match({
+                    true  => {
+                        w = indirect.match({ true => Where.GprPointer(next), false => Where.Gpr(next) });
+                        next = next + indirect.match({ true => 1, false => regs });
+                        w
+                    },
+                    false => {
+                        stack = round_up(stack, l.align.max(8));
+                        w = indirect.match({ true => Where.StackPointer(stack), false => Where.Stack(stack) });
+                        stack = stack + indirect.match({ true => 8, false => round_up(l.size, 8) });
+                        (!x86 && !l.vector).then(() { next = limit; });
+                        (!x86 && l.vector).then(() { vnext = 8; });
+                        w
+                    },
+                })
+            },
+        });
+        count = where.match({
+            Gpr(_)  => (l.size + 7) / 8,
+            Vreg(_) => vregs,
+            _       => 1,
+        });
+        out.add(Placed(param: p, layout: l, at: where, regs: count)).try();
+    });
+    Ok(out)
+}
+
+// A std.simd CPU capability (Avx2, Aes, Clmul, ...): a struct whose one
+// field is the `proof` byte.
+capability = (a: Alloc, c: str, ctype: str) bool {
+    struct_body(a, c, ctype).match({
+        Ok(body) => body.len == 1 && body.get(0).value_or("").eq("uint8_t zu_m5proof;"),
+        Err(_)   => false,
+    })
+}
+
+// A std.simd vector type itself (not a struct that contains vectors).
+vector_type = (ctype: str) bool { vector_layout(ctype).match({ Ok(_) => true, None => false }) }
+
+// Bytes a result of C type `result` returns through a hidden pointer, or 0.
+hidden_result = (a: Alloc, isa: Isa, c: str, result: str, avx: bool) usize {
+    layout_of(a, c, result).match({
+        None    => 0,
+        Ok(l)   => in_result_registers(isa, l, vector_type(result), avx).match({ true => 0, false => l.size }),
+    })
+}
+
+in_result_registers = (isa: Isa, l: Layout, vector: bool, avx: bool) bool {
+    isa.match({
+        X86 => l.size <= 16 || (vector && l.size <= 32 && avx),
+        Arm => l.size <= 16 || (l.vector && !vector && l.size <= 64 && l.size % 16 == 0),
+    })
+}
+
 seed_of* = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Seed, AllocError> {
     values   ::= a.Vec<str>();
     pointers ::= a.Vec<str>();
     slots    ::= a.Vec<i64>();
     pslots   ::= a.Vec<i64>();
-    next     ::= 0;
-    // Stack arguments start above the return address on x86-64 and at the
-    // stack pointer on arm64.
-    stack: usize ::= isa.match({ X86 => 8, Arm => 0 });
-    limit: usize = isa.match({ X86 => 6, Arm => 8 });
-    big_result   = layout_of(
-        a,
-        c,
-        m.result
-    ).match({ Ok(l) => l.size > 16, None => false });
-    (isa.match({ X86 => true, Arm => false }) && big_result).then(
-        () { next = 1; }
-    );
-    m.params.loop((p) {
-        l     = layout_of(a, c, p.ctype).match({ Ok(v) => v, None => Layout(size: 8, align: 8) });
-        // A `const T *` parameter named as a secret value is a wide `:`
-        // parameter the C backend receives by address (gen_c_borrow.zen):
-        // the address is public, the bytes it points at are the secret.
-        borrowed = p.ctype.starts_with("const ") && p.ctype.ends_with("*");
-        value = p.name.is_in(m.secret) && !borrowed;
-        point = p.name.is_in(m.pointee) || (p.name.is_in(m.secret) && borrowed);
-        regs  = (l.size + 7) / 8;
-        // arm64 puts a u128 in an even-numbered register pair.
-        (isa.match({ Arm => true, X86 => false }) && l.align == 16 && next % 2 == 1).then(() {
-            next = next + 1;
-        });
-        in_regs  = l.size <= 16 && next + regs <= limit;
-        indirect = l.size > 16 && isa.match({ Arm => true, X86 => false });
-        (in_regs || (indirect && next < limit)).match({
-            true  => {
-                Range(0, indirect.match({ true => 1, false => regs })).loop((k) {
-                    reg = reg_name(a, isa, next + k).try();
-                    (value && !indirect).then(() { values.add(reg).try(); });
-                    (point || (value && indirect)).then(
-                        () { pointers.add(reg).try(); }
-                    );
-                });
-                next = next + indirect.match({ true => 1, false => regs });
-            },
-            false => {
-                // On the stack: every byte of a secret value is secret.
-                stack = round_up(stack, l.align.max(8));
-                point.then(
-                    () { pslots.add(stack.truncate_u32().to_i64()).try(); }
-                );
+    pointers2 ::= a.Vec<str>();
+    // The hidden result pointer addresses memory that will hold the
+    // result, which the body may build there and read back. A public
+    // result returned that way must not have secrets stored into it.
+    hidden = hidden_result(a, isa, c, m.result, m.avx) > 0;
+    hidden_reg = isa.match({ X86 => "rdi", Arm => "x8" });
+    hidden.then(() { pointers.add(hidden_reg).try(); });
+    placements(a, isa, c, m).try().loop((pl) {
+        marked_value = pl.param.name.is_in(m.secret);
+        point2 = pl.param.name.is_in(m.pointee2);
+        // A by-value aggregate the C backend lends as `const T *`: the
+        // secret bytes are behind the pointer.
+        lent  = pl.param.ctype.starts_with("const ") && pl.param.ctype.ends_with("*");
+        value = marked_value && !lent;
+        point = pl.param.name.is_in(m.pointee) || (marked_value && lent);
+        pl.at.match({
+            Gpr(i)          => Range(0, pl.regs).loop((k) {
+                reg = reg_name(a, isa, i + k).try();
+                value.then(() { values.add(reg).try(); });
+                point.then(() { pointers.add(reg).try(); });
+                point2.then(() { pointers2.add(reg).try(); });
+            }),
+            Vreg(i)         => Range(0, pl.regs).loop((k) {
+                value.then(() { values.add(vector_name(a, isa, i + k).try()).try(); });
+            }),
+            Stack(at)       => {
+                point.then(() { pslots.add(wide(at)).try(); });
                 value.then(() {
-                    Range(0, (l.size + 7) / 8).loop((k) {
-                        slots.add(
-                            (stack + k * 8).truncate_u32().to_i64()
-                        ).try();
-                    });
+                    Range(0, (pl.layout.size + 7) / 8).loop((k) { slots.add(wide(at + k * 8)).try(); });
                 });
-                stack = stack + round_up(l.size, 8);
-                (isa.match({ X86 => false, Arm => true }) && !in_regs).then(
-                    () { next = limit; }
-                );
             },
+            GprPointer(i)   => { (value || point).then(() { pointers.add(reg_name(a, isa, i).try()).try(); }); },
+            StackPointer(at) => { (value || point).then(() { pslots.add(wide(at)).try(); }); },
         });
     });
     Ok(Seed(
         values: values,
         pointers: pointers,
         slots: slots,
-        pointer_slots: pslots
+        pointer_slots: pslots,
+        pointers2: pointers2,
+        result_pointer: (hidden && m.public_result).match({ true => hidden_reg, false => "" })
     ))
 }
+
+// Registers that carry the result of `m` when it is audited as
+// public-result: the integer result register (or pair), or the first
+// vector register. A result through a hidden pointer is memory, which the
+// analysis does not follow.
+result_registers* = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Vec<str>, AllocError> {
+    out ::= a.Vec<str>();
+    m.public_result.then(() {
+        layout_of(a, c, m.result).when_ok((l) {
+            in_result_registers(isa, l, vector_type(m.result), m.avx).then(() {
+                l.vector.match({
+                    true  => out.add(vector_name(a, isa, 0).try()).try(),
+                    false => {
+                        // A byte-sized result (bool, u8) is only its low byte.
+                        out.add(isa.match({
+                            X86 => (l.size == 1).match({ true => "rax/1", false => "rax" }),
+                            Arm => "x0",
+                        })).try();
+                        (l.size > 8).then(() { out.add(isa.match({ X86 => "rdx", Arm => "x1" })).try(); });
+                    },
+                });
+            });
+        });
+    });
+    Ok(out)
+}
+
+wide = (n: usize) i64 { n.truncate_u32().to_i64() }
 
 reg_name = (a: Alloc, isa: Isa, i: usize) Res<str, AllocError> {
     isa.match({
         X86 => Ok(X86_ARGS[i]),
         Arm => a.String("x{}", i).match({ Ok(s) => Ok(s.view()), Err(e) => Err(e) }),
     })
+}
+
+// The analysis's name for vector register i: mm<i> (xmm/ymm/zmm) or v<i>.
+vector_name = (a: Alloc, isa: Isa, i: usize) Res<str, AllocError> {
+    isa.match({
+        X86 => a.String("mm{}", i),
+        Arm => a.String("v{}", i),
+    }).match({ Ok(s) => Ok(s.view()), Err(e) => Err(e) })
 }
 
 // ---------------------------------------------------------------------
@@ -366,12 +523,28 @@ reg_name = (a: Alloc, isa: Isa, i: usize) Res<str, AllocError> {
 //   aes_gcm   ghash_mul         x y
 //   tls13_cert_config  Tls13CertConfig.release  *self
 //   aes_gcm   aes_gcm_open      *key *scratch branches=1
+//   chacha20_simd  stream8      *j public-result
+//   aes_gcm_simd   ctr_hw       **hw *output
 //
 // Every definition of the function (each overload and instantiation) is
 // audited. An entry that matches no definition is an error, unless its
 // module is written `?module`: the program may not reach that module.
-// `branches=N` allows N secret-dependent conditional branches (see Marked).
-Entry* = { module*: str, function*: str, secret*: Vec<str>, pointee*: Vec<str>, optional*: bool, branches*: usize }
+// `branches=N` allows N secret-dependent conditional branches (see Marked);
+// `public-result` requires the result register to be public at every
+// return (for a result returned through a hidden pointer: that no secret is
+// stored through it), which lets callers treat it as public. `**name` is a pointer to
+// memory whose words point at secret memory (a struct of key-schedule
+// pointers): a load through it yields a pointer to secrets.
+Entry* = {
+    module*: str,
+    function*: str,
+    secret*: Vec<str>,
+    pointee*: Vec<str>,
+    pointee2*: Vec<str>,
+    optional*: bool,
+    branches*: usize,
+    public_result*: bool,
+}
 
 manifest_entries* = (a: Alloc, text: str) Res<Vec<Entry>, AllocError> {
     out ::= a.Vec<Entry>();
@@ -382,14 +555,22 @@ manifest_entries* = (a: Alloc, text: str) Res<Vec<Entry>, AllocError> {
         (words.len >= 2).then(() {
             secret   ::= a.Vec<str>();
             pointee  ::= a.Vec<str>();
+            pointee2 ::= a.Vec<str>();
             branches ::= 0;
+            public   ::= false;
             Range(2, words.len).loop((i) {
                 w = words.get(i).value_or("");
                 w.starts_with("branches=").match({
                     true  => { branches = w.slice(9, w.len).parse_usize().value_or(0); },
-                    false => w.starts_with("*").match({
-                        true  => pointee.add(w.slice(1, w.len)).try(),
-                        false => secret.add(w).try(),
+                    false => w.eq("public-result").match({
+                        true  => { public = true; },
+                        false => w.starts_with("**").match({
+                            true  => pointee2.add(w.slice(2, w.len)).try(),
+                            false => w.starts_with("*").match({
+                                true  => pointee.add(w.slice(1, w.len)).try(),
+                                false => secret.add(w).try(),
+                            }),
+                        }),
                     }),
                 });
             });
@@ -398,13 +579,15 @@ manifest_entries* = (a: Alloc, text: str) Res<Vec<Entry>, AllocError> {
             out.add(Entry(
                 optional: optional,
                 branches: branches,
+                public_result: public,
                 module: optional.match({ true => head.slice(
                     1,
                     head.len
                 ), false => head }),
                 function: words.get(1).value_or(""),
                 secret: secret,
-                pointee: pointee
+                pointee: pointee,
+                pointee2: pointee2
             )).try();
         });
     });
@@ -445,8 +628,12 @@ manifest_functions* = (
             next   = symbol.slice(prefix.len().min(symbol.len), symbol.len);
             (symbol.starts_with(prefix.view()) && (next.len == 0 || next.starts_with("O"))).then(() {
                 parse_plain(a, line).when_ok((m) {
-                    secret  ::= a.Vec<str>();
-                    pointee ::= a.Vec<str>();
+                    secret   ::= a.Vec<str>();
+                    pointee  ::= a.Vec<str>();
+                    pointee2 ::= a.Vec<str>();
+                    e.pointee2.loop(
+                        (n) { pointee2.add(local_name(a, n).try()).try(); }
+                    );
                     e.secret.loop(
                         (n) { secret.add(local_name(a, n).try()).try(); }
                     );
@@ -459,7 +646,10 @@ manifest_functions* = (
                         params: m.params,
                         secret: secret,
                         pointee: pointee,
-                        branches: e.branches
+                        pointee2: pointee2,
+                        branches: e.branches,
+                        avx: m.avx,
+                        public_result: e.public_result
                     )).try();
                 });
             });
@@ -475,15 +665,123 @@ parse_plain = (a: Alloc, line: str) Res<Marked> {
     parse_definition(a, marked.view())
 }
 
-// Integer argument registers each function in the file takes, for the
-// taint analysis's call rule: only those registers can carry a secret into
-// the callee. Unknown layouts count one register.
-register_arity* = (
+// ---------------------------------------------------------------------
+// Parameter kinds from the mangled symbol
+// ---------------------------------------------------------------------
+
+// The C backend names a function zu_f<path>O<count>_<type codes> (see
+// src/gen/gen_name.zen): a count is digits then `_`, a component its
+// length then its text, and a type code one of z q, b<comp>,
+// t<path>[I<types>], f<type><types>, u<types>, a<count><type>.
+Mangled = {
+    text: str,
+    at :: usize,
+
+    number = (self :: @Self) Res<usize> {
+        start = self.at;
+        loop(() { self.at < self.text.len && is_digit(self.text.index(self.at)) }, (h) { self.at = self.at + 1; });
+        (self.at > start).ensure().try();
+        self.text.slice(start, self.at).parse_usize()
+    }
+
+    count = (self :: @Self) Res<usize> {
+        n = self.number().try();
+        (self.at < self.text.len && self.text.index(self.at) == '_').ensure().try();
+        self.at = self.at + 1;
+        Ok(n)
+    }
+
+    component = (self :: @Self) Res<()> {
+        n = self.number().try();
+        (self.at + n <= self.text.len).ensure().try();
+        self.at = self.at + n;
+        Ok(())
+    }
+
+    types = (self :: @Self) Res<()> {
+        n = self.count().try();
+        ok ::= true;
+        Range(0, n).loop((h, i) { self.skip_type().match({ Ok(_) => (), None => { ok = false; h.break(); } }); });
+        ok.ensure()
+    }
+
+    skip_type = (self :: @Self) Res<()> {
+        (self.at < self.text.len).ensure().try();
+        tag = self.text.index(self.at);
+        self.at = self.at + 1;
+        (tag == 'z' || tag == 'q').match({
+            true  => Ok(()),
+            false => (tag == 'b').match({
+                true  => self.component(),
+                false => (tag == 't').match({
+                    true  => {
+                        k = self.count().try();
+                        ok ::= true;
+                        Range(0, k).loop((h, i) { self.component().match({ Ok(_) => (), None => { ok = false; h.break(); } }); });
+                        ok.ensure().try();
+                        (self.at < self.text.len && self.text.index(self.at) == 'I').match({
+                            true  => {
+                                self.at = self.at + 1;
+                                self.types()
+                            },
+                            false => Ok(()),
+                        })
+                    },
+                    false => (tag == 'f').match({
+                        true  => {
+                            self.skip_type().try();
+                            self.types()
+                        },
+                        false => (tag == 'u').match({
+                            true  => self.types(),
+                            false => (tag == 'a').match({
+                                true  => {
+                                    self.count().try();
+                                    self.skip_type()
+                                },
+                                false => None,
+                            }),
+                        }),
+                    }),
+                }),
+            }),
+        })
+    }
+}
+
+is_digit = (c: u8) bool { c >= '0' && c <= '9' }
+
+PTR_CODE: str = "t4_3std3mem7mem_ptr3PtrI"
+
+// For each declared parameter, whether its Zen type is a Ptr<T> (an
+// address with no extent); None when the symbol does not decode.
+pointer_params = (a: Alloc, symbol: str) Res<Vec<bool>> {
+    symbol.starts_with("zu_f").ensure().try();
+    m ::= Mangled(text: symbol, at: 4);
+    k = m.count().try();
+    Range(0, k).loop((i) { m.component().match({ _ => () }); });
+    (m.at < symbol.len && symbol.index(m.at) == 'O').ensure().try();
+    m.at = m.at + 1;
+    n = m.count().try();
+    out ::= a.Vec<bool>();
+    ok ::= true;
+    Range(0, n).loop((h, i) {
+        out.add(symbol.slice(m.at, symbol.len).starts_with(PTR_CODE)).match({ _ => () });
+        m.skip_type().match({ Ok(_) => (), None => { ok = false; h.break(); } });
+    });
+    ok.ensure().try();
+    Ok(out)
+}
+
+// Every function's calling shape, for the taint analysis's call rule:
+// only its argument registers and stack arguments can carry a secret into
+// the callee.
+call_shapes* = (
     a   : Alloc,
     isa : Isa,
     c   : str
-) Res<Map<str, usize>, AllocError> {
-    out ::= a.Map<str, usize>();
+) Res<Map<str, CallShape>, AllocError> {
+    out ::= a.Map<str, CallShape>();
     c.lines().loop((line) {
         head = line.starts_with("static ") && line.contains('(')
             && (line.ends_with(";") || line.ends_with("{"));
@@ -495,40 +793,113 @@ register_arity* = (
                 ).try().view(),
                 false => line,
             })).when_ok((m) {
-                n ::= isa.match({
-                    X86 => layout_of(
-                        a,
-                        c,
-                        m.result
-                    ).match({ Ok(l) => (l.size > 16).match({ true => 1, false => 0 }), None => 0 }),
-                    Arm => 0,
-                });
-                m.params.loop((p) {
-                    size = layout_of(
-                        a,
-                        c,
-                        p.ctype
-                    ).match({ Ok(l) => l.size, None => 8 });
-                    n    = n + (size <= 8).match({
-                        true  => 1,
-                        false => (size <= 16).match({
-                            true  => 2,
-                            false => isa.match({ X86 => 0, Arm => 1 }),
-                        }),
-                    });
-                });
-                // A result of 9 to 16 bytes comes back in a register pair;
-                // PAIR marks it for the call rule.
-                pair = layout_of(a, c, m.result).match({
-                    Ok(l) => l.size > 8 && l.size <= 16,
-                    None  => false,
-                });
-                out.set(
-                    m.symbol,
-                    n + pair.match({ true => PAIR, false => 0 })
-                ).try();
+                out.set(m.symbol, shape_of(a, isa, c, m).try()).try();
             });
         });
     });
     Ok(out)
+}
+
+shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
+    x86      = isa.match({ X86 => true, Arm => false });
+    hidden   = hidden_result(a, isa, c, m.result, m.avx);
+    gprs: usize ::= (x86 && hidden > 0).match({ true => 1, false => 0 });
+    vectors: usize ::= 0;
+    stack: usize ::= 0;
+    writable ::= a.Vec<Writable>();
+    ignored  ::= a.Vec<str>();
+    // A `::` or lent parameter names exactly one value; a Ptr<T> any extent.
+    kinds: Res<Vec<bool>> = pointer_params(a, m.symbol);
+    decoded = kinds.match({ Ok(k) => k.len == m.params.len, None => false });
+    pointer_args ::= a.Vec<str>();
+    base: usize = isa.match({ X86 => 8, Arm => 0 });
+    placements(a, isa, c, m).try().loop((pl) {
+        pl.at.match({
+            Gpr(i)           => {
+                gprs = gprs.max(i + pl.regs);
+                capability(a, c, pl.param.ctype).then(() { ignored.add(reg_name(a, isa, i).try()).try(); });
+                pl.param.ctype.ends_with("*").then(() { pointer_args.add(reg_name(a, isa, i).try()).try(); });
+                (pl.param.ctype.ends_with("*") && !pl.param.ctype.starts_with("const ")).then(() {
+                    unbounded = !decoded || kinds.match({
+                        Ok(k) => k.get(placed_index(m, pl.param.name)).value_or(true),
+                        None  => true,
+                    });
+                    pointee = pl.param.ctype.slice(0, pl.param.ctype.len - 1).trim().value_or("");
+                    bytes = unbounded.match({
+                        true  => 0,
+                        false => layout_of(a, c, pointee).match({ Ok(l) => l.size, None => 0 }),
+                    });
+                    writable.add(Writable(index: i, bytes: bytes)).try();
+                });
+            },
+            Vreg(i)          => { vectors = vectors.max(i + pl.regs); },
+            Stack(at)        => { stack = stack.max(at + round_up(pl.layout.size, 8) - base); },
+            GprPointer(i)    => {
+                gprs = gprs.max(i + 1);
+                pointer_args.add(reg_name(a, isa, i).try()).try();
+            },
+            StackPointer(at) => { stack = stack.max(at + 8 - base); },
+        });
+    });
+    result = layout_of(a, c, m.result);
+    Ok(CallShape(
+        gprs: gprs,
+        vectors: vectors,
+        stack: stack,
+        returns: result.match({ Ok(_) => hidden == 0, None => false }),
+        pair: result.match({ Ok(l) => !l.vector && l.size > 8 && l.size <= 16, None => false }),
+        vector_result: result.match({ Ok(l) => l.vector && hidden == 0, None => false }),
+        hidden: hidden,
+        writable: writable,
+        ignored: ignored,
+        pointer_args: pointer_args,
+        known: true,
+        reads: a.Vec<str>(),
+        reads_known: false,
+        audited: false,
+        public_result: false,
+        values: a.Vec<str>(),
+        pointers: a.Vec<str>(),
+        slots: a.Vec<i64>(),
+        pointer_slots: a.Vec<i64>(),
+        pointers2: a.Vec<str>()
+    ))
+}
+
+// The position of a parameter by its C name.
+placed_index = (m: Marked, name: str) usize {
+    Range(0, m.params.len).find((i) { m.params.get(i).match({ Ok(p) => p.name.eq(name), None => false }) }).value_or(0)
+}
+
+// The shape of an audited function: what its audit seeds and proves.
+audited_shape* = (
+    a     : Alloc,
+    isa   : Isa,
+    c     : str,
+    m     : Marked,
+    shape : CallShape
+) Res<CallShape, AllocError> {
+    seed = seed_of(a, isa, c, m).try();
+    Ok(CallShape(
+        gprs: shape.gprs,
+        vectors: shape.vectors,
+        stack: shape.stack,
+        returns: shape.returns,
+        pair: shape.pair,
+        vector_result: shape.vector_result,
+        hidden: shape.hidden,
+        writable: shape.writable,
+        ignored: shape.ignored,
+        pointer_args: shape.pointer_args,
+        known: true,
+        reads: shape.reads,
+        reads_known: shape.reads_known,
+        audited: true,
+        public_result: m.public_result,
+        values: seed.values,
+        pointers: seed.pointers,
+        slots: seed.slots,
+        pointer_slots: seed.pointer_slots,
+        pointers2: seed.pointers2
+    ))
 }

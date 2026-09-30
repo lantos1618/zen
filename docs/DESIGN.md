@@ -1961,12 +1961,20 @@ function is a C compiler error, which the backend does not yet diagnose.
 ## Target features and runtime dispatch
 
 A CPU feature is a capability, in the same sense as the authority `Env`
-carries: `std.simd` declares `Avx2`, `Ssse3`, `Aes`, `Clmul` and `Neon`, and
-only `std.simd` may construct one (`ForgedCapability` otherwise). The
-detection functions `avx2()`, `ssse3()`, `aes()`, `clmul()` and `neon()`
-return `Res<Capability>` from a runtime check: cpuid through the compiler
-runtime on x86 (which includes the OS's AVX state), `AT_HWCAP` on Linux
-arm64 and `hw.optional.arm.*` sysctls on macOS. NEON is baseline on arm64.
+carries: `std.simd` declares `Avx2`, `Ssse3`, `Bmi2`, `Aes`, `Clmul`,
+`Neon`, `ShaNi`, `ArmSha2` and `ArmSha512`, and only `std.simd` may construct
+one (`ForgedCapability` otherwise). The detection functions `avx2()`,
+`ssse3()`, `bmi2()`, `aes()`, `clmul()`, `neon()`, `sha_ni()`, `arm_sha2()`
+and `arm_sha512()` return `Res<Capability>` from a runtime check: cpuid through
+the compiler runtime on x86 (which includes the OS's AVX state; CPUID leaf 7
+for the SHA extensions), `AT_HWCAP` on Linux arm64 and `hw.optional.arm.*`
+sysctls on macOS. NEON is baseline on arm64. `Bmi2` (x86 BMI1 and BMI2) has
+no instructions of its own: a function taking it may use RORX, ANDN and the
+other BMI encodings the C compiler picks for scalar code. `ZEN_CPU_DISABLE`
+(a comma list of `avx2`, `ssse3`, `bmi2`, `aes`, `clmul`, `neon`, `sha`,
+`sha512` or `all`) makes
+detection report features absent so every fallback path can be run on one
+machine; `sha` covers the SHA-256 instructions of both architectures.
 
 **The signature answers the question.** A function with a capability
 parameter is compiled for that feature: the C backend emits one combined
@@ -1985,6 +1993,18 @@ AESENC/AESENCLAST semantics; AESE+AESMC then xor on arm64) and
 `clmul_low` / `clmul_high(self: u64x2, other: u64x2, cpu: Clmul)`
 (PCLMULQDQ 0x00/0x11, PMULL/PMULL2). `cast_V` views a vector's bytes as
 another vector of the same size.
+
+The SHA instructions of x86 and arm64 compute different steps of the same
+algorithm (two rounds on an ABEF/CDGH split against four rounds on
+ABCD/EFGH), so neither can be written in terms of the other at native cost.
+Each set therefore has its own capability, detected only on its
+architecture: `sha256_rnds2`, `sha256_msg1`, `sha256_msg2` take `ShaNi`
+(SHA256RNDS2/MSG1/MSG2); `sha256h`, `sha256h2`, `sha256su0`, `sha256su1`
+take `ArmSha2` and `sha512h`, `sha512h2`, `sha512su0`, `sha512su1` take
+`ArmSha512` (FEAT_SHA256, FEAT_SHA512; operands in the ACLE order, the
+destination's incoming value first). A program with both kernels dispatches
+on both detections; on the other architecture the helpers abort, which is
+unreachable because the capability cannot be obtained there.
 
 32-byte vectors never cross a C call between functions compiled for
 different features: x86 passes them in YMM registers only with AVX, so the
@@ -2104,26 +2124,68 @@ be flagged, so a check that has stopped seeing anything fails:
 - `ct-asm --c program.c` compiles a program's generated C to assembly with
   each `--cc` at `-O2` and `-O3`. The C backend writes
   `/* zen:secret zu_l3key *zu_l3out */` after the parameter list of every
-  function with a Secret parameter; the tool keeps those functions out of
-  line, places their secret inputs by the SysV x86-64 or AAPCS64 convention,
-  and runs a forward taint analysis over the assembly (registers and stack
-  slots, joined at labels). `--manifest` names further functions and their
-  secret parameters, for shared arithmetic whose signature cannot say
-  Secret because public verification uses it too; `branches=N` on an entry
-  allows N secret-dependent branches, `?module` makes an entry optional.
+  function with a Secret parameter, ending in `public-result` when the
+  result is not written Secret (sema's discipline makes it public, and the
+  tool checks it); the tool keeps those functions out of
+  line (`noinline`, and `noipa` so GCC cannot run a clone instead), places
+  their secret inputs by the SysV x86-64 or AAPCS64 convention, and runs a
+  forward taint analysis over the assembly, joined at labels. Registers are
+  tracked whole, vector registers included (%xmm/%ymm/%zmm n are one
+  register, as are b/h/s/d/q/v n on arm64), with the vector forms that also
+  read their destination (legacy-SSE two-address forms with an immediate,
+  NEON accumulates and lane inserts, AESE) and vector instructions leaving
+  the flags alone; std.simd vectors passed by value arrive in XMM/YMM or V
+  registers, and a by-value struct the backend lends as `const T *` holds
+  its secret bytes behind the pointer. The stack is tracked byte by byte, so
+  a spilled vector's lanes keep their taint when reloaded narrower; a store
+  at an offset the analysis cannot place smears the stack (every later stack
+  load is secret). `--manifest` names further functions and their secret
+  parameters (`*p` a pointer to secret memory, `**p` a pointer to memory
+  holding pointers to secret memory), for shared arithmetic whose signature
+  cannot say Secret because public verification uses it too; `branches=N`
+  on an entry allows N secret-dependent branches, `public-result` requires
+  the result register to be public at every return, `?module` makes an
+  entry optional.
   `std.ct.declassify` of a word and `Choice.declassify_bool` pass through
   `declassify_barrier`, whose asm text is `/* zen:declassify %reg */`: the
   analysis treats that register as public from there on, so a program's
   explicit declassifications are the only places its secrets may steer
-  code. A call taints its result only through the argument registers its C
-  prototype uses (and the second result register only for a two-register
-  result); calls that never return end their path. `CT_TRACE=<symbol>`
-  prints the analysis instruction by instruction. It fails on a conditional branch, a memory
-  address, a division or an indirect jump that depends on a secret. Memory
-  other than the stack and secret pointees is not modelled.
+  code. A call passes secrets through the integer and vector argument
+  registers and stack arguments its C prototype uses. An audited callee must
+  have been seeded with every secret it is passed, or the call is reported;
+  only argument registers its body actually consumes count (measured on its
+  own assembly for the same compiler and level), a register merely holding
+  the address of secret memory counts only for a pointer parameter, and
+  std.simd capability arguments, which carry no data, never count. Its
+  result is public only when its audit proved it (`public-result`, which
+  also forbids returning a pointer into secret memory, and for a result
+  returned through a hidden pointer forbids storing a secret through it or
+  handing it to a callee given secrets); otherwise the
+  result, and memory behind a hidden result pointer, is secret when any
+  argument is secret or points at secrets. A secret-bearing call that
+  passes a writable stack address marks the one value a `::` borrow names
+  (its extent is read from the mangled parameter types) or, for a Ptr<T>,
+  smears the stack. A function's own hidden result pointer addresses memory
+  that may hold secrets. A load through a `**` pointer yields a pointer to
+  secrets only when it is pointer-sized. The stack protector's guard (from
+  `%fs:40`, or `___stack_chk_guard` through the GOT) is tracked into its
+  slot, which stays public when the stack is smeared, since only the
+  prologue writes it. On x86-64 a byte written over a secret register
+  (`sete %al`) makes only its low byte public, which is what a byte-sized
+  read, spill or `bool` result sees. Calls that never return end their
+  path. `CT_TRACE=<symbol>` prints the analysis instruction by
+  instruction. It fails on a conditional branch,
+  a memory address, a division or an indirect jump that depends on a
+  secret, a secret passed to an audited callee unseeded, and a secret
+  returned by a public-result function. Memory other than the stack and
+  secret pointees is not modelled.
 - `ct-grind` is the ctgrind method: `std.ct.ct_grind.secret_bytes` marks
   memory undefined for valgrind's memcheck, which then reports every branch
-  and address computed from it; `public_bytes` is the declassification.
+  and address computed from it; `public_bytes` is the declassification. A
+  program compiled with `-DZEN_CT_GRIND` also marks every `std.ct.declassify`
+  result defined (`ZG_CT_PUBLIC`, a valgrind client request next to the asm
+  marker), so memcheck and the static check agree on where secrets may
+  steer code.
 - `ct-timing` is a dudect-style statistical test (`std.ct.ct_timing`):
   fixed against random inputs, interleaved, Welch's t over all measurements
   and over dudect's percentile crops, run under `taskset` on one core after

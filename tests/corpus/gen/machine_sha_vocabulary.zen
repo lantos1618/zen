@@ -1,0 +1,15 @@
+// Every SHA instruction std.simd declares maps to a machine operation whose
+// refusal, on a backend that cannot lower it yet, names the instruction.
+machine_op, machine_refusal = gen.gen_ir_machine
+
+main = () {
+    [str, 11](
+        "sha256_rnds2", "sha256_msg1", "sha256_msg2", "sha256h", "sha256h2", "sha256su0",
+        "sha256su1", "sha512h", "sha512h2", "sha512su0", "sha512su1"
+    ).loop((name) {
+        println(
+            "{}",
+            machine_op(name, true).match({ Ok(op) => machine_refusal(op), None => "unmapped" })
+        );
+    });
+}

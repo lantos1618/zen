@@ -21,6 +21,8 @@ main = (env: Env) Res<(), AllocError> {
     wipe(bytes, 20);
     println("wiped: {} {} {}", bytes.read(0), bytes.read(19), bytes.read(20));
     wipe(bytes, 0);
+    wipe(words.to<u64>().offset(1), 2);
+    println("wiped words: {} {}", words.read(5), words.read(6));
     println("mix: {} {}", mix(1, 2), mix(4294967295, 1));
     // A function merely named `inline` is still an ordinary call.
     println("named inline: {} {}", inline(41), twice(5));

@@ -7,6 +7,7 @@ Function, ExprId = std.ast
 AllocError = std.mem
 Vec = std.collections
 str, String = std.text
+Range = std.core
 Checker, Ctx = sema.sema_check
 TyId, is_vector, vector_lane, vector_lanes = sema.sema_ty
 Def = sema.sema_def
@@ -195,7 +196,10 @@ is_pattern = (shown: str, n: usize) bool {
 // CPU capabilities are std.simd structs whose values prove that runtime
 // detection succeeded. Functions taking one are compiled for the feature.
 is_capability* = (name: str) bool {
-    name.is_in(["Avx2", "Ssse3", "Aes", "Clmul", "Neon"])
+    name.is_in([
+        "Avx2", "Ssse3", "Bmi2", "Aes", "Clmul", "Neon", "ShaNi", "ArmSha2",
+        "ArmSha512"
+    ])
 }
 
 forged_capability* = (c :: Checker, id: ExprId, d: Def, ctx: Ctx)
@@ -219,15 +223,50 @@ feature_shape = (name: str, ps: Vec<String>, r: str) bool {
     name.match({
         "cpu_avx2"       => ps.len == 0 && r.eq("bool"),
         "cpu_ssse3"      => ps.len == 0 && r.eq("bool"),
+        "cpu_bmi2"       => ps.len == 0 && r.eq("bool"),
         "cpu_aes"        => ps.len == 0 && r.eq("bool"),
         "cpu_clmul"      => ps.len == 0 && r.eq("bool"),
         "cpu_neon"       => ps.len == 0 && r.eq("bool"),
+        "cpu_sha_ni"     => ps.len == 0 && r.eq("bool"),
+        "cpu_arm_sha2"   => ps.len == 0 && r.eq("bool"),
+        "cpu_arm_sha512" => ps.len == 0 && r.eq("bool"),
         "aes_round"      => aes_shape(ps, r),
         "aes_round_last" => aes_shape(ps, r),
         "clmul_low"      => clmul_shape(ps, r),
         "clmul_high"     => clmul_shape(ps, r),
-        _                => false,
+        _                => sha_shape(name, ps, r),
     })
+}
+
+// The SHA instructions: every operand and the result are one vector type,
+// followed by the capability of the instruction's architecture.
+sha_shape = (name: str, ps: Vec<String>, r: str) bool {
+    name.match({
+        "sha256_rnds2" => instruction_shape(ps, r, "u32x4", 3, "ShaNi"),
+        "sha256_msg1"  => instruction_shape(ps, r, "u32x4", 2, "ShaNi"),
+        "sha256_msg2"  => instruction_shape(ps, r, "u32x4", 2, "ShaNi"),
+        "sha256h"      => instruction_shape(ps, r, "u32x4", 3, "ArmSha2"),
+        "sha256h2"     => instruction_shape(ps, r, "u32x4", 3, "ArmSha2"),
+        "sha256su0"    => instruction_shape(ps, r, "u32x4", 2, "ArmSha2"),
+        "sha256su1"    => instruction_shape(ps, r, "u32x4", 3, "ArmSha2"),
+        "sha512h"      => instruction_shape(ps, r, "u64x2", 3, "ArmSha512"),
+        "sha512h2"     => instruction_shape(ps, r, "u64x2", 3, "ArmSha512"),
+        "sha512su0"    => instruction_shape(ps, r, "u64x2", 2, "ArmSha512"),
+        "sha512su1"    => instruction_shape(ps, r, "u64x2", 3, "ArmSha512"),
+        _              => false,
+    })
+}
+
+instruction_shape = (
+    ps       : Vec<String>,
+    r        : str,
+    v        : str,
+    operands : usize,
+    cpu      : str
+) bool {
+    same ::= ps.len == operands + 1 && r.eq(v);
+    Range(0, operands).loop((i) { same = same && type_at(ps, i).eq(v); });
+    same && type_at(ps, operands).eq(cpu)
 }
 
 aes_shape = (ps: Vec<String>, r: str) bool {

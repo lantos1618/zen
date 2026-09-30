@@ -1,0 +1,21 @@
+// MUST FAIL: a bound match whose arms are blocks ending in `;`. The first
+// arm's `Range(0, 2).loop(..)` is `Res<i32>` (a loop over a range may be
+// broken with an element); the second's `.then(() { println(..) })` is
+// `Res<()>`, settled by the callback's body. A block's trailing statement
+// is its value with or without the `;`, so the arms disagree.
+//
+// `then`'s `T` appears only in its callback's result, and sema used to
+// leave it open: `Res<T>` agreed with every arm, the match took `Res<i32>`,
+// and cc refused to assign the second arm's result struct to it.
+//
+// position: the arm whose type disagrees with the arm above it.
+
+main = (env: Env) Res<i32, AllocError> {
+    k = 2;
+    r = (k == 2).match({
+        true  => { Range(0, 2).loop((h, i: i32) { println("i {}", i) }); },
+        false => { (k > 5).then(() { println("big") }); },
+    });
+    r.match({ Ok(_) => println("ok"), None => println("none") });
+    Ok(0);
+}

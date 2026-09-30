@@ -1,0 +1,14 @@
+// MUST FAIL: `(k > 5).then(() { println(..) })` is `Res<()>` -- `then`'s
+// `T` is its callback's result, here unit -- and it cannot be stored as a
+// `Res<i32>`. Left open, `Res<T>` was assignable to any `Res` and cc
+// refused the emitted assignment instead.
+//
+// position: the value that does not fit the annotation.
+
+main = (env: Env) Res<i32, AllocError> {
+    k           = 2;
+    r           = (k > 5).then(() { println("big") });
+    s: Res<i32> = r;
+    s.match({ Ok(v) => println("{}", v), None => println("none") });
+    Ok(0);
+}

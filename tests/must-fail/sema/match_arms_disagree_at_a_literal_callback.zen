@@ -1,0 +1,17 @@
+// MUST FAIL: `.then(() { 7 })` is `Res<i32>` -- a bare literal body takes
+// its default width, as the callee's instance is lowered -- and
+// `.then(() { println(..) })` is `Res<()>`. The bound match's arms
+// disagree. Before `then`'s `T` was settled from the callback's body, both
+// arms were `Res<T>` to sema and cc refused the emitted assignments.
+//
+// position: the arm whose type disagrees with the arm above it.
+
+main = (env: Env) Res<i32, AllocError> {
+    k = 2;
+    r = (k == 2).match({
+        true  => (k > 1).then(() { 7 }),
+        false => (k > 1).then(() { println("x") }),
+    });
+    r.match({ Ok(_) => println("ok"), None => println("none") });
+    Ok(0);
+}

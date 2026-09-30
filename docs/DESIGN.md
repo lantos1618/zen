@@ -515,7 +515,7 @@ The emitted C then fails to compile — `incompatible type for argument 2 of 'zg
 and the right operand is not checked against it.** The return check can hide the
 gap when the left operand already matches the declared result. The bitwise
 operators are the exception: `& | ^` check that both operands have the same
-unsigned type, and a shift checks its `usize` count (see "Unsigned bit
+unsigned type, and a shift checks that its count is unsigned (see "Unsigned bit
 operations").
 
 This remains a language decision, not a C-backend workaround: choose implicit
@@ -1858,11 +1858,16 @@ value explicitly, and use `&&`, `||` and `!=` on booleans.
   must fit it.
 - `~a` has `a`'s type.
 - `word << count` and `word >> count` shift an unsigned word; the result has
-  the word's type. The count is always `usize` (a literal count is checked
-  against `usize`); a narrower unsigned count converts with `.to_usize()`.
-- A literal alone chooses no width, so every bitwise expression needs a typed
-  unsigned operand: `1 | 2`, `~0` and `1 << n` are errors. Bind the value to a
-  typed name first, such as `one: u64 = 1; one << n`.
+  the word's type. The count may be any unsigned type, independent of the
+  word's; a literal count is checked against `usize`. Signed and float counts
+  are errors.
+- An expression whose operands are all literals — `1 << 4`, `~0`,
+  `0xF0 | 0x0F`, or a literal word shifted by a typed count — takes its width
+  from the expected type: an annotated binding or constant, a parameter, a
+  return type or a field. It folds at that width, so `lost: u8 = 1 << 8` is
+  `0` and `all: u8 = ~0` is `255`, and each literal operand must fit it. With
+  no expected type (`x = 1 << 4`), or a type that is not unsigned
+  (`x: i32 = 1 << 4`), it is an error.
 
 Shifts are bit operations, not arithmetic, and never trap. Bits moved out of
 the word are discarded, `>>` fills with zero, and a count greater than or

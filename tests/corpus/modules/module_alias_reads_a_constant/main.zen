@@ -1,0 +1,8 @@
+// A module alias reaches the module's exported constants as well as its
+// functions: `sh.OFFSET` reads shape's constant.
+sh = shape
+
+main = (env: Env) Res<i32, IoError> {
+    println("{}", sh.value() + sh.OFFSET);
+    Ok(0);
+}

@@ -27,6 +27,7 @@
 { base_of } = sema.sema_member
 { lower_const_value } = gen.gen_c.gen_c_const
 { Case, cases_of, find_case } = sema.sema_case
+{ alias_module } = sema.sema_module
 { type_from_ast } = sema.sema_denote
 
 // The base's resolved kind separates declaration reads from value fields.
@@ -286,10 +287,34 @@ collect_type_const = (
     name : str,
     out  :: Vec<TypeConst>
 ) Res<(), AllocError> {
-    decl_at(be.tree, d.id).match({
-        None  => Ok(()),
-        Ok(x) => be.collect_decl_const(x, d, name, out),
+    be.check.alias_module(d.id).match({
+        Ok(mi) => be.collect_module_const(mi, name, out),
+        None   => decl_at(be.tree, d.id).match({
+            None  => Ok(()),
+            Ok(x) => be.collect_decl_const(x, d, name, out),
+        }),
     })
+}
+
+// `sh.LIMIT` through a module alias reads that module's exported constant.
+collect_module_const = (
+    be   :: CBackend,
+    mi   : usize,
+    name : str,
+    out  :: Vec<TypeConst>
+) Res<(), AllocError> {
+    defs ::= be.alloc.Vec<Def>();
+    be.check.world.exported_defs(mi, name, defs).try();
+    defs.loop((h, d) {
+        decl_at(be.tree, d.id).match({
+            None  => Ok(()),
+            Ok(x) => x.kind.match({
+                Const(k) => out.add(TypeConst(k: k, d: d)),
+                _        => Ok(()),
+            }),
+        }).try();
+    });
+    Ok(());
 }
 
 collect_decl_const = (

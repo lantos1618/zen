@@ -129,7 +129,7 @@ main = () i32 { (C.getpid() > 0).match({true => 0, false => 1}) }
             with self.subTest(child_path=child_path):
                 root, result = self.project_fixture({
                     "main.zen": "{ answer, VERSION } = deps.sdk\nmain = () i32 { (answer() == 42).match({true => 0, false => 1}) }\n",
-                    "vendor/sdk/api.zen": "{ VALUE, FLAG } = deps.sdk.detail\nanswer* = () i32 { VALUE }\nVERSION*: i32 = 1\n",
+                    "vendor/sdk/api.zen": "{ VALUE, FLAG } = detail\nanswer* = () i32 { VALUE }\nVERSION*: i32 = 1\n",
                     child_path: "VALUE*: i32 = 42\nFLAG*: bool = true\n",
                 }, 'sdk = b.lib("sdk", {src: Path("vendor/sdk/api.zen"), libs: [], paths: []}).try();\n'
                    'b.lib("unused", {src: Path("missing/not-present.zen"), libs: [], paths: []}).try();\n'
@@ -157,6 +157,17 @@ main = () i32 { (C.getpid() > 0).match({true => 0, false => 1}) }
            'b.exe("app", {src: Path("main.zen"), deps: [], out: Ok(Path("app"))}).try();')
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("`sdk` is not a dependency of this target", result.stdout + result.stderr)
+
+    def test_package_imports_its_own_modules_by_their_own_names(self):
+        root, result = self.project_fixture({
+            "main.zen": "{ answer } = deps.tools\nmain = () i32 { (answer() == 42).match({true => 0, false => 1}) }\n",
+            "vendor/sdk/api.zen": "{ VALUE } = detail\nd = detail\nanswer* = () i32 { VALUE + d.OFFSET }\n",
+            "vendor/sdk/detail.zen": "VALUE*: i32 = 40\nOFFSET*: i32 = 2\n",
+        }, 'tools = b.lib("tools", {src: Path("vendor/sdk/api.zen"), libs: [], paths: []}).try();\n'
+           'b.exe("app", {src: Path("main.zen"), deps: [tools], out: Ok(Path("app"))}).try();')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        process = subprocess.run([str(root / "app")], capture_output=True, text=True, timeout=10)
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
 
     def test_dependency_is_reached_through_deps(self):
         _, result = self.project_fixture({

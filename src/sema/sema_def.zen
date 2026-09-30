@@ -582,7 +582,7 @@ bind_named = (
     im.names.get(0).match({
         None  => Ok(()),
         Ok(n) => {
-            path = dotted(a, im.module).try();
+            path = package_path(a, m.name, dotted(a, im.module).try()).try();
             seen ::= a.Vec<usize>();
             item = w.index_of(path).match({
                 None      => false,
@@ -840,7 +840,7 @@ add_def = (
 }
 
 add_imports = (t :: ModuleTable, a: Alloc, im: Import) Res<(), AllocError> {
-    path = dotted(a, im.module).try();
+    path = package_path(a, t.name, dotted(a, im.module).try()).try();
     im.names.loop((h, n) {
         t.imports.add(ImportBinding(
             name: n.name.text,
@@ -851,6 +851,38 @@ add_imports = (t :: ModuleTable, a: Alloc, im: Import) Res<(), AllocError> {
         )).try();
     });
     Ok(());
+}
+
+// The package a module belongs to: `sdk` for `deps.sdk.detail`, else "".
+package_of* = (module: str) str {
+    module.starts_with("deps.").match({
+        false => "",
+        true  => {
+            rest = module.slice(5, module.len);
+            rest.find(".").match({
+                Ok(at) => rest.slice(0, at),
+                None   => rest,
+            })
+        },
+    })
+}
+
+// Inside a dependency, an import root other than `std` and `deps` names one
+// of the dependency's own modules, so a package never depends on the name
+// its consumer gave it: in `deps.sdk.api`, `detail` is `deps.sdk.detail`.
+package_path* = (a: Alloc, owner: str, path: str) Res<str, AllocError> {
+    pkg  = package_of(owner);
+    root = path.find(".").match({
+        Ok(at) => path.slice(0, at),
+        None   => path,
+    });
+    (pkg.is_empty() || root.eq("std") || root.eq("deps")).match({
+        true  => Ok(path),
+        false => {
+            full ::= a.String("deps.{}.{}", pkg, path).try();
+            Ok(full.view())
+        },
+    })
 }
 
 dotted* = (a: Alloc, q: QualifiedName) Res<str, AllocError> {

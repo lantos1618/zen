@@ -34,6 +34,12 @@ The dependency's entry is module `deps.audio`; a module beside it is
 list is an error that says so, and a dependency is never reachable by its bare
 name, so it cannot collide with a project folder of the same name.
 
+Inside a dependency the same rule is relative to the dependency: an import
+root other than `std` and `deps` names one of its own modules, so
+`{ VALUE } = detail` in the entry of `deps.audio` is `deps.audio.detail`. A
+package therefore never depends on the name a consumer registers it under,
+and it cannot reach the consumer's project modules.
+
 `exe` and `exe_test` return `Res<Builder, BuildError>`. `.try()` propagates a
 failed registration before evaluating the next one. Existing standalone calls
 remain valid. The evaluator visits each receiver once and retains declaration

@@ -5,7 +5,7 @@
 { str } = std.text
 { DeclId } = sema.sema_id
 { TyId } = sema.sema_ty
-{ Def, decl_at, module_display } = sema.sema_def
+{ Def, decl_at, module_display, package_path } = sema.sema_def
 { SemaFault, ExportFault } = sema.sema_diag
 { Checker, Ctx } = sema.sema_check
 { def_type, decl_as_type } = sema.sema_type
@@ -59,19 +59,26 @@ module_for_target = (c :: Checker, n: Named, id: DeclId) Res<usize> {
             d.name.eq(n.name.text) && d.id.eq(id) == false
         }).match({
             Ok(_) => None,
-            None  => c.target_module(n),
+            None  => c.target_module(n, id),
         }),
         None  => c.world.defines(id.module.to_usize(), n.name.text).match({
             true  => None,
-            false => c.target_module(n),
+            false => c.target_module(n, id),
         }),
     })
 }
 
-target_module = (c :: Checker, n: Named) Res<usize> {
+target_module = (c :: Checker, n: Named, id: DeclId) Res<usize> {
     (n.args.len == 0).match({
         false => None,
-        true  => c.world.index_of(n.name.text),
+        true  => package_path(
+            c.alloc,
+            c.world.module_name(id),
+            n.name.text
+        ).match({
+            Ok(path) => c.world.index_of(path),
+            Err(_)   => None,
+        }),
     })
 }
 

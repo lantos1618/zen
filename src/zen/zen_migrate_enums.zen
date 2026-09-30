@@ -1,0 +1,239 @@
+// Rewrites each bare `A | B(T)` declaration that sema reads as an enum into
+// the braced form `{ A | B: T }`. Exists for the one migration; it is
+// removed once every enum in the tree is braced.
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Range } = std.core
+{ Module, Decl, Enum, Variant, Span, TypeId } = std.ast
+{ scan, Source } = std.lex
+{ Parser, module } = std.parse
+{ Checker } = sema.sema_check
+{ DeclId } = sema.sema_id
+{ union_reading } = sema.sema_union
+{ Src } = fmt.fmt_src
+
+// One replacement: `len` bytes at `at` become `text`.
+Edit = {
+    at: usize,
+    len: usize,
+    text: str,
+}
+
+// Span files are relative to their root: `std/..` to the stdlib's parent,
+// everything else to the build root.
+migrate_enums* = (
+    env      : Env,
+    a        : Alloc,
+    c        :: Checker,
+    root     : str,
+    std_root : str
+) Res<(), AllocError> {
+    module_id: u32 ::= 0;
+    Range(0, c.tree.module_count()).loop((h, i) {
+        c.tree.module_at(i).match({
+            None  => Ok(()),
+            // Only written source files; a translated C binding has none.
+            Ok(m) => c.tree.module_origin_at(i).match({
+                Ok(origin) => origin.match({
+                    Source => migrate_module(
+                        env,
+                        a,
+                        c,
+                        m,
+                        module_id,
+                        root,
+                        std_root
+                    ),
+                    _      => Ok(()),
+                }),
+                None       => Ok(()),
+            }),
+        }).try();
+        module_id = module_id + 1;
+    });
+    Ok(())
+}
+
+migrate_module = (
+    env      : Env,
+    a        : Alloc,
+    c        :: Checker,
+    m        : Module,
+    mi       : u32,
+    root     : str,
+    std_root : str
+) Res<(), AllocError> {
+    targets      ::= a.Vec<Enum>();
+    file         ::= "";
+    decl_id: u32 ::= 0;
+    m.decls.loop((h, d) {
+        d.kind.match({
+            Enum(e) => (!e.braced
+                && !c.union_reading(DeclId(module: mi, decl: decl_id))).then(() {
+                file = d.span.file;
+                targets.add(e).try();
+            }),
+            _       => (),
+        });
+        decl_id = decl_id + 1;
+    });
+    (targets.len == 0).match({
+        true  => Ok(()),
+        false => {
+            base = file.starts_with("std/").match({
+                true  => std_root,
+                false => root,
+            });
+            path ::= a.String("{}/{}", base, file).try();
+            rewrite(env, a, c, path.view(), targets)
+        },
+    })
+}
+
+rewrite = (env: Env, a: Alloc, c :: Checker, file: str, targets: Vec<Enum>)
+          Res<(), AllocError> {
+    env.fs.read(a, file).match({
+        Err(_)  => {
+            println("migrate-enums: cannot read {}", file);
+            Ok(())
+        },
+        Ok(raw) => {
+            text = raw.view();
+            src  = a.Src(text).try();
+            edits   ::= a.Vec<Edit>();
+            skipped ::= false;
+            targets.loop((h, e) {
+                enum_edits(a, c, src, text, e, edits).try().match({
+                    true  => (),
+                    false => {
+                        skipped = true;
+                        println(
+                            "migrate-enums: {}:{} has a union payload; left for a named union",
+                            file,
+                            e.name.span.start.line
+                        );
+                    },
+                });
+            });
+            out = apply(a, text, edits).try();
+            checked(a, file, out.view()).try().match({
+                false => {
+                    println(
+                        "migrate-enums: {} does not parse after rewriting; left unchanged",
+                        file
+                    );
+                    Ok(())
+                },
+                true  => env.fs.write(file, out.view()).match({
+                    Ok(_)  => {
+                        println("migrate-enums: rewrote {}", file);
+                        Ok(())
+                    },
+                    Err(_) => {
+                        println("migrate-enums: cannot write {}", file);
+                        Ok(())
+                    },
+                }),
+            })
+        },
+    })
+}
+
+// Braces around the variants and `Name(T)` as `Name: T`. False when a
+// payload is a union, which the braced form writes under a name.
+enum_edits = (
+    a     : Alloc,
+    c     : Checker,
+    src   : Src,
+    text  : str,
+    e     : Enum,
+    edits :: Vec<Edit>
+) Res<bool, AllocError> {
+    union = e.variants.find((v) {
+        v.payload.match({
+            None  => false,
+            Ok(t) => c.tree.type_at(
+                t
+            ).kind.match({ Union(_) => true, _ => false }),
+        })
+    }).match({ Ok(_) => true, None => false });
+    union.match({
+        true  => Ok(false),
+        false => {
+            first = e.leading_bar.match({
+                Ok(bar) => bar.start,
+                None    => e.variants.get(0).match({
+                    Ok(v) => v.span.start,
+                    None  => e.name.span.start,
+                }),
+            });
+            last  = e.variants.get(e.variants.len - 1).match({
+                Ok(v) => v.span.end,
+                None  => e.name.span.end,
+            });
+            edits.add(Edit(at: src.offset(first), len: 0, text: "{ ")).try();
+            e.variants.loop((h, v) {
+                v.payload.match({
+                    None  => Ok(()),
+                    Ok(t) => payload_edits(c, src, text, v, t, edits),
+                }).try();
+            });
+            edits.add(Edit(at: src.offset(last), len: 0, text: " }")).try();
+            Ok(true)
+        },
+    })
+}
+
+// `Name(T)`: the `(` and any space before the type become `: `, and the
+// `)` after the type goes.
+payload_edits = (
+    c     : Checker,
+    src   : Src,
+    text  : str,
+    v     : Variant,
+    t     : TypeId,
+    edits :: Vec<Edit>
+) Res<(), AllocError> {
+    span  = c.tree.type_at(t).span;
+    open  = src.offset(v.name.span.end);
+    start = src.offset(span.start);
+    end   = src.offset(span.end);
+    close ::= end;
+    loop(
+        close < text.len && text.index(close) != ')',
+        (h) { close = close + 1; }
+    );
+    edits.add(Edit(at: open, len: start - open, text: ": ")).try();
+    edits.add(Edit(at: end, len: close + 1 - end, text: "")).try();
+    Ok(())
+}
+
+// Edits never overlap; they are applied in offset order.
+apply = (a: Alloc, text: str, edits: Vec<Edit>) Res<String, AllocError> {
+    out       ::= a.String().try();
+    at: usize ::= 0;
+    Range(0, text.len + 1).loop((h, i) {
+        edits.loop((h2, ed) {
+            (ed.at == i && ed.len == 0).then(() { out.add(ed.text).try(); });
+        });
+        replaced = edits.find((ed) { ed.at == i && ed.len > 0 });
+        replaced.match({
+            Ok(ed) => {
+                out.add(ed.text).try();
+                at = i + ed.len;
+            },
+            None   => (),
+        });
+        (i >= at && i < text.len).then(() { out.add(text.index(i)).try(); });
+    });
+    Ok(out)
+}
+
+// The rewritten file parses without a diagnostic.
+checked = (a: Alloc, file: str, text: str) Res<bool, AllocError> {
+    lexed = scan(a, Source(file: file, text: text)).try();
+    p ::= a.Parser(lexed);
+    p.module(file).try();
+    Ok(lexed.is_clean() && p.diags.len == 0)
+}

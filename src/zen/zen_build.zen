@@ -36,6 +36,7 @@
 { Unit } = zen.zen_path
 
 { Publisher } = zen.zen_write
+{ migrate_enums } = zen.zen_migrate_enums
 
 // The import root of a target's dependencies, named after its `deps` list.
 DEPS: str = "deps"
@@ -350,6 +351,21 @@ Build* = {
     enqueue_named = (self :: @Self, im: Import, seen :: Vec<Unit>)
                     Res<(), AllocError> {
         whole = self.named_path(im).try();
+        // Module names are lowercase, so a capitalised segment names an item.
+        // Probing it would find `Env.zen` as `env.zen` on a case-insensitive
+        // filesystem and load that module twice.
+        item = whole.last_segment().match({
+            ""   => true,
+            name => name.index(0).is_upper(),
+        });
+        item.match({
+            true  => self.enqueue(im.module, seen),
+            false => self.enqueue_whole(im, whole, seen),
+        })
+    }
+
+    enqueue_whole = (self :: @Self, im: Import, whole: QualifiedName,
+                     seen :: Vec<Unit>) Res<(), AllocError> {
         whole.segment_at(0).eq(DEPS).match({
             true  => self.enqueue_named_dep(im, whole, seen),
             false => self.source_module(whole).try().match({
@@ -683,7 +699,17 @@ Build* = {
 
     // check_all owns declaration scope and traversal order.
     check_tree = (self :: @Self, job: BuildArgs) Res<(), AllocError> {
-        c      ::= self.checked().try();
+        c ::= self.checked().try();
+        self.env.var("ZEN_MIGRATE_ENUMS").match({
+            Ok(_) => migrate_enums(
+                self.env,
+                self.alloc,
+                c,
+                self.root,
+                self.std_base()
+            ).try(),
+            None  => (),
+        });
         report ::= self.alloc.String("").try();
         c.render_diags(report).try();
         // Graph checks cover self-imports and cross-module constant cycles.

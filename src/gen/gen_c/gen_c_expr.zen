@@ -655,13 +655,29 @@ spill_valued = (
     ty  : TyId,
     out :: String
 ) Res<(), AllocError> {
+    tmp = be.declare_temp(ty).try();
+    be.deliver(id, ctx, ty, Dest.Into(tmp.view())).try();
+    out.add(tmp.view())
+}
+
+// A fresh temporary of `ty`, declared ahead of the statement being lowered.
+declare_temp* = (be :: CBackend, ty: TyId) Res<String, AllocError> {
     be.request_type(ty).try();
     tmp  ::= be.fresh_name("s").try();
     line ::= be.alloc.String().try();
     be.declarator(ty, tmp.view(), line).try();
     be.fmt("{};\n", line.view()).try();
-    be.deliver(id, ctx, ty, Dest.Into(tmp.view())).try();
-    out.add(tmp.view())
+    Ok(tmp)
+}
+
+// The type a value is held at, when it has storage to be held in.
+holding_type* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
+                Res<Res<TyId>, AllocError> {
+    ty = be.destination_type(id, ctx, want).try();
+    Ok(be.spill_of(ty).match({
+        Valued => Ok(ty),
+        _      => None,
+    }))
 }
 
 // Holds a value at its source position to preserve Zen evaluation order.
@@ -756,9 +772,36 @@ lower_paren = (
     out  :: String
 ) Res<(), AllocError> {
     out.add("(").try();
-    expr(be, id, ctx, want, out).try();
+    expr(be, be.unparened(id, ctx, want).try(), ctx, want, out).try();
     out.add(")").try();
     Ok(());
+}
+
+// The expression inside directly nested parens that each lower as plain
+// parentheses around it. Such a chain needs only one C pair, and walking it
+// iteratively keeps deep parens from costing host stack or C nesting.
+unparened* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
+             Res<ExprId, AllocError> {
+    at    ::= id;
+    going ::= true;
+    going.loop((h) {
+        going = be.tree.expr_at(at).kind.match({
+            Paren(p) => be.plain_paren(at, ctx, want).try().match({
+                true  => { at = p.inner; true },
+                false => false,
+            }),
+            _        => false,
+        });
+    });
+    Ok(at)
+}
+
+// Whether `expr` lowers this paren as parentheses around its inner
+// expression at the same expected type.
+plain_paren = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
+              Res<bool, AllocError> {
+    door = be.door_of(id, ctx, want).try();
+    Ok(door.match({ Plain => !be.spills(id), _ => false }))
 }
 
 // Scalar literals retain their checked source spelling. Strings also carry

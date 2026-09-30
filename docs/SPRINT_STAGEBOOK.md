@@ -5,6 +5,32 @@ Completed execution logs, previous checkpoints and review transcripts live in
 Git history. Architecture and library contracts belong in [LIBRARIES.md](LIBRARIES.md),
 [DESIGN.md](DESIGN.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Current checkpoint: deep expressions (2026-09-30)
+
+Constant folding walks an explicit continuation stack that each checker
+reserves once for `FOLD_DEPTH` pending operators; a fold costs no host stack
+per level and never allocates. The recursive folder copied the 5.6 KB
+`Checker` into every level (about 29 KB of stack each), so a 256-deep fold
+under deep typing overflowed Linux's 8 MB main stack in
+`codegen/nesting_expr`. Typing, ownership and C lowering now continue their
+left-operand chains through parens and unary operators, and directly nested
+parens lower to one C pair. A binary spine deeper than 32 levels is written
+as comma-sequenced segments held in temporaries, which keeps the generated C
+within Clang's 256-level bracket limit without reordering evaluation.
+
+`nesting_expr` now needs about 2.2 MB of stack on Linux (7 MB with only the
+folder fixed), bounded by the parser's own recursion, and it and
+`lex/long_single_line` compile under Clang. The warning gate's fixture carries
+a 300-level parenthesized sum and a 300-term chain, so Clang's bracket limit is
+checked on Linux CI.
+
+The seed is regenerated. On Linux, `make check` passes (1363, one deferred)
+with unchanged warning counts, and the seed fixpoint, determinism,
+differential, UBSan and runtime gates pass. On macOS `make check` shows only
+the six failures main also has. GNU Make 3.81 on macOS gives recipes a 64 MB
+stack, so a compiler stack overflow there shows only when `zen` or
+`tests/run.py` runs outside make.
+
 ## Current checkpoint: HTTP package boundary (2026-09-29)
 
 HTTP/1 and HTTP/2 implementations, std re-exports and `Net.http` have been
@@ -157,8 +183,14 @@ verification remains pending. Actor mailbox scheduling is unchanged. See
   It was not included in this native-socket branch. Also preserve the unrelated
   local `grammar/src/tree_sitter/array.h` drift; it is not part of this change.
 - Resolve the remaining macOS corpus failures: Linux-specific backend/path
-  expectations, `/proc` fixture, Clang nesting limits and TLS linking. Check
-  Linux CI before claiming portability verified on both operating systems.
+  expectations, `/proc` fixture and TLS linking. Check Linux CI before
+  claiming portability verified on both operating systems.
+- Deep nesting outside left-operand chains still recurses at 10-60 KB of host
+  stack per level: nested calls in C lowering (`codegen/nesting_calls` needs
+  about 7 MB on Linux and 12-16 MB on macOS arm64, where it fails outside
+  make), and right-nested operands or unary chains in typing. Right-nested
+  operands and unary chains near the parser's depth limit also still exceed
+  Clang's bracket limit in the generated C.
 - Linux warning checks now pass at GCC315 and Clang320 for the seed, with the
   Clang budget lowered after removing 24 unused arithmetic helpers. The later
   review-tool dependency failure is fixed in the workflow; confirm the full CI

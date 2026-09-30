@@ -1,15 +1,28 @@
-Expr, ExprId, Binary = std.ast
+Expr, ExprId = std.ast
 AllocError = std.mem
 Vec = std.collections
 Checker, Ctx = sema.sema_check
+TyId = sema.sema_ty
 type_of = sema.sema_type
 
-// Guard the heavier iterative walk; most operands have no left binary spine.
-spine_ahead* = (c: Checker, id: ExprId) bool {
+// A parent types one operand before anything else: a binary its left operand,
+// a paren or unary operator its only one. Typing that chain deepest first
+// leaves every parent's first operand a memo hit, so a deeply nested chain
+// costs constant host stack.
+type_first* = (c :: Checker, id: ExprId, ctx: Ctx) Res<TyId, AllocError> {
+    c.spine_ahead(id).match({
+        false => Ok(()),
+        true  => c.seed_left_spine(id, ctx),
+    }).try();
+    c.type_of(id, ctx)
+}
+
+// Guard the heavier iterative walk; most operands have no chain below them.
+spine_ahead = (c: Checker, id: ExprId) bool {
     c.below(id).match({ None => false, Ok(_) => true })
 }
 
-seed_left_spine* = (c :: Checker, id: ExprId, ctx: Ctx)
+seed_left_spine = (c :: Checker, id: ExprId, ctx: Ctx)
                   Res<(), AllocError> {
     spine ::= c.alloc.Vec<ExprId>();
     down  ::= id;
@@ -30,8 +43,8 @@ seed_left_spine* = (c :: Checker, id: ExprId, ctx: Ctx)
     Ok(());
 }
 
-// One step down: the left operand of a binary node nothing has typed
-// yet, and `None` at anything else.
+// One step down: the first-typed operand of a node nothing has typed yet,
+// and `None` at anything else.
 below = (c: Checker, id: ExprId) Res<ExprId> {
     c.expr_memo.get(id).match({
         Ok(_) => None,
@@ -42,6 +55,8 @@ below = (c: Checker, id: ExprId) Res<ExprId> {
 left_of = (node: Expr) Res<ExprId> {
     node.kind.match({
         Binary(b) => Ok(b.lhs),
+        Paren(p)  => Ok(p.inner),
+        Unary(u)  => Ok(u.operand),
         _         => None,
     })
 }

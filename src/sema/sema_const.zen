@@ -1,6 +1,6 @@
-Expr, ExprId, Binary, BinOp, Literal = std.ast
-Unary, Access, Paren, Name, Const = std.ast
-AllocError = std.mem
+Ast, Expr, ExprId, BinOp, Literal = std.ast
+Unary, Access, Const = std.ast
+Alloc, AllocError, Ptr = std.mem
 Vec = std.collections
 str = std.text
 TyId = sema.sema_ty
@@ -115,29 +115,123 @@ last_digit = (v: i64) usize {
     })
 }
 
+// Expressions nested deeper than this are not folded. The bound also sizes
+// the folder's continuation stack.
 FOLD_DEPTH: usize = 256
 
 // The integer this expression provably is; absence for anything reached
 // through a binding.
-const_int* = (c: Checker, id: ExprId) Res<i64> {
-    c.const_within(id, FOLD_DEPTH)
+const_int* = (c: Checker, id: ExprId) Res<i64> { c.folder.int(id) }
+
+// Folding walks an explicit continuation stack, so expression depth costs no
+// host stack. Only a negation or binary operator leaves a continuation, one
+// per ancestor of the node being folded, and no node deeper than FOLD_DEPTH
+// is entered; the stack reserved at construction therefore always suffices
+// and a fold never allocates. Operands fold left to right and the first
+// operand that is not constant ends the fold.
+ConstFolder* = {
+    tree: Ast,
+    pending: Ptr<Pending>,
+
+    int* = (self: @Self, root: ExprId) Res<i64> {
+        top              ::= 0;
+        move             ::= self.enter(FoldAt(id: root, depth: 0));
+        result: Res<i64> ::= None;
+        going            ::= true;
+        going.loop((h) {
+            move.match({
+                Into(at)    => { move = self.enter(at); },
+                Defer(d)    => {
+                    self.pending.write(top, d.owed);
+                    top  = top + 1;
+                    move = self.enter(d.next);
+                },
+                Leaf(value) => value.match({
+                    None  => { going = false; },
+                    Ok(v) => (top == 0).match({
+                        true  => { result = Ok(v); going = false; },
+                        false => {
+                            top  = top - 1;
+                            move = resume(self.pending.read(top), v);
+                        },
+                    }),
+                }),
+            });
+        });
+        result
+    }
+
+    enter = (self: @Self, at: FoldAt) FoldMove {
+        (at.depth < FOLD_DEPTH).match({
+            true  => self.enter_node(self.tree.expr_at(at.id), at.depth + 1),
+            false => FoldMove.Leaf(None),
+        })
+    }
+
+    // `below` is the depth of this node's operands.
+    enter_node = (self: @Self, node: Expr, below: usize) FoldMove {
+        node.kind.match({
+            Literal(l) => FoldMove.Leaf(const_literal(l)),
+            Paren(p)   => FoldMove.Into(FoldAt(id: p.inner, depth: below)),
+            Unary(u)   => enter_unary(u, below),
+            Binary(b)  => FoldMove.Defer(Deferral(
+                owed: Pending.Rhs(RhsOwed(rhs: b.rhs, op: b.op, depth: below)),
+                next: FoldAt(id: b.lhs, depth: below)
+            )),
+            Access(a)  => FoldMove.Leaf(self.prim_const(a)),
+            _          => FoldMove.Leaf(None),
+        })
+    }
+
+    // `i32.MAX/MIN/BITS` only when the base is the primitive's own name, not
+    // a binding of that type.
+    prim_const = (self: @Self, a: Access) Res<i64> {
+        self.tree.expr_at(a.base).kind.match({
+            Name(n) => prim_const_value(n.text, a.name.text),
+            _       => None,
+        })
+    }
 }
 
-const_within = (c: Checker, id: ExprId, left: usize) Res<i64> {
-    (left == 0).match({
-        true  => None,
-        false => c.const_node(c.tree.expr_at(id), left - 1),
+ConstFolder* = (a: Alloc, tree: Ast) Res<ConstFolder, AllocError> {
+    pending ::= a.Vec<Pending>();
+    pending.reserve(FOLD_DEPTH).try();
+    Ok(ConstFolder(tree: tree, pending: pending.ptr()))
+}
+
+FoldAt = { id: ExprId, depth: usize }
+
+// What an operator still owes once its current operand has folded: a
+// negation, the right operand of a binary, or the operation itself once both
+// sides are known.
+RhsOwed = { rhs: ExprId, op: BinOp, depth: usize }
+LhsDone = { op: BinOp, x: i64 }
+Pending = Negate | Rhs(RhsOwed) | Combine(LhsDone)
+
+Deferral = { owed: Pending, next: FoldAt }
+
+// A leaf answers a value or refusal; `Into` and `Defer` continue with an
+// operand, `Defer` after recording what its operator owes.
+FoldMove = Leaf(Res<i64>) | Into(FoldAt) | Defer(Deferral)
+
+enter_unary = (u: Unary, below: usize) FoldMove {
+    u.op.match({
+        Neg => FoldMove.Defer(Deferral(
+            owed: Pending.Negate,
+            next: FoldAt(id: u.operand, depth: below)
+        )),
+        _   => FoldMove.Leaf(None),
     })
 }
 
-const_node = (c: Checker, node: Expr, left: usize) Res<i64> {
-    node.kind.match({
-        Literal(l) => const_literal(l),
-        Paren(p)   => c.const_within(p.inner, left),
-        Unary(u)   => c.const_unary(u, left),
-        Binary(b)  => c.const_binary(b, left),
-        Access(a)  => c.const_prim_const(a),
-        _          => None,
+resume = (owed: Pending, v: i64) FoldMove {
+    owed.match({
+        Negate     => FoldMove.Leaf(Ok(0 - v)),
+        Rhs(r)     => FoldMove.Defer(Deferral(
+            owed: Pending.Combine(LhsDone(op: r.op, x: v)),
+            next: FoldAt(id: r.rhs, depth: r.depth)
+        )),
+        Combine(l) => FoldMove.Leaf(fold(l.op, l.x, v)),
     })
 }
 
@@ -187,44 +281,6 @@ fits_magnitude* = (value: u64, name: str) Res<bool> {
         "i64"   => Ok(value <= 9223372036854775807),
         "u64"   => Ok(true),
         "usize" => Ok(true),
-        _       => None,
-    })
-}
-
-const_unary = (c: Checker, u: Unary, left: usize) Res<i64> {
-    u.op.match({
-        Neg => c.negate(u.operand, left),
-        _   => None,
-    })
-}
-
-negate = (c: Checker, id: ExprId, left: usize) Res<i64> {
-    c.const_within(id, left).match({
-        None  => None,
-        Ok(v) => Ok(0 - v),
-    })
-}
-
-const_binary = (c: Checker, b: Binary, left: usize) Res<i64> {
-    c.const_within(b.lhs, left).match({
-        None  => None,
-        Ok(x) => c.const_rhs(b, x, left),
-    })
-}
-
-const_rhs = (c: Checker, b: Binary, x: i64, left: usize) Res<i64> {
-    c.const_within(b.rhs, left).match({
-        None  => None,
-        Ok(y) => fold(b.op, x, y),
-    })
-}
-
-// `i32.MAX/MIN/BITS` only when the base is the primitive's own name, not
-// a binding of that type.
-const_prim_const = (c: Checker, a: Access) Res<i64> {
-    base = c.tree.expr_at(a.base);
-    base.kind.match({
-        Name(n) => prim_const_value(n.text, a.name.text),
         _       => None,
     })
 }

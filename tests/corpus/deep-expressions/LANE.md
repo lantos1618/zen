@@ -8,6 +8,8 @@ tests/corpus/deep-expressions/nested_member_chain_threads_types -- resolve any c
 tests/corpus/deep-expressions/try_chain_surfaces_the_deepest_error -- forward a re-wrapped or zero Err through any of the twelve .try() hops instead of the deepest frame's ChainError(tag=12); the Ok path (66 through twelve frames) catches join-slot mix-ups from the other direction.
 tests/corpus/deep-expressions/nested_arrays_settle_element_types -- settle an inner array literal to the wrong element type at depth, flatten nesting into one flat array, or apply an index to the wrong level's slot (5/44/27/10/59/1 all shift).
 tests/corpus/deep-expressions/nested_enum_tags_survive_twenty_wraps -- read the wrong enum's tag when two enums share a payload shape (Node/Vine), skip one tag translation across twenty Ptr hops, or dereference the payload as a pointer (prints 0/traps instead of node 40 / vine -13).
+tests/corpus/deep-expressions/three_hundred_parenthesized_sums_stay_shallow -- let constant folding, typing, ownership or C lowering recurse once per `(sum + 1)` level (the compiler overflows its stack), or write one C bracket per Zen paren or per operator (Clang refuses the generated C); a lost or doubled level prints 299/301.
+tests/corpus/deep-expressions/long_operator_chains_keep_their_values -- drop, repeat or reorder a segment of a chain lowered through temporaries, cut it at the wrong level, or hold a segment at the wrong type (up/down/wrapped/mixed shift; halves or same turn false).
 
 ## Compiler bugs found while writing this lane
 

@@ -1,0 +1,120 @@
+// add_carry and sub_borrow against u128 arithmetic, and the two-chain
+// multi-limb products against schoolbook multiplication, on edge and
+// pseudo-random limbs. Every line prints the same on a CPU without ADX:
+// there the products are not run and the line reports agreement.
+add_carry, sub_borrow, mul_wide, truncate_u64, shift_right, bit_and, bit_xor, shift_left, to_u128 = std.core.num
+adx, bmi2, Adx, Bmi2, mul_limbs, square_limbs = std.simd
+
+ALL: u64 = 18446744073709551615
+
+edge = (i: usize) u64 {
+    i.match({
+        0 => 0,
+        1 => 1,
+        2 => 2,
+        3 => 9223372036854775808,
+        4 => ALL,
+        5 => ALL -% 1,
+        6 => 6148914691236517205,
+        7 => 4294967295,
+        _ => 18446744069414584321,
+    })
+}
+
+// xorshift64
+next = (s: u64) u64 {
+    a = s.bit_xor(s.shift_left(13));
+    b = a.bit_xor(a.shift_right(7));
+    b.bit_xor(b.shift_left(17))
+}
+
+carry_ok = (a: u64, b: u64, c: u64) bool {
+    s = a.add_carry(b, c);
+    t = a.to_u128() +% b.to_u128() +% c.bit_and(1).to_u128();
+    d = a.sub_borrow(b, c);
+    u = a.to_u128() -% b.to_u128() -% c.bit_and(1).to_u128();
+    s[0] == t.truncate_u64() && s[1] == t.shift_right(64).truncate_u64()
+        && d[0] == u.truncate_u64() && d[1] == u.shift_right(64).truncate_u64().bit_and(1)
+}
+
+model_mul = (x: [u64, 4], y: [u64, 4]) [u64, 8] {
+    r: [u64, 8] ::= [0, 0, 0, 0, 0, 0, 0, 0];
+    Range(0, 4).loop((i) {
+        carry: u64 ::= 0;
+        Range(0, 4).loop((j) {
+            t        = x[i].mul_wide(
+                y[j]
+            ) +% r[i + j].to_u128() +% carry.to_u128();
+            r[i + j] = t.truncate_u64();
+            carry    = t.shift_right(64).truncate_u64();
+        });
+        r[i + 4] = carry;
+    });
+    r
+}
+
+same8 = (p: [u64, 8], q: [u64, 8]) bool {
+    ok ::= true;
+    Range(0, 8).loop((i) { ok = ok && p[i] == q[i]; });
+    ok
+}
+
+products_ok = (adx: Adx, bmi: Bmi2, x: [u64, 4], y: [u64, 4]) bool {
+    same8(x.mul_limbs(y, adx, bmi), model_mul(x, y)) && same8(x.square_limbs(adx, bmi), model_mul(x, x))
+}
+
+main = () {
+    edges ::= true;
+    Range(0, 9).loop((i) {
+        Range(0, 9).loop((j) {
+            [u64, 5](0, 1, 2, 3, ALL).loop(
+                (c) { edges = edges && carry_ok(edge(i), edge(j), c); }
+            );
+        });
+    });
+    println("carries agree on edges: {}", edges);
+    s      ::= 88172645463325252;
+    random ::= true;
+    Range(0, 10000).loop((k) {
+        a = next(s); b = next(a); c = next(b); s = c;
+        random = random && carry_ok(a, b, c);
+    });
+    println("carries agree on random words: {}", random);
+    products = adx().match({
+        Ok(fast) => bmi2().match({
+            Ok(bmi) => {
+                ok ::= true;
+                // Every limb drawn from the edge words: carries through every
+                // position, all-ones and powers of two.
+                Range(0, 9).loop((i) {
+                    Range(0, 9).loop((j) {
+                        x  = [u64, 4](edge(i), edge(j), edge((i + j) % 9), edge((i * j) % 9));
+                        y  = [u64, 4](edge(j), edge(i), edge((i + 2 * j) % 9), edge((2 * i + j) % 9));
+                        ok = ok && products_ok(fast, bmi, x, y);
+                    });
+                });
+                ok = ok && products_ok(
+                    fast,
+                    bmi,
+                    [ALL, ALL, ALL, ALL],
+                    [ALL, ALL, ALL, ALL]
+                );
+                r ::= 2463534242;
+                Range(0, 2000).loop((k) {
+                    a = next(r); b = next(a); c = next(b); d = next(c);
+                    e = next(d); f = next(e); g = next(f); h = next(g); r = h;
+                    ok = ok && products_ok(
+                        fast,
+                        bmi,
+                        [a, b, c, d],
+                        [e, f, g, h]
+                    );
+                });
+                ok
+            },
+            None    => true,
+        }),
+        None     => true,
+    });
+    println("limb products agree: {}", products);
+}

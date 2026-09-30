@@ -1,0 +1,172 @@
+// `zen test tools/ct` (with check.zen): instruction selection for the
+// carry and multi-limb primitives, run from the repository root.
+//
+// tools/ct/isa/main.zen is compiled to assembly with every compiler in
+// CT_CC (comma-separated, default "cc") at -O2 and -O3, its probe functions
+// kept out of line. Each expectation counts one mnemonic in one probe's
+// body on the ISA the compiler produced:
+//
+//   x86-64  mul_limbs and square_limbs are MULX, ADCX and ADOX; mul_wide in a
+//           Bmi2 function is MULX; add_carry and sub_borrow chains are ADC
+//           and SBB.
+//   arm64   add_carry and sub_borrow chains are ADCS and SBCS; mul_wide is
+//           UMULH.
+//
+// The negative controls are absences: portable_product, arithmetic like
+// dual_product's without a capability, must contain none of MULX, ADCX and
+// ADOX on x86-64, and wide no ADCS on arm64, so a check that stopped
+// telling functions apart fails.
+Vec = std.collections
+str, String = std.text
+Isa, Line, function_lines, parse_lines = taint
+Entry, manifest_entries, manifest_functions = abi
+out_of_line = audit
+
+PROBES: str = "main dual_product\nmain dual_square\nmain wide_bmi2\nmain wide\nmain carry_chain\nmain borrow_chain\nmain portable_product\n"
+
+// At least `least` (or, with `absent`, none) of `mnemonic` in `probe`.
+Expect = { isa: Isa, probe: str, mnemonic: str, least: usize, absent: bool }
+
+expectations = (a: Alloc) Res<Vec<Expect>, AllocError> {
+    out ::= a.Vec<Expect>();
+    out.add(Expect(isa: Isa.X86, probe: "dual_product", mnemonic: "mulx", least: 16, absent: false)).try();
+    out.add(Expect(isa: Isa.X86, probe: "dual_product", mnemonic: "adcx", least: 17, absent: false)).try();
+    out.add(Expect(isa: Isa.X86, probe: "dual_product", mnemonic: "adox", least: 14, absent: false)).try();
+    out.add(Expect(isa: Isa.X86, probe: "dual_square", mnemonic: "mulx", least: 10, absent: false)).try();
+    out.add(Expect(isa: Isa.X86, probe: "dual_square", mnemonic: "adcx", least: 12, absent: false)).try();
+    out.add(Expect(isa: Isa.X86, probe: "dual_square", mnemonic: "adox", least: 10, absent: false)).try();
+    out.add(Expect(isa: Isa.X86, probe: "wide_bmi2", mnemonic: "mulx", least: 1, absent: false)).try();
+    out.add(Expect(isa: Isa.X86, probe: "wide_bmi2", mnemonic: "mul", least: 0, absent: true)).try();
+    out.add(Expect(isa: Isa.X86, probe: "carry_chain", mnemonic: "adc", least: 3, absent: false)).try();
+    out.add(Expect(isa: Isa.X86, probe: "borrow_chain", mnemonic: "sbb", least: 3, absent: false)).try();
+    out.add(Expect(isa: Isa.X86, probe: "portable_product", mnemonic: "mulx", least: 0, absent: true)).try();
+    out.add(Expect(isa: Isa.X86, probe: "portable_product", mnemonic: "adcx", least: 0, absent: true)).try();
+    out.add(Expect(isa: Isa.X86, probe: "portable_product", mnemonic: "adox", least: 0, absent: true)).try();
+    out.add(Expect(isa: Isa.Arm, probe: "carry_chain", mnemonic: "adcs", least: 3, absent: false)).try();
+    out.add(Expect(isa: Isa.Arm, probe: "borrow_chain", mnemonic: "sbcs", least: 3, absent: false)).try();
+    out.add(Expect(isa: Isa.Arm, probe: "wide", mnemonic: "umulh", least: 1, absent: false)).try();
+    out.add(Expect(isa: Isa.Arm, probe: "portable_product", mnemonic: "umulh", least: 1, absent: false)).try();
+    out.add(Expect(isa: Isa.Arm, probe: "wide", mnemonic: "adcs", least: 0, absent: true)).try();
+    Ok(out)
+}
+
+same_isa = (x: Isa, y: Isa) bool {
+    x.match({ X86 => y.match({ X86 => true, Arm => false }), Arm => y.match({ X86 => false, Arm => true }) })
+}
+
+// An x86 mnemonic matches with or without its operand-size suffix; arm64
+// mnemonics are exact.
+same_mnemonic = (isa: Isa, found: str, want: str) bool {
+    isa.match({
+        X86 => found.eq(want) || (found.len == want.len + 1 && found.starts_with(want)
+            && (found.ends_with("q") || found.ends_with("l"))),
+        Arm => found.eq(want),
+    })
+}
+
+symbol_of = (names: Vec<str>, symbols: Vec<str>, probe: str) str {
+    found ::= "";
+    Range(0, names.len).loop((i) {
+        names.get(i).value_or("").eq(probe).then(() { found = symbols.get(i).value_or(""); });
+    });
+    found
+}
+
+count = (isa: Isa, lines: Vec<Line>, want: str) usize {
+    n ::= 0;
+    lines.loop((l) { same_mnemonic(isa, l.mnemonic, want).then(() { n = n + 1; }); });
+    n
+}
+
+// The ISA of one compiler's output: AT&T operands carry `%` registers.
+isa_of = (asm: str) Isa {
+    x86 ::= false;
+    asm.lines().loop((h, line) {
+        text = line.trim().value_or(line);
+        (!text.starts_with(".") && !text.starts_with(";") && !text.starts_with("#")
+            && !text.starts_with("/") && text.contains("%")).then(() { x86 = true; h.break(); });
+    });
+    x86.match({ true => Isa.X86, false => Isa.Arm })
+}
+
+run = (env: Env, a: Alloc, words: Vec<str>) Res<bool, AllocError> {
+    env.proc.run_argv(a, "", words).match({
+        Ok(r)  => {
+            (r.code != 0).then(() { println("{}{}", r.out.view(), r.err.view()); });
+            Ok(r.code == 0)
+        },
+        Err(_) => Ok(false),
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a    = env.mem.alloc();
+    zen  = env.var("ZEN_COMPILER").value_or("./zen");
+    std  = env.var("ZEN_STD").value_or("src");
+    work = "build/ct";
+    mk ::= a.Vec<str>();
+    [str, 3]("mkdir", "-p", work).loop((w) { mk.add(w).try(); });
+    run(env, a, mk).try();
+    emit ::= a.Vec<str>();
+    [str, 10](zen, "build", "tools/ct/isa", "--entry", "main.zen", "--std", std, "--emit-c", "-o", "build/ct/isa.c")
+        .loop((w) { emit.add(w).try(); });
+    emitted = run(env, a, emit).try();
+    source = env.fs.read(a, "build/ct/isa.c").match({ Ok(t) => t.view(), Err(_) => "" });
+    // The probe symbols and the C with those functions out of line.
+    symbols ::= a.Vec<str>();
+    names   ::= a.Vec<str>();
+    manifest_entries(a, PROBES).try().loop((e) {
+        manifest_functions(a, source, e).try().loop((m) {
+            symbols.add(m.symbol).try();
+            names.add(e.function).try();
+        });
+    });
+    probes_found = emitted && symbols.len == 7;
+    (!probes_found).then(() { println("FAIL isa: could not emit tools/ct/isa or find its 7 probes"); });
+    kept = out_of_line(a, source, symbols).try();
+    env.fs.write("build/ct/isa-kept.c", kept.view()).match({ _ => () });
+    compilers ::= a.Vec<str>();
+    env.var("CT_CC").value_or("cc").split(',').loop((cc) { compilers.add(cc).try(); });
+    passed ::= 0; failed ::= 0; controls ::= 0;
+    (probes_found).then(() {
+        compilers.loop((cc) {
+            [str, 2]("-O2", "-O3").loop((level) {
+                asm_path = a.String("{}/isa-{}{}.s", work, cc.after_last('/'), level).try();
+                cc_argv ::= a.Vec<str>();
+                [str, 7](cc, level, "-S", "-w", "build/ct/isa-kept.c", "-o", asm_path.view())
+                    .loop((w) { cc_argv.add(w).try(); });
+                compiled = run(env, a, cc_argv).try();
+                (!compiled).then(() { println("FAIL isa {} {}: the C compiler rejected the probe", cc, level); failed = failed + 1; });
+                asm = env.fs.read(a, asm_path.view()).match({ Ok(t) => t.view(), Err(_) => "" });
+                isa = isa_of(asm);
+                arch = isa.match({ X86 => "x86-64", Arm => "arm64" });
+                (compiled).then(() {
+                    expectations(a).try().loop((x) {
+                        (same_isa(x.isa, isa)).then(() {
+                            symbol = symbol_of(names, symbols, x.probe);
+                            body  = function_lines(a, asm, symbol).try();
+                            lines = parse_lines(a, isa, body).try();
+                            n     = count(isa, lines, x.mnemonic);
+                            ok    = lines.len > 0 && x.absent.match({ true => n == 0, false => n >= x.least });
+                            ok.match({
+                                true  => {
+                                    x.absent.match({ true => { controls = controls + 1; }, false => { passed = passed + 1; } });
+                                    println("PASS {} {} {} ({}): {} {}", cc, level, x.probe, arch, n, x.mnemonic);
+                                },
+                                false => {
+                                    failed = failed + 1;
+                                    x.absent.match({
+                                        true  => println("FAIL {} {} {} ({}): {} {}, expected none ({} instructions)", cc, level, x.probe, arch, n, x.mnemonic, lines.len),
+                                        false => println("FAIL {} {} {} ({}): {} {}, expected at least {} ({} instructions)", cc, level, x.probe, arch, n, x.mnemonic, x.least, lines.len),
+                                    });
+                                },
+                            });
+                        });
+                    });
+                });
+            });
+        });
+    });
+    println("isa: {} passed, {} failed, {} negative control(s) held", passed, failed, controls);
+    Ok((probes_found && failed == 0 && passed > 0 && controls > 0).match({ true => 0, false => 1 }))
+}

@@ -1,17 +1,19 @@
 // Machine operations shared by every backend: the semantic operations that
 // sema_prim and sema_numeric validate (wide multiply, truncation, unsigned
-// bit operations, std.simd vectors, volatile access, compiler barriers, CPU
-// capabilities and the AES, carry-less and SHA instructions they unlock). The C
-// backend lowers them from checked facts today. The scalar IR carries them
-// as `Instruction.Machine` so assembly targets implement one vocabulary;
-// until IR slots can hold u64, u128, vectors and pointers, lowering refuses
-// every call to one with a diagnostic naming the operation, and the
-// verifier rejects a Machine instruction.
+// bit operations, add with carry, std.simd vectors, volatile access, compiler
+// barriers, CPU capabilities and the AES, carry-less, SHA and multi-limb
+// instructions they unlock). The C backend lowers them from checked facts
+// today. The scalar IR carries them as `Instruction.Machine` so assembly
+// targets implement one vocabulary; until IR slots can hold u64, u128,
+// vectors and pointers, lowering refuses every call to one with a diagnostic
+// naming the operation, and the verifier rejects a Machine instruction.
 Vec = std.collections
 str = std.text
 Span = std.ast
 
 MachineOp* = MulWide
+    | AddCarry
+    | SubBorrow
     | Truncate
     | BitXor
     | BitAnd
@@ -52,6 +54,8 @@ MachineOp* = MulWide
     | Sha512H2
     | Sha512Su0
     | Sha512Su1
+    | MulLimbs
+    | SquareLimbs
 
 // `outs` and `args` index Func.slots; `word` names the operand type as the
 // primitive's source spelling (`u64`, `u32x8`, `avx2`, ...), so a target can
@@ -69,6 +73,8 @@ MachineCall* = {
 machine_op* = (name: str) Res<MachineOp> {
     name.match({
         "mul_wide"         => Ok(MachineOp.MulWide),
+        "add_carry"        => Ok(MachineOp.AddCarry),
+        "sub_borrow"       => Ok(MachineOp.SubBorrow),
         "bit_xor"          => Ok(MachineOp.BitXor),
         "bit_and"          => Ok(MachineOp.BitAnd),
         "bit_or"           => Ok(MachineOp.BitOr),
@@ -103,6 +109,8 @@ machine_op* = (name: str) Res<MachineOp> {
         "sha512h2"         => Ok(MachineOp.Sha512H2),
         "sha512su0"        => Ok(MachineOp.Sha512Su0),
         "sha512su1"        => Ok(MachineOp.Sha512Su1),
+        "mul_limbs"        => Ok(MachineOp.MulLimbs),
+        "square_limbs"     => Ok(MachineOp.SquareLimbs),
         _                  => prefixed_op(name),
     })
 }
@@ -133,6 +141,8 @@ prefixed_op = (name: str) Res<MachineOp> {
 machine_refusal* = (op: MachineOp) str {
     op.match({
         MulWide         => "the machine primitive mul_wide (64x64 -> 128)",
+        AddCarry        => "the machine primitive add_carry",
+        SubBorrow       => "the machine primitive sub_borrow",
         Truncate        => "the machine primitive truncate_*",
         BitXor          => "the machine primitive bit_xor",
         BitAnd          => "the machine primitive bit_and",
@@ -173,5 +183,7 @@ machine_refusal* = (op: MachineOp) str {
         Sha512H2        => "the std.simd instruction sha512h2",
         Sha512Su0       => "the std.simd instruction sha512su0",
         Sha512Su1       => "the std.simd instruction sha512su1",
+        MulLimbs        => "the std.simd instruction mul_limbs",
+        SquareLimbs     => "the std.simd instruction square_limbs",
     })
 }

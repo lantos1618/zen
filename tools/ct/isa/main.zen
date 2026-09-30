@@ -1,0 +1,66 @@
+// Probe functions for tools/ct/isa.zen: each one isolates a machine
+// primitive whose instruction selection the check asserts. Inputs come from
+// the command line so nothing folds to a constant.
+add_carry, sub_borrow, mul_wide, truncate_u64, shift_right, bit_xor, to_u64 = std.core.num
+Adx, Bmi2, adx, bmi2, mul_limbs, square_limbs = std.simd
+
+// mul_limbs: MULX with ADCX and ADOX on x86-64.
+dual_product* = (adx: Adx, bmi: Bmi2, x: [u64, 4], y: [u64, 4]) [u64, 8] { x.mul_limbs(y, adx, bmi) }
+
+// square_limbs: the same instructions.
+dual_square* = (adx: Adx, bmi: Bmi2, x: [u64, 4]) [u64, 8] { x.square_limbs(adx, bmi) }
+
+// A 64x64 product in a BMI2 function: MULX rather than MUL on x86-64.
+wide_bmi2* = (bmi: Bmi2, x: u64, y: u64) u64 {
+    p = x.mul_wide(y);
+    p.truncate_u64().bit_xor(p.shift_right(64).truncate_u64())
+}
+
+// A 64x64 product without a capability: MUL on x86-64, MUL/UMULH on arm64.
+wide* = (x: u64, y: u64) u64 {
+    p = x.mul_wide(y);
+    p.truncate_u64().bit_xor(p.shift_right(64).truncate_u64())
+}
+
+// Four-limb addition and subtraction chains: ADC/SBB, ADCS/SBCS.
+carry_chain* = (x: [u64, 4], y: [u64, 4]) [u64, 4] {
+    s0 = x[0].add_carry(y[0], 0); s1 = x[1].add_carry(y[1], s0[1]);
+    s2 = x[2].add_carry(y[2], s1[1]); s3 = x[3].add_carry(y[3], s2[1]);
+    [u64, 4](s0[0], s1[0], s2[0], s3[0].bit_xor(s3[1]))
+}
+borrow_chain* = (x: [u64, 4], y: [u64, 4]) [u64, 4] {
+    d0 = x[0].sub_borrow(y[0], 0); d1 = x[1].sub_borrow(y[1], d0[1]);
+    d2 = x[2].sub_borrow(y[2], d1[1]); d3 = x[3].sub_borrow(y[3], d2[1]);
+    [u64, 4](d0[0], d1[0], d2[0], d3[0].bit_xor(d3[1]))
+}
+
+// The low half of a four-limb product from mul_wide and add_carry with no
+// capability: the negative control, which must use none of the two-chain
+// instructions.
+portable_product* = (x: [u64, 4], y: [u64, 4]) [u64, 2] {
+    p00 = x[0].mul_wide(y[0]); p01 = x[0].mul_wide(y[1]); p10 = x[1].mul_wide(y[0]);
+    a = p01.truncate_u64().add_carry(p00.shift_right(64).truncate_u64(), 0);
+    b = a[0].add_carry(p10.truncate_u64(), 0);
+    [u64, 2](p00.truncate_u64(), b[0].bit_xor(a[1]).bit_xor(b[1]))
+}
+
+main = (env: Env) Res<(), AllocError> {
+    n = env.argv.len.to_u64();
+    x = [u64, 4](n, n *% 3, n *% 5, 18446744073709551615);
+    y = [u64, 4](n *% 7, 18446744073709551615, n, n *% 11);
+    c = carry_chain(x, y);
+    d = borrow_chain(x, y);
+    q = portable_product(x, y);
+    println("{} {} {} {}", c[3], d[3], q[1], wide(n, 18446744073709551615));
+    bmi2().match({
+        Ok(bmi) => {
+            println("{}", wide_bmi2(bmi, n, 18446744073709551615));
+            adx().match({
+                Ok(fast) => println("{} {}", dual_product(fast, bmi, x, y)[7], dual_square(fast, bmi, x)[7]),
+                None     => (),
+            });
+        },
+        None    => (),
+    });
+    Ok(())
+}

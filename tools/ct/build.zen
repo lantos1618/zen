@@ -13,6 +13,10 @@ build = (b :: Builder) Res<(), BuildError> {
         {src: Path("grind.zen"), deps: [], out: Ok(Path("../../build/ct-grind"))}
     ).try();
     b.exe_test(
+        "isa",
+        {src: Path("isa.zen"), deps: [], out: Ok(Path("../../build/ct-isa"))}
+    ).try();
+    b.exe_test(
         "ct",
         {src: Path("check.zen"), deps: [], out: Ok(Path("../../build/ct-check"))}
     ).try();

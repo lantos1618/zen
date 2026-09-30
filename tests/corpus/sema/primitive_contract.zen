@@ -68,6 +68,36 @@ main = (env: Env) Res<(), AllocError> {
         false
     ).try();
     a.row(
+        "add_carry",
+        "add_carry* = (self: u64, other: u64, carry: u64) [u64, 2]\n",
+        num,
+        false
+    ).try();
+    a.row(
+        "sub_borrow",
+        "sub_borrow* = (self: u64, other: u64, borrow: u64) [u64, 2]\n",
+        num,
+        false
+    ).try();
+    a.row(
+        "add_carry owner",
+        "add_carry* = (self: u64, other: u64, carry: u64) [u64, 2]\n",
+        "pretend.num",
+        false
+    ).try();
+    a.row(
+        "add_carry result",
+        "add_carry* = (self: u64, other: u64, carry: u64) u128\n",
+        num,
+        false
+    ).try();
+    a.row(
+        "sub_borrow words",
+        "sub_borrow* = (self: u32, other: u32, borrow: u32) [u32, 2]\n",
+        num,
+        false
+    ).try();
+    a.row(
         "mul_wide owner",
         "mul_wide* = (self: u64, other: u64) u128\n",
         "pretend.num",
@@ -254,6 +284,37 @@ main = (env: Env) Res<(), AllocError> {
     a.row("cpu unknown", "cpu_sse9* = () bool\n", simd, false).try();
     a.row("cpu sha", "cpu_sha_ni* = () bool\n", simd, false).try();
     a.row("cpu bmi2", "cpu_bmi2* = () bool\n", simd, false).try();
+    a.row("cpu adx", "cpu_adx* = () bool\n", simd, false).try();
+    a.row(
+        "mul_limbs",
+        "mul_limbs* = (self: [u64, 4], other: [u64, 4], adx: Adx, bmi: Bmi2) [u64, 8]\nAdx* = { proof: u8 }\nBmi2* = { proof: u8 }\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "mul_limbs without bmi2",
+        "mul_limbs* = (self: [u64, 4], other: [u64, 4], adx: Adx) [u64, 8]\nAdx* = { proof: u8 }\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "mul_limbs width",
+        "mul_limbs* = (self: [u64, 6], other: [u64, 6], adx: Adx, bmi: Bmi2) [u64, 12]\nAdx* = { proof: u8 }\nBmi2* = { proof: u8 }\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "square_limbs",
+        "square_limbs* = (self: [u64, 4], adx: Adx, bmi: Bmi2) [u64, 8]\nAdx* = { proof: u8 }\nBmi2* = { proof: u8 }\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "square_limbs result",
+        "square_limbs* = (self: [u64, 4], adx: Adx, bmi: Bmi2) [u64, 4]\nAdx* = { proof: u8 }\nBmi2* = { proof: u8 }\n",
+        simd,
+        false
+    ).try();
     a.row(
         "sha256_rnds2",
         "sha256_rnds2* = (self: u32x4, abef: u32x4, wk: u32x4, cpu: ShaNi) u32x4\nShaNi* = { proof: u8 }\n",

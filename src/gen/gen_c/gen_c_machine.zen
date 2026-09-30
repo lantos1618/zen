@@ -1,5 +1,6 @@
 // C floor and lowering for machine-level primitives: the u128 type, wide
-// multiplication, explicit truncation and std.simd vectors. The floor is
+// multiplication, add with carry, explicit truncation, std.simd vectors and
+// the multi-limb products. The floor is
 // emitted only when a reachable program spells one of them.
 // The C backend targets 64-bit GCC/Clang, which provide unsigned __int128
 // and vector extensions; another toolchain is refused with #error rather
@@ -125,6 +126,7 @@ write_machine = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     out.say("#endif").try();
     out.line().try();
     write_features(out).try();
+    write_carries(out).try();
     be.write_sha(out).try();
     be.write_target_sets(out).try();
     Ok(())
@@ -196,6 +198,11 @@ write_features = (out :: Emit) Res<(), AllocError> {
     ).try();
     out.say("    if (!__get_cpuid_count(7, 0, &a, &b, &c, &d)) return 0;").try();
     out.say("    return (b >> 29) & 1;").try();
+    out.say("}").try();
+    out.say("static int zg_cpu_probe_adx(void) {").try();
+    out.say("    unsigned int a, b, c, d;").try();
+    out.say("    if (!__get_cpuid_count(7, 0, &a, &b, &c, &d)) return 0;").try();
+    out.say("    return (b >> 19) & 1;").try();
     out.say("}").try();
     out.say("#define zg_cpu_probe_arm_sha2() 0").try();
     out.say("#define zg_cpu_probe_arm_sha512() 0").try();
@@ -270,6 +277,7 @@ write_features = (out :: Emit) Res<(), AllocError> {
     out.say("#define zg_cpu_probe_avx2() 0").try();
     out.say("#define zg_cpu_probe_ssse3() 0").try();
     out.say("#define zg_cpu_probe_bmi2() 0").try();
+    out.say("#define zg_cpu_probe_adx() 0").try();
     out.say("#define zg_cpu_probe_neon() 1").try();
     out.say("#define zg_cpu_probe_sha_ni() 0").try();
     out.say(
@@ -304,6 +312,7 @@ write_features = (out :: Emit) Res<(), AllocError> {
     out.say("#define zg_cpu_probe_avx2() 0").try();
     out.say("#define zg_cpu_probe_ssse3() 0").try();
     out.say("#define zg_cpu_probe_bmi2() 0").try();
+    out.say("#define zg_cpu_probe_adx() 0").try();
     out.say("#define zg_cpu_probe_aes() 0").try();
     out.say("#define zg_cpu_probe_clmul() 0").try();
     out.say("#define zg_cpu_probe_neon() 0").try();
@@ -324,8 +333,8 @@ write_features = (out :: Emit) Res<(), AllocError> {
     ).try();
     out.say("#endif").try();
     // Detection runs once per feature; sysctl and cpuid are not free.
-    // ZEN_CPU_DISABLE lists features (avx2, ssse3, bmi2, aes, clmul, neon,
-    // sha, sha512, or all) that detection reports absent, as OPENSSL_ia32cap
+    // ZEN_CPU_DISABLE lists features (avx2, ssse3, bmi2, adx, aes, clmul,
+    // neon, sha, sha512, or all) that detection reports absent, as OPENSSL_ia32cap
     // masks OpenSSL's dispatch: every portable path can be exercised on one
     // machine. It can only remove features, never claim one the CPU lacks.
     // `sha` masks the SHA-256 instructions of both architectures.
@@ -361,6 +370,7 @@ write_features = (out :: Emit) Res<(), AllocError> {
         "ZG_CPU_CACHED(zg_cpu_ssse3, \"ssse3\", zg_cpu_probe_ssse3())"
     ).try();
     out.say("ZG_CPU_CACHED(zg_cpu_bmi2, \"bmi2\", zg_cpu_probe_bmi2())").try();
+    out.say("ZG_CPU_CACHED(zg_cpu_adx, \"adx\", zg_cpu_probe_adx())").try();
     out.say("ZG_CPU_CACHED(zg_cpu_aes, \"aes\", zg_cpu_probe_aes())").try();
     out.say(
         "ZG_CPU_CACHED(zg_cpu_clmul, \"clmul\", zg_cpu_probe_clmul())"
@@ -375,6 +385,219 @@ write_features = (out :: Emit) Res<(), AllocError> {
     out.say(
         "ZG_CPU_CACHED(zg_cpu_arm_sha512, \"sha512\", zg_cpu_probe_arm_sha512())"
     ).try();
+    out.line().try();
+    Ok(())
+}
+
+// Add with carry and subtract with borrow, and the two-chain multi-limb
+// products. The carry helpers use Clang's (and GCC 14's) __builtin_addcll
+// family, whose chains Clang keeps in the flags; older GCC uses the x86
+// _addcarry_u64 intrinsics, and anything else u128 arithmetic. Only the low
+// bit of an incoming carry is read.
+//
+// The products follow OpenSSL's x25519_fe64_mul and x25519_fe64_sqr
+// (crypto/ec/asm/x25519-x86_64.pl, OpenSSL 3.5.4, Apache-2.0): MULX leaves
+// the flags alone, so the low halves of the partial products accumulate on
+// CF through ADCX while the high halves accumulate on OF through ADOX. No
+// branch, and every memory operand is a fixed offset from a factor's
+// address. Both flags are clear after each row, so mul_limbs is two asm
+// blocks split between the second and third rows: each needs at most
+// twelve registers, which leaves room for the frame pointer and for -O0.
+// Elsewhere the Adx capability is never detected and the helpers abort.
+write_carries = (out :: Emit) Res<(), AllocError> {
+    comment(out, "machine floor: carries and multi-limb products").try();
+    out.say("#if defined(__has_builtin)").try();
+    out.say(
+        "#if __has_builtin(__builtin_addcll) && __has_builtin(__builtin_subcll)"
+    ).try();
+    out.say("#define ZG_ADDC_BUILTIN 1").try();
+    out.say("#endif").try();
+    out.say("#endif").try();
+    out.say(
+        "static inline uint64_t zg_add_carry(uint64_t a, uint64_t b, uint64_t c, uint64_t *carry) {"
+    ).try();
+    out.say("#if defined(ZG_ADDC_BUILTIN)").try();
+    out.say("    unsigned long long out;").try();
+    out.say("    uint64_t s = __builtin_addcll(a, b, c & 1, &out);").try();
+    out.say("    *carry = out;").try();
+    out.say("    return s;").try();
+    out.say("#elif defined(__x86_64__)").try();
+    out.say("    unsigned long long s;").try();
+    out.say("    *carry = _addcarry_u64((unsigned char)(c & 1), a, b, &s);").try();
+    out.say("    return s;").try();
+    out.say("#else").try();
+    out.say("    zg_u128 t = (zg_u128)a + b + (c & 1);").try();
+    out.say("    *carry = (uint64_t)(t >> 64);").try();
+    out.say("    return (uint64_t)t;").try();
+    out.say("#endif").try();
+    out.say("}").try();
+    out.say(
+        "static inline uint64_t zg_sub_borrow(uint64_t a, uint64_t b, uint64_t c, uint64_t *borrow) {"
+    ).try();
+    out.say("#if defined(ZG_ADDC_BUILTIN)").try();
+    out.say("    unsigned long long out;").try();
+    out.say("    uint64_t s = __builtin_subcll(a, b, c & 1, &out);").try();
+    out.say("    *borrow = out;").try();
+    out.say("    return s;").try();
+    out.say("#elif defined(__x86_64__)").try();
+    out.say("    unsigned long long s;").try();
+    out.say(
+        "    *borrow = _subborrow_u64((unsigned char)(c & 1), a, b, &s);"
+    ).try();
+    out.say("    return s;").try();
+    out.say("#else").try();
+    out.say("    zg_u128 t = (zg_u128)a - b - (c & 1);").try();
+    out.say("    *borrow = (uint64_t)(t >> 64) & 1;").try();
+    out.say("    return (uint64_t)t;").try();
+    out.say("#endif").try();
+    out.say("}").try();
+    out.say("#if defined(__x86_64__)").try();
+    out.say(
+        "static inline __attribute__((always_inline)) void zg_mul_limbs(const uint64_t *a, const uint64_t *b, uint64_t *r) {"
+    ).try();
+    out.say("    uint64_t x0, x1, x2, x3, x4, x5, x6, x7, t0, t1, z;").try();
+    out.say("    __asm__(").try();
+    out.say("        \"movq 0(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"mulx 0(%[b]), %[x0], %[t0]\\n\\t\"").try();
+    out.say("        \"xorl %k[z], %k[z]\\n\\t\"").try();
+    out.say("        \"mulx 8(%[b]), %[x1], %[t1]\\n\\t\"").try();
+    out.say("        \"adcx %[t0], %[x1]\\n\\t\"").try();
+    out.say("        \"mulx 16(%[b]), %[x2], %[t0]\\n\\t\"").try();
+    out.say("        \"adcx %[t1], %[x2]\\n\\t\"").try();
+    out.say("        \"mulx 24(%[b]), %[x3], %[x4]\\n\\t\"").try();
+    out.say("        \"movq 8(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"adcx %[t0], %[x3]\\n\\t\"").try();
+    out.say("        \"adcx %[z], %[x4]\\n\\t\"").try();
+    out.say("        \"mulx 0(%[b]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x1]\\n\\t\"").try();
+    out.say("        \"adcx %[t1], %[x2]\\n\\t\"").try();
+    out.say("        \"mulx 8(%[b]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x2]\\n\\t\"").try();
+    out.say("        \"adcx %[t1], %[x3]\\n\\t\"").try();
+    out.say("        \"mulx 16(%[b]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x3]\\n\\t\"").try();
+    out.say("        \"adcx %[t1], %[x4]\\n\\t\"").try();
+    out.say("        \"mulx 24(%[b]), %[t0], %[x5]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x4]\\n\\t\"").try();
+    out.say("        \"adcx %[z], %[x5]\\n\\t\"").try();
+    out.say("        \"adox %[z], %[x5]\\n\\t\"").try();
+    out.say(
+        "        : [x0] \"=&r\"(x0), [x1] \"=&r\"(x1), [x2] \"=&r\"(x2), [x3] \"=&r\"(x3),"
+    ).try();
+    out.say(
+        "          [x4] \"=&r\"(x4), [x5] \"=&r\"(x5), [t0] \"=&r\"(t0), [t1] \"=&r\"(t1), [z] \"=&r\"(z)"
+    ).try();
+    out.say("        : [a] \"r\"(a), \"m\"(*(const uint64_t (*)[4])a),").try();
+    out.say("          [b] \"r\"(b), \"m\"(*(const uint64_t (*)[4])b)").try();
+    out.say("        : \"cc\", \"rdx\");").try();
+    out.say("    __asm__(").try();
+    out.say("        \"movq 16(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"xorl %k[z], %k[z]\\n\\t\"").try();
+    out.say("        \"mulx 0(%[b]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adcx %[t0], %[x2]\\n\\t\"").try();
+    out.say("        \"adox %[t1], %[x3]\\n\\t\"").try();
+    out.say("        \"mulx 8(%[b]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adcx %[t0], %[x3]\\n\\t\"").try();
+    out.say("        \"adox %[t1], %[x4]\\n\\t\"").try();
+    out.say("        \"mulx 16(%[b]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adcx %[t0], %[x4]\\n\\t\"").try();
+    out.say("        \"adox %[t1], %[x5]\\n\\t\"").try();
+    out.say("        \"mulx 24(%[b]), %[t0], %[x6]\\n\\t\"").try();
+    out.say("        \"movq 24(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"adcx %[t0], %[x5]\\n\\t\"").try();
+    out.say("        \"adox %[z], %[x6]\\n\\t\"").try();
+    out.say("        \"adcx %[z], %[x6]\\n\\t\"").try();
+    out.say("        \"mulx 0(%[b]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x3]\\n\\t\"").try();
+    out.say("        \"adcx %[t1], %[x4]\\n\\t\"").try();
+    out.say("        \"mulx 8(%[b]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x4]\\n\\t\"").try();
+    out.say("        \"adcx %[t1], %[x5]\\n\\t\"").try();
+    out.say("        \"mulx 16(%[b]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x5]\\n\\t\"").try();
+    out.say("        \"adcx %[t1], %[x6]\\n\\t\"").try();
+    out.say("        \"mulx 24(%[b]), %[t0], %[x7]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x6]\\n\\t\"").try();
+    out.say("        \"adcx %[z], %[x7]\\n\\t\"").try();
+    out.say("        \"adox %[z], %[x7]\\n\\t\"").try();
+    out.say(
+        "        : [x2] \"+&r\"(x2), [x3] \"+&r\"(x3), [x4] \"+&r\"(x4), [x5] \"+&r\"(x5),"
+    ).try();
+    out.say(
+        "          [x6] \"=&r\"(x6), [x7] \"=&r\"(x7), [t0] \"=&r\"(t0), [t1] \"=&r\"(t1), [z] \"=&r\"(z)"
+    ).try();
+    out.say("        : [a] \"r\"(a), \"m\"(*(const uint64_t (*)[4])a),").try();
+    out.say("          [b] \"r\"(b), \"m\"(*(const uint64_t (*)[4])b)").try();
+    out.say("        : \"cc\", \"rdx\");").try();
+    out.say("    r[0] = x0; r[1] = x1; r[2] = x2; r[3] = x3;").try();
+    out.say("    r[4] = x4; r[5] = x5; r[6] = x6; r[7] = x7;").try();
+    out.say("}").try();
+    out.say(
+        "static inline __attribute__((always_inline)) void zg_square_limbs(const uint64_t *a, uint64_t *r) {"
+    ).try();
+    out.say("    uint64_t x0, x1, x2, x3, x4, x5, x6, x7, t0, t1, z;").try();
+    out.say("    __asm__(").try();
+    out.say("        \"movq 0(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"mulx %%rdx, %[x0], %[x7]\\n\\t\"").try();
+    out.say("        \"mulx 8(%[a]), %[x1], %[t0]\\n\\t\"").try();
+    out.say("        \"xorl %k[z], %k[z]\\n\\t\"").try();
+    out.say("        \"mulx 16(%[a]), %[x2], %[t1]\\n\\t\"").try();
+    out.say("        \"adcx %[t0], %[x2]\\n\\t\"").try();
+    out.say("        \"mulx 24(%[a]), %[x3], %[x4]\\n\\t\"").try();
+    out.say("        \"movq 8(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"adcx %[t1], %[x3]\\n\\t\"").try();
+    out.say("        \"adcx %[z], %[x4]\\n\\t\"").try();
+    out.say("        \"mulx 16(%[a]), %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x3]\\n\\t\"").try();
+    out.say("        \"adcx %[t1], %[x4]\\n\\t\"").try();
+    out.say("        \"mulx 24(%[a]), %[t0], %[x5]\\n\\t\"").try();
+    out.say("        \"movq 16(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x4]\\n\\t\"").try();
+    out.say("        \"adcx %[z], %[x5]\\n\\t\"").try();
+    out.say("        \"mulx 24(%[a]), %[t0], %[x6]\\n\\t\"").try();
+    out.say("        \"movq 8(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x5]\\n\\t\"").try();
+    out.say("        \"adcx %[z], %[x6]\\n\\t\"").try();
+    out.say("        \"adox %[z], %[x6]\\n\\t\"").try();
+    out.say("        \"adcx %[x1], %[x1]\\n\\t\"").try();
+    out.say("        \"adox %[x7], %[x1]\\n\\t\"").try();
+    out.say("        \"adcx %[x2], %[x2]\\n\\t\"").try();
+    out.say("        \"mulx %%rdx, %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"movq 16(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"adcx %[x3], %[x3]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x2]\\n\\t\"").try();
+    out.say("        \"adcx %[x4], %[x4]\\n\\t\"").try();
+    out.say("        \"adox %[t1], %[x3]\\n\\t\"").try();
+    out.say("        \"mulx %%rdx, %[t0], %[t1]\\n\\t\"").try();
+    out.say("        \"movq 24(%[a]), %%rdx\\n\\t\"").try();
+    out.say("        \"adcx %[x5], %[x5]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x4]\\n\\t\"").try();
+    out.say("        \"adcx %[x6], %[x6]\\n\\t\"").try();
+    out.say("        \"adox %[t1], %[x5]\\n\\t\"").try();
+    out.say("        \"mulx %%rdx, %[t0], %[x7]\\n\\t\"").try();
+    out.say("        \"adox %[t0], %[x6]\\n\\t\"").try();
+    out.say("        \"adcx %[z], %[x7]\\n\\t\"").try();
+    out.say("        \"adox %[z], %[x7]\\n\\t\"").try();
+    out.say(
+        "        : [x0] \"=&r\"(x0), [x1] \"=&r\"(x1), [x2] \"=&r\"(x2), [x3] \"=&r\"(x3),"
+    ).try();
+    out.say(
+        "          [x4] \"=&r\"(x4), [x5] \"=&r\"(x5), [x6] \"=&r\"(x6), [x7] \"=&r\"(x7),"
+    ).try();
+    out.say("          [t0] \"=&r\"(t0), [t1] \"=&r\"(t1), [z] \"=&r\"(z)").try();
+    out.say("        : [a] \"r\"(a), \"m\"(*(const uint64_t (*)[4])a)").try();
+    out.say("        : \"cc\", \"rdx\");").try();
+    out.say("    r[0] = x0; r[1] = x1; r[2] = x2; r[3] = x3;").try();
+    out.say("    r[4] = x4; r[5] = x5; r[6] = x6; r[7] = x7;").try();
+    out.say("}").try();
+    out.say("#else").try();
+    out.say(
+        "static inline void zg_mul_limbs(const uint64_t *a, const uint64_t *b, uint64_t *r) { (void)a; (void)b; (void)r; abort(); }"
+    ).try();
+    out.say(
+        "static inline void zg_square_limbs(const uint64_t *a, uint64_t *r) { (void)a; (void)r; abort(); }"
+    ).try();
+    out.say("#endif").try();
     out.line().try();
     Ok(())
 }
@@ -516,6 +739,7 @@ write_target_set = (be :: CBackend, out :: Emit, set: str)
     x86.add_feature(set, "_AVX2", "avx2").try();
     x86.add_feature(set, "_SSSE3", "ssse3").try();
     x86.add_feature(set, "_BMI2", "bmi,bmi2").try();
+    x86.add_feature(set, "_ADX", "adx").try();
     x86.add_feature(set, "_AES", "aes,ssse3,sse4.1").try();
     x86.add_feature(set, "_CLMUL", "pclmul,ssse3,sse4.1").try();
     x86.add_feature(set, "_SHANI", "sha,ssse3,sse4.1").try();
@@ -810,11 +1034,80 @@ render_scalar = (
     literal : bool,
     out     :: String
 ) Res<(), AllocError> {
+    site.p.name.match({
+        "add_carry"    => be.carry_pair(site, held, "zg_add_carry", out),
+        "sub_borrow"   => be.carry_pair(site, held, "zg_sub_borrow", out),
+        "mul_limbs"    => be.limb_product(site, held, true, out),
+        "square_limbs" => be.limb_product(site, held, false, out),
+        _              => be.render_wide(site, held, literal, out),
+    })
+}
+
+// [sum, carry]: the floor helper returns the word and stores the carry.
+carry_pair = (
+    be     :: CBackend,
+    site   : PrimSite,
+    held   : Vec<String>,
+    helper : str,
+    out    :: String
+) Res<(), AllocError> {
+    pair = be.temp(site.p.result, "carry").try();
+    be.fmt(
+        "{}.{}[0] = {}({}, {}, {}, &{}.{}[1]);\n",
+        pair.view(),
+        ELEMS,
+        helper,
+        operand(held, 0),
+        operand(held, 1),
+        operand(held, 2),
+        pair.view(),
+        ELEMS
+    ).try();
+    out.add(pair.view())
+}
+
+// The eight product limbs, written by the floor's two-chain sequence. The
+// capability operands carry no data.
+limb_product = (
+    be   :: CBackend,
+    site : PrimSite,
+    held : Vec<String>,
+    two  : bool,
+    out  :: String
+) Res<(), AllocError> {
+    limbs = be.temp(site.p.result, "limbs").try();
+    two.match({
+        true  => be.fmt(
+            "zg_mul_limbs({}.{}, {}.{}, {}.{});\n",
+            operand(held, 0),
+            ELEMS,
+            operand(held, 1),
+            ELEMS,
+            limbs.view(),
+            ELEMS
+        ),
+        false => be.fmt(
+            "zg_square_limbs({}.{}, {}.{});\n",
+            operand(held, 0),
+            ELEMS,
+            limbs.view(),
+            ELEMS
+        ),
+    }).try();
+    out.add(limbs.view())
+}
+
+render_wide = (
+    be      :: CBackend,
+    site    : PrimSite,
+    held    : Vec<String>,
+    literal : bool,
+    out     :: String
+) Res<(), AllocError> {
     p = site.p;
     a = operand(held, 0);
-    b = operand(held, 1);
     p.name.eq("mul_wide").match({
-        true  => out.fmt("((zg_u128){} * (zg_u128){})", a, b),
+        true  => out.fmt("((zg_u128){} * (zg_u128){})", a, operand(held, 1)),
         false => p.name.starts_with("truncate_").match({
             true  => out.fmt(
                 "(({}){})",
@@ -1101,6 +1394,7 @@ function_attributes* = (
     out :: String
 ) Res<(), AllocError> {
     set ::= be.alloc.String().try();
+    be.add_capability(sig, "Adx", "_ADX", set).try();
     be.add_capability(sig, "Aes", "_AES", set).try();
     be.add_capability(sig, "ArmSha2", "_ARMSHA2", set).try();
     be.add_capability(sig, "ArmSha512", "_ARMSHA512", set).try();

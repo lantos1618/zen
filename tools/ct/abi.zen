@@ -61,10 +61,24 @@ marked_functions* = (a: Alloc, c: str) Res<Vec<Marked>, AllocError> {
     out ::= a.Vec<Marked>();
     c.lines().loop((line) {
         (line.starts_with("static ") && line.contains(MARK) && line.ends_with("{")).then(() {
-            parse_definition(a, line).when_ok((m) { out.add(m).try(); });
+            parse_definition(a, plain_definition(a, line).try()).when_ok((m) { out.add(m).try(); });
         });
     });
     Ok(out)
+}
+
+// An `inline` function's definition carries the always_inline attribute
+// (after any target attribute), whose parentheses come before the parameter
+// list; parsing reads the line without it.
+ALWAYS_INLINE*: str = "inline __attribute__((always_inline)) "
+plain_definition* = (a: Alloc, line: str) Res<str, AllocError> {
+    line.find(ALWAYS_INLINE).match({
+        Ok(at) => a.String("{}{}", line.slice(0, at), line.slice(at + ALWAYS_INLINE.len, line.len)).match({
+            Ok(s)  => Ok(s.view()),
+            Err(e) => Err(e),
+        }),
+        None   => Ok(line),
+    })
 }
 
 targets_avx = (line: str) bool {
@@ -619,8 +633,9 @@ manifest_functions* = (
 ) Res<Vec<Marked>, AllocError> {
     prefix = symbol_prefix(a, e).try();
     out ::= a.Vec<Marked>();
-    c.lines().loop((line) {
-        (line.starts_with("static ") && line.ends_with("{")).then(() {
+    c.lines().loop((raw) {
+        (raw.starts_with("static ") && raw.ends_with("{")).then(() {
+            line   = plain_definition(a, raw).try();
             open   = line.find('(').value_or(0);
             head   = line.slice(0, open);
             space  = head.rfind(' ').value_or(0);
@@ -659,7 +674,8 @@ manifest_functions* = (
 }
 
 // A definition line without the marker comment.
-parse_plain = (a: Alloc, line: str) Res<Marked> {
+parse_plain = (a: Alloc, raw: str) Res<Marked> {
+    line   = plain_definition(a, raw).match({ Ok(l) => Ok(l), Err(_) => None }).try();
     at     = line.rfind(')').try();
     marked = a.String("{} {} */ {", line.slice(0, at + 1), MARK).match({ Ok(s) => Ok(s), Err(_) => None }).try();
     parse_definition(a, marked.view())

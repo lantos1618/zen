@@ -1566,6 +1566,15 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             cur.flags = secret;
             h.break();
         });
+        // MULX src, lo, hi (BMI2) writes both halves of %rdx * src and
+        // leaves the flags alone; %rdx is an implicit source.
+        (m.starts_with("mulx") && n == 3).then(() {
+            has(cur.val, "rdx").then(() { an.observed = true; });
+            secret = an.x86_value(cur, first, l, width).try() || has(cur.val, "rdx");
+            an.x86_write(cur, ops.get(1).value_or(""), secret, false, l, width).try();
+            an.x86_write(cur, last, secret, false, l, width).try();
+            h.break();
+        });
         (m.is_in(["cqto", "cqo", "cltd", "cdq", "cltq", "cdqe", "cwtl"])).then(() {
             has(cur.val, "rax").then(() { an.observed = true; });
             put(cur.val, "rdx", has(cur.val, "rax")).try();
@@ -1663,7 +1672,8 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             || m.eq("sfence") || m.eq("pause") || m.eq("vzeroupper") || m.eq("vzeroall")).then(() { h.break(); });
         // Everything else computes its destination from its operands: a
         // two-operand form also reads the destination, as do the forms in
-        // x86_reads_destination, and adc/sbb read the carry.
+        // x86_reads_destination, and adc/sbb/adcx read the carry and adox
+        // the overflow flag (one taint bit covers every flag).
         secret  ::= false;
         points  ::= false;
         points2 ::= false;
@@ -1677,7 +1687,8 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
                 points2 = points2 || an.x86_points2(cur, op, width);
             });
         });
-        (m.starts_with("adc") || m.starts_with("sbb") || m.starts_with("rcl") || m.starts_with("rcr")).then(() {
+        (m.starts_with("adc") || m.starts_with("adox") || m.starts_with("sbb") || m.starts_with("rcl")
+            || m.starts_with("rcr")).then(() {
             secret = secret || cur.flags;
         });
         // `add $k, %reg` on a register holding a stack address moves it.

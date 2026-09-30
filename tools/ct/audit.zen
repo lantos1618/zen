@@ -15,7 +15,7 @@ str, String, parse_usize = std.text
 Range = std.core
 Isa, Finding, CallShape, function_lines, parse_lines, analyze, argument_reads = taint
 Marked, marked_functions, seed_of, result_registers = abi
-Entry, manifest_entries, manifest_functions, call_shapes, audited_shape = abi
+Entry, manifest_entries, manifest_functions, call_shapes, audited_shape, plain_definition = abi
 
 AuditError* = AllocError | ProcError | FsError | AuditFault
 AuditFault* = | NoMarkedFunctions
@@ -52,12 +52,8 @@ out_of_line* = (a: Alloc, c: str, symbols: Vec<str>) Res<String, AllocError> {
         audited.match({
             false => out.add(line).try(),
             true  => {
-                rest = line.starts_with(
-                    "static inline __attribute__((always_inline)) "
-                ).match({
-                    true  => line.slice(46, line.len),
-                    false => line.slice(7, line.len),
-                });
+                plain = plain_definition(a, line).try();
+                rest  = plain.slice(7, plain.len);
                 out.add("static __attribute__((noinline,noipa,used)) ").try();
                 out.add(rest).try();
             },

@@ -532,7 +532,9 @@ rule:
 - **Taint is transitive within `src/gen`.** A backend may not import a helper
   that reaches the frontend.
 - **`gen_c` is grandfathered edge by edge** in
-  `tests/gates/arch_boundary.allow`: 306 `(file, module)` edges at 890acb1c.
+  `tests/gates/arch_boundary.allow`: 306 `(file, module)` edges at 890acb1c,
+  304 once gen_c read the copy and mailbox-transfer facts from the Checker's
+  published queries instead of importing `sema.sema_copy`.
   That list is a **ratchet**. It may not name anything outside `gen_c/`, a line
   whose import has gone fails as stale, and its length must equal
   `ARCH_GEN_C_CEILING` in the Makefile. It can therefore shrink, and cannot

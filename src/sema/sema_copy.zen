@@ -14,7 +14,7 @@ PayloadPolicy = ActorMessage | OwningCopy
 
 // Copying inline fields duplicates their owners; pointer/allocator handles
 // remain copyable because they do not own their pointees.
-contains_drop* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
+owning_copy_unsafe* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
     walk ::= PayloadWalk(
         seen: c.alloc.Vec<TyId>(),
         policy: PayloadPolicy.OwningCopy
@@ -26,7 +26,7 @@ contains_drop* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
 // while allocator-backed containers, pointers, and functions do. Named
 // values are classified by their stored fields rather than by their spelling,
 // so wrapping an unsafe value never launders it into a transferable one.
-actor_payload_unsafe* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
+mailbox_payload_unsafe* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
     c.types.at(ty).match({
         // Mailbox lowering owns a direct str argument. Nested str values do
         // not receive slice descriptors and retain the sender's pointer.
@@ -43,7 +43,7 @@ actor_payload_unsafe* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
 
 // Only direct byte buffers have mailbox transfer lowering. Nested containers
 // and buffers of owning elements remain rejected by the recursive policy.
-actor_byte_buffer* = (c: Checker, ty: TyId) bool {
+mailbox_byte_buffer* = (c: Checker, ty: TyId) bool {
     c.types.at(ty).match({
         Named(n) => (c.named_as(
             n,

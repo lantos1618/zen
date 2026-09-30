@@ -27,7 +27,6 @@ temp, payload_type, write_assign_ok, write_assign_err = gen.gen_c.gen_c_flow
 write_assign_ok_unit = gen.gen_c.gen_c_flow
 by_ref = gen.gen_c.gen_c_arg
 fat_value = gen.gen_c.gen_c_fat
-actor_byte_buffer, actor_payload_unsafe = sema.sema_copy
 
 BehaviorHit* = {
     site*: Site,

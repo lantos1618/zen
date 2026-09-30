@@ -8,9 +8,10 @@
 # THIS FILE ONLY SHRINKS. The gate refuses a line outside gen/gen_c/, a line
 # whose import is gone, and a count that differs from the ceiling. Adding a
 # line means a new AST/sema dependency in a backend: carry the fact in gen_ir
-# instead. Generated once from the tree at 890acb1c, sorted with LC_ALL=C.
+# instead. The list is the tree's live edges, one per line, sorted with
+# LC_ALL=C; the gate compares it against the tree on every run, so it cannot
+# describe an older commit.
 gen/gen_c/gen_c_actor.zen sema.sema_check
-gen/gen_c/gen_c_actor.zen sema.sema_copy
 gen/gen_c/gen_c_actor.zen sema.sema_def
 gen/gen_c/gen_c_actor.zen sema.sema_id
 gen/gen_c/gen_c_actor.zen sema.sema_inst
@@ -228,7 +229,6 @@ gen/gen_c/gen_c_print.zen sema.sema_ty
 gen/gen_c/gen_c_print.zen std.ast
 gen/gen_c/gen_c_print.zen std.lex
 gen/gen_c/gen_c_ptr.zen sema.sema_check
-gen/gen_c/gen_c_ptr.zen sema.sema_copy
 gen/gen_c/gen_c_ptr.zen sema.sema_ty
 gen/gen_c/gen_c_ptr.zen std.ast
 gen/gen_c/gen_c_range.zen sema.sema_check

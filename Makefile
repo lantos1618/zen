@@ -271,7 +271,7 @@ cap: build
 ## fails here before it can pass the real tree.
 ##
 ## DO NOT RAISE THIS NUMBER. Lower it when an import migrates to gen_ir.
-ARCH_GEN_C_CEILING := 306
+ARCH_GEN_C_CEILING := 304
 archcheck: build
 	@mkdir -p build/gates
 	@$(call gate,arch_boundary)

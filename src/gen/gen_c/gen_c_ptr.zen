@@ -15,7 +15,6 @@ ctype, request_type = gen.gen_c.gen_c_type
 write_qname = gen.gen_c.gen_c_layout
 expr = gen.gen_c.gen_c_expr
 Dest, deliver = gen.gen_c.gen_c_stmt
-contains_drop = sema.sema_copy
 GenFault = gen.gen_diag
 
 // recognising

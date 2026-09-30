@@ -163,7 +163,9 @@ conversion_kind = (source: str, target: str) Res<ConversionKind> {
         "u8"    => target.is_in([
             "u16", "u32", "u64", "u128", "usize", "i32", "i64", "f32", "f64"
         ]),
-        "u16"   => target.is_in(["u32", "u64", "u128", "usize", "i64", "f32", "f64"]),
+        "u16"   => target.is_in([
+            "u32", "u64", "u128", "usize", "i64", "f32", "f64"
+        ]),
         "u32"   => target.is_in(["u64", "u128", "usize", "i64", "f64"]),
         "u64"   => target.eq("u128"),
         "usize" => target.is_in(["u64", "u128"]),

@@ -721,15 +721,21 @@ write_proto = (
 // is secret: a written Ptr, and also a parameter C receives by address
 // (`::`, or a wide `:` one, gen_c_borrow.zen), whose address is public.
 // Functions without Secret parameters get nothing.
-secret_marker = (be :: CBackend, f: Function, mi: usize, sig: Vec<TyId>, out :: String)
+secret_marker = (
+    be  :: CBackend,
+    f   : Function,
+    mi  : usize,
+    sig : Vec<TyId>,
+    out :: String
+)
                 Res<(), AllocError> {
     marked ::= false;
     f.params.loop((h, i, p) {
         p.type.when_ok((t) {
             be.check.written_secret(t, mi).then(() {
                 (!marked).then(() { out.add(" /* zen:secret").try(); });
-                marked = true;
-                ty = sig.get(i).match({ Ok(s) => s, None => TyId(index: 0) });
+                marked  = true;
+                ty      = sig.get(i).match({ Ok(s) => s, None => TyId(index: 0) });
                 address = be.check.written_pointer(t) || be.passes_address(f, i, ty).try();
                 out.add(address.match({
                     true  => " *",

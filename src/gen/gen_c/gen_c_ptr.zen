@@ -37,10 +37,7 @@ named_ptr = (be :: CBackend, rty: TyId) bool {
 }
 
 ptr_verb = (name: str) bool {
-    name.is_in([
-        "read", "take", "write", "offset", "back", "bytes", "copy_from", "to",
-        "is_null", "same", "read_volatile", "write_volatile"
-    ]) || byte_order_verb(name)
+    name.is_in(["read", "take", "write", "offset", "back", "bytes", "copy_from", "to", "is_null", "same", "read_volatile", "write_volatile"]) || byte_order_verb(name)
 }
 
 // The run's element type, which every member below scales by.
@@ -154,7 +151,8 @@ ptr_unit_policy = (be: CBackend, et: TyId, name: str) PtrUnitPolicy {
     be.is_unit(et).match({
         false => PtrUnitPolicy.PtrLower,
         true  => name.is_in([
-            "read", "take", "write", "offset", "back", "read_volatile", "write_volatile"
+            "read", "take", "write", "offset", "back", "read_volatile",
+            "write_volatile"
         ]).match({
             true  => PtrUnitPolicy.PtrRefuse,
             false => name.is_in(["bytes", "copy_from"]).match({

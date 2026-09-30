@@ -10,7 +10,7 @@ variant_payload = sema.sema_case
 type_from_ast = sema.sema_denote
 is_drop_type = sema.sema_drop
 
-PayloadPolicy = ActorMessage | OwningCopy
+PayloadPolicy = ActorMessage | OwningCopy | BoundCarrier
 
 // Copying inline fields duplicates their owners; pointer/allocator handles
 // remain copyable because they do not own their pointees.
@@ -60,6 +60,26 @@ actor_byte_buffer* = (c: Checker, ty: TyId) bool {
     })
 }
 
+// Whether a value of this type can hold a bound value (a receiver pointer
+// plus function pointers) inside it. Only such a value can carry a bound
+// built over this frame's storage out of the frame; a `str` or a `Ptr<u8>`
+// drawn through that bound points at the allocator's memory, not the frame.
+// A type variable may be instantiated with anything, so it counts.
+carries_bound* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
+    c.carrier_memo.get(ty).match({
+        Ok(known) => Ok(known),
+        None      => {
+            walk ::= PayloadWalk(
+                seen: c.alloc.Vec<TyId>(),
+                policy: PayloadPolicy.BoundCarrier
+            );
+            found = walk.unsafe(c, ty).try();
+            c.carrier_memo.set(ty, found).try();
+            Ok(found)
+        },
+    })
+}
+
 // One walk owns cycle detection for an entire payload. Checker remains a
 // mutable argument: type interning and scoped type variables belong to the
 // caller's semantic state, not a copied checker stored in this traversal.
@@ -68,7 +88,11 @@ PayloadWalk = {
     policy: PayloadPolicy,
 
     actor_message = (self: @Self) bool {
-        self.policy.match({ ActorMessage => true, OwningCopy => false })
+        self.policy.match({ ActorMessage => true, _ => false })
+    }
+
+    bound_carrier = (self: @Self) bool {
+        self.policy.match({ BoundCarrier => true, _ => false })
     }
 
     unsafe = (self :: @Self, c :: Checker, ty: TyId)
@@ -87,7 +111,7 @@ PayloadWalk = {
         c.types.at(ty).match({
             Prim(p)  => Ok(self.actor_message() && p.name.eq("str")),
             Fn(_)    => Ok(self.actor_message()),
-            Var(_)   => Ok(self.actor_message()),
+            Var(_)   => Ok(self.actor_message() || self.bound_carrier()),
             Infer    => Ok(false),
             Unknown  => Ok(false),
             Array(a) => (a.count == 0).match({
@@ -115,7 +139,8 @@ PayloadWalk = {
 
     named = (self :: @Self, c :: Checker, ty: TyId, n: TyNamed)
             Res<bool, AllocError> {
-        (!self.actor_message() && c.is_drop_type(ty).try()).match({
+        (self.policy.match({ OwningCopy => true, _ => false })
+            && c.is_drop_type(ty).try()).match({
             true  => Ok(true),
             false => self.named_fields(c, ty, n),
         })
@@ -126,7 +151,15 @@ PayloadWalk = {
         (c.named_as(n, "String", "std.text.text_string")
             || c.named_as(n, "Vec", "std.collections.collections_vec")
             || c.named_as(n, "Ptr", "std.mem.mem_ptr")).match({
-            true  => Ok(self.actor_message()),
+            true  => self.bound_carrier().match({
+                // String and Vec keep their `alloc: Alloc`; a Ptr carries
+                // whatever it points at.
+                true  => c.named_as(n, "Ptr", "std.mem.mem_ptr").match({
+                    false => Ok(true),
+                    true  => self.list(c, n.args),
+                }),
+                false => Ok(self.actor_message()),
+            }),
             false => {
                 wide = c.set_of(ty);
                 wide.eq(ty).match({
@@ -183,7 +216,9 @@ PayloadWalk = {
                 _           => {},
             });
         });
-        Ok(unsafe || (self.actor_message() && methods && !storage))
+        Ok(
+            unsafe || ((self.actor_message() || self.bound_carrier()) && methods && !storage)
+        )
     }
 
     field = (

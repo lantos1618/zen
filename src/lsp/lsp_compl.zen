@@ -158,23 +158,26 @@ MemberCache* = {
             },
         }).try();
 
-        fresh_arena ::= env.mem.alloc();
-        kept_items  ::= fresh_arena.Vec<Item>();
+        // The answer is built inside `self.arena` where it lives: a vector
+        // built in another arena and moved here would keep that arena's old
+        // address as its allocator. The retired answer is forgotten first.
+        self.cur = None;
+        self.arena.drop();
+        self.arena = env.mem.alloc();
+        kept_items ::= self.arena.Vec<Item>();
         found.loop((h, item) {
             kept_items.add(Item(
-                label: item.label.dup(fresh_arena).try(),
+                label: item.label.dup(self.arena).try(),
                 kind: item.kind
             )).try();
         });
         fresh = MemberAnswer(
-            workspace: workspace.dup(fresh_arena).try(),
-            path: path.dup(fresh_arena).try(),
-            patched: patched.dup(fresh_arena).try(),
+            workspace: workspace.dup(self.arena).try(),
+            path: path.dup(self.arena).try(),
+            patched: patched.dup(self.arena).try(),
             items: kept_items
         );
 
-        self.arena.drop();
-        self.arena  = consume fresh_arena;
         self.cur    = Ok(fresh);
         self.stale  = false;
         self.builds = self.builds + 1;
@@ -294,7 +297,7 @@ member_names = (ms: Vec<Member>, cands :: Vec<Item>) Res<(), AllocError> {
 
 // `Completion` discovers candidates; `Offers` filters and deduplicates them.
 Completion = {
-    c    : Checker,
+    c    :: Checker,
     a    : Alloc,
     file : str,
 
@@ -465,7 +468,7 @@ Completion = {
 }
 
 Offers = {
-    completion : Completion,
+    completion :: Completion,
     prefix     : str,
     seen       :: Map<str, bool>,
     items      :: Vec<Item>,
@@ -535,7 +538,7 @@ Offers = {
         })
     }
 
-    visible = (self: @Self, ty: TyId, name: str)
+    visible = (self :: @Self, ty: TyId, name: str)
               Res<bool, AllocError> {
         found ::= self.completion.a.Vec<Found>();
         self.completion.c.members_of(ty, name, found).try();

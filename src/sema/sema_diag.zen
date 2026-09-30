@@ -23,6 +23,21 @@ TypeFault* = {
     found*: TyId,
 }
 
+// A bound value built over a frame's storage, and where it would outlive
+// that frame.
+FrameViewFault* = {
+    place*: str,
+    at*: Span,
+}
+
+// A place passed to a `::` parameter or stored in a `::` field, and the
+// parameter or field.
+LendFault* = {
+    place*: str,
+    param*: str,
+    field*: bool,
+}
+
 // Two conflicting declaration positions.
 PairFault* = {
     name*: str,
@@ -56,6 +71,7 @@ SemaFault* =
     | CatchAllConstruction(NameFault)
     | BareNoneBinding(NameFault)       // a binding declared from a bare `None`
     | LiteralLent(NameFault)           // an unannotated number passed to a `::` parameter
+    | ImmutableLent(LendFault)         // a `:` place passed to a `::` parameter
 
     // overloading
     | NoOverload(NameFault)            // no candidate of that arity or those types
@@ -130,9 +146,12 @@ SemaFault* =
     | ArenaInvalidated(NameFault)
     | ArenaStored(NameFault)           // local storage escaped through a parameter
     | ArenaEscapes(NameFault)          // a view outlived the arena behind it
+    | BoundViewEscapes(FrameViewFault) // a bound value over this frame is returned
+    | BoundViewStored(FrameViewFault)  // ... or stored where the caller keeps it
     | HandleNotAValue(NameFault)       // a loop handle names its loop, it is not a value
     | LocalFunctionShape(NameFault)    // a function declared in a body is a plain, typed closure
     | ConsumedByCapture(CaptureFault)  // a capture outlives the consume
+    | ConsumedUnderView(CaptureFault)  // a bound value built over it outlives the consume
 
 Diag* = {
     file*: str,
@@ -226,11 +245,15 @@ message* = (fault: SemaFault) str {
         ArenaInvalidated(_)          => "use after arena destruction: the backing allocation owner was explicitly dropped",
         ArenaStored(_)               => "a value backed by an arena this body made may not be stored through a borrowed parameter: the arena is dropped when this body ends — take the allocation owner as a parameter",
         ArenaEscapes(_)              => "a value backed by an arena this body made may not be returned: the arena is dropped at the end of this body, so the caller would read freed pages — take the arena as a parameter, or move it into the value you return",
+        BoundViewEscapes(_)          => "a bound value built here from a concrete value may not be returned:",
+        BoundViewStored(_)           => "a bound value built here from a concrete value may not be stored through a borrowed parameter:",
         HandleNotAValue(_)           => "a loop handle is not a value: it names the loop it came from and has no storage, so only `h.break(..)` and `h.next()` may read it",
         LocalFunctionShape(_)        => "a function declared in a body is a local closure: it takes no `*` and no type parameters, and has a body",
         ConsumedByCapture(_)         => "consume after capture:",
+        ConsumedUnderView(_)         => "consume under a bound value:",
         BareNoneBinding(_)           => "`None` alone does not say which Res this is: annotate the binding",
         LiteralLent(_)               => "an unannotated number cannot be passed to the `::` parameter",
+        ImmutableLent(_)             => "an immutable place cannot be lent to a `::` parameter or field:",
     });
 }
 
@@ -280,9 +303,12 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         ArenaInvalidated(f)          => out.write_name(f),
         ArenaStored(f)               => out.write_name(f),
         ArenaEscapes(f)              => out.write_name(f),
+        BoundViewEscapes(f)          => out.write_frame_view(f, "returned"),
+        BoundViewStored(f)           => out.write_frame_view(f, "stored"),
         HandleNotAValue(f)           => out.write_name(f),
         BareNoneBinding(f)           => out.write_bare_none_binding(f),
         LiteralLent(f)               => out.write_literal_lent(f),
+        ImmutableLent(f)             => out.write_immutable_lent(f),
         LocalFunctionShape(f)        => out.write_name(f),
 
         ConsumedUse(f)               => out.write_place(
@@ -306,6 +332,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
             " is partially moved, so the drop has a hole: move the whole value or none of it"
         ),
         ConsumedByCapture(f)         => out.write_capture(f),
+        ConsumedUnderView(f)         => out.write_under_view(f),
 
         NoSuchField(f)               => out.write_member(types, f),
         MemberNeedsValue(f)          => out.write_needs_value(types, f),
@@ -354,6 +381,18 @@ write_literal_lent = (out :: String, f: NameFault) Res<(), AllocError> {
     out.quote(f.name).try();
     out.add(
         ": the parameter borrows the argument's storage, and a number with no written type is stored as an i64 (a float as an f64), not as the parameter's type — annotate the binding"
+    )
+}
+
+write_immutable_lent = (out :: String, f: LendFault) Res<(), AllocError> {
+    out.fmt(
+        " `{}` is declared `:`, and the {}",
+        f.place,
+        f.field.match({ true => "field", false => "parameter" })
+    ).try();
+    out.quote(f.param).try();
+    out.add(
+        " is `::`, so its writer changes the argument's own bytes — declare the binding (and every field on the path) `::`, or pass a copy"
     )
 }
 
@@ -472,6 +511,35 @@ write_capture = (out :: String, f: CaptureFault) Res<(), AllocError> {
     out.fmt(" {} was consumed by a closure that captured it", f.place).try();
     out.add(" — the capture keeps it alive here: ").try();
     out.write_at(f.at).try();
+    Ok(());
+}
+
+// The fix is to build the bound from an owner that outlives the result.
+write_frame_view = (out :: String, f: FrameViewFault, how: str)
+                   Res<(), AllocError> {
+    out.add(" the bound value points at").try();
+    (f.place.len > 0).match({
+        true  => out.fmt(" `{}`", f.place),
+        false => out.add(" a temporary"),
+    }).try();
+    out.add(" in this body's frame, which ends when the body returns").try();
+    out.fmt(" — it is {} here: ", how).try();
+    out.write_at(f.at).try();
+    out.add(
+        " — build the bound from an owner that outlives it: take the bound type as the parameter, or build it from the owner in the place it will live"
+    ).try();
+    Ok(());
+}
+
+write_under_view = (out :: String, f: CaptureFault) Res<(), AllocError> {
+    out.fmt(
+        " {} is moved, but a bound value was built over its storage here: ",
+        f.place
+    ).try();
+    out.write_at(f.at).try();
+    out.add(
+        " — the record keeps that address, so after the move it points at the moved-from place; move the owner first and build the bound from its new home"
+    ).try();
     Ok(());
 }
 

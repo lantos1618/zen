@@ -51,7 +51,7 @@ main = (env: Env) Res<i32, AllocError> {
 // ---- the lex twin: a stray `#` at byte offset 12 of line 1. The offset
 // rides on every lex Pos and must stay silent; the printed bytes are
 // `file:line:col` and nothing else, through BOTH doors.
-say_lex = (a: Alloc, out :: Console) Res<(), AllocError> {
+say_lex = (a: Alloc, out: Console) Res<(), AllocError> {
     lexed = scan(a, Source(file: "bad.zen", text: "n : i32 = 1 # 2;\n")).try();
     lexed.diags.loop((h, d) {
         one ::= a.String("{}:{}", d.file, d.span.start).try();

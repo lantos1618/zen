@@ -140,8 +140,7 @@ Diagnostics* = {
             }).try();
         });
         spots.uris_of(now).try();
-        fresh_arena ::= turn.env.mem.alloc();
-        fresh       ::= fresh_arena.Map<str, str>();
+        fresh ::= turn.temp.Map<str, str>();
         now.loop((uri) {
             body ::= turn.temp.String().try();
             write_notification(
@@ -152,10 +151,7 @@ Diagnostics* = {
                 body
             ).try();
             self.say_changed(uri, body.view(), out).try();
-            fresh.set(
-                uri.dup(fresh_arena).try(),
-                body.view().dup(fresh_arena).try()
-            ).try();
+            fresh.set(uri, body.view()).try();
         });
         self.said.pairs((h, uri, previous) {
             now.find((current) { current.eq(uri) }).match({ None => true, Ok(_) => false }).then(() {
@@ -170,11 +166,20 @@ Diagnostics* = {
                 (!previous.eq(empty.view())).then(() { write_frame(empty.view(), out).try(); });
             });
         });
+        // `said` is rebuilt inside `said_arena` where that arena now lives:
+        // a map built in another arena and moved here would keep that
+        // arena's old address as its allocator.
         self.said_arena.drop();
-        self.said_arena = consume fresh_arena;
-        self.said       = fresh;
-        self.dirty      = false;
-        self.fresh      = true;
+        self.said_arena = turn.env.mem.alloc();
+        self.said       = self.said_arena.Map<str, str>();
+        fresh.pairs((h, uri, body) {
+            self.said.set(
+                uri.dup(self.said_arena).try(),
+                body.dup(self.said_arena).try()
+            ).try();
+        });
+        self.dirty = false;
+        self.fresh = true;
         written()
     }
 
@@ -216,15 +221,15 @@ Diagnostics.impl(Drop, {
     }
 })
 
-Diagnostics* = (env: Env) Diagnostics {
-    said_arena ::= env.mem.alloc();
-    diagnostics_with_said(env, consume said_arena)
-}
-
-diagnostics_with_said = (env: Env, said_arena :: Arena)
-                        Diagnostics {
-    said = said_arena.Map<str, str>();
-    Diagnostics(built: env.Built(), said_arena: consume said_arena, said: said)
+// The value is returned, so nothing in it may point at its own fields:
+// `said` starts empty in the caller's allocator, and `publish_snapshot`
+// rebuilds it inside `said_arena` once the value has its final home.
+Diagnostics* = (env: Env, a: Alloc) Diagnostics {
+    Diagnostics(
+        built: env.Built(),
+        said_arena: env.mem.alloc(),
+        said: a.Map<str, str>()
+    )
 }
 
 uris_of = (spots: Vec<Spot>, into :: Vec<str>) Res<(), AllocError> {

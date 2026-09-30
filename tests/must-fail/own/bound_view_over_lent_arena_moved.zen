@@ -1,0 +1,14 @@
+// A bound value over a `::` parameter's place may leave with the result,
+// so the place may not move out from under it: the map would keep the
+// caller's address for an arena that now lives in the returned value.
+Owner = { arena :: Arena, names :: Map<str, i32> }
+adopt = (arena :: Arena) Owner {
+    names = arena.Map<str, i32>();
+    Owner(arena: consume arena, names: names)
+}
+main = (env: Env) Res<(), AllocError> {
+    arena ::= env.mem.alloc();
+    owner ::= adopt(arena);
+    owner.names.set("a", 1).try();
+    Ok(())
+}

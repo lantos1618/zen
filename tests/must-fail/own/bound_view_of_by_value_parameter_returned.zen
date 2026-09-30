@@ -1,0 +1,27 @@
+// A concrete allocator passed by value reaches `adopt` as an `Alloc`: the
+// bound value points at this body's copy of `tracking`, and the session
+// that keeps it outlives the body.
+Counting = { base: Alloc, tag: usize }
+Counting.impl(Alloc, {
+    raw = (self: @Self, count: usize, alignment: usize) Res<Ptr<u8>, AllocError> {
+        self.base.raw(count, alignment)
+    }
+    realloc = <T>(self: @Self, p: Ptr<T>, count: usize) Res<Ptr<T>, AllocError> {
+        self.base.realloc(p, count)
+    }
+})
+Session = { alloc: Alloc, memory: Ptr<u8> }
+adopt = (alloc: Alloc, memory: Ptr<u8>) Session { Session(
+    alloc: alloc,
+    memory: memory
+) }
+open = (tracking: Counting) Res<Session, AllocError> {
+    memory = tracking.raw(64, 8).try();
+    Ok(adopt(tracking, memory))
+}
+main = (env: Env) Res<(), AllocError> {
+    base    = env.mem.alloc();
+    session = open(Counting(base: base, tag: 1)).try();
+    session.alloc.raw(8, 8).try();
+    Ok(())
+}

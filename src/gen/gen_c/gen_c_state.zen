@@ -134,9 +134,9 @@ CBackend* = {
     locals :: Vec<LocalSlot>,
     held_expression* :: Res<HeldExpression>,
     declared :: Vec<String>,
-    // Borrowed parameters this function lends to a `::` parameter. Sema
-    // accepts that lend and the write lands in the callee's own copy, so
-    // such a parameter is copied in at entry (`gen_c_decl.own_lent`).
+    // Borrowed parameters this function lends to a `::` parameter or a
+    // bound value. The caller's storage is never written, so such a
+    // parameter is copied in at entry (`gen_c_decl.own_lent`).
     lent :: Vec<String>,
     // Active loop and block stacks, innermost last.
     loops :: Vec<LoopFrame>,

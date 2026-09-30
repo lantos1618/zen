@@ -1,0 +1,12 @@
+// A `Sink` built from `text` points at `text`, and `write` is a `::`
+// member: storing the sink in a `::` field lends `text` to every writer
+// of that field, so `text` must be `::` itself.
+Out = { sink :: Sink }
+main = (env: Env) Res<(), AllocError | WriteError> {
+    a    = env.mem.alloc();
+    text = a.String().try();
+    out ::= Out(sink: text);
+    out.sink.write("x").try();
+    println("{}", text.view());
+    Ok(())
+}

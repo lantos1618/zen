@@ -10,14 +10,16 @@ Range = std.core
 TyId = sema.sema_ty
 Checker, Ctx, UNRESOLVED, truncate = sema.sema_check
 SemaFault, NameFault = sema.sema_diag
-check_receiver, check_write_place = sema.sema_recv
+check_receiver, check_write_place, check_lent_args, check_lent_fields = sema.sema_recv
 check_scope_returned, check_scope_stored = sema.sema_scope
 check_scope_captured, is_scope_value, call_escapes = sema.sema_scope
 check_arena_returned, is_arena_backed, is_arena_ty = sema.sema_scope
 scope_alias, remember_block_origin, check_arena_stored, is_construction = sema.sema_scope
+frame_bound_view, frame_view_at, refuse_frame_view, sheds_frame_view = sema.sema_scope
 arena_source, release_stored_arena, stored_arena_backed = sema.sema_scope
-Pin, pin_captured, refuse_pinned, refuse_pinned_at = sema.sema_pin
+Pin, pin_captured, refuse_pinned, refuse_pinned_at, pin_viewed = sema.sema_pin
 check_drop_copy, is_drop_type = sema.sema_drop
+carries_bound = sema.sema_copy
 is_handle_ty, refuse_handle_at, spelled_name = sema.sema_handle
 local_lambda = sema.sema_local
 spelled_lambda, call_callee = sema.sema_call
@@ -138,6 +140,40 @@ Provenance = {
     }
 }
 
+ViewRoot* = { root*: usize, at*: ExprId }
+
+// Moving an arena into caller storage takes its pages along, so what was
+// drawn from it stops being local. A value that holds a bound built over the
+// arena's binding is the exception: the record keeps the binding's address,
+// which the move leaves behind, so it becomes a view of this frame instead.
+rehome_arena* = (c :: Checker, o :: Own, source: ExprId, root: Res<usize>)
+                Res<(), AllocError> {
+    formed: Res<ExprId> = root.match({
+        None  => None,
+        Ok(i) => o.views.find((v) { v.root == i }).match({ None => None, Ok(v) => Ok(v.at) }),
+    });
+    formed.match({
+        None     => o.release_arena(source),
+        Ok(view) => {
+            kept ::= o.alloc.Vec<usize>();
+            o.vars.loop((h, i, row) {
+                (row.arena && same_source(row.source, Ok(source)) && c.carries_bound(row.ty).try())
+                    .then(() { kept.add(i).try(); });
+            });
+            o.release_arena(source).try();
+            kept.loop((i) {
+                o.vars.get(i).when_ok((old) {
+                    row ::= old;
+                    row.arena  = true;
+                    row.source = Ok(view);
+                    o.vars.set(i, row);
+                });
+            });
+            Ok(())
+        },
+    })
+}
+
 // A moved-out place: a binding, or one field of it.
 Place* = {
     root*: usize,
@@ -161,6 +197,9 @@ Own* = {
     vars :: Vec<OwnVar>,
     dead :: Vec<Place>,
     pinned* :: Vec<Pin>,
+    // Bound values built over this frame's bindings: the binding, and the
+    // converted argument that names the view (`sema_scope`, bound values).
+    views* :: Vec<ViewRoot>,
     escaped* :: usize,
     method* :: str,
     body* :: BlockId,
@@ -510,6 +549,8 @@ Own* = {
     release = (self :: @Self, mark: usize) Res<(), AllocError> {
         self.dead   = self.dead.filter(self.alloc, (p) { p.root < mark })
             .try();
+        self.views  = self.views.filter(self.alloc, (v) { v.root < mark })
+            .try();
         self.pinned = self.pinned.filter(self.alloc, (p) { p.root < mark })
             .try();
         self.vars.truncate(mark);
@@ -523,6 +564,7 @@ Own* = (a: Alloc) Res<Own, AllocError> {
         vars: a.Vec<OwnVar>(),
         dead: a.Vec<Place>(),
         pinned: a.Vec<Pin>(),
+        views: a.Vec<ViewRoot>(),
         escaped: 0,
         method: "",
         body: BlockId(index: 0),
@@ -571,7 +613,40 @@ StoredView* = {
     }
 }
 
+// A bound value built from `value` at this use is a view of this frame
+// whatever `value` itself was drawn from (`sema_scope`, bound values).
 stored_view* = (
+    c     :: Checker,
+    o     :: Own,
+    value : ExprId,
+    field : Res<str>
+) StoredView {
+    view = c.stored_view_of(o, value, field);
+    c.frame_bound_view(value).match({
+        true  => view.arena.match({
+            false => StoredView(
+                scoped: view.scoped,
+                arena: true,
+                source: Ok(value)
+            ),
+            true  => view,
+        }),
+        false => (field.match({ None => true, Ok(_) => false }) && view.arena && c.sheds_frame_view(
+            o,
+            value,
+            view.source
+        )).match({
+            true  => StoredView(
+                scoped: view.scoped,
+                arena: false,
+                source: None
+            ),
+            false => view,
+        }),
+    })
+}
+
+stored_view_of = (
     c     :: Checker,
     o     :: Own,
     value : ExprId,
@@ -644,10 +719,21 @@ store_origin* = (
     view = c.stored_view(o, value, field);
     c.path_root(o, target).when_ok((root) {
         (!o.owned_at(root) && view.arena).then(() {
-            c.refuse(
-                c.tree.expr_at(target).span,
-                SemaFault.ArenaStored(NameFault(name: c.spelled_name(value)))
-            ).try();
+            c.frame_view_at(view.source).match({
+                None       => c.refuse(
+                    c.tree.expr_at(target).span,
+                    SemaFault.ArenaStored(NameFault(name: c.spelled_name(
+                        value
+                    )))
+                ),
+                Ok(formed) => c.refuse_frame_view(
+                    o,
+                    formed,
+                    value,
+                    target,
+                    true
+                ),
+            }).try();
         });
     });
     c.transfer_view(o, target, view)
@@ -1087,9 +1173,12 @@ report_partial = (c :: Checker, o :: Own, i: usize) Res<(), AllocError> {
 own_call = (c :: Checker, o :: Own, id: ExprId, k: Call, ctx: Ctx)
            Res<(), AllocError> {
     c.check_receiver(o, k, ctx).try();
+    c.check_lent_args(o, id, k).try();
+    c.check_lent_fields(o, id, k).try();
     c.check_scope_stored(id, k).try();
     c.own_expr(o, k.callee, ctx).try();
     c.own_args(o, id, k, ctx).try();
+    c.pin_views(o, id, k).try();
     c.call_stores(o, id, k).try();
     c.own_destruction(o, id, k).try();
     Ok(());
@@ -1162,6 +1251,61 @@ destroy_owner = (c :: Checker, o :: Own, id: ExprId, receiver: ExprId)
     })
 }
 
+// A place a bound value is built over is recorded once the record may be
+// kept: the call's result can hold a bound, or the callee can store one
+// through a `::` parameter (`sema_pin.pin_viewed` says what that holds the
+// place to). `text.dup(arena)` keeps nothing — the record lives only for
+// the call.
+pin_views = (c :: Checker, o :: Own, id: ExprId, k: Call) Res<(), AllocError> {
+    c.builds_view(k).match({
+        false => Ok(()),
+        true  => (c.stores_through(id) || c.carries_bound(c.place_type(o, id)).try()).match({
+            false => Ok(()),
+            true  => c.pin_view_args(o, k),
+        }),
+    })
+}
+
+builds_view = (c: Checker, k: Call) bool {
+    receiver = c.tree.expr_at(k.callee).kind.match({
+        Access(a) => c.is_bound_view(a.base),
+        _         => false,
+    });
+    receiver || k.args.find((a) { c.is_bound_view(a.value) }).match({
+        Ok(_) => true,
+        None  => false,
+    })
+}
+
+is_bound_view = (c: Checker, id: ExprId) bool {
+    c.bound_views.get(id).match({ Ok(_) => true, None => false })
+}
+
+// Any `::` parameter may receive what the callee was given.
+stores_through = (c: Checker, id: ExprId) bool {
+    c.resolved_call(id).match({
+        None    => true,
+        Ok(did) => c.tree.decl_at(did).match({
+            None    => true,
+            Ok(dec) => dec.kind.match({
+                Function(f) => f.params.find(
+                    (p) { p.mutable }
+                ).match({ Ok(_) => true, None => false }),
+                _           => true,
+            }),
+        }),
+    })
+}
+
+pin_view_args = (c :: Checker, o :: Own, k: Call) Res<(), AllocError> {
+    c.tree.expr_at(k.callee).kind.match({
+        Access(a) => c.pin_viewed(o, a.base),
+        _         => Ok(()),
+    }).try();
+    k.args.loop((h, a) { c.pin_viewed(o, a.value).try() });
+    Ok(());
+}
+
 own_args = (c :: Checker, o :: Own, id: ExprId, k: Call, ctx: Ctx)
            Res<(), AllocError> {
     repeats = c.repeating_body(id).try();
@@ -1205,7 +1349,7 @@ own_lambda = (
     escapes : bool
 ) Res<(), AllocError> {
     repeats.then(() { c.loop_provenance(o, l, ctx).try() });
-    before    = o.provenance().try();
+    before ::= o.provenance().try();
     dmark     = o.dead.len;
     vmark     = o.vars.len;
     outer     = o.escaped;
@@ -1229,7 +1373,7 @@ loop_provenance = (c :: Checker, o :: Own, l: Lambda, ctx: Ctx)
                   Res<(), AllocError> {
     stable ::= false;
     loop(() { !stable }, (h) {
-        before   = o.provenance().try();
+        before ::= o.provenance().try();
         previous = o.provenance().try();
         mark     = o.vars.len;
         l.params.loop((h, p) { c.own_param(o, p).try() });
@@ -1322,8 +1466,8 @@ flow_expr = (c :: Checker, o :: Own, id: ExprId, ctx: Ctx)
                     Ok(l) => c.repeating_body(id).try().match({
                         true  => c.loop_provenance(o, l, ctx).try(),
                         false => {
-                            before = o.provenance().try();
-                            mark   = o.vars.len;
+                            before ::= o.provenance().try();
+                            mark = o.vars.len;
                             l.params.loop((h, p) { c.own_param(o, p).try() });
                             c.flow_block(o, l.body, ctx).try();
                             truncate(o.vars, mark);
@@ -1337,8 +1481,8 @@ flow_expr = (c :: Checker, o :: Own, id: ExprId, ctx: Ctx)
         },
         Match(m)      => {
             c.flow_expr(o, m.scrutinee, ctx).try();
-            before = o.provenance().try();
-            joined = o.provenance().try();
+            before ::= o.provenance().try();
+            joined ::= o.provenance().try();
             m.arms.loop((h, arm) {
                 o.restore_provenance(before);
                 c.flow_expr(o, arm.body, ctx).try();
@@ -1604,7 +1748,12 @@ summarized_view = (
     view ::= StoredView(scoped: false, arena: false, source: None);
     returned.sources.loop((source) {
         actual(c, id, call, summary.function, source.parameter).when_ok((argument) {
-            view = view.join(c.stored_view(o, argument, source.field));
+            drawn = c.stored_view(o, argument, source.field);
+            // The result keeps a bound view only if its type can hold one.
+            (drawn.arena && c.sheds_frame_view(o, id, drawn.source)).match({
+                true  => (),
+                false => { view = view.join(drawn); },
+            });
         });
     });
     Ok(view)

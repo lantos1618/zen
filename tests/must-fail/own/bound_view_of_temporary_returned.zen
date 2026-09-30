@@ -1,0 +1,17 @@
+Counting = { base: Alloc, tag: usize }
+Counting.impl(Alloc, {
+    raw = (self: @Self, count: usize, alignment: usize) Res<Ptr<u8>, AllocError> {
+        self.base.raw(count, alignment)
+    }
+    realloc = <T>(self: @Self, p: Ptr<T>, count: usize) Res<Ptr<T>, AllocError> {
+        self.base.realloc(p, count)
+    }
+})
+Holder = { alloc: Alloc }
+keep = (alloc: Alloc) Holder { Holder(alloc: alloc) }
+make = (base: Alloc) Holder { keep(Counting(base: base, tag: 1)) }
+main = (env: Env) Res<(), AllocError> {
+    held = make(env.mem.alloc());
+    held.alloc.raw(8, 8).try();
+    Ok(())
+}

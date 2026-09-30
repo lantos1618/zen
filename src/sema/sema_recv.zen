@@ -1,19 +1,180 @@
 Expr, ExprId = std.ast
 Struct, Member, Function = std.ast
-Call, Access, Index, Name, Paren, Field, Const = std.ast
+Call, Arg, Access, Index, Name, Paren, Field, Const = std.ast
 AllocError = std.mem
 str = std.text
 TyId, TyNamed = sema.sema_ty
 decl_at = sema.sema_def
 Checker, Ctx = sema.sema_check
-SemaFault, NameFault = sema.sema_diag
+SemaFault, NameFault, LendFault = sema.sema_diag
 Own, path_root, place_type = sema.sema_own
+is_construction = sema.sema_scope
+storage_seat_name = sema.sema_supply
+is_bound_ty = sema.sema_bound
 
 check_receiver* = (c :: Checker, o :: Own, k: Call, ctx: Ctx)
                   Res<(), AllocError> {
     c.tree.expr_at(k.callee).kind.match({
         Access(a) => c.check_method_call(o, a, k),
         _         => Ok(()),
+    })
+}
+
+// arguments to `::` parameters
+
+// A receiver is only the first parameter (DESIGN.md, Ownership), so the
+// receiver rule holds for every `::` parameter: the callee writes the
+// argument's own bytes, and an argument that names a place must be writable
+// along every link from its binding. A value that is not a place — a call,
+// a literal, a construction — is a fresh temporary nothing else can see.
+check_lent_args* = (c :: Checker, o :: Own, id: ExprId, k: Call)
+                   Res<(), AllocError> {
+    c.lent_callee(o, id, k).match({
+        None       => Ok(()),
+        Ok(callee) => {
+            k.args.loop((h, i, a) {
+                c.check_lent(o, callee.f, i + callee.off, a.value).try()
+            });
+            // A member method's receiver is checked by `check_method_call`.
+            (callee.off == 1 && !callee.member).match({
+                false => Ok(()),
+                true  => c.tree.expr_at(k.callee).kind.match({
+                    Access(a) => c.check_lent(o, callee.f, 0, a.base),
+                    _         => Ok(()),
+                }),
+            })
+        },
+    })
+}
+
+// A bound value is a pointer to the value it was built from, so storing
+// one in a `::` field lends that value to whoever holds the field: the
+// bound's `::` members write the value's own bytes through it.
+check_lent_fields* = (c :: Checker, o :: Own, id: ExprId, k: Call)
+                     Res<(), AllocError> {
+    c.is_construction(id).match({
+        false => Ok(()),
+        true  => c.expr_memo.get(id).match({
+            None   => Ok(()),
+            Ok(ty) => {
+                k.args.loop(
+                    (h, i, a) { c.check_lent_field(o, ty, i, a).try() }
+                );
+                Ok(())
+            },
+        }),
+    })
+}
+
+check_lent_field = (c :: Checker, o :: Own, ty: TyId, i: usize, a: Arg)
+                   Res<(), AllocError> {
+    c.reaches_through(o, a.value).match({
+        false => Ok(()),
+        true  => {
+            name = a.name.match({
+                Ok(label) => label.text,
+                None      => c.storage_seat_name(ty, i).try(),
+            });
+            (c.field_is_lent(ty, name) && c.path_root(o, a.value).match({ Ok(_) => true, None => false }))
+                .match({
+                    false => Ok(()),
+                    true  => c.immutable_link(o, a.value).match({
+                        None     => Ok(()),
+                        Ok(link) => c.refuse(
+                            c.tree.expr_at(a.value).span,
+                            SemaFault.ImmutableLent(LendFault(
+                                place: link,
+                                param: name,
+                                field: true
+                            ))
+                        ),
+                    }),
+                })
+        },
+    })
+}
+
+// A value whose bytes a bound's `::` member could reach: one converted to
+// a bound here, or a bound value whose interface declares such a member.
+reaches_through = (c :: Checker, o :: Own, id: ExprId) bool {
+    c.bound_views.get(id).match({
+        Ok(_) => true,
+        None  => c.writes_behind(c.place_type(o, id)),
+    })
+}
+
+writes_behind = (c: Checker, ty: TyId) bool {
+    c.is_bound_ty(ty) && c.types.at(ty).match({
+        Named(n) => c.tree.decl_at(n.decl).match({
+            None  => false,
+            Ok(d) => d.kind.match({
+                Struct(st) => st.members.find(
+                    (m) { m.receiver_is_mutable() }
+                ).match({
+                    Ok(_) => true,
+                    None  => false,
+                }),
+                _          => false,
+            }),
+        }),
+        _        => false,
+    })
+}
+
+field_is_lent = (c: Checker, ty: TyId, name: str) bool {
+    c.own_member(ty, name).match({
+        None  => false,
+        Ok(m) => m.kind.match({ Field(f) => f.mutable, _ => false }),
+    })
+}
+
+LentCallee = { f: Function, off: usize, member: bool }
+
+// The declaration whose parameters the arguments bind to: a member reached
+// through a value, or the function resolution selected.
+lent_callee = (c :: Checker, o :: Own, id: ExprId, k: Call) Res<LentCallee> {
+    member: Res<Function> = c.tree.expr_at(k.callee).kind.match({
+        Access(a) => c.own_member(c.place_type(o, a.base), a.name.text).match({
+            Ok(m) => m.kind.match({ Function(f) => Ok(f), _ => None }),
+            None  => None,
+        }),
+        _         => None,
+    });
+    member.match({
+        Ok(f) => Ok(LentCallee(f: f, off: 1, member: true)),
+        None  => {
+            call       = c.checked_call(id).try();
+            decl       = c.tree.decl_at(call.declaration.try()).try();
+            f          = decl.kind.match({ Function(f) => Ok(
+                f
+            ), _ => None }).try();
+            off: usize = call.signature.try().receiver.match({ Ok(_) => 1, None => 0 });
+            Ok(LentCallee(f: f, off: off, member: false))
+        },
+    })
+}
+
+check_lent = (c :: Checker, o :: Own, f: Function, i: usize, value: ExprId)
+             Res<(), AllocError> {
+    f.params.get(i).match({
+        None  => Ok(()),
+        Ok(p) => (p.mutable && c.path_root(
+            o,
+            value
+        ).match({ Ok(_) => true, None => false })).match({
+            false => Ok(()),
+            true  => c.immutable_link(o, value).match({
+                None     => Ok(()),
+                Ok(link) => c.refuse(
+                    c.tree.expr_at(value).span,
+                    SemaFault.ImmutableLent(LendFault(
+                        place: link,
+                        param: p.name.text,
+                        field: false
+                    ))
+                ),
+            }),
+        }),
     })
 }
 

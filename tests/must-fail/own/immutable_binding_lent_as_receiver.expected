@@ -1,0 +1,2 @@
+an immutable place cannot be lent to a `::` parameter or field
+6:5

@@ -14,7 +14,7 @@ entry_is = (shared: Shared, file: str) bool {
 
 main = (env: Env) Res<(), AllocError> {
     a     ::= env.mem.alloc();
-    notes ::= env.Diagnostics();
+    notes ::= env.Diagnostics(a);
     uris  ::= a.Vec<str>();
     docs  ::= a.Map<str, str>();
     uri = "file://src/app/value.zen";

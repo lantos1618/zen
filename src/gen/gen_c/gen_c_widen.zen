@@ -165,13 +165,13 @@ member_reaches_set = (
 // none of them, and claiming that here would emit a tag nothing
 // defines. A structural set composes its tag instead of declaring one,
 // so there the answer is always yes.
-settled_member = (be: CBackend, cty: TyId, want: TyId, wide: TyId) bool {
+settled_member = (be :: CBackend, cty: TyId, want: TyId, wide: TyId) bool {
     (be.check.is_unknown(cty) == false) && (cty.eq(wide) == false)
         && be.is_stored_member(cty) && be.check.types.set_has(wide, cty)
         && be.variant_carries(want, cty)
 }
 
-variant_carries = (be: CBackend, want: TyId, member: TyId) bool {
+variant_carries = (be :: CBackend, want: TyId, member: TyId) bool {
     be.check.types.at(want).match({
         Named(_) => be.carrier(want, member).match({
             None  => false,

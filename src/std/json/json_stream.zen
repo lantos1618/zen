@@ -6,7 +6,7 @@
 { Vec } = std.collections
 { Alloc } = std.mem
 { Range } = std.core
-{ JsonFault, TextByte, decode_text_token, number_token, MAX_NESTING, is_json_space, shifted, text_byte, unescaped } = std.json.json_read
+{ JsonFault, TextByte, decode_text_token, number_token, MAX_NESTING, is_json_space, text_byte, unescaped } = std.json.json_read
 
 JsonEvent* = { ObjectStart
     | ObjectEnd

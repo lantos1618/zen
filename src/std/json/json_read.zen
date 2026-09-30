@@ -14,7 +14,21 @@ JsonFault* = { Unexpected: usize   // a byte that cannot begin what is expected 
            | BadNumber: usize    // digits that are not JSON's number grammar
            | TooDeep: usize      // nested past MAX_NESTING
            | Trailing: usize     // a complete value, and then more bytes
-           | NoMemory }            // the arena could not grow
+           | NoMemory,             // the arena could not grow
+
+    // The same fault with its offset rebased into an enclosing document.
+    shifted* = (self: @Self, base: usize) JsonFault {
+        self.match({
+            Unexpected(at) => JsonFault.Unexpected(base + at),
+            Truncated(at)  => JsonFault.Truncated(base + at),
+            BadEscape(at)  => JsonFault.BadEscape(base + at),
+            BadNumber(at)  => JsonFault.BadNumber(base + at),
+            TooDeep(at)    => JsonFault.TooDeep(base + at),
+            Trailing(at)   => JsonFault.Trailing(base + at),
+            NoMemory       => JsonFault.NoMemory,
+        })
+    }
+}
 
 // Bounds recursive DOM reads and the incremental decoder's frame stack.
 MAX_NESTING*: usize = 64
@@ -409,19 +423,6 @@ text_byte* = (b: u8, at: usize) Res<TextByte, JsonFault> {
             true  => Err(JsonFault.Unexpected(at)),
             false => Ok(TextByte.TextPlain),
         }),
-    })
-}
-
-// The same fault with its offset rebased into an enclosing document.
-shifted* = (self: JsonFault, base: usize) JsonFault {
-    self.match({
-        Unexpected(at) => JsonFault.Unexpected(base + at),
-        Truncated(at)  => JsonFault.Truncated(base + at),
-        BadEscape(at)  => JsonFault.BadEscape(base + at),
-        BadNumber(at)  => JsonFault.BadNumber(base + at),
-        TooDeep(at)    => JsonFault.TooDeep(base + at),
-        Trailing(at)   => JsonFault.Trailing(base + at),
-        NoMemory       => JsonFault.NoMemory,
     })
 }
 

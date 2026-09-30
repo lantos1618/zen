@@ -170,7 +170,19 @@ Codegen.impl(StableName, {
 // Check emits nothing. Other modes describe where generated artifacts go.
 Emission* = { Check | Stdout | File: str | Directory: str }
 
-Permutation* = { Natural | Reverse | Rotate | Interleave }
+Permutation* = {
+    Natural | Reverse | Rotate | Interleave,
+
+    // The position the `i`th of `n` items takes in this order.
+    index* = (self: @Self, n: usize, i: usize) usize {
+        self.match({
+            Natural    => i,
+            Reverse    => n - 1 - i,
+            Rotate     => (i + 1) % n,
+            Interleave => interleaved(n, i),
+        })
+    }
+}
 
 Permutation.impl(StableName, {
     stable_name = (self: @Self) str {
@@ -182,15 +194,6 @@ Permutation.impl(StableName, {
         })
     }
 })
-
-index* = (self: Permutation, n: usize, i: usize) usize {
-    self.match({
-        Natural    => i,
-        Reverse    => n - 1 - i,
-        Rotate     => (i + 1) % n,
-        Interleave => interleaved(n, i),
-    })
-}
 
 interleaved = (n: usize, i: usize) usize {
     half = n / 2;

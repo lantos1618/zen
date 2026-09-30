@@ -2104,7 +2104,9 @@ be flagged, so a check that has stopped seeing anything fails:
 - `ct-asm --c program.c` compiles a program's generated C to assembly with
   each `--cc` at `-O2` and `-O3`. The C backend writes
   `/* zen:secret zu_l3key *zu_l3out */` after the parameter list of every
-  function with a Secret parameter; the tool keeps those functions out of
+  function with a Secret parameter, ending in `public-result` when the
+  result is not written Secret (sema's discipline makes it public, and the
+  tool checks it); the tool keeps those functions out of
   line (`noinline`, and `noipa` so GCC cannot run a clone instead), places
   their secret inputs by the SysV x86-64 or AAPCS64 convention, and runs a
   forward taint analysis over the assembly, joined at labels. Registers are
@@ -2151,8 +2153,8 @@ be flagged, so a check that has stopped seeing anything fails:
   prologue writes it. On x86-64 a byte written over a secret register
   (`sete %al`) makes only its low byte public, which is what a byte-sized
   read, spill or `bool` result sees. Calls that never return end their
-  path. `CT_TRACE=<symbol>` prints
-  the analysis instruction by instruction. It fails on a conditional branch,
+  path. `CT_TRACE=<symbol>` prints the analysis instruction by
+  instruction. It fails on a conditional branch,
   a memory address, a division or an indirect jump that depends on a
   secret, a secret passed to an audited callee unseeded, and a secret
   returned by a public-result function. Memory other than the stack and

@@ -20,7 +20,7 @@ lower_eq_call = gen.gen_c.gen_c_member
 init_temp = gen.gen_c.gen_c_flow
 expr, ty_of, spills_anywhere = gen.gen_c.gen_c_expr
 infix_operand_held, value_held = gen.gen_c.gen_c_expr
-unparened, holding_type, declare_temp = gen.gen_c.gen_c_expr
+unparened = gen.gen_c.gen_c_expr
 needs_set = gen.gen_c.gen_c_widen
 needs_hoist = gen.gen_c.gen_c_hoist
 needs_fat = gen.gen_c.gen_c_fat
@@ -57,7 +57,7 @@ wrap_unary = (
 }
 
 // What a `-` writes, in the order `negate_kind` asks for them.
-NegKind = Float | Folded(str) | Checked
+NegKind* = Float | Folded(str) | Checked
 
 // Negation on an integer is `0 - x`, and it traps: `-i32.MIN` is an
 // overflow like any other. On a float it is the C operator, which
@@ -83,7 +83,7 @@ lower_negate = (
 // `0 - x` would trap while first evaluating the magnitude of `iN.MIN`, which
 // is one greater than `iN.MAX`, and would report the literal rather than the
 // operation that actually failed.
-negate_kind = (be: CBackend, u: Unary, prim: str) NegKind {
+negate_kind* = (be: CBackend, u: Unary, prim: str) NegKind {
     is_c_integer(prim).match({
         false => NegKind.Float,
         true  => be.int_digits(u.operand).match({
@@ -117,7 +117,7 @@ literal_digits = (l: Literal) Res<str> {
 I64_MIN_DIGITS: str = "9223372036854775808"
 I64_MIN_C: str = "(-9223372036854775807LL - 1LL)"
 
-write_negative_literal = (digits: str, out :: String) Res<(), AllocError> {
+write_negative_literal* = (digits: str, out :: String) Res<(), AllocError> {
     digits.eq(I64_MIN_DIGITS).match({
         true  => out.add(I64_MIN_C),
         false => write_neg(digits, out),
@@ -205,7 +205,7 @@ is_comparison* = (op: BinOp) bool {
 
 // The lowering forms for binary operators. `op_kind` tests them in language
 // precedence order.
-OpKind = ShortCircuit | Infix | Helper(str) | Dispatched | Refused
+OpKind* = ShortCircuit | Infix | Helper(str) | Dispatched | Refused
 
 // Short-circuit operators use an explicit branch whenever either operand must
 // be held or the right subtree emits statements. `spills_anywhere` is required:
@@ -213,7 +213,7 @@ OpKind = ShortCircuit | Infix | Helper(str) | Dispatched | Refused
 // it. Pure operands stay as C infix expressions. Scalar comparisons use C;
 // equality on other types dispatches through `Eq`. Ordering without a language
 // operation is refused.
-op_kind = (be: CBackend, b: Binary, operand: TyId) OpKind {
+op_kind* = (be: CBackend, b: Binary, operand: TyId) OpKind {
     found: Res<OpKind> = loop<OpKind>((h) {
         (is_logical(b.op)
             && (be.spills_anywhere(b.rhs) || be.infix_operand_held(b)))
@@ -507,17 +507,8 @@ write_trap_args = (be :: CBackend, node: Expr, b: Binary, out :: String)
 // effects and operand types. A non-folding form or held operand ends the walk
 // and returns that base to normal expression lowering. Plain parens around a
 // folding level are written through: every level already delimits its left
-// operand, as a helper argument or inside its own parentheses.
-//
-// A spine deeper than SPINE_NEST levels is cut into segments, innermost
-// first, each assigned to a temporary that the next segment reads:
-//     (zg_s1 = <innermost segment>, zg_s2 = <next, on zg_s1>, <outermost>)
-// The comma operator keeps the segments in evaluation order at the spine's
-// own position, so C nesting stays bounded without moving any evaluation.
-
-// Levels one spine segment nests in C. C99 promises only 63 nested
-// parenthesized expressions, and Clang refuses more than 256.
-SPINE_NEST: usize = 32
+// operand, as a helper argument or inside its own parentheses. A spine deep
+// enough to strain C nesting is lowered by `gen_c_deep` instead.
 
 // One level of the spine. `id` is the operator node and `operand` the
 // type its operands lower at; the node is re-read rather than stored
@@ -552,123 +543,10 @@ spine_lhs = (
         hint  = rung.operand;
     });
     folded = rungs.len - 1;
-    cuts   = be.spine_cuts(rungs, folded, ctx, want).try();
-    (cuts.len == 0).match({
-        true  => {
-            be.open_levels(rungs, 0, folded, out).try();
-            expr(be, down, ctx, hint, out).try();
-            be.close_levels(rungs, 0, folded, ctx, out).try();
-        },
-        false => be.write_cut_spine(rungs, cuts, down, hint, ctx, out).try(),
-    });
-    Ok(());
-}
-
-// Where a spine continues through a temporary: every SPINE_NEST levels from
-// its innermost, holding the value of the level cut at. A spine is cut only
-// if every cut can be held.
-SpineCut = { level: usize, ty: TyId }
-
-spine_cuts = (
-    be     :: CBackend,
-    rungs  : Vec<Rung>,
-    folded : usize,
-    ctx    : Ctx,
-    want   : TyId
-) Res<Vec<SpineCut>, AllocError> {
-    cuts  ::= be.alloc.Vec<SpineCut>();
-    at    ::= folded;
-    holds ::= true;
-    loop(() { holds && at > SPINE_NEST }, (h) {
-        at   = at - SPINE_NEST;
-        held = rungs.get(at).match({
-            None       => Ok(None),
-            Ok(inside) => be.holding_type(
-                inside.id,
-                ctx,
-                level_want(rungs, at, want)
-            ),
-        }).try();
-        held.match({
-            Ok(ty) => cuts.add(SpineCut(level: at, ty: ty)).try(),
-            None   => { holds = false; },
-        });
-    });
-    holds.match({
-        true  => Ok(cuts),
-        false => Ok(be.alloc.Vec<SpineCut>()),
-    })
-}
-
-// A level is lowered at its parent's operand type; the outermost at the
-// spine's own.
-level_want = (rungs: Vec<Rung>, level: usize, want: TyId) TyId {
-    (level == 0).match({
-        true  => want,
-        false => rungs.get(level - 1).match({
-            Ok(parent) => parent.operand,
-            None       => want,
-        }),
-    })
-}
-
-write_cut_spine = (
-    be        :: CBackend,
-    rungs     : Vec<Rung>,
-    cuts      : Vec<SpineCut>,
-    base      : ExprId,
-    base_want : TyId,
-    ctx       : Ctx,
-    out       :: String
-) Res<(), AllocError> {
-    out.add("(").try();
-    held ::= be.alloc.String().try();
-    top  ::= rungs.len - 1;
-    cuts.loop((h, i, cut) {
-        tmp = be.declare_temp(cut.ty).try();
-        out.fmt("{} = ", tmp.view()).try();
-        be.open_levels(rungs, cut.level, top - cut.level, out).try();
-        (i == 0).match({
-            true  => expr(be, base, ctx, base_want, out),
-            false => out.add(held.view()),
-        }).try();
-        be.close_levels(rungs, cut.level, top - cut.level, ctx, out).try();
-        out.add(", ").try();
-        held = tmp;
-        top  = cut.level;
-    });
-    be.open_levels(rungs, 0, top, out).try();
-    out.add(held.view()).try();
-    be.close_levels(rungs, 0, top, ctx, out).try();
-    out.add(")").try();
-    Ok(());
-}
-
-// Opens `count` levels from `first`, outermost first.
-open_levels = (
-    be    :: CBackend,
-    rungs : Vec<Rung>,
-    first : usize,
-    count : usize,
-    out   :: String
-) Res<(), AllocError> {
-    Range(first, first + count).loop((h, i) {
-        be.open_rung(rungs, i, out).try();
-    });
-    Ok(());
-}
-
-// Closes the same levels, innermost first.
-close_levels = (
-    be    :: CBackend,
-    rungs : Vec<Rung>,
-    first : usize,
-    count : usize,
-    ctx   : Ctx,
-    out   :: String
-) Res<(), AllocError> {
-    Range(0, count).loop((h, i) {
-        be.close_rung(rungs, first + count - 1 - i, ctx, out).try();
+    Range(0, folded).loop((h, i) { be.open_rung(rungs, i, out).try(); });
+    expr(be, down, ctx, hint, out).try();
+    Range(0, folded).loop((h, i) {
+        be.close_rung(rungs, folded - 1 - i, ctx, out).try();
     });
     Ok(());
 }
@@ -722,7 +600,7 @@ operand_rung = (be :: CBackend, id: ExprId, b: Binary, ctx: Ctx, want: TyId)
 // operator and not from what they were given; a comparison's operands'
 // own reading (`comparison_level` below); everything else the operands'
 // joined type with `want` as the last resort.
-level_type = (be :: CBackend, b: Binary, ctx: Ctx, want: TyId)
+level_type* = (be :: CBackend, b: Binary, ctx: Ctx, want: TyId)
              Res<TyId, AllocError> {
     is_logical(b.op).match({
         true  => be.check.types.bool_ty(),

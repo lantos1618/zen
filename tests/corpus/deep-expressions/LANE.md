@@ -10,6 +10,9 @@ tests/corpus/deep-expressions/nested_arrays_settle_element_types -- settle an in
 tests/corpus/deep-expressions/nested_enum_tags_survive_twenty_wraps -- read the wrong enum's tag when two enums share a payload shape (Node/Vine), skip one tag translation across twenty Ptr hops, or dereference the payload as a pointer (prints 0/traps instead of node 40 / vine -13).
 tests/corpus/deep-expressions/three_hundred_parenthesized_sums_stay_shallow -- let constant folding, typing, ownership or C lowering recurse once per `(sum + 1)` level (the compiler overflows its stack), or write one C bracket per Zen paren or per operator (Clang refuses the generated C); a lost or doubled level prints 299/301.
 tests/corpus/deep-expressions/long_operator_chains_keep_their_values -- drop, repeat or reorder a segment of a chain lowered through temporaries, cut it at the wrong level, or hold a segment at the wrong type (up/down/wrapped/mixed shift; halves or same turn false).
+tests/corpus/deep-expressions/operator_trees_at_the_parser_limit -- recurse once per level while typing, checking ownership of or lowering a right-nested, unary or logical operator tree (the compiler overflows its stack), write one C bracket per level (Clang refuses the generated C), or lose a level (right/negated/inverted/all/any/mixed shift).
+tests/corpus/deep-expressions/calls_and_chains_at_the_parser_limit -- copy large read-only records such as the checker or backend into every frame of call lowering or ownership checking, so 151 nested calls or a 151-link method chain no longer fits the default stack.
+tests/corpus/deep-expressions/deep_logical_operands_still_short_circuit -- assign a temporary from the right operand of `&&` or `||` ahead of the operator (the skipped division by zero traps), or write a conditional operand so it no longer runs when it must (taken and/or turn false).
 
 ## Compiler bugs found while writing this lane
 

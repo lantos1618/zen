@@ -1,0 +1,15 @@
+// tests/corpus/traps/add_i8_max_in_a_right_nested_sum.zen
+// A right-nested sum deep enough to be written through temporaries. The
+// innermost `1 + x` runs first; 100 plus twenty-eight ones passes i8.MAX at
+// the twenty-eighth `+` from the inside, and the trap names that operator
+
+// main must name an error type. a trap never lifts into Res:
+// it aborts the process
+Error = Overflow | DivideByZero | OutOfBounds
+
+main = (env: Env) Res<i32, Error> {
+    x: i8 = 100;
+    sum   = 1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (1 + (x))))))))))))))))))))))))))))))))))))))));
+    println("{}", sum);
+    Ok(0);
+}

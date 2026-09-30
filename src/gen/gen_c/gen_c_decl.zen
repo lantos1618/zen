@@ -21,6 +21,7 @@ sym_fn, sym_local = gen.gen_name
 GenFault = gen.gen_diag
 CBackend, MethodRef, FnOrigin = gen.gen_c.gen_c_state
 LocalSlot = gen.gen_c.gen_c_frame
+passes_address = gen.gen_c.gen_c_param
 sub, enter_tparams, leave_tparams = gen.gen_c.gen_c_mono
 open_named = gen.gen_c.gen_c_mono
 enter_struct_tparams = gen.gen_c.gen_c_mono
@@ -602,8 +603,8 @@ self_body_ctx* = (
 // answer with.
 bind_params = (be :: CBackend, f: Function, ctx: Ctx, sig :: Vec<TyId>)
               Res<(), AllocError> {
-    f.params.loop((h, p) {
-        bind_param(be, p, ctx, sig).try();
+    f.params.loop((h, i, p) {
+        bind_param(be, f, i, p, ctx, sig).try();
     });
     Ok(());
 }
@@ -611,12 +612,18 @@ bind_params = (be :: CBackend, f: Function, ctx: Ctx, sig :: Vec<TyId>)
 // `param_type` resolves `@Self`. C declarations use the current concrete
 // Instantiation, while sema keeps the generic declared type in its node memo;
 // Backend reads apply `be.inst` through `ty_of`.
-bind_param = (be :: CBackend, p: Param, ctx: Ctx, sig :: Vec<TyId>)
-             Res<(), AllocError> {
+bind_param = (
+    be  :: CBackend,
+    f   : Function,
+    i   : usize,
+    p   : Param,
+    ctx : Ctx,
+    sig :: Vec<TyId>
+) Res<(), AllocError> {
     declared = be.check.param_type(p, ctx).try();
     ty       = sub(be, declared).try();
     sig.add(ty).try();
-    be.declare(p.name.text, ty, p.mutable).try();
+    be.declare(p.name.text, ty, be.passes_address(f, i, ty).try()).try();
     be.check.bind(p.name.text, declared, p.mutable, true).try();
     Ok(());
 }
@@ -667,7 +674,7 @@ write_param_list = (
         ty = sig.get(i).match({ Ok(t) => t, None => unknown });
         be.has_storage(ty).then(() {
             written.then(() { out.add(", ").try() });
-            be.write_param(p, i, sig, out).try();
+            be.write_param(f, p, i, sig, out).try();
             written = true;
         });
     });
@@ -675,9 +682,11 @@ write_param_list = (
     Ok(());
 }
 
-// A `::` parameter is declared as a pointer — see `ref_declarator`.
+// A parameter passed by address is declared as a pointer — see
+// `ref_declarator` and `gen_c_param`.
 write_param = (
     be  :: CBackend,
+    f   : Function,
     p   : Param,
     i   : usize,
     sig : Vec<TyId>,
@@ -686,15 +695,15 @@ write_param = (
     ty = sig.get(i).match({ Ok(t) => t, None => TyId(index: 0) });
     name ::= be.alloc.String().try();
     be.slot_index(p.name.text, p.name.span, name).try();
-    p.mutable.match({
+    be.passes_address(f, i, ty).try().match({
         false => be.declarator(ty, name.view(), out),
         true  => be.ref_declarator(ty, name.view(), out),
     })
 }
 
-// A `::` parameter holds the address of its argument, inlined or not:
-// the body writes the caller's own bytes and every read of the name is
-// a dereference, which is what `LocalSlot.by_ref` records.
+// A parameter passed by address holds the address of its argument: every
+// read of the name is a dereference, which is what `LocalSlot.by_ref`
+// records, and a `::` parameter's writes reach the caller's own bytes.
 ref_declarator* = (be :: CBackend, ty: TyId, name: str, out :: String)
                   Res<(), AllocError> {
     be.ctype(ty, out).try();

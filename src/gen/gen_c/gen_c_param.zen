@@ -1,0 +1,244 @@
+// How a parameter crosses a C call. A `::` parameter always receives the
+// caller's address, because the body writes the caller's own bytes. A `:`
+// parameter whose type is a large record is passed by address too: the
+// callee only reads it, so copying kilobytes into every frame buys nothing
+// and makes each level of a recursive walk cost that much host stack.
+//
+// Definitions and call sites ask the same question of the same Function and
+// the same concrete type, so both sides always agree. A body that assigns a
+// parameter or spawns a thread keeps its large parameters by value: the
+// first would write the caller's value, the second could let a thread
+// outlive the frame that owns it. Bodyless (foreign) functions keep the C
+// ABI their declaration spells.
+
+Ast, BlockId, Function, Call, Bind = std.ast
+WalkVisitor, WalkEvent, WalkNode, walk = std.ast
+Alloc, AllocError = std.mem
+Vec, Map = std.collections
+str = std.text
+TyId, TyNamed = sema.sema_ty
+decl_at = sema.sema_def
+CBackend = gen.gen_c.gen_c_state
+field_type, variant_type, decl_inst, decl_ctx = gen.gen_c.gen_c_type
+enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
+
+// Records larger than this estimate are passed by address. The estimate uses
+// fixed 64-bit sizes so every host emits the same C.
+PARAM_ADDRESS_BYTES: usize = 256
+
+ParamPassing* = {
+    sizes :: Map<TyId, usize>,
+    bodies :: Map<BlockId, BodyParams>,
+}
+
+ParamPassing* = (a: Alloc) ParamPassing {
+    ParamPassing(
+        sizes: a.Map<TyId, usize>(),
+        bodies: a.Map<BlockId, BodyParams>()
+    )
+}
+
+// What a body does with its parameters that rules out passing by address.
+BodyParams = {
+    written: Vec<str>,
+    spawns: bool,
+
+    writes = (self: @Self, name: str) bool {
+        self.written.find((w) { w.eq(name) }).match({
+            Ok(_) => true,
+            None  => false,
+        })
+    }
+}
+
+// Whether parameter `i` of `f`, at concrete type `ty`, receives an address.
+passes_address* = (be :: CBackend, f: Function, i: usize, ty: TyId)
+                  Res<bool, AllocError> {
+    f.params.get(i).match({
+        None  => Ok(false),
+        Ok(p) => p.mutable.match({
+            true  => Ok(true),
+            false => be.large_read_only(f, p.name.text, ty),
+        }),
+    })
+}
+
+// Whether `f` declares parameter `i` with `::`: a shape question about the
+// signature, independent of how the argument crosses C.
+mutable_param* = (f: Function, i: usize) bool {
+    f.params.get(i).match({ Ok(p) => p.mutable, None => false })
+}
+
+large_read_only = (be :: CBackend, f: Function, name: str, ty: TyId)
+                  Res<bool, AllocError> {
+    f.body.match({
+        None     => Ok(false),
+        Ok(body) => (be.c_bytes(ty).try() > PARAM_ADDRESS_BYTES).match({
+            false => Ok(false),
+            true  => be.body_params(body).try().match({
+                Ok(uses) => Ok(!uses.spawns && !uses.writes(name)),
+                None     => Ok(false),
+            }),
+        }),
+    })
+}
+
+body_params = (be :: CBackend, body: BlockId) Res<Res<BodyParams>, AllocError> {
+    be.params.bodies.get(body).match({
+        Ok(found) => Ok(Ok(found)),
+        None      => {
+            scan ::= ParamScan(
+                tree: be.tree,
+                written: be.alloc.Vec<str>(),
+                spawns: false
+            );
+            be.tree.walk(be.alloc, WalkNode.Block(body), scan).try();
+            uses = BodyParams(written: scan.written, spawns: scan.spawns);
+            be.params.bodies.set(body, uses).try();
+            Ok(Ok(uses))
+        },
+    })
+}
+
+// Plain `name = value` writes an existing binding; a `::=` or typed binding
+// declares a new one. Every plain write to a name is recorded, whether or
+// not it reaches the parameter, because recording too many only keeps a
+// parameter by value.
+ParamScan = {
+    tree: Ast,
+    written :: Vec<str>,
+    spawns :: bool,
+}
+
+ParamScan.impl(WalkVisitor, {
+    visit = (self :: @Self, event: WalkEvent) Res<(), AllocError> {
+        event.match({
+            Enter(node) => node.match({
+                Statement(s) => s.value.kind.match({
+                    Bind(b) => self.bind_target(b),
+                    _       => Ok(()),
+                }).try(),
+                Expr(id)     => self.tree.expr_at(id).kind.match({
+                    Call(c) => { self.spawns = self.spawns || self.is_spawn(
+                        c
+                    ); },
+                    _       => (),
+                }),
+                _            => (),
+            }),
+            Leave(_)    => (),
+        });
+        Ok(())
+    }
+})
+
+bind_target = (scan :: ParamScan, b: Bind) Res<(), AllocError> {
+    declares = b.mutable || b.type.match({ Ok(_) => true, None => false });
+    declares.match({
+        true  => Ok(()),
+        false => scan.tree.expr_at(b.target).kind.match({
+            Name(n) => scan.written.add(n.text),
+            _       => Ok(()),
+        }),
+    })
+}
+
+is_spawn = (scan: ParamScan, c: Call) bool {
+    scan.tree.expr_at(c.callee).kind.match({
+        Access(a) => a.name.text.eq("spawn"),
+        _         => false,
+    })
+}
+
+// The estimated C size of a type, in bytes.
+c_bytes* = (be :: CBackend, ty: TyId) Res<usize, AllocError> {
+    be.params.sizes.get(ty).match({
+        Ok(n) => Ok(n),
+        None  => {
+            n = be.measure(ty).try();
+            be.params.sizes.set(ty, n).try();
+            Ok(n)
+        },
+    })
+}
+
+measure = (be :: CBackend, ty: TyId) Res<usize, AllocError> {
+    be.types().at(ty).match({
+        Prim(p)  => Ok(prim_bytes(p.name)),
+        Res(r)   => be.tagged_bytes(r.value, r.error),
+        Named(n) => be.named_bytes(n),
+        Union(u) => be.union_bytes(u.members),
+        Array(a) => Ok(a.count * be.c_bytes(a.elem).try()),
+        Fn(_)    => Ok(16),
+        _        => Ok(0),
+    })
+}
+
+prim_bytes = (name: str) usize {
+    name.match({
+        "()"       => 0,
+        "bool"     => 1,
+        "i8"       => 1,
+        "u8"       => 1,
+        "c_schar"  => 1,
+        "c_uchar"  => 1,
+        "i16"      => 2,
+        "u16"      => 2,
+        "c_short"  => 2,
+        "c_ushort" => 2,
+        "i32"      => 4,
+        "u32"      => 4,
+        "f32"      => 4,
+        "c_int"    => 4,
+        "c_uint"   => 4,
+        "str"      => 16,
+        _          => 8,
+    })
+}
+
+tagged_bytes = (be :: CBackend, value: TyId, error: TyId)
+               Res<usize, AllocError> {
+    Ok(8 + be.c_bytes(value).try().max(be.c_bytes(error).try()))
+}
+
+union_bytes = (be :: CBackend, members: Vec<TyId>) Res<usize, AllocError> {
+    widest: usize ::= 0;
+    members.loop((h, m) { widest = widest.max(be.c_bytes(m).try()); });
+    Ok(8 + widest)
+}
+
+// Pointers and scopes are one word; a record or enum is measured from its
+// declaration at the type's own arguments.
+named_bytes = (be :: CBackend, n: TyNamed) Res<usize, AllocError> {
+    (n.name.eq("Ptr") || n.name.eq("Scope")).match({
+        true  => Ok(8),
+        false => decl_at(be.tree, n.decl).match({
+            None  => Ok(8),
+            Ok(d) => {
+                ctx  = be.decl_ctx(n);
+                inst = be.decl_inst(n).try();
+                mark = be.enter_struct_tparams(n.decl).try();
+                total: usize ::= 0;
+                d.kind.match({
+                    Struct(s) => s.members.loop((h, m) {
+                        be.field_type(m, ctx, inst).when_ok((t) {
+                            total = total + be.c_bytes(t).try();
+                        });
+                    }),
+                    Enum(e)   => {
+                        widest: usize ::= 0;
+                        e.variants.loop((h, v) {
+                            be.variant_type(n, v, ctx, inst).when_ok((t) {
+                                widest = widest.max(be.c_bytes(t).try());
+                            });
+                        });
+                        total = 8 + widest;
+                    },
+                    _         => { total = 8; },
+                });
+                be.leave_tparams(mark).try();
+                Ok(total)
+            },
+        }),
+    })
+}

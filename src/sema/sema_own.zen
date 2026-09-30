@@ -838,9 +838,24 @@ revive_field = (c :: Checker, o :: Own, a: Access, value: ExprId, ctx: Ctx)
     Ok(());
 }
 
-own_expr = (c :: Checker, o :: Own, written: ExprId, ctx: Ctx)
+own_expr = (c :: Checker, o :: Own, root: ExprId, ctx: Ctx)
            Res<(), AllocError> {
-    id   = c.tree.operand_within(written);
+    is_operator(c.tree, root).match({
+        false => c.own_operand(o, root, ctx),
+        true  => {
+            operands ::= o.alloc.OperandWalk(root).try();
+            loop(() { operands.pending.len > 0 }, (h) {
+                operands.next(c.tree).try().when_ok((id) {
+                    c.own_operand(o, id, ctx).try();
+                });
+            });
+            Ok(())
+        },
+    })
+}
+
+own_operand = (c :: Checker, o :: Own, id: ExprId, ctx: Ctx)
+              Res<(), AllocError> {
     node = c.tree.expr_at(id);
     node.kind.match({
         Name(n)       => c.use_name(o, node, id, n.text),
@@ -851,7 +866,6 @@ own_expr = (c :: Checker, o :: Own, written: ExprId, ctx: Ctx)
         Lambda(l)     => c.own_lambda(o, l, ctx, false, false),
         Block(b)      => c.own_block(o, b, ctx),
         Try(t)        => c.own_try(o, t, ctx),
-        Binary(bi)    => c.own_binary(o, bi, ctx),
         Index(x)      => c.own_pair(o, x.base, x.index, ctx),
         Array(a)      => c.own_elems(o, a.elems, ctx),
         FixedArray(a) => c.own_elems(o, a.elems, ctx),
@@ -860,43 +874,44 @@ own_expr = (c :: Checker, o :: Own, written: ExprId, ctx: Ctx)
     })
 }
 
-// Parens and unary operators own nothing themselves: ownership reads the
-// operand within them. Walking through them iteratively keeps a deeply
-// wrapped operand from costing host stack.
-operand_within = (tree: Ast, id: ExprId) ExprId {
-    at    ::= id;
-    going ::= true;
-    going.loop((h) {
-        tree.expr_at(at).kind.match({
-            Paren(p) => { at = p.inner; },
-            Unary(u) => { at = u.operand; },
-            _        => { going = false; },
-        });
-    });
-    at
+// Operators own nothing themselves: ownership and flow read an operator
+// tree's other operands, left to right. Pending operands wait on an explicit
+// stack, so a deeply nested tree costs no host stack.
+OperandWalk = {
+    pending :: Vec<ExprId>,
+
+    // The next operand that is not an operator, or `None` when the operators
+    // just taken expand to more pending work.
+    next = (self :: @Self, tree: Ast) Res<Res<ExprId>, AllocError> {
+        self.pending.take(self.pending.len - 1).match({
+            None   => Ok(None),
+            Ok(id) => tree.expr_at(id).kind.match({
+                Paren(p)  => { self.pending.add(p.inner).try(); Ok(None) },
+                Unary(u)  => { self.pending.add(u.operand).try(); Ok(None) },
+                Binary(b) => {
+                    self.pending.add(b.rhs).try();
+                    self.pending.add(b.lhs).try();
+                    Ok(None)
+                },
+                _         => Ok(Ok(id)),
+            }),
+        })
+    }
 }
 
-// A left-leaning operator chain is walked iteratively, leftmost first.
-own_binary = (c :: Checker, o :: Own, first: Binary, ctx: Ctx)
-             Res<(), AllocError> {
-    rights ::= o.alloc.Vec<ExprId>();
-    left   ::= c.tree.operand_within(first.lhs);
-    done   ::= false;
-    rights.add(first.rhs).try();
-    loop(() { done == false }, (h) {
-        c.tree.expr_at(left).kind.match({
-            Binary(next) => {
-                rights.add(next.rhs).try();
-                left = c.tree.operand_within(next.lhs);
-            },
-            _            => { done = true; },
-        });
-    });
-    c.own_expr(o, left, ctx).try();
-    Range(0, rights.len).loop((h, i) {
-        c.opt_expr(o, rights.get(rights.len - 1 - i), ctx).try();
-    });
-    Ok(())
+OperandWalk = (a: Alloc, root: ExprId) Res<OperandWalk, AllocError> {
+    pending ::= a.Vec<ExprId>();
+    pending.add(root).try();
+    Ok(OperandWalk(pending: pending))
+}
+
+is_operator = (tree: Ast, id: ExprId) bool {
+    tree.expr_at(id).kind.match({
+        Paren(_)  => true,
+        Unary(_)  => true,
+        Binary(_) => true,
+        _         => false,
+    })
 }
 
 own_try = (c :: Checker, o :: Own, t: Try, ctx: Ctx)
@@ -1292,9 +1307,24 @@ flow_bind = (c :: Checker, o :: Own, b: Bind, ctx: Ctx)
     Ok(())
 }
 
-flow_expr = (c :: Checker, o :: Own, written: ExprId, ctx: Ctx)
+flow_expr = (c :: Checker, o :: Own, root: ExprId, ctx: Ctx)
             Res<(), AllocError> {
-    id = c.tree.operand_within(written);
+    is_operator(c.tree, root).match({
+        false => c.flow_operand(o, root, ctx),
+        true  => {
+            operands ::= o.alloc.OperandWalk(root).try();
+            loop(() { operands.pending.len > 0 }, (h) {
+                operands.next(c.tree).try().when_ok((id) {
+                    c.flow_operand(o, id, ctx).try();
+                });
+            });
+            Ok(())
+        },
+    })
+}
+
+flow_operand = (c :: Checker, o :: Own, id: ExprId, ctx: Ctx)
+               Res<(), AllocError> {
     c.tree.expr_at(id).kind.match({
         Block(b)      => c.flow_block(o, b, ctx).try(),
         Try(t)        => {
@@ -1305,7 +1335,6 @@ flow_expr = (c :: Checker, o :: Own, written: ExprId, ctx: Ctx)
                 ctx
             ).try() });
         },
-        Binary(b)     => c.flow_binary(o, b, ctx).try(),
         Access(a)     => c.flow_expr(o, a.base, ctx).try(),
         Index(x)      => {
             c.flow_expr(o, x.base, ctx).try();
@@ -1346,31 +1375,6 @@ flow_expr = (c :: Checker, o :: Own, written: ExprId, ctx: Ctx)
             o.restore_provenance(joined);
         },
         _             => (),
-    });
-    Ok(())
-}
-
-// Preserve left-to-right transfers without recursing down a binary spine.
-flow_binary = (c :: Checker, o :: Own, first: Binary, ctx: Ctx)
-              Res<(), AllocError> {
-    rights ::= o.alloc.Vec<ExprId>();
-    left   ::= c.tree.operand_within(first.lhs);
-    done   ::= false;
-    rights.add(first.rhs).try();
-    loop(() { !done }, (h) {
-        c.tree.expr_at(left).kind.match({
-            Binary(next) => {
-                rights.add(next.rhs).try();
-                left = c.tree.operand_within(next.lhs);
-            },
-            _            => { done = true; },
-        });
-    });
-    c.flow_expr(o, left, ctx).try();
-    Range(0, rights.len).loop((h, i) {
-        rights.get(rights.len - 1 - i).match({
-            None => (), Ok(value) => c.flow_expr(o, value, ctx).try(),
-        });
     });
     Ok(())
 }

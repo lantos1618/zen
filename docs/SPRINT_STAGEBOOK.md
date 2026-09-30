@@ -5,6 +5,39 @@ Completed execution logs, previous checkpoints and review transcripts live in
 Git history. Architecture and library contracts belong in [LIBRARIES.md](LIBRARIES.md),
 [DESIGN.md](DESIGN.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Current checkpoint: large read-only parameters and deep operator trees (2026-09-30)
+
+A `:` parameter whose record is estimated above 256 bytes is passed to a
+bodied function by address (`gen_c_param`). The estimate uses fixed 64-bit
+sizes, so every host emits the same C. Definitions and call sites ask one
+predicate. A body that assigns the parameter or spawns a thread keeps it by
+value, and a call that also takes a `::` argument copies the value first.
+Foreign functions, native bindings and bound slots keep the C ABI they spell;
+fat-value thunks, actor turns, `main`'s `Env` and the env-args helpers pass
+addresses where the callee takes them. The compiler's 10 KB `CBackend` and
+6 KB `Checker` were copied into every frame that took them by value, which is
+what made each nesting level cost 10-60 KB of stack.
+
+Ownership walks operator trees with an explicit stack. A call-free operator
+tree deeper than 32 levels is lowered iteratively by `gen_c_deep`: levels
+are written as `gen_c_op` writes them, a segment reaching 32 brackets is
+assigned to a temporary in a comma sequence at the tree's position, the
+right operand of `&&`/`||` keeps its temporaries inside itself, and a chain
+of one logical operator is written flat. This replaces the spine segmenting
+of the previous checkpoint. `tests/run.py` runs every compiler and program
+with an 8 MB stack, so macOS runs under make no longer hide overflows.
+
+At the parser's depth limit the deepest shapes, nested calls and method
+chains, need about 5.3 MB of stack on Linux and 4.5 MB on macOS arm64; 151
+nested calls needed 8.4 MB and 16.8 MB before. Right-nested, unary, logical,
+index and match nesting need 2.6 MB or less, and Clang accepts the generated
+C for every shape.
+
+The seed is regenerated. On Linux, `make check` passes (1368, one deferred)
+with unchanged warning counts, and the seed fixpoint, determinism,
+differential, UBSan and runtime gates pass. On macOS `make check`, now under
+an 8 MB stack, shows only the six failures main also has.
+
 ## Current checkpoint: deep expressions (2026-09-30)
 
 Constant folding walks an explicit continuation stack that each checker
@@ -185,12 +218,16 @@ verification remains pending. Actor mailbox scheduling is unchanged. See
 - Resolve the remaining macOS corpus failures: Linux-specific backend/path
   expectations, `/proc` fixture and TLS linking. Check Linux CI before
   claiming portability verified on both operating systems.
-- Deep nesting outside left-operand chains still recurses at 10-60 KB of host
-  stack per level: nested calls in C lowering (`codegen/nesting_calls` needs
-  about 7 MB on Linux and 12-16 MB on macOS arm64, where it fails outside
-  make), and right-nested operands or unary chains in typing. Right-nested
-  operands and unary chains near the parser's depth limit also still exceed
-  Clang's bracket limit in the generated C.
+- Recursive compiler passes still inherit frames the C compiler grows by
+  inlining single-caller helpers (GCC's `own_expr` is 17 KB at -O2 and 1 KB
+  with `-fno-inline-functions-called-once`; Clang inflates `write_expr`
+  instead). Nesting at the parser's limit fits today; a much larger limit
+  would need those passes iterative or their frames bounded.
+- A plain `name = value` in a nested block writes an outer immutable binding,
+  including a parameter: sema's rebinding check sees only the current block.
+  Decide whether this is shadowing, a write, or an error.
+- Actor and spawned threads use the platform's default pthread stack, 512 KB
+  on macOS.
 - Linux warning checks now pass at GCC315 and Clang320 for the seed, with the
   Clang budget lowered after removing 24 unused arithmetic helpers. The later
   review-tool dependency failure is fixed in the workflow; confirm the full CI

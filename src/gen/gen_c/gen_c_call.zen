@@ -44,6 +44,7 @@ construct = gen.gen_c.gen_c_build
 is_format_door, lower_format_door = gen.gen_c.gen_c_fmt
 is_json_door, lower_json_door = gen.gen_c.gen_c_json
 recv_arg, arg_value, write_arg_at = gen.gen_c.gen_c_arg
+passes_address = gen.gen_c.gen_c_param
 call_callee = sema.sema_call
 omittable = sema.sema_cand
 is_native_callback, lower_native_callback = gen.gen_c.gen_c_callback
@@ -515,16 +516,13 @@ CallArgs = {
     write_omitted = (self: @Self, be :: CBackend, i: usize, out :: String)
                     Res<(), AllocError> {
         ty = self.sig.ty_at(i);
-        self.f.params.get(i).match({
-            Ok(p) => p.mutable.match({
-                false => be.write_none(ty, out),
-                true  => {
-                    out.add("&(").try();
-                    be.write_none(ty, out).try();
-                    out.add(")")
-                },
-            }),
-            None  => be.write_none(ty, out),
+        be.passes_address(self.f, i, ty).try().match({
+            false => be.write_none(ty, out),
+            true  => {
+                out.add("&(").try();
+                be.write_none(ty, out).try();
+                out.add(")")
+            },
         })
     }
 

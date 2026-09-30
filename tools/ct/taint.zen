@@ -1481,11 +1481,12 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
         // the frame, whatever realignment (`and $-32, %rsp`) came after it.
         (m.eq("leave") || m.eq("leaveq")).then(() {
             cur.frame.when_ok((f) { cur.delta = 0 - f; });
-            secret    = has_slot(cur.slots, 0 - cur.delta);
-            points    = has_slot(cur.pslots, 0 - cur.delta);
+            secret    = stack_secret(cur, Place.Exact(0 - cur.delta), 8);
+            points    = stack_points(cur, Place.Exact(0 - cur.delta), 8);
+            points2   = stack_points2(cur, Place.Exact(0 - cur.delta), 8);
             cur.delta = cur.delta - 8;
-            put(cur.val, "rbp", secret).try();
-            put(cur.pts, "rbp", points).try();
+            an.x86_write(cur, "%rbp", secret, points, l, 8).try();
+            an.x86_mark_points2(cur, "%rbp", 8, points2).try();
             cur.frame = None;
             h.break();
         });

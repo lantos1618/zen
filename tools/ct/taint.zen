@@ -43,6 +43,9 @@
 //   call      a secret passed to an audited callee that was not seeded
 //             with it
 //   result    a secret returned by a function audited as public-result
+//   repeat    a rep string instruction with a secret count
+//   unreached code after a label no path reaches (never analysed)
+//   unconverged  taint still growing when the analysis gave up
 //
 // Not modelled, so not reported: memory other than the stack and the
 // secret pointees (a secret copied into a heap buffer and read back is
@@ -237,18 +240,93 @@ split_operands = (a: Alloc, text: str) Res<Vec<str>, AllocError> {
 }
 
 // An x86 instruction without the prefixes that leave its effect alone:
-// `notrack` (CET, on GCC's jump-table `notrack jmp *%rax`) and `bnd`.
+// `notrack` (CET, on GCC's jump-table `notrack jmp *%rax`), `bnd` and
+// `lock`, and `rep` on anything but a string instruction (`rep ret`, and
+// `rep bsf`, which is tzcnt).
 without_prefix = (line: str) str {
     rest ::= line;
     loop((h) {
         cut = Range(0, rest.len).find((i) { rest.index(i) == ' ' || rest.index(i) == '\t' });
         word = cut.match({ Ok(i) => rest.slice(0, i), None => rest });
-        (cut.match({ Ok(_) => true, None => false }) && (word.eq("notrack") || word.eq("bnd"))).match({
-            true  => { rest = rest.slice(word.len, rest.len).trim().value_or(rest); },
+        next = cut.match({ Ok(i) => rest.slice(i, rest.len).trim().value_or(""), None => "" });
+        drop = word.eq("notrack") || word.eq("bnd") || word.eq("lock")
+            || (repeat_prefix(word) && !string_operation(first_word(next)));
+        (cut.match({ Ok(_) => true, None => false }) && drop).match({
+            true  => { rest = next; },
             false => h.break(),
         });
     });
     rest
+}
+
+first_word = (text: str) str {
+    Range(0, text.len).find((i) { text.index(i) == ' ' || text.index(i) == '\t' }).match({
+        Ok(i) => text.slice(0, i),
+        None  => text,
+    })
+}
+
+repeat_prefix = (word: str) bool { word.is_in(["rep", "repe", "repz", "repne", "repnz"]) }
+
+// The x86 string instructions: movs, stos, cmps, scas and lods with a
+// size suffix (AT&T writes the doubleword forms with `l`).
+string_operation* = (word: str) bool {
+    base = (word.len == 5).match({ true => word.slice(0, 4), false => "" });
+    base.is_in(["movs", "stos", "cmps", "scas", "lods"])
+        && word.slice(4, word.len).is_in(["b", "w", "l", "d", "q"])
+}
+
+// One instruction's text as a Line. A string instruction under a `rep`
+// prefix keeps the prefix as its mnemonic and the instruction as its
+// operand.
+instruction = (a: Alloc, text: str, raw: str) Res<Line, AllocError> {
+    line     = without_prefix(text);
+    space    = Range(0, line.len).find((i) { line.index(i) == ' ' || line.index(i) == '\t' });
+    mnemonic = space.match({ Ok(i) => line.slice(0, i), None => line });
+    rest     = space.match({ Ok(i) => line.slice(i + 1, line.len).trim().value_or(""), None => "" });
+    repeated = repeat_prefix(mnemonic);
+    operands ::= a.Vec<str>();
+    repeated.match({
+        true  => operands.add(first_word(rest)).try(),
+        false => { operands = split_operands(a, rest).try(); },
+    });
+    Ok(Line(label: "", mnemonic: mnemonic, operands: operands, text: raw.trim().value_or(raw)))
+}
+
+// The count a `rep` string instruction repeats, when an instruction just
+// before it in the same block put a constant in %rcx (GCC's `movl $16,
+// %ecx; rep movsq`): added as its second operand, `$16`.
+repeat_counts = (a: Alloc, lines :: Vec<Line>) Res<(), AllocError> {
+    known: Res<str> ::= None;
+    Range(0, lines.len).loop((i) {
+        l = lines.get(i).ok_or(AllocError.OutOfMemory).try();
+        ops = l.operands;
+        last = ops.get(ops.len -% 1).value_or("");
+        (l.label.len > 0).match({
+            true  => { known = None; },
+            false => repeat_prefix(l.mnemonic).match({
+                true  => {
+                    known.when_ok((n) {
+                        out ::= a.Vec<str>();
+                        out.add(ops.get(0).value_or("")).try();
+                        out.add(n).try();
+                        lines.ptr().write(i, Line(label: l.label, mnemonic: l.mnemonic, operands: out, text: l.text));
+                    });
+                    known = None;
+                },
+                false => {
+                    to_rcx = x86_reg(a, last).match({ Ok(r) => r.eq("rcx"), None => false });
+                    constant = ops.len == 2 && ops.get(0).value_or("").starts_with("$")
+                        && (l.mnemonic.eq("movl") || l.mnemonic.eq("movq")) && (last.eq("%ecx") || last.eq("%rcx"));
+                    constant.match({
+                        true  => { known = Ok(ops.get(0).value_or("")); },
+                        false => { (to_rcx || l.mnemonic.starts_with("call") || l.mnemonic.starts_with("xchg")).then(() { known = None; }); },
+                    });
+                },
+            }),
+        });
+    });
+    Ok(())
 }
 
 parse_lines* = (a: Alloc, isa: Isa, body: Vec<str>) Res<Vec<Line>, AllocError> {
@@ -278,29 +356,19 @@ parse_lines* = (a: Alloc, isa: Isa, body: Vec<str>) Res<Vec<Line>, AllocError> {
                     operands: a.Vec<str>(),
                     text: raw
                 )).try(),
-                false => { (line.len > 0).then(() {
-                    line = without_prefix(line);
-                    space    = Range(0, line.len).find((i) {
-                        line.index(i) == ' ' || line.index(i) == '\t'
-                    });
-                    mnemonic = space.match({ Ok(i) => line.slice(
-                        0,
-                        i
-                    ), None => line });
-                    rest     = space.match({ Ok(i) => line.slice(
-                        i + 1,
-                        line.len
-                    ), None => "" });
-                    out.add(Line(
-                        label: "",
-                        mnemonic: mnemonic,
-                        operands: split_operands(a, rest).try(),
-                        text: raw.trim().value_or(raw)
-                    )).try();
-                }); },
+                // On x86 `;` separates statements (inline asm, Clang's
+                // `rep;movsb`).
+                false => isa.match({
+                    X86 => line.split(';').loop((part) {
+                        text = part.trim().value_or("");
+                        (text.len > 0).then(() { out.add(instruction(a, text, raw).try()).try(); });
+                    }),
+                    Arm => out.add(instruction(a, line, raw).try()).try(),
+                }),
             });
         });
     });
+    isa.match({ X86 => repeat_counts(a, out).try(), Arm => () });
     Ok(out)
 }
 
@@ -1577,6 +1645,80 @@ x86_writes_flags = (m: str, ops: Vec<str>) bool {
         || m.starts_with("movbe") || m.starts_with("xchg") || m.starts_with("cvt"))
 }
 
+// A string instruction: `op` (movs, stos, cmps, scas or lods with its
+// size) through %rsi and %rdi, once or, `repeated`, %rcx times; `count` is
+// %rcx when a constant set it (tools/ct's `$n` operand), 0 when unknown.
+x86_string = (
+    an       :: Analysis,
+    cur      :: State,
+    l        : Line,
+    op       : str,
+    repeated : bool,
+    count    : usize
+) Res<(), AllocError> {
+    size: usize = op.ends_with("b").match({
+        true  => 1,
+        false => op.ends_with("w").match({ true => 2, false => (op.ends_with("q")).match({ true => 8, false => 4 }) }),
+    });
+    kind  = op.slice(0, 4);
+    bytes = repeated.match({ true => count * size, false => size });
+    reads_source = kind.is_in(["movs", "cmps", "lods"]);
+    reads_dest   = kind.is_in(["cmps", "scas"]);
+    // The addresses are %rsi and %rdi.
+    ((reads_source && has(cur.val, "rsi")) || (!kind.eq("lods") && has(cur.val, "rdi"))).then(() {
+        an.report("address", l.text).try();
+    });
+    // A secret count repeats a secret number of times.
+    (repeated && has(cur.val, "rcx")).then(() { an.report("repeat", l.text).try(); });
+    source = reads_source.match({
+        true  => has(cur.pts, "rsi") || stack_behind(cur, "rsi", bytes),
+        false => has(cur.val, "rax") && !kind.eq("lods"),
+    });
+    dest = reads_dest && (has(cur.pts, "rdi") || stack_behind(cur, "rdi", bytes));
+    compared = source || dest;
+    (source || dest || has(cur.val, "rax")).then(() { an.observed = true; });
+    // cmps and scas stop at the first difference (or match) under repe
+    // and repne: an early exit on the data.
+    (kind.is_in(["cmps", "scas"])).then(() {
+        (repeated && compared).then(() { an.report("branch", l.text).try(); });
+        cur.flags = compared;
+        repeated.then(() { put(cur.val, "rcx", compared).try(); });
+    });
+    kind.eq("lods").then(() { put(cur.val, "rax", source).try(); set_addr(cur.addr, "rax", None).try(); });
+    // movs and stos write `bytes` at %rdi.
+    (kind.eq("movs") || kind.eq("stos")).then(() {
+        (source && has(cur.rps, "rdi")).then(() { an.report("result", l.text).try(); });
+        from: Res<i64> = addr_of(cur, "rsi");
+        entry_of(cur, "rdi").when_ok((e) {
+            (e.exact && bytes > 0).match({
+                true  => {
+                    stack_store(cur, Place.Exact(e.at), bytes, source, false).try();
+                    stack_guard(cur, Place.Exact(e.at), bytes, false).try();
+                    // A copy moves the pointer words with it.
+                    (kind.eq("movs")).then(() { from.when_ok((f) {
+                        Range(0, bytes / 8).loop((k) {
+                            has_slot(cur.pslots, f + wide(8 * k)).then(() { put_slot(cur.pslots, e.at + wide(8 * k), true).try(); });
+                            has_slot(cur.p2slots, f + wide(8 * k)).then(() { put_slot(cur.p2slots, e.at + wide(8 * k), true).try(); });
+                        });
+                    }); });
+                },
+                false => { source.then(() { cur.smear = true; }); },
+            });
+        });
+    });
+    // The pointers advance past what was moved; %rcx counts down to 0.
+    [str, 2]("rsi", "rdi").loop((r) {
+        entry_of(cur, r).when_ok((e) {
+            (e.exact && bytes > 0).match({
+                true  => set_addr(cur.addr, r, Ok(e.at + wide(bytes))).try(),
+                false => set_somewhere(cur.addr, r).try(),
+            });
+        });
+    });
+    (repeated && !kind.is_in(["cmps", "scas"])).then(() { put(cur.val, "rcx", false).try(); });
+    Ok(())
+}
+
 x86_call = (an :: Analysis, cur :: State, target: str, l: Line) Res<(), AllocError> {
     conv = x86_convention(an.alloc).try();
     an.call(cur, target, l, conv)
@@ -1601,6 +1743,17 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
                     put(cur.low, r, false).try();
                 });
             });
+            h.break();
+        });
+        // String instructions, repeated or once.
+        (repeat_prefix(m) && string_operation(first)).then(() {
+            given = x86_imm(ops.get(1).value_or(""));
+            count = (given > 0).match({ true => given.to_usize().value_or(0), false => 0 });
+            an.x86_string(cur, l, first, true, count).try();
+            h.break();
+        });
+        (string_operation(m) && (n == 0 || ops.find((o) { o.contains("%es:") }).match({ Ok(_) => true, None => false }))).then(() {
+            an.x86_string(cur, l, m, false, 1).try();
             h.break();
         });
         // Control flow.

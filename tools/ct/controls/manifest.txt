@@ -24,3 +24,4 @@ main  leaky_offset_read  *key
 main  peek_first         *table
 main  leaky_lend         *key
 main  leaky_delay        key
+main  leaky_block_copy   *key

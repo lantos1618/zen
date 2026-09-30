@@ -288,6 +288,18 @@ leaky_delay* = (key: u64, n: usize, table: Ptr<u8>) u8 {
     table.read(d79.truncate_u8().to_usize())
 }
 
+// Key words and a count, copied whole.
+KeyBlock* = { words* :: [u64, 32], count*: usize }
+
+// Copies a block of key words to the stack (GCC: `rep movsq`) before a
+// store that may alias the key, then reads a copied word at a public index
+// and uses it as an address.
+leaky_block_copy* = (key: Ptr<KeyBlock>, table: Ptr<u8>, sink: Ptr<u64>, n: usize) u8 {
+    copy = key.read(0);
+    sink.write(0, 1);
+    table.read(copy.words[n % 32].truncate_u8().to_usize())
+}
+
 main = (env: Env) Res<(), AllocError> {
     a     = env.mem.alloc();
     bytes = a.raw(256, 16).try();
@@ -337,6 +349,7 @@ main = (env: Env) Res<(), AllocError> {
     println("{}", leaky_offset_read(bytes, bytes, 4));
     println("{}", leaky_lend(bytes, bytes));
     println("{}", leaky_delay(3, 90, bytes));
+    println("{}", leaky_block_copy(a.raw(272, 16).try().to<KeyBlock>(), bytes, words, 5));
     chained = carry_chain(x, y, x);
     adx().match({
         Ok(fast) => bmi2().match({

@@ -20,6 +20,7 @@ lower_eq_call = gen.gen_c.gen_c_member
 init_temp = gen.gen_c.gen_c_flow
 expr, ty_of, spills_anywhere = gen.gen_c.gen_c_expr
 infix_operand_held, value_held = gen.gen_c.gen_c_expr
+unparened, holding_type, declare_temp = gen.gen_c.gen_c_expr
 needs_set = gen.gen_c.gen_c_widen
 needs_hoist = gen.gen_c.gen_c_hoist
 needs_fat = gen.gen_c.gen_c_fat
@@ -390,11 +391,20 @@ spine_ahead = (be: CBackend, id: ExprId, held: bool) bool {
     })
 }
 
+// Parens around the next level do not end the spine; `rung_at` decides
+// whether they may be written through.
 binary_ahead = (be: CBackend, id: ExprId) bool {
-    be.tree.expr_at(id).kind.match({
-        Binary(_) => true,
-        _         => false,
-    })
+    at    ::= id;
+    going ::= true;
+    found ::= false;
+    going.loop((h) {
+        be.tree.expr_at(at).kind.match({
+            Paren(p)  => { at = p.inner; },
+            Binary(_) => { found = true; going = false; },
+            _         => { going = false; },
+        });
+    });
+    found
 }
 
 // Write the half of an infix expression following its left operand.
@@ -495,7 +505,19 @@ write_trap_args = (be :: CBackend, node: Expr, b: Binary, out :: String)
 //       opens, outermost in    base   closes, innermost out
 // Collecting rungs and writing them in two passes preserves left-to-right
 // effects and operand types. A non-folding form or held operand ends the walk
-// and returns that base to normal expression lowering.
+// and returns that base to normal expression lowering. Plain parens around a
+// folding level are written through: every level already delimits its left
+// operand, as a helper argument or inside its own parentheses.
+//
+// A spine deeper than SPINE_NEST levels is cut into segments, innermost
+// first, each assigned to a temporary that the next segment reads:
+//     (zg_s1 = <innermost segment>, zg_s2 = <next, on zg_s1>, <outermost>)
+// The comma operator keeps the segments in evaluation order at the spine's
+// own position, so C nesting stays bounded without moving any evaluation.
+
+// Levels one spine segment nests in C. C99 promises only 63 nested
+// parenthesized expressions, and Clang refuses more than 256.
+SPINE_NEST: usize = 32
 
 // One level of the spine. `id` is the operator node and `operand` the
 // type its operands lower at; the node is re-read rather than stored
@@ -530,24 +552,142 @@ spine_lhs = (
         hint  = rung.operand;
     });
     folded = rungs.len - 1;
-    Range(0, folded).loop((h, i) { be.open_rung(rungs, i, out).try(); });
-    expr(be, down, ctx, hint, out).try();
-    Range(0, folded).loop((h, i) {
-        be.close_rung(rungs, folded - 1 - i, ctx, out).try();
+    cuts   = be.spine_cuts(rungs, folded, ctx, want).try();
+    (cuts.len == 0).match({
+        true  => {
+            be.open_levels(rungs, 0, folded, out).try();
+            expr(be, down, ctx, hint, out).try();
+            be.close_levels(rungs, 0, folded, ctx, out).try();
+        },
+        false => be.write_cut_spine(rungs, cuts, down, hint, ctx, out).try(),
     });
     Ok(());
 }
 
-// A node folds when `expr` would have reached `lower_binary` for it
-// and `lower_binary` would have written it as open-operand-operand-
-// close. Anything else answers a rung that stops the walk, naming
-// itself as the base.
+// Where a spine continues through a temporary: every SPINE_NEST levels from
+// its innermost, holding the value of the level cut at. A spine is cut only
+// if every cut can be held.
+SpineCut = { level: usize, ty: TyId }
+
+spine_cuts = (
+    be     :: CBackend,
+    rungs  : Vec<Rung>,
+    folded : usize,
+    ctx    : Ctx,
+    want   : TyId
+) Res<Vec<SpineCut>, AllocError> {
+    cuts  ::= be.alloc.Vec<SpineCut>();
+    at    ::= folded;
+    holds ::= true;
+    loop(() { holds && at > SPINE_NEST }, (h) {
+        at   = at - SPINE_NEST;
+        held = rungs.get(at).match({
+            None       => Ok(None),
+            Ok(inside) => be.holding_type(
+                inside.id,
+                ctx,
+                level_want(rungs, at, want)
+            ),
+        }).try();
+        held.match({
+            Ok(ty) => cuts.add(SpineCut(level: at, ty: ty)).try(),
+            None   => { holds = false; },
+        });
+    });
+    holds.match({
+        true  => Ok(cuts),
+        false => Ok(be.alloc.Vec<SpineCut>()),
+    })
+}
+
+// A level is lowered at its parent's operand type; the outermost at the
+// spine's own.
+level_want = (rungs: Vec<Rung>, level: usize, want: TyId) TyId {
+    (level == 0).match({
+        true  => want,
+        false => rungs.get(level - 1).match({
+            Ok(parent) => parent.operand,
+            None       => want,
+        }),
+    })
+}
+
+write_cut_spine = (
+    be        :: CBackend,
+    rungs     : Vec<Rung>,
+    cuts      : Vec<SpineCut>,
+    base      : ExprId,
+    base_want : TyId,
+    ctx       : Ctx,
+    out       :: String
+) Res<(), AllocError> {
+    out.add("(").try();
+    held ::= be.alloc.String().try();
+    top  ::= rungs.len - 1;
+    cuts.loop((h, i, cut) {
+        tmp = be.declare_temp(cut.ty).try();
+        out.fmt("{} = ", tmp.view()).try();
+        be.open_levels(rungs, cut.level, top - cut.level, out).try();
+        (i == 0).match({
+            true  => expr(be, base, ctx, base_want, out),
+            false => out.add(held.view()),
+        }).try();
+        be.close_levels(rungs, cut.level, top - cut.level, ctx, out).try();
+        out.add(", ").try();
+        held = tmp;
+        top  = cut.level;
+    });
+    be.open_levels(rungs, 0, top, out).try();
+    out.add(held.view()).try();
+    be.close_levels(rungs, 0, top, ctx, out).try();
+    out.add(")").try();
+    Ok(());
+}
+
+// Opens `count` levels from `first`, outermost first.
+open_levels = (
+    be    :: CBackend,
+    rungs : Vec<Rung>,
+    first : usize,
+    count : usize,
+    out   :: String
+) Res<(), AllocError> {
+    Range(first, first + count).loop((h, i) {
+        be.open_rung(rungs, i, out).try();
+    });
+    Ok(());
+}
+
+// Closes the same levels, innermost first.
+close_levels = (
+    be    :: CBackend,
+    rungs : Vec<Rung>,
+    first : usize,
+    count : usize,
+    ctx   : Ctx,
+    out   :: String
+) Res<(), AllocError> {
+    Range(0, count).loop((h, i) {
+        be.close_rung(rungs, first + count - 1 - i, ctx, out).try();
+    });
+    Ok(());
+}
+
+// A node folds when `expr` would have reached `lower_binary` for it,
+// directly or through plain parens, and `lower_binary` would have written
+// it as open-operand-operand-close. Anything else answers a rung that stops
+// the walk, naming itself, parens included, as the base.
 rung_at = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
           Res<Rung, AllocError> {
-    be.tree.expr_at(id).kind.match({
-        Binary(b) => be.binary_rung(id, b, ctx, want),
-        _         => Ok(base_rung(id, want)),
-    })
+    inner = be.unparened(id, ctx, want).try();
+    rung  = be.tree.expr_at(inner).kind.match({
+        Binary(b) => be.binary_rung(inner, b, ctx, want).try(),
+        _         => base_rung(inner, want),
+    });
+    Ok(rung.folds.match({
+        true  => rung,
+        false => base_rung(id, want),
+    }))
 }
 
 base_rung = (id: ExprId, want: TyId) Rung {

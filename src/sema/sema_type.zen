@@ -28,7 +28,7 @@ check_arms, check_arms_agree = sema.sema_hoist
 check_statement = sema.sema_effect
 check_eq = sema.sema_bound
 operands_agree, check_neg = sema.sema_operand
-seed_left_spine, spine_ahead = sema.sema_spine
+type_first = sema.sema_spine
 type_from_ast, self_type, declared_or_alias = sema.sema_denote
 
 type_of* = (c :: Checker, id: ExprId, ctx: Ctx) Res<TyId, AllocError> {
@@ -62,7 +62,7 @@ expr_kind = (c :: Checker, id: ExprId, node: Expr, ctx: Ctx)
         Unit          => c.types.unit(),
         SelfType      => c.self_type(ctx),
         Name(n)       => c.name_type(id, node, n.text, ctx),
-        Paren(p)      => c.type_of(p.inner, ctx),
+        Paren(p)      => c.type_first(p.inner, ctx),
         Binary(b)     => c.binary_type(node, b, ctx),
         Unary(u)      => c.unary_type(node, u, ctx),
         Try(t)        => c.try_type(t.name_span, t.operand, t.error, ctx),
@@ -260,11 +260,7 @@ written_or_value = (c :: Checker, k: Const, ctx: Ctx) Res<TyId, AllocError> {
 
 binary_type* = (c :: Checker, node: Expr, b: Binary, ctx: Ctx)
               Res<TyId, AllocError> {
-    c.spine_ahead(b.lhs).match({
-        false => Ok(()),
-        true  => c.seed_left_spine(b.lhs, ctx),
-    }).try();
-    lhs     = c.type_of(b.lhs, ctx).try();
+    lhs     = c.type_first(b.lhs, ctx).try();
     rhs     = c.type_of(b.rhs, ctx).try();
     operand = c.arith_type(lhs, rhs).try();
     got     = is_predicate(b.op).match({
@@ -292,7 +288,7 @@ arith_type = (c :: Checker, lhs: TyId, rhs: TyId) Res<TyId, AllocError> {
 
 unary_type = (c :: Checker, node: Expr, u: Unary, ctx: Ctx)
              Res<TyId, AllocError> {
-    inner = c.type_of(u.operand, ctx).try();
+    inner = c.type_first(u.operand, ctx).try();
     u.op.match({
         Not  => c.check_not(u, inner),
         Neg  => c.check_neg(u, inner),

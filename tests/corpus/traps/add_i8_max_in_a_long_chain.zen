@@ -1,0 +1,15 @@
+// tests/corpus/traps/add_i8_max_in_a_long_chain.zen
+// A long operator chain is lowered in segments. 88 plus forty ones passes
+// i8.MAX at the fortieth `+`, which lies beyond the chain's first segment:
+// the trap names that operator, and nothing is printed
+
+// main must name an error type. a trap never lifts into Res:
+// it aborts the process
+Error = Overflow | DivideByZero | OutOfBounds
+
+main = (env: Env) Res<i32, Error> {
+    x: i8 = 88;
+    sum   = x + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1;
+    println("{}", sum);
+    Ok(0);
+}

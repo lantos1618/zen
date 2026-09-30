@@ -17,6 +17,7 @@ DiscriminantCall = sema.sema_discriminant
 VariantNameCall = sema.sema_variant_name
 NumericConversion, IntegerBitOperation = sema.sema_numeric
 OwnCheck, StoreEffects = sema.sema_store
+ConstFolder = sema.sema_const
 
 // One scoped name. Mutability feeds receiver/ownership checks, param feeds LSP
 // classification, and span identifies the original binding in diagnostics.
@@ -151,6 +152,9 @@ Checker* = {
 
     tvars :: Vec<Binding>,
     bounds :: Vec<Binding>,
+
+    // Integer constant folding over this tree, with its reserved stack.
+    folder*: ConstFolder,
 
     alloc*: Alloc,
 
@@ -799,6 +803,7 @@ Checker* = (a: Alloc, tree: Ast) Res<Checker, AllocError> {
         block_base: 0,
         tvars: a.Vec<Binding>(),
         bounds: a.Vec<Binding>(),
+        folder: a.ConstFolder(tree).try(),
         alloc: a,
     );
     c.check_import_gate().try();

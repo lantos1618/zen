@@ -8,7 +8,7 @@
 Secret, declassify, Choice = std.ct
 ct_eq, ct_lt, ct_select, ct_swap, ct_memeq, ct_lookup = std.ct
 bit_xor, bit_and, shift_right, mul_wide, truncate_u64, truncate_u8 = std.core.num
-to_u64, to_usize, add_carry, sub_borrow = std.core.num
+to_u64, to_usize, add_carry, sub_borrow, bit_or, shift_left = std.core.num
 Ptr = std.mem
 Avx2, Clmul, Adx, Bmi2, avx2, clmul, adx, bmi2, mul_limbs, square_limbs = std.simd
 load_u8x16, load_u32x4, load_u64x2, load_u32x8, lanes_u64x2, splat_u32x4 = std.simd
@@ -300,6 +300,13 @@ leaky_block_copy* = (key: Ptr<KeyBlock>, table: Ptr<u8>, sink: Ptr<u64>, n: usiz
     table.read(copy.words[n % 32].truncate_u8().to_usize())
 }
 
+// Sets the bit a secret chooses in a public word (GCC: `btsq %rsi, %rdi`,
+// which writes its destination), then uses the word as an address.
+leaky_set_bit* = (flags: u64, key: u64, table: Ptr<u8>) u8 {
+    one: u64 = 1;
+    table.read(flags.bit_or(one.shift_left((key % 64).to_usize().value_or(0))).truncate_u8().to_usize())
+}
+
 main = (env: Env) Res<(), AllocError> {
     a     = env.mem.alloc();
     bytes = a.raw(256, 16).try();
@@ -349,6 +356,7 @@ main = (env: Env) Res<(), AllocError> {
     println("{}", leaky_offset_read(bytes, bytes, 4));
     println("{}", leaky_lend(bytes, bytes));
     println("{}", leaky_delay(3, 90, bytes));
+    println("{}", leaky_set_bit(3, 5, bytes));
     println("{}", leaky_block_copy(a.raw(272, 16).try().to<KeyBlock>(), bytes, words, 5));
     chained = carry_chain(x, y, x);
     adx().match({

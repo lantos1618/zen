@@ -155,6 +155,9 @@ State = {
     guards :: Vec<str>,
     guard_slots :: Vec<i64>,
     flags :: bool,
+    // x86's carry flag, which inc, dec and adox leave alone and adcx alone
+    // writes; `flags` is the rest (and all of NZCV on arm64).
+    carry :: bool,
     // Bytes the stack pointer has moved down since entry.
     delta :: i64,
     // The frame pointer as an entry-relative offset, once it is set.
@@ -623,6 +626,7 @@ copy_state = (a: Alloc, s: State) Res<State, AllocError> {
         guards: s.guards.map(a, (x) { x }).try(),
         guard_slots: s.guard_slots.map(a, (x) { x }).try(),
         flags: s.flags,
+        carry: s.carry,
         delta: s.delta,
         frame: s.frame,
         smear: s.smear,
@@ -644,6 +648,7 @@ dead_state = (a: Alloc) State {
         guards: a.Vec<str>(),
         guard_slots: a.Vec<i64>(),
         flags: false,
+        carry: false,
         delta: 0,
         frame: None,
         smear: false,
@@ -724,6 +729,9 @@ join = (a: Alloc, into :: State, from: State) Res<bool, AllocError> {
         });
         (from.flags && !into.flags).then(
             () { into.flags = true; grew = true; }
+        );
+        (from.carry && !into.carry).then(
+            () { into.carry = true; grew = true; }
         );
         (from.smear && !into.smear).then(
             () { into.smear = true; grew = true; }
@@ -897,7 +905,7 @@ pass = (an :: Analysis, seed: Seed) Res<(), AllocError> {
                 true  => {
                 (an.trace && an.reporting).then(() {
                     shown ::= an.alloc.String().try();
-                    shown.fmt("flags={} smear={} secret:", cur.flags, cur.smear).try();
+                    shown.fmt("flags={} carry={} smear={} secret:", cur.flags, cur.carry, cur.smear).try();
                     cur.val.loop((r) { shown.fmt(" {}", r).try(); });
                     shown.add(" stack:").try();
                     show_bytes(shown, cur.slots).try();
@@ -1347,6 +1355,7 @@ call = (
         });
     });
     cur.flags = false;
+    cur.carry = false;
     Ok(())
 }
 
@@ -1636,6 +1645,29 @@ x86_reads_destination = (m: str) bool {
         || m.starts_with("vfmsub") || m.starts_with("vfnmadd") || m.starts_with("vfnmsub")
 }
 
+// Whether an x86 condition code (`ne`, `b`, `nbe`, ...) reads a secret
+// flag: the carry for b/ae/c, the carry and zero flags for a/be, the rest
+// otherwise. A size suffix (Clang's `cmovneq`) is dropped; an unknown code
+// reads everything.
+x86_condition = (cur: State, code: str) bool {
+    codes = ["o", "no", "b", "nae", "c", "ae", "nb", "nc", "e", "z", "ne", "nz", "be", "na", "a", "nbe",
+        "s", "ns", "p", "pe", "np", "po", "l", "nge", "ge", "nl", "le", "ng", "g", "nle"];
+    cond = code.is_in(codes).match({
+        true  => code,
+        false => (code.len > 1 && code.slice(0, code.len - 1).is_in(codes)).match({
+            true  => code.slice(0, code.len - 1),
+            false => "",
+        }),
+    });
+    cond.is_in(["b", "nae", "c", "ae", "nb", "nc"]).match({
+        true  => cur.carry,
+        false => cond.is_in(["be", "na", "a", "nbe"]).match({
+            true  => cur.carry || cur.flags,
+            false => (cond.len == 0).match({ true => cur.carry || cur.flags, false => cur.flags }),
+        }),
+    })
+}
+
 // Vector instructions and the BMI2/move family leave the flags alone.
 x86_writes_flags = (m: str, ops: Vec<str>) bool {
     vector = ops.find((op) { x86_vector_reg(op) || op.starts_with("%k") }).match({ Ok(_) => true, None => false });
@@ -1682,6 +1714,7 @@ x86_string = (
     (kind.is_in(["cmps", "scas"])).then(() {
         (repeated && compared).then(() { an.report("branch", l.text).try(); });
         cur.flags = compared;
+        cur.carry = compared;
         repeated.then(() { put(cur.val, "rcx", compared).try(); });
     });
     kind.eq("lods").then(() { put(cur.val, "rax", source).try(); set_addr(cur.addr, "rax", None).try(); });
@@ -1778,7 +1811,11 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
                     cur.live = false;
                 },
                 false => {
-                    cur.flags.then(() { an.report("branch", l.text).try(); });
+                    secret = m.is_in(["jrcxz", "jecxz"]).match({
+                        true  => has(cur.val, "rcx"),
+                        false => x86_condition(cur, m.slice(1, m.len)),
+                    });
+                    secret.then(() { an.report("branch", l.text).try(); });
                     an.flow(last, cur).try();
                 },
             });
@@ -1793,7 +1830,12 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             no_return(last).then(() { cur.live = false; });
             h.break();
         });
-        (m.starts_with("cmp") || m.starts_with("test") || m.starts_with("bt")
+        // A bit test with a register bit offset and a memory operand
+        // addresses the word the offset selects, beyond the operand.
+        bit_test = m.is_in(["bt", "btw", "btl", "btq", "bts", "btsw", "btsl", "btsq", "btr", "btrw", "btrl", "btrq", "btc", "btcw", "btcl", "btcq"]);
+        (bit_test && n == 2 && x86_is_mem(last) && !first.starts_with("$")
+            && an.x86_value(cur, first, l, 8).try()).then(() { an.report("address", l.text).try(); });
+        (m.starts_with("cmp") || m.starts_with("test") || m.is_in(["bt", "btw", "btl", "btq"])
             || m.starts_with("ucomis") || m.starts_with("comis") || m.starts_with("ptest")
             || m.starts_with("vptest") || m.starts_with("vtestp")).then(() {
             secret ::= false;
@@ -1801,14 +1843,16 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
                 (op) { secret = secret || an.x86_value(cur, op, l, width).try(); }
             );
             cur.flags = secret;
+            cur.carry = secret;
             h.break();
         });
         (m.starts_with("set")).then(() {
-            an.x86_write(cur, last, cur.flags, false, l, 1).try();
+            an.x86_write(cur, last, x86_condition(cur, m.slice(3, m.len)), false, l, 1).try();
             h.break();
         });
         (m.starts_with("cmov")).then(() {
-            secret = an.x86_value(cur, first, l, width).try() || an.x86_value(cur, last, l, width).try() || cur.flags;
+            secret = an.x86_value(cur, first, l, width).try() || an.x86_value(cur, last, l, width).try()
+                || x86_condition(cur, m.slice(4, m.len));
             an.x86_write(cur, last, secret, false, l, width).try();
             h.break();
         });
@@ -1875,7 +1919,7 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             an.x86_mark_points2(cur, first, 8, points2).try();
             h.break();
         });
-        (m.starts_with("xchg") && n == 2 && !x86_is_mem(first) && !x86_is_mem(last)).then(() {
+        (m.starts_with("xchg") && n == 2).then(() {
             a_secret = an.x86_value(cur, first, l, width).try();
             b_secret = an.x86_value(cur, last, l, width).try();
             an.x86_write(cur, first, b_secret, false, l, width).try();
@@ -1886,16 +1930,15 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             (has(cur.val, "rax") || has(cur.val, "rdx")).then(() { an.observed = true; });
             secret = an.x86_value(cur, first, l, width).try() || has(cur.val, "rax") || has(cur.val, "rdx");
             secret.then(() { an.report("divide", l.text).try(); });
-            put(cur.val, "rax", secret).try();
-            put(cur.val, "rdx", secret).try();
+            [str, 2]("rax", "rdx").loop((r) { put(cur.val, r, secret).try(); put(cur.low, r, false).try(); });
             h.break();
         });
         ((m.starts_with("mul") || m.starts_with("imul")) && n == 1).then(() {
             has(cur.val, "rax").then(() { an.observed = true; });
             secret = an.x86_value(cur, first, l, width).try() || has(cur.val, "rax");
-            put(cur.val, "rax", secret).try();
-            put(cur.val, "rdx", secret).try();
+            [str, 2]("rax", "rdx").loop((r) { put(cur.val, r, secret).try(); put(cur.low, r, false).try(); });
             cur.flags = secret;
+            cur.carry = secret;
             h.break();
         });
         // MULX src, lo, hi (BMI2) writes both halves of %rdx * src and
@@ -1910,6 +1953,7 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
         (m.is_in(["cqto", "cqo", "cltd", "cdq", "cltq", "cdqe", "cwtl"])).then(() {
             has(cur.val, "rax").then(() { an.observed = true; });
             put(cur.val, "rdx", has(cur.val, "rax")).try();
+            put(cur.low, "rdx", false).try();
             h.break();
         });
         // Stack pointer arithmetic keeps slot offsets entry-relative.
@@ -1928,7 +1972,7 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
         (same && (m.starts_with("xor") || m.starts_with("sub") || m.starts_with("pxor")
             || m.starts_with("xorp") || m.starts_with("pcmpeq") || m.starts_with("psub"))).then(() {
             an.x86_write(cur, last, false, false, l, width).try();
-            m.starts_with("p").match({ true => (), false => { cur.flags = false; } });
+            m.starts_with("p").match({ true => (), false => { cur.flags = false; cur.carry = false; } });
             h.break();
         });
         (n == 3 && (m.starts_with("vpxor") || m.starts_with("vxorp") || m.starts_with("vpcmpeq")
@@ -1942,7 +1986,7 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
         (m.starts_with("mov") || m.starts_with("vmov") || m.starts_with("cvt")).then(() {
             (n == 2).then(() {
                 merge = (m.is_in(["movss", "movsd"]) && x86_vector_reg(first) && x86_vector_reg(last))
-                    || (m.is_in(["movlps", "movhps", "movlpd", "movhpd"]) && x86_vector_reg(last));
+                    || (m.is_in(["movlps", "movhps", "movlpd", "movhpd", "movlhps", "movhlps"]) && x86_vector_reg(last));
                 secret = an.x86_value(cur, first, l, width).try()
                     || (merge && an.x86_value(cur, last, l, width).try());
                 points = an.x86_points(cur, first, width);
@@ -2019,10 +2063,11 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
                 points2 = points2 || an.x86_points2(cur, op, width);
             });
         });
-        (m.starts_with("adc") || m.starts_with("adox") || m.starts_with("sbb") || m.starts_with("rcl")
-            || m.starts_with("rcr")).then(() {
-            secret = secret || cur.flags;
+        // adc, sbb, adcx, rcl and rcr read the carry; adox the overflow.
+        (m.starts_with("adc") || m.starts_with("sbb") || m.starts_with("rcl") || m.starts_with("rcr")).then(() {
+            secret = secret || cur.carry;
         });
+        m.starts_with("adox").then(() { secret = secret || cur.flags; });
         // `add $k, %reg` on a register holding a stack address moves it.
         moved: Res<i64> = (n == 2 && first.starts_with("$") && !x86_is_mem(last)
             && (m.starts_with("add") || m.starts_with("sub"))).match({
@@ -2060,7 +2105,16 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
                 });
             });
         });
-        x86_writes_flags(m, ops).then(() { cur.flags = secret; });
+        x86_writes_flags(m, ops).then(() {
+            // inc and dec leave the carry; adcx writes only the carry and
+            // adox only the overflow; a shift or rotate by %cl leaves every
+            // flag when the count is 0.
+            by_count = first.eq("%cl") && (m.starts_with("sh") || m.starts_with("sa") || m.starts_with("ro") || m.starts_with("rc"));
+            keeps_carry = m.starts_with("inc") || m.starts_with("dec") || m.starts_with("adox");
+            keeps_rest = m.starts_with("adcx");
+            (!keeps_rest).then(() { cur.flags = secret || (by_count && cur.flags); });
+            (!keeps_carry).then(() { cur.carry = secret || (by_count && cur.carry); });
+        });
         h.break();
     });
     Ok(())

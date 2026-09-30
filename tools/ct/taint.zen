@@ -764,8 +764,14 @@ Analysis* = {
     // Some instruction consumed a tainted register (argument_reads).
     observed :: bool,
 
+    // A label's state. GNU numeric labels (`1:`, reached as `1f` or `1b`
+    // from inline asm) share one state per number: a join over every
+    // definition, which covers whichever one a reference means.
     state_at = (self: @Self, label: str) Res<usize> {
-        Range(0, self.labels.len).find((i) { self.labels.get(i).value_or("").eq(label) })
+        numeric = label.len > 1 && (label.ends_with("f") || label.ends_with("b"))
+            && Range(0, label.len - 1).find((i) { !is_digit(label.index(i)) }).match({ Ok(_) => false, None => true });
+        name = numeric.match({ true => label.slice(0, label.len - 1), false => label });
+        Range(0, self.labels.len).find((i) { self.labels.get(i).value_or("").eq(name) })
     }
 
     report = (self :: @Self, kind: str, text: str) Res<(), AllocError> {
@@ -920,6 +926,24 @@ pass = (an :: Analysis, seed: Seed) Res<(), AllocError> {
                 },
             }); },
         });
+    });
+    Ok(())
+}
+
+// The taken edge of a conditional branch: to a label of this function, or
+// out of it, a conditional tail call (Clang's `jne f # TAILCALL`), which
+// is a call and a return on that path.
+branch_to = (an :: Analysis, cur: State, target: str, l: Line) Res<(), AllocError> {
+    an.state_at(target).match({
+        Ok(_) => an.flow(target, cur).try(),
+        None  => { (!target.starts_with(".") && !target.starts_with("L")).then(() {
+            taken ::= copy_state(an.alloc, cur).try();
+            an.isa.match({
+                X86 => an.x86_call(taken, target, l).try(),
+                Arm => an.arm_call(taken, target, l).try(),
+            });
+            an.returns(taken, l).try();
+        }); },
     });
     Ok(())
 }
@@ -1816,7 +1840,7 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
                         false => x86_condition(cur, m.slice(1, m.len)),
                     });
                     secret.then(() { an.report("branch", l.text).try(); });
-                    an.flow(last, cur).try();
+                    an.branch_to(cur, last, l).try();
                 },
             });
             h.break();
@@ -2472,13 +2496,13 @@ arm = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
         (m.starts_with("b.") || (m.starts_with("b") && m.len == 3 && !m.eq("bic") && !m.eq("bfi")
             && !m.eq("bit") && !m.eq("bif") && !m.eq("bsl") && !m.eq("brk") && !m.eq("bfm"))).then(() {
             cur.flags.then(() { an.report("branch", l.text).try(); });
-            an.flow(last, cur).try();
+            an.branch_to(cur, last, l).try();
             h.break();
         });
         (m.is_in(["cbz", "cbnz", "tbz", "tbnz"])).then(() {
             (an.arm_reads(cur, ops, 0).try() && dst.match({ Ok(r) => has(cur.val, r), None => false }))
                 .then(() { an.report("branch", l.text).try(); });
-            an.flow(last, cur).try();
+            an.branch_to(cur, last, l).try();
             h.break();
         });
         (m.eq("b")).then(() {

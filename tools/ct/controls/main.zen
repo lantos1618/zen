@@ -319,6 +319,18 @@ leaky_stack_walk* = (key: Ptr<u64>, table: Ptr<u8>, sink: Ptr<u64>, n: usize) u6
     sum
 }
 
+// A table read at an index its audit takes as public.
+pick* = (table: Ptr<u8>, index: usize) u8 { table.read(index) }
+
+// Passes a secret to pick's public index only when a public flag is set
+// (x86-64 Clang: a conditional tail call, `jne pick`).
+leaky_call_if* = (table: Ptr<u8>, key: usize, flag: u64) u8 {
+    (flag != 0).match({
+        true  => pick(table, key),
+        false => 0,
+    })
+}
+
 main = (env: Env) Res<(), AllocError> {
     a     = env.mem.alloc();
     bytes = a.raw(256, 16).try();
@@ -370,6 +382,7 @@ main = (env: Env) Res<(), AllocError> {
     println("{}", leaky_delay(3, 90, bytes));
     println("{}", leaky_set_bit(3, 5, bytes));
     println("{}", leaky_stack_walk(words, bytes, words, 9));
+    println("{}", leaky_call_if(bytes, 7, 1));
     println("{}", leaky_block_copy(a.raw(272, 16).try().to<KeyBlock>(), bytes, words, 5));
     chained = carry_chain(x, y, x);
     adx().match({

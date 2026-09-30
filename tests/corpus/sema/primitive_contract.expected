@@ -38,4 +38,9 @@ cast same: false
 cpu: true
 cpu result: false
 cpu unknown: false
+cpu sha: true
+sha256_rnds2: true
+sha256_rnds2 capability: false
+sha512h lanes: false
+sha512su0: true
 foreign: true

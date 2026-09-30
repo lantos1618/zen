@@ -169,21 +169,34 @@ cast_u32x8* = (self: u64x4) u32x8
 // Avx2: x86-64 AVX2. Ssse3: x86 SSSE3. Aes: AES rounds (x86 AES-NI with
 // SSSE3/SSE4.1, arm64 FEAT_AES). Clmul: 64x64 carry-less multiply (x86
 // PCLMULQDQ with SSSE3/SSE4.1, arm64 FEAT_PMULL). Neon: arm64 Advanced SIMD.
+// ShaNi: the x86 SHA extensions (SHA256RNDS2/MSG1/MSG2) with SSSE3/SSE4.1.
+// ArmSha2: arm64 FEAT_SHA256 (SHA256H/H2/SU0/SU1). ArmSha512: arm64
+// FEAT_SHA512 (SHA512H/H2/SU0/SU1). The SHA instructions of the two
+// architectures compute different steps, so each set has its own
+// capability and is detected only on its architecture.
 // Detection is cheap but not free; hoist it out of per-block loops.
 // The environment variable ZEN_CPU_DISABLE (comma list of avx2, ssse3,
-// aes, clmul, neon, or all) makes detection report those features absent,
-// so tests can run each portable path on one machine; it cannot add one.
+// aes, clmul, neon, sha, sha512, or all) makes detection report those
+// features absent, so tests can run each portable path on one machine; it
+// cannot add one. `sha` names the SHA-256 instructions of either
+// architecture (ShaNi, ArmSha2) and `sha512` names ArmSha512.
 Avx2* = { proof: u8 }
 Ssse3* = { proof: u8 }
 Aes* = { proof: u8 }
 Clmul* = { proof: u8 }
 Neon* = { proof: u8 }
+ShaNi* = { proof: u8 }
+ArmSha2* = { proof: u8 }
+ArmSha512* = { proof: u8 }
 
 cpu_avx2* = () bool
 cpu_ssse3* = () bool
 cpu_aes* = () bool
 cpu_clmul* = () bool
 cpu_neon* = () bool
+cpu_sha_ni* = () bool
+cpu_arm_sha2* = () bool
+cpu_arm_sha512* = () bool
 
 avx2* = () Res<Avx2> { cpu_avx2().match({ true => Ok(Avx2(
     proof: 1
@@ -200,6 +213,15 @@ clmul* = () Res<Clmul> { cpu_clmul().match({ true => Ok(Clmul(
 neon* = () Res<Neon> { cpu_neon().match({ true => Ok(Neon(
     proof: 1
 )), false => None }) }
+sha_ni* = () Res<ShaNi> { cpu_sha_ni().match({ true => Ok(ShaNi(
+    proof: 1
+)), false => None }) }
+arm_sha2* = () Res<ArmSha2> { cpu_arm_sha2().match({ true => Ok(ArmSha2(
+    proof: 1
+)), false => None }) }
+arm_sha512* = () Res<ArmSha512> { cpu_arm_sha512().match({ true => Ok(ArmSha512(
+    proof: 1
+)), false => None }) }
 
 // One AES encryption round with x86 AESENC semantics:
 // MixColumns(SubBytes(ShiftRows(state))) xor key. The last round omits
@@ -214,6 +236,40 @@ aes_round_last* = (self: u8x16, key: u8x16, cpu: Aes) u8x16
 // 64 bits of the product.
 clmul_low* = (self: u64x2, other: u64x2, cpu: Clmul) u64x2
 clmul_high* = (self: u64x2, other: u64x2, cpu: Clmul) u64x2
+
+// x86 SHA extensions (Intel SDM). State vectors hold the eight SHA-256
+// working words as ABEF and CDGH, most significant lane first: lane 3 of
+// abef is A, lane 0 is F. sha256_rnds2 runs two rounds with the message
+// words plus constants in lanes 0 and 1 of wk and returns the new ABEF;
+// `self` is the old CDGH (SHA256RNDS2 with wk in XMM0). sha256_msg1 and
+// sha256_msg2 are the two halves of the message schedule: msg1 adds
+// sigma0 of the following words (`next` supplies W4 in lane 0), msg2 adds
+// sigma1 of the previous two schedule words (`prev` lanes 2 and 3).
+sha256_rnds2* = (self: u32x4, abef: u32x4, wk: u32x4, cpu: ShaNi) u32x4
+sha256_msg1* = (self: u32x4, next: u32x4, cpu: ShaNi) u32x4
+sha256_msg2* = (self: u32x4, prev: u32x4, cpu: ShaNi) u32x4
+
+// arm64 SHA-256 instructions (Arm ARM SHA256H, SHA256H2, SHA256SU0,
+// SHA256SU1). abcd holds A in lane 0 through D in lane 3, efgh likewise.
+// sha256h runs four rounds on wk (message words plus constants) and returns
+// the new ABCD; sha256h2 returns the new EFGH and needs the ABCD from
+// before those rounds. sha256su0 and sha256su1 compute four schedule words:
+// su0 adds sigma0 terms from w4_7, su1 adds W[t-7] from w8_11/w12_15 and
+// sigma1 of w12_15's high lanes (and of its own first two results).
+sha256h* = (self: u32x4, efgh: u32x4, wk: u32x4, cpu: ArmSha2) u32x4
+sha256h2* = (self: u32x4, abcd: u32x4, wk: u32x4, cpu: ArmSha2) u32x4
+sha256su0* = (self: u32x4, w4_7: u32x4, cpu: ArmSha2) u32x4
+sha256su1* = (self: u32x4, w8_11: u32x4, w12_15: u32x4, cpu: ArmSha2) u32x4
+
+// arm64 SHA-512 instructions (Arm ARM SHA512H, SHA512H2, SHA512SU0,
+// SHA512SU1), in the operand order of the ACLE intrinsics vsha512hq_u64
+// and friends: `self` is the destination register's incoming value.
+// sha512h adds the Sigma1/Ch half of two rounds, sha512h2 the Sigma0/Maj
+// half; sha512su0 and sha512su1 compute two schedule words.
+sha512h* = (self: u64x2, fg: u64x2, de: u64x2, cpu: ArmSha512) u64x2
+sha512h2* = (self: u64x2, cd: u64x2, ab: u64x2, cpu: ArmSha512) u64x2
+sha512su0* = (self: u64x2, w2_3: u64x2, cpu: ArmSha512) u64x2
+sha512su1* = (self: u64x2, w14_15: u64x2, w9_10: u64x2, cpu: ArmSha512) u64x2
 
 // Full 64-bit products of the low 32 bits of each lane (PMULUDQ, UMULL): the
 // radix-2^26 multiply of vector Poly1305. The high 32 bits of both operands

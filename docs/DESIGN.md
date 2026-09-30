@@ -1961,12 +1961,17 @@ function is a C compiler error, which the backend does not yet diagnose.
 ## Target features and runtime dispatch
 
 A CPU feature is a capability, in the same sense as the authority `Env`
-carries: `std.simd` declares `Avx2`, `Ssse3`, `Aes`, `Clmul` and `Neon`, and
-only `std.simd` may construct one (`ForgedCapability` otherwise). The
-detection functions `avx2()`, `ssse3()`, `aes()`, `clmul()` and `neon()`
-return `Res<Capability>` from a runtime check: cpuid through the compiler
-runtime on x86 (which includes the OS's AVX state), `AT_HWCAP` on Linux
-arm64 and `hw.optional.arm.*` sysctls on macOS. NEON is baseline on arm64.
+carries: `std.simd` declares `Avx2`, `Ssse3`, `Aes`, `Clmul`, `Neon`,
+`ShaNi`, `ArmSha2` and `ArmSha512`, and only `std.simd` may construct one
+(`ForgedCapability` otherwise). The detection functions `avx2()`,
+`ssse3()`, `aes()`, `clmul()`, `neon()`, `sha_ni()`, `arm_sha2()` and
+`arm_sha512()` return `Res<Capability>` from a runtime check: cpuid through
+the compiler runtime on x86 (which includes the OS's AVX state; CPUID leaf 7
+for the SHA extensions), `AT_HWCAP` on Linux arm64 and `hw.optional.arm.*`
+sysctls on macOS. NEON is baseline on arm64. `ZEN_CPU_DISABLE` (a comma list
+of `avx2`, `ssse3`, `aes`, `clmul`, `neon`, `sha`, `sha512` or `all`) makes
+detection report features absent so every fallback path can be run on one
+machine; `sha` covers the SHA-256 instructions of both architectures.
 
 **The signature answers the question.** A function with a capability
 parameter is compiled for that feature: the C backend emits one combined
@@ -1985,6 +1990,18 @@ AESENC/AESENCLAST semantics; AESE+AESMC then xor on arm64) and
 `clmul_low` / `clmul_high(self: u64x2, other: u64x2, cpu: Clmul)`
 (PCLMULQDQ 0x00/0x11, PMULL/PMULL2). `cast_V` views a vector's bytes as
 another vector of the same size.
+
+The SHA instructions of x86 and arm64 compute different steps of the same
+algorithm (two rounds on an ABEF/CDGH split against four rounds on
+ABCD/EFGH), so neither can be written in terms of the other at native cost.
+Each set therefore has its own capability, detected only on its
+architecture: `sha256_rnds2`, `sha256_msg1`, `sha256_msg2` take `ShaNi`
+(SHA256RNDS2/MSG1/MSG2); `sha256h`, `sha256h2`, `sha256su0`, `sha256su1`
+take `ArmSha2` and `sha512h`, `sha512h2`, `sha512su0`, `sha512su1` take
+`ArmSha512` (FEAT_SHA256, FEAT_SHA512; operands in the ACLE order, the
+destination's incoming value first). A program with both kernels dispatches
+on both detections; on the other architecture the helpers abort, which is
+unreachable because the capability cannot be obtained there.
 
 32-byte vectors never cross a C call between functions compiled for
 different features: x86 passes them in YMM registers only with AVX, so the

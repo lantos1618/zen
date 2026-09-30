@@ -1,0 +1,288 @@
+// The capability-gated SHA instructions against models of their
+// architectural definitions (Intel SDM SHA256RNDS2/MSG1/MSG2, Arm ARM
+// SHA256H/H2/SU0/SU1 and SHA512H/H2/SU0/SU1) on pseudo-random operands, and
+// one FIPS 180-4 block ("abc") hashed with each instruction set. Every line
+// prints the same on a CPU without a feature: the check runs only where the
+// capability is detected.
+sha_ni, arm_sha2, arm_sha512, ShaNi, ArmSha2, ArmSha512 = std.simd
+lanes_u32x4, lanes_u64x2 = std.simd
+
+Rng = {
+    s :: u64,
+
+    next64 = (self :: @Self) u64 {
+        x ::= self.s;
+        x      = x.bit_xor(x.shift_left(13));
+        x      = x.bit_xor(x.shift_right(7));
+        x      = x.bit_xor(x.shift_left(17));
+        self.s = x;
+        x
+    }
+
+    next32 = (self :: @Self) u32 { self.next64().shift_right(
+        32
+    ).truncate_u32() }
+
+    vec32 = (self :: @Self) u32x4 {
+        lanes_u32x4(self.next32(), self.next32(), self.next32(), self.next32())
+    }
+
+    vec64 = (self :: @Self) u64x2 { lanes_u64x2(self.next64(), self.next64()) }
+}
+
+same32 = (a: u32x4, b: u32x4) bool {
+    a.lane(0) == b.lane(0) && a.lane(1) == b.lane(1) && a.lane(2) == b.lane(2)
+        && a.lane(3) == b.lane(3)
+}
+
+same64 = (a: u64x2, b: u64x2) bool { a.lane(0) == b.lane(0) && a.lane(1) == b.lane(1) }
+
+big_sigma0 = (x: u32) u32 { x.rotate_right(2).bit_xor(x.rotate_right(13)).bit_xor(x.rotate_right(22)) }
+big_sigma1 = (x: u32) u32 { x.rotate_right(6).bit_xor(x.rotate_right(11)).bit_xor(x.rotate_right(25)) }
+small_sigma0 = (x: u32) u32 { x.rotate_right(7).bit_xor(x.rotate_right(18)).bit_xor(x.shift_right(3)) }
+small_sigma1 = (x: u32) u32 { x.rotate_right(17).bit_xor(x.rotate_right(19)).bit_xor(x.shift_right(10)) }
+ch = (x: u32, y: u32, z: u32) u32 { x.bit_and(y).bit_xor(x.bit_xor(4294967295).bit_and(z)) }
+maj = (x: u32, y: u32, z: u32) u32 { x.bit_and(y).bit_xor(x.bit_and(z)).bit_xor(y.bit_and(z)) }
+
+// SHA256RNDS2: cdgh is SRC1, abef SRC2, wk XMM0.
+model_rnds2 = (cdgh: u32x4, abef: u32x4, wk: u32x4) u32x4 {
+    a ::= abef.lane(3); b ::= abef.lane(2); c ::= cdgh.lane(3); d ::= cdgh.lane(2);
+    e ::= abef.lane(1); f ::= abef.lane(0); g ::= cdgh.lane(1); h ::= cdgh.lane(0);
+    Range(0, 2).loop((i) {
+        t1 = h +% big_sigma1(e) +% ch(e, f, g) +% wk.lane(i);
+        t2 = big_sigma0(a) +% maj(a, b, c);
+        h  = g; g = f; f = e; e = d +% t1;
+        d = c; c = b; b = a; a = t1 +% t2;
+    });
+    lanes_u32x4(f, e, b, a)
+}
+
+model_msg1 = (w: u32x4, next: u32x4) u32x4 {
+    lanes_u32x4(
+        w.lane(0) +% small_sigma0(w.lane(1)),
+        w.lane(1) +% small_sigma0(w.lane(2)),
+        w.lane(2) +% small_sigma0(w.lane(3)),
+        w.lane(3) +% small_sigma0(next.lane(0))
+    )
+}
+
+model_msg2 = (w: u32x4, prev: u32x4) u32x4 {
+    w16 = w.lane(0) +% small_sigma1(prev.lane(2));
+    w17 = w.lane(1) +% small_sigma1(prev.lane(3));
+    w18 = w.lane(2) +% small_sigma1(w16);
+    w19 = w.lane(3) +% small_sigma1(w17);
+    lanes_u32x4(w16, w17, w18, w19)
+}
+
+// SHA256hash(X, Y, W, part1): four rounds on X = ABCD, Y = EFGH (A and E in
+// lane 0); part1 returns X (SHA256H), otherwise Y (SHA256H2).
+model_hash = (abcd: u32x4, efgh: u32x4, wk: u32x4, part1: bool) u32x4 {
+    a ::= abcd.lane(0); b ::= abcd.lane(1); c ::= abcd.lane(2); d ::= abcd.lane(3);
+    e ::= efgh.lane(0); f ::= efgh.lane(1); g ::= efgh.lane(2); h ::= efgh.lane(3);
+    Range(0, 4).loop((i) {
+        t1 = h +% big_sigma1(e) +% ch(e, f, g) +% wk.lane(i);
+        t2 = big_sigma0(a) +% maj(a, b, c);
+        h  = g; g = f; f = e; e = d +% t1;
+        d = c; c = b; b = a; a = t1 +% t2;
+    });
+    part1.match({
+        true  => lanes_u32x4(a, b, c, d),
+        false => lanes_u32x4(e, f, g, h),
+    })
+}
+
+model_su0 = (w0_3: u32x4, w4_7: u32x4) u32x4 {
+    lanes_u32x4(
+        w0_3.lane(0) +% small_sigma0(w0_3.lane(1)),
+        w0_3.lane(1) +% small_sigma0(w0_3.lane(2)),
+        w0_3.lane(2) +% small_sigma0(w0_3.lane(3)),
+        w0_3.lane(3) +% small_sigma0(w4_7.lane(0))
+    )
+}
+
+model_su1 = (d: u32x4, n: u32x4, m: u32x4) u32x4 {
+    r0 = d.lane(0) +% n.lane(1) +% small_sigma1(m.lane(2));
+    r1 = d.lane(1) +% n.lane(2) +% small_sigma1(m.lane(3));
+    r2 = d.lane(2) +% n.lane(3) +% small_sigma1(r0);
+    r3 = d.lane(3) +% m.lane(0) +% small_sigma1(r1);
+    lanes_u32x4(r0, r1, r2, r3)
+}
+
+sigma512_1 = (x: u64) u64 { x.rotate_right(14).bit_xor(x.rotate_right(18)).bit_xor(x.rotate_right(41)) }
+sigma512_0 = (x: u64) u64 { x.rotate_right(28).bit_xor(x.rotate_right(34)).bit_xor(x.rotate_right(39)) }
+not64 = (x: u64) u64 { x.bit_xor(18446744073709551615) }
+
+// SHA512H: w is the destination, x = Vn, y = Vm; lane 0 is bits 63:0.
+model_sha512h = (w: u64x2, x: u64x2, y: u64x2) u64x2 {
+    hi = y.lane(1).bit_and(x.lane(0)).bit_xor(not64(y.lane(1)).bit_and(x.lane(1)))
+        +% sigma512_1(y.lane(1)) +% w.lane(1);
+    t  = hi +% y.lane(0);
+    lo = t.bit_and(y.lane(1)).bit_xor(not64(t).bit_and(x.lane(0)))
+        +% sigma512_1(t) +% w.lane(0);
+    lanes_u64x2(lo, hi)
+}
+
+model_sha512h2 = (w: u64x2, x: u64x2, y: u64x2) u64x2 {
+    hi = x.lane(0).bit_and(y.lane(1)).bit_xor(x.lane(0).bit_and(y.lane(0)))
+        .bit_xor(y.lane(1).bit_and(y.lane(0))) +% sigma512_0(y.lane(0)) +% w.lane(1);
+    lo = hi.bit_and(y.lane(0)).bit_xor(hi.bit_and(y.lane(1)))
+        .bit_xor(y.lane(1).bit_and(y.lane(0))) +% sigma512_0(hi) +% w.lane(0);
+    lanes_u64x2(lo, hi)
+}
+
+small512_0 = (x: u64) u64 { x.rotate_right(1).bit_xor(x.rotate_right(8)).bit_xor(x.shift_right(7)) }
+small512_1 = (x: u64) u64 { x.rotate_right(19).bit_xor(x.rotate_right(61)).bit_xor(x.shift_right(6)) }
+
+model_sha512su0 = (w: u64x2, x: u64x2) u64x2 {
+    lanes_u64x2(
+        w.lane(0) +% small512_0(w.lane(1)),
+        w.lane(1) +% small512_0(x.lane(0))
+    )
+}
+
+model_sha512su1 = (w: u64x2, x: u64x2, y: u64x2) u64x2 {
+    lanes_u64x2(
+        w.lane(0) +% small512_1(x.lane(0)) +% y.lane(0),
+        w.lane(1) +% small512_1(x.lane(1)) +% y.lane(1)
+    )
+}
+
+x86_models = (cpu: ShaNi) bool {
+    rng ::= Rng(s: 88172645463325252);
+    ok  ::= true;
+    Range(0, 256).loop((i) {
+        a = rng.vec32(); b = rng.vec32(); c = rng.vec32();
+        ok = ok && same32(a.sha256_rnds2(b, c, cpu), model_rnds2(a, b, c));
+        ok = ok && same32(a.sha256_msg1(b, cpu), model_msg1(a, b));
+        ok = ok && same32(a.sha256_msg2(b, cpu), model_msg2(a, b));
+    });
+    ok
+}
+
+arm_models = (cpu: ArmSha2) bool {
+    rng ::= Rng(s: 88172645463325252);
+    ok  ::= true;
+    Range(0, 256).loop((i) {
+        a = rng.vec32(); b = rng.vec32(); c = rng.vec32();
+        ok = ok && same32(a.sha256h(b, c, cpu), model_hash(a, b, c, true));
+        ok = ok && same32(a.sha256h2(b, c, cpu), model_hash(b, a, c, false));
+        ok = ok && same32(a.sha256su0(b, cpu), model_su0(a, b));
+        ok = ok && same32(a.sha256su1(b, c, cpu), model_su1(a, b, c));
+    });
+    ok
+}
+
+arm512_models = (cpu: ArmSha512) bool {
+    rng ::= Rng(s: 88172645463325252);
+    ok  ::= true;
+    Range(0, 256).loop((i) {
+        a = rng.vec64(); b = rng.vec64(); c = rng.vec64();
+        ok = ok && same64(a.sha512h(b, c, cpu), model_sha512h(a, b, c));
+        ok = ok && same64(a.sha512h2(b, c, cpu), model_sha512h2(a, b, c));
+        ok = ok && same64(a.sha512su0(b, cpu), model_sha512su0(a, b));
+        ok = ok && same64(a.sha512su1(b, c, cpu), model_sha512su1(a, b, c));
+    });
+    ok
+}
+
+k256 = (i: usize) u32 {
+    table: [u32, 64] = [
+        1116352408, 1899447441, 3049323471, 3921009573, 961987163, 1508970993, 2453635748, 2870763221,
+        3624381080, 310598401, 607225278, 1426881987, 1925078388, 2162078206, 2614888103, 3248222580,
+        3835390401, 4022224774, 264347078, 604807628, 770255983, 1249150122, 1555081692, 1996064986,
+        2554220882, 2821834349, 2952996808, 3210313671, 3336571891, 3584528711, 113926993, 338241895,
+        666307205, 773529912, 1294757372, 1396182291, 1695183700, 1986661051, 2177026350, 2456956037,
+        2730485921, 2820302411, 3259730800, 3345764771, 3516065817, 3600352804, 4094571909, 275423344,
+        430227734, 506948616, 659060556, 883997877, 958139571, 1322822218, 1537002063, 1747873779,
+        1955562222, 2024104815, 2227730452, 2361852424, 2428436474, 2756734187, 3204031479, 3329325298,
+    ];
+    table[i]
+}
+
+k4 = (group: usize) u32x4 {
+    lanes_u32x4(
+        k256(4 * group),
+        k256(4 * group + 1),
+        k256(4 * group + 2),
+        k256(4 * group + 3)
+    )
+}
+
+// The padded one-block message "abc", as four vectors of message words.
+abc_words = (i: usize) u32x4 {
+    (i == 0).match({
+        true  => lanes_u32x4(1633837952, 0, 0, 0),
+        false => lanes_u32x4(
+            0,
+            0,
+            0,
+            (i == 3).match({ true => 24, false => 0 })
+        ),
+    })
+}
+
+// FIPS 180-4 B.1: SHA-256("abc") word 0 and word 7.
+ABC_H0: u32 = 3128432319
+ABC_H7: u32 = 4060091821
+
+// Rounds 4g..4g+3 as two SHA256RNDS2; after each, the old ABEF is the new
+// CDGH.
+x86_abc = (cpu: ShaNi) bool {
+    abef ::= lanes_u32x4(2600822924, 1359893119, 3144134277, 1779033703);
+    cdgh ::= lanes_u32x4(1541459225, 528734635, 2773480762, 1013904242);
+    m0   ::= abc_words(0); m1 ::= abc_words(1); m2 ::= abc_words(2); m3 ::= abc_words(3);
+    start_abef = abef; start_cdgh = cdgh;
+    Range(0, 16).loop((g) {
+        wk   = m0.add_wrap(k4(g));
+        t0   = cdgh.sha256_rnds2(abef, wk, cpu);
+        cdgh = abef; abef = t0;
+        t1   = cdgh.sha256_rnds2(abef, wk.shuffle([2, 3, 0, 1]), cpu);
+        cdgh = abef; abef = t1;
+        next = m0.sha256_msg1(m1, cpu).add_wrap(m2.shuffle2(m3, [1, 2, 3, 4])).sha256_msg2(m3, cpu);
+        m0   = m1; m1 = m2; m2 = m3; m3 = next;
+    });
+    abef = abef.add_wrap(start_abef);
+    cdgh = cdgh.add_wrap(start_cdgh);
+    abef.lane(3) == ABC_H0 && cdgh.lane(0) == ABC_H7
+}
+
+arm_abc = (cpu: ArmSha2) bool {
+    abcd ::= lanes_u32x4(1779033703, 3144134277, 1013904242, 2773480762);
+    efgh ::= lanes_u32x4(1359893119, 2600822924, 528734635, 1541459225);
+    m0   ::= abc_words(0); m1 ::= abc_words(1); m2 ::= abc_words(2); m3 ::= abc_words(3);
+    start_abcd = abcd; start_efgh = efgh;
+    Range(0, 16).loop((g) {
+        wk     = m0.add_wrap(k4(g));
+        before = abcd;
+        abcd   = abcd.sha256h(efgh, wk, cpu);
+        efgh   = efgh.sha256h2(before, wk, cpu);
+        next   = m0.sha256su0(m1, cpu).sha256su1(m2, m3, cpu);
+        m0     = m1; m1 = m2; m2 = m3; m3 = next;
+    });
+    abcd = abcd.add_wrap(start_abcd);
+    efgh = efgh.add_wrap(start_efgh);
+    abcd.lane(0) == ABC_H0 && efgh.lane(3) == ABC_H7
+}
+
+main = () {
+    println(
+        "sha-ni matches the SDM model: {}",
+        sha_ni().match({ Ok(cpu) => x86_models(cpu), None => true })
+    );
+    println(
+        "sha-ni abc: {}",
+        sha_ni().match({ Ok(cpu) => x86_abc(cpu), None => true })
+    );
+    println(
+        "arm sha256 matches the Arm ARM model: {}",
+        arm_sha2().match({ Ok(cpu) => arm_models(cpu), None => true })
+    );
+    println(
+        "arm sha256 abc: {}",
+        arm_sha2().match({ Ok(cpu) => arm_abc(cpu), None => true })
+    );
+    println(
+        "arm sha512 matches the Arm ARM model: {}",
+        arm_sha512().match({ Ok(cpu) => arm512_models(cpu), None => true })
+    );
+}

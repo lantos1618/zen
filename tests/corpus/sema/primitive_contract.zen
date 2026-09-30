@@ -252,6 +252,31 @@ main = (env: Env) Res<(), AllocError> {
     a.row("cpu", "cpu_avx2* = () bool\n", simd, false).try();
     a.row("cpu result", "cpu_avx2* = () u8\n", simd, false).try();
     a.row("cpu unknown", "cpu_sse9* = () bool\n", simd, false).try();
+    a.row("cpu sha", "cpu_sha_ni* = () bool\n", simd, false).try();
+    a.row(
+        "sha256_rnds2",
+        "sha256_rnds2* = (self: u32x4, abef: u32x4, wk: u32x4, cpu: ShaNi) u32x4\nShaNi* = { proof: u8 }\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "sha256_rnds2 capability",
+        "sha256_rnds2* = (self: u32x4, abef: u32x4, wk: u32x4, cpu: ArmSha2) u32x4\nArmSha2* = { proof: u8 }\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "sha512h lanes",
+        "sha512h* = (self: u32x4, fg: u32x4, de: u32x4, cpu: ArmSha512) u32x4\nArmSha512* = { proof: u8 }\n",
+        simd,
+        false
+    ).try();
+    a.row(
+        "sha512su0",
+        "sha512su0* = (self: u64x2, w2_3: u64x2, cpu: ArmSha512) u64x2\nArmSha512* = { proof: u8 }\n",
+        simd,
+        false
+    ).try();
     println("foreign: {}", foreign_keeps_binding(a).try());
     Ok(())
 }

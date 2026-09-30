@@ -291,9 +291,20 @@ AssocSite = {
             Ok(decl) => decl.kind.match({ Struct(raw) => raw.native_header, _ => None }),
             None     => None,
         });
-        header.match({
-            Ok(path) => self.emit_native(be, f, sig, path, out),
-            None     => self.emit_zen(be, f, sig, inst, out),
+        // `js.bind` members exist only in the JavaScript host.
+        host = decl_at(be.tree, self.site.decl).match({
+            Ok(decl) => decl.kind.match({ Struct(raw) => raw.native_host, _ => false }),
+            None     => false,
+        });
+        host.match({
+            true  => {
+                be.unsupported(self.id, "a js.bind member (JavaScript host only)", out).try();
+                Ok(true)
+            },
+            false => header.match({
+                Ok(path) => self.emit_native(be, f, sig, path, out),
+                None     => self.emit_zen(be, f, sig, inst, out),
+            }),
         })
     }
 

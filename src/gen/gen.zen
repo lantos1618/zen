@@ -11,13 +11,13 @@ Ast = std.ast
 Checker = sema.sema
 Codegen, Target = std.build
 String, str = std.text
-lower, LowerError = gen.gen_lower
+LowerError = gen.gen_lower
 lower_native = gen.gen_lower_core
-Program = gen.gen_ir
-emit_js = gen.gen_js
+Program, float = gen.gen_ir
+emit_js, emit_app, emit_runtime, PAGE = gen.gen_js
 X86_64Linux = gen.gen_asm_x86
 Arm64, Arm64Os = gen.gen_asm_arm64
-verify, verify_native, message = gen.gen_verify
+verify_native, message = gen.gen_verify
 
 Layout* = Single | Modules
 ArtifactKind* = Source | Symbols
@@ -44,6 +44,9 @@ Generation* = {
     symbols*: bool,
     // The native machine for assembly; None when no target was resolved.
     target*: Res<Target>,
+    // JavaScript for a page (`--target js-browser`): publish index.html,
+    // runtime.js and app.js instead of one script.
+    browser* :: bool = false,
 
     // Lowering diagnostics precede publication. The returned count includes
     // backend faults and publication failures; allocation errors stay typed.
@@ -118,22 +121,16 @@ Generation* = {
         })
     }
 
-    // JavaScript consumes the scalar surface; assembly the native surface.
+    // JavaScript and assembly both render the one full lowering.
     lowered = (self: @Self, backend: ScalarBackend) Res<Program, LowerError> {
-        backend.match({
-            Js  => lower(self.alloc, self.tree, self.check, self.entry),
-            Asm => lower_native(self.alloc, self.tree, self.check, self.entry),
-        })
+        lower_native(self.alloc, self.tree, self.check, self.entry)
     }
 
     render_scalar = (self: @Self, backend: ScalarBackend, program: Program,
                      report :: String,
                      publish: (artifact: Artifact) Res<usize, AllocError>)
                     Res<usize, AllocError> {
-        backend.match({
-            Js  => program.verify(self.alloc),
-            Asm => program.verify_native(self.alloc),
-        }).match({
+        program.verify_native(self.alloc).match({
             Err(error) => error.match({
                 OutOfMemory    => Err(AllocError.OutOfMemory),
                 Invalid(fault) => {
@@ -149,25 +146,53 @@ Generation* = {
                 },
             }),
             Ok(_)      => backend.match({
-                Js  => publish(Artifact(
-                    kind: ArtifactKind.Source,
-                    name: "zen.js",
-                    text: emit_js(self.alloc, program).try().view()
-                )),
-                Asm => self.assembly(program).try().match({
-                    None      => {
-                        report.add(
-                            "error: the asm backend supports x86_64-linux, aarch64-linux and arm64-darwin targets\n"
-                        ).try();
+                Js  => self.browser.match({
+                    false => publish(Artifact(
+                        kind: ArtifactKind.Source,
+                        name: "zen.js",
+                        text: emit_js(self.alloc, program).try().view()
+                    )),
+                    true  => {
+                        page = publish(Artifact(kind: ArtifactKind.Source, name: "index.html", text: PAGE)).try();
+                        runtime = publish(Artifact(
+                            kind: ArtifactKind.Source,
+                            name: "runtime.js",
+                            text: emit_runtime(self.alloc).try().view()
+                        )).try();
+                        app = publish(Artifact(
+                            kind: ArtifactKind.Source,
+                            name: "app.js",
+                            text: emit_app(self.alloc, program).try().view()
+                        )).try();
+                        Ok(page + runtime + app)
+                    },
+                }),
+                Asm => refused_by_asm(program).match({
+                    Ok(what) => {
+                        report.fmt("error: unsupported by the asm backend: {}\n", what).try();
                         Ok(1)
                     },
-                    Ok(text)  => publish(Artifact(
-                        kind: ArtifactKind.Source,
-                        name: "zen.s",
-                        text: text.view()
-                    )),
+                    None     => self.publish_assembly(program, report, (artifact) { publish(artifact) }),
                 }),
             }),
+        })
+    }
+
+    publish_assembly = (self: @Self, program: Program, report :: String,
+                        publish: (artifact: Artifact) Res<usize, AllocError>)
+                       Res<usize, AllocError> {
+        self.assembly(program).try().match({
+            None      => {
+                report.add(
+                    "error: the asm backend supports x86_64-linux, aarch64-linux and arm64-darwin targets\n"
+                ).try();
+                Ok(1)
+            },
+            Ok(text)  => publish(Artifact(
+                kind: ArtifactKind.Source,
+                name: "zen.s",
+                text: text.view()
+            )),
         })
     }
 
@@ -262,6 +287,28 @@ COutput = {
             text: out.view()
         ))
     }
+}
+
+// The IR features the assembly renderers do not implement yet, checked
+// before rendering so the program is refused with a reason (IR_ARCHITECTURE
+// §2.3: support boundaries are declared, not discovered).
+refused_by_asm = (program: Program) Res<str> {
+    found: Res<str> ::= None;
+    program.functions.loop((function) {
+        function.slots.loop((ty) {
+            float(ty).then(() { found = Ok("floating-point values"); });
+        });
+        function.blocks.loop((block) {
+            block.code.loop((instruction) {
+                instruction.match({
+                    Host(_) => { found = Ok("JavaScript host calls (js.bind)"); },
+                    Wait(_) => { found = Ok("JavaScript event waits (std.js.wait)"); },
+                    _       => (),
+                });
+            });
+        });
+    });
+    found
 }
 
 // Target selection happens here, at the generation boundary; the renderer

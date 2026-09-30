@@ -8,9 +8,9 @@ asm evaluation true
 asm literal bytes true
 asm shadow true
 c literal paths true
-js wide refused true
-js literal width refused true
-js bool entry refused true
+js wide true
+js literal width true
+js bool entry true
 asm wide true
 asm literal width true
 asm bool entry true

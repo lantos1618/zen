@@ -224,6 +224,10 @@ Assembly = {
                 self.rax_slot = None;
                 self.out.add("    call za_flush\n")
             },
+            // JavaScript-host instructions; `refused_by_asm` rejects such
+            // programs before any renderer runs.
+            Host(_)            => Ok(()),
+            Wait(_)            => Ok(()),
             SysConst(value)    => {
                 self.out.fmt("    movq ${}, %rax\n", constant_value(value.name, Platform.LinuxX86_64)).try();
                 self.store(value.out, "%rax")

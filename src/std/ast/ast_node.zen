@@ -326,6 +326,10 @@ Struct* = {
     native_header* :: Res<str> = None,
     native_symbol* :: Res<str> = None,
     native_record* :: bool = false,
+    // `js.bind(object, {..})`: `native_header` is the JavaScript object path
+    // (`document`, `Element.style`) and the members are host methods and
+    // properties, reached only by the JavaScript backend.
+    native_host* :: bool = false,
 
     has_field* = (self: @Self, name: str) bool {
         self.members.find((m) {

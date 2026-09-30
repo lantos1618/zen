@@ -18,8 +18,8 @@ Checker, DeclId, Def, TyId, Ctx, Inst, decl_at, CheckedCall, TyNamed = sema.sema
 subst = sema.sema
 Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print = gen.gen_ir
 Instruction, Terminator, Convert, Address, Load, Store, CopyMem, StaticBytes = gen.gen_ir
-Write, Stream, TrapKind = gen.gen_ir
-word, integer, signed, same = gen.gen_ir
+Write, Stream, TrapKind, Marshal, HostCall = gen.gen_ir
+word, integer, signed, same, float = gen.gen_ir
 LowerError, unsupported = gen.gen_lower
 machine_op, machine_refusal = gen.gen_ir_machine
 Lowerer, Value, Place, Base, LocalKind, LambdaRef, LoopTarget, Frame, Callee = gen.gen_lower_core
@@ -149,16 +149,41 @@ dot_call_on = (lo :: Lowerer, id: ExprId, c: Call, a: Access, base: Expr, span: 
                 Ok(checked) => checked.declaration.match({ Ok(_) => true, None => false }),
                 None        => false,
             });
+            // A function declared inside a struct and called through the
+            // type (`View.create(a, 16)`): sema records the member's body and
+            // the type that provides it, and there is no receiver.
+            member: Res<CheckedCall> = selected.match({
+                Ok(checked) => checked.body.match({
+                    None    => None,
+                    Ok(_)   => checked.member_provider.match({ Ok(_) => Ok(checked), None => None }),
+                }),
+                None        => None,
+            });
+            host = selected.match({
+                Ok(checked) => host_binding(lo, checked),
+                None        => None,
+            });
             (type_base && !declared).match({
-                // `Type.Variant(payload)` or a construction through a type.
-                true  => {
-                    ty = lo.settled_type(id).try();
-                    s  = lo.shape(ty).try();
-                    s.form.match({
-                        Record(_) => lo.construct_named(ty, c, span),
-                        _         => lo.variant_call(ty, c, a.name.text, span),
-                    })
-                },
+                true  => host.match({
+                  Ok(binding) => lo.host_call(id, c, binding, a.name.text, span),
+                  None        => member.match({
+                    Ok(checked) => {
+                        owner = lo.concrete(checked.member_provider.value_or(lo.unit_ty)).try();
+                        callee = lo.resolve(owner, a.name.text, checked.body, c.args.len, lo.call_inst(checked.inst).try(), None, span).try();
+                        sources = lo.bind_sources(callee.f, c, None, span).try();
+                        lo.invoke(id, callee, sources, c, span)
+                    },
+                    // `Type.Variant(payload)` or a construction through a type.
+                    None        => {
+                        ty = lo.settled_type(id).try();
+                        s  = lo.shape(ty).try();
+                        s.form.match({
+                            Record(_) => lo.construct_named(ty, c, span),
+                            _         => lo.variant_call(ty, c, a.name.text, span),
+                        })
+                    },
+                  }),
+                }),
                 false => {
                     checked = selected.ok_or(unsupported(span, "a call without successful semantic checking")).try();
                     receiver: Res<ExprId> = type_base.match({ true => None, false => Ok(a.base) });
@@ -166,6 +191,123 @@ dot_call_on = (lo :: Lowerer, id: ExprId, c: Call, a: Access, base: Expr, span: 
                 },
             })
         },
+    })
+}
+
+// ---------------------------------------------------------------------
+// JavaScript host calls (`js.bind`, see std.js)
+// ---------------------------------------------------------------------
+
+// The `js.bind` namespace a checked member call goes through, if any.
+host_binding = (lo :: Lowerer, checked: CheckedCall) Res<StructDecl> {
+    checked.member_provider.match({
+        None     => None,
+        Ok(ty)   => lo.check.types.at(ty).match({
+            Named(n) => decl_at(lo.tree, n.decl).match({
+                Ok(d)  => d.kind.match({
+                    Struct(s) => s.native_host.match({ true => Ok(StructDecl(id: n.decl, s: s)), false => None }),
+                    _         => None,
+                }),
+                None   => None,
+            }),
+            _        => None,
+        }),
+    })
+}
+
+// How a value of `ty` crosses into the host; None when it cannot.
+marshal_of = (lo :: Lowerer, ty: TyId) Res<Marshal> {
+    name = lo.prim_name(ty);
+    name.is_empty().match({
+        false => name.match({
+            "str"  => Ok(Marshal.Text),
+            "bool" => Ok(Marshal.Flag),
+            "()"   => Ok(Marshal.Nothing),
+            _      => lo.class_of(ty).match({
+                Ok(class) => (integer(class) || float(class)).match({ true => Ok(Marshal.Number), false => None }),
+                Err(_)    => None,
+            }),
+        }),
+        true  => lo.check.types.at(ty).match({
+            Named(n) => lo.alloc.String("{}.{}", lo.check.world.module_name(n.decl), n.name).match({
+                Ok(q)  => q.view().match({
+                    "std.js.js.Ref"     => Ok(Marshal.Handle),
+                    "std.js.js.Handler" => Ok(Marshal.Handler),
+                    _                   => None,
+                }),
+                Err(_) => None,
+            }),
+            _        => None,
+        }),
+    })
+}
+
+// `Object.member(args)`: arguments in written order, each converted to its
+// declared parameter type and then to its boundary form. A `Ref` or
+// `Handler` crosses as its u32 id; a returned `Ref` is rebuilt from one.
+host_call = (lo :: Lowerer, id: ExprId, c: Call, binding: StructDecl, name: str, span: Span)
+            Res<Value, LowerError> {
+    found: Res<usize> ::= None;
+    binding.s.members.loop((h, i, m) {
+        m.kind.match({ Function(f) => f.name.text.eq(name), _ => false }).then(() { found = Ok(i); });
+    });
+    index = found.ok_or(unsupported(span, "a js.bind member that is not declared")).try();
+    f = binding.s.members.get(index).ok_or(unsupported(span, "a js.bind member")).try().kind.match({
+        Function(f) => Ok(f),
+        _           => None,
+    }).ok_or(unsupported(span, "a js.bind member that is not a function")).try();
+    callee = Callee(
+        f: f,
+        owner: binding.id,
+        member: Ok(index),
+        module: binding.id.module.to_usize(),
+        inst: lo.alloc.Inst(),
+        self_ty: None,
+        generic_owner: None
+    );
+    receiver = f.params.get(0).match({ Ok(p) => p.name.text.eq("this"), None => false });
+    (c.args.len == f.params.len).ensure(unsupported(span, "a js.bind call with omitted or named arguments")).try();
+    args ::= lo.alloc.Vec<usize>();
+    kinds ::= lo.alloc.Vec<Marshal>();
+    c.args.loop((h, i, a) {
+        param = f.params.get(i).ok_or(unsupported(a.span, "more arguments than parameters")).try();
+        written = param.type.ok_or(unsupported(a.span, "an untyped js.bind parameter")).try();
+        ty = lo.callee_type(callee, written).try();
+        kind = marshal_of(lo, ty).ok_or(unsupported(a.span, lo.described("a type that cannot cross into JavaScript", ty))).try();
+        value = lo.expr_as(a.value, ty).try();
+        slot = kind.match({
+            Handle  => lo.read(lo.field_place(lo.spill(value), "id", a.span).try()).try().slot,
+            Handler => lo.read(lo.field_place(lo.spill(value), "id", a.span).try()).try().slot,
+            _       => value.slot,
+        });
+        args.add(slot).try(LowerError.OutOfMemory);
+        kinds.add(kind).try(LowerError.OutOfMemory);
+    });
+    result_ty = lo.type_of(id).try();
+    result = marshal_of(lo, result_ty).ok_or(unsupported(span, lo.described("a result that cannot cross from JavaScript", result_ty))).try();
+    (result.match({ Text => false, Handler => false, _ => true })).ensure(unsupported(span, "a js.bind result of this type")).try();
+    host_out = result.match({
+        Handle => lo.slot_of(Scalar.U32).try(),
+        _      => lo.temp(result_ty).try().slot,
+    });
+    lo.add(Instruction.Host(HostCall(
+        out: host_out,
+        object: binding.s.native_header.value_or(""),
+        member: name,
+        receiver: receiver,
+        args: args,
+        marshal: kinds,
+        result: result
+    ))).try();
+    result.match({
+        Handle => {
+            out = lo.temp(result_ty).try();
+            at = lo.slot_of(Scalar.Ptr).try();
+            lo.add(Instruction.AddressOf(Address(out: at, slot: out.slot))).try();
+            lo.add(Instruction.StoreValue(Store(base: at, offset: 0, value: host_out))).try();
+            Ok(out)
+        },
+        _      => Ok(Value(slot: host_out, ty: result_ty)),
     })
 }
 
@@ -866,6 +1008,15 @@ intrinsic = (lo :: Lowerer, id: ExprId, callee: Callee, sources: Vec<Source>, c:
                 "std.env.env"               => lo.env_call(id, name, c, sources, span),
                 "std.mem.mem_arena"         => lo.mem_call(id, name, sources, span),
                 "std.sys.sys"               => lo.sys_call(id, name, sources, span),
+                // `std.js.wait()`: suspend until an event handler fires.
+                "std.js.js"                 => name.eq("wait").match({
+                    true  => {
+                        out = lo.temp(lo.type_of(id).try()).try();
+                        lo.add(Instruction.Wait(out.slot)).try();
+                        Ok(out)
+                    },
+                    false => Err(unsupported(span, "this std.js operation")),
+                }),
                 "std.text.text_string"      => lo.string_call(id, name, c, sources, span),
                 "std.text.text_fmt"         => name.eq("fmt").match({
                     // `fmt(out :: Sink, fmt, args..)`: formatting through a Sink.
@@ -1837,6 +1988,8 @@ print_value* = (lo :: Lowerer, value: Value, to: FmtTo, span: Span) Res<(), Lowe
             true  => lo.write_str(place, value),
             false => primitive.match({
                 true  => {
+                    // `add_f64` has no Zen body yet (C formats with %g).
+                    (!float(class)).ensure(unsupported(span, "formatting an f64 into text")).try();
                     sink = lo.sink_for_place(place, span).try();
                     helper = class.match({
                         Bool => "add_bool",

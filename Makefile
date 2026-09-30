@@ -42,7 +42,7 @@ J       ?= $(shell nproc 2>/dev/null || echo 4)
 CACHE   ?= $(shell command -v ccache 2>/dev/null)
 ZCC      = $(CACHE) $(CC)
 
-.PHONY: archcheck reviewcheck projectcheck lspcheck all check build dev-build dev-check dev-run bootstrap buildcheck runnercheck editorcheck seed test verify differential runtimecheck warnings lint parse cap dupcomments faults lextile determinism fixpoint grammar fmt asan ubsan leak profile clean clean-obj clean-reports clean-all help
+.PHONY: jscheck archcheck reviewcheck projectcheck lspcheck all check build dev-build dev-check dev-run bootstrap buildcheck runnercheck editorcheck seed test verify differential runtimecheck warnings lint parse cap dupcomments faults lextile determinism fixpoint grammar fmt asan ubsan leak profile clean clean-obj clean-reports clean-all help
 
 # These gates share ./zen, build/, and grammar/zen.so. Keep their dependency
 # graphs serial even when an operator invokes `make -j verify`.
@@ -143,6 +143,12 @@ seed: build
 test: build lint parse cap dupcomments faults lextile
 	$(PY) tests/run.py --zen ./zen --cc "$(CC)" --cc-cache "$(CACHE)" --jobs "$(TEST_J)" $(TEST_CACHE_ARGS)
 
+## jscheck: every corpus program through --backend js under Node must match the
+## C oracle, except the shrink-only list in tests/js/known_gaps.txt. The Zen
+## runner prints a notice and passes when node is not on PATH.
+jscheck: build
+	./zen run tests/js -- ./zen --gaps tests/js/known_gaps.txt
+
 ## lspcheck: real-process protocol, document, and lifecycle regressions.
 lspcheck: build
 	$(PY) tests/quality/lsp_protocol.py --zen ./zen
@@ -153,7 +159,7 @@ lspcheck: build
 ## are built once per invocation, then formatting and determinism inspect the
 ## same compiler that ran the test suite.
 verify: override TEST_CACHE_ARGS := --result-cache "$(TEST_RESULTS)" --refresh-result-cache
-verify: warnings nativecheck test archcheck fmt determinism fixpoint mutatecheck differential runtimecheck ownershipcheck actorcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck ctcheck
+verify: warnings nativecheck jscheck test archcheck fmt determinism fixpoint mutatecheck differential runtimecheck ownershipcheck actorcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck ctcheck
 
 .PHONY: ctcheck
 ## ctcheck: the constant-time tooling's self-test (tools/ct/check.zen): the

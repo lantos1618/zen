@@ -1,0 +1,342 @@
+# Known JavaScript-backend gaps: corpus tests whose JS behaviour does not
+# yet match the C oracle. Ratchet: the gate fails on a failure not listed
+# here and on a listed test that passes. Regenerate with --shrink; it only
+# removes entries. Each comment is the verdict when last regenerated.
+tests/corpus/actor/a_generic_actor_matches_a_bound_methods_res # UNSUPPORTED: a_generic_actor_matches_a_bound_methods_res.zen:19:9: error: unsupported by this backend: this envir
+tests/corpus/actor/a_generic_actors_bound_close_calls_the_bound_impl # UNSUPPORTED: a_generic_actors_bound_close_calls_the_bound_impl.zen:27:9: error: unsupported by this backend: this
+tests/corpus/actor/dynamic_str_is_copied # UNSUPPORTED: dynamic_str_is_copied.zen:22:14: error: unsupported by this backend: this environment operation
+tests/corpus/actor/generic_spawn_settles_state # UNSUPPORTED: generic_spawn_settles_state.zen:25:13: error: unsupported by this backend: this environment operatio
+tests/corpus/actor/multiple_actor_types_keep_distinct_c_names # UNSUPPORTED: multiple_actor_types_keep_distinct_c_names.zen:14:14: error: unsupported by this backend: this envir
+tests/corpus/actor/oversized_payload_is_rejected # UNSUPPORTED: oversized_payload_is_rejected.zen:11:16: error: unsupported by this backend: this environment operat
+tests/corpus/actor/safe_nested_payload_crosses_actor # UNSUPPORTED: safe_nested_payload_crosses_actor.zen:23:15: error: unsupported by this backend: a type sema did not
+tests/corpus/actor/send_phase_keeps_message_shapes # UNSUPPORTED: send_phase_keeps_message_shapes.zen:24:13: error: unsupported by this backend: this environment oper
+tests/corpus/actor/surface_is_usable # UNSUPPORTED: surface_is_usable.zen:34:15: error: unsupported by this backend: this environment operation
+tests/corpus/actor/task_summary/main # UNSUPPORTED: main.zen:68:14: error: unsupported by this backend: this environment operation
+tests/corpus/arrays/filter_and_map_settle_the_arrays_element/main # UNSUPPORTED: std/core/loop/loop_find.zen:54:50: error: unsupported by this backend: a loop handle used as a value
+tests/corpus/ast/impl_queries_distinguish_values_and_hooks # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/ast/structural_walk_handles_deep_trees # UNSUPPORTED: std/ast/ast_walk.zen:138:5: error: unsupported by this backend: a value conversion this backend does
+tests/corpus/ast/structural_walk_preserves_owners # UNSUPPORTED: std/ast/ast_walk.zen:138:5: error: unsupported by this backend: a value conversion this backend does
+tests/corpus/backends/c_ir_pilot/main # UNSUPPORTED: main.zen:4:22: nothing is at that path: tried `zen/zen_build.zen` and `zen/zen_build/zen_build.zen`
+tests/corpus/casts-conversions/float_narrowing_rounds_and_exact_conversions_check/main # UNSUPPORTED: main.zen:24:30: error: unsupported by this backend: f32 values
+tests/corpus/casts-conversions/float_widening_is_exact/main # UNSUPPORTED: :0:0: error: unsupported by this backend: f32 values
+tests/corpus/cli/a_broken_import_walks_no_phantom_path/main # UNSUPPORTED: main.zen:15:18: construction has a surplus positional argument: `build` has no storage seat left
+tests/corpus/cli/backend_selection_is_explicit/main # UNSUPPORTED: main.zen:5:9: construction has a surplus positional argument: `cli` has no storage seat left
+tests/corpus/cli/build_plan_records_graph/main # UNSUPPORTED: main.zen:1:9: nothing is at that path: tried `zen/zen_build.zen` and `zen/zen_build/zen_build.zen`
+tests/corpus/cli/build_plan_selects_backend/main # UNSUPPORTED: main.zen:1:9: nothing is at that path: tried `zen/zen_build.zen` and `zen/zen_build/zen_build.zen`
+tests/corpus/cli/build_puts_every_module_in_one_tree/main # UNSUPPORTED: main.zen:34:12: nothing is at that path: tried `zen/zen_path.zen` and `zen/zen_path/zen_path.zen`
+tests/corpus/cli/build_walks_a_module_alias/main # UNSUPPORTED: main.zen:41:18: construction has a surplus positional argument: `build` has no storage seat left
+tests/corpus/cli/build_walks_a_root_it_is_given/main # UNSUPPORTED: main.zen:17:18: construction has a surplus positional argument: `build` has no storage seat left
+tests/corpus/cli/c_import_clang_ast_translation # UNSUPPORTED: c_import_clang_ast_translation.zen:1:17: nothing is at that path: tried `zen/zen_c_translate.zen` an
+tests/corpus/cli/c_import_request_identity # UNSUPPORTED: c_import_request_identity.zen:5:11: nothing is at that path: tried `zen/zen_c_import.zen` and `zen/z
+tests/corpus/cli/c_import_translation_attaches # UNSUPPORTED: c_import_translation_attaches.zen:3:27: nothing is at that path: tried `zen/zen_c_import.zen` and `z
+tests/corpus/cli/check_validates_without_emission/main # UNSUPPORTED: main.zen:1:14: nothing is at that path: tried `zen.zen` and `zen/zen.zen`
+tests/corpus/cli/cli_build_args_are_validated_once # UNSUPPORTED: cli_build_args_are_validated_once.zen:4:12: nothing is at that path: tried `zen.zen` and `zen/zen.ze
+tests/corpus/cli/cli_reads_an_explicit_entry # UNSUPPORTED: cli_reads_an_explicit_entry.zen:22:12: nothing is at that path: tried `zen.zen` and `zen/zen.zen`
+tests/corpus/cli/project_backend_recipes/main # UNSUPPORTED: main.zen:1:19: nothing is at that path: tried `zen/zen_project.zen` and `zen/zen_project/zen_project
+tests/corpus/cli/project_commands_start_at_build_zen # UNSUPPORTED: project_commands_start_at_build_zen.zen:3:12: nothing is at that path: tried `zen.zen` and `zen/zen.
+tests/corpus/cli/project_test_targets/main # UNSUPPORTED: main.zen:1:19: nothing is at that path: tried `zen/zen_project.zen` and `zen/zen_project/zen_project
+tests/corpus/cli/value_flags_do_not_swallow_options # UNSUPPORTED: value_flags_do_not_swallow_options.zen:5:12: nothing is at that path: tried `zen.zen` and `zen/zen.z
+tests/corpus/closures-capture/a_mutation_before_defer_is_invisible/main # UNSUPPORTED: main.zen:17:46: error: unsupported by this backend: an expression without a checked type
+tests/corpus/closures-capture/b_two_writers_one_snapshot_each/main # UNSUPPORTED: main.zen:22:13: error: unsupported by this backend: an expression without a checked type
+tests/corpus/closures-capture/c_byref_param_capture_aliases_the_caller/main # UNSUPPORTED: main.zen:30:13: error: unsupported by this backend: this expression in a native executable
+tests/corpus/closures-capture/d_capture_walk_descends_nested_bodies/main # UNSUPPORTED: main.zen:24:9: error: unsupported by this backend: an expression without a checked type
+tests/corpus/closures-capture/e_shadowing_bind_is_not_a_capture/main # UNSUPPORTED: main.zen:9:34: error: unsupported by this backend: an expression without a checked type
+tests/corpus/closures-capture/g_inner_block_snapshot_outer_frame/main # UNSUPPORTED: main.zen:23:53: error: unsupported by this backend: an expression without a checked type
+tests/corpus/closures-capture/h_lambda_argument_reads_the_live_binding/main # UNSUPPORTED: main.zen:24:46: error: unsupported by this backend: an expression without a checked type
+tests/corpus/closures-capture/i_local_function_reads_the_live_frame/main # UNSUPPORTED: main.zen:16:5: error: unsupported by this backend: nested declarations
+tests/corpus/closures-capture/j_local_function_try_returns_from_its_writer/main # UNSUPPORTED: main.zen:31:5: error: unsupported by this backend: nested declarations
+tests/corpus/codegen/a_nested_block_is_the_blocks_value # UNSUPPORTED: :0:0: error: unsupported by this backend: a value conversion this backend does not model (`()` to `i
+tests/corpus/codegen/a_recorded_call_never_falls_back_to_another_declaration # UNSUPPORTED: a_recorded_call_never_falls_back_to_another_declaration.zen:4:45: nothing is at that path: tried `se
+tests/corpus/codegen/a_unit_try_in_tail_position_builds_its_res/main # UNSUPPORTED: main.zen:23:9: error: unsupported by this backend: this expression in a native executable
+tests/corpus/codegen/byte_order_reads_and_writes_round_trip # UNSUPPORTED: byte_order_reads_and_writes_round_trip.zen:8:22: error: unsupported by this backend: this pointer op
+tests/corpus/codegen/c_abi_integer_spelling # UNSUPPORTED: c_abi_integer_spelling.zen:23:30: error: unsupported by this backend: the compiler-provided operatio
+tests/corpus/codegen/call_effect_summaries_reuse_completed_subtrees # UNSUPPORTED: call_effect_summaries_reuse_completed_subtrees.zen:4:15: nothing is at that path: tried `gen/gen_c/g
+tests/corpus/codegen/field_defaults # UNSUPPORTED: field_defaults.zen:100:29: error: unsupported by this backend: a variant of a type without alternati
+tests/corpus/codegen/forward_types # UNSUPPORTED: forward_types.zen:59:9: error: unsupported by this backend: create without an element type
+tests/corpus/codegen/generic_enum_helper_returns_each_instantiation # UNSUPPORTED: :0:0: error: unsupported by this backend: a value conversion this backend does not model (`%T@generi
+tests/corpus/codegen/generic_method_literal_defaults # UNSUPPORTED: generic_method_literal_defaults.zen:5:9: error: unsupported by this backend: a member without a body
+tests/corpus/codegen/named_call_dispatch_keeps_its_precedence # UNSUPPORTED: named_call_dispatch_keeps_its_precedence.zen:17:5: error: unsupported by this backend: alternatives 
+tests/corpus/codegen/native_constants_in_different_functions_keep_their_own_values # UNSUPPORTED: native_constants_in_different_functions_keep_their_own_values.zen:17:18: error: unsupported by this 
+tests/corpus/codegen/nested_capability_receiver_dispatches/main # UNSUPPORTED: main.zen:25:15: error: unsupported by this backend: this environment operation
+tests/corpus/codegen/struct_return_behavior # UNSUPPORTED: struct_return_behavior.zen:44:14: error: unsupported by this backend: this environment operation
+tests/corpus/codegen/type_qualified_methods_use_explicit_receivers # UNSUPPORTED: type_qualified_methods_use_explicit_receivers.zen:11:5: error: unsupported by this backend: alternat
+tests/corpus/codegen/unit_allocation_has_a_c_object_size # UNSUPPORTED: unit_allocation_has_a_c_object_size.zen:2:9: error: unsupported by this backend: create without an e
+tests/corpus/codegen/unit_pointer_is_an_opaque_handle # UNSUPPORTED: unit_pointer_is_an_opaque_handle.zen:16:5: error: unsupported by this backend: the compiler-provided
+tests/corpus/codegen/vararg_after_unit_omits_the_erased_argument # UNSUPPORTED: vararg_after_unit_omits_the_erased_argument.zen:7:33: error: unsupported by this backend: more argum
+tests/corpus/codegen/variant_call_settles_its_enum # UNSUPPORTED: :0:0: error: unsupported by this backend: a value conversion this backend does not model (`%T@varian
+tests/corpus/constants/module_qualified_constant_reads_the_export/main # UNSUPPORTED: main.zen:19:22: error: unsupported by this backend: a variant of a type without alternatives (`str`)
+tests/corpus/deep-expressions/nested_enum_tags_survive_twenty_wraps/main # UNSUPPORTED: main.zen:45:15: error: unsupported by this backend: create without an element type
+tests/corpus/deep-expressions/ten_then_links_rewrap_each_value/main # UNSUPPORTED: main.zen:18:19: error: unsupported by this backend: a member without a body this backend can find (`
+tests/corpus/enum-basic/two_instantiations_answer_differently # UNSUPPORTED: :0:0: error: unsupported by this backend: a value conversion this backend does not model (`%T@two_in
+tests/corpus/enums/represented_enum_round_trips # UNSUPPORTED: represented_enum_round_trips.zen:5:15: error: unsupported by this backend: an unknown variant
+tests/corpus/env/args_answer_is_typed_at_the_call # UNSUPPORTED: args_answer_is_typed_at_the_call.zen:18:19: error: unsupported by this backend: this environment ope
+tests/corpus/env/args_fills_a_schema # UNSUPPORTED: args_fills_a_schema.zen:47:10: error: unsupported by this backend: this environment operation
+tests/corpus/env/args_missing_names_the_field # UNSUPPORTED: args_missing_names_the_field.zen:37:10: error: unsupported by this backend: this environment operati
+tests/corpus/env/args_parse_names_the_field # UNSUPPORTED: args_parse_names_the_field.zen:37:10: error: unsupported by this backend: this environment operation
+tests/corpus/env/args_surplus_word_is_parse_of_the_last_positional # UNSUPPORTED: args_surplus_word_is_parse_of_the_last_positional.zen:37:10: error: unsupported by this backend: thi
+tests/corpus/env/args_unknown_flag_is_parse_of_the_word # UNSUPPORTED: args_unknown_flag_is_parse_of_the_word.zen:37:10: error: unsupported by this backend: this environme
+tests/corpus/env/clock_reads_are_two_authorities # UNSUPPORTED: clock_reads_are_two_authorities.zen:25:5: error: unsupported by this backend: this environment opera
+tests/corpus/env/fs_cwd_respects_allocator # UNSUPPORTED: fs_cwd_respects_allocator.zen:14:5: error: unsupported by this backend: this environment operation
+tests/corpus/env/fs_cwd_uses_process_directory # UNSUPPORTED: fs_cwd_uses_process_directory.zen:5:13: error: unsupported by this backend: this environment operati
+tests/corpus/env/fs_lock_excludes_until_released # UNSUPPORTED: fs_lock_excludes_until_released.zen:27:15: error: unsupported by this backend: this environment oper
+tests/corpus/env/fs_lock_missing_parent_names_the_reason # UNSUPPORTED: fs_lock_missing_parent_names_the_reason.zen:8:13: error: unsupported by this backend: this environme
+tests/corpus/env/fs_lock_survives_a_move_across_frames # UNSUPPORTED: fs_lock_survives_a_move_across_frames.zen:23:15: error: unsupported by this backend: this environmen
+tests/corpus/env/fs_mkdir_creates_once # UNSUPPORTED: fs_mkdir_creates_once.zen:9:5: error: unsupported by this backend: this environment operation
+tests/corpus/env/fs_read_special_file_with_zero_stat_size/main # FAIL: exit 1 (expected 0) stdout differs (0 bytes, expected 14) 
+tests/corpus/env/fs_remove_directory_stays_isdir/main # UNSUPPORTED: main.zen:25:5: error: unsupported by this backend: this environment operation
+tests/corpus/env/fs_remove_true_when_something_was_there # UNSUPPORTED: fs_remove_true_when_something_was_there.zen:17:5: error: unsupported by this backend: this environme
+tests/corpus/env/proc_arguments # UNSUPPORTED: std/proc/proc.zen:241:16: error: unsupported by this backend: the compiler-provided operation `std.p
+tests/corpus/env/proc_stream_errors # UNSUPPORTED: proc_stream_errors.zen:25:5: error: unsupported by this backend: alternatives of a value without the
+tests/corpus/env/proc_streams_before_exit # UNSUPPORTED: proc_streams_before_exit.zen:25:23: error: unsupported by this backend: a call without successful se
+tests/corpus/env/thread_periodic_worker # UNSUPPORTED: thread_periodic_worker.zen:14:19: error: unsupported by this backend: this environment operation
+tests/corpus/env/threads_sleep_returns_and_continues # UNSUPPORTED: threads_sleep_returns_and_continues.zen:6:5: error: unsupported by this backend: this environment op
+tests/corpus/env/threads_spawn_joins_two_bodies # UNSUPPORTED: threads_spawn_joins_two_bodies.zen:11:33: error: unsupported by this backend: this environment opera
+tests/corpus/errors-try/fallible_inline_helper_in_thread/main # UNSUPPORTED: main.zen:11:14: error: unsupported by this backend: this environment operation
+tests/corpus/errors-try/inlined_helpers_keep_lexical_returns/main # UNSUPPORTED: main.zen:96:9: error: unsupported by this backend: an expression without a checked type
+tests/corpus/errors-try/try_on_an_all_ok_match_never_widens/ # UNSUPPORTED: main.zen:20:5: error: unsupported by this backend: an unknown variant (`Res!i32,main.Fail|main.Kind|
+tests/corpus/errors-variant/err_binder_arm_joins_its_set_into_the_match/ # FAIL: stdout differs (18 bytes, expected 42) 
+tests/corpus/file-io/posix_stream/main # UNSUPPORTED: main.zen:29:23: error: unsupported by this backend: a call without successful semantic checking
+tests/corpus/fmt/a_comment_between_items_stays_put # UNSUPPORTED: a_comment_between_items_stays_put.zen:15:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/f
+tests/corpus/fmt/a_file_that_does_not_parse_is_left_alone # UNSUPPORTED: a_file_that_does_not_parse_is_left_alone.zen:14:10: nothing is at that path: tried `fmt/fmt.zen` and
+tests/corpus/fmt/a_formatted_file_says_what_it_said # UNSUPPORTED: a_formatted_file_says_what_it_said.zen:32:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/
+tests/corpus/fmt/a_list_just_under_the_width_stays_packed # UNSUPPORTED: a_list_just_under_the_width_stays_packed.zen:13:10: nothing is at that path: tried `fmt/fmt.zen` and
+tests/corpus/fmt/a_long_argument_list_breaks_one_per_line # UNSUPPORTED: a_long_argument_list_breaks_one_per_line.zen:25:10: nothing is at that path: tried `fmt/fmt.zen` and
+tests/corpus/fmt/a_long_parameter_list_breaks_one_per_line # UNSUPPORTED: a_long_parameter_list_breaks_one_per_line.zen:44:10: nothing is at that path: tried `fmt/fmt.zen` an
+tests/corpus/fmt/a_long_union_breaks_one_variant_per_line # UNSUPPORTED: a_long_union_breaks_one_variant_per_line.zen:18:10: nothing is at that path: tried `fmt/fmt.zen` and
+tests/corpus/fmt/a_nested_list_breaks_only_where_it_must # UNSUPPORTED: a_nested_list_breaks_only_where_it_must.zen:33:10: nothing is at that path: tried `fmt/fmt.zen` and 
+tests/corpus/fmt/an_array_literal_fills_its_lines # UNSUPPORTED: an_array_literal_fills_its_lines.zen:42:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/fm
+tests/corpus/fmt/arms_line_up_on_their_arrows # UNSUPPORTED: arms_line_up_on_their_arrows.zen:43:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/fmt/fm
+tests/corpus/fmt/bindings_line_up_on_their_operators # UNSUPPORTED: bindings_line_up_on_their_operators.zen:33:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt
+tests/corpus/fmt/formatting_twice_moves_nothing # UNSUPPORTED: formatting_twice_moves_nothing.zen:28:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/fmt/
+tests/corpus/fmt/unit_return_bodies # UNSUPPORTED: unit_return_bodies.zen:1:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/fmt/fmt.zen`
+tests/corpus/fmt/unit_return_comments # UNSUPPORTED: unit_return_comments.zen:1:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/fmt/fmt.zen`
+tests/corpus/fmt/unit_return_preserved # UNSUPPORTED: unit_return_preserved.zen:1:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/fmt/fmt.zen`
+tests/corpus/fmt/unrelated_lists_keep_their_layout_at_scale # UNSUPPORTED: unrelated_lists_keep_their_layout_at_scale.zen:1:10: nothing is at that path: tried `fmt/fmt.zen` an
+tests/corpus/gen/asm_renderer/main # UNSUPPORTED: main.zen:8:114: nothing is at that path: tried `gen/gen_ir.zen` and `gen/gen_ir/gen_ir.zen`
+tests/corpus/gen/asm_traps/main # UNSUPPORTED: main.zen:9:81: nothing is at that path: tried `gen/gen_ir.zen` and `gen/gen_ir/gen_ir.zen`
+tests/corpus/gen/ir_verifier/main # UNSUPPORTED: main.zen:1:57: nothing is at that path: tried `gen/gen_ir.zen` and `gen/gen_ir/gen_ir.zen`
+tests/corpus/gen/js_renderer/main # UNSUPPORTED: main.zen:4:73: nothing is at that path: tried `gen/gen_ir.zen` and `gen/gen_ir/gen_ir.zen`
+tests/corpus/gen/machine_refused/main # UNSUPPORTED: main.zen:1:9: nothing is at that path: tried `zen/zen_build.zen` and `zen/zen_build/zen_build.zen`
+tests/corpus/gen/machine_sha_vocabulary # UNSUPPORTED: machine_sha_vocabulary.zen:3:31: nothing is at that path: tried `gen/gen_ir_machine.zen` and `gen/ge
+tests/corpus/gen/scalar_backends/main # UNSUPPORTED: main.zen:1:22: nothing is at that path: tried `zen/zen_build.zen` and `zen/zen_build/zen_build.zen`
+tests/corpus/gen_zen/a_closure_row_cannot_be_read_as_storage/main # UNSUPPORTED: main.zen:5:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/backend_lookup_growth/main # UNSUPPORTED: main.zen:7:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/backend_records_survive_allocation_refusal/main # UNSUPPORTED: main.zen:2:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/bodyless_free_function_is_extern/main # UNSUPPORTED: main.zen:13:11: error: unsupported by this backend: the compiler-provided operation `main.isdigit`
+tests/corpus/gen_zen/c_abi_primitives_keep_c_spelling/main # UNSUPPORTED: main.zen:1:10: nothing is at that path: tried `gen/gen_c.zen` and `gen/gen_c/gen_c.zen`
+tests/corpus/gen_zen/c_binding_header_owns_declarations/main # UNSUPPORTED: main.zen:8:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/c_binding_opaque_types_keep_native_names/main # UNSUPPORTED: main.zen:8:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/c_binding_rejects_an_unsafe_header/main # UNSUPPORTED: main.zen:7:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/c_binding_rejects_invalid_opaque_types/main # UNSUPPORTED: main.zen:8:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/emits_a_c_program/main # UNSUPPORTED: main.zen:23:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/gen_zen/emitter_preserves_blank_lines_and_stable_order/main # UNSUPPORTED: main.zen:1:15: nothing is at that path: tried `gen/gen_emit.zen` and `gen/gen_emit/gen_emit.zen`
+tests/corpus/gen_zen/ffi_lowers_a_bodyless_function/main # UNSUPPORTED: main.zen:8:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/lowers_the_loop_intrinsic/main # UNSUPPORTED: main.zen:13:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/gen_zen/mangles_by_length_prefix/main # UNSUPPORTED: main.zen:12:42: nothing is at that path: tried `gen/gen_name.zen` and `gen/gen_name/gen_name.zen`
+tests/corpus/gen_zen/monomorphises_a_generic/main # UNSUPPORTED: main.zen:30:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/gen_zen/range_literal_bound_receiver/main # UNSUPPORTED: main.zen:4:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/reports_what_it_cannot_lower/main # UNSUPPORTED: main.zen:18:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/gen_zen/symbol_map_keeps_only_source_functions/main # UNSUPPORTED: main.zen:7:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/gen_zen/union_reading_is_per_declaration/main # UNSUPPORTED: main.zen:12:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/gen_zen/unit_pointer_has_no_void_element_c/main # UNSUPPORTED: main.zen:7:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/generics/inline_method_keeps_its_type_arguments/main # UNSUPPORTED: main.zen:8:20: error: unsupported by this backend: a construction of a non-record type
+tests/corpus/impl-traits/dispatch_picks_each_type_own_impl/main # UNSUPPORTED: main.zen:18:42: error: unsupported by this backend: a field of a value without record layout
+tests/corpus/imports/imported_constant_folds_through_both_spellings/main # UNSUPPORTED: main.zen:8:19: error: unsupported by this backend: a variant of a type without alternatives (`u64`)
+tests/corpus/json/escape_tables_agree # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/json/finished_decoders_refuse_every_feed # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/json/object_member_inspection # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/json/read_and_stream_reject_raw_controls # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/json/streaming_decoder_crosses_chunks # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/json/streaming_decoder_refuses_incomplete_json # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/json/tree_accessors_default # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/json/typed_record_to_json # UNSUPPORTED: typed_record_to_json.zen:19:15: error: unsupported by this backend: the compiler-provided operation 
+tests/corpus/lex/char_literal_vtab_formfeed # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/lex/diagnostic_allocation_failures_propagate # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/lex/long_single_line # UNSUPPORTED: 
+tests/corpus/lex_zen/big_input/ # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/lex_zen/comments/ # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/lex_zen/edges/ # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/lex_zen/faults/ # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/lex_zen/kind_equality/ # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/lex_zen/literals/ # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/lex_zen/numbers/ # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/lex_zen/spans/ # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/lex_zen/token_kinds/ # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/loop-basic/empty_collections_run_zero_passes/main # UNSUPPORTED: main.zen:40:5: error: unsupported by this backend: folding loops
+tests/corpus/loop-basic/fold_threads_acc_by_value_through_the_passes/main # UNSUPPORTED: main.zen:17:5: error: unsupported by this backend: folding loops
+tests/corpus/loop-basic/single_element_collections_walk_exactly_once/main # UNSUPPORTED: main.zen:29:5: error: unsupported by this backend: folding loops
+tests/corpus/loop-nested/inner_break_value_not_outer_type/main # UNSUPPORTED: main.zen:23:13: error: unsupported by this backend: folding loops
+tests/corpus/loop-nested/nested_folds_break_carries_to_right_loop/main # UNSUPPORTED: main.zen:35:5: error: unsupported by this backend: folding loops
+tests/corpus/lsp/a_build_zen_marks_the_root/main # UNSUPPORTED: main.zen:38:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/a_missing_module_is_named/main # UNSUPPORTED: main.zen:33:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/a_query_shares_the_settles_build/main # UNSUPPORTED: main.zen:37:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/a_session_is_answered_frame_by_frame/main # UNSUPPORTED: main.zen:24:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/a_watched_dependency_retires_the_build/main # UNSUPPORTED: main.zen:6:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/auto_import_offers_undefined_name/main # UNSUPPORTED: main.zen:33:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/closing_a_document_retires_its_overlay/main # UNSUPPORTED: main.zen:7:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/colour_comes_from_the_build/main # UNSUPPORTED: main.zen:45:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/colour_comes_from_the_lexer/main # UNSUPPORTED: main.zen:52:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/completion_lists_an_imported_types_members/main # UNSUPPORTED: main.zen:19:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/completion_lists_members_after_a_dot/main # UNSUPPORTED: main.zen:23:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/completion_narrows_the_scope_by_prefix/main # UNSUPPORTED: main.zen:22:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/definition_jumps_across_modules/main # UNSUPPORTED: main.zen:28:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/definition_jumps_into_a_variants_payload/main # UNSUPPORTED: main.zen:27:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/definition_jumps_within_a_module/main # UNSUPPORTED: main.zen:26:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/definition_uses_src_below_build_marker/main # UNSUPPORTED: main.zen:4:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/lsp/diagnostics_are_written_as_the_protocol_spells_them # UNSUPPORTED: diagnostics_are_written_as_the_protocol_spells_them.zen:44:17: nothing is at that path: tried `lsp/l
+tests/corpus/lsp/diagnostics_publish_and_clear/main # UNSUPPORTED: main.zen:8:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/document_symbol_lists_the_declarations/main # UNSUPPORTED: main.zen:19:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/document_symbol_skips_a_name_not_yet_typed/main # UNSUPPORTED: main.zen:12:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/document_uris_name_local_paths # UNSUPPORTED: document_uris_name_local_paths.zen:7:29: nothing is at that path: tried `lsp/lsp_uri.zen` and `lsp/l
+tests/corpus/lsp/every_query_refuses_a_uri_never_opened/main # UNSUPPORTED: main.zen:24:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/explicit_source_roots/main # UNSUPPORTED: main.zen:1:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/formatting_is_one_whole_document_edit/ # UNSUPPORTED: main.zen:29:10: nothing is at that path: tried `fmt/fmt.zen` and `fmt/fmt/fmt.zen`
+tests/corpus/lsp/formatting_refuses_a_buffer_with_a_hole/ # UNSUPPORTED: main.zen:30:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/frames_arrive_over_stdin # UNSUPPORTED: frames_arrive_over_stdin.zen:25:22: nothing is at that path: tried `lsp/lsp_frame.zen` and `lsp/lsp_
+tests/corpus/lsp/hover_answers_a_primitive_type/main # UNSUPPORTED: main.zen:6:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/hover_answers_an_imported_name/main # UNSUPPORTED: main.zen:8:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/hover_answers_at_a_declaration/main # UNSUPPORTED: main.zen:41:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/hover_answers_inside_a_generic_body/ # UNSUPPORTED: main.zen:18:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/hover_streams_shapes/main # UNSUPPORTED: main.zen:5:12: nothing is at that path: tried `lsp/lsp_hover.zen` and `lsp/lsp_hover/lsp_hover.zen`
+tests/corpus/lsp/idle_queries_do_not_grow_session/main # UNSUPPORTED: main.zen:2:10: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/import_queries_reuse_checked_graph/main # UNSUPPORTED: main.zen:3:23: nothing is at that path: tried `lsp/lsp_diag.zen` and `lsp/lsp_diag/lsp_diag.zen`
+tests/corpus/lsp/initialize_then_idle_sends_nothing # UNSUPPORTED: initialize_then_idle_sends_nothing.zen:23:17: nothing is at that path: tried `lsp/lsp_serve.zen` and
+tests/corpus/lsp/json_round_trips_and_rejects/main # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/lsp/method_types_keep_semantic_colours/main # UNSUPPORTED: main.zen:6:38: nothing is at that path: tried `lsp/lsp_query.zen` and `lsp/lsp_query/lsp_query.zen`
+tests/corpus/lsp/observed_types_survive_unknown_queries # UNSUPPORTED: observed_types_survive_unknown_queries.zen:1:20: nothing is at that path: tried `lsp/lsp_query.zen` 
+tests/corpus/lsp/patched_completion_uses_all_open_buffers/main # UNSUPPORTED: main.zen:3:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/positions_convert_both_ways/main # UNSUPPORTED: main.zen:38:33: nothing is at that path: tried `lsp/lsp_pos.zen` and `lsp/lsp_pos/lsp_pos.zen`
+tests/corpus/lsp/unchanged_diagnostics_are_not_republished/main # UNSUPPORTED: main.zen:7:17: nothing is at that path: tried `lsp/lsp_serve.zen` and `lsp/lsp_serve/lsp_serve.zen`
+tests/corpus/lsp/workspace_diagnostics/main # UNSUPPORTED: main.zen:3:19: nothing is at that path: tried `zen/zen_build.zen` and `zen/zen_build/zen_build.zen`
+tests/corpus/match-payloads/err_case_on_a_union_tests_only_that_case/ # FAIL: stdout differs (164 bytes, expected 142) 
+tests/corpus/match-payloads/err_payload_case_on_a_union_reads_the_case/ # UNSUPPORTED: main.zen:23:19: error: unsupported by this backend: an unknown variant pattern
+tests/corpus/match-payloads/union_payload_cases_cover_their_member/ # UNSUPPORTED: main.zen:22:19: error: unsupported by this backend: an unknown variant pattern
+tests/corpus/math/scalar # UNSUPPORTED: scalar.zen:8:21: error: unsupported by this backend: a float literal with more than 15 significant d
+tests/corpus/meta/alias_name_is_what_was_written # UNSUPPORTED: alias_name_is_what_was_written.zen:31:22: error: unsupported by this backend: this expression in a n
+tests/corpus/meta/field_count_via_meta # UNSUPPORTED: field_count_via_meta.zen:64:9: error: unsupported by this backend: a call without successful semanti
+tests/corpus/meta/field_walk_shadowing # UNSUPPORTED: field_walk_shadowing.zen:12:5: error: unsupported by this backend: an expression without a checked t
+tests/corpus/meta/field_walk_via_meta # UNSUPPORTED: field_walk_via_meta.zen:71:25: error: unsupported by this backend: a call without successful semanti
+tests/corpus/meta/primitive_name_is_its_own_spelling # UNSUPPORTED: primitive_name_is_its_own_spelling.zen:43:22: error: unsupported by this backend: this expression in
+tests/corpus/meta/type_name_via_meta # UNSUPPORTED: type_name_via_meta.zen:23:38: error: unsupported by this backend: this expression in a native execut
+tests/corpus/net/dns_resolve/main # UNSUPPORTED: std/net/socket.zen:167:19: error: unsupported by this backend: a variant of a type without alternati
+tests/corpus/net/tcp_connect/main # UNSUPPORTED: std/net/socket.zen:213:10: error: unsupported by this backend: a variant of a type without alternati
+tests/corpus/net/tls_connect/main # UNSUPPORTED: std/net/tls.zen:260:13: error: unsupported by this backend: the compiler-provided operation `std.net
+tests/corpus/own/deep_binary_callback_provenance # UNSUPPORTED: deep_binary_callback_provenance.zen:3:11: nothing is at that path: tried `sema/sema_check.zen` and `
+tests/corpus/own/defer_cap_is_thirty_two/main # UNSUPPORTED: main.zen:22:9: error: unsupported by this backend: this expression in a native executable
+tests/corpus/own/defer_captures_at_registration # UNSUPPORTED: defer_captures_at_registration.zen:13:10: error: unsupported by this backend: this expression in a n
+tests/corpus/own/explicit_static_consumed_drop_runs_once # UNSUPPORTED: explicit_static_consumed_drop_runs_once.zen:6:5: error: unsupported by this backend: alternatives of
+tests/corpus/own/scope_captured_by_non_escaping_closure # UNSUPPORTED: scope_captured_by_non_escaping_closure.zen:14:9: error: unsupported by this backend: this expression
+tests/corpus/own/scope_nests_per_block # UNSUPPORTED: scope_nests_per_block.zen:6:13: error: unsupported by this backend: this expression in a native exec
+tests/corpus/own/scope_passed_inward # UNSUPPORTED: scope_passed_inward.zen:14:14: error: unsupported by this backend: this expression in a native execu
+tests/corpus/own/send_consumed_buffer # UNSUPPORTED: send_consumed_buffer.zen:47:14: error: unsupported by this backend: this environment operation
+tests/corpus/own/val_literal_crosses_actor # UNSUPPORTED: val_literal_crosses_actor.zen:16:16: error: unsupported by this backend: this environment operation
+tests/corpus/parse/fn_returning_unit_at_module_level # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/parse/impl_decl_statement # UNSUPPORTED: impl_decl_statement.zen:18:35: error: unsupported by this backend: a field of a value without record
+tests/corpus/parse/parser_ambiguities # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/parse/parser_deep_nesting # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/parse/parser_error_recovery # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/parse/parser_group_lookahead_scaling # UNSUPPORTED: parser_group_lookahead_scaling.zen:13:16: a member is resolved on the receiver's type, so a name dec
+tests/corpus/parse/parser_precedence # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/parse/parser_reads_a_star_as_multiplication # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/parse/parser_reads_its_own_stdlib_shapes # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/parse/parser_spans # UNSUPPORTED: parser_spans.zen:50:5: error: unsupported by this backend: a value conversion this backend does not 
+tests/corpus/parse/parser_trivia # UNSUPPORTED: parser_trivia.zen:61:5: error: unsupported by this backend: a value conversion this backend does not
+tests/corpus/parse/represented_enum_discriminants # UNSUPPORTED: represented_enum_discriminants.zen:22:5: error: unsupported by this backend: a value conversion this
+tests/corpus/parse/trivia_attachment_corners # UNSUPPORTED: trivia_attachment_corners.zen:134:5: error: unsupported by this backend: a value conversion this bac
+tests/corpus/parse/trivia_every_comment_is_owned # UNSUPPORTED: trivia_every_comment_is_owned.zen:101:5: error: unsupported by this backend: a value conversion this
+tests/corpus/parse/trivia_lone_comment_in_bare_block_and_closure_body # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/parse_zen/a_diagnostic_is_a_value_and_carries_its_note/main # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/parse_zen/positions_are_exact/main # UNSUPPORTED: main.zen:67:5: error: unsupported by this backend: a value conversion this backend does not model (`
+tests/corpus/printing/floats_print_only_through_f64/main # UNSUPPORTED: :0:0: error: unsupported by this backend: f32 values
+tests/corpus/proc_run/allocation_failure_frees_captures/main # UNSUPPORTED: std/proc/proc.zen:222:27: error: unsupported by this backend: a call without successful semantic che
+tests/corpus/proc_run/creation_mask/main # UNSUPPORTED: main.zen:5:23: error: unsupported by this backend: a call without successful semantic checking
+tests/corpus/proc_run/hello_world/main # UNSUPPORTED: std/proc/proc.zen:241:16: error: unsupported by this backend: the compiler-provided operation `std.p
+tests/corpus/proc_run/large_streams/main # UNSUPPORTED: std/proc/proc.zen:222:27: error: unsupported by this backend: a call without successful semantic che
+tests/corpus/ptr/comparisons_preserve_element_types # UNSUPPORTED: comparisons_preserve_element_types.zen:3:10: error: unsupported by this backend: create without an e
+tests/corpus/sema/bound_third_module/ # UNSUPPORTED: boxy/boxy.zen:8:35: error: unsupported by this backend: a field of a value without record layout
+tests/corpus/sema/checked_calls_survive_contextual_rechecking # UNSUPPORTED: checked_calls_survive_contextual_rechecking.zen:3:16: nothing is at that path: tried `sema/sema_chec
+tests/corpus/sema/computed_field_read # UNSUPPORTED: computed_field_read.zen:26:19: error: unsupported by this backend: a field of a value without record
+tests/corpus/sema/construction_supplies_its_defaulted_fields # UNSUPPORTED: construction_supplies_its_defaulted_fields.zen:22:39: error: unsupported by this backend: a variant 
+tests/corpus/sema/field_defaults_publish_checked_calls # UNSUPPORTED: field_defaults_publish_checked_calls.zen:3:11: nothing is at that path: tried `sema/sema_check.zen` 
+tests/corpus/sema/impl_collision_bound_in_scope # UNSUPPORTED: impl_collision_bound_in_scope.zen:32:36: error: unsupported by this backend: a field of a value with
+tests/corpus/sema/integer_bits_contract # UNSUPPORTED: integer_bits_contract.zen:5:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_
+tests/corpus/sema/member_call_facts_require_valid_signatures # UNSUPPORTED: member_call_facts_require_valid_signatures.zen:4:11: nothing is at that path: tried `sema/sema_check
+tests/corpus/sema/nominal_generic_types_validate_open_and_closed # UNSUPPORTED: nominal_generic_types_validate_open_and_closed.zen:21:55: error: unsupported by this backend: a fiel
+tests/corpus/sema/numeric_conversion_contract # UNSUPPORTED: numeric_conversion_contract.zen:5:11: nothing is at that path: tried `sema/sema_check.zen` and `sema
+tests/corpus/sema/primitive_contract # UNSUPPORTED: primitive_contract.zen:5:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_che
+tests/corpus/sema/recursive_type_ptr # UNSUPPORTED: recursive_type_ptr.zen:15:9: error: unsupported by this backend: create without an element type
+tests/corpus/sema/rejected_calls_publish_no_selection # UNSUPPORTED: rejected_calls_publish_no_selection.zen:3:11: nothing is at that path: tried `sema/sema_check.zen` a
+tests/corpus/sema/statement_effects # UNSUPPORTED: compiler error: invalid IR at function 7 (checked), block 3: instruction types do not agree
+tests/corpus/sema/statement_tail_is_not_a_value # UNSUPPORTED: :0:0: error: unsupported by this backend: a value conversion this backend does not model (`()` to `i
+tests/corpus/sema/type_observations_are_indexed_and_monotone # UNSUPPORTED: type_observations_are_indexed_and_monotone.zen:2:11: nothing is at that path: tried `sema/sema_check
+tests/corpus/sema/type_observations_survive_unknown_context # UNSUPPORTED: type_observations_survive_unknown_context.zen:2:16: nothing is at that path: tried `sema/sema_check.
+tests/corpus/sema/usage_report/main # UNSUPPORTED: main.zen:4:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/sema/vararg_element_type_is_inferred # UNSUPPORTED: vararg_element_type_is_inferred.zen:31:29: error: unsupported by this backend: more arguments than p
+tests/corpus/sema/vararg_pack_forwards # UNSUPPORTED: vararg_pack_forwards.zen:42:26: error: unsupported by this backend: more arguments than parameters
+tests/corpus/sema/vararg_pack_of_structs # UNSUPPORTED: vararg_pack_of_structs.zen:54:30: error: unsupported by this backend: more arguments than parameters
+tests/corpus/sema/variant_payload_uses_applied_type/main # UNSUPPORTED: :0:0: error: unsupported by this backend: a value conversion this backend does not model (`%T@main.O
+tests/corpus/sema/widening_conversions_are_bounds # UNSUPPORTED: :0:0: error: unsupported by this backend: f32 values
+tests/corpus/sema/zero_array_count_is_valid # UNSUPPORTED: compiler error: invalid IR at function 0 (main), block 1: slot is read before initialization on a re
+tests/corpus/sema_zen/a_cursor_position_finds_its_node/main # UNSUPPORTED: main.zen:8:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
+tests/corpus/sema_zen/a_declaration_is_read_with_its_own_scope/main # UNSUPPORTED: main.zen:29:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/sema_zen/a_prelude_declaration_of_a_primitive_is_that_primitive/main # UNSUPPORTED: main.zen:30:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/sema_zen/a_provable_trap_is_a_compile_error/main # UNSUPPORTED: main.zen:26:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/sema_zen/an_impl_supplies_but_never_stores/main # UNSUPPORTED: main.zen:29:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/sema_zen/an_unimported_name_is_not_visible/main # UNSUPPORTED: main.zen:32:23: nothing is at that path: tried `sema/sema_def.zen` and `sema/sema_def/sema_def.zen`
+tests/corpus/sema_zen/error_set_canonicalises/ # UNSUPPORTED: main.zen:18:15: nothing is at that path: tried `sema/sema_ty.zen` and `sema/sema_ty/sema_ty.zen`
+tests/corpus/sema_zen/error_set_canonicalises/main # UNSUPPORTED: main.zen:18:15: nothing is at that path: tried `sema/sema_ty.zen` and `sema/sema_ty/sema_ty.zen`
+tests/corpus/sema_zen/match_covers_the_pattern_space/main # UNSUPPORTED: main.zen:25:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/sema_zen/overload_resolution_reads_the_signature/main # UNSUPPORTED: main.zen:28:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/sema_zen/type_of_is_memoized/main # UNSUPPORTED: main.zen:18:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/std/a_user_type_is_a_sink # UNSUPPORTED: a_user_type_is_a_sink.zen:73:5: error: unsupported by this backend: a member without a body this bac
+tests/corpus/std/bool_then_composes_with_try # UNSUPPORTED: compiler error: invalid IR at function 1 (checked_double), block 3: instruction types do not agree
+tests/corpus/std/build_api_resolves # UNSUPPORTED: build_api_resolves.zen:14:9: construction names no member: every argument must name a field of the t
+tests/corpus/std/byte_ascii_questions # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/std/cli_command_model_parses_and_writes_help # UNSUPPORTED: compiler error: invalid IR at function 25 (run), block 37: instruction types do not agree
+tests/corpus/std/cli_constraints_use_explicit_presence # UNSUPPORTED: compiler error: invalid IR at function 22 (run), block 37: instruction types do not agree
+tests/corpus/std/cli_declarations_reject_ambiguous_grammars # UNSUPPORTED: compiler error: invalid IR at function 32 (run), block 37: instruction types do not agree
+tests/corpus/std/cli_nested_commands_and_trailing_args # UNSUPPORTED: cli_nested_commands_and_trailing_args.zen:35:9: error: unsupported by this backend: a value conversi
+tests/corpus/std/cli_option_values_do_not_swallow_options # UNSUPPORTED: compiler error: invalid IR at function 16 (run), block 37: instruction types do not agree
+tests/corpus/std/collection_callbacks_preserve_failures # UNSUPPORTED: std/core/loop/loop_find.zen:44:43: error: unsupported by this backend: a loop handle used as a value
+tests/corpus/std/console_bound_println_reaches_the_same_floor # UNSUPPORTED: console_bound_println_reaches_the_same_floor.zen:21:5: error: unsupported by this backend: alternati
+tests/corpus/std/console_errorln_is_the_other_stream # UNSUPPORTED: console_errorln_is_the_other_stream.zen:16:5: error: unsupported by this backend: alternatives of a 
+tests/corpus/std/constant_time # UNSUPPORTED: constant_time.zen:50:18: error: unsupported by this backend: the machine primitive truncate_*
+tests/corpus/std/create_allocates_a_whole_element # UNSUPPORTED: create_allocates_a_whole_element.zen:23:9: error: unsupported by this backend: create without an ele
+tests/corpus/std/create_calls_the_dynamic_allocator # UNSUPPORTED: create_calls_the_dynamic_allocator.zen:28:17: error: unsupported by this backend: create without an 
+tests/corpus/std/display_allocating_overload_picked_by_argument # UNSUPPORTED: display_allocating_overload_picked_by_argument.zen:29:13: error: unsupported by this backend: a valu
+tests/corpus/std/eq_is_in_asks_each_types_own_eq # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/std/eq_is_in_over_primitives # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/std/fmt_writes_through_the_receivers_own_floor # UNSUPPORTED: fmt_writes_through_the_receivers_own_floor.zen:34:5: error: unsupported by this backend: the compile
+tests/corpus/std/folds_preserve_supplied_range_completion # UNSUPPORTED: folds_preserve_supplied_range_completion.zen:33:13: error: unsupported by this backend: folding loop
+tests/corpus/std/json_serves_a_second_caller # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/std/lines_borrow_text_and_strip_terminators # UNSUPPORTED: std/text/text_str.zen:395:35: error: unsupported by this backend: a loop handle used as a value
+tests/corpus/std/loop_break_type_is_the_loops_own # UNSUPPORTED: loop_break_type_is_the_loops_own.zen:29:5: error: unsupported by this backend: folding loops
+tests/corpus/std/loop_fold_break_carries_its_value # UNSUPPORTED: loop_fold_break_carries_its_value.zen:17:5: error: unsupported by this backend: folding loops
+tests/corpus/std/loop_fold_threads_acc # UNSUPPORTED: loop_fold_threads_acc.zen:10:5: error: unsupported by this backend: folding loops
+tests/corpus/std/loop_map_allocates # UNSUPPORTED: std/core/loop/loop_find.zen:54:50: error: unsupported by this backend: a loop handle used as a value
+tests/corpus/std/loop_map_body_can_break_early # UNSUPPORTED: std/core/loop/loop_find.zen:54:50: error: unsupported by this backend: a loop handle used as a value
+tests/corpus/std/map_len_counts_keys_and_pairs_walks_them # UNSUPPORTED: std/collections/collections_map.zen:58:18: error: unsupported by this backend: a loop handle used as
+tests/corpus/std/os_entropy # UNSUPPORTED: os_entropy.zen:5:23: error: unsupported by this backend: a call without successful semantic checking
+tests/corpus/std/pos_display_both_format_doors_agree # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
+tests/corpus/std/res_try_error_sets_merge # UNSUPPORTED: compiler error: invalid IR at function 1 (build_label), block 13: instruction types do not agree
+tests/corpus/std/secret_discipline_accepts_constant_time_code # UNSUPPORTED: secret_discipline_accepts_constant_time_code.zen:56:42: error: unsupported by this backend: the mach
+tests/corpus/std/signed_shift_right_fills_with_the_sign # UNSUPPORTED: signed_shift_right_fills_with_the_sign.zen:26:9: error: unsupported by this backend: an arithmetic s
+tests/corpus/std/simd_bmi2 # UNSUPPORTED: std/simd.zen:210:24: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu
+tests/corpus/std/simd_features # UNSUPPORTED: simd_features.zen:93:25: error: unsupported by this backend: the std.simd operation lane
+tests/corpus/std/simd_sha # UNSUPPORTED: std/simd.zen:222:27: error: unsupported by this backend: runtime CPU feature detection (std.simd cpu
+tests/corpus/std/simd_vectors # UNSUPPORTED: simd_vectors.zen:43:9: error: unsupported by this backend: the std.simd operation lanes_*
+tests/corpus/std/split_walk_advances_once # UNSUPPORTED: std/text/text_str.zen:253:35: error: unsupported by this backend: a loop handle used as a value
+tests/corpus/std/stats_rolling_measurements # UNSUPPORTED: std/math/math.zen:14:28: error: unsupported by this backend: alternatives of a value without them (`
+tests/corpus/std/str_count_and_replace_once # UNSUPPORTED: std/text/text_str.zen:104:17: error: unsupported by this backend: a value conversion this backend do
+tests/corpus/std/test_suite_runs_after_assertion_failure # UNSUPPORTED: std/test/test.zen:24:9: error: unsupported by this backend: a member without a body this backend can
+tests/corpus/std/tester_equality_uses_eq # UNSUPPORTED: std/test/test.zen:24:9: error: unsupported by this backend: a member without a body this backend can
+tests/corpus/std/text_folds_keep_control_and_cursor # UNSUPPORTED: std/text/text_str.zen:291:43: error: unsupported by this backend: a loop handle used as a value
+tests/corpus/std/volatile_and_inline # UNSUPPORTED: volatile_and_inline.zen:15:28: error: unsupported by this backend: this pointer operation
+tests/corpus/std/wide_integers # UNSUPPORTED: wide_integers.zen:16:15: error: unsupported by this backend: the machine primitive mul_wide (64x64 -
+tests/corpus/string-basic/a_float_fits_the_buffer/main # UNSUPPORTED: main.zen:39:25: error: unsupported by this backend: formatting an f64 into text
+tests/corpus/string-basic/str_find_split_trim_serve_a_csv/main # UNSUPPORTED: std/text/text_str.zen:253:35: error: unsupported by this backend: a loop handle used as a value
+tests/corpus/string-basic/str_search_members_edge_cases/main # UNSUPPORTED: main.zen:56:5: error: unsupported by this backend: a value conversion this backend does not model (`
+tests/corpus/trait-bound/bound_names_a_generic_trait/main # UNSUPPORTED: :0:0: error: unsupported by this backend: a value conversion this backend does not model (`%T@std.co
+tests/corpus/trait-bound/computed_fields_recompute_and_own_storage_wins/main # UNSUPPORTED: main.zen:36:19: error: unsupported by this backend: a field of a value without record layout
+tests/corpus/traps/simd_lane_out_of_bounds # UNSUPPORTED: simd_lane_out_of_bounds.zen:7:12: error: unsupported by this backend: the std.simd operation splat_*
+tests/corpus/vec/map_and_filter_walk_in_order_to_the_end/main # UNSUPPORTED: std/core/loop/loop_find.zen:54:50: error: unsupported by this backend: a loop handle used as a value

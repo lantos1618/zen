@@ -47,7 +47,7 @@ TAG_BYTES*: usize = 4
 size_of* = (class: Scalar) usize {
     class.match({
         I8 => 1, U8 => 1, Bool => 1, I16 => 2, U16 => 2, I32 => 4, U32 => 4,
-        I64 => 8, U64 => 8, Ptr => 8, Unit => 0, Block(l) => l.size,
+        I64 => 8, U64 => 8, Ptr => 8, F64 => 8, Unit => 0, Block(l) => l.size,
     })
 }
 
@@ -59,8 +59,8 @@ round_up* = (value: usize, align: usize) usize {
     ((value + align - 1) / align) * align
 }
 
-// The IR class of a primitive name; None for primitives this backend does
-// not lower (floats).
+// The IR class of a primitive name; None for primitives the lowering does
+// not model yet (`f32`).
 prim_class* = (name: str) Res<Scalar> {
     name.match({
         "i8"         => Ok(Scalar.I8),
@@ -73,6 +73,9 @@ prim_class* = (name: str) Res<Scalar> {
         "u64"        => Ok(Scalar.U64),
         "usize"      => Ok(Scalar.U64),
         "bool"       => Ok(Scalar.Bool),
+        "f64"        => Ok(Scalar.F64),
+        // Unsettled float literals take the C path's double.
+        "float"      => Ok(Scalar.F64),
         "()"         => Ok(Scalar.Unit),
         // Unsettled integer literals take the C path's 64-bit width.
         "int"        => Ok(Scalar.I64),
@@ -132,7 +135,7 @@ compute_shape = (lo :: Lowerer, ty: TyId) Res<Shape, LowerError> {
             },
             false => prim_class(p.name).match({
                 Ok(class) => Ok(Shape(class: class, form: Form.Plain)),
-                None      => Err(unsupported(nowhere(), "floating-point values")),
+                None      => Err(unsupported(nowhere(), "f32 values")),
             }),
         }),
         Res(r)   => {

@@ -600,6 +600,19 @@ Build* = {
                 }),
                 _   => None,
             });
+            // `--backend js --target js-browser -o DIR` writes the page
+            // layout (index.html, runtime.js, app.js) into DIR.
+            browser = job.backend.match({ Js => job.target.eq("js-browser"), _ => false });
+            emission = browser.match({
+                false => job.emission,
+                true  => job.emission.match({
+                    File(dir) => {
+                        self.env.fs.mkdir(dir).ignore();
+                        Emission.Directory(dir)
+                    },
+                    _         => job.emission,
+                }),
+            });
             generation = Generation(
                 alloc: self.alloc,
                 mem: self.env.mem,
@@ -607,17 +620,18 @@ Build* = {
                 check: c,
                 backend: job.backend,
                 entry: 0,
-                layout: job.emission.match({
-                    Directory(_) => Layout.Modules,
-                    _            => Layout.Single,
+                layout: (job.emission.match({ Directory(_) => true, _ => false }) && !browser).match({
+                    true  => Layout.Modules,
+                    false => Layout.Single,
                 }),
                 ffi: self.ffi,
                 symbols: !job.symbol_map.is_empty(),
-                target: target
+                target: target,
+                browser: browser
             );
             publisher  = Publisher(
                 env: self.env,
-                emission: job.emission,
+                emission: emission,
                 symbol_map: job.symbol_map
             );
             report ::= self.alloc.String().try();

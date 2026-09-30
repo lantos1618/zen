@@ -1,7 +1,8 @@
 // The full lowering: checked Zen to the native IR surface (see gen_verify)
 // consumed by the machine targets. It is target-independent; renderers
-// (`gen_asm_x86`, `gen_asm_arm64`) consume only its IR and a Target. The scalar `gen_lower` remains the
-// JavaScript and IR-C path until those renderers accept the wider IR.
+// (`gen_asm_x86`, `gen_asm_arm64`, `gen_js`) consume only its IR and a
+// Target. The scalar `gen_lower` remains the IR-C pilot's path until that
+// renderer accepts the wider IR.
 //
 // Values live in typed slots: words in word slots, aggregates in `Block`
 // slots addressed through `AddressOf` with `Load`/`Store` at field offsets.
@@ -12,7 +13,7 @@
 // mutable parameter (`::`) receives the address of the caller's place.
 // Unsupported reachable constructs fail before any artifact is published.
 
-Alloc, AllocError = std.mem
+Alloc, AllocError, null_ptr = std.mem
 Vec, Map = std.collections
 String, str = std.text
 Range = std.core
@@ -822,7 +823,11 @@ Lowerer* = {
                     .match({ Ok(t) => Ok(t), Err(_) => Err(unsupported(span, "a malformed literal escape")) }).try();
                 self.string(text, ty)
             },
-            Float => Err(unsupported(span, "floating-point values")),
+            Float => {
+                bits = float_bits(self.alloc, l.text).try(LowerError.OutOfMemory)
+                    .ok_or(unsupported(span, "a float literal with more than 15 significant digits or a decimal exponent beyond 22")).try();
+                self.constant(ty, bits)
+            },
         })
     }
 
@@ -1466,11 +1471,11 @@ Lowerer* = {
         s = self.shape(ty).try();
         s.form.match({
             Tags(variants)   => {
-                tag = variant_index(variants, name).ok_or(unsupported(span, "an unknown variant")).try();
+                tag = variant_index(variants, name).ok_or(unsupported(span, self.described("an unknown variant", ty))).try();
                 self.constant(ty, tag.to_i64_bits())
             },
             Variants(tagged) => {
-                tag = variant_index(tagged.variants, name).ok_or(unsupported(span, "an unknown variant")).try();
+                tag = variant_index(tagged.variants, name).ok_or(unsupported(span, self.described("an unknown variant", ty))).try();
                 out = self.temp(ty).try();
                 at  = self.slot_of(Scalar.Ptr).try();
                 self.add(Instruction.AddressOf(Address(out: at, slot: out.slot))).try();
@@ -1486,7 +1491,7 @@ Lowerer* = {
                 });
                 Ok(out)
             },
-            _                => Err(unsupported(span, "a variant of a type without alternatives")),
+            _                => Err(unsupported(span, self.described("a variant of a type without alternatives", ty))),
         })
     }
 
@@ -2109,6 +2114,65 @@ to_i64_bits* = (value: u64) i64 {
 
 to_i64_bits* = (value: usize) i64 {
     value.to_u64().to_i64_bits()
+}
+
+// The IEEE-754 binary64 bits of a decimal float literal (`12.5`, `1e-3`,
+// `1_000.0`). Exact under Clinger's fast path: at most 15 significant
+// digits (an integer below 2^53, so an exact double) and a decimal exponent
+// within 22 (10^22 is the largest exact power of ten), so the one multiply
+// or divide rounds correctly. None outside that range: such a literal is
+// refused rather than rounded twice.
+float_bits* = (a: Alloc, text: str) Res<Res<i64>, AllocError> {
+    mantissa: u64 ::= 0;
+    digits ::= 0;
+    scale: i64 ::= 0;
+    exponent: i64 ::= 0;
+    negative_exponent ::= false;
+    fraction ::= false;
+    in_exponent ::= false;
+    valid ::= true;
+    Range(0, text.len).loop((i) {
+        c = text.index(i).to_u64();
+        (c >= 48 && c <= 57).match({
+            true  => in_exponent.match({
+                true  => { exponent = exponent * 10 + (c - 48).to_i64_bits(); (exponent > 400).then(() { valid = false; }); },
+                false => {
+                    // Leading zeros are not significant digits.
+                    (mantissa > 0 || c != 48).then(() {
+                        digits = digits + 1;
+                        (digits <= 15).match({ true => { mantissa = mantissa * 10 + (c - 48); }, false => { valid = false; } });
+                    });
+                    fraction.then(() { scale = scale - 1; });
+                },
+            }),
+            false => c.match({
+                46  => { fraction = true; },
+                95  => (),
+                101 => { in_exponent = true; },
+                69  => { in_exponent = true; },
+                45  => { negative_exponent = true; },
+                43  => (),
+                _   => { valid = false; },
+            }),
+        });
+    });
+    power = scale + negative_exponent.match({ true => 0 - exponent, false => exponent });
+    (valid && power >= -22 && power <= 22).match({
+        false => Ok(None),
+        true  => {
+            // Split below 2^30 per part: only i32 converts to f64.
+            high = (mantissa / 1073741824).to_i32().value_or(0).to_f64();
+            low  = (mantissa % 1073741824).to_i32().value_or(0).to_f64();
+            value = high * 1073741824.0 + low;
+            ten ::= 1.0;
+            steps = (power < 0).match({ true => 0 - power, false => power });
+            Range(0, steps.to_usize().value_or(0)).loop((k) { ten = ten * 10.0; });
+            exact = (power < 0).match({ true => value / ten, false => value * ten });
+            cell = a.realloc<f64>(null_ptr<f64>(), 1).try();
+            cell.write(0, exact);
+            Ok(Ok(cell.to<u64>().read(0).to_i64_bits()))
+        },
+    })
 }
 
 signed_max = (bits: i64) i64 {

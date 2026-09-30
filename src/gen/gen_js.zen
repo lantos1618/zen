@@ -1,115 +1,541 @@
-// JavaScript rendering of the shared scalar IR. Generated names come from
-// function and value IDs; source identifiers never become JavaScript syntax.
+// JavaScript rendering of the shared IR (the native surface produced by
+// `gen_lower_core`). This file owns only machine details; every language
+// rule was decided by lowering. docs/JS_BACKEND.md records the model.
+//
+// Machine model (the runtime in `gen_js_runtime` implements its half):
+//
+// - One linear heap: an `ArrayBuffer` read through `zm` (DataView) and `zb`
+//   (Uint8Array). A `Ptr` is a byte offset held as a JS number; address 0 is
+//   reserved. Static bytes sit at the bottom, the call stack grows down from
+//   `ZSTACK`, and pages mapped by the program lie above it.
+// - Slots. A word slot of 32 bits or fewer is a JS local holding a canonical
+//   number (signed classes sign-extended, unsigned ones in [0, 2^N)). A
+//   64-bit slot is two locals, `vN` (low half) and `vNh` (high half), both
+//   uint32. `F64` is a JS number. A `Block` slot, and any slot whose address
+//   is taken, lives in the function's heap frame at `fp + offset` instead.
+// - Calls. A 64-bit argument is passed as two arguments; a 64-bit result
+//   returns its low half and leaves the high half in `zH`, as a
+//   two-register machine ABI would. An aggregate argument is the address of
+//   the caller's copy, which the callee copies into its frame; an aggregate
+//   result is written through a trailing destination-address argument.
+// - Control flow. Each function is a `switch` over its basic blocks inside
+//   `for (;;)`, so every IR edge is `pc = target; continue;`.
+// - Traps throw `ZenTrap` with the pre-formatted `file:line:col: ` (hex);
+//   the entry wrapper flushes output, reports and exits 134, like C.
 
 Alloc, AllocError = std.mem
 str, String = std.text
 Range = std.core
+Vec = std.collections
 Span = std.ast
 Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
+Scalar, Op, TrapKind, Stream = gen.gen_ir
+Convert, Load, Store, SysCall, Start, HostCall, Marshal = gen.gen_ir
+width, trap_message = gen.gen_ir
+Sys, constant_value, Platform = gen.gen_sys
+write_runtime = gen.gen_js_runtime
 
-// The caller verifies slot types, initialization, calls, and block targets
-// before rendering. Malformed IR is a compiler fault, not executable input.
+// The caller verifies the program first (gen_verify.verify_native); malformed
+// IR is a compiler fault, not executable input.
+//
+// One self-contained script (the runtime, then the program): what Node runs.
 emit_js* = (a: Alloc, program: Program) Res<String, AllocError> {
-    writer ::= JavaScript(out: a.String().try(), location: a.String().try());
-    writer.program(program).try();
+    out ::= a.String().try();
+    write_runtime(out).try();
+    app = emit_app(a, program).try();
+    out.add(app.view()).try();
+    Ok(out)
+}
+
+// The program alone (binding stubs, functions, constants and the call of
+// `zmain`), for a page that loads the runtime separately (`js-browser`).
+emit_app* = (a: Alloc, program: Program) Res<String, AllocError> {
+    writer ::= JavaScript(
+        alloc: a,
+        program: program,
+        out: a.String().try(),
+        data: a.String().try(),
+        location: a.String().try(),
+        homes: a.Vec<usize>(),
+        suspends: a.Vec<bool>(),
+        stubs: a.Vec<String>()
+    );
+    writer.render().try();
     Ok(writer.out)
 }
 
-JavaScript = {
-    out :: String,
-    location :: String,
+// The runtime alone (`runtime.js` of the `js-browser` layout).
+emit_runtime* = (a: Alloc) Res<String, AllocError> {
+    out ::= a.String().try();
+    write_runtime(out).try();
+    Ok(out)
+}
 
-    program = (self :: @Self, program: Program) Res<(), AllocError> {
-        self.out.runtime().try();
-        program.functions.loop((h, index, function) {
+// The page of the `js-browser` layout: it loads the runtime, then the
+// program, which builds its own DOM through js.bind. The body starts empty.
+PAGE*: str = "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Zen</title>\n<script src=\"runtime.js\" defer></script>\n<script src=\"app.js\" defer></script>\n</head>\n<body></body>\n</html>\n"
+
+// No frame home: the slot is a JS local.
+LOCAL: usize = 18446744073709551615
+
+JavaScript = {
+    alloc: Alloc,
+    program: Program,
+    out :: String,
+    // Module-level constants (static bytes, f64 bit patterns, host-call
+    // stubs). They follow the functions but run before `zmain`.
+    data :: String,
+    location :: String,
+    // Per function: each slot's frame offset, or LOCAL.
+    homes :: Vec<usize>,
+    // Per function: whether it can reach `Wait` and so renders as a
+    // generator that its callers resume with `yield*`.
+    suspends :: Vec<bool>,
+    // One host-call stub per distinct binding signature, by its key.
+    stubs :: Vec<String>,
+    function_id :: usize = 0,
+    frame :: usize = 0,
+    next_constant :: usize = 0,
+
+    render = (self :: @Self) Res<(), AllocError> {
+        self.find_suspending().try();
+        self.program.functions.loop((h, index, function) {
             self.function(index, function).try();
         });
-        self.out.add("try {\n").try();
-        self.out.fmt(
-            "  process.exitCode = zg_f{}() & 255;\n",
-            program.entry
-        ).try();
-        self.out.add("} catch (error) {\n").try();
-        self.out.add("  if (!(error instanceof ZenTrap)) throw error;\n").try();
-        self.out.add(
-            "  process.stderr.write(Buffer.from(error.where, \"hex\"));\n"
-        ).try();
-        self.out.add(
-            "  process.stderr.write(\"trap: \" + error.message + \"\\n\");\n"
-        ).try();
-        self.out.add("  process.exitCode = 134;\n}\n")
+        self.out.add(self.data.view()).try();
+        self.out.fmt("zmain(zf{});\n", self.program.entry)
     }
 
-    function = (self :: @Self, index: usize, function: Func)
-               Res<(), AllocError> {
-        self.out.fmt("function zg_f{}(", index).try();
+    // A function suspends when it contains `Wait` or invokes a function that
+    // suspends; iterate to the fixed point over the call graph.
+    find_suspending = (self :: @Self) Res<(), AllocError> {
+        self.program.functions.loop((function) {
+            waits ::= false;
+            function.blocks.loop((block) {
+                block.code.loop((instruction) {
+                    instruction.match({ Wait(_) => { waits = true; }, _ => () });
+                });
+            });
+            self.suspends.add(waits).try();
+        });
+        changed ::= true;
+        loop(() { changed }, (h) {
+            changed = false;
+            self.program.functions.loop((fh, index, function) {
+                (!self.suspending(index)).then(() {
+                    reaches ::= false;
+                    function.blocks.loop((block) {
+                        block.code.loop((instruction) {
+                            instruction.match({
+                                Invoke(call) => { reaches = reaches || self.suspending(
+                                    call.function
+                                ); },
+                                _            => (),
+                            });
+                        });
+                    });
+                    reaches.then(() {
+                        self.suspends.set(
+                            index,
+                            true
+                        ).match({ Ok(_) => (), None => () });
+                        changed = true;
+                    });
+                });
+            });
+        });
+        Ok(())
+    }
+
+    suspending = (self: @Self, index: usize) bool { self.suspends.get(index).value_or(false) }
+
+    slot_type = (self: @Self, slot: usize) Scalar {
+        self.program.functions.get(self.function_id).match({
+            Ok(f) => f.slots.get(slot).value_or(Scalar.Unit),
+            None  => Scalar.Unit,
+        })
+    }
+
+    home = (self: @Self, slot: usize) usize { self.homes.get(slot).value_or(LOCAL) }
+
+    in_memory = (self: @Self, slot: usize) bool { self.home(slot) != LOCAL }
+
+    // Blocks and address-taken slots get 8-aligned (16 for 16-aligned
+    // aggregates) homes in the frame; everything else stays a local.
+    layout_frame = (self :: @Self, function: Func) {
+        self.homes.clear();
+        function.slots.loop((ty) { self.homes.add(LOCAL).ignore(); });
+        function.blocks.loop((block) {
+            block.code.loop((instruction) {
+                instruction.match({
+                    AddressOf(value) => { self.homes.set(
+                        value.slot,
+                        0
+                    ).match({ Ok(_) => (), None => () }); },
+                    _                => (),
+                });
+            });
+        });
+        cursor ::= 0;
+        function.slots.loop((h, i, ty) {
+            aggregate = is_block(ty);
+            (aggregate || self.home(i) != LOCAL).then(() {
+                align  = ty.match({ Block(l) => (l.align > 8).match({ true => 16, false => 8 }), _ => 8 });
+                cursor = round_up(cursor, align);
+                self.homes.set(i, cursor).match({ Ok(_) => (), None => () });
+                cursor = cursor + round_up(stored_size(ty), 8);
+            });
+        });
+        self.frame = round_up(cursor, 16);
+    }
+
+    function = (self :: @Self, id: usize, function: Func) Res<(), AllocError> {
+        self.function_id = id;
+        self.layout_frame(function);
+        star: str = self.suspending(id).match({ true => "*", false => "" });
+        self.out.fmt("function{} zf{}(", star, id).try();
+        first ::= true;
         Range(0, function.parameters).loop((i) {
-            (i > 0).then(() { self.out.add(", ").try(); });
-            self.out.fmt("v{}", i).try();
+            ty = function.slots.get(i).value_or(Scalar.Unit);
+            (!first).then(() { self.out.add(", ").try(); });
+            first = false;
+            self.out.fmt("p{}", i).try();
+            wide(ty).then(() { self.out.fmt(", p{}h", i).try(); });
+        });
+        is_block(function.result).then(() {
+            (!first).then(() { self.out.add(", ").try(); });
+            self.out.add("rp").try();
         });
         self.out.add(") {\n").try();
-        Range(function.parameters, function.slots.len).loop((i) {
-            self.out.fmt("  let v{};\n", i).try();
+        self.out.fmt(
+            "  const zs = zsp, fp = zsp = zs - {};\n  if (fp < zdata) zstack();\n",
+            self.frame
+        ).try();
+        // Locals first; parameters in memory are copied into their homes.
+        function.slots.loop((h, i, ty) {
+            (!self.in_memory(i) && !is_block(ty) && !unit(ty)).then(() {
+                (i < function.parameters).match({
+                    true  => {
+                        self.out.fmt("  let v{} = p{}", i, i).try();
+                        wide(ty).then(() { self.out.fmt(", v{}h = p{}h", i, i).try(); });
+                    },
+                    false => {
+                        self.out.fmt("  let v{} = 0", i).try();
+                        wide(ty).then(() { self.out.fmt(", v{}h = 0", i).try(); });
+                    },
+                });
+                self.out.add(";\n").try();
+            });
         });
-        // Every block explicitly returns or chooses its successor. Slots live
-        // in the function scope and retain their values across back-edges.
+        Range(0, function.parameters).loop((i) {
+            ty = function.slots.get(i).value_or(Scalar.Unit);
+            self.in_memory(i).then(() {
+                is_block(ty).match({
+                    true  => self.out.fmt(
+                        "  zcopy(fp + {}, p{}, {});\n",
+                        self.home(i),
+                        i,
+                        stored_size(ty)
+                    ),
+                    false => {
+                        self.out.add("  ").try();
+                        self.store_to(ty, self.home(i)).try();
+                        self.out.fmt("p{}", i).try();
+                        wide(ty).then(() { self.out.fmt(", p{}h", i).try(); });
+                        self.out.add(");\n")
+                    },
+                }).try();
+            });
+        });
         self.out.add("  let pc = 0;\n  for (;;) {\n    switch (pc) {\n").try();
         function.blocks.loop((h, index, block) {
             self.out.fmt("    case {}:\n", index).try();
             block.code.loop(
                 (instruction) { self.instruction(instruction).try(); }
             );
-            self.terminator(block.exit).try();
+            self.terminator(function, block.exit).try();
         });
-        self.out.add(
-            "    default: throw new Error(\"invalid Zen IR block\");\n    }\n  }\n}\n"
-        )
+        self.out.add("    }\n  }\n}\n")
     }
 
-    terminator = (self :: @Self, exit: Terminator) Res<(), AllocError> {
-        exit.match({
-            Return(value)  => self.out.fmt("      return v{};\n", value),
-            Jump(block)    => self.out.fmt("      pc = {}; continue;\n", block),
-            Branch(branch) => self.out.fmt(
-                "      pc = v{} !== 0 ? {} : {}; continue;\n",
-                branch.value,
-                branch.yes,
-                branch.no
-            ),
-            // Native-surface IR; `verify` refuses it before rendering.
-            Trap(_)        => self.out.add(OUTSIDE),
+    // ---- slot access ------------------------------------------------
+
+    // The low half (or the whole value) of a word slot.
+    lo = (self :: @Self, slot: usize) Res<(), AllocError> {
+        ty = self.slot_type(slot);
+        self.in_memory(slot).match({
+            false => self.out.fmt("v{}", slot),
+            true  => {
+                self.out.add(getter(ty)).try();
+                self.out.fmt("(fp + {}, true)", self.home(slot))
+            },
         })
     }
 
-    instruction = (self :: @Self, instruction: Instruction)
-                  Res<(), AllocError> {
+    hi = (self :: @Self, slot: usize) Res<(), AllocError> {
+        self.in_memory(slot).match({
+            false => self.out.fmt("v{}h", slot),
+            true  => self.out.fmt(
+                "zm.getUint32(fp + {}, true)",
+                self.home(slot) + 4
+            ),
+        })
+    }
+
+    // The heap address of a slot kept in memory.
+    at = (self :: @Self, slot: usize) Res<(), AllocError> {
+        self.out.fmt("(fp + {})", self.home(slot))
+    }
+
+    // Begin and end an assignment of a value to a slot's low half (or whole
+    // word): `vN = <expr>;` or `zm.setX(fp + k, <expr>, true);`.
+    open = (self :: @Self, slot: usize) Res<(), AllocError> {
+        self.in_memory(slot).match({
+            false => self.out.fmt("      v{} = ", slot),
+            true  => {
+                self.out.add("      ").try();
+                self.store_to(self.slot_type(slot), self.home(slot))
+            },
+        })
+    }
+
+    close = (self :: @Self, slot: usize) Res<(), AllocError> {
+        self.in_memory(slot).match({
+            false => self.out.add(";\n"),
+            true  => {
+                ty = self.slot_type(slot);
+                wide(ty).match({
+                    // The high half is supplied by `set_high`.
+                    true  => self.out.add(", 0);\n"),
+                    false => self.out.add(");\n"),
+                })
+            },
+        })
+    }
+
+    // After `open`/`close` of a 64-bit slot: its high half from `zH`.
+    set_high = (self :: @Self, slot: usize) Res<(), AllocError> {
+        self.in_memory(slot).match({
+            false => self.out.fmt("      v{}h = zH;\n", slot),
+            true  => self.out.fmt(
+                "      zm.setUint32(fp + {}, zH, true);\n",
+                self.home(slot) + 4
+            ),
+        })
+    }
+
+    // `zset<class>(address, ` for a store of `ty` at `fp + home`; the
+    // caller writes the value and the closing parenthesis. 64-bit values
+    // take two arguments (low, high) and pointers store a zero high half.
+    store_to = (self :: @Self, ty: Scalar, home: usize) Res<(), AllocError> {
+        self.out.add(setter(ty)).try();
+        self.out.fmt("(fp + {}, ", home)
+    }
+
+    // A whole assignment from an expression producing (low, zH).
+    assign_wide = (self :: @Self, slot: usize, expr: str) Res<(), AllocError> {
+        self.open(slot).try();
+        self.out.add(expr).try();
+        self.close(slot).try();
+        self.set_high(slot)
+    }
+
+    // ---- instructions -----------------------------------------------
+
+    instruction = (self :: @Self, instruction: Instruction) Res<(), AllocError> {
         instruction.match({
-            Constant(value)    => self.out.fmt(
-                "      v{} = {};\n",
-                value.out,
-                value.value
-            ),
-            Copy(value)        => self.out.fmt(
-                "      v{} = v{};\n",
-                value.out,
-                value.source
-            ),
+            Constant(value)    => self.constant(value.out, value.value),
+            Copy(value)        => self.copy(value.out, value.source),
             UnaryValue(value)  => self.unary(value),
             BinaryValue(value) => self.binary(value),
-            Invoke(value)      => self.call(value),
+            Invoke(call)       => self.call(call),
             PrintValue(value)  => self.print(value),
-            Text(value)        => {
-                self.out.add("      process.stdout.write(").try();
-                self.out.byte_string(value).try();
+            Text(bytes)        => (!bytes.is_empty()).match({
+                true  => {
+                    name = self.static_bytes(bytes).try();
+                    self.out.fmt("      zwrite(1, zk{}, {});\n", name, bytes.len)
+                },
+                false => Ok(()),
+            }),
+            Cast(value)        => self.convert(value),
+            AddressOf(value)   => {
+                self.open(value.out).try();
+                self.at(value.slot).try();
+                self.close(value.out)
+            },
+            LoadValue(value)   => self.load(value),
+            StoreValue(value)  => self.store(value),
+            CopyBytes(value)   => {
+                self.out.add("      zcopy(").try();
+                self.lo(value.dest).try();
+                self.out.add(", ").try();
+                self.lo(value.source).try();
+                self.out.add(", ").try();
+                self.lo(value.bytes).try();
                 self.out.add(");\n")
             },
-            // Native-surface IR; `verify` refuses it before rendering.
-            _                  => self.out.add(OUTSIDE),
+            Bytes(value)       => {
+                name = self.static_bytes(value.bytes).try();
+                self.open(value.out).try();
+                self.out.fmt("zk{}", name).try();
+                self.close(value.out)
+            },
+            WriteOut(value)    => {
+                self.out.fmt("      zwrite({}, ", descriptor(
+                    value.stream
+                )).try();
+                self.lo(value.data).try();
+                self.out.add(", ").try();
+                self.lo(value.len).try();
+                self.out.add(");\n")
+            },
+            System(call)       => self.system(call),
+            Startup(value)     => value.value.match({
+                Argc => {
+                    self.open(value.out).try();
+                    self.out.add("zargc").try();
+                    self.close(value.out).try();
+                    self.clear_high(value.out)
+                },
+                Argv => {
+                    self.open(value.out).try();
+                    self.out.add("zargv").try();
+                    self.close(value.out)
+                },
+                Envp => {
+                    self.open(value.out).try();
+                    self.out.add("zenvp").try();
+                    self.close(value.out)
+                },
+            }),
+            MapPages(value)    => {
+                self.open(value.out).try();
+                self.out.add("zpages(").try();
+                self.lo(value.bytes).try();
+                self.out.add(")").try();
+                self.close(value.out)
+            },
+            UnmapPages(slot)   => {
+                self.out.add("      zunpages(").try();
+                self.lo(slot).try();
+                self.out.add(");\n")
+            },
+            SysConst(value)    => self.constant(
+                value.out,
+                constant_value(value.name, Platform.LinuxX86_64)
+            ),
+            Flush              => self.out.add("      zflush();\n"),
+            Host(call)         => self.host(call),
+            // gen_verify refuses a machine primitive, so none reaches here.
+            Machine(_)         => self.out.add("      throw new Error(\"unverified machine primitive\");\n"),
+            // Suspend; the runtime resumes with a handler id.
+            Wait(slot)         => {
+                self.open(slot).try();
+                self.out.add("(yield 0) >>> 0").try();
+                self.close(slot)
+            },
         })
     }
 
-    // Keep location formatting in one reusable buffer. The generated hex
-    // literal is decoded only on the failing path, not on every arithmetic op.
+    clear_high = (self :: @Self, slot: usize) Res<(), AllocError> {
+        wide(self.slot_type(slot)).match({
+            true  => {
+                self.out.add("      zH = 0;\n").try();
+                self.set_high(slot)
+            },
+            false => Ok(()),
+        })
+    }
+
+    constant = (self :: @Self, out: usize, value: i64) Res<(), AllocError> {
+        ty   = self.slot_type(out);
+        bits = bits64(value);
+        low  = bits % 4294967296;
+        high = bits / 4294967296;
+        ty.match({
+            Unit     => Ok(()),
+            Block(_) => Ok(()),
+            F64      => {
+                name = self.constant_name();
+                self.data.fmt(
+                    "const zk{} = zfbits({}, {});\n",
+                    name,
+                    low,
+                    high
+                ).try();
+                self.open(out).try();
+                self.out.fmt("zk{}", name).try();
+                self.close(out)
+            },
+            I64      => {
+                self.out.fmt("      zH = {};\n", high).try();
+                self.open(out).try();
+                self.out.fmt("{}", low).try();
+                self.close(out).try();
+                self.set_high(out)
+            },
+            U64      => {
+                self.out.fmt("      zH = {};\n", high).try();
+                self.open(out).try();
+                self.out.fmt("{}", low).try();
+                self.close(out).try();
+                self.set_high(out)
+            },
+            _        => {
+                self.open(out).try();
+                self.canonical(ty).try();
+                self.out.fmt("({}))", low).try();
+                self.close(out)
+            },
+        })
+    }
+
+    constant_name = (self :: @Self) usize {
+        name               = self.next_constant;
+        self.next_constant = name + 1;
+        name
+    }
+
+    // A module constant holding the address of `bytes` in the static region.
+    static_bytes = (self :: @Self, bytes: str) Res<usize, AllocError> {
+        name = self.constant_name();
+        self.data.fmt("const zk{} = zstatic(", name).try();
+        self.data.hex_literal(bytes).try();
+        self.data.add(");\n").try();
+        Ok(name)
+    }
+
+    copy = (self :: @Self, out: usize, source: usize) Res<(), AllocError> {
+        ty = self.slot_type(out);
+        ty.match({
+            Unit     => Ok(()),
+            Block(l) => {
+                self.out.add("      zcopy(").try();
+                self.at(out).try();
+                self.out.add(", ").try();
+                self.at(source).try();
+                self.out.fmt(", {});\n", l.size)
+            },
+            _        => wide(ty).match({
+                true  => {
+                    self.out.add("      zH = ").try();
+                    self.hi(source).try();
+                    self.out.add(";\n").try();
+                    self.open(out).try();
+                    self.lo(source).try();
+                    self.close(out).try();
+                    self.set_high(out)
+                },
+                false => {
+                    self.open(out).try();
+                    self.lo(source).try();
+                    self.close(out)
+                },
+            }),
+        })
+    }
+
+    // Pre-formatted `file:line:col: ` for a trap report, as a hex literal.
     position = (self :: @Self, span: Span) Res<(), AllocError> {
         self.location.clear();
         self.location.fmt(
@@ -122,157 +548,920 @@ JavaScript = {
     }
 
     unary = (self :: @Self, value: Unary) Res<(), AllocError> {
+        ty = self.slot_type(value.input);
         value.op.match({
-            Neg => {
-                self.out.fmt(
-                    "      v{} = zg_i32(-v{}, ",
-                    value.out,
-                    value.input
-                ).try();
-                self.position(value.span).try();
-                self.out.add(");\n")
+            Not => {
+                self.open(value.out).try();
+                self.lo(value.input).try();
+                self.out.add(" ^ 1").try();
+                self.close(value.out)
             },
-            Not => self.out.fmt(
-                "      v{} = v{} === 0 ? 1 : 0;\n",
-                value.out,
-                value.input
-            ),
+            Neg => ty.match({
+                F64 => {
+                    self.open(value.out).try();
+                    self.out.add("-").try();
+                    self.lo(value.input).try();
+                    self.close(value.out)
+                },
+                _   => wide(ty).match({
+                    true  => {
+                        self.open(value.out).try();
+                        self.out.add("zneg64(").try();
+                        self.pair(value.input).try();
+                        self.out.add(", ").try();
+                        self.position(value.span).try();
+                        self.out.add(")").try();
+                        self.close(value.out).try();
+                        self.set_high(value.out)
+                    },
+                    false => {
+                        self.open(value.out).try();
+                        self.out.add("zrange(-").try();
+                        self.lo(value.input).try();
+                        self.out.fmt(
+                            ", {}, {}, ",
+                            minimum(ty),
+                            maximum(ty)
+                        ).try();
+                        self.position(value.span).try();
+                        self.out.add(")").try();
+                        self.close(value.out)
+                    },
+                }),
+            }),
         })
+    }
+
+    pair = (self :: @Self, slot: usize) Res<(), AllocError> {
+        self.lo(slot).try();
+        self.out.add(", ").try();
+        self.hi(slot)
     }
 
     binary = (self :: @Self, value: Binary) Res<(), AllocError> {
-        self.out.fmt("      v{} = ", value.out).try();
-        value.op.match({
-            Add          => self.out.fmt(
-                "zg_i32(v{} + v{}",
-                value.left,
-                value.right
-            ),
-            Sub          => self.out.fmt(
-                "zg_i32(v{} - v{}",
-                value.left,
-                value.right
-            ),
-            Mul          => self.out.fmt(
-                "zg_i32(v{} * v{}",
-                value.left,
-                value.right
-            ),
-            Div          => self.out.fmt(
-                "zg_div(v{}, v{}",
-                value.left,
-                value.right
-            ),
-            Rem          => self.out.fmt(
-                "zg_rem(v{}, v{}",
-                value.left,
-                value.right
-            ),
-            Equal        => self.out.fmt(
-                "v{} === v{} ? 1 : 0",
-                value.left,
-                value.right
-            ),
-            NotEqual     => self.out.fmt(
-                "v{} !== v{} ? 1 : 0",
-                value.left,
-                value.right
-            ),
-            Less         => self.out.fmt(
-                "v{} < v{} ? 1 : 0",
-                value.left,
-                value.right
-            ),
-            LessEqual    => self.out.fmt(
-                "v{} <= v{} ? 1 : 0",
-                value.left,
-                value.right
-            ),
-            Greater      => self.out.fmt(
-                "v{} > v{} ? 1 : 0",
-                value.left,
-                value.right
-            ),
-            GreaterEqual => self.out.fmt(
-                "v{} >= v{} ? 1 : 0",
-                value.left,
-                value.right
-            ),
-            _            => self.out.add("zg_outside("),
-        }).try();
-        checked = value.op.match({ Add => true, Sub => true, Mul => true, Div => true, Rem => true, _ => false });
-        checked.then(() {
-            self.out.add(", ").try();
-            self.position(value.span).try();
-            self.out.add(')').try();
-        });
-        self.out.add(";\n")
+        ty = self.slot_type(value.left);
+        ty.match({
+            F64  => self.float_binary(value),
+            Ptr  => self.pointer_binary(value),
+            Bool => self.small_binary(value, ty),
+            _    => wide(ty).match({
+                true  => self.wide_binary(value, ty),
+                false => self.small_binary(value, ty),
+            }),
+        })
     }
 
-    call = (self :: @Self, value: Invocation) Res<(), AllocError> {
-        self.out.fmt("      v{} = zg_f{}(", value.out, value.function).try();
-        value.args.loop((h, i, slot) {
-            (i > 0).then(() { self.out.add(", ").try(); });
-            self.out.fmt("v{}", slot).try();
+    // `(left <op> right)` with plain JS operators.
+    infix = (self :: @Self, value: Binary, op: str) Res<(), AllocError> {
+        self.out.add("(").try();
+        self.lo(value.left).try();
+        self.out.fmt(" {} ", op).try();
+        self.lo(value.right).try();
+        self.out.add(")")
+    }
+
+    compare = (self :: @Self, value: Binary) Res<bool, AllocError> {
+        op = comparison(value.op);
+        (!op.is_empty()).match({
+            true  => {
+                self.open(value.out).try();
+                self.infix(value, op).try();
+                self.out.add(" ? 1 : 0").try();
+                self.close(value.out).try();
+                Ok(true)
+            },
+            false => Ok(false),
+        })
+    }
+
+    float_binary = (self :: @Self, value: Binary) Res<(), AllocError> {
+        self.compare(value).try().match({
+            true  => Ok(()),
+            false => {
+                op = value.op.match({ Add => "+", Sub => "-", Mul => "*", Div => "/", _ => "%" });
+                self.open(value.out).try();
+                self.infix(value, op).try();
+                self.close(value.out)
+            },
+        })
+    }
+
+    // Pointer comparisons, and pointer steps by a U64 byte count (whose
+    // high half is irrelevant below the 2^31-byte heap limit).
+    pointer_binary = (self :: @Self, value: Binary) Res<(), AllocError> {
+        self.compare(value).try().match({
+            true  => Ok(()),
+            false => {
+                self.open(value.out).try();
+                self.out.add("(").try();
+                self.lo(value.left).try();
+                self.out.add(
+                    value.op.match({ WrapSub => " - ", _ => " + " })
+                ).try();
+                self.lo(value.right).try();
+                self.out.add(") >>> 0").try();
+                self.close(value.out)
+            },
+        })
+    }
+
+    // Words of 32 bits or fewer, and Bool.
+    small_binary = (self :: @Self, value: Binary, ty: Scalar) Res<(), AllocError> {
+        self.compare(value).try().match({
+            true  => Ok(()),
+            false => {
+                self.open(value.out).try();
+                value.op.match({
+                    Add     => self.checked(value, ty, "+"),
+                    Sub     => self.checked(value, ty, "-"),
+                    Mul     => self.checked(value, ty, "*"),
+                    Div     => self.division(value, ty, "zdiv"),
+                    Rem     => self.division(value, ty, "zrem"),
+                    WrapAdd => self.wrapped(value, ty, "+"),
+                    WrapSub => self.wrapped(value, ty, "-"),
+                    WrapMul => {
+                        self.canonical(ty).try();
+                        self.out.add("Math.imul(").try();
+                        self.lo(value.left).try();
+                        self.out.add(", ").try();
+                        self.lo(value.right).try();
+                        self.out.add("))")
+                    },
+                    And     => self.wrapped(value, ty, "&"),
+                    Or      => self.wrapped(value, ty, "|"),
+                    Xor     => self.wrapped(value, ty, "^"),
+                    Shl     => self.shift(value, ty, "zshl"),
+                    Shr     => self.shift(value, ty, "zshr"),
+                    Rotr    => {
+                        self.canonical(ty).try();
+                        self.out.add("zrotr(").try();
+                        self.unsigned_form(value.left, ty).try();
+                        self.out.add(", ").try();
+                        self.lo(value.right).try();
+                        self.out.fmt(", {}))", width(ty) * 8)
+                    },
+                    _       => self.out.add("0"),
+                }).try();
+                self.close(value.out)
+            },
+        })
+    }
+
+    // Exact in float64 for these widths; an out-of-range product of two
+    // 32-bit values stays out of range after rounding.
+    checked = (self :: @Self, value: Binary, ty: Scalar, op: str) Res<(), AllocError> {
+        self.out.add("zrange(").try();
+        self.infix(value, op).try();
+        self.out.fmt(", {}, {}, ", minimum(ty), maximum(ty)).try();
+        self.position(value.span).try();
+        self.out.add(")")
+    }
+
+    division = (self :: @Self, value: Binary, ty: Scalar, helper: str) Res<(), AllocError> {
+        self.out.fmt("{}(", helper).try();
+        self.lo(value.left).try();
+        self.out.add(", ").try();
+        self.lo(value.right).try();
+        self.out.fmt(", {}, ", minimum(ty)).try();
+        self.position(value.span).try();
+        self.out.add(")")
+    }
+
+    wrapped = (self :: @Self, value: Binary, ty: Scalar, op: str) Res<(), AllocError> {
+        self.canonical(ty).try();
+        self.infix(value, op).try();
+        self.out.add(")")
+    }
+
+    shift = (self :: @Self, value: Binary, ty: Scalar, helper: str) Res<(), AllocError> {
+        self.canonical(ty).try();
+        self.out.fmt("{}(", helper).try();
+        self.unsigned_form(value.left, ty).try();
+        self.out.add(", ").try();
+        self.pair(value.right).try();
+        self.out.fmt(", {}))", width(ty) * 8)
+    }
+
+    // The slot's bits read as unsigned, for bit operations on signed words.
+    unsigned_form = (self :: @Self, slot: usize, ty: Scalar) Res<(), AllocError> {
+        ty.match({
+            I8  => { self.out.add("(").try(); self.lo(slot).try(); self.out.add(" & 255)") },
+            I16 => { self.out.add("(").try(); self.lo(slot).try(); self.out.add(" & 65535)") },
+            I32 => { self.out.add("(").try(); self.lo(slot).try(); self.out.add(" >>> 0)") },
+            _   => self.lo(slot),
+        })
+    }
+
+    // `(`-prefixed canonicalisation for a class; the caller closes it.
+    canonical = (self :: @Self, ty: Scalar) Res<(), AllocError> {
+        self.out.add(canon_prefix(ty))
+    }
+
+    wide_binary = (self :: @Self, value: Binary, ty: Scalar) Res<(), AllocError> {
+        flag = truth(signed_class(ty));
+        value.op.match({
+            Equal        => self.wide_equal(value, ""),
+            NotEqual     => self.wide_equal(value, "!"),
+            Less         => self.wide_order(value, false, false, flag),
+            GreaterEqual => self.wide_order(value, true, false, flag),
+            Greater      => self.wide_order(value, false, true, flag),
+            LessEqual    => self.wide_order(value, true, true, flag),
+            And          => self.wide_bits(value, "&"),
+            Or           => self.wide_bits(value, "|"),
+            Xor          => self.wide_bits(value, "^"),
+            _            => {
+                self.open(value.out).try();
+                value.op.match({
+                    Add     => self.wide_call(value, "zadd64", flag, true),
+                    Sub     => self.wide_call(value, "zsub64", flag, true),
+                    Mul     => self.wide_call(value, "zmul64", flag, true),
+                    Div     => self.wide_call(
+                        value,
+                        "zdiv64",
+                        signed_class(
+                            ty
+                        ).match({ true => "true, false", false => "false, false" }),
+                        true
+                    ),
+                    Rem     => self.wide_call(
+                        value,
+                        "zdiv64",
+                        signed_class(
+                            ty
+                        ).match({ true => "true, true", false => "false, true" }),
+                        true
+                    ),
+                    WrapAdd => self.wide_call(value, "zwadd64", "", false),
+                    WrapSub => self.wide_call(value, "zwsub64", "", false),
+                    WrapMul => self.wide_call(value, "zwmul64", "", false),
+                    Shl     => self.wide_call(value, "zshl64", "", false),
+                    Shr     => self.wide_call(value, "zshr64", "", false),
+                    Rotr    => {
+                        self.out.add("zrotr64(").try();
+                        self.pair(value.left).try();
+                        self.out.add(", ").try();
+                        self.lo(value.right).try();
+                        self.out.add(")")
+                    },
+                    _       => self.out.add("0"),
+                }).try();
+                self.close(value.out).try();
+                self.set_high(value.out)
+            },
+        })
+    }
+
+    // helper(left pair, right pair[, extra][, where])
+    wide_call = (self :: @Self, value: Binary, helper: str, extra: str, traps: bool) Res<(), AllocError> {
+        self.out.fmt("{}(", helper).try();
+        self.pair(value.left).try();
+        self.out.add(", ").try();
+        self.pair(value.right).try();
+        (!extra.is_empty()).then(() { self.out.fmt(", {}", extra).try(); });
+        traps.then(() {
+            self.out.add(", ").try();
+            self.position(value.span).try();
         });
-        self.out.add(");\n")
+        self.out.add(")")
+    }
+
+    wide_equal = (self :: @Self, value: Binary, lead: str) Res<(), AllocError> {
+        self.open(value.out).try();
+        self.out.add(lead).try();
+        self.out.add("((").try();
+        self.lo(value.left).try();
+        self.out.add(" === ").try();
+        self.lo(value.right).try();
+        self.out.add(") && (").try();
+        self.hi(value.left).try();
+        self.out.add(" === ").try();
+        self.hi(value.right).try();
+        self.out.add(")) ? 1 : 0").try();
+        self.close(value.out)
+    }
+
+    // left < right, optionally negated and/or with the operands swapped.
+    wide_order = (self :: @Self, value: Binary, negate: bool, swap: bool, flag: str) Res<(), AllocError> {
+        first  = swap.match({ true => value.right, false => value.left });
+        second = swap.match({ true => value.left, false => value.right });
+        self.open(value.out).try();
+        self.out.add(
+            negate.match({ true => "!zlt64(", false => "zlt64(" })
+        ).try();
+        self.pair(first).try();
+        self.out.add(", ").try();
+        self.pair(second).try();
+        self.out.fmt(", {}) ? 1 : 0", flag).try();
+        self.close(value.out)
+    }
+
+    wide_bits = (self :: @Self, value: Binary, op: str) Res<(), AllocError> {
+        self.out.add("      zH = (").try();
+        self.hi(value.left).try();
+        self.out.fmt(" {} ", op).try();
+        self.hi(value.right).try();
+        self.out.add(") >>> 0;\n").try();
+        self.open(value.out).try();
+        self.out.add("(").try();
+        self.lo(value.left).try();
+        self.out.fmt(" {} ", op).try();
+        self.lo(value.right).try();
+        self.out.add(") >>> 0").try();
+        self.close(value.out).try();
+        self.set_high(value.out)
+    }
+
+    // Truncate or extend between integer classes, Bool, Ptr and F64.
+    convert = (self :: @Self, value: Convert) Res<(), AllocError> {
+        from = self.slot_type(value.input);
+        to   = self.slot_type(value.out);
+        to.match({
+            Bool => {
+                self.open(value.out).try();
+                (width(from) == 1 && !signed_class(from) && !is_float(from)).match({
+                    true  => self.lo(value.input),
+                    false => {
+                        self.out.add("(").try();
+                        self.lo(value.input).try();
+                        wide(from).then(() {
+                            self.out.add(" | ").try();
+                            self.hi(value.input).try();
+                        });
+                        self.out.add(") !== 0 ? 1 : 0")
+                    },
+                }).try();
+                self.close(value.out)
+            },
+            F64  => {
+                self.open(value.out).try();
+                wide(from).match({
+                    true  => {
+                        self.out.add("znum(").try();
+                        self.pair(value.input).try();
+                        self.out.fmt(", {})", truth(signed_class(from)))
+                    },
+                    false => self.lo(value.input),
+                }).try();
+                self.close(value.out)
+            },
+            _    => wide(to).match({
+                true  => {
+                    wide(from).match({
+                        true  => {
+                            self.out.add("      zH = ").try();
+                            self.hi(value.input).try();
+                            self.out.add(";\n").try();
+                            self.open(value.out).try();
+                            self.lo(value.input)
+                        },
+                        false => is_float(from).match({
+                            true  => {
+                                self.open(value.out).try();
+                                self.out.add("zfromnum(Math.trunc(").try();
+                                self.lo(value.input).try();
+                                self.out.add("))")
+                            },
+                            false => {
+                                // Sign-extend signed classes; zero-extend the rest.
+                                self.out.add("      zH = ").try();
+                                signed_class(from).match({
+                                    true  => {
+                                        self.out.add("(").try();
+                                        self.lo(value.input).try();
+                                        self.out.add(
+                                            " < 0 ? 4294967295 : 0);\n"
+                                        )
+                                    },
+                                    false => self.out.add("0;\n"),
+                                }).try();
+                                self.open(value.out).try();
+                                self.out.add("(").try();
+                                self.lo(value.input).try();
+                                self.out.add(") >>> 0")
+                            },
+                        }),
+                    }).try();
+                    self.close(value.out).try();
+                    self.set_high(value.out)
+                },
+                false => {
+                    self.open(value.out).try();
+                    self.canonical(to).try();
+                    is_float(from).match({
+                        true  => {
+                            self.out.add("Math.trunc(").try();
+                            self.lo(value.input).try();
+                            self.out.add(")")
+                        },
+                        false => self.lo(value.input),
+                    }).try();
+                    self.out.add(")").try();
+                    self.close(value.out)
+                },
+            }),
+        })
+    }
+
+    load = (self :: @Self, value: Load) Res<(), AllocError> {
+        ty = self.slot_type(value.out);
+        ty.match({
+            Unit     => Ok(()),
+            Block(l) => {
+                self.out.add("      zcopy(").try();
+                self.at(value.out).try();
+                self.out.add(", ").try();
+                self.lo(value.base).try();
+                self.out.fmt(" + {}, {});\n", value.offset, l.size)
+            },
+            _        => wide(ty).match({
+                true  => {
+                    self.out.add("      zH = zm.getUint32(").try();
+                    self.lo(value.base).try();
+                    self.out.fmt(" + {}, true);\n", value.offset + 4).try();
+                    self.open(value.out).try();
+                    self.out.add("zm.getUint32(").try();
+                    self.lo(value.base).try();
+                    self.out.fmt(" + {}, true)", value.offset).try();
+                    self.close(value.out).try();
+                    self.set_high(value.out)
+                },
+                false => {
+                    self.open(value.out).try();
+                    self.out.add(getter(ty)).try();
+                    self.out.add("(").try();
+                    self.lo(value.base).try();
+                    self.out.fmt(" + {}, true)", value.offset).try();
+                    self.close(value.out)
+                },
+            }),
+        })
+    }
+
+    store = (self :: @Self, value: Store) Res<(), AllocError> {
+        ty = self.slot_type(value.value);
+        ty.match({
+            Unit     => Ok(()),
+            Block(l) => {
+                self.out.add("      zcopy(").try();
+                self.lo(value.base).try();
+                self.out.fmt(" + {}, ", value.offset).try();
+                self.at(value.value).try();
+                self.out.fmt(", {});\n", l.size)
+            },
+            _        => {
+                self.out.add("      ").try();
+                self.out.add(setter(ty)).try();
+                self.out.add("(").try();
+                self.lo(value.base).try();
+                self.out.fmt(" + {}, ", value.offset).try();
+                self.lo(value.value).try();
+                wide(ty).then(() {
+                    self.out.add(", ").try();
+                    self.hi(value.value).try();
+                });
+                self.out.add(");\n")
+            },
+        })
+    }
+
+    call = (self :: @Self, call: Invocation) Res<(), AllocError> {
+        result = self.program.functions.get(
+            call.function
+        ).match({ Ok(f) => f.result, None => Scalar.Unit });
+        direct = result.match({ Unit => true, Block(_) => true, _ => false });
+        // A suspending callee is a generator; `yield*` runs it to completion,
+        // passing its suspensions up to the runtime.
+        resume: str = self.suspending(
+            call.function
+        ).match({ true => "yield* ", false => "" });
+        direct.match({
+            true  => {
+                self.out.fmt("      {}zf{}(", resume, call.function).try();
+                self.arguments(call, result).try();
+                self.out.add(");\n")
+            },
+            false => {
+                self.open(call.out).try();
+                self.out.fmt("({}zf{}(", resume, call.function).try();
+                self.arguments(call, result).try();
+                self.out.add("))").try();
+                self.close(call.out).try();
+                wide(result).match({ true => self.set_high(call.out), false => Ok(()) })
+            },
+        })
+    }
+
+    // A `js.bind` call through its stub; the stub converts each argument to
+    // its JavaScript form and the result back.
+    host = (self :: @Self, call: HostCall) Res<(), AllocError> {
+        stub = self.stub(call).try();
+        out  = self.slot_type(call.out);
+        call.result.match({
+            Nothing => {
+                self.out.fmt("      zj{}(", stub).try();
+                self.host_arguments(call).try();
+                self.out.add(");\n")
+            },
+            Number  => wide(out).match({
+                true  => {
+                    self.open(call.out).try();
+                    self.out.fmt("zfromnum(zj{}(", stub).try();
+                    self.host_arguments(call).try();
+                    self.out.add("))").try();
+                    self.close(call.out).try();
+                    self.set_high(call.out)
+                },
+                false => {
+                    self.open(call.out).try();
+                    is_float(out).match({
+                        true  => self.out.add("+("),
+                        false => self.canonical(out),
+                    }).try();
+                    self.out.fmt("zj{}(", stub).try();
+                    self.host_arguments(call).try();
+                    self.out.add("))").try();
+                    self.close(call.out)
+                },
+            }),
+            _       => {
+                self.open(call.out).try();
+                self.out.fmt("zj{}(", stub).try();
+                self.host_arguments(call).try();
+                self.out.add(")").try();
+                self.close(call.out)
+            },
+        })
+    }
+
+    host_arguments = (self :: @Self, call: HostCall) Res<(), AllocError> {
+        call.args.loop((h, i, slot) {
+            (i > 0).then(() { self.out.add(", ").try(); });
+            ty = self.slot_type(slot);
+            call.marshal.get(i).value_or(Marshal.Nothing).match({
+                Text => self.at(slot),
+                _    => wide(ty).match({
+                    true  => {
+                        self.out.add("znum(").try();
+                        self.pair(slot).try();
+                        self.out.fmt(", {})", truth(signed_class(ty)))
+                    },
+                    false => self.lo(slot),
+                }),
+            }).try();
+        });
+        Ok(())
+    }
+
+    // The stub's number for this binding signature, written on first use.
+    stub = (self :: @Self, call: HostCall) Res<usize, AllocError> {
+        key ::= self.alloc.String().try();
+        key.fmt(
+            "{}|{}|{}|{}|",
+            call.object,
+            call.member,
+            call.receiver,
+            marshal_name(call.result)
+        ).try();
+        call.marshal.loop((m) { key.fmt("{},", marshal_name(m)).try(); });
+        found: Res<usize> ::= None;
+        self.stubs.loop(
+            (h, i, known) { known.view().eq(key.view()).then(() { found = Ok(i); }); }
+        );
+        found.match({
+            Ok(i) => Ok(i),
+            None  => {
+                index = self.stubs.len;
+                self.stubs.add(key).try();
+                self.write_stub(index, call).try();
+                Ok(index)
+            },
+        })
+    }
+
+    // function zjN(a0, a1) { const t = zobj(a0)["style"]; return (t["setProperty"](zstr(a1)), 0); }
+    // The object is a global path, or the receiver followed by the path
+    // after its first segment. Names are emitted only when they are plain
+    // identifiers; any other spelling becomes a stub that throws.
+    write_stub = (self :: @Self, index: usize, call: HostCall) Res<(), AllocError> {
+        self.data.fmt("function zj{}(", index).try();
+        Range(0, call.args.len).loop((i) {
+            (i > 0).then(() { self.data.add(", ").try(); });
+            self.data.fmt("a{}", i).try();
+        });
+        self.data.add(") {\n").try();
+        valid ::= identifier(call.member);
+        call.object.split('.').loop((segment) { valid = valid && identifier(segment); });
+        valid.match({
+            false => self.data.add(
+                "  throw new Error(\"js.bind: invalid object path or member name\");\n}\n"
+            ),
+            true  => {
+                self.data.add(
+                    call.receiver.match({ true => "  const t = zobj(a0)", false => "  const t = globalThis" })
+                ).try();
+                skip ::= call.receiver;
+                call.object.split('.').loop((segment) {
+                    skip.match({
+                        true  => { skip = false; },
+                        false => { self.data.fmt("[\"{}\"]", segment).try(); },
+                    });
+                });
+                self.data.add(";\n  return ").try();
+                first    = call.receiver.match({ true => 1, false => 0 });
+                property = call.member.len > 4 && (call.member.starts_with("set_") || call.member.starts_with("get_"));
+                setter   = property && call.member.starts_with("set_");
+                name     = property.match({ true => call.member.slice(
+                    4,
+                    call.member.len
+                ), false => call.member });
+                setter.match({
+                    true  => {
+                        self.data.fmt("(t[\"{}\"] = ", name).try();
+                        self.argument_js(call, first).try();
+                        self.data.add(", 0);\n}\n")
+                    },
+                    false => {
+                        self.data.add(result_open(call.result)).try();
+                        self.data.fmt("t[\"{}\"]", name).try();
+                        (!property).then(() {
+                            self.data.add("(").try();
+                            Range(first, call.args.len).loop((i) {
+                                (i > first).then(
+                                    () { self.data.add(", ").try(); }
+                                );
+                                self.argument_js(call, i).try();
+                            });
+                            self.data.add(")").try();
+                        });
+                        self.data.add(result_close(call.result)).try();
+                        self.data.add(";\n}\n")
+                    },
+                })
+            },
+        })
+    }
+
+    // Argument `i` converted to its JavaScript form inside a stub.
+    argument_js = (self :: @Self, call: HostCall, i: usize) Res<(), AllocError> {
+        call.marshal.get(i).value_or(Marshal.Nothing).match({
+            Number  => self.data.fmt("a{}", i),
+            Flag    => self.data.fmt("(a{} !== 0)", i),
+            Text    => self.data.fmt("zstr(a{})", i),
+            Handle  => self.data.fmt("zobj(a{})", i),
+            Handler => self.data.fmt("zhandler(a{})", i),
+            Nothing => self.data.add("undefined"),
+        })
+    }
+
+    arguments = (self :: @Self, call: Invocation, result: Scalar) Res<(), AllocError> {
+        first ::= true;
+        call.args.loop((h, i, slot) {
+            (!first).then(() { self.out.add(", ").try(); });
+            first = false;
+            ty    = self.slot_type(slot);
+            ty.match({
+                Unit     => self.out.add("0"),
+                Block(_) => self.at(slot),
+                _        => wide(ty).match({ true => self.pair(slot), false => self.lo(slot) }),
+            }).try();
+        });
+        is_block(result).then(() {
+            (!first).then(() { self.out.add(", ").try(); });
+            self.at(call.out).try();
+        });
+        Ok(())
     }
 
     print = (self :: @Self, value: Print) Res<(), AllocError> {
+        fd = descriptor(value.stream);
         value.ty.match({
-            I32  => self.out.fmt(
-                "      process.stdout.write(String(v{}));\n",
-                value.value
-            ),
-            Bool => self.out.fmt(
-                "      process.stdout.write(v{} === 0 ? \"false\" : \"true\");\n",
-                value.value
-            ),
-            Unit => self.out.add("      process.stdout.write(\"()\");\n"),
-            _    => self.out.add(OUTSIDE),
+            Unit => self.out.fmt("      zprint({}, \"()\");\n", fd),
+            Bool => {
+                self.out.fmt("      zprint({}, ", fd).try();
+                self.lo(value.value).try();
+                self.out.add(" !== 0 ? \"true\" : \"false\");\n")
+            },
+            F64  => {
+                self.out.fmt("      zprint({}, zfmtg(", fd).try();
+                self.lo(value.value).try();
+                self.out.add("));\n")
+            },
+            _    => wide(value.ty).match({
+                true  => {
+                    self.out.fmt("      zprint64({}, ", fd).try();
+                    self.pair(value.value).try();
+                    self.out.fmt(", {});\n", truth(signed_class(value.ty)))
+                },
+                false => {
+                    self.out.fmt("      zprint({}, String(", fd).try();
+                    self.lo(value.value).try();
+                    self.out.add("));\n")
+                },
+            }),
+        })
+    }
+
+    // Arguments reach the host as JS numbers (exact below 2^53); the result
+    // is a word in the -errno convention.
+    system = (self :: @Self, call: SysCall) Res<(), AllocError> {
+        ty = self.slot_type(call.out);
+        self.open(call.out).try();
+        wide(ty).then(() { self.out.add("zfromnum(").try(); });
+        self.out.fmt("zsys(\"{}\", [", sys_name(call.call)).try();
+        call.args.loop((h, i, slot) {
+            (i > 0).then(() { self.out.add(", ").try(); });
+            arg = self.slot_type(slot);
+            wide(arg).match({
+                true  => {
+                    self.out.add("znum(").try();
+                    self.pair(slot).try();
+                    self.out.fmt(", {})", truth(signed_class(arg)))
+                },
+                false => self.lo(slot),
+            }).try();
+        });
+        self.out.add("])").try();
+        wide(ty).then(() { self.out.add(")").try(); });
+        self.close(call.out).try();
+        wide(ty).match({ true => self.set_high(call.out), false => Ok(()) })
+    }
+
+    terminator = (self :: @Self, function: Func, exit: Terminator) Res<(), AllocError> {
+        exit.match({
+            Return(value)  => function.result.match({
+                Unit     => self.out.add("      zsp = zs; return 0;\n"),
+                Block(l) => {
+                    self.out.add("      zcopy(rp, ").try();
+                    self.at(value).try();
+                    self.out.fmt(", {}); zsp = zs; return;\n", l.size)
+                },
+                _        => wide(function.result).match({
+                    true  => {
+                        self.out.add("      zsp = zs; zH = ").try();
+                        self.hi(value).try();
+                        self.out.add("; return ").try();
+                        self.lo(value).try();
+                        self.out.add(";\n")
+                    },
+                    false => {
+                        self.out.add("      zsp = zs; return ").try();
+                        self.lo(value).try();
+                        self.out.add(";\n")
+                    },
+                }),
+            }),
+            Jump(block)    => self.out.fmt("      pc = {}; continue;\n", block),
+            Branch(branch) => {
+                self.out.add("      pc = ").try();
+                self.lo(branch.value).try();
+                self.out.fmt(
+                    " !== 0 ? {} : {}; continue;\n",
+                    branch.yes,
+                    branch.no
+                )
+            },
+            Trap(fault)    => {
+                self.out.add("      zt(").try();
+                self.position(fault.span).try();
+                self.out.fmt(", \"{}\");\n", trap_message(fault.what))
+            },
         })
     }
 }
 
-// Node drains queued writes before exiting. Throwing a distinct trap aborts
-// execution without process.exit truncating already-produced output.
-// Every i32 is exactly representable as a Number. An in-range product is exact
-// too; rounding of larger products cannot bring them inside the i32 bounds.
-OUTSIDE: str = "      throw new Error(\"native-surface IR\");\n"
+// ---- class tables -------------------------------------------------------
 
-runtime = (out :: String) Res<(), AllocError> {
-    out.add("\"use strict\";\n").try();
-    out.add("class ZenTrap extends Error {}\n").try();
-    out.add(
-        "function zg_trap(where, message) { const error = new ZenTrap(message); error.where = where; throw error; }\n"
-    ).try();
-    out.add("function zg_i32(value, where) {\n").try();
-    out.add(
-        "  if (!Number.isInteger(value) || value < -2147483648 || value > 2147483647) zg_trap(where, \"integer overflow\");\n"
-    ).try();
-    out.add("  return value;\n}\n").try();
-    out.add("function zg_div(left, right, where) {\n").try();
-    out.add("  if (right === 0) zg_trap(where, \"divide by zero\");\n").try();
-    out.add(
-        "  if (left === -2147483648 && right === -1) zg_trap(where, \"integer overflow\");\n"
-    ).try();
-    out.add("  return Math.trunc(left / right);\n}\n").try();
-    out.add("function zg_rem(left, right, where) {\n").try();
-    out.add("  if (right === 0) zg_trap(where, \"divide by zero\");\n").try();
-    out.add(
-        "  if (left === -2147483648 && right === -1) zg_trap(where, \"integer overflow\");\n"
-    ).try();
-    out.add("  return left % right;\n}\n")
+wide = (ty: Scalar) bool { ty.match({ I64 => true, U64 => true, _ => false }) }
+is_block = (ty: Scalar) bool { ty.match({ Block(_) => true, _ => false }) }
+unit = (ty: Scalar) bool { ty.match({ Unit => true, _ => false }) }
+is_float = (ty: Scalar) bool { ty.match({ F64 => true, _ => false }) }
+signed_class = (ty: Scalar) bool {
+    ty.match({ I8 => true, I16 => true, I32 => true, I64 => true, _ => false })
 }
 
-// Hex spelling preserves arbitrary byte strings, including invalid UTF-8 and
-// embedded NULs, without placing source text in JavaScript syntax.
-byte_string = (out :: String, text: str) Res<(), AllocError> {
-    out.add("Buffer.from(").try();
-    out.hex_literal(text).try();
-    out.add(", \"hex\")")
+// How a result converts back: a number stays a number, a boolean becomes
+// 1/0, an object becomes a handle, and nothing is 0.
+result_open = (m: Marshal) str {
+    m.match({ Number => "+(", Flag => "(", Handle => "zref(", _ => "(" })
 }
 
+result_close = (m: Marshal) str {
+    m.match({ Flag => ") ? 1 : 0", Nothing => ", 0)", _ => ")" })
+}
+
+marshal_name = (m: Marshal) str {
+    m.match({ Number => "n", Flag => "b", Text => "s", Handle => "r", Handler => "h", Nothing => "-" })
+}
+
+// A JavaScript identifier made only of ASCII letters, digits, `_` and `$`.
+identifier = (text: str) bool {
+    ok ::= text.len > 0;
+    text.loop((c) {
+        letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$';
+        ok     = ok && (letter || (c >= '0' && c <= '9'));
+    });
+    ok && !(text.index(0) >= '0' && text.index(0) <= '9')
+}
+
+truth = (value: bool) str { value.match({ true => "true", false => "false" }) }
+
+stored_size = (ty: Scalar) usize { ty.match({ Block(l) => l.size, _ => 8 }) }
+
+round_up = (
+    value : usize,
+    align : usize
+) usize { ((value + align - 1) / align) * align }
+
+descriptor = (stream: Stream) usize { stream.match({ Out => 1, Err => 2 }) }
+
+getter = (ty: Scalar) str {
+    ty.match({
+        I8   => "zm.getInt8",
+        U8   => "zm.getUint8",
+        Bool => "zm.getUint8",
+        I16  => "zm.getInt16",
+        U16  => "zm.getUint16",
+        I32  => "zm.getInt32",
+        F64  => "zm.getFloat64",
+        _    => "zm.getUint32",
+    })
+}
+
+// Stores take (address, value) or, for 64-bit words, (address, low, high).
+setter = (ty: Scalar) str {
+    ty.match({
+        I8   => "zst8",
+        U8   => "zst8",
+        Bool => "zst8",
+        I16  => "zst16",
+        U16  => "zst16",
+        I32  => "zst32",
+        U32  => "zst32",
+        F64  => "zstf",
+        _    => "zset64",
+    })
+}
+
+canon_prefix = (ty: Scalar) str {
+    ty.match({
+        I8   => "zc_i8(",
+        U8   => "zc_u8(",
+        Bool => "zc_u8(",
+        I16  => "zc_i16(",
+        U16  => "zc_u16(",
+        I32  => "zc_i32(",
+        _    => "zc_u32(",
+    })
+}
+
+comparison = (op: Op) str {
+    op.match({
+        Equal        => "===",
+        NotEqual     => "!==",
+        Less         => "<",
+        LessEqual    => "<=",
+        Greater      => ">",
+        GreaterEqual => ">=",
+        _            => "",
+    })
+}
+
+minimum = (ty: Scalar) i64 {
+    ty.match({ I8 => -128, I16 => -32768, I32 => -2147483648, _ => 0 })
+}
+
+maximum = (ty: Scalar) i64 {
+    ty.match({
+        I8 => 127, U8 => 255, I16 => 32767, U16 => 65535, I32 => 2147483647,
+        _ => 4294967295,
+    })
+}
+
+sys_name = (call: Sys) str {
+    call.match({
+        Read         => "read",
+        Write        => "write",
+        Openat       => "openat",
+        Close        => "close",
+        Mmap         => "mmap",
+        Munmap       => "munmap",
+        ExitGroup    => "exit_group",
+        ClockGettime => "clock_gettime",
+        Getrandom    => "getrandom",
+        _            => "unsupported",
+    })
+}
+
+// The two's-complement bit pattern of a signed value.
+bits64 = (value: i64) u64 {
+    (value < 0).match({
+        true  => u64.MAX - (-(value + 1)).to_usize().value_or(0).to_u64(),
+        false => value.to_usize().value_or(0).to_u64(),
+    })
+}
+
+// Hex spelling preserves arbitrary bytes without placing source text in
+// JavaScript syntax.
 hex_literal = (out :: String, text: str) Res<(), AllocError> {
     out.add('"').try();
     text.loop((byte) { out.write_hex_fixed(byte.to_u64(), 2).try(); });

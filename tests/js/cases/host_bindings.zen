@@ -1,0 +1,55 @@
+// js.bind under Node: every boundary form crosses and comes back, and a
+// program that can reach std.js.wait runs as a resumable generator (with no
+// event source, wait answers 0). JavaScript-only: the C backend refuses
+// js.bind members, so this lives beside the JS gate, not in tests/corpus.
+Ref, Handler, wait = std.js
+
+MathJs = js.bind("Math", {
+    max* = (a: f64, b: f64) f64
+    floor* = (x: f64) i32
+})
+
+Global = js.bind("globalThis", {
+    parseInt* = (text: str) i32
+    isFinite* = (x: f64) bool
+    get_Math* = () Ref
+})
+
+ArrayJs = js.bind("Array", {
+    of* = (x: i32, y: i32) Ref
+})
+
+Arrays = js.bind("Array", {
+    get_length* = (this: Ref) u32
+    set_length* = (this: Ref, length: u32) ()
+    push* = (this: Ref, text: str) u32
+    at* = (this: Ref, index: i32) Ref
+    includes* = (this: Ref, text: str) bool
+})
+
+// Suspends through two frames; resumed with 0 because Node has no events.
+deep = () u32 { deeper() + 1 }
+deeper = () u32 { wait() }
+
+main = (env: Env) Res<i32, AllocError> {
+    println("max {}", MathJs.max(1.5, 2.25));
+    println("floor {}", MathJs.floor(-7.5));
+    println("parseInt {}", Global.parseInt("  42 apples"));
+    println("finite {} {}", Global.isFinite(3.0), Global.isFinite(1.0 / 0.0));
+    list = ArrayJs.of(4, 5);
+    println("push {}", Arrays.push(list, "héllo, wörld"));
+    println(
+        "includes {} {}",
+        Arrays.includes(list, "héllo, wörld"),
+        Arrays.includes(list, "hello")
+    );
+    println(
+        "same object, same handle {}",
+        Global.get_Math().id == Global.get_Math().id
+    );
+    println("missing element is handle {}", Arrays.at(list, 10).id);
+    Arrays.set_length(list, 1);
+    println("length {}", Arrays.get_length(list));
+    println("wait {} deep {}", wait(), deep());
+    Ok(0)
+}

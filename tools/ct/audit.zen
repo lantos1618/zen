@@ -267,7 +267,7 @@ run_whole = (
             file_isa = detect_isa_lines(asm.view());
             measure_reads(a, asm.view(), file_isa, marked, shapes_x86, shapes_arm).try();
             marked.loop((m) {
-                one = audit_function(a, audit, asm.view(), source, m, "", cc, level, file_isa, shapes_x86, shapes_arm).try();
+                one = audit_function(a, audit, asm.view(), source, m, "", cc, level, file_isa, shapes_x86, shapes_arm, a.Vec<str>()).try();
                 outcome = sum(outcome, one);
             });
         });
@@ -350,7 +350,7 @@ run_inlined = (
             marked.loop((m) {
                 (!m.symbol.is_in(changed)).then(() {
                     label = m.symbol.is_in(roots).match({ true => " (root)", false => "" });
-                    one = audit_function(a, audit, asm.view(), source, m, label, cc, level, file_isa, shapes_x86, shapes_arm).try();
+                    one = audit_function(a, audit, asm.view(), source, m, label, cc, level, file_isa, shapes_x86, shapes_arm, changed).try();
                     outcome = sum(outcome, one);
                 });
             });
@@ -372,7 +372,7 @@ run_inlined = (
                 measure_reads(a, asm2.view(), file_isa, marked, shapes2_x86, shapes2_arm).try();
                 marked.loop((m) {
                     m.symbol.is_in(changed).then(() {
-                        one = audit_function(a, audit, asm2.view(), source, m, " (forced)", cc, level, file_isa, shapes2_x86, shapes2_arm).try();
+                        one = audit_function(a, audit, asm2.view(), source, m, " (forced)", cc, level, file_isa, shapes2_x86, shapes2_arm, a.Vec<str>()).try();
                         outcome = sum(outcome, one);
                     });
                 });
@@ -549,13 +549,15 @@ audit_function = (
     level     : str,
     isa       : Isa,
     shapes_x86 : Map<str, CallShape>,
-    shapes_arm : Map<str, CallShape>
+    shapes_arm : Map<str, CallShape>,
+    // Callees audited from another build (see run_inlined).
+    elsewhere  : Vec<str>
 ) Res<Outcome, AuditError> {
     name = a.String("{}{}", short_name(m.symbol), label).try().view();
     m.public_only.then(() {
         println("PUBLIC {} {} {}: declared public-only by the manifest, not analysed", cc, level, name);
     });
-    (m.public_only).match({ true => Ok(Outcome(passed: 0, failed: 0, controls: 0)), false => audit_body(a, audit, asm, c, m, name, label.len == 0, cc, level, isa, shapes_x86, shapes_arm) })
+    (m.public_only).match({ true => Ok(Outcome(passed: 0, failed: 0, controls: 0)), false => audit_body(a, audit, asm, c, m, name, label.len == 0, cc, level, isa, shapes_x86, shapes_arm, elsewhere) })
 }
 
 audit_body = (
@@ -571,7 +573,8 @@ audit_body = (
     level     : str,
     isa       : Isa,
     shapes_x86 : Map<str, CallShape>,
-    shapes_arm : Map<str, CallShape>
+    shapes_arm : Map<str, CallShape>,
+    elsewhere  : Vec<str>
 ) Res<Outcome, AuditError> {
     body = function_lines(a, asm, m.symbol).try();
     // In the default audit every audited definition is compiled `used`
@@ -623,7 +626,8 @@ audit_body = (
                 seed,
                 isa.match({ X86 => shapes_x86, Arm => shapes_arm }),
                 result_registers(a, isa, c, m).try(),
-                audit.trace.len > 0 && m.symbol.contains(audit.trace)
+                audit.trace.len > 0 && m.symbol.contains(audit.trace),
+                elsewhere
             ).try();
             arch    = isa.match({ X86 => "x86-64", Arm => "arm64" });
             located = seed.values.len + seed.pointers.len + seed.slots.len + seed.pointer_slots.len + seed.pointers2.len > 0;

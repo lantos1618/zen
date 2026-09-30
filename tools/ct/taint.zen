@@ -784,6 +784,10 @@ Analysis* = {
     // Each called symbol's calling shape, from its C prototype; an unknown
     // callee is assumed to take every argument register.
     shapes: Map<str, CallShape>,
+    // Callees audited from another build (the inlined audit's functions
+    // whose signature the optimizer changed): called as unknown functions,
+    // but not unaudited ones.
+    elsewhere: Vec<str>,
     // Registers that must not be secret at a return (a public-result audit).
     result_check: Vec<str>,
     // Print every instruction of the final pass with the tainted registers
@@ -846,7 +850,8 @@ analyze* = (
     seed         : Seed,
     shapes       : Map<str, CallShape>,
     result_check : Vec<str>,
-    trace        : bool
+    trace        : bool,
+    elsewhere    : Vec<str>
 ) Res<Vec<Finding>, AllocError> {
     an ::= Analysis(
         alloc: a,
@@ -858,6 +863,7 @@ analyze* = (
         reporting: false,
         grew: false,
         shapes: shapes,
+        elsewhere: elsewhere,
         result_check: result_check,
         trace: trace,
         observed: false
@@ -1352,7 +1358,7 @@ call = (
     // addresses were never checked. The runtime library's wide divisions
     // are divisions; the copies and fills, the entropy source and calls
     // that never return are known not to depend on the data.
-    (secret && !shape.audited).then(() {
+    (secret && !shape.audited && !call_target(target).is_in(an.elsewhere)).then(() {
         wide_division(target).match({
             true  => an.report("divide", line.text).try(),
             false => { (!returns_first(target) && !no_return(target) && !data_blind(target)).then(() {
@@ -1493,6 +1499,7 @@ argument_reads* = (
             reporting: false,
             grew: false,
             shapes: shapes,
+            elsewhere: a.Vec<str>(),
             result_check: a.Vec<str>(),
             trace: false,
             observed: false

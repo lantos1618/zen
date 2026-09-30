@@ -220,10 +220,10 @@ module.exports = grammar({
     // `Vec<i32>` — an alias target / a type, or `Vec < i32`? Decided at the
     // token after the `>`. (A-ANGLE)
     [$.generic_type, $._expression, $._callee],
-    [$.generic_type, $._type],
+    [$.generic_type, $._single_type],
     // the payload of the enum fork: `str` in `Failed(str)` is a type on one
     // side and an expression on the other.
-    [$._type, $._expression],
+    [$._single_type, $._expression],
     // D7: `x*` at the head of a statement — an export marker, or `x * y`?
     // And `x<T> =` — type parameters, or `x < T`? Decided one token later.
     [$.declaration_name, $._binding_target],
@@ -241,6 +241,9 @@ module.exports = grammar({
     // braced import? Decided after the matching `}`: only an import is
     // followed by `=`.
     [$.function, $.function_signature],
+    // `{ Name: T` — an enum's variant or a struct's field? Decided at the
+    // separator that follows: `|` joins variants, `,` joins fields.
+    [$.declaration_name, $.braced_variant],
   ],
 
   rules: {
@@ -419,9 +422,11 @@ module.exports = grammar({
     braced_enum_body: ($) =>
       seq(
         '{',
-        optional('|'),
-        $.braced_variant,
-        repeat(seq('|', $.braced_variant)),
+        // One variant takes the leading bar, as in the bare form.
+        choice(
+          seq('|', $.braced_variant, repeat(seq('|', $.braced_variant))),
+          seq($.braced_variant, repeat1(seq('|', $.braced_variant))),
+        ),
         optional(seq(',', repeat(seq($.member_declaration, optional(','))))),
         '}',
       ),

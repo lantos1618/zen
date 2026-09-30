@@ -142,6 +142,7 @@
   value: [(struct_body) (enum_body)])
 
 (enum_variant name: (identifier) @constructor)
+(braced_variant name: (identifier) @constructor)
 
 ; `{ Bag, reseat } = shape`: the module path is a namespace, and each
 ; destructured name is whatever the module declares it as, which the

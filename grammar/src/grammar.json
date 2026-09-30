@@ -152,6 +152,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "braced_enum_body"
+        },
+        {
+          "type": "SYMBOL",
           "name": "enum_body"
         },
         {
@@ -532,7 +536,7 @@
                   "name": "type",
                   "content": {
                     "type": "SYMBOL",
-                    "name": "_type"
+                    "name": "_single_type"
                   }
                 },
                 {
@@ -743,6 +747,182 @@
         }
       ]
     },
+    "braced_enum_body": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "{"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "|"
+                },
+                {
+                  "type": "SYMBOL",
+                  "name": "braced_variant"
+                },
+                {
+                  "type": "REPEAT",
+                  "content": {
+                    "type": "SEQ",
+                    "members": [
+                      {
+                        "type": "STRING",
+                        "value": "|"
+                      },
+                      {
+                        "type": "SYMBOL",
+                        "name": "braced_variant"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "SYMBOL",
+                  "name": "braced_variant"
+                },
+                {
+                  "type": "REPEAT1",
+                  "content": {
+                    "type": "SEQ",
+                    "members": [
+                      {
+                        "type": "STRING",
+                        "value": "|"
+                      },
+                      {
+                        "type": "SYMBOL",
+                        "name": "braced_variant"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": ","
+                },
+                {
+                  "type": "REPEAT",
+                  "content": {
+                    "type": "SEQ",
+                    "members": [
+                      {
+                        "type": "SYMBOL",
+                        "name": "member_declaration"
+                      },
+                      {
+                        "type": "CHOICE",
+                        "members": [
+                          {
+                            "type": "STRING",
+                            "value": ","
+                          },
+                          {
+                            "type": "BLANK"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "STRING",
+          "value": "}"
+        }
+      ]
+    },
+    "braced_variant": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": ":"
+                },
+                {
+                  "type": "FIELD",
+                  "name": "payload",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_single_type"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "="
+                },
+                {
+                  "type": "FIELD",
+                  "name": "discriminant",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_expression"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        }
+      ]
+    },
     "block": {
       "type": "SEQ",
       "members": [
@@ -837,6 +1017,10 @@
               {
                 "type": "SYMBOL",
                 "name": "struct_body"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "braced_enum_body"
               },
               {
                 "type": "SYMBOL",
@@ -1270,6 +1454,19 @@
       "members": [
         {
           "type": "SYMBOL",
+          "name": "_single_type"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "union_type"
+        }
+      ]
+    },
+    "_single_type": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
           "name": "identifier"
         },
         {
@@ -1291,10 +1488,6 @@
         {
           "type": "SYMBOL",
           "name": "self_type"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "union_type"
         },
         {
           "type": "SYMBOL",
@@ -3103,10 +3296,10 @@
     ],
     [
       "generic_type",
-      "_type"
+      "_single_type"
     ],
     [
-      "_type",
+      "_single_type",
       "_expression"
     ],
     [
@@ -3137,6 +3330,10 @@
     [
       "function",
       "function_signature"
+    ],
+    [
+      "declaration_name",
+      "braced_variant"
     ]
   ],
   "precedences": [],

@@ -9,7 +9,7 @@ Map, Vec = std.collections
 BuildArgs, ProjectArgs, Emission, Target, Os, Arch, Abi, Dep, Codegen = std.build
 Build = zen.zen_build
 entry_of, holds_build_zen = zen.zen_path
-Inputs, inputs, replay = zen.zen_inputs
+Inputs, inputs = zen.zen_inputs
 BuildPlan, ExeNode, plan = zen.zen_build_plan
 
 Action* = Build | Run | Test
@@ -572,11 +572,7 @@ Project = {
             Err(_)     => Ok(false),
             Ok(record) => listing.match({
                 Err(_)    => Ok(false),
-                Ok(paths) => replay(
-                    self.env,
-                    self.a,
-                    paths.view()
-                ).try().match({
+                Ok(paths) => self.replay(paths.view()).try().match({
                     None    => Ok(false),
                     Ok(now) => {
                         text = record.view();
@@ -586,6 +582,26 @@ Project = {
                 }),
             }),
         })
+    }
+
+    // Rebuild the record for a `paths` listing from the filesystem. None means
+    // a listed file can no longer be read, so the old record cannot match.
+    replay = (self: @Self, paths: str) Res<Res<Inputs>, AllocError> {
+        now      ::= inputs(self.a).try();
+        readable ::= true;
+        paths.split('\n').loop((line) {
+            (line.len > 2).then(() {
+                path = line.slice(2, line.len);
+                (line.index(0) == 'R').match({
+                    true  => self.env.fs.read(self.a, path).match({
+                        Ok(text) => now.read(path, text.view()).try(),
+                        Err(_)   => { readable = false; },
+                    }),
+                    false => now.probe(path, self.env.fs.exists(path)).try(),
+                });
+            });
+        });
+        Ok(readable.match({ true => Ok(now), false => None }))
     }
 
     // The listing is written before the record, so a record on disk always

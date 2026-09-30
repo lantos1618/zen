@@ -8,9 +8,9 @@
 Secret, declassify, Choice = std.ct
 ct_eq, ct_lt, ct_select, ct_swap, ct_memeq, ct_lookup = std.ct
 bit_xor, bit_and, shift_right, mul_wide, truncate_u64, truncate_u8 = std.core.num
-to_u64, to_usize = std.core.num
+to_u64, to_usize, add_carry, sub_borrow = std.core.num
 Ptr = std.mem
-Avx2, Clmul, avx2, clmul = std.simd
+Avx2, Clmul, Adx, Bmi2, avx2, clmul, adx, bmi2, mul_limbs, square_limbs = std.simd
 load_u8x16, load_u32x4, load_u64x2, load_u32x8, lanes_u64x2, splat_u32x4 = std.simd
 
 // Branch-free selection on a secret comparison.
@@ -26,6 +26,22 @@ mul_low* = (x: Secret<[u64, 4]>, y: Secret<[u64, 4]>) Secret<[u64, 4]> {
     p3 = x[0].mul_wide(y[3]) +% x[1].mul_wide(y[2]) +% x[2].mul_wide(y[1]) +% x[3].mul_wide(y[0])
         +% p2.shift_right(64);
     [u64, 4](p0.truncate_u64(), p1.truncate_u64(), p2.truncate_u64(), p3.truncate_u64())
+}
+
+// Carry and borrow chains over secret limbs: x + y - z, four limbs.
+carry_chain* = (x: Secret<[u64, 4]>, y: Secret<[u64, 4]>, z: Secret<[u64, 4]>) Secret<[u64, 4]> {
+    s0 = x[0].add_carry(y[0], 0); s1 = x[1].add_carry(y[1], s0[1]);
+    s2 = x[2].add_carry(y[2], s1[1]); s3 = x[3].add_carry(y[3], s2[1]);
+    d0 = s0[0].sub_borrow(z[0], 0); d1 = s1[0].sub_borrow(z[1], d0[1]);
+    d2 = s2[0].sub_borrow(z[2], d1[1]); d3 = s3[0].sub_borrow(z[3], d2[1]);
+    [u64, 4](d0[0], d1[0], d2[0], d3[0])
+}
+
+// The two-chain products (MULX, ADCX, ADOX on x86-64) of secret limbs.
+limb_products* = (adx: Adx, bmi: Bmi2, x: Secret<[u64, 4]>, y: Secret<[u64, 4]>) Secret<[u64, 8]> {
+    p = x.mul_limbs(y, adx, bmi);
+    q = x.square_limbs(adx, bmi);
+    [u64, 8](p[0].bit_xor(q[0]), p[1], p[2], p[3], p[4], p[5], p[6], p[7].bit_xor(q[7]))
 }
 
 // A Montgomery-ladder step: swap two field elements by a secret bit.
@@ -163,6 +179,15 @@ leaky_clmul* = (cpu: Clmul, x: u64x2, h: u64x2, table: Ptr<u8>) u8 {
     table.read(x.clmul_low(h, cpu).lane(0).truncate_u8().to_usize())
 }
 
+// A product compiled for BMI2 (MULX on x86-64, which writes its low half to
+// its middle operand and reads %rdx implicitly) whose low half chooses an
+// address; the high half only goes to memory.
+leaky_mulx_low* = (bmi: Bmi2, key: u64, m: u64, sink: Ptr<u64>, table: Ptr<u8>) u8 {
+    p = key.mul_wide(m);
+    sink.write(0, p.shift_right(64).truncate_u64());
+    table.read(p.truncate_u64().truncate_u8().to_usize())
+}
+
 // A table lookup whose index parameter is public by its audit.
 lookup* = (table: Ptr<u8>, index: u8) u8 { table.read(index.to_usize()) }
 
@@ -221,6 +246,16 @@ main = (env: Env) Res<(), AllocError> {
         None    => (),
     });
     println("{} {}", leaky_call(bytes, bytes), leaky_result(bytes));
+    chained = carry_chain(x, y, x);
+    adx().match({
+        Ok(fast) => bmi2().match({
+            Ok(bmi) => println("{}", declassify(limb_products(fast, bmi, x, y)[7])),
+            None    => (),
+        }),
+        None     => (),
+    });
+    bmi2().match({ Ok(bmi) => println("{}", leaky_mulx_low(bmi, 77, 91, words, bytes)), None => () });
+    println("{}", declassify(chained[0]));
     schedule = Schedule(keys: bytes, powers: bytes.offset(128), rounds: 3);
     schedule_mix(schedule, mixed);
     println("{} {}", mixed.read(1), leaky_schedule(schedule, bytes));

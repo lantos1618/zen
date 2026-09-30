@@ -11,6 +11,7 @@ main  leaky_accumulate     acc
 main  leaky_clmul          x
 main  leaky_call           *key
 main  leaky_result         *key  public-result
+main  leaky_mulx_low       key
 main  leaky_schedule       **s
 # schedule_mix reads round keys through a struct of pointers.
 main  schedule_mix         **s *out

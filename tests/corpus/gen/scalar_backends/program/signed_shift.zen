@@ -1,0 +1,5 @@
+main = () i32 {
+    word: i32 = -8;
+    println(word.shift_right(1));
+    0
+}

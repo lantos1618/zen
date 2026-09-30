@@ -98,6 +98,9 @@ CallShape* = {
     returns*: bool,           // a result in registers (not void, not hidden)
     pair*: bool,              // an integer result in a register pair
     vector_result*: bool,     // a result in the first vector register
+    // Vector registers the result takes from the first: several for an
+    // arm64 aggregate of vectors (v0..v3).
+    vector_results*: usize,
     hidden*: usize,           // bytes returned through a hidden pointer
     writable*: Vec<Writable>, // pointers the callee may write through
     // Pointer arguments that name one value, with its size: a `::` or lent
@@ -1119,6 +1122,7 @@ unknown_shape = (a: Alloc, isa: Isa) CallShape {
         returns: true,
         pair: true,
         vector_result: true,
+        vector_results: isa.match({ X86 => 2, Arm => 4 }),
         hidden: 0,
         writable: writable,
         extents: a.Vec<Writable>(),
@@ -1155,6 +1159,7 @@ library_shape = (a: Alloc, conv: Convention, target: str) CallShape {
         returns: true,
         pair: false,
         vector_result: false,
+        vector_results: 0,
         hidden: 0,
         writable: writable,
         extents: a.Vec<Writable>(),
@@ -1380,7 +1385,9 @@ call = (
     put(cur.val, first, out && integer).try();
     put(cur.pts, first, points && integer && !shape.audited).try();
     put(cur.val, second, out && integer && shape.pair).try();
-    put(cur.val, conv.vector_result, out && shape.returns && shape.vector_result).try();
+    Range(0, (shape.vector_results > 0).match({ true => shape.vector_results, false => 1 }).min(conv.vectors.len)).loop((i) {
+        put(cur.val, conv.vectors.get(i).value_or(""), out && shape.returns && shape.vector_result).try();
+    });
     returns_dest.then(() {
         put(cur.val, first, dest_val).try();
         put(cur.pts, first, dest_pts).try();

@@ -524,21 +524,32 @@ result_registers* = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Vec<str>, AllocE
     m.public_result.then(() {
         layout_of(a, c, m.result).when_ok((l) {
             in_result_registers(isa, l, vector_type(m.result), m.avx).then(() {
-                l.vector.match({
-                    true  => out.add(vector_name(a, isa, 0).try()).try(),
-                    false => {
-                        // A byte-sized result (bool, u8) is only its low byte.
-                        out.add(isa.match({
-                            X86 => (l.size == 1).match({ true => "rax/1", false => "rax" }),
-                            Arm => "x0",
-                        })).try();
-                        (l.size > 8).then(() { out.add(isa.match({ X86 => "rdx", Arm => "x1" })).try(); });
-                    },
+                l.vector.then(() {
+                    Range(0, result_vectors(isa, l, vector_type(m.result))).loop((i) {
+                        out.add(vector_name(a, isa, i).try()).try();
+                    });
+                });
+                (!l.vector).then(() {
+                    // A byte-sized result (bool, u8) is only its low byte.
+                    out.add(isa.match({
+                        X86 => (l.size == 1).match({ true => "rax/1", false => "rax" }),
+                        Arm => "x0",
+                    })).try();
+                    (l.size > 8).then(() { out.add(isa.match({ X86 => "rdx", Arm => "x1" })).try(); });
                 });
             });
         });
     });
     Ok(out)
+}
+
+// Vector registers a vector-class result returned in registers takes: an
+// arm64 aggregate of 16-byte vectors takes one each (v0..v3).
+result_vectors = (isa: Isa, l: Layout, vector: bool) usize {
+    isa.match({
+        X86 => 1,
+        Arm => (!vector && l.size > 16).match({ true => l.size / 16, false => 1 }),
+    })
 }
 
 wide = (n: usize) i64 { n.truncate_u32().to_i64() }
@@ -906,6 +917,10 @@ shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
         returns: result.match({ Ok(_) => hidden == 0, None => false }),
         pair: result.match({ Ok(l) => !l.vector && l.size > 8 && l.size <= 16, None => false }),
         vector_result: result.match({ Ok(l) => l.vector && hidden == 0, None => false }),
+        vector_results: result.match({
+            Ok(l) => (l.vector && hidden == 0).match({ true => result_vectors(isa, l, vector_type(m.result)), false => 0 }),
+            None  => 0,
+        }),
         hidden: hidden,
         writable: writable,
         extents: extents,
@@ -945,6 +960,7 @@ audited_shape* = (
         returns: shape.returns,
         pair: shape.pair,
         vector_result: shape.vector_result,
+        vector_results: shape.vector_results,
         hidden: shape.hidden,
         writable: shape.writable,
         extents: shape.extents,

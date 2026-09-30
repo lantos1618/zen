@@ -1,0 +1,886 @@
+// Threads for the native lowering: the std.sys runtime operations that are
+// not kernel calls (atomics, code addresses, the process block, a single
+// sleep), and the `Env` thread capabilities `threads.spawn`, `threads.sleep`
+// and `Thread.join`.
+//
+// A spawned closure becomes a function of its own. Its captures are copied
+// at the spawn into a record that the new thread receives as its only
+// argument; the body runs in a frame whose names resolve to that record and
+// whose return target is the lifted function itself, so `.try()` inside the
+// body ends the thread with that answer. The answer is written into the
+// record, where `join` reads it at the type the join is expected at, the
+// same contract the C backend's pthread trampoline keeps.
+
+Alloc, AllocError = std.mem
+Vec, Map = std.collections
+String, str = std.text
+Range = std.core
+ExprId, Span, Call, Lambda, TypeId = std.ast
+nowhere = std.ast
+TyId, Inst, Def, decl_at = sema.sema
+walk, WalkNode = std.ast.ast_walk
+Scalar, Layout, Op, Const, Move, Binary, Instruction, Load, Store, Address = gen.gen_ir
+Update, UpdateOp, Compare, CodeRef, IndirectCall, Start, StartValue, SysCall = gen.gen_ir
+Invocation, Pages, Convert, width, integer = gen.gen_ir
+Func, BasicBlock, Terminator, Fault, TrapKind = gen.gen_ir
+Sys = gen.gen_sys
+LowerError, unsupported = gen.gen_lower
+Lowerer, Value, Place, Base, Callee, Frame, LocalKind, LambdaRef, Local = gen.gen_lower_core
+to_i64_bits, LoopTarget, Cleanup, DropEntry, DeferEntry, NameFinder = gen.gen_lower_core
+size_of, align_of, round_up, class_of, variant_index = gen.gen_lower_shape
+ActorEntry, actor_function = gen.gen_lower_actor
+Source, argument_value, argument_place, sys_env_call, closure_of = gen.gen_lower_call
+pointee_of, payload_type = gen.gen_lower_member
+
+// ---------------------------------------------------------------------
+// std.sys runtime operations
+// ---------------------------------------------------------------------
+
+// A bodiless std.sys operation that is not a kernel call or constant.
+runtime_call* = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    name    : str,
+    sources : Vec<Source>,
+    span    : Span
+)
+                Res<Value, LowerError> {
+    // `atomic_<op>_<type>`: the operation is the same for every width.
+    operation = name.starts_with("atomic_").match({
+        true  => name.slice(0, name.rfind('_').value_or(name.len)),
+        false => name,
+    });
+    operation.match({
+        "atomic_load"   => {
+            word = lo.operand(sources, 0, span).try();
+            out  = lo.temp(lo.pointee_of(word.ty).try()).try();
+            lo.add(Instruction.AtomicLoad(Load(
+                out: out.slot,
+                base: word.slot,
+                offset: 0
+            ))).try();
+            Ok(out)
+        },
+        "atomic_store"  => {
+            word  = lo.operand(sources, 0, span).try();
+            value = lo.element(word, sources, 1, span).try();
+            lo.add(Instruction.AtomicStore(Store(
+                base: word.slot,
+                offset: 0,
+                value: value.slot
+            ))).try();
+            lo.unit()
+        },
+        "atomic_swap"   => lo.atomic_update(id, sources, UpdateOp.Swap, span),
+        "atomic_add"    => lo.atomic_update(id, sources, UpdateOp.Add, span),
+        "atomic_cas"    => {
+            word     = lo.operand(sources, 0, span).try();
+            expected = lo.element(word, sources, 1, span).try();
+            desired  = lo.element(word, sources, 2, span).try();
+            out      = lo.temp(expected.ty).try();
+            lo.add(Instruction.CompareSwap(Compare(
+                out: out.slot,
+                base: word.slot,
+                expected: expected.slot,
+                desired: desired.slot
+            ))).try();
+            Ok(out)
+        },
+        "call_entry"    => {
+            code   = lo.argument_value(
+                sources.get(0).value_or(Source.Absent),
+                lo.prim("usize").try(),
+                span
+            ).try();
+            target = lo.slot_of(Scalar.Ptr).try();
+            lo.add(Instruction.Cast(Convert(
+                out: target,
+                input: code.slot
+            ))).try();
+            args ::= lo.alloc.Vec<usize>();
+            Range(1, 3).loop((i) { args.add(lo.operand(sources, i, span).try().slot).try(LowerError.OutOfMemory); });
+            out = lo.unit().try();
+            lo.add(Instruction.InvokeAt(IndirectCall(
+                out: out.slot,
+                target: target,
+                args: args
+            ))).try();
+            Ok(out)
+        },
+        "process_block" => {
+            out = lo.temp(lo.type_of(id).try()).try();
+            lo.add(Instruction.Startup(Start(
+                out: out.slot,
+                value: StartValue.Globals
+            ))).try();
+            Ok(out)
+        },
+        "nanosleep_ns"  => {
+            ns = lo.argument_value(
+                sources.get(0).value_or(Source.Absent),
+                lo.prim("u64").try(),
+                span
+            ).try();
+            // struct timespec { seconds; nanoseconds } in frame memory.
+            time = lo.slot_of(Scalar.Block(Layout(size: 16, align: 8))).try();
+            at   = lo.slot_of(Scalar.Ptr).try();
+            lo.add(Instruction.AddressOf(Address(out: at, slot: time))).try();
+            billion = lo.word_const(Scalar.U64, 1000000000).try();
+            seconds = lo.slot_of(Scalar.U64).try();
+            nanos   = lo.slot_of(Scalar.U64).try();
+            lo.add(Instruction.BinaryValue(Binary(
+                out: seconds,
+                left: ns.slot,
+                right: billion,
+                op: Op.Div,
+                span: nowhere()
+            ))).try();
+            lo.add(Instruction.BinaryValue(Binary(
+                out: nanos,
+                left: ns.slot,
+                right: billion,
+                op: Op.Rem,
+                span: nowhere()
+            ))).try();
+            lo.add(Instruction.StoreValue(Store(
+                base: at,
+                offset: 0,
+                value: seconds
+            ))).try();
+            lo.add(Instruction.StoreValue(Store(
+                base: at,
+                offset: 8,
+                value: nanos
+            ))).try();
+            none = lo.word_const(Scalar.Ptr, 0).try();
+            args ::= lo.alloc.Vec<usize>();
+            args.add(at).try(LowerError.OutOfMemory);
+            args.add(none).try(LowerError.OutOfMemory);
+            out = lo.temp(lo.type_of(id).try()).try();
+            lo.add(Instruction.System(SysCall(
+                out: out.slot,
+                call: Sys.Nanosleep,
+                args: args
+            ))).try();
+            Ok(out)
+        },
+        _               => Err(unsupported(span, "this std.sys operation")),
+    })
+}
+
+atomic_update = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    sources : Vec<Source>,
+    op      : UpdateOp,
+    span    : Span
+)
+                Res<Value, LowerError> {
+    word  = lo.operand(sources, 0, span).try();
+    value = lo.element(word, sources, 1, span).try();
+    out   = lo.temp(value.ty).try();
+    lo.add(Instruction.AtomicUpdate(Update(
+        out: out.slot,
+        base: word.slot,
+        value: value.slot,
+        op: op
+    ))).try();
+    Ok(out)
+}
+
+// An argument already evaluated, or evaluated now at its own type.
+operand = (
+    lo      :: Lowerer,
+    sources : Vec<Source>,
+    i       : usize,
+    span    : Span
+) Res<Value, LowerError> {
+    sources.get(i).value_or(Source.Absent).match({
+        Given(e)    => lo.expr(e),
+        Computed(v) => Ok(v),
+        Located(p)  => lo.read(p),
+        Absent      => Err(unsupported(span, "an omitted argument")),
+    })
+}
+
+// An argument at the element type of the pointer `word`.
+element = (
+    lo      :: Lowerer,
+    word    : Value,
+    sources : Vec<Source>,
+    i       : usize,
+    span    : Span
+)
+          Res<Value, LowerError> {
+    ty = lo.pointee_of(word.ty).try();
+    lo.argument_value(sources.get(i).value_or(Source.Absent), ty, span)
+}
+
+// ---------------------------------------------------------------------
+// functions the lowering synthesizes
+// ---------------------------------------------------------------------
+
+// A function instance with no declaration of its own. It occupies a slot in
+// `Lowerer.pending` like any instance (so calls and code addresses name it
+// by index) and is lowered from this description instead of a Function.
+Synth* = Lifted(LiftedBody) | Actor(ActorEntry)
+SynthAt* = { index*: usize, synth*: Synth }
+
+// A pending instance: synthesized, or an ordinary function.
+lower_pending* = (
+    lo     :: Lowerer,
+    index  : usize,
+    callee : Callee,
+    entry  : bool
+) Res<Func, LowerError> {
+    lo.synths.find((s) { s.index == index }).match({
+        Ok(at) => at.synth.match({
+            Lifted(body)   => lo.lifted_function(body),
+            Actor(routine) => lo.actor_function(routine),
+        }),
+        None   => lo.function(callee, entry),
+    })
+}
+
+// Reserve a function index for a synthesized body. The Callee stored in
+// `pending` only stands in for the slot; nothing resolves through it.
+enqueue_synth* = (
+    lo       :: Lowerer,
+    stand_in : Callee,
+    synth    : Synth
+) Res<usize, LowerError> {
+    index = lo.pending.len;
+    lo.pending.add(stand_in).try(LowerError.OutOfMemory);
+    lo.vias.add(None).try(LowerError.OutOfMemory);
+    lo.synths.add(SynthAt(
+        index: index,
+        synth: synth
+    )).try(LowerError.OutOfMemory);
+    Ok(index)
+}
+
+// Begin a synthesized function: fresh per-function state, and the first
+// `parameters` slots of the given classes. Returns the entry block, which
+// `finish_synth` fills with the prologue.
+begin_synth* = (lo :: Lowerer, parameters: Vec<Scalar>) Res<usize, LowerError> {
+    lo.reset_function();
+    entry_block = lo.label().try();
+    first       = lo.label().try();
+    lo.start(first);
+    parameters.loop((class) { lo.slot_of(class).try(); });
+    Ok(entry_block)
+}
+
+// End a synthesized function whose body has jumped to its return, after
+// the current block returns `value`.
+finish_synth* = (
+    lo          :: Lowerer,
+    name        : str,
+    entry_block : usize,
+    parameters  : usize,
+    value       : usize,
+    result      : Scalar
+) Res<Func, LowerError> {
+    lo.finish(Terminator.Return(value)).try();
+    lo.blocks.set(
+        entry_block,
+        Ok(BasicBlock(
+            code: lo.prologue,
+            exit: Terminator.Jump(entry_block + 1)
+        ))
+    );
+    blocks ::= lo.alloc.Vec<BasicBlock>();
+    lo.blocks.loop((pending) {
+        blocks.add(pending.value_or(BasicBlock(
+            code: lo.alloc.Vec<Instruction>(),
+            exit: Terminator.Trap(Fault(
+                what: TrapKind.Unreachable,
+                span: nowhere()
+            ))
+        ))).try(LowerError.OutOfMemory);
+    });
+    Ok(Func(
+        name: name,
+        parameters: parameters,
+        slots: lo.slots,
+        blocks: blocks,
+        result: result
+    ))
+}
+
+// ---------------------------------------------------------------------
+// threads.spawn and Thread.join
+// ---------------------------------------------------------------------
+
+// The thread record: the thread's handle, then the body's answer, then the
+// captures. The spawning code fills the captures; the lifted body writes the
+// answer; `join` reads it and releases the record.
+RECORD_HANDLE: usize = 0
+RECORD_RESULT: usize = 16
+
+// How a captured name reaches the lifted body: a copy of the value in the
+// record, the address of the spawner's place (a `::` binding, as the C
+// backend captures it), or a capability, which has no storage.
+CaptureKind* = Copied | Address | Authority
+
+Capture* = { name*: str, ty*: TyId, offset*: usize, kind*: CaptureKind }
+
+// A spawned closure lifted into its own function `(record: Ptr) ()`. The
+// frame facts are those of the frame the closure was written in.
+LiftedBody* = {
+    lambda*: ExprId,
+    inst*: Inst,
+    module*: usize,
+    self_ty*: Res<TyId>,
+    scope*: Res<Callee>,
+    ret_ty*: TyId,
+    captures*: Vec<Capture>,
+}
+
+// `threads.spawn(a, () Res<T, ThreadError> { .. })`. The allocator argument
+// is the authority the signature demands; the record is mapped directly, as
+// the C backend mallocs it.
+spawn_thread* = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    sources : Vec<Source>,
+    span    : Span
+) Res<Value, LowerError> {
+    ty     = lo.type_of(id).try();
+    lambda = lo.closure_of(sources.get(2).value_or(Source.Absent), span).try();
+    l      = lo.tree.expr_at(lambda.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
+        .ok_or(unsupported(
+            span,
+            "`spawn` given something other than a closure"
+        )).try();
+    (l.params.len == 0).ensure(unsupported(
+        span,
+        "a spawned closure that takes parameters"
+    )).try();
+    written  = l.ret.ok_or(unsupported(
+        span,
+        "a spawned closure that declares no return type"
+    )).try();
+    frame    = lo.frames.get(lambda.frame).ok_or(unsupported(span, "a closure without a frame")).try();
+    saved    = lo.use_frame(lambda.frame);
+    ret_ty   = lo.written(written).try();
+    captures = lo.thread_captures(lambda, lo.record_start(ret_ty).try(), span);
+    lo.use_frame(saved);
+    fields = captures.try();
+    size   = lo.record_size(ret_ty, fields).try();
+    record = lo.slot_of(Scalar.Ptr).try();
+    bytes  = lo.word_const(Scalar.U64, size.to_i64_bits()).try();
+    lo.add(Instruction.MapPages(Pages(out: record, bytes: bytes))).try();
+    out    = lo.temp(ty).try();
+    failed = lo.is_null(record).try();
+    refuse = lo.label().try();
+    fill   = lo.label().try();
+    done   = lo.label().try();
+    lo.branch_to(failed, refuse, fill).try();
+    lo.start(fill);
+    saved_fill = lo.use_frame(lambda.frame);
+    fields.loop((c) { lo.store_capture(record, c, span).try(); });
+    lo.use_frame(saved_fill);
+    stand_in = frame.scope.ok_or(unsupported(
+        span,
+        "a spawn outside a function"
+    )).try();
+    index    = lo.enqueue_synth(
+        stand_in,
+        Synth.Lifted(LiftedBody(
+            lambda: lambda.expr,
+            inst: frame.inst,
+            module: frame.module,
+            self_ty: frame.self_ty,
+            scope: frame.scope,
+            ret_ty: ret_ty,
+            captures: fields
+        ))
+    ).try();
+    code     = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.CodeAddress(CodeRef(out: code, function: index))).try();
+    usize_ty = lo.prim("usize").try();
+    entry    = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.Cast(Convert(out: entry, input: code))).try();
+    args ::= lo.alloc.Vec<Source>();
+    args.add(Source.Computed(Value(
+        slot: entry,
+        ty: usize_ty
+    ))).try(LowerError.OutOfMemory);
+    args.add(Source.Computed(Value(
+        slot: record,
+        ty: lo.byte_pointer().try()
+    ))).try(LowerError.OutOfMemory);
+    started = lo.std_call(
+        "std.sys.sys_thread",
+        "thread_spawn",
+        args,
+        span
+    ).try();
+    ok      = lo.succeeded(started).try();
+    running = lo.label().try();
+    lo.branch_to(ok, running, refuse).try();
+    lo.start(running);
+    handle = lo.ok_payload(started).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: record,
+        offset: RECORD_HANDLE,
+        value: handle.slot
+    ))).try();
+    thread_ty = lo.payload_type(ty, "Ok").try();
+    thread    = lo.temp(thread_ty).try();
+    id_place  = lo.field_place(lo.spill(thread), "id", span).try();
+    id_word   = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.Cast(Convert(out: id_word, input: record))).try();
+    lo.write(id_place, Value(slot: id_word, ty: id_place.ty)).try();
+    made = lo.variant_value(ty, "Ok", Ok(thread), span).try();
+    lo.add(Instruction.Copy(Move(out: out.slot, source: made.slot))).try();
+    lo.jump(done).try();
+    // No thread owns the record when the mapping or the start failed.
+    lo.start(refuse);
+    lo.add(Instruction.UnmapPages(record)).try();
+    err_ty  = lo.payload_type(ty, "Err").try();
+    reason  = lo.variant_value(err_ty, "SpawnFailed", None, span).try();
+    refused = lo.variant_value(ty, "Err", Ok(reason), span).try();
+    lo.add(Instruction.Copy(Move(out: out.slot, source: refused.slot))).try();
+    lo.jump(done).try();
+    lo.start(done);
+    Ok(out)
+}
+
+// The names the closure reads that are locals of the frame it was written
+// in, with their record offsets after the answer at `start`.
+thread_captures = (lo :: Lowerer, lambda: LambdaRef, start: usize, span: Span)
+                  Res<Vec<Capture>, LowerError> {
+    l = lo.tree.expr_at(lambda.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
+        .ok_or(unsupported(span, "a closure that is not a lambda")).try();
+    finder ::= NameFinder(tree: lo.tree, names: lo.alloc.Vec<str>());
+    walk(
+        lo.tree,
+        lo.alloc,
+        WalkNode.Block(l.body),
+        finder
+    ).try(LowerError.OutOfMemory);
+    out ::= lo.alloc.Vec<Capture>();
+    at  ::= start;
+    finder.names.loop((name) {
+        lo.lookup(name).match({
+            Ok(Direct(v))     => {
+                class = lo.class_of(v.ty).try();
+                at    = round_up(at, larger(align_of(class), 8));
+                out.add(Capture(
+                    name: name,
+                    ty: v.ty,
+                    offset: at,
+                    kind: CaptureKind.Copied
+                )).try(LowerError.OutOfMemory);
+                at = at + size_of(class);
+            },
+            Ok(Ref(p))        => {
+                at = round_up(at, 8);
+                out.add(Capture(
+                    name: name,
+                    ty: p.ty,
+                    offset: at,
+                    kind: CaptureKind.Address
+                )).try(LowerError.OutOfMemory);
+                at = at + 8;
+            },
+            Ok(Capability(t)) => out.add(Capture(
+                name: name,
+                ty: t,
+                offset: 0,
+                kind: CaptureKind.Authority
+            )).try(LowerError.OutOfMemory),
+            Ok(Closure(_))    => Err(unsupported(
+                span,
+                "a spawned closure that calls a closure of its creator"
+            )).try(),
+            Ok(Handle(_))     => Err(unsupported(
+                span,
+                "a spawned closure that uses a loop handle of its creator"
+            )).try(),
+            None              => (),
+        });
+    });
+    Ok(out)
+}
+
+// Where the captures start: after the answer, 16-byte aligned.
+record_start = (lo :: Lowerer, ret_ty: TyId) Res<usize, LowerError> {
+    Ok(round_up(RECORD_RESULT + size_of(lo.class_of(ret_ty).try()), 16))
+}
+
+record_size = (
+    lo       :: Lowerer,
+    ret_ty   : TyId,
+    captures : Vec<Capture>
+) Res<usize, LowerError> {
+    end ::= lo.record_start(ret_ty).try();
+    captures.loop((c) {
+        c.kind.match({
+            Copied    => { end = larger(
+                end,
+                c.offset + size_of(lo.class_of(c.ty).try())
+            ); },
+            Address   => { end = larger(end, c.offset + 8); },
+            Authority => (),
+        });
+    });
+    Ok(round_up(end, 16))
+}
+
+// Copy one captured local into the record, in the closure's frame.
+store_capture = (
+    lo     :: Lowerer,
+    record : usize,
+    c      : Capture,
+    span   : Span
+) Res<(), LowerError> {
+    lo.lookup(c.name).match({
+        Ok(Direct(v)) => lo.add(Instruction.StoreValue(Store(
+            base: record,
+            offset: c.offset,
+            value: v.slot
+        ))),
+        Ok(Ref(p))    => {
+            pointer = lo.address(p).try();
+            lo.add(Instruction.StoreValue(Store(
+                base: record,
+                offset: c.offset,
+                value: pointer
+            )))
+        },
+        _             => Ok(()),
+    })
+}
+
+// The lifted body: captures bound to the record, the closure's statements,
+// and its answer stored at RECORD_RESULT.
+lifted_function = (lo :: Lowerer, body: LiftedBody) Res<Func, LowerError> {
+    l = lo.tree.expr_at(body.lambda).kind.match({ Lambda(l) => Ok(l), _ => None })
+        .ok_or(unsupported(
+            nowhere(),
+            "a lifted closure that is not a lambda"
+        )).try();
+    params ::= lo.alloc.Vec<Scalar>();
+    params.add(Scalar.Ptr).try(LowerError.OutOfMemory);
+    entry_block = lo.begin_synth(params).try();
+    record      = 0;
+    frame       = lo.push_frame(
+        body.inst,
+        body.module,
+        body.ret_ty,
+        body.self_ty,
+        body.scope
+    ).try();
+    lo.use_frame(frame);
+    body.captures.loop((c) {
+        c.kind.match({
+            Copied    => lo.bind_local(
+                c.name,
+                LocalKind.Ref(Place(
+                    base: Base.Through(record),
+                    offset: c.offset,
+                    ty: c.ty
+                ))
+            ).try(),
+            Address   => {
+                pointer = lo.slot_of(Scalar.Ptr).try();
+                lo.add(Instruction.LoadValue(Load(
+                    out: pointer,
+                    base: record,
+                    offset: c.offset
+                ))).try();
+                lo.bind_local(
+                    c.name,
+                    LocalKind.Ref(Place(
+                        base: Base.Through(pointer),
+                        offset: 0,
+                        ty: c.ty
+                    ))
+                ).try();
+            },
+            Authority => lo.bind_local(
+                c.name,
+                LocalKind.Capability(c.ty)
+            ).try(),
+        });
+    });
+    value  = lo.block(l.body).try();
+    here   = lo.here();
+    answer = lo.coerce(value, body.ret_ty).try();
+    lo.add(Instruction.Copy(Move(
+        out: here.ret_slot,
+        source: answer.slot
+    ))).try();
+    lo.enter(here.ret_block).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: record,
+        offset: RECORD_RESULT,
+        value: here.ret_slot
+    ))).try();
+    done = lo.unit().try();
+    lo.finish_synth("thread_body", entry_block, 1, done.slot, Scalar.Unit)
+}
+
+// `thread.join()`: wait for the thread, then read its answer at the type
+// this call is expected at and release the record. A failed wait is
+// Panicked, as a failed pthread_join is for the C backend.
+join_thread* = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    sources : Vec<Source>,
+    span    : Span
+) Res<Value, LowerError> {
+    ty       = lo.join_type(id, span).try();
+    receiver = lo.operand(sources, 0, span).try();
+    id_value = lo.read(
+        lo.field_place(lo.spill(receiver), "id", span).try()
+    ).try();
+    record   = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.Cast(Convert(out: record, input: id_value.slot))).try();
+    handle = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.LoadValue(Load(
+        out: handle,
+        base: record,
+        offset: RECORD_HANDLE
+    ))).try();
+    args ::= lo.alloc.Vec<Source>();
+    args.add(Source.Computed(Value(
+        slot: handle,
+        ty: lo.byte_pointer().try()
+    ))).try(LowerError.OutOfMemory);
+    joined = lo.std_call("std.sys.sys_thread", "thread_join", args, span).try();
+    ok     = lo.succeeded(joined).try();
+    out    = lo.temp(ty).try();
+    read   = lo.label().try();
+    failed = lo.label().try();
+    done   = lo.label().try();
+    lo.branch_to(ok, read, failed).try();
+    lo.start(read);
+    lo.add(Instruction.LoadValue(Load(
+        out: out.slot,
+        base: record,
+        offset: RECORD_RESULT
+    ))).try();
+    lo.add(Instruction.UnmapPages(record)).try();
+    lo.jump(done).try();
+    lo.start(failed);
+    err_ty   = lo.payload_type(ty, "Err").try();
+    reason   = lo.variant_value(err_ty, "Panicked", None, span).try();
+    panicked = lo.variant_value(ty, "Err", Ok(reason), span).try();
+    lo.add(Instruction.Copy(Move(out: out.slot, source: panicked.slot))).try();
+    lo.jump(done).try();
+    lo.start(done);
+    Ok(out)
+}
+
+// The join's result type: the call's checked type when settled, else the
+// type its context expects. A join sema left open is the value its frame
+// returns (`thread.join()` as a body's last expression), so the frame's
+// result type settles it when that is a Res with the same error type.
+join_type = (lo :: Lowerer, id: ExprId, span: Span) Res<TyId, LowerError> {
+    ty       = lo.settled_type(id).try();
+    ret      = lo.here().ret_ty;
+    returned = lo.settled(ret) && lo.check.types.at(ty).match({
+        Res(open) => lo.check.types.at(ret).match({
+            Res(r) => r.error == open.error,
+            _      => false,
+        }),
+        _         => false,
+    });
+    lo.settled(ty).match({
+        true  => Ok(ty),
+        false => returned.match({
+            true  => Ok(ret),
+            false => Err(unsupported(
+                span,
+                "a `join` whose result type nothing settles"
+            )),
+        }),
+    })
+}
+
+// `threads.sleep(ms)`.
+sleep_thread* = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    c       : Call,
+    sources : Vec<Source>,
+    span    : Span
+) Res<Value, LowerError> {
+    rest ::= lo.alloc.Vec<Source>();
+    sources.loop(
+        (h, i, s) { (i > 0).then(
+            () { rest.add(s).try(LowerError.OutOfMemory); }
+        ); }
+    );
+    lo.sys_env_call(id, "sleep_ms", rest, c, span)
+}
+
+// ---------------------------------------------------------------------
+// fs.lock and Lock.unlock
+// ---------------------------------------------------------------------
+
+// `fs.lock(path)`: std.sys.sys_env takes the lock and answers its
+// descriptor; the Lock around it is built here, because its field is
+// private to std.env.
+fs_lock* = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    c       : Call,
+    sources : Vec<Source>,
+    span    : Span
+) Res<Value, LowerError> {
+    ty = lo.type_of(id).try();
+    rest ::= lo.alloc.Vec<Source>();
+    sources.loop(
+        (h, i, s) { (i > 0).then(
+            () { rest.add(s).try(LowerError.OutOfMemory); }
+        ); }
+    );
+    got     = lo.sys_env_call(id, "fs_lock_fd", rest, c, span).try();
+    out     = lo.temp(ty).try();
+    held    = lo.label().try();
+    refused = lo.label().try();
+    done    = lo.label().try();
+    lo.branch_to(lo.succeeded(got).try(), held, refused).try();
+    lo.start(held);
+    fd   = lo.ok_payload(got).try();
+    lock = lo.temp(lo.payload_type(ty, "Ok").try()).try();
+    lo.write(lo.field_place(lo.spill(lock), "fd", span).try(), fd).try();
+    made = lo.variant_value(ty, "Ok", Ok(lock), span).try();
+    lo.add(Instruction.Copy(Move(out: out.slot, source: made.slot))).try();
+    lo.jump(done).try();
+    lo.start(refused);
+    variants = lo.variants_of(got.ty).try();
+    err      = variant_index(variants, "Err").ok_or(unsupported(span, "a Res without Err")).try();
+    reason   = lo.payload_of(got, err).try();
+    failed   = lo.variant_value(ty, "Err", Ok(reason), span).try();
+    lo.add(Instruction.Copy(Move(out: out.slot, source: failed.slot))).try();
+    lo.jump(done).try();
+    lo.start(done);
+    Ok(out)
+}
+
+// `lock.unlock()`: close the descriptor and leave -1 behind, so the Drop
+// that may follow releases nothing twice.
+fs_unlock* = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    c       : Call,
+    sources : Vec<Source>,
+    span    : Span
+) Res<Value, LowerError> {
+    receiver = sources.get(0).value_or(Source.Absent);
+    lock_ty  = receiver.match({
+        Given(e)    => lo.type_of(e),
+        Located(p)  => Ok(p.ty),
+        Computed(v) => Ok(v.ty),
+        Absent      => Err(unsupported(span, "an unlock without a Lock")),
+    }).try();
+    place    = lo.argument_place(receiver, lock_ty, span).try();
+    fd_place = lo.field_place(place, "fd", span).try();
+    fd       = lo.read(fd_place).try();
+    args ::= lo.alloc.Vec<Source>();
+    args.add(Source.Computed(fd)).try(LowerError.OutOfMemory);
+    lo.sys_env_call(id, "fs_unlock_fd", args, c, span).try();
+    released = lo.constant(fd_place.ty, -1).try();
+    lo.write(fd_place, released).try();
+    lo.unit()
+}
+
+// ---------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------
+
+// Call a std function by module and name with evaluated arguments.
+std_call* = (
+    lo     :: Lowerer,
+    module : str,
+    name   : str,
+    args   : Vec<Source>,
+    span   : Span
+) Res<Value, LowerError> {
+    lo.real_call(lo.std_function(module, name, span).try(), args, span)
+}
+
+std_function* = (
+    lo     :: Lowerer,
+    module : str,
+    name   : str,
+    span   : Span
+) Res<Callee, LowerError> {
+    index = lo.check.world.index_of(module).ok_or(unsupported(span, "a missing runtime module")).try();
+    table = lo.check.world.table_at(index).ok_or(unsupported(span, "a missing runtime module table")).try();
+    def   = table.defs.find((d) { d.name.eq(name) }).ok_or(unsupported(span, "a missing runtime function")).try();
+    decl  = decl_at(lo.tree, def.id).ok_or(unsupported(span, "a missing runtime declaration")).try();
+    f     = decl.kind.match({ Function(f) => Ok(f), _ => None }).ok_or(unsupported(span, "a runtime name that is not a function")).try();
+    Ok(Callee(
+        f: f,
+        owner: def.id,
+        member: None,
+        module: index,
+        inst: lo.alloc.Inst(),
+        self_ty: None,
+        generic_owner: None
+    ))
+}
+
+// Whether a Res value holds Ok (tag 0 in Res's layout order Ok, Err).
+succeeded* = (lo :: Lowerer, value: Value) Res<usize, LowerError> {
+    variants = lo.variants_of(value.ty).try();
+    ok       = variant_index(variants, "Ok").ok_or(unsupported(nowhere(), "a Res without Ok")).try();
+    tag      = lo.tag_of(value).try();
+    expected = lo.word_const(Scalar.U32, ok.to_i64_bits()).try();
+    test     = lo.slot_of(Scalar.Bool).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: test,
+        left: tag,
+        right: expected,
+        op: Op.Equal,
+        span: nowhere()
+    ))).try();
+    Ok(test)
+}
+
+ok_payload* = (lo :: Lowerer, value: Value) Res<Value, LowerError> {
+    variants = lo.variants_of(value.ty).try();
+    ok       = variant_index(variants, "Ok").ok_or(unsupported(nowhere(), "a Res without Ok")).try();
+    lo.payload_of(value, ok)
+}
+
+larger = (a: usize, b: usize) usize { (a > b).match({ true => a, false => b }) }
+
+is_null* = (lo :: Lowerer, pointer: usize) Res<usize, LowerError> {
+    zero = lo.word_const(Scalar.Ptr, 0).try();
+    test = lo.slot_of(Scalar.Bool).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: test,
+        left: pointer,
+        right: zero,
+        op: Op.Equal,
+        span: nowhere()
+    ))).try();
+    Ok(test)
+}
+
+// The checked type `Ptr<u8>`.
+byte_pointer* = (lo :: Lowerer) Res<TyId, LowerError> {
+    u8_ty = lo.prim("u8").try();
+    defs ::= lo.alloc.Vec<Def>();
+    lo.check.world.exported_named("Ptr", defs).try(LowerError.OutOfMemory);
+    d = defs.find(
+        (d) { lo.check.world.module_name(d.id).eq("std.mem.mem_ptr") }
+    )
+        .ok_or(unsupported(nowhere(), "a missing std.mem.Ptr")).try();
+    args ::= lo.alloc.Vec<TyId>();
+    args.add(u8_ty).try(LowerError.OutOfMemory);
+    lo.check.types.named(
+        d.id,
+        d.qname,
+        d.name,
+        args
+    ).try(LowerError.OutOfMemory)
+}

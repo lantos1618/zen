@@ -7,7 +7,12 @@
 // `--backend asm`, assembles and links it with the system `as`/`ld` only,
 // runs it, and compares stdout, exit status and stderr substrings.
 //
-//   native-corpus <zen> <target> [filter] [shard] [shards]
+//   native-corpus <zen> <target> [filter] [shard] [shards] [runs]
+//
+// [filter] keeps the tests whose path contains any of its comma-separated
+// parts. With [runs] above one, each program is built once and run that
+// many times, for concurrent programs: a test is PASS only if every run
+// matches, and FLAKY when some runs match and some do not.
 //
 // <target> is x86_64-linux, aarch64-linux or arm64-darwin. A foreign Linux
 // architecture assembles with `<arch>-linux-gnu-as`/`ld` and runs under
@@ -46,6 +51,7 @@ target_of = (name: str, host_arch: str) Res<Target> {
 Tally = {
     pass :: usize = 0,
     fail :: usize = 0,
+    flaky :: usize = 0,
     unsupported :: usize = 0,
     broken :: usize = 0,
 }
@@ -60,6 +66,7 @@ Runner = {
     target: Target,
     work: str,
     sdk: str,
+    runs: usize,
 
     run = (self: @Self, argv: Vec<str>) Res<ProcOutput, AllocError> {
         self.env.proc.run_argv(self.a, "", argv).match({
@@ -217,11 +224,25 @@ Runner = {
                     println("BROKEN {} :: {}", c.base, first_line(reason));
                 },
                 None       => {
-                    result = self.execute(c, binary.view(), index).try();
-                    verdict = self.compare(c, result).try();
-                    verdict.is_empty().match({
+                    failed ::= 0;
+                    first ::= "";
+                    Range(0, self.runs).loop((_) {
+                        result = self.execute(c, binary.view(), index).try();
+                        verdict = self.compare(c, result).try();
+                        (!verdict.is_empty()).then(() {
+                            (failed == 0).then(() { first = verdict; });
+                            failed = failed + 1;
+                        });
+                    });
+                    (failed == 0).match({
                         true  => { tally.pass = tally.pass + 1; println("PASS {}", c.base); },
-                        false => { tally.fail = tally.fail + 1; println("FAIL {} :: {}", c.base, verdict); },
+                        false => (failed == self.runs).match({
+                            true  => { tally.fail = tally.fail + 1; println("FAIL {} :: {}", c.base, first); },
+                            false => {
+                                tally.flaky = tally.flaky + 1;
+                                println("FLAKY {} :: {} of {} runs differ; first: {}", c.base, failed, self.runs, first);
+                            },
+                        }),
                     });
                 },
             }),
@@ -260,6 +281,8 @@ repeat = (a: Alloc, byte: u8, n: usize) Res<String, AllocError> {
     Ok(out)
 }
 
+max_one = (n: usize) usize { (n == 0).match({ true => 1, false => n }) }
+
 first_line = (text: str) str {
     text.split_once('\n').match({ Ok(pair) => pair.before, None => text })
 }
@@ -288,13 +311,14 @@ case_of = (a: Alloc, expected: str) Res<Res<Case>, AllocError> {
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();
     (env.argv.len < 3).then(() {
-        println("usage: native-corpus <zen> <target> [filter] [shard] [shards]");
+        println("usage: native-corpus <zen> <target> [filter] [shard] [shards] [runs]");
     });
     zen = env.argv.get(1).value_or("./zen");
     target_name = env.argv.get(2).value_or("x86_64-linux");
     filter = env.argv.get(3).value_or("");
     shard = env.argv.get(4).value_or("0").parse_usize().value_or(0);
     shards = env.argv.get(5).value_or("1").parse_usize().value_or(1);
+    runs = env.argv.get(6).value_or("1").parse_usize().value_or(1);
     uname ::= a.Vec<str>();
     uname.add("uname").try();
     uname.add("-m").try();
@@ -324,24 +348,27 @@ main = (env: Env) Res<i32, AllocError> {
     listed = env.proc.run_argv(a, "", find).match({ Ok(out) => out.out.view(), Err(_) => "" });
     paths ::= a.Vec<str>();
     listed.split('\n').loop((line) {
-        (!line.is_empty() && line.contains(filter)).then(() { paths.add(line).try(); });
+        wanted = filter.split(',').find((part) { line.contains(part) }).match({ Ok(_) => true, None => false });
+        (!line.is_empty() && wanted).then(() { paths.add(line).try(); });
     });
-    runner = Runner(env: env, a: a, zen: zen, target_name: target_name, target: target, work: work.view(), sdk: sdk);
+    runner = Runner(env: env, a: a, zen: zen, target_name: target_name, target: target, work: work.view(), sdk: sdk, runs: runs.max_one());
     tally ::= Tally();
     paths.loop((h, i, path) {
         (i % shards == shard).then(() {
             case_of(a, path).try().when_ok((c) { runner.case(c, i, tally).try(); });
         });
     });
-    total = tally.pass + tally.fail + tally.unsupported + tally.broken;
+    total = tally.pass + tally.fail + tally.flaky + tally.unsupported + tally.broken;
     println(
-        "native-corpus {}: {} pass, {} fail, {} unsupported, {} broken of {}",
+        "native-corpus {}: {} pass, {} fail, {} flaky, {} unsupported, {} broken of {} ({} runs each)",
         target_name,
         tally.pass,
         tally.fail,
+        tally.flaky,
         tally.unsupported,
         tally.broken,
-        total
+        total,
+        runs.max_one()
     );
     Ok(0)
 }

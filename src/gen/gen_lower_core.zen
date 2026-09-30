@@ -37,6 +37,7 @@ real_call = gen.gen_lower_call
 capability = gen.gen_lower_shape
 variant_index, size_of, TAG_BYTES = gen.gen_lower_shape
 call, construct_named, print_call, sys_env_call, Source = gen.gen_lower_call
+SynthAt, lower_pending = gen.gen_lower_thread
 
 // A value computed into a slot, with its concrete (substituted) type.
 Value* = { slot*: usize, ty*: TyId }
@@ -146,6 +147,9 @@ Lowerer* = {
     vias* :: Vec<Res<TyId>>,
     made* :: Vec<TyId>,
     broken* :: Vec<Broken>,
+    // Pending instances the lowering synthesizes (thread bodies, actor
+    // entry points), by function index; see gen_lower_thread.
+    synths* :: Vec<SynthAt>,
 
     // -------------------------------------------------------------------
     // blocks and slots
@@ -235,6 +239,22 @@ Lowerer* = {
     }
 
     deeper* = (self :: @Self) { self.depth = self.depth + 1; }
+
+    // Clear the per-function state before lowering a body with no
+    // declaration of its own (gen_lower_thread's synthesized functions).
+    reset_function* = (self :: @Self) {
+        self.slots    = self.alloc.Vec<Scalar>();
+        self.blocks   = self.alloc.Vec<Res<BasicBlock>>();
+        self.locals   = self.alloc.Vec<Local>();
+        self.frames   = self.alloc.Vec<Frame>();
+        self.loops    = self.alloc.Vec<LoopTarget>();
+        self.scopes   = self.alloc.Vec<Cleanup>();
+        self.drops    = self.alloc.Vec<DropEntry>();
+        self.defers   = self.alloc.Vec<DeferEntry>();
+        self.depth    = 0;
+        self.expected = None;
+        self.prologue = self.alloc.Vec<Instruction>();
+    }
 
     // Mark enqueues as reached through one implementor's dispatch.
     use_via* = (self :: @Self, via: Res<TyId>) Res<TyId> {
@@ -2123,9 +2143,9 @@ ignore_absent = <T>(r: Res<T>) { r.match({ Ok(_) => (), None => () }); }
 
 // Every name a closure body reads (its own bindings included; lookup at
 // registration keeps only the enclosing locals).
-NameFinder = {
-    tree: Ast,
-    names :: Vec<str>,
+NameFinder* = {
+    tree*: Ast,
+    names* :: Vec<str>,
 }
 
 NameFinder.impl(WalkVisitor, {
@@ -2180,7 +2200,8 @@ lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
         defers: alloc.Vec<DeferEntry>(),
         vias: alloc.Vec<Res<TyId>>(),
         made: alloc.Vec<TyId>(),
-        broken: alloc.Vec<Broken>()
+        broken: alloc.Vec<Broken>(),
+        synths: alloc.Vec<SynthAt>()
     );
     main_decl = decl_at(tree, main).ok_or(unsupported(module.span, "a missing main function")).try();
     main_fn = main_decl.kind.match({ Function(f) => Ok(f), _ => None })
@@ -2200,7 +2221,7 @@ lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
         callee = state.pending.get(i).ok_or(unsupported(module.span, "a missing reachable function")).try();
         via = state.vias.get(i).value_or(None);
         state.use_via(via);
-        f = state.function(callee, i == entry_index).match({
+        f = state.lower_pending(i, callee, i == entry_index).match({
             Ok(f)    => f,
             Err(err) => via.match({
                 // Only one implementor's branch reaches this function.

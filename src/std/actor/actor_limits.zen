@@ -3,3 +3,11 @@
 // str/slice payloads; native allocations inside a behavior are outside this cap.
 MAX_MESSAGES*: usize = 64
 MAX_MESSAGE_BYTES*: usize = 33554432
+
+// Mailbox storage policy: each actor retains at most CACHE_BYTES (headers
+// included) in at most CACHE_COUNT retired blocks, none larger than
+// CACHE_BLOCK payload bytes. std.actor.actor_storage applies it on the C
+// backend, std.sys.sys_actor on the native one.
+CACHE_BYTES*: usize = 1048576
+CACHE_BLOCK*: usize = 65536
+CACHE_COUNT*: usize = 64

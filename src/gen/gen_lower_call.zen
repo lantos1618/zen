@@ -24,6 +24,8 @@ LowerError, unsupported = gen.gen_lower
 Lowerer, Value, Place, Base, LocalKind, LambdaRef, LoopTarget, Frame, Callee = gen.gen_lower_core
 DeferEntry, Local = gen.gen_lower_core
 member_call, mem_call, sys_call, resolve, to_bound, handle_for_place = gen.gen_lower_member
+sleep_thread, spawn_thread, join_thread, fs_lock, fs_unlock = gen.gen_lower_thread
+spawn_actor = gen.gen_lower_actor
 bound_of, dispatch, Bound = gen.gen_lower_member
 to_i64_bits = gen.gen_lower_core
 Shape, Form, FieldAt, VariantAt, shape, class_of, field_types = gen.gen_lower_shape
@@ -740,7 +742,7 @@ is_fn_type = (lo :: Lowerer, ty: TyId) bool {
     lo.check.types.at(ty).match({ Fn(_) => true, _ => false })
 }
 
-closure_of = (lo :: Lowerer, source: Source, span: Span) Res<LambdaRef, LowerError> {
+closure_of* = (lo :: Lowerer, source: Source, span: Span) Res<LambdaRef, LowerError> {
     e = source.match({ Given(e) => Ok(e), _ => None })
         .ok_or(unsupported(span, "an omitted closure argument")).try();
     node = lo.stripped(e);
@@ -1076,6 +1078,15 @@ env_call = (lo :: Lowerer, id: ExprId, name: str, c: Call, sources: Vec<Source>,
             ty = lo.type_of(id).try();
             lo.variant_value(ty, "Ok", Ok(lo.unit().try()), span)
         },
+        // Threads and actors (gen_lower_thread, gen_lower_actor).
+        "sleep"   => lo.sleep_thread(id, c, sources, span),
+        "spawn"   => lo.receiver_kind(sources).eq("Threads").match({
+            true  => lo.spawn_thread(id, sources, span),
+            false => lo.spawn_actor(id, sources, span),
+        }),
+        "join"    => lo.join_thread(id, sources, span),
+        "lock"    => lo.fs_lock(id, c, sources, span),
+        "unlock"  => lo.fs_unlock(id, c, sources, span),
         "read"    => lo.receiver_kind(sources).eq("Stdin").match({
             true  => lo.stdin_read(id, sources, span),
             false => lo.sys_env_call(id, "fs_read", lo.without_receiver(sources).try(), c, span),

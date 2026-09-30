@@ -1,0 +1,48 @@
+// Sixty-four actors in a ring pass one token 4096 hops. Every hop is a
+// send from one worker thread to another, and main returns while the token
+// is still moving: process exit waits for accepted work, including the
+// sends that work makes, before it stops the workers. Only the last hop
+// prints, so the output does not depend on scheduling.
+
+Node = {
+    index: u64,
+    next :: Res<Ref<Node>> = None,
+}
+
+Node.impl(Actor, {
+    link = (self :: @Self, ctx: Context, next: Ref<Node>) {
+        self.next = Ok(next);
+    }
+
+    pass = (self :: @Self, ctx: Context, hops: u64) {
+        (hops == 0).match({
+            true  => println("token stopped at node {}", self.index),
+            false => self.next.match({
+                Ok(next) => next.pass(hops - 1).match({
+                    Ok(_)  => (),
+                    Err(_) => println("hop refused at node {}", self.index),
+                }),
+                None     => println("node {} has no next", self.index),
+            }),
+        });
+    }
+})
+
+Error = ActorStartError | ActorError
+
+COUNT: u64 = 64
+
+main = (env: Env) Res<i32, Error> {
+    first = env.spawn(Node(index: 0)).try();
+    previous ::= first;
+    i        ::= 1;
+    loop(() { i < COUNT }, (h) {
+        node = env.spawn(Node(index: i)).try();
+        previous.link(node).try();
+        previous = node;
+        i        = i + 1;
+    });
+    previous.link(first).try();
+    first.pass(4096).try();
+    Ok(0)
+}

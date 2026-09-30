@@ -1,0 +1,76 @@
+// Four threads send 2000 numbered messages each to one actor whose mailbox
+// admits at most 64 at a time, retrying when it answers Full. Admission is
+// FIFO, so each producer's messages arrive in the order it sent them; the
+// actor checks that and counts. After the joins, stop drains and a send is
+// refused as Closed.
+
+Tally = {
+    received :: u64 = 0,
+    out_of_order :: u64 = 0,
+    expected :: [u64, 4] = [0, 0, 0, 0],
+}
+
+Tally.impl(Actor, {
+    add = (self :: @Self, ctx: Context, producer: usize, sequence: u64) {
+        (self.expected[producer] != sequence).then(() {
+            self.out_of_order = self.out_of_order + 1;
+        });
+        self.expected[producer] = sequence + 1;
+        self.received           = self.received + 1;
+    }
+
+    stopped = (self :: @Self, ctx: Context) {
+        println(
+            "received {} out of order {}",
+            self.received,
+            self.out_of_order
+        );
+    }
+})
+
+Error = ActorStartError | ActorError | ThreadError
+
+PER_PRODUCER: u64 = 2000
+
+produce = (
+    env      : Env,
+    a        : Alloc,
+    tally    : Ref<Tally>,
+    producer : usize
+) Res<Thread, ThreadError> {
+    env.threads.spawn(a, () Res<u64, ThreadError> {
+        sequence ::= 0;
+        full     ::= 0;
+        loop(() { sequence < PER_PRODUCER }, (h) {
+            tally.add(producer, sequence).match({
+                Ok(_)  => { sequence = sequence + 1; },
+                Err(e) => e.match({
+                    Full   => { full = full + 1; env.threads.sleep(1); },
+                    Closed => h.break(),
+                }),
+            });
+        });
+        Ok(sequence)
+    })
+}
+
+main = (env: Env) Res<i32, Error> {
+    a         = env.mem.alloc();
+    tally     = env.spawn(Tally()).try();
+    t0        = produce(env, a, tally, 0).try();
+    t1        = produce(env, a, tally, 1).try();
+    t2        = produce(env, a, tally, 2).try();
+    t3        = produce(env, a, tally, 3).try();
+    sent: u64 = t0.join<u64>().try() + t1.join<u64>().try() + t2.join<u64>().try() + t3.join<u64>().try();
+    println("sent {}", sent);
+    tally.stop();
+    tally.join();
+    tally.add(0, 0).match({
+        Ok(_)  => println("accepted after stop"),
+        Err(e) => e.match({
+            Closed => println("closed after stop"),
+            Full   => println("full after stop"),
+        }),
+    });
+    Ok(0)
+}

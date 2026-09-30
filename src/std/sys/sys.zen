@@ -44,10 +44,65 @@ epoll_ctl* = (epoll: i32, op: i32, fd: i32, event: Ptr<u8>) i64
 epoll_pwait* = (epoll: i32, events: Ptr<u8>, count: i32, timeout: i32, mask: usize, size: usize) i64
 kqueue* = () i64
 kevent* = (kq: i32, changes: Ptr<u8>, count: i32, events: Ptr<u8>, capacity: i32, timeout: Ptr<u8>) i64
-// Linux only; macOS threads go through pthreads, which this layer does not
-// expose yet.
+// Linux only; macOS threads go through pthreads (below).
 futex* = (address: Ptr<u32>, op: i32, value: u32, timeout: usize, other: usize, third: u32) i64
 clone* = (flags: usize, stack: usize, parent: usize, child: usize, tls: usize) i64
+nanosleep* = (request: Ptr<u8>, remaining: Ptr<u8>) i64
+mprotect* = (addr: usize, len: usize, prot: i32) i64
+flock* = (fd: i32, op: i32) i64
+
+// Threads. std.sys.sys_thread builds its portable API on these; programs
+// use that (or Env) rather than calling them directly.
+//
+// The running thread's pointer: its control block on Linux (installed as
+// TLS by the runtime and by `clone_thread`), `pthread_self()` on macOS.
+thread_self* = () i64
+// Linux: start a thread sharing this process on the stack below `stack`,
+// running `block.entry(block.arg)`; the kernel keeps the thread id at
+// block+24 and clears it when the thread exits. macOS answers -ENOSYS.
+clone_thread* = (flags: usize, stack: usize, block: Ptr<u8>) i64
+// macOS: pthread_create for the same control block, storing the pthread_t
+// at block+32. Linux answers -ENOSYS.
+pthread_start* = (block: Ptr<u8>) i64
+// macOS libSystem locks, conditions and join over caller memory; each
+// returns 0 or -errno. Linux answers -ENOSYS.
+pthread_join* = (thread: usize, result: usize) i64
+pthread_mutex_init* = (mutex: Ptr<u8>, attributes: usize) i64
+pthread_mutex_lock* = (mutex: Ptr<u8>) i64
+pthread_mutex_unlock* = (mutex: Ptr<u8>) i64
+pthread_mutex_destroy* = (mutex: Ptr<u8>) i64
+pthread_cond_init* = (cond: Ptr<u8>, attributes: usize) i64
+pthread_cond_wait* = (cond: Ptr<u8>, mutex: Ptr<u8>) i64
+pthread_cond_signal* = (cond: Ptr<u8>) i64
+pthread_cond_broadcast* = (cond: Ptr<u8>) i64
+pthread_cond_destroy* = (cond: Ptr<u8>) i64
+
+// Sleep for `ns` nanoseconds once; -EINTR when a signal cut it short.
+nanosleep_ns* = (ns: u64) i64
+
+// Sequentially consistent atomic operations on a naturally aligned u32 or
+// usize word. `swap`, `add` (wrapping) and `cas` return the previous
+// contents; `cas` stores `desired` only when those equal `expected`.
+atomic_load_u32* = (word: Ptr<u32>) u32
+atomic_store_u32* = (word: Ptr<u32>, value: u32) ()
+atomic_swap_u32* = (word: Ptr<u32>, value: u32) u32
+atomic_add_u32* = (word: Ptr<u32>, value: u32) u32
+atomic_cas_u32* = (word: Ptr<u32>, expected: u32, desired: u32) u32
+atomic_load_usize* = (word: Ptr<usize>) usize
+atomic_store_usize* = (word: Ptr<usize>, value: usize) ()
+atomic_swap_usize* = (word: Ptr<usize>, value: usize) usize
+atomic_add_usize* = (word: Ptr<usize>, value: usize) usize
+atomic_cas_usize* = (word: Ptr<usize>, expected: usize, desired: usize) usize
+
+// Call a function the compiler handed to the runtime as a code address, with
+// two word arguments. Only compiler-generated entry points are called this
+// way (thread bodies, actor turns); see std.sys.sys_thread.
+call_entry* = (code: usize, first: Ptr<u8>, second: Ptr<u8>) ()
+
+// The runtime's zeroed block of process-wide state (256 bytes). Its first
+// word is the exit hook the runtime calls after main returns; std.sys owns
+// the rest.
+process_block* = () Ptr<u8>
 
 // Process start values.
 argc* = () usize
@@ -73,6 +128,8 @@ clock_monotonic* = () i32
 clock_realtime* = () i32
 eintr* = () i64
 eagain* = () i64
+// 1 on macOS, 0 on Linux.
+platform_darwin* = () i32
 
 // ---------------------------------------------------------------------
 // built on the operations

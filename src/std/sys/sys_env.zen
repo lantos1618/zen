@@ -9,7 +9,8 @@ FsError = std.env
 Duration, IoError, Range = std.core
 read_file, write_file, env_var, arg, argc, Pages = std.sys
 monotonic_ns, realtime_ns, c_path, openat, close, at_fdcwd, o_rdonly, o_cloexec = std.sys
-o_directory = std.sys
+o_directory, o_rdwr, o_creat, flock, eagain = std.sys
+sleep_ns = std.sys.sys_thread
 
 // A kernel -errno as the Fs error a caller can act on.
 fs_error* = (errno: i64) FsError {
@@ -42,8 +43,8 @@ fs_is_dir* = (path: str) bool { probe(path, o_directory()) }
 probe = (path: str, extra: i32) bool {
     scratch = Pages();
     c_path(scratch, path).match({
-        Err(_)  => false,
-        Ok(p)   => {
+        Err(_) => false,
+        Ok(p)  => {
             fd = openat(at_fdcwd(), p, o_rdonly() + o_cloexec() + extra, 0);
             (fd >= 0).then(() { close(fd.to_i32().value_or(-1)); });
             scratch.free(p);
@@ -63,9 +64,43 @@ argv* = () Vec<str> {
 
 var* = (name: str) Res<str> { env_var(name) }
 
-
 // Monotonic time; its origin is unspecified, so only differences matter.
 since_start* = () Duration { Duration(ns: monotonic_ns()) }
 
 // Wall-clock time since the Unix epoch.
 unix* = () Duration { Duration(ns: realtime_ns()) }
+
+// Block the calling thread for at least `ms` milliseconds.
+sleep_ms* = (ms: u64) {
+    limit: u64 = 18446744073709;
+    sleep_ns((ms > limit).match({ true => u64.MAX, false => ms * 1000000 }));
+}
+
+// `fs.lock(path)`: create or open the file and take an exclusive,
+// non-blocking flock. Exists when another open file description holds it.
+// The descriptor is the Lock the compiler builds from it.
+fs_lock_fd* = (path: str) Res<i32, FsError> {
+    fs_is_dir(path).match({ true => Err(FsError.IsDir), false => Ok(()) }).try();
+    scratch = Pages();
+    name    = c_path(scratch, path).match({ Ok(p) => Ok(p), Err(_) => Err(FsError.OutOfMemory) }).try();
+    fd      = openat(at_fdcwd(), name, o_rdwr() + o_creat() + o_cloexec(), 438);
+    scratch.free(name);
+    (fd < 0).match({ true => Err(fs_error(fd)), false => Ok(()) }).try();
+    handle = fd.to_i32().value_or(-1);
+    // LOCK_EX | LOCK_NB
+    locked = flock(handle, 6);
+    (locked < 0).then(() { close(handle); }).match({ Ok(_) => (), None => () });
+    (locked < 0).match({
+        true  => Err(
+            (locked == 0 - eagain()).match({ true => FsError.Exists, false => fs_error(
+                locked
+            ) })
+        ),
+        false => Ok(handle),
+    })
+}
+
+// Release a Lock's descriptor; a released Lock holds -1.
+fs_unlock_fd* = (fd: i32) {
+    (fd >= 0).then(() { close(fd); }).match({ Ok(_) => (), None => () });
+}

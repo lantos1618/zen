@@ -1,0 +1,25 @@
+// Thirty-two threads start before any is joined; each answers from its own
+// captured index. Joining them in spawn order collects every answer.
+
+Error = ThreadError | AllocError
+
+main = (env: Env) Res<i32, Error> {
+    a = env.mem.alloc();
+    threads ::= a.Vec<Thread>();
+    i: u64  ::= 0;
+    loop(() { i < 32 }, (h) {
+        index = i;
+        t     = env.threads.spawn(a, () Res<u64, ThreadError> {
+            env.threads.sleep(1);
+            Ok(index * index)
+        }).try();
+        threads.add(t).try();
+        i = i + 1;
+    });
+    total: u64 ::= 0;
+    threads.loop((h, t) {
+        total = total + t.join<u64>().try();
+    });
+    println("sum of squares {}", total);
+    Ok(0)
+}

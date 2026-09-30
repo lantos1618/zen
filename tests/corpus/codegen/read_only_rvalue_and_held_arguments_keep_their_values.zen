@@ -1,0 +1,52 @@
+// Large read-only arguments that are not places — constructions, call
+// results, omitted optional arguments — reach the callee with their values,
+// and an argument that a later argument's call writes is read first, in
+// Zen's left-to-right order.
+
+Big = {
+    a :: i64,
+    b :: i64,
+    c :: i64,
+    d :: i64,
+    e :: i64,
+    f :: i64,
+    g :: i64,
+    h :: i64,
+    i :: i64,
+}
+
+make = (n: i64) Big {
+    println("make {}", n);
+    Big(a: n, b: 0, c: 0, d: 0, e: 0, f: 0, g: 0, h: 0, i: n)
+}
+
+sum = (x: Big, y: Big) i64 { x.a + x.i + y.a + y.i }
+
+// A call in the second argument writes the binding the first one reads.
+bump = (big :: Big) i64 {
+    big.a = big.a + 100;
+    big.a
+}
+
+first_then = (x: Big, n: i64) i64 { x.a * 1000 + n }
+
+maybe = (x: Big, extra: Res<Big>) i64 {
+    extra.match({
+        Ok(e) => x.a + e.a,
+        None  => x.a,
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", sum(make(1), make(2)));
+    println(
+        "{}",
+        sum(Big(a: 3, b: 0, c: 0, d: 0, e: 0, f: 0, g: 0, h: 0, i: 4), make(5))
+    );
+    big ::= make(7);
+    println("{}", first_then(big, bump(big)));
+    println("{}", big.a);
+    println("{}", maybe(big));
+    println("{}", maybe(big, Ok(make(9))));
+    Ok(0);
+}

@@ -1,0 +1,30 @@
+// A read-only parameter handed to a free function's `::` parameter is
+// written in the callee's own copy: later reads in the same call see the
+// write, and the caller's binding does not change.
+
+Big = {
+    a :: i64,
+    b :: i64,
+    c :: i64,
+    d :: i64,
+    e :: i64,
+    f :: i64,
+    g :: i64,
+    h :: i64,
+    i :: i64,
+}
+
+grow = (big :: Big) { big.a = big.a + 10; }
+
+twice = (big: Big) i64 {
+    big.grow();
+    big.grow();
+    big.a
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    big ::= Big(a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9);
+    println("{}", twice(big));
+    println("{}", big.a);
+    Ok(0);
+}

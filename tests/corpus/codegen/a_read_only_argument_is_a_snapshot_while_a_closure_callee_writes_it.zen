@@ -1,0 +1,34 @@
+// A closure called with a read-only argument sees the argument as it was at
+// the call, even though its body writes the captured binding the argument
+// came from before reading the parameter, or before handing it on.
+
+Big = {
+    a :: i64,
+    b :: i64,
+    c :: i64,
+    d :: i64,
+    e :: i64,
+    f :: i64,
+    g :: i64,
+    h :: i64,
+    i :: i64,
+}
+
+call_with = (body: (seen: Big) i64, value: Big) i64 { body(value) }
+
+reread = (seen: Big) i64 { seen.a }
+
+main = (env: Env) Res<i32, AllocError> {
+    big ::= Big(a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9);
+    first = call_with((seen: Big) i64 {
+        big.a = big.a + 7;
+        seen.a
+    }, big);
+    println("{} {}", first, big.a);
+    second = call_with((seen: Big) i64 {
+        big.a = big.a + 70;
+        reread(seen)
+    }, big);
+    println("{} {}", second, big.a);
+    Ok(0);
+}

@@ -8,9 +8,11 @@ String = std.text
 TyId = sema.sema_ty
 Ctx = sema.sema_check
 CBackend = gen.gen_c.gen_c_state
-expr, value_held = gen.gen_c.gen_c_expr
+expr, value_held, holdable, spill_valued = gen.gen_c.gen_c_expr
 declare_temp = gen.gen_c.gen_c_flow
-address_of = gen.gen_c.gen_c_fat
+address_of, is_place = gen.gen_c.gen_c_fat
+ctype = gen.gen_c.gen_c_type
+passing, lends, CallPlaces = gen.gen_c.gen_c_borrow
 
 arg_text* = (
     be   :: CBackend,
@@ -66,8 +68,10 @@ write_arg* = (
     be.write_arg_at(value, i, false, f, sig, ctx, out)
 }
 
-// Mutable parameters receive the address of the caller's place. Other
-// arguments may be held to preserve Zen's left-to-right evaluation order.
+// Mutable parameters receive the address of the caller's place. A borrowed
+// parameter receives the address of a copy here; `lend_arg_at` is the path
+// that may lend the caller's own storage. Other arguments may be held to
+// preserve Zen's left-to-right evaluation order.
 write_arg_at* = (
     be    :: CBackend,
     value : ExprId,
@@ -79,10 +83,93 @@ write_arg_at* = (
     out   :: String
 ) Res<(), AllocError> {
     want = sig.get(i).match({ Ok(t) => t, None => TyId(index: 0) });
-    by_ref(f, i).match({
-        false => be.value_held(value, ctx, want, hold, out),
-        true  => be.write_address(value, ctx, want, out),
+    be.passing(f, i, want).try().match({
+        Value    => be.value_held(value, ctx, want, hold, out),
+        Mutable  => be.write_address(value, ctx, want, out),
+        Borrowed => be.write_copy_address(value, ctx, want, hold, out),
     })
+}
+
+// One argument of a statically resolved call whose other arguments are
+// known, so a borrowed parameter may receive the caller's own storage.
+lend_arg_at* = (
+    be    :: CBackend,
+    value : ExprId,
+    i     : usize,
+    hold  : bool,
+    call  : CallPlaces,
+    ctx   : Ctx,
+    out   :: String
+) Res<(), AllocError> {
+    want = call.sig.get(i).match({ Ok(t) => t, None => TyId(index: 0) });
+    be.passing(call.f, i, want).try().match({
+        Borrowed => be.write_lent(value, i, hold, call, ctx, want, out),
+        _        => be.write_arg_at(value, i, hold, call.f, call.sig, ctx, out),
+    })
+}
+
+// A held argument is already a snapshot, so only an argument written in
+// place can be lent; `lends` decides whether its storage is safe to share.
+write_lent = (
+    be    :: CBackend,
+    value : ExprId,
+    i     : usize,
+    hold  : bool,
+    call  : CallPlaces,
+    ctx   : Ctx,
+    want  : TyId,
+    out   :: String
+) Res<(), AllocError> {
+    ((hold == false) && be.lends(call, i, value).try()).match({
+        false => be.write_copy_address(value, ctx, want, hold, out),
+        true  => {
+            code ::= be.alloc.String().try();
+            be.expr(value, ctx, want, code).try();
+            be.address_or_copy(code.view(), want, out)
+        },
+    })
+}
+
+// The address of a fresh copy. A held argument is copied into its
+// temporary by the hold itself; anything else is copied into a one-element
+// compound literal, which is evaluated where the argument is written and
+// lives until the enclosing block ends.
+write_copy_address* = (
+    be    :: CBackend,
+    value : ExprId,
+    ctx   : Ctx,
+    want  : TyId,
+    hold  : bool,
+    out   :: String
+) Res<(), AllocError> {
+    code ::= be.alloc.String().try();
+    (hold && be.holdable(value)).match({
+        true  => {
+            be.spill_valued(value, ctx, want, code).try();
+            out.fmt("&{}", code.view())
+        },
+        false => {
+            be.expr(value, ctx, want, code).try();
+            be.copy_address(code.view(), want, out)
+        },
+    })
+}
+
+address_or_copy = (be :: CBackend, code: str, want: TyId, out :: String)
+                  Res<(), AllocError> {
+    is_place(code).match({
+        true  => out.fmt("&({code})"),
+        false => be.copy_address(code, want, out),
+    })
+}
+
+copy_address* = (be :: CBackend, code: str, want: TyId, out :: String)
+                Res<(), AllocError> {
+    out.add("(").try();
+    be.ctype(want, out).try();
+    out.add("[1]){ ").try();
+    out.add(code).try();
+    out.add(" }")
 }
 
 by_ref* = (f: Function, i: usize) bool {

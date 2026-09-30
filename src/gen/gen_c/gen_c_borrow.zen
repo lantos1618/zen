@@ -1,0 +1,1060 @@
+// Borrowed parameters. A read-only parameter of a large aggregate type is
+// passed to a Zen function as `const T *` rather than by value. Zen's value
+// semantics do not change: the callee must see the argument as it was when
+// the call began. A call site therefore lends its own storage only when
+// nothing can write that storage while the callee runs, and otherwise
+// passes the address of a copy.
+
+ExprId, BlockId, Call, Function, Struct, Enum, Member = std.ast
+WalkVisitor, WalkEvent, WalkNode, walk, Ast = std.ast
+Alloc, AllocError = std.mem
+Vec, Map = std.collections
+str = std.text
+Range = std.core
+TyId, TyNamed, TyRes, TyArray, is_failure = sema.sema_ty
+decl_at = sema.sema_def
+Ctx, CheckedCall = sema.sema_check
+Inst = sema.sema_inst
+call_callee = sema.sema_call
+ty_at = sema.sema_cand
+CBackend = gen.gen_c.gen_c_state
+LocalSlot = gen.gen_c.gen_c_frame
+has_body, impl_member_at = gen.gen_c.gen_c_impl
+site_of, member_at = gen.gen_c.gen_c_member
+is_fat, slots_of, Slot = gen.gen_c.gen_c_fat
+field_type, variant_type, decl_ctx, decl_inst = gen.gen_c.gen_c_type
+has_storage, is_unit, is_native_record = gen.gen_c.gen_c_type
+spellable, is_ptr_named, is_scope_named = gen.gen_c.gen_c_type
+enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
+drop_fn = gen.gen_c.gen_c_own
+
+// Aggregates larger than this many bytes are borrowed. Measured on the
+// self-hosted compiler: a 32-byte threshold, which also borrows 64-byte Vec
+// and String descriptors read through many small methods, ran no faster
+// than passing everything by value; 64 and 128 were equally fast.
+BORROW_BYTES*: usize = 64
+
+// How one declared parameter crosses a C call. It depends only on the
+// callee and the parameter's concrete type, so a definition and every call
+// site agree without consulting each other.
+Passing* = Value | Borrowed | Mutable
+
+passing* = (be :: CBackend, f: Function, i: usize, ty: TyId)
+           Res<Passing, AllocError> {
+    f.params.get(i).match({
+        None  => Ok(Passing.Value),
+        Ok(p) => p.mutable.match({
+            true  => Ok(Passing.Mutable),
+            false => be.read_only_passing(f, i, ty),
+        }),
+    })
+}
+
+// A bodiless function is foreign or a runtime floor with a fixed C
+// signature, and `main` is entered from the generated C `main`; both keep
+// the by-value convention. Native callbacks never reach here with an
+// aggregate: `gen_c_callback.zen` admits only scalar and pointer parameters.
+read_only_passing = (be :: CBackend, f: Function, i: usize, ty: TyId)
+                    Res<Passing, AllocError> {
+    (has_body(f) && (f.name.text.eq("main") == false)).match({
+        false => Ok(Passing.Value),
+        true  => (be.lendable(ty).try() && (be.handed_on(f, i).try() == false)).match({
+            true  => Ok(Passing.Borrowed),
+            false => Ok(Passing.Value),
+        }),
+    })
+}
+
+// Sema accepts a `:` binding as the `::` argument of a free or UFCS
+// function, and that callee then writes the caller's own copy of a by-value
+// parameter; a trait value made from the binding can be written through the
+// same way. A parameter whose body hands it (or a place inside it) to a `::`
+// or trait-typed parameter, or to a callee this scan cannot resolve, keeps
+// its copy. Anywhere else a trait value is made from a borrowed parameter,
+// `gen_c_expr.fat_expr` points it at a copy.
+handed_on = (be :: CBackend, f: Function, i: usize) Res<bool, AllocError> {
+    f.body.match({
+        None     => Ok(false),
+        Ok(body) => {
+            flags = be.handed_params(f, body).try();
+            Ok(flags.get(i).match({ Ok(b) => b, None => false }))
+        },
+    })
+}
+
+handed_params = (be :: CBackend, f: Function, body: BlockId)
+                Res<Vec<bool>, AllocError> {
+    be.borrow.handed.get(body).match({
+        Ok(flags) => Ok(flags),
+        None      => {
+            flags = be.scan_handed(f, body).try();
+            be.borrow.handed.set(body, flags).try();
+            Ok(flags)
+        },
+    })
+}
+
+scan_handed = (be :: CBackend, f: Function, body: BlockId)
+              Res<Vec<bool>, AllocError> {
+    flags ::= be.alloc.Vec<bool>();
+    f.params.loop((h, p) { flags.add(false).try() });
+    scan ::= CallScan(tree: be.tree, calls: be.alloc.Vec<ExprId>());
+    be.tree.walk(be.alloc, WalkNode.Block(body), scan).try();
+    scan.calls.loop((h, id) { be.mark_handed(f, id, flags).try() });
+    Ok(flags)
+}
+
+mark_handed = (be :: CBackend, f: Function, id: ExprId, flags :: Vec<bool>)
+              Res<(), AllocError> {
+    be.tree.expr_at(id).kind.match({
+        Call(c) => {
+            recv = be.checked_receiver(id);
+            be.names_param(f, c, recv).match({
+                false => Ok(()),
+                true  => be.mark_call(f, id, c, recv, flags),
+            })
+        },
+        _       => Ok(()),
+    })
+}
+
+mark_call = (
+    be    :: CBackend,
+    f     : Function,
+    id    : ExprId,
+    c     : Call,
+    recv  : Res<ExprId>,
+    flags :: Vec<bool>
+) Res<(), AllocError> {
+    callee       = be.callee_of(id, c).try();
+    params       = be.checked_params(id);
+    first: usize = recv.match({ Ok(_) => 1, None => 0 });
+    recv.match({
+        Ok(r) => be.mark_position(f, callee, params, 0, r, flags),
+        None  => (),
+    });
+    c.args.loop((h, k, a) {
+        be.mark_position(f, callee, params, k + first, a.value, flags);
+    });
+    Ok(())
+}
+
+// Most calls pass no place rooted at a parameter; those are not resolved.
+names_param = (be: CBackend, f: Function, c: Call, recv: Res<ExprId>) bool {
+    by_recv = recv.match({
+        Ok(r) => be.roots_param(f, r),
+        None  => false,
+    });
+    by_recv || c.args.find((a) { be.roots_param(f, a.value) }).match({
+        Ok(_) => true,
+        None  => false,
+    })
+}
+
+roots_param = (be: CBackend, f: Function, id: ExprId) bool {
+    be.root_name(id).match({
+        None     => false,
+        Ok(name) => f.params.find((p) { p.name.text.eq(name) }).match({
+            Ok(_) => true,
+            None  => false,
+        }),
+    })
+}
+
+// A place handed to a `::` parameter is written by the callee; one handed
+// to a trait-typed parameter becomes a trait value holding its address,
+// which may be written through later.
+mark_position = (
+    be     :: CBackend,
+    f      : Function,
+    callee : Callee,
+    params : Res<Vec<TyId>>,
+    pos    : usize,
+    arg    : ExprId,
+    flags  :: Vec<bool>
+) {
+    be.root_name(arg).match({
+        None     => (),
+        Ok(name) => (writes(callee, pos) || be.trait_at(params, pos))
+            .then(() { mark_param(f, name, flags); }),
+    });
+}
+
+// Whether a checked signature position is a trait value.
+trait_at = (be: CBackend, params: Res<Vec<TyId>>, pos: usize) bool {
+    params.match({
+        None    => false,
+        Ok(tys) => tys.get(pos).match({
+            Ok(t) => be.is_fat(t),
+            None  => false,
+        }),
+    })
+}
+
+checked_params = (be :: CBackend, id: ExprId) Res<Vec<TyId>> {
+    be.check.call_resolution(id).try().match({
+        Checked(call) => Ok(call.signature.try().params),
+        _             => None,
+    })
+}
+
+mark_param = (f: Function, name: str, flags :: Vec<bool>) {
+    f.params.loop((h, k, p) {
+        p.name.text.eq(name).then(() { flags.set(k, true); });
+    });
+}
+
+// The binding a path of fields and indexes starts from.
+root_name = (be: CBackend, id: ExprId) Res<str> {
+    be.tree.expr_at(id).kind.match({
+        Name(n)   => Ok(n.text),
+        Paren(p)  => be.root_name(p.inner),
+        Access(a) => be.root_name(a.base),
+        Index(x)  => be.root_name(x.base),
+        _         => None,
+    })
+}
+
+checked_receiver = (be: CBackend, id: ExprId) Res<ExprId> {
+    be.check.call_resolution(id).try().match({
+        Checked(call) => call.signature.try().receiver,
+        _             => None,
+    })
+}
+
+// What the scan knows of a call's parameters: the selected declaration,
+// that every argument is taken by value, or nothing.
+Callee = Declared(Function) | Values | Unknown
+
+writes = (callee: Callee, pos: usize) bool {
+    callee.match({
+        Declared(g) => g.params.get(
+            pos
+        ).match({ Ok(q) => q.mutable, None => false }),
+        Values      => false,
+        Unknown     => true,
+    })
+}
+
+callee_of = (be :: CBackend, id: ExprId, c: Call) Res<Callee, AllocError> {
+    be.check.call_resolution(id).match({
+        None           => Ok(unchecked_callee(be, c)),
+        Ok(resolution) => resolution.match({
+            Checked(call) => be.checked_callee(c, call),
+            _             => Ok(Callee.Unknown),
+        }),
+    })
+}
+
+// A member or a function with a body is found by its body; a bodiless
+// member through its provider type; a bodiless function or a construction
+// by its declaration.
+checked_callee = (be :: CBackend, c: Call, call: CheckedCall)
+                 Res<Callee, AllocError> {
+    by_body = call.body.match({
+        None  => Ok(None),
+        Ok(b) => be.body_owner(b),
+    }).try();
+    by_body.match({
+        Ok(g) => Ok(Callee.Declared(g)),
+        None  => call.member_provider.match({
+            Ok(pty) => be.member_callee(c, pty),
+            None    => Ok(be.declared_callee(call)),
+        }),
+    })
+}
+
+declared_callee = (be :: CBackend, call: CheckedCall) Callee {
+    call.declaration.match({
+        None  => Callee.Unknown,
+        Ok(d) => decl_at(be.tree, d).match({
+            None  => Callee.Unknown,
+            Ok(x) => x.kind.match({
+                Function(g) => Callee.Declared(g),
+                Struct(_)   => Callee.Values,
+                _           => Callee.Unknown,
+            }),
+        }),
+    })
+}
+
+// Struct members first, then what impls supply, as member lookup orders
+// them. Overloads of one name are not told apart here, so a name with more
+// than one function member is unknown.
+member_callee = (be :: CBackend, c: Call, pty: TyId) Res<Callee, AllocError> {
+    name = call_callee(be.tree, c).kind.match({
+        Access(a) => a.name.text,
+        _         => "",
+    });
+    be.site_of(pty).try().match({
+        None     => Ok(Callee.Unknown),
+        Ok(site) => {
+            found ::= be.alloc.Vec<Member>();
+            be.member_at(site, name, found).try();
+            (function_count(found) == 0).then(() {
+                be.impl_member_at(site.decl, name, found).try();
+            });
+            Ok(only_function(found))
+        },
+    })
+}
+
+function_count = (found: Vec<Member>) usize {
+    n ::= 0;
+    found.loop((h, m) { is_function(m).then(() { n = n + 1; }) });
+    n
+}
+
+only_function = (found: Vec<Member>) Callee {
+    (function_count(found) == 1).match({
+        false => Callee.Unknown,
+        true  => found.find((m) { is_function(m) }).match({
+            None  => Callee.Unknown,
+            Ok(m) => m.kind.match({
+                Function(g) => Callee.Declared(g),
+                _           => Callee.Unknown,
+            }),
+        }),
+    })
+}
+
+is_function = (m: Member) bool {
+    m.kind.match({ Function(_) => true, _ => false })
+}
+
+// Print sugar and `Res` constructors record no call check; their arguments
+// are values.
+unchecked_callee = (be: CBackend, c: Call) Callee {
+    call_callee(be.tree, c).kind.match({
+        Name(n) => n.text.is_in([
+            "println", "print", "errorln", "error", "Ok", "Err"
+        ]).match({
+            true  => Callee.Values,
+            false => Callee.Unknown,
+        }),
+        _       => Callee.Unknown,
+    })
+}
+
+body_owner = (be :: CBackend, b: BlockId) Res<Res<Function>, AllocError> {
+    be.borrow.indexed.match({
+        true  => Ok(()),
+        false => be.index_bodies(),
+    }).try();
+    Ok(be.borrow.bodies.get(b))
+}
+
+index_bodies = (be :: CBackend) Res<(), AllocError> {
+    be.check.own_checks.loop((h, job) {
+        be.borrow.bodies.set(job.body, job.function).try();
+    });
+    be.borrow.indexed = true;
+    Ok(())
+}
+
+// The calls written in one body, lambdas included.
+CallScan = { tree: Ast, calls :: Vec<ExprId> }
+
+CallScan.impl(WalkVisitor, {
+    visit = (self :: @Self, event: WalkEvent) Res<(), AllocError> {
+        event.match({
+            Enter(node) => node.match({
+                Expr(id) => self.tree.expr_at(id).kind.match({
+                    Call(_) => self.calls.add(id),
+                    _       => Ok(()),
+                }),
+                _        => Ok(()),
+            }),
+            Leave(_)    => Ok(()),
+        })
+    }
+})
+
+// A value type the callee can read through a pointer. Trait values and
+// pointers are handles already; a Drop type passed by value is owned, and
+// destroyed, by the callee; header-owned records keep their C layout.
+lendable* = (be :: CBackend, ty: TyId) Res<bool, AllocError> {
+    shape = be.shape(ty).try();
+    Ok(
+        shape.aggregate && (shape.drops == false) && (shape.size > BORROW_BYTES)
+    );
+}
+
+// The storage a place argument names: a binding, or a chain of struct fields
+// on one. `ty` is the parameter type, which is the type of a lent place.
+Place* = {
+    slot*: LocalSlot,
+    ty*: TyId,
+}
+
+// The binding a chain of fields starts from. Whether each hop is plain
+// storage is settled by the lowered C: only a C place is lent.
+root_slot = (be: CBackend, id: ExprId) Res<LocalSlot> {
+    be.tree.expr_at(id).kind.match({
+        Name(n)   => {
+            s = be.slot_of(n.text).try();
+            (s.is_value() && be.has_storage(s.ty)).ensure().try();
+            Ok(s)
+        },
+        Paren(p)  => be.root_slot(p.inner),
+        Access(a) => be.root_slot(a.base),
+        _         => None,
+    })
+}
+
+// Whether a trait value made from this expression would point into a
+// borrowed parameter's storage, which belongs to the caller.
+borrowed_place* = (be :: CBackend, id: ExprId) Res<bool, AllocError> {
+    be.root_slot(id).match({
+        None  => Ok(false),
+        Ok(s) => Ok(s.borrowed),
+    })
+}
+
+// The arguments of one statically resolved call, by signature position:
+// the receiver takes position zero when `first` is one.
+CallPlaces* = {
+    recv*: Res<ExprId>,
+    c*: Call,
+    first*: usize,
+    f*: Function,
+    sig*: Vec<TyId>,
+
+    at = (self: @Self, pos: usize) Res<ExprId> {
+        (pos < self.first).match({
+            true  => self.recv,
+            false => self.c.args.get(pos - self.first).match({
+                Ok(a) => Ok(a.value),
+                None  => None,
+            }),
+        })
+    }
+}
+
+// Whether the argument at `pos` may be passed as the address of its own
+// storage. Anything else is passed as the address of a copy, which is always
+// correct. The argument must be a place; then, by where that place lives:
+//
+// A borrowed parameter of the calling function: nothing writes it while the
+// caller runs (that is what lending it established), and the callee runs
+// inside the caller, so it is lent again unconditionally.
+//
+// A value binding of the calling function (a C local): only two things can
+// write it during the call. (1) A `::` argument of the same call that may
+// share its storage — `c.store_effects.solve(c)` hands `solve` both a
+// writable `store_effects` and a read-only `c`. (2) A trait value: a record
+// built from a place holds that place's address, and it may be reached
+// through any argument, or through the argument itself. No other pointer to
+// frame storage exists: the address-of operator is rejected, `Ptr` values
+// come from allocators and native code, closures are inlined rather than
+// called, a spawned thread or deferred body captures values by copy, and
+// module-level values are constants.
+//
+// A `::` parameter or other by-address binding: its storage may be in any
+// caller's frame or on the heap, so besides (1) and (2) the callee may reach
+// it through a `Ptr` whose element type contains the object the argument lies
+// in — a Vec of such values, for example — or release it through an owned
+// Drop value.
+//
+// Storage is typed: two objects overlap only when one's type holds the
+// other's by value. For (1), a `::` argument rooted at the same binding
+// always clashes; one that provably names different storage (`disjoint`)
+// never does; any other clashes when the types can overlap (`overlaps`).
+// Erased pointers, function values and unsettled types may point anywhere
+// and always force a copy. Pointers are taken to address values of their
+// element type: a program that reinterprets live struct storage with
+// `Ptr.to<U>()` and writes it while that struct is being read by value is
+// outside this guarantee.
+lends* = (be :: CBackend, call: CallPlaces, pos: usize, value: ExprId)
+         Res<bool, AllocError> {
+    be.root_slot(value).match({
+        None     => Ok(false),
+        Ok(slot) => slot.borrowed.match({
+            true  => Ok(true),
+            false => be.unwritten(
+                call,
+                pos,
+                Place(slot: slot, ty: call.sig.ty_at(pos))
+            ),
+        }),
+    })
+}
+
+unwritten = (be :: CBackend, call: CallPlaces, pos: usize, lent: Place)
+            Res<bool, AllocError> {
+    clash = be.mutable_clash(call, pos, lent).try();
+    (clash == false).match({
+        false => Ok(false),
+        true  => be.no_reaching_writer(call, lent),
+    })
+}
+
+// Clause (1): a `::` argument that may share the lent place's storage.
+mutable_clash = (be :: CBackend, call: CallPlaces, pos: usize, lent: Place)
+                Res<bool, AllocError> {
+    clash ::= false;
+    n = call.first + call.c.args.len;
+    Range(0, n).loop((h, j) {
+        (j != pos).then(() {
+            ty = call.sig.get(j).match({ Ok(t) => t, None => TyId(index: 0) });
+            be.is_mutable_at(call.f, j, ty).try().then(() {
+                call.at(j).match({
+                    None    => (),
+                    Ok(arg) => be.may_alias(arg, ty, lent).try().then(() {
+                        clash = true;
+                        h.break();
+                    }),
+                });
+            });
+        });
+    });
+    Ok(clash)
+}
+
+is_mutable_at = (be :: CBackend, f: Function, j: usize, ty: TyId)
+                Res<bool, AllocError> {
+    be.passing(f, j, ty).try().match({
+        Mutable => Ok(true),
+        _       => Ok(false),
+    })
+}
+
+// A `::` argument writes the storage its path of fields and indexes names.
+// A value that is not a path is a fresh temporary.
+may_alias = (be :: CBackend, arg: ExprId, ty: TyId, lent: Place)
+            Res<bool, AllocError> {
+    be.path_root(arg).match({
+        None  => Ok(false),
+        Ok(r) => same_slot(r.slot, lent.slot).match({
+            true  => Ok(true),
+            false => disjoint(r, lent.slot).match({
+                true  => Ok(false),
+                false => be.overlaps(ty, lent),
+            }),
+        }),
+    })
+}
+
+same_slot = (a: LocalSlot, b: LocalSlot) bool {
+    a.name.eq(b.name) && (a.index == b.index)
+}
+
+// A C local is storage of this frame alone: no other local, no address
+// from the caller, and no heap element through a local's index is part
+// of it. Storage from the caller cannot be a local of this frame either.
+disjoint = (r: PathRoot, lent: LocalSlot) bool {
+    lent.by_ref.match({
+        false => (r.slot.by_ref == false) || r.slot.from_caller,
+        true  => lent.from_caller && (r.slot.by_ref == false) && (r.indexed == false),
+    })
+}
+
+// An object of type `u` can share storage with the lent place only if it
+// contains the root object, or lies inside it and overlaps the place.
+overlaps = (be :: CBackend, u: TyId, lent: Place) Res<bool, AllocError> {
+    be.contains(u, lent.slot.ty).try().match({
+        true  => Ok(true),
+        false => (be.contains(lent.slot.ty, u).try()
+            && (be.contains(u, lent.ty).try() || be.contains(lent.ty, u).try()))
+            .match({ true => Ok(true), false => Ok(false) }),
+    })
+}
+
+PathRoot = {
+    slot: LocalSlot,
+    indexed: bool,
+}
+
+// A path through an index may leave the root's storage for the heap.
+path_root = (be :: CBackend, id: ExprId) Res<PathRoot> {
+    be.tree.expr_at(id).kind.match({
+        Name(n)   => be.slot_of(n.text).match({
+            Ok(s) => Ok(PathRoot(slot: s, indexed: false)),
+            None  => None,
+        }),
+        Paren(p)  => be.path_root(p.inner),
+        Access(a) => be.path_root(a.base),
+        Index(x)  => be.path_root(x.base).match({
+            Ok(r) => Ok(PathRoot(slot: r.slot, indexed: true)),
+            None  => None,
+        }),
+        _         => None,
+    })
+}
+
+// Clause (2), and for by-address places the pointer and Drop clauses: every
+// position's type, the lent argument's own included, is searched for what
+// the callee could write the place through.
+no_reaching_writer = (be :: CBackend, call: CallPlaces, lent: Place)
+                     Res<bool, AllocError> {
+    frame = lent.slot.by_ref == false;
+    found ::= false;
+    call.sig.loop((h, u) {
+        be.writes_into(u, lent.slot.ty, frame).try().then(() {
+            found = true;
+            h.break();
+        });
+    });
+    Ok(found == false)
+}
+
+// `root` is the type of the object the lent place lies in; a pointer to an
+// element that contains it can write the place.
+writes_into = (be :: CBackend, u: TyId, root: TyId, frame: bool)
+              Res<bool, AllocError> {
+    r = be.reach(u).try();
+    (r.trait_value || r.erased).match({
+        true  => Ok(true),
+        false => (frame && (be.ffi == false)).match({
+            true  => Ok(false),
+            false => be.pointer_writes(r, root, frame),
+        }),
+    })
+}
+
+// With `--ffi`, native code handed a `::` argument could retain its address,
+// so a frame place is also checked against the reachable pointers.
+pointer_writes = (be :: CBackend, r: Reach, root: TyId, frame: bool)
+                 Res<bool, AllocError> {
+    (r.drops && (frame == false)).match({
+        true  => Ok(true),
+        false => {
+            hit ::= false;
+            r.pointees.loop((h, x) {
+                be.contains(x, root).try().then(() {
+                    hit = true;
+                    h.break();
+                });
+            });
+            Ok(hit)
+        },
+    })
+}
+
+// type facts
+
+// What one type holds by value, for sizing and for the searches above.
+// `parts` are its by-value members; `pointees` the element types of the
+// pointers it holds directly (`str` holds bytes).
+Shape* = {
+    size*: usize,
+    align*: usize,
+    aggregate*: bool,
+    parts*: Vec<TyId>,
+    pointees*: Vec<TyId>,
+    // A trait value other than `Alloc`: a receiver address and methods
+    // that may write through it or through anything the receiver holds.
+    // An `Alloc` only writes storage it has not handed out, and releases a
+    // block only when given a typed pointer to it.
+    trait_value*: bool,
+    erased*: bool,
+    drops*: bool,
+}
+
+// Everything a value of one type can reach, following pointers.
+Reach* = {
+    pointees*: Vec<TyId>,
+    trait_value*: bool,
+    erased*: bool,
+    drops*: bool,
+}
+
+// Per-backend memos. Types are interned, so an answer holds for the whole
+// emission.
+BorrowFacts* = {
+    shapes :: Map<TyId, Shape>,
+    reaches :: Map<TyId, Reach>,
+    nested :: Map<TyId, Vec<TyId>>,
+    // Per function body: which parameters it hands to a `::` parameter.
+    handed :: Map<BlockId, Vec<bool>>,
+    // Every checked function by its body, built on first use.
+    bodies :: Map<BlockId, Function>,
+    indexed :: bool,
+}
+
+BorrowFacts* = (a: Alloc) BorrowFacts {
+    BorrowFacts(
+        shapes: a.Map<TyId, Shape>(),
+        reaches: a.Map<TyId, Reach>(),
+        nested: a.Map<TyId, Vec<TyId>>(),
+        handed: a.Map<BlockId, Vec<bool>>(),
+        bodies: a.Map<BlockId, Function>(),
+        indexed: false
+    )
+}
+
+shape* = (be :: CBackend, ty: TyId) Res<Shape, AllocError> {
+    be.borrow.shapes.get(ty).match({
+        Ok(s) => Ok(s),
+        None  => {
+            s = be.measure(ty).try();
+            be.borrow.shapes.set(ty, s).try();
+            Ok(s)
+        },
+    })
+}
+
+// C layout is approximated with natural alignment on an LP64 target. The
+// answer only has to be deterministic: definitions and call sites ask the
+// same question of the same type.
+measure = (be :: CBackend, ty: TyId) Res<Shape, AllocError> {
+    be.types().at(ty).match({
+        Prim(p)  => be.prim_shape(p.name),
+        Named(n) => be.named_shape(ty, n),
+        Res(r)   => be.res_shape(r),
+        Union(u) => be.tagged_shape(u.members),
+        Array(a) => be.array_shape(a),
+        _        => be.leaf_shape(0, 1, true),
+    })
+}
+
+leaf_shape = (be :: CBackend, size: usize, align: usize, erased: bool)
+             Res<Shape, AllocError> {
+    Ok(Shape(
+        size: size,
+        align: align,
+        aggregate: false,
+        parts: be.alloc.Vec<TyId>(),
+        pointees: be.alloc.Vec<TyId>(),
+        trait_value: false,
+        erased: erased,
+        drops: false
+    ))
+}
+
+// A word-sized handle holding one pointer to `target`.
+pointer_to = (be :: CBackend, size: usize, target: TyId)
+             Res<Shape, AllocError> {
+    pointees ::= be.alloc.Vec<TyId>();
+    pointees.add(target).try();
+    Ok(Shape(
+        size: size,
+        align: 8,
+        aggregate: false,
+        parts: be.alloc.Vec<TyId>(),
+        pointees: pointees,
+        trait_value: false,
+        erased: false,
+        drops: false
+    ))
+}
+
+prim_shape = (be :: CBackend, name: str) Res<Shape, AllocError> {
+    name.eq("str").match({
+        true  => be.str_shape(),
+        false => be.leaf_shape(
+            prim_size(name),
+            max_of(prim_size(name), 1),
+            false
+        ),
+    })
+}
+
+prim_size = (name: str) usize {
+    name.match({
+        "()"       => 0,
+        "bool"     => 1,
+        "u8"       => 1,
+        "i8"       => 1,
+        "c_char"   => 1,
+        "c_schar"  => 1,
+        "c_uchar"  => 1,
+        "u16"      => 2,
+        "i16"      => 2,
+        "c_short"  => 2,
+        "c_ushort" => 2,
+        "u32"      => 4,
+        "i32"      => 4,
+        "f32"      => 4,
+        "c_int"    => 4,
+        "c_uint"   => 4,
+        _          => 8,
+    })
+}
+
+str_shape = (be :: CBackend) Res<Shape, AllocError> {
+    be.pointer_to(16, be.check.types.prim("u8").try())
+}
+
+named_shape = (be :: CBackend, ty: TyId, n: TyNamed) Res<Shape, AllocError> {
+    is_ptr_named(n).match({
+        true  => be.pointer_shape(n),
+        false => is_scope_named(n).match({
+            true  => be.leaf_shape(8, 8, true),
+            false => be.value_named_shape(ty, n),
+        }),
+    })
+}
+
+pointer_shape = (be :: CBackend, n: TyNamed) Res<Shape, AllocError> {
+    n.args.get(0).match({
+        None       => be.leaf_shape(8, 8, true),
+        Ok(target) => be.pointer_to(8, target),
+    })
+}
+
+// Header-owned records have only scalar fields and a C layout of their own;
+// an opaque native type has no Zen layout at all.
+value_named_shape = (be :: CBackend, ty: TyId, n: TyNamed)
+                    Res<Shape, AllocError> {
+    be.is_fat(ty).match({
+        true  => be.trait_shape(ty, n),
+        false => be.is_native_record(ty).match({
+            true  => be.leaf_shape(0, 1, false),
+            false => be.spellable(ty).match({
+                true  => be.declared_shape(n),
+                false => be.leaf_shape(0, 1, true),
+            }),
+        }),
+    })
+}
+
+trait_shape = (be :: CBackend, ty: TyId, n: TyNamed) Res<Shape, AllocError> {
+    slots ::= be.alloc.Vec<Slot>();
+    be.slots_of(ty, slots).try();
+    Ok(Shape(
+        size: 8 * (slots.len + 1),
+        align: 8,
+        aggregate: false,
+        parts: be.alloc.Vec<TyId>(),
+        pointees: be.alloc.Vec<TyId>(),
+        trait_value: is_alloc(be, n) == false,
+        erased: false,
+        drops: false
+    ))
+}
+
+is_alloc = (be: CBackend, n: TyNamed) bool {
+    n.name.eq("Alloc") && be.check.world.module_name(n.decl).eq("std.mem.mem_alloc")
+}
+
+declared_shape = (be :: CBackend, n: TyNamed) Res<Shape, AllocError> {
+    ctx  = be.decl_ctx(n);
+    inst = be.decl_inst(n).try();
+    mark = be.enter_struct_tparams(n.decl).try();
+    parts  ::= be.alloc.Vec<TyId>();
+    tagged ::= false;
+    decl_at(be.tree, n.decl).match({
+        None  => Ok(()),
+        Ok(d) => d.kind.match({
+            Struct(s) => be.field_parts(s, ctx, inst, parts),
+            Enum(e)   => {
+                tagged = true;
+                be.variant_parts(n, e, ctx, inst, parts)
+            },
+            _         => Ok(()),
+        }),
+    }).try();
+    be.leave_tparams(mark).try();
+    drops = be.drop_fn(n.decl).try().match({ Ok(_) => true, None => false });
+    tagged.match({
+        false => be.record_shape(parts, drops),
+        true  => be.union_of(parts, drops),
+    })
+}
+
+field_parts = (
+    be    :: CBackend,
+    s     : Struct,
+    ctx   : Ctx,
+    inst  : Inst,
+    parts :: Vec<TyId>
+) Res<(), AllocError> {
+    s.members.loop((h, m) {
+        be.field_type(m, ctx, inst).match({
+            None  => Ok(()),
+            Ok(t) => be.add_stored(t, parts),
+        }).try();
+    });
+    Ok(())
+}
+
+variant_parts = (
+    be    :: CBackend,
+    n     : TyNamed,
+    e     : Enum,
+    ctx   : Ctx,
+    inst  : Inst,
+    parts :: Vec<TyId>
+) Res<(), AllocError> {
+    e.variants.loop((h, v) {
+        be.variant_type(n, v, ctx, inst).match({
+            None  => Ok(()),
+            Ok(t) => be.add_stored(t, parts),
+        }).try();
+    });
+    Ok(())
+}
+
+add_stored = (be :: CBackend, t: TyId, parts :: Vec<TyId>)
+             Res<(), AllocError> {
+    be.has_storage(t).match({
+        true  => parts.add(t),
+        false => Ok(()),
+    })
+}
+
+// Members laid out in order, each at its natural alignment.
+record_shape = (be :: CBackend, parts: Vec<TyId>, drops: bool)
+               Res<Shape, AllocError> {
+    offset: usize ::= 0;
+    align: usize  ::= 1;
+    parts.loop((h, t) {
+        part   = be.shape(t).try();
+        offset = align_up(offset, part.align) + part.size;
+        align  = max_of(align, part.align);
+    });
+    be.aggregate_shape(align_up(offset, align), align, parts, drops)
+}
+
+// A tag word followed by the largest payload.
+union_of = (be :: CBackend, parts: Vec<TyId>, drops: bool)
+           Res<Shape, AllocError> {
+    widest: usize ::= 0;
+    parts.loop((h, t) {
+        widest = max_of(widest, be.shape(t).try().size);
+    });
+    be.aggregate_shape(8 + align_up(widest, 8), 8, parts, drops)
+}
+
+res_shape = (be :: CBackend, r: TyRes) Res<Shape, AllocError> {
+    parts ::= be.alloc.Vec<TyId>();
+    be.add_stored(r.value, parts).try();
+    is_failure(r.form).then(() { be.add_stored(r.error, parts).try() });
+    be.union_of(parts, false)
+}
+
+tagged_shape = (be :: CBackend, members: Vec<TyId>) Res<Shape, AllocError> {
+    parts ::= be.alloc.Vec<TyId>();
+    members.loop((h, t) { be.add_stored(t, parts).try() });
+    be.union_of(parts, false)
+}
+
+array_shape = (be :: CBackend, a: TyArray) Res<Shape, AllocError> {
+    elem = be.shape(a.elem).try();
+    parts ::= be.alloc.Vec<TyId>();
+    parts.add(a.elem).try();
+    be.aggregate_shape(elem.size * a.count, elem.align, parts, false)
+}
+
+aggregate_shape = (
+    be    :: CBackend,
+    size  : usize,
+    align : usize,
+    parts : Vec<TyId>,
+    drops : bool
+) Res<Shape, AllocError> {
+    Ok(Shape(
+        size: size,
+        align: align,
+        aggregate: true,
+        parts: parts,
+        pointees: be.alloc.Vec<TyId>(),
+        trait_value: false,
+        erased: false,
+        drops: drops
+    ))
+}
+
+align_up = (n: usize, align: usize) usize {
+    (align <= 1).match({
+        true  => n,
+        false => ((n + align - 1) / align) * align,
+    })
+}
+
+max_of = (a: usize, b: usize) usize {
+    (a > b).match({ true => a, false => b })
+}
+
+// reachability
+
+reach = (be :: CBackend, u: TyId) Res<Reach, AllocError> {
+    be.borrow.reaches.get(u).match({
+        Ok(r) => Ok(r),
+        None  => {
+            r = be.walk_reach(u).try();
+            be.borrow.reaches.set(u, r).try();
+            Ok(r)
+        },
+    })
+}
+
+// Depth-first over by-value members and pointer elements. A trait value is
+// not entered: what its receiver holds depends on the implementation.
+walk_reach = (be :: CBackend, u: TyId) Res<Reach, AllocError> {
+    seen        ::= be.alloc.Vec<TyId>();
+    work        ::= be.alloc.Vec<TyId>();
+    pointees    ::= be.alloc.Vec<TyId>();
+    trait_value ::= false;
+    erased      ::= false;
+    drops       ::= false;
+    work.add(u).try();
+    loop(() { work.len > 0 }, (h) {
+        t = work.take(work.len - 1).ok_or(AllocError.OutOfMemory).try();
+        first_visit(seen, t).try().then(() {
+            shape       = be.shape(t).try();
+            trait_value = trait_value || shape.trait_value;
+            erased      = erased || shape.erased;
+            drops       = drops || shape.drops;
+            shape.parts.loop((g, part) { work.add(part).try() });
+            shape.pointees.loop((g, x) {
+                be.is_unit(x).then(() { erased = true; });
+                pointees.add(x).try();
+                work.add(x).try();
+            });
+        });
+    });
+    Ok(Reach(
+        pointees: pointees,
+        trait_value: trait_value,
+        erased: erased,
+        drops: drops
+    ))
+}
+
+first_visit = (seen :: Vec<TyId>, t: TyId) Res<bool, AllocError> {
+    listed(seen, t).match({
+        true  => Ok(false),
+        false => {
+            seen.add(t).try();
+            Ok(true)
+        },
+    })
+}
+
+listed = (types: Vec<TyId>, t: TyId) bool {
+    types.find(
+        (x) { x.index == t.index }
+    ).match({ Ok(_) => true, None => false })
+}
+
+// Whether a value of type `outer` holds a value of type `inner` by value,
+// itself included.
+contains = (be :: CBackend, outer: TyId, inner: TyId) Res<bool, AllocError> {
+    Ok(listed(be.nested(outer).try(), inner))
+}
+
+nested = (be :: CBackend, outer: TyId) Res<Vec<TyId>, AllocError> {
+    be.borrow.nested.get(outer).match({
+        Ok(types) => Ok(types),
+        None      => {
+            types = be.walk_nested(outer).try();
+            be.borrow.nested.set(outer, types).try();
+            Ok(types)
+        },
+    })
+}
+
+walk_nested = (be :: CBackend, outer: TyId) Res<Vec<TyId>, AllocError> {
+    seen ::= be.alloc.Vec<TyId>();
+    work ::= be.alloc.Vec<TyId>();
+    work.add(outer).try();
+    loop(() { work.len > 0 }, (h) {
+        t = work.take(work.len - 1).ok_or(AllocError.OutOfMemory).try();
+        first_visit(seen, t).try().then(() {
+            be.shape(t).try().parts.loop((g, part) { work.add(part).try() });
+        });
+    });
+    Ok(seen)
+}

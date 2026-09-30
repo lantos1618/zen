@@ -47,7 +47,9 @@ is_ptr_member, ptr_member_type = gen.gen_c.gen_c_ptr
 create_type = gen.gen_c.gen_c_alloc
 field_of = gen.gen_c.gen_c_type
 inline_result_type = gen.gen_c.gen_c_settle
-needs_fat, write_fat_value = gen.gen_c.gen_c_fat
+needs_fat, write_fat_value, fat_value = gen.gen_c.gen_c_fat
+borrowed_place = gen.gen_c.gen_c_borrow
+copy_address = gen.gen_c.gen_c_arg
 release_binding = gen.gen_c.gen_c_own
 lower_scope_ref, is_scope_ref, scope_type = gen.gen_c.gen_c_scope
 lower_global_value = gen.gen_c.gen_c_const
@@ -559,7 +561,9 @@ door_of = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
 }
 
 // The value at its own type, then the record over its address: lowering
-// it at the bound would ask for a record that does not exist yet.
+// it at the bound would ask for a record that does not exist yet. Storage
+// reached through a borrowed parameter is the caller's, so the record points
+// at a copy of it instead.
 fat_expr = (
     be   :: CBackend,
     id   : ExprId,
@@ -571,7 +575,14 @@ fat_expr = (
     cty     = be.ty_of(id, ctx, unknown).try();
     code ::= be.alloc.String().try();
     be.value_expr(id, ctx, cty, code).try();
-    be.write_fat_value(code.view(), cty, want, out)
+    be.borrowed_place(id).try().match({
+        false => be.write_fat_value(code.view(), cty, want, out),
+        true  => {
+            addr ::= be.alloc.String().try();
+            be.copy_address(code.view(), cty, addr).try();
+            be.fat_value(addr.view(), cty, want, out)
+        },
+    })
 }
 
 value_expr* = (
@@ -648,7 +659,7 @@ spill_effect = (
     out.add("0")
 }
 
-spill_valued = (
+spill_valued* = (
     be  :: CBackend,
     id  : ExprId,
     ctx : Ctx,

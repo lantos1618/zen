@@ -182,7 +182,7 @@ write_module_call = (
     sym_fn(sym, be.check.types, be.check.world, d.qname, sig, inst).try();
     be.need_function(d, inst, sym.view()).try();
     out.fmt("{}(", sym.view()).try();
-    be.write_call_args(c, 0, f, sig, ctx, out).try();
+    be.write_call_args(c, None, f, sig, ctx, out).try();
     out.add(")").try();
     Ok(true);
 }
@@ -336,7 +336,7 @@ AssocSite = {
             }),
         }).try();
         out.add("(").try();
-        be.write_call_args(self.call, 0, f, sig, self.ctx, out).try();
+        be.write_call_args(self.call, None, f, sig, self.ctx, out).try();
         out.add(")").try();
         Ok(true)
     }
@@ -351,7 +351,7 @@ AssocSite = {
             inst
         ).try();
         out.fmt("{}(", sym.view()).try();
-        be.write_call_args(self.call, 0, f, sig, self.ctx, out).try();
+        be.write_call_args(self.call, None, f, sig, self.ctx, out).try();
         out.add(")").try();
         Ok(true)
     }

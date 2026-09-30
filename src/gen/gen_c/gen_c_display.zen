@@ -14,7 +14,8 @@ ctype, request_type = gen.gen_c.gen_c_type
 recv_inst = gen.gen_c.gen_c_mono
 Site, site_of, member_at = gen.gen_c.gen_c_member
 impl_member_of, by_arity = gen.gen_c.gen_c_impl
-by_ref = gen.gen_c.gen_c_arg
+by_ref, copy_address = gen.gen_c.gen_c_arg
+passing = gen.gen_c.gen_c_borrow
 method_sig, member_symbol = gen.gen_c.gen_c_member
 Slot, slots_of, thunk_param = gen.gen_c.gen_c_fat
 
@@ -211,7 +212,13 @@ display_call = (
     sig ::= be.alloc.Vec<TyId>();
     be.method_sig(ty, s.decl, f, s.decl.module.to_usize(), inst, sig).try();
     sym = be.member_symbol(ty, s, DISPLAY_MEMBER, sig, inst).try();
-    out.fmt("{}({text}, ", sym.view()).try();
+    out.fmt("{}(", sym.view()).try();
+    self_ty = sig.get(0).match({ Ok(t) => t, None => ty });
+    be.passing(f, 0, self_ty).try().match({
+        Borrowed => be.copy_address(text, self_ty, out),
+        _        => out.add(text),
+    }).try();
+    out.add(", ").try();
     write_sink_arg(f, sink, out).try();
     out.add(")")
 }

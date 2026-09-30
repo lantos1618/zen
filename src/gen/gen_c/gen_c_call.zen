@@ -43,7 +43,8 @@ lower_closure_call = gen.gen_c.gen_c_inline
 construct = gen.gen_c.gen_c_build
 is_format_door, lower_format_door = gen.gen_c.gen_c_fmt
 is_json_door, lower_json_door = gen.gen_c.gen_c_json
-recv_arg, arg_value, write_arg_at = gen.gen_c.gen_c_arg
+recv_arg, arg_value, lend_arg_at, copy_address = gen.gen_c.gen_c_arg
+CallPlaces, passing = gen.gen_c.gen_c_borrow
 call_callee = sema.sema_call
 omittable = sema.sema_cand
 is_native_callback, lower_native_callback = gen.gen_c.gen_c_callback
@@ -375,7 +376,14 @@ CallSite = {
             None     => Ok(0),
             Ok(base) => {
                 hold = be.holds(self.c, 0, 1);
-                be.write_arg_at(base, 0, hold, f, sig, self.ctx, out).try();
+                call = CallPlaces(
+                    recv: self.recv,
+                    c: self.c,
+                    first: 1,
+                    f: f,
+                    sig: sig
+                );
+                be.lend_arg_at(base, 0, hold, call, self.ctx, out).try();
                 Ok(1)
             },
         })
@@ -385,7 +393,7 @@ CallSite = {
             sym: str, out :: String) Res<(), AllocError> {
         out.fmt("{sym}(").try();
         first = self.write_receiver(be, f, sig, out).try();
-        CallArgs(c: self.c, f: f, sig: sig, first: first, ctx: self.ctx).write(be, out).try();
+        CallArgs(c: self.c, recv: self.recv, f: f, sig: sig, first: first, ctx: self.ctx).write(be, out).try();
         out.add(")").try();
         Ok(())
     }
@@ -463,10 +471,21 @@ NamedCallSite = {
 // remain borrowed by each write.
 CallArgs = {
     c: Call,
+    recv: Res<ExprId>,
     f: Function,
     sig: Vec<TyId>,
     first: usize,
     ctx: Ctx,
+
+    places = (self: @Self) CallPlaces {
+        CallPlaces(
+            recv: self.recv,
+            c: self.c,
+            first: self.first,
+            f: self.f,
+            sig: self.sig
+        )
+    }
 
     write = (self: @Self, be :: CBackend, out :: String)
             Res<(), AllocError> {
@@ -488,12 +507,11 @@ CallArgs = {
                 true  => {
                     written.then(() { out.add(", ").try() });
                     hold = be.holds(self.c, pos, self.first);
-                    be.write_arg_at(
+                    be.lend_arg_at(
                         a.value,
                         pos,
                         hold,
-                        self.f,
-                        self.sig,
+                        self.places(),
                         self.ctx,
                         out
                     ).try();
@@ -515,16 +533,18 @@ CallArgs = {
     write_omitted = (self: @Self, be :: CBackend, i: usize, out :: String)
                     Res<(), AllocError> {
         ty = self.sig.ty_at(i);
-        self.f.params.get(i).match({
-            Ok(p) => p.mutable.match({
-                false => be.write_none(ty, out),
-                true  => {
-                    out.add("&(").try();
-                    be.write_none(ty, out).try();
-                    out.add(")")
-                },
-            }),
-            None  => be.write_none(ty, out),
+        be.passing(self.f, i, ty).try().match({
+            Value    => be.write_none(ty, out),
+            Mutable  => {
+                out.add("&(").try();
+                be.write_none(ty, out).try();
+                out.add(")")
+            },
+            Borrowed => {
+                none ::= be.alloc.String().try();
+                be.write_none(ty, none).try();
+                be.copy_address(none.view(), ty, out)
+            },
         })
     }
 
@@ -543,12 +563,11 @@ CallArgs = {
                     true  => {
                         written.then(() { out.add(", ").try() });
                         hold = be.holds(self.c, pos, self.first);
-                        be.write_arg_at(
+                        be.lend_arg_at(
                             a.value,
                             pos,
                             hold,
-                            self.f,
-                            self.sig,
+                            self.places(),
                             self.ctx,
                             out
                         ).try();
@@ -1182,19 +1201,22 @@ add_param = (
     sig.add(be.sub_with(declared, inst).try())
 }
 
-// The arguments, from signature position `first` on: as written, or with
+// The written arguments, after the receiver when `recv` names one (it is
+// already written; it is read here only to decide what a borrowed argument
+// may share): as written, or with
 // the tail gathered into one `vararg<T>` value. one dispatch, read here
 // and by the method path (`gen_c_member.zen`'s `emit_method_call`) — a pack
 // built the same way whichever spelling reached it, which is the same
 // reason `pack_sig_fits` is one function in sema.
 write_call_args* = (
-    be    :: CBackend,
-    c     : Call,
-    first : usize,
-    f     : Function,
-    sig   : Vec<TyId>,
-    ctx   : Ctx,
-    out   :: String
+    be   :: CBackend,
+    c    : Call,
+    recv : Res<ExprId>,
+    f    : Function,
+    sig  : Vec<TyId>,
+    ctx  : Ctx,
+    out  :: String
 ) Res<(), AllocError> {
-    CallArgs(c: c, f: f, sig: sig, first: first, ctx: ctx).write(be, out)
+    first: usize = recv.match({ Ok(_) => 1, None => 0 });
+    CallArgs(c: c, recv: recv, f: f, sig: sig, first: first, ctx: ctx).write(be, out)
 }

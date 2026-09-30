@@ -1,0 +1,56 @@
+// A trait value made from a large read-only parameter points at storage of
+// the callee's, never at the caller's binding: writing through it changes
+// what the callee reads afterwards when the parameter is handed to a
+// trait-typed parameter, and never changes the caller's value.
+
+Big = {
+    a :: i64,
+    b :: i64,
+    c :: i64,
+    d :: i64,
+    e :: i64,
+    f :: i64,
+    g :: i64,
+    h :: i64,
+    i :: i64,
+}
+
+Bump = {
+    step = (self :: @Self) i64,
+}
+
+Big.impl(Bump, {
+    step = (self :: @Self) i64 {
+        self.a = self.a + 1000;
+        self.a
+    },
+})
+
+Holder = {
+    bump :: Bump,
+}
+
+// A copy of the trait value still holds the same address.
+poke = (s: Bump) i64 {
+    held ::= s;
+    held.step()
+}
+
+handed = (big: Big) i64 {
+    poke(big);
+    big.a
+}
+
+stored = (big: Big) i64 {
+    holder ::= Holder(bump: big);
+    holder.bump.step()
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    big ::= Big(a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9);
+    println("{}", handed(big));
+    println("{}", big.a);
+    println("{}", stored(big));
+    println("{}", big.a);
+    Ok(0);
+}

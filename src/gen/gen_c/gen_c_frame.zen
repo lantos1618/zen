@@ -23,6 +23,17 @@ LocalSlot* = {
     // the frame's own storage and there is nothing to alias.
     by_ref*: bool,
 
+    // A read-only parameter passed by address (`gen_c_borrow.zen`). It is
+    // also `by_ref`, so reads dereference; the pointer is `const`, and the
+    // storage belongs to the caller, so anything that would keep or write
+    // through the address copies the value instead.
+    borrowed*: bool,
+
+    // A by-address binding whose address this C function's caller supplied
+    // (a `::` or borrowed parameter), so it cannot point at the function's
+    // own locals. An inlined `::` parameter may.
+    from_caller*: bool,
+
     // Which loop this name is the handle of, 1-based, or 0 for an
     // ordinary binding. `(h, value) { .. }` binds `h` to a
     // `LoopHandle` — not a value, no C storage: it's the two labels of

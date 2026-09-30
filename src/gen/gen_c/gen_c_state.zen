@@ -13,6 +13,7 @@ World, Def = sema.sema_def
 Checker = sema.sema_check
 Inst = sema.sema_inst
 CallEffects = gen.gen_c.gen_c_effect
+BorrowFacts = gen.gen_c.gen_c_borrow
 LoopSyntax = gen.gen_c.gen_c_shape
 Emit = gen.gen_emit
 GenDiag, GenFault = gen.gen_diag
@@ -67,6 +68,9 @@ CBackend* = {
     // Lazily indexed loop syntax from the immutable parsed tree.
     loop_syntax :: Res<LoopSyntax>,
     call_effects*: CallEffects,
+
+    // Type facts behind the borrowed-parameter convention.
+    borrow* :: BorrowFacts,
 
     // Scratch output for the current function.
     buf :: Emit,
@@ -643,6 +647,25 @@ CBackend* = {
         Ok(n);
     }
 
+    // A parameter passed by address: `::`, or borrowed (`const T *`, with
+    // `LocalSlot.borrowed` keeping the storage the caller's). Every read
+    // dereferences.
+    declare_param_ref* = (self :: @Self, name: str, ty: TyId, borrowed: bool)
+                         Res<usize, AllocError> {
+        n = self.reserve(name).try();
+        self.locals.add(LocalSlot(
+            name: name,
+            index: n,
+            ty: ty,
+            by_ref: true,
+            borrowed: borrowed,
+            from_caller: true,
+            handle: 0,
+            closure: 0
+        )).try();
+        Ok(n);
+    }
+
     // A name is not in scope until its initialiser has been lowered, so
     // the two halves of `declare` are separable: `reserve` takes the
     // number the C name carries, `publish` is what makes the name
@@ -665,6 +688,8 @@ CBackend* = {
             index: n,
             ty: ty,
             by_ref: by_ref,
+            borrowed: false,
+            from_caller: false,
             handle: 0,
             closure: 0
         )).try();
@@ -682,6 +707,8 @@ CBackend* = {
             index: 0,
             ty: cl.ret,
             by_ref: false,
+            borrowed: false,
+            from_caller: false,
             handle: 0,
             closure: self.closures.len
         )).try();
@@ -784,6 +811,8 @@ CBackend* = {
             index: 0,
             ty: ty,
             by_ref: false,
+            borrowed: false,
+            from_caller: false,
             handle: depth,
             closure: 0
         ))
@@ -933,6 +962,7 @@ CBackend* = (a: Alloc, tree: Ast, check: Checker) Res<CBackend, AllocError> {
         check: check,
         loop_syntax: None,
         call_effects: a.CallEffects(tree).try(),
+        borrow: a.BorrowFacts(),
         buf: a.Emit().try(),
         diags: a.Vec<GenDiag>(),
         type_queue: a.Vec<QueuedType>(),

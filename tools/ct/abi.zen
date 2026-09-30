@@ -295,8 +295,12 @@ seed_of* = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Seed, AllocError> {
     );
     m.params.loop((p) {
         l     = layout_of(a, c, p.ctype).match({ Ok(v) => v, None => Layout(size: 8, align: 8) });
-        value = p.name.is_in(m.secret);
-        point = p.name.is_in(m.pointee);
+        // A `const T *` parameter named as a secret value is a wide `:`
+        // parameter the C backend receives by address (gen_c_borrow.zen):
+        // the address is public, the bytes it points at are the secret.
+        borrowed = p.ctype.starts_with("const ") && p.ctype.ends_with("*");
+        value = p.name.is_in(m.secret) && !borrowed;
+        point = p.name.is_in(m.pointee) || (p.name.is_in(m.secret) && borrowed);
         regs  = (l.size + 7) / 8;
         // arm64 puts a u128 in an even-numbered register pair.
         (isa.match({ Arm => true, X86 => false }) && l.align == 16 && next % 2 == 1).then(() {

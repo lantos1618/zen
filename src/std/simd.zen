@@ -169,21 +169,24 @@ cast_u32x8* = (self: u64x4) u32x8
 // Avx2: x86-64 AVX2. Ssse3: x86 SSSE3. Aes: AES rounds (x86 AES-NI with
 // SSSE3/SSE4.1, arm64 FEAT_AES). Clmul: 64x64 carry-less multiply (x86
 // PCLMULQDQ with SSSE3/SSE4.1, arm64 FEAT_PMULL). Neon: arm64 Advanced SIMD.
-// Bmi2: x86 BMI1 and BMI2 (RORX, ANDN, ...), which only change how scalar
-// code compiles. ShaNi: the x86 SHA extensions (SHA256RNDS2/MSG1/MSG2) with SSSE3/SSE4.1.
+// Bmi2: x86 BMI1 and BMI2 (RORX, ANDN, MULX, ...), which only change how
+// scalar code compiles; mul_wide in a Bmi2 function becomes MULX. Adx: x86
+// ADX (ADCX, ADOX), which with Bmi2 unlocks mul_limbs and square_limbs.
+// ShaNi: the x86 SHA extensions (SHA256RNDS2/MSG1/MSG2) with SSSE3/SSE4.1.
 // ArmSha2: arm64 FEAT_SHA256 (SHA256H/H2/SU0/SU1). ArmSha512: arm64
 // FEAT_SHA512 (SHA512H/H2/SU0/SU1). The SHA instructions of the two
 // architectures compute different steps, so each set has its own
 // capability and is detected only on its architecture.
 // Detection is cheap but not free; hoist it out of per-block loops.
 // The environment variable ZEN_CPU_DISABLE (comma list of avx2, ssse3,
-// bmi2, aes, clmul, neon, sha, sha512, or all) makes detection report those
+// bmi2, adx, aes, clmul, neon, sha, sha512, or all) makes detection report those
 // features absent, so tests can run each portable path on one machine; it
 // cannot add one. `sha` names the SHA-256 instructions of either
 // architecture (ShaNi, ArmSha2) and `sha512` names ArmSha512.
 Avx2* = { proof: u8 }
 Ssse3* = { proof: u8 }
 Bmi2* = { proof: u8 }
+Adx* = { proof: u8 }
 Aes* = { proof: u8 }
 Clmul* = { proof: u8 }
 Neon* = { proof: u8 }
@@ -194,6 +197,7 @@ ArmSha512* = { proof: u8 }
 cpu_avx2* = () bool
 cpu_ssse3* = () bool
 cpu_bmi2* = () bool
+cpu_adx* = () bool
 cpu_aes* = () bool
 cpu_clmul* = () bool
 cpu_neon* = () bool
@@ -208,6 +212,9 @@ ssse3* = () Res<Ssse3> { cpu_ssse3().match({ true => Ok(Ssse3(
     proof: 1
 )), false => None }) }
 bmi2* = () Res<Bmi2> { cpu_bmi2().match({ true => Ok(Bmi2(
+    proof: 1
+)), false => None }) }
+adx* = () Res<Adx> { cpu_adx().match({ true => Ok(Adx(
     proof: 1
 )), false => None }) }
 aes* = () Res<Aes> { cpu_aes().match({ true => Ok(Aes(
@@ -228,6 +235,18 @@ arm_sha2* = () Res<ArmSha2> { cpu_arm_sha2().match({ true => Ok(ArmSha2(
 arm_sha512* = () Res<ArmSha512> { cpu_arm_sha512().match({ true => Ok(ArmSha512(
     proof: 1
 )), false => None }) }
+
+// Multi-limb products on two carry chains (x86 MULX with ADCX and ADOX).
+// Limbs are 64-bit words, least significant first. mul_limbs returns the
+// 512-bit product self * other; square_limbs returns self * self. Each is
+// one instruction sequence in which MULX leaves the flags alone and the low
+// and high halves of the partial products accumulate on independent carry
+// flags (CF through ADCX, OF through ADOX), as in OpenSSL's
+// x25519_fe64_mul/_sqr: no branches and no memory indices depend on the
+// values. Only x86-64 has them; on other targets the capability is never
+// detected and a call is unreachable.
+mul_limbs* = (self: [u64, 4], other: [u64, 4], adx: Adx, bmi: Bmi2) [u64, 8]
+square_limbs* = (self: [u64, 4], adx: Adx, bmi: Bmi2) [u64, 8]
 
 // One AES encryption round with x86 AESENC semantics:
 // MixColumns(SubBytes(ShiftRows(state))) xor key. The last round omits

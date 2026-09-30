@@ -1,0 +1,7 @@
+adx, Adx, mul_limbs = std.simd
+
+wrong = (cpu: Adx, x: [u64, 4]) [u64, 8] { x.mul_limbs(x, cpu) }
+
+main = () {
+    adx().match({ Ok(cpu) => println("{}", wrong(cpu, [1, 2, 3, 4])[0]), None => println("0") });
+}

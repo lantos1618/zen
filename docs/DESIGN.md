@@ -1905,6 +1905,20 @@ identity exactly as for conversions (`sema_prim`); a bodyless `mul_wide` or
 `truncate_*` elsewhere is rejected. JS and assembly refuse these types
 through the scalar lowering's existing type check.
 
+`add_carry(self: u64, other: u64, carry: u64) [u64, 2]` returns the sum and
+the carry out (0 or 1) of `self + other + carry`, and `sub_borrow` the
+difference and borrow out of `self - other - borrow`; only the low bit of
+the incoming carry or borrow is read, so neither has a precondition or a
+trap. They are the spelled way to write a multi-word addition chain: the C
+backend lowers them to `__builtin_addcll`/`__builtin_subcll` (Clang, GCC
+14), `_addcarry_u64`/`_subborrow_u64` (older GCC on x86-64) or u128
+arithmetic, and Clang keeps a chain of them in the flags (ADC/SBB on
+x86-64, ADCS/SBCS on arm64). A u128 sum of three terms, the usual
+alternative, often leaves the carry in a register instead: OpenSSL's
+ecp_nistz256 Montgomery multiplication written with u128 took 68 cycles on
+a Zen 3 core, and with these operations 37. `tools/ct/isa.zen` checks the
+instructions each compiler selects.
+
 ## SIMD vectors
 
 `u8x16`, `u8x32`, `u32x4`, `u32x8`, `u64x2` and `u64x4` are primitive
@@ -1961,18 +1975,19 @@ function is a C compiler error, which the backend does not yet diagnose.
 ## Target features and runtime dispatch
 
 A CPU feature is a capability, in the same sense as the authority `Env`
-carries: `std.simd` declares `Avx2`, `Ssse3`, `Bmi2`, `Aes`, `Clmul`,
+carries: `std.simd` declares `Avx2`, `Ssse3`, `Bmi2`, `Adx`, `Aes`, `Clmul`,
 `Neon`, `ShaNi`, `ArmSha2` and `ArmSha512`, and only `std.simd` may construct
 one (`ForgedCapability` otherwise). The detection functions `avx2()`,
-`ssse3()`, `bmi2()`, `aes()`, `clmul()`, `neon()`, `sha_ni()`, `arm_sha2()`
-and `arm_sha512()` return `Res<Capability>` from a runtime check: cpuid through
-the compiler runtime on x86 (which includes the OS's AVX state; CPUID leaf 7
-for the SHA extensions), `AT_HWCAP` on Linux arm64 and `hw.optional.arm.*`
-sysctls on macOS. NEON is baseline on arm64. `Bmi2` (x86 BMI1 and BMI2) has
-no instructions of its own: a function taking it may use RORX, ANDN and the
-other BMI encodings the C compiler picks for scalar code. `ZEN_CPU_DISABLE`
-(a comma list of `avx2`, `ssse3`, `bmi2`, `aes`, `clmul`, `neon`, `sha`,
-`sha512` or `all`) makes
+`ssse3()`, `bmi2()`, `adx()`, `aes()`, `clmul()`, `neon()`, `sha_ni()`,
+`arm_sha2()` and `arm_sha512()` return `Res<Capability>` from a runtime
+check: cpuid through the compiler runtime on x86 (which includes the OS's
+AVX state; CPUID leaf 7 for the SHA extensions and ADX), `AT_HWCAP` on Linux
+arm64 and `hw.optional.arm.*` sysctls on macOS. NEON is baseline on arm64.
+`Bmi2` (x86 BMI1 and BMI2) has no instructions of its own: a function taking
+it may use RORX, ANDN, MULX (for `mul_wide`) and the other BMI encodings the
+C compiler picks for scalar code. `ZEN_CPU_DISABLE` (a comma list of `avx2`,
+`ssse3`, `bmi2`, `adx`, `aes`, `clmul`, `neon`, `sha`, `sha512` or `all`)
+makes
 detection report features absent so every fallback path can be run on one
 machine; `sha` covers the SHA-256 instructions of both architectures.
 
@@ -2005,6 +2020,26 @@ take `ArmSha2` and `sha512h`, `sha512h2`, `sha512su0`, `sha512su1` take
 destination's incoming value first). A program with both kernels dispatches
 on both detections; on the other architecture the helpers abort, which is
 unreachable because the capability cannot be obtained there.
+
+Two carry chains need two carry flags, which only x86 has: ADCX adds with
+CF alone and ADOX with OF alone, and MULX multiplies without touching
+either, so the low and high halves of a row of partial products accumulate
+at once instead of one after the other. C has no way to say which flag an
+addition uses, and neither Clang nor GCC emits ADOX, so the dual chain is a
+fixed operation rather than a scheduling hint:
+`mul_limbs(self: [u64, 4], other: [u64, 4], adx: Adx, bmi: Bmi2) [u64, 8]`
+is the 512-bit product of two 4-limb numbers (least significant limb
+first) and `square_limbs(self, adx, bmi)` the square. The C backend lowers
+each to inline assembly transcribed from OpenSSL's `x25519_fe64_mul` and
+`x25519_fe64_sqr` product sequences, guarded by `__x86_64__`, with no
+branch and every memory operand at a fixed offset from a factor. Both flags
+are clear after each row, so `mul_limbs` is two blocks split after its
+second row: each needs at most twelve general registers, which leaves room
+for a frame pointer and for -O0. Reductions stay ordinary code over
+`add_carry` and `mul_wide`, since a single flag chain is what the C
+compiler schedules well. In a microbenchmark on a Zen 3 core the product
+plus an `add_carry` reduction mod 2^255 - 19 took 25.9 cycles against 29.2
+for OpenSSL's `x25519_fe64_mul`. On other targets `Adx` is never detected.
 
 32-byte vectors never cross a C call between functions compiled for
 different features: x86 passes them in YMM registers only with AVX, so the
@@ -2134,7 +2169,9 @@ be flagged, so a check that has stopped seeing anything fails:
   register, as are b/h/s/d/q/v n on arm64), with the vector forms that also
   read their destination (legacy-SSE two-address forms with an immediate,
   NEON accumulates and lane inserts, AESE) and vector instructions leaving
-  the flags alone; std.simd vectors passed by value arrive in XMM/YMM or V
+  the flags alone; MULX writes both of its destinations from its source and
+  the implicit %rdx, and ADC, ADCX and ADOX read the flags (one taint bit
+  covers them all); std.simd vectors passed by value arrive in XMM/YMM or V
   registers, and a by-value struct the backend lends as `const T *` holds
   its secret bytes behind the pointer. The stack is tracked byte by byte, so
   a spilled vector's lanes keep their taint when reloaded narrower; a store

@@ -282,6 +282,16 @@ rotate_right* = (self: u64, count: usize) u64
 // 64x64->128 multiplication; never overflows.
 mul_wide* = (self: u64, other: u64) u128
 
+// Add with carry and subtract with borrow: [sum, carry] of self + other +
+// carry and [difference, borrow] of self - other - borrow. Only the low bit
+// of the incoming carry or borrow is read; the outgoing one is 0 or 1.
+// Chained through their carries they lower to ADC/SBB (x86-64) and
+// ADCS/SBCS (arm64) where the C compiler keeps the carry in the flags, as
+// Clang does for __builtin_addcll chains; u128 sums of three terms often
+// leave the carry in a register instead. Never traps and never branches.
+add_carry* = (self: u64, other: u64, carry: u64) [u64, 2]
+sub_borrow* = (self: u64, other: u64, borrow: u64) [u64, 2]
+
 // Explicit truncation keeps the low bits of a strictly wider unsigned word.
 // Unlike the checked `to_` conversions, it never fails: the discarded high
 // bits are the documented intent.

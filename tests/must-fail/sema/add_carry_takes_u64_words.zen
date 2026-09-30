@@ -1,0 +1,7 @@
+add_carry = std.core.num
+
+main = () {
+    x: u32 = 7;
+    s = x.add_carry(1, 0);
+    println("{}", s[0]);
+}

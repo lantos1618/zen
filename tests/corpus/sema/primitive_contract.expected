@@ -1,4 +1,9 @@
 mul_wide: true
+add_carry: true
+sub_borrow: true
+add_carry owner: false
+add_carry result: false
+sub_borrow words: false
 mul_wide owner: false
 mul_wide result: false
 mul_wide words: false
@@ -40,6 +45,12 @@ cpu result: false
 cpu unknown: false
 cpu sha: true
 cpu bmi2: true
+cpu adx: true
+mul_limbs: true
+mul_limbs without bmi2: false
+mul_limbs width: false
+square_limbs: true
+square_limbs result: false
 sha256_rnds2: true
 sha256_rnds2 capability: false
 sha512h lanes: false

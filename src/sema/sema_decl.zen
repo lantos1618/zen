@@ -25,7 +25,7 @@ variant_payload = sema.sema_case
 owner_of, push_tparams = sema.sema_inst
 settle_raised = sema.sema_raise
 check_return = sema.sema_hoist
-check_literal = sema.sema_trap
+check_literal, report_unsettled_widths = sema.sema_trap
 check_arms = sema.sema_hoist
 check_own = sema.sema_own
 finish_ownership = sema.sema_store
@@ -45,6 +45,7 @@ check_all* = (c :: Checker) Res<(), AllocError> {
     Range(0, c.world.count()).loop((h, mi) {
         c.check_module(mi).try();
     });
+    c.report_unsettled_widths().try();
     c.finish_ownership().try();
     // Layout and depth require the complete cross-module declaration graph.
     c.check_layout().try();

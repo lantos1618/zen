@@ -51,7 +51,9 @@ lower_bit_not = (
     want : TyId,
     out  :: String
 ) Res<(), AllocError> {
-    ty   = be.ty_of(u.operand, ctx, want).try();
+    operand = be.ty_of(u.operand, ctx, want).try();
+    // A literal operand complements at the expected width.
+    ty   = be.usable(operand).match({ true => operand, false => want });
     prim = be.check.prim_name(ty);
     be.need_helpers(prim, "not").try();
     out.fmt("zg_not_{prim}(").try();
@@ -206,7 +208,7 @@ binary_type* = (be :: CBackend, b: Binary, ctx: Ctx, want: TyId)
 operand_answer = (be :: CBackend, b: Binary, ctx: Ctx, want: TyId)
                  Res<TyId, AllocError> {
     lhs = be.ty_of(b.lhs, ctx, want).try();
-    be.usable(lhs).match({
+    (be.usable(lhs) || b.op.is_shift()).match({
         true  => Ok(lhs),
         false => be.ty_of(b.rhs, ctx, want),
     })
@@ -306,7 +308,11 @@ operand_type = (be :: CBackend, b: Binary, ctx: Ctx, want: TyId)
     lhs = sub(be, be.check.type_of(b.lhs, ctx).try()).try();
     be.usable(lhs).match({
         true  => Ok(lhs),
-        false => be.rhs_type(b, ctx, want),
+        // A literal shifted word is the expected type, never its count's.
+        false => b.op.is_shift().match({
+            true  => Ok(want),
+            false => be.rhs_type(b, ctx, want),
+        }),
     })
 }
 
@@ -493,7 +499,7 @@ close_helper = (
     out     :: String
 ) Res<(), AllocError> {
     out.add(", ").try();
-    expr(be, b.rhs, ctx, be.rhs_want(b, operand).try(), out).try();
+    expr(be, b.rhs, ctx, be.rhs_want(b, ctx, operand).try(), out).try();
     // `.match` and not `.then`: a `.then` closure capturing more than
     // one of its enclosing parameters is inlined with the receiver
     // substituted into the wrong argument slot, which `cc` catches.
@@ -505,11 +511,21 @@ close_helper = (
     Ok(());
 }
 
-// A shift's count is a `usize` whatever word it moves.
-rhs_want = (be :: CBackend, b: Binary, operand: TyId) Res<TyId, AllocError> {
+// A shift's count keeps its own unsigned type whatever word it moves; a
+// literal count is a `usize`.
+rhs_want = (be :: CBackend, b: Binary, ctx: Ctx, operand: TyId)
+           Res<TyId, AllocError> {
     b.op.is_shift().match({
-        true  => be.check.types.prim("usize"),
+        true  => be.count_type(b, ctx),
         false => Ok(operand),
+    })
+}
+
+count_type = (be :: CBackend, b: Binary, ctx: Ctx) Res<TyId, AllocError> {
+    count = sub(be, be.check.type_of(b.rhs, ctx).try()).try();
+    be.usable(count).match({
+        true  => Ok(count),
+        false => be.check.types.prim("usize"),
     })
 }
 

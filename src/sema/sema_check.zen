@@ -119,6 +119,9 @@ Checker* = {
     // Validated standard numeric operations, keyed by declaration identity.
     numeric_conversions* :: Map<DeclId, NumericConversion>,
     integer_bits* :: Map<DeclId, IntegerBitOperation>,
+    // Literal-only bitwise expressions and whether an expected unsigned type
+    // has given them a width. See `sema_trap.defer_width`.
+    bit_widths* :: Map<ExprId, bool>,
 
     // Compiler-provided represented-enum conversions.
     discriminant_calls* :: Map<ExprId, DiscriminantCall>,
@@ -787,6 +790,7 @@ Checker* = (a: Alloc, tree: Ast) Res<Checker, AllocError> {
         store_effects: a.StoreEffects(),
         numeric_conversions: a.Map<DeclId, NumericConversion>(),
         integer_bits: a.Map<DeclId, IntegerBitOperation>(),
+        bit_widths: a.Map<ExprId, bool>(),
         discriminant_calls: a.Map<ExprId, DiscriminantCall>(),
         variant_name_calls: a.Map<ExprId, VariantNameCall>(),
         param_memo: a.Map<ExprId, bool>(),

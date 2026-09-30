@@ -1,3 +1,4 @@
 main = () {
-    mask: u8 = ~0;
+    flipped = ~0;
+    println("{}", flipped);
 }

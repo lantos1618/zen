@@ -1,2 +1,2 @@
-a bitwise operator needs a typed unsigned operand
-2:18
+needs an expected unsigned type
+2:14

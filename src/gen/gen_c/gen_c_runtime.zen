@@ -928,7 +928,8 @@ bitwise = (out :: Emit, ct: str, prim: str, op: str, sym: str)
 }
 
 // Logical shifts discard the bits moved out, and a count at or above the
-// width yields zero rather than C's undefined shift. Shifting a `uintmax_t`
+// width yields zero rather than C's undefined shift. The count arrives as a
+// `uintmax_t`, which holds every unsigned count type. Shifting a `uintmax_t`
 // keeps a narrow word from promoting to signed `int`; a left shift clears the
 // bits it would move out first, so no sanitizer sees a lossy shift.
 shift = (out :: Emit, ct: str, prim: str, op: str) Res<(), AllocError> {
@@ -940,7 +941,7 @@ shift = (out :: Emit, ct: str, prim: str, op: str) Res<(), AllocError> {
     out.bytes(prim).try();
     out.bytes("(").try();
     out.bytes(ct).try();
-    out.say(" a, size_t b) {").try();
+    out.say(" a, uintmax_t b) {").try();
     out.indent();
     out.bytes("if (b >= sizeof(").try();
     out.bytes(ct).try();

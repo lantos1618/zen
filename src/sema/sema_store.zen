@@ -14,8 +14,8 @@ decl_at = sema.sema_def
 TyId = sema.sema_ty
 member_type = sema.sema_member
 type_from_ast = sema.sema_denote
-WalkVisitor, WalkEvent, WalkNode, walk = std.ast
-Checker, Ctx, Binding, UNRESOLVED = sema.sema_check
+WalkVisitor, WalkEvent, WalkNode, walk, Ast = std.ast
+Checker, Ctx, Binding, UNRESOLVED, CallResolution = sema.sema_check
 Own, check_own_body, store_origin, transfer_store_origin = sema.sema_own
 truncate = sema.sema_check
 
@@ -112,6 +112,13 @@ solve = (effects :: StoreEffects, c: Checker) Res<(), AllocError> {
             },
         });
     });
+    work = callee_first(
+        effects.alloc,
+        c.tree,
+        c.call_resolutions(),
+        effects.rows,
+        work
+    ).try();
     cursor: usize ::= 0;
     loop(() { cursor < work.len }, (h) {
         body   = work.get(cursor).ok_or(AllocError.OutOfMemory).try();
@@ -160,6 +167,96 @@ solve = (effects :: StoreEffects, c: Checker) Res<(), AllocError> {
     });
     Ok(())
 }
+
+// Scanning callees before their callers lets each caller read final callee
+// summaries, so only recursive functions are scanned more than once. The
+// fixpoint does not depend on this order; it only removes repeated scans.
+// Depth-first postorder over the call graph, restricted to summarized bodies;
+// a call back into a body still being visited is left to the worklist.
+callee_first = (
+    a      : Alloc,
+    tree   : Ast,
+    calls  : Map<ExprId, CallResolution>,
+    rows   : Map<BlockId, Summary>,
+    bodies : Vec<BlockId>
+) Res<Vec<BlockId>, AllocError> {
+    order ::= a.Vec<BlockId>();
+    seen  ::= a.Map<BlockId, bool>();
+    stack ::= a.Vec<BlockId>();
+    edges ::= a.Vec<Vec<BlockId>>();
+    next  ::= a.Vec<usize>();
+    bodies.loop((root) {
+        (!seen.get(root).value_or(false)).then(() {
+            seen.set(root, true).try();
+            stack.add(root).try();
+            edges.add(callees(a, tree, calls, root).try()).try();
+            next.add(0).try();
+            loop(() { stack.len > 0 }, (h) {
+                top    = stack.len - 1;
+                body   = stack.get(top).ok_or(AllocError.OutOfMemory).try();
+                out    = edges.get(top).ok_or(AllocError.OutOfMemory).try();
+                cursor = next.get(top).ok_or(AllocError.OutOfMemory).try();
+                (cursor < out.len).match({
+                    true  => {
+                        next.set(top, cursor + 1).ok_or(AllocError.OutOfMemory).try();
+                        callee = out.get(cursor).ok_or(AllocError.OutOfMemory).try();
+                        fresh  = !seen.get(callee).value_or(false) && rows.get(callee).match({ Ok(_) => true, None => false });
+                        fresh.then(() {
+                            seen.set(callee, true).try();
+                            stack.add(callee).try();
+                            edges.add(
+                                callees(a, tree, calls, callee).try()
+                            ).try();
+                            next.add(0).try();
+                        });
+                    },
+                    false => {
+                        order.add(body).try();
+                        stack.take(top).ok_or(AllocError.OutOfMemory).try();
+                        edges.take(top).ok_or(AllocError.OutOfMemory).try();
+                        next.take(top).ok_or(AllocError.OutOfMemory).try();
+                    },
+                });
+            });
+        });
+    });
+    Ok(order)
+}
+
+// Bodies called from `body`, each once, in first-call order.
+callees = (
+    a     : Alloc,
+    tree  : Ast,
+    calls : Map<ExprId, CallResolution>,
+    body  : BlockId
+)
+          Res<Vec<BlockId>, AllocError> {
+    found ::= Callees(calls: calls, found: a.Vec<BlockId>());
+    tree.walk(a, WalkNode.Block(body), found).try();
+    Ok(found.found)
+}
+
+Callees = { calls: Map<ExprId, CallResolution>, found :: Vec<BlockId> }
+
+Callees.impl(WalkVisitor, {
+    visit = (self :: @Self, event: WalkEvent) Res<(), AllocError> {
+        event.match({
+            Leave(node) => node.match({
+                Expr(id) => self.calls.get(id).when_ok((resolution) {
+                    resolution.match({
+                        Checked(call) => call.body.when_ok((callee) {
+                            (!callee.is_in(self.found)).then(() { self.found.add(callee).try(); });
+                        }),
+                        _             => (),
+                    });
+                }),
+                _        => (),
+            }),
+            _           => (),
+        });
+        Ok(())
+    }
+})
 
 // Written arguments are matched by parameter identity, including named
 // arguments and an implicit receiver. Missing defaults carry no caller view.

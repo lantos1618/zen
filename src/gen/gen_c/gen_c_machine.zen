@@ -64,6 +64,17 @@ write_machine = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     out.say(
         "typedef uint64_t zg_u64x4 __attribute__((vector_size(32), aligned(16)));"
     ).try();
+    // A ctgrind build (-DZEN_CT_GRIND) tells valgrind's memcheck where the
+    // program declassifies, as the asm marker tells tools/ct: the value is
+    // marked defined, so only undeclared uses of secrets are reported.
+    out.say("#if defined(ZEN_CT_GRIND)").try();
+    out.say("#include <valgrind/memcheck.h>").try();
+    out.say(
+        "#define ZG_CT_PUBLIC(x) ((void)VALGRIND_MAKE_MEM_DEFINED(&(x), sizeof(x)))"
+    ).try();
+    out.say("#else").try();
+    out.say("#define ZG_CT_PUBLIC(x) ((void)0)").try();
+    out.say("#endif").try();
     // Full products of the low 32 bits of each 64-bit lane: PMULUDQ on x86
     // (matched from the widening form), UMULL on arm64 (spelled directly:
     // the widening form is scalarized when an operand is a splat).
@@ -537,6 +548,8 @@ value_barrier = (
         true  => "",
         false => wide.match({ true => " %0 %1 */", false => " %0 */" }),
     });
+    // ZG_CT_PUBLIC lives in the machine floor.
+    be.need_machine();
     wide.match({
         false => be.fmt(
             "__asm__(\"{}{}\" : \"+r\"({}));\n",
@@ -553,6 +566,7 @@ value_barrier = (
             held
         ).try(),
     });
+    (!marker.is_empty()).then(() { be.fmt("ZG_CT_PUBLIC({});\n", held).try(); });
     out.add(held)
 }
 

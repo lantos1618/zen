@@ -1159,26 +1159,91 @@ sign_agrees = (lo :: Lowerer, from: Value, to: Value) Res<usize, LowerError> {
 
 bit_operation = (lo :: Lowerer, id: ExprId, name: str, sources: Vec<Source>, span: Span)
                 Res<Value, LowerError> {
+    lhs = sources.source_expr(0, span).try();
+    rhs = sources.source_expr(1, span).try();
+    lo.bits(id, name, lhs, rhs, span)
+}
+
+// One named bit operation of `std.core.num`, which the bit operators also
+// spell: `a | b` is `a.bit_or(b)`. Each name maps to its IR operation
+// explicitly; a name without a mapping is refused, never lowered as a
+// neighbouring operation.
+bits* = (lo :: Lowerer, id: ExprId, name: str, lhs: ExprId, rhs: ExprId, span: Span)
+        Res<Value, LowerError> {
     ty = lo.type_of(id).try();
-    // `shift_right` on a signed word is arithmetic; the IR's `Shr` is the
-    // logical shift, so a signed receiver has no lowering yet.
-    arithmetic = name.eq("shift_right") && signed(lo.class_of(ty).try());
-    arithmetic.match({
-        true  => Err(unsupported(span, "an arithmetic shift of a signed word")),
-        false => Ok(()),
-    }).try();
-    left = lo.expr_as(sources.source_expr(0, span).try(), ty).try();
-    count_ty = name.is_in(["bit_xor", "bit_and"]).match({ true => ty, false => lo.prim("usize").try() });
-    right = lo.expr_as(sources.source_expr(1, span).try(), count_ty).try();
-    op = name.match({
-        "bit_xor"      => Op.Xor,
-        "bit_and"      => Op.And,
-        "rotate_right" => Op.Rotr,
-        _              => Op.Shr,
+    lo.bit_word(ty, name, span).try();
+    op = bit_op(name).ok_or(unsupported(span, bit_refusal(lo.alloc, name))).try();
+    left = lo.expr_as(lhs, ty).try();
+    count_ty = name.starts_with("bit_").match({ true => ty, false => lo.prim("usize").try() });
+    count = lo.expr_as(rhs, count_ty).try();
+    // Every renderer reduces a rotation count modulo the width, so rotating
+    // left by n is rotating right by the wrapped negation of n.
+    right = name.eq("rotate_left").match({
+        true  => {
+            zero = lo.constant(count_ty, 0).try();
+            negated = lo.temp(count_ty).try();
+            lo.add(Instruction.BinaryValue(Binary(out: negated.slot, left: zero.slot, right: count.slot, op: Op.WrapSub, span: span))).try();
+            negated
+        },
+        false => count,
     });
     out = lo.temp(ty).try();
     lo.add(Instruction.BinaryValue(Binary(out: out.slot, left: left.slot, right: right.slot, op: op, span: span))).try();
     Ok(out)
+}
+
+// `~x` is `x.bit_xor(all ones)` at the word's width.
+bit_not* = (lo :: Lowerer, id: ExprId, operand: ExprId, span: Span) Res<Value, LowerError> {
+    ty = lo.type_of(id).try();
+    lo.bit_word(ty, "bit_not", span).try();
+    value = lo.expr_as(operand, ty).try();
+    ones = lo.class_of(ty).try().match({
+        U8  => lo.constant(ty, 255),
+        U16 => lo.constant(ty, 65535),
+        U32 => lo.constant(ty, 4294967295),
+        U64 => lo.constant(ty, -1),
+        _   => Err(unsupported(span, bit_refusal(lo.alloc, "bit_not"))),
+    }).try();
+    out = lo.temp(ty).try();
+    lo.add(Instruction.BinaryValue(Binary(out: out.slot, left: value.slot, right: ones.slot, op: Op.Xor, span: span))).try();
+    Ok(out)
+}
+
+bit_op = (name: str) Res<Op> {
+    name.match({
+        "bit_and"      => Ok(Op.And),
+        "bit_or"       => Ok(Op.Or),
+        "bit_xor"      => Ok(Op.Xor),
+        "shift_left"   => Ok(Op.Shl),
+        "shift_right"  => Ok(Op.Shr),
+        "rotate_right" => Ok(Op.Rotr),
+        "rotate_left"  => Ok(Op.Rotr),
+        _              => None,
+    })
+}
+
+// The IR's bit operations act on unsigned words of at most 64 bits: `Shr`
+// is the logical shift, so a signed `shift_right` (arithmetic) has no
+// lowering yet, and u128 has no scalar class.
+bit_word = (lo :: Lowerer, ty: TyId, name: str, span: Span) Res<(), LowerError> {
+    word = lo.prim_name(ty);
+    word.is_in(["u8", "u16", "u32", "u64", "usize"]).match({
+        true  => Ok(()),
+        false => Err(unsupported(span, (name.eq("shift_right") && word.is_in(["i8", "i16", "i32", "i64"])).match({
+            true  => "an arithmetic shift of a signed word",
+            false => lo.alloc.String("the bit operation `{}` on `{}`", name, word).match({
+                Ok(t)  => t.view(),
+                Err(_) => "a bit operation on this word",
+            }),
+        }))),
+    })
+}
+
+bit_refusal = (a: Alloc, name: str) str {
+    a.String("the bit operation `{}`", name).match({
+        Ok(t)  => t.view(),
+        Err(_) => "a bit operation",
+    })
 }
 
 // Ptr<T> operations. Element sizes come from T at this instantiation.

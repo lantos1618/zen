@@ -1,0 +1,15 @@
+// BITS, MAX and MIN of every integer primitive, and u128.BITS. Each width is
+// named in the lowering: a default once gave u128.BITS as 64 on the asm and
+// JS backends.
+main = () {
+    println("u8 {} {} {}", u8.BITS, u8.MAX, u8.MIN);
+    println("u16 {} {} {}", u16.BITS, u16.MAX, u16.MIN);
+    println("u32 {} {} {}", u32.BITS, u32.MAX, u32.MIN);
+    println("u64 {} {} {}", u64.BITS, u64.MAX, u64.MIN);
+    println("usize {} {} {}", usize.BITS, usize.MAX, usize.MIN);
+    println("i8 {} {} {}", i8.BITS, i8.MAX, i8.MIN);
+    println("i16 {} {} {}", i16.BITS, i16.MAX, i16.MIN);
+    println("i32 {} {} {}", i32.BITS, i32.MAX, i32.MIN);
+    println("i64 {} {} {}", i64.BITS, i64.MAX, i64.MIN);
+    println("u128 {}", u128.BITS);
+}

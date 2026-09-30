@@ -1,0 +1,18 @@
+# Corpus tests that must PASS on every native target (x86_64-linux,
+# aarch64-linux, arm64-darwin); the native corpus runner exits 1 when a
+# selected one fails, is refused or does not assemble. Each pins behaviour
+# a native backend once got silently wrong. One test base per line, as the
+# runner prints it.
+
+# Bit operations: bit_or, shift_left and rotate_left were once lowered as a
+# right shift. Every named operation and operator, every unsigned width.
+tests/corpus/bitwise/every_bit_operation_every_width
+tests/corpus/bitwise/truth_tables_per_width
+tests/corpus/bitwise/shifts_discard_and_saturate
+tests/corpus/bitwise/unsigned_shift_counts
+tests/corpus/bitwise/folded_bits_agree_with_runtime
+tests/corpus/bitwise/operands_evaluate_once_left_to_right
+tests/corpus/bitwise/angle_pairs_still_close_generics
+
+# Primitive constants: u128.BITS was once 64 through a defaulted width.
+tests/corpus/constants/primitive_constants_name_their_width/main

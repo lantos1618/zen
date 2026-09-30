@@ -217,10 +217,10 @@ write_bits* = (name: str, word: str, l: str, r: str, out :: String)
     width = word_width(word);
     mask  = width - 1;
     name.match({
-        "bit_xor"     => out.fmt("(({})({} ^ {}))", ct, l, r),
-        "bit_and"     => out.fmt("(({})({} & {}))", ct, l, r),
-        "bit_or"      => out.fmt("(({})({} | {}))", ct, l, r),
-        "shift_right" => signed_shift_word(word).match({
+        "bit_xor"      => out.fmt("(({})({} ^ {}))", ct, l, r),
+        "bit_and"      => out.fmt("(({})({} & {}))", ct, l, r),
+        "bit_or"       => out.fmt("(({})({} | {}))", ct, l, r),
+        "shift_right"  => signed_shift_word(word).match({
             true  => arithmetic_shift(l, r, word, width, out),
             // A logical shift by the width or more yields zero. Guard the C shift.
             false => out.fmt(
@@ -233,7 +233,7 @@ write_bits* = (name: str, word: str, l: str, r: str, out :: String)
                 r
             ),
         }),
-        "shift_left"  => out.fmt(
+        "shift_left"   => out.fmt(
             "({} >= {}u ? ({})0 : ({})({} << {}))",
             r,
             width,
@@ -242,7 +242,7 @@ write_bits* = (name: str, word: str, l: str, r: str, out :: String)
             l,
             r
         ),
-        "rotate_left" => out.fmt(
+        "rotate_left"  => out.fmt(
             "(({})(({} << ({} & {}u)) | ({} >> (({}u - ({} & {}u)) & {}u))))",
             ct,
             l,
@@ -254,7 +254,7 @@ write_bits* = (name: str, word: str, l: str, r: str, out :: String)
             mask,
             mask
         ),
-        _             => out.fmt(
+        "rotate_right" => out.fmt(
             "(({})(({} >> ({} & {}u)) | ({} << (({}u - ({} & {}u)) & {}u))))",
             ct,
             l,
@@ -266,6 +266,9 @@ write_bits* = (name: str, word: str, l: str, r: str, out :: String)
             mask,
             mask
         ),
+        // Sema admits only the names above. Any other name fails the C
+        // compile here instead of being written as some other operation.
+        _              => out.fmt("zen_unsupported_bit_operation_{}()", name),
     })
 }
 

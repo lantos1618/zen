@@ -15,6 +15,11 @@
 // UNSUPPORTED (the compiler refused the program before publishing
 // assembly) or BROKEN (assembly or link failed: a backend bug). The summary
 // counts each class over the selected tests.
+//
+// Tests named in tests/native/required.txt must PASS on every target: the
+// runner exits 1, naming each one, when a selected required test fails, is
+// refused or does not assemble. They pin behaviour a native backend once got
+// silently wrong, such as bit operations lowered as other operations.
 
 Alloc, AllocError = std.mem
 str, String = std.text
@@ -200,12 +205,13 @@ Runner = {
         })
     }
 
-    // One test's verdict line.
-    case = (self: @Self, original: Case, index: usize, tally :: Tally) Res<(), AllocError> {
+    // One test's verdict line; true when it passed.
+    case = (self: @Self, original: Case, index: usize, tally :: Tally) Res<bool, AllocError> {
         c = self.staged(original, index).try();
         source = self.a.String("{}/t{}.s", self.work, index).try();
         object = self.a.String("{}/t{}.o", self.work, index).try();
         binary = self.a.String("{}/t{}", self.work, index).try();
+        passed ::= false;
         self.compile(c, source.view()).try().match({
             Ok(reason) => {
                 tally.unsupported = tally.unsupported + 1;
@@ -220,13 +226,13 @@ Runner = {
                     result = self.execute(c, binary.view(), index).try();
                     verdict = self.compare(c, result).try();
                     verdict.is_empty().match({
-                        true  => { tally.pass = tally.pass + 1; println("PASS {}", c.base); },
+                        true  => { tally.pass = tally.pass + 1; passed = true; println("PASS {}", c.base); },
                         false => { tally.fail = tally.fail + 1; println("FAIL {} :: {}", c.base, verdict); },
                     });
                 },
             }),
         });
-        Ok(())
+        Ok(passed)
     }
 
     compare = (self: @Self, c: Case, result: ProcOutput) Res<str, AllocError> {
@@ -326,11 +332,16 @@ main = (env: Env) Res<i32, AllocError> {
     listed.split('\n').loop((line) {
         (!line.is_empty() && line.contains(filter)).then(() { paths.add(line).try(); });
     });
+    required = listed_tests(a, env.fs.read(a, "tests/native/required.txt").match({ Ok(s) => s.view(), Err(_) => "" })).try();
     runner = Runner(env: env, a: a, zen: zen, target_name: target_name, target: target, work: work.view(), sdk: sdk);
     tally ::= Tally();
+    missed ::= a.Vec<str>();
     paths.loop((h, i, path) {
         (i % shards == shard).then(() {
-            case_of(a, path).try().when_ok((c) { runner.case(c, i, tally).try(); });
+            case_of(a, path).try().when_ok((c) {
+                passed = runner.case(c, i, tally).try();
+                (!passed && named(required, c.base)).then(() { missed.add(c.base).try(); });
+            });
         });
     });
     total = tally.pass + tally.fail + tally.unsupported + tally.broken;
@@ -343,5 +354,27 @@ main = (env: Env) Res<i32, AllocError> {
         tally.broken,
         total
     );
-    Ok(0)
+    missed.loop((base) {
+        println("REQUIRED {} did not pass on {} (tests/native/required.txt)", base, target_name);
+    });
+    (missed.len > 0).then(() {
+        println("native-corpus {}: {} required test(s) did not pass", target_name, missed.len);
+    });
+    Ok((missed.len > 0).match({ true => 1, false => 0 }))
+}
+
+// Test bases listed one per line, ignoring `#` comments and blank lines.
+listed_tests = (a: Alloc, text: str) Res<Vec<str>, AllocError> {
+    names ::= a.Vec<str>();
+    text.split('\n').loop((line) {
+        entry = line.split_once('#').match({ Ok(pair) => pair.before, None => line });
+        entry.trim().when_ok((word) { names.add(word).try(); });
+    });
+    Ok(names)
+}
+
+named = (names: Vec<str>, base: str) bool {
+    found ::= false;
+    names.loop((h, i, n) { n.eq(base).then(() { found = true; h.break(); }); });
+    found
 }

@@ -17,16 +17,10 @@ tests/corpus/ast/impl_queries_distinguish_values_and_hooks # UNSUPPORTED: std/co
 tests/corpus/ast/structural_walk_handles_deep_trees # UNSUPPORTED: std/ast/ast_walk.zen:138:5: error: unsupported by this backend: a value conversion this backend does
 tests/corpus/ast/structural_walk_preserves_owners # UNSUPPORTED: std/ast/ast_walk.zen:138:5: error: unsupported by this backend: a value conversion this backend does
 tests/corpus/backends/c_ir_pilot/main # UNSUPPORTED: main.zen:4:22: nothing is at that path: tried `zen/zen_build.zen` and `zen/zen_build/zen_build.zen`
-tests/corpus/bitwise/angle_pairs_still_close_generics # UNSUPPORTED: angle_pairs_still_close_generics.zen:21:59: error: unsupported by this backend: the `>>` operator
-tests/corpus/bitwise/bars_still_declare_enums_and_unions # UNSUPPORTED: bars_still_declare_enums_and_unions.zen:21:21: error: unsupported by this backend: the `|` operator
-tests/corpus/bitwise/expected_type_settles_literal_width # UNSUPPORTED: expected_type_settles_literal_width.zen:15:20: error: unsupported by this backend: the `~` operator
-tests/corpus/bitwise/folded_bits_agree_with_runtime # UNSUPPORTED: folded_bits_agree_with_runtime.zen:11:35: error: unsupported by this backend: the `^` operator
-tests/corpus/bitwise/operands_evaluate_once_left_to_right # UNSUPPORTED: operands_evaluate_once_left_to_right.zen:15:31: error: unsupported by this backend: the `|` operator
-tests/corpus/bitwise/secret_words_take_public_counts # UNSUPPORTED: secret_words_take_public_counts.zen:6:17: error: unsupported by this backend: the `&` operator
-tests/corpus/bitwise/shifts_discard_and_saturate # UNSUPPORTED: shifts_discard_and_saturate.zen:13:14: error: unsupported by this backend: the `<<` operator
-tests/corpus/bitwise/truth_tables_per_width # UNSUPPORTED: truth_tables_per_width.zen:7:38: error: unsupported by this backend: the `&` operator
-tests/corpus/bitwise/u128_words # UNSUPPORTED: :0:0: error: unsupported by this backend: f32 values
-tests/corpus/bitwise/unsigned_shift_counts # UNSUPPORTED: unsigned_shift_counts.zen:16:14: error: unsupported by this backend: the `>>` operator
+tests/corpus/bitwise/bars_still_declare_enums_and_unions # UNSUPPORTED: bars_still_declare_enums_and_unions.zen:25:25: error: unsupported by this backend: a member without
+tests/corpus/bitwise/expected_type_settles_literal_width # UNSUPPORTED: expected_type_settles_literal_width.zen:27:26: error: unsupported by this backend: a field of a v
+tests/corpus/bitwise/secret_words_take_public_counts # UNSUPPORTED: std/ct/ct.zen:48:34: error: unsupported by this backend: the compiler-provided operation `std.ct
+tests/corpus/bitwise/u128_words # UNSUPPORTED: :0:0: error: unsupported by this backend: u128 values
 tests/corpus/casts-conversions/float_narrowing_rounds_and_exact_conversions_check/main # UNSUPPORTED: main.zen:24:30: error: unsupported by this backend: f32 values
 tests/corpus/casts-conversions/float_widening_is_exact/main # UNSUPPORTED: :0:0: error: unsupported by this backend: f32 values
 tests/corpus/cli/a_broken_import_walks_no_phantom_path/main # UNSUPPORTED: main.zen:15:18: construction has a surplus positional argument: `build` has no storage seat left

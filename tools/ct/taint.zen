@@ -2367,6 +2367,22 @@ arm_memory = (
         offset = offset + t.width;
     });
     (post.starts_with("#") && sp_base).then(() { cur.delta = cur.delta - arm_imm(post); });
+    // Writeback moves any other base too: `[x9], #8` and `[x9, #8]!` step
+    // a pointer through a stack array.
+    (!sp_base && (mem.pre || post.len > 0)).then(() {
+        mem.base.when_ok((b) {
+            entry_of(cur, b).when_ok((e) {
+                step: Res<i64> = mem.pre.match({
+                    true  => Ok(mem.disp),
+                    false => post.starts_with("#").match({ true => Ok(arm_imm(post)), false => None }),
+                });
+                (e.exact && step.match({ Ok(_) => true, None => false })).match({
+                    true  => set_addr(cur.addr, b, Ok(e.at + step.value_or(0))).try(),
+                    false => set_somewhere(cur.addr, b).try(),
+                });
+            });
+        });
+    });
     Ok(())
 }
 

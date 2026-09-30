@@ -307,6 +307,18 @@ leaky_set_bit* = (flags: u64, key: u64, table: Ptr<u8>) u8 {
     table.read(flags.bit_or(one.shift_left((key % 64).to_usize().value_or(0))).truncate_u8().to_usize())
 }
 
+// Walks a stack array whose first word is public and the rest key words,
+// using each as an address (arm64 Clang: `ldrb w10, [x9], #8`, a pointer
+// stepped by writeback).
+leaky_stack_walk* = (key: Ptr<u64>, table: Ptr<u8>, sink: Ptr<u64>, n: usize) u64 {
+    words ::= [u64, 16](0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    Range(1, 16).loop((i) { words[i] = key.read(i); });
+    sink.write(0, words[0]);
+    sum: u64 ::= 0;
+    Range(0, n % 16).loop((i) { sum = sum +% table.read(words[i].truncate_u8().to_usize()).to_u64(); });
+    sum
+}
+
 main = (env: Env) Res<(), AllocError> {
     a     = env.mem.alloc();
     bytes = a.raw(256, 16).try();
@@ -357,6 +369,7 @@ main = (env: Env) Res<(), AllocError> {
     println("{}", leaky_lend(bytes, bytes));
     println("{}", leaky_delay(3, 90, bytes));
     println("{}", leaky_set_bit(3, 5, bytes));
+    println("{}", leaky_stack_walk(words, bytes, words, 9));
     println("{}", leaky_block_copy(a.raw(272, 16).try().to<KeyBlock>(), bytes, words, 5));
     chained = carry_chain(x, y, x);
     adx().match({

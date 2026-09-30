@@ -26,3 +26,4 @@ main  leaky_lend         *key
 main  leaky_delay        key
 main  leaky_block_copy   *key
 main  leaky_set_bit      key
+main  leaky_stack_walk   *key

@@ -313,20 +313,21 @@ audit_function = (
     shapes_arm : Map<str, CallShape>
 ) Res<Outcome, AuditError> {
     body = function_lines(a, asm, m.symbol).try();
-    // An unused function may be dropped entirely; that is not a failure,
-    // but a control must be present.
+    // Every audited definition is compiled `used` (out_of_line), so the
+    // compiler cannot drop it: a body not found is one the parser missed,
+    // and passing it would pass code nobody read.
     leaky = is_leaky(audit, m.symbol);
     (body.len == 0).match({
         true  => {
             println(
-                "SKIP {} {} {}: not in the assembly (unused)",
+                "FAIL {} {} {}: not found in the assembly",
                 cc,
                 level,
                 short_name(m.symbol)
             );
             leaky.match({
                 true  => Err(AuditFault.MissingSymbol),
-                false => Ok(Outcome(passed: 0, failed: 0, controls: 0)),
+                false => Ok(Outcome(passed: 0, failed: 1, controls: 0)),
             })
         },
         false => {

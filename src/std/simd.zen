@@ -169,19 +169,21 @@ cast_u32x8* = (self: u64x4) u32x8
 // Avx2: x86-64 AVX2. Ssse3: x86 SSSE3. Aes: AES rounds (x86 AES-NI with
 // SSSE3/SSE4.1, arm64 FEAT_AES). Clmul: 64x64 carry-less multiply (x86
 // PCLMULQDQ with SSSE3/SSE4.1, arm64 FEAT_PMULL). Neon: arm64 Advanced SIMD.
-// ShaNi: the x86 SHA extensions (SHA256RNDS2/MSG1/MSG2) with SSSE3/SSE4.1.
+// Bmi2: x86 BMI1 and BMI2 (RORX, ANDN, ...), which only change how scalar
+// code compiles. ShaNi: the x86 SHA extensions (SHA256RNDS2/MSG1/MSG2) with SSSE3/SSE4.1.
 // ArmSha2: arm64 FEAT_SHA256 (SHA256H/H2/SU0/SU1). ArmSha512: arm64
 // FEAT_SHA512 (SHA512H/H2/SU0/SU1). The SHA instructions of the two
 // architectures compute different steps, so each set has its own
 // capability and is detected only on its architecture.
 // Detection is cheap but not free; hoist it out of per-block loops.
 // The environment variable ZEN_CPU_DISABLE (comma list of avx2, ssse3,
-// aes, clmul, neon, sha, sha512, or all) makes detection report those
+// bmi2, aes, clmul, neon, sha, sha512, or all) makes detection report those
 // features absent, so tests can run each portable path on one machine; it
 // cannot add one. `sha` names the SHA-256 instructions of either
 // architecture (ShaNi, ArmSha2) and `sha512` names ArmSha512.
 Avx2* = { proof: u8 }
 Ssse3* = { proof: u8 }
+Bmi2* = { proof: u8 }
 Aes* = { proof: u8 }
 Clmul* = { proof: u8 }
 Neon* = { proof: u8 }
@@ -191,6 +193,7 @@ ArmSha512* = { proof: u8 }
 
 cpu_avx2* = () bool
 cpu_ssse3* = () bool
+cpu_bmi2* = () bool
 cpu_aes* = () bool
 cpu_clmul* = () bool
 cpu_neon* = () bool
@@ -202,6 +205,9 @@ avx2* = () Res<Avx2> { cpu_avx2().match({ true => Ok(Avx2(
     proof: 1
 )), false => None }) }
 ssse3* = () Res<Ssse3> { cpu_ssse3().match({ true => Ok(Ssse3(
+    proof: 1
+)), false => None }) }
+bmi2* = () Res<Bmi2> { cpu_bmi2().match({ true => Ok(Bmi2(
     proof: 1
 )), false => None }) }
 aes* = () Res<Aes> { cpu_aes().match({ true => Ok(Aes(

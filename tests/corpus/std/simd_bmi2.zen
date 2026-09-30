@@ -1,0 +1,26 @@
+// A function with the Bmi2 capability is compiled for BMI1/BMI2 (x86 RORX,
+// ANDN): the scalar SHA-512 round below must agree with the same code
+// compiled for the baseline target. Prints the same without the feature.
+bmi2, Bmi2 = std.simd
+
+round = (e: u64, f: u64, g: u64, h: u64) u64 {
+    s1 = e.rotate_right(14).bit_xor(e.rotate_right(18)).bit_xor(e.rotate_right(41));
+    h +% s1 +% e.bit_and(f) +% e.bit_xor(18446744073709551615).bit_and(g)
+}
+
+chain = (seed: u64) u64 {
+    x ::= seed;
+    Range(0, 1000).loop((i) { x = round(x, x.rotate_right(7), x.rotate_right(19), x +% 1); });
+    x
+}
+
+chain_bmi2 = (cpu: Bmi2, seed: u64) u64 {
+    x ::= seed;
+    Range(0, 1000).loop((i) { x = round(x, x.rotate_right(7), x.rotate_right(19), x +% 1); });
+    x
+}
+
+main = () {
+    fast = bmi2().match({ Ok(cpu) => chain_bmi2(cpu, 12345), None => chain(12345) });
+    println("bmi2 dispatch agrees: {}", fast == chain(12345));
+}

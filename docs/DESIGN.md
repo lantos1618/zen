@@ -1961,15 +1961,18 @@ function is a C compiler error, which the backend does not yet diagnose.
 ## Target features and runtime dispatch
 
 A CPU feature is a capability, in the same sense as the authority `Env`
-carries: `std.simd` declares `Avx2`, `Ssse3`, `Aes`, `Clmul`, `Neon`,
-`ShaNi`, `ArmSha2` and `ArmSha512`, and only `std.simd` may construct one
-(`ForgedCapability` otherwise). The detection functions `avx2()`,
-`ssse3()`, `aes()`, `clmul()`, `neon()`, `sha_ni()`, `arm_sha2()` and
-`arm_sha512()` return `Res<Capability>` from a runtime check: cpuid through
+carries: `std.simd` declares `Avx2`, `Ssse3`, `Bmi2`, `Aes`, `Clmul`,
+`Neon`, `ShaNi`, `ArmSha2` and `ArmSha512`, and only `std.simd` may construct
+one (`ForgedCapability` otherwise). The detection functions `avx2()`,
+`ssse3()`, `bmi2()`, `aes()`, `clmul()`, `neon()`, `sha_ni()`, `arm_sha2()`
+and `arm_sha512()` return `Res<Capability>` from a runtime check: cpuid through
 the compiler runtime on x86 (which includes the OS's AVX state; CPUID leaf 7
 for the SHA extensions), `AT_HWCAP` on Linux arm64 and `hw.optional.arm.*`
-sysctls on macOS. NEON is baseline on arm64. `ZEN_CPU_DISABLE` (a comma list
-of `avx2`, `ssse3`, `aes`, `clmul`, `neon`, `sha`, `sha512` or `all`) makes
+sysctls on macOS. NEON is baseline on arm64. `Bmi2` (x86 BMI1 and BMI2) has
+no instructions of its own: a function taking it may use RORX, ANDN and the
+other BMI encodings the C compiler picks for scalar code. `ZEN_CPU_DISABLE`
+(a comma list of `avx2`, `ssse3`, `bmi2`, `aes`, `clmul`, `neon`, `sha`,
+`sha512` or `all`) makes
 detection report features absent so every fallback path can be run on one
 machine; `sha` covers the SHA-256 instructions of both architectures.
 

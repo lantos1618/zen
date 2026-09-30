@@ -182,6 +182,9 @@ write_features = (out :: Emit) Res<(), AllocError> {
     out.say("}").try();
     out.say("#define zg_cpu_probe_avx2() zg_cpu_has(1, 0, 0, 0)").try();
     out.say("#define zg_cpu_probe_ssse3() zg_cpu_has(0, 1, 0, 0)").try();
+    out.say(
+        "#define zg_cpu_probe_bmi2() (__builtin_cpu_supports(\"bmi\") && __builtin_cpu_supports(\"bmi2\"))"
+    ).try();
     out.say("#define zg_cpu_probe_aes() zg_cpu_has(0, 0, 1, 0)").try();
     out.say("#define zg_cpu_probe_clmul() zg_cpu_has(0, 0, 0, 1)").try();
     out.say("#define zg_cpu_probe_neon() 0").try();
@@ -266,6 +269,7 @@ write_features = (out :: Emit) Res<(), AllocError> {
     out.say("#endif").try();
     out.say("#define zg_cpu_probe_avx2() 0").try();
     out.say("#define zg_cpu_probe_ssse3() 0").try();
+    out.say("#define zg_cpu_probe_bmi2() 0").try();
     out.say("#define zg_cpu_probe_neon() 1").try();
     out.say("#define zg_cpu_probe_sha_ni() 0").try();
     out.say(
@@ -299,6 +303,7 @@ write_features = (out :: Emit) Res<(), AllocError> {
     out.say("#else").try();
     out.say("#define zg_cpu_probe_avx2() 0").try();
     out.say("#define zg_cpu_probe_ssse3() 0").try();
+    out.say("#define zg_cpu_probe_bmi2() 0").try();
     out.say("#define zg_cpu_probe_aes() 0").try();
     out.say("#define zg_cpu_probe_clmul() 0").try();
     out.say("#define zg_cpu_probe_neon() 0").try();
@@ -319,8 +324,8 @@ write_features = (out :: Emit) Res<(), AllocError> {
     ).try();
     out.say("#endif").try();
     // Detection runs once per feature; sysctl and cpuid are not free.
-    // ZEN_CPU_DISABLE lists features (avx2, ssse3, aes, clmul, neon, sha,
-    // sha512, or all) that detection reports absent, as OPENSSL_ia32cap
+    // ZEN_CPU_DISABLE lists features (avx2, ssse3, bmi2, aes, clmul, neon,
+    // sha, sha512, or all) that detection reports absent, as OPENSSL_ia32cap
     // masks OpenSSL's dispatch: every portable path can be exercised on one
     // machine. It can only remove features, never claim one the CPU lacks.
     // `sha` masks the SHA-256 instructions of both architectures.
@@ -355,6 +360,7 @@ write_features = (out :: Emit) Res<(), AllocError> {
     out.say(
         "ZG_CPU_CACHED(zg_cpu_ssse3, \"ssse3\", zg_cpu_probe_ssse3())"
     ).try();
+    out.say("ZG_CPU_CACHED(zg_cpu_bmi2, \"bmi2\", zg_cpu_probe_bmi2())").try();
     out.say("ZG_CPU_CACHED(zg_cpu_aes, \"aes\", zg_cpu_probe_aes())").try();
     out.say(
         "ZG_CPU_CACHED(zg_cpu_clmul, \"clmul\", zg_cpu_probe_clmul())"
@@ -509,6 +515,7 @@ write_target_set = (be :: CBackend, out :: Emit, set: str)
     x86 ::= be.alloc.String().try();
     x86.add_feature(set, "_AVX2", "avx2").try();
     x86.add_feature(set, "_SSSE3", "ssse3").try();
+    x86.add_feature(set, "_BMI2", "bmi,bmi2").try();
     x86.add_feature(set, "_AES", "aes,ssse3,sse4.1").try();
     x86.add_feature(set, "_CLMUL", "pclmul,ssse3,sse4.1").try();
     x86.add_feature(set, "_SHANI", "sha,ssse3,sse4.1").try();
@@ -1099,6 +1106,7 @@ function_attributes* = (
     be.add_capability(sig, "ArmSha2", "_ARMSHA2", set).try();
     be.add_capability(sig, "ArmSha512", "_ARMSHA512", set).try();
     be.add_capability(sig, "Avx2", "_AVX2", set).try();
+    be.add_capability(sig, "Bmi2", "_BMI2", set).try();
     be.add_capability(sig, "Clmul", "_CLMUL", set).try();
     be.add_capability(sig, "Neon", "_NEON", set).try();
     be.add_capability(sig, "ShaNi", "_SHANI", set).try();

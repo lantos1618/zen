@@ -197,7 +197,8 @@ is_pattern = (shown: str, n: usize) bool {
 // detection succeeded. Functions taking one are compiled for the feature.
 is_capability* = (name: str) bool {
     name.is_in([
-        "Avx2", "Ssse3", "Aes", "Clmul", "Neon", "ShaNi", "ArmSha2", "ArmSha512"
+        "Avx2", "Ssse3", "Bmi2", "Aes", "Clmul", "Neon", "ShaNi", "ArmSha2",
+        "ArmSha512"
     ])
 }
 
@@ -222,6 +223,7 @@ feature_shape = (name: str, ps: Vec<String>, r: str) bool {
     name.match({
         "cpu_avx2"       => ps.len == 0 && r.eq("bool"),
         "cpu_ssse3"      => ps.len == 0 && r.eq("bool"),
+        "cpu_bmi2"       => ps.len == 0 && r.eq("bool"),
         "cpu_aes"        => ps.len == 0 && r.eq("bool"),
         "cpu_clmul"      => ps.len == 0 && r.eq("bool"),
         "cpu_neon"       => ps.len == 0 && r.eq("bool"),

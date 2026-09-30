@@ -253,6 +253,7 @@ main = (env: Env) Res<(), AllocError> {
     a.row("cpu result", "cpu_avx2* = () u8\n", simd, false).try();
     a.row("cpu unknown", "cpu_sse9* = () bool\n", simd, false).try();
     a.row("cpu sha", "cpu_sha_ni* = () bool\n", simd, false).try();
+    a.row("cpu bmi2", "cpu_bmi2* = () bool\n", simd, false).try();
     a.row(
         "sha256_rnds2",
         "sha256_rnds2* = (self: u32x4, abef: u32x4, wk: u32x4, cpu: ShaNi) u32x4\nShaNi* = { proof: u8 }\n",

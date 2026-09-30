@@ -269,21 +269,38 @@ write_features = (out :: Emit) Res<(), AllocError> {
     ).try();
     out.say("#endif").try();
     // Detection runs once per feature; sysctl and cpuid are not free.
+    // ZEN_CPU_DISABLE lists features (avx2, ssse3, aes, clmul, neon, or
+    // all) that detection reports absent, as OPENSSL_ia32cap masks OpenSSL's
+    // dispatch: every portable path can be exercised on one machine. It can
+    // only remove features, never claim one the CPU lacks.
+    out.say("static __attribute__((unused)) int zg_cpu_masked(const char *feature) {").try();
+    out.say("    const char *list = getenv(\"ZEN_CPU_DISABLE\");").try();
+    out.say("    size_t n = strlen(feature);").try();
+    out.say("    while (list != NULL && *list != 0) {").try();
+    out.say("        const char *end = strchr(list, ',');").try();
+    out.say("        size_t len = end != NULL ? (size_t)(end - list) : strlen(list);").try();
     out.say(
-        "#define ZG_CPU_CACHED(name, probe) static __attribute__((unused)) int name(void) { \\"
+        "        if ((len == n && strncmp(list, feature, n) == 0) || (len == 3 && strncmp(list, \"all\", 3) == 0)) return 1;"
+    ).try();
+    out.say("        list = end != NULL ? end + 1 : NULL;").try();
+    out.say("    }").try();
+    out.say("    return 0;").try();
+    out.say("}").try();
+    out.say(
+        "#define ZG_CPU_CACHED(name, feature, probe) static __attribute__((unused)) int name(void) { \\"
     ).try();
     out.say(
         "    static int known; int v = __atomic_load_n(&known, __ATOMIC_RELAXED); \\"
     ).try();
     out.say(
-        "    if (v == 0) { v = (probe) ? 2 : 1; __atomic_store_n(&known, v, __ATOMIC_RELAXED); } \\"
+        "    if (v == 0) { v = (!zg_cpu_masked(feature) && (probe)) ? 2 : 1; __atomic_store_n(&known, v, __ATOMIC_RELAXED); } \\"
     ).try();
     out.say("    return v == 2; }").try();
-    out.say("ZG_CPU_CACHED(zg_cpu_avx2, zg_cpu_probe_avx2())").try();
-    out.say("ZG_CPU_CACHED(zg_cpu_ssse3, zg_cpu_probe_ssse3())").try();
-    out.say("ZG_CPU_CACHED(zg_cpu_aes, zg_cpu_probe_aes())").try();
-    out.say("ZG_CPU_CACHED(zg_cpu_clmul, zg_cpu_probe_clmul())").try();
-    out.say("ZG_CPU_CACHED(zg_cpu_neon, zg_cpu_probe_neon())").try();
+    out.say("ZG_CPU_CACHED(zg_cpu_avx2, \"avx2\", zg_cpu_probe_avx2())").try();
+    out.say("ZG_CPU_CACHED(zg_cpu_ssse3, \"ssse3\", zg_cpu_probe_ssse3())").try();
+    out.say("ZG_CPU_CACHED(zg_cpu_aes, \"aes\", zg_cpu_probe_aes())").try();
+    out.say("ZG_CPU_CACHED(zg_cpu_clmul, \"clmul\", zg_cpu_probe_clmul())").try();
+    out.say("ZG_CPU_CACHED(zg_cpu_neon, \"neon\", zg_cpu_probe_neon())").try();
     out.line().try();
     Ok(())
 }

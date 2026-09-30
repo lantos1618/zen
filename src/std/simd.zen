@@ -170,6 +170,9 @@ cast_u32x8* = (self: u64x4) u32x8
 // SSSE3/SSE4.1, arm64 FEAT_AES). Clmul: 64x64 carry-less multiply (x86
 // PCLMULQDQ with SSSE3/SSE4.1, arm64 FEAT_PMULL). Neon: arm64 Advanced SIMD.
 // Detection is cheap but not free; hoist it out of per-block loops.
+// The environment variable ZEN_CPU_DISABLE (comma list of avx2, ssse3,
+// aes, clmul, neon, or all) makes detection report those features absent,
+// so tests can run each portable path on one machine; it cannot add one.
 Avx2* = { proof: u8 }
 Ssse3* = { proof: u8 }
 Aes* = { proof: u8 }

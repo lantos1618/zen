@@ -1,13 +1,16 @@
 // ct-asm: the static constant-time check over a Zen program's generated C.
 //
 //   ct-asm --c build/program.c [--cc clang]... [--level -O2]... \
-//          [--leaky name]... [--manifest file] [--work build/ct]
+//          [--leaky name]... [--manifest file] [--roots file] [--work build/ct]
 //
 // Emit the C with `zen build <root> --entry <file> --emit-c -o <file>`.
 // Every function with a Secret parameter is audited, and every function a
 // manifest names (see tools/ct/abi.zen for the format); `--leaky` names
-// negative controls that must be flagged. Exits 0 only when every audited
-// function passes on every compiler and level and every control is caught.
+// negative controls that must be flagged; one written `name@cc` applies to
+// the compiler `cc` only. `--roots` (a manifest of entry points) selects
+// the inlined audit, which forces only those out of line
+// (tools/ct/audit.zen). Exits 0 only when every audited function passes
+// on every compiler and level and every control is caught.
 Vec = std.collections
 str = std.text
 Audit, run_audit = audit
@@ -16,6 +19,7 @@ main = (env: Env) Res<i32, AllocError> {
     a = env.mem.alloc();
     c_path    ::= "";
     manifest  ::= "";
+    roots     ::= "";
     work      ::= "build/ct";
     compilers ::= a.Vec<str>();
     levels    ::= a.Vec<str>();
@@ -30,6 +34,15 @@ main = (env: Env) Res<i32, AllocError> {
             "--cc"       => compilers.add(value).try(),
             "--level"    => levels.add(value).try(),
             "--leaky"    => leaky.add(value).try(),
+            "--roots"    => {
+                roots = env.fs.read(a, value).match({
+                    Ok(text) => text.view(),
+                    Err(_)   => {
+                        println("ct-asm: cannot read roots {}", value);
+                        ""
+                    },
+                });
+            },
             "--manifest" => {
                 manifest = env.fs.read(a, value).match({
                     Ok(text) => text.view(),
@@ -57,6 +70,8 @@ main = (env: Env) Res<i32, AllocError> {
             a,
             Audit(
                 manifest: manifest,
+                roots: roots,
+                precise: env.var("CT_PRECISE").match({ Ok(_) => true, None => false }),
                 trace: env.var("CT_TRACE").value_or(""),
                 compilers: compilers,
                 levels: levels,
@@ -66,11 +81,15 @@ main = (env: Env) Res<i32, AllocError> {
             c_path
         ).match({
             Ok(o)  => {
+                env.var("CT_PRECISE").when_ok((_) {
+                    println("ct-asm: CT_PRECISE is a diagnostic, not evidence: a pass here proves nothing");
+                });
                 println(
-                    "ct-asm: {} passed, {} failed, {} negative control(s) flagged",
+                    "ct-asm: {} passed, {} failed, {} negative control(s) flagged, {} inlined",
                     o.passed,
                     o.failed,
-                    o.controls
+                    o.controls,
+                    o.inlined
                 );
                 Ok(
                     (o.failed == 0 && o.controls >= leaky.len).match({ true => 0, false => 1 })

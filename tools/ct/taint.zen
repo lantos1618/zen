@@ -75,6 +75,21 @@ Seed* = {
     // is returned through memory ("" otherwise): no secret may be stored
     // through it.
     result_pointer*: str,
+    // The precise diagnostic (ct-asm CT_PRECISE): see State.precise.
+    precise* :: bool = false,
+}
+
+// `seed` with the precise diagnostic set to `on`.
+with_precise* = (seed: Seed, on: bool) Seed {
+    Seed(
+        values: seed.values,
+        pointers: seed.pointers,
+        slots: seed.slots,
+        pointer_slots: seed.pointer_slots,
+        pointers2: seed.pointers2,
+        result_pointer: seed.result_pointer,
+        precise: on
+    )
 }
 
 // An integer argument register holding a pointer the callee may write
@@ -154,6 +169,11 @@ State = {
     // A secret went somewhere on the stack the analysis could not place.
     smear :: bool,
     addr :: Vec<StackAddr>,
+    // A diagnostic that drops the two coarse rules: a store the analysis
+    // cannot place does not smear the stack, and a call does not taint
+    // the memory its callee may write. Unsound, so never a pass; what it
+    // still reports did not come from those rules.
+    precise :: bool = false,
 }
 
 // Where a memory operand lands: a known entry-relative stack offset, the
@@ -166,7 +186,7 @@ Place = | Exact(i64) | Somewhere | Elsewhere
 
 // A global label starts a function: not indented, not a directive, not a
 // compiler-local label (.L on ELF, L/Ltmp on Mach-O), not a comment.
-global_label = (line: str) Res<str> {
+global_label* = (line: str) Res<str> {
     colon = line.find(':').try();
     plain = !line.starts_with(" ") && !line.starts_with("\t")
         && !line.starts_with(".") && !line.starts_with("L")
@@ -537,7 +557,8 @@ copy_state = (a: Alloc, s: State) Res<State, AllocError> {
         delta: s.delta,
         frame: s.frame,
         smear: s.smear,
-        addr: s.addr.map(a, (x) { x }).try()
+        addr: s.addr.map(a, (x) { x }).try(),
+        precise: s.precise
     ))
 }
 
@@ -570,6 +591,7 @@ join = (a: Alloc, into :: State, from: State) Res<bool, AllocError> {
         was_live = into.live;
         (!was_live).then(() {
             into.live  = true;
+            into.precise = from.precise;
             into.delta = from.delta;
             into.frame = from.frame;
             into.addr  = from.addr.map(a, (x) { x }).try();
@@ -752,6 +774,7 @@ analyze* = (
 entry_state = (a: Alloc, seed: Seed) Res<State, AllocError> {
     s ::= dead_state(a);
     s.live = true;
+    s.precise = seed.precise;
     seed.values.loop((r) { put(s.val, r, true).try(); });
     seed.pointers.loop((r) { put(s.pts, r, true).try(); });
     seed.slots.loop((o) { mark(s.slots, o, 8, true).try(); });
@@ -877,14 +900,14 @@ stack_store = (
     place.match({
         Exact(o)  => {
             placed = mark(cur.slots, o, width, secret).try();
-            (!placed && secret).then(() { cur.smear = true; });
+            (!placed && secret && !cur.precise).then(() { cur.smear = true; });
             Range(0, width).loop((k) {
                 put_slot(cur.pslots, o + wide(k), false).try();
                 put_slot(cur.p2slots, o + wide(k), false).try();
             });
             (points && width == 8).then(() { put_slot(cur.pslots, o, true).try(); });
         },
-        Somewhere => { secret.then(() { cur.smear = true; }); },
+        Somewhere => { (secret && !cur.precise).then(() { cur.smear = true; }); },
         Elsewhere => (),
     });
     Ok(())
@@ -911,11 +934,11 @@ never_returns = (name: str) bool {
 call_target* = (op: str) str {
     plain = op.split_once('@').match({ Ok(p) => p.before, None => op });
     base  = plain.split_once('.').match({ Ok(p) => p.before, None => plain });
-    base.starts_with("_zu_").match({ true => base.slice(1, base.len), false => base })
+    (base.starts_with("_zu_") || base.starts_with("_zg_")).match({ true => base.slice(1, base.len), false => base })
 }
 
 // What a callee is assumed to take when its prototype is unknown.
-unknown_shape = (a: Alloc, isa: Isa) CallShape {
+unknown_shape* = (a: Alloc, isa: Isa) CallShape {
     writable ::= a.Vec<Writable>();
     Range(0, isa.match({ X86 => 6, Arm => 8 })).loop((i) { writable.add(Writable(index: i, bytes: 0)).match({ _ => () }); });
     CallShape(
@@ -1076,7 +1099,7 @@ call = (
     (shape.hidden > 0).then(() {
         addr_of(cur, conv.hidden_reg).match({
             Ok(o)  => stack_store(cur, Place.Exact(o), shape.hidden, out, false).try(),
-            None   => { (out && on_stack(cur, conv.hidden_reg)).then(() { cur.smear = true; }); },
+            None   => { (out && !cur.precise && on_stack(cur, conv.hidden_reg)).then(() { cur.smear = true; }); },
         });
     });
     // A callee given secrets may write what it derives from them through
@@ -1084,7 +1107,7 @@ call = (
     // borrow names, or anywhere.
     shape.writable.loop((w) {
         r = conv.gprs.get(w.index).value_or("");
-        (secret && on_stack(cur, r) && !(shape.hidden > 0 && r.eq(conv.hidden_reg))).then(() {
+        (secret && !cur.precise && on_stack(cur, r) && !(shape.hidden > 0 && r.eq(conv.hidden_reg))).then(() {
             (w.bytes > 0).match({
                 true  => addr_of(cur, r).match({
                     Ok(o) => { mark(cur.slots, o, w.bytes, true).try().match({ true => (), false => { cur.smear = true; } }); },
@@ -2064,7 +2087,8 @@ arm = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             h.break();
         });
         (m.starts_with("b.") || (m.starts_with("b") && m.len == 3 && !m.eq("bic") && !m.eq("bfi")
-            && !m.eq("bit") && !m.eq("bif") && !m.eq("bsl") && !m.eq("brk") && !m.eq("bfm"))).then(() {
+            && !m.eq("bit") && !m.eq("bif") && !m.eq("bsl") && !m.eq("brk") && !m.eq("bfm")
+            && !m.eq("blr") && !m.eq("bti"))).then(() {
             cur.flags.then(() { an.report("branch", l.text).try(); });
             an.flow(last, cur).try();
             h.break();

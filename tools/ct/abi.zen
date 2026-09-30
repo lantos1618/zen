@@ -48,6 +48,10 @@ Marked* = {
     // The result register must be public at every return; callers may
     // rely on that.
     public_result* :: bool = false,
+    // Declared by the manifest (`public-only`) to handle public data only:
+    // not analysed, but counted as audited where audited code is inlined
+    // into it (the inlined audit's coverage check).
+    public_only* :: bool = false,
 }
 
 // `vector`: passed in the SIMD&FP registers (a vector, a float, or a small
@@ -68,12 +72,18 @@ marked_functions* = (a: Alloc, c: str) Res<Vec<Marked>, AllocError> {
 }
 
 // An `inline` function's definition carries the always_inline attribute
-// (after any target attribute), whose parentheses come before the parameter
-// list; parsing reads the line without it.
+// (after any target attribute), and the runtime's CPU-feature helper the
+// unused attribute; their parentheses come before the parameter list, so
+// parsing reads the line without them.
 ALWAYS_INLINE*: str = "inline __attribute__((always_inline)) "
+UNUSED: str = "__attribute__((unused)) "
 plain_definition* = (a: Alloc, line: str) Res<str, AllocError> {
-    line.find(ALWAYS_INLINE).match({
-        Ok(at) => a.String("{}{}", line.slice(0, at), line.slice(at + ALWAYS_INLINE.len, line.len)).match({
+    without(a, without(a, line, ALWAYS_INLINE).try(), UNUSED)
+}
+
+without = (a: Alloc, line: str, attribute: str) Res<str, AllocError> {
+    line.find(attribute).match({
+        Ok(at) => a.String("{}{}", line.slice(0, at), line.slice(at + attribute.len, line.len)).match({
             Ok(s)  => Ok(s.view()),
             Err(e) => Err(e),
         }),
@@ -546,7 +556,10 @@ vector_name = (a: Alloc, isa: Isa, i: usize) Res<str, AllocError> {
 // `branches=N` allows N secret-dependent conditional branches (see Marked);
 // `public-result` requires the result register to be public at every
 // return (for a result returned through a hidden pointer: that no secret is
-// stored through it), which lets callers treat it as public. `**name` is a pointer to
+// stored through it), which lets callers treat it as public. `public-only`
+// declares a function that handles public data only (parsing a peer's
+// public key, say): it is not analysed, and the inlined audit counts
+// audited code inlined into it as covered. `**name` is a pointer to
 // memory whose words point at secret memory (a struct of key-schedule
 // pointers): a load through it yields a pointer to secrets.
 Entry* = {
@@ -558,6 +571,7 @@ Entry* = {
     optional*: bool,
     branches*: usize,
     public_result*: bool,
+    public_only*: bool,
 }
 
 manifest_entries* = (a: Alloc, text: str) Res<Vec<Entry>, AllocError> {
@@ -572,17 +586,21 @@ manifest_entries* = (a: Alloc, text: str) Res<Vec<Entry>, AllocError> {
             pointee2 ::= a.Vec<str>();
             branches ::= 0;
             public   ::= false;
+            only     ::= false;
             Range(2, words.len).loop((i) {
                 w = words.get(i).value_or("");
                 w.starts_with("branches=").match({
                     true  => { branches = w.slice(9, w.len).parse_usize().value_or(0); },
                     false => w.eq("public-result").match({
                         true  => { public = true; },
-                        false => w.starts_with("**").match({
-                            true  => pointee2.add(w.slice(2, w.len)).try(),
-                            false => w.starts_with("*").match({
-                                true  => pointee.add(w.slice(1, w.len)).try(),
-                                false => secret.add(w).try(),
+                        false => w.eq("public-only").match({
+                            true  => { only = true; },
+                            false => w.starts_with("**").match({
+                                true  => pointee2.add(w.slice(2, w.len)).try(),
+                                false => w.starts_with("*").match({
+                                    true  => pointee.add(w.slice(1, w.len)).try(),
+                                    false => secret.add(w).try(),
+                                }),
                             }),
                         }),
                     }),
@@ -594,6 +612,7 @@ manifest_entries* = (a: Alloc, text: str) Res<Vec<Entry>, AllocError> {
                 optional: optional,
                 branches: branches,
                 public_result: public,
+                public_only: only,
                 module: optional.match({ true => head.slice(
                     1,
                     head.len
@@ -664,7 +683,8 @@ manifest_functions* = (
                         pointee2: pointee2,
                         branches: e.branches,
                         avx: m.avx,
-                        public_result: e.public_result
+                        public_result: e.public_result,
+                        public_only: e.public_only
                     )).try();
                 });
             });

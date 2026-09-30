@@ -7,13 +7,23 @@
 // address, division or indirect jump that depends on a secret input.
 // Functions named in `leaky` are negative controls: each must be flagged,
 // or the check itself is broken.
+//
+// The inlined audit (`roots`) checks the code as the program ships it.
+// Keeping a helper out of line changes its callers: once inlined, a mask
+// the helper computes can meet a comparison in the caller, and the C
+// compiler may turn the two into a branch (Clang's x86 CMOV conversion
+// does this to a select in a loop or with a memory operand). Only the
+// roots, the program's entry points, are forced out of line; every other
+// audited function keeps its own attributes, so the compiler inlines it
+// where it would in production. Those it still emits are audited as
+// themselves, and the rest inside their callers.
 ProcError = std.proc
 FsError = std.env
 Alloc, AllocError = std.mem
 Vec, Map = std.collections
 str, String, parse_usize = std.text
 Range = std.core
-Isa, Finding, CallShape, function_lines, parse_lines, analyze, argument_reads = taint
+Isa, Finding, CallShape, function_lines, global_label, parse_lines, analyze, argument_reads, with_precise, unknown_shape = taint
 Marked, marked_functions, seed_of, result_registers = abi
 Entry, manifest_entries, manifest_functions, call_shapes, audited_shape, plain_definition = abi
 
@@ -23,7 +33,9 @@ AuditFault* = | NoMarkedFunctions
     | MissingSymbol
     | UnmatchedEntry
 
-Outcome* = { passed*: usize, failed*: usize, controls*: usize }
+// `inlined`: audited functions the compiler left with no out-of-line copy
+// in the inlined audit, whose code is checked inside their callers.
+Outcome* = { passed*: usize, failed*: usize, controls*: usize, inlined* :: usize = 0 }
 
 Audit* = {
     // Text of a manifest (tools/ct/abi.zen) naming unmarked functions to
@@ -36,16 +48,28 @@ Audit* = {
     levels*: Vec<str>,
     leaky*: Vec<str>,
     work*: str,
+    // Text of a manifest naming the program's entry points, for the inlined
+    // audit (see run_audit); empty for the default one.
+    roots* :: str = "",
+    // The precise diagnostic (CT_PRECISE; tools/ct/taint.zen State.precise).
+    precise* :: bool = false,
 }
 
 // Audited functions are forced out of line so their code can be read, and
 // kept whole: `noipa` stops GCC from cloning one with its parameters
 // changed (.isra, .constprop), which would leave the audited body unused.
-// Clang ignores the attribute.
+// Clang ignores the attribute. `symbols` holds `name(` for each function
+// to force, besides every function with a Secret parameter.
 out_of_line* = (a: Alloc, c: str, symbols: Vec<str>) Res<String, AllocError> {
+    force(a, c, symbols, true)
+}
+
+// As out_of_line, forcing the functions with a Secret parameter only with
+// `marked_too`.
+force = (a: Alloc, c: str, symbols: Vec<str>, marked_too: bool) Res<String, AllocError> {
     out ::= a.String().try();
     c.lines().loop((line) {
-        audited = line.starts_with("static ") && (line.contains("/* zen:secret")
+        audited = line.starts_with("static ") && ((marked_too && line.contains("/* zen:secret"))
             || symbols.find(
                 (s) { line.contains(s) }
             ).match({ Ok(_) => true, None => false }));
@@ -63,10 +87,16 @@ out_of_line* = (a: Alloc, c: str, symbols: Vec<str>) Res<String, AllocError> {
     Ok(out)
 }
 
-is_leaky = (audit: Audit, symbol: str) bool {
-    audit.leaky.find(
-        (name) { symbol.contains(name) }
-    ).match({ Ok(_) => true, None => false })
+// A control is named by a symbol substring, or `name@cc` for a control that
+// applies only to the compiler given as `cc` (a behaviour of one compiler's
+// optimizer).
+is_leaky = (audit: Audit, symbol: str, cc: str) bool {
+    audit.leaky.find((entry) {
+        entry.split_once('@').match({
+            Ok(p) => symbol.contains(p.before) && p.after.eq(cc),
+            None  => symbol.contains(entry),
+        })
+    }).match({ Ok(_) => true, None => false })
 }
 
 // A short, stable name for reports: the Zen function name inside the
@@ -188,115 +218,322 @@ run_audit* = (
     c_path : str
 ) Res<Outcome, AuditError> {
     source = env.fs.read(a, c_path).try();
-    marked ::= marked_functions(a, source.view()).try();
+    marked ::= a.Vec<Marked>();
+    roots  ::= a.Vec<str>();
+    manifest_entries(a, audit.roots).try().loop((e) {
+        listed(a, source.view(), e, c_path).try().loop((m) {
+            roots.add(m.symbol).try();
+            add_new(marked, m).try();
+        });
+    });
+    marked_functions(a, source.view()).try().loop((m) { add_new(marked, m).try(); });
     manifest_entries(a, audit.manifest).try().loop((e) {
-        found = manifest_functions(a, source.view(), e).try();
-        (found.len == 0 && !e.optional).then(() {
-            println(
-                "FAIL manifest entry {} {} matches no function in {}",
-                e.module,
-                e.function,
-                c_path
-            );
-            Err(AuditFault.UnmatchedEntry).try();
-        });
-        found.loop((m) {
-            // A function both marked and listed is audited once, as listed.
-            (marked.find(
-                (k) { k.symbol.eq(m.symbol) }
-            ).match({ Ok(_) => false, None => true }))
-                .then(() { marked.add(m).try(); });
-        });
+        listed(a, source.view(), e, c_path).try().loop((m) { add_new(marked, m).try(); });
     });
     (marked.len > 0).ensure(AuditFault.NoMarkedFunctions).try();
     symbols ::= a.Vec<str>();
     marked.loop((m) {
         symbols.add(a.String("{}(", m.symbol).try().view()).try();
     });
-    patched = out_of_line(a, source.view(), symbols).try();
-    audit_c = a.String("{}/audit.c", audit.work).try();
-    env.fs.write(audit_c.view(), patched.view()).try();
+    whole_c = a.String("{}/audit.c", audit.work).try();
+    env.fs.write(whole_c.view(), out_of_line(a, source.view(), symbols).try().view()).try();
+    (audit.roots.len > 0).match({
+        true  => run_inlined(env, a, audit, source.view(), marked, roots, whole_c.view()),
+        false => run_whole(env, a, audit, source.view(), marked, whole_c.view()),
+    })
+}
+
+// The default audit: every audited function out of line.
+run_whole = (
+    env     : Env,
+    a       : Alloc,
+    audit   : Audit,
+    source  : str,
+    marked  : Vec<Marked>,
+    audit_c : str
+) Res<Outcome, AuditError> {
     outcome ::= Outcome(passed: 0, failed: 0, controls: 0);
-    shapes_x86 ::= call_shapes(a, Isa.X86, source.view()).try();
-    shapes_arm ::= call_shapes(a, Isa.Arm, source.view()).try();
-    // Callers rely on what each audited callee's audit assumes and proves.
-    marked.loop((m) {
-        shapes_x86.get(m.symbol).when_ok((s) {
-            shapes_x86.set(m.symbol, audited_shape(a, Isa.X86, source.view(), m, s).try()).try();
-        });
-        shapes_arm.get(m.symbol).when_ok((s) {
-            shapes_arm.set(m.symbol, audited_shape(a, Isa.Arm, source.view(), m, s).try()).try();
-        });
-    });
+    shapes_x86 ::= audited_shapes(a, Isa.X86, source, marked, a.Vec<str>()).try();
+    shapes_arm ::= audited_shapes(a, Isa.Arm, source, marked, a.Vec<str>()).try();
     audit.compilers.loop((cc) {
         audit.levels.loop((level) {
-            asm_path = a.String(
-                "{}/audit-{}{}.s",
-                audit.work,
-                cc.after_last('/'),
-                level
-            ).try();
-            argv ::= a.Vec<str>();
-            [str, 7](cc, level, "-S", "-w", audit_c.view(), "-o", asm_path.view())
-                .loop((word) { argv.add(word).try(); });
-            result = env.proc.run_argv(a, "", argv).try();
-            (result.code == 0).match({
-                true  => (),
-                false => {
-                    println(
-                        "FAIL {} {}: the C compiler rejected the audit file",
-                        cc,
-                        level
-                    );
-                    println("{}", result.err.view());
-                    Err(AuditFault.CompileFailed).try();
-                },
-            });
+            asm_path = a.String("{}/audit-{}{}.s", audit.work, cc.after_last('/'), level).try();
+            compile(env, a, cc, level, audit_c, asm_path.view(), "").try();
             asm = env.fs.read(a, asm_path.view()).try();
             // One compiler output is one ISA; a short function (a lone
             // tail-call jmp) may not show which by itself.
             file_isa = detect_isa_lines(asm.view());
-            // What each audited function's body reads with this compiler
-            // and level, for its callers' call rule.
+            measure_reads(a, asm.view(), file_isa, marked, shapes_x86, shapes_arm).try();
             marked.loop((m) {
-                body = function_lines(a, asm.view(), m.symbol).try();
-                (body.len > 0).then(() {
-                    isa   = file_isa;
-                    lines = parse_lines(a, isa, body).try();
-                    isa.match({
-                        X86 => { shapes_x86.get(m.symbol).when_ok((s) {
-                            reads = argument_reads(a, isa, lines, shapes_x86, unseeded(a, Isa.X86, s).try()).try();
-                            shapes_x86.set(m.symbol, with_reads(s, reads)).try();
-                        }); },
-                        Arm => { shapes_arm.get(m.symbol).when_ok((s) {
-                            reads = argument_reads(a, isa, lines, shapes_arm, unseeded(a, Isa.Arm, s).try()).try();
-                            shapes_arm.set(m.symbol, with_reads(s, reads)).try();
-                        }); },
-                    });
-                });
-            });
-            marked.loop((m) {
-                one     = audit_function(
-                    a,
-                    audit,
-                    asm.view(),
-                    source.view(),
-                    m,
-                    cc,
-                    level,
-                    file_isa,
-                    shapes_x86,
-                    shapes_arm
-                ).try();
-                outcome = Outcome(
-                    passed: outcome.passed + one.passed,
-                    failed: outcome.failed + one.failed,
-                    controls: outcome.controls + one.controls
-                );
+                one = audit_function(a, audit, asm.view(), source, m, "", cc, level, file_isa, shapes_x86, shapes_arm).try();
+                outcome = sum(outcome, one);
             });
         });
     });
     Ok(outcome)
+}
+
+// The inlined audit (see the top of this file). The program is compiled
+// with only the roots forced out of line, and each audited function is
+// checked where that build leaves it: roots and functions the compiler
+// kept out of line as themselves, the rest inside their callers.
+//
+// Keeping its own attributes, a function may also have its signature
+// changed: GCC clones it with parameters removed or replaced
+// (`f.constprop.0`, `f.isra.0`), and LLVM removes dead or constant
+// parameters in place, under the same name. Its C prototype then no longer
+// says where its secrets arrive, so its callers treat a call to it as a
+// call to an unknown function, and the function is audited from a second
+// build in which it, too, is forced out of line whole. LLVM's changes are
+// found by comparing the function's parameter types in the LLVM IR of the
+// build with those in the build that forces everything out of line.
+run_inlined = (
+    env     : Env,
+    a       : Alloc,
+    audit   : Audit,
+    source  : str,
+    marked  : Vec<Marked>,
+    roots   : Vec<str>,
+    whole_c : str
+) Res<Outcome, AuditError> {
+    outcome ::= Outcome(passed: 0, failed: 0, controls: 0);
+    forced ::= a.Vec<str>();
+    roots.loop((r) { forced.add(a.String("{}(", r).try().view()).try(); });
+    rooted_c = a.String("{}/inlined.c", audit.work).try();
+    env.fs.write(rooted_c.view(), force(a, source, forced, false).try().view()).try();
+    audit.compilers.loop((cc) {
+        gcc = is_gcc(env, a, cc).try();
+        audit.levels.loop((level) {
+            tag = a.String("{}{}", cc.after_last('/'), level).try();
+            asm_path = a.String("{}/inlined-{}.s", audit.work, tag.view()).try();
+            remarks = compile(env, a, cc, level, rooted_c.view(), asm_path.view(), gcc.match({ true => "-fopt-info-inline-optimized", false => "-Rpass=inline" })).try();
+            asm = env.fs.read(a, asm_path.view()).try();
+            file_isa = detect_isa_lines(asm.view());
+            // Functions whose signature the optimizer changed.
+            changed ::= a.Vec<str>();
+            ir = (!gcc).match({
+                true  => {
+                    rooted_ir = a.String("{}/inlined-{}.ll", audit.work, tag.view()).try();
+                    whole_ir  = a.String("{}/whole-{}.ll", audit.work, tag.view()).try();
+                    compile(env, a, cc, level, rooted_c.view(), rooted_ir.view(), "-emit-llvm").try();
+                    compile(env, a, cc, level, whole_c, whole_ir.view(), "-emit-llvm").try();
+                    Ok(IrPair(rooted: env.fs.read(a, rooted_ir.view()).try(), whole: env.fs.read(a, whole_ir.view()).try()))
+                },
+                false => None,
+            });
+            marked.loop((m) {
+                (!m.symbol.is_in(roots)).then(() {
+                    present = function_lines(a, asm.view(), m.symbol).try().len > 0;
+                    clone = clone_of(a, asm.view(), m.symbol).try();
+                    moved = clone.len > 0 || (present && ir.match({
+                        Ok(p) => !ir_params(a, p.rooted.view(), m.symbol).try().view().eq(ir_params(a, p.whole.view(), m.symbol).try().view()),
+                        None  => false,
+                    }));
+                    moved.then(() {
+                        changed.add(m.symbol).try();
+                        println(
+                            "NOTE {} {} {}: signature changed by the optimizer{}{}; audited forced out of line, called as an unknown function",
+                            cc,
+                            level,
+                            short_name(m.symbol),
+                            (clone.len > 0).match({ true => " into the clone ", false => "" }),
+                            clone
+                        );
+                    });
+                });
+            });
+            shapes_x86 ::= audited_shapes(a, Isa.X86, source, marked, changed).try();
+            shapes_arm ::= audited_shapes(a, Isa.Arm, source, marked, changed).try();
+            measure_reads(a, asm.view(), file_isa, marked, shapes_x86, shapes_arm).try();
+            marked.loop((m) {
+                (!m.symbol.is_in(changed)).then(() {
+                    label = m.symbol.is_in(roots).match({ true => " (root)", false => "" });
+                    one = audit_function(a, audit, asm.view(), source, m, label, cc, level, file_isa, shapes_x86, shapes_arm).try();
+                    outcome = sum(outcome, one);
+                });
+            });
+            gaps = uncovered(a, asm.view(), remarks.view(), marked, cc, level).try();
+            outcome = sum(outcome, Outcome(passed: 0, failed: gaps, controls: 0));
+            (changed.len > 0).then(() {
+                again ::= a.Vec<str>();
+                forced.loop((s) { again.add(s).try(); });
+                changed.loop((s) { again.add(a.String("{}(", s).try().view()).try(); });
+                second_c   = a.String("{}/inlined-{}-forced.c", audit.work, tag.view()).try();
+                second_asm = a.String("{}/inlined-{}-forced.s", audit.work, tag.view()).try();
+                env.fs.write(second_c.view(), force(a, source, again, false).try().view()).try();
+                compile(env, a, cc, level, second_c.view(), second_asm.view(), "").try();
+                asm2 = env.fs.read(a, second_asm.view()).try();
+                // Forced out of line, their prototypes hold again; the other
+                // functions are taken as the first build found them.
+                shapes2_x86 ::= audited_shapes(a, Isa.X86, source, marked, a.Vec<str>()).try();
+                shapes2_arm ::= audited_shapes(a, Isa.Arm, source, marked, a.Vec<str>()).try();
+                measure_reads(a, asm2.view(), file_isa, marked, shapes2_x86, shapes2_arm).try();
+                marked.loop((m) {
+                    m.symbol.is_in(changed).then(() {
+                        one = audit_function(a, audit, asm2.view(), source, m, " (forced)", cc, level, file_isa, shapes2_x86, shapes2_arm).try();
+                        outcome = sum(outcome, one);
+                    });
+                });
+            });
+        });
+    });
+    Ok(outcome)
+}
+
+IrPair = { rooted: String, whole: String }
+
+sum = (x: Outcome, y: Outcome) Outcome {
+    Outcome(
+        passed: x.passed + y.passed,
+        failed: x.failed + y.failed,
+        controls: x.controls + y.controls,
+        inlined: x.inlined + y.inlined
+    )
+}
+
+// Every function's calling shape from its C prototype, with what each
+// audited function's audit assumes and proves; the functions in `unknown`
+// are called as unknown functions.
+audited_shapes = (
+    a       : Alloc,
+    isa     : Isa,
+    source  : str,
+    marked  : Vec<Marked>,
+    unknown : Vec<str>
+) Res<Map<str, CallShape>, AllocError> {
+    shapes ::= call_shapes(a, isa, source).try();
+    marked.loop((m) {
+        shapes.get(m.symbol).when_ok((s) {
+            shapes.set(m.symbol, audited_shape(a, isa, source, m, s).try()).try();
+        });
+    });
+    unknown.loop((s) { shapes.set(s, unknown_shape(a, isa)).try(); });
+    Ok(shapes)
+}
+
+// What each audited function's body reads with this compiler and level,
+// for its callers' call rule.
+measure_reads = (
+    a          : Alloc,
+    asm        : str,
+    isa        : Isa,
+    marked     : Vec<Marked>,
+    shapes_x86 :: Map<str, CallShape>,
+    shapes_arm :: Map<str, CallShape>
+) Res<(), AllocError> {
+    marked.loop((m) {
+        body = function_lines(a, asm, m.symbol).try();
+        (body.len > 0).then(() {
+            lines = parse_lines(a, isa, body).try();
+            isa.match({
+                X86 => { shapes_x86.get(m.symbol).when_ok((s) {
+                    (s.audited).then(() {
+                        reads = argument_reads(a, isa, lines, shapes_x86, unseeded(a, Isa.X86, s).try()).try();
+                        shapes_x86.set(m.symbol, with_reads(s, reads)).try();
+                    });
+                }); },
+                Arm => { shapes_arm.get(m.symbol).when_ok((s) {
+                    (s.audited).then(() {
+                        reads = argument_reads(a, isa, lines, shapes_arm, unseeded(a, Isa.Arm, s).try()).try();
+                        shapes_arm.set(m.symbol, with_reads(s, reads)).try();
+                    });
+                }); },
+            });
+        });
+    });
+    Ok(())
+}
+
+// Compile `c_file` to assembly, with one `extra` flag or none (""); the
+// result is what the compiler wrote to standard error.
+compile = (
+    env    : Env,
+    a      : Alloc,
+    cc     : str,
+    level  : str,
+    c_file : str,
+    out    : str,
+    extra  : str
+) Res<String, AuditError> {
+    argv ::= a.Vec<str>();
+    [str, 7](cc, level, "-S", "-w", c_file, "-o", out).loop((word) { argv.add(word).try(); });
+    (extra.len > 0).then(() { argv.add(extra).try(); });
+    // GCC's interprocedural register allocation lets a caller keep a value
+    // in a caller-saved register across a call to a function that it can
+    // see leaves the register alone; the call rule drops what those
+    // registers held. Turning it off changes which registers hold values
+    // across calls, never the control flow.
+    is_gcc(env, a, cc).try().then(() { argv.add("-fno-ipa-ra").try(); });
+    result = env.proc.run_argv(a, "", argv).try();
+    (result.code == 0).match({
+        true  => Ok(result.err),
+        false => {
+            println("FAIL {} {}: the C compiler rejected {}", cc, level, c_file);
+            println("{}", result.err.view());
+            Err(AuditFault.CompileFailed)
+        },
+    })
+}
+
+// The parameter types of `symbol`'s definition in LLVM IR, comma-separated
+// (attributes and names dropped), or "" when the IR does not define it.
+ir_params = (a: Alloc, ir: str, symbol: str) Res<String, AllocError> {
+    needle = a.String("@{}(", symbol).try();
+    out ::= a.String().try();
+    ir.lines().loop((h, line) {
+        (line.starts_with("define ")).then(() {
+            line.find(needle.view()).when_ok((at) {
+                rest  = line.slice(at + needle.len(), line.len);
+                depth ::= 0;
+                start ::= 0;
+                first ::= true;
+                i ::= 0;
+                loop(() { i < rest.len }, (h2) {
+                    c = rest.index(i);
+                    ((c == '(' || c == '<' || c == '[' || c == '{')).then(() { depth = depth + 1; });
+                    ((c == ')' || c == '>' || c == ']' || c == '}') && depth > 0).then(() { depth = depth - 1; });
+                    end = depth == 0 && (c == ',' || c == ')');
+                    end.then(() {
+                        param = rest.slice(start, i).trim().value_or("");
+                        (param.len > 0).then(() {
+                            (!first).then(() { out.add(",").try(); });
+                            out.add(ir_type(param)).try();
+                            first = false;
+                        });
+                        start = i + 1;
+                    });
+                    (c == ')' && depth == 0).then(() { h2.break(); });
+                    i = i + 1;
+                });
+                h.break();
+            });
+        });
+    });
+    Ok(out)
+}
+
+// The type at the start of an LLVM IR parameter: a bracketed aggregate or
+// vector, or the first word.
+ir_type = (param: str) str {
+    open = param.index(0);
+    (open == '<' || open == '[' || open == '{').match({
+        true  => {
+            depth ::= 0;
+            end ::= param.len;
+            i ::= 0;
+            loop(() { i < param.len }, (h) {
+                c = param.index(i);
+                (c == '<' || c == '[' || c == '{').then(() { depth = depth + 1; });
+                (c == '>' || c == ']' || c == '}').then(() {
+                    depth = depth - 1;
+                    (depth == 0).then(() { end = i + 1; h.break(); });
+                });
+                i = i + 1;
+            });
+            param.slice(0, end)
+        },
+        false => param.split_once(' ').match({ Ok(p) => p.before, None => param }),
+    })
 }
 
 audit_function = (
@@ -305,6 +542,27 @@ audit_function = (
     asm       : str,
     c         : str,
     m         : Marked,
+    label     : str,
+    cc        : str,
+    level     : str,
+    isa       : Isa,
+    shapes_x86 : Map<str, CallShape>,
+    shapes_arm : Map<str, CallShape>
+) Res<Outcome, AuditError> {
+    name = a.String("{}{}", short_name(m.symbol), label).try().view();
+    m.public_only.then(() {
+        println("PUBLIC {} {} {}: declared public-only by the manifest, not analysed", cc, level, name);
+    });
+    (m.public_only).match({ true => Ok(Outcome(passed: 0, failed: 0, controls: 0)), false => audit_body(a, audit, asm, c, m, name, cc, level, isa, shapes_x86, shapes_arm) })
+}
+
+audit_body = (
+    a         : Alloc,
+    audit     : Audit,
+    asm       : str,
+    c         : str,
+    m         : Marked,
+    name      : str,
     cc        : str,
     level     : str,
     isa       : Isa,
@@ -312,25 +570,53 @@ audit_function = (
     shapes_arm : Map<str, CallShape>
 ) Res<Outcome, AuditError> {
     body = function_lines(a, asm, m.symbol).try();
-    // An unused function may be dropped entirely; that is not a failure,
-    // but a control must be present.
-    leaky = is_leaky(audit, m.symbol);
+    // An unused function may be dropped entirely, and in the inlined audit
+    // a function inlined into every caller has no copy of its own; neither
+    // is a failure, but a control must be present. A function present only
+    // as a GCC clone (.isra, .constprop, .part) has a body nobody audits.
+    leaky = is_leaky(audit, m.symbol, cc);
     (body.len == 0).match({
         true  => {
-            println(
-                "SKIP {} {} {}: not in the assembly (unused)",
-                cc,
-                level,
-                short_name(m.symbol)
-            );
-            leaky.match({
-                true  => Err(AuditFault.MissingSymbol),
-                false => Ok(Outcome(passed: 0, failed: 0, controls: 0)),
+            clone = clone_of(a, asm, m.symbol).try();
+            (clone.len > 0).match({
+                true  => {
+                    println(
+                        "FAIL {} {} {}: only the clone {} is in the assembly, and its body is not audited",
+                        cc,
+                        level,
+                        name,
+                        clone
+                    );
+                    Ok(Outcome(passed: 0, failed: 1, controls: 0))
+                },
+                false => (audit.roots.len > 0 && !leaky).match({
+                    true  => {
+                        println(
+                            "INLINED {} {} {}: no out-of-line copy, audited inside its callers",
+                            cc,
+                            level,
+                            name
+                        );
+                        Ok(Outcome(passed: 0, failed: 0, controls: 0, inlined: 1))
+                    },
+                    false => {
+                        println(
+                            "SKIP {} {} {}: not in the assembly (unused)",
+                            cc,
+                            level,
+                            name
+                        );
+                        leaky.match({
+                            true  => Err(AuditFault.MissingSymbol),
+                            false => Ok(Outcome(passed: 0, failed: 0, controls: 0)),
+                        })
+                    },
+                }),
             })
         },
         false => {
             lines   = parse_lines(a, isa, body).try();
-            seed    = seed_of(a, isa, c, m).try();
+            seed    = with_precise(seed_of(a, isa, c, m).try(), audit.precise);
             found   = analyze(
                 a,
                 isa,
@@ -350,7 +636,7 @@ audit_function = (
                         "FAIL {} {} {} ({}): no secret input located in registers or on the stack",
                         cc,
                         level,
-                        short_name(m.symbol),
+                        name,
                         arch
                     );
                     Ok(Outcome(passed: 0, failed: 1, controls: 0))
@@ -363,7 +649,7 @@ audit_function = (
                             "PASS {} {} {} ({}): negative control flagged, {} finding(s), first {}: {}",
                             cc,
                             level,
-                            short_name(m.symbol),
+                            name,
                             arch,
                             found.len,
                             first.kind,
@@ -376,7 +662,7 @@ audit_function = (
                             "FAIL {} {} {} ({}): negative control NOT flagged",
                             cc,
                             level,
-                            short_name(m.symbol),
+                            name,
                             arch
                         );
                         Ok(Outcome(passed: 0, failed: 1, controls: 0))
@@ -389,7 +675,7 @@ audit_function = (
                                 "PASS {} {} {} ({}): {} instructions, no secret-dependent branch, address or division",
                                 cc,
                                 level,
-                                short_name(m.symbol),
+                                name,
                                 arch,
                                 lines.len
                             ),
@@ -397,7 +683,7 @@ audit_function = (
                                 "PASS {} {} {} ({}): {} instructions, {} secret-dependent branch(es) within the {} allowed for its public outcome, no secret address or division",
                                 cc,
                                 level,
-                                short_name(m.symbol),
+                                name,
                                 arch,
                                 lines.len,
                                 found.len,
@@ -411,7 +697,7 @@ audit_function = (
                             "FAIL {} {} {} ({}):",
                             cc,
                             level,
-                            short_name(m.symbol),
+                            name,
                             arch
                         );
                         found.loop((f) { println("    {}: {}", f.kind, f.text); });
@@ -423,3 +709,167 @@ audit_function = (
         },
     })
 }
+
+// The first label in `asm` naming a GCC clone of `symbol` (`symbol.isra.0`,
+// `symbol.constprop.0`, `symbol.part.0`; not its `.cold` part), or "".
+clone_of = (a: Alloc, asm: str, symbol: str) Res<str, AllocError> {
+    dotted = a.String("{}.", symbol).try();
+    cold   = a.String("{}.cold", symbol).try();
+    found ::= "";
+    asm.lines().loop((h, line) {
+        global_label(line).when_ok((name) {
+            plain = name.starts_with("_").match({ true => name.slice(1, name.len), false => name });
+            (plain.starts_with(dotted.view()) && !plain.starts_with(cold.view())).then(() {
+                found = name;
+                h.break();
+            });
+        });
+    });
+    Ok(found)
+}
+
+// Add a function unless one with its symbol is already listed: the first
+// description of a function (root, then Secret marking, then manifest) is
+// the one audited.
+add_new = (list :: Vec<Marked>, m: Marked) Res<(), AllocError> {
+    list.find((k) { k.symbol.eq(m.symbol) }).match({
+        Ok(_) => Ok(()),
+        None  => list.add(m),
+    })
+}
+
+// The definitions a manifest entry names; an entry that is not optional
+// must name at least one.
+listed = (a: Alloc, c: str, e: Entry, c_path: str) Res<Vec<Marked>, AuditError> {
+    found = manifest_functions(a, c, e).try();
+    (found.len == 0 && !e.optional).then(() {
+        println(
+            "FAIL manifest entry {} {} matches no function in {}",
+            e.module,
+            e.function,
+            c_path
+        );
+        Err(AuditFault.UnmatchedEntry).try();
+    });
+    Ok(found)
+}
+
+
+// True when `cc --version` does not name Clang (GCC, whatever it is
+// called: `cc` is GCC on most Linux hosts).
+is_gcc = (env: Env, a: Alloc, cc: str) Res<bool, AuditError> {
+    argv ::= a.Vec<str>();
+    argv.add(cc).try();
+    argv.add("--version").try();
+    r = env.proc.run_argv(a, "", argv).try();
+    Ok(!r.out.view().contains("clang"))
+}
+
+// Audited code inlined into a function that is not audited is checked
+// nowhere. From the compiler's inlining report, each audited function is
+// followed into every function it was inlined into, and on through those
+// that were inlined in turn, to the functions the build emits; each of
+// those must be audited. Prints every exception and returns their number.
+uncovered = (
+    a       : Alloc,
+    asm     : str,
+    remarks : str,
+    marked  : Vec<Marked>,
+    cc      : str,
+    level   : str
+) Res<usize, AllocError> {
+    callers = inlinings(a, remarks).try();
+    emitted = emitted_functions(a, asm).try();
+    audited ::= a.Vec<str>();
+    marked.loop((m) { audited.add(m.symbol).try(); });
+    count ::= 0;
+    marked.loop((m) {
+        seen ::= a.Vec<str>();
+        work ::= a.Vec<str>();
+        work.add(m.symbol).try();
+        i ::= 0;
+        loop(() { i < work.len }, (h) {
+            f = work.get(i).value_or("");
+            i = i + 1;
+            callers.get(f).when_ok((list) {
+                list.loop((c) {
+                    (!c.is_in(seen)).then(() {
+                        seen.add(c).try();
+                        (!c.is_in(audited)).then(() {
+                            c.is_in(emitted).match({
+                                true  => {
+                                    println(
+                                        "FAIL {} {} {}: inlined into {}, which is not audited",
+                                        cc,
+                                        level,
+                                        short_name(m.symbol),
+                                        short_name(c)
+                                    );
+                                    count = count + 1;
+                                },
+                                false => work.add(c).try(),
+                            });
+                        });
+                    });
+                });
+            });
+        });
+    });
+    Ok(count)
+}
+
+// The functions an assembly file defines, without the Mach-O underscore
+// and GCC clone suffixes.
+emitted_functions = (a: Alloc, asm: str) Res<Vec<str>, AllocError> {
+    out ::= a.Vec<str>();
+    asm.lines().loop((line) {
+        global_label(line).when_ok((name) {
+            f = plain_symbol(name);
+            (!f.is_in(out)).then(() { out.add(f).try(); });
+        });
+    });
+    Ok(out)
+}
+
+plain_symbol = (name: str) str {
+    bare = (name.starts_with("_zu_") || name.starts_with("_zg_")).match({ true => name.slice(1, name.len), false => name });
+    bare.split_once('.').match({ Ok(p) => p.before, None => bare })
+}
+
+// Which functions each function was inlined into, from Clang's
+// -Rpass=inline remarks (`'callee' inlined into 'caller'`) or GCC's
+// -fopt-info-inline-optimized report (`Inlined callee/N into caller/M`).
+inlinings = (a: Alloc, text: str) Res<Map<str, Vec<str>>, AllocError> {
+    out ::= a.Map<str, Vec<str>>();
+    text.lines().loop((line) {
+        pair = line.split_once("' inlined into '").match({
+            Ok(p) => p.before.split_once("remark: '").match({
+                Ok(q) => p.after.split_once('\'').match({
+                    Ok(r) => Ok(Inlined(callee: q.after, caller: r.before)),
+                    None  => None,
+                }),
+                None  => None,
+            }),
+            None  => line.split_once(" Inlined ").match({
+                Ok(p) => p.after.split_once(" into ").match({
+                    Ok(q) => Ok(Inlined(
+                        callee: q.before.split_once('/').match({ Ok(r) => r.before, None => q.before }),
+                        caller: q.after.split_once('/').match({ Ok(r) => r.before, None => q.after.split_once(' ').match({ Ok(s) => s.before, None => q.after }) })
+                    )),
+                    None  => None,
+                }),
+                None  => None,
+            }),
+        });
+        pair.when_ok((e) {
+            callee = plain_symbol(e.callee);
+            caller = plain_symbol(e.caller);
+            list ::= out.get(callee).value_or(a.Vec<str>());
+            (!caller.is_in(list)).then(() { list.add(caller).try(); });
+            out.set(callee, list).try();
+        });
+    });
+    Ok(out)
+}
+
+Inlined = { callee: str, caller: str }

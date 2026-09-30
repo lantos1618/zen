@@ -1,0 +1,4 @@
+# The inlined audit's negative control (see main.zen).
+main  control_select   dst src move
+main  control_is_zero  a
+main  select_control   *out a az b bz

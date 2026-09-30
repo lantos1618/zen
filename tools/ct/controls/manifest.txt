@@ -23,3 +23,4 @@ main  leaky_offset_read  *key
 # peek_first reads its lent buffer as public; its table holds secrets.
 main  peek_first         *table
 main  leaky_lend         *key
+main  leaky_delay        key

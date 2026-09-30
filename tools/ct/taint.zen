@@ -763,12 +763,20 @@ analyze* = (
         an.grew = false;
         an.pass(seed).try();
         rounds = rounds + 1;
-        (!an.grew || rounds > 64).then(() { h.break(); });
+        (!an.grew || rounds >= MAX_ROUNDS).then(() { h.break(); });
     });
     an.reporting = true;
+    // Taint still growing: the final pass would report from states that
+    // miss some of it.
+    an.grew.then(() {
+        an.report("unconverged", an.alloc.String("taint still growing after {} passes", rounds).try().view()).try();
+    });
     an.pass(seed).try();
     Ok(an.findings)
 }
+
+// Passes over a function before the analysis gives up on a fixed point.
+MAX_ROUNDS: usize = 1000
 
 entry_state = (a: Alloc, seed: Seed) Res<State, AllocError> {
     s ::= dead_state(a);
@@ -1328,9 +1336,10 @@ argument_reads* = (
             an.grew = false;
             an.pass(seed).try();
             rounds = rounds + 1;
-            (an.observed || !an.grew || rounds > 64).then(() { h.break(); });
+            (an.observed || !an.grew || rounds >= MAX_ROUNDS).then(() { h.break(); });
         });
-        an.observed.then(() { read.add(r).try(); });
+        // Unsettled, the register may yet be read.
+        (an.observed || an.grew).then(() { read.add(r).try(); });
     });
     Ok(read)
 }

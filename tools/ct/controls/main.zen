@@ -244,6 +244,50 @@ leaky_lend* = (key: Ptr<u8>, table: Ptr<u8>) u8 {
     peek_first(buf, table)
 }
 
+// A delay line: the key enters d0 and moves one variable per iteration,
+// so its taint reaches d79 only after as many passes of the analysis
+// (more than the old cap of 64). d79 then chooses an address.
+leaky_delay* = (key: u64, n: usize, table: Ptr<u8>) u8 {
+    d0: u64 ::= 0; d1: u64 ::= 1; d2: u64 ::= 2; d3: u64 ::= 3;
+    d4: u64 ::= 4; d5: u64 ::= 5; d6: u64 ::= 6; d7: u64 ::= 7;
+    d8: u64 ::= 8; d9: u64 ::= 9; d10: u64 ::= 10; d11: u64 ::= 11;
+    d12: u64 ::= 12; d13: u64 ::= 13; d14: u64 ::= 14; d15: u64 ::= 15;
+    d16: u64 ::= 16; d17: u64 ::= 17; d18: u64 ::= 18; d19: u64 ::= 19;
+    d20: u64 ::= 20; d21: u64 ::= 21; d22: u64 ::= 22; d23: u64 ::= 23;
+    d24: u64 ::= 24; d25: u64 ::= 25; d26: u64 ::= 26; d27: u64 ::= 27;
+    d28: u64 ::= 28; d29: u64 ::= 29; d30: u64 ::= 30; d31: u64 ::= 31;
+    d32: u64 ::= 32; d33: u64 ::= 33; d34: u64 ::= 34; d35: u64 ::= 35;
+    d36: u64 ::= 36; d37: u64 ::= 37; d38: u64 ::= 38; d39: u64 ::= 39;
+    d40: u64 ::= 40; d41: u64 ::= 41; d42: u64 ::= 42; d43: u64 ::= 43;
+    d44: u64 ::= 44; d45: u64 ::= 45; d46: u64 ::= 46; d47: u64 ::= 47;
+    d48: u64 ::= 48; d49: u64 ::= 49; d50: u64 ::= 50; d51: u64 ::= 51;
+    d52: u64 ::= 52; d53: u64 ::= 53; d54: u64 ::= 54; d55: u64 ::= 55;
+    d56: u64 ::= 56; d57: u64 ::= 57; d58: u64 ::= 58; d59: u64 ::= 59;
+    d60: u64 ::= 60; d61: u64 ::= 61; d62: u64 ::= 62; d63: u64 ::= 63;
+    d64: u64 ::= 64; d65: u64 ::= 65; d66: u64 ::= 66; d67: u64 ::= 67;
+    d68: u64 ::= 68; d69: u64 ::= 69; d70: u64 ::= 70; d71: u64 ::= 71;
+    d72: u64 ::= 72; d73: u64 ::= 73; d74: u64 ::= 74; d75: u64 ::= 75;
+    d76: u64 ::= 76; d77: u64 ::= 77; d78: u64 ::= 78; d79: u64 ::= 79;
+    Range(0, n).loop((i) {
+        d79 = d78; d78 = d77; d77 = d76; d76 = d75; d75 = d74; d74 = d73;
+        d73 = d72; d72 = d71; d71 = d70; d70 = d69; d69 = d68; d68 = d67;
+        d67 = d66; d66 = d65; d65 = d64; d64 = d63; d63 = d62; d62 = d61;
+        d61 = d60; d60 = d59; d59 = d58; d58 = d57; d57 = d56; d56 = d55;
+        d55 = d54; d54 = d53; d53 = d52; d52 = d51; d51 = d50; d50 = d49;
+        d49 = d48; d48 = d47; d47 = d46; d46 = d45; d45 = d44; d44 = d43;
+        d43 = d42; d42 = d41; d41 = d40; d40 = d39; d39 = d38; d38 = d37;
+        d37 = d36; d36 = d35; d35 = d34; d34 = d33; d33 = d32; d32 = d31;
+        d31 = d30; d30 = d29; d29 = d28; d28 = d27; d27 = d26; d26 = d25;
+        d25 = d24; d24 = d23; d23 = d22; d22 = d21; d21 = d20; d20 = d19;
+        d19 = d18; d18 = d17; d17 = d16; d16 = d15; d15 = d14; d14 = d13;
+        d13 = d12; d12 = d11; d11 = d10; d10 = d9; d9 = d8; d8 = d7;
+        d7 = d6; d6 = d5; d5 = d4; d4 = d3; d3 = d2; d2 = d1;
+        d1 = d0;
+        d0 = key;
+    });
+    table.read(d79.truncate_u8().to_usize())
+}
+
 main = (env: Env) Res<(), AllocError> {
     a     = env.mem.alloc();
     bytes = a.raw(256, 16).try();
@@ -292,6 +336,7 @@ main = (env: Env) Res<(), AllocError> {
     println("{}", leaky_jump_table(2, 77, bytes, words));
     println("{}", leaky_offset_read(bytes, bytes, 4));
     println("{}", leaky_lend(bytes, bytes));
+    println("{}", leaky_delay(3, 90, bytes));
     chained = carry_chain(x, y, x);
     adx().match({
         Ok(fast) => bmi2().match({

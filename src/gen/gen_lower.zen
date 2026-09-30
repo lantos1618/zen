@@ -20,6 +20,21 @@ unsupported* = (span: Span, what: str) LowerError {
     LowerError.Unsupported(Fault(span: span, what: what))
 }
 
+// The bit operators have no IR lowering yet; each is refused by name rather
+// than lowered as some other operation.
+bit_operator* = (op: BinOp) str {
+    op.match({
+        BitAnd     => "the `&` operator",
+        BitOr      => "the `|` operator",
+        BitXor     => "the `^` operator",
+        ShiftLeft  => "the `<<` operator",
+        ShiftRight => "the `>>` operator",
+        _          => "this operator",
+    })
+}
+
+BIT_NOT*: str = "the `~` operator"
+
 Value = { slot: usize, ty: Scalar }
 Local = { name: str, value: Value }
 
@@ -384,7 +399,7 @@ Lowering = {
             value     = self.expr(operand).try();
             operation = op.match({ Neg => Ok(UnaryOp.Neg), Not => Ok(UnaryOp.Not), _ => None })
                 .ok_or(unsupported(span, op.match({
-                    BitNot => "bitwise not on unsigned integers",
+                    BitNot => BIT_NOT,
                     _      => "address-of",
                 }))).try();
             out       = self.slot(value.ty).try();
@@ -418,7 +433,7 @@ Lowering = {
                     Greater  => Ok(Op.Greater),
                     GreaterEq => Ok(Op.GreaterEqual), _ => None,
                 }).ok_or(unsupported(span, op.is_bitwise().match({
-                    true  => "bitwise operators on unsigned integers",
+                    true  => bit_operator(op),
                     false => "wrapping arithmetic",
                 }))).try();
                 left      = self.expr(lhs).try();

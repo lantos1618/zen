@@ -68,9 +68,21 @@ is_bitwise* = (op: BinOp) bool {
     })
 }
 
-// A shift's count is `usize`, not its word's type.
+// A shift's count is any unsigned type, not necessarily its word's.
 is_shift* = (op: BinOp) bool {
     op.match({ ShiftLeft => true, ShiftRight => true, _ => false })
+}
+
+// The `std.core.num` operation a bit operator spells; empty for the others.
+bit_name* = (op: BinOp) str {
+    op.match({
+        BitAnd     => "bit_and",
+        BitOr      => "bit_or",
+        BitXor     => "bit_xor",
+        ShiftLeft  => "shift_left",
+        ShiftRight => "shift_right",
+        _          => "",
+    })
 }
 
 // Unary `!`, `-`, address-of `&`, and bitwise not `~`.

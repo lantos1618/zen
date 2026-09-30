@@ -1907,7 +1907,11 @@ the word are discarded, `>>` fills with zero, and a count greater than or
 equal to the width yields zero, including `usize.MAX`. No backend may expose
 the underlying machine's shift behaviour: the C backend guards every count and
 converts narrow results back to their type, and constant folding computes the
-same values at the node's width.
+same values at the node's width. The JavaScript and assembly backends do not
+lower the operators yet: each is refused by name (``unsupported by this
+backend: the `&` operator``), never lowered as some other operation. A secret
+shift count is refused at `<<` and `>>` as at `shift_left` and `shift_right`
+(see "Secret values").
 
 **A bitwise operator never relies on precedence.** Beside any different binary
 operator — comparison, arithmetic, logical, or another bitwise operator — the

@@ -226,10 +226,10 @@ message* = (fault: SemaFault) str {
         BoundNotSatisfied(_)         => "bound not satisfied: this type has no impl of the bound, so it has none of the fields the bound promises",
         EqNeedsImpl(_)               => "`==` needs an `Eq`: equality dispatches to the impl, so write one or compare the parts",
         InvalidOperator(_)           => "operator is not defined for these operands: arithmetic and ordering require numbers; remainder and wrapping require integers",
-        BitwiseOperand(_)            => "bitwise operators take unsigned integers: u8, u16, u32, u64 or usize",
+        BitwiseOperand(_)            => "bitwise operators take unsigned integers: u8, u16, u32, u64, u128 or usize",
         BitwiseWidths(_)             => "bitwise operands must have the same unsigned type: there is no implicit widening",
         BitwiseUntyped(_)            => "a bitwise operator over literals needs an expected unsigned type: nothing here chooses its width, so write the type, such as `mask: u32 = 1 << 4`",
-        ShiftCount(_)                => "a shift count is an unsigned integer: u8, u16, u32, u64 or usize",
+        ShiftCount(_)                => "a shift count is an unsigned integer: u8, u16, u32, u64, u128 or usize",
         ComputedFieldAssign(_)       => "cannot assign to a computed field: an impl-supplied field has no storage, so there is nothing to assign into",
         ComputedFieldAddress(_)      => "cannot take the address of a computed field: there is no storage, so no address exists",
         TryOutsideRes(_)             => "`.try()` in a function that does not return Res: try unwraps Ok or returns the failure from the enclosing function, so there must be somewhere to return it to",
@@ -665,7 +665,12 @@ write_bit_operand = (out :: String, types: Types, f: TypeFault)
     name.eq("bool").match({
         true  => out.add(": use `&&`, `||` or `!=` for bool"),
         false => name.is_in(["i8", "i16", "i32", "i64"]).match({
-            true  => out.add(": convert it to an unsigned type first"),
+            true  => f.name.eq(">>").match({
+                true  => out.add(
+                    ": convert it to an unsigned type first, or call `shift_right` for the arithmetic shift"
+                ),
+                false => out.add(": convert it to an unsigned type first"),
+            }),
             false => Ok(()),
         }),
     }).try();

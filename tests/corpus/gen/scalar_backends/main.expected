@@ -17,6 +17,10 @@ asm bool entry true
 js constant time refused true
 js split refused true
 js bitwise refused true
+js shift refused true
+js complement refused true
 asm constant time refused true
 asm split refused true
 asm bitwise refused true
+asm shift refused true
+asm complement refused true

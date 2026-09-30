@@ -30,7 +30,7 @@ Scalar, Layout, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print = gen
 Branch, Instruction, Func, Program, BasicBlock, Terminator = gen.gen_ir
 Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault = gen.gen_ir
 word, integer, same = gen.gen_ir
-LowerError, unsupported = gen.gen_lower
+LowerError, unsupported, bit_operator, BIT_NOT = gen.gen_lower
 Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of = gen.gen_lower_shape
 to_bound, resolve = gen.gen_lower_member
 walk, WalkVisitor, WalkEvent, WalkNode = std.ast.ast_walk
@@ -846,6 +846,10 @@ Lowerer* = {
 
     unary = (self :: @Self, id: ExprId, op: UnOp, operand: ExprId, span: Span)
             Res<Value, LowerError> {
+        op.match({
+            BitNot => Err(unsupported(span, BIT_NOT)),
+            _      => Ok(()),
+        }).try();
         ty = self.type_of(id).try();
         // The minimum signed literal has no positive intermediate.
         // A negated literal is a constant, including the minimum whose
@@ -884,6 +888,10 @@ Lowerer* = {
             And => self.logical(true, lhs, rhs),
             Or  => self.logical(false, lhs, rhs),
             _   => {
+                op.is_bitwise().match({
+                    true  => Err(unsupported(span, bit_operator(op))),
+                    false => Ok(()),
+                }).try();
                 checked = self.type_of(id).try();
                 compare = op.match({
                     Equal => true, NotEqual => true, Less => true, LessEq => true,

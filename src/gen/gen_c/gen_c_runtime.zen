@@ -666,12 +666,6 @@ emit_family = (be: CBackend, out :: Emit, prim: str) Res<(), AllocError> {
     be.has_helper(prim, "wadd").then(() { wrapping(out, ct, uct, prim, "wadd", "+").try(); });
     be.has_helper(prim, "wsub").then(() { wrapping(out, ct, uct, prim, "wsub", "-").try(); });
     be.has_helper(prim, "wmul").then(() { wrapping(out, ct, uct, prim, "wmul", "*").try(); });
-    be.has_helper(prim, "and").then(() { bitwise(out, ct, prim, "and", "&").try(); });
-    be.has_helper(prim, "or").then(() { bitwise(out, ct, prim, "or", "|").try(); });
-    be.has_helper(prim, "xor").then(() { bitwise(out, ct, prim, "xor", "^").try(); });
-    be.has_helper(prim, "shl").then(() { shift(out, ct, prim, "shl").try(); });
-    be.has_helper(prim, "shr").then(() { shift(out, ct, prim, "shr").try(); });
-    be.has_helper(prim, "not").then(() { complement(out, ct, prim).try(); });
     Ok(());
 }
 
@@ -909,67 +903,6 @@ wrapping = (out :: Emit, ct: str, uct: str, prim: str, op: str, sym: str)
            Res<(), AllocError> {
     open_helper(out, ct, prim, op, false).try();
     wrapped_return(out, ct, uct, sym).try();
-    close_helper(out).try();
-    Ok(());
-}
-
-// Narrow operands promote to `int` in C, so every bit helper converts its
-// result back to the word type.
-bitwise = (out :: Emit, ct: str, prim: str, op: str, sym: str)
-          Res<(), AllocError> {
-    open_helper(out, ct, prim, op, false).try();
-    out.bytes("return (").try();
-    out.bytes(ct).try();
-    out.bytes(")(a ").try();
-    out.bytes(sym).try();
-    out.say(" b);").try();
-    close_helper(out).try();
-    Ok(());
-}
-
-// Logical shifts discard the bits moved out, and a count at or above the
-// width yields zero rather than C's undefined shift. The count arrives as a
-// `uintmax_t`, which holds every unsigned count type. Shifting a `uintmax_t`
-// keeps a narrow word from promoting to signed `int`; a left shift clears the
-// bits it would move out first, so no sanitizer sees a lossy shift.
-shift = (out :: Emit, ct: str, prim: str, op: str) Res<(), AllocError> {
-    out.bytes("static ").try();
-    out.bytes(ct).try();
-    out.bytes(" zg_").try();
-    out.bytes(op).try();
-    out.bytes("_").try();
-    out.bytes(prim).try();
-    out.bytes("(").try();
-    out.bytes(ct).try();
-    out.say(" a, uintmax_t b) {").try();
-    out.indent();
-    out.bytes("if (b >= sizeof(").try();
-    out.bytes(ct).try();
-    out.bytes(") * 8u) return (").try();
-    out.bytes(ct).try();
-    out.say(")0;").try();
-    out.bytes("return (").try();
-    out.bytes(ct).try();
-    op.eq("shl").match({
-        true  => out.say(")(((uintmax_t)a & (UINTMAX_MAX >> b)) << b);"),
-        false => out.say(")((uintmax_t)a >> b);"),
-    }).try();
-    close_helper(out).try();
-    Ok(());
-}
-
-complement = (out :: Emit, ct: str, prim: str) Res<(), AllocError> {
-    out.bytes("static ").try();
-    out.bytes(ct).try();
-    out.bytes(" zg_not_").try();
-    out.bytes(prim).try();
-    out.bytes("(").try();
-    out.bytes(ct).try();
-    out.say(" a) {").try();
-    out.indent();
-    out.bytes("return (").try();
-    out.bytes(ct).try();
-    out.say(")~a;").try();
     close_helper(out).try();
     Ok(());
 }

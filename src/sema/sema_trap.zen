@@ -335,7 +335,7 @@ defer_width* = (c :: Checker, id: ExprId) Res<(), AllocError> {
 }
 
 unsigned_word* = (c: Checker, ty: TyId) bool {
-    c.prim_name(ty).is_in(["u8", "u16", "u32", "u64", "usize"])
+    c.prim_name(ty).is_in(["u8", "u16", "u32", "u64", "u128", "usize"])
 }
 
 settle_widths = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {

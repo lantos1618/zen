@@ -15,9 +15,10 @@ type_of = sema.sema_type
 CBackend = gen.gen_c.gen_c_state
 unsupported = gen.gen_c.gen_c_report
 sub = gen.gen_c.gen_c_mono
-is_c_integer = gen.gen_c.gen_c_type
+is_c_integer, c_prim = gen.gen_c.gen_c_type
 lower_eq_call = gen.gen_c.gen_c_member
-init_temp = gen.gen_c.gen_c_flow
+init_temp, temp = gen.gen_c.gen_c_flow
+write_bits = gen.gen_c.gen_c_num
 expr, ty_of, spills_anywhere, unparen = gen.gen_c.gen_c_expr
 infix_operand_held, value_held = gen.gen_c.gen_c_expr
 needs_set = gen.gen_c.gen_c_widen
@@ -42,8 +43,8 @@ lower_unary* = (
     })
 }
 
-// `~` goes through a helper that converts back to the operand's type: C
-// promotes a narrow operand to `int` before complementing it.
+// `~` flips every bit of an unsigned word, as `bit_xor` with the all-ones
+// word does. The cast undoes C's promotion of u8 and u16 to `int`.
 lower_bit_not = (
     be   :: CBackend,
     u    : Unary,
@@ -53,10 +54,8 @@ lower_bit_not = (
 ) Res<(), AllocError> {
     operand = be.ty_of(u.operand, ctx, want).try();
     // A literal operand complements at the expected width.
-    ty   = be.usable(operand).match({ true => operand, false => want });
-    prim = be.check.prim_name(ty);
-    be.need_helpers(prim, "not").try();
-    out.fmt("zg_not_{prim}(").try();
+    ty = be.usable(operand).match({ true => operand, false => want });
+    out.fmt("(({})~", c_prim(be.check.prim_name(ty))).try();
     expr(be, u.operand, ctx, ty, out).try();
     out.add(")")
 }
@@ -178,6 +177,7 @@ lower_binary* = (
         ShortCircuit => be.write_short_circuit(b, operand, ctx, out),
         Infix        => be.write_infix(b, c_op(b.op), ctx, operand, out),
         Helper(prim) => be.call_helper(node, b, prim, ctx, operand, out),
+        Bits         => be.lower_bit_operator(b, ctx, operand, out),
         Dispatched   => be.lower_eq_op(b, ctx, operand, out),
         Refused      => be.unsupported(
             b.lhs,
@@ -224,7 +224,7 @@ is_comparison* = (op: BinOp) bool {
 
 // The lowering forms for binary operators. `op_kind` tests them in language
 // precedence order.
-OpKind = ShortCircuit | Infix | Helper(str) | Dispatched | Refused
+OpKind = ShortCircuit | Infix | Helper(str) | Bits | Dispatched | Refused
 
 // Short-circuit operators use an explicit branch whenever either operand must
 // be held or the right subtree emits statements. `spills_anywhere` is required:
@@ -234,6 +234,7 @@ OpKind = ShortCircuit | Infix | Helper(str) | Dispatched | Refused
 // operation is refused.
 op_kind = (be: CBackend, b: Binary, operand: TyId) OpKind {
     found: Res<OpKind> = loop<OpKind>((h) {
+        b.op.is_bitwise().then(() { h.break(OpKind.Bits) });
         (is_logical(b.op)
             && (be.spills_anywhere(b.rhs) || be.infix_operand_held(b)))
             .then(() { h.break(OpKind.ShortCircuit) });
@@ -449,16 +450,12 @@ c_op* = (op: BinOp) str {
 }
 
 // The helper an operator goes through. `+ - *` trap, `/ %` trap on a
-// zero divisor and on `MIN / -1`, and the wrapping forms do neither. Bit
-// operations never trap; their helpers convert back to the word type and
-// shifts guard counts at or above the width.
+// zero divisor and on `MIN / -1`, and the wrapping forms do neither.
 helper_stem* = (op: BinOp) str {
     op.match({
         Add => "add", Sub => "sub", Mul => "mul",
         Div => "div", Rem => "mod",
         AddWrap => "wadd", SubWrap => "wsub", MulWrap => "wmul",
-        BitAnd => "and", BitOr => "or", BitXor => "xor",
-        ShiftLeft => "shl", ShiftRight => "shr",
         _ => "",
     })
 }
@@ -466,7 +463,7 @@ helper_stem* = (op: BinOp) str {
 traps* = (op: BinOp) bool {
     op.match({
         AddWrap => false, SubWrap => false, MulWrap => false,
-        _ => !op.is_bitwise(),
+        _ => true,
     })
 }
 
@@ -499,7 +496,7 @@ close_helper = (
     out     :: String
 ) Res<(), AllocError> {
     out.add(", ").try();
-    expr(be, b.rhs, ctx, be.rhs_want(b, ctx, operand).try(), out).try();
+    expr(be, b.rhs, ctx, operand, out).try();
     // `.match` and not `.then`: a `.then` closure capturing more than
     // one of its enclosing parameters is inlined with the receiver
     // substituted into the wrong argument slot, which `cc` catches.
@@ -511,16 +508,48 @@ close_helper = (
     Ok(());
 }
 
-// A shift's count keeps its own unsigned type whatever word it moves; a
-// literal count is a `usize`.
-rhs_want = (be :: CBackend, b: Binary, ctx: Ctx, operand: TyId)
-           Res<TyId, AllocError> {
-    b.op.is_shift().match({
+// A bit operator is the named bit operation of `std.core.num` spelled as
+// syntax, and lowers as that call does: `a & b` as `a.bit_and(b)`.
+lower_bit_operator = (
+    be      :: CBackend,
+    b       : Binary,
+    ctx     : Ctx,
+    operand : TyId,
+    out     :: String
+) Res<(), AllocError> {
+    count = b.op.is_shift().match({
         true  => be.count_type(b, ctx),
         false => Ok(operand),
-    })
+    }).try();
+    be.lower_bits(b.lhs, b.rhs, b.op.bit_name(), operand, count, ctx, out)
 }
 
+// One named bit operation on `word`, its operands held in source order so
+// each is evaluated once. `count` is the right operand's type: the word
+// itself for `bit_*`, any unsigned type for a shift or rotation count.
+lower_bits* = (
+    be    :: CBackend,
+    left  : ExprId,
+    right : ExprId,
+    name  : str,
+    word  : TyId,
+    count : TyId,
+    ctx   : Ctx,
+    out   :: String
+) Res<(), AllocError> {
+    lc ::= be.alloc.String().try();
+    expr(be, left, ctx, word, lc).try();
+    lv = be.temp(word, "bits").try();
+    be.set_line(lv.view(), lc.view()).try();
+    rc ::= be.alloc.String().try();
+    expr(be, right, ctx, count, rc).try();
+    rv = be.temp(count, "bits").try();
+    be.set_line(rv.view(), rc.view()).try();
+    write_bits(name, be.check.prim_name(word), lv.view(), rv.view(), out)
+}
+
+// A shift's count keeps its own unsigned type whatever word it moves; a
+// literal count is a `usize`.
 count_type = (be :: CBackend, b: Binary, ctx: Ctx) Res<TyId, AllocError> {
     count = sub(be, be.check.type_of(b.rhs, ctx).try()).try();
     be.usable(count).match({

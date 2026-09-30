@@ -1,0 +1,144 @@
+// What a renderer can render, declared rather than discovered. There is one
+// IR and one verifier (gen_verify); a renderer that implements only part of
+// the IR says so through a `supports` function over this closed list, and the
+// driver refuses a program that uses anything else before any artifact is
+// published. docs/IR_ARCHITECTURE.md §2.3 is the design.
+str = std.text
+Program, Func, Scalar, Instruction, Terminator, Op = gen.gen_ir
+
+IrFeature* = WideInt
+    | Memory
+    | Aggregates
+    | Conversion
+    | Wrapping
+    | Bits
+    | ErrorStream
+    | Sys
+    | Traps
+
+describe* = (feature: IrFeature) str {
+    feature.match({
+        WideInt     => "integers other than i32",
+        Memory      => "pointers and memory access",
+        Aggregates  => "records, unions and arrays held in memory",
+        Conversion  => "integer conversions",
+        Wrapping    => "wrapping arithmetic",
+        Bits        => "bit operations",
+        ErrorStream => "writing to standard error",
+        Sys         => "operating-system calls and process start values",
+        Traps       => "trapping control flow",
+    })
+}
+
+// Where a program first uses a feature a renderer lacks.
+Refusal* = { function*: str, feature*: IrFeature }
+
+// The first construct of `program` that `supports` refuses, in function and
+// block order, or None when the renderer can render all of it.
+refused* = (
+    program  : Program,
+    supports : (feature: IrFeature) bool
+) Res<Refusal> {
+    found: Res<Refusal> ::= None;
+    program.functions.loop((fh, function) {
+        need = first_need(function, (feature) { supports(feature) });
+        need.when_ok((feature) {
+            found = Ok(Refusal(function: function.name, feature: feature));
+            fh.break();
+        });
+    });
+    found
+}
+
+first_need = (
+    function : Func,
+    supports : (feature: IrFeature) bool
+) Res<IrFeature> {
+    found: Res<IrFeature> ::= refusing(
+        class_need(function.result),
+        (feature) { supports(feature) }
+    );
+    function.slots.loop((sh, ty) {
+        found.match({ Ok(_) => sh.break(), None => () });
+        found = refusing(class_need(ty), (feature) { supports(feature) });
+    });
+    function.blocks.loop((bh, block) {
+        block.code.loop((ih, instruction) {
+            found.match({ Ok(_) => ih.break(), None => () });
+            found = refusing(
+                instruction_need(instruction),
+                (feature) { supports(feature) }
+            );
+        });
+        found.match({
+            Ok(_) => bh.break(),
+            None  => block.exit.match({
+                Trap(_) => { found = refusing(
+                    Ok(IrFeature.Traps),
+                    (feature) { supports(feature) }
+                ); },
+                _       => (),
+            }),
+        });
+    });
+    found
+}
+
+// A needed feature the renderer refuses; None when nothing is needed or
+// the renderer has it.
+refusing = (
+    need     : Res<IrFeature>,
+    supports : (feature: IrFeature) bool
+) Res<IrFeature> {
+    need.match({
+        None        => None,
+        Ok(feature) => supports(feature).match({ true => None, false => Ok(feature) }),
+    })
+}
+
+class_need = (ty: Scalar) Res<IrFeature> {
+    ty.match({
+        I32      => None,
+        Bool     => None,
+        Unit     => None,
+        Ptr      => Ok(IrFeature.Memory),
+        Block(_) => Ok(IrFeature.Aggregates),
+        _        => Ok(IrFeature.WideInt),
+    })
+}
+
+instruction_need = (instruction: Instruction) Res<IrFeature> {
+    instruction.match({
+        Constant(_)        => None,
+        Copy(_)            => None,
+        UnaryValue(_)      => None,
+        BinaryValue(value) => op_need(value.op),
+        Invoke(_)          => None,
+        PrintValue(value)  => value.stream.match({ Out => None, Err => Ok(
+            IrFeature.ErrorStream
+        ) }),
+        Text(_)            => None,
+        Cast(_)            => Ok(IrFeature.Conversion),
+        WriteOut(value)    => value.stream.match({ Out => Ok(IrFeature.Memory), Err => Ok(IrFeature.ErrorStream) }),
+        System(_)          => Ok(IrFeature.Sys),
+        Startup(_)         => Ok(IrFeature.Sys),
+        SysConst(_)        => Ok(IrFeature.Sys),
+        Flush              => Ok(IrFeature.Sys),
+        _                  => Ok(IrFeature.Memory),
+    })
+}
+
+op_need = (op: Op) Res<IrFeature> {
+    op.match({
+        WrapAdd => Ok(IrFeature.Wrapping),
+        WrapSub => Ok(IrFeature.Wrapping),
+        WrapMul => Ok(IrFeature.Wrapping),
+        And     => Ok(IrFeature.Bits),
+        Or      => Ok(IrFeature.Bits),
+        Xor     => Ok(IrFeature.Bits),
+        Shl     => Ok(IrFeature.Bits),
+        Shr     => Ok(IrFeature.Bits),
+        Rotr    => Ok(IrFeature.Bits),
+        _       => None,
+    })
+}

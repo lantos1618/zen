@@ -1,7 +1,5 @@
-// The full lowering: checked Zen to the native IR surface (see gen_verify)
-// consumed by the machine targets. It is target-independent; renderers
-// (`gen_asm_x86`, `gen_asm_arm64`) consume only its IR and a Target. The scalar `gen_lower` remains the
-// JavaScript and IR-C path until those renderers accept the wider IR.
+// The core of the one lowering (see gen_lower): checked Zen to gen_ir. It is
+// target-independent; every renderer consumes only its IR and a Target.
 //
 // Values live in typed slots: words in word slots, aggregates in `Block`
 // slots addressed through `AddressOf` with `Load`/`Store` at field offsets.
@@ -23,7 +21,7 @@ TParam, Arg = std.ast
 PatternId = std.ast
 nowhere = std.ast
 Checker, DeclId, Def, TyId, Ctx, Inst, decl_at = sema.sema
-subst, type_from_ast, is_prim = sema.sema
+subst, type_from_ast, is_prim, const_int, fits = sema.sema
 is_drop_type = sema.sema_drop
 Scalar, Layout, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print = gen.gen_ir
 Branch, Instruction, Func, Program, BasicBlock, Terminator = gen.gen_ir
@@ -592,7 +590,7 @@ Lowerer* = {
             Literal(l)    => self.literal(id, l, e.span),
             Unit          => self.unit(),
             Paren(p)      => self.expr(p.inner),
-            Block(b)      => self.block(b),
+            Block(b)      => self.block_want(b, self.narrowed(id).try()),
             Unary(u)      => self.unary(id, u.op, u.operand, u.op_span),
             Binary(b)     => self.binary(id, b.op, b.lhs, b.rhs, b.op_span),
             Match(m)      => self.match_expr(id, m, e.span),
@@ -679,9 +677,33 @@ Lowerer* = {
 
     // Evaluate, then settle integer literals of an unsettled type into `ty`.
     expr_as* = (self :: @Self, id: ExprId, ty: TyId) Res<Value, LowerError> {
-        self.expected = Ok(Expected(id: self.unwrapped(id), ty: ty));
-        value = self.expr(id).try();
-        self.coerce(value, ty)
+        self.folded(id, ty).try().match({
+            Ok(value) => Ok(value),
+            None      => {
+                self.expected = Ok(Expected(id: self.unwrapped(id), ty: ty));
+                value = self.expr(id).try();
+                self.coerce(value, ty)
+            },
+        })
+    }
+
+    // Unsettled integer arithmetic (`41`, `-2147483648`, `1 << 4`) that sema
+    // folds to a constant fitting the wanted integer type is that constant at
+    // that type: the C path's 64-bit literal arithmetic gives the same value,
+    // and no wide temporary or conversion is emitted.
+    folded = (self :: @Self, id: ExprId, want: TyId) Res<Res<Value>, LowerError> {
+        own  = self.type_of(id).try();
+        name = self.prim_name(want);
+        (own != want && self.prim_name(own).eq("int") && !name.eq("int")).match({
+            false => Ok(None),
+            true  => self.check.const_int(id).match({
+                None    => Ok(None),
+                Ok(bits) => fits(bits, name).value_or(false).match({
+                    true  => Ok(Ok(self.constant(want, bits).try())),
+                    false => Ok(None),
+                }),
+            }),
+        })
     }
 
     unwrapped = (self: @Self, id: ExprId) ExprId {
@@ -884,13 +906,24 @@ Lowerer* = {
                     Equal => true, NotEqual => true, Less => true, LessEq => true,
                     Greater => true, GreaterEq => true, _ => false,
                 });
-                raw_left  = self.expr(lhs).try();
-                raw_right = self.expr(rhs).try();
                 // The operands meet at the checked arithmetic type, else at
-                // whichever side is settled and not an open literal.
-                operand = (!compare && self.settled(checked)).match({
+                // whichever side is settled and not an open literal. When
+                // that is an integer type known before either side runs,
+                // both sides are lowered at it, so an open literal operand
+                // is a constant of that type rather than a widened one.
+                early = (!compare && self.settled(checked)).match({
                     true  => checked,
-                    false => self.meeting(raw_left.ty, raw_right.ty),
+                    false => self.meeting(self.type_of(lhs).try(), self.type_of(rhs).try()),
+                });
+                ahead = self.integer_type(early) && !self.prim_name(early).eq("int");
+                raw_left  = ahead.match({ true => self.expr_as(lhs, early), false => self.expr(lhs) }).try();
+                raw_right = ahead.match({ true => self.expr_as(rhs, early), false => self.expr(rhs) }).try();
+                operand = ahead.match({
+                    true  => early,
+                    false => (!compare && self.settled(checked)).match({
+                        true  => checked,
+                        false => self.meeting(raw_left.ty, raw_right.ty),
+                    }),
                 });
                 ty = compare.match({ true => checked, false => operand });
                 left  = self.coerce(raw_left, operand).try();
@@ -1046,12 +1079,38 @@ Lowerer* = {
     // -------------------------------------------------------------------
 
     block* = (self :: @Self, id: BlockId) Res<Value, LowerError> {
-        self.block_as(id, true)
+        self.block_as(id, true, None)
+    }
+
+    // A block expression whose value the context wants at `want`.
+    block_want = (self :: @Self, id: BlockId, want: TyId) Res<Value, LowerError> {
+        self.block_as(id, true, Ok(want))
+    }
+
+    // The integer type a context wants for an expression sema left at the
+    // open literal type `int` (a `match` or block whose results are
+    // literals), else the expression's own type. Lowering the results at
+    // the wanted type lets them fold to constants of that type.
+    narrowed = (self :: @Self, id: ExprId) Res<TyId, LowerError> {
+        own = self.type_of(id).try();
+        wanted = self.expected.match({
+            Ok(want) => (want.id == id && self.prim_name(own).eq("int")
+                && !self.prim_name(want.ty).eq("int") && self.integer_type(want.ty)).match({
+                true  => Ok(want.ty),
+                false => None,
+            }),
+            None     => None,
+        });
+        Ok(wanted.value_or(own))
+    }
+
+    integer_type = (self :: @Self, ty: TyId) bool {
+        self.settled(ty) && self.class_of(ty).match({ Ok(class) => integer(class), Err(_) => false })
     }
 
     // `used` is false for a block in statement position: nothing receives
     // its value, so a binding it would hand out is dropped at its brace.
-    block_as = (self :: @Self, id: BlockId, used: bool) Res<Value, LowerError> {
+    block_as = (self :: @Self, id: BlockId, used: bool, want: Res<TyId>) Res<Value, LowerError> {
         block = self.tree.block_at(id);
         mark  = self.locals.len;
         self.scopes.add(Cleanup(drops: self.drops.len, defers: self.defers.len)).try(LowerError.OutOfMemory);
@@ -1065,11 +1124,14 @@ Lowerer* = {
                     false => { self.expr(e.expr).try(); self.unit() },
                 }),
                 Bind(b)  => { self.bind(b, s.span).try(); self.unit() },
-                Block(b) => self.block_as(b, tail && used),
+                Block(b) => self.block_as(b, tail && used, None),
                 Decl(_)  => Err(unsupported(s.span, "nested declarations")),
             }).try();
         });
-        value = block.value.match({ Ok(e) => self.expr(e), None => Ok(last) }).try();
+        value = block.value.match({
+            Ok(e) => want.match({ Ok(t) => self.expr_as(e, t), None => self.expr(e) }),
+            None  => Ok(last),
+        }).try();
         // A binding the block hands out as its value is not dropped here.
         keep = used.match({ true => self.handed_out(id), false => "" });
         self.run_scope(self.scopes.len - 1, keep).try();
@@ -1527,7 +1589,7 @@ Lowerer* = {
     }
 
     match_expr = (self :: @Self, id: ExprId, m: Match, span: Span) Res<Value, LowerError> {
-        ty    = self.type_of(id).try();
+        ty    = self.narrowed(id).try();
         subject_ty = self.type_of(m.scrutinee).try();
         subject = self.expr_as(m.scrutinee, subject_ty).try();
         out   = self.temp(ty).try();
@@ -1990,7 +2052,12 @@ Lowerer* = {
         params.loop((h, i, p) {
             kinds.get(i).when_ok((k) { self.bind_local(p.name.text, k).try(); });
         });
-        value = self.block(body).try();
+        // An integer result lowers the body's value at that type, so an
+        // open literal result is a constant of it.
+        value = self.integer_type(ret_ty).match({
+            true  => self.block_want(body, ret_ty),
+            false => self.block(body),
+        }).try();
         here = self.here();
         coerced = self.coerce(value, ret_ty).try();
         self.add(Instruction.Copy(Move(out: here.ret_slot, source: coerced.slot))).try();
@@ -2073,9 +2140,7 @@ Lowerer* = {
                     Ok(t) => integer(self.class_of(t).try()).match({
                         true  => {
                             p = self.payload_of(value, ok).try();
-                            c = self.slot_of(Scalar.I32).try();
-                            self.add(Instruction.Cast(Convert(out: c, input: p.slot))).try();
-                            c
+                            self.status_word(p.slot).try()
                         },
                         false => self.word_const(Scalar.I32, 0).try(),
                     }),
@@ -2086,13 +2151,22 @@ Lowerer* = {
                 Ok(out)
             },
             _        => integer(s.class).match({
-                true  => {
-                    c = self.slot_of(Scalar.I32).try();
-                    self.add(Instruction.Cast(Convert(out: c, input: value.slot))).try();
-                    Ok(c)
-                },
+                true  => self.status_word(value.slot),
                 false => self.word_const(Scalar.I32, 0),
             }),
+        })
+    }
+
+    // An integer as the I32 status word; an I32 is already one, so a
+    // renderer without conversions can still run an `i32` main.
+    status_word = (self :: @Self, slot: usize) Res<usize, LowerError> {
+        same(self.slots.get(slot).value_or(Scalar.Unit), Scalar.I32).match({
+            true  => Ok(slot),
+            false => {
+                c = self.slot_of(Scalar.I32).try();
+                self.add(Instruction.Cast(Convert(out: c, input: slot))).try();
+                Ok(c)
+            },
         })
     }
 }
@@ -2147,7 +2221,7 @@ NameFinder.impl(WalkVisitor, {
     }
 })
 
-lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
+lower* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
                 Res<Program, LowerError> {
     module = tree.module_at(entry).ok_or(unsupported(nowhere(), "a missing entry module")).try();
     mains ::= alloc.Vec<DeclId>();

@@ -100,30 +100,29 @@ machine details stay inside each target; targets never fall back to C.
 ```text
 AST + checked sema facts
   → gen_lower_core / gen_lower_call / gen_lower_member / gen_lower_shape   (full lowering)
-  → gen_ir.Program (native surface)  → gen_verify.verify_native
+  → gen_ir.Program  → gen_verify.verify
   → gen_asm_x86.X86_64Linux | gen_asm_arm64.Arm64(Linux | Darwin)   (renderers)
   → as + ld (zen.zen_native)
 ```
 
-**The IR stays target-neutral.** `gen_ir` has two surfaces. The scalar surface
-(`I32 | Bool | Unit`, the original instructions) is what `gen_lower` produces
-for JavaScript and the IR-C pilot. The native surface adds integer widths
+**The IR stays target-neutral.** There is one IR: integer widths
 (`I8 … U64`), `Ptr`, `Block(Layout)` aggregates held in frame memory,
 `Convert`, `AddressOf`, `Load`/`Store` at byte offsets, `CopyBytes`,
 `StaticBytes`, stream output (`WriteOut`, `Print` with a stream), `System`
 (portable `Sys` operation), `SysConst` (portable constant name), `Startup`
-(argc/argv/envp), `MapPages`/`UnmapPages`, `Flush`, and a `Trap` terminator.
-Nothing in it names a register, an instruction or an ABI; checked arithmetic,
-wrapping arithmetic, shifts and rotates are operations on typed slots. A C,
-JavaScript or LLVM renderer can consume the same program: `verify_native`
-checks it, and `verify` keeps the scalar renderers on their subset.
+(argc/argv/envp), `MapPages`/`UnmapPages`, `Flush`, and a `Trap` terminator,
+beside the original scalar instructions. Nothing in it names a register, an
+instruction or an ABI; checked arithmetic, wrapping arithmetic, shifts and
+rotates are operations on typed slots. One verifier (`gen_verify.verify`)
+checks it; a renderer that implements only part of it (JavaScript and the IR C
+renderer today) declares that part through `supports` (`gen_ir_feature`).
 
 **Full lowering** (`src/gen/gen_lower_*`, target-independent; the arch gate in
 `tests/gates/arch_boundary.zen` classifies `gen.gen_lower*` as frontend, so
 renderers may not import it and it may not import a renderer). It is named
-for lowering, not for assembly: its output is the native IR surface, which any
-renderer that accepts that surface can consume. It stays separate from the
-scalar `gen_lower` and from the C IR pilot for now.
+for lowering, not for assembly: its output is the one IR, which every renderer
+consumes. `gen_lower` is its entry point (`lower`) and owns `LowerError`; the
+former scalar-only lowering is gone.
 
 * `gen_lower_shape` — machine layouts of checked types: words, `str` as
   `{data: Ptr<u8>, len: usize}`, records at natural alignment, tagged
@@ -292,9 +291,9 @@ benchmarked; it needs the same work.
    Linux, kqueue on macOS). Missing are threads (`clone` + futex on Linux,
    pthreads through libSystem on macOS), actors over them, and the `Env`
    operations that the corpus still refuses.
-5. **Backend unification** (per `IR_ARCHITECTURE.md`): merge the full
-   lowering with the scalar `gen_lower` and the C IR pilot so one lowering
-   feeds C, JavaScript and assembly. This is deliberately not done yet.
+5. **Backend unification** (per `IR_ARCHITECTURE.md`): done for the IR paths.
+   One lowering feeds JavaScript, the IR C renderer and assembly, and each
+   declares its support. The full C backend (`gen_c`) is still AST-driven.
 
 ### Stage 2: three targets, no libc
 

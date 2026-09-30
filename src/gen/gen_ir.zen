@@ -1,13 +1,12 @@
-// Executable IR shared by the JavaScript and assembly renderers.
+// The one executable IR: gen_lower produces it, gen_verify checks it, and
+// every renderer (C, JavaScript, assembly) consumes it with a Target.
 // The caller owns every vector and text buffer. Renderers consume a verified
 // program synchronously; retaining a view does not extend that allocation.
 //
-// Two surfaces share these types. The scalar surface (`I32`, `Bool`, `Unit`
-// slots and the first seven instructions) is what `gen_lower` produces for
-// every renderer. The native surface adds integer widths, pointers,
-// aggregates held in frame memory, memory access, system calls and traps;
-// `gen_lower_core` produces it and only the assembly targets render it.
-// `gen_verify.verify` admits the scalar surface; `verify_native` admits both.
+// It holds typed mutable slots in basic blocks: integer words of every
+// width, pointers, aggregates held in frame memory, memory access, system
+// calls and traps. A renderer that implements only part of it declares that
+// part through `supports` (gen_ir_feature); there is no second IR.
 Vec = std.collections
 str = std.text
 Span = std.ast

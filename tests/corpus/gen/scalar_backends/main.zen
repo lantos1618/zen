@@ -167,13 +167,14 @@ main = (env: Env) Res<(), AllocError> {
         "c literal paths {}",
         run(env, a, Codegen.C, "literal_c.zen", expected.view(), 0).try()
     );
-    // JavaScript keeps the scalar surface; the native surface runs these
-    // with the C backend's meaning (64-bit literal arithmetic, a bool main
-    // exits 0).
+    // Every backend renders the one lowering, which gives these the C
+    // backend's meaning (64-bit literal arithmetic, a bool main exits 0).
+    // JavaScript declares i32 as its only integer, so it refuses the wide
+    // programs before publishing anything.
     w = env.mem.alloc();
     println("js wide refused {}", refused(env, w, Codegen.Js, "wide.zen", Layout.Single).try());
     println("js literal width refused {}", refused(env, w, Codegen.Js, "literal_width.zen", Layout.Single).try());
-    println("js bool entry refused {}", refused(env, w, Codegen.Js, "bool_entry.zen", Layout.Single).try());
+    println("js bool entry {}", run(env, w, Codegen.Js, "bool_entry.zen", "", 0).try());
     println("asm wide {}", run(env, w, Codegen.Asm, "wide.zen", "12\n", 0).try());
     println("asm literal width {}", run(env, w, Codegen.Asm, "literal_width.zen", "2147483648\n", 0).try());
     println("asm bool entry {}", run(env, w, Codegen.Asm, "bool_entry.zen", "", 0).try());

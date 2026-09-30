@@ -12,17 +12,26 @@ Checker = sema.sema
 Codegen, Target = std.build
 String, str = std.text
 lower, LowerError = gen.gen_lower
-lower_native = gen.gen_lower_core
 Program = gen.gen_ir
-emit_js = gen.gen_js
+Refusal, refused, describe = gen.gen_ir_feature
+emit_js, supports = gen.gen_js
 X86_64Linux = gen.gen_asm_x86
 Arm64, Arm64Os = gen.gen_asm_arm64
-verify, verify_native, message = gen.gen_verify
+verify, message = gen.gen_verify
 
 Layout* = Single | Modules
 ArtifactKind* = Source | Symbols
 
 ScalarBackend = Js | Asm
+
+// The first construct of `program` this backend does not render. The
+// assembly renderers implement the whole IR.
+supported = (backend: ScalarBackend, program: Program) Res<Refusal> {
+    backend.match({
+        Js  => program.refused((feature) { supports(feature) }),
+        Asm => None,
+    })
+}
 
 // Names and bytes borrow the renderer's current buffer. Consumers must write
 // or copy them during the callback; retaining this record extends no lifetime.
@@ -118,22 +127,16 @@ Generation* = {
         })
     }
 
-    // JavaScript consumes the scalar surface; assembly the native surface.
+    // Every backend renders the one lowering.
     lowered = (self: @Self, backend: ScalarBackend) Res<Program, LowerError> {
-        backend.match({
-            Js  => lower(self.alloc, self.tree, self.check, self.entry),
-            Asm => lower_native(self.alloc, self.tree, self.check, self.entry),
-        })
+        lower(self.alloc, self.tree, self.check, self.entry)
     }
 
     render_scalar = (self: @Self, backend: ScalarBackend, program: Program,
                      report :: String,
                      publish: (artifact: Artifact) Res<usize, AllocError>)
                     Res<usize, AllocError> {
-        backend.match({
-            Js  => program.verify(self.alloc),
-            Asm => program.verify_native(self.alloc),
-        }).match({
+        program.verify(self.alloc).match({
             Err(error) => error.match({
                 OutOfMemory    => Err(AllocError.OutOfMemory),
                 Invalid(fault) => {
@@ -148,7 +151,25 @@ Generation* = {
                     Ok(1)
                 },
             }),
-            Ok(_)      => backend.match({
+            Ok(_)      => backend.supported(program).match({
+                Ok(refusal) => {
+                    report.fmt(
+                        "error: unsupported by this backend: {} (first in `{}`)\n",
+                        refusal.feature.describe(),
+                        refusal.function
+                    ).try();
+                    Ok(1)
+                },
+                None        => self.render(backend, program, report, (artifact) { publish(artifact) }),
+            }),
+        })
+    }
+
+    render = (self: @Self, backend: ScalarBackend, program: Program,
+              report :: String,
+              publish: (artifact: Artifact) Res<usize, AllocError>)
+             Res<usize, AllocError> {
+        backend.match({
                 Js  => publish(Artifact(
                     kind: ArtifactKind.Source,
                     name: "zen.js",
@@ -167,10 +188,8 @@ Generation* = {
                         text: text.view()
                     )),
                 }),
-            }),
         })
     }
-
 
     assembly = (self: @Self, program: Program)
                Res<Res<String>, AllocError> {

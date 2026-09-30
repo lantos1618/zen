@@ -1,11 +1,19 @@
-// C rendering of the shared scalar IR. The caller verifies the program before
-// rendering; this experimental path does not define Zen's foreign or aggregate ABI.
+// C rendering of the one IR, for the part `supports` declares: i32, bool and
+// unit values, checked i32 arithmetic, calls, standard output and traps. The
+// caller verifies the program and checks `supports` before rendering; this
+// experimental path does not define Zen's foreign or aggregate ABI.
 Alloc, AllocError = std.mem
 String, str = std.text
 Vec = std.collections
 Range = std.core
 Span = std.ast
 Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
+trap_message = gen.gen_ir
+IrFeature = gen.gen_ir_feature
+
+supports* = (feature: IrFeature) bool {
+    feature.match({ Traps => true, _ => false })
+}
 
 emit_c* = (a: Alloc, program: Program) Res<String, AllocError> {
     writer ::= C(
@@ -97,8 +105,11 @@ C = {
                 branch.yes,
                 branch.no
             ),
-            // Native-surface IR; `verify` refuses it before rendering.
-            Trap(_)        => self.out.add(OUTSIDE),
+            Trap(fault)    => {
+                self.out.add("  zg_ir_trap(").try();
+                self.position(fault.span).try();
+                self.out.fmt(", \"{}\");\n", trap_message(fault.what))
+            },
         })
     }
 
@@ -123,7 +134,7 @@ C = {
                 self.out.bytes(text).try();
                 self.out.fmt(", 1, {}, stdout);\n", text.len)
             },
-            // Native-surface IR; `verify` refuses it before rendering.
+            // Outside `supports`; the driver refuses it before rendering.
             _                  => self.out.add(OUTSIDE),
         })
     }

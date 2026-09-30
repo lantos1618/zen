@@ -597,7 +597,7 @@ and **A** are the backends.
 | # | Stage | Lane | Depends on | Parallel with |
 |---|---|---|---|---|
 | 0a | This branch: architecture gate, this doc | I | — | all |
-| 0b | Rename the asm branch's `gen_asm_lower/_call/_member/_shape` to `gen_lower_*`, and merge them with `gen_lower` into one lowering. Collapse `verify`/`verify_native` into one verifier plus backend `supports()` (§2.3). | L | asm branch merged | C1 |
+| 0b | Rename the asm branch's `gen_asm_lower/_call/_member/_shape` to `gen_lower_*`, and merge them with `gen_lower` into one lowering. Collapse `verify`/`verify_native` into one verifier plus backend `supports()` (§2.3). **Done** on `shared-lowering`: `gen_lower` is the entry point, `gen_ir_feature` holds `IrFeature` and the refusal check. | L | asm branch merged | C1 |
 | 1 | IR core: type table (named aggregates plus layout per Target, `Int(128)`, `Vector`), places and projections, `SpanId` table, `VerifiedProgram` token, **IR text printer and `--emit ir`**, verifier rules 1, 2, 6, 7. Split `gen_ir` into per-family files (`gen_ir_type`, `gen_ir_mem`, `gen_ir_ctl`, …) so later families do not collide. | I | 0b | C1 |
 | C1 | Per-function strangler in the C driver: try IR lowering, render with IR-C, fall back; plus the fallback counter. At first only scalar functions qualify. | C | 1 | J1, A1 |
 | 2 | Scalars at every width: wrapping, bit operations, `u128`, `MulWide`, `Truncate`/`Extend`/`Checked` conversions, floats. | L+I | 1 | — |

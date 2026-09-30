@@ -202,6 +202,13 @@ leaky_schedule* = (s: Schedule, table: Ptr<u8>) u8 {
 // Audited as returning a public value, but returns key material.
 leaky_result* = (key: Ptr<u8>) u64 { key.read_le64(0) }
 
+// A 128-bit remainder, which C compiles to a call of the runtime library
+// (__umodti3): the callee is not in the program, and the remainder of the
+// secret chooses an address.
+leaky_libcall* = (key: u64, d: u64, table: Ptr<u8>) u8 {
+    table.read((key.to_u128().shift_left(64) % d.to_u128()).truncate_u64().truncate_u8().to_usize())
+}
+
 main = (env: Env) Res<(), AllocError> {
     a     = env.mem.alloc();
     bytes = a.raw(256, 16).try();
@@ -246,6 +253,7 @@ main = (env: Env) Res<(), AllocError> {
         None    => (),
     });
     println("{} {}", leaky_call(bytes, bytes), leaky_result(bytes));
+    println("{}", leaky_libcall(1234, 97, bytes));
     chained = carry_chain(x, y, x);
     adx().match({
         Ok(fast) => bmi2().match({

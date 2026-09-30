@@ -81,12 +81,45 @@ plain_definition* = (a: Alloc, line: str) Res<str, AllocError> {
     })
 }
 
+// The parenthesis that opens a definition's parameter list: the first one
+// outside any `__attribute__((...))` written before the name (the runtime's
+// `static __attribute__((unused)) int zg_cpu_masked(...)` and its
+// `__attribute__((target("aes")))` helpers).
+param_open* = (line: str) Res<usize> {
+    at    ::= 0;
+    found: Res<usize> ::= None;
+    loop(() { at < line.len }, (h) {
+        line.slice(at, line.len).starts_with("__attribute__").match({
+            true  => {
+                // Skip to the parenthesis that closes the attribute.
+                depth ::= 0;
+                j     ::= at + 13;
+                loop(() { j < line.len }, (h2) {
+                    c = line.index(j);
+                    (c == '(').then(() { depth = depth + 1; });
+                    (c == ')').then(() {
+                        depth = depth - 1;
+                        (depth == 0).then(() { h2.break(); });
+                    });
+                    j = j + 1;
+                });
+                at = j + 1;
+            },
+            false => {
+                (line.index(at) == '(').then(() { found = Ok(at); h.break(); });
+                at = at + 1;
+            },
+        });
+    });
+    found
+}
+
 targets_avx = (line: str) bool {
     line.contains("ZG_TARGET_AVX") || line.contains("target(\"avx")
 }
 
 parse_definition = (a: Alloc, line: str) Res<Marked> {
-    open   = line.find('(').try();
+    open   = param_open(line).try();
     mark   = line.find(MARK).try();
     close  = line.slice(0, mark).rfind(')').try();
     head   = line.slice(0, open).trim().try();
@@ -636,7 +669,7 @@ manifest_functions* = (
     c.lines().loop((raw) {
         (raw.starts_with("static ") && raw.ends_with("{")).then(() {
             line   = plain_definition(a, raw).try();
-            open   = line.find('(').value_or(0);
+            open   = param_open(line).value_or(0);
             head   = line.slice(0, open);
             space  = head.rfind(' ').value_or(0);
             symbol = head.slice(space + 1, head.len);

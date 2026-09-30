@@ -911,7 +911,13 @@ never_returns = (name: str) bool {
 call_target* = (op: str) str {
     plain = op.split_once('@').match({ Ok(p) => p.before, None => op });
     base  = plain.split_once('.').match({ Ok(p) => p.before, None => plain });
-    base.starts_with("_zu_").match({ true => base.slice(1, base.len), false => base })
+    (base.starts_with("_zu_") || base.starts_with("_zg_")).match({ true => base.slice(1, base.len), false => base })
+}
+
+// A direct call of a compiler-made clone: a `.` suffix on the symbol.
+clone_call = (op: str) bool {
+    plain = op.split_once('@').match({ Ok(p) => p.before, None => op });
+    plain.contains('.')
 }
 
 // What a callee is assumed to take when its prototype is unknown.
@@ -1014,9 +1020,15 @@ call = (
     line   : Line,
     conv   : Convention
 ) Res<(), AllocError> {
-    shape = an.shapes.get(call_target(target)).match({
-        Ok(s)  => s,
-        None => unknown_shape(an.alloc, an.isa),
+    // A GCC clone (`f.isra.0`, `f.constprop.0`, `f.part.0`) may take its
+    // arguments differently from f's prototype: ISRA passes fields of an
+    // aggregate in registers of their own.
+    shape = clone_call(target).match({
+        true  => unknown_shape(an.alloc, an.isa),
+        false => an.shapes.get(call_target(target)).match({
+            Ok(s)  => s,
+            None => unknown_shape(an.alloc, an.isa),
+        }),
     });
     secret ::= false;   // some argument is secret or points at secrets
     points ::= false;   // some argument points at secrets
@@ -1094,6 +1106,12 @@ call = (
             });
         });
     });
+    // memcpy, memmove and memset return their destination pointer.
+    dest     = conv.gprs.get(0).value_or("");
+    returns_dest = returns_first(target);
+    dest_val = has(cur.val, dest);
+    dest_pts = has(cur.pts, dest);
+    dest_at: Res<StackAddr> = entry_of(cur, dest);
     conv.clobbered.loop((r) {
         put(cur.val, r, false).try();
         put(cur.low, r, false).try();
@@ -1104,16 +1122,36 @@ call = (
     });
     // An audited callee's result is never a pointer into secret memory
     // (a public-result audit checks that at its returns); an unknown
-    // callee's may be whenever it was given one.
+    // callee's may be whenever it was given one. A callee without a
+    // prototype may return in either the integer or the vector registers.
     first  = conv.results.get(0).value_or("");
     second = conv.results.get(1).value_or("");
-    integer = shape.returns && !shape.vector_result;
+    integer = shape.returns && (!shape.vector_result || !shape.known);
     put(cur.val, first, out && integer).try();
     put(cur.pts, first, points && integer && !shape.audited).try();
     put(cur.val, second, out && integer && shape.pair).try();
     put(cur.val, conv.vector_result, out && shape.returns && shape.vector_result).try();
+    returns_dest.then(() {
+        put(cur.val, first, dest_val).try();
+        put(cur.pts, first, dest_pts).try();
+        put(cur.val, second, false).try();
+        put(cur.val, conv.vector_result, false).try();
+        dest_at.when_ok((e) {
+            e.exact.match({
+                true  => set_addr(cur.addr, first, Ok(e.at)).try(),
+                false => set_somewhere(cur.addr, first).try(),
+            });
+        });
+    });
     cur.flags = false;
     Ok(())
+}
+
+// The C library's copies and fills, whose result is their first argument.
+returns_first = (op: str) bool {
+    name = call_target(op);
+    bare = name.starts_with("_").match({ true => name.slice(1, name.len), false => name });
+    name.is_in(["memcpy", "memmove", "memset"]) || bare.is_in(["memcpy", "memmove", "memset"])
 }
 
 // ---------------------------------------------------------------------

@@ -590,8 +590,8 @@ render_vector = (
         "bit_xor"      => out.fmt("({} ^ {})", a, b),
         "bit_and"      => out.fmt("({} & {})", a, b),
         "bit_or"       => out.fmt("({} | {})", a, b),
-        "shift_left"   => be.vector_shift(v, a, b, "<<", out),
-        "shift_right"  => be.vector_shift(v, a, b, ">>", out),
+        "shift_left"   => vector_shift(v, a, b, "<<", out),
+        "shift_right"  => vector_shift(v, a, b, ">>", out),
         "rotate_left"  => be.rotate_or_swap(site, v, a, b, "<<", ">>", out),
         "rotate_right" => be.rotate_or_swap(site, v, a, b, ">>", "<<", out),
         "store"        => out.fmt(
@@ -603,8 +603,8 @@ render_vector = (
         ),
         "lane"         => be.vector_lane_read(site, a, b, out),
         "with_lane"    => be.vector_lane_write(site, held, out),
-        "shuffle"      => be.vector_shuffle(v, a, a, b, literal, false, out),
-        "shuffle2"     => be.vector_shuffle(
+        "shuffle"      => vector_shuffle(v, a, a, b, literal, false, out),
+        "shuffle2"     => vector_shuffle(
             v,
             a,
             b,
@@ -619,7 +619,7 @@ render_vector = (
 
 // A count at or beyond the lane width yields zero; C's vector shift by such
 // a count is undefined, so the guard selects the zero vector instead.
-vector_shift = (be :: CBackend, v: str, a: str, n: str, op: str, out :: String)
+vector_shift = (v: str, a: str, n: str, op: str, out :: String)
                Res<(), AllocError> {
     lane  = vector_lane(v);
     width = unsigned_width(lane);
@@ -656,13 +656,12 @@ rotate_or_swap = (
         None  => false,
     });
     halves.match({
-        false => be.vector_rotate(v, a, n, near, far, out),
+        false => vector_rotate(v, a, n, near, far, out),
         true  => out.fmt("ZG_ROT16_U32X{}({})", vector_lanes(v), a),
     })
 }
 
 vector_rotate = (
-    be   :: CBackend,
     v    : str,
     a    : str,
     n    : str,
@@ -739,7 +738,6 @@ vector_lane_write = (
 
 // `pattern` is either the literal index list or a held fixed array.
 vector_shuffle = (
-    be      :: CBackend,
     v       : str,
     a       : str,
     b       : str,
@@ -836,7 +834,6 @@ function_attributes* = (
     be  :: CBackend,
     f   : Function,
     sig : Vec<TyId>,
-    ret : TyId,
     out :: String
 ) Res<(), AllocError> {
     set ::= be.alloc.String().try();

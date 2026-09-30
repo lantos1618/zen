@@ -558,7 +558,7 @@ Lowering = {
         });
         name.match({
             None       => Ok(()),
-            Ok(called) => machine_op(called, false).match({
+            Ok(called) => machine_op(called).match({
                 Ok(op) => Err(unsupported(span, machine_refusal(op))),
                 None   => Err(unsupported(span, "a machine primitive")),
             }),

@@ -846,7 +846,7 @@ intrinsic = (lo :: Lowerer, id: ExprId, callee: Callee, sources: Vec<Source>, c:
     // A machine primitive (std.simd, volatile access, u128 arithmetic) has
     // no native lowering yet; name the operation instead of its operands.
     lo.check.primitives.get(decl).match({
-        Ok(p) => machine_op(p.name, false).match({
+        Ok(p) => machine_op(p.name).match({
             Ok(op) => Err(unsupported(span, machine_refusal(op))),
             None   => Ok(()),
         }),

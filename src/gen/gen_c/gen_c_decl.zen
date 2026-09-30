@@ -705,7 +705,7 @@ write_proto = (
               Res<(), AllocError> {
     be.check_spellable(name, span, ret, sig).try();
     out.add(be.linkage()).try();
-    be.function_attributes(f, sig, ret, out).try();
+    be.function_attributes(f, sig, out).try();
     be.ctype(ret, out).try();
     out.add(" ").try();
     sym_fn(out, be.check.types, be.check.world, qname, sig, be.inst).try();

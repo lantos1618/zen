@@ -53,9 +53,9 @@ MachineCall* = {
     span*: Span,
 }
 
-// The operation a validated primitive name denotes; vector lane operations
-// share the scalar names and are distinguished by the operand type.
-machine_op* = (name: str, vector: bool) Res<MachineOp> {
+// The operation a validated primitive name denotes. Vector lane operations
+// share the scalar names; the operand type tells them apart where it matters.
+machine_op* = (name: str) Res<MachineOp> {
     name.match({
         "mul_wide"         => Ok(MachineOp.MulWide),
         "bit_xor"          => Ok(MachineOp.BitXor),

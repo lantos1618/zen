@@ -1,0 +1,167 @@
+Bitwise operators on the native (arm64/x86-64) lowering.
+
+Apply to unified-rooms after merging `bitwise-operators`:
+
+    git apply docs/integration/arm64-bitwise.patch
+
+The diff is against unified-rooms 2b70b639 and touches only
+src/gen/gen_lower_core.zen. It applies unchanged before or after the merge,
+but it only compiles once `bitwise-operators` (which adds BinOp.BitAnd..
+ShiftRight and UnOp.BitNot) is merged.
+
+What it changes:
+- `binary`: maps the operators explicitly (BitAnd->Op.And, BitOr->Op.Or,
+  BitXor->Op.Xor, ShiftLeft->Op.Shl, ShiftRight->Op.Shr) instead of the
+  `_ => Op.Equal` fallback, which would lower every new operator as equality.
+- `binary`: coerces a shift's count to `usize` (U64), as gen_verify requires,
+  whatever unsigned type the source count has.
+- `unary`: lowers `~x` as `x ^ all-ones` at the operand's width (no new IR
+  UnaryOp); a constant `~` folds through `const_int`.
+The arm64 and x86 renderers need no change: their existing And/Or/Xor and
+Shl/Shr (count >= width gives 0, then canonicalize) already match the
+language semantics.
+
+Merge conflict in tests/corpus/gen/scalar_backends (resolve by hand):
+- main.expected.darwin: keep unified's deletion.
+- main.zen: drop the "{} bitwise refused" println that bitwise-operators adds
+  inside the Js/Asm loop (it names `a`, which is not in scope there), and add
+  after the "asm bool entry" line:
+      println("js bitwise refused {}", refused(env, w, Codegen.Js, "bitwise.zen", Layout.Single).try());
+      println("asm bitwise {}", run(env, w, Codegen.Asm, "bitwise.zen", "8\n", 0).try());
+- main.expected: after "asm bool entry true" add
+      js bitwise refused true
+      asm bitwise true
+- Take seed/zen.c from either side and regenerate it once the merge builds.
+
+Verified in a scratch detached worktree (2b70b639 + bitwise-operators + this
+patch), on macOS arm64: build, run.py --filter bitwise/shift/scalar_backends/
+corpus/backends (31/31), and the tests/corpus/bitwise programs compiled with
+Codegen.Asm and run natively: 5 of 6 match their .expected byte for byte; the
+sixth fails only on `Flags().bits`, an existing native gap ("a field of a
+value without record layout"), and matches with that line removed.
+
+diff --git a/src/gen/gen_lower_core.zen b/src/gen/gen_lower_core.zen
+index ea16aabe..67854f53 100644
+--- a/src/gen/gen_lower_core.zen
++++ b/src/gen/gen_lower_core.zen
+@@ -28,7 +28,7 @@ is_drop_type = sema.sema_drop
+ Scalar, Layout, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print = gen.gen_ir
+ Branch, Instruction, Func, Program, BasicBlock, Terminator = gen.gen_ir
+ Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault = gen.gen_ir
+-word, integer, same = gen.gen_ir
++word, integer, same, width = gen.gen_ir
+ LowerError, unsupported = gen.gen_lower
+ Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of = gen.gen_lower_shape
+ to_bound, resolve = gen.gen_lower_member
+@@ -846,33 +846,62 @@ Lowerer* = {
+         // A negated literal is a constant, including the minimum whose
+         // magnitude has no positive form in its type.
+         folded: Res<i64> = op.match({
+-            Neg => self.tree.expr_at(operand).kind.match({
++            Neg    => self.tree.expr_at(operand).kind.match({
+                 Literal(l) => l.integer.match({
+                     Ok(v) => Ok(0 -% v.to_i64_bits()),
+                     None  => None,
+                 }),
+                 _          => self.check.const_int(id),
+             }),
+-            _   => None,
++            BitNot => self.check.const_int(id),
++            _      => None,
+         });
+         folded.match({
+             Ok(v) => self.constant(ty, v),
+-            None  => {
+-                value = self.expr_as(operand, ty).try();
+-                operation = op.match({ Neg => Ok(UnaryOp.Neg), Not => Ok(UnaryOp.Not), _ => None })
+-                    .ok_or(unsupported(span, "address-of")).try();
+-                out = self.temp(ty).try();
+-                self.add(Instruction.UnaryValue(Unary(
+-                    out: out.slot,
+-                    input: value.slot,
+-                    op: operation,
+-                    span: span
+-                ))).try();
+-                Ok(out)
+-            },
++            None  => op.match({
++                BitNot => self.complement(operand, ty, span),
++                _      => self.unary_value(op, operand, ty, span),
++            }),
+         })
+     }
+ 
++    // `~` is xor with the word's all-ones value; its folded form comes from
++    // `const_int` like any other constant operation.
++    complement = (self :: @Self, operand: ExprId, ty: TyId, span: Span)
++                 Res<Value, LowerError> {
++        value = self.expr_as(operand, ty).try();
++        ones  = self.constant(ty, width(self.class_of(ty).try()).match({
++            1 => 255,
++            2 => 65535,
++            4 => 4294967295,
++            _ => -1,
++        })).try();
++        out = self.temp(ty).try();
++        self.add(Instruction.BinaryValue(Binary(
++            out: out.slot,
++            left: value.slot,
++            right: ones.slot,
++            op: Op.Xor,
++            span: span
++        ))).try();
++        Ok(out)
++    }
++
++    unary_value = (self :: @Self, op: UnOp, operand: ExprId, ty: TyId, span: Span)
++                  Res<Value, LowerError> {
++        value = self.expr_as(operand, ty).try();
++        operation = op.match({ Neg => Ok(UnaryOp.Neg), Not => Ok(UnaryOp.Not), _ => None })
++            .ok_or(unsupported(span, "address-of")).try();
++        out = self.temp(ty).try();
++        self.add(Instruction.UnaryValue(Unary(
++            out: out.slot,
++            input: value.slot,
++            op: operation,
++            span: span
++        ))).try();
++        Ok(out)
++    }
++
+     binary = (self :: @Self, id: ExprId, op: BinOp, lhs: ExprId, rhs: ExprId,
+               span: Span) Res<Value, LowerError> {
+         op.match({
+@@ -894,7 +923,14 @@ Lowerer* = {
+                 });
+                 ty = compare.match({ true => checked, false => operand });
+                 left  = self.coerce(raw_left, operand).try();
+-                right = self.coerce(raw_right, operand).try();
++                // A shift's count is any unsigned type; the IR takes it as
++                // `usize` whatever word it moves.
++                count = op.match({
++                    ShiftLeft  => self.prim("usize").try(),
++                    ShiftRight => self.prim("usize").try(),
++                    _          => operand,
++                });
++                right = self.coerce(raw_right, count).try();
+                 (compare && !word(self.class_of(operand).try())).match({
+                     true  => self.equal_values(op, left, right, span),
+                     false => {
+@@ -912,8 +948,15 @@ Lowerer* = {
+                             Less      => Op.Less,
+                             LessEq    => Op.LessEqual,
+                             Greater   => Op.Greater,
+-                            GreaterEq => Op.GreaterEqual,
+-                            _         => Op.Equal,
++                            GreaterEq  => Op.GreaterEqual,
++                            BitAnd     => Op.And,
++                            BitOr      => Op.Or,
++                            BitXor     => Op.Xor,
++                            ShiftLeft  => Op.Shl,
++                            ShiftRight => Op.Shr,
++                            // `&&` and `||` short-circuit above.
++                            And        => Op.And,
++                            Or         => Op.Or,
+                         });
+                         out = self.temp(ty).try();
+                         self.add(Instruction.BinaryValue(Binary(

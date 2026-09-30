@@ -2,7 +2,8 @@
 //
 // The Zen C backend writes ` /* zen:secret zu_l3key *zu_l3out */` after the
 // parameter list of every function with a parameter written std.ct.Secret
-// (`*` marks a pointer whose pointee is secret). This module reads those
+// (`*` marks a pointer whose pointee is secret), with `public-result` when
+// the result is not written Secret (sema's discipline makes it public). This module reads those
 // definitions, sizes the parameter types from the struct definitions in
 // the same file, and assigns them to registers and stack slots by the
 // SysV x86-64 or AAPCS64 calling convention, which is what the assembly
@@ -108,7 +109,10 @@ parse_definition = (a: Alloc, line: str) Res<Marked> {
         secret: secret,
         pointee: pointee,
         pointee2: a.Vec<str>(),
-        avx: targets_avx(line)
+        avx: targets_avx(line),
+        // The backend writes `public-result` for a checked function whose
+        // result is not written Secret.
+        public_result: words.contains(" public-result")
     ))
 }
 

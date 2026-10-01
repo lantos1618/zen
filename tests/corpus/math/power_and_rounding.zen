@@ -1,0 +1,15 @@
+pow, exp, log, floor, ceil, tan, atan2 = std.math
+near = (left: f64, right: f64) bool {
+    difference = left - right;
+    difference > -0.000000001 && difference < 0.000000001
+}
+main = () i32 {
+    valid = near(pow(2.0, 10.0), 1024.0)
+        && near(pow(9.0, 0.5), 3.0)
+        && near(log(exp(1.5)), 1.5)
+        && floor(-1.5) == -2.0 && ceil(-1.5) == -1.0
+        && near(tan(0.0), 0.0)
+        && near(atan2(1.0, 1.0), 0.7853981633974483);
+    println("power and rounding: {}", valid);
+    valid.match({true => 0, false => 1})
+}

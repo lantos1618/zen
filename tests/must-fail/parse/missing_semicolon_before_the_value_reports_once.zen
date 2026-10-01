@@ -1,0 +1,10 @@
+// A call followed by the block's value on the next line is missing its `;`.
+// That is one mistake, so it is one diagnostic: the statement is kept and the
+// rest of the block parses normally.
+//
+// position: just after the call, where the `;` goes.
+
+main = () i32 {
+    print("hello")
+    0
+}

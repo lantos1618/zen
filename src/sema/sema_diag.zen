@@ -656,7 +656,8 @@ write_operator_types = (out :: String, types: Types, f: TypeFault)
     Ok(())
 }
 
-// A signed integer converts explicitly; a bool has logical operators.
+// A signed integer converts explicitly; a bool has logical operators; a float
+// under `^` was almost certainly meant as a power.
 write_bit_operand = (out :: String, types: Types, f: TypeFault)
                     Res<(), AllocError> {
     found ::= types.name_of(f.found).try();
@@ -664,14 +665,19 @@ write_bit_operand = (out :: String, types: Types, f: TypeFault)
     out.fmt(" — `{}` on `{}`", f.name, name).try();
     name.eq("bool").match({
         true  => out.add(": use `&&`, `||` or `!=` for bool"),
-        false => name.is_in(["i8", "i16", "i32", "i64"]).match({
-            true  => f.name.eq(">>").match({
-                true  => out.add(
-                    ": convert it to an unsigned type first, or call `shift_right` for the arithmetic shift"
-                ),
-                false => out.add(": convert it to an unsigned type first"),
+        false => (f.name.eq("^") && name.is_in(["f32", "f64"])).match({
+            true  => out.add(
+                ": `^` is exclusive-or, not a power — write `x * x`, or call `pow` from std.math"
+            ),
+            false => name.is_in(["i8", "i16", "i32", "i64"]).match({
+                true  => f.name.eq(">>").match({
+                    true  => out.add(
+                        ": convert it to an unsigned type first, or call `shift_right` for the arithmetic shift"
+                    ),
+                    false => out.add(": convert it to an unsigned type first"),
+                }),
+                false => Ok(()),
             }),
-            false => Ok(()),
         }),
     }).try();
     Ok(())
@@ -691,7 +697,14 @@ write_bit_widths = (out :: String, types: Types, f: TypeFault)
 }
 
 write_bit_untyped = (out :: String, f: TypeFault) Res<(), AllocError> {
-    out.fmt(" — `{}`", f.name)
+    out.fmt(" — `{}`", f.name).try();
+    f.name.eq("^").match({
+        true  => out.add(
+            ": `^` is exclusive-or, not a power; call `pow` from std.math for a power"
+        ),
+        false => Ok(()),
+    }).try();
+    Ok(())
 }
 
 write_shift_count = (out :: String, types: Types, f: TypeFault)

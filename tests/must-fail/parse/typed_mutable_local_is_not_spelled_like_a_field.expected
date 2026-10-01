@@ -1,0 +1,2 @@
+a mutable local with a type is written `name: T ::= value`
+11:7

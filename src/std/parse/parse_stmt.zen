@@ -143,21 +143,50 @@ expr_item = (
     target = p.expr().try();
     p.peek().kind.match({
         Colon        => { p.bind_typed(stmts, m, target).try(); Ok(None) },
+        ColonColon   => { p.bind_field_spelling(stmts, m, target).try(); Ok(None) },
         Eq           => { p.bind(stmts, m, target, false).try(); Ok(None) },
         ColonColonEq => { p.bind(stmts, m, target, true).try(); Ok(None) },
         Semicolon    => { p.expr_stmt(stmts, m, target).try(); Ok(None) },
-        _            => p.tail_value(target),
+        _            => p.tail_value(stmts, m, target),
     });
 }
 
-tail_value = (p :: Parser, value: ExprId) Res<Res<ExprId>, AllocError> {
-    (!p.at_kind(TokenKind.BraceClose)).then(() {
-        p.error_at(
-            "expected `;` — a statement ends with one, a declaration does not",
-            p.gap_span()
-        ).try();
+// A well-formed expression followed by anything but `}` is a statement missing
+// its `;`. It is kept as a statement so the rest of the block still parses. An
+// expression the parser already gave up on ends the block instead, as before.
+tail_value = (
+    p     :: Parser,
+    stmts :: Vec<Stmt>,
+    m     : Mark,
+    value : ExprId
+) Res<Res<ExprId>, AllocError> {
+    (p.at_kind(TokenKind.BraceClose) || p.hushed()).match({
+        true  => Ok(Ok(value)),
+        false => {
+            p.error_at(
+                "expected `;` — a statement ends with one, a declaration does not",
+                p.gap_span()
+            ).try();
+            p.push(stmts, StmtKind.Expr(ExprStmt(expr: value)), m).try();
+            Ok(None)
+        },
     });
-    Ok(Ok(value));
+}
+
+// `name :: T` declares a mutable field or parameter; a local spells the same
+// thing `name: T ::= value`. The binding is kept so checking continues.
+bind_field_spelling = (
+    p      :: Parser,
+    stmts  :: Vec<Stmt>,
+    m      : Mark,
+    target : ExprId
+) Res<(), AllocError> {
+    p.error(
+        "a mutable local with a type is written `name: T ::= value`; `name :: T` declares a mutable field or parameter"
+    ).try();
+    p.bump().try();
+    t = p.type().try();
+    p.bind_rest(stmts, m, target, Ok(t), true);
 }
 
 bind_typed = (
@@ -167,9 +196,19 @@ bind_typed = (
     target : ExprId
 ) Res<(), AllocError> {
     p.bump().try();
-    t       = p.type().try();
-    mutable = p.at_kind(TokenKind.ColonColonEq);
-    p.bind_rest(stmts, m, target, Ok(t), mutable);
+    p.at_kind(TokenKind.Eq).match({
+        true  => {
+            p.error(
+                "`:=` is not a Zen binding: write `name = value` for an immutable binding or `name ::= value` for a mutable one"
+            ).try();
+            p.bind_rest(stmts, m, target, None, false)
+        },
+        false => {
+            t       = p.type().try();
+            mutable = p.at_kind(TokenKind.ColonColonEq);
+            p.bind_rest(stmts, m, target, Ok(t), mutable)
+        },
+    });
 }
 
 bind = (

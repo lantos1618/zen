@@ -349,7 +349,7 @@ Parser* = {
 
     // Suppress follow-on diagnostics while unwinding a depth refusal or after
     // the first syntax error in a statement. `resume` ends that containment.
-    hushed = (self: @Self) bool { self.too_deep || self.said }
+    hushed* = (self: @Self) bool { self.too_deep || self.said }
 
     resume* = (self :: @Self) { self.said = false; }
 

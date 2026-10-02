@@ -494,6 +494,7 @@ Checker* = {
             mutable: false,
             param: false,
             span: span,
+            deferred: false,
             held: Ok(held)
         ))
     }

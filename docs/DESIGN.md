@@ -31,16 +31,71 @@ The original Python frontend bootstrap is retired. The maintained build path is
 **C compiler → committed `seed/zen.c` → seed Zen executes `build.zen` → `./zen`**.
 `make build` and `make bootstrap` use the same path. Make owns only compiling the
 seed; the Zen project builder owns the source graph, C generation, native tool
-invocation, and publication. An existing `./zen` can run `./zen build .` to build
-its own replacement. The compiler target has no unconditional network/TLS link
+invocation, and publication. An existing `./zen` can run `./zen build --release .`
+to build its own replacement. The compiler target has no unconditional network/TLS link
 dependencies. Python remains a test tool, not a compiler build orchestrator.
 
-Native project builds currently rebuild targets rather than maintaining the
-retired Python incremental cache. They lock their generated workspace, link to
-a candidate beside the requested executable, and rename after success. A failed
-frontend or native command preserves the previous executable, including one
-currently running. Inherited lock descriptors keep the workspace protected if
-a C compiler outlives the Zen driver.
+**`build.zen` is planned, not executed.** The driver type-checks it against
+`std.build`, then evaluates the `build` function's target registrations over
+values known while planning: string and path literals, lists, locals,
+`std.build` enum values, `b.mode()`, `b.os`, `b.arch`, `b.target()` and `.match`
+over any of them. A written target field that the planner cannot evaluate, or
+an unknown field name, stops the build with the field named; nothing falls back
+to a default silently. Calls into project code are refused at their position,
+because the project is not compiled yet.
+
+**The build mode** is chosen on the command line — `--mode debug|release|small`,
+with `--release` for `release` — and defaults to `debug`, so an edit-run cycle
+pays only for an unoptimized C compile. Debug compiles at `-O0`, release at
+`-O2`, and small at `-Oz` (`-Os` for GCC) with unreferenced sections dropped at
+link time (`-Wl,-dead_strip` on macOS, `--gc-sections` elsewhere) and the
+executable stripped. A target can choose for itself:
+
+```zen
+Builder, BuildError, Optimize, Cc = std.build
+
+build = (b :: Builder) Res<(), BuildError> {
+    b.exe("app", {
+        src: Path("src/main.zen"),
+        deps: [],
+        optimize: b.mode().match({ Debug => Optimize.Debug, _ => Optimize.Size }),
+        strip: b.mode().match({ Debug => false, _ => true }),
+        cc: b.os.match({ Macos => Cc.Clang, _ => Cc.Gcc }),
+        cflags: ["-Wno-unused"],
+        defines: ["APP_NAME=app"],
+        libs: ["m"],
+    }).try();
+    Ok(())
+}
+```
+
+`optimize` is `Optimize.Debug | Speed | Size` and `cc` is
+`Cc.Clang | Gcc | Tcc | Custom(Path)`, so a misspelled choice is a compile
+error. `--cc` and then `CC` override `cc`, and `CFLAGS` words follow `cflags`.
+On macOS the `/usr/bin` compiler shims are resolved once, through xcrun, to the
+clang and SDK they select, and that answer is kept in `build/.zen/toolchain`.
+`zen build --target TRIPLE` cross-compiles with clang; such a target is not run.
+
+**Unchanged work is skipped.** Each native target records, beside its
+generated C, the inputs of its last successful compile — the compiler
+executable, the compilation words, every source file read (by length and
+content hash) and every module-path probe answer — and its last link command
+with the generated C's hash. A build whose records still match skips the front
+end, the C compiler, or both, and leaves the executable untouched, which also
+spares macOS from verifying a new binary before its first run. Records are
+removed before work starts and written only after success. Targets with C
+imports always recompile, and targets with extern C sources or C imports always
+relink, because their headers are not recorded; neither are system headers or
+libraries found through search paths, so deleting a target's executable forces
+a relink.
+
+Native project builds lock their generated workspace, link to a candidate
+beside the requested executable, and rename it into place after success. A
+failed frontend or native command preserves the previous executable, including
+one currently running. Inherited lock descriptors keep the workspace protected
+if a C compiler outlives the Zen driver. The driver starts no helper processes
+of its own: the host platform comes from the compiler's predefined macros, and
+directories and renames go through `Env.fs` and `std.fs.posix`.
 
 **The grammar is written first, not extracted later.** It is the stage-0 artifact anyway, and writing the rules rather than more examples is what surfaces the ambiguities — the first one already found is that `Alias = Shape` is indistinguishable from a one-variant enum unless the grammar says which.
 

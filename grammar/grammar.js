@@ -458,7 +458,7 @@ module.exports = grammar({
       seq(
         field('name', $.identifier),
         optional(seq(':', field('payload', $._single_type))),
-        optional(seq('=', field('discriminant', $._expression))),
+        optional(seq('=', field('discriminant', $._discriminant))),
       ),
 
     // ------------------------------------------------------------------

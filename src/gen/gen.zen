@@ -134,7 +134,9 @@ Generation* = {
             Err(error) => error.match({
                 OutOfMemory    => Err(AllocError.OutOfMemory),
                 Invalid(fault) => {
-                    name = program.functions.get(fault.function).match({ Ok(f) => f.name, None => "?" });
+                    name = program.functions.get(
+                        fault.function
+                    ).match({ Ok(f) => f.name, None => "?" });
                     report.fmt(
                         "compiler error: invalid IR at function {} ({}), block {}: {}\n",
                         fault.function,
@@ -147,42 +149,53 @@ Generation* = {
             }),
             Ok(_)      => backend.match({
                 Js  => program.refused((feature) { supports(feature) }).match({
-                  Ok(refusal) => {
-                    report.fmt(
-                        "error: unsupported by this backend: {} (first in `{}`)\n",
-                        refusal.feature.describe(),
-                        refusal.function
-                    ).try();
-                    Ok(1)
-                  },
-                  None        => self.browser.match({
-                    false => publish(Artifact(
-                        kind: ArtifactKind.Source,
-                        name: "zen.js",
-                        text: emit_js(self.alloc, program).try().view()
-                    )),
-                    true  => {
-                        page = publish(Artifact(kind: ArtifactKind.Source, name: "index.html", text: PAGE)).try();
-                        runtime = publish(Artifact(
-                            kind: ArtifactKind.Source,
-                            name: "runtime.js",
-                            text: emit_runtime(self.alloc).try().view()
-                        )).try();
-                        app = publish(Artifact(
-                            kind: ArtifactKind.Source,
-                            name: "app.js",
-                            text: emit_app(self.alloc, program).try().view()
-                        )).try();
-                        Ok(page + runtime + app)
+                    Ok(refusal) => {
+                        report.fmt(
+                            "error: unsupported by this backend: {} (first in `{}`)\n",
+                            refusal.feature.describe(),
+                            refusal.function
+                        ).try();
+                        Ok(1)
                     },
-                  }),
+                    None        => self.browser.match({
+                        false => publish(Artifact(
+                            kind: ArtifactKind.Source,
+                            name: "zen.js",
+                            text: emit_js(self.alloc, program).try().view()
+                        )),
+                        true  => {
+                            page    = publish(Artifact(
+                                kind: ArtifactKind.Source,
+                                name: "index.html",
+                                text: PAGE
+                            )).try();
+                            runtime = publish(Artifact(
+                                kind: ArtifactKind.Source,
+                                name: "runtime.js",
+                                text: emit_runtime(self.alloc).try().view()
+                            )).try();
+                            app     = publish(Artifact(
+                                kind: ArtifactKind.Source,
+                                name: "app.js",
+                                text: emit_app(self.alloc, program).try().view()
+                            )).try();
+                            Ok(page + runtime + app)
+                        },
+                    }),
                 }),
                 Asm => refused_by_asm(program).match({
                     Ok(what) => {
-                        report.fmt("error: unsupported by the asm backend: {}\n", what).try();
+                        report.fmt(
+                            "error: unsupported by the asm backend: {}\n",
+                            what
+                        ).try();
                         Ok(1)
                     },
-                    None     => self.publish_assembly(program, report, (artifact) { publish(artifact) }),
+                    None     => self.publish_assembly(
+                        program,
+                        report,
+                        (artifact) { publish(artifact) }
+                    ),
                 }),
             }),
         })
@@ -192,13 +205,13 @@ Generation* = {
                         publish: (artifact: Artifact) Res<usize, AllocError>)
                        Res<usize, AllocError> {
         self.assembly(program).try().match({
-            None      => {
+            None     => {
                 report.add(
                     "error: the asm backend supports x86_64-linux, aarch64-linux and arm64-darwin targets\n"
                 ).try();
                 Ok(1)
             },
-            Ok(text)  => publish(Artifact(
+            Ok(text) => publish(Artifact(
                 kind: ArtifactKind.Source,
                 name: "zen.s",
                 text: text.view()
@@ -209,8 +222,8 @@ Generation* = {
     assembly = (self: @Self, program: Program)
                Res<Res<String>, AllocError> {
         self.target.match({
-            None         => Ok(None),
-            Ok(machine)  => emit_assembly(self.alloc, machine, program),
+            None        => Ok(None),
+            Ok(machine) => emit_assembly(self.alloc, machine, program),
         })
     }
 }
@@ -310,8 +323,12 @@ refused_by_asm = (program: Program) Res<str> {
         function.blocks.loop((block) {
             block.code.loop((instruction) {
                 instruction.match({
-                    Host(_) => { found = Ok("JavaScript host calls (js.bind)"); },
-                    Wait(_) => { found = Ok("JavaScript event waits (std.js.wait)"); },
+                    Host(_) => { found = Ok(
+                        "JavaScript host calls (js.bind)"
+                    ); },
+                    Wait(_) => { found = Ok(
+                        "JavaScript event waits (std.js.wait)"
+                    ); },
                     _       => (),
                 });
             });
@@ -328,10 +345,14 @@ emit_assembly* = (alloc: Alloc, machine: Target, program: Program)
     machine.os.match({
         Linux   => machine.arch.match({
             X86_64 => Ok(Ok(X86_64Linux(alloc: alloc).emit(program).try())),
-            Arm64  => Ok(Ok(Arm64(alloc: alloc, os: Arm64Os.Linux).emit(program).try())),
+            Arm64  => Ok(Ok(
+                Arm64(alloc: alloc, os: Arm64Os.Linux).emit(program).try()
+            )),
         }),
         Macos   => machine.arch.match({
-            Arm64  => Ok(Ok(Arm64(alloc: alloc, os: Arm64Os.Darwin).emit(program).try())),
+            Arm64  => Ok(Ok(
+                Arm64(alloc: alloc, os: Arm64Os.Darwin).emit(program).try()
+            )),
             X86_64 => Ok(None),
         }),
         Windows => Ok(None),

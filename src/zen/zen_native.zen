@@ -21,12 +21,19 @@ asm_native* = (target: Target) bool {
 
 // Assemble `source` and link `output`. Tool output, if any, is appended to
 // `log`; the result says whether both tools succeeded.
-assemble_and_link* = (env: Env, a: Alloc, target: Target, source: str,
-                      output: str, strip: bool, log :: String)
+assemble_and_link* = (
+    env    : Env,
+    a      : Alloc,
+    target : Target,
+    source : str,
+    output : str,
+    strip  : bool,
+    log    :: String
+)
                      Res<bool, AllocError> {
-    object   = a.String("{}.o", source).try();
-    darwin   = target.os.match({ Macos => true, _ => false });
-    prefix   = cross_prefix(env, a, target).try();
+    object    = a.String("{}.o", source).try();
+    darwin    = target.os.match({ Macos => true, _ => false });
+    prefix    = cross_prefix(env, a, target).try();
     assembler = a.String("{}as", prefix).try();
     linker    = a.String("{}ld", prefix).try();
     assemble ::= a.Vec<str>();
@@ -69,8 +76,11 @@ assemble_and_link* = (env: Env, a: Alloc, target: Target, source: str,
 // builds for its own architecture here.
 cross_prefix = (env: Env, a: Alloc, target: Target) Res<str, AllocError> {
     Ok(host_target(env, a).try().match({
-        None       => "",
-        Ok(host)   => (same_arch(host.arch, target.arch) || target.os.match({ Linux => false, _ => true })).match({
+        None     => "",
+        Ok(host) => (same_arch(
+            host.arch,
+            target.arch
+        ) || target.os.match({ Linux => false, _ => true })).match({
             true  => "",
             false => target.arch.match({
                 Arm64  => "aarch64-linux-gnu-",
@@ -107,7 +117,10 @@ tool = (env: Env, a: Alloc, argv: Vec<str>, log :: String)
        Res<bool, AllocError> {
     env.proc.run_argv(a, "", argv).match({
         Err(_)     => {
-            log.fmt("zen: could not start `{}`\n", argv.get(0).value_or("tool")).try();
+            log.fmt(
+                "zen: could not start `{}`\n",
+                argv.get(0).value_or("tool")
+            ).try();
             Ok(false)
         },
         Ok(result) => {

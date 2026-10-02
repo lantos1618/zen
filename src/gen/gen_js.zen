@@ -413,18 +413,18 @@ JavaScript = {
             },
             System(call)       => self.system(call),
             Startup(value)     => value.value.match({
-                Argc => {
+                Argc    => {
                     self.open(value.out).try();
                     self.out.add("zargc").try();
                     self.close(value.out).try();
                     self.clear_high(value.out)
                 },
-                Argv => {
+                Argv    => {
                     self.open(value.out).try();
                     self.out.add("zargv").try();
                     self.close(value.out)
                 },
-                Envp => {
+                Envp    => {
                     self.open(value.out).try();
                     self.out.add("zenvp").try();
                     self.close(value.out)

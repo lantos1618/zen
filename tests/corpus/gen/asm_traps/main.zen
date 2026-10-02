@@ -78,13 +78,13 @@ probed = (a: Alloc, host: Host, assembly: String) Res<String, AllocError> {
     host.arm64().match({
         true  => Ok(assembly),
         false => {
-            out ::= a.String().try();
+            out  ::= a.String().try();
             rest ::= assembly.view();
             call = "call za_print_i64\n";
             loop((h) {
                 rest.find(call).match({
-                    None     => { out.add(rest).try(); h.break(); },
-                    Ok(at)   => {
+                    None   => { out.add(rest).try(); h.break(); },
+                    Ok(at) => {
                         out.add(rest.slice(0, at)).try();
                         out.add("call probe_print\n").try();
                         rest = rest.slice(at + call.len, rest.len);

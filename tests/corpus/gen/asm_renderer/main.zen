@@ -146,7 +146,10 @@ abi = (a: Alloc) Res<Program, AllocError> {
     Range(7, 10).loop((parameters) {
         stacked ::= a.Vec<usize>();
         Range(0, parameters).loop((i) {
-            code.add(Instruction.Constant(Const(out: i, value: digit(i)))).try();
+            code.add(Instruction.Constant(Const(
+                out: i,
+                value: digit(i)
+            ))).try();
             stacked.add(i).try();
         });
         // The last argument starts in the cached register; widening it for
@@ -278,13 +281,13 @@ probed = (a: Alloc, host: Host, assembly: String) Res<String, AllocError> {
     host.arm64().match({
         true  => Ok(assembly),
         false => {
-            out ::= a.String().try();
+            out  ::= a.String().try();
             rest ::= assembly.view();
             call = "call za_print_i64\n";
             loop((h) {
                 rest.find(call).match({
-                    None     => { out.add(rest).try(); h.break(); },
-                    Ok(at)   => {
+                    None   => { out.add(rest).try(); h.break(); },
+                    Ok(at) => {
                         out.add(rest.slice(0, at)).try();
                         out.add("call probe_print\n").try();
                         rest = rest.slice(at + call.len, rest.len);

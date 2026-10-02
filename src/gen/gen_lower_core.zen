@@ -203,7 +203,7 @@ Lowerer* = {
                 .ok_or(unsupported(nowhere(), "an unreserved block")).try();
         });
         self.current = None;
-        dead = self.label().try();
+        dead         = self.label().try();
         self.start(dead);
         Ok(())
     }
@@ -242,7 +242,10 @@ Lowerer* = {
 
     constant* = (self :: @Self, ty: TyId, value: i64) Res<Value, LowerError> {
         out = self.temp(ty).try();
-        self.add(Instruction.Constant(Const(out: out.slot, value: value))).try();
+        self.add(Instruction.Constant(Const(
+            out: out.slot,
+            value: value
+        ))).try();
         Ok(out)
     }
 
@@ -294,15 +297,7 @@ Lowerer* = {
     // -------------------------------------------------------------------
 
     here* = (self: @Self) Frame {
-        self.frames.get(self.frame).value_or(Frame(
-            inst: self.alloc.Inst(),
-            module: 0,
-            ret_slot: 0,
-            ret_block: 0,
-            ret_ty: self.unit_ty,
-            self_ty: None,
-            scope: None
-        ))
+        self.frames.get(self.frame).value_or(Frame(inst: self.alloc.Inst(), module: 0, ret_slot: 0, ret_block: 0, ret_ty: self.unit_ty, self_ty: None, scope: None))
     }
 
     ctx* = (self: @Self) Ctx {
@@ -321,12 +316,12 @@ Lowerer* = {
     // impl of a generic type, the type named without arguments (`Holder`
     // for `Holder.impl(..)`) is Self at this instantiation too.
     concrete* = (self :: @Self, ty: TyId) Res<TyId, LowerError> {
-        frame = self.here();
+        frame   = self.here();
         settled = self.check.subst(ty, frame.inst).try(LowerError.OutOfMemory);
         Ok(frame.scope.match({
-            None         => settled,
-            Ok(callee)   => callee.self_ty.match({
-                None       => settled,
+            None       => settled,
+            Ok(callee) => callee.self_ty.match({
+                None        => settled,
                 Ok(self_ty) => self.check.types.at(settled).match({
                     Named(n) => {
                         bare_owner = n.args.len == 0 && callee.generic_owner.match({ Ok(g) => g == n.decl, None => false });
@@ -346,14 +341,11 @@ Lowerer* = {
     // call on such a receiver has the result type of the method the
     // receiver's type resolves it to.
     type_of* = (self :: @Self, id: ExprId) Res<TyId, LowerError> {
-        raw = self.check.expr_memo.get(id).match({
+        raw     = self.check.expr_memo.get(id).match({
             Ok(t) => t,
             // Arguments of a call sema could not resolve go unchecked.
             None  => {
-                return_open = self.local_type(id).ok_or(unsupported(
-                    self.tree.expr_at(id).span,
-                    "an expression without a checked type"
-                )).try();
+                return_open = self.local_type(id).ok_or(unsupported(self.tree.expr_at(id).span, "an expression without a checked type")).try();
                 return_open
             },
         });
@@ -366,7 +358,7 @@ Lowerer* = {
 
     local_type = (self :: @Self, id: ExprId) Res<TyId> {
         self.tree.expr_at(id).kind.match({
-            Paren(p) => self.local_type(p.inner),
+            Paren(p)   => self.local_type(p.inner),
             // Literals sema never visited have their literal types.
             Literal(l) => self.prim(l.kind.match({
                 Bool  => "bool",
@@ -375,7 +367,7 @@ Lowerer* = {
                 Int   => "int",
                 Float => "float",
             })).match({ Ok(t) => Ok(t), Err(_) => None }),
-            Call(c)  => self.tree.expr_at(c.callee).kind.match({
+            Call(c)    => self.tree.expr_at(c.callee).kind.match({
                 Name(n)   => self.function_result(n.text, c.args.len),
                 Access(a) => self.handle_named(a.base).match({
                     // `h.break()` and `h.next()` leave; as values they are unit.
@@ -384,7 +376,7 @@ Lowerer* = {
                 }),
                 _         => None,
             }),
-            Name(n) => self.lookup(n.text).match({
+            Name(n)    => self.lookup(n.text).match({
                 Ok(kind) => kind.match({
                     Direct(value) => self.settled(value.ty).match({ true => Ok(value.ty), false => None }),
                     Ref(place)    => self.settled(place.ty).match({ true => Ok(place.ty), false => None }),
@@ -392,7 +384,7 @@ Lowerer* = {
                 }),
                 None     => None,
             }),
-            _       => None,
+            _          => None,
         })
     }
 
@@ -402,14 +394,17 @@ Lowerer* = {
         self.here().scope.match({
             Ok(callee) => self.callee_type(callee, id),
             None       => {
-                raw = self.check.type_from_ast(id, self.ctx()).try(LowerError.OutOfMemory);
+                raw = self.check.type_from_ast(
+                    id,
+                    self.ctx()
+                ).try(LowerError.OutOfMemory);
                 self.concrete(raw)
             },
         })
     }
 
     callee_type* = (self :: @Self, callee: Callee, id: TypeId) Res<TyId, LowerError> {
-        ctx = Ctx(
+        ctx  = Ctx(
             module: callee.module,
             ret: self.unit_ty,
             has_ret: false,
@@ -420,13 +415,25 @@ Lowerer* = {
         callee.generic_owner.when_ok((owner) {
             decl_at(self.tree, owner).when_ok((d) {
                 d.kind.match({
-                    Struct(s) => self.enter_vars(owner.module.to_usize(), s.name.text, s.tparams).try(),
-                    Enum(e)   => self.enter_vars(owner.module.to_usize(), e.name.text, e.tparams).try(),
+                    Struct(s) => self.enter_vars(
+                        owner.module.to_usize(),
+                        s.name.text,
+                        s.tparams
+                    ).try(),
+                    Enum(e)   => self.enter_vars(
+                        owner.module.to_usize(),
+                        e.name.text,
+                        e.tparams
+                    ).try(),
                     _         => (),
                 });
             });
         });
-        self.enter_vars(callee.module, callee.f.name.text, callee.f.tparams).try();
+        self.enter_vars(
+            callee.module,
+            callee.f.name.text,
+            callee.f.tparams
+        ).try();
         raw = self.check.type_from_ast(id, ctx).try(LowerError.OutOfMemory);
         self.check.release_tvars(mark).try(LowerError.OutOfMemory);
         self.check.subst(raw, callee.inst).try(LowerError.OutOfMemory)
@@ -436,7 +443,10 @@ Lowerer* = {
                  Res<(), LowerError> {
         owner = self.check.owner_of(module, name).try(LowerError.OutOfMemory);
         tparams.loop((tp) {
-            var = self.check.types.var(tp.name.text, owner).try(LowerError.OutOfMemory);
+            var = self.check.types.var(
+                tp.name.text,
+                owner
+            ).try(LowerError.OutOfMemory);
             self.check.push_tvar(tp.name.text, var).try(LowerError.OutOfMemory);
         });
         Ok(())
@@ -472,7 +482,11 @@ Lowerer* = {
     // -------------------------------------------------------------------
 
     bind_local* = (self :: @Self, name: str, kind: LocalKind) Res<(), LowerError> {
-        self.locals.add(Local(name: name, frame: self.frame, kind: kind)).try(LowerError.OutOfMemory);
+        self.locals.add(Local(
+            name: name,
+            frame: self.frame,
+            kind: kind
+        )).try(LowerError.OutOfMemory);
         Ok(())
     }
 
@@ -480,9 +494,14 @@ Lowerer* = {
     // such a value is refused rather than silently skipping its drop.
     refuse_drop = (self :: @Self, ty: TyId) Res<(), LowerError> {
         // An Arena's pages are returned to the kernel at exit instead.
-        arena = self.qualified(ty).eq("std.mem.mem_arena.Arena");
-        dropping = !arena && self.check.is_drop_type(ty).try(LowerError.OutOfMemory);
-        (!dropping).ensure(unsupported(nowhere(), self.described("values with Drop cleanup", ty))).try();
+        arena    = self.qualified(ty).eq("std.mem.mem_arena.Arena");
+        dropping = !arena && self.check.is_drop_type(
+            ty
+        ).try(LowerError.OutOfMemory);
+        (!dropping).ensure(unsupported(
+            nowhere(),
+            self.described("values with Drop cleanup", ty)
+        )).try();
         Ok(())
     }
 
@@ -497,7 +516,10 @@ Lowerer* = {
     }
 
     release_locals* = (self :: @Self, mark: usize) {
-        loop(() { self.locals.len > mark }, (h) { self.locals.take(self.locals.len - 1); });
+        loop(
+            () { self.locals.len > mark },
+            (h) { self.locals.take(self.locals.len - 1); }
+        );
     }
 
     // -------------------------------------------------------------------
@@ -506,7 +528,10 @@ Lowerer* = {
 
     copy_value* = (self :: @Self, value: Value) Res<Value, LowerError> {
         out = self.temp(value.ty).try();
-        self.add(Instruction.Copy(Move(out: out.slot, source: value.slot))).try();
+        self.add(Instruction.Copy(Move(
+            out: out.slot,
+            source: value.slot
+        ))).try();
         Ok(out)
     }
 
@@ -515,7 +540,10 @@ Lowerer* = {
         base = place.base.match({
             InSlot(slot) => {
                 p = self.slot_of(Scalar.Ptr).try();
-                self.add(Instruction.AddressOf(Address(out: p, slot: slot))).try();
+                self.add(Instruction.AddressOf(Address(
+                    out: p,
+                    slot: slot
+                ))).try();
                 p
             },
             Through(p)   => p,
@@ -527,7 +555,10 @@ Lowerer* = {
         (offset == 0).match({
             true  => Ok(base),
             false => {
-                amount = self.word_const(Scalar.U64, offset.to_i64_bits()).try();
+                amount = self.word_const(
+                    Scalar.U64,
+                    offset.to_i64_bits()
+                ).try();
                 out    = self.slot_of(Scalar.Ptr).try();
                 self.add(Instruction.BinaryValue(Binary(
                     out: out,
@@ -542,41 +573,67 @@ Lowerer* = {
     }
 
     read* = (self :: @Self, place: Place) Res<Value, LowerError> {
-        out = self.temp(place.ty).try();
-        whole = place.base.match({ InSlot(_) => place.offset == 0, Through(_) => false });
+        out       = self.temp(place.ty).try();
+        whole     = place.base.match({ InSlot(_) => place.offset == 0, Through(_) => false });
         source_is = place.base.match({ InSlot(s) => s, Through(_) => 0 });
-        (whole && same(self.slots.get(source_is).value_or(Scalar.Unit), self.slots.get(out.slot).value_or(Scalar.Unit))).match({
-            true  => self.add(Instruction.Copy(Move(out: out.slot, source: source_is))).try(),
+        (whole && same(
+            self.slots.get(source_is).value_or(Scalar.Unit),
+            self.slots.get(out.slot).value_or(Scalar.Unit)
+        )).match({
+            true  => self.add(Instruction.Copy(Move(
+                out: out.slot,
+                source: source_is
+            ))).try(),
             false => {
                 pointer = place.base.match({
                     InSlot(slot) => {
                         p = self.slot_of(Scalar.Ptr).try();
-                        self.add(Instruction.AddressOf(Address(out: p, slot: slot))).try();
+                        self.add(Instruction.AddressOf(Address(
+                            out: p,
+                            slot: slot
+                        ))).try();
                         p
                     },
                     Through(p)   => p,
                 });
-                self.add(Instruction.LoadValue(Load(out: out.slot, base: pointer, offset: place.offset))).try();
+                self.add(Instruction.LoadValue(Load(
+                    out: out.slot,
+                    base: pointer,
+                    offset: place.offset
+                ))).try();
             },
         });
         Ok(out)
     }
 
     write* = (self :: @Self, place: Place, value: Value) Res<(), LowerError> {
-        whole = place.base.match({ InSlot(_) => place.offset == 0, Through(_) => false });
+        whole  = place.base.match({ InSlot(_) => place.offset == 0, Through(_) => false });
         target = place.base.match({ InSlot(s) => s, Through(_) => 0 });
-        (whole && same(self.slots.get(target).value_or(Scalar.Unit), self.slots.get(value.slot).value_or(Scalar.Unit))).match({
-            true  => self.add(Instruction.Copy(Move(out: target, source: value.slot))),
+        (whole && same(
+            self.slots.get(target).value_or(Scalar.Unit),
+            self.slots.get(value.slot).value_or(Scalar.Unit)
+        )).match({
+            true  => self.add(Instruction.Copy(Move(
+                out: target,
+                source: value.slot
+            ))),
             false => {
                 pointer = place.base.match({
                     InSlot(slot) => {
                         p = self.slot_of(Scalar.Ptr).try();
-                        self.add(Instruction.AddressOf(Address(out: p, slot: slot))).try();
+                        self.add(Instruction.AddressOf(Address(
+                            out: p,
+                            slot: slot
+                        ))).try();
                         p
                     },
                     Through(p)   => p,
                 });
-                self.add(Instruction.StoreValue(Store(base: pointer, offset: place.offset, value: value.slot)))
+                self.add(Instruction.StoreValue(Store(
+                    base: pointer,
+                    offset: place.offset,
+                    value: value.slot
+                )))
             },
         })
     }
@@ -589,7 +646,7 @@ Lowerer* = {
     // A field of a record-shaped value.
     field_place* = (self :: @Self, base: Place, name: str, span: Span)
                    Res<Place, LowerError> {
-        s = self.shape(base.ty).try();
+        s                   = self.shape(base.ty).try();
         found: Res<FieldAt> = s.form.match({
             Record(fields) => fields.find((f) { f.name.eq(name) }),
             _              => None,
@@ -597,15 +654,30 @@ Lowerer* = {
         self.prim_name(base.ty).eq("str").match({
             true  => {
                 field = name.match({
-                    "len"  => Ok(Place(base: base.base, offset: base.offset + 8, ty: self.prim("usize").try())),
-                    "data" => Ok(Place(base: base.base, offset: base.offset, ty: self.ptr_u8().try())),
+                    "len"  => Ok(Place(
+                        base: base.base,
+                        offset: base.offset + 8,
+                        ty: self.prim("usize").try()
+                    )),
+                    "data" => Ok(Place(
+                        base: base.base,
+                        offset: base.offset,
+                        ty: self.ptr_u8().try()
+                    )),
                     _      => Err(unsupported(span, "this str field")),
                 }).try();
                 Ok(field)
             },
             false => {
-                f = found.ok_or(unsupported(span, "a field of a value without record layout")).try();
-                Ok(Place(base: base.base, offset: base.offset + f.offset, ty: f.ty))
+                f = found.ok_or(unsupported(
+                    span,
+                    "a field of a value without record layout"
+                )).try();
+                Ok(Place(
+                    base: base.base,
+                    offset: base.offset + f.offset,
+                    ty: f.ty
+                ))
             },
         })
     }
@@ -626,7 +698,12 @@ Lowerer* = {
         self.check.world.exported_named(name, defs).try(LowerError.OutOfMemory);
         decl = defs.find((d) { self.check.world.module_name(d.id).eq(module) })
             .ok_or(unsupported(nowhere(), "a std declaration")).try();
-        self.check.types.named(decl.id, decl.qname, decl.name, args).try(LowerError.OutOfMemory)
+        self.check.types.named(
+            decl.id,
+            decl.qname,
+            decl.name,
+            args
+        ).try(LowerError.OutOfMemory)
     }
 
     // The place an expression denotes, when it has one.
@@ -634,20 +711,30 @@ Lowerer* = {
         e = self.tree.expr_at(id);
         e.kind.match({
             Name(n)   => Ok(self.lookup(n.text).match({
-                Ok(Direct(v)) => Ok(Place(base: Base.InSlot(v.slot), offset: 0, ty: v.ty)),
+                Ok(Direct(v)) => Ok(Place(
+                    base: Base.InSlot(v.slot),
+                    offset: 0,
+                    ty: v.ty
+                )),
                 Ok(Ref(p))    => Ok(p),
                 _             => None,
             })),
             Paren(p)  => self.place_of(p.inner),
             SelfType  => Ok(self.lookup("self").match({
-                Ok(Direct(v)) => Ok(Place(base: Base.InSlot(v.slot), offset: 0, ty: v.ty)),
+                Ok(Direct(v)) => Ok(Place(
+                    base: Base.InSlot(v.slot),
+                    offset: 0,
+                    ty: v.ty
+                )),
                 Ok(Ref(p))    => Ok(p),
                 _             => None,
             })),
             Access(a) => self.is_value_access(a).match({
                 false => Ok(None),
                 true  => self.place_of(a.base).try().match({
-                    Ok(base) => Ok(Ok(self.field_place(base, a.name.text, e.span).try())),
+                    Ok(base) => Ok(Ok(
+                        self.field_place(base, a.name.text, e.span).try()
+                    )),
                     None     => Ok(None),
                 }),
             }),
@@ -670,7 +757,11 @@ Lowerer* = {
     names_type* = (self :: @Self, name: str) bool {
         defs ::= self.alloc.Vec<Def>();
         self.check.world.defs_of(self.here().module, name, defs).ignore();
-        defs.find((d) { d.kind.match({ StructDef => true, EnumDef => true, AliasDef => true, _ => false }) })
+        defs.find(
+            (
+                d
+            ) { d.kind.match({ StructDef => true, EnumDef => true, AliasDef => true, _ => false }) }
+        )
             .match({ Ok(_) => true, None => is_prim(name) })
     }
 
@@ -701,8 +792,8 @@ Lowerer* = {
             Unit          => self.unit(),
             Paren(p)      => self.expr(p.inner),
             Block(b)      => self.expected_of(id).match({
-                Ok(_)  => self.block_want(b, self.narrowed(id).try()),
-                None   => self.block(b),
+                Ok(_) => self.block_want(b, self.narrowed(id).try()),
+                None  => self.block(b),
             }),
             Unary(u)      => self.unary(id, u.op, u.operand, u.op_span),
             Binary(b)     => self.binary(id, b.op, b.lhs, b.rhs, b.op_span),
@@ -722,13 +813,19 @@ Lowerer* = {
                 value = self.expr(c.operand).try();
                 self.tree.expr_at(c.operand).kind.match({
                     Name(n) => self.drop_entry(n.text).when_ok((entry) {
-                        self.add(Instruction.Constant(Const(out: entry.live, value: 0))).try();
+                        self.add(Instruction.Constant(Const(
+                            out: entry.live,
+                            value: 0
+                        ))).try();
                     }).ignore_absent(),
                     _       => (),
                 });
                 Ok(value)
             },
-            _             => Err(unsupported(e.span, "this expression in a native executable")),
+            _             => Err(unsupported(
+                e.span,
+                "this expression in a native executable"
+            )),
         })
     }
 
@@ -737,8 +834,14 @@ Lowerer* = {
             Ok(Direct(v))     => self.copy_value(v),
             Ok(Ref(p))        => self.read(p),
             Ok(Capability(t)) => self.constant_unit_of(t),
-            Ok(Closure(_))    => Err(unsupported(span, "a closure used as a value")),
-            Ok(Handle(_))     => Err(unsupported(span, "a loop handle used as a value")),
+            Ok(Closure(_))    => Err(unsupported(
+                span,
+                "a closure used as a value"
+            )),
+            Ok(Handle(_))     => Err(unsupported(
+                span,
+                "a loop handle used as a value"
+            )),
             None              => self.global(id, text, span),
         })
     }
@@ -751,8 +854,14 @@ Lowerer* = {
     global = (self :: @Self, id: ExprId, text: str, span: Span) Res<Value, LowerError> {
         ty = self.type_of(id).try();
         defs ::= self.alloc.Vec<Def>();
-        self.check.world.defs_of(self.here().module, text, defs).try(LowerError.OutOfMemory);
-        constant = defs.find((d) { d.kind.match({ ConstDef => true, _ => false }) });
+        self.check.world.defs_of(
+            self.here().module,
+            text,
+            defs
+        ).try(LowerError.OutOfMemory);
+        constant = defs.find(
+            (d) { d.kind.match({ ConstDef => true, _ => false }) }
+        );
         constant.match({
             Ok(d) => self.global_const(d, ty, span),
             None  => self.variant_value(ty, text, None, span),
@@ -760,12 +869,12 @@ Lowerer* = {
     }
 
     global_const = (self :: @Self, d: Def, ty: TyId, span: Span) Res<Value, LowerError> {
-        decl = decl_at(self.tree, d.id).ok_or(unsupported(span, "a missing constant")).try();
+        decl     = decl_at(self.tree, d.id).ok_or(unsupported(span, "a missing constant")).try();
         constant = decl.kind.match({
             Const(c) => Ok(c),
             _        => None,
         }).ok_or(unsupported(span, "a constant without a value")).try();
-        value = constant.value;
+        value    = constant.value;
         // The initializer is read in its declaring module, at its written
         // type when it has one.
         saved = self.frame;
@@ -779,11 +888,11 @@ Lowerer* = {
             scope: None
         )).try(LowerError.OutOfMemory);
         self.frame = self.frames.len - 1;
-        want = constant.type.match({
+        want       = constant.type.match({
             Ok(t) => self.written(t).match({ Ok(w) => w, Err(_) => ty }),
             None  => ty,
         });
-        result = self.expr_as(value, want);
+        result     = self.expr_as(value, want);
         self.frame = saved;
         result
     }
@@ -794,7 +903,7 @@ Lowerer* = {
             Ok(value) => Ok(value),
             None      => {
                 self.expected = Ok(Expected(id: self.unwrapped(id), ty: ty));
-                value = self.expr(id).try();
+                value         = self.expr(id).try();
                 self.coerce(value, ty)
             },
         })
@@ -810,7 +919,7 @@ Lowerer* = {
         (own != want && self.prim_name(own).eq("int") && !name.eq("int")).match({
             false => Ok(None),
             true  => self.check.const_int(id).match({
-                None    => Ok(None),
+                None     => Ok(None),
                 Ok(bits) => fits(bits, name).value_or(false).match({
                     true  => Ok(Ok(self.constant(want, bits).try())),
                     false => Ok(None),
@@ -843,13 +952,17 @@ Lowerer* = {
             Infer    => false,
             Unknown  => false,
             Prim(_)  => true,
-            Named(n) => n.args.find((a) { !self.settled(a) }).match({ Ok(_) => false, None => true }),
+            Named(n) => n.args.find(
+                (a) { !self.settled(a) }
+            ).match({ Ok(_) => false, None => true }),
             Res(r)   => self.settled(r.value) && r.form.match({
                 Failure => self.settled(r.error),
                 _       => true,
             }),
             Array(a) => self.settled(a.elem),
-            Union(u) => u.members.find((m) { !self.settled(m) }).match({ Ok(_) => false, None => true }),
+            Union(u) => u.members.find(
+                (m) { !self.settled(m) }
+            ).match({ Ok(_) => false, None => true }),
             Fn(_)    => true,
         })
     }
@@ -876,20 +989,35 @@ Lowerer* = {
                 (integer(from) && integer(to)).match({
                     true  => {
                         out = self.temp(ty).try();
-                        self.add(Instruction.Cast(Convert(out: out.slot, input: value.slot))).try();
+                        self.add(Instruction.Cast(Convert(
+                            out: out.slot,
+                            input: value.slot
+                        ))).try();
                         Ok(out)
                     },
                     false => same(from, to).match({
                         true  => Ok(Value(slot: value.slot, ty: ty)),
                         false => self.array_coercion(value, ty).try().match({
                           Ok(converted) => Ok(converted),
-                          None          => self.variant_position(ty, self.type_name(value.ty)).match({
+                          None          => self.variant_position(
+                              ty,
+                              self.type_name(value.ty)
+                          ).match({
                             // A member value enters the union that names it.
-                            Ok(_) => self.variant_value(ty, self.type_name(value.ty), Ok(value), nowhere()),
+                            Ok(_) => self.variant_value(
+                                ty,
+                                self.type_name(value.ty),
+                                Ok(value),
+                                nowhere()
+                            ),
                             None  => (self.has_variants(value.ty) && self.has_variants(ty)).match({
                                 // Same-named alternatives carry over, payloads
                                 // converted (an open Res meeting its settled form).
-                                true  => self.remap_variants(value, ty, nowhere()),
+                                true  => self.remap_variants(
+                                    value,
+                                    ty,
+                                    nowhere()
+                                ),
                                 false => self.lift(value, ty),
                             }),
                           }),
@@ -904,20 +1032,31 @@ Lowerer* = {
     // open integers into `[u8, N]`).
     array_coercion = (self :: @Self, value: Value, ty: TyId) Res<Res<Value>, LowerError> {
         from = self.shape(value.ty).try();
-        to = self.shape(ty).try();
+        to   = self.shape(ty).try();
         from.form.match({
             Array(a) => to.form.match({
                 Array(b) => (a.count == b.count).match({
                     false => Ok(None),
                     true  => {
-                        out = self.temp(ty).try();
+                        out    = self.temp(ty).try();
                         source = self.address(self.spill(value)).try();
-                        dest = self.slot_of(Scalar.Ptr).try();
+                        dest   = self.slot_of(Scalar.Ptr).try();
                         Range(0, a.count).loop((i) {
-                            self.add(Instruction.AddressOf(Address(out: dest, slot: out.slot))).try();
-                            element = self.read(Place(base: Base.Through(source), offset: i * a.stride, ty: a.elem)).try();
+                            self.add(Instruction.AddressOf(Address(
+                                out: dest,
+                                slot: out.slot
+                            ))).try();
+                            element   = self.read(Place(
+                                base: Base.Through(source),
+                                offset: i * a.stride,
+                                ty: a.elem
+                            )).try();
                             converted = self.coerce(element, b.elem).try();
-                            self.add(Instruction.StoreValue(Store(base: dest, offset: i * b.stride, value: converted.slot))).try();
+                            self.add(Instruction.StoreValue(Store(
+                                base: dest,
+                                offset: i * b.stride,
+                                value: converted.slot
+                            ))).try();
                         });
                         Ok(Ok(out))
                     },
@@ -935,7 +1074,14 @@ Lowerer* = {
                 inner = self.coerce(value, self.concrete(r.value).try()).try();
                 self.variant_value(ty, "Ok", Ok(inner), nowhere())
             },
-            _      => Err(unsupported(nowhere(), self.described2("a value conversion this backend does not model", value.ty, ty))),
+            _      => Err(unsupported(
+                nowhere(),
+                self.described2(
+                    "a value conversion this backend does not model",
+                    value.ty,
+                    ty
+                )
+            )),
         })
     }
 
@@ -943,10 +1089,16 @@ Lowerer* = {
         ty = self.type_of(id).try();
         l.kind.match({
             Int   => {
-                value = l.integer.ok_or(unsupported(span, "an unparsed integer literal")).try();
+                value = l.integer.ok_or(unsupported(
+                    span,
+                    "an unparsed integer literal"
+                )).try();
                 self.constant(ty, value.to_i64_bits())
             },
-            Bool  => self.constant(ty, l.text.eq("true").match({ true => 1, false => 0 })),
+            Bool  => self.constant(
+                ty,
+                l.text.eq("true").match({ true => 1, false => 0 })
+            ),
             Char  => {
                 text = l.text.slice(1, l.text.len - 1).decode_literal(self.alloc)
                     .match({ Ok(t) => Ok(t), Err(_) => Err(unsupported(span, "a malformed literal escape")) }).try();
@@ -958,8 +1110,14 @@ Lowerer* = {
                 self.string(text, ty)
             },
             Float => {
-                bits = float_bits(self.alloc, l.text).try(LowerError.OutOfMemory)
-                    .ok_or(unsupported(span, "a float literal with more than 15 significant digits or a decimal exponent beyond 22")).try();
+                bits = float_bits(
+                    self.alloc,
+                    l.text
+                ).try(LowerError.OutOfMemory)
+                    .ok_or(unsupported(
+                        span,
+                        "a float literal with more than 15 significant digits or a decimal exponent beyond 22"
+                    )).try();
                 self.constant(ty, bits)
             },
         })
@@ -970,11 +1128,19 @@ Lowerer* = {
         out  = self.temp(ty).try();
         data = self.slot_of(Scalar.Ptr).try();
         self.add(Instruction.Bytes(StaticBytes(out: data, bytes: text))).try();
-        len  = self.word_const(Scalar.U64, text.len.to_i64_bits()).try();
-        at   = self.slot_of(Scalar.Ptr).try();
+        len = self.word_const(Scalar.U64, text.len.to_i64_bits()).try();
+        at  = self.slot_of(Scalar.Ptr).try();
         self.add(Instruction.AddressOf(Address(out: at, slot: out.slot))).try();
-        self.add(Instruction.StoreValue(Store(base: at, offset: 0, value: data))).try();
-        self.add(Instruction.StoreValue(Store(base: at, offset: 8, value: len))).try();
+        self.add(Instruction.StoreValue(Store(
+            base: at,
+            offset: 0,
+            value: data
+        ))).try();
+        self.add(Instruction.StoreValue(Store(
+            base: at,
+            offset: 8,
+            value: len
+        ))).try();
         Ok(out)
     }
 
@@ -989,7 +1155,7 @@ Lowerer* = {
             4 => 4294967295,
             _ => -1,
         })).try();
-        out = self.temp(ty).try();
+        out   = self.temp(ty).try();
         self.add(Instruction.BinaryValue(Binary(
             out: out.slot,
             left: value.slot,
@@ -1027,10 +1193,10 @@ Lowerer* = {
         folded.match({
             Ok(v) => self.constant(ty, v),
             None  => {
-                value = self.expr_as(operand, ty).try();
+                value     = self.expr_as(operand, ty).try();
                 operation = op.match({ Neg => Ok(UnaryOp.Neg), Not => Ok(UnaryOp.Not), _ => None })
                     .ok_or(unsupported(span, "address-of")).try();
-                out = self.temp(ty).try();
+                out       = self.temp(ty).try();
                 self.add(Instruction.UnaryValue(Unary(
                     out: out.slot,
                     input: value.slot,
@@ -1066,28 +1232,31 @@ Lowerer* = {
         // an integer type known before either side runs, both sides are
         // lowered at it, so an open literal operand is a constant of that
         // type rather than a widened one.
-        early = (!compare && self.settled(checked)).match({
+        early     = (!compare && self.settled(checked)).match({
             true  => checked,
-            false => self.meeting(self.type_of(lhs).try(), self.type_of(rhs).try()),
+            false => self.meeting(
+                self.type_of(lhs).try(),
+                self.type_of(rhs).try()
+            ),
         });
-        ahead = self.integer_type(early) && !self.prim_name(early).eq("int");
+        ahead     = self.integer_type(early) && !self.prim_name(early).eq("int");
         raw_left  = ahead.match({ true => self.expr_as(lhs, early), false => self.expr(lhs) }).try();
         raw_right = ahead.match({ true => self.expr_as(rhs, early), false => self.expr(rhs) }).try();
-        operand = ahead.match({
+        operand   = ahead.match({
             true  => early,
             false => (!compare && self.settled(checked)).match({
                 true  => checked,
                 false => self.meeting(raw_left.ty, raw_right.ty),
             }),
         });
-        ty = compare.match({ true => checked, false => operand });
-        left  = self.coerce(raw_left, operand).try();
-        right = self.coerce(raw_right, operand).try();
+        ty        = compare.match({ true => checked, false => operand });
+        left      = self.coerce(raw_left, operand).try();
+        right     = self.coerce(raw_right, operand).try();
         (compare && !word(self.class_of(operand).try())).match({
             true  => self.equal_values(op, left, right, span),
             false => {
                 operation = binary_op(op).ok_or(unsupported(span, "this operator")).try();
-                out = self.temp(ty).try();
+                out       = self.temp(ty).try();
                 self.add(Instruction.BinaryValue(Binary(
                     out: out.slot,
                     left: left.slot,
@@ -1104,7 +1273,9 @@ Lowerer* = {
         firm = (self.settled(left) && !self.prim_name(left).eq("int"));
         firm.match({
             true  => left,
-            false => self.settled(right).match({ true => right, false => left }),
+            false => self.settled(
+                right
+            ).match({ true => right, false => left }),
         })
     }
 
@@ -1115,7 +1286,15 @@ Lowerer* = {
         self.prim_name(left.ty).eq("str").match({
             // `==` on other aggregates is the type's own `eq`.
             false => {
-                callee = self.resolve(left.ty, "eq", None, 2, self.alloc.Inst(), None, span).try();
+                callee = self.resolve(
+                    left.ty,
+                    "eq",
+                    None,
+                    2,
+                    self.alloc.Inst(),
+                    None,
+                    span
+                ).try();
                 sources ::= self.alloc.Vec<Source>();
                 sources.add(Source.Computed(left)).try(LowerError.OutOfMemory);
                 sources.add(Source.Computed(right)).try(LowerError.OutOfMemory);
@@ -1123,7 +1302,12 @@ Lowerer* = {
                 op.match({
                     NotEqual => {
                         out = self.temp(result.ty).try();
-                        self.add(Instruction.UnaryValue(Unary(out: out.slot, input: result.slot, op: UnaryOp.Not, span: span))).try();
+                        self.add(Instruction.UnaryValue(Unary(
+                            out: out.slot,
+                            input: result.slot,
+                            op: UnaryOp.Not,
+                            span: span
+                        ))).try();
                         Ok(out)
                     },
                     _        => Ok(result),
@@ -1134,7 +1318,12 @@ Lowerer* = {
                 op.match({
                     NotEqual => {
                         out = self.temp(result.ty).try();
-                        self.add(Instruction.UnaryValue(Unary(out: out.slot, input: result.slot, op: UnaryOp.Not, span: span))).try();
+                        self.add(Instruction.UnaryValue(Unary(
+                            out: out.slot,
+                            input: result.slot,
+                            op: UnaryOp.Not,
+                            span: span
+                        ))).try();
                         Ok(out)
                     },
                     _        => Ok(result),
@@ -1147,18 +1336,40 @@ Lowerer* = {
     str_equal* = (self :: @Self, left: Value, right: Value) Res<Value, LowerError> {
         bool_ty = self.prim("bool").try();
         out     = self.constant(bool_ty, 0).try();
-        lp = self.address(self.spill(left)).try();
-        rp = self.address(self.spill(right)).try();
-        ll = self.slot_of(Scalar.U64).try();
-        rl = self.slot_of(Scalar.U64).try();
-        self.add(Instruction.LoadValue(Load(out: ll, base: lp, offset: 8))).try();
-        self.add(Instruction.LoadValue(Load(out: rl, base: rp, offset: 8))).try();
+        lp      = self.address(self.spill(left)).try();
+        rp      = self.address(self.spill(right)).try();
+        ll      = self.slot_of(Scalar.U64).try();
+        rl      = self.slot_of(Scalar.U64).try();
+        self.add(Instruction.LoadValue(Load(
+            out: ll,
+            base: lp,
+            offset: 8
+        ))).try();
+        self.add(Instruction.LoadValue(Load(
+            out: rl,
+            base: rp,
+            offset: 8
+        ))).try();
         ld = self.slot_of(Scalar.Ptr).try();
         rd = self.slot_of(Scalar.Ptr).try();
-        self.add(Instruction.LoadValue(Load(out: ld, base: lp, offset: 0))).try();
-        self.add(Instruction.LoadValue(Load(out: rd, base: rp, offset: 0))).try();
+        self.add(Instruction.LoadValue(Load(
+            out: ld,
+            base: lp,
+            offset: 0
+        ))).try();
+        self.add(Instruction.LoadValue(Load(
+            out: rd,
+            base: rp,
+            offset: 0
+        ))).try();
         same_len = self.slot_of(Scalar.Bool).try();
-        self.add(Instruction.BinaryValue(Binary(out: same_len, left: ll, right: rl, op: Op.Equal, span: nowhere()))).try();
+        self.add(Instruction.BinaryValue(Binary(
+            out: same_len,
+            left: ll,
+            right: rl,
+            op: Op.Equal,
+            span: nowhere()
+        ))).try();
         walk = self.label().try();
         test = self.label().try();
         body = self.label().try();
@@ -1166,25 +1377,63 @@ Lowerer* = {
         done = self.label().try();
         self.branch_to(same_len, walk, done).try();
         self.start(walk);
-        i = self.word_const(Scalar.U64, 0).try();
+        i   = self.word_const(Scalar.U64, 0).try();
         one = self.word_const(Scalar.U64, 1).try();
         self.jump(test).try();
         self.start(test);
         more = self.slot_of(Scalar.Bool).try();
-        self.add(Instruction.BinaryValue(Binary(out: more, left: i, right: ll, op: Op.Less, span: nowhere()))).try();
+        self.add(Instruction.BinaryValue(Binary(
+            out: more,
+            left: i,
+            right: ll,
+            op: Op.Less,
+            span: nowhere()
+        ))).try();
         self.branch_to(more, body, yes).try();
         self.start(body);
         la = self.slot_of(Scalar.Ptr).try();
         ra = self.slot_of(Scalar.Ptr).try();
-        self.add(Instruction.BinaryValue(Binary(out: la, left: ld, right: i, op: Op.WrapAdd, span: nowhere()))).try();
-        self.add(Instruction.BinaryValue(Binary(out: ra, left: rd, right: i, op: Op.WrapAdd, span: nowhere()))).try();
+        self.add(Instruction.BinaryValue(Binary(
+            out: la,
+            left: ld,
+            right: i,
+            op: Op.WrapAdd,
+            span: nowhere()
+        ))).try();
+        self.add(Instruction.BinaryValue(Binary(
+            out: ra,
+            left: rd,
+            right: i,
+            op: Op.WrapAdd,
+            span: nowhere()
+        ))).try();
         lb = self.slot_of(Scalar.U8).try();
         rb = self.slot_of(Scalar.U8).try();
-        self.add(Instruction.LoadValue(Load(out: lb, base: la, offset: 0))).try();
-        self.add(Instruction.LoadValue(Load(out: rb, base: ra, offset: 0))).try();
+        self.add(Instruction.LoadValue(Load(
+            out: lb,
+            base: la,
+            offset: 0
+        ))).try();
+        self.add(Instruction.LoadValue(Load(
+            out: rb,
+            base: ra,
+            offset: 0
+        ))).try();
         eq = self.slot_of(Scalar.Bool).try();
-        self.add(Instruction.BinaryValue(Binary(out: eq, left: lb, right: rb, op: Op.Equal, span: nowhere()))).try();
-        self.add(Instruction.BinaryValue(Binary(out: i, left: i, right: one, op: Op.WrapAdd, span: nowhere()))).try();
+        self.add(Instruction.BinaryValue(Binary(
+            out: eq,
+            left: lb,
+            right: rb,
+            op: Op.Equal,
+            span: nowhere()
+        ))).try();
+        self.add(Instruction.BinaryValue(Binary(
+            out: i,
+            left: i,
+            right: one,
+            op: Op.WrapAdd,
+            span: nowhere()
+        ))).try();
         self.branch_to(eq, test, done).try();
         self.start(yes);
         self.add(Instruction.Constant(Const(out: out.slot, value: 1))).try();
@@ -1204,7 +1453,10 @@ Lowerer* = {
         }).try();
         self.start(next);
         right = self.expr(rhs).try();
-        self.add(Instruction.Copy(Move(out: out.slot, source: right.slot))).try();
+        self.add(Instruction.Copy(Move(
+            out: out.slot,
+            source: right.slot
+        ))).try();
         self.enter(done).try();
         Ok(out)
     }
@@ -1229,7 +1481,7 @@ Lowerer* = {
     // at the wanted type gives every arm one layout, and lets literal arms
     // fold to constants of that type.
     narrowed = (self :: @Self, id: ExprId) Res<TyId, LowerError> {
-        own = self.type_of(id).try();
+        own    = self.type_of(id).try();
         wanted = self.expected.match({
             Ok(want) => (want.id == id && self.settled(want.ty) && (!self.settled(own)
                 || (self.prim_name(own).eq("int") && !self.prim_name(want.ty).eq("int")
@@ -1256,15 +1508,26 @@ Lowerer* = {
     // `arity` arguments, when it names no type parameter.
     function_result = (self :: @Self, name: str, arity: usize) Res<TyId> {
         defs ::= self.alloc.Vec<Def>();
-        self.check.world.defs_of(self.here().module, name, defs).match({ Ok(_) => (), Err(_) => () });
+        self.check.world.defs_of(
+            self.here().module,
+            name,
+            defs
+        ).match({ Ok(_) => (), Err(_) => () });
         (defs.len == 1).ensure().try();
         d = defs.get(0).try();
         f = decl_at(self.tree, d.id).try().kind.match({ Function(f) => Ok(f), _ => None }).try();
         (f.params.len == arity && f.tparams.len == 0).ensure().try();
         written = f.ret.try();
-        probe = Callee(f: f, owner: d.id, member: None, module: d.id.module.to_usize(),
-                       inst: self.alloc.Inst(), self_ty: None, generic_owner: None);
-        ty = self.callee_type(probe, written).match({ Ok(t) => Ok(t), Err(_) => None }).try();
+        probe   = Callee(
+            f: f,
+            owner: d.id,
+            member: None,
+            module: d.id.module.to_usize(),
+            inst: self.alloc.Inst(),
+            self_ty: None,
+            generic_owner: None
+        );
+        ty      = self.callee_type(probe, written).match({ Ok(t) => Ok(t), Err(_) => None }).try();
         self.settled(ty).match({ true => Ok(ty), false => None })
     }
 
@@ -1273,10 +1536,18 @@ Lowerer* = {
     method_result = (self :: @Self, a: Access, arity: usize) Res<TyId> {
         receiver = self.type_of(a.base).match({ Ok(t) => Ok(t), Err(_) => None }).try();
         self.settled(receiver).ensure().try();
-        callee = self.resolve(receiver, a.name.text, None, arity, self.alloc.Inst(), None, nowhere())
+        callee  = self.resolve(
+            receiver,
+            a.name.text,
+            None,
+            arity,
+            self.alloc.Inst(),
+            None,
+            nowhere()
+        )
             .match({ Ok(c) => Ok(c), Err(_) => None }).try();
         written = callee.f.ret.try();
-        ty = self.callee_type(callee, written).match({ Ok(t) => Ok(t), Err(_) => None }).try();
+        ty      = self.callee_type(callee, written).match({ Ok(t) => Ok(t), Err(_) => None }).try();
         self.settled(ty).match({ true => Ok(ty), false => None })
     }
 
@@ -1295,7 +1566,10 @@ Lowerer* = {
     block_as = (self :: @Self, id: BlockId, used: bool, want: Res<TyId>) Res<Value, LowerError> {
         block = self.tree.block_at(id);
         mark  = self.locals.len;
-        self.scopes.add(Cleanup(drops: self.drops.len, defers: self.defers.len)).try(LowerError.OutOfMemory);
+        self.scopes.add(Cleanup(
+            drops: self.drops.len,
+            defers: self.defers.len
+        )).try(LowerError.OutOfMemory);
         last ::= self.unit().try();
         block.stmts.loop((h, i, s) {
             tail = i + 1 == block.stmts.len && block.value.match({ Ok(_) => false, None => true });
@@ -1307,7 +1581,11 @@ Lowerer* = {
                 }),
                 Bind(b)  => { self.bind(b, s.span).try(); self.unit() },
                 // A final nested block is the block's value, at its type.
-                Block(b) => self.block_as(b, tail && used, tail.match({ true => want, false => None })),
+                Block(b) => self.block_as(
+                    b,
+                    tail && used,
+                    tail.match({ true => want, false => None })
+                ),
                 Decl(_)  => Err(unsupported(s.span, "nested declarations")),
             }).try();
         });
@@ -1319,8 +1597,14 @@ Lowerer* = {
         keep = used.match({ true => self.handed_out(id), false => "" });
         self.run_scope(self.scopes.len - 1, keep).try();
         top = self.scopes.get(self.scopes.len - 1).ok_or(unsupported(nowhere(), "a missing scope")).try();
-        loop(() { self.drops.len > top.drops }, (h) { self.drops.take(self.drops.len - 1); });
-        loop(() { self.defers.len > top.defers }, (h) { self.defers.take(self.defers.len - 1); });
+        loop(
+            () { self.drops.len > top.drops },
+            (h) { self.drops.take(self.drops.len - 1); }
+        );
+        loop(
+            () { self.defers.len > top.defers },
+            (h) { self.defers.take(self.defers.len - 1); }
+        );
         self.scopes.take(self.scopes.len - 1);
         self.release_locals(mark);
         Ok(value)
@@ -1328,7 +1612,7 @@ Lowerer* = {
 
     // The name of the binding a block's value reads, if any.
     handed_out = (self :: @Self, id: BlockId) str {
-        block = self.tree.block_at(id);
+        block      = self.tree.block_at(id);
         tail: Tail = block.value.match({
             Ok(e) => Tail.Expression(e),
             None  => (block.stmts.len > 0).match({
@@ -1347,10 +1631,14 @@ Lowerer* = {
         tail.match({
             Expression(e) => self.tree.expr_at(e).kind.match({
                 Name(n)    => n.text,
-                Consume(c) => self.tree.expr_at(c.operand).kind.match({ Name(n) => n.text, _ => "" }),
+                Consume(c) => self.tree.expr_at(
+                    c.operand
+                ).kind.match({ Name(n) => n.text, _ => "" }),
                 // `{ n }` hands out what its own tail names.
                 Block(b)   => self.handed_out(b),
-                Paren(p)   => self.tree.expr_at(p.inner).kind.match({ Name(n) => n.text, _ => "" }),
+                Paren(p)   => self.tree.expr_at(
+                    p.inner
+                ).kind.match({ Name(n) => n.text, _ => "" }),
                 _          => "",
             }),
             Nested(b)     => self.handed_out(b),
@@ -1361,9 +1649,13 @@ Lowerer* = {
     // Leave one scope: armed defers last-in first-out, then live Drop
     // bindings in reverse declaration order.
     run_scope = (self :: @Self, index: usize, keep: str) Res<(), LowerError> {
-        scope = self.scopes.get(index).ok_or(unsupported(nowhere(), "a missing scope")).try();
-        drops_end = self.scopes.get(index + 1).match({ Ok(next) => next.drops, None => self.drops.len });
-        defers_end = self.scopes.get(index + 1).match({ Ok(next) => next.defers, None => self.defers.len });
+        scope      = self.scopes.get(index).ok_or(unsupported(nowhere(), "a missing scope")).try();
+        drops_end  = self.scopes.get(
+            index + 1
+        ).match({ Ok(next) => next.drops, None => self.drops.len });
+        defers_end = self.scopes.get(
+            index + 1
+        ).match({ Ok(next) => next.defers, None => self.defers.len });
         Range(scope.defers, defers_end).loop((k) {
             entry = self.defers.get(defers_end - 1 - (k - scope.defers)).ok_or(unsupported(nowhere(), "a missing defer")).try();
             self.run_defer(entry).try();
@@ -1378,16 +1670,21 @@ Lowerer* = {
     // An armed defer runs its closure with the locals it captured, and
     // disarms so a later pass through the same block starts clear.
     run_defer = (self :: @Self, entry: DeferEntry) Res<(), LowerError> {
-        yes = self.label().try();
+        yes  = self.label().try();
         done = self.label().try();
         self.branch_to(entry.armed, yes, done).try();
         self.start(yes);
         self.add(Instruction.Constant(Const(out: entry.armed, value: 0))).try();
-        l = self.tree.expr_at(entry.lambda.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
-            .ok_or(unsupported(nowhere(), "a deferred closure that is not a lambda")).try();
+        l     = self.tree.expr_at(entry.lambda.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
+            .ok_or(unsupported(
+                nowhere(),
+                "a deferred closure that is not a lambda"
+            )).try();
         saved = self.use_frame(entry.lambda.frame);
-        mark = self.locals.len;
-        entry.captures.loop((c) { self.locals.add(c).try(LowerError.OutOfMemory); });
+        mark  = self.locals.len;
+        entry.captures.loop(
+            (c) { self.locals.add(c).try(LowerError.OutOfMemory); }
+        );
         self.block(l.body).try();
         self.release_locals(mark);
         self.use_frame(saved);
@@ -1397,20 +1694,36 @@ Lowerer* = {
     // Snapshot every local a closure reads, as `@scope.defer` captures them.
     captures_of* = (self :: @Self, lambda: LambdaRef) Res<Vec<Local>, LowerError> {
         l = self.tree.expr_at(lambda.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
-            .ok_or(unsupported(nowhere(), "a deferred closure that is not a lambda")).try();
+            .ok_or(unsupported(
+                nowhere(),
+                "a deferred closure that is not a lambda"
+            )).try();
         finder ::= NameFinder(tree: self.tree, names: self.alloc.Vec<str>());
-        walk(self.tree, self.alloc, WalkNode.Block(l.body), finder).try(LowerError.OutOfMemory);
+        walk(
+            self.tree,
+            self.alloc,
+            WalkNode.Block(l.body),
+            finder
+        ).try(LowerError.OutOfMemory);
         out ::= self.alloc.Vec<Local>();
         saved = self.use_frame(lambda.frame);
         finder.names.loop((name) {
             self.lookup(name).match({
                 Ok(Direct(v)) => {
                     copy = self.copy_value(v).try();
-                    out.add(Local(name: name, frame: lambda.frame, kind: LocalKind.Direct(copy))).try(LowerError.OutOfMemory);
+                    out.add(Local(
+                        name: name,
+                        frame: lambda.frame,
+                        kind: LocalKind.Direct(copy)
+                    )).try(LowerError.OutOfMemory);
                 },
                 Ok(Ref(p))    => {
                     copy = self.read(p).try();
-                    out.add(Local(name: name, frame: lambda.frame, kind: LocalKind.Direct(copy))).try(LowerError.OutOfMemory);
+                    out.add(Local(
+                        name: name,
+                        frame: lambda.frame,
+                        kind: LocalKind.Direct(copy)
+                    )).try(LowerError.OutOfMemory);
                 },
                 _             => (),
             });
@@ -1430,7 +1743,7 @@ Lowerer* = {
 
     // Drop a binding's value if it is still live, and mark it dropped.
     guarded_drop = (self :: @Self, entry: DropEntry) Res<(), LowerError> {
-        yes = self.label().try();
+        yes  = self.label().try();
         done = self.label().try();
         self.branch_to(entry.live, yes, done).try();
         self.start(yes);
@@ -1445,13 +1758,26 @@ Lowerer* = {
     // The `drop` a `T.impl(Drop, ..)` supplies.
     drop_callee = (self :: @Self, ty: TyId) Res<Callee, LowerError> {
         drop_decl = self.drop_bound().try();
-        self.resolve(ty, "drop", None, 1, self.alloc.Inst(), Ok(drop_decl), nowhere())
+        self.resolve(
+            ty,
+            "drop",
+            None,
+            1,
+            self.alloc.Inst(),
+            Ok(drop_decl),
+            nowhere()
+        )
     }
 
     drop_bound = (self :: @Self) Res<DeclId, LowerError> {
         defs ::= self.alloc.Vec<Def>();
-        self.check.world.exported_named("Drop", defs).try(LowerError.OutOfMemory);
-        d = defs.find((d) { self.check.world.module_name(d.id).starts_with("std.core") })
+        self.check.world.exported_named(
+            "Drop",
+            defs
+        ).try(LowerError.OutOfMemory);
+        d = defs.find(
+            (d) { self.check.world.module_name(d.id).starts_with("std.core") }
+        )
             .ok_or(unsupported(nowhere(), "the std Drop bound")).try();
         Ok(d.id)
     }
@@ -1463,7 +1789,11 @@ Lowerer* = {
             self.drops.add(DropEntry(
                 name: name,
                 frame: self.frame,
-                place: Place(base: Base.InSlot(value.slot), offset: 0, ty: value.ty),
+                place: Place(
+                    base: Base.InSlot(value.slot),
+                    offset: 0,
+                    ty: value.ty
+                ),
                 ty: value.ty,
                 live: live
             )).try(LowerError.OutOfMemory);
@@ -1475,7 +1805,7 @@ Lowerer* = {
     drop_entry = (self: @Self, name: str) Res<DropEntry> {
         i ::= self.drops.len;
         found: Res<DropEntry> = loop<DropEntry>(() { i > 0 }, (h) {
-            i = i - 1;
+            i     = i - 1;
             entry = self.drops.get(i).try();
             (entry.frame == self.frame && entry.name.eq(name)).then(() { h.break(entry); });
         });
@@ -1487,7 +1817,7 @@ Lowerer* = {
         target.kind.match({
             Name(n) => {
                 existing = self.lookup(n.text);
-                fresh = b.mutable || b.type.match({ Ok(_) => true, None => false })
+                fresh    = b.mutable || b.type.match({ Ok(_) => true, None => false })
                     || existing.match({ Ok(Direct(_)) => false, Ok(Ref(_)) => false, _ => true });
                 fresh.match({
                     true  => {
@@ -1496,11 +1826,17 @@ Lowerer* = {
                             None  => self.type_of(b.value),
                         }).try();
                         self.is_capability(ty).match({
-                            true  => self.bind_local(n.text, LocalKind.Capability(ty)),
+                            true  => self.bind_local(
+                                n.text,
+                                LocalKind.Capability(ty)
+                            ),
                             false => {
                                 value = self.bind_value(b.value, ty).try();
                                 slot  = self.copy_value(value).try();
-                                self.bind_local(n.text, LocalKind.Direct(slot)).try();
+                                self.bind_local(
+                                    n.text,
+                                    LocalKind.Direct(slot)
+                                ).try();
                                 self.note_drop(n.text, slot)
                             },
                         })
@@ -1514,7 +1850,10 @@ Lowerer* = {
                             Ok(entry) => {
                                 self.guarded_drop(entry).try();
                                 self.write(place, value).try();
-                                self.add(Instruction.Constant(Const(out: entry.live, value: 1)))
+                                self.add(Instruction.Constant(Const(
+                                    out: entry.live,
+                                    value: 1
+                                )))
                             },
                             None      => self.write(place, value),
                         })
@@ -1539,7 +1878,7 @@ Lowerer* = {
     // -------------------------------------------------------------------
 
     access = (self :: @Self, id: ExprId, a: Access, span: Span) Res<Value, LowerError> {
-        base_expr = self.tree.expr_at(a.base);
+        base_expr           = self.tree.expr_at(a.base);
         type_name: Res<str> = base_expr.kind.match({
             Name(n) => self.lookup(n.text).match({
                 Ok(_) => None,
@@ -1558,21 +1897,36 @@ Lowerer* = {
                             true  => self.constant(ty, 0),
                             // `env.argv`: the process arguments.
                             false => a.name.text.eq("argv").match({
-                                true  => self.sys_env_call(id, "argv", self.alloc.Vec<Source>(), Call(
-                                    callee: id,
-                                    targs: self.alloc.Vec<TypeId>(),
-                                    args: self.alloc.Vec<Arg>(),
-                                    args_span: span
-                                ), span),
-                                false => Err(unsupported(span, "this environment field")),
+                                true  => self.sys_env_call(
+                                    id,
+                                    "argv",
+                                    self.alloc.Vec<Source>(),
+                                    Call(
+                                        callee: id,
+                                        targs: self.alloc.Vec<TypeId>(),
+                                        args: self.alloc.Vec<Arg>(),
+                                        args_span: span
+                                    ),
+                                    span
+                                ),
+                                false => Err(unsupported(
+                                    span,
+                                    "this environment field"
+                                )),
                             }),
                         })
                     },
                     None  => self.place_of(a.base).try().match({
-                        Ok(place) => self.read(self.field_place(place, a.name.text, span).try()),
+                        Ok(place) => self.read(
+                            self.field_place(place, a.name.text, span).try()
+                        ),
                         None      => {
                             base  = self.expr(a.base).try();
-                            field = self.field_place(self.spill(base), a.name.text, span).try();
+                            field = self.field_place(
+                                self.spill(base),
+                                a.name.text,
+                                span
+                            ).try();
                             self.read(field)
                         },
                     }),
@@ -1596,17 +1950,19 @@ Lowerer* = {
     // once 64, f64.MAX a NaN).
     prim_constant = (self :: @Self, ty: TyId, prim: str, member: str, span: Span)
                     Res<Value, LowerError> {
-        bits: Res<i64> = prim.match({
+        bits: Res<i64>  = prim.match({
             "i8" => Ok(8), "u8" => Ok(8), "i16" => Ok(16), "u16" => Ok(16),
             "i32" => Ok(32), "u32" => Ok(32), "f32" => Ok(32),
             "i64" => Ok(64), "u64" => Ok(64), "usize" => Ok(64), "f64" => Ok(64),
             "u128" => Ok(128),
-            _ => None,
+            _      => None,
         });
-        is_signed = prim.is_in(["i8", "i16", "i32", "i64"]);
-        integer = prim.is_in(["i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "usize"]);
+        is_signed       = prim.is_in(["i8", "i16", "i32", "i64"]);
+        integer         = prim.is_in([
+            "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "usize"
+        ]);
         value: Res<i64> = bits.match({
-            None    => None,
+            None      => None,
             Ok(width) => member.match({
                 "BITS" => Ok(width),
                 // The float extremes are IEEE bit patterns, as float
@@ -1634,20 +1990,27 @@ Lowerer* = {
                 _      => None,
             }),
         });
-        self.constant(ty, value.ok_or(unsupported(span, "this primitive constant")).try())
+        self.constant(
+            ty,
+            value.ok_or(unsupported(span, "this primitive constant")).try()
+        )
     }
 
     // The capability an expression denotes (`env`, `env.out`), if any.
     capability_of* = (self :: @Self, id: ExprId) Res<Res<TyId>, LowerError> {
         e = self.tree.expr_at(id);
         e.kind.match({
-            Name(n)   => Ok(self.lookup(n.text).match({ Ok(Capability(t)) => Ok(t), _ => None })),
+            Name(n)   => Ok(
+                self.lookup(n.text).match({ Ok(Capability(t)) => Ok(t), _ => None })
+            ),
             Paren(p)  => self.capability_of(p.inner),
             Access(a) => self.capability_of(a.base).try().match({
-                None    => Ok(None),
-                Ok(_)   => {
+                None  => Ok(None),
+                Ok(_) => {
                     ty = self.type_of(id).try();
-                    Ok(self.shape(ty).try().class.match({ Unit => Ok(ty), _ => None }))
+                    Ok(
+                        self.shape(ty).try().class.match({ Unit => Ok(ty), _ => None })
+                    )
                 },
             }),
             _         => Ok(None),
@@ -1665,33 +2028,69 @@ Lowerer* = {
         });
         // The place's own type decides the layout: a binding keeps the
         // representation it was built with.
-        base_ty = base.ty;
+        base_ty  = base.ty;
         usize_ty = self.prim("usize").try();
-        index = self.expr_as(x.index, usize_ty).try();
-        s = self.shape(base_ty).try();
+        index    = self.expr_as(x.index, usize_ty).try();
+        s        = self.shape(base_ty).try();
         s.form.match({
             Array(elements) => {
-                count = self.word_const(Scalar.U64, elements.count.to_i64_bits()).try();
+                count = self.word_const(
+                    Scalar.U64,
+                    elements.count.to_i64_bits()
+                ).try();
                 self.bounds(index.slot, count, x.op_span).try();
                 pointer = self.address(base).try();
-                stride  = self.word_const(Scalar.U64, elements.stride.to_i64_bits()).try();
+                stride  = self.word_const(
+                    Scalar.U64,
+                    elements.stride.to_i64_bits()
+                ).try();
                 offset  = self.slot_of(Scalar.U64).try();
-                self.add(Instruction.BinaryValue(Binary(out: offset, left: index.slot, right: stride, op: Op.WrapMul, span: nowhere()))).try();
+                self.add(Instruction.BinaryValue(Binary(
+                    out: offset,
+                    left: index.slot,
+                    right: stride,
+                    op: Op.WrapMul,
+                    span: nowhere()
+                ))).try();
                 at = self.slot_of(Scalar.Ptr).try();
-                self.add(Instruction.BinaryValue(Binary(out: at, left: pointer, right: offset, op: Op.WrapAdd, span: nowhere()))).try();
+                self.add(Instruction.BinaryValue(Binary(
+                    out: at,
+                    left: pointer,
+                    right: offset,
+                    op: Op.WrapAdd,
+                    span: nowhere()
+                ))).try();
                 Ok(Place(base: Base.Through(at), offset: 0, ty: elements.elem))
             },
             _               => self.prim_name(base_ty).eq("str").match({
                 true  => {
                     pointer = self.address(base).try();
-                    len = self.slot_of(Scalar.U64).try();
-                    self.add(Instruction.LoadValue(Load(out: len, base: pointer, offset: 8))).try();
+                    len     = self.slot_of(Scalar.U64).try();
+                    self.add(Instruction.LoadValue(Load(
+                        out: len,
+                        base: pointer,
+                        offset: 8
+                    ))).try();
                     self.bounds(index.slot, len, x.op_span).try();
                     data = self.slot_of(Scalar.Ptr).try();
-                    self.add(Instruction.LoadValue(Load(out: data, base: pointer, offset: 0))).try();
+                    self.add(Instruction.LoadValue(Load(
+                        out: data,
+                        base: pointer,
+                        offset: 0
+                    ))).try();
                     at = self.slot_of(Scalar.Ptr).try();
-                    self.add(Instruction.BinaryValue(Binary(out: at, left: data, right: index.slot, op: Op.WrapAdd, span: nowhere()))).try();
-                    Ok(Place(base: Base.Through(at), offset: 0, ty: self.prim("u8").try()))
+                    self.add(Instruction.BinaryValue(Binary(
+                        out: at,
+                        left: data,
+                        right: index.slot,
+                        op: Op.WrapAdd,
+                        span: nowhere()
+                    ))).try();
+                    Ok(Place(
+                        base: Base.Through(at),
+                        offset: 0,
+                        ty: self.prim("u8").try()
+                    ))
                 },
                 false => Err(unsupported(span, "indexing this value")),
             }),
@@ -1700,7 +2099,13 @@ Lowerer* = {
 
     bounds = (self :: @Self, index: usize, count: usize, span: Span) Res<(), LowerError> {
         inside = self.slot_of(Scalar.Bool).try();
-        self.add(Instruction.BinaryValue(Binary(out: inside, left: index, right: count, op: Op.Less, span: nowhere()))).try();
+        self.add(Instruction.BinaryValue(Binary(
+            out: inside,
+            left: index,
+            right: count,
+            op: Op.Less,
+            span: nowhere()
+        ))).try();
         ok   = self.label().try();
         fail = self.label().try();
         self.branch_to(inside, ok, fail).try();
@@ -1711,16 +2116,26 @@ Lowerer* = {
     }
 
     array = (self :: @Self, id: ExprId, elems: Vec<ExprId>, span: Span) Res<Value, LowerError> {
-        ty = self.type_of(id).try();
-        s  = self.shape(ty).try();
+        ty       = self.type_of(id).try();
+        s        = self.shape(ty).try();
         elements = s.form.match({ Array(e) => Ok(e), _ => None })
-            .ok_or(unsupported(span, "an array literal without a fixed array type")).try();
-        out = self.temp(ty).try();
-        base = self.slot_of(Scalar.Ptr).try();
+            .ok_or(unsupported(
+                span,
+                "an array literal without a fixed array type"
+            )).try();
+        out      = self.temp(ty).try();
+        base     = self.slot_of(Scalar.Ptr).try();
         elems.loop((h, i, elem) {
             value = self.expr_as(elem, elements.elem).try();
-            self.add(Instruction.AddressOf(Address(out: base, slot: out.slot))).try();
-            self.add(Instruction.StoreValue(Store(base: base, offset: i * elements.stride, value: value.slot))).try();
+            self.add(Instruction.AddressOf(Address(
+                out: base,
+                slot: out.slot
+            ))).try();
+            self.add(Instruction.StoreValue(Store(
+                base: base,
+                offset: i * elements.stride,
+                value: value.slot
+            ))).try();
         });
         Ok(out)
     }
@@ -1742,20 +2157,34 @@ Lowerer* = {
                 tag = variant_index(tagged.variants, name).ok_or(unsupported(span, self.described("an unknown variant", ty))).try();
                 out = self.temp(ty).try();
                 at  = self.slot_of(Scalar.Ptr).try();
-                self.add(Instruction.AddressOf(Address(out: at, slot: out.slot))).try();
+                self.add(Instruction.AddressOf(Address(
+                    out: at,
+                    slot: out.slot
+                ))).try();
                 word = self.word_const(Scalar.U32, tag.to_i64_bits()).try();
-                self.add(Instruction.StoreValue(Store(base: at, offset: 0, value: word))).try();
+                self.add(Instruction.StoreValue(Store(
+                    base: at,
+                    offset: 0,
+                    value: word
+                ))).try();
                 payload.when_ok((p) {
                     expected = tagged.variants.get(tag).ok_or(unsupported(span, "a missing variant")).try().payload;
-                    stored = expected.match({
+                    stored   = expected.match({
                         Ok(t) => self.coerce(p, t).try(),
                         None  => p,
                     });
-                    self.add(Instruction.StoreValue(Store(base: at, offset: tagged.payload, value: stored.slot))).try();
+                    self.add(Instruction.StoreValue(Store(
+                        base: at,
+                        offset: tagged.payload,
+                        value: stored.slot
+                    ))).try();
                 });
                 Ok(out)
             },
-            _                => Err(unsupported(span, self.described("a variant of a type without alternatives", ty))),
+            _                => Err(unsupported(
+                span,
+                self.described("a variant of a type without alternatives", ty)
+            )),
         })
     }
 
@@ -1765,9 +2194,13 @@ Lowerer* = {
         s.form.match({
             Tags(_) => Ok(value.slot),
             _       => {
-                at = self.address(self.spill(value)).try();
+                at  = self.address(self.spill(value)).try();
                 tag = self.slot_of(Scalar.U32).try();
-                self.add(Instruction.LoadValue(Load(out: tag, base: at, offset: 0))).try();
+                self.add(Instruction.LoadValue(Load(
+                    out: tag,
+                    base: at,
+                    offset: 0
+                ))).try();
                 Ok(tag)
             },
         })
@@ -1777,7 +2210,9 @@ Lowerer* = {
         s = self.shape(value.ty).try();
         // Zero-size payloads occupy no bytes: the tag word is the value.
         empty: Res<TyId> = s.form.match({
-            Tags(v) => v.get(tag).match({ Ok(variant) => variant.payload, None => None }),
+            Tags(v) => v.get(
+                tag
+            ).match({ Ok(variant) => variant.payload, None => None }),
             _       => None,
         });
         empty.match({
@@ -1787,16 +2222,31 @@ Lowerer* = {
     }
 
     payload_in_memory = (self :: @Self, value: Value, tag: usize) Res<Value, LowerError> {
-        s = self.shape(value.ty).try();
-        tagged = s.form.match({ Variants(t) => Ok(t), _ => None })
-            .ok_or(unsupported(nowhere(), self.described("a payload of a value without one", value.ty))).try();
+        s       = self.shape(value.ty).try();
+        tagged  = s.form.match({ Variants(t) => Ok(t), _ => None })
+            .ok_or(unsupported(
+                nowhere(),
+                self.described("a payload of a value without one", value.ty)
+            )).try();
         variant = tagged.variants.get(tag).ok_or(unsupported(nowhere(), "a missing variant")).try();
-        ty = variant.payload.ok_or(unsupported(nowhere(), "a payload-free variant")).try();
+        ty      = variant.payload.ok_or(unsupported(
+            nowhere(),
+            "a payload-free variant"
+        )).try();
         self.current.when_ok((block) {
-            self.payload_reads.add(PayloadRead(block: block, at: self.code.len, subject: value.slot, variant: tag))
+            self.payload_reads.add(PayloadRead(
+                block: block,
+                at: self.code.len,
+                subject: value.slot,
+                variant: tag
+            ))
                 .try(LowerError.OutOfMemory);
         });
-        self.read(Place(base: Base.InSlot(value.slot), offset: tagged.payload, ty: ty))
+        self.read(Place(
+            base: Base.InSlot(value.slot),
+            offset: tagged.payload,
+            ty: ty
+        ))
     }
 
     // Each arm's tests come from sema's reading of its pattern (the tree its
@@ -1805,24 +2255,45 @@ Lowerer* = {
     // decision, and the lowering only follows it. A case the reading names
     // that the lowered layout lacks is a compiler error, never a binder.
     match_expr = (self :: @Self, id: ExprId, m: Match, span: Span) Res<Value, LowerError> {
-        ty    = self.narrowed(id).try();
+        ty         = self.narrowed(id).try();
         subject_ty = self.type_of(m.scrutinee).try();
-        subject = self.expr_as(m.scrutinee, subject_ty).try();
-        out   = self.temp(ty).try();
-        done  = self.label().try();
+        subject    = self.expr_as(m.scrutinee, subject_ty).try();
+        out        = self.temp(ty).try();
+        done       = self.label().try();
         m.arms.loop((arm) {
-            reading = self.check.read_pattern(arm.pattern, subject_ty, self.ctx()).try(LowerError.OutOfMemory);
-            next = self.label().try();
-            body = self.label().try();
-            mark = self.locals.len;
+            reading = self.check.read_pattern(
+                arm.pattern,
+                subject_ty,
+                self.ctx()
+            ).try(LowerError.OutOfMemory);
+            next    = self.label().try();
+            body    = self.label().try();
+            mark    = self.locals.len;
             // Payloads the tests read, by reading index; the binders take
             // these same values, which the tests' guards cover.
             read ::= self.alloc.Vec<TestedPayload>();
-            self.test_pattern(reading, reading.root, arm.pattern, subject, body, next, read).try();
+            self.test_pattern(
+                reading,
+                reading.root,
+                arm.pattern,
+                subject,
+                body,
+                next,
+                read
+            ).try();
             self.start(body);
-            self.bind_pattern(reading, reading.root, arm.pattern, subject, read).try();
+            self.bind_pattern(
+                reading,
+                reading.root,
+                arm.pattern,
+                subject,
+                read
+            ).try();
             value = self.expr_as(arm.body, ty).try();
-            self.add(Instruction.Copy(Move(out: out.slot, source: value.slot))).try();
+            self.add(Instruction.Copy(Move(
+                out: out.slot,
+                source: value.slot
+            ))).try();
             self.release_locals(mark);
             self.jump(done).try();
             self.start(next);
@@ -1854,9 +2325,11 @@ Lowerer* = {
                 },
                 _          => {
                     index = self.case_index(subject.ty, p).try();
-                    test = self.tag_test(subject, index).try();
-                    sub = p.has_sub.match({ true => Ok(reading.pats.at(p.sub)), false => None });
-                    open = sub.match({ Ok(q) => q.kind.match({ WildPat => false, _ => true }), None => false });
+                    test  = self.tag_test(subject, index).try();
+                    sub   = p.has_sub.match({ true => Ok(reading.pats.at(
+                        p.sub
+                    )), false => None });
+                    open  = sub.match({ Ok(q) => q.kind.match({ WildPat => false, _ => true }), None => false });
                     open.match({
                         false => self.branch_to(test, yes, no),
                         true  => {
@@ -1864,8 +2337,19 @@ Lowerer* = {
                             self.branch_to(test, inner, no).try();
                             self.start(inner);
                             payload = self.payload_of(subject, index).try();
-                            read.add(TestedPayload(at: p.sub, value: payload)).try(LowerError.OutOfMemory);
-                            self.test_pattern(reading, p.sub, self.sub_node(node, p), payload, yes, no, read)
+                            read.add(TestedPayload(
+                                at: p.sub,
+                                value: payload
+                            )).try(LowerError.OutOfMemory);
+                            self.test_pattern(
+                                reading,
+                                p.sub,
+                                self.sub_node(node, p),
+                                payload,
+                                yes,
+                                no,
+                                read
+                            )
                         },
                     })
                 },
@@ -1877,10 +2361,7 @@ Lowerer* = {
     // here; if the layout has no such alternative the two disagree, and the
     // program is refused rather than matched by the tag alone.
     case_index = (self :: @Self, ty: TyId, p: Pat) Res<usize, LowerError> {
-        self.variant_position(ty, p.name).ok_or(unsupported(
-            p.span,
-            self.described("a case sema read in this pattern that the lowered layout lacks", ty)
-        ))
+        self.variant_position(ty, p.name).ok_or(unsupported(p.span, self.described("a case sema read in this pattern that the lowered layout lacks", ty)))
     }
 
     // The written pattern beneath a constructor reading. `Err(e)` reads as
@@ -1889,15 +2370,20 @@ Lowerer* = {
     // so the member level keeps the node that spelled the case.
     sub_node = (self: @Self, node: PatternId, p: Pat) PatternId {
         self.tree.pattern_at(node).kind.match({
-            Destructure(d) => d.name.last_segment().eq(p.name).match({ true => d.binder, false => node }),
+            Destructure(d) => d.name.last_segment().eq(
+                p.name
+            ).match({ true => d.binder, false => node }),
             _              => node,
         })
     }
 
     literal_test = (self :: @Self, node: PatternId, subject: Value) Res<usize, LowerError> {
-        written = self.tree.pattern_at(node);
-        l = written.kind.match({ Literal(l) => Ok(l), _ => None })
-            .ok_or(unsupported(written.span, "a literal reading of a pattern that is not a literal")).try();
+        written  = self.tree.pattern_at(node);
+        l        = written.kind.match({ Literal(l) => Ok(l), _ => None })
+            .ok_or(unsupported(
+                written.span,
+                "a literal reading of a pattern that is not a literal"
+            )).try();
         expected = self.literal_pattern(l, subject.ty, written.span).try();
         self.equal_test(subject, expected)
     }
@@ -1916,15 +2402,28 @@ Lowerer* = {
     // For a value with payloads the test is remembered, so the branch that
     // consumes it becomes a guard (see `branch_to`).
     tag_test* = (self :: @Self, subject: Value, index: usize) Res<usize, LowerError> {
-        tag = self.tag_of(subject).try();
+        tag      = self.tag_of(subject).try();
         expected = self.word_const(Scalar.U32, index.to_i64_bits()).try();
-        test = self.slot_of(Scalar.Bool).try();
-        self.add(Instruction.BinaryValue(Binary(out: test, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+        test     = self.slot_of(Scalar.Bool).try();
+        self.add(Instruction.BinaryValue(Binary(
+            out: test,
+            left: tag,
+            right: expected,
+            op: Op.Equal,
+            span: nowhere()
+        ))).try();
         self.shape(subject.ty).try().form.match({
             Variants(t) => {
                 // With two alternatives, failing the test proves the other.
-                otherwise: Res<usize> = (t.variants.len == 2).match({ true => Ok(1 - index), false => None });
-                self.case_tests.add(CaseTest(test: test, subject: subject.slot, variant: index, otherwise: otherwise))
+                otherwise: Res<usize> = (t.variants.len == 2).match({ true => Ok(
+                    1 - index
+                ), false => None });
+                self.case_tests.add(CaseTest(
+                    test: test,
+                    subject: subject.slot,
+                    variant: index,
+                    otherwise: otherwise
+                ))
                     .try(LowerError.OutOfMemory);
             },
             _           => (),
@@ -1944,12 +2443,20 @@ Lowerer* = {
         s.form.match({
             Tags(v)     => Ok(v),
             Variants(t) => Ok(t.variants),
-            _           => Err(unsupported(nowhere(), self.described("alternatives of a value without them", ty))),
+            _           => Err(unsupported(
+                nowhere(),
+                self.described("alternatives of a value without them", ty)
+            )),
         })
     }
 
     described2* = (self: @Self, what: str, from: TyId, to: TyId) str {
-        self.alloc.String("{} (`{}` to `{}`)", what, self.check.types.key_at(from), self.check.types.key_at(to)).match({
+        self.alloc.String(
+            "{} (`{}` to `{}`)",
+            what,
+            self.check.types.key_at(from),
+            self.check.types.key_at(to)
+        ).match({
             Ok(s)  => s.view(),
             Err(_) => what,
         })
@@ -1957,7 +2464,11 @@ Lowerer* = {
 
     // A fault message naming the type involved.
     described* = (self: @Self, what: str, ty: TyId) str {
-        self.alloc.String("{} (`{}`)", what, self.check.types.key_at(ty)).match({
+        self.alloc.String(
+            "{} (`{}`)",
+            what,
+            self.check.types.key_at(ty)
+        ).match({
             Ok(s)  => s.view(),
             Err(_) => what,
         })
@@ -1965,8 +2476,17 @@ Lowerer* = {
 
     literal_pattern = (self :: @Self, l: Literal, ty: TyId, span: Span) Res<Value, LowerError> {
         l.kind.match({
-            Int   => self.constant(ty, l.integer.ok_or(unsupported(span, "an unparsed integer")).try().to_i64_bits()),
-            Bool  => self.constant(ty, l.text.eq("true").match({ true => 1, false => 0 })),
+            Int   => self.constant(
+                ty,
+                l.integer.ok_or(unsupported(
+                    span,
+                    "an unparsed integer"
+                )).try().to_i64_bits()
+            ),
+            Bool  => self.constant(
+                ty,
+                l.text.eq("true").match({ true => 1, false => 0 })
+            ),
             Char  => {
                 text = l.text.slice(1, l.text.len - 1).decode_literal(self.alloc).match({ Ok(t) => Ok(t), Err(_) => Err(unsupported(span, "a malformed literal escape")) }).try();
                 self.constant(ty, text.get(0).value_or(0).to_i64())
@@ -1984,7 +2504,13 @@ Lowerer* = {
             true  => Ok(self.str_equal(left, right).try().slot),
             false => {
                 test = self.slot_of(Scalar.Bool).try();
-                self.add(Instruction.BinaryValue(Binary(out: test, left: left.slot, right: right.slot, op: Op.Equal, span: nowhere()))).try();
+                self.add(Instruction.BinaryValue(Binary(
+                    out: test,
+                    left: left.slot,
+                    right: right.slot,
+                    op: Op.Equal,
+                    span: nowhere()
+                ))).try();
                 Ok(test)
             },
         })
@@ -2014,7 +2540,13 @@ Lowerer* = {
                             self.payload_of(subject, index).try()
                         },
                     });
-                    self.bind_pattern(reading, p.sub, self.sub_node(node, p), payload, read)
+                    self.bind_pattern(
+                        reading,
+                        p.sub,
+                        self.sub_node(node, p),
+                        payload,
+                        read
+                    )
                 },
             }),
             LitPat  => Ok(()),
@@ -2029,22 +2561,31 @@ Lowerer* = {
     // the expression, converting the failure to that frame's result type.
     try_expr = (self :: @Self, id: ExprId, operand: ExprId, error: Res<ExprId>, span: Span)
                Res<Value, LowerError> {
-        value = self.expr(operand).try();
+        value    = self.expr(operand).try();
         variants = self.variants_of(value.ty).try();
-        ok_tag = variant_index(variants, "Ok").ok_or(unsupported(span, "try on a value without Ok")).try();
-        is_ok = self.tag_test(value, ok_tag).try();
-        good = self.label().try();
-        bad  = self.label().try();
+        ok_tag   = variant_index(variants, "Ok").ok_or(unsupported(span, "try on a value without Ok")).try();
+        is_ok    = self.tag_test(value, ok_tag).try();
+        good     = self.label().try();
+        bad      = self.label().try();
         self.branch_to(is_ok, good, bad).try();
         self.start(bad);
-        frame = self.here();
-        failure = self.failure_for(value, variants, frame.ret_ty, error, span).try();
-        self.add(Instruction.Copy(Move(out: frame.ret_slot, source: failure.slot))).try();
+        frame   = self.here();
+        failure = self.failure_for(
+            value,
+            variants,
+            frame.ret_ty,
+            error,
+            span
+        ).try();
+        self.add(Instruction.Copy(Move(
+            out: frame.ret_slot,
+            source: failure.slot
+        ))).try();
         // Leaving the frame runs the cleanup of every scope it opened.
         self.unwind(frame.depth).try();
         self.jump(frame.ret_block).try();
         self.start(good);
-        ty = self.type_of(id).try();
+        ty      = self.type_of(id).try();
         payload = self.payload_of(value, ok_tag).try();
         self.coerce(payload, ty)
     }
@@ -2056,25 +2597,29 @@ Lowerer* = {
         target_variants = self.variants_of(ret).try();
         variant_index(variants, "Err").match({
             None    => error.match({
-                None    => self.variant_value(ret, "None", None, span),
-                Ok(e)   => {
+                None  => self.variant_value(ret, "None", None, span),
+                Ok(e) => {
                     reason = self.replacement(e, ret, None).try();
                     self.variant_value(ret, "Err", Ok(reason), span)
                 },
             }),
             Ok(err) => {
                 original = self.payload_of(value, err).try();
-                reason = error.match({
-                    None    => Ok(original),
-                    Ok(e)   => self.replacement(e, ret, Ok(original)),
+                reason   = error.match({
+                    None  => Ok(original),
+                    Ok(e) => self.replacement(e, ret, Ok(original)),
                 }).try();
                 variant_index(target_variants, "Err").match({
-                    Ok(_)  => {
-                        target = self.err_type(ret).try();
-                        converted = self.widen_error(reason, target, span).try();
+                    Ok(_) => {
+                        target    = self.err_type(ret).try();
+                        converted = self.widen_error(
+                            reason,
+                            target,
+                            span
+                        ).try();
                         self.variant_value(ret, "Err", Ok(converted), span)
                     },
-                    None   => self.variant_value(ret, "None", None, span),
+                    None  => self.variant_value(ret, "None", None, span),
                 })
             },
         })
@@ -2088,7 +2633,9 @@ Lowerer* = {
             Lambda(_) => {
                 lambda = LambdaRef(expr: e, frame: self.frame);
                 args ::= self.alloc.Vec<Value>();
-                original.when_ok((o) { args.add(o).try(LowerError.OutOfMemory); });
+                original.when_ok(
+                    (o) { args.add(o).try(LowerError.OutOfMemory); }
+                );
                 self.inline_lambda(lambda, args, target)
             },
             _         => self.expr_as(e, target),
@@ -2098,7 +2645,10 @@ Lowerer* = {
     err_type* = (self :: @Self, ty: TyId) Res<TyId, LowerError> {
         self.check.types.at(ty).match({
             Res(r) => self.concrete(r.error),
-            _      => Err(unsupported(nowhere(), "an error result outside Res")),
+            _      => Err(unsupported(
+                nowhere(),
+                "an error result outside Res"
+            )),
         })
     }
 
@@ -2109,12 +2659,12 @@ Lowerer* = {
             true  => Ok(value),
             false => {
                 target_variants = self.variants_of(target).try();
-                name = self.type_name(value.ty);
+                name            = self.type_name(value.ty);
                 variant_index(target_variants, name).match({
                     // The source type is itself one member of the target.
-                    Ok(_)  => self.variant_value(target, name, Ok(value), span),
+                    Ok(_) => self.variant_value(target, name, Ok(value), span),
                     // Otherwise the source's own alternatives carry over.
-                    None   => self.remap_variants(value, target, span),
+                    None  => self.remap_variants(value, target, span),
                 })
             },
         })
@@ -2122,7 +2672,11 @@ Lowerer* = {
 
     qualified* = (self: @Self, ty: TyId) str {
         self.check.types.at(ty).match({
-            Named(n) => self.alloc.String("{}.{}", self.check.world.module_name(n.decl), n.name).match({
+            Named(n) => self.alloc.String(
+                "{}.{}",
+                self.check.world.module_name(n.decl),
+                n.name
+            ).match({
                 Ok(s)  => s.view(),
                 Err(_) => "",
             }),
@@ -2142,8 +2696,8 @@ Lowerer* = {
     remap_variants = (self :: @Self, value: Value, target: TyId, span: Span)
                      Res<Value, LowerError> {
         source = self.variants_of(value.ty).try();
-        out = self.temp(target).try();
-        done = self.label().try();
+        out    = self.temp(target).try();
+        done   = self.label().try();
         source.loop((h, i, variant) {
             yes  = self.label().try();
             next = self.label().try();
@@ -2153,11 +2707,13 @@ Lowerer* = {
             target_variants = self.variants_of(target).try();
             variant_index(target_variants, variant.name).match({
                 // A source alternative the target lacks cannot occur here.
-                None    => self.trap(TrapKind.Unreachable, span).try(),
-                Ok(t)   => {
+                None  => self.trap(TrapKind.Unreachable, span).try(),
+                Ok(t) => {
                     // An unsettled placeholder payload cannot reach a
                     // settled one: that alternative never holds a value.
-                    wanted = target_variants.get(t).match({ Ok(v) => v.payload, None => None });
+                    wanted  = target_variants.get(
+                        t
+                    ).match({ Ok(v) => v.payload, None => None });
                     phantom = variant.payload.match({
                         Ok(p) => self.placeholder(p) && wanted.match({ Ok(w) => !self.placeholder(w) && !self.is_unit(w), None => false }),
                         None  => false,
@@ -2169,8 +2725,16 @@ Lowerer* = {
                                 Ok(_) => Ok(self.payload_of(value, i).try()),
                                 None  => None,
                             });
-                            made = self.variant_value(target, variant.name, payload, span).try();
-                            self.add(Instruction.Copy(Move(out: out.slot, source: made.slot))).try();
+                            made                = self.variant_value(
+                                target,
+                                variant.name,
+                                payload,
+                                span
+                            ).try();
+                            self.add(Instruction.Copy(Move(
+                                out: out.slot,
+                                source: made.slot
+                            ))).try();
                             self.jump(done).try();
                         },
                     });
@@ -2192,7 +2756,11 @@ Lowerer* = {
     inline_lambda* = (self :: @Self, lambda: LambdaRef, args: Vec<Value>, want: TyId)
                      Res<Value, LowerError> {
         kinds ::= self.alloc.Vec<LocalKind>();
-        args.loop((arg) { kinds.add(LocalKind.Direct(self.copy_value(arg).try())).try(LowerError.OutOfMemory); });
+        args.loop(
+            (arg) { kinds.add(LocalKind.Direct(
+                self.copy_value(arg).try()
+            )).try(LowerError.OutOfMemory); }
+        );
         self.inline_bound(lambda, kinds, want)
     }
 
@@ -2201,11 +2769,14 @@ Lowerer* = {
     // caller's `h` on, and `h.break()` in the body leaves that loop).
     inline_bound* = (self :: @Self, lambda: LambdaRef, args: Vec<LocalKind>, want: TyId)
                     Res<Value, LowerError> {
-        l = self.tree.expr_at(lambda.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
-            .ok_or(unsupported(nowhere(), "a closure that is not a lambda")).try();
-        saved = self.frame;
+        l          = self.tree.expr_at(lambda.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
+            .ok_or(unsupported(
+                nowhere(),
+                "a closure that is not a lambda"
+            )).try();
+        saved      = self.frame;
         self.frame = lambda.frame;
-        mark = self.locals.len;
+        mark       = self.locals.len;
         l.params.loop((h, i, p) {
             args.get(i).when_ok((arg) { self.bind_local(p.name.text, arg).try(); });
         });
@@ -2256,12 +2827,19 @@ Lowerer* = {
             callee.member.value_or(usize.MAX)
         ).try(LowerError.OutOfMemory);
         callee.self_ty.when_ok((t) {
-            key.fmt("@{}", self.check.types.key_at(t)).try(LowerError.OutOfMemory);
+            key.fmt(
+                "@{}",
+                self.check.types.key_at(t)
+            ).try(LowerError.OutOfMemory);
         });
         Range(0, callee.inst.len()).loop((i) {
             callee.inst.var_at(i).when_ok((v) {
                 callee.inst.arg_at(i).when_ok((t) {
-                    key.fmt(",{}={}", self.check.types.key_at(v), self.check.types.key_at(t)).try(LowerError.OutOfMemory);
+                    key.fmt(
+                        ",{}={}",
+                        self.check.types.key_at(v),
+                        self.check.types.key_at(t)
+                    ).try(LowerError.OutOfMemory);
                 });
             });
         });
@@ -2270,23 +2848,26 @@ Lowerer* = {
 
     // Lower one real function instance.
     function* = (self :: @Self, callee: Callee, entry: bool) Res<Func, LowerError> {
-        f    = callee.f;
-        body = f.body.ok_or(unsupported(f.name.span, "a call to a bodiless declaration")).try();
-        self.slots   = self.alloc.Vec<Scalar>();
-        self.blocks  = self.alloc.Vec<Res<BasicBlock>>();
-        self.locals  = self.alloc.Vec<Local>();
-        self.frames  = self.alloc.Vec<Frame>();
-        self.loops   = self.alloc.Vec<LoopTarget>();
-        self.scopes  = self.alloc.Vec<Cleanup>();
-        self.drops   = self.alloc.Vec<DropEntry>();
-        self.defers  = self.alloc.Vec<DeferEntry>();
-        self.case_tests = self.alloc.Vec<CaseTest>();
-        self.tag_guards = self.alloc.Vec<TagGuard>();
+        f                  = callee.f;
+        body               = f.body.ok_or(unsupported(
+            f.name.span,
+            "a call to a bodiless declaration"
+        )).try();
+        self.slots         = self.alloc.Vec<Scalar>();
+        self.blocks        = self.alloc.Vec<Res<BasicBlock>>();
+        self.locals        = self.alloc.Vec<Local>();
+        self.frames        = self.alloc.Vec<Frame>();
+        self.loops         = self.alloc.Vec<LoopTarget>();
+        self.scopes        = self.alloc.Vec<Cleanup>();
+        self.drops         = self.alloc.Vec<DropEntry>();
+        self.defers        = self.alloc.Vec<DeferEntry>();
+        self.case_tests    = self.alloc.Vec<CaseTest>();
+        self.tag_guards    = self.alloc.Vec<TagGuard>();
         self.payload_reads = self.alloc.Vec<PayloadRead>();
-        self.depth   = 0;
-        self.prologue = self.alloc.Vec<Instruction>();
-        entry_block = self.label().try();
-        first = self.label().try();
+        self.depth         = 0;
+        self.prologue      = self.alloc.Vec<Instruction>();
+        entry_block        = self.label().try();
+        first              = self.label().try();
         self.start(first);
         // Parameter slots come first, in order.
         ret_ty = f.ret.match({ Ok(t) => self.callee_type(callee, t), None => Ok(self.unit_ty) }).try();
@@ -2294,33 +2875,55 @@ Lowerer* = {
         f.params.loop((p) { params.add(p).try(LowerError.OutOfMemory); });
         kinds ::= self.alloc.Vec<LocalKind>();
         params.loop((p) {
-            ty = p.type.ok_or(unsupported(p.span, "an inferred parameter type")).try();
-            t  = self.callee_type(callee, ty).try();
+            ty         = p.type.ok_or(unsupported(
+                p.span,
+                "an inferred parameter type"
+            )).try();
+            t          = self.callee_type(callee, ty).try();
             capability = self.shape(t).try().class.match({ Unit => self.is_capability(t), _ => false });
             capability.match({
                 true  => {
                     // Capabilities carry no data; a callee still receives
                     // an argument position so calls keep one shape.
-                    entry.match({ true => (), false => { self.temp(t).try(); } });
-                    kinds.add(LocalKind.Capability(t)).try(LowerError.OutOfMemory);
+                    entry.match({ true => (), false => { self.temp(
+                        t
+                    ).try(); } });
+                    kinds.add(LocalKind.Capability(
+                        t
+                    )).try(LowerError.OutOfMemory);
                 },
                 false => p.mutable.match({
                     true  => {
                         pointer = self.slot_of(Scalar.Ptr).try();
-                        kinds.add(LocalKind.Ref(Place(base: Base.Through(pointer), offset: 0, ty: t))).try(LowerError.OutOfMemory);
+                        kinds.add(LocalKind.Ref(Place(
+                            base: Base.Through(pointer),
+                            offset: 0,
+                            ty: t
+                        ))).try(LowerError.OutOfMemory);
                     },
                     false => {
                         slot = self.temp(t).try();
-                        kinds.add(LocalKind.Direct(slot)).try(LowerError.OutOfMemory);
+                        kinds.add(LocalKind.Direct(
+                            slot
+                        )).try(LowerError.OutOfMemory);
                     },
                 }),
             });
         });
         entry.then(() {
-            (self.slots.len == 0).ensure(unsupported(f.name.span, "main parameters other than Env")).try();
+            (self.slots.len == 0).ensure(unsupported(
+                f.name.span,
+                "main parameters other than Env"
+            )).try();
         });
         parameters = self.slots.len;
-        frame = self.push_frame(callee.inst, callee.module, ret_ty, callee.self_ty, Ok(callee)).try();
+        frame      = self.push_frame(
+            callee.inst,
+            callee.module,
+            ret_ty,
+            callee.self_ty,
+            Ok(callee)
+        ).try();
         self.frame = frame;
         params.loop((h, i, p) {
             kinds.get(i).when_ok((k) { self.bind_local(p.name.text, k).try(); });
@@ -2328,25 +2931,37 @@ Lowerer* = {
         // The body's value is lowered at the result type, so an open
         // literal result is a constant of it and an open `match` result
         // takes its layout.
-        value = self.settled(ret_ty).match({
+        value   = self.settled(ret_ty).match({
             true  => self.block_want(body, ret_ty),
             false => self.block(body),
         }).try();
-        here = self.here();
+        here    = self.here();
         coerced = self.coerce(value, ret_ty).try();
-        self.add(Instruction.Copy(Move(out: here.ret_slot, source: coerced.slot))).try();
+        self.add(Instruction.Copy(Move(
+            out: here.ret_slot,
+            source: coerced.slot
+        ))).try();
         self.enter(here.ret_block).try();
         exit_value = entry.match({
-            true  => self.exit_code(Value(slot: here.ret_slot, ty: ret_ty)).try(),
+            true  => self.exit_code(Value(
+                slot: here.ret_slot,
+                ty: ret_ty
+            )).try(),
             false => here.ret_slot,
         });
         self.finish(Terminator.Return(exit_value)).try();
-        self.blocks.set(entry_block, Ok(BasicBlock(code: self.prologue, exit: Terminator.Jump(first))));
+        self.blocks.set(
+            entry_block,
+            Ok(BasicBlock(code: self.prologue, exit: Terminator.Jump(first)))
+        );
         blocks ::= self.alloc.Vec<BasicBlock>();
         self.blocks.loop((pending) {
             blocks.add(pending.value_or(BasicBlock(
                 code: self.alloc.Vec<Instruction>(),
-                exit: Terminator.Trap(Fault(what: TrapKind.Unreachable, span: f.name.span))
+                exit: Terminator.Trap(Fault(
+                    what: TrapKind.Unreachable,
+                    span: f.name.span
+                ))
             ))).try(LowerError.OutOfMemory);
         });
         result_class = entry.match({
@@ -2359,7 +2974,10 @@ Lowerer* = {
             slots: self.slots,
             blocks: blocks,
             result: result_class,
-            guards: Ok(Guards(tests: self.tag_guards, reads: self.payload_reads))
+            guards: Ok(Guards(
+                tests: self.tag_guards,
+                reads: self.payload_reads
+            ))
         ))
     }
 
@@ -2367,16 +2985,24 @@ Lowerer* = {
     stub = (self :: @Self, callee: Callee) Res<Func, LowerError> {
         self.slots = self.alloc.Vec<Scalar>();
         callee.f.params.loop((h, p) {
-            ty = p.type.ok_or(unsupported(p.span, "an inferred parameter type")).try();
-            t = self.callee_type(callee, ty).try();
-            class = p.mutable.match({ true => Scalar.Ptr, false => self.class_of(t).try() });
+            ty    = p.type.ok_or(unsupported(
+                p.span,
+                "an inferred parameter type"
+            )).try();
+            t     = self.callee_type(callee, ty).try();
+            class = p.mutable.match({ true => Scalar.Ptr, false => self.class_of(
+                t
+            ).try() });
             self.slots.add(class).try(LowerError.OutOfMemory);
         });
         ret = callee.f.ret.match({ Ok(t) => self.callee_type(callee, t), None => Ok(self.unit_ty) }).try();
         blocks ::= self.alloc.Vec<BasicBlock>();
         blocks.add(BasicBlock(
             code: self.alloc.Vec<Instruction>(),
-            exit: Terminator.Trap(Fault(what: TrapKind.Unreachable, span: callee.f.name.span))
+            exit: Terminator.Trap(Fault(
+                what: TrapKind.Unreachable,
+                span: callee.f.name.span
+            ))
         )).try(LowerError.OutOfMemory);
         Ok(Func(
             name: callee.f.name.text,
@@ -2399,15 +3025,15 @@ Lowerer* = {
             Unit     => self.word_const(Scalar.I32, 0),
             Block(_) => {
                 variants = self.variants_of(value.ty).try();
-                ok = variant_index(variants, "Ok").ok_or(unsupported(nowhere(), "a main result without Ok")).try();
-                out = self.word_const(Scalar.I32, 1).try();
-                test = self.tag_test(value, ok).try();
-                yes  = self.label().try();
-                done = self.label().try();
+                ok       = variant_index(variants, "Ok").ok_or(unsupported(nowhere(), "a main result without Ok")).try();
+                out      = self.word_const(Scalar.I32, 1).try();
+                test     = self.tag_test(value, ok).try();
+                yes      = self.label().try();
+                done     = self.label().try();
                 self.branch_to(test, yes, done).try();
                 self.start(yes);
                 payload_ty = variants.get(ok).ok_or(unsupported(nowhere(), "a missing variant")).try().payload;
-                code = payload_ty.match({
+                code       = payload_ty.match({
                     Ok(t) => integer(self.class_of(t).try()).match({
                         true  => {
                             p = self.payload_of(value, ok).try();
@@ -2448,22 +3074,22 @@ Lowerer* = {
 // The bit operators lower through `bits` (gen_lower_call), by name.
 binary_op = (op: BinOp) Res<Op> {
     op.match({
-        Add       => Ok(Op.Add),
-        Sub       => Ok(Op.Sub),
-        Mul       => Ok(Op.Mul),
-        Div       => Ok(Op.Div),
-        Rem       => Ok(Op.Rem),
-        AddWrap   => Ok(Op.WrapAdd),
-        SubWrap   => Ok(Op.WrapSub),
-        MulWrap   => Ok(Op.WrapMul),
-        Equal     => Ok(Op.Equal),
-        NotEqual  => Ok(Op.NotEqual),
-        Less      => Ok(Op.Less),
-        LessEq    => Ok(Op.LessEqual),
-        Greater   => Ok(Op.Greater),
-        GreaterEq => Ok(Op.GreaterEqual),
-        And       => None,
-        Or        => None,
+        Add        => Ok(Op.Add),
+        Sub        => Ok(Op.Sub),
+        Mul        => Ok(Op.Mul),
+        Div        => Ok(Op.Div),
+        Rem        => Ok(Op.Rem),
+        AddWrap    => Ok(Op.WrapAdd),
+        SubWrap    => Ok(Op.WrapSub),
+        MulWrap    => Ok(Op.WrapMul),
+        Equal      => Ok(Op.Equal),
+        NotEqual   => Ok(Op.NotEqual),
+        Less       => Ok(Op.Less),
+        LessEq     => Ok(Op.LessEqual),
+        Greater    => Ok(Op.Greater),
+        GreaterEq  => Ok(Op.GreaterEqual),
+        And        => None,
+        Or         => None,
         BitAnd     => None,
         BitOr      => None,
         BitXor     => None,
@@ -2503,19 +3129,21 @@ to_i64_bits* = (value: usize) i64 {
 // or divide rounds correctly. None outside that range: such a literal is
 // refused rather than rounded twice.
 float_bits* = (a: Alloc, text: str) Res<Res<i64>, AllocError> {
-    mantissa: u64 ::= 0;
-    digits ::= 0;
-    scale: i64 ::= 0;
-    exponent: i64 ::= 0;
+    mantissa: u64     ::= 0;
+    digits            ::= 0;
+    scale: i64        ::= 0;
+    exponent: i64     ::= 0;
     negative_exponent ::= false;
-    fraction ::= false;
-    in_exponent ::= false;
-    valid ::= true;
+    fraction          ::= false;
+    in_exponent       ::= false;
+    valid             ::= true;
     Range(0, text.len).loop((i) {
         c = text.index(i).to_u64();
         (c >= 48 && c <= 57).match({
             true  => in_exponent.match({
-                true  => { exponent = exponent * 10 + (c - 48).to_i64_bits(); (exponent > 400).then(() { valid = false; }); },
+                true  => { exponent = exponent * 10 + (c - 48).to_i64_bits(); (exponent > 400).then(
+                    () { valid = false; }
+                ); },
                 false => {
                     // Leading zeros are not significant digits.
                     (mantissa > 0 || c != 48).then(() {
@@ -2541,14 +3169,14 @@ float_bits* = (a: Alloc, text: str) Res<Res<i64>, AllocError> {
         false => Ok(None),
         true  => {
             // Split below 2^30 per part: only i32 converts to f64.
-            high = (mantissa / 1073741824).to_i32().value_or(0).to_f64();
-            low  = (mantissa % 1073741824).to_i32().value_or(0).to_f64();
+            high  = (mantissa / 1073741824).to_i32().value_or(0).to_f64();
+            low   = (mantissa % 1073741824).to_i32().value_or(0).to_f64();
             value = high * 1073741824.0 + low;
             ten ::= 1.0;
             steps = (power < 0).match({ true => 0 - power, false => power });
             Range(0, steps.to_usize().value_or(0)).loop((_) { ten = ten * 10.0; });
             exact = (power < 0).match({ true => value / ten, false => value * ten });
-            cell = a.realloc<f64>(null_ptr<f64>(), 1).try();
+            cell  = a.realloc<f64>(null_ptr<f64>(), 1).try();
             cell.write(0, exact);
             Ok(Ok(cell.to<u64>().read(0).to_i64_bits()))
         },
@@ -2597,10 +3225,15 @@ lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
     mains ::= alloc.Vec<DeclId>();
     table = check.world.table_at(entry).ok_or(unsupported(module.span, "a missing module table")).try();
     table.defs.loop((def) {
-        is_main = def.name.eq("main") && def.kind.match({ FunctionDef => true, _ => false });
+        is_main = def.name.eq(
+            "main"
+        ) && def.kind.match({ FunctionDef => true, _ => false });
         is_main.then(() { mains.add(def.id).try(LowerError.OutOfMemory); });
     });
-    (mains.len == 1).ensure(unsupported(module.span, "an executable without exactly one main function")).try();
+    (mains.len == 1).ensure(unsupported(
+        module.span,
+        "an executable without exactly one main function"
+    )).try();
     main = mains.get(0).ok_or(unsupported(module.span, "a missing main function")).try();
     checker ::= check;
     unit_ty = checker.types.unit().try(LowerError.OutOfMemory);
@@ -2630,8 +3263,8 @@ lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
         payload_reads: alloc.Vec<PayloadRead>(),
         synths: alloc.Vec<SynthAt>()
     );
-    main_decl = decl_at(tree, main).ok_or(unsupported(module.span, "a missing main function")).try();
-    main_fn = main_decl.kind.match({ Function(f) => Ok(f), _ => None })
+    main_decl   = decl_at(tree, main).ok_or(unsupported(module.span, "a missing main function")).try();
+    main_fn     = main_decl.kind.match({ Function(f) => Ok(f), _ => None })
         .ok_or(unsupported(module.span, "a main that is not a function")).try();
     entry_index = state.enqueue(Callee(
         f: main_fn,
@@ -2643,17 +3276,20 @@ lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
         generic_owner: None
     )).try();
     functions ::= alloc.Vec<Func>();
-    i: usize ::= 0;
+    i: usize  ::= 0;
     loop(() { i < state.pending.len }, (h) {
         callee = state.pending.get(i).ok_or(unsupported(module.span, "a missing reachable function")).try();
-        via = state.vias.get(i).value_or(None);
+        via    = state.vias.get(i).value_or(None);
         state.use_via(via);
         f = state.lower_pending(i, callee, i == entry_index).match({
             Ok(f)    => f,
             Err(err) => via.match({
                 // Only one implementor's branch reaches this function.
                 Ok(ty) => {
-                    state.broken.add(Broken(ty: ty, fault: err)).try(LowerError.OutOfMemory);
+                    state.broken.add(Broken(
+                        ty: ty,
+                        fault: err
+                    )).try(LowerError.OutOfMemory);
                     state.stub(callee).try()
                 },
                 None   => { Err(err).try(); state.stub(callee).try() },

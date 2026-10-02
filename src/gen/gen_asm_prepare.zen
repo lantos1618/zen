@@ -1074,95 +1074,95 @@ shift = (
     base        : usize
 ) Res<Instruction, AllocError> {
     Ok(instruction.match({
-        Constant(v)    => Instruction.Constant(Const(
+        Constant(v)     => Instruction.Constant(Const(
             out: base + v.out,
             value: v.value
         )),
-        Copy(v)        => Instruction.Copy(Move(
+        Copy(v)         => Instruction.Copy(Move(
             out: base + v.out,
             source: base + v.source
         )),
-        UnaryValue(v)  => Instruction.UnaryValue(Unary(
+        UnaryValue(v)   => Instruction.UnaryValue(Unary(
             out: base + v.out,
             input: base + v.input,
             op: v.op,
             span: v.span
         )),
-        BinaryValue(v) => Instruction.BinaryValue(Binary(
+        BinaryValue(v)  => Instruction.BinaryValue(Binary(
             out: base + v.out,
             left: base + v.left,
             right: base + v.right,
             op: v.op,
             span: v.span
         )),
-        Invoke(call)   => Instruction.Invoke(Invocation(
+        Invoke(call)    => Instruction.Invoke(Invocation(
             out: base + call.out,
             function: call.function,
             args: moved(alloc, call.args, base).try()
         )),
-        PrintValue(v)  => Instruction.PrintValue(Print(
+        PrintValue(v)   => Instruction.PrintValue(Print(
             value: base + v.value,
             ty: v.ty,
             stream: v.stream
         )),
-        Text(t)        => Instruction.Text(t),
-        Cast(v)        => Instruction.Cast(Convert(
+        Text(t)         => Instruction.Text(t),
+        Cast(v)         => Instruction.Cast(Convert(
             out: base + v.out,
             input: base + v.input
         )),
-        AddressOf(v)   => Instruction.AddressOf(Address(
+        AddressOf(v)    => Instruction.AddressOf(Address(
             out: base + v.out,
             slot: base + v.slot
         )),
-        LoadValue(v)   => Instruction.LoadValue(Load(
+        LoadValue(v)    => Instruction.LoadValue(Load(
             out: base + v.out,
             base: base + v.base,
             offset: v.offset
         )),
-        StoreValue(v)  => Instruction.StoreValue(Store(
+        StoreValue(v)   => Instruction.StoreValue(Store(
             base: base + v.base,
             offset: v.offset,
             value: base + v.value
         )),
-        CopyBytes(v)   => Instruction.CopyBytes(CopyMem(
+        CopyBytes(v)    => Instruction.CopyBytes(CopyMem(
             dest: base + v.dest,
             source: base + v.source,
             bytes: base + v.bytes
         )),
-        Bytes(v)       => Instruction.Bytes(StaticBytes(
+        Bytes(v)        => Instruction.Bytes(StaticBytes(
             out: base + v.out,
             bytes: v.bytes
         )),
-        WriteOut(v)    => Instruction.WriteOut(Write(
+        WriteOut(v)     => Instruction.WriteOut(Write(
             data: base + v.data,
             len: base + v.len,
             stream: v.stream
         )),
-        System(call)   => Instruction.System(SysCall(
+        System(call)    => Instruction.System(SysCall(
             out: base + call.out,
             call: call.call,
             args: moved(alloc, call.args, base).try()
         )),
-        Startup(v)     => Instruction.Startup(Start(
+        Startup(v)      => Instruction.Startup(Start(
             out: base + v.out,
             value: v.value
         )),
-        MapPages(v)    => Instruction.MapPages(Pages(
+        MapPages(v)     => Instruction.MapPages(Pages(
             out: base + v.out,
             bytes: base + v.bytes
         )),
-        UnmapPages(v)  => Instruction.UnmapPages(base + v),
-        SysConst(v)    => Instruction.SysConst(SysValue(
+        UnmapPages(v)   => Instruction.UnmapPages(base + v),
+        SysConst(v)     => Instruction.SysConst(SysValue(
             out: base + v.out,
             name: v.name
         )),
-        Flush          => Instruction.Flush,
-        AtomicLoad(v)  => Instruction.AtomicLoad(Load(
+        Flush           => Instruction.Flush,
+        AtomicLoad(v)   => Instruction.AtomicLoad(Load(
             out: base + v.out,
             base: base + v.base,
             offset: v.offset
         )),
-        AtomicStore(v) => Instruction.AtomicStore(Store(
+        AtomicStore(v)  => Instruction.AtomicStore(Store(
             base: base + v.base,
             offset: v.offset,
             value: base + v.value
@@ -1173,29 +1173,29 @@ shift = (
             value: base + v.value,
             op: v.op
         )),
-        CompareSwap(v) => Instruction.CompareSwap(Compare(
+        CompareSwap(v)  => Instruction.CompareSwap(Compare(
             out: base + v.out,
             base: base + v.base,
             expected: base + v.expected,
             desired: base + v.desired
         )),
-        CodeAddress(v) => Instruction.CodeAddress(CodeRef(
+        CodeAddress(v)  => Instruction.CodeAddress(CodeRef(
             out: base + v.out,
             function: v.function
         )),
-        InvokeAt(c)    => Instruction.InvokeAt(IndirectCall(
+        InvokeAt(c)     => Instruction.InvokeAt(IndirectCall(
             out: base + c.out,
             target: base + c.target,
             args: moved(alloc, c.args, base).try()
         )),
-        Machine(c)     => Instruction.Machine(MachineCall(
+        Machine(c)      => Instruction.Machine(MachineCall(
             op: c.op,
             word: c.word,
             outs: moved(alloc, c.outs, base).try(),
             args: moved(alloc, c.args, base).try(),
             span: c.span
         )),
-        Host(c)        => Instruction.Host(HostCall(
+        Host(c)         => Instruction.Host(HostCall(
             out: base + c.out,
             object: c.object,
             member: c.member,
@@ -1205,7 +1205,7 @@ shift = (
             marshal: c.marshal,
             result: c.result
         )),
-        Wait(v)        => Instruction.Wait(base + v),
+        Wait(v)         => Instruction.Wait(base + v),
     }))
 }
 

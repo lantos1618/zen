@@ -25,7 +25,14 @@ read* = (fd: i32, buf: Ptr<u8>, len: usize) i64
 write* = (fd: i32, buf: Ptr<u8>, len: usize) i64
 openat* = (dir: i32, path: Ptr<u8>, flags: i32, mode: u32) i64
 close* = (fd: i32) i64
-mmap* = (addr: usize, len: usize, prot: i32, flags: i32, fd: i32, offset: i64) i64
+mmap* = (
+    addr   : usize,
+    len    : usize,
+    prot   : i32,
+    flags  : i32,
+    fd     : i32,
+    offset : i64
+) i64
 munmap* = (addr: usize, len: usize) i64
 exit_group* = (status: i32) i64
 clock_gettime* = (clock: i32, time: Ptr<u8>) i64
@@ -41,12 +48,39 @@ connect* = (fd: i32, address: Ptr<u8>, len: u32) i64
 // Readiness: epoll on Linux, kqueue on macOS. The other OS answers -ENOSYS.
 epoll_create1* = (flags: i32) i64
 epoll_ctl* = (epoll: i32, op: i32, fd: i32, event: Ptr<u8>) i64
-epoll_pwait* = (epoll: i32, events: Ptr<u8>, count: i32, timeout: i32, mask: usize, size: usize) i64
+epoll_pwait* = (
+    epoll   : i32,
+    events  : Ptr<u8>,
+    count   : i32,
+    timeout : i32,
+    mask    : usize,
+    size    : usize
+) i64
 kqueue* = () i64
-kevent* = (kq: i32, changes: Ptr<u8>, count: i32, events: Ptr<u8>, capacity: i32, timeout: Ptr<u8>) i64
+kevent* = (
+    kq       : i32,
+    changes  : Ptr<u8>,
+    count    : i32,
+    events   : Ptr<u8>,
+    capacity : i32,
+    timeout  : Ptr<u8>
+) i64
 // Linux only; macOS threads go through pthreads (below).
-futex* = (address: Ptr<u32>, op: i32, value: u32, timeout: usize, other: usize, third: u32) i64
-clone* = (flags: usize, stack: usize, parent: usize, child: usize, tls: usize) i64
+futex* = (
+    address : Ptr<u32>,
+    op      : i32,
+    value   : u32,
+    timeout : usize,
+    other   : usize,
+    third   : u32
+) i64
+clone* = (
+    flags  : usize,
+    stack  : usize,
+    parent : usize,
+    child  : usize,
+    tls    : usize
+) i64
 nanosleep* = (request: Ptr<u8>, remaining: Ptr<u8>) i64
 mprotect* = (addr: usize, len: usize, prot: i32) i64
 flock* = (fd: i32, op: i32) i64
@@ -215,11 +249,11 @@ c_path* = (a: Alloc, path: str) Res<Ptr<u8>, AllocError> {
 // -errno, or -12 (ENOMEM) when the text cannot grow.
 read_file* = (a: Alloc, path: str) Res<String, i64> {
     name = c_path(a, path).match({ Ok(p) => Ok(p), Err(_) => Err(NO_MEMORY) }).try();
-    fd = openat(at_fdcwd(), name, o_rdonly() + o_cloexec(), 0);
+    fd   = openat(at_fdcwd(), name, o_rdonly() + o_cloexec(), 0);
     (fd < 0).match({ true => Err(fd), false => Ok(()) }).try();
     handle = fd.to_i32().value_or(-1);
     out ::= a.String().match({ Ok(s) => Ok(s), Err(_) => Err(NO_MEMORY) }).try();
-    chunk = a.raw(65536, 16).match({ Ok(p) => Ok(p), Err(_) => Err(NO_MEMORY) }).try();
+    chunk             = a.raw(65536, 16).match({ Ok(p) => Ok(p), Err(_) => Err(NO_MEMORY) }).try();
     failure: Res<i64> = loop<i64>((h) {
         n = read(handle, chunk, 65536);
         (n == 0).then(() { h.break(); });
@@ -238,9 +272,14 @@ read_file* = (a: Alloc, path: str) Res<String, i64> {
 // Create or truncate a file and write all of `bytes` to it.
 write_file* = (a: Alloc, path: str, bytes: str) Res<(), i64> {
     name = c_path(a, path).match({ Ok(p) => Ok(p), Err(_) => Err(NO_MEMORY) }).try();
-    fd = openat(at_fdcwd(), name, o_wronly() + o_creat() + o_trunc() + o_cloexec(), 420);
+    fd   = openat(
+        at_fdcwd(),
+        name,
+        o_wronly() + o_creat() + o_trunc() + o_cloexec(),
+        420
+    );
     (fd < 0).match({ true => Err(fd), false => Ok(()) }).try();
-    handle = fd.to_i32().value_or(-1);
+    handle  = fd.to_i32().value_or(-1);
     written = write_all(handle, bytes);
     close(handle);
     written
@@ -295,7 +334,7 @@ PAGE_HEADER: usize = 16
 
 map_run = (size: usize) Res<Ptr<u8>, AllocError> {
     total = size + PAGE_HEADER;
-    got = mmap(0, total, 3, map_private_anonymous(), -1, 0);
+    got   = mmap(0, total, 3, map_private_anonymous(), -1, 0);
     (got < 0).match({
         true  => Err(AllocError.OutOfMemory),
         false => {
@@ -320,11 +359,11 @@ Pages.impl(Alloc, {
     }
 
     realloc = <T>(self: @Self, p: Ptr<T>, count: usize) Res<Ptr<T>, AllocError> {
-        want = p.bytes(count);
+        want  = p.bytes(count);
         fresh = map_run(want).try();
-        src = p.to<u8>();
+        src   = p.to<u8>();
         (!src.is_null()).then(() {
-            old = src.back(PAGE_HEADER).to<usize>().read(1);
+            old  = src.back(PAGE_HEADER).to<usize>().read(1);
             keep = (old > want).match({ true => want, false => old });
             (keep > 0).then(() { fresh.copy_from(src, keep); });
             head = src.back(PAGE_HEADER);

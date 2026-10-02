@@ -21,47 +21,47 @@ NONE*: usize = 18446744073709551615
 // Append the slots `instruction` reads to `out`.
 reads* = (instruction: Instruction, out :: Vec<usize>) Res<(), AllocError> {
     instruction.match({
-        Constant(_)        => Ok(()),
-        Copy(value)        => out.add(value.source),
-        UnaryValue(value)  => out.add(value.input),
-        BinaryValue(value) => {
+        Constant(_)         => Ok(()),
+        Copy(value)         => out.add(value.source),
+        UnaryValue(value)   => out.add(value.input),
+        BinaryValue(value)  => {
             out.add(value.left).try();
             out.add(value.right)
         },
-        Invoke(call)       => {
+        Invoke(call)        => {
             call.args.loop((slot) { out.add(slot).try(); });
             Ok(())
         },
-        PrintValue(value)  => out.add(value.value),
-        Text(_)            => Ok(()),
-        Cast(value)        => out.add(value.input),
-        AddressOf(_)       => Ok(()),
-        LoadValue(value)   => out.add(value.base),
-        StoreValue(value)  => {
+        PrintValue(value)   => out.add(value.value),
+        Text(_)             => Ok(()),
+        Cast(value)         => out.add(value.input),
+        AddressOf(_)        => Ok(()),
+        LoadValue(value)    => out.add(value.base),
+        StoreValue(value)   => {
             out.add(value.base).try();
             out.add(value.value)
         },
-        CopyBytes(value)   => {
+        CopyBytes(value)    => {
             out.add(value.dest).try();
             out.add(value.source).try();
             out.add(value.bytes)
         },
-        Bytes(_)           => Ok(()),
-        WriteOut(value)    => {
+        Bytes(_)            => Ok(()),
+        WriteOut(value)     => {
             out.add(value.data).try();
             out.add(value.len)
         },
-        System(call)       => {
+        System(call)        => {
             call.args.loop((slot) { out.add(slot).try(); });
             Ok(())
         },
-        Startup(_)         => Ok(()),
-        MapPages(value)    => out.add(value.bytes),
-        UnmapPages(slot)   => out.add(slot),
-        SysConst(_)        => Ok(()),
-        Flush              => Ok(()),
-        AtomicLoad(value)  => out.add(value.base),
-        AtomicStore(value) => {
+        Startup(_)          => Ok(()),
+        MapPages(value)     => out.add(value.bytes),
+        UnmapPages(slot)    => out.add(slot),
+        SysConst(_)         => Ok(()),
+        Flush               => Ok(()),
+        AtomicLoad(value)   => out.add(value.base),
+        AtomicStore(value)  => {
             out.add(value.base).try();
             out.add(value.value)
         },
@@ -69,13 +69,13 @@ reads* = (instruction: Instruction, out :: Vec<usize>) Res<(), AllocError> {
             out.add(value.base).try();
             out.add(value.value)
         },
-        CompareSwap(value) => {
+        CompareSwap(value)  => {
             out.add(value.base).try();
             out.add(value.expected).try();
             out.add(value.desired)
         },
-        CodeAddress(_)     => Ok(()),
-        InvokeAt(call)     => {
+        CodeAddress(_)      => Ok(()),
+        InvokeAt(call)      => {
             out.add(call.target).try();
             call.args.loop((slot) { out.add(slot).try(); });
             Ok(())
@@ -83,15 +83,15 @@ reads* = (instruction: Instruction, out :: Vec<usize>) Res<(), AllocError> {
         // Refused before the machine passes run (gen_verify refuses a
         // machine primitive; the driver refuses JavaScript host programs),
         // but their reads are still listed.
-        Machine(call)      => {
+        Machine(call)       => {
             call.args.loop((slot) { out.add(slot).try(); });
             Ok(())
         },
-        Host(call)         => {
+        Host(call)          => {
             call.args.loop((slot) { out.add(slot).try(); });
             Ok(())
         },
-        Wait(_)            => Ok(()),
+        Wait(_)             => Ok(()),
     })
 }
 
@@ -100,39 +100,39 @@ reads* = (instruction: Instruction, out :: Vec<usize>) Res<(), AllocError> {
 // which `Flow.local` accounts for.
 written* = (instruction: Instruction) Res<usize> {
     instruction.match({
-        Constant(value)    => Ok(value.out),
-        Copy(value)        => Ok(value.out),
-        UnaryValue(value)  => Ok(value.out),
-        BinaryValue(value) => Ok(value.out),
-        Invoke(call)       => Ok(call.out),
-        Cast(value)        => Ok(value.out),
-        AddressOf(value)   => Ok(value.out),
-        LoadValue(value)   => Ok(value.out),
-        Bytes(value)       => Ok(value.out),
-        System(call)       => Ok(call.out),
-        Startup(value)     => Ok(value.out),
-        MapPages(value)    => Ok(value.out),
-        SysConst(value)    => Ok(value.out),
-        AtomicLoad(value)  => Ok(value.out),
+        Constant(value)     => Ok(value.out),
+        Copy(value)         => Ok(value.out),
+        UnaryValue(value)   => Ok(value.out),
+        BinaryValue(value)  => Ok(value.out),
+        Invoke(call)        => Ok(call.out),
+        Cast(value)         => Ok(value.out),
+        AddressOf(value)    => Ok(value.out),
+        LoadValue(value)    => Ok(value.out),
+        Bytes(value)        => Ok(value.out),
+        System(call)        => Ok(call.out),
+        Startup(value)      => Ok(value.out),
+        MapPages(value)     => Ok(value.out),
+        SysConst(value)     => Ok(value.out),
+        AtomicLoad(value)   => Ok(value.out),
         AtomicUpdate(value) => Ok(value.out),
-        CompareSwap(value) => Ok(value.out),
-        CodeAddress(value) => Ok(value.out),
-        InvokeAt(call)     => Ok(call.out),
-        Host(call)         => Ok(call.out),
-        Wait(slot)         => Ok(slot),
+        CompareSwap(value)  => Ok(value.out),
+        CodeAddress(value)  => Ok(value.out),
+        InvokeAt(call)      => Ok(call.out),
+        Host(call)          => Ok(call.out),
+        Wait(slot)          => Ok(slot),
         // Listed one by one, without a default: an instruction added to the
         // IR must say what it writes, or liveness would miss the write.
-        PrintValue(_)      => None,
-        Text(_)            => None,
-        StoreValue(_)      => None,
-        CopyBytes(_)       => None,
-        WriteOut(_)        => None,
-        UnmapPages(_)      => None,
-        Flush              => None,
-        AtomicStore(_)     => None,
+        PrintValue(_)       => None,
+        Text(_)             => None,
+        StoreValue(_)       => None,
+        CopyBytes(_)        => None,
+        WriteOut(_)         => None,
+        UnmapPages(_)       => None,
+        Flush               => None,
+        AtomicStore(_)      => None,
         // A machine primitive writes several slots, and gen_verify refuses
         // it before any machine pass runs.
-        Machine(_)         => None,
+        Machine(_)          => None,
     })
 }
 

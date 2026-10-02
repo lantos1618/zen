@@ -46,10 +46,7 @@ send = (env: Env, worker: Ref<Worker>) Res<(), Error> {
 main = (env: Env) Res<i32, Error> {
     worker = env.spawn(Worker()).try();
     sent   = send(env, worker);
-    env.fs.write(
-        "sender-finished",
-        "done"
-    ).match({ Ok(_) => (), Err(_) => println("wrong") });
+    env.fs.write("sender-finished", "done").match({ Ok(_) => (), Err(_) => println("wrong") });
     sent.try();
     worker.stop();
     worker.join();

@@ -28,18 +28,18 @@ IrReason* = EntryFunction
 
 message* = (reason: IrReason) str {
     reason.match({
-        EntryFunction   => "entry function is missing",
-        EntryParameters => "entry function takes arguments",
-        ParameterSlots  => "parameter count exceeds the slot signature",
-        MissingBlock    => "function has no entry block",
-        Slot            => "instruction refers to a missing slot",
-        Type            => "instruction types do not agree",
-        Constant        => "constant does not fit its scalar type",
-        Callee          => "call refers to a missing function",
-        Arguments       => "call argument count does not match its signature",
-        Target          => "terminator refers to a missing block",
-        Uninitialized   => "slot is read before initialization on a reachable path",
-        Guard           => "a recorded tag guard does not branch on that slot's tag",
+        EntryFunction    => "entry function is missing",
+        EntryParameters  => "entry function takes arguments",
+        ParameterSlots   => "parameter count exceeds the slot signature",
+        MissingBlock     => "function has no entry block",
+        Slot             => "instruction refers to a missing slot",
+        Type             => "instruction types do not agree",
+        Constant         => "constant does not fit its scalar type",
+        Callee           => "call refers to a missing function",
+        Arguments        => "call argument count does not match its signature",
+        Target           => "terminator refers to a missing block",
+        Uninitialized    => "slot is read before initialization on a reachable path",
+        Guard            => "a recorded tag guard does not branch on that slot's tag",
         UnguardedPayload => "a payload is read without a test for its alternative on every path",
     })
 }
@@ -109,16 +109,16 @@ Check = {
 
     instruction = (self: @Self, instruction: Instruction) Res<(), VerifyError> {
         instruction.match({
-            Constant(value)    => {
+            Constant(value)     => {
                 ty = self.slot(value.out).try();
                 fits(ty, value.value).ensure(self.fault(IrReason.Constant)).try();
                 Ok(())
             },
-            Copy(value)        => self.expect(
+            Copy(value)         => self.expect(
                 value.out,
                 self.slot(value.source).try()
             ),
-            UnaryValue(value)  => {
+            UnaryValue(value)   => {
                 ty = self.slot(value.input).try();
                 value.op.match({
                     Neg => signed(ty) || float(ty),
@@ -126,8 +126,13 @@ Check = {
                 }).ensure(self.fault(IrReason.Type)).try();
                 self.expect(value.out, ty)
             },
-            BinaryValue(value) => self.binary(value.left, value.right, value.out, value.op),
-            Invoke(call)       => {
+            BinaryValue(value)  => self.binary(
+                value.left,
+                value.right,
+                value.out,
+                value.op
+            ),
+            Invoke(call)        => {
                 callee = self.program.functions.get(call.function)
                     .ok_or(self.fault(IrReason.Callee)).try();
                 (callee.parameters == call.args.len).ensure(self.fault(
@@ -139,58 +144,60 @@ Check = {
                 });
                 self.expect(call.out, callee.result)
             },
-            PrintValue(value)  => {
+            PrintValue(value)   => {
                 (word(value.ty) || same(value.ty, Scalar.Unit))
                     .ensure(self.fault(IrReason.Type)).try();
                 self.expect(value.value, value.ty)
             },
-            Text(_)            => Ok(()),
-            Cast(value)        => {
+            Text(_)             => Ok(()),
+            Cast(value)         => {
                 self.word_slot(value.input).try();
                 self.word_slot(value.out).try();
                 Ok(())
             },
-            AddressOf(value)   => {
+            AddressOf(value)    => {
                 self.slot(value.slot).try();
                 self.expect(value.out, Scalar.Ptr)
             },
-            LoadValue(value)   => {
+            LoadValue(value)    => {
                 self.slot(value.out).try();
                 self.expect(value.base, Scalar.Ptr)
             },
-            StoreValue(value)  => {
+            StoreValue(value)   => {
                 self.slot(value.value).try();
                 self.expect(value.base, Scalar.Ptr)
             },
-            CopyBytes(value)   => {
+            CopyBytes(value)    => {
                 self.expect(value.dest, Scalar.Ptr).try();
                 self.expect(value.source, Scalar.Ptr).try();
                 self.expect(value.bytes, Scalar.U64)
             },
-            Bytes(value)       => {
+            Bytes(value)        => {
                 self.expect(value.out, Scalar.Ptr)
             },
-            WriteOut(value)    => {
+            WriteOut(value)     => {
                 self.expect(value.data, Scalar.Ptr).try();
                 self.expect(value.len, Scalar.U64)
             },
-            System(call)       => {
+            System(call)        => {
                 (call.args.len == arity(call.call)).ensure(self.fault(IrReason.Arguments)).try();
                 call.args.loop((slot) { self.word_slot(slot).try(); });
                 self.expect(call.out, Scalar.I64)
             },
-            MapPages(value)    => {
+            MapPages(value)     => {
                 self.expect(value.bytes, Scalar.U64).try();
                 self.expect(value.out, Scalar.Ptr)
             },
-            UnmapPages(slot)   => {
+            UnmapPages(slot)    => {
                 self.expect(slot, Scalar.Ptr)
             },
-            Flush              => Ok(()),
-            Host(call)         => {
-                (call.args.len == call.marshal.len).ensure(self.fault(IrReason.Arguments)).try();
+            Flush               => Ok(()),
+            Host(call)          => {
+                (call.args.len == call.marshal.len).ensure(self.fault(
+                    IrReason.Arguments
+                )).try();
                 call.args.loop((h, i, slot) {
-                    ty = self.slot(slot).try();
+                    ty   = self.slot(slot).try();
                     fits = call.marshal.get(i).value_or(Marshal.Nothing).match({
                         Number  => integer(ty) || float(ty),
                         Flag    => same(ty, Scalar.Bool),
@@ -204,7 +211,9 @@ Check = {
                 });
                 // A runtime operation names one the JavaScript runtime has.
                 known = call.member.eq("release") || call.member.eq("copy");
-                (!call.runtime || (known && call.object.is_empty())).ensure(self.fault(IrReason.Arguments)).try();
+                (!call.runtime || (known && call.object.is_empty())).ensure(self.fault(
+                    IrReason.Arguments
+                )).try();
                 out = self.slot(call.out).try();
                 call.result.match({
                     Number  => integer(out) || float(out),
@@ -215,24 +224,24 @@ Check = {
                 }).ensure(self.fault(IrReason.Type)).try();
                 Ok(())
             },
-            Wait(slot)         => {
+            Wait(slot)          => {
                 self.expect(slot, Scalar.U32)
             },
-            SysConst(value)    => {
+            SysConst(value)     => {
                 integer(self.slot(value.out).try()).ensure(self.fault(IrReason.Type)).try();
                 Ok(())
             },
-            Startup(value)     => {
+            Startup(value)      => {
                 ty = value.value.match({ Argc => Scalar.U64, _ => Scalar.Ptr });
                 self.expect(value.out, ty)
             },
             // Scalar slots cannot hold a machine operation's operands.
-            Machine(_)         => Err(self.fault(IrReason.Type)),
-            AtomicLoad(value)  => {
+            Machine(_)          => Err(self.fault(IrReason.Type)),
+            AtomicLoad(value)   => {
                 self.atomic_word(value.out).try();
                 self.expect(value.base, Scalar.Ptr)
             },
-            AtomicStore(value) => {
+            AtomicStore(value)  => {
                 self.atomic_word(value.value).try();
                 self.expect(value.base, Scalar.Ptr)
             },
@@ -243,20 +252,22 @@ Check = {
                 self.expect(value.value, ty).try();
                 self.expect(value.base, Scalar.Ptr)
             },
-            CompareSwap(value) => {
+            CompareSwap(value)  => {
                 ty = self.atomic_word(value.out).try();
                 self.expect(value.expected, ty).try();
                 self.expect(value.desired, ty).try();
                 self.expect(value.base, Scalar.Ptr)
             },
-            CodeAddress(value) => {
+            CodeAddress(value)  => {
                 self.program.functions.get(value.function).ok_or(self.fault(IrReason.Callee)).try();
                 self.expect(value.out, Scalar.Ptr)
             },
-            InvokeAt(call)     => {
+            InvokeAt(call)      => {
                 self.expect(call.target, Scalar.Ptr).try();
                 // Every renderer passes these in argument registers.
-                (call.args.len <= INDIRECT_ARGUMENTS).ensure(self.fault(IrReason.Arguments)).try();
+                (call.args.len <= INDIRECT_ARGUMENTS).ensure(self.fault(
+                    IrReason.Arguments
+                )).try();
                 call.args.loop((slot) { self.word_slot(slot).try(); });
                 out = self.slot(call.out).try();
                 (word(out) || same(out, Scalar.Unit)).ensure(self.fault(IrReason.Type)).try();
@@ -274,15 +285,15 @@ Check = {
 
     binary = (self: @Self, left: usize, right: usize, out: usize, op: Op)
              Res<(), VerifyError> {
-        input = self.slot(left).try();
-        rhs   = self.slot(right).try();
+        input        = self.slot(left).try();
+        rhs          = self.slot(right).try();
         pointer_step = same(input, Scalar.Ptr) && same(rhs, Scalar.U64)
             && op.match({ WrapAdd => true, WrapSub => true, _ => false });
-        shift = op.match({ Shl => true, Shr => true, Rotr => true, _ => false });
+        shift        = op.match({ Shl => true, Shr => true, Rotr => true, _ => false });
         (pointer_step || (shift && same(rhs, Scalar.U64)) || same(input, rhs))
             .ensure(self.fault(IrReason.Type)).try();
         // Unit values compare equal: there is only one.
-        unit = same(input, Scalar.Unit);
+        unit  = same(input, Scalar.Unit);
         valid = op.match({
             Equal        => word(input) || unit,
             NotEqual     => word(input) || unit,
@@ -348,56 +359,56 @@ Check = {
 
     reads = (self: @Self, flags: Vec<bool>, instruction: Instruction) Res<(), VerifyError> {
         instruction.match({
-            Constant(_)        => Ok(()),
-            Copy(value)        => self.initialized(flags, value.source),
-            UnaryValue(value)  => self.initialized(flags, value.input),
-            BinaryValue(value) => {
+            Constant(_)         => Ok(()),
+            Copy(value)         => self.initialized(flags, value.source),
+            UnaryValue(value)   => self.initialized(flags, value.input),
+            BinaryValue(value)  => {
                 self.initialized(flags, value.left).try();
                 self.initialized(flags, value.right)
             },
-            Invoke(call)       => {
+            Invoke(call)        => {
                 call.args.loop((slot) { self.initialized(flags, slot).try(); });
                 Ok(())
             },
-            PrintValue(value)  => self.initialized(flags, value.value),
-            Text(_)            => Ok(()),
-            Cast(value)        => self.initialized(flags, value.input),
-            AddressOf(_)       => Ok(()),
-            LoadValue(value)   => self.initialized(flags, value.base),
-            StoreValue(value)  => {
+            PrintValue(value)   => self.initialized(flags, value.value),
+            Text(_)             => Ok(()),
+            Cast(value)         => self.initialized(flags, value.input),
+            AddressOf(_)        => Ok(()),
+            LoadValue(value)    => self.initialized(flags, value.base),
+            StoreValue(value)   => {
                 self.initialized(flags, value.base).try();
                 self.initialized(flags, value.value)
             },
-            CopyBytes(value)   => {
+            CopyBytes(value)    => {
                 self.initialized(flags, value.dest).try();
                 self.initialized(flags, value.source).try();
                 self.initialized(flags, value.bytes)
             },
-            Bytes(_)           => Ok(()),
-            WriteOut(value)    => {
+            Bytes(_)            => Ok(()),
+            WriteOut(value)     => {
                 self.initialized(flags, value.data).try();
                 self.initialized(flags, value.len)
             },
-            System(call)       => {
+            System(call)        => {
                 call.args.loop((slot) { self.initialized(flags, slot).try(); });
                 Ok(())
             },
-            Startup(_)         => Ok(()),
-            MapPages(value)    => self.initialized(flags, value.bytes),
-            UnmapPages(slot)   => self.initialized(flags, slot),
-            SysConst(_)        => Ok(()),
-            Flush              => Ok(()),
-            Machine(call)      => {
+            Startup(_)          => Ok(()),
+            MapPages(value)     => self.initialized(flags, value.bytes),
+            UnmapPages(slot)    => self.initialized(flags, slot),
+            SysConst(_)         => Ok(()),
+            Flush               => Ok(()),
+            Machine(call)       => {
                 call.args.loop((slot) { self.initialized(flags, slot).try(); });
                 Ok(())
             },
-            Host(call)         => {
+            Host(call)          => {
                 call.args.loop((slot) { self.initialized(flags, slot).try(); });
                 Ok(())
             },
-            Wait(_)            => Ok(()),
-            AtomicLoad(value)  => self.initialized(flags, value.base),
-            AtomicStore(value) => {
+            Wait(_)             => Ok(()),
+            AtomicLoad(value)   => self.initialized(flags, value.base),
+            AtomicStore(value)  => {
                 self.initialized(flags, value.base).try();
                 self.initialized(flags, value.value)
             },
@@ -405,13 +416,13 @@ Check = {
                 self.initialized(flags, value.base).try();
                 self.initialized(flags, value.value)
             },
-            CompareSwap(value) => {
+            CompareSwap(value)  => {
                 self.initialized(flags, value.base).try();
                 self.initialized(flags, value.expected).try();
                 self.initialized(flags, value.desired)
             },
-            CodeAddress(_)     => Ok(()),
-            InvokeAt(call)     => {
+            CodeAddress(_)      => Ok(()),
+            InvokeAt(call)      => {
                 self.initialized(flags, call.target).try();
                 call.args.loop((slot) { self.initialized(flags, slot).try(); });
                 Ok(())
@@ -438,31 +449,31 @@ flags = (alloc: Alloc, count: usize, value: bool) Res<Vec<bool>, VerifyError> {
 // Structural validation has established the bounds of every slot and edge.
 write = (flags :: Vec<bool>, instruction: Instruction) {
     instruction.match({
-        Constant(value)    => { flags.set(value.out, true); },
-        Copy(value)        => { flags.set(value.out, true); },
-        UnaryValue(value)  => { flags.set(value.out, true); },
-        BinaryValue(value) => { flags.set(value.out, true); },
-        Invoke(value)      => { flags.set(value.out, true); },
-        Cast(value)        => { flags.set(value.out, true); },
+        Constant(value)     => { flags.set(value.out, true); },
+        Copy(value)         => { flags.set(value.out, true); },
+        UnaryValue(value)   => { flags.set(value.out, true); },
+        BinaryValue(value)  => { flags.set(value.out, true); },
+        Invoke(value)       => { flags.set(value.out, true); },
+        Cast(value)         => { flags.set(value.out, true); },
         // Stores through the pointer may initialize the slot.
-        AddressOf(value)   => {
+        AddressOf(value)    => {
             flags.set(value.out, true);
             flags.set(value.slot, true);
         },
-        LoadValue(value)   => { flags.set(value.out, true); },
-        Bytes(value)       => { flags.set(value.out, true); },
-        System(value)      => { flags.set(value.out, true); },
-        Startup(value)     => { flags.set(value.out, true); },
-        MapPages(value)    => { flags.set(value.out, true); },
-        SysConst(value)    => { flags.set(value.out, true); },
-        Host(value)        => { flags.set(value.out, true); },
-        Wait(slot)         => { flags.set(slot, true); },
-        AtomicLoad(value)  => { flags.set(value.out, true); },
+        LoadValue(value)    => { flags.set(value.out, true); },
+        Bytes(value)        => { flags.set(value.out, true); },
+        System(value)       => { flags.set(value.out, true); },
+        Startup(value)      => { flags.set(value.out, true); },
+        MapPages(value)     => { flags.set(value.out, true); },
+        SysConst(value)     => { flags.set(value.out, true); },
+        Host(value)         => { flags.set(value.out, true); },
+        Wait(slot)          => { flags.set(slot, true); },
+        AtomicLoad(value)   => { flags.set(value.out, true); },
         AtomicUpdate(value) => { flags.set(value.out, true); },
-        CompareSwap(value) => { flags.set(value.out, true); },
-        CodeAddress(value) => { flags.set(value.out, true); },
-        InvokeAt(value)    => { flags.set(value.out, true); },
-        _                  => (),
+        CompareSwap(value)  => { flags.set(value.out, true); },
+        CodeAddress(value)  => { flags.set(value.out, true); },
+        InvokeAt(value)     => { flags.set(value.out, true); },
+        _                   => (),
     });
 }
 
@@ -649,7 +660,11 @@ Payloads = {
     block :: usize,
 
     fault = (self: @Self, reason: IrReason) VerifyError {
-        VerifyError.Invalid(IrFault(function: self.index, block: self.block, reason: reason))
+        VerifyError.Invalid(IrFault(
+            function: self.index,
+            block: self.block,
+            reason: reason
+        ))
     }
 
     check = (self :: @Self) Res<(), VerifyError> {
@@ -671,7 +686,7 @@ Payloads = {
     // The only instruction writing `slot`, when exactly one does.
     only_def = (self: @Self, slot: usize) Res<Instruction> {
         found: Res<Instruction> ::= None;
-        count ::= 0;
+        count                   ::= 0;
         self.function.blocks.loop((block) {
             block.code.loop((instruction) {
                 (written(instruction).value_or(NO_SLOT) == slot).then(() {
@@ -684,24 +699,30 @@ Payloads = {
     }
 
     genuine = (self: @Self, g: TagGuard) bool {
-        branch: Res<usize> = self.function.blocks.get(g.block).match({
-            None    => None,
-            Ok(b)   => b.exit.match({ Branch(br) => Ok(br.value), _ => None }),
+        branch: Res<usize>     = self.function.blocks.get(g.block).match({
+            None  => None,
+            Ok(b) => b.exit.match({ Branch(br) => Ok(br.value), _ => None }),
         });
-        test: Res<Instruction> = branch.match({ Ok(v) => self.only_def(v), None => None });
-        compare: Res<Binary> = test.match({
-            Ok(i) => i.match({ BinaryValue(b) => b.op.match({ Equal => Ok(b), _ => None }), _ => None }),
+        test: Res<Instruction> = branch.match({ Ok(v) => self.only_def(
+            v
+        ), None => None });
+        compare: Res<Binary>   = test.match({
+            Ok(i) => i.match({ BinaryValue(b) => b.op.match({ Equal => Ok(
+                b
+            ), _ => None }), _ => None }),
             None  => None,
         });
         compare.match({
-            None    => false,
-            Ok(b)   => self.constant_is(b.right, g.variant) && self.loads_tag_of(b.left, g.subject),
+            None  => false,
+            Ok(b) => self.constant_is(b.right, g.variant) && self.loads_tag_of(b.left, g.subject),
         })
     }
 
     constant_is = (self: @Self, slot: usize, variant: usize) bool {
         self.only_def(slot).match({
-            Ok(i) => i.match({ Constant(c) => c.value.to_usize().value_or(NO_SLOT) == variant, _ => false }),
+            Ok(i) => i.match({ Constant(c) => c.value.to_usize().value_or(
+                NO_SLOT
+            ) == variant, _ => false }),
             None  => false,
         })
     }
@@ -734,7 +755,9 @@ Payloads = {
     solve = (self :: @Self) Res<(), VerifyError> {
         slots = self.function.slots.len;
         self.function.blocks.loop((h, i, _) {
-            self.entry.add(filled(self.alloc, slots, UNREACHED).try()).try(VerifyError.OutOfMemory);
+            self.entry.add(
+                filled(self.alloc, slots, UNREACHED).try()
+            ).try(VerifyError.OutOfMemory);
         });
         first = filled(self.alloc, slots, KNOWN_NONE).try();
         self.entry.set(0, first);
@@ -742,19 +765,28 @@ Payloads = {
         loop(() { changed }, (lh) {
             changed = false;
             self.function.blocks.loop((bh, index, block) {
-                start = self.entry.get(index).ok_or(VerifyError.OutOfMemory).try();
-                reached = start.get(0).match({ Ok(v) => v != UNREACHED, None => true });
+                start   = self.entry.get(index).ok_or(VerifyError.OutOfMemory).try();
+                reached = start.get(
+                    0
+                ).match({ Ok(v) => v != UNREACHED, None => true });
                 reached.then(() {
                     out ::= self.state_at(index, block.code.len).try();
                     block.exit.match({
-                        Jump(to)   => { changed = self.merge(to, out).try() || changed; },
+                        Jump(to)   => { changed = self.merge(
+                            to,
+                            out
+                        ).try() || changed; },
                         Branch(br) => {
-                            guard: Res<TagGuard> = self.guards.tests.find((g) { g.block == index });
+                            guard: Res<TagGuard> = self.guards.tests.find(
+                                (g) { g.block == index }
+                            );
                             yes ::= copied(self.alloc, out).try();
                             no  ::= copied(self.alloc, out).try();
                             guard.when_ok((g) {
                                 yes.set(g.subject, g.variant);
-                                g.otherwise.when_ok((o) { no.set(g.subject, o); });
+                                g.otherwise.when_ok(
+                                    (o) { no.set(g.subject, o); }
+                                );
                             });
                             changed = self.merge(br.yes, yes).try() || changed;
                             changed = self.merge(br.no, no).try() || changed;
@@ -769,7 +801,7 @@ Payloads = {
 
     // Meet `incoming` into the entry facts of `block`; true when they changed.
     merge = (self :: @Self, block: usize, incoming: Vec<usize>) Res<bool, VerifyError> {
-        facts ::= self.entry.get(block).ok_or(VerifyError.OutOfMemory).try();
+        facts   ::= self.entry.get(block).ok_or(VerifyError.OutOfMemory).try();
         changed ::= false;
         Range(0, facts.len).loop((slot) {
             old = facts.get(slot).value_or(KNOWN_NONE);
@@ -801,44 +833,55 @@ Payloads = {
         // Writes through a pointer, listed without a fallback for the same
         // reason as `written`.
         instruction.match({
-            StoreValue(s)  => self.forget_through(state, s.base),
-            CopyBytes(c)   => self.forget_through(state, c.dest),
-            Invoke(c)      => c.args.loop((a) { self.forget_argument(state, a); }),
-            System(c)      => c.args.loop((a) { self.forget_argument(state, a); }),
-            Host(c)        => c.args.loop((a) { self.forget_argument(state, a); }),
-            AtomicStore(v) => self.forget_through(state, v.base),
+            StoreValue(s)   => self.forget_through(state, s.base),
+            CopyBytes(c)    => self.forget_through(state, c.dest),
+            Invoke(c)       => c.args.loop(
+                (a) { self.forget_argument(state, a); }
+            ),
+            System(c)       => c.args.loop(
+                (a) { self.forget_argument(state, a); }
+            ),
+            Host(c)         => c.args.loop(
+                (a) { self.forget_argument(state, a); }
+            ),
+            AtomicStore(v)  => self.forget_through(state, v.base),
             AtomicUpdate(v) => self.forget_through(state, v.base),
-            CompareSwap(v) => self.forget_through(state, v.base),
-            InvokeAt(c)    => c.args.loop((a) { self.forget_argument(state, a); }),
-            AtomicLoad(_)  => (),
-            CodeAddress(_) => (),
-            Machine(c)     => {
+            CompareSwap(v)  => self.forget_through(state, v.base),
+            InvokeAt(c)     => c.args.loop(
+                (a) { self.forget_argument(state, a); }
+            ),
+            AtomicLoad(_)   => (),
+            CodeAddress(_)  => (),
+            Machine(c)      => {
                 c.outs.loop((slot) { state.set(slot, KNOWN_NONE); });
                 c.args.loop((a) { self.forget_argument(state, a); });
             },
-            Wait(_)        => (),
-            Constant(_)    => (),
-            Copy(_)        => (),
-            UnaryValue(_)  => (),
-            BinaryValue(_) => (),
-            PrintValue(_)  => (),
-            Text(_)        => (),
-            Cast(_)        => (),
-            AddressOf(_)   => (),
-            LoadValue(_)   => (),
-            Bytes(_)       => (),
-            WriteOut(_)    => (),
-            Startup(_)     => (),
-            MapPages(_)    => (),
-            UnmapPages(_)  => (),
-            SysConst(_)    => (),
-            Flush          => (),
+            Wait(_)         => (),
+            Constant(_)     => (),
+            Copy(_)         => (),
+            UnaryValue(_)   => (),
+            BinaryValue(_)  => (),
+            PrintValue(_)   => (),
+            Text(_)         => (),
+            Cast(_)         => (),
+            AddressOf(_)    => (),
+            LoadValue(_)    => (),
+            Bytes(_)        => (),
+            WriteOut(_)     => (),
+            Startup(_)      => (),
+            MapPages(_)     => (),
+            UnmapPages(_)   => (),
+            SysConst(_)     => (),
+            Flush           => (),
         });
     }
 
     forget_argument = (self: @Self, state :: Vec<usize>, slot: usize) {
         self.function.slots.get(slot).match({
-            Ok(ty) => ty.match({ Ptr => self.forget_through(state, slot), _ => () }),
+            Ok(ty) => ty.match({ Ptr => self.forget_through(
+                state,
+                slot
+            ), _ => () }),
             None   => (),
         });
     }
@@ -858,40 +901,44 @@ Payloads = {
 // payload fact about that slot would outlive the write.
 written = (instruction: Instruction) Res<usize> {
     instruction.match({
-        Constant(v)    => Ok(v.out),
-        Copy(v)        => Ok(v.out),
-        UnaryValue(v)  => Ok(v.out),
-        BinaryValue(v) => Ok(v.out),
-        Invoke(v)      => Ok(v.out),
-        Cast(v)        => Ok(v.out),
-        AddressOf(v)   => Ok(v.out),
-        LoadValue(v)   => Ok(v.out),
-        Bytes(v)       => Ok(v.out),
-        System(v)      => Ok(v.out),
-        Startup(v)     => Ok(v.out),
-        MapPages(v)    => Ok(v.out),
-        SysConst(v)    => Ok(v.out),
-        Host(v)        => Ok(v.out),
-        Wait(slot)     => Ok(slot),
-        AtomicLoad(v)  => Ok(v.out),
+        Constant(v)     => Ok(v.out),
+        Copy(v)         => Ok(v.out),
+        UnaryValue(v)   => Ok(v.out),
+        BinaryValue(v)  => Ok(v.out),
+        Invoke(v)       => Ok(v.out),
+        Cast(v)         => Ok(v.out),
+        AddressOf(v)    => Ok(v.out),
+        LoadValue(v)    => Ok(v.out),
+        Bytes(v)        => Ok(v.out),
+        System(v)       => Ok(v.out),
+        Startup(v)      => Ok(v.out),
+        MapPages(v)     => Ok(v.out),
+        SysConst(v)     => Ok(v.out),
+        Host(v)         => Ok(v.out),
+        Wait(slot)      => Ok(slot),
+        AtomicLoad(v)   => Ok(v.out),
         AtomicUpdate(v) => Ok(v.out),
-        CompareSwap(v) => Ok(v.out),
-        CodeAddress(v) => Ok(v.out),
-        InvokeAt(v)    => Ok(v.out),
-        AtomicStore(_) => None,
+        CompareSwap(v)  => Ok(v.out),
+        CodeAddress(v)  => Ok(v.out),
+        InvokeAt(v)     => Ok(v.out),
+        AtomicStore(_)  => None,
         // A machine primitive writes several slots; `forget` clears each.
-        Machine(_)     => None,
-        PrintValue(_)  => None,
-        Text(_)        => None,
-        StoreValue(_)  => None,
-        CopyBytes(_)   => None,
-        WriteOut(_)    => None,
-        UnmapPages(_)  => None,
-        Flush          => None,
+        Machine(_)      => None,
+        PrintValue(_)   => None,
+        Text(_)         => None,
+        StoreValue(_)   => None,
+        CopyBytes(_)    => None,
+        WriteOut(_)     => None,
+        UnmapPages(_)   => None,
+        Flush           => None,
     })
 }
 
-filled = (alloc: Alloc, count: usize, value: usize) Res<Vec<usize>, VerifyError> {
+filled = (
+    alloc : Alloc,
+    count : usize,
+    value : usize
+) Res<Vec<usize>, VerifyError> {
     out ::= alloc.Vec<usize>();
     Range(0, count).loop((_) { out.add(value).try(VerifyError.OutOfMemory); });
     Ok(out)

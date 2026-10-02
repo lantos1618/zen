@@ -63,34 +63,34 @@ round_up* = (value: usize, align: usize) usize {
 // not model yet (`f32`).
 prim_class* = (name: str) Res<Scalar> {
     name.match({
-        "i8"         => Ok(Scalar.I8),
-        "u8"         => Ok(Scalar.U8),
-        "i16"        => Ok(Scalar.I16),
-        "u16"        => Ok(Scalar.U16),
-        "i32"        => Ok(Scalar.I32),
-        "u32"        => Ok(Scalar.U32),
-        "i64"        => Ok(Scalar.I64),
-        "u64"        => Ok(Scalar.U64),
-        "usize"      => Ok(Scalar.U64),
-        "bool"       => Ok(Scalar.Bool),
-        "f64"        => Ok(Scalar.F64),
+        "i8"          => Ok(Scalar.I8),
+        "u8"          => Ok(Scalar.U8),
+        "i16"         => Ok(Scalar.I16),
+        "u16"         => Ok(Scalar.U16),
+        "i32"         => Ok(Scalar.I32),
+        "u32"         => Ok(Scalar.U32),
+        "i64"         => Ok(Scalar.I64),
+        "u64"         => Ok(Scalar.U64),
+        "usize"       => Ok(Scalar.U64),
+        "bool"        => Ok(Scalar.Bool),
+        "f64"         => Ok(Scalar.F64),
         // Unsettled float literals take the C path's double.
-        "float"      => Ok(Scalar.F64),
-        "()"         => Ok(Scalar.Unit),
+        "float"       => Ok(Scalar.F64),
+        "()"          => Ok(Scalar.Unit),
         // Unsettled integer literals take the C path's 64-bit width.
-        "int"        => Ok(Scalar.I64),
-        "c_char"     => Ok(Scalar.I8),
-        "c_schar"    => Ok(Scalar.I8),
-        "c_uchar"    => Ok(Scalar.U8),
-        "c_short"    => Ok(Scalar.I16),
-        "c_ushort"   => Ok(Scalar.U16),
-        "c_int"      => Ok(Scalar.I32),
-        "c_uint"     => Ok(Scalar.U32),
-        "c_long"     => Ok(Scalar.I64),
-        "c_ulong"    => Ok(Scalar.U64),
-        "c_longlong" => Ok(Scalar.I64),
+        "int"         => Ok(Scalar.I64),
+        "c_char"      => Ok(Scalar.I8),
+        "c_schar"     => Ok(Scalar.I8),
+        "c_uchar"     => Ok(Scalar.U8),
+        "c_short"     => Ok(Scalar.I16),
+        "c_ushort"    => Ok(Scalar.U16),
+        "c_int"       => Ok(Scalar.I32),
+        "c_uint"      => Ok(Scalar.U32),
+        "c_long"      => Ok(Scalar.I64),
+        "c_ulong"     => Ok(Scalar.U64),
+        "c_longlong"  => Ok(Scalar.I64),
         "c_ulonglong" => Ok(Scalar.U64),
-        _            => None,
+        _             => None,
     })
 }
 
@@ -129,14 +129,28 @@ compute_shape = (lo :: Lowerer, ty: TyId) Res<Shape, LowerError> {
             // `str` is the record `{ data: Ptr<u8>, len: usize }`.
             true  => {
                 fields ::= lo.alloc.Vec<FieldAt>();
-                fields.add(FieldAt(name: "data", ty: lo.ptr_u8().try(), offset: 0)).try(LowerError.OutOfMemory);
-                fields.add(FieldAt(name: "len", ty: lo.prim("usize").try(), offset: 8)).try(LowerError.OutOfMemory);
-                Ok(Shape(class: Scalar.Block(STR_LAYOUT), form: Form.Record(fields)))
+                fields.add(FieldAt(
+                    name: "data",
+                    ty: lo.ptr_u8().try(),
+                    offset: 0
+                )).try(LowerError.OutOfMemory);
+                fields.add(FieldAt(
+                    name: "len",
+                    ty: lo.prim("usize").try(),
+                    offset: 8
+                )).try(LowerError.OutOfMemory);
+                Ok(Shape(
+                    class: Scalar.Block(STR_LAYOUT),
+                    form: Form.Record(fields)
+                ))
             },
             false => prim_class(p.name).match({
                 Ok(class) => Ok(Shape(class: class, form: Form.Plain)),
                 // Named, so a u128 or f32 value is not reported as another type.
-                None      => Err(unsupported(nowhere(), lo.alloc.String("{} values", p.name).match({
+                None      => Err(unsupported(nowhere(), lo.alloc.String(
+                    "{} values",
+                    p.name
+                ).match({
                     Ok(t)  => t.view(),
                     Err(_) => "values of this primitive type",
                 }))),
@@ -167,7 +181,11 @@ compute_shape = (lo :: Lowerer, ty: TyId) Res<Shape, LowerError> {
                     size: stride * a.count,
                     align: align_of(elem.class)
                 )),
-                form: Form.Array(Elements(elem: a.elem, count: a.count, stride: stride))
+                form: Form.Array(Elements(
+                    elem: a.elem,
+                    count: a.count,
+                    stride: stride
+                ))
             ))
         },
         Fn(_)    => Err(unsupported(nowhere(), "function values")),
@@ -197,26 +215,44 @@ named_shape = (lo :: Lowerer, n: TyNamed, ty: TyId) Res<Shape, LowerError> {
                     // A struct of functions without storage is a bound: its
                     // values are an implementor tag and a receiver pointer.
                     Struct(s) => behaviour_only(s).match({
-                        true  => Ok(Shape(class: Scalar.Block(Layout(size: 16, align: 8)), form: Form.Handle(n.decl))),
+                        true  => Ok(Shape(
+                            class: Scalar.Block(Layout(size: 16, align: 8)),
+                            form: Form.Handle(n.decl)
+                        )),
                         false => lo.record(n, s),
                     }),
                     Enum(_)   => {
                         found ::= lo.alloc.Vec<Case>();
-                        lo.check.cases_of(ty, found).try(LowerError.OutOfMemory);
+                        lo.check.cases_of(
+                            ty,
+                            found
+                        ).try(LowerError.OutOfMemory);
                         // Payloads are read off the declaration (`Some(T)`);
                         // this instance fixes the parameters (`Opt<i32>`).
-                        inst = lo.check.inst_of_named(n).try(LowerError.OutOfMemory);
+                        inst = lo.check.inst_of_named(
+                            n
+                        ).try(LowerError.OutOfMemory);
                         cases ::= lo.alloc.Vec<Case>();
                         found.loop((c) {
-                            payload = lo.check.subst(c.payload, inst).try(LowerError.OutOfMemory);
-                            cases.add(Case(name: c.name, payload: payload, has_payload: c.has_payload)).try(LowerError.OutOfMemory);
+                            payload = lo.check.subst(
+                                c.payload,
+                                inst
+                            ).try(LowerError.OutOfMemory);
+                            cases.add(Case(
+                                name: c.name,
+                                payload: payload,
+                                has_payload: c.has_payload
+                            )).try(LowerError.OutOfMemory);
                         });
                         // A declared set (`Both = Kind | Fail`) shares the
                         // layout of every other spelling of its members.
                         lo.check.union_reading(n.decl).then(() { by_name(cases); });
                         lo.tagged(cases)
                     },
-                    _         => Err(unsupported(decl.span, "this kind of type declaration")),
+                    _         => Err(unsupported(
+                        decl.span,
+                        "this kind of type declaration"
+                    )),
                 })
             },
         }),
@@ -224,8 +260,12 @@ named_shape = (lo :: Lowerer, n: TyNamed, ty: TyId) Res<Shape, LowerError> {
 }
 
 behaviour_only* = (s: Struct) bool {
-    functions = s.members.find((m) { m.kind.match({ Function(_) => true, _ => false }) });
-    fields = s.members.find((m) { m.kind.match({ Field(_) => true, _ => false }) });
+    functions = s.members.find(
+        (m) { m.kind.match({ Function(_) => true, _ => false }) }
+    );
+    fields    = s.members.find(
+        (m) { m.kind.match({ Field(_) => true, _ => false }) }
+    );
     functions.match({ Ok(_) => true, None => false }) && fields.match({ Ok(_) => false, None => true })
 }
 
@@ -237,10 +277,14 @@ record = (lo :: Lowerer, n: TyNamed, s: Struct) Res<Shape, LowerError> {
     cursor ::= 0;
     align  ::= 1;
     fields.loop((field) {
-        class = lo.class_of(field.ty).try();
-        a     = align_of(class);
+        class  = lo.class_of(field.ty).try();
+        a      = align_of(class);
         cursor = round_up(cursor, a);
-        placed.add(FieldAt(name: field.name, ty: field.ty, offset: cursor)).try(LowerError.OutOfMemory);
+        placed.add(FieldAt(
+            name: field.name,
+            ty: field.ty,
+            offset: cursor
+        )).try(LowerError.OutOfMemory);
         cursor = cursor + size_of(class);
         (a > align).then(() { align = a; });
     });
@@ -255,26 +299,46 @@ record = (lo :: Lowerer, n: TyNamed, s: Struct) Res<Shape, LowerError> {
 }
 
 // Storage fields with their types at this instantiation.
-field_types* = (lo :: Lowerer, n: TyNamed, s: Struct) Res<Vec<FieldAt>, LowerError> {
+field_types* = (
+    lo :: Lowerer,
+    n  : TyNamed,
+    s  : Struct
+) Res<Vec<FieldAt>, LowerError> {
     inst  = lo.check.inst_of_named(n).try(LowerError.OutOfMemory);
     mi    = n.decl.module.to_usize();
-    ctx   = Ctx(module: mi, ret: lo.unit_ty, has_ret: false, self_ty: lo.unit_ty, has_self: false);
+    ctx   = Ctx(
+        module: mi,
+        ret: lo.unit_ty,
+        has_ret: false,
+        self_ty: lo.unit_ty,
+        has_self: false
+    );
     owner = lo.check.owner_of(mi, s.name.text).try(LowerError.OutOfMemory);
     mark  = lo.check.tvar_mark();
     s.tparams.loop((tp) {
-        var = lo.check.types.var(tp.name.text, owner).try(LowerError.OutOfMemory);
+        var = lo.check.types.var(
+            tp.name.text,
+            owner
+        ).try(LowerError.OutOfMemory);
         lo.check.push_tvar(tp.name.text, var).try(LowerError.OutOfMemory);
     });
     out ::= lo.alloc.Vec<FieldAt>();
     s.members.loop((m) {
         m.kind.match({
             Field(f) => f.type.match({
-                Ok(t)  => {
-                    raw = lo.check.type_from_ast(t, ctx).try(LowerError.OutOfMemory);
+                Ok(t) => {
+                    raw = lo.check.type_from_ast(
+                        t,
+                        ctx
+                    ).try(LowerError.OutOfMemory);
                     ty  = lo.check.subst(raw, inst).try(LowerError.OutOfMemory);
-                    out.add(FieldAt(name: f.name.text, ty: ty, offset: 0)).try(LowerError.OutOfMemory);
+                    out.add(FieldAt(
+                        name: f.name.text,
+                        ty: ty,
+                        offset: 0
+                    )).try(LowerError.OutOfMemory);
                 },
-                None   => (),
+                None  => (),
             }),
             _        => (),
         });
@@ -287,16 +351,21 @@ field_types* = (lo :: Lowerer, n: TyNamed, s: Struct) Res<Vec<FieldAt>, LowerErr
 // are the tag word alone.
 tagged = (lo :: Lowerer, cases: Vec<Case>) Res<Shape, LowerError> {
     variants ::= lo.alloc.Vec<VariantAt>();
-    size  ::= 0;
-    align ::= 1;
+    size     ::= 0;
+    align    ::= 1;
     cases.loop((c) {
-        payload: Res<TyId> = c.has_payload.match({ true => Ok(c.payload), false => None });
+        payload: Res<TyId> = c.has_payload.match({ true => Ok(
+            c.payload
+        ), false => None });
         payload.when_ok((p) {
             class = lo.class_of(p).try();
             (size_of(class) > size).then(() { size = size_of(class); });
             (align_of(class) > align).then(() { align = align_of(class); });
         });
-        variants.add(VariantAt(name: c.name, payload: payload)).try(LowerError.OutOfMemory);
+        variants.add(VariantAt(
+            name: c.name,
+            payload: payload
+        )).try(LowerError.OutOfMemory);
     });
     (size == 0).match({
         true  => Ok(Shape(class: Scalar.U32, form: Form.Tags(variants))),
@@ -304,7 +373,10 @@ tagged = (lo :: Lowerer, cases: Vec<Case>) Res<Shape, LowerError> {
             offset = round_up(TAG_BYTES, align);
             whole  = (align > TAG_BYTES).match({ true => align, false => TAG_BYTES });
             Ok(Shape(
-                class: Scalar.Block(Layout(size: round_up(offset + size, whole), align: whole)),
+                class: Scalar.Block(Layout(
+                    size: round_up(offset + size, whole),
+                    align: whole
+                )),
                 form: Form.Variants(Tagged(variants: variants, payload: offset))
             ))
         },

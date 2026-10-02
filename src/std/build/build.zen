@@ -90,15 +90,51 @@ Target* = {
 // their short `<arch>-<os>` forms. Unknown spellings are refused.
 target_named* = (text: str) Res<Target> {
     text.match({
-        "x86_64-linux"        => Ok(Target(os: Os.Linux, arch: Arch.X86_64, abi: Abi.Gnu)),
-        "x86_64-linux-gnu"    => Ok(Target(os: Os.Linux, arch: Arch.X86_64, abi: Abi.Gnu)),
-        "aarch64-linux"       => Ok(Target(os: Os.Linux, arch: Arch.Arm64, abi: Abi.Gnu)),
-        "aarch64-linux-gnu"   => Ok(Target(os: Os.Linux, arch: Arch.Arm64, abi: Abi.Gnu)),
-        "arm64-linux"         => Ok(Target(os: Os.Linux, arch: Arch.Arm64, abi: Abi.Gnu)),
-        "arm64-darwin"        => Ok(Target(os: Os.Macos, arch: Arch.Arm64, abi: Abi.Darwin)),
-        "arm64-apple-darwin"  => Ok(Target(os: Os.Macos, arch: Arch.Arm64, abi: Abi.Darwin)),
-        "x86_64-darwin"       => Ok(Target(os: Os.Macos, arch: Arch.X86_64, abi: Abi.Darwin)),
-        "x86_64-apple-darwin" => Ok(Target(os: Os.Macos, arch: Arch.X86_64, abi: Abi.Darwin)),
+        "x86_64-linux"        => Ok(Target(
+            os: Os.Linux,
+            arch: Arch.X86_64,
+            abi: Abi.Gnu
+        )),
+        "x86_64-linux-gnu"    => Ok(Target(
+            os: Os.Linux,
+            arch: Arch.X86_64,
+            abi: Abi.Gnu
+        )),
+        "aarch64-linux"       => Ok(Target(
+            os: Os.Linux,
+            arch: Arch.Arm64,
+            abi: Abi.Gnu
+        )),
+        "aarch64-linux-gnu"   => Ok(Target(
+            os: Os.Linux,
+            arch: Arch.Arm64,
+            abi: Abi.Gnu
+        )),
+        "arm64-linux"         => Ok(Target(
+            os: Os.Linux,
+            arch: Arch.Arm64,
+            abi: Abi.Gnu
+        )),
+        "arm64-darwin"        => Ok(Target(
+            os: Os.Macos,
+            arch: Arch.Arm64,
+            abi: Abi.Darwin
+        )),
+        "arm64-apple-darwin"  => Ok(Target(
+            os: Os.Macos,
+            arch: Arch.Arm64,
+            abi: Abi.Darwin
+        )),
+        "x86_64-darwin"       => Ok(Target(
+            os: Os.Macos,
+            arch: Arch.X86_64,
+            abi: Abi.Darwin
+        )),
+        "x86_64-apple-darwin" => Ok(Target(
+            os: Os.Macos,
+            arch: Arch.X86_64,
+            abi: Abi.Darwin
+        )),
         _                     => None,
     })
 }
@@ -305,16 +341,16 @@ BuildFlags* = {
 
     apply_setting* = (self :: @Self, flag: BuildFlag, value: str) {
         flag.match({
-            EmitDir   => self.set_dir(value),
-            Out       => self.set_out(value),
-            Entry     => self.set_entry(value),
-            StdRoot   => self.set_std_root(value),
-            Backend   => self.set_backend(value),
-            SymbolMap => self.set_symbol_map(value),
-            Repeat    => self.set_repeat(value.repeat_count()),
-            Permute   => self.set_permute(value),
+            EmitDir    => self.set_dir(value),
+            Out        => self.set_out(value),
+            Entry      => self.set_entry(value),
+            StdRoot    => self.set_std_root(value),
+            Backend    => self.set_backend(value),
+            SymbolMap  => self.set_symbol_map(value),
+            Repeat     => self.set_repeat(value.repeat_count()),
+            Permute    => self.set_permute(value),
             TargetName => self.set_target(value),
-            _         => (),
+            _          => (),
         });
     }
 

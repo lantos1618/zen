@@ -603,8 +603,10 @@ Build* = {
             });
             // `--backend js --target js-browser -o DIR` writes the page
             // layout (index.html, runtime.js, app.js) into DIR.
-            browser = job.backend.match({ Js => job.target.eq("js-browser"), _ => false });
-            emission = browser.match({
+            browser    = job.backend.match({ Js => job.target.eq(
+                "js-browser"
+            ), _ => false });
+            emission   = browser.match({
                 false => job.emission,
                 true  => job.emission.match({
                     File(dir) => {

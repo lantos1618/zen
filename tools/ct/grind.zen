@@ -10,7 +10,7 @@
 { Alloc, AllocError, Ptr } = std.mem
 { Vec } = std.collections
 { str } = std.text
-{ ct_memeq, ct_lookup, ct_swap, ct_eq, ct_lt, ct_select, ct_memcmp } = std.ct
+{ ct_memeq, ct_lookup, ct_swap, ct_eq, ct_lt, ct_select, ct_memcmp, to_u8 } = std.ct
 { secret_bytes, public_bytes } = std.ct.ct_grind
 { truncate_u8, to_u64, bit_and } = std.core.num
 { Res, Ok, None, Range } = std.core

@@ -1,4 +1,4 @@
-{ splat_u32x4, lanes_u32x4, load_u32x4, lanes_u64x2, load_u64x2 } = std.simd
+{ splat_u32x4, lanes_u32x4, load_u32x4, lanes_u64x2, load_u64x2, add_wrap, bit_xor, lane, mul_wrap, rotate_left, rotate_right, shift_left, shift_right, shuffle, shuffle2, sub_wrap, with_lane, bit_or, store, bit_and } = std.simd
 { splat_u32x8, lanes_u32x8, load_u32x8, splat_u8x16, load_u8x16 } = std.simd
 { splat_u8x32, load_u8x32, lanes_u64x4, splat_u64x4 } = std.simd
 { AllocError, Ptr } = std.mem

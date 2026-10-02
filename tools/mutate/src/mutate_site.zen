@@ -6,7 +6,7 @@
 { scan, Source } = std.lex
 { Parser, module } = std.parse
 { Ast, Span, Expr, ExprId, Stmt, Decl, Match, Call, Binary } = std.ast
-{ WalkNode, WalkEvent, WalkVisitor, DeclVisit, DeclSite, DeclParent } = std.ast
+{ WalkNode, WalkEvent, WalkVisitor, DeclVisit, DeclSite, DeclParent, walk } = std.ast
 { Alloc, AllocError } = std.mem
 { Vec } = std.collections
 { str, String } = std.text

@@ -223,7 +223,7 @@ trap = (
 }
 
 // The first line of every generated trap program; its traps are on line 2.
-PRINT_IMPORT: str = "print = std.io\n"
+PRINT_IMPORT: str = "{ print } = std.io\n"
 
 // A backedge and a physically unreachable block exercise verified IR shapes
 // the source lowerer does not yet produce. Arbitrary bytes bypass source lexing.
@@ -416,7 +416,7 @@ main = (env: Env) Res<(), AllocError> {
             "integer overflow"
         ).try()
     );
-    source: str  = "print = std.io\nmain = () i32 { value: i32 = -2147483648; print(\"before\\n\"); -value }";
+    source: str  = "{ print } = std.io\nmain = () i32 { value: i32 = -2147483648; print(\"before\\n\"); -value }";
     expected_neg = a.String(
         "program.zen:2:{}: trap: integer overflow\n",
         source.find("-value").value_or(0) - PRINT_IMPORT.len + 1

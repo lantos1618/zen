@@ -1,5 +1,5 @@
 // A lane index at or beyond the lane count traps at the index argument.
-{ splat_u32x4 } = std.simd
+{ splat_u32x4, lane } = std.simd
 { println } = std.io
 
 pick = (i: usize) usize { i + 3 }

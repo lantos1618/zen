@@ -114,7 +114,7 @@ main = () i32 { (C.getpid() > 0).match({true => 0, false => 1}) }
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
         (root / "build.zen").write_text(
-            "{ Builder, BuildError } = std.build\n"
+            "{ Builder, BuildError } = std.build\n{ Res, Ok, Path } = std.core\n"
             "build = (b :: Builder) Res<(), BuildError> {\n"
             + registrations + "\nOk(())\n}\n")
         environment = {key: value for key, value in os.environ.items()

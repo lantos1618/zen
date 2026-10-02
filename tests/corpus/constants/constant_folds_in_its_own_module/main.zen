@@ -16,7 +16,7 @@
 // and declared its own would be rejected, so the two WIDTHs meet only
 // through the function that folded one of them.
 
-{ get_total, WIDTH } = helper.helper
+{ get_total } = helper.helper
 { Res, Ok } = std.core
 { AllocError } = std.mem
 { Env } = std.env

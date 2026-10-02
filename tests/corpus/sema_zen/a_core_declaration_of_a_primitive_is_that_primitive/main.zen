@@ -30,6 +30,7 @@
 { Checker, Ctx } = sema.sema_check
 { Types, TyId } = sema.sema_ty
 { CORE } = sema.sema_def
+{ type_of } = sema.sema_type
 { Ast } = std.ast.ast_arena
 { Expr, ExprKind, Access, Name, Literal, LiteralKind, Call, Arg } = std.ast.ast_node
 { Decl, DeclKind, Struct, Import, ImportName, Module } = std.ast.ast_node
@@ -172,6 +173,7 @@ reexport = (a: Alloc, name: str, module: str) Res<Decl, AllocError> {
     names ::= a.Vec<ImportName>();
     names.add(ImportName(
         name: id_of(name),
+        source: id_of(name),
         exported: true,
         span: at(),
         leading: no_trivia(),

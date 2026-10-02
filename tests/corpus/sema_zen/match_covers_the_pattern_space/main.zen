@@ -29,7 +29,8 @@
 { Pattern, PatternKind, PatName, Destructure } = std.ast.ast_node
 { Type, TypeKind, Named } = std.ast.ast_node
 { Decl, DeclKind, Enum, Variant, Module, TParam, Member } = std.ast.ast_node
-{ Ident, QualifiedName, no_trivia, Pos, Span } = std.ast.ast_span
+{ Ident, QualifiedName, no_trivia } = std.ast.ast_span
+{ Pos, Span } = std.source
 { Pos, Span } = std.source
 { ExprId, TypeId, PatternId } = std.ast.ast_id
 { Alloc, AllocError } = std.mem

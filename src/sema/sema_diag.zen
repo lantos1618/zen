@@ -760,7 +760,7 @@ write_untyped_variable = (out :: String, types: Types, f: TypeFault)
                          Res<(), AllocError> {
     expected ::= types.name_of(f.expected).try();
     out.fmt(
-        " — `{}` is wanted as `{}`: declare it with that type, such as `{} :: {} = …`",
+        " — `{}` is wanted as `{}`: declare it with that type, such as `{}: {} ::= …`",
         f.name,
         expected.view(),
         f.name,

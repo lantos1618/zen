@@ -1,0 +1,40 @@
+// Three threads and main join the same actor at once while it is still
+// working. Exactly one of them performs the native join; the others wait
+// for it, and every join returns only after the stopped hook has run.
+
+Slow = { turns :: u64 = 0 }
+
+Slow.impl(Actor, {
+    work = (self :: @Self, ctx: Context) {
+        ctx.env.threads.sleep(2);
+        self.turns = self.turns + 1;
+    }
+
+    stopped = (self :: @Self, ctx: Context) {
+        println("stopped after {} turns", self.turns);
+    }
+})
+
+Error = ActorStartError | ActorError | ThreadError
+
+waiter = (env: Env, a: Alloc, slow: Ref<Slow>) Res<Thread, ThreadError> {
+    env.threads.spawn(a, () Res<u64, ThreadError> {
+        slow.join();
+        Ok(1)
+    })
+}
+
+main = (env: Env) Res<i32, Error> {
+    a    = env.mem.alloc();
+    slow = env.spawn(Slow()).try();
+    i ::= 0;
+    loop(() { i < 20 }, (h) { slow.work().try(); i = i + 1; });
+    w0 = waiter(env, a, slow).try();
+    w1 = waiter(env, a, slow).try();
+    w2 = waiter(env, a, slow).try();
+    slow.stop();
+    slow.join();
+    joined: u64 = w0.join<u64>().try() + w1.join<u64>().try() + w2.join<u64>().try();
+    println("joined by {} threads and main", joined);
+    Ok(0)
+}

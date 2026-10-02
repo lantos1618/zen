@@ -95,8 +95,13 @@ Write* = { data*: usize, len*: usize, stream*: Stream }
 SysCall* = { out*: usize, call*: Sys, args*: Vec<usize> }
 // A kernel constant at its target's value, as an I32/I64 word.
 SysValue* = { out*: usize, name*: SysConstant }
-// Process start values: `argc`, `argv` and `envp`.
-StartValue* = Argc | Argv | Envp
+// Process start values: `argc`, `argv` and `envp`. `Globals` is the address
+// of a zeroed, 256-byte, 16-byte aligned block of process-wide runtime state.
+// Its first word is the exit hook: when non-zero it is the code address of a
+// function taking no arguments, which the runtime calls on the main thread
+// after the entry function returns and before standard output is flushed.
+// The rest belongs to std.sys (see `std.sys.sys_actor`).
+StartValue* = Argc | Argv | Envp | Globals
 Start* = { out*: usize, value*: StartValue }
 // Anonymous zeroed memory of at least `bytes` (a U64 slot) bytes, 16-byte
 // aligned; the pointer is null when the kernel refuses. `UnmapPages`
@@ -131,6 +136,23 @@ HostCall* = {
     result*: Marshal,
 }
 
+// Atomic memory operations. Each is sequentially consistent and acts on the
+// naturally aligned 4- or 8-byte word at `base + offset` (`base` a Ptr slot);
+// the word's width is the class of the value slot (`out`, or `value` for a
+// store). `AtomicUpdate` and `CompareSwap` leave the previous contents in
+// `out`; `CompareSwap` writes `desired` only when they equal `expected`.
+UpdateOp* = Swap | Add
+Update* = { out*: usize, base*: usize, value*: usize, op*: UpdateOp }
+Compare* = { out*: usize, base*: usize, expected*: usize, desired*: usize }
+
+// The machine address of one of the program's functions, as a Ptr word, and
+// a call through such an address. The target must take word arguments only
+// and return a word or unit; the call follows the same convention as
+// `Invoke`, so the address may also be handed to the runtime as a thread
+// entry.
+CodeRef* = { out*: usize, function*: usize }
+IndirectCall* = { out*: usize, target*: usize, args*: Vec<usize> }
+
 Instruction* = Constant(Const)
     | Copy(Move)
     | UnaryValue(Unary)
@@ -159,6 +181,12 @@ Instruction* = Constant(Const)
     // registered event handler fires (its id into the U32 slot).
     | Host(HostCall)
     | Wait(usize)
+    | AtomicLoad(Load)
+    | AtomicStore(Store)
+    | AtomicUpdate(Update)
+    | CompareSwap(Compare)
+    | CodeAddress(CodeRef)
+    | InvokeAt(IndirectCall)
 
 // A terminator that ends the process with Zen's trap report.
 TrapKind* = Overflow | DivideByZero | OutOfBounds | Unreachable | OutOfMemory

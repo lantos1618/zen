@@ -9,7 +9,7 @@ Range = std.core
 str = std.text
 Program, Func, Scalar, Instruction, Terminator, Op, Marshal = gen.gen_ir
 Guards, TagGuard, PayloadRead, Binary = gen.gen_ir
-same, word, integer, signed, float = gen.gen_ir
+same, word, integer, signed, float, width = gen.gen_ir
 arity = gen.gen_sys
 
 IrReason* = EntryFunction
@@ -46,6 +46,10 @@ message* = (reason: IrReason) str {
 
 IrFault* = { function*: usize, block*: usize, reason*: IrReason }
 VerifyError* = OutOfMemory | Invalid(IrFault)
+
+// The most arguments an indirect call may pass: the smallest register
+// argument count among the targets (System V has six).
+INDIRECT_ARGUMENTS*: usize = 6
 
 // Whether a constant's bits are a value of its slot class.
 fits = (ty: Scalar, value: i64) bool {
@@ -224,7 +228,48 @@ Check = {
             },
             // Scalar slots cannot hold a machine operation's operands.
             Machine(_)         => Err(self.fault(IrReason.Type)),
+            AtomicLoad(value)  => {
+                self.atomic_word(value.out).try();
+                self.expect(value.base, Scalar.Ptr)
+            },
+            AtomicStore(value) => {
+                self.atomic_word(value.value).try();
+                self.expect(value.base, Scalar.Ptr)
+            },
+            AtomicUpdate(value) => {
+                ty = self.atomic_word(value.out).try();
+                value.op.match({ Add => integer(ty), Swap => true })
+                    .ensure(self.fault(IrReason.Type)).try();
+                self.expect(value.value, ty).try();
+                self.expect(value.base, Scalar.Ptr)
+            },
+            CompareSwap(value) => {
+                ty = self.atomic_word(value.out).try();
+                self.expect(value.expected, ty).try();
+                self.expect(value.desired, ty).try();
+                self.expect(value.base, Scalar.Ptr)
+            },
+            CodeAddress(value) => {
+                self.program.functions.get(value.function).ok_or(self.fault(IrReason.Callee)).try();
+                self.expect(value.out, Scalar.Ptr)
+            },
+            InvokeAt(call)     => {
+                self.expect(call.target, Scalar.Ptr).try();
+                // Every renderer passes these in argument registers.
+                (call.args.len <= INDIRECT_ARGUMENTS).ensure(self.fault(IrReason.Arguments)).try();
+                call.args.loop((slot) { self.word_slot(slot).try(); });
+                out = self.slot(call.out).try();
+                (word(out) || same(out, Scalar.Unit)).ensure(self.fault(IrReason.Type)).try();
+                Ok(())
+            },
         })
+    }
+
+    // Atomic operations act on whole 4- or 8-byte words.
+    atomic_word = (self: @Self, index: usize) Res<Scalar, VerifyError> {
+        ty = self.word_slot(index).try();
+        (width(ty) == 4 || width(ty) == 8).ensure(self.fault(IrReason.Type)).try();
+        Ok(ty)
     }
 
     binary = (self: @Self, left: usize, right: usize, out: usize, op: Op)
@@ -351,6 +396,26 @@ Check = {
                 Ok(())
             },
             Wait(_)            => Ok(()),
+            AtomicLoad(value)  => self.initialized(flags, value.base),
+            AtomicStore(value) => {
+                self.initialized(flags, value.base).try();
+                self.initialized(flags, value.value)
+            },
+            AtomicUpdate(value) => {
+                self.initialized(flags, value.base).try();
+                self.initialized(flags, value.value)
+            },
+            CompareSwap(value) => {
+                self.initialized(flags, value.base).try();
+                self.initialized(flags, value.expected).try();
+                self.initialized(flags, value.desired)
+            },
+            CodeAddress(_)     => Ok(()),
+            InvokeAt(call)     => {
+                self.initialized(flags, call.target).try();
+                call.args.loop((slot) { self.initialized(flags, slot).try(); });
+                Ok(())
+            },
         })
     }
 
@@ -392,6 +457,11 @@ write = (flags :: Vec<bool>, instruction: Instruction) {
         SysConst(value)    => { flags.set(value.out, true); },
         Host(value)        => { flags.set(value.out, true); },
         Wait(slot)         => { flags.set(slot, true); },
+        AtomicLoad(value)  => { flags.set(value.out, true); },
+        AtomicUpdate(value) => { flags.set(value.out, true); },
+        CompareSwap(value) => { flags.set(value.out, true); },
+        CodeAddress(value) => { flags.set(value.out, true); },
+        InvokeAt(value)    => { flags.set(value.out, true); },
         _                  => (),
     });
 }
@@ -736,6 +806,12 @@ Payloads = {
             Invoke(c)      => c.args.loop((a) { self.forget_argument(state, a); }),
             System(c)      => c.args.loop((a) { self.forget_argument(state, a); }),
             Host(c)        => c.args.loop((a) { self.forget_argument(state, a); }),
+            AtomicStore(v) => self.forget_through(state, v.base),
+            AtomicUpdate(v) => self.forget_through(state, v.base),
+            CompareSwap(v) => self.forget_through(state, v.base),
+            InvokeAt(c)    => c.args.loop((a) { self.forget_argument(state, a); }),
+            AtomicLoad(_)  => (),
+            CodeAddress(_) => (),
             Machine(c)     => {
                 c.outs.loop((slot) { state.set(slot, KNOWN_NONE); });
                 c.args.loop((a) { self.forget_argument(state, a); });
@@ -797,6 +873,12 @@ written = (instruction: Instruction) Res<usize> {
         SysConst(v)    => Ok(v.out),
         Host(v)        => Ok(v.out),
         Wait(slot)     => Ok(slot),
+        AtomicLoad(v)  => Ok(v.out),
+        AtomicUpdate(v) => Ok(v.out),
+        CompareSwap(v) => Ok(v.out),
+        CodeAddress(v) => Ok(v.out),
+        InvokeAt(v)    => Ok(v.out),
+        AtomicStore(_) => None,
         // A machine primitive writes several slots; `forget` clears each.
         Machine(_)     => None,
         PrintValue(_)  => None,

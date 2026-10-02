@@ -228,8 +228,63 @@ adapts the two calls whose C shape differs: `openat`'s variadic mode goes on
 the stack, and `getrandom` becomes `getentropy` in 256-byte chunks returning
 the byte count. `accept4` is `accept` on Darwin (flags must be zero), epoll
 and futex/clone answer `-ENOSYS` there, kqueue answers `-ENOSYS` on Linux.
-Threads over `clone` + futex are not built yet; macOS threads would go through
-pthreads in libSystem.
+The pthread operations (`pthread_start`, `pthread_join`, the mutex and
+condition calls) exist only on Darwin and answer `-ENOSYS` on Linux; they
+return their error number directly, which the renderer negates.
+
+### Threads and actors
+
+Threads follow the same OS policy: raw `clone` and futexes on Linux,
+libSystem pthreads on macOS, one API above both.
+
+* **IR.** Atomics are instructions (`AtomicLoad`, `AtomicStore`,
+  `AtomicUpdate` Swap/Add, `CompareSwap`), sequentially consistent on 4- and
+  8-byte words: plain `mov` loads and `xchg`/`lock xadd`/`lock cmpxchg` on
+  x86-64, `ldar`/`stlr` and `ldaxr`/`stlxr` loops on AArch64 (ARMv8.0, so no
+  feature check). `CodeAddress` names a function's machine address and
+  `InvokeAt` calls through one with word arguments (at most six, the System V
+  register count). `StartValue.Globals` is a zeroed 256-byte process block;
+  its first word is an exit hook the runtime calls on the main thread after
+  the entry function returns, before stdout is flushed.
+* **Runtime (asm).** Every thread starts at `entry(arg)` read from its
+  control block (`+8`, `+16`). Linux: `_start` installs the main thread's
+  block as TLS (`arch_prctl(ARCH_SET_FS)` / `tpidr_el0`); `za_clone` issues
+  `clone(CLONE_VM|FS|FILES|SIGHAND|THREAD|SYSVSEM|SETTLS|PARENT_SETTID|
+  CHILD_CLEARTID)` on a caller-built stack, with the block as the new
+  thread's TLS and its id word at `+24`; the child calls the entry and
+  leaves with `exit` (not `exit_group`). Darwin: `za_d_thread_start` wraps
+  `pthread_create` with an 8 MiB stack and a C entry point that preserves
+  x19-x28/d8-d15. The shared stdout buffer is locked: a futex word on Linux,
+  an `os_unfair_lock` on Darwin.
+* **`std.sys.sys_thread` (Zen).** Mutexes and condition variables in caller
+  memory (`MUTEX_BYTES` 64, `COND_BYTES` 48 — the size of Darwin's
+  `pthread_mutex_t`/`pthread_cond_t`). On Linux the mutex is Drepper's
+  three-state futex lock and the condition a sequence word; on macOS they
+  are `pthread_mutex_t`/`pthread_cond_t` (`os_unfair_lock` has no condition
+  variable to pair with, so it guards only the runtime's stdout buffer).
+  `thread_spawn` maps an 8 MiB stack with a 64 KiB guard below it and the
+  control block above it; `thread_join` waits on the id word with a shared
+  futex (the kernel's `CHILD_CLEARTID` wake), then unmaps the stack.
+* **`std.sys.sys_actor` (Zen).** The actor runtime with the C backend's
+  semantics (`ACTOR_RUNTIME.md`): one worker per actor, a bounded FIFO
+  mailbox with the same admission and byte accounting (Full/Closed), stop
+  draining before the stopped hook, shared joins with self-join returning
+  at once, a registry that refuses stale Refs, and shutdown (the exit hook)
+  draining accepted work, including sends made while draining, then stopping
+  and joining every worker. Retired message blocks are cached per actor under
+  `std.actor.actor_limits`' cache limits.
+* **Lowering** (`gen_lower_thread`, `gen_lower_actor`). A spawned closure is
+  lifted into a synthesized function over a capture record (values copied,
+  `::` bindings by address, capabilities free); its answer is written into
+  the record and read by `join` at the join's expected type. `env.spawn`
+  lays out the actor record (state, Context, arena) and starts the worker; a
+  behavior call copies its arguments into a payload record (str bytes into
+  the message) and each send site gets a synthesized turn; the stopped hook
+  also drops the state and the arena. A byte buffer (`Vec<u8>`) argument's
+  bytes travel in the message like a str's, and the turn moves them into the
+  actor's own allocator before the behavior runs, so the behavior may keep
+  and grow the buffer (the C backend gives each such message its own
+  receiver-owned arena instead; both live until the actor stops).
 
 The C and JavaScript backends do not provide the bodiless `std.sys`
 operations; C programs keep reaching the OS through `Env` and libc.
@@ -325,10 +380,10 @@ benchmarked; it needs the same work.
    volatile store plus a compiler barrier for wiping secrets.
 3. **Remaining language coverage:** floats, the missing conversions, loop
    handles as values, folding loops, and the unsettled generic corners.
-4. **zen-http:** sockets and readiness are already in `std.sys` (epoll on
-   Linux, kqueue on macOS). Missing are threads (`clone` + futex on Linux,
-   pthreads through libSystem on macOS), actors over them, and the `Env`
-   operations that the corpus still refuses.
+4. **zen-http:** sockets and readiness are in `std.sys` (epoll on Linux,
+   kqueue on macOS), and threads and actors run natively (above). Missing
+   are the `Env` operations the corpus still refuses (`args` schemas,
+   `fs.cwd/mkdir/remove`).
 5. **Backend unification** (per `IR_ARCHITECTURE.md`): done for the IR paths.
    One lowering feeds JavaScript, the IR C renderer and assembly, and each
    declares its support. The full C backend (`gen_c`) is still AST-driven.

@@ -30,31 +30,70 @@ Sys* = Read
     | Kevent
     | Futex
     | Clone
+    | Nanosleep
+    | Mprotect
+    | Flock
+    // Threads. `ThreadSelf` reads the calling thread's pointer: the thread
+    // control block the runtime installed as TLS on Linux, `pthread_self()`
+    // on Darwin. `CloneThread` starts a Linux thread on a caller-built stack
+    // and control block (see `std.sys.sys_thread`); `PthreadStart` is the
+    // Darwin equivalent over libSystem.
+    | ThreadSelf
+    | CloneThread
+    | PthreadStart
+    | PthreadJoin
+    // Darwin's lock and condition objects, in caller memory. Linux programs
+    // build theirs on `Futex` instead.
+    | MutexInit
+    | MutexLock
+    | MutexUnlock
+    | MutexDestroy
+    | CondInit
+    | CondWait
+    | CondSignal
+    | CondBroadcast
+    | CondDestroy
 
 // Word arguments each operation consumes, in kernel order.
 arity* = (call: Sys) usize {
     call.match({
-        Read         => 3,
-        Write        => 3,
-        Openat       => 4,
-        Close        => 1,
-        Mmap         => 6,
-        Munmap       => 2,
-        ExitGroup    => 1,
-        ClockGettime => 2,
-        Getrandom    => 3,
-        Socket       => 3,
-        Bind         => 3,
-        Listen       => 2,
-        Accept4      => 4,
-        Connect      => 3,
-        EpollCreate1 => 1,
-        EpollCtl     => 4,
-        EpollPwait   => 6,
-        Kqueue       => 0,
-        Kevent       => 6,
-        Futex        => 6,
-        Clone        => 5,
+        Read          => 3,
+        Write         => 3,
+        Openat        => 4,
+        Close         => 1,
+        Mmap          => 6,
+        Munmap        => 2,
+        ExitGroup     => 1,
+        ClockGettime  => 2,
+        Getrandom     => 3,
+        Socket        => 3,
+        Bind          => 3,
+        Listen        => 2,
+        Accept4       => 4,
+        Connect       => 3,
+        EpollCreate1  => 1,
+        EpollCtl      => 4,
+        EpollPwait    => 6,
+        Kqueue        => 0,
+        Kevent        => 6,
+        Futex         => 6,
+        Clone         => 5,
+        Nanosleep     => 2,
+        Mprotect      => 3,
+        Flock         => 2,
+        ThreadSelf    => 0,
+        CloneThread   => 3,
+        PthreadStart  => 1,
+        PthreadJoin   => 2,
+        MutexInit     => 2,
+        MutexLock     => 1,
+        MutexUnlock   => 1,
+        MutexDestroy  => 1,
+        CondInit      => 2,
+        CondWait      => 2,
+        CondSignal    => 1,
+        CondBroadcast => 1,
+        CondDestroy   => 1,
     })
 }
 
@@ -82,6 +121,10 @@ linux_x86_64* = (call: Sys) Res<usize> {
         Kevent       => None,
         Futex        => Ok(202),
         Clone        => Ok(56),
+        Nanosleep    => Ok(35),
+        Mprotect     => Ok(10),
+        Flock        => Ok(73),
+        _            => None,
     })
 }
 
@@ -109,35 +152,83 @@ linux_arm64* = (call: Sys) Res<usize> {
         Kevent       => None,
         Futex        => Ok(98),
         Clone        => Ok(220),
+        Nanosleep    => Ok(101),
+        Mprotect     => Ok(226),
+        Flock        => Ok(32),
+        _            => None,
     })
 }
+
+// Linux x86-64 and AArch64 numbers the renderers' runtimes use directly.
+LINUX_X86_64_EXIT*: usize = 60
+LINUX_X86_64_ARCH_PRCTL*: usize = 158
+LINUX_ARM64_EXIT*: usize = 93
 
 // libSystem exports, without the Mach-O underscore. Operations Darwin spells
 // differently map to their closest public equivalent; epoll, futex and raw
 // clone have none and are refused rather than emulated here.
 darwin_symbol* = (call: Sys) Res<str> {
     call.match({
-        Read         => Ok("read"),
-        Write        => Ok("write"),
-        Openat       => Ok("openat"),
-        Close        => Ok("close"),
-        Mmap         => Ok("mmap"),
-        Munmap       => Ok("munmap"),
-        ExitGroup    => Ok("_exit"),
-        ClockGettime => Ok("clock_gettime"),
-        Getrandom    => Ok("getentropy"),
-        Socket       => Ok("socket"),
-        Bind         => Ok("bind"),
-        Listen       => Ok("listen"),
-        Accept4      => Ok("accept"),
-        Connect      => Ok("connect"),
-        EpollCreate1 => None,
-        EpollCtl     => None,
-        EpollPwait   => None,
-        Kqueue       => Ok("kqueue"),
-        Kevent       => Ok("kevent"),
-        Futex        => None,
-        Clone        => None,
+        Read          => Ok("read"),
+        Write         => Ok("write"),
+        Openat        => Ok("openat"),
+        Close         => Ok("close"),
+        Mmap          => Ok("mmap"),
+        Munmap        => Ok("munmap"),
+        ExitGroup     => Ok("_exit"),
+        ClockGettime  => Ok("clock_gettime"),
+        Getrandom     => Ok("getentropy"),
+        Socket        => Ok("socket"),
+        Bind          => Ok("bind"),
+        Listen        => Ok("listen"),
+        Accept4       => Ok("accept"),
+        Connect       => Ok("connect"),
+        EpollCreate1  => None,
+        EpollCtl      => None,
+        EpollPwait    => None,
+        Kqueue        => Ok("kqueue"),
+        Kevent        => Ok("kevent"),
+        Futex         => None,
+        Clone         => None,
+        Nanosleep     => Ok("nanosleep"),
+        Mprotect      => Ok("mprotect"),
+        Flock         => Ok("flock"),
+        ThreadSelf    => Ok("pthread_self"),
+        CloneThread   => None,
+        PthreadStart  => Ok("pthread_create"),
+        PthreadJoin   => Ok("pthread_join"),
+        MutexInit     => Ok("pthread_mutex_init"),
+        MutexLock     => Ok("pthread_mutex_lock"),
+        MutexUnlock   => Ok("pthread_mutex_unlock"),
+        MutexDestroy  => Ok("pthread_mutex_destroy"),
+        CondInit      => Ok("pthread_cond_init"),
+        CondWait      => Ok("pthread_cond_wait"),
+        CondSignal    => Ok("pthread_cond_signal"),
+        CondBroadcast => Ok("pthread_cond_broadcast"),
+        CondDestroy   => Ok("pthread_cond_destroy"),
+    })
+}
+
+// How a Darwin call reports failure. Most libSystem calls return -1 and set
+// errno; the pthread family returns the error number itself (0 on success);
+// `pthread_self` cannot fail and returns a handle.
+DarwinResult* = Errno | Returned | Handle
+
+darwin_result* = (call: Sys) DarwinResult {
+    call.match({
+        ThreadSelf    => DarwinResult.Handle,
+        PthreadStart  => DarwinResult.Returned,
+        PthreadJoin   => DarwinResult.Returned,
+        MutexInit     => DarwinResult.Returned,
+        MutexLock     => DarwinResult.Returned,
+        MutexUnlock   => DarwinResult.Returned,
+        MutexDestroy  => DarwinResult.Returned,
+        CondInit      => DarwinResult.Returned,
+        CondWait      => DarwinResult.Returned,
+        CondSignal    => DarwinResult.Returned,
+        CondBroadcast => DarwinResult.Returned,
+        CondDestroy   => DarwinResult.Returned,
+        _             => DarwinResult.Errno,
     })
 }
 
@@ -156,6 +247,8 @@ SysConstant* = AtFdcwd
     | EIntr
     | EAgain
     | MapPrivateAnonymous
+    // 1 on Darwin, 0 on Linux: which thread primitives std.sys builds on.
+    | IsDarwin
 
 // The operating systems and architectures with constant tables.
 Platform* = LinuxX86_64 | LinuxArm64 | Darwin
@@ -180,34 +273,51 @@ constant_value* = (name: SysConstant, platform: Platform) i64 {
         EAgain              => linux.match({ true => 11, false => 35 }),
         // MAP_PRIVATE | MAP_ANONYMOUS
         MapPrivateAnonymous => linux.match({ true => 34, false => 4098 }),
+        IsDarwin            => linux.match({ true => 0, false => 1 }),
     })
 }
 
 // The Sys operation a std.sys declaration names.
 sys_named* = (name: str) Res<Sys> {
     name.match({
-        "read"          => Ok(Sys.Read),
-        "write"         => Ok(Sys.Write),
-        "openat"        => Ok(Sys.Openat),
-        "close"         => Ok(Sys.Close),
-        "mmap"          => Ok(Sys.Mmap),
-        "munmap"        => Ok(Sys.Munmap),
-        "exit_group"    => Ok(Sys.ExitGroup),
-        "clock_gettime" => Ok(Sys.ClockGettime),
-        "getrandom"     => Ok(Sys.Getrandom),
-        "socket"        => Ok(Sys.Socket),
-        "bind"          => Ok(Sys.Bind),
-        "listen"        => Ok(Sys.Listen),
-        "accept4"       => Ok(Sys.Accept4),
-        "connect"       => Ok(Sys.Connect),
-        "epoll_create1" => Ok(Sys.EpollCreate1),
-        "epoll_ctl"     => Ok(Sys.EpollCtl),
-        "epoll_pwait"   => Ok(Sys.EpollPwait),
-        "kqueue"        => Ok(Sys.Kqueue),
-        "kevent"        => Ok(Sys.Kevent),
-        "futex"         => Ok(Sys.Futex),
-        "clone"         => Ok(Sys.Clone),
-        _               => None,
+        "read"                   => Ok(Sys.Read),
+        "write"                  => Ok(Sys.Write),
+        "openat"                 => Ok(Sys.Openat),
+        "close"                  => Ok(Sys.Close),
+        "mmap"                   => Ok(Sys.Mmap),
+        "munmap"                 => Ok(Sys.Munmap),
+        "exit_group"             => Ok(Sys.ExitGroup),
+        "clock_gettime"          => Ok(Sys.ClockGettime),
+        "getrandom"              => Ok(Sys.Getrandom),
+        "socket"                 => Ok(Sys.Socket),
+        "bind"                   => Ok(Sys.Bind),
+        "listen"                 => Ok(Sys.Listen),
+        "accept4"                => Ok(Sys.Accept4),
+        "connect"                => Ok(Sys.Connect),
+        "epoll_create1"          => Ok(Sys.EpollCreate1),
+        "epoll_ctl"              => Ok(Sys.EpollCtl),
+        "epoll_pwait"            => Ok(Sys.EpollPwait),
+        "kqueue"                 => Ok(Sys.Kqueue),
+        "kevent"                 => Ok(Sys.Kevent),
+        "futex"                  => Ok(Sys.Futex),
+        "clone"                  => Ok(Sys.Clone),
+        "nanosleep"              => Ok(Sys.Nanosleep),
+        "mprotect"               => Ok(Sys.Mprotect),
+        "flock"                  => Ok(Sys.Flock),
+        "thread_self"            => Ok(Sys.ThreadSelf),
+        "clone_thread"           => Ok(Sys.CloneThread),
+        "pthread_start"          => Ok(Sys.PthreadStart),
+        "pthread_join"           => Ok(Sys.PthreadJoin),
+        "pthread_mutex_init"     => Ok(Sys.MutexInit),
+        "pthread_mutex_lock"     => Ok(Sys.MutexLock),
+        "pthread_mutex_unlock"   => Ok(Sys.MutexUnlock),
+        "pthread_mutex_destroy"  => Ok(Sys.MutexDestroy),
+        "pthread_cond_init"      => Ok(Sys.CondInit),
+        "pthread_cond_wait"      => Ok(Sys.CondWait),
+        "pthread_cond_signal"    => Ok(Sys.CondSignal),
+        "pthread_cond_broadcast" => Ok(Sys.CondBroadcast),
+        "pthread_cond_destroy"   => Ok(Sys.CondDestroy),
+        _                        => None,
     })
 }
 
@@ -227,6 +337,7 @@ constant_named* = (name: str) Res<SysConstant> {
         "eintr"                 => Ok(SysConstant.EIntr),
         "eagain"                => Ok(SysConstant.EAgain),
         "map_private_anonymous" => Ok(SysConstant.MapPrivateAnonymous),
+        "platform_darwin"       => Ok(SysConstant.IsDarwin),
         _                       => None,
     })
 }

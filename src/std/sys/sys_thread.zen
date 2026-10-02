@@ -1,0 +1,279 @@
+// Threads, locks and condition variables for the native backend, as
+// ordinary Zen over std.sys. Linux builds everything on raw `clone` and
+// futexes; macOS goes through libSystem's pthreads, because Darwin's kernel
+// interface is not a stable ABI. Callers see one API either way.
+//
+// Locks and conditions live in caller memory of MUTEX_BYTES / COND_BYTES at
+// a stable address (the OS objects must never move or be copied), and are
+// initialised before first use. A thread is its control block, which starts
+// with the layout the renderers' runtime reads:
+//
+//     +0  self    the block's own address (the Linux TLS pointer)
+//     +8  entry   code address of the Zen function the thread runs
+//     +16 arg     that function's argument
+//     +24 tid     Linux: the kernel's thread id, cleared when it exits
+//     +32 os      macOS: the pthread_t
+//     +40 base    Linux: the stack mapping to release after the join
+//     +48 length
+
+Ptr, AllocError = std.mem
+futex, mmap, munmap, mprotect, map_private_anonymous, pointer_at, address_of = std.sys
+thread_self, clone_thread, pthread_start, pthread_join = std.sys
+pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_mutex_destroy = std.sys
+pthread_cond_init, pthread_cond_wait, pthread_cond_signal, pthread_cond_broadcast = std.sys
+pthread_cond_destroy, platform_darwin, nanosleep_ns, monotonic_ns, Pages, NO_MEMORY = std.sys
+atomic_load_u32, atomic_store_u32, atomic_swap_u32, atomic_add_u32, atomic_cas_u32 = std.sys
+
+// Enough for the largest OS object: macOS's pthread_mutex_t / pthread_cond_t.
+MUTEX_BYTES*: usize = 64
+COND_BYTES*: usize = 48
+
+// Every thread gets an 8 MiB stack (the usual Linux default) with a
+// no-access guard below it large enough for 16 KiB and 64 KiB pages.
+STACK_BYTES*: usize = 8388608
+GUARD_BYTES: usize = 65536
+BLOCK_BYTES: usize = 64
+BLOCK_TID: usize = 24
+
+// CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD |
+// CLONE_SYSVSEM | CLONE_SETTLS | CLONE_PARENT_SETTID | CLONE_CHILD_CLEARTID:
+// a thread of this process, with the control block as its TLS and its id
+// maintained in the block for the join.
+CLONE_THREAD_FLAGS: usize = 4001536
+
+FUTEX_WAIT: i32 = 0
+FUTEX_WAIT_PRIVATE: i32 = 128
+FUTEX_WAKE_PRIVATE: i32 = 129
+
+darwin = () bool { platform_darwin() == 1 }
+
+// 0 from the pthread family is success; anything else is already -errno.
+status = (code: i64) Res<(), i64> {
+    (code == 0).match({ true => Ok(()), false => Err(code) })
+}
+
+// Futex waits and wakes whose results the caller does not need: a wait
+// that returns early (a changed word, a signal) is rechecked by its loop.
+wait_word = (word: Ptr<u32>, op: i32, expected: u32) {
+    futex(word, op, expected, 0, 0, 0).ignore_status();
+}
+
+wake_word = (word: Ptr<u32>, count: u32) {
+    futex(word, FUTEX_WAKE_PRIVATE, count, 0, 0, 0).ignore_status();
+}
+
+// Lock and condition calls on macOS fail only for invalid objects, which
+// this module never passes; their results are dropped as the C backend's are.
+ignore_status = (code: i64) { status(code).ignore(); }
+
+// ---------------------------------------------------------------------
+// locks
+// ---------------------------------------------------------------------
+
+// Linux: a futex word, 0 free, 1 held, 2 held with (possible) waiters, as
+// in Drepper's "Futexes Are Tricky". Unlocking a 2 wakes one waiter, which
+// then takes the lock as 2 so a later unlock wakes the next.
+mutex_init* = (m: Ptr<u8>) Res<(), i64> {
+    darwin().match({
+        true  => status(pthread_mutex_init(m, 0)),
+        false => { atomic_store_u32(m.to<u32>(), 0); Ok(()) },
+    })
+}
+
+mutex_lock* = (m: Ptr<u8>) {
+    darwin().match({
+        true  => pthread_mutex_lock(m).ignore_status(),
+        false => {
+            word = m.to<u32>();
+            (atomic_cas_u32(word, 0, 1) != 0).then(() { lock_contended(word); });
+        },
+    });
+}
+
+lock_contended = (word: Ptr<u32>) {
+    loop(
+        () { atomic_swap_u32(word, 2) != 0 },
+        (h) { wait_word(word, FUTEX_WAIT_PRIVATE, 2); }
+    );
+}
+
+mutex_unlock* = (m: Ptr<u8>) {
+    darwin().match({
+        true  => pthread_mutex_unlock(m).ignore_status(),
+        false => {
+            word = m.to<u32>();
+            (atomic_swap_u32(word, 0) == 2).then(() { wake_word(word, 1); }).ignore_none();
+        },
+    });
+}
+
+mutex_destroy* = (m: Ptr<u8>) {
+    darwin().match({ true => pthread_mutex_destroy(
+        m
+    ).ignore_status(), false => () });
+}
+
+// ---------------------------------------------------------------------
+// condition variables
+// ---------------------------------------------------------------------
+
+// Linux: a sequence word bumped by every signal. A waiter sleeps only while
+// the word still holds the value it read before releasing the lock, so a
+// signal between the release and the sleep is never lost. Wakeups may be
+// spurious; callers wait in a loop on their own condition.
+cond_init* = (c: Ptr<u8>) Res<(), i64> {
+    darwin().match({
+        true  => status(pthread_cond_init(c, 0)),
+        false => { atomic_store_u32(c.to<u32>(), 0); Ok(()) },
+    })
+}
+
+cond_wait* = (c: Ptr<u8>, m: Ptr<u8>) {
+    darwin().match({
+        true  => pthread_cond_wait(c, m).ignore_status(),
+        false => {
+            word = c.to<u32>();
+            seen = atomic_load_u32(word);
+            mutex_unlock(m);
+            wait_word(word, FUTEX_WAIT_PRIVATE, seen);
+            // Retake as contended: other waiters may be queued behind us.
+            lock_contended(m.to<u32>());
+        },
+    });
+}
+
+cond_signal* = (c: Ptr<u8>) {
+    darwin().match({
+        true  => pthread_cond_signal(c).ignore_status(),
+        false => {
+            word = c.to<u32>();
+            atomic_add_u32(word, 1);
+            wake_word(word, 1);
+        },
+    });
+}
+
+cond_broadcast* = (c: Ptr<u8>) {
+    darwin().match({
+        true  => pthread_cond_broadcast(c).ignore_status(),
+        false => {
+            word = c.to<u32>();
+            atomic_add_u32(word, 1);
+            wake_word(word, 2147483647);
+        },
+    });
+}
+
+cond_destroy* = (c: Ptr<u8>) {
+    darwin().match({ true => pthread_cond_destroy(
+        c
+    ).ignore_status(), false => () });
+}
+
+// ---------------------------------------------------------------------
+// threads
+// ---------------------------------------------------------------------
+
+// Start a thread running the compiler-provided function at `entry` with
+// `arg`. The handle is the thread's control block; join it exactly once.
+thread_spawn* = (entry: usize, arg: Ptr<u8>) Res<Ptr<u8>, i64> {
+    darwin().match({
+        true  => spawn_pthread(entry, arg),
+        false => spawn_clone(entry, arg),
+    })
+}
+
+// The stack and control block share one mapping: guard pages at the bottom,
+// the stack above them, and the block in the top 64 bytes, so the stack
+// starts just below the block.
+spawn_clone = (entry: usize, arg: Ptr<u8>) Res<Ptr<u8>, i64> {
+    total = GUARD_BYTES + STACK_BYTES;
+    got   = mmap(0, total, 3, map_private_anonymous(), -1, 0);
+    (got < 0).match({ true => Err(got), false => Ok(()) }).try();
+    base    = got.to_usize().value_or(0);
+    guarded = mprotect(base, GUARD_BYTES, 0);
+    (guarded < 0).then(
+        () { munmap(base, total).ignore_status(); }
+    ).ignore_none();
+    (guarded < 0).match({ true => Err(guarded), false => Ok(()) }).try();
+    block = pointer_at(base + total - BLOCK_BYTES);
+    fill_block(block, entry, arg, base, total);
+    started = clone_thread(CLONE_THREAD_FLAGS, address_of(block), block);
+    (started < 0).then(
+        () { munmap(base, total).ignore_status(); }
+    ).ignore_none();
+    (started < 0).match({ true => Err(started), false => Ok(block) })
+}
+
+spawn_pthread = (entry: usize, arg: Ptr<u8>) Res<Ptr<u8>, i64> {
+    block = Pages().raw(BLOCK_BYTES, 16).match({ Ok(p) => Ok(p), Err(_) => Err(NO_MEMORY) }).try();
+    fill_block(block, entry, arg, 0, 0);
+    started = pthread_start(block);
+    (started != 0).then(() { Pages().free(block); }).ignore_none();
+    (started != 0).match({ true => Err(started), false => Ok(block) })
+}
+
+fill_block = (
+    block  : Ptr<u8>,
+    entry  : usize,
+    arg    : Ptr<u8>,
+    base   : usize,
+    length : usize
+) {
+    words = block.to<usize>();
+    words.write(0, address_of(block));
+    words.write(1, entry);
+    words.write(2, address_of(arg));
+    words.write(3, 0);
+    words.write(4, 0);
+    words.write(5, base);
+    words.write(6, length);
+}
+
+// Wait for the thread to finish and release its stack and block. Linux:
+// the kernel clears the id word and wakes (shared) futex waiters on it once
+// the thread can no longer touch its stack.
+thread_join* = (t: Ptr<u8>) Res<(), i64> {
+    words = t.to<usize>();
+    darwin().match({
+        true  => {
+            status(pthread_join(words.read(4), 0)).try();
+            Pages().free(t);
+            Ok(())
+        },
+        false => {
+            tid = t.offset(BLOCK_TID).to<u32>();
+            loop(() { atomic_load_u32(tid) != 0 }, (h) {
+                seen = atomic_load_u32(tid);
+                (seen != 0).then(
+                    () { wait_word(tid, FUTEX_WAIT, seen); }
+                ).ignore_none();
+            });
+            munmap(words.read(5), words.read(6)).ignore_status();
+            Ok(())
+        },
+    })
+}
+
+self_word = () usize { thread_self().to_usize().value_or(0) }
+
+// Whether the calling thread is the one `t` started.
+thread_is_current* = (t: Ptr<u8>) bool {
+    darwin().match({
+        true  => self_word() == t.to<usize>().read(4),
+        false => self_word() == address_of(t),
+    })
+}
+
+// Sleep for at least `ns` nanoseconds, resuming after interruptions.
+sleep_ns* = (ns: u64) {
+    start = monotonic_ns();
+    left ::= ns;
+    loop(() { left > 0 }, (h) {
+        nanosleep_ns(left).ignore_status();
+        spent = monotonic_ns() -% start;
+        left  = (spent >= ns).match({ true => 0, false => ns - spent });
+    });
+}
+
+ignore_none = (r: Res<()>) { r.match({ Ok(_) => (), None => () }); }

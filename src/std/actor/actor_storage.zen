@@ -2,9 +2,7 @@
 // actor lifetime. Backend locks serialize take/give; close follows worker drain.
 Pool = std.mem.mem_pool
 Ptr = std.mem
-CACHE_BYTES*: usize = 1048576
-CACHE_BLOCK*: usize = 65536
-CACHE_COUNT*: usize = 64
+CACHE_BYTES*, CACHE_BLOCK*, CACHE_COUNT* = std.actor.actor_limits
 MailboxOps* = {
     take* = (self :: @Self, bytes: usize) Ptr<u8>
     give* = (self :: @Self, pointer: Ptr<u8>) ()

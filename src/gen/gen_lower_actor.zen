@@ -1,0 +1,856 @@
+// Actors for the native lowering, over the runtime in std.sys.sys_actor.
+// The semantics are the C backend's (gen_c_actor): `env.spawn(actor)`
+// builds the actor's record and starts its worker, a behavior call on a
+// `Ref<A>` copies its arguments into one mailbox message and returns as
+// soon as the message is admitted, and `stop`/`join` close and wait.
+//
+// What depends on the actor's type is generated here: the record layout
+//
+//     +0           the actor's state (A)
+//     +context     the Context every turn receives
+//     +arena       the Arena behind Context.alloc
+//
+// and three kinds of entry point the worker calls by code address, each
+// `(record: Ptr<u8>, data: Ptr<u8>) ()`: a turn per behavior send site
+// (data is the message's payload record), and the started and stopped
+// hooks (data unused). The stopped hook also drops the state and the arena.
+//
+// A direct str argument travels as bytes copied into the message. So does a
+// byte buffer (`Vec<u8>`), which the turn then moves into the actor's own
+// allocator before the behavior runs, so the behavior may keep and grow it;
+// like the C backend's receiver-owned arenas, that memory lives until the
+// actor's arena is dropped after `stopped`.
+
+Vec = std.collections
+String, str = std.text
+Range = std.core
+ExprId, Call = std.ast
+Span, nowhere = std.source
+TyId, Def, DeclId, CheckedCall = sema.sema
+Scalar, Layout, Op, Move, Binary, Instruction, Store, Address, Convert = gen.gen_ir
+CodeRef, Func, Pages, CopyMem, TrapKind = gen.gen_ir
+LowerError, unsupported = gen.gen_lower
+Lowerer, Value, Place, Base, Callee, to_i64_bits = gen.gen_lower_core
+Source, argument_value, param_type, real_call = gen.gen_lower_call
+resolve, handle_for_place, payload_type, pointee_of, bound_of, dispatch = gen.gen_lower_member
+size_of, align_of, round_up, class_of, FieldAt = gen.gen_lower_shape
+Synth, std_call, std_function, enqueue_synth, begin_synth, finish_synth = gen.gen_lower_thread
+succeeded, is_null, byte_pointer, ok_payload = gen.gen_lower_thread
+
+// The generated record of one actor type.
+ActorLayout* = {
+    actor_ty*: TyId,
+    context_ty*: TyId,
+    arena_ty*: TyId,
+    alloc_ty*: TyId,
+    context*: usize,
+    arena*: usize,
+    size*: usize,
+}
+
+EntryKind* = Turn | Started | Stopped
+
+// One generated entry point. A turn's `hook` is its behavior and `fields`
+// place the behavior's arguments in the payload record; `Started` and
+// `Stopped` call the actor's hook of that name when it has one.
+ActorEntry* = {
+    kind*: EntryKind,
+    layout*: ActorLayout,
+    hook*: Res<Callee>,
+    fields*: Vec<FieldAt>,
+    // Which fields are byte buffers to move into the actor's allocator.
+    buffers*: Vec<bool>,
+}
+
+// A str argument's slice descriptor (std.sys.sys_actor.Slice).
+SLICE_BYTES: usize = 32
+
+// ---------------------------------------------------------------------
+// recognizing actor types
+// ---------------------------------------------------------------------
+
+// The actor type A of std.actor's `Ref<A>`; None for any other type,
+// including a user type that happens to be called Ref.
+actor_of_ref* = (lo :: Lowerer, ty: TyId) Res<Res<TyId>, LowerError> {
+    Ok(lo.check.types.at(ty).match({
+        Named(n) => (n.name.eq("Ref") && lo.check.world.module_name(n.decl).eq("std.actor.actor_core")).match({
+            true  => n.args.get(0),
+            false => None,
+        }),
+        _        => None,
+    }))
+}
+
+std_type = (
+    lo    :: Lowerer,
+    name  : str,
+    qname : str,
+    span  : Span
+) Res<TyId, LowerError> {
+    defs ::= lo.alloc.Vec<Def>();
+    lo.check.world.exported_named(name, defs).try(LowerError.OutOfMemory);
+    d = defs.find((d) { d.qname.eq(qname) }).ok_or(unsupported(span, "a missing std actor type")).try();
+    lo.check.def_type(d).try(LowerError.OutOfMemory)
+}
+
+field_type = (
+    lo   :: Lowerer,
+    ty   : TyId,
+    name : str,
+    span : Span
+) Res<TyId, LowerError> {
+    lo.shape(ty).try().form.match({
+        Record(fields) => fields.find((f) { f.name.eq(name) }).match({ Ok(f) => Ok(f.ty), None => None }),
+        _              => None,
+    }).ok_or(unsupported(span, "a std actor type without its field"))
+}
+
+layout_of = (
+    lo       :: Lowerer,
+    actor_ty : TyId,
+    span     : Span
+) Res<ActorLayout, LowerError> {
+    context_ty = lo.std_type(
+        "Context",
+        "std.actor.actor_context.Context",
+        span
+    ).try();
+    arena_ty   = lo.std_type("Arena", "std.mem.mem_arena.Arena", span).try();
+    alloc_ty   = lo.field_type(context_ty, "alloc", span).try();
+    state      = lo.class_of(actor_ty).try();
+    context    = lo.class_of(context_ty).try();
+    arena      = lo.class_of(arena_ty).try();
+    at_context = round_up(size_of(state), align_of(context).larger(8));
+    at_arena   = round_up(
+        at_context + size_of(context),
+        align_of(arena).larger(8)
+    );
+    Ok(ActorLayout(
+        actor_ty: actor_ty,
+        context_ty: context_ty,
+        arena_ty: arena_ty,
+        alloc_ty: alloc_ty,
+        context: at_context,
+        arena: at_arena,
+        size: round_up(at_arena + size_of(arena), 16)
+    ))
+}
+
+larger = (a: usize, b: usize) usize { (a > b).match({ true => a, false => b }) }
+
+// ---------------------------------------------------------------------
+// env.spawn
+// ---------------------------------------------------------------------
+
+// `env.spawn(actor)`: Ok(Ref) once the worker runs; OutOfMemory when the
+// cell or the arena cannot be had; Unavailable when no worker can start.
+// Any failure drops the actor value (and the arena) as the C backend does.
+spawn_actor* = (
+    lo      :: Lowerer,
+    id      : ExprId,
+    sources : Vec<Source>,
+    span    : Span
+) Res<Value, LowerError> {
+    ty        = lo.type_of(id).try();
+    ref_ty    = lo.payload_type(ty, "Ok").try();
+    actor_ty  = lo.actor_of_ref(ref_ty).try().ok_or(unsupported(span, "Env.spawn returning a non-actor Ref")).try();
+    layout    = lo.layout_of(actor_ty, span).try();
+    actor     = lo.argument_value(
+        sources.get(1).value_or(Source.Absent),
+        actor_ty,
+        span
+    ).try();
+    out       = lo.temp(ty).try();
+    done      = lo.label().try();
+    size      = lo.word_const(Scalar.U64, layout.size.to_i64_bits()).try();
+    cell      = lo.actor_call(
+        "actor_new",
+        lo.one(Source.Computed(Value(
+            slot: size,
+            ty: lo.prim("usize").try()
+        ))).try(),
+        span
+    ).try();
+    no_cell   = lo.label().try();
+    have_cell = lo.label().try();
+    lo.branch_to(lo.is_null(cell.slot).try(), no_cell, have_cell).try();
+    lo.start(no_cell);
+    lo.drop_value(
+        Place(base: Base.InSlot(actor.slot), offset: 0, ty: actor_ty),
+        span
+    ).try();
+    lo.fail(out, ty, "OutOfMemory", span).try();
+    lo.jump(done).try();
+    lo.start(have_cell);
+    record = lo.actor_call(
+        "actor_record",
+        lo.one(Source.Computed(cell)).try(),
+        span
+    ).try().slot;
+    lo.add(Instruction.StoreValue(Store(
+        base: record,
+        offset: 0,
+        value: actor.slot
+    ))).try();
+    // The arena's state is fresh zeroed pages, as `Mem.alloc()` makes it.
+    arena_state_ty = lo.pointee_of(
+        lo.field_type(layout.arena_ty, "state", span).try()
+    ).try();
+    state_bytes    = lo.word_const(
+        Scalar.U64,
+        size_of(lo.class_of(arena_state_ty).try()).larger(1).to_i64_bits()
+    ).try();
+    arena_state    = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.MapPages(Pages(
+        out: arena_state,
+        bytes: state_bytes
+    ))).try();
+    no_arena   = lo.label().try();
+    have_arena = lo.label().try();
+    lo.branch_to(lo.is_null(arena_state).try(), no_arena, have_arena).try();
+    lo.start(no_arena);
+    lo.drop_value(
+        Place(base: Base.Through(record), offset: 0, ty: actor_ty),
+        span
+    ).try();
+    lo.actor_call(
+        "actor_discard",
+        lo.one(Source.Computed(cell)).try(),
+        span
+    ).try();
+    lo.fail(out, ty, "OutOfMemory", span).try();
+    lo.jump(done).try();
+    lo.start(have_arena);
+    arena = Place(
+        base: Base.Through(record),
+        offset: layout.arena,
+        ty: layout.arena_ty
+    );
+    lo.write(
+        lo.field_place(arena, "state", span).try(),
+        Value(
+            slot: arena_state,
+            ty: lo.field_type(layout.arena_ty, "state", span).try()
+        )
+    ).try();
+    // Context.alloc refers to the record's arena, whose address is stable
+    // for the actor's life.
+    handle  = lo.handle_for_place(arena, layout.alloc_ty).try().ok_or(unsupported(span, "an Arena that is not an Alloc")).try();
+    context = Place(
+        base: Base.Through(record),
+        offset: layout.context,
+        ty: layout.context_ty
+    );
+    lo.write(lo.field_place(context, "alloc", span).try(), handle).try();
+    started  = lo.hook_code(layout, "started", EntryKind.Started, span).try();
+    stopped  = lo.hook_code(layout, "stopped", EntryKind.Stopped, span).try();
+    worker   = lo.function_code(
+        lo.std_function("std.sys.sys_actor", "actor_worker", span).try()
+    ).try();
+    shutdown = lo.function_code(
+        lo.std_function("std.sys.sys_actor", "actor_shutdown", span).try()
+    ).try();
+    start_args ::= lo.one(Source.Computed(cell)).try();
+    [worker, shutdown, started, stopped].loop((a) { start_args.more(a).try(); });
+    status = lo.actor_call("actor_start", start_args, span).try();
+    zero   = lo.word_const(Scalar.I32, 0).try();
+    ok     = lo.slot_of(Scalar.Bool).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: ok,
+        left: status.slot,
+        right: zero,
+        op: Op.Equal,
+        span: nowhere()
+    ))).try();
+    running = lo.label().try();
+    refused = lo.label().try();
+    lo.branch_to(ok, running, refused).try();
+    // No worker owns the actor: drop it and its arena here.
+    lo.start(refused);
+    lo.drop_value(
+        Place(base: Base.Through(record), offset: 0, ty: actor_ty),
+        span
+    ).try();
+    lo.drop_value(arena, span).try();
+    lo.actor_call(
+        "actor_discard",
+        lo.one(Source.Computed(cell)).try(),
+        span
+    ).try();
+    lo.fail(out, ty, "Unavailable", span).try();
+    lo.jump(done).try();
+    lo.start(running);
+    reference = lo.temp(ref_ty).try();
+    id_place  = lo.field_place(lo.spill(reference), "id", span).try();
+    id_word   = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.Cast(Convert(out: id_word, input: cell.slot))).try();
+    lo.write(id_place, Value(slot: id_word, ty: id_place.ty)).try();
+    made = lo.variant_value(ty, "Ok", Ok(reference), span).try();
+    lo.add(Instruction.Copy(Move(out: out.slot, source: made.slot))).try();
+    lo.jump(done).try();
+    lo.start(done);
+    Ok(out)
+}
+
+// `Err(<name>)` of a Res whose error set names it, into `out`.
+fail = (
+    lo   :: Lowerer,
+    out  : Value,
+    ty   : TyId,
+    name : str,
+    span : Span
+) Res<(), LowerError> {
+    err_ty = lo.payload_type(ty, "Err").try();
+    reason = lo.variant_value(err_ty, name, None, span).try();
+    failed = lo.variant_value(ty, "Err", Ok(reason), span).try();
+    lo.add(Instruction.Copy(Move(out: out.slot, source: failed.slot)))
+}
+
+// The code address of a generated hook as a usize, or 0 for a `started` the
+// actor does not define. The stopped entry always exists: it drops.
+hook_code = (
+    lo     :: Lowerer,
+    layout : ActorLayout,
+    name   : str,
+    kind   : EntryKind,
+    span   : Span
+) Res<Source, LowerError> {
+    hook     = lo.behavior(layout.actor_ty, name, 2, span);
+    usize_ty = lo.prim("usize").try();
+    (hook.match({ Ok(_) => false, None => true }) && name.eq("started")).match({
+        true  => Ok(Source.Computed(Value(
+            slot: lo.word_const(Scalar.U64, 0).try(),
+            ty: usize_ty
+        ))),
+        false => {
+            index = lo.enqueue_synth(
+                lo.stand_in(span).try(),
+                Synth.Actor(ActorEntry(
+                    kind: kind,
+                    layout: layout,
+                    hook: hook,
+                    fields: lo.alloc.Vec<FieldAt>(),
+                    buffers: lo.alloc.Vec<bool>()
+                ))
+            ).try();
+            lo.code_of(index)
+        },
+    })
+}
+
+function_code = (lo :: Lowerer, callee: Callee) Res<Source, LowerError> {
+    lo.code_of(lo.enqueue(callee).try())
+}
+
+// The code address of function `index`, as a usize argument.
+code_of = (lo :: Lowerer, index: usize) Res<Source, LowerError> {
+    code = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.CodeAddress(CodeRef(out: code, function: index))).try();
+    word = lo.slot_of(Scalar.U64).try();
+    lo.add(Instruction.Cast(Convert(out: word, input: code))).try();
+    Ok(Source.Computed(Value(slot: word, ty: lo.prim("usize").try())))
+}
+
+// A Callee standing in for a synthesized entry's slot in `pending`.
+stand_in = (lo :: Lowerer, span: Span) Res<Callee, LowerError> {
+    lo.std_function("std.sys.sys_actor", "actor_worker", span)
+}
+
+// A behavior (or hook) of the actor type by name, when it has one with a
+// body; `arity` counts self and the Context.
+behavior = (
+    lo       :: Lowerer,
+    actor_ty : TyId,
+    name     : str,
+    arity    : usize,
+    span     : Span
+) Res<Callee> {
+    lo.resolve(actor_ty, name, None, arity, lo.alloc.Inst(), None, span).match({
+        Ok(callee) => callee.f.body.match({ Ok(_) => Ok(
+            callee
+        ), None => None }),
+        Err(_)     => None,
+    })
+}
+
+// Run a value's Drop at its place, when its type has one.
+drop_value = (lo :: Lowerer, place: Place, span: Span) Res<(), LowerError> {
+    lo.check.is_drop_type(place.ty).try(LowerError.OutOfMemory).match({
+        false => Ok(()),
+        true  => {
+            defs ::= lo.alloc.Vec<Def>();
+            lo.check.world.exported_named(
+                "Drop",
+                defs
+            ).try(LowerError.OutOfMemory);
+            bound  = defs.find(
+                (d) { lo.check.world.module_name(d.id).starts_with("std.core") }
+            )
+                .ok_or(unsupported(span, "the std Drop bound")).try();
+            callee = lo.resolve(
+                place.ty,
+                "drop",
+                None,
+                1,
+                lo.alloc.Inst(),
+                Ok(bound.id),
+                span
+            ).try();
+            lo.real_call(
+                callee,
+                lo.one(Source.Located(place)).try(),
+                span
+            ).try();
+            Ok(())
+        },
+    })
+}
+
+// A std.sys.sys_actor function with evaluated arguments.
+actor_call = (
+    lo   :: Lowerer,
+    name : str,
+    args : Vec<Source>,
+    span : Span
+) Res<Value, LowerError> {
+    lo.std_call("std.sys.sys_actor", name, args, span)
+}
+
+// Argument lists for runtime calls.
+one = (lo :: Lowerer, a: Source) Res<Vec<Source>, LowerError> {
+    out ::= lo.alloc.Vec<Source>();
+    out.add(a).try(LowerError.OutOfMemory);
+    Ok(out)
+}
+
+more = (list :: Vec<Source>, a: Source) Res<Vec<Source>, LowerError> {
+    list.add(a).try(LowerError.OutOfMemory);
+    Ok(list)
+}
+
+// ---------------------------------------------------------------------
+// Ref members: behaviors, stop and join
+// ---------------------------------------------------------------------
+
+// A member call on `Ref<A>`.
+actor_member* = (
+    lo       :: Lowerer,
+    id       : ExprId,
+    c        : Call,
+    receiver : ExprId,
+    actor_ty : TyId,
+    name     : str,
+    span     : Span
+) Res<Value, LowerError> {
+    reference = lo.expr(receiver).try();
+    id_value  = lo.read(
+        lo.field_place(lo.spill(reference), "id", span).try()
+    ).try();
+    cell      = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.Cast(Convert(out: cell, input: id_value.slot))).try();
+    cell_source = Source.Computed(Value(
+        slot: cell,
+        ty: lo.byte_pointer().try()
+    ));
+    name.match({
+        "stop" => { lo.actor_call(
+            "actor_stop",
+            lo.one(cell_source).try(),
+            span
+        ).try(); lo.unit() },
+        "join" => { lo.actor_call(
+            "actor_join",
+            lo.one(cell_source).try(),
+            span
+        ).try(); lo.unit() },
+        _      => lo.send(id, c, cell_source, actor_ty, name, span),
+    })
+}
+
+// `reference.behavior(args)`: evaluate the arguments into a payload record,
+// describe its str arguments, and hand both to actor_send; its status is
+// Ok, Closed or Full.
+send = (
+    lo       :: Lowerer,
+    id       : ExprId,
+    c        : Call,
+    cell     : Source,
+    actor_ty : TyId,
+    name     : str,
+    span     : Span
+)
+       Res<Value, LowerError> {
+    hook   = lo.behavior(actor_ty, name, c.args.len + 2, span)
+        .ok_or(unsupported(span, "an unresolved actor behavior")).try();
+    layout = lo.layout_of(actor_ty, span).try();
+    fields        ::= lo.alloc.Vec<FieldAt>();
+    buffers       ::= lo.alloc.Vec<bool>();
+    at: usize     ::= 0;
+    widest: usize ::= 1;
+    strs: usize   ::= 0;
+    c.args.loop((h, i, arg) {
+        formal = lo.param_type(hook, i + 2).try();
+        actual = lo.type_of(arg.value).try();
+        lo.transferable(formal, actual, span).try();
+        class  = lo.class_of(formal).try();
+        at     = round_up(at, align_of(class));
+        widest = widest.larger(align_of(class));
+        fields.add(FieldAt(
+            name: "",
+            ty: formal,
+            offset: at
+        )).try(LowerError.OutOfMemory);
+        buffers.add(lo.check.actor_byte_buffer(
+            formal
+        )).try(LowerError.OutOfMemory);
+        at = at + size_of(class);
+        lo.copied(formal).then(() { strs = strs + 1; });
+    });
+    // As C lays out the payload struct (one byte when there are no fields).
+    size    = (fields.len == 0).match({ true => 1, false => round_up(
+        at,
+        widest
+    ) });
+    payload = lo.slot_of(Scalar.Block(Layout(
+        size: round_up(size, 16),
+        align: 16
+    ))).try();
+    data    = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.AddressOf(Address(out: data, slot: payload))).try();
+    slices      = lo.slot_of(Scalar.Block(Layout(
+        size: (strs * SLICE_BYTES).larger(16),
+        align: 16
+    ))).try();
+    descriptors = lo.slot_of(Scalar.Ptr).try();
+    lo.add(Instruction.AddressOf(Address(
+        out: descriptors,
+        slot: slices
+    ))).try();
+    slice: usize ::= 0;
+    c.args.loop((h, i, arg) {
+        field = fields.get(i).ok_or(unsupported(span, "a missing payload field")).try();
+        value = lo.argument_value(
+            Source.Given(arg.value),
+            field.ty,
+            span
+        ).try();
+        lo.add(Instruction.StoreValue(Store(
+            base: data,
+            offset: field.offset,
+            value: value.slot
+        ))).try();
+        lo.copied(field.ty).then(() {
+            lo.describe(
+                descriptors,
+                slice * SLICE_BYTES,
+                value,
+                field.offset,
+                span
+            ).try();
+            slice = slice + 1;
+        });
+    });
+    index      = lo.enqueue_synth(
+        lo.stand_in(span).try(),
+        Synth.Actor(ActorEntry(
+            kind: EntryKind.Turn,
+            layout: layout,
+            hook: Ok(hook),
+            fields: fields,
+            buffers: buffers
+        ))
+    ).try();
+    usize_ty   = lo.prim("usize").try();
+    pointer_ty = lo.byte_pointer().try();
+    no_slices  = lo.word_const(Scalar.Ptr, 0).try();
+    send_args ::= lo.one(cell).try();
+    send_args.more(lo.code_of(index).try()).try();
+    send_args.more(Source.Computed(Value(slot: data, ty: pointer_ty))).try();
+    send_args.more(Source.Computed(Value(
+        slot: lo.word_const(Scalar.U64, size.to_i64_bits()).try(),
+        ty: usize_ty
+    ))).try();
+    send_args.more(Source.Computed(Value(
+        slot: (strs > 0).match({ true => descriptors, false => no_slices }),
+        ty: pointer_ty
+    ))).try();
+    send_args.more(Source.Computed(Value(
+        slot: lo.word_const(Scalar.U64, strs.to_i64_bits()).try(),
+        ty: usize_ty
+    ))).try();
+    status = lo.actor_call("actor_send", send_args, span).try();
+    ty     = lo.type_of(id).try();
+    out    = lo.temp(ty).try();
+    done   = lo.label().try();
+    lo.outcome(status.slot, 0, out, ty, None, done, span).try();
+    lo.outcome(status.slot, 1, out, ty, Ok("Closed"), done, span).try();
+    lo.fail(out, ty, "Full", span).try();
+    lo.jump(done).try();
+    lo.start(done);
+    Ok(out)
+}
+
+// When `status` is `code`, store Ok(()) or Err(reason) in `out` and leave.
+outcome = (
+    lo     :: Lowerer,
+    status : usize,
+    code   : i64,
+    out    : Value,
+    ty     : TyId,
+    reason : Res<str>,
+    done   : usize,
+    span   : Span
+) Res<(), LowerError> {
+    expected = lo.word_const(Scalar.I32, code).try();
+    test     = lo.slot_of(Scalar.Bool).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: test,
+        left: status,
+        right: expected,
+        op: Op.Equal,
+        span: nowhere()
+    ))).try();
+    yes = lo.label().try();
+    no  = lo.label().try();
+    lo.branch_to(test, yes, no).try();
+    lo.start(yes);
+    reason.match({
+        Ok(name) => lo.fail(out, ty, name, span).try(),
+        None     => {
+            made = lo.variant_value(ty, "Ok", Ok(lo.unit().try()), span).try();
+            lo.add(Instruction.Copy(Move(
+                out: out.slot,
+                source: made.slot
+            ))).try();
+        },
+    });
+    lo.jump(done).try();
+    lo.start(no);
+    Ok(())
+}
+
+// Slice descriptor `at` bytes into the descriptor array for a str stored at
+// `offset` in the payload: { data_offset, len_offset, data, len }.
+describe = (
+    lo          :: Lowerer,
+    descriptors : usize,
+    at          : usize,
+    value       : Value,
+    offset      : usize,
+    span        : Span
+)
+           Res<(), LowerError> {
+    text        = lo.spill(value);
+    data        = lo.read(lo.field_place(text, "data", span).try()).try();
+    len         = lo.read(lo.field_place(text, "len", span).try()).try();
+    data_offset = lo.word_const(
+        Scalar.U64,
+        (offset + lo.field_place(text, "data", span).try().offset).to_i64_bits()
+    ).try();
+    len_offset  = lo.word_const(
+        Scalar.U64,
+        (offset + lo.field_place(text, "len", span).try().offset).to_i64_bits()
+    ).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: descriptors,
+        offset: at,
+        value: data_offset
+    ))).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: descriptors,
+        offset: at + 8,
+        value: len_offset
+    ))).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: descriptors,
+        offset: at + 16,
+        value: data.slot
+    ))).try();
+    lo.add(Instruction.StoreValue(Store(
+        base: descriptors,
+        offset: at + 24,
+        value: len.slot
+    )))
+}
+
+is_str = (lo :: Lowerer, ty: TyId) bool {
+    lo.check.types.at(ty).match({ Prim(p) => p.name.eq("str"), _ => false })
+}
+
+// Whether an argument's bytes are copied into the message: a direct str or
+// a byte buffer (both have `data` and `len`).
+copied = (lo :: Lowerer, ty: TyId) bool {
+    lo.is_str(ty) || lo.check.actor_byte_buffer(ty)
+}
+
+// The C backend's transfer rule: a direct str or byte buffer is copied;
+// any other payload must be free of borrowed memory. The argument's own
+// representation must agree, so a conversion cannot hide a buffer.
+transferable = (
+    lo     :: Lowerer,
+    formal : TyId,
+    actual : TyId,
+    span   : Span
+) Res<(), LowerError> {
+    same_shape = lo.check.actor_byte_buffer(formal) == lo.check.actor_byte_buffer(actual)
+        && lo.is_str(formal) == lo.is_str(actual);
+    same_shape.ensure(unsupported(
+        span,
+        "an actor payload without a concrete mailbox transfer"
+    )).try();
+    (lo.copied(formal) || !lo.check.actor_payload_unsafe(formal).try(LowerError.OutOfMemory))
+        .ensure(unsupported(
+            span,
+            "an actor payload without a concrete mailbox transfer"
+        )).try();
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// generated entry points
+// ---------------------------------------------------------------------
+
+// `(record: Ptr<u8>, data: Ptr<u8>) ()`: a turn calls its behavior with
+// the state, the Context and the payload's fields; `Started` calls the
+// started hook; `Stopped` calls the stopped hook, then drops the state and
+// the arena.
+actor_function* = (lo :: Lowerer, entry: ActorEntry) Res<Func, LowerError> {
+    layout = entry.layout;
+    params ::= lo.alloc.Vec<Scalar>();
+    params.add(Scalar.Ptr).try(LowerError.OutOfMemory);
+    params.add(Scalar.Ptr).try(LowerError.OutOfMemory);
+    entry_block = lo.begin_synth(params).try();
+    record      = 0;
+    data        = 1;
+    lo.use_frame(
+        lo.push_frame(lo.alloc.Inst(), 0, lo.unit_ty, None, None).try()
+    );
+    state   = Place(base: Base.Through(record), offset: 0, ty: layout.actor_ty);
+    context = Place(
+        base: Base.Through(record),
+        offset: layout.context,
+        ty: layout.context_ty
+    );
+    entry.fields.loop((h, i, f) {
+        entry.buffers.get(i).value_or(false).then(() {
+            lo.own_buffer(
+                layout,
+                record,
+                Place(base: Base.Through(data), offset: f.offset, ty: f.ty)
+            ).try();
+        });
+    });
+    entry.hook.when_ok((hook) {
+        sources ::= lo.alloc.Vec<Source>();
+        sources.add(Source.Located(state)).try(LowerError.OutOfMemory);
+        sources.add(Source.Located(context)).try(LowerError.OutOfMemory);
+        entry.fields.loop((f) {
+            sources.add(Source.Located(Place(
+                base: Base.Through(data),
+                offset: f.offset,
+                ty: f.ty
+            ))).try(LowerError.OutOfMemory);
+        });
+        lo.real_call(hook, sources, nowhere()).try();
+    });
+    entry.kind.match({
+        Stopped => {
+            lo.drop_value(state, nowhere()).try();
+            lo.drop_value(
+                Place(
+                    base: Base.Through(record),
+                    offset: layout.arena,
+                    ty: layout.arena_ty
+                ),
+                nowhere()
+            ).try();
+        },
+        _       => (),
+    });
+    done = lo.unit().try();
+    name = entry.kind.match({ Turn => "actor_turn", Started => "actor_started", Stopped => "actor_stopped" });
+    lo.finish_synth(name, entry_block, 2, done.slot, Scalar.Unit)
+}
+
+// Move a byte buffer's bytes from the message into the actor's allocator
+// (Context.alloc) and make that allocator the buffer's own. An empty buffer
+// keeps no memory. Allocation failure traps, as native allocations do.
+own_buffer = (
+    lo     :: Lowerer,
+    layout : ActorLayout,
+    record : usize,
+    buffer : Place
+) Res<(), LowerError> {
+    span    = nowhere();
+    context = Place(
+        base: Base.Through(record),
+        offset: layout.context,
+        ty: layout.context_ty
+    );
+    handle  = lo.read(lo.field_place(context, "alloc", span).try()).try();
+    data    = lo.field_place(buffer, "data", span).try();
+    len     = lo.read(lo.field_place(buffer, "len", span).try()).try();
+    zero    = lo.word_const(Scalar.U64, 0).try();
+    empty   = lo.slot_of(Scalar.Bool).try();
+    lo.add(Instruction.BinaryValue(Binary(
+        out: empty,
+        left: len.slot,
+        right: zero,
+        op: Op.Equal,
+        span: span
+    ))).try();
+    none = lo.label().try();
+    some = lo.label().try();
+    done = lo.label().try();
+    lo.branch_to(empty, none, some).try();
+    lo.start(none);
+    lo.write(
+        data,
+        Value(slot: lo.word_const(Scalar.Ptr, 0).try(), ty: data.ty)
+    ).try();
+    lo.jump(done).try();
+    lo.start(some);
+    bound     = lo.bound_of(layout.alloc_ty).try().ok_or(unsupported(span, "an Alloc that is not a bound")).try();
+    error_ty  = lo.std_type(
+        "AllocError",
+        "std.mem.mem_alloc.AllocError",
+        span
+    ).try();
+    result_ty = lo.check.types.res_failure(
+        data.ty,
+        error_ty
+    ).try(LowerError.OutOfMemory);
+    usize_ty  = lo.prim("usize").try();
+    args ::= lo.one(Source.Computed(len)).try();
+    args.more(Source.Computed(Value(
+        slot: lo.word_const(Scalar.U64, 1).try(),
+        ty: usize_ty
+    ))).try();
+    got     = lo.dispatch(
+        bound,
+        handle,
+        "raw",
+        args,
+        lo.alloc.Inst(),
+        result_ty,
+        span
+    ).try();
+    have    = lo.label().try();
+    refused = lo.label().try();
+    lo.branch_to(lo.succeeded(got).try(), have, refused).try();
+    lo.start(refused);
+    lo.trap(TrapKind.OutOfMemory, span).try();
+    lo.start(have);
+    bytes  = lo.ok_payload(got).try();
+    source = lo.read(data).try();
+    lo.add(Instruction.CopyBytes(CopyMem(
+        dest: bytes.slot,
+        source: source.slot,
+        bytes: len.slot
+    ))).try();
+    lo.write(data, bytes).try();
+    lo.jump(done).try();
+    lo.start(done);
+    lo.write(lo.field_place(buffer, "capacity", span).try(), len).try();
+    lo.write(lo.field_place(buffer, "alloc", span).try(), handle)
+}

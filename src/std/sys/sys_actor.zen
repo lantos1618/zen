@@ -1,0 +1,752 @@
+// The actor runtime of the native backend, in Zen over std.sys threads. It
+// keeps the C backend's semantics (gen_c_actor): one worker thread and one
+// bounded mailbox per actor, FIFO admission, Full and Closed as explicit
+// send results, stop draining accepted work before the stopped hook, shared
+// joins, and a registry that lets a stale Ref be refused instead of
+// dereferenced. At process exit the runtime waits for every accepted message,
+// stops and joins every worker, and releases every actor.
+//
+// The compiler generates what depends on the actor's type: the record
+// holding its state, Context and arena (`actor_record`), and the functions
+// the worker calls through code addresses: one turn per behavior send site,
+// and the started and stopped hooks. Each of those takes (record, data).
+//
+// An actor is one mapping, its cell:
+//
+//     +0   next         registry chain, guarded by the registry lock
+//     +16  ActorFixed   written before the worker starts, then read-only
+//     then ActorState   guarded by the actor's lock
+//     then the lock and two conditions, then the generated record.
+//
+// Lock order: the registry lock before an actor's lock.
+
+Ptr, null_ptr = std.mem
+Range = std.core
+MAX_MESSAGES, MAX_MESSAGE_BYTES, CACHE_BYTES, CACHE_BLOCK, CACHE_COUNT = std.actor.actor_limits
+Pages, process_block, call_entry, pointer_at, address_of, nanosleep_ns = std.sys
+atomic_load_u32, atomic_store_u32, atomic_cas_u32, atomic_store_usize = std.sys
+MUTEX_BYTES, COND_BYTES, mutex_init, mutex_lock, mutex_unlock, mutex_destroy = std.sys.sys_thread
+cond_init, cond_wait, cond_signal, cond_broadcast, cond_destroy = std.sys.sys_thread
+thread_spawn, thread_join, thread_is_current = std.sys.sys_thread
+
+// A message in the mailbox: the mailbox cache's own 16-byte header, then
+// this 32-byte header (next, turn, charged bytes, padding), then the
+// payload record and the copied str bytes. The sizes match the C runtime's
+// accounting, so admission refuses the same sends on every backend.
+MESSAGE_HEADER: usize = 32
+// The block cache's own header (next block, capacity). It is also the
+// per-message storage overhead admission charges, as std.mem.mem_pool's
+// header is on the C backend.
+HEADER_BYTES: usize = 16
+MESSAGE_NEXT: usize = 0
+MESSAGE_TURN: usize = 1
+MESSAGE_CHARGED: usize = 2
+
+// One str argument's bytes to copy into the message, and where the copy's
+// pointer and length go in the payload record (C's zg_actor_slice).
+Slice* = { data_offset*: usize, len_offset*: usize, data*: Ptr<u8>, len*: usize }
+
+ActorFixed = {
+    record: Ptr<u8>,
+    started: usize,
+    stopped: usize,
+    lock: Ptr<u8>,
+    wake: Ptr<u8>,
+    joined_wake: Ptr<u8>,
+}
+
+ActorState = {
+    thread :: Ptr<u8>,
+    head :: Ptr<u8>,
+    tail :: Ptr<u8>,
+    count :: usize,
+    bytes :: usize,
+    open :: bool,
+    joined :: bool,
+    joining :: bool,
+    // Retired message blocks kept for reuse (exact size), within the
+    // actor_storage limits.
+    cache :: Ptr<u8>,
+    cached_bytes :: usize,
+    cached_blocks :: usize,
+}
+
+// Process-wide state, behind the process block's third word.
+Registry = {
+    head :: Ptr<u8>,
+    // 0 running, 1 shutting down, 2 shut down.
+    shutting_down :: u32,
+    // Started workers that have not yet run `started`, plus accepted
+    // messages not yet finished: shutdown waits for these to drain.
+    pending :: usize,
+    // External joins in progress; shutdown waits for them before it
+    // detaches the registry.
+    borrowers :: usize,
+    lock: Ptr<u8>,
+    idle: Ptr<u8>,
+}
+
+// The process block: +0 the exit hook, +8 the registry's once-word
+// (0 absent, 1 being made, 2 ready), +16 the registry.
+REGISTRY_ONCE: usize = 8
+REGISTRY_AT: usize = 16
+
+FIXED_AT: usize = 16
+
+align16 = (n: usize) usize { (n + 15) / 16 * 16 }
+
+state_at = () usize { align16(FIXED_AT + null_ptr<ActorFixed>().bytes(1)) }
+
+sync_at = () usize { align16(state_at() + null_ptr<ActorState>().bytes(1)) }
+
+record_at = () usize { align16(sync_at() + MUTEX_BYTES + COND_BYTES * 2) }
+
+fixed = (cell: Ptr<u8>) ActorFixed { cell.offset(FIXED_AT).to<ActorFixed>().read(0) }
+
+state = (cell: Ptr<u8>) ActorState { cell.offset(state_at()).to<ActorState>().read(0) }
+
+set_state = (cell: Ptr<u8>, s: ActorState) { cell.offset(state_at()).to<ActorState>().write(0, s); }
+
+next_of = (cell: Ptr<u8>) Ptr<u8> { cell.to<Ptr<u8>>().read(0) }
+
+set_next = (cell: Ptr<u8>, next: Ptr<u8>) { cell.to<Ptr<u8>>().write(0, next); }
+
+// ---------------------------------------------------------------------
+// the registry
+// ---------------------------------------------------------------------
+
+// The registry, made on first use by whichever spawn gets there first; the
+// others wait for it. Making it also installs `shutdown` as the exit hook.
+// Null when its memory cannot be had.
+registry = (shutdown: usize) Ptr<Registry> {
+    block = process_block();
+    once  = block.offset(REGISTRY_ONCE).to<u32>();
+    (atomic_cas_u32(once, 0, 1) == 0).then(() {
+        made = make_registry();
+        block.offset(REGISTRY_AT).to<usize>().write(0, address_of(made));
+        (!made.is_null()).then(
+            () { atomic_store_usize(block.to<usize>(), shutdown); }
+        );
+        atomic_store_u32(once, 2);
+    });
+    loop(
+        () { atomic_load_u32(once) != 2 },
+        (h) { nanosleep_ns(1000).discard(); }
+    );
+    pointer_at(block.offset(REGISTRY_AT).to<usize>().read(0)).to<Registry>()
+}
+
+// The registry once it exists; null before the first spawn.
+existing_registry = () Ptr<Registry> {
+    block = process_block();
+    (atomic_load_u32(block.offset(REGISTRY_ONCE).to<u32>()) == 2).match({
+        true  => pointer_at(block.offset(REGISTRY_AT).to<usize>().read(0)).to<Registry>(),
+        false => null_ptr<Registry>(),
+    })
+}
+
+make_registry = () Ptr<u8> {
+    size = align16(null_ptr<Registry>().bytes(1));
+    Pages().raw(size + MUTEX_BYTES + COND_BYTES, 16).match({
+        Err(_)  => null_ptr<u8>(),
+        Ok(raw) => {
+            lock  = raw.offset(size);
+            idle  = lock.offset(MUTEX_BYTES);
+            ready = mutex_init(lock).match({ Ok(_) => true, Err(_) => false })
+                && cond_init(idle).match({ Ok(_) => true, Err(_) => false });
+            ready.match({
+                true  => {
+                    raw.to<Registry>().write(
+                        0,
+                        Registry(
+                            head: null_ptr<u8>(),
+                            shutting_down: 0,
+                            pending: 0,
+                            borrowers: 0,
+                            lock: lock,
+                            idle: idle
+                        )
+                    );
+                    raw
+                },
+                false => { Pages().free(raw); null_ptr<u8>() },
+            })
+        },
+    })
+}
+
+registered = (r: Registry, cell: Ptr<u8>) bool {
+    at    ::= r.head;
+    found ::= false;
+    loop(() { !found && !at.is_null() }, (h) {
+        found = at.same(cell);
+        at    = next_of(at);
+    });
+    found
+}
+
+// One unit of pending work finished (a started hook or a message); the last
+// one wakes a waiting shutdown. The registry lock is held.
+finish_pending = (reg: Ptr<Registry>) {
+    r ::= reg.read(0);
+    r.pending = r.pending - 1;
+    reg.write(0, r);
+    (r.pending == 0).then(() { cond_broadcast(r.idle); });
+}
+
+// ---------------------------------------------------------------------
+// spawning
+// ---------------------------------------------------------------------
+
+// A zeroed cell with `record_bytes` for the generated record; null when the
+// memory cannot be had.
+actor_new* = (record_bytes: usize) Ptr<u8> {
+    Pages().raw(
+        record_at() + record_bytes,
+        16
+    ).match({ Ok(p) => p, Err(_) => null_ptr<u8>() })
+}
+
+// Where the generated record (state, Context, arena) lives in a cell.
+actor_record* = (cell: Ptr<u8>) Ptr<u8> { cell.offset(record_at()) }
+
+// Release a cell whose actor never started.
+actor_discard* = (cell: Ptr<u8>) { Pages().free(cell); }
+
+// Start the worker once the record is complete. 0 started, 1 the actor's
+// lock or conditions could not be made, 2 no worker is available (the
+// process is shutting down, or no thread could be started). The code
+// addresses are the compiler's: the runtime's own worker and shutdown, and
+// the actor's hooks (0 when absent).
+actor_start* = (
+    cell     : Ptr<u8>,
+    worker   : usize,
+    shutdown : usize,
+    started  : usize,
+    stopped  : usize
+) i32 {
+    sync        = cell.offset(sync_at());
+    lock        = sync;
+    wake        = sync.offset(MUTEX_BYTES);
+    joined_wake = wake.offset(COND_BYTES);
+    made        = mutex_init(lock).match({ Ok(_) => true, Err(_) => false });
+    woke        = made && cond_init(
+        wake
+    ).match({ Ok(_) => true, Err(_) => false });
+    joins       = woke && cond_init(
+        joined_wake
+    ).match({ Ok(_) => true, Err(_) => false });
+    joins.match({
+        false => {
+            woke.then(() { cond_destroy(wake); });
+            made.then(() { mutex_destroy(lock); });
+            1
+        },
+        true  => {
+            cell.offset(FIXED_AT).to<ActorFixed>().write(0, ActorFixed(record: actor_record(cell), started: started, stopped: stopped, lock: lock, wake: wake, joined_wake: joined_wake));
+            set_state(
+                cell,
+                ActorState(
+                    thread: null_ptr<u8>(),
+                    head: null_ptr<u8>(),
+                    tail: null_ptr<u8>(),
+                    count: 0,
+                    bytes: 0,
+                    open: true,
+                    joined: false,
+                    joining: false,
+                    cache: null_ptr<u8>(),
+                    cached_bytes: 0,
+                    cached_blocks: 0
+                )
+            );
+            status = launch(cell, worker, shutdown);
+            (status != 0).then(() { destroy_sync(cell); });
+            status
+        },
+    })
+}
+
+// Register the actor and start its worker under the registry lock: the
+// worker's first step (retiring its `started` from pending) takes that lock,
+// so it cannot run ahead of its own registration.
+launch = (cell: Ptr<u8>, worker: usize, shutdown: usize) i32 {
+    reg = registry(shutdown);
+    reg.is_null().match({
+        true  => 2,
+        false => {
+            r ::= reg.read(0);
+            mutex_lock(r.lock);
+            // Read the registry again now that it is held.
+            r = reg.read(0);
+            available   = r.shutting_down == 0 && r.pending < usize.MAX;
+            result: i32 = available.match({
+                false => 2,
+                true  => {
+                    r.pending = r.pending + 1;
+                    reg.write(0, r);
+                    thread_spawn(worker, cell).match({
+                        Err(_) => {
+                            r.pending = r.pending - 1;
+                            reg.write(0, r);
+                            2
+                        },
+                        Ok(t)  => {
+                            f = fixed(cell);
+                            mutex_lock(f.lock);
+                            s ::= state(cell);
+                            s.thread = t;
+                            set_state(cell, s);
+                            mutex_unlock(f.lock);
+                            set_next(cell, r.head);
+                            r.head = cell;
+                            reg.write(0, r);
+                            0
+                        },
+                    })
+                },
+            });
+            mutex_unlock(r.lock);
+            result
+        },
+    })
+}
+
+destroy_sync = (cell: Ptr<u8>) {
+    f = fixed(cell);
+    cond_destroy(f.joined_wake);
+    cond_destroy(f.wake);
+    mutex_destroy(f.lock);
+}
+
+// ---------------------------------------------------------------------
+// the worker
+// ---------------------------------------------------------------------
+
+// The thread body of every actor: `started`, then each accepted message in
+// order until the mailbox is closed and empty, then `stopped`.
+actor_worker* = (cell: Ptr<u8>) {
+    f = fixed(cell);
+    (f.started != 0).then(
+        () { call_entry(f.started, f.record, null_ptr<u8>()); }
+    );
+    reg = existing_registry();
+    mutex_lock(reg.read(0).lock);
+    finish_pending(reg);
+    mutex_unlock(reg.read(0).lock);
+    loop((h) {
+        mutex_lock(f.lock);
+        loop(() { state(cell).head.is_null() && state(cell).open }, (w) {
+            cond_wait(f.wake, f.lock);
+        });
+        s ::= state(cell);
+        s.head.is_null().then(() {
+            mutex_unlock(f.lock);
+            h.break();
+        });
+        message = s.head;
+        words   = message.to<usize>();
+        s.head  = pointer_at(words.read(MESSAGE_NEXT));
+        s.head.is_null().then(() { s.tail = null_ptr<u8>(); });
+        set_state(cell, s);
+        mutex_unlock(f.lock);
+        call_entry(
+            words.read(MESSAGE_TURN),
+            f.record,
+            message.offset(MESSAGE_HEADER)
+        );
+        mutex_lock(f.lock);
+        done ::= state(cell);
+        done.count = done.count - 1;
+        done.bytes = done.bytes - words.read(MESSAGE_CHARGED);
+        set_state(cell, done);
+        give(cell, message);
+        mutex_unlock(f.lock);
+        mutex_lock(reg.read(0).lock);
+        finish_pending(reg);
+        mutex_unlock(reg.read(0).lock);
+    });
+    (f.stopped != 0).then(
+        () { call_entry(f.stopped, f.record, null_ptr<u8>()); }
+    );
+    mutex_lock(f.lock);
+    close_cache(cell);
+    mutex_unlock(f.lock);
+}
+
+// ---------------------------------------------------------------------
+// the mailbox's block cache (std.actor.actor_storage's policy)
+// ---------------------------------------------------------------------
+
+// A block of exactly `bytes` usable bytes, reused when one of that size was
+// retired; null when memory is refused. The actor's lock is held.
+take = (cell: Ptr<u8>, bytes: usize) Ptr<u8> {
+    s        ::= state(cell);
+    previous ::= null_ptr<u8>();
+    at       ::= s.cache;
+    found    ::= null_ptr<u8>();
+    loop(() { found.is_null() && !at.is_null() }, (h) {
+        words = at.to<usize>();
+        next  = pointer_at(words.read(0));
+        (words.read(1) == bytes).match({
+            true  => {
+                previous.is_null().match({
+                    true  => { s.cache = next; },
+                    false => previous.to<usize>().write(0, address_of(next)),
+                });
+                s.cached_bytes  = s.cached_bytes - bytes - HEADER_BYTES;
+                s.cached_blocks = s.cached_blocks - 1;
+                found           = at;
+            },
+            false => { previous = at; at = next; },
+        });
+    });
+    set_state(cell, s);
+    found.is_null().match({
+        false => found.offset(HEADER_BYTES),
+        true  => (bytes <= usize.MAX - HEADER_BYTES).match({
+            false => null_ptr<u8>(),
+            true  => Pages().raw(bytes + HEADER_BYTES, 16).match({
+                Err(_)  => null_ptr<u8>(),
+                Ok(raw) => {
+                    raw.to<usize>().write(0, 0);
+                    raw.to<usize>().write(1, bytes);
+                    raw.offset(HEADER_BYTES)
+                },
+            }),
+        }),
+    })
+}
+
+// Retire a block: keep it within the cache limits, else unmap it. The
+// actor's lock is held.
+give = (cell: Ptr<u8>, block: Ptr<u8>) {
+    raw      = block.back(HEADER_BYTES);
+    words    = raw.to<usize>();
+    capacity = words.read(1);
+    total    = capacity + HEADER_BYTES;
+    s ::= state(cell);
+    keep = s.cached_blocks < CACHE_COUNT && capacity <= CACHE_BLOCK
+        && s.cached_bytes <= CACHE_BYTES && total <= CACHE_BYTES - s.cached_bytes;
+    keep.match({
+        true  => {
+            words.write(0, address_of(s.cache));
+            s.cache         = raw;
+            s.cached_bytes  = s.cached_bytes + total;
+            s.cached_blocks = s.cached_blocks + 1;
+            set_state(cell, s);
+        },
+        false => Pages().free(raw),
+    });
+}
+
+close_cache = (cell: Ptr<u8>) {
+    s ::= state(cell);
+    loop(() { !s.cache.is_null() }, (h) {
+        raw     = s.cache;
+        s.cache = pointer_at(raw.to<usize>().read(0));
+        Pages().free(raw);
+    });
+    s.cached_bytes  = 0;
+    s.cached_blocks = 0;
+    set_state(cell, s);
+}
+
+// ---------------------------------------------------------------------
+// sending
+// ---------------------------------------------------------------------
+
+// Admit one message: 0 accepted, 1 Closed (the actor is stopped or the cell
+// is not a live actor), 2 Full (the mailbox's message or byte limit, or its
+// memory, refused it). `data` is the payload record of `size` bytes;
+// `slices` lists `count` str arguments whose bytes are copied after it and
+// whose pointers in the copy are redirected there. Every limit is checked
+// before anything is allocated or copied.
+actor_send* = (
+    cell   : Ptr<u8>,
+    turn   : usize,
+    data   : Ptr<u8>,
+    size   : usize,
+    slices : Ptr<u8>,
+    count  : usize
+) i32 {
+    reg = existing_registry();
+    reg.is_null().match({
+        true  => 1,
+        false => {
+            lock = reg.read(0).lock;
+            mutex_lock(lock);
+            r = reg.read(0);
+            result = registered(r, cell).match({
+                false => 1,
+                true  => admit(
+                    reg,
+                    cell,
+                    turn,
+                    data,
+                    size,
+                    slices.to<Slice>(),
+                    count
+                ),
+            });
+            mutex_unlock(r.lock);
+            result
+        },
+    })
+}
+
+// The registry lock is held.
+admit = (
+    reg    : Ptr<Registry>,
+    cell   : Ptr<u8>,
+    turn   : usize,
+    data   : Ptr<u8>,
+    size   : usize,
+    slices : Ptr<Slice>,
+    count  : usize
+) i32 {
+    f = fixed(cell);
+    mutex_lock(f.lock);
+    result: i32 = state(cell).open.match({
+        false => 1,
+        true  => {
+            charged = charge(reg.read(0), state(cell), size, slices, count);
+            message = (charged == 0).match({
+                true  => null_ptr<u8>(),
+                false => take(cell, charged - HEADER_BYTES),
+            });
+            message.is_null().match({
+                true  => 2,
+                false => { enqueue(
+                    reg,
+                    cell,
+                    message,
+                    turn,
+                    charged,
+                    data,
+                    size,
+                    slices,
+                    count
+                ); 0 },
+            })
+        },
+    });
+    mutex_unlock(f.lock);
+    result
+}
+
+// The bytes a message charges against its actor, header and cache
+// overhead included, or 0 when it does not fit the mailbox's limits. Each
+// step is checked against the remaining room, so nothing overflows.
+charge = (
+    r      : Registry,
+    s      : ActorState,
+    size   : usize,
+    slices : Ptr<Slice>,
+    count  : usize
+) usize {
+    total ::= MESSAGE_HEADER;
+    fits  ::= s.count < MAX_MESSAGES && r.pending < usize.MAX && size <= MAX_MESSAGE_BYTES - total;
+    fits.then(() { total = total + size; });
+    Range(0, count).loop((i) {
+        fits.then(() {
+            len  = slices.read(i).len;
+            fits = len <= MAX_MESSAGE_BYTES - total;
+            fits.then(() { total = total + len; });
+        });
+    });
+    fits = fits && total <= MAX_MESSAGE_BYTES - HEADER_BYTES;
+    fits = fits && total + HEADER_BYTES <= MAX_MESSAGE_BYTES - s.bytes;
+    fits.match({ true => total + HEADER_BYTES, false => 0 })
+}
+
+// Fill the message and append it to the mailbox. Both locks are held.
+enqueue = (
+    reg     : Ptr<Registry>,
+    cell    : Ptr<u8>,
+    message : Ptr<u8>,
+    turn    : usize,
+    charged : usize,
+    data    : Ptr<u8>,
+    size    : usize,
+    slices  : Ptr<Slice>,
+    count   : usize
+) {
+    words = message.to<usize>();
+    words.write(MESSAGE_NEXT, 0);
+    words.write(MESSAGE_TURN, turn);
+    words.write(MESSAGE_CHARGED, charged);
+    payload = message.offset(MESSAGE_HEADER);
+    (size > 0).then(() { payload.copy_from(data, size); });
+    tail ::= payload.offset(size);
+    Range(0, count).loop((i) {
+        slice = slices.read(i);
+        (slice.len > 0).then(() { tail.copy_from(slice.data, slice.len); });
+        payload.offset(slice.data_offset).to<usize>().write(0, address_of(tail));
+        payload.offset(slice.len_offset).to<usize>().write(0, slice.len);
+        tail = tail.offset(slice.len);
+    });
+    s ::= state(cell);
+    was_empty = s.head.is_null();
+    was_empty.match({
+        true  => { s.head = message; },
+        false => s.tail.to<usize>().write(MESSAGE_NEXT, address_of(message)),
+    });
+    s.tail  = message;
+    s.count = s.count + 1;
+    s.bytes = s.bytes + charged;
+    set_state(cell, s);
+    r ::= reg.read(0);
+    r.pending = r.pending + 1;
+    reg.write(0, r);
+    // Queued work already keeps the worker awake; only the empty-to-nonempty
+    // transition needs a signal.
+    was_empty.then(() { cond_signal(fixed(cell).wake); });
+}
+
+// ---------------------------------------------------------------------
+// stop, join and shutdown
+// ---------------------------------------------------------------------
+
+// Close admission; the worker drains what was accepted, then stops.
+actor_stop* = (cell: Ptr<u8>) {
+    reg = existing_registry();
+    (!reg.is_null()).then(() {
+        lock = reg.read(0).lock;
+        mutex_lock(lock);
+        registered(reg.read(0), cell).then(() { close(cell); });
+        mutex_unlock(lock);
+    });
+}
+
+close = (cell: Ptr<u8>) {
+    f = fixed(cell);
+    mutex_lock(f.lock);
+    s ::= state(cell);
+    s.open = false;
+    set_state(cell, s);
+    cond_signal(f.wake);
+    mutex_unlock(f.lock);
+}
+
+// Wait until the actor has drained and stopped. Concurrent callers share one
+// native join; a call from the actor's own worker returns at once.
+actor_join* = (cell: Ptr<u8>) {
+    reg = existing_registry();
+    (!reg.is_null()).then(() {
+        r ::= reg.read(0);
+        mutex_lock(r.lock);
+        r = reg.read(0);
+        live = registered(r, cell);
+        live.then(() {
+            r.borrowers = r.borrowers + 1;
+            reg.write(0, r);
+        });
+        mutex_unlock(r.lock);
+        live.then(() {
+            join_worker(cell);
+            mutex_lock(r.lock);
+            after ::= reg.read(0);
+            after.borrowers = after.borrowers - 1;
+            reg.write(0, after);
+            (after.borrowers == 0).then(() { cond_broadcast(after.idle); });
+            mutex_unlock(r.lock);
+        });
+    });
+}
+
+// Exactly one caller performs the native join; others wait on joined_wake,
+// which the worker's own wakeups never use.
+join_worker = (cell: Ptr<u8>) {
+    f = fixed(cell);
+    mutex_lock(f.lock);
+    s ::= state(cell);
+    own = s.joined || thread_is_current(s.thread);
+    own.match({
+        true  => mutex_unlock(f.lock),
+        false => {
+            loop(() { state(cell).joining && !state(cell).joined }, (h) {
+                cond_wait(f.joined_wake, f.lock);
+            });
+            s = state(cell);
+            s.joined.match({
+                true  => mutex_unlock(f.lock),
+                false => {
+                    s.joining = true;
+                    set_state(cell, s);
+                    mutex_unlock(f.lock);
+                    joined = thread_join(
+                        s.thread
+                    ).match({ Ok(_) => true, Err(_) => false });
+                    mutex_lock(f.lock);
+                    after ::= state(cell);
+                    after.joined  = joined;
+                    after.joining = false;
+                    set_state(cell, after);
+                    cond_broadcast(f.joined_wake);
+                    mutex_unlock(f.lock);
+                },
+            });
+        },
+    });
+}
+
+// The exit hook: drain accepted work, stop and join every worker, and
+// release every actor. A second caller waits for the first to finish.
+actor_shutdown* = () {
+    reg = existing_registry();
+    (!reg.is_null()).then(() {
+        r ::= reg.read(0);
+        lock = r.lock;
+        idle = r.idle;
+        mutex_lock(lock);
+        (reg.read(0).shutting_down != 0).match({
+            true  => {
+                loop(
+                    () { reg.read(0).shutting_down != 2 },
+                    (h) { cond_wait(idle, lock); }
+                );
+                mutex_unlock(lock);
+            },
+            false => {
+                begin ::= reg.read(0);
+                begin.shutting_down = 1;
+                reg.write(0, begin);
+                loop(
+                    () { reg.read(0).pending != 0 },
+                    (h) { cond_wait(idle, lock); }
+                );
+                at ::= reg.read(0).head;
+                loop(
+                    () { !at.is_null() },
+                    (h) { close(at); at = next_of(at); }
+                );
+                loop(
+                    () { reg.read(0).borrowers != 0 },
+                    (h) { cond_wait(idle, lock); }
+                );
+                detached ::= reg.read(0);
+                list     ::= detached.head;
+                detached.head = null_ptr<u8>();
+                reg.write(0, detached);
+                mutex_unlock(lock);
+                loop(() { !list.is_null() }, (h) {
+                    cell = list;
+                    list = next_of(cell);
+                    join_worker(cell);
+                    destroy_sync(cell);
+                    Pages().free(cell);
+                });
+                mutex_lock(lock);
+                finished ::= reg.read(0);
+                finished.shutting_down = 2;
+                reg.write(0, finished);
+                cond_broadcast(idle);
+                mutex_unlock(lock);
+            },
+        });
+    });
+}
+
+// A result the caller has no use for (a short sleep that may be cut short).
+discard = (code: i64) {}

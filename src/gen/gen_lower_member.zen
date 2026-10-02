@@ -24,6 +24,8 @@ to_i64_bits = gen.gen_lower_core
 Shape, Form, shape, size_of = gen.gen_lower_shape
 Source, bind_sources, invoke, call_inst, source_expr, result_type, real_call = gen.gen_lower_call
 settle_params = gen.gen_lower_call
+runtime_call = gen.gen_lower_thread
+actor_of_ref, actor_member = gen.gen_lower_actor
 
 // How a member call reaches its body.
 Target = Static(Callee) | Dynamic(Bound)
@@ -55,6 +57,15 @@ call_type = (lo :: Lowerer, id: ExprId, c: Call, name: str) Res<TyId, LowerError
 member_call* = (lo :: Lowerer, id: ExprId, c: Call, checked: CheckedCall, receiver: ExprId,
                 name: str, span: Span) Res<Value, LowerError> {
     recv_ty = lo.type_of(receiver).try();
+    // A behavior, stop or join through an actor's Ref (gen_lower_actor).
+    lo.actor_of_ref(recv_ty).try().match({
+        Ok(actor_ty) => lo.actor_member(id, c, receiver, actor_ty, name, span),
+        None         => lo.resolved_member_call(id, c, checked, receiver, recv_ty, name, span),
+    })
+}
+
+resolved_member_call = (lo :: Lowerer, id: ExprId, c: Call, checked: CheckedCall, receiver: ExprId,
+                        recv_ty: TyId, name: str, span: Span) Res<Value, LowerError> {
     method_inst = lo.call_inst(checked.inst).try();
     lo.check.variant_name_call_of(id).match({
         Ok(_) => lo.variant_name(id, receiver, span),
@@ -816,7 +827,8 @@ sys_call* = (lo :: Lowerer, id: ExprId, name: str, sources: Vec<Source>, span: S
                     lo.add(Instruction.BinaryValue(Binary(out: out.slot, left: scaled, right: nanos, op: Op.WrapAdd, span: nowhere()))).try();
                     Ok(out)
                 },
-                _             => Err(unsupported(span, "this std.sys operation")),
+                // Atomics, code addresses and other runtime operations.
+                _             => lo.runtime_call(id, name, sources, span),
             }),
         }),
     })

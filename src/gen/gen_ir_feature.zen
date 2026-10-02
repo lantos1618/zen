@@ -17,6 +17,7 @@ IrFeature* = WideInt
     | Sys
     | Traps
     | Host
+    | Threads
 
 describe* = (feature: IrFeature) str {
     feature.match({
@@ -31,6 +32,7 @@ describe* = (feature: IrFeature) str {
         Sys         => "operating-system calls and process start values",
         Traps       => "trapping control flow",
         Host        => "JavaScript host calls and event waits",
+        Threads     => "atomic operations and calls through code addresses",
     })
 }
 
@@ -126,11 +128,17 @@ instruction_need = (instruction: Instruction) Res<IrFeature> {
         Cast(_)            => Ok(IrFeature.Conversion),
         WriteOut(value)    => value.stream.match({ Out => Ok(IrFeature.Memory), Err => Ok(IrFeature.ErrorStream) }),
         System(_)          => Ok(IrFeature.Sys),
-        Startup(_)         => Ok(IrFeature.Sys),
+        Startup(value)     => value.value.match({ Globals => Ok(IrFeature.Threads), _ => Ok(IrFeature.Sys) }),
         SysConst(_)        => Ok(IrFeature.Sys),
         Flush              => Ok(IrFeature.Sys),
         Host(_)            => Ok(IrFeature.Host),
         Wait(_)            => Ok(IrFeature.Host),
+        AtomicLoad(_)      => Ok(IrFeature.Threads),
+        AtomicStore(_)     => Ok(IrFeature.Threads),
+        AtomicUpdate(_)    => Ok(IrFeature.Threads),
+        CompareSwap(_)     => Ok(IrFeature.Threads),
+        CodeAddress(_)     => Ok(IrFeature.Threads),
+        InvokeAt(_)        => Ok(IrFeature.Threads),
         _                  => Ok(IrFeature.Memory),
     })
 }

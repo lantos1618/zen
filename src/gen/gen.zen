@@ -13,7 +13,8 @@ Codegen, Target = std.build
 String, str = std.text
 lower, LowerError = gen.gen_lower
 Program, float = gen.gen_ir
-emit_js, emit_app, emit_runtime, PAGE = gen.gen_js
+emit_js, emit_app, emit_runtime, PAGE, supports = gen.gen_js
+refused, describe = gen.gen_ir_feature
 X86_64Linux = gen.gen_asm_x86
 Arm64, Arm64Os = gen.gen_asm_arm64
 verify, message = gen.gen_verify
@@ -145,7 +146,16 @@ Generation* = {
                 },
             }),
             Ok(_)      => backend.match({
-                Js  => self.browser.match({
+                Js  => program.refused((feature) { supports(feature) }).match({
+                  Ok(refusal) => {
+                    report.fmt(
+                        "error: unsupported by this backend: {} (first in `{}`)\n",
+                        refusal.feature.describe(),
+                        refusal.function
+                    ).try();
+                    Ok(1)
+                  },
+                  None        => self.browser.match({
                     false => publish(Artifact(
                         kind: ArtifactKind.Source,
                         name: "zen.js",
@@ -165,6 +175,7 @@ Generation* = {
                         )).try();
                         Ok(page + runtime + app)
                     },
+                  }),
                 }),
                 Asm => refused_by_asm(program).match({
                     Ok(what) => {

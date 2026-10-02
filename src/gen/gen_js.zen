@@ -33,6 +33,29 @@ Convert, Load, Store, SysCall, Start, HostCall, Marshal = gen.gen_ir
 width, trap_message = gen.gen_ir
 Sys, constant_value, Platform = gen.gen_sys
 write_runtime = gen.gen_js_runtime
+IrFeature = gen.gen_ir_feature
+
+// The part of the IR this renderer implements: all of it except the
+// thread primitives, since a JavaScript program runs on one thread. The
+// driver refuses a program needing them before rendering.
+supports* = (feature: IrFeature) bool {
+    feature.match({
+        WideInt     => true,
+        Float       => true,
+        Memory      => true,
+        Aggregates  => true,
+        Conversion  => true,
+        Wrapping    => true,
+        Bits        => true,
+        ErrorStream => true,
+        Sys         => true,
+        Traps       => true,
+        Host        => true,
+        Threads     => false,
+    })
+}
+
+OUTSIDE_SUPPORTS: str = "      throw new Error(\"an instruction outside supports\");\n"
 
 // The caller verifies the program first (gen_verify.verify); malformed
 // IR is a compiler fault, not executable input.
@@ -406,6 +429,8 @@ JavaScript = {
                     self.out.add("zenvp").try();
                     self.close(value.out)
                 },
+                // Outside `supports` (Threads); refused before rendering.
+                Globals => self.out.add(OUTSIDE_SUPPORTS),
             }),
             MapPages(value)    => {
                 self.open(value.out).try();
@@ -435,6 +460,13 @@ JavaScript = {
                 self.out.add("(yield 0) >>> 0").try();
                 self.close(slot)
             },
+            // Outside `supports`; the driver refuses them before rendering.
+            AtomicLoad(_)      => self.out.add(OUTSIDE_SUPPORTS),
+            AtomicStore(_)     => self.out.add(OUTSIDE_SUPPORTS),
+            AtomicUpdate(_)    => self.out.add(OUTSIDE_SUPPORTS),
+            CompareSwap(_)     => self.out.add(OUTSIDE_SUPPORTS),
+            CodeAddress(_)     => self.out.add(OUTSIDE_SUPPORTS),
+            InvokeAt(_)        => self.out.add(OUTSIDE_SUPPORTS),
         })
     }
 

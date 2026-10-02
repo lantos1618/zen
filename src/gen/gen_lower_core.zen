@@ -1576,7 +1576,18 @@ Lowerer* = {
             last = s.kind.match({
                 Expr(e)     => tail.match({
                     // A semicolon-terminated tail may settle the block value.
-                    true  => self.expr(e.expr),
+                    // One sema left open (`Ok(None)` beside `Ok(Ok(v))`) is
+                    // lowered at the type the block's value is wanted at.
+                    true  => want.match({
+                        Ok(t) => (used && !self.settled(
+                            self.type_of(e.expr).try()
+                        ))
+                            .match({
+                                true  => self.expr_as(e.expr, t),
+                                false => self.expr(e.expr),
+                            }),
+                        None  => self.expr(e.expr),
+                    }),
                     false => { self.expr(e.expr).try(); self.unit() },
                 }),
                 Bind(b)     => { self.bind(b, s.span).try(); self.unit() },

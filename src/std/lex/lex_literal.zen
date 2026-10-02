@@ -8,7 +8,8 @@ Pos, TokenKind = std.lex.lex_token
 LexFault = std.lex.lex_diag
 is_escape, escape_value = std.lex.lex_byte
 Alloc, AllocError = std.mem
-str = std.text
+str, String = std.text
+Range = std.core
 
 LiteralError* = OutOfMemory | IncompleteEscape(usize) | UnknownEscape(usize)
 
@@ -53,8 +54,20 @@ decode_literal* = (raw: str, a: Alloc) Res<str, LiteralError> {
     })
 }
 
-// String line/end faults are anchored at the opening quote.
+// String line/end faults are anchored at the opening quote. `"""` opens a
+// multi-line string instead.
 string* = (lx :: Lexer) Res<(), AllocError> {
+    lx.at_triple_quote().match({
+        true  => lx.text_block(),
+        false => lx.line_string(),
+    })
+}
+
+at_triple_quote = (lx: Lexer) bool {
+    lx.cur.at_byte('"') && lx.cur.at_byte(1, '"') && lx.cur.at_byte(2, '"')
+}
+
+line_string = (lx :: Lexer) Res<(), AllocError> {
     from = lx.cur.pos();
     lx.cur.bump();
     loop((h) {
@@ -79,6 +92,284 @@ string* = (lx :: Lexer) Res<(), AllocError> {
         });
     });
     Ok(());
+}
+
+// The closing `"""` of a multi-line string and the whitespace before it on
+// its line, which every line of text begins with.
+BlockEnd = { at: Pos, indent: str }
+
+// How the search for a closing `"""` ended. `Reported` means a fault inside
+// the literal was already diagnosed.
+Closing = Closed(BlockEnd) | Reported | Unclosed
+
+// A multi-line string: `"""`, a line break, the lines of text, and a closing
+// `"""` as the first text on its own line (DESIGN.md, "Multi-line strings").
+// The whole literal is one Str token; `text_block_literal` reads its value.
+// A literal with any fault yields no token.
+text_block = (lx :: Lexer) Res<(), AllocError> {
+    from   = lx.cur.pos();
+    faults = lx.diags.len;
+    lx.cur.bump();
+    lx.cur.bump();
+    lx.cur.bump();
+    lx.block_opening().try().match({
+        true  => Ok(()),
+        false => lx.block_close().try().match({
+            Unclosed    => lx.report(LexFault.UnterminatedTextBlock, from),
+            Reported    => Ok(()),
+            Closed(end) => {
+                (lx.diags.len == faults).then(() {
+                    lx.block_indents(from, end).try();
+                });
+                (lx.diags.len == faults).match({
+                    true  => lx.emit(TokenKind.Str, from),
+                    false => Ok(()),
+                })
+            },
+        }),
+    })
+}
+
+// Only a line break may follow the opening `"""`; other text there is a fault
+// at its first byte. Returns true when the literal already ended: when the
+// same line also holds a closing `"""` (`"""text"""`), the literal ends
+// there rather than reading the rest of the file as its text.
+block_opening = (lx :: Lexer) Res<bool, AllocError> {
+    at = lx.cur.pos();
+    loop(() { lx.on_opening_line() }, (h) { lx.cur.bump(); });
+    rest  = lx.since(at);
+    blank = rest.len == 0 || rest.eq("\r");
+    lx.at_triple_quote().match({
+        true  => {
+            lx.cur.bump();
+            lx.cur.bump();
+            lx.cur.bump();
+            lx.report(LexFault.TextBlockOpening, at).try();
+            Ok(true)
+        },
+        false => {
+            (!blank && !lx.cur.is_done()).then(() {
+                lx.report(LexFault.TextBlockOpening, at).try();
+            });
+            Ok(false)
+        },
+    })
+}
+
+on_opening_line = (lx: Lexer) bool {
+    lx.cur.peek().match({
+        Ok('\n') => false,
+        Ok(_)    => !lx.at_triple_quote(),
+        None     => false,
+    })
+}
+
+// Scan the lines of text for the closing `"""`. Escapes are checked as in a
+// one-line string.
+block_close = (lx :: Lexer) Res<Closing, AllocError> {
+    line ::= lx.cur.pos();
+    ended: Res<Closing> = loop<Closing>((h) {
+        lx.cur.peek().match({
+            None     => h.break(Closing.Unclosed),
+            Ok('\n') => {
+                lx.cur.bump();
+                line = lx.cur.pos();
+            },
+            Ok('\\') => {
+                lx.block_escape().try().then(() { h.break(Closing.Reported); });
+            },
+            Ok('"')  => lx.at_triple_quote().match({
+                true  => h.break(lx.block_end(line).try()),
+                false => lx.cur.bump(),
+            }),
+            Ok(_)    => lx.cur.bump(),
+        });
+    });
+    Ok(ended.value_or(Closing.Unclosed))
+}
+
+// Returns true when the literal must stop here: a fault at end of input that
+// an unterminated-literal report would only repeat.
+block_escape = (lx :: Lexer) Res<bool, AllocError> {
+    breaks = lx.cur.at_byte(1, '\n')
+        || (lx.cur.at_byte(1, '\r') && lx.cur.at_byte(2, '\n'));
+    breaks.match({
+        // Zen has no line continuation, in either kind of string.
+        true  => {
+            from = lx.cur.pos();
+            lx.cur.bump();
+            lx.report(LexFault.UnknownEscape, from).try();
+            Ok(false)
+        },
+        false => {
+            reported = lx.escape().try();
+            Ok(lx.cur.is_done() && reported)
+        },
+    })
+}
+
+// A closing `"""` is the first text on its line; the whitespace before it is
+// the indentation stripped from every line of text.
+block_end = (lx :: Lexer, line: Pos) Res<Closing, AllocError> {
+    lead = lx.since(line);
+    at   = lx.cur.pos();
+    lx.cur.bump();
+    lx.cur.bump();
+    lx.cur.bump();
+    is_indent(lead).match({
+        true  => Ok(Closing.Closed(BlockEnd(at: at, indent: lead))),
+        false => {
+            lx.report(LexFault.TextBlockClosing, at).try();
+            Ok(Closing.Reported)
+        },
+    })
+}
+
+// Every line of text begins with the closing indentation, except a line of
+// only whitespace, which is an empty line of text. The first line that does
+// not is the fault, at its first byte of text.
+block_indents = (lx :: Lexer, from: Pos, end: BlockEnd) Res<(), AllocError> {
+    whole = lx.since(from);
+    stop  = end.at.offset - end.indent.len - from.offset;
+    at   ::= whole.newline_in(0, stop) + 1;
+    line ::= from.line + 1;
+    bad: Res<Pos> = loop<Pos>(() { at < stop }, (h) {
+        upto = whole.newline_in(at, stop);
+        text = whole.slice(at, upto);
+        (text.starts_with(end.indent) || is_indent(without_cr(text))).match({
+            true  => (),
+            false => {
+                lead = text.len - text.trim_start().value_or("").len;
+                h.break(Pos(
+                    offset: from.offset + at + lead,
+                    line: line,
+                    col: 1 + lead
+                ));
+            },
+        });
+        at   = upto + 1;
+        line = line + 1;
+    });
+    bad.match({
+        Ok(pos) => lx.report(LexFault.TextBlockIndent, pos),
+        None    => Ok(()),
+    })
+}
+
+is_indent = (s: str) bool {
+    Range(0, s.len).find((i) { s[i] != ' ' && s[i] != '\t' }).match({
+        Ok(_) => false,
+        None  => true,
+    })
+}
+
+// A CRLF line's text, without the CR: a literal's value does not depend on
+// the line endings its file was saved with.
+without_cr = (s: str) str {
+    s.ends_with("\r").match({
+        true  => s.slice(0, s.len - 1),
+        false => s,
+    })
+}
+
+// The value of a lexer-validated multi-line string, spelled as the equivalent
+// one-line literal: quoted, each line's closing indentation removed, the lines
+// joined by `\n` escapes, and each bare `"` escaped. Escapes in the text stay
+// as written, so every consumer of a one-line literal reads this one alike.
+text_block_literal* = (raw: str, a: Alloc) Res<str, AllocError> {
+    close  = raw.len - 3;
+    first  = raw.newline_in(3, close);
+    last   = raw.slice(0, close).rfind('\n').value_or(first);
+    indent = raw.slice(last + 1, close);
+    out ::= a.String().try();
+    out.add('"').try();
+    (last > first).then(() {
+        at ::= first + 1;
+        loop((h) {
+            upto = raw.newline_in(at, last);
+            out.add_block_line(without_cr(raw.slice(at, upto)), indent).try();
+            (upto >= last).then(() { h.break(); });
+            out.add("\\n").try();
+            at = upto + 1;
+        });
+    });
+    out.add('"').try();
+    Ok(out.view())
+}
+
+// Where a byte of a multi-line string's one-line spelling (as written by
+// `text_block_literal`) stands in the source: the line within the literal,
+// counted from the opening line, and the zero-based byte column on it. An
+// offset past the text answers the closing `"""`. A diagnostic about a byte
+// of the value, such as a format hole, points at that byte this way.
+SourceAt* = { line*: usize, col*: usize }
+
+text_block_at* = (raw: str, offset: usize) SourceAt {
+    close  = raw.len - 3;
+    first  = raw.newline_in(3, close);
+    last   = raw.slice(0, close).rfind('\n').value_or(first);
+    indent = raw.slice(last + 1, close);
+    seen ::= 1;
+    line ::= 1;
+    at   ::= first + 1;
+    found: Res<SourceAt> = loop<SourceAt>(() { offset > 0 && last > first }, (
+        h
+    ) {
+        upto = raw.newline_in(at, last);
+        text = without_cr(raw.slice(at, upto));
+        col ::= text.starts_with(
+            indent
+        ).match({ true => indent.len, false => text.len });
+        loop(() { col < text.len }, (h2) {
+            b      = text[col];
+            cooked = (b == '\\' || b == '"').match({ true => 2, false => 1 });
+            (offset < seen + cooked).then(
+                () { h.break(SourceAt(line: line, col: col)); }
+            );
+            seen = seen + cooked;
+            col  = col + (b == '\\').match({ true => 2, false => 1 });
+        });
+        (upto >= last).then(() { h.break(); });
+        (offset < seen + 2).then(
+            () { h.break(SourceAt(line: line, col: text.len)); }
+        );
+        seen = seen + 2;
+        at   = upto + 1;
+        line = line + 1;
+    });
+    (offset == 0).match({
+        true  => SourceAt(line: 0, col: 0),
+        false => found.value_or(SourceAt(
+            line: raw.slice(0, close).count("\n"),
+            col: indent.len
+        )),
+    })
+}
+
+add_block_line = (out :: String, line: str, indent: str) Res<(), AllocError> {
+    text = line.starts_with(indent).match({
+        true  => line.slice(indent.len, line.len),
+        false => "",
+    });
+    at ::= 0;
+    loop(() { at < text.len }, (h) {
+        b = text[at];
+        b.match({
+            '\\' => {
+                out.add(text.slice(at, at + 2)).try();
+                at = at + 2;
+            },
+            '"'  => {
+                out.add("\\\"").try();
+                at = at + 1;
+            },
+            _    => {
+                out.add(b).try();
+                at = at + 1;
+            },
+        });
+    });
+    Ok(())
 }
 
 // Character literals contain exactly one byte, not one Unicode code point.

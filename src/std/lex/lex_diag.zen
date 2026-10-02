@@ -7,6 +7,10 @@ str = std.text
 LexFault* =
       UnterminatedString       // end of file inside "..."
     | StringSpansLine          // a newline inside "..."
+    | UnterminatedTextBlock    // end of file inside """...
+    | TextBlockOpening         // text on the line of an opening """
+    | TextBlockClosing         // text before a closing """ on its line
+    | TextBlockIndent          // a line not starting with the closing indentation
     | UnterminatedChar         // end of file inside '...'
     | CharSpansLine            // a newline inside '...'
     | EmptyChar                // ''
@@ -36,22 +40,26 @@ Diag* = {
 
 message* = (fault: LexFault) str {
     fault.match({
-        UnterminatedString  => "unterminated string literal: end of file before the closing quote",
-        StringSpansLine     => "unterminated string literal: a string literal does not span lines",
-        UnterminatedChar    => "unterminated character literal: end of file before the closing quote",
-        CharSpansLine       => "unterminated character literal: a character literal does not span lines",
-        EmptyChar           => "empty character literal: a character literal holds exactly one byte",
-        CharTooLong         => "a character literal holds exactly one byte; this one holds more",
-        UnknownEscape       => "unknown escape sequence: the escapes are \\n \\t \\r \\v \\f \\0 \\\\ \\' \\\"",
-        UnterminatedEscape  => "unterminated escape sequence: end of file after the backslash",
-        UnterminatedComment => "unterminated block comment: end of file before `*/`",
-        LeadingZero         => "a decimal literal has no leading zero, and Zen has no octal",
-        HexNeedsDigit       => "a hexadecimal integer needs a digit after `0x`",
-        FloatNeedsDigit     => "a float literal needs a digit after the `.`",
-        SuffixOnNumber      => "an identifier may not start with a digit, and a number carries no suffix",
-        IntegerOutOfRange   => "integer literal out of range: the widest integer type is u64",
-        UnknownAtName       => "the `@` namespace is exactly `@Self`, `@meta`, `@scope`",
-        MisplacedBom        => "a byte-order mark is stripped only at the start of a file",
-        StrayByte           => "unexpected character: it begins no Zen token",
+        UnterminatedString    => "unterminated string literal: end of file before the closing quote",
+        StringSpansLine       => "unterminated string literal: a string literal does not span lines; for multi-line text write `\"\"\"` … `\"\"\"`",
+        UnterminatedTextBlock => "unterminated multi-line string: end of file before the closing `\"\"\"`",
+        TextBlockOpening      => "a multi-line string's text starts on the line after its opening `\"\"\"`",
+        TextBlockClosing      => "the closing `\"\"\"` of a multi-line string goes on a line of its own",
+        TextBlockIndent       => "every line of a multi-line string starts with the indentation of its closing `\"\"\"`",
+        UnterminatedChar      => "unterminated character literal: end of file before the closing quote",
+        CharSpansLine         => "unterminated character literal: a character literal does not span lines",
+        EmptyChar             => "empty character literal: a character literal holds exactly one byte",
+        CharTooLong           => "a character literal holds exactly one byte; this one holds more",
+        UnknownEscape         => "unknown escape sequence: the escapes are \\n \\t \\r \\v \\f \\0 \\\\ \\' \\\"",
+        UnterminatedEscape    => "unterminated escape sequence: end of file after the backslash",
+        UnterminatedComment   => "unterminated block comment: end of file before `*/`",
+        LeadingZero           => "a decimal literal has no leading zero, and Zen has no octal",
+        HexNeedsDigit         => "a hexadecimal integer needs a digit after `0x`",
+        FloatNeedsDigit       => "a float literal needs a digit after the `.`",
+        SuffixOnNumber        => "an identifier may not start with a digit, and a number carries no suffix",
+        IntegerOutOfRange     => "integer literal out of range: the widest integer type is u64",
+        UnknownAtName         => "the `@` namespace is exactly `@Self`, `@meta`, `@scope`",
+        MisplacedBom          => "a byte-order mark is stripped only at the start of a file",
+        StrayByte             => "unexpected character: it begins no Zen token",
     });
 }

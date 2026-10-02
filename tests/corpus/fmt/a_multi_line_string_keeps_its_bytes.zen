@@ -1,0 +1,54 @@
+// The formatter prints a multi-line string as its source bytes: the lines of
+// text are part of one token, so neither re-indentation nor line breaking nor
+// column alignment reaches inside it, while the code around it is still
+// formatted. The source below is itself a multi-line string; `\"""` writes
+// the inner literal's delimiters.
+
+Alloc, AllocError = std.mem
+str, String = std.text
+Range = std.core
+scan, Source = std.lex.lex
+render = fmt.fmt
+
+SOURCE: str = """
+    main = () i32 {
+        v = [1, 2,    3];
+        s = \"""
+            keep   these   spaces,  "quotes",  { braces }
+                a deeper line,   x = y
+            k:   v
+            \""";
+        long_function_name(first_argument, second_argument, third_argument, \"""
+            text
+            \""");
+        0
+    }
+
+    """
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+
+    lexed = scan(a, Source(file: "in.zen", text: SOURCE)).try();
+    out   = render(a, lexed).try();
+
+    println("diagnostics: {}", out.diags.len);
+    println("faithful: {}", out.faithful);
+    println("---");
+    show(out.text.view());
+    println("---");
+    Ok(0);
+}
+
+// One numbered line per line of the output.
+show = (text: str) {
+    line ::= 0;
+    from ::= 0;
+    Range(0, text.len).loop((h, i) {
+        (text.index(i) == '\n').then(() {
+            line = line + 1;
+            println("{} |{}", line, text.slice(from, i));
+            from = i + 1;
+        });
+    });
+}

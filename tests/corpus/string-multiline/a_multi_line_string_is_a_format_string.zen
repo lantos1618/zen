@@ -1,0 +1,17 @@
+// A multi-line string is a string literal, so it is a format string wherever
+// a one-line literal is: println, and formatting into a String.
+main = (env: Env) Res<i32, AllocError> {
+    name  = "Zen";
+    count = 3;
+    println("""
+        name:  {}
+        count: {}
+        """, name, count);
+    a ::= env.mem.alloc();
+    text = a.String("""
+        {} + {}
+        = {}
+        """, 1, 2, 1 + 2).try();
+    println("{}", text.view());
+    Ok(0)
+}

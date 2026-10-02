@@ -99,12 +99,15 @@ Form* = Required | Sealed | Default | Hook
 
 LiteralKind* = Int | Float | Str | Char | Bool
 
-// `text` is the raw source slice, including quotes and escapes. `integer`
-// is the lexer's value of an Int literal, decimal or hexadecimal.
+// `text` is the source spelling, including quotes and escapes; a multi-line
+// string's is its equivalent one-line literal, and `block` keeps the source
+// spelling for positions inside it. `integer` is the lexer's value of an Int
+// literal, decimal or hexadecimal.
 Literal* = {
     kind*: LiteralKind,
     text*: str,
     integer* :: Res<u64> = None,
+    block* :: Res<str> = None,
 }
 
 Type* = {

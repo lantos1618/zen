@@ -1,0 +1,17 @@
+// Escapes are the one-line set and mean the same bytes. Quotes need no
+// escape unless three would close the literal; an escaped `\n` is a byte of
+// text, not a line of the literal, so it takes no part in indentation.
+main = () i32 {
+    text = """
+        tab:\there
+        "quoted" and ""doubled""
+        backslash: \\ and \"""
+        one\ntwo
+        """;
+    println(text);
+    println(
+        "{}",
+        text == "tab:\there\n\"quoted\" and \"\"doubled\"\"\nbackslash: \\ and \"\"\"\none\ntwo"
+    );
+    0
+}

@@ -1,0 +1,7 @@
+// End of file arrives inside a multi-line string. The fault is the opening
+// quotes, where the literal began, not the end of the file.
+main = () i32 {
+    text = """
+        never closed
+    0
+}

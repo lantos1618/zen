@@ -1,0 +1,9 @@
+// A multi-line string's text starts on the line after its opening quotes.
+// Text beside them is refused at its first byte rather than read as a first
+// line whose indentation nothing can state.
+main = () i32 {
+    text = """first
+        second
+        """;
+    0
+}

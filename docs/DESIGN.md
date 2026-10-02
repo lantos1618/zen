@@ -131,7 +131,31 @@ The shape of every rule below is the same: **reject rather than reinterpret.** A
 
 **Escapes.** The set is `\n \t \r \v \f \0 \\ \' \"` and nothing else. An unknown escape is an error, never a silent literal character: `"\q"` does not mean `q`.
 
-**A string or character literal does not span lines.** The newline is the error, and the diagnostic points at the **opening quote** — pointing at end-of-file names no useful location, because end-of-file is not where the mistake is.
+**A `"…"` string or character literal does not span lines.** The newline is the error, and the diagnostic points at the **opening quote** — pointing at end-of-file names no useful location, because end-of-file is not where the mistake is. The diagnostic names the form that may span lines.
+
+**Multi-line strings are written `"""` … `"""`.** Text that has lines is written as lines, not as `\n` escapes on one line:
+
+```zen
+USAGE: str = """
+    usage: zen <command>
+
+    commands:
+        build   compile a project
+        run     build and run it
+    """
+```
+
+The rules, each chosen so that what the eye sees on the page is the value:
+
+- **The text starts on the line after the opening `"""`.** Nothing else may follow the opening `"""` on its line; text there is an error at its first byte. There is no one-line `"""text"""` form — a one-line string is `"text"`.
+- **The closing `"""` is the first text on its own line**, and the whitespace before it is the literal's **indentation**. Text before the closing `"""` on its line is an error.
+- **The indentation is removed from every line.** So the literal sits at the code's indentation and a deeper line keeps only its extra indentation. Every line of text must begin with exactly the indentation's bytes — compared byte for byte, so a tab is not four spaces — or be whitespace only; a line that starts left of the closing `"""` is an error at its first byte of text, never a guess at what to strip. A whitespace-only line shorter than the indentation is an empty line.
+- **Neither delimiter's line break is text.** The line break after the opening `"""` and the one before the closing line are not part of the value, so the example above ends in `it`, not in a newline. A value that ends in a newline ends with an empty line before the closing `"""`. With no line between the delimiters, or one empty line, the value is `""`.
+- **Line breaks in the value are LF**, whatever the file was saved with: a CR before a line break is not text.
+- **Escapes are the one-line set and mean the same bytes.** `"` and `""` need no escape; `\"""` writes three quotes without closing the literal. An escaped `\n` is a byte of text, not a line of the literal. A backslash does not continue a line.
+- **It is a string literal**: type `str`, usable wherever `"…"` is — as a `println` or `String` format string, and as a match pattern.
+
+The scanner reads the whole literal as one token, and the parser keeps its value as the equivalent one-line literal, so every later phase and every backend reads one form. The formatter prints the literal's source bytes; no layout rule reaches inside it.
 
 **A character literal holds exactly one byte.** `str` is bytes, so `''` and `'ab'` are both errors. `'é'` is two bytes and therefore not a character literal.
 

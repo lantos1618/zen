@@ -1,0 +1,9 @@
+// The closing quotes go on a line of their own, so their indentation is the
+// indentation every line of text begins with. After text on the last line
+// there is no such indentation to read.
+main = () i32 {
+    text = """
+        first
+        last""";
+    0
+}

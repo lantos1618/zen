@@ -1,0 +1,9 @@
+// A backslash does not continue a line, in a multi-line string as in any
+// other: the escape set is the one-line set, and a line break is not in it.
+main = () i32 {
+    text = """
+        joined \
+        nothing
+        """;
+    0
+}

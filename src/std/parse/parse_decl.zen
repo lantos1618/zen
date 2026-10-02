@@ -212,7 +212,7 @@ native_text = (p :: Parser) Res<str, AllocError> {
     (token.kind == TokenKind.Str).match({
         false => { p.error("expected a literal native header or symbol name").try(); Ok("") },
         true  => {
-            raw = p.text(token);
+            raw = p.literal_text(token).try();
             p.bump().try();
             Ok(raw.slice(1, raw.len - 1))
         },

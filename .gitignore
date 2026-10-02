@@ -32,4 +32,6 @@ zen-new.c
 /tools/ct/build/
 # zen-mutate build output.
 /tools/mutate/build/
+# zen-imports build output.
+/tools/imports/build/
 /tests/js/build/

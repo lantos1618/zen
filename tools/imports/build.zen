@@ -1,0 +1,14 @@
+// zen-imports: adds the imports a module needs now that nothing is implicit.
+// See src/imports.zen.
+Res, Ok = std.core
+Path = std.core
+Builder, BuildError = std.build
+
+build = (b :: Builder) Res<(), BuildError> {
+    b.exe("zen-imports", {
+        src: Path("src/imports.zen"),
+        deps: [],
+        out: Ok(Path("build/zen-imports")),
+    }).try();
+    Ok(())
+}

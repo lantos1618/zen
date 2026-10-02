@@ -1,0 +1,25 @@
+// What `zen check` reports a module is missing. A standard name used without
+// its import is one diagnostic:
+//
+//   path:line:col: missing import: `Res` is not imported; add `Res = std.core`
+//
+// so the import to add is read straight from the compiler's own answer.
+Res, Ok, None = std.core
+str = std.text
+
+Missing* = { file*: str, name*: str, module*: str }
+
+MARK: str = ": missing import: `"
+ADD: str = "; add `"
+
+// The missing import one output line reports, or None for any other line.
+missing_in* = (line: str) Res<Missing> {
+    at     = line.find(MARK).try();
+    file   = line.split_once(':').try().before;
+    rest   = line.slice(at + MARK.len, line.len);
+    name   = rest.split_once('`').try().before;
+    hint   = rest.split_once(ADD).try().after;
+    pair   = hint.split_once('`').try().before;
+    module = pair.split_once(" = ").try().after;
+    Ok(Missing(file: file, name: name, module: module))
+}

@@ -5,7 +5,8 @@
 // facts at the current point: whether every path here assigned it (`must`)
 // and whether some path did (`may`). A read, a `consume` or a capture needs
 // `must`; an assignment to an immutable one needs `may` to be false, which is
-// what makes `x: T;` assigned exactly once.
+// what makes `x: T;` assigned exactly once. A deferred local that no statement
+// assigns at all is refused where it is declared, read or not.
 //
 // Control flow is the language's own: a match joins its arms, `&&` and `||`
 // join the skipped right side, `bool.then` may run its body or not, and any
@@ -104,7 +105,9 @@ dead = (a: Alloc) State { State(live: false, inits: a.Vec<Init>()) }
 snapshot = (w: InitWalk) Res<State, AllocError> {
     inits ::= w.alloc.Vec<Init>();
     (w.tracked > 0).then(() {
-        w.slots.loop((h, s) { inits.add(Init(must: s.must, may: s.may)).try() });
+        w.slots.loop(
+            (h, s) { inits.add(Init(must: s.must, may: s.may)).try() }
+        );
     });
     Ok(State(live: w.live, inits: inits))
 }
@@ -137,7 +140,10 @@ join = (a: Alloc, x: State, y: State) Res<State, AllocError> {
             Range(0, n).loop((h, i) {
                 l = x.inits.get(i).value_or(Init(must: true, may: true));
                 r = y.inits.get(i).value_or(Init(must: true, may: true));
-                inits.add(Init(must: l.must && r.must, may: l.may || r.may)).try();
+                inits.add(Init(
+                    must: l.must && r.must,
+                    may: l.may || r.may
+                )).try();
             });
             Ok(State(live: true, inits: inits))
         },
@@ -286,7 +292,10 @@ init_assign = (c :: Checker, w :: InitWalk, i: usize, span: Span)
         Ok(old) => {
             twice = old.deferred && !old.mutable && old.may && w.live;
             (twice && !w.quiet).then(() {
-                c.refuse(span, SemaFault.AssignedTwice(NameFault(name: old.name)))
+                c.refuse(
+                    span,
+                    SemaFault.AssignedTwice(NameFault(name: old.name))
+                )
                     .try();
             });
             row ::= old;
@@ -340,7 +349,12 @@ init_expr = (c :: Checker, w :: InitWalk, id: ExprId) Res<(), AllocError> {
         Unary(u)      => c.init_expr(w, u.operand),
         Binary(b)     => c.init_binary(w, b),
         Consume(x)    => c.tree.expr_at(x.operand).kind.match({
-            Name(n) => c.init_use(w, c.tree.expr_at(x.operand).span, n.text, "consumed"),
+            Name(n) => c.init_use(
+                w,
+                c.tree.expr_at(x.operand).span,
+                n.text,
+                "consumed"
+            ),
             _       => c.init_expr(w, x.operand),
         }),
         Block(b)      => c.init_block(w, b),
@@ -371,8 +385,8 @@ init_exit = (c :: Checker, w :: InitWalk, id: ExprId) Res<(), AllocError> {
 init_use = (c :: Checker, w :: InitWalk, span: Span, text: str, verb: str)
            Res<(), AllocError> {
     w.find_slot(text).match({
-        None    => Ok(()),
-        Ok(i)   => w.slots.get(i).match({
+        None  => Ok(()),
+        Ok(i) => w.slots.get(i).match({
             None    => Ok(()),
             Ok(old) => (old.deferred && !old.must && w.live).match({
                 false => Ok(()),
@@ -434,7 +448,7 @@ init_operand = (c :: Checker, w :: InitWalk, bin: Binary)
 init_maybe = (c :: Checker, w :: InitWalk, id: ExprId) Res<(), AllocError> {
     before = w.snapshot().try();
     c.init_expr(w, id).try();
-    after  = w.snapshot().try();
+    after = w.snapshot().try();
     w.restore(join(w.alloc, before, after).try());
     Ok(())
 }
@@ -495,8 +509,8 @@ handle_jump = (c :: Checker, w: InitWalk, k: Call) Res<Jump> {
         Access(a) => (a.name.text.eq("break") || a.name.text.eq("next")).match({
             false => None,
             true  => c.handle_frame(w, a.base).match({
-                None    => None,
-                Ok(fr)  => Ok(Jump(frame: fr, breaks: a.name.text.eq("break"))),
+                None   => None,
+                Ok(fr) => Ok(Jump(frame: fr, breaks: a.name.text.eq("break"))),
             }),
         }),
         _         => None,
@@ -511,7 +525,9 @@ handle_frame = (c :: Checker, w: InitWalk, id: ExprId) Res<usize> {
             true  => w.find_slot(n.text).match({
                 None  => None,
                 Ok(i) => w.slots.get(i).match({
-                    Ok(s) => (s.frame > 0).match({ true => Ok(s.frame), false => None }),
+                    Ok(s) => (s.frame > 0).match({ true => Ok(
+                        s.frame
+                    ), false => None }),
                     None  => None,
                 }),
             }),
@@ -530,14 +546,21 @@ init_jump = (c :: Checker, w :: InitWalk, k: Call, jump: Jump)
 
 // Add the current state to the frame's exits: after the loop, back to its
 // entry, or both.
-record_jump = (c :: Checker, w :: InitWalk, frame: usize, breaks: bool,
-               nexts: bool) Res<(), AllocError> {
+record_jump = (
+    c      :: Checker,
+    w      :: InitWalk,
+    frame  : usize,
+    breaks : bool,
+    nexts  : bool
+) Res<(), AllocError> {
     now = w.snapshot().try();
     w.frames.get(frame - 1).match({
         None    => Ok(()),
         Ok(old) => {
             row ::= old;
-            breaks.then(() { row.breaks = join(w.alloc, row.breaks, now).try(); });
+            breaks.then(
+                () { row.breaks = join(w.alloc, row.breaks, now).try(); }
+            );
             nexts.then(() { row.nexts = join(w.alloc, row.nexts, now).try(); });
             w.frames.set(frame - 1, row);
             Ok(())
@@ -554,7 +577,7 @@ bare_loop = (c :: Checker, id: ExprId, k: Call) bool {
     (callee_is_loop && k.args.len == 1).match({
         false => false,
         true  => c.resolved_call(id).match({
-            None    => false,
+            None     => false,
             Ok(decl) => c.world.module_name(decl).eq(LOOP_MODULE),
         }),
     })
@@ -570,7 +593,7 @@ init_arg = (c :: Checker, w :: InitWalk, a: Arg, repeats: bool, bare: bool)
         None  => {
             c.init_holes(w, a.value).try();
             c.handle_frame(w, a.value).match({
-                None     => Ok(()),
+                None      => Ok(()),
                 Ok(frame) => c.record_jump(w, frame, true, true),
             }).try();
             c.init_expr(w, a.value)
@@ -601,7 +624,10 @@ init_hole_names = (c :: Checker, w :: InitWalk, span: Span, raw: str)
                 hole = Span(
                     file: span.file,
                     start: Pos(line: span.start.line, col: span.start.col + i),
-                    end: Pos(line: span.start.line, col: span.start.col + at.next),
+                    end: Pos(
+                        line: span.start.line,
+                        col: span.start.col + at.next
+                    ),
                 );
                 c.init_use(w, hole, name, "read").try();
             },
@@ -616,7 +642,7 @@ init_hole_names = (c :: Checker, w :: InitWalk, span: Span, raw: str)
 init_once = (c :: Checker, w :: InitWalk, l: Lambda) Res<(), AllocError> {
     before = w.snapshot().try();
     c.run_closure(w, l, w.quiet).try();
-    after  = w.snapshot().try();
+    after = w.snapshot().try();
     w.restore(join(w.alloc, before, after).try());
     Ok(())
 }
@@ -628,14 +654,14 @@ init_once = (c :: Checker, w :: InitWalk, l: Lambda) Res<(), AllocError> {
 // or, unless the loop stops only by breaking, the entry itself.
 init_repeating = (c :: Checker, w :: InitWalk, l: Lambda, bare: bool)
                  Res<(), AllocError> {
-    start  = w.snapshot().try();
-    entry ::= start;
+    start = w.snapshot().try();
+    entry  ::= start;
     stable ::= w.tracked == 0;
     loop(() { !stable }, (h) {
         w.restore(entry);
-        frame = c.run_closure(w, l, true).try();
-        back  = join(w.alloc, w.snapshot().try(), frame.nexts).try();
-        next  = join(w.alloc, start, back).try();
+        frame  = c.run_closure(w, l, true).try();
+        back   = join(w.alloc, w.snapshot().try(), frame.nexts).try();
+        next   = join(w.alloc, start, back).try();
         stable = same(next, entry);
         entry  = next;
     });
@@ -672,10 +698,7 @@ run_closure = (c :: Checker, w :: InitWalk, l: Lambda, quiet: bool)
     l.params.loop((h, p) { c.init_param(w, p, frame).try() });
     c.init_block(w, l.body).try();
     c.pop_to(w, mark).try();
-    out = w.frames.take(frame - 1).value_or(Frame(
-        breaks: dead(w.alloc),
-        nexts: dead(w.alloc)
-    ));
+    out     = w.frames.take(frame - 1).value_or(Frame(breaks: dead(w.alloc), nexts: dead(w.alloc)));
     w.floor = was_floor;
     w.quiet = was_quiet;
     Ok(out)

@@ -7,10 +7,10 @@ main = () i32 {
     Range(0, 4).loop((h, i) {
         square :: usize;
         square = i * i;
-        sum = sum + square;
+        sum    = sum + square;
     });
     first :: i32;
-    n ::= 5;
+    n     ::= 5;
     loop((h) {
         (n % 3 == 0).then(() {
             first = n;

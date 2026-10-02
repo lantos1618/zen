@@ -12,7 +12,7 @@ main = () i32 {
     count :: i32 = 0;
     count = count + 1;
     total ::= 10;
-    total = total + count;
+    total      = total + count;
     fixed: i32 = 7;
     println("{} {} {} {}", c.r, count, total, fixed);
     0

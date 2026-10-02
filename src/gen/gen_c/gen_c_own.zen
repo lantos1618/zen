@@ -165,7 +165,12 @@ note_unset_drop* = (be :: CBackend, name: str, index: usize, ty: TyId)
         false => Ok(()),
         true  => {
             live = be.open_live_flag(false).try();
-            be.own_binding(DropEntry(name: name, index: index, ty: ty, live: live))
+            be.own_binding(DropEntry(
+                name: name,
+                index: index,
+                ty: ty,
+                live: live
+            ))
         },
     })
 }

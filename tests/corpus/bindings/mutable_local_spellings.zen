@@ -9,7 +9,7 @@ main = () i32 {
     b :: = Foo();
     c :: Foo = Foo();
     d :: Foo;
-    d = Foo(x: 4);
+    d   = Foo(x: 4);
     a.x = 1;
     b.x = 2;
     c.x = 3;

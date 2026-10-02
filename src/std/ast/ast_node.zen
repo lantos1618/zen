@@ -332,10 +332,10 @@ Stmt* = {
 
 // Declarations may be nested and do not take a semicolon.
 StmtKind* = Bind(Bind)
-           | Deferred(Deferred)
-           | Expr(ExprStmt)
-           | Decl(Decl)
-           | Block(BlockId)
+    | Deferred(Deferred)
+    | Expr(ExprStmt)
+    | Decl(Decl)
+    | Block(BlockId)
 
 // `x = e;`, `x ::= e;`, `x: T = e;`, `x :: T = e;`,
 // `self.len = self.len + 1;`. The target is an expression: a member and an

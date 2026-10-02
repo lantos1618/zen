@@ -41,12 +41,20 @@ refuse_type_value = (c :: Checker, id: ExprId, ctx: Ctx) Res<(), AllocError> {
             None  => c.world.first_def_of(ctx.module, n.text).try().match({
                 None  => Ok(()),
                 Ok(d) => d.kind.match({
-                    StructDef => c.refuse(node.span, SemaFault.TypeNotAValue(
-                        TypeValueFault(name: n.text, record: true)
-                    )),
-                    EnumDef   => c.refuse(node.span, SemaFault.TypeNotAValue(
-                        TypeValueFault(name: n.text, record: false)
-                    )),
+                    StructDef => c.refuse(
+                        node.span,
+                        SemaFault.TypeNotAValue(TypeValueFault(
+                            name: n.text,
+                            record: true
+                        ))
+                    ),
+                    EnumDef   => c.refuse(
+                        node.span,
+                        SemaFault.TypeNotAValue(TypeValueFault(
+                            name: n.text,
+                            record: false
+                        ))
+                    ),
                     _         => Ok(()),
                 }),
             }),

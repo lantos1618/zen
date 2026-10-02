@@ -179,7 +179,7 @@ Probe = {
         self.tree.blocks_each((_, block) {
             block.stmts.loop((h2, s) {
                 s.kind.match({
-                    Bind(b) => {
+                    Bind(b)     => {
                         (b.target.index == e.index).then(() {
                             found = told(span, b.type, Ok(b.value));
                         });
@@ -189,7 +189,7 @@ Probe = {
                             found = told(span, Ok(d.type), None);
                         });
                     },
-                    _       => (),
+                    _           => (),
                 });
             });
         });

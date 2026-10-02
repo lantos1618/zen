@@ -620,7 +620,7 @@ write_type_value = (out :: String, f: TypeValueFault) Res<(), AllocError> {
 
 write_never_assigned = (out :: String, types: Types, f: UnsetFault)
                        Res<(), AllocError> {
-    ty    ::= types.name_of(f.ty).try();
+    ty ::= types.name_of(f.ty).try();
     marker = f.mutable.match({ true => " ::", false => ":" });
     out.fmt(
         " `{}` is declared but never assigned: give it a value here (`{}{} {} = …`) or assign it before the block ends",

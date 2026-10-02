@@ -17,7 +17,7 @@ DiscriminantCall = sema.sema_discriminant
 VariantNameCall = sema.sema_variant_name
 NumericConversion, IntegerBitOperation = sema.sema_numeric
 Primitive = sema.sema_prim
-Printer = sema.sema_print
+Printer, IO_MODULE, printer_named = sema.sema_print
 OwnCheck, StoreEffects = sema.sema_store
 
 // One scoped name. Mutability feeds receiver/ownership checks, param feeds LSP
@@ -77,6 +77,8 @@ Checker* = {
     world* :: World,
     types* :: Types,
     diags :: Vec<Diag>,
+    // Every reported diagnostic, rendered, so a repeat is dropped.
+    reported :: Map<str, bool>,
 
     // Query results keyed by stable AST node ids.
     expr_memo* :: Map<ExprId, TyId>,
@@ -232,7 +234,23 @@ Checker* = {
 
     // The std.io printer a call selected, and `None` for every other call.
     printer_call* = (self: @Self, id: ExprId) Res<Printer> {
-        self.printers.get(self.resolved_call(id).try())
+        self.printer_of(self.resolved_call(id).try())
+    }
+
+    // The printer a declaration is. `check_all` validates std.io's bodyless
+    // declarations and records them; a tree lowered without that pass still
+    // finds them by the same identity, the declaring module and the name.
+    printer_of* = (self: @Self, did: DeclId) Res<Printer> {
+        self.printers.get(did).match({
+            Ok(how) => Ok(how),
+            None    => self.world.module_name(did).eq(IO_MODULE).match({
+                false => None,
+                true  => self.tree.decl_at(did).try().kind.match({
+                    Function(f) => printer_named(f.name.text),
+                    _           => None,
+                }),
+            }),
+        })
     }
 
     resolved_member_provider* = (self: @Self, id: ExprId) Res<TyId> {
@@ -390,9 +408,20 @@ Checker* = {
         Ok(());
     }
 
+    // A diagnostic identical to one already reported is the same mistake
+    // found again by a second walk over the same node, so it is kept once.
     report* = (self :: @Self, file: str, span: Span, fault: SemaFault)
               Res<(), AllocError> {
-        self.diags.add(Diag(file: file, span: span, fault: fault))
+        d = Diag(file: file, span: span, fault: fault);
+        key ::= self.alloc.String().try();
+        d.render(self.types, key).try();
+        self.reported.get(key.view()).match({
+            Ok(_) => Ok(()),
+            None  => {
+                self.reported.set(key.view(), true).try();
+                self.diags.add(d)
+            },
+        })
     }
 
     // `report` at the position's own file.
@@ -793,6 +822,7 @@ Checker* = (a: Alloc, tree: Ast) Res<Checker, AllocError> {
         world: a.World(tree).try(),
         types: a.Types(),
         diags: a.Vec<Diag>(),
+        reported: a.Map<str, bool>(),
         expr_memo: a.Map<ExprId, TyId>(),
         type_memo: a.Map<TypeId, TyId>(),
         resolved_types: a.Vec<bool>(),

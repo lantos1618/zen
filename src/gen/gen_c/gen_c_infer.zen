@@ -24,6 +24,7 @@ bodyless = gen.gen_c.gen_c_sink
 site_of, method_sig = gen.gen_c.gen_c_member
 Site = gen.gen_c.gen_c_member
 recv_inst = gen.gen_c.gen_c_mono
+selected_def = gen.gen_c.gen_c_call
 Res, Ok, None = std.core
 
 // Stable call facts are receiver state; the backend and accumulating answer
@@ -296,8 +297,18 @@ ReturnCall = {
     }
 
     // One candidate or nothing; overload resolution remains sema's rule.
+    // The declaration sema selected, when it selected one; otherwise the
+    // module's only declaration of the name.
     named = (self: @Self, be :: CBackend, name: str)
             Res<TyId, AllocError> {
+        be.selected_def(self.id).match({
+            Ok(d) => self.definition(be, d),
+            None  => self.unselected(be, name),
+        })
+    }
+
+    unselected = (self: @Self, be :: CBackend, name: str)
+                 Res<TyId, AllocError> {
         found ::= be.alloc.Vec<Def>();
         be.check.world.defs_of(self.ctx.module, name, found).try();
         found.len.match({

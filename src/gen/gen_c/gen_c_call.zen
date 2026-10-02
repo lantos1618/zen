@@ -17,7 +17,6 @@ Res, Ok, None, loop, Range = std.core
 TyId, TyRes = sema.sema_ty
 Def, decl_at = sema.sema_def
 Ctx = sema.sema_check
-Printer = sema.sema_print
 Inst = sema.sema_inst
 type_from_ast = sema.sema_denote
 pack_slot, pack_elem = sema.sema_vararg
@@ -35,7 +34,7 @@ lower_primitive, avx2_boundary = gen.gen_c.gen_c_machine
 expr, ty_of, want_of = gen.gen_c.gen_c_expr
 value_held, holds = gen.gen_c.gen_c_expr
 Dest, deliver = gen.gen_c.gen_c_stmt
-is_print, lower_print = gen.gen_c.gen_c_print
+lower_print = gen.gen_c.gen_c_print
 lower_dot_call = gen.gen_c.gen_c_member
 lower_loop = gen.gen_c.gen_c_loop
 is_loop_shape = gen.gen_c.gen_c_shape
@@ -94,6 +93,11 @@ CallSite = {
         found ::= be.alloc.Vec<Def>();
         be.check.world.defs_of(self.ctx.module, name, found).try();
         self.add_travelled(be, name, found).try();
+        // A receiver whose type this generic body cannot name yet still
+        // reaches std.core's functions, which travel with the built-in types
+        // sema checked it against.
+        (found.len == 0 && self.recv.match({ Ok(_) => true, None => false }))
+            .then(() { be.check.world.core_of(name, found).try() });
         self.only(be, name, found, want, out)
     }
 
@@ -297,10 +301,15 @@ CallSite = {
         })
     }
 
+    // A bodyless declaration is a std.io printer, whose body the compiler
+    // supplies, or a foreign function.
     plain_or_foreign = (self: @Self, be :: CBackend, d: Def, f: Function,
                         out :: String) Res<(), AllocError> {
         bodyless(f).match({
-            true  => self.foreign(be, d, f, out),
+            true  => be.check.printer_of(d.id).match({
+                Ok(how) => be.lower_print(self.c, how, self.ctx, out),
+                None    => self.foreign(be, d, f, out),
+            }),
             false => self.signature(be, d, f, out),
         })
     }
@@ -424,8 +433,8 @@ CallSite = {
 }
 
 // A bare call name follows visible language precedence: a local closure wins,
-// `Ok` and `Err` construct the destination `Res`, a declared `println` shadows
-// print sugar, and every other name uses ordinary resolution.
+// `Ok` and `Err` construct the destination `Res`, and every other name uses
+// ordinary resolution.
 NamedCallSite = {
     site: CallSite,
     name: str,
@@ -450,7 +459,7 @@ NamedCallSite = {
             Res<(), AllocError> {
         is_res_ctor(self.name).match({
             true  => self.lower_res(be, out),
-            false => self.sugar_or_plain(be, out),
+            false => self.site.resolve(be, self.name, self.want, out),
         })
     }
 
@@ -478,22 +487,6 @@ NamedCallSite = {
                 self.site.ctx,
                 out
             ),
-        })
-    }
-
-    sugar_or_plain = (self: @Self, be :: CBackend, out :: String)
-                     Res<(), AllocError> {
-        be.check.printer_call(self.site.id).match({
-            Ok(how) => be.lower_print(self.site.c, how, self.site.ctx, out),
-            None    => be.is_sugar(self.name, self.site.ctx).try().match({
-                true  => be.lower_print(
-                    self.site.c,
-                    sugar_printer(self.name),
-                    self.site.ctx,
-                    out
-                ),
-                false => self.site.resolve(be, self.name, self.want, out),
-            }),
         })
     }
 }
@@ -929,23 +922,6 @@ write_indirect_arg = (
 ) Res<(), AllocError> {
     want = params.get(i).match({ Ok(t) => t, None => TyId(index: 0) });
     be.value_held(a.value, ctx, want, hold, out)
-}
-
-is_sugar = (be :: CBackend, name: str, ctx: Ctx) Res<bool, AllocError> {
-    is_print(name).match({
-        false => Ok(false),
-        true  => be.undeclared(name, ctx),
-    })
-}
-
-undeclared = (be :: CBackend, name: str, ctx: Ctx) Res<bool, AllocError> {
-    found ::= be.alloc.Vec<Def>();
-    be.check.world.defs_of(ctx.module, name, found).try();
-    Ok(found.len == 0);
-}
-
-sugar_printer = (name: str) Printer {
-    name.eq("println").match({ true => Printer.Line, false => Printer.Bare })
 }
 
 is_res_ctor* = (name: str) bool { name.eq("Ok") || name.eq("Err") }

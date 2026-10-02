@@ -1,5 +1,5 @@
-// A FREE FUNCTION ON A PRELUDE TYPE TRAVELS TO IT LIKE ANY OTHER: i32 is
-// declared as an ordinary struct in std.core ("a prelude declaration of a
+// A FREE FUNCTION ON A PRIMITIVE TRAVELS TO IT LIKE ANY OTHER: i32 is
+// declared as an ordinary struct in std.core ("std.core's declaration of a
 // primitive's name IS that primitive"), so a free function taking i32
 // first is reachable through the dot on any i32 -- including one produced
 // by a method call mid-chain.

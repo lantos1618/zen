@@ -42,11 +42,11 @@ local_impls* = (c :: Checker, n: TyNamed, out :: Vec<LocalImpl>)
     Ok(());
 }
 
-// The prelude declaration of a primitive's name, as the type its impls
+// std.core's declaration of a primitive's name, as the type its impls
 // attach to.
 prim_named* = (c :: Checker, p: Prim) Res<Res<TyNamed>, AllocError> {
     defs ::= c.alloc.Vec<Def>();
-    c.world.prelude_of(p.name, defs).try();
+    c.world.core_of(p.name, defs).try();
     Ok(defs.get(0).match({
         None  => None,
         Ok(d) => Ok(TyNamed(

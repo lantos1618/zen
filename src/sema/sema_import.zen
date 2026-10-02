@@ -11,7 +11,7 @@ AllocError = std.mem
 Vec = std.collections
 str, String = std.text
 Checker = sema.sema_check
-PRELUDE, Def, decl_at = sema.sema_def
+CORE, Def, decl_at = sema.sema_def
 is_type_def = sema.sema_member
 SemaFault, ExportFault = sema.sema_diag
 IO_MODULE = sema.sema_print
@@ -21,11 +21,16 @@ IO_MODULE = sema.sema_print
 // a standard name, so the caller reports its own undefined-name fault.
 missing_import* = (c :: Checker, mi: usize, name: str, span: Span)
                   Res<bool, AllocError> {
-    c.world.explicit.match({
-        false => Ok(false),
-        true  => c.standard_home(name).match({
-            None       => Ok(false),
-            Ok(module) => c.report_missing(mi, name, module, span),
+    // An import of the name that fails to resolve is that import's error.
+    imported = c.world.table_at(mi).match({
+        Ok(t) => t.imports_name(name),
+        None  => false,
+    });
+    c.standard_home(name).match({
+        None       => Ok(false),
+        Ok(module) => imported.match({
+            true  => Ok(false),
+            false => c.report_missing(mi, name, module, span),
         }),
     })
 }
@@ -87,11 +92,11 @@ standard_home* = (c: Checker, name: str) Res<str> {
 }
 
 core_source = (c: Checker, name: str) Res<str> {
-    core    = c.world.prelude_index().try();
+    core    = c.world.core_index().try();
     table   = c.world.table_at(core).try();
     binding = table.imports.find((b) { b.exported && b.name.eq(name) }).try();
     binding.module.starts_with("std.core.").match({
-        true  => Ok(PRELUDE),
+        true  => Ok(CORE),
         false => Ok(binding.module),
     })
 }
@@ -100,15 +105,8 @@ core_source = (c: Checker, name: str) Res<str> {
 // so a member naming an unimported standard type would silently become an
 // enum variant. Each such member is reported before any union is classified.
 check_union_imports* = (c :: Checker) Res<(), AllocError> {
-    c.world.explicit.match({
-        false => Ok(()),
-        true  => {
-            Range(0, c.world.count()).loop((h, mi) {
-                c.module_unions(mi).try();
-            });
-            Ok(())
-        },
-    })
+    Range(0, c.world.count()).loop((h, mi) { c.module_unions(mi).try() });
+    Ok(());
 }
 
 module_unions = (c :: Checker, mi: usize) Res<(), AllocError> {
@@ -159,7 +157,7 @@ union_member = (c :: Checker, mi: usize, v: Variant) Res<(), AllocError> {
 // other variants a union member could also spell are not types.
 standard_type = (c :: Checker, name: str) Res<bool, AllocError> {
     defs ::= c.alloc.Vec<Def>();
-    c.world.prelude_of(name, defs).try();
+    c.world.core_of(name, defs).try();
     Ok(defs.find((d) { d.kind.is_type_def() }).match({
         Ok(_) => true,
         None  => false,

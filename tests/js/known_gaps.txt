@@ -291,7 +291,7 @@ tests/corpus/sema/widening_conversions_are_bounds # UNSUPPORTED: :0:0: error: un
 tests/corpus/sema/zero_array_count_is_valid # UNSUPPORTED: compiler error: invalid IR at function 0 (main), block 1: slot is read before initialization on a re
 tests/corpus/sema_zen/a_cursor_position_finds_its_node/main # UNSUPPORTED: main.zen:8:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
 tests/corpus/sema_zen/a_declaration_is_read_with_its_own_scope/main # UNSUPPORTED: main.zen:29:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
-tests/corpus/sema_zen/a_prelude_declaration_of_a_primitive_is_that_primitive/main # UNSUPPORTED: main.zen:30:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
+tests/corpus/sema_zen/a_core_declaration_of_a_primitive_is_that_primitive/main # UNSUPPORTED: main.zen:30:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
 tests/corpus/sema_zen/a_provable_trap_is_a_compile_error/main # UNSUPPORTED: main.zen:26:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
 tests/corpus/sema_zen/an_impl_supplies_but_never_stores/main # UNSUPPORTED: main.zen:29:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
 tests/corpus/sema_zen/an_unimported_name_is_not_visible/main # UNSUPPORTED: main.zen:32:23: nothing is at that path: tried `sema/sema_def.zen` and `sema/sema_def/sema_def.zen`

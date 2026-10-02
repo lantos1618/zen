@@ -252,12 +252,12 @@ stream_sink = (be :: CBackend, out :: String, stream: ConsoleStream)
     })
 }
 
-// `Sink` as the prelude exports it. Reached by declaration and not
+// `Sink` as std.core exports it. Reached by declaration and not
 // through the caller's imports, because the record is the backend's: a
 // caller that wrote `println("{}", p)` never named it.
 sink_ty = (be :: CBackend) Res<Res<TyId>, AllocError> {
     defs ::= be.alloc.Vec<Def>();
-    be.check.world.prelude_of(SINK_NAME, defs).try();
+    be.check.world.core_of(SINK_NAME, defs).try();
     defs.get(0).match({
         None  => Ok(None),
         Ok(d) => be.sink_named(d),

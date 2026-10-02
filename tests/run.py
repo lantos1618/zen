@@ -426,7 +426,7 @@ def collect(tests_dir: Path, into: Collection, kind: str) -> None:
             return
         for child in children:
             # A SYMLINK IS NOT A TEST. `example/std` points at src/std, which
-            # is the prelude every test already stands on -- descending it
+            # is the library every test already imports from -- descending it
             # would report all ~200 std files as uncollected and stage the
             # library twice. No suite has ever held a real symlinked test.
             if child.is_symlink():
@@ -627,9 +627,9 @@ class Toolchain:
 
     def command(self, source: Path, out_c: Path, root: Path,
                 entry: str | None = None) -> list[str]:
-        # A test is a program, and a program stands on std: `Res`, `Ok`, `Env`
-        # and `println` are prelude names. Compiling a corpus file alone would
-        # fail on every one of them and say nothing about the test -- so what
+        # A test is a program, and a program stands on std: it imports `Res`,
+        # `Ok`, `Env` and `println` from there. Compiling a corpus file alone
+        # would fail on every one of them and say nothing about the test -- so what
         # is passed is the staged ROOT, positionally, because a build IS a root.
         #
         # `--entry` is where to START inside it, and it is not optional.

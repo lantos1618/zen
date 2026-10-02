@@ -40,7 +40,6 @@ lower_call, res_value, is_res_ctor = gen.gen_c.gen_c_call
 call_callee = sema.sema_call
 needs_hoist, hoist_expr = gen.gen_c.gen_c_hoist
 needs_widen, widen_expr, needs_set, set_expr = gen.gen_c.gen_c_widen
-is_print = gen.gen_c.gen_c_print
 call_ret_type = gen.gen_c.gen_c_infer
 lower_unary, lower_binary, binary_type = gen.gen_c.gen_c_op
 lower_index, index_type = gen.gen_c.gen_c_index
@@ -448,19 +447,8 @@ declared_call_type = (be :: CBackend, name: str, ctx: Ctx, want: TyId)
     be.check.world.defs_of(ctx.module, name, found).try();
     found.len.match({
         1 => be.def_call_type(found, want),
-        0 => be.sugar_call_type(name, want),
+        0 => Ok(want),
         _ => Ok(want),
-    })
-}
-
-// Print sugar names no declaration but evaluates to unit. This rule applies
-// only after declaration lookup, so a module-local `println` retains its own
-// declared result type.
-sugar_call_type = (be :: CBackend, name: str, want: TyId)
-                  Res<TyId, AllocError> {
-    is_print(name).match({
-        false => Ok(want),
-        true  => be.check.types.prim("()"),
     })
 }
 

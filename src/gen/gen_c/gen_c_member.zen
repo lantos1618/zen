@@ -513,7 +513,7 @@ arg_actual = (be :: CBackend, x: Arg, ctx: Ctx) Res<Actual, AllocError> {
 }
 
 // Identifies the declaration and qualified symbol path that own a receiver's
-// Members. Primitive receivers use their prelude declaration as the site.
+// Members. Primitive receivers use their std.core declaration as the site.
 
 Site* = {
     ty*: TyId,
@@ -590,7 +590,7 @@ named_site = (
 
 prim_site = (be :: CBackend, rty: TyId, name: str) Res<Res<Site>, AllocError> {
     defs ::= be.alloc.Vec<Def>();
-    be.check.world.prelude_of(name, defs).try();
+    be.check.world.core_of(name, defs).try();
     defs.get(0).match({
         None  => Ok(None),
         Ok(d) => Ok(Ok(Site(

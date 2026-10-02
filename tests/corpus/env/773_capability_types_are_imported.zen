@@ -1,5 +1,6 @@
-// Capability and bound types used in ordinary signatures are prelude names.
-// This file deliberately imports nothing.
+// Capability and bound types used in ordinary signatures are imported like
+// any other name: Console, Fs, FsError and Stdin from std.env, Ordered from
+// std.collections.
 
 Res, Ok, Range, IoError = std.core
 Alloc, AllocError = std.mem
@@ -16,18 +17,16 @@ banner = (out: Console, title: str) Res<(), IoError> {
     out.println("== {} ==", title)
 }
 
-// A helper that reads files takes Fs and answers FsError — names from
-// nowhere, because they travel with Env in the prelude. Writes then
-// reads back its own bytes, so the test depends on no file outside
-// itself.
+// A helper that reads files takes Fs and answers FsError, both imported
+// beside Env. Writes then reads back its own bytes, so the test depends
+// on no file outside itself.
 slurp = (fs: Fs, alloc :: Alloc) Res<String, FsError> {
-    fs.write("773_prelude_round_trip.txt", "prelude names").try();
-    fs.read(alloc, "773_prelude_round_trip.txt")
+    fs.write("773_capability_round_trip.txt", "capability names").try();
+    fs.read(alloc, "773_capability_round_trip.txt")
 }
 
-// Stdin is Env's field `in`, and its type is a prelude name like the
-// rest: a reader announces it in its own signature, imported from
-// nothing. The CALLER makes the buffer's room, so this body holds no
+// Stdin is Env's field `in`, and its type is imported like the rest: a
+// reader announces it in its own signature. The CALLER makes the buffer's room, so this body holds no
 // allocation and its only error is the one `read` itself answers.
 // Read answers EXACTLY n bytes; the harness feeds an empty stream,
 // so the answer printed below is ZERO — end of input, not a failure.

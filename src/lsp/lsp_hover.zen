@@ -172,7 +172,7 @@ write_ty = (c: Checker, id: TypeId, out :: String) Res<bool, AllocError> {
     })
 }
 
-// A written type shows its declaration; a primitive shows its prelude members.
+// A written type shows its declaration; a primitive shows its std.core members.
 write_ty_named = (c: Checker, id: TyId, out :: String) Res<bool, AllocError> {
     c.poison_free(id).match({
         false => Ok(false),
@@ -208,17 +208,17 @@ write_prim = (c: Checker, id: TyId, p: Prim, out :: String)
              Res<bool, AllocError> {
     c.types.write_name(id, out).try();
     defs ::= c.alloc.Vec<Def>();
-    c.world.prelude_of(p.name, defs).try();
+    c.world.core_of(p.name, defs).try();
     defs.get(0).match({
         None  => Ok(true),
         Ok(d) => {
-            c.write_prelude_note(d, out).try();
+            c.write_core_note(d, out).try();
             Ok(true)
         },
     })
 }
 
-write_prelude_note = (c: Checker, d: Def, out :: String) Res<(), AllocError> {
+write_core_note = (c: Checker, d: Def, out :: String) Res<(), AllocError> {
     decl_at(c.tree, d.id).match({
         None   => Ok(()),
         Ok(dd) => c.write_decl_note(dd, EXPORTED_ONLY, out),

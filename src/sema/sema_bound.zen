@@ -42,7 +42,7 @@ check_home = (c :: Checker, im: Impl, id: ImplId, mi: usize)
 target_defs = (c :: Checker, name: str, mi: usize, out :: Vec<Def>)
               Res<(), AllocError> {
     name.is_prim().match({
-        true  => c.world.prelude_of(name, out),
+        true  => c.world.core_of(name, out),
         false => c.world.defs_of(mi, name, out),
     })
 }

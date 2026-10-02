@@ -201,15 +201,19 @@ trap = (
 )
        Res<bool, AllocError> {
     source   = a.String(
-        "main = () i32 {{ left: i32 = {}; right: i32 = {}; print(\"before\\n\"); left {} right }}",
+        "{}main = () i32 {{ left: i32 = {}; right: i32 = {}; print(\"before\\n\"); left {} right }}",
+        PRINT_IMPORT,
         left,
         right,
         op
     ).try();
-    at       = source.view().rfind(op[0]).value_or(0);
-    expected = a.String("program.zen:1:{}: trap: {}\n", at + 1, fault).try();
+    at       = source.view().rfind(op[0]).value_or(0) - PRINT_IMPORT.len;
+    expected = a.String("program.zen:2:{}: trap: {}\n", at + 1, fault).try();
     Case(name: name, source: Ok(source.view()), out: "before\n", err: expected.view(), code: 134).run(env)
 }
+
+// The first line of every generated trap program; its traps are on line 2.
+PRINT_IMPORT: str = "print = std.io\n"
 
 // A backedge and a physically unreachable block exercise verified IR shapes
 // the source lowerer does not yet produce. Arbitrary bytes bypass source lexing.
@@ -402,10 +406,10 @@ main = (env: Env) Res<(), AllocError> {
             "integer overflow"
         ).try()
     );
-    source: str  = "main = () i32 { value: i32 = -2147483648; print(\"before\\n\"); -value }";
+    source: str  = "print = std.io\nmain = () i32 { value: i32 = -2147483648; print(\"before\\n\"); -value }";
     expected_neg = a.String(
-        "program.zen:1:{}: trap: integer overflow\n",
-        source.find("-value").value_or(0) + 1
+        "program.zen:2:{}: trap: integer overflow\n",
+        source.find("-value").value_or(0) - PRINT_IMPORT.len + 1
     ).try();
     println(
         "negation overflow {}",

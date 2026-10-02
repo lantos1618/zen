@@ -1,0 +1,9 @@
+// `None` as a value is imported like `Ok` and `Err`. A pattern does not
+// name it: `None =>` is read against the matched type.
+//
+// position: the `None` value.
+Res = std.core
+
+nothing = () Res<i32> { None }
+
+main = () i32 { 0 }

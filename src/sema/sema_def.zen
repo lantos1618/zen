@@ -5,6 +5,7 @@ Vec, Map = std.collections
 str, String = std.text
 Res, Ok, None, Range, Eq, Hash = std.core
 DeclId, ImplId = sema.sema_id
+is_prim = sema.sema_ty
 
 DefKind* = StructDef | EnumDef | AliasDef | FunctionDef | ConstDef
 
@@ -45,11 +46,13 @@ WorldIndex = {
     members :: Map<DeclId, Map<str, Vec<usize>>>,
 }
 
-// The module every other module imports implicitly. Bootstrap must use the
-// same spelling.
-PRELUDE*: str = "std.core"
+// The module every program loads: it declares the members of the built-in
+// types (`i32.MAX`, `str.len`, `bool.then`) and the declarations the
+// compiler recognises by identity. Loading it binds no name; a module
+// imports what it uses from it like from any other module.
+CORE*: str = "std.core"
 
-PRELUDE_FILE*: str = "std.core.core"
+CORE_FILE*: str = "std.core.core"
 
 World* = {
     tables :: Vec<ModuleTable>,
@@ -58,17 +61,11 @@ World* = {
     index: Ptr<WorldIndex>,
     alloc: Alloc,
 
-    // Whether a module sees only what it declares and imports. Names a
-    // module was told to import resolve through the prelude afterwards, so
-    // one missing import is one diagnostic.
-    explicit* :: bool = false,
+    // Standard names reported as missing imports, keyed by module and name.
+    // Each resolves through std.core afterwards, as its import would, so one
+    // missing import is one diagnostic.
     granted :: Map<str, bool>,
 
-    require_imports* = (self :: @Self, on: bool) {
-        self.explicit = on;
-    }
-
-    // Resolve `name` in `mi` as its import would after `missing` reports it.
     grant* = (self :: @Self, mi: usize, name: str) Res<(), AllocError> {
         key = self.alloc.String("{} {}", mi, name).try();
         self.granted.set(key.view(), true)
@@ -79,13 +76,16 @@ World* = {
         Ok(self.granted.get(key.view()).match({ Ok(_) => true, None => false }))
     }
 
-    // Whether an unbound `name` in `mi` still falls back to the prelude.
+    // Whether an unbound `name` in `mi` resolves through std.core: a
+    // primitive type's name always does, because the primitive is built in
+    // and std.core declares its members; any other name only once it has
+    // been reported as a missing import.
     falls_back = (self: @Self, mi: usize, name: str) Res<bool, AllocError> {
         (self.binds_name(mi, name)).match({
             true  => Ok(false),
-            false => self.explicit.match({
-                false => Ok(true),
-                true  => self.is_granted(mi, name),
+            false => name.is_prim().match({
+                true  => Ok(true),
+                false => self.is_granted(mi, name),
             }),
         })
     }
@@ -132,7 +132,7 @@ World* = {
         self.own_defs(mi, name, out).try();
         (out.len == 0).then(() { self.imported_defs(mi, name, out).try() });
         (out.len == 0 && self.falls_back(mi, name).try())
-            .then(() { self.prelude_defs(mi, name, out).try() });
+            .then(() { self.core_defs(mi, name, out).try() });
         Ok(());
     }
 
@@ -151,7 +151,7 @@ World* = {
             Ok(d) => Ok(Ok(d)),
             None  => self.falls_back(mi, name).try().match({
                 false => Ok(None),
-                true  => self.first_prelude_for(mi, name),
+                true  => self.first_core_for(mi, name),
             }),
         })
     }
@@ -163,9 +163,9 @@ World* = {
         })
     }
 
-    first_prelude_for = (self: @Self, mi: usize, name: str)
+    first_core_for = (self: @Self, mi: usize, name: str)
                         Res<Res<Def>, AllocError> {
-        self.prelude_index().match({
+        self.core_index().match({
             None    => Ok(None),
             Ok(pre) => (pre == mi).match({
                 true  => Ok(None),
@@ -254,23 +254,23 @@ World* = {
         })
     }
 
-    prelude_defs = (self: @Self, mi: usize, name: str, out :: Vec<Def>)
+    core_defs = (self: @Self, mi: usize, name: str, out :: Vec<Def>)
                    Res<(), AllocError> {
-        self.prelude_index().match({
-            Ok(p) => self.prelude_exports(p, mi, name, out),
+        self.core_index().match({
+            Ok(p) => self.core_exports(p, mi, name, out),
             None  => Ok(()),
         }).try();
         Ok(());
     }
 
-    prelude_index* = (self: @Self) Res<usize> {
-        self.index_of(PRELUDE).match({
+    core_index* = (self: @Self) Res<usize> {
+        self.index_of(CORE).match({
             Ok(p) => Ok(p),
-            None  => self.index_of(PRELUDE_FILE),
+            None  => self.index_of(CORE_FILE),
         })
     }
 
-    prelude_exports = (self: @Self, p: usize, mi: usize, name: str,
+    core_exports = (self: @Self, p: usize, mi: usize, name: str,
                        out :: Vec<Def>) Res<(), AllocError> {
         (p == mi).match({
             true  => Ok(()),
@@ -286,19 +286,19 @@ World* = {
         self.exports_of(p, name, out, seen)
     }
 
-    prelude_of* = (self: @Self, name: str, out :: Vec<Def>)
+    core_of* = (self: @Self, name: str, out :: Vec<Def>)
                   Res<(), AllocError> {
-        self.prelude_index().match({
+        self.core_index().match({
             Ok(p) => self.exported_defs(p, name, out),
             None  => Ok(()),
         }).try();
         Ok(());
     }
 
-    is_prelude_decl* = (self: @Self, id: DeclId, name: str)
+    is_core_decl* = (self: @Self, id: DeclId, name: str)
                        Res<bool, AllocError> {
         defs ::= self.alloc.Vec<Def>();
-        self.prelude_of(name, defs).try();
+        self.core_of(name, defs).try();
         Ok(
             defs.find(
                 (d) { d.id.eq(id) }

@@ -26,6 +26,7 @@ class ProjectTests(unittest.TestCase):
 
     def build_file(self, registrations):
         self.write("build.zen", "Builder, BuildError = std.build\n"
+                   "Res, Ok, Path = std.core\n"
                    "build = (b :: Builder) Res<(), BuildError> {\n"
                    + registrations + "\nOk(())\n}\n")
 
@@ -54,7 +55,7 @@ class ProjectTests(unittest.TestCase):
         self.assertIn("no `exe`", result.stdout)
 
     def test_chained_duplicate_stops_before_execution(self):
-        self.write("pass.zen", 'main = () { println("must not run"); }\n')
+        self.write("pass.zen", 'println = std.io\nmain = () { println("must not run"); }\n')
         self.build_file('b.exe_test("same", {src: Path("pass.zen"), deps: []}).try()\n'
                         ' .exe_test("same", {src: Path("pass.zen"), deps: []}).try();')
         result = self.run_zen("test")
@@ -197,7 +198,7 @@ class ProjectTests(unittest.TestCase):
             self.assertIn("no matching executable test targets", result.stdout)
 
     def test_registered_unimported_source_is_checked_before_any_execution(self):
-        self.write("pass.zen", 'main = () { println("must not run"); }\n')
+        self.write("pass.zen", 'println = std.io\nmain = () { println("must not run"); }\n')
         self.write("broken_test.zen", 'main = () { absent_test_function(); }\n')
         self.build_file('b.exe_test("first", {src: Path("pass.zen"), deps: []}).try();\n'
                         'b.exe_test("broken", {src: Path("broken_test.zen"), deps: []}).try();')
@@ -208,7 +209,8 @@ class ProjectTests(unittest.TestCase):
         self.assertNotIn("zen test: 2 passed", result.stdout)
 
     def test_trailing_arguments_require_a_separator(self):
-        self.write("args.zen", 'main = (env: Env) {\n'
+        self.write("args.zen", 'Env = std.env\nprintln = std.io\n'
+                   'main = (env: Env) {\n'
                    'env.argv.get(1).when_ok((arg) { println("arg {}", arg); });\n}\n')
         self.build_file('b.exe_test("args", {src: Path("args.zen"), deps: []}).try();')
         result = self.run_zen("test", "--", "--help")
@@ -244,14 +246,14 @@ class ProjectTests(unittest.TestCase):
         self.assertFalse((self.root / "build/linux-x86_64/test").exists())
 
     def test_suite_rejects_empty_and_reports_assertions(self):
-        self.write("suite.zen", 'Suite = std.test\n'
+        self.write("suite.zen", 'Suite = std.test\nRes, IoError = std.core\nEnv = std.env\n'
                    'main = (env: Env) Res<i32, IoError> {\n'
                    'suite ::= Suite(env: env);\nsuite.finish()\n}\n')
         self.build_file('b.exe_test("suite", {src: Path("suite.zen"), deps: []}).try();')
         empty = self.run_zen("test")
         self.assertEqual(empty.returncode, 1, empty.stdout + empty.stderr)
         self.assertIn("0 passed, 0 failed", empty.stdout)
-        self.write("suite.zen", 'Suite = std.test\n'
+        self.write("suite.zen", 'Suite = std.test\nRes, IoError = std.core\nEnv = std.env\n'
                    'main = (env: Env) Res<i32, IoError> {\n'
                    'suite ::= Suite(env: env);\n'
                    'suite.run("first", (t) { t.expect(false) }).try();\n'

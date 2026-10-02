@@ -37,7 +37,7 @@ is_scope_ref* = (be :: CBackend, id: ExprId) bool {
 
 scope_type* = (be :: CBackend, ctx: Ctx) Res<TyId, AllocError> {
     found ::= be.alloc.Vec<Def>();
-    be.check.world.defs_of(ctx.module, "Scope", found).try();
+    be.check.world.core_of("Scope", found).try();
     found.get(0).match({
         None  => be.check.types.unknown(),
         Ok(d) => be.scope_named(d),

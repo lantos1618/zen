@@ -169,7 +169,7 @@ res_sugar* = (c :: Checker, name: str, mi: usize)
         true  => {
             c.world.first_def_of(mi, name).try().match({
                 None      => Ok(true),
-                Ok(found) => c.world.is_prelude_decl(found.id, name),
+                Ok(found) => c.world.is_core_decl(found.id, name),
             })
         },
     })

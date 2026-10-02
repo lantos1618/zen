@@ -21,7 +21,7 @@ IO_MODULE*: str = "std.io"
 // `Line` writes a newline after its arguments; `Bare` does not.
 Printer* = Line | Bare
 
-printer_named = (name: str) Res<Printer> {
+printer_named* = (name: str) Res<Printer> {
     name.match({
         "println" => Ok(Printer.Line),
         "print"   => Ok(Printer.Bare),

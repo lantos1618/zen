@@ -186,8 +186,9 @@ def stage(fixture: Fixture, root: Path) -> None:
     std = REPO_ROOT / "src" / "std"
     if not std.is_dir():
         raise HarnessError(f"standard library not found at {std}")
-    # Compiler implementation sublayers are not part of a user program's
-    # prelude. Excluding them keeps a fixture coupled only to language std.
+    # Compiler implementation sublayers are not part of the library a user
+    # program imports. Excluding them keeps a fixture coupled only to language
+    # std.
     shutil.copytree(
         std,
         root / "std",

@@ -1,2 +1,2 @@
-`total` is read here, but no path to here assigns it
+`total` is read before it is assigned: no path to here assigns it
 7:19

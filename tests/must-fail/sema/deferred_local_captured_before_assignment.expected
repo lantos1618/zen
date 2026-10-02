@@ -1,2 +1,2 @@
-`limit` is captured here, but no path to here assigns it
+`limit` is captured before it is assigned
 8:42

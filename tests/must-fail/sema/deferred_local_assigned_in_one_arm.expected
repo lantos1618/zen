@@ -1,2 +1,2 @@
-`size` is read here, but not every path to here assigns it
+`size` is read where it may not be assigned yet: not every path to here assigns it
 13:19

@@ -1,2 +1,2 @@
-`held` is consumed here, but no path to here assigns it
+`held` is consumed before it is assigned
 11:18

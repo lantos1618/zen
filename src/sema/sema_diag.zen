@@ -223,7 +223,7 @@ message* = (fault: SemaFault) str {
         NoSuchField(_)               => "a member is resolved on the receiver's type, so a name declared on another type is not a candidate",
         MemberNeedsValue(_)          => "a union's member is the type it names, so the member alone is not a value",
         TypeMismatch(_)              => "type mismatch",
-        TypeNotAValue(_)             => "a type is not a value:",
+        TypeNotAValue(_)             => "",
         ArmsDisagree(_)              => "match arms disagree: every arm produces the match's value, and nothing here decides which type that is",
         DiscardedValue(_)            => "discarded value",
         NotCallable(_)               => "this is not a function, so it cannot be called",
@@ -284,9 +284,9 @@ message* = (fault: SemaFault) str {
         NegativeArrayCount(_)        => "an array count cannot be negative: fixed-array lengths are zero or greater",
         ComptimeBudget(_)            => "comptime evaluation ran out of steps: the evaluator is budgeted so the build fails rather than hangs — docs/design_meta.md",
         ConsumedUse(_)               => "use after move:",
-        UnassignedUse(_)             => "a local declared without a value is used before it is assigned:",
-        AssignedTwice(_)             => "an immutable local declared without a value is assigned exactly once:",
-        NeverAssigned(_)             => "a local declared without a value must be assigned:",
+        UnassignedUse(_)             => "",
+        AssignedTwice(_)             => "",
+        NeverAssigned(_)             => "",
         NeedsMutableReceiver(_)      => "the receiver is immutable:",
         ImmutableWrite(_)            => "cannot write through an immutable binding:",
         SnapshottedReceiver(_)       => "an argument call writes the place this call's by-value receiver was copied from:",
@@ -595,9 +595,13 @@ write_place = (out :: String, f: NameFault, tail: str) Res<(), AllocError> {
     Ok(());
 }
 
+// The faults below have no separate headline: the detail is the whole
+// sentence, with the local or type it names as its subject.
+
 write_assigned_twice = (out :: String, f: NameFault) Res<(), AllocError> {
     out.fmt(
-        " `{}` may already hold a value here — declare it `{} :: T;` to assign it again",
+        "`{}` may already hold a value here: a local declared `{}: T;` is assigned exactly once — declare it `{} :: T;` to assign it again",
+        f.name,
         f.name,
         f.name
     )
@@ -606,12 +610,12 @@ write_assigned_twice = (out :: String, f: NameFault) Res<(), AllocError> {
 write_type_value = (out :: String, f: TypeValueFault) Res<(), AllocError> {
     f.record.match({
         true  => out.fmt(
-            " `{}` is a type, not a value: construct it with `{}()`",
+            "`{}` is a type, not a value: construct it with `{}()`",
             f.name,
             f.name
         ),
         false => out.fmt(
-            " `{}` is a type, not a value: name one of its variants, `{}.Variant`",
+            "`{}` is a type, not a value: name one of its variants, `{}.Variant`",
             f.name,
             f.name
         ),
@@ -623,7 +627,7 @@ write_never_assigned = (out :: String, types: Types, f: UnsetFault)
     ty ::= types.name_of(f.ty).try();
     marker = f.mutable.match({ true => " ::", false => ":" });
     out.fmt(
-        " `{}` is declared but never assigned: give it a value here (`{}{} {} = …`) or assign it before the block ends",
+        "`{}` is declared but never assigned: give it a value here (`{}{} {} = …`) or assign it before the block ends",
         f.name,
         f.name,
         marker,
@@ -632,13 +636,18 @@ write_never_assigned = (out :: String, types: Types, f: UnsetFault)
 }
 
 write_unassigned = (out :: String, f: InitFault) Res<(), AllocError> {
-    out.fmt(" `{}` is {} here, but ", f.name, f.verb).try();
-    out.add(f.maybe.match({
-        true  => "not every path to here assigns it",
-        false => "no path to here assigns it",
-    })).try();
-    out.add(" — assign it on each path first").try();
-    Ok(())
+    f.maybe.match({
+        false => out.fmt(
+            "`{}` is {} before it is assigned: no path to here assigns it",
+            f.name,
+            f.verb
+        ),
+        true  => out.fmt(
+            "`{}` is {} where it may not be assigned yet: not every path to here assigns it",
+            f.name,
+            f.verb
+        ),
+    })
 }
 
 // The secret the refused expression reads, when it names one directly.

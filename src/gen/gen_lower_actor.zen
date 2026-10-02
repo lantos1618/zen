@@ -483,11 +483,11 @@ send = (
     hook   = lo.behavior(actor_ty, name, c.args.len + 2, span)
         .ok_or(unsupported(span, "an unresolved actor behavior")).try();
     layout = lo.layout_of(actor_ty, span).try();
-    fields        ::= lo.alloc.Vec<FieldAt>();
-    buffers       ::= lo.alloc.Vec<bool>();
-    at: usize     ::= 0;
-    widest: usize ::= 1;
-    strs: usize   ::= 0;
+    fields  ::= lo.alloc.Vec<FieldAt>();
+    buffers ::= lo.alloc.Vec<bool>();
+    at      :: usize = 0;
+    widest  :: usize = 1;
+    strs    :: usize = 0;
     c.args.loop((h, i, arg) {
         formal = lo.param_type(hook, i + 2).try();
         actual = lo.type_of(arg.value).try();
@@ -526,7 +526,7 @@ send = (
         out: descriptors,
         slot: slices
     ))).try();
-    slice: usize ::= 0;
+    slice :: usize = 0;
     c.args.loop((h, i, arg) {
         field = fields.get(i).ok_or(unsupported(span, "a missing payload field")).try();
         value = lo.argument_value(

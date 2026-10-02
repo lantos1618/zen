@@ -81,7 +81,7 @@ chacha20poly1305_open* = (
             initialize(scratch, key, nonce);
             authenticate(scratch, aad, aad_count, ciphertext, count);
             tag = scratch.offset(38).to<u8>();
-            different: u32 ::= 0;
+            different :: u32 = 0;
             Range(0, 16).loop((i) {
                 different = different +% tag.read(i).to_u32().bit_xor(ciphertext.read(count + i).to_u32());
             });
@@ -171,7 +171,7 @@ stream_xor = (
     input   : Ptr<u8>,
     count   : usize
 ) {
-    offset: usize ::= 0; counter: u32 ::= 1;
+    offset :: usize = 0; counter :: u32 = 1;
     (offset < count).loop((loop) {
         block(scratch, counter);
         take       = (count - offset).min(64);
@@ -208,7 +208,7 @@ poly_block = (p: Ptr<u64>, input: Ptr<u8>) {
     p.write(7, d2 % 67108864); p.write(8, d3 % 67108864); p.write(9, d4 % 67108864);
 }
 poly_padded = (p: Ptr<u64>, buffer: Ptr<u8>, input: Ptr<u8>, count: usize) {
-    offset: usize ::= 0;
+    offset :: usize = 0;
     (count - offset >= 16).loop(
         (loop) { poly_block(p, input.offset(offset)); offset = offset + 16; }
     );

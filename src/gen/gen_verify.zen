@@ -516,7 +516,7 @@ Flow = {
         self.reachable.set(0, true);
         work ::= self.alloc.Vec<usize>();
         work.add(0).try(VerifyError.OutOfMemory);
-        at: usize ::= 0;
+        at :: usize = 0;
         loop(() { at < work.len }, (h) {
             index = work.get(at).ok_or(self.check.fault(IrReason.Target)).try();
             self.check.function.blocks.get(index).ok_or(self.check.fault(IrReason.Target)).try().exit.match({
@@ -685,8 +685,8 @@ Payloads = {
 
     // The only instruction writing `slot`, when exactly one does.
     only_def = (self: @Self, slot: usize) Res<Instruction> {
-        found: Res<Instruction> ::= None;
-        count                   ::= 0;
+        found :: Res<Instruction> = None;
+        count ::= 0;
         self.function.blocks.loop((block) {
             block.code.loop((instruction) {
                 (written(instruction).value_or(NO_SLOT) == slot).then(() {

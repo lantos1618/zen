@@ -6,7 +6,7 @@ Error = ThreadError | AllocError
 main = (env: Env) Res<i32, Error> {
     a = env.mem.alloc();
     threads ::= a.Vec<Thread>();
-    i: u64  ::= 0;
+    i       :: u64 = 0;
     loop(() { i < 32 }, (h) {
         index = i;
         t     = env.threads.spawn(a, () Res<u64, ThreadError> {
@@ -16,7 +16,7 @@ main = (env: Env) Res<i32, Error> {
         threads.add(t).try();
         i = i + 1;
     });
-    total: u64 ::= 0;
+    total :: u64 = 0;
     threads.loop((h, t) {
         total = total + t.join<u64>().try();
     });

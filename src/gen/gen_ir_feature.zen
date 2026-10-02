@@ -45,7 +45,7 @@ refused* = (
     program  : Program,
     supports : (feature: IrFeature) bool
 ) Res<Refusal> {
-    found: Res<Refusal> ::= None;
+    found :: Res<Refusal> = None;
     program.functions.loop((fh, function) {
         need = first_need(function, (feature) { supports(feature) });
         need.when_ok((feature) {
@@ -60,7 +60,7 @@ first_need = (
     function : Func,
     supports : (feature: IrFeature) bool
 ) Res<IrFeature> {
-    found: Res<IrFeature> ::= refusing(
+    found :: Res<IrFeature> = refusing(
         class_need(function.result),
         (feature) { supports(feature) }
     );

@@ -35,7 +35,7 @@ blake2b_candidate* = (
                 load_block(m, key, key_count);
                 compress(h, m, v, 128, 0, input_count == 0);
             });
-            offset: usize ::= 0;
+            offset :: usize = 0;
             (input_count - offset > 128).loop((loop) {
                 load_block(m, input.offset(offset), 128);
                 offset = offset + 128;
@@ -52,7 +52,7 @@ blake2b_candidate* = (
                 compress(h, m, v, counter, high, true);
             });
             Range(0, output_count).loop((i) {
-                word: u64 ::= h.read(i / 8);
+                word :: u64 = h.read(i / 8);
                 Range(0, i % 8).loop((j) { word = word / 256; });
                 byte = (word % 256).to_usize().match({
                     Ok(n) => n.to_u8().match({Ok(b) => b, None => 0}),
@@ -67,7 +67,7 @@ blake2b_candidate* = (
 
 load_block = (words: Ptr<u64>, input: Ptr<u8>, count: usize) {
     Range(0, 16).loop((i) { words.write(i, 0); });
-    factor: u64 ::= 1;
+    factor :: u64 = 1;
     Range(0, count).loop((i) {
         (i % 8 == 0).then(() { factor = 1; });
         words.write(i / 8, words.read(i / 8) + input.read(i).to_u64() * factor);

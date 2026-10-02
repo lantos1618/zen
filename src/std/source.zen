@@ -21,8 +21,8 @@ Pos* = {
     // including columns beyond the line and lines beyond the final newline.
     offset_in* = (self: @Self, text: str) Res<usize> {
         (self.line > 0 && self.col > 0).ensure().try();
-        at: usize   ::= 0;
-        line: usize ::= 1;
+        at   :: usize = 0;
+        line :: usize = 1;
         loop(() { line < self.line }, (h) {
             end = text.newline_in(at, text.len);
             (end < text.len).ensure().try();

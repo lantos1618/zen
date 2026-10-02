@@ -138,7 +138,7 @@ Assembly = {
     layout_frame = (self :: @Self, function: Func) usize {
         self.offsets.clear();
         self.save_offsets.clear();
-        cursor: usize ::= 8;
+        cursor :: usize = 8;
         self.result_offset = cursor;
         self.plan.saved.loop((_) {
             cursor = cursor + 8;
@@ -1265,7 +1265,7 @@ Assembly = {
                 ).try();
             },
             false => {
-                at: usize ::= 0;
+                at :: usize = 0;
                 loop(() { at < size }, (h) {
                     step: usize = (at + 8 <= size).match({ true => 8, false => 1 });
                     self.out.fmt("    mov{} ", suffix(step)).try();
@@ -1579,8 +1579,8 @@ Assembly = {
     // through %rcx (base) and %rdx (index).
     locate = (self :: @Self, address: Address, offset: usize) Res<Place, AllocError> {
         displacement ::= address.displacement;
-        below: usize ::= 0;
-        base: usize  ::= 1;
+        below        :: usize = 0;
+        base         :: usize = 1;
         self.operand(address.base).match({
             Reg(n)    => { base = n; },
             Addr(off) => {

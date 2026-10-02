@@ -370,8 +370,8 @@ ordered* = (alloc: Alloc, function: Func) Res<Func, AllocError> {
         ).try();
     });
     Range(0, count).loop((b) {
-        at           ::= b;
-        steps: usize ::= 0;
+        at    ::= b;
+        steps :: usize = 0;
         loop(() { forward.get(at).value_or(at) != at && steps < count }, (h) {
             at    = forward.get(at).value_or(at);
             steps = steps + 1;
@@ -620,8 +620,8 @@ Tables = {
         });
         // `link.no` is where every other value goes.
         fallback = link.no;
-        low: i64  ::= 0;
-        high: i64 ::= 0;
+        low  :: i64 = 0;
+        high :: i64 = 0;
         keys.loop((h, i, k) {
             (i == 0 || k < low).then(() { low = k; });
             (i == 0 || k > high).then(() { high = k; });
@@ -874,8 +874,8 @@ reachable_only* = (alloc: Alloc, function: Func) Res<Func, AllocError> {
         });
     });
     // Renumber the survivors in their existing order.
-    position    ::= zeros(alloc, function.blocks.len).try();
-    kept: usize ::= 0;
+    position ::= zeros(alloc, function.blocks.len).try();
+    kept     :: usize = 0;
     seen.loop((h, b, live) {
         live.then(() {
             position.set(b, kept);
@@ -922,8 +922,8 @@ inlinable = (
 ) bool {
     functions.get(callee).match({
         Ok(f) => {
-            size: usize ::= 0;
-            leaf        ::= true;
+            size :: usize = 0;
+            leaf ::= true;
             f.blocks.loop((block) {
                 size = size + block.code.len;
                 block.code.loop((instruction) {
@@ -947,8 +947,8 @@ inline_calls = (alloc: Alloc, functions: Vec<Func>, index: usize, entry: usize)
         blocks.add(block).try();
         follow.add(NONE).try();
     });
-    changed  ::= false;
-    b: usize ::= 0;
+    changed ::= false;
+    b       :: usize = 0;
     loop(() { b < blocks.len }, (h) {
         block = blocks.get(b).value_or(BasicBlock(code: alloc.Vec<Instruction>(), exit: Terminator.Jump(b)));
         site ::= NONE;

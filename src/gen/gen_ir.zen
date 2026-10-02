@@ -8,11 +8,13 @@
 // access, system calls, JavaScript host calls and traps. A renderer that
 // implements only part of it declares that part through `supports`
 // (gen_ir_feature) or refuses it before rendering; there is no second IR.
-Vec = std.collections
+Vec, OutOfBounds = std.collections
 str = std.text
 Span = std.source
 Sys, SysConstant = gen.gen_sys
 MachineCall = gen.gen_ir_machine
+Res, None = std.core
+Ptr = std.mem
 
 // Size and alignment of an aggregate slot, in bytes.
 Layout* = { size*: usize, align*: usize }

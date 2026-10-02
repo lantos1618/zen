@@ -12,7 +12,7 @@
 // instruction and the value that instruction writes never overlap.
 Alloc, AllocError = std.mem
 Vec = std.collections
-Range = std.core
+Res, Ok, None, loop, Range = std.core
 Func, Instruction, Terminator, Scalar, Op, UnaryOp = gen.gen_ir
 word = gen.gen_ir
 

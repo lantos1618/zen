@@ -3,7 +3,7 @@
 str, String = std.text
 Vec = std.collections
 Alloc, AllocError = std.mem
-Range = std.core
+Res, Ok, Range = std.core
 Pos, Span = std.source
 module_index_of = std.ast.ast_named
 Checker = sema.sema_check

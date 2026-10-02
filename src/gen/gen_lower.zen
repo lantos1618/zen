@@ -20,6 +20,7 @@ Alloc = std.mem
 Checker = sema.sema
 Program = gen.gen_ir
 lower_native = gen.gen_lower_core
+Res = std.core
 
 // Lower the program whose `main` is in module `entry`.
 lower* = (

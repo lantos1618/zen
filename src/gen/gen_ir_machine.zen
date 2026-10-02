@@ -10,6 +10,7 @@
 Vec = std.collections
 str = std.text
 Span = std.source
+Res, Ok, None = std.core
 
 MachineOp* = MulWide
     | AddCarry

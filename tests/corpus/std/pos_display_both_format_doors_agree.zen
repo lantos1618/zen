@@ -13,7 +13,10 @@
 // half drives the REAL lexer over a real stray byte.
 scan, Source, message = std.lex.lex
 Pos = std.source
-Console = std.env
+Env, Console = std.env
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+println = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

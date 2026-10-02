@@ -3,6 +3,10 @@
 Vec = std.collections
 str, String = std.text
 Command, command, Spec, Kind, Matches = std.cli
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+Env = std.env
+println, print = std.io
 
 Id = Verbose | Quiet | Jobs | Mode | Input | Define
 

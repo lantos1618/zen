@@ -3,6 +3,8 @@
 //
 // position: the expression the operator applies to.
 
+println = std.io
+
 main = () i32 {
     r: f32 = 2.0;
     area   = (r ^ 2) * 3.14;

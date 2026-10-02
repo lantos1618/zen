@@ -1,4 +1,4 @@
-Res, Ok, loop, Range = std.core
+Res, Ok, loop, Range, Seq = std.core
 AllocError = std.mem
 Env = std.env
 println = std.io

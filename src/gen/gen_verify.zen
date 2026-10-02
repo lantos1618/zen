@@ -5,7 +5,7 @@
 // predecessors until stable, so a backedge cannot invent an initial value.
 Alloc = std.mem
 Vec = std.collections
-Res, Ok, Err, loop, Range = std.core
+Res, Ok, Err, None, loop, Range = std.core
 str = std.text
 Program, Func, Scalar, Instruction, Terminator, Op, Marshal = gen.gen_ir
 Guards, TagGuard, PayloadRead, Binary = gen.gen_ir

@@ -9,8 +9,8 @@
 Alloc, AllocError = std.mem
 str, String = std.text
 Vec, Map = std.collections
-Range, Path = std.core
-FsError, fs_message = std.env
+Res, Ok, None, loop, Range, Path = std.core
+Env, FsError, fs_message = std.env
 
 Ast = std.ast.ast_arena
 Module, Alias, Named = std.ast.ast_node

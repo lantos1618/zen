@@ -1,6 +1,11 @@
 // Thirty-two threads start before any is joined; each answers from its own
 // captured index. Joining them in spawn order collects every answer.
 
+Res, Ok, loop = std.core
+AllocError = std.mem
+Env, Thread, ThreadError = std.env
+println = std.io
+
 Error = ThreadError | AllocError
 
 main = (env: Env) Res<i32, Error> {

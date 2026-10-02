@@ -1,3 +1,8 @@
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // BLAKE2b throughput: zen-crypto's blake2b.zen, unchanged, built with the C
 // backend and the native asm backend. Hashes a 1 MiB buffer `rounds` times
 // (argument, default 64), chaining each digest into the next input, and

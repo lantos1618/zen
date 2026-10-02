@@ -10,7 +10,7 @@ Token, TokenKind, Source, Lexed, is_trivia, empty_eof = std.parse.parse_token
 text_block_literal = std.lex.lex
 Literal, LiteralKind = std.ast.ast_node
 Diag, diag, diag_at, truncated = std.parse.parse_diag
-Res, Ok, loop, Range = std.core
+Res, Ok, None, loop, Range = std.core
 Vec = std.collections
 
 // Nesting limit for the recursive grammar. Binary spines are iterative and do

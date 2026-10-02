@@ -4,7 +4,7 @@ Import, Impl, Enum, Alias = std.ast
 Alloc, AllocError, Ptr = std.mem
 Vec, Map = std.collections
 str, String = std.text
-Range, Eq, Hash = std.core
+Res, Ok, None, Range, Eq, Hash = std.core
 DeclId, ImplId = sema.sema_id
 is_prim = sema.sema_ty
 

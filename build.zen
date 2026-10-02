@@ -1,6 +1,6 @@
 // The compiler builds itself through the same project graph as user programs.
 Builder, BuildError = std.build
-Res, Ok = std.core
+Res, Ok, Path = std.core
 
 build = (b :: Builder) Res<(), BuildError> {
     b.exe("zen", {

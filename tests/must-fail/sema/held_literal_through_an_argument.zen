@@ -1,3 +1,5 @@
+println = std.io
+
 // A held number passed as an argument is checked against the parameter.
 take = (v: u8) { println("{}", v); }
 

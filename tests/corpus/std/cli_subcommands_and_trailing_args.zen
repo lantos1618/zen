@@ -4,6 +4,10 @@
 Vec = std.collections
 str = std.text
 Command, command, Spec, Matches = std.cli
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+Env = std.env
+println, print = std.io
 
 Tool = Verbose | Deploy | Status
 Deploy = DryRun | Name

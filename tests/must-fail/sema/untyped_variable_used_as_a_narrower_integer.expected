@@ -1,2 +1,2 @@
 `n` is wanted as `u8`: declare it with that type, such as `n :: u8 = …`
-7:13
+9:13

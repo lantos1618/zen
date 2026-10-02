@@ -5,6 +5,9 @@
 // A bare call with no import is must-fail/sema/a_bare_call_needs_its_import.
 
 Box, describe = box.box
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
 
 main = (env: Env) Res<i32, IoError> {
     b = Box(label: 3);

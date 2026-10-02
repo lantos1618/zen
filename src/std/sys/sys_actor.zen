@@ -21,7 +21,7 @@
 // Lock order: the registry lock before an actor's lock.
 
 Ptr, null_ptr = std.mem
-Range = std.core
+loop, Range = std.core
 MAX_MESSAGES, MAX_MESSAGE_BYTES, CACHE_BYTES, CACHE_BLOCK, CACHE_COUNT = std.actor.actor_limits
 Pages, process_block, call_entry, pointer_at, address_of, nanosleep_ns = std.sys
 atomic_load_u32, atomic_store_u32, atomic_cas_u32, atomic_store_usize = std.sys

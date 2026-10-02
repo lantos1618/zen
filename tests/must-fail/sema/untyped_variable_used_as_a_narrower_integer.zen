@@ -1,3 +1,5 @@
+println = std.io
+
 // A `::=` binding of a number with no written type is an i64 whose value
 // changes at run time, so no use can prove it fits a narrower integer type:
 // 250 + 10 would wrap to 4 in a u8. The binding has to say its type.

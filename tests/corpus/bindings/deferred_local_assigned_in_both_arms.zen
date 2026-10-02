@@ -2,6 +2,8 @@
 // read must assign it first; here both arms of the match do, so the read
 // after the match is accepted, and the later reassignment is a plain write.
 
+println = std.io
+
 label = (n: i32) str {
     word :: str;
     (n % 2 == 0).match({

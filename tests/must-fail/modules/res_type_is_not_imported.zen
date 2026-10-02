@@ -2,7 +2,7 @@
 // writes it still imports it.
 //
 // position: the `Res` of the return type.
-Ok = std.core
+Res, Ok = std.core
 
 one = () Res<i32> { Ok(1) }
 

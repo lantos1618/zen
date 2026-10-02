@@ -13,6 +13,7 @@
 // needs to know what else may read or write the slot.
 Alloc, AllocError = std.mem
 str, String = std.text
+Res, Ok, None = std.core
 
 Dialect* = Att | Arm
 

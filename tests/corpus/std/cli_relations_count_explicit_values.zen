@@ -3,6 +3,10 @@
 
 Vec = std.collections
 Command, command, Spec, Matches = std.cli
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+Env = std.env
+println = std.io
 
 Id = Mode | Json | Upload | Output | Home
 

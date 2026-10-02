@@ -15,7 +15,7 @@ storage_seat_name, LocalImpl, local_impls, prim_named = sema.sema_supply
 Cand, TBound, is_tvar = sema.sema_cand
 Inst, module_name, subst, inst_of_named = sema.sema_inst
 res_sugar = sema.sema_denote
-Res, Ok = std.core
+Res, Ok, None = std.core
 
 check_impl* = (c :: Checker, id: ImplId, mi: usize) Res<(), AllocError> {
     c.world.impl_at(c.tree, id).match({

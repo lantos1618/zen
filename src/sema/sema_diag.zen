@@ -2,6 +2,7 @@ Span = std.source
 str, String = std.text
 AllocError = std.mem
 TyId, Types = sema.sema_ty
+Res, Ok = std.core
 
 // Something the program named, or failed to.
 NameFault* = { name*: str }

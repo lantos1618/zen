@@ -3,6 +3,8 @@
 //
 // position: the write.
 
+println = std.io
+
 apply = (f: () ()) { f(); }
 
 main = () i32 {

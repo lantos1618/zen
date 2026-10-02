@@ -8,6 +8,12 @@
 //
 // position: the call.
 
+Res = std.core
+AllocError = std.mem
+parse_i32 = std.text
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     n = parse_i32("12").value_or(0);
     println("{}", n);

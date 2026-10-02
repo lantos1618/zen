@@ -1,3 +1,6 @@
+Range = std.core
+println = std.io
+
 // A range's values have its bounds' type, and literal bounds with nothing
 // else to go on are i32, the literal default: this fold is i32 arithmetic
 // all the way through, with no conversion written.

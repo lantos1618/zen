@@ -3,6 +3,8 @@
 //
 // position: the write.
 
+println = std.io
+
 main = () i32 {
     x = 1;
     true.then(() { x = 2; });

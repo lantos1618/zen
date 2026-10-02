@@ -7,7 +7,7 @@
 
 Alloc, AllocError = std.mem
 str, String = std.text
-Hasher, Range = std.core
+Res, Ok, Range, Hasher = std.core
 
 Inputs* = {
     paths* :: String,

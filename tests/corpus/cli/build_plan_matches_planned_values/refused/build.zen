@@ -1,4 +1,5 @@
 Builder, BuildError, Optimize = std.build
+Res, Ok, Path = std.core
 
 pick = () Optimize { Optimize.Size }
 

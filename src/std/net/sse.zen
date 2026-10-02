@@ -6,7 +6,7 @@ Alloc, AllocError = std.mem
 str, String, SplitPair = std.text
 BOM_FIRST, BOM_SECOND, BOM_THIRD = std.text.text_utf8
 Vec = std.collections
-Seq = std.core
+Res, Ok, Seq = std.core
 
 SseMessage* = {
     data*: str,

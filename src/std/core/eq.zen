@@ -1,4 +1,4 @@
-Range = std.core
+Range, Seq = std.core
 
 Eq* = {
     // Implement equality; ne is derived so the two cannot disagree.

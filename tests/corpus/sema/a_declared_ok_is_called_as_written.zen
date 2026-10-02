@@ -8,6 +8,11 @@
 // impossible to write, is must-fail/sema/a_declared_ok_shadows_the_constructor;
 // an imported `Ok` is corpus/modules/an_imported_ok_is_called_as_written.
 
+Res = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Ok = (x: i32) i32 { x + 1 }
 
 Mode = Auto | None

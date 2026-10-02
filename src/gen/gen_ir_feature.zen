@@ -5,6 +5,8 @@
 // published. docs/IR_ARCHITECTURE.md §2.3 is the design.
 str = std.text
 Program, Func, Scalar, Instruction, Terminator, Op = gen.gen_ir
+Res, Ok, None = std.core
+Threads = std.env
 
 IrFeature* = WideInt
     | Float

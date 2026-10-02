@@ -9,7 +9,7 @@ LexFault = std.lex.lex_diag
 is_escape, escape_value = std.lex.lex_byte
 Alloc, AllocError = std.mem
 str, String = std.text
-Range = std.core
+Res, Ok, loop, Range = std.core
 
 LiteralError* = OutOfMemory | IncompleteEscape(usize) | UnknownEscape(usize)
 

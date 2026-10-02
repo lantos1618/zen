@@ -1,4 +1,4 @@
-Res, Ok, ToU64, ToI64, LoopHandle, Range = std.core
+Res, Ok, ToU64, ToI64, LoopHandle, Range, Seq = std.core
 AllocError = std.mem
 Env = std.env
 println = std.io

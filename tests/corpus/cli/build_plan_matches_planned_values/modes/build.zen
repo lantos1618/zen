@@ -1,4 +1,5 @@
 Builder, BuildError, Mode, Optimize, Cc = std.build
+Res, Ok, Path = std.core
 
 build = (b :: Builder) Res<(), BuildError> {
     flags = b.os.match({

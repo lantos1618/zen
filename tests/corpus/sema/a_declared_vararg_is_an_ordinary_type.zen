@@ -3,6 +3,11 @@
 // ordinary generic struct: it may sit in any parameter position and is
 // passed as one value, not spread from a run of arguments.
 
+Res = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 vararg<T> = { first: T, count: i32 }
 
 total = (pack: vararg<i32>, extra: i32) i32 { pack.first * pack.count + extra }

@@ -4,6 +4,7 @@
 // children, and exclude leading trivia and following separators. Statement
 // spans include their semicolon.
 Pos, Span = std.source
+Vec = std.collections
 
 // Blank represents one or more blank lines between source nodes.
 TriviaKind* = LineComment | BlockComment | Blank

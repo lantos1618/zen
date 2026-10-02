@@ -5,6 +5,10 @@
 //
 // position: the closure's tail.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+
 Full* = | Full
 
 push = (n: i32) Res<(), Full> {

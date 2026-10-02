@@ -1,3 +1,8 @@
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println, print = std.io
+
 // find, map, filter and is_in take any Seq; a Range is a Seq of its own
 // values in its own type.
 main = (env: Env) Res<i32, AllocError> {

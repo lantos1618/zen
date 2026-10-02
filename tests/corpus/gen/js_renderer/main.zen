@@ -5,6 +5,11 @@ Program, Func, Instruction, Const, Unary, UnaryOp, Binary, Op, Scalar = gen.gen_
 BasicBlock, Terminator = gen.gen_ir
 emit_js = gen.gen_js
 Span, Pos = std.source
+Res, Ok, Range = std.core
+Alloc, AllocError = std.mem
+Vec = std.collections
+Env = std.env
+println = std.io
 
 location = () Span {
     Span(

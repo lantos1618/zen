@@ -3,6 +3,8 @@
 //
 // position: the read after the match.
 
+println = std.io
+
 main = () i32 {
     flag = true;
     size :: i32;

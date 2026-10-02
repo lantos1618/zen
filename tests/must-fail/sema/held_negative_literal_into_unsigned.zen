@@ -1,3 +1,5 @@
+println = std.io
+
 // A negative number held by an untyped binding does not fit an unsigned use.
 main = () i32 {
     neg = -1;

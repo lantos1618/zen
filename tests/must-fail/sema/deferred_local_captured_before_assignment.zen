@@ -3,6 +3,9 @@
 //
 // position: the name inside the closure.
 
+Range = std.core
+println = std.io
+
 main = () i32 {
     limit :: i32;
     Range(0, 3).loop((i) { println("{}", limit); });

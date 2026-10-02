@@ -1,3 +1,8 @@
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // A literal bound takes the type of the typed one, so a range up to a usize
 // length walks usize positions and indexes with them directly.
 main = (env: Env) Res<i32, AllocError> {

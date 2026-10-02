@@ -4,6 +4,8 @@
 //
 // position: the second assignment's target.
 
+println = std.io
+
 main = () i32 {
     name: str;
     name = "first";

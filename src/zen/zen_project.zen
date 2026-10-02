@@ -3,7 +3,7 @@
 
 Alloc, AllocError = std.mem
 str, String = std.text
-Res, Ok, Err, None, loop, Range, Path, join_path = std.core
+Res, Ok, Err, None, loop, Range, Path, join_path, Duration = std.core
 Map, Vec = std.collections
 
 BuildArgs, ProjectArgs, Emission, Target, Os, Arch, Abi, Dep, Codegen = std.build

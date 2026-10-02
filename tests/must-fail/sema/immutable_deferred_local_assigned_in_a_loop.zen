@@ -3,6 +3,8 @@
 //
 // position: the assignment inside the loop body.
 
+Range = std.core
+
 main = () i32 {
     last: i32;
     Range(0, 3).loop((i) { last = i; });

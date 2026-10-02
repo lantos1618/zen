@@ -1,3 +1,8 @@
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // ChaCha20-Poly1305 throughput: zen-crypto's chacha20poly1305.zen, unchanged,
 // built with the C backend and the native asm backend. Seals a 1 MiB buffer
 // `rounds` times (argument, default 64), feeding each tag back into the

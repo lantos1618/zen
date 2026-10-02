@@ -3,6 +3,8 @@
 //
 // position: the callee.
 
+println = std.io
+
 main = () i32 {
     println("x = {}", 1);
     0

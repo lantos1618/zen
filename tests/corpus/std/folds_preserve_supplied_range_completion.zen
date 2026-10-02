@@ -1,4 +1,4 @@
-Res, Ok, Range = std.core
+Res, Ok, Range, Seq = std.core
 AllocError = std.mem
 Vec = std.collections
 Env = std.env

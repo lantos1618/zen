@@ -3,6 +3,7 @@
 Alloc, AllocError, Ptr, null_ptr = std.mem
 Range = std.core.range
 Seq = std.core.seq
+Res, Ok, None, loop = std.core
 
 // An index at or past `len`, named so a caller can propagate the miss
 // honestly instead of borrowing an unrelated error such as OutOfMemory.

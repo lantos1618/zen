@@ -6,7 +6,7 @@
 Alloc, AllocError = std.mem
 Vec, Map = std.collections
 String, str = std.text
-Range = std.core
+Res, Ok, Err, None, loop, Range = std.core
 fmt_at = std.text.text_fmt
 decode_literal = std.lex
 Ast, ExprId, BlockId, TypeId, Function, Literal, Call, Arg, Param = std.ast
@@ -89,7 +89,13 @@ named_call = (
 ) Res<Value, LowerError> {
     selected = lo.check.checked_call(id);
     lo.printer_at(id, name).match({
-        Ok(how) => lo.print_call(c.args, 0, how.match({ Line => true, Bare => false }), Stream.Out, span),
+        Ok(how) => lo.print_call(
+            c.args,
+            0,
+            how.match({ Line => true, Bare => false }),
+            Stream.Out,
+            span
+        ),
         None    => selected.match({
             Ok(checked) => checked.declaration.match({
                 Ok(_) => lo.checked_invoke(id, c, checked, None, span),

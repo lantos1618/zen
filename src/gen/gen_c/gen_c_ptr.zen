@@ -16,7 +16,7 @@ write_qname = gen.gen_c.gen_c_layout
 expr = gen.gen_c.gen_c_expr
 Dest, deliver = gen.gen_c.gen_c_stmt
 init_temp = gen.gen_c.gen_c_flow
-Range = std.core
+Res, Ok, None, Range = std.core
 GenFault = gen.gen_diag
 
 // recognising

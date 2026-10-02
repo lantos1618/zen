@@ -20,7 +20,7 @@
 // arguments never sit in the registers the call is loaded through.
 Alloc, AllocError = std.mem
 Vec = std.collections
-Range = std.core
+Res, Ok, None, loop, Range = std.core
 Func, BasicBlock, Instruction, Terminator, Scalar, same, signed = gen.gen_ir
 Move, Unary, Binary, Invocation, Print, Convert, Load, Store, CopyMem = gen.gen_ir
 Write, SysCall, Pages, Branch, Op, Const = gen.gen_ir

@@ -2,7 +2,7 @@
 // positions. Out-of-range positions clamp to valid line boundaries.
 
 str = std.text
-Range = std.core
+loop, Range = std.core
 Pos, Span = std.source
 codepoint_at, UTF8_MIN_4 = std.text.text_utf8
 

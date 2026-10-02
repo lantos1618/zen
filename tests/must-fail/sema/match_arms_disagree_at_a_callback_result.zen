@@ -10,6 +10,11 @@
 //
 // position: the arm whose type disagrees with the arm above it.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     k = 2;
     r = (k == 2).match({

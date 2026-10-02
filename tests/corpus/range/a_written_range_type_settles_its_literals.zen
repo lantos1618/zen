@@ -1,3 +1,6 @@
+Range = std.core
+println, print = std.io
+
 // A binding's written type settles bounds that are all literals, exactly as
 // written type arguments do. The two spellings are one type.
 show = (r: Range<i32>) {

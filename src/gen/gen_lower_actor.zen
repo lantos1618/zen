@@ -23,7 +23,7 @@
 
 Vec = std.collections
 String, str = std.text
-Range = std.core
+Res, Ok, None, Range = std.core
 ExprId, Call = std.ast
 Span, nowhere = std.source
 TyId, Def, DeclId, CheckedCall = sema.sema

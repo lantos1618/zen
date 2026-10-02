@@ -1,2 +1,2 @@
 cannot write through an immutable binding: x is declared `:`
-10:16
+12:16

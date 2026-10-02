@@ -3,6 +3,7 @@
 
 Ptr = std.mem
 Seq = std.core.seq
+Res, Ok, None = std.core
 
 vararg*<T> = {
     data: Ptr<T>,

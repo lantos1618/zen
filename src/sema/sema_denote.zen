@@ -14,6 +14,7 @@ Inst, push_tparams, module_name, tparam_vars, zip = sema.sema_inst
 TBound = sema.sema_cand
 inst_bounds_hold = sema.sema_bound
 missing_import, require_bound = sema.sema_import
+Res, Ok, None, Range = std.core
 
 type_from_ast* = (c :: Checker, id: TypeId, ctx: Ctx)
                  Res<TyId, AllocError> {

@@ -4,6 +4,11 @@
 // sends that work makes, before it stops the workers. Only the last hop
 // prints, so the output does not depend on scheduling.
 
+Res, Ok, None, loop = std.core
+Env = std.env
+Actor, Ref, ActorError, ActorStartError, Context = std.actor
+println = std.io
+
 Node = {
     index: u64,
     next :: Res<Ref<Node>> = None,

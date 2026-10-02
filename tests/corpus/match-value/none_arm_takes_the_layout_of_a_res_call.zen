@@ -6,6 +6,11 @@
 // ("instruction types do not agree"). The match takes the type the function
 // result wants, and each case below reads back as the arm that made it.
 
+Res, Ok, None = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 lookup = (x: i32) Res<str> {
     (x > 0).match({ true => Ok("positive"), false => None })
 }

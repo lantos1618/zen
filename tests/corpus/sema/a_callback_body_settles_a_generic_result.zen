@@ -17,6 +17,11 @@
 // beside `()`) is written for its effects: its value is unit, so the
 // outer `when_ok` is `Res<()>`, not the first arm's `Res<Res<()>>`.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 pick = (k: i32) Res<i32> {
     n: i32 = k * 7;
     (k == 3).match({

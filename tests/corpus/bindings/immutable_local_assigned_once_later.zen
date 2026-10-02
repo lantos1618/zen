@@ -2,6 +2,8 @@
 // on every path before any read. After it the local is as fixed as
 // `name: T = value` would have made it.
 
+println = std.io
+
 pick = (big: bool) i64 {
     limit: i64;
     big.match({

@@ -3,6 +3,8 @@
 //
 // position: the `Vec` of the parameter type.
 
+Vec = std.collections
+
 len_of = (v: Vec<i32>) usize { v.len }
 
 main = () i32 { 0 }

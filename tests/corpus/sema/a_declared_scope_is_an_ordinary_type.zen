@@ -2,6 +2,11 @@
 // enclosing block's record. A module's own `Scope` is an ordinary struct and
 // keeps its fields.
 
+Res = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Scope = { depth: i32, label: str }
 
 describe = (s: Scope) i32 { s.depth * 10 }

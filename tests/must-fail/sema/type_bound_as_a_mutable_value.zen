@@ -3,6 +3,8 @@
 //
 // position: the type name.
 
+println = std.io
+
 Foo = { x :: i32 = 0 }
 
 main = () i32 {

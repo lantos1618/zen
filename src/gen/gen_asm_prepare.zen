@@ -14,7 +14,7 @@
 Alloc, AllocError = std.mem
 Vec = std.collections
 String, str = std.text
-Range = std.core
+Res, Ok, None, loop, Range = std.core
 Program, Func, BasicBlock, Instruction, Terminator, Scalar, Op = gen.gen_ir
 Const, Move, Unary, Binary, Invocation, Print, Convert, Address, Load, Store = gen.gen_ir
 same = gen.gen_ir

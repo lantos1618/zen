@@ -1,3 +1,5 @@
+println = std.io
+
 // A multi-line string's text runs from the line after the opening `"""` to
 // the line before the closing `"""`: neither of those line breaks is text,
 // so two lines of text hold exactly one `\n`.

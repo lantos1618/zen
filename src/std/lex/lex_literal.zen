@@ -15,8 +15,8 @@ LiteralError* = OutOfMemory | IncompleteEscape(usize) | UnknownEscape(usize)
 // Byte length of an unquoted, lexer-validated literal body or format fragment.
 // Each Zen escape denotes one byte; counting needs no decoded allocation.
 literal_byte_len* = (raw: str) usize {
-    count: usize ::= 0;
-    at: usize    ::= 0;
+    count :: usize = 0;
+    at    :: usize = 0;
     loop(() { at < raw.len }, (h) {
         count = count + 1;
         at    = at + (raw[at] == '\\').match({ true => 2, false => 1 });
@@ -33,7 +33,7 @@ decode_literal* = (raw: str, a: Alloc) Res<str, LiteralError> {
         Ok(first) => {
             out ::= a.String().try(LiteralError.OutOfMemory);
             out.add(raw.slice(0, first)).try(LiteralError.OutOfMemory);
-            at: usize ::= first;
+            at :: usize = first;
             loop(() { at < raw.len }, (h) {
                 byte ::= raw[at];
                 (byte == '\\').then(() {

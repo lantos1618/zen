@@ -1,0 +1,11 @@
+// `bool.then` runs a closure that captures the local, and a capture of an
+// immutable local cannot write it.
+//
+// position: the write.
+
+main = () i32 {
+    x = 1;
+    true.then(() { x = 2; });
+    println("{}", x);
+    0
+}

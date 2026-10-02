@@ -64,9 +64,9 @@ main = (env: Env) Res<i32, AllocError> {
     probe = fresh();
     home  = slot(probe);
     probe.release();
-    last: u32  ::= generation(probe);
-    moved      ::= false;
-    tries: u32 ::= 0;
+    last  :: u32 = generation(probe);
+    moved ::= false;
+    tries :: u32 = 0;
     loop(() { !moved && tries < 5000 }, (h) {
         next = fresh();
         (slot(next) == home).match({

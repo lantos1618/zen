@@ -7,7 +7,7 @@ Alloc, AllocError = std.mem
 Vec, Map = std.collections
 str, String = std.text
 Range = std.core
-Function, BlockId, ExprId, Call, Bind = std.ast
+Function, BlockId, ExprId, Call, Bind, Deferred = std.ast
 tail_expr = sema.sema_hoist
 is_construction = sema.sema_scope
 decl_at = sema.sema_def
@@ -112,7 +112,7 @@ solve = (effects :: StoreEffects, c: Checker) Res<(), AllocError> {
             },
         });
     });
-    cursor: usize ::= 0;
+    cursor :: usize = 0;
     loop(() { cursor < work.len }, (h) {
         body   = work.get(cursor).ok_or(AllocError.OutOfMemory).try();
         cursor = cursor + 1;
@@ -470,6 +470,19 @@ returned.sources.loop((source) {
         Ok(())
     }
 
+    // A deferred local starts with no origins; each assignment joins its own.
+    deferred = (self :: @Self, d: Deferred) Res<(), AllocError> {
+        self.check.tree.expr_at(d.target).kind.match({
+            Name(n) => self.vars.add(OriginBinding(
+                name: n.text,
+                origins: self.alloc.Vec<Source>(),
+                fields: self.alloc.Vec<Returned>(),
+                target: None
+            )),
+            _       => Ok(()),
+        })
+    }
+
     bind = (self :: @Self, bind: Bind) Res<(), AllocError> {
         sources = self.origins(bind.value);
         self.root(bind.target).when_ok((target) { self.add_store(target, self.local_path(bind.target).try(), sources).try(); });
@@ -744,9 +757,11 @@ StoreScan.impl(WalkVisitor, {
                 _        => (),
             }),
             Leave(node) => node.match({
-                Statement(s) => s.value.kind.match({ Bind(b) => self.bind(
-                    b
-                ).try(), _ => () }),
+                Statement(s) => s.value.kind.match({
+                    Bind(b)     => self.bind(b).try(),
+                    Deferred(d) => self.deferred(d).try(),
+                    _           => (),
+                }),
                 Expr(id)     => {
                     self.expression(id).try();
                     self.check.tree.expr_at(id).kind.match({

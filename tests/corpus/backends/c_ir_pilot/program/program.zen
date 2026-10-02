@@ -15,7 +15,7 @@ weighted = (
 unit = (value: ()) { print("unit:"); value }
 
 main = () i32 {
-    x: i32 ::= 1;
+    x :: i32 = 1;
     saved   = pair(x, true.match({ true => { x = 4; 3 }, false => 0 }));
     skipped = false && true.match({ true => { x = 9; true }, false => false });
     taken   = true || true.match({ true => { x = 10; false }, false => false });

@@ -1,0 +1,13 @@
+// `name: T;` is an immutable local whose one assignment comes later. A
+// second assignment on a path that already assigned it is refused; `::`
+// declares a local that may be assigned again.
+//
+// position: the second assignment's target.
+
+main = () i32 {
+    name: str;
+    name = "first";
+    name = "second";
+    println("{}", name);
+    0
+}

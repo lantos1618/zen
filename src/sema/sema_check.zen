@@ -23,12 +23,15 @@ owning_copy_unsafe, mailbox_payload_unsafe, mailbox_byte_buffer = sema.sema_copy
 
 // One scoped name. Mutability feeds receiver/ownership checks, param feeds LSP
 // classification, and span identifies the original binding in diagnostics.
+// `deferred` marks a local declared `x :: T;` or `x: T;`: its first
+// assignment is a write to it, never a second binding of the name.
 Binding* = {
     name*: str,
     ty*: TyId,
     mutable*: bool,
     param*: bool,
     span*: Span,
+    deferred*: bool,
 }
 
 // Binders for the active @meta field walk. Parameter spans distinguish the
@@ -452,7 +455,21 @@ Checker* = {
             ty: ty,
             mutable: mutable,
             param: param,
-            span: span
+            span: span,
+            deferred: false
+        ))
+    }
+
+    // A local declared without a value; see `Binding.deferred`.
+    bind_deferred* = (self :: @Self, name: str, ty: TyId, mutable: bool,
+                      span: Span) Res<(), AllocError> {
+        self.locals.add(Binding(
+            name: name,
+            ty: ty,
+            mutable: mutable,
+            param: false,
+            span: span,
+            deferred: true
         ))
     }
 
@@ -913,7 +930,14 @@ undecided_or = (f: ResForm, failure: bool) bool {
 
 // A type-parameter or bound binding: immutable, and written nowhere.
 Binding = (name: str, ty: TyId) Binding {
-    Binding(name: name, ty: ty, mutable: false, param: false, span: nowhere())
+    Binding(
+        name: name,
+        ty: ty,
+        mutable: false,
+        param: false,
+        span: nowhere(),
+        deferred: false
+    )
 }
 
 // The last binding of `name`: an inner scope shadows an outer one.

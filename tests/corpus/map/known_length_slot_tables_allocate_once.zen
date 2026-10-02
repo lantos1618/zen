@@ -25,9 +25,9 @@ main = (env: Env) Res<i32, AllocError> {
     calls.write(0, 0);
     a        = Counting(inner: arena, calls: calls);
     n: usize = 64;
-    sum: usize ::= 0;
-    values     ::= a.Vec<usize>();
-    index      ::= a.Map<Key, usize>();
+    sum    :: usize = 0;
+    values ::= a.Vec<usize>();
+    index  ::= a.Map<Key, usize>();
     Range(0, n).loop((i) {
         values.add(i * 3 + 7).try();
         index.set(Key(value: i), i).try();

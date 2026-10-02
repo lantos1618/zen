@@ -151,7 +151,7 @@ Server* = {
         size: Res<usize>   = named.match({ None => Ok(0), Ok(value) => request.array_size(value) });
         valid ::= size.match({ Ok(_) => true, None => false });
         count = size.value_or(0);
-        i: usize ::= 0;
+        i :: usize = 0;
         loop(() { valid && i < count }, (h) {
             request.item_at(roots, i).match({
                 None     => { valid = false; h.break(); },

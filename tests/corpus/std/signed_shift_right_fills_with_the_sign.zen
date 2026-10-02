@@ -55,7 +55,7 @@ main = () {
         tiny.shift_right(7),
         tiny.shift_right(8)
     );
-    calls: i32 ::= 0;
+    calls :: i32 = 0;
     shifted = once(calls, -64).shift_right(count_once(calls));
     println("once: {} {}", shifted, calls);
     println("free: {}", shift_right(minus, 1));

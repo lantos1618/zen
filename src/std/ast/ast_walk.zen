@@ -210,17 +210,21 @@ member = (walker :: Walker, m: MemberVisit) Res<(), AllocError> {
 
 statement = (walker :: Walker, s: StmtVisit) Res<(), AllocError> {
     s.value.kind.match({
-        Bind(b)   => {
+        Bind(b)     => {
             walker.node(WalkNode.Expr(b.target)).try();
             b.type.when_ok((ty) { walker.node(WalkNode.Type(ty)).try(); });
             walker.node(WalkNode.Expr(b.value)).try();
         },
-        Expr(e)   => walker.node(WalkNode.Expr(e.expr)).try(),
-        Decl(d)   => walker.node(WalkNode.Declaration(DeclVisit(
+        Deferred(d) => {
+            walker.node(WalkNode.Expr(d.target)).try();
+            walker.node(WalkNode.Type(d.type)).try();
+        },
+        Expr(e)     => walker.node(WalkNode.Expr(e.expr)).try(),
+        Decl(d)     => walker.node(WalkNode.Declaration(DeclVisit(
             site: DeclSite(parent: DeclParent.Block(s.block), index: s.index),
             value: d
         ))).try(),
-        Block(id) => walker.node(WalkNode.Block(id)).try(),
+        Block(id)   => walker.node(WalkNode.Block(id)).try(),
     });
     Ok(())
 }

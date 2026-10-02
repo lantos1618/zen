@@ -1,0 +1,13 @@
+// A local declared without a value that nothing assigns is refused even
+// when it is never read: the declaration says a value is coming.
+//
+// position: the declared name.
+
+Foo = {}
+
+main = () i32 {
+    {
+        abc :: Foo;
+    }
+    0
+}

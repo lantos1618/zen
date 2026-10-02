@@ -1,9 +1,9 @@
-Expr, ExprId, Bind, Access = std.ast
+Expr, ExprId, Bind, Deferred, Access = std.ast
 AllocError = std.mem
 str = std.text
 TyId, TyArray, literal_default = sema.sema_ty
 Checker, Ctx, Binding = sema.sema_check
-SemaFault, NameFault, PairFault = sema.sema_diag
+SemaFault, NameFault, PairFault, TypeValueFault = sema.sema_diag
 computed_member, writable_member = sema.sema_member
 check_literal = sema.sema_trap
 const_def = sema.sema_const
@@ -15,6 +15,7 @@ refuse_handle_value = sema.sema_handle
 
 bind_stmt* = (c :: Checker, b: Bind, ctx: Ctx) Res<TyId, AllocError> {
     got = c.type_of(b.value, ctx).try();
+    c.refuse_type_value(b.value, ctx).try();
     c.refuse_handle_value(b.value, got).try();
     want    = c.check_rebound(b).try().match({
         true  => c.types.unknown(),
@@ -24,6 +25,53 @@ bind_stmt* = (c :: Checker, b: Bind, ctx: Ctx) Res<TyId, AllocError> {
     c.check_assign(b, settled, want, ctx).try();
     c.refuse_bare_none(b, want).try();
     c.bind_target(b, want, ctx).try();
+    c.types.prim("()")
+}
+
+// `x = Foo;` binds a type where a value belongs. A type's name reaches
+// value position as a constructor or as a member's base, never alone, so
+// the binding is refused here rather than left to a backend with nothing to
+// lower.
+refuse_type_value = (c :: Checker, id: ExprId, ctx: Ctx) Res<(), AllocError> {
+    node = c.tree.expr_at(id);
+    node.kind.match({
+        Paren(p) => c.refuse_type_value(p.inner, ctx),
+        Name(n)  => c.lookup(n.text).match({
+            Ok(_) => Ok(()),
+            None  => c.world.first_def_of(ctx.module, n.text).try().match({
+                None  => Ok(()),
+                Ok(d) => d.kind.match({
+                    StructDef => c.refuse(
+                        node.span,
+                        SemaFault.TypeNotAValue(TypeValueFault(
+                            name: n.text,
+                            record: true
+                        ))
+                    ),
+                    EnumDef   => c.refuse(
+                        node.span,
+                        SemaFault.TypeNotAValue(TypeValueFault(
+                            name: n.text,
+                            record: false
+                        ))
+                    ),
+                    _         => Ok(()),
+                }),
+            }),
+        }),
+        _        => Ok(()),
+    })
+}
+
+// `x :: T;` and `x: T;` bind the name with its written type and no value.
+// sema_init proves each read follows an assignment on every path.
+deferred_stmt* = (c :: Checker, d: Deferred, ctx: Ctx) Res<TyId, AllocError> {
+    ty     = c.type_from_ast(d.type, ctx).try();
+    target = c.tree.expr_at(d.target);
+    target.kind.match({
+        Name(n) => c.bind_deferred(n.text, ty, d.mutable, target.span),
+        _       => Ok(()),
+    }).try();
     c.types.prim("()")
 }
 
@@ -92,10 +140,14 @@ rebound_of = (c :: Checker, b: Bind) Res<Binding> {
     })
 }
 
-// A mutable first binding is writable and therefore not a rebound fault.
+// A mutable first binding is writable and therefore not a rebound fault, and
+// a deferred one is waiting for exactly this write.
 settled_binding = (found: Res<Binding>) Res<Binding> {
     found.match({
-        Ok(old) => old.mutable.match({ true => None, false => Ok(old) }),
+        Ok(old) => (old.mutable || old.deferred).match({
+            true  => None,
+            false => Ok(old),
+        }),
         None    => None,
     })
 }
@@ -202,8 +254,24 @@ bind_name = (
 )
            Res<(), AllocError> {
     c.assign_binding(b).match({
-        Ok(_) => Ok(()),
-        None  => c.fresh_or_refused(b, name, target, ty, ctx),
+        Ok(old) => c.refuse_immutable_store(b, old, target),
+        None    => c.fresh_or_refused(b, name, target, ty, ctx),
+    })
+}
+
+// A write to an immutable local from a nested block, an arm, or a closure
+// that captures it is the same fault a field write through `:` is. The same
+// block already reports it as a rebinding, and a deferred local's one
+// assignment is sema_init's to check.
+refuse_immutable_store = (c :: Checker, b: Bind, old: Binding, target: Expr)
+                         Res<(), AllocError> {
+    same_block = c.rebound_of(b).match({ Ok(_) => true, None => false });
+    (old.mutable || old.deferred || same_block).match({
+        true  => Ok(()),
+        false => c.refuse(
+            target.span,
+            SemaFault.ImmutableWrite(NameFault(name: old.name))
+        ),
     })
 }
 

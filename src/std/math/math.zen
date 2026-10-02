@@ -4,14 +4,31 @@
 Native = c.bind("math.h", {
     cos* = (angle: f64) f64
     sin* = (angle: f64) f64
+    tan* = (angle: f64) f64
+    atan2* = (y: f64, x: f64) f64
     sqrt* = (value: f64) f64
+    pow* = (base: f64, exponent: f64) f64
+    exp* = (value: f64) f64
+    log* = (value: f64) f64
     log10* = (value: f64) f64
+    floor* = (value: f64) f64
+    ceil* = (value: f64) f64
     round* = (value: f64) f64
 })
 
 cos* = (angle: f64) f64 { Native.cos(angle) }
 sin* = (angle: f64) f64 { Native.sin(angle) }
+tan* = (angle: f64) f64 { Native.tan(angle) }
+// The angle of the point (x, y) from the positive x axis, in (-pi, pi].
+atan2* = (y: f64, x: f64) f64 { Native.atan2(y, x) }
 sqrt* = (value: f64) f64 { Native.sqrt(value) }
+// `^` is exclusive-or on unsigned integers; raising to a power is this call.
+pow* = (base: f64, exponent: f64) f64 { Native.pow(base, exponent) }
+exp* = (value: f64) f64 { Native.exp(value) }
+// Natural logarithm.
+log* = (value: f64) f64 { Native.log(value) }
 log10* = (value: f64) f64 { Native.log10(value) }
+floor* = (value: f64) f64 { Native.floor(value) }
+ceil* = (value: f64) f64 { Native.ceil(value) }
 // Halfway values round away from zero.
 round* = (value: f64) f64 { Native.round(value) }

@@ -12,7 +12,7 @@ main = (env: Env) Res<i32, AllocError> {
     c ::= check_standalone(a, "doc.zen", TEXT).try();
     println("diagnostics {}", c.diag_count());
     unknown = c.types.unknown().try();
-    next: u32 ::= 0;
+    next :: u32 = 0;
     Range(0, c.tree.type_ids()).loop((h, i) {
         id       = TypeId(index: next);
         next     = next + 1;

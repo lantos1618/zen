@@ -26,7 +26,7 @@ main = (env: Env) Res<i32, AllocError> {
     each(Cell(n: 21), (x) { println("{}", x.doubled()) });
 
     xs = [1, 2, 3, 4];
-    total: i32 ::= 0;
+    total :: i32 = 0;
     xs.loop((h, v) { total = total + v; });
     println("{}", total);
 

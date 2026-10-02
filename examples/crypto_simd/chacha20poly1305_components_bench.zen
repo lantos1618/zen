@@ -2,7 +2,7 @@ stream_xor, authenticate, initialize, poly_key = chacha20poly1305
 time = (env: Env, label: str, count: usize, run: () ()) {
     target: u64 = 300000000;
     start = env.clock.since_start().ns;
-    elapsed: u64 ::= 0; bytes: u64 ::= 0;
+    elapsed :: u64 = 0; bytes :: u64 = 0;
     (elapsed < target).loop((h) {
         Range(0, 64).loop((i) { run(); });
         bytes   = bytes + 64 * count.to_u64();

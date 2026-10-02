@@ -173,7 +173,7 @@ Matches*<T> = {
     }
 
     last* = (self: @Self, name: str) Res<Match<T>> {
-        found: Res<Match<T>> = None;
+        found :: Res<Match<T>> = None;
         Range(0, self.values.len).loop((h, i) {
             self.values.get(i).match({
                 Ok(value) => value.name.eq(name).then(() { found = Ok(value); }),
@@ -184,7 +184,7 @@ Matches*<T> = {
     }
 
     last_in* = (self: @Self, command: str, name: str) Res<Match<T>> {
-        found: Res<Match<T>> = None;
+        found :: Res<Match<T>> = None;
         Range(0, self.values.len).loop((h, i) {
             self.values.get(i).match({
                 Ok(value) => (value.name.eq(name) && value.command.eq(command))
@@ -537,7 +537,7 @@ Command*<T> = {
     }
 
     local_declaration_error = (self: @Self) Res<Diagnostic> {
-        found: Res<Diagnostic> = None;
+        found :: Res<Diagnostic> = None;
         (self.name.is_empty() || self.name.is_flag() || self.name.contains(' '))
             .then(() {
                 found = self.bad_declaration(
@@ -690,7 +690,7 @@ Command*<T> = {
 
     check_parameter_links = (self: @Self, parameter: Parameter<T>)
         Res<Diagnostic> {
-        found: Res<Diagnostic> = None;
+        found :: Res<Diagnostic> = None;
         (parameter.name.eq("--help")
             || parameter.name.eq("-h")
             || (!self.release.is_empty() && parameter.name.eq("--version"))
@@ -1060,7 +1060,7 @@ Parser<T> = {
 
     setting = (self :: @Self, located: Located<T>, value_type: ValueType)
         Res<(), AllocError> {
-        raw: Res<str> ::= located.inline;
+        raw :: Res<str> = located.inline;
         raw.match({
             Ok(_) => (),
             None  => (self.at < self.argv.len).match({
@@ -1148,7 +1148,7 @@ Parser<T> = {
 
     positional_parameter = (self: @Self) Res<Parameter<T>> {
         wanted ::= self.positional;
-        found: Res<Parameter<T>> = None;
+        found  :: Res<Parameter<T>> = None;
         Range(0, self.scope_parameters.len).loop((h, i) {
             self.scope_parameters.get(i).match({
                 None          => (),
@@ -1165,7 +1165,7 @@ Parser<T> = {
     }
 
     locate_option = (self: @Self, word: str) Res<Located<T>> {
-        found: Res<Located<T>> = None;
+        found :: Res<Located<T>> = None;
         Range(0, self.scope_parameters.len).loop((h, i) {
             self.scope_parameters.get(i).match({
                 None          => (),

@@ -10,8 +10,8 @@ inspect = (a: Alloc, name: str, source: str) Res<(), AllocError> {
     parser.tree.add_module(parsed).try();
     checker ::= a.Checker(parser.tree).try();
     checker.check_all().try();
-    declarations: usize ::= 0;
-    instances: usize    ::= 0;
+    declarations :: usize = 0;
+    instances    :: usize = 0;
     parser.tree.exprs_each((id, expr) {
         expr.kind.match({
             Call(_) => {

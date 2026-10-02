@@ -38,6 +38,29 @@ LendFault* = {
     field*: bool,
 }
 
+// A local declared without a value, used where some path has not assigned
+// it: how it was used ("read", "captured", "consumed"), and whether some
+// path to the use did assign it.
+InitFault* = {
+    name*: str,
+    verb*: str,
+    maybe*: bool,
+}
+
+// A local declared without a value that nothing ever assigns.
+UnsetFault* = {
+    name*: str,
+    ty*: TyId,
+    mutable*: bool,
+}
+
+// A type's name written where a value belongs; `record` when the type is
+// constructed with a call, rather than named through a variant.
+TypeValueFault* = {
+    name*: str,
+    record*: bool,
+}
+
 // Two conflicting declaration positions.
 PairFault* = {
     name*: str,
@@ -55,6 +78,7 @@ SemaFault* =
     | NoSuchField(TypeFault)           // the type has no member of that name
     | MemberNeedsValue(TypeFault)      // a union's member IS a type, so naming it alone writes no value
     | Rebound(PairFault)               // a second `=` binding of one name in one block
+    | TypeNotAValue(TypeValueFault)    // `x = Foo;` binds a type, not a value of it
 
     // types
     | TypeMismatch(TypeFault)          // expected X, found Y
@@ -139,6 +163,9 @@ SemaFault* =
 
     // ownership
     | ConsumedUse(NameFault)           // a place that was moved out of
+    | UnassignedUse(InitFault)         // a deferred local used before every path assigns it
+    | AssignedTwice(NameFault)         // an immutable deferred local assigned again
+    | NeverAssigned(UnsetFault)        // a deferred local no statement assigns
     | NeedsMutableReceiver(NameFault)  // a `::` method reached through `:`
     | ImmutableWrite(NameFault)        // a write through a `:` link of the path
     | SnapshottedReceiver(NameFault)   // a `::` argument call aliases a by-value receiver
@@ -196,6 +223,7 @@ message* = (fault: SemaFault) str {
         NoSuchField(_)               => "a member is resolved on the receiver's type, so a name declared on another type is not a candidate",
         MemberNeedsValue(_)          => "a union's member is the type it names, so the member alone is not a value",
         TypeMismatch(_)              => "type mismatch",
+        TypeNotAValue(_)             => "",
         ArmsDisagree(_)              => "match arms disagree: every arm produces the match's value, and nothing here decides which type that is",
         DiscardedValue(_)            => "discarded value",
         NotCallable(_)               => "this is not a function, so it cannot be called",
@@ -256,6 +284,9 @@ message* = (fault: SemaFault) str {
         NegativeArrayCount(_)        => "an array count cannot be negative: fixed-array lengths are zero or greater",
         ComptimeBudget(_)            => "comptime evaluation ran out of steps: the evaluator is budgeted so the build fails rather than hangs — docs/design_meta.md",
         ConsumedUse(_)               => "use after move:",
+        UnassignedUse(_)             => "",
+        AssignedTwice(_)             => "",
+        NeverAssigned(_)             => "",
         NeedsMutableReceiver(_)      => "the receiver is immutable:",
         ImmutableWrite(_)            => "cannot write through an immutable binding:",
         SnapshottedReceiver(_)       => "an argument call writes the place this call's by-value receiver was copied from:",
@@ -313,6 +344,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         CtorNamesConstant(f)         => out.write_ctor_constant(types, f),
         OrphanImpl(f)                => out.write_orphan(f),
         Rebound(f)                   => out.write_pair(f),
+        TypeNotAValue(f)             => out.write_type_value(f),
         ComputedFieldAssign(f)       => out.write_name(f),
         ComputedFieldAddress(f)      => out.write_name(f),
         InferredSetExported(f)       => out.write_name(f),
@@ -353,6 +385,9 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
             f,
             " was consumed, and a binding is dead from the move onwards"
         ),
+        UnassignedUse(f)             => out.write_unassigned(f),
+        AssignedTwice(f)             => out.write_assigned_twice(f),
+        NeverAssigned(f)             => out.write_never_assigned(types, f),
         NeedsMutableReceiver(f)      => out.write_place(
             f,
             " needs a mutable receiver, so every link from the binding to it must permit the write"
@@ -560,6 +595,61 @@ write_place = (out :: String, f: NameFault, tail: str) Res<(), AllocError> {
     Ok(());
 }
 
+// The faults below have no separate headline: the detail is the whole
+// sentence, with the local or type it names as its subject.
+
+write_assigned_twice = (out :: String, f: NameFault) Res<(), AllocError> {
+    out.fmt(
+        "`{}` may already hold a value here: a local declared `{}: T;` is assigned exactly once — declare it `{} :: T;` to assign it again",
+        f.name,
+        f.name,
+        f.name
+    )
+}
+
+write_type_value = (out :: String, f: TypeValueFault) Res<(), AllocError> {
+    f.record.match({
+        true  => out.fmt(
+            "`{}` is a type, not a value: construct it with `{}()`",
+            f.name,
+            f.name
+        ),
+        false => out.fmt(
+            "`{}` is a type, not a value: name one of its variants, `{}.Variant`",
+            f.name,
+            f.name
+        ),
+    })
+}
+
+write_never_assigned = (out :: String, types: Types, f: UnsetFault)
+                       Res<(), AllocError> {
+    ty ::= types.name_of(f.ty).try();
+    marker = f.mutable.match({ true => " ::", false => ":" });
+    out.fmt(
+        "`{}` is declared but never assigned: give it a value here (`{}{} {} = …`) or assign it before the block ends",
+        f.name,
+        f.name,
+        marker,
+        ty.view()
+    )
+}
+
+write_unassigned = (out :: String, f: InitFault) Res<(), AllocError> {
+    f.maybe.match({
+        false => out.fmt(
+            "`{}` is {} before it is assigned: no path to here assigns it",
+            f.name,
+            f.verb
+        ),
+        true  => out.fmt(
+            "`{}` is {} where it may not be assigned yet: not every path to here assigns it",
+            f.name,
+            f.verb
+        ),
+    })
+}
+
 // The secret the refused expression reads, when it names one directly.
 write_secret = (out :: String, f: NameFault) Res<(), AllocError> {
     (f.name.len > 0).then(() { out.fmt(" (`{}` is secret)", f.name).try() });
@@ -656,7 +746,8 @@ write_operator_types = (out :: String, types: Types, f: TypeFault)
     Ok(())
 }
 
-// A signed integer converts explicitly; a bool has logical operators.
+// A signed integer converts explicitly; a bool has logical operators; a float
+// under `^` was almost certainly meant as a power.
 write_bit_operand = (out :: String, types: Types, f: TypeFault)
                     Res<(), AllocError> {
     found ::= types.name_of(f.found).try();
@@ -664,14 +755,19 @@ write_bit_operand = (out :: String, types: Types, f: TypeFault)
     out.fmt(" — `{}` on `{}`", f.name, name).try();
     name.eq("bool").match({
         true  => out.add(": use `&&`, `||` or `!=` for bool"),
-        false => name.is_in(["i8", "i16", "i32", "i64"]).match({
-            true  => f.name.eq(">>").match({
-                true  => out.add(
-                    ": convert it to an unsigned type first, or call `shift_right` for the arithmetic shift"
-                ),
-                false => out.add(": convert it to an unsigned type first"),
+        false => (f.name.eq("^") && name.is_in(["f32", "f64"])).match({
+            true  => out.add(
+                ": `^` is exclusive-or, not a power — write `x * x`, or call `pow` from std.math"
+            ),
+            false => name.is_in(["i8", "i16", "i32", "i64"]).match({
+                true  => f.name.eq(">>").match({
+                    true  => out.add(
+                        ": convert it to an unsigned type first, or call `shift_right` for the arithmetic shift"
+                    ),
+                    false => out.add(": convert it to an unsigned type first"),
+                }),
+                false => Ok(()),
             }),
-            false => Ok(()),
         }),
     }).try();
     Ok(())
@@ -691,7 +787,14 @@ write_bit_widths = (out :: String, types: Types, f: TypeFault)
 }
 
 write_bit_untyped = (out :: String, f: TypeFault) Res<(), AllocError> {
-    out.fmt(" — `{}`", f.name)
+    out.fmt(" — `{}`", f.name).try();
+    f.name.eq("^").match({
+        true  => out.add(
+            ": `^` is exclusive-or, not a power; call `pow` from std.math for a power"
+        ),
+        false => Ok(()),
+    }).try();
+    Ok(())
 }
 
 write_shift_count = (out :: String, types: Types, f: TypeFault)

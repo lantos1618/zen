@@ -1,0 +1,15 @@
+// A match arm is a nested block: writing an immutable local from it is
+// refused as it is anywhere else.
+//
+// position: the write.
+
+main = () i32 {
+    x = 1;
+    flag = true;
+    flag.match({
+        true  => { x = 2; },
+        false => (),
+    });
+    println("{}", x);
+    0
+}

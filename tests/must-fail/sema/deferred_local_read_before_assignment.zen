@@ -1,0 +1,10 @@
+// A local declared without a value may not be read until it is assigned.
+//
+// position: the read.
+
+main = () i32 {
+    total :: i32;
+    println("{}", total);
+    total = 4;
+    0
+}

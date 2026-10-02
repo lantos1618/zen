@@ -1,0 +1,705 @@
+// Definite assignment for locals declared without a value.
+//
+// `x :: T;` and `x: T;` bind a name that holds nothing yet. This pass walks
+// one function body in evaluation order and keeps, for each such local, two
+// facts at the current point: whether every path here assigned it (`must`)
+// and whether some path did (`may`). A read, a `consume` or a capture needs
+// `must`; an assignment to an immutable one needs `may` to be false, which is
+// what makes `x: T;` assigned exactly once. A deferred local that no statement
+// assigns at all is refused where it is declared, read or not.
+//
+// Control flow is the language's own: a match joins its arms, `&&` and `||`
+// join the skipped right side, `bool.then` may run its body or not, and any
+// other closure passed to a call may run any number of times, so its entry
+// state is solved to a fixpoint before it is walked for diagnostics. A loop
+// handle's `h.break()` leaves for the point after the loop and `h.next()`
+// returns to the body's entry; after either, the rest of the path is
+// unreachable. `.try()` leaves the function, which reads no local, so it
+// needs no edge. A handle passed to another function may break or continue
+// there, so such a call counts as both.
+//
+// Known limits, each refusing rather than accepting: a closure stored in a
+// binding or declared as a local function is walked where it is written,
+// and an assignment it makes does not count for the code after it; a call
+// that never returns is not known to, so a path through it still has to
+// assign.
+
+ExprId, BlockId, Stmt, Bind, Deferred = std.ast
+Function, Param, Call, Arg, Match, Lambda = std.ast
+Binary, PatternId, Span, Pos, nowhere = std.ast
+Alloc, AllocError = std.mem
+Vec = std.collections
+str = std.text
+Range = std.core
+fmt_at = std.text.text_fmt
+Checker, UNRESOLVED, truncate = sema.sema_check
+SemaFault, NameFault, InitFault, UnsetFault = sema.sema_diag
+TyId = sema.sema_ty
+is_handle_ty = sema.sema_handle
+spelled_lambda = sema.sema_call
+local_lambda = sema.sema_local
+repeating_body = sema.sema_own
+
+LOOP_MODULE: str = "std.core.loop.loop_iter"
+
+// One name the walk can see. Only a deferred slot has a state; every other
+// binding holds a value from its declaration. `frame` is one past the index
+// of the loop frame a handle parameter breaks, and 0 for anything else.
+// `touched` records that some assignment to a deferred slot was written at
+// all, on any path; one that is never assigned is refused at its scope's end.
+Slot = {
+    name: str,
+    deferred: bool,
+    mutable: bool,
+    frame: usize,
+    must :: bool,
+    may :: bool,
+    touched :: bool,
+    span: Span,
+    ty: TyId,
+}
+
+Init = { must: bool, may: bool }
+
+// The assignment facts at one point: one entry per slot below the point's
+// depth, and whether any path reaches it. An unreachable state joins as
+// nothing. A state taken while no deferred local is in scope holds no
+// entries, because every visible slot is assigned.
+State = { live: bool, inits: Vec<Init> }
+
+// The paths that leave one closure through its loop handle.
+Frame = { breaks :: State, nexts :: State }
+
+InitWalk = {
+    alloc: Alloc,
+    slots :: Vec<Slot>,
+    live :: bool,
+    tracked :: usize,
+    frames :: Vec<Frame>,
+    // Slots below `floor` belong to code outside the closure being walked:
+    // naming one here is a capture.
+    floor :: usize,
+    // Fixpoint passes walk a closure again; only the last pass reports.
+    quiet :: bool,
+}
+
+check_init* = (c :: Checker, f: Function, body: BlockId)
+              Res<(), AllocError> {
+    w ::= InitWalk(
+        alloc: c.alloc,
+        slots: c.alloc.Vec<Slot>(),
+        live: true,
+        tracked: 0,
+        frames: c.alloc.Vec<Frame>(),
+        floor: 0,
+        quiet: false
+    );
+    f.params.loop((h, p) { c.init_param(w, p, 0).try() });
+    c.init_block(w, body)
+}
+
+// the state
+
+dead = (a: Alloc) State { State(live: false, inits: a.Vec<Init>()) }
+
+snapshot = (w: InitWalk) Res<State, AllocError> {
+    inits ::= w.alloc.Vec<Init>();
+    (w.tracked > 0).then(() {
+        w.slots.loop(
+            (h, s) { inits.add(Init(must: s.must, may: s.may)).try() }
+        );
+    });
+    Ok(State(live: w.live, inits: inits))
+}
+
+restore = (w :: InitWalk, s: State) {
+    w.live = s.live;
+    s.inits.loop((h, i, init) {
+        w.slots.get(i).match({
+            None    => (),
+            Ok(old) => {
+                row ::= old;
+                row.must = init.must;
+                row.may  = init.may;
+                w.slots.set(i, row);
+            },
+        });
+    });
+}
+
+// Every path into either state: assigned on all of them, or on any.
+join = (a: Alloc, x: State, y: State) Res<State, AllocError> {
+    (x.live && y.live).match({
+        false => Ok(x.live.match({ true => x, false => y })),
+        true  => {
+            n = (x.inits.len < y.inits.len).match({
+                true  => x.inits.len,
+                false => y.inits.len,
+            });
+            inits ::= a.Vec<Init>();
+            Range(0, n).loop((h, i) {
+                l = x.inits.get(i).value_or(Init(must: true, may: true));
+                r = y.inits.get(i).value_or(Init(must: true, may: true));
+                inits.add(Init(
+                    must: l.must && r.must,
+                    may: l.may || r.may
+                )).try();
+            });
+            Ok(State(live: true, inits: inits))
+        },
+    })
+}
+
+same = (x: State, y: State) bool {
+    equal ::= x.live == y.live && x.inits.len == y.inits.len;
+    x.inits.loop((h, i, l) {
+        y.inits.get(i).match({
+            Ok(r) => { equal = equal && l.must == r.must && l.may == r.may; },
+            None  => { equal = false; },
+        });
+    });
+    equal
+}
+
+// scopes
+
+push = (w :: InitWalk, slot: Slot) Res<(), AllocError> {
+    slot.deferred.then(() { w.tracked = w.tracked + 1; });
+    w.slots.add(slot)
+}
+
+pop_to = (c :: Checker, w :: InitWalk, mark: usize) Res<(), AllocError> {
+    Range(mark, w.slots.len).loop((h, i) {
+        w.slots.get(i).match({
+            Ok(s) => s.deferred.then(() {
+                w.tracked = w.tracked - 1;
+                (!s.touched && !w.quiet).then(() {
+                    c.refuse(s.span, SemaFault.NeverAssigned(UnsetFault(
+                        name: s.name,
+                        ty: s.ty,
+                        mutable: s.mutable,
+                    ))).try();
+                });
+            }),
+            None  => (),
+        });
+    });
+    truncate(w.slots, mark);
+    Ok(())
+}
+
+assigned = (name: str, frame: usize) Slot {
+    Slot(
+        name: name,
+        deferred: false,
+        mutable: true,
+        frame: frame,
+        must: true,
+        may: true,
+        touched: true,
+        span: nowhere(),
+        ty: UNRESOLVED
+    )
+}
+
+find_slot = (w: InitWalk, name: str) Res<usize> {
+    n = w.slots.len;
+    Range(0, n).find((k) {
+        w.slots.get(n - k - 1).match({ Ok(s) => s.name.eq(name), None => false })
+    }).match({
+        None  => None,
+        Ok(k) => Ok(n - k - 1),
+    })
+}
+
+init_param = (c :: Checker, w :: InitWalk, p: Param, frame: usize)
+             Res<(), AllocError> {
+    w.push(assigned(p.name.text, frame))
+}
+
+// statements
+
+init_block = (c :: Checker, w :: InitWalk, id: BlockId) Res<(), AllocError> {
+    b    = c.tree.block_at(id);
+    mark = w.slots.len;
+    b.stmts.loop((h, s) { c.init_stmt(w, s).try() });
+    b.value.match({ Ok(v) => c.init_expr(w, v), None => Ok(()) }).try();
+    c.pop_to(w, mark).try();
+    Ok(())
+}
+
+init_stmt = (c :: Checker, w :: InitWalk, s: Stmt) Res<(), AllocError> {
+    s.kind.match({
+        Bind(b)     => c.init_bind(w, b),
+        Deferred(d) => c.init_deferred(w, d),
+        Expr(e)     => c.init_expr(w, e.expr),
+        Block(x)    => c.init_block(w, x),
+        Decl(d)     => d.kind.match({
+            Function(f) => {
+                local_lambda(f).match({
+                    Ok(l) => c.init_closure(w, l),
+                    None  => Ok(()),
+                }).try();
+                w.push(assigned(f.name.text, 0))
+            },
+            _           => Ok(()),
+        }),
+    })
+}
+
+init_deferred = (c :: Checker, w :: InitWalk, d: Deferred)
+                Res<(), AllocError> {
+    c.tree.expr_at(d.target).kind.match({
+        Name(n) => w.push(Slot(
+            name: n.text,
+            deferred: true,
+            mutable: d.mutable,
+            frame: 0,
+            must: false,
+            may: false,
+            touched: false,
+            span: c.tree.expr_at(d.target).span,
+            ty: c.type_memo.get(d.type).value_or(UNRESOLVED)
+        )),
+        _       => Ok(()),
+    })
+}
+
+// The value is evaluated before the target is written. A plain `x = v` on a
+// visible local writes it; every other spelling declares a new binding,
+// which is the rule sema_place.plain_write states.
+init_bind = (c :: Checker, w :: InitWalk, b: Bind) Res<(), AllocError> {
+    c.init_expr(w, b.value).try();
+    plain  = !b.mutable && b.type.match({ Ok(_) => false, None => true });
+    target = c.tree.expr_at(b.target);
+    target.kind.match({
+        Name(n) => plain.match({
+            true  => w.find_slot(n.text).match({
+                Ok(i) => c.init_assign(w, i, target.span),
+                None  => w.push(assigned(n.text, 0)),
+            }),
+            false => w.push(assigned(n.text, 0)),
+        }),
+        // A member or element is written into storage that must exist.
+        _       => c.init_expr(w, b.target),
+    })
+}
+
+init_assign = (c :: Checker, w :: InitWalk, i: usize, span: Span)
+              Res<(), AllocError> {
+    w.slots.get(i).match({
+        None    => Ok(()),
+        Ok(old) => {
+            twice = old.deferred && !old.mutable && old.may && w.live;
+            (twice && !w.quiet).then(() {
+                c.refuse(
+                    span,
+                    SemaFault.AssignedTwice(NameFault(name: old.name))
+                )
+                    .try();
+            });
+            row ::= old;
+            row.must    = true;
+            row.may     = true;
+            row.touched = true;
+            w.slots.set(i, row);
+            Ok(())
+        },
+    })
+}
+
+// expressions
+
+init_expr = (c :: Checker, w :: InitWalk, id: ExprId) Res<(), AllocError> {
+    node = c.tree.expr_at(id);
+    node.kind.match({
+        Name(n)       => c.init_use(w, node.span, n.text, "read"),
+        Meta(m)       => m.value.match({ Ok(v) => c.init_expr(w, v), None => Ok(()) }),
+        Paren(p)      => c.init_expr(w, p.inner),
+        Array(a)      => c.init_exprs(w, a.elems),
+        FixedArray(a) => c.init_exprs(w, a.elems),
+        Lambda(l)     => c.init_closure(w, l),
+        Call(k)       => c.init_call(w, id, k),
+        Match(m)      => c.init_match(w, m),
+        Try(t)        => {
+            c.init_expr(w, t.operand).try();
+            t.error.match({
+                None    => Ok(()),
+                Ok(err) => c.init_exit(w, err),
+            })
+        },
+        Record(r)     => {
+            r.entries.loop((h, m) {
+                m.kind.match({
+                    Field(f)    => f.value.match({
+                        Ok(v) => c.init_expr(w, v),
+                        None  => Ok(()),
+                    }),
+                    Const(k)    => c.init_expr(w, k.value),
+                    Function(_) => Ok(()),
+                }).try();
+            });
+            Ok(())
+        },
+        Access(a)     => c.init_expr(w, a.base),
+        Index(x)      => {
+            c.init_expr(w, x.base).try();
+            c.init_expr(w, x.index)
+        },
+        Unary(u)      => c.init_expr(w, u.operand),
+        Binary(b)     => c.init_binary(w, b),
+        Consume(x)    => c.tree.expr_at(x.operand).kind.match({
+            Name(n) => c.init_use(
+                w,
+                c.tree.expr_at(x.operand).span,
+                n.text,
+                "consumed"
+            ),
+            _       => c.init_expr(w, x.operand),
+        }),
+        Block(b)      => c.init_block(w, b),
+        _             => Ok(()),
+    })
+}
+
+init_exprs = (c :: Checker, w :: InitWalk, ids: Vec<ExprId>)
+             Res<(), AllocError> {
+    ids.loop((h, e) { c.init_expr(w, e).try() });
+    Ok(())
+}
+
+// The replacement a failing `.try(..)` computes runs only on the way out of
+// the function, so the state after it is the state before it.
+init_exit = (c :: Checker, w :: InitWalk, id: ExprId) Res<(), AllocError> {
+    before = w.snapshot().try();
+    c.spelled_lambda(id).match({
+        Ok(l) => c.init_once(w, l),
+        None  => c.init_expr(w, id),
+    }).try();
+    w.restore(before);
+    Ok(())
+}
+
+// A read of a deferred local needs an assignment on every path to it. After
+// one report the local counts as assigned, so one mistake is one diagnostic.
+init_use = (c :: Checker, w :: InitWalk, span: Span, text: str, verb: str)
+           Res<(), AllocError> {
+    w.find_slot(text).match({
+        None  => Ok(()),
+        Ok(i) => w.slots.get(i).match({
+            None    => Ok(()),
+            Ok(old) => (old.deferred && !old.must && w.live).match({
+                false => Ok(()),
+                true  => {
+                    (!w.quiet).then(() {
+                        c.refuse(span, SemaFault.UnassignedUse(InitFault(
+                            name: old.name,
+                            verb: (i < w.floor).match({ true => "captured", false => verb }),
+                            maybe: old.may,
+                        ))).try();
+                    });
+                    row ::= old;
+                    row.must = true;
+                    w.slots.set(i, row);
+                    Ok(())
+                },
+            }),
+        }),
+    })
+}
+
+// A left-leaning chain is walked iteratively, leftmost operand first. The
+// right side of `&&` or `||` may not run, so the state after it joins the
+// state before it.
+init_binary = (c :: Checker, w :: InitWalk, first: Binary)
+              Res<(), AllocError> {
+    rights ::= w.alloc.Vec<Binary>();
+    left   ::= first.lhs;
+    done   ::= false;
+    rights.add(first).try();
+    loop(() { !done }, (h) {
+        c.tree.expr_at(left).kind.match({
+            Binary(next) => {
+                rights.add(next).try();
+                left = next.lhs;
+            },
+            _            => { done = true; },
+        });
+    });
+    c.init_expr(w, left).try();
+    Range(0, rights.len).loop((h, k) {
+        rights.get(rights.len - 1 - k).match({
+            None    => (),
+            Ok(bin) => c.init_operand(w, bin).try(),
+        });
+    });
+    Ok(())
+}
+
+init_operand = (c :: Checker, w :: InitWalk, bin: Binary)
+               Res<(), AllocError> {
+    bin.op.match({
+        And => c.init_maybe(w, bin.rhs),
+        Or  => c.init_maybe(w, bin.rhs),
+        _   => c.init_expr(w, bin.rhs),
+    })
+}
+
+init_maybe = (c :: Checker, w :: InitWalk, id: ExprId) Res<(), AllocError> {
+    before = w.snapshot().try();
+    c.init_expr(w, id).try();
+    after = w.snapshot().try();
+    w.restore(join(w.alloc, before, after).try());
+    Ok(())
+}
+
+// Each arm starts from the scrutinee's state; after the match, a local is
+// assigned when every arm that finishes assigned it.
+init_match = (c :: Checker, w :: InitWalk, m: Match) Res<(), AllocError> {
+    c.init_expr(w, m.scrutinee).try();
+    before = w.snapshot().try();
+    joined ::= dead(w.alloc);
+    m.arms.loop((h, arm) {
+        w.restore(before);
+        mark = w.slots.len;
+        c.init_pattern(w, arm.pattern).try();
+        c.init_expr(w, arm.body).try();
+        c.pop_to(w, mark).try();
+        joined = join(w.alloc, joined, w.snapshot().try()).try();
+    });
+    w.restore(joined);
+    Ok(())
+}
+
+// A pattern's bare names bind, shadowing any local of the same name.
+init_pattern = (c :: Checker, w :: InitWalk, id: PatternId)
+               Res<(), AllocError> {
+    c.tree.pattern_at(id).kind.match({
+        Name(pn)       => (pn.name.segments.len == 1).match({
+            true  => w.push(assigned(pn.name.segment_at(0), 0)),
+            false => Ok(()),
+        }),
+        Destructure(d) => c.init_pattern(w, d.binder),
+        _              => Ok(()),
+    })
+}
+
+// calls and closures
+
+init_call = (c :: Checker, w :: InitWalk, id: ExprId, k: Call)
+            Res<(), AllocError> {
+    c.handle_jump(w, k).match({
+        Ok(jump) => c.init_jump(w, k, jump),
+        None     => {
+            c.init_expr(w, k.callee).try();
+            repeats = c.repeating_body(id).try();
+            bare    = c.bare_loop(id, k);
+            k.args.loop((h, a) { c.init_arg(w, a, repeats, bare).try() });
+            Ok(())
+        },
+    })
+}
+
+// `h.break(..)` or `h.next()` on a handle this walk saw bound: the frame it
+// leaves and whether it breaks.
+Jump = { frame: usize, breaks: bool }
+
+handle_jump = (c :: Checker, w: InitWalk, k: Call) Res<Jump> {
+    c.tree.expr_at(k.callee).kind.match({
+        Access(a) => (a.name.text.eq("break") || a.name.text.eq("next")).match({
+            false => None,
+            true  => c.handle_frame(w, a.base).match({
+                None   => None,
+                Ok(fr) => Ok(Jump(frame: fr, breaks: a.name.text.eq("break"))),
+            }),
+        }),
+        _         => None,
+    })
+}
+
+handle_frame = (c :: Checker, w: InitWalk, id: ExprId) Res<usize> {
+    node = c.tree.expr_at(id);
+    node.kind.match({
+        Name(n) => c.is_handle_ty(c.expr_memo.get(id).value_or(UNRESOLVED)).match({
+            false => None,
+            true  => w.find_slot(n.text).match({
+                None  => None,
+                Ok(i) => w.slots.get(i).match({
+                    Ok(s) => (s.frame > 0).match({ true => Ok(
+                        s.frame
+                    ), false => None }),
+                    None  => None,
+                }),
+            }),
+        }),
+        _       => None,
+    })
+}
+
+init_jump = (c :: Checker, w :: InitWalk, k: Call, jump: Jump)
+            Res<(), AllocError> {
+    k.args.loop((h, a) { c.init_expr(w, a.value).try() });
+    c.record_jump(w, jump.frame, jump.breaks, !jump.breaks).try();
+    w.live = false;
+    Ok(())
+}
+
+// Add the current state to the frame's exits: after the loop, back to its
+// entry, or both.
+record_jump = (
+    c      :: Checker,
+    w      :: InitWalk,
+    frame  : usize,
+    breaks : bool,
+    nexts  : bool
+) Res<(), AllocError> {
+    now = w.snapshot().try();
+    w.frames.get(frame - 1).match({
+        None    => Ok(()),
+        Ok(old) => {
+            row ::= old;
+            breaks.then(
+                () { row.breaks = join(w.alloc, row.breaks, now).try(); }
+            );
+            nexts.then(() { row.nexts = join(w.alloc, row.nexts, now).try(); });
+            w.frames.set(frame - 1, row);
+            Ok(())
+        },
+    })
+}
+
+// The one-argument `loop((h) { .. })` stops only when its body breaks.
+bare_loop = (c :: Checker, id: ExprId, k: Call) bool {
+    callee_is_loop = c.tree.expr_at(k.callee).kind.match({
+        Name(n) => n.text.eq("loop"),
+        _       => false,
+    });
+    (callee_is_loop && k.args.len == 1).match({
+        false => false,
+        true  => c.resolved_call(id).match({
+            None     => false,
+            Ok(decl) => c.world.module_name(decl).eq(LOOP_MODULE),
+        }),
+    })
+}
+
+init_arg = (c :: Checker, w :: InitWalk, a: Arg, repeats: bool, bare: bool)
+           Res<(), AllocError> {
+    c.spelled_lambda(a.value).match({
+        Ok(l) => repeats.match({
+            true  => c.init_repeating(w, l, bare),
+            false => c.init_once(w, l),
+        }),
+        None  => {
+            c.init_holes(w, a.value).try();
+            c.handle_frame(w, a.value).match({
+                None      => Ok(()),
+                Ok(frame) => c.record_jump(w, frame, true, true),
+            }).try();
+            c.init_expr(w, a.value)
+        },
+    })
+}
+
+// `{name}` in a format string reads that binding where the string is written.
+init_holes = (c :: Checker, w :: InitWalk, id: ExprId) Res<(), AllocError> {
+    node = c.tree.expr_at(id);
+    node.kind.match({
+        Literal(l) => l.kind.match({
+            Str => c.init_hole_names(w, node.span, l.text),
+            _   => Ok(()),
+        }),
+        _          => Ok(()),
+    })
+}
+
+init_hole_names = (c :: Checker, w :: InitWalk, span: Span, raw: str)
+                  Res<(), AllocError> {
+    end = (raw.len > 1).match({ true => raw.len - 1, false => 1 });
+    i ::= 1;
+    loop(() { i < end }, (h) {
+        at = raw.fmt_at(i, end);
+        at.what.match({
+            Named(name) => {
+                hole = Span(
+                    file: span.file,
+                    start: Pos(line: span.start.line, col: span.start.col + i),
+                    end: Pos(
+                        line: span.start.line,
+                        col: span.start.col + at.next
+                    ),
+                );
+                c.init_use(w, hole, name, "read").try();
+            },
+            _           => (),
+        });
+        i = at.next;
+    });
+    Ok(())
+}
+
+// `cond.then(() { .. })` runs its body at most once.
+init_once = (c :: Checker, w :: InitWalk, l: Lambda) Res<(), AllocError> {
+    before = w.snapshot().try();
+    c.run_closure(w, l, w.quiet).try();
+    after = w.snapshot().try();
+    w.restore(join(w.alloc, before, after).try());
+    Ok(())
+}
+
+// A closure a call may run any number of times. Its entry state joins the
+// state before the call with every path back to its entry; that is solved
+// quietly first, then the body is walked once more to report. Afterwards a
+// local is assigned when every way out of the loop assigned it: a break,
+// or, unless the loop stops only by breaking, the entry itself.
+init_repeating = (c :: Checker, w :: InitWalk, l: Lambda, bare: bool)
+                 Res<(), AllocError> {
+    start = w.snapshot().try();
+    entry  ::= start;
+    stable ::= w.tracked == 0;
+    loop(() { !stable }, (h) {
+        w.restore(entry);
+        frame  = c.run_closure(w, l, true).try();
+        back   = join(w.alloc, w.snapshot().try(), frame.nexts).try();
+        next   = join(w.alloc, start, back).try();
+        stable = same(next, entry);
+        entry  = next;
+    });
+    w.restore(entry);
+    frame = c.run_closure(w, l, w.quiet).try();
+    after = bare.match({
+        true  => frame.breaks,
+        false => join(w.alloc, entry, frame.breaks).try(),
+    });
+    w.restore(after);
+    Ok(())
+}
+
+// A closure that is not called where it is written — a local function, or
+// a lambda held as a value — is checked as if it ran any number of times
+// from here, and leaves the state after it unchanged.
+init_closure = (c :: Checker, w :: InitWalk, l: Lambda) Res<(), AllocError> {
+    start = w.snapshot().try();
+    c.init_repeating(w, l, false).try();
+    w.restore(start);
+    Ok(())
+}
+
+// Walk one closure body from the current state, leaving its end state.
+run_closure = (c :: Checker, w :: InitWalk, l: Lambda, quiet: bool)
+              Res<Frame, AllocError> {
+    was_quiet = w.quiet;
+    was_floor = w.floor;
+    mark      = w.slots.len;
+    w.quiet   = quiet;
+    w.floor   = mark;
+    w.frames.add(Frame(breaks: dead(w.alloc), nexts: dead(w.alloc))).try();
+    frame = w.frames.len;
+    l.params.loop((h, p) { c.init_param(w, p, frame).try() });
+    c.init_block(w, l.body).try();
+    c.pop_to(w, mark).try();
+    out     = w.frames.take(frame - 1).value_or(Frame(breaks: dead(w.alloc), nexts: dead(w.alloc)));
+    w.floor = was_floor;
+    w.quiet = was_quiet;
+    Ok(out)
+}

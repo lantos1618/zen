@@ -86,7 +86,7 @@ main = (env: Env) Res<(), AllocError> {
                 );
                 [CallResolution.Rejected, CallResolution.Checking].loop((state) {
                     backend.check.record_call(id, state).try();
-                    before = backend.diag_count();
+                    diags_before = backend.diag_count();
                     refused ::= a.String().try();
                     backend.lower_plain_call(
                         id,
@@ -99,7 +99,7 @@ main = (env: Env) Res<(), AllocError> {
                     ).try();
                     println(
                         "unfinished selection refused {}",
-                        backend.diag_count() == before + 1 && refused.view().eq(
+                        backend.diag_count() == diags_before + 1 && refused.view().eq(
                             "0"
                         )
                     );

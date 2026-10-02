@@ -120,7 +120,7 @@ chacha20poly1305_open* = (
             poly_key(scratch);
             authenticate(scratch, aad, aad_count, ciphertext, count);
             tag = scratch.offset(38).to<u8>();
-            different: u32 ::= 0;
+            different :: u32 = 0;
             Range(0, 16).loop((i) {
                 different = different +% tag.read(i).to_u32().bit_xor(ciphertext.read(count + i).to_u32());
             });
@@ -490,7 +490,7 @@ xor_store_u32x4 = inline (output: Ptr<u8>, input: Ptr<u8>, offset: usize, v: u32
 }
 // 512-byte runs with AVX2; returns the bytes done.
 stream8 = (cpu: Avx2, j: Ptr<u32>, output: Ptr<u8>, input: Ptr<u8>, count: usize) usize {
-    offset: usize ::= 0; counter: u32 ::= 1;
+    offset :: usize = 0; counter :: u32 = 1;
     (count - offset >= 512).loop((loop) {
         blocks8(cpu, j, output, input, offset, counter);
         offset  = offset + 512;
@@ -505,9 +505,9 @@ stream_xor* = (
     count   : usize
 ) {
     j = scratch.to<u32>();
-    offset: usize ::= avx2().match({ Ok(cpu) => stream8(cpu, j, output, input, count), None => 0 });
+    offset :: usize = avx2().match({ Ok(cpu) => stream8(cpu, j, output, input, count), None => 0 });
     // The IETF block counter starts at 1; the stream is at block offset / 64.
-    counter: u32 ::= 1 +% offset.shift_right(6).truncate_u32();
+    counter :: u32 = 1 +% offset.shift_right(6).truncate_u32();
     (count - offset >= 256).loop((loop) {
         blocks4(j, output, input, offset, counter);
         offset  = offset + 256;
@@ -530,7 +530,7 @@ stream_xor* = (
 MASK44: u64 = 17592186044415
 MASK42: u64 = 4398046511103
 load64 = (m: Ptr<u8>, offset: usize) u64 {
-    v: u64 ::= 0;
+    v :: u64 = 0;
     Range(0, 8).loop((i) { v = v.bit_or(m.read(offset + i).to_u64().shift_left(8 * i)); });
     v
 }
@@ -553,7 +553,7 @@ poly_blocks = (p: Ptr<u64>, m: Ptr<u8>, count: usize) {
     r0 = p.read(0); r1 = p.read(1); r2 = p.read(2);
     s1 = r1 *% 20; s2 = r2 *% 20;
     h0 ::= p.read(3); h1 ::= p.read(4); h2 ::= p.read(5);
-    offset: usize ::= 0;
+    offset :: usize = 0;
     (offset < count).loop((loop) {
         words = load_u64x2(m, offset);
         t0 = words.lane(0); t1 = words.lane(1);
@@ -760,7 +760,7 @@ poly_lanes4 = (cpu: Avx2, p: Ptr<u64>, m: Ptr<u8>, count: usize) {
         a3: first.a3.with_lane(0, first.a3.lane(0) +% h.l3),
         a4: first.a4.with_lane(0, first.a4.lane(0) +% h.l4)
     );
-    offset: usize ::= 64;
+    offset :: usize = 64;
     (offset < count).loop((loop) {
         acc    = add4(cpu, mulr4(cpu, acc, step), message4(cpu, m, offset));
         offset = offset + 64;
@@ -832,7 +832,7 @@ poly_lanes2 = (p: Ptr<u64>, m: Ptr<u8>, count: usize) {
         a3: first.a3.with_lane(0, first.a3.lane(0) +% h.l3),
         a4: first.a4.with_lane(0, first.a4.lane(0) +% h.l4)
     );
-    offset: usize ::= 32;
+    offset :: usize = 32;
     (offset < count).loop((loop) {
         acc    = add2(mulr2(acc, step), message2(m, offset));
         offset = offset + 32;

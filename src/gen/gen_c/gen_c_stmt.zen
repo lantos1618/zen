@@ -4,7 +4,7 @@
 // directly into their destination. Destination types provide context for
 // literals and joins, and statements are typed before emission.
 
-Expr, ExprId, BlockId, Block, Stmt, Bind = std.ast
+Expr, ExprId, BlockId, Block, Stmt, Bind, Deferred = std.ast
 Decl = std.ast
 Match = std.ast
 AllocError = std.mem
@@ -20,10 +20,10 @@ GenFault = gen.gen_diag
 CBackend = gen.gen_c.gen_c_state
 lower_match = gen.gen_c.gen_c_flow
 lower_try = gen.gen_c.gen_c_try
-declarator, is_unit, has_storage, void_discard = gen.gen_c.gen_c_type
+declarator, is_unit, has_storage, void_discard, write_zero = gen.gen_c.gen_c_type
 expr, ty_of, spills = gen.gen_c.gen_c_expr
 declare_local_function = gen.gen_c.gen_c_inline
-enter_block, leave_block, note_drop, displace = gen.gen_c.gen_c_own
+enter_block, leave_block, note_drop, note_unset_drop, displace = gen.gen_c.gen_c_own
 
 Dest* = Discard | Return | Into(str)
 
@@ -364,10 +364,11 @@ discard_line = (be :: CBackend, text: str) Res<(), AllocError> {
 
 stmt* = (be :: CBackend, s: Stmt, ctx: Ctx) Res<(), AllocError> {
     s.kind.match({
-        Bind(b)  => be.lower_bind(s, b, ctx),
-        Expr(e)  => be.lower_expr_stmt(s, e.expr, ctx),
-        Block(b) => be.lower_nested(b, ctx),
-        Decl(d)  => be.local_decl(s, d, ctx),
+        Bind(b)     => be.lower_bind(s, b, ctx),
+        Deferred(d) => be.lower_deferred(s, d, ctx),
+        Expr(e)     => be.lower_expr_stmt(s, e.expr, ctx),
+        Block(b)    => be.lower_nested(b, ctx),
+        Decl(d)     => be.local_decl(s, d, ctx),
     })
 }
 
@@ -479,6 +480,38 @@ declare_local = (be :: CBackend, name: str, b: Bind, ty: TyId, ctx: Ctx)
     be.publish(name, n, ty, false).try();
     be.note_drop(name, n, ty).try();
     Ok(());
+}
+
+// `x :: T;` declares storage holding T's zero value. sema_init has proved no
+// read reaches it before an assignment, so the zero is never observed; it
+// keeps the C compiler from reasoning about an uninitialized object. A Drop
+// value's live flag starts clear, so scope exit drops only an assigned one,
+// and the first assignment arms it.
+lower_deferred = (be :: CBackend, s: Stmt, d: Deferred, ctx: Ctx)
+                 Res<(), AllocError> {
+    be.check.stmt_type(s, ctx).try();
+    raw = be.check.type_from_ast(d.type, ctx).try();
+    ty  = subst(be.check, raw, be.inst).try();
+    be.tree.expr_at(d.target).kind.match({
+        Name(n) => be.declare_unset(n.text, ty),
+        _       => Ok(()),
+    })
+}
+
+declare_unset = (be :: CBackend, name: str, ty: TyId) Res<(), AllocError> {
+    n = be.reserve(name).try();
+    cname ::= be.alloc.String().try();
+    sym_local(cname, name, n).try();
+    be.has_storage(ty).then(() {
+        decl ::= be.alloc.String().try();
+        be.declarator(ty, cname.view(), decl).try();
+        zero ::= be.alloc.String().try();
+        be.write_zero(ty, zero).try();
+        be.fmt("{} = {};\n", decl.view(), zero.view()).try();
+        be.void_discard(name, cname.view()).try();
+    });
+    be.publish(name, n, ty, false).try();
+    be.note_unset_drop(name, n, ty)
 }
 
 // A store to a tracked Drop binding evaluates the RHS first, drops the

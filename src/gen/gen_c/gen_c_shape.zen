@@ -306,7 +306,7 @@ LoopSyntax* = (a: Alloc, tree: Ast) Res<LoopSyntax, AllocError> {
 join_break_args* = (be :: CBackend, span: Span, ctx: Ctx)
                    Res<Res<TyId>, AllocError> {
     sites = be.loop_sites().try();
-    got: Res<TyId> ::= None;
+    got :: Res<TyId> = None;
     sites.breaks.loop((id) {
         site = be.tree.expr_at(id).span;
         (site.inside(span) && sites.has_body(site, span)).then(() {

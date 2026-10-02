@@ -358,7 +358,7 @@ host_call = (
     span    : Span
 )
             Res<Value, LowerError> {
-    found: Res<usize> ::= None;
+    found :: Res<usize> = None;
     binding.s.members.loop((h, i, m) {
         m.kind.match({ Function(f) => f.name.text.eq(name), _ => false }).then(() { found = Ok(i); });
     });
@@ -3362,9 +3362,9 @@ format = (
 )
          Res<(), LowerError> {
     end = raw.len - 1;
-    start: usize ::= 1;
-    i: usize     ::= 1;
-    used: usize  ::= first + 1;
+    start :: usize = 1;
+    i :: usize = 1;
+    used :: usize = first + 1;
     loop(() { i < end }, (h) {
         at = raw.fmt_at(i, end);
         at.what.match({

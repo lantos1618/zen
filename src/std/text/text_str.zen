@@ -75,8 +75,8 @@ str* = {
 
     // Returns the last matching byte index, or None.
     rfind* = (self: @Self, needle: u8) Res<usize> {
-        hit: Res<usize> = None;
-        at ::= self.len;
+        hit :: Res<usize> = None;
+        at  ::= self.len;
         loop(at > 0, (h) {
             at = at - 1;
             (self.data.read(at) == needle).then(() {
@@ -151,7 +151,7 @@ str* = {
     }
 
     trim_end* = (self: @Self) Res<str> {
-        hit: Res<str> = None;
+        hit  :: Res<str> = None;
         keep ::= self.len;
         loop(keep > 0, (h) {
             keep = keep - 1;
@@ -333,9 +333,9 @@ Split.impl(Range<str>, {
 
     at ::= (self: @Self, index: usize) Res<str> {
         s = self.bytes;
-        from ::= 0;
-        n    ::= 0;
-        answer: Res<str> = None;
+        from   ::= 0;
+        n      ::= 0;
+        answer :: Res<str> = None;
         Range(0, s.len + 1).loop((h, i) {
             edge = s.get(i).match({
                 None  => true,

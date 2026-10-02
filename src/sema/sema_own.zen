@@ -1,4 +1,4 @@
-Expr, ExprId, Block, BlockId, Stmt, Bind = std.ast
+Expr, ExprId, Block, BlockId, Stmt, Bind, Deferred = std.ast
 Decl, Member, Function, Param = std.ast
 Call, Arg, Access, Match, Arm, Lambda, Index, Consume = std.ast
 Name, Paren, Try, Unary, Binary = std.ast
@@ -23,6 +23,7 @@ check_drop_copy, is_drop_type = sema.sema_drop
 carries_bound = sema.sema_copy
 is_handle_ty, refuse_handle_at, spelled_name = sema.sema_handle
 local_lambda = sema.sema_local
+type_from_ast = sema.sema_denote
 spelled_lambda, call_callee = sema.sema_call
 OwnCheck, call_stores, transfer_call_stores, actual, selected_summary = sema.sema_store
 append_path, strip_path, copy_allocation, Returned = sema.sema_store
@@ -56,13 +57,13 @@ Provenance = {
     fields: Vec<FieldOrigin>,
 
     field = (self: @Self, name: str) FieldOrigin {
-        found       ::= FieldOrigin(
+        found ::= FieldOrigin(
             name: name,
             scoped: self.scoped,
             arena: self.arena,
             source: self.source
         );
-        best: usize ::= 0;
+        best  :: usize = 0;
         self.fields.loop((field) {
             matches = field.name.eq(name) || strip_path(name, field.name).match({ None => false, Ok(_) => true });
             (matches && field.name.len >= best).then(() {
@@ -829,10 +830,33 @@ own_block = (c :: Checker, o :: Own, id: BlockId, ctx: Ctx)
 
 own_stmt = (c :: Checker, o :: Own, s: Stmt, ctx: Ctx) Res<(), AllocError> {
     s.kind.match({
-        Bind(b)  => c.own_bind(o, b, ctx),
-        Expr(e)  => c.own_expr(o, e.expr, ctx),
-        Block(x) => c.own_block(o, x, ctx),
-        Decl(d)  => c.own_local_decl(o, d, ctx),
+        Bind(b)     => c.own_bind(o, b, ctx),
+        Deferred(d) => c.own_deferred(o, d, ctx),
+        Expr(e)     => c.own_expr(o, e.expr, ctx),
+        Block(x)    => c.own_block(o, x, ctx),
+        Decl(d)     => c.own_local_decl(o, d, ctx),
+    })
+}
+
+// A deferred local is storage this frame owns from its declaration, with no
+// origin until it is assigned. sema_init, not this walk, proves every read
+// of it follows an assignment.
+own_deferred = (c :: Checker, o :: Own, d: Deferred, ctx: Ctx)
+               Res<(), AllocError> {
+    node = c.tree.expr_at(d.target);
+    node.kind.match({
+        Name(n) => o.vars.add(OwnVar(
+            name: n.text,
+            ty: c.type_from_ast(d.type, ctx).try(),
+            mutable: d.mutable,
+            owned: true,
+            scoped: false,
+            arena: false,
+            source: None,
+            fields: o.alloc.Vec<FieldOrigin>(),
+            span: node.span
+        )),
+        _       => Ok(()),
     })
 }
 
@@ -1331,7 +1355,7 @@ own_arg = (
 
 // Only the resolved standard conditional guarantees at most one invocation.
 // A source-local method with the same spelling has no such contract.
-repeating_body = (c :: Checker, id: ExprId) Res<bool, AllocError> {
+repeating_body* = (c :: Checker, id: ExprId) Res<bool, AllocError> {
     c.resolved_call(id).match({
         None     => Ok(true),
         Ok(decl) => c.world.module_name(decl).eq("std.core.bool").match({
@@ -1393,13 +1417,14 @@ flow_block = (c :: Checker, o :: Own, id: BlockId, ctx: Ctx)
     mark  = o.vars.len;
     block.stmts.loop((h, stmt) {
         stmt.kind.match({
-            Bind(b)  => {
+            Bind(b)     => {
                 c.flow_expr(o, b.value, ctx).try();
                 c.flow_bind(o, b, ctx).try();
             },
-            Expr(e)  => c.flow_expr(o, e.expr, ctx).try(),
-            Block(b) => c.flow_block(o, b, ctx).try(),
-            Decl(_)  => (),
+            Deferred(d) => c.own_deferred(o, d, ctx).try(),
+            Expr(e)     => c.flow_expr(o, e.expr, ctx).try(),
+            Block(b)    => c.flow_block(o, b, ctx).try(),
+            Decl(_)     => (),
         });
     });
     block.value.match({

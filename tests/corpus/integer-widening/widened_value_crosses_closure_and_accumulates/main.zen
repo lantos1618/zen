@@ -28,9 +28,9 @@
 takes_sz = (m: usize) usize { m }
 
 main = (env: Env) Res<i32, AllocError> {
-    xs: [u8, 3] ::= [200, 250, 5];
-    total: u64  ::= 0;
-    prod: u64   ::= 1;
+    xs    :: [u8, 3] = [200, 250, 5];
+    total :: u64 = 0;
+    prod  :: u64 = 1;
     xs.loop((h, v) {
         w: u64 = v.to_u64();
         total  = total + w;

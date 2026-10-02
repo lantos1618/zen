@@ -15,7 +15,7 @@ measure = (
     ok ::= aes128gcm_seal(sealed, count + 16, buffer, count, key, 5, key, nonce, scratch, AES_GCM_SCRATCH_WORDS);
     target: u64 = 400000000;
     start = env.clock.since_start().ns;
-    elapsed: u64 ::= 0; bytes: u64 ::= 0; rounds: u64 ::= 0;
+    elapsed :: u64 = 0; bytes :: u64 = 0; rounds :: u64 = 0;
     (elapsed < target).loop((h) {
         Range(0, 64).loop((i) {
             seal.match({

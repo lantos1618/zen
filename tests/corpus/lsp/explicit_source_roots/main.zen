@@ -52,8 +52,8 @@ Protocol = {
     }
 
     diagnostics = (self: @Self, text: str, uri: str, count: usize) Res<bool, AllocError> {
-        at: usize ::= 0;
-        found     ::= false;
+        at    :: usize = 0;
+        found ::= false;
         loop(() { at < text.len }, (h) {
             frame_at(text, at).match({
                 Err(_)    => h.break(),

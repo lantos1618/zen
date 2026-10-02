@@ -163,7 +163,7 @@ Resolve each one *in `DESIGN.md`*, not in the parser. A parser that quietly pick
 
 Constructs the grammar must cover, all present in `DESIGN.md`:
 
-- bindings: `x = e`, `x ::= e`, `x: T = e`, `x: T ::= e`
+- bindings: `x = e`, `x ::= e`, `x: T = e`, `x :: T = e`, and `x :: T;` / `x: T;` assigned later
 - struct decl `Name* = { field: T, field :: T, field: T = default, method* = sig {..} }`
 - enum decl `Name* = A(T), B(T), C` — no braces, this is the asymmetry to get right
 - function decl / lambda `(a: T, b: T) R { .. }`, generic `<T: Bound>`

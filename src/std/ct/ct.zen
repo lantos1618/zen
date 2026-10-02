@@ -318,7 +318,7 @@ ct_cmov* = (dst: Ptr<u64>, src: Ptr<u64>, count: usize, c: Choice) {
 // the differences are OR-accumulated and tested once (libsodium
 // crypto_verify_n, BoringSSL CRYPTO_memcmp).
 ct_memeq* = (a: Ptr<u8>, b: Ptr<u8>, count: usize) Choice {
-    d: u8 ::= 0;
+    d :: u8 = 0;
     Range(0, count).loop((i) { d = d.bit_or(a.read(i).bit_xor(b.read(i))); });
     ct_is_zero(value_barrier(d))
 }
@@ -342,17 +342,17 @@ ct_memcmp* = (a: Ptr<u8>, b: Ptr<u8>, count: usize) i32 {
 // table[index] among `count` words, reading every word so the address
 // pattern is independent of the index. An index at or past count yields 0.
 ct_lookup* = (table: Ptr<u8>, count: usize, index: usize) u8 {
-    out: u8 ::= 0;
+    out :: u8 = 0;
     Range(0, count).loop((i) { out = ct_eq(i, index).ct_select(table.read(i), out); });
     out
 }
 ct_lookup* = (table: Ptr<u32>, count: usize, index: usize) u32 {
-    out: u32 ::= 0;
+    out :: u32 = 0;
     Range(0, count).loop((i) { out = ct_eq(i, index).ct_select(table.read(i), out); });
     out
 }
 ct_lookup* = (table: Ptr<u64>, count: usize, index: usize) u64 {
-    out: u64 ::= 0;
+    out :: u64 = 0;
     Range(0, count).loop((i) { out = ct_eq(i, index).ct_select(table.read(i), out); });
     out
 }

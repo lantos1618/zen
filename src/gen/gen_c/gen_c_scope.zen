@@ -456,10 +456,11 @@ captures* = (be :: CBackend, id: BlockId, out :: Vec<LocalSlot>)
 stmt_captures = (be :: CBackend, s: Stmt, out :: Vec<LocalSlot>)
                 Res<(), AllocError> {
     s.kind.match({
-        Expr(e)  => be.expr_captures(e.expr, out),
-        Bind(b)  => be.bind_captures(b, out),
-        Block(k) => be.captures(k, out),
-        Decl(_)  => Ok(()),
+        Expr(e)     => be.expr_captures(e.expr, out),
+        Bind(b)     => be.bind_captures(b, out),
+        Deferred(_) => Ok(()),
+        Block(k)    => be.captures(k, out),
+        Decl(_)     => Ok(()),
     })
 }
 

@@ -226,7 +226,7 @@ res_width = (be :: CBackend, r: TyRes) Res<usize, AllocError> {
 larger = (a: usize, b: usize) usize { (a > b).match({ true => a, false => b }) }
 
 widest = (be :: CBackend, members: Vec<TyId>) Res<usize, AllocError> {
-    most: usize ::= 0;
+    most :: usize = 0;
     members.loop((h, m) { most = larger(most, be.width(m).try()); });
     Ok(most)
 }
@@ -241,7 +241,7 @@ named_width = (be :: CBackend, n: TyNamed)
                 ctx  = be.decl_ctx(n);
                 inst = be.decl_inst(n).try();
                 mark = be.enter_struct_tparams(n.decl).try();
-                total: usize ::= 0;
+                total :: usize = 0;
                 d.kind.match({
                     Struct(s) => s.members.loop((h, m) {
                         be.field_type(m, ctx, inst).match({
@@ -250,7 +250,7 @@ named_width = (be :: CBackend, n: TyNamed)
                         });
                     }),
                     Enum(e)   => {
-                        most: usize ::= 0;
+                        most :: usize = 0;
                         e.variants.loop((h, v) {
                             variant_type(be, n, v, ctx, inst).match({
                                 None  => (),

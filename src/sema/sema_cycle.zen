@@ -200,7 +200,7 @@ Graph = {
 
     module_edge_span = (self: @Self, m: Module, to: usize)
                        Res<Span, AllocError> {
-        hit: Res<Span> ::= None;
+        hit :: Res<Span> = None;
         m.decls.loop((h, d) {
             d.kind.match({
                 Import(im) => self.names_module(im, to).try().match({

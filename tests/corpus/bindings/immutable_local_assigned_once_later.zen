@@ -1,0 +1,19 @@
+// `name: T;` declares an immutable local whose one assignment comes later,
+// on every path before any read. After it the local is as fixed as
+// `name: T = value` would have made it.
+
+pick = (big: bool) i64 {
+    limit: i64;
+    big.match({
+        true  => { limit = 1000; },
+        false => { limit = 10; },
+    });
+    limit * 2
+}
+
+main = () i32 {
+    greeting: str;
+    greeting = "hello";
+    println("{} {} {}", greeting, pick(true), pick(false));
+    0
+}

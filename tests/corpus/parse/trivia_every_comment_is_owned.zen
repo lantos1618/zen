@@ -183,7 +183,7 @@ walk_block = (w :: Walk, b: Block) Res<(), AllocError> {
 walk_stmt = (w :: Walk, s: Stmt) Res<(), AllocError> {
     add(w, s.leading, "stmt.leading");
     s.kind.match({
-        Bind(bd)   => {
+        Bind(bd)    => {
             walk_expr(w, bd.target);
             bd.type.match({
                 Ok(t) => walk_type(w, t),
@@ -191,9 +191,13 @@ walk_stmt = (w :: Walk, s: Stmt) Res<(), AllocError> {
             });
             walk_expr(w, bd.value);
         },
-        Expr(es)   => walk_expr(w, es.expr),
-        Decl(d)    => walk_decl(w, d),
-        Block(bid) => walk_block(w, block_of(w, bid)),
+        Deferred(d) => {
+            walk_expr(w, d.target);
+            walk_type(w, d.type);
+        },
+        Expr(es)    => walk_expr(w, es.expr),
+        Decl(d)     => walk_decl(w, d),
+        Block(bid)  => walk_block(w, block_of(w, bid)),
     });
     add(w, s.trailing, "stmt.trailing");
     Ok(());

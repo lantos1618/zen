@@ -3,7 +3,7 @@
 
 main = (env: Env) Res<i32, AllocError> {
     k: i32 = 5;
-    k.match({ _ => { k: i32 ::= k + 1; println("{}", k); } });
+    k.match({ _ => { k :: i32 = k + 1; println("{}", k); } });
 
     xs         = [1, 2, 3];
     total: i32 = 100;

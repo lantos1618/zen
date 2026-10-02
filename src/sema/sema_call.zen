@@ -1108,11 +1108,11 @@ first_matching = (
     cands   : Vec<Cand>,
     actuals : Vec<Actual>
 ) Res<Res<Cand>, AllocError> {
-    written             = site.call.targs.len;
-    annotated           = c.callback_annotated(site.call);
-    hit: Res<Cand>      = None;
-    pending: Res<Cand>  = None;
-    rejected: Res<Cand> = None;
+    written   = site.call.targs.len;
+    annotated = c.callback_annotated(site.call);
+    hit      :: Res<Cand> = None;
+    pending  :: Res<Cand> = None;
+    rejected :: Res<Cand> = None;
     cands.loop((h, k) {
         c.candidate_compatible(k, actuals).try().then(() {
             fit = (annotated && (written == 0 || written == k.tvars.len)).match({
@@ -1668,7 +1668,7 @@ pick_fitting = (
     off     : usize
 )
                Res<Res<Found>, AllocError> {
-    hit: Res<Found> = None;
+    hit :: Res<Found> = None;
     found.loop((h, f) {
         c.found_fits(f, actuals, off).try().then(() {
             hit.match({

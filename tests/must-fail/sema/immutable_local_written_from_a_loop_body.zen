@@ -1,0 +1,10 @@
+// A loop body captures the local it writes; an immutable one is refused.
+//
+// position: the write.
+
+main = () i32 {
+    x: usize = 0;
+    Range(0, 3).loop((i) { x = i; });
+    println("{}", x);
+    0
+}

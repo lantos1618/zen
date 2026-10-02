@@ -157,9 +157,27 @@ note_drop* = (be :: CBackend, name: str, index: usize, ty: TyId)
     })
 }
 
+// A deferred binding (`x :: T;`) is registered before it holds a value: its
+// flag starts clear, and the assignment that gives it one arms the flag.
+note_unset_drop* = (be :: CBackend, name: str, index: usize, ty: TyId)
+                   Res<(), AllocError> {
+    be.has_drop(ty).try().match({
+        false => Ok(()),
+        true  => {
+            live = be.open_live_flag(false).try();
+            be.own_binding(DropEntry(
+                name: name,
+                index: index,
+                ty: ty,
+                live: live
+            ))
+        },
+    })
+}
+
 own_binding = (be :: CBackend, name: str, index: usize, ty: TyId)
               Res<(), AllocError> {
-    live = be.open_live_flag().try();
+    live = be.open_live_flag(true).try();
     be.own_binding(DropEntry(name: name, index: index, ty: ty, live: live))
 }
 
@@ -170,11 +188,15 @@ own_binding = (be :: CBackend, name: str, index: usize, ty: TyId)
 // choice is a program-wide scan or over-approximating — and
 // over-approximating costs an `int` the C compiler folds, while
 // under-approximating costs a double free.
-open_live_flag = (be :: CBackend) Res<usize, AllocError> {
+open_live_flag = (be :: CBackend, armed: bool) Res<usize, AllocError> {
     n = be.next_tmp();
     name ::= be.alloc.String().try();
     sym_gen(name, "o", n).try();
-    be.fmt("int {} = 1;\n", name.view()).try();
+    be.fmt(
+        "int {} = {};\n",
+        name.view(),
+        armed.match({ true => "1", false => "0" })
+    ).try();
     Ok(n);
 }
 
@@ -224,13 +246,12 @@ write_clear = (be :: CBackend, live: usize) Res<(), AllocError> {
 // gains none: a store onto a borrow must not teach the frame to drop
 // somebody else's value at scope exit.
 // The entry fires behind its own live flag, so a slot whose value a
-// `consume` already moved out emits nothing here; the flag is then
-// killed, because one retirement is all a generation gets -- without
-// that, the retired entry would fire again at scope exit, over the new
-// value. note_drop arms a fresh one for the value landing now: `a =
-// consume b` onto a moved-out binding is the legal face of sema's
-// `revive`, and the swap test's scope-exit drops hang on exactly this
-// re-arm.
+// `consume` already moved out, or a deferred binding not yet assigned,
+// emits nothing here. The same flag is then set for the value landing now:
+// `a = consume b` onto a moved-out binding is the legal face of sema's
+// `revive`. The entry stays in the frame that declared the binding, so a
+// store made inside a nested block -- a match arm -- is dropped when the
+// binding's own scope ends, not when the arm's does.
 displace* = (be :: CBackend, name: str) Res<(), AllocError> {
     n = be.drop_count();
     Range(0, n).find((k) {
@@ -248,12 +269,18 @@ displace* = (be :: CBackend, name: str) Res<(), AllocError> {
     Ok(());
 }
 
-// Drop through the entry's own machinery -- write_drop already knows
-// the guarded shape -- kill the flag, and register the successor.
 displace_one = (be :: CBackend, e: DropEntry) Res<(), AllocError> {
     be.write_drop(e).try();
-    be.write_clear(e.live).try();
-    be.note_drop(e.name, e.index, e.ty).try()
+    (e.live > 0).match({
+        false => Ok(()),
+        true  => be.write_arm(e.live),
+    })
+}
+
+write_arm = (be :: CBackend, live: usize) Res<(), AllocError> {
+    name ::= be.alloc.String().try();
+    sym_gen(name, "o", live).try();
+    be.fmt("{} = 1;\n", name.view())
 }
 
 has_drop* = (be :: CBackend, ty: TyId) Res<bool, AllocError> {
@@ -439,10 +466,11 @@ writes_scope* = (be :: CBackend, id: BlockId) bool {
 
 stmt_writes_scope = (be :: CBackend, s: Stmt) bool {
     s.kind.match({
-        Expr(e)  => be.expr_writes_scope(e.expr),
-        Bind(b)  => be.expr_writes_scope(b.value),
-        Block(_) => false,
-        Decl(_)  => false,
+        Expr(e)     => be.expr_writes_scope(e.expr),
+        Bind(b)     => be.expr_writes_scope(b.value),
+        Deferred(_) => false,
+        Block(_)    => false,
+        Decl(_)     => false,
     })
 }
 

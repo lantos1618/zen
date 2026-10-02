@@ -43,7 +43,7 @@ Sha256* = {
                     self.used = 0;
                 });
                 Range(self.used, 56).loop((i) { self.block.write(i, 0); });
-                bits: u64 ::= self.count * 8;
+                bits :: u64 = self.count * 8;
                 Range(0, 8).loop((i) {
                     self.block.write(
                         63 - i,
@@ -105,7 +105,7 @@ sha256_candidate* = (
 compress = (state: Ptr<u32>, block: Ptr<u8>) {
     w = state.offset(8);
     Range(0, 16).loop((i) {
-        word: u32 ::= 0;
+        word :: u32 = 0;
         Range(0, 4).loop((j) { word = word *% 256 +% block.read(i * 4 + j).to_u32(); });
         w.write(i, word);
     });
@@ -115,10 +115,10 @@ compress = (state: Ptr<u32>, block: Ptr<u8>) {
         s1 = y.rotate_right(17).bit_xor(y.rotate_right(19)).bit_xor(y.shift_right(10));
         w.write(i, w.read(i - 16) +% s0 +% w.read(i - 7) +% s1);
     });
-    a: u32 ::= state.read(0); b: u32 ::= state.read(1);
-    c: u32 ::= state.read(2); d: u32 ::= state.read(3);
-    e: u32 ::= state.read(4); f: u32 ::= state.read(5);
-    g: u32 ::= state.read(6); h: u32 ::= state.read(7);
+    a :: u32 = state.read(0); b :: u32 = state.read(1);
+    c :: u32 = state.read(2); d :: u32 = state.read(3);
+    e :: u32 = state.read(4); f :: u32 = state.read(5);
+    g :: u32 = state.read(6); h :: u32 = state.read(7);
     Range(0, 64).loop((i) {
         s1       = e.rotate_right(6).bit_xor(e.rotate_right(11)).bit_xor(e.rotate_right(25));
         choose   = e.bit_and(f.bit_xor(g)).bit_xor(g);

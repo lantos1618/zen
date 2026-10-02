@@ -126,8 +126,8 @@ root_for* = (
     path     : str,
     mappings : Res<Vec<SourceRoot>>
 ) str {
-    chosen        ::= "";
-    length: usize ::= 0;
+    chosen ::= "";
+    length :: usize = 0;
     mappings.match({
         None        => (),
         Ok(entries) => entries.loop((entry) {

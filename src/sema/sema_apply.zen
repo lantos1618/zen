@@ -788,7 +788,7 @@ infer_var_bound = (
     c.unshadowed_tvar(name, actual).then(() {
         c.bounds_of(name, bounds).try();
     });
-    source: Res<TyId> = None;
+    source    :: Res<TyId> = None;
     ambiguous ::= false;
     bounds.loop((h, b) {
         c.same_head(bound, b).then(() {

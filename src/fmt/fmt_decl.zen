@@ -209,26 +209,43 @@ next_arm_line = (mt: Match, i: usize) usize {
     })
 }
 
-// One op per statement: a binding's `=`, `:=` or `::=` run, else none.
+// One op per statement, else none: the `=` or `::=` after an untyped
+// binding's name, the `=` after a typed immutable binding's type, and the
+// `::` after a typed mutable binding's name. `x: T;` keeps its colon on the
+// name, as a typed binding always does.
 stmt_ops = (src: Src, a: Alloc, tree: Ast, b: Block)
            Res<Vec<Op>, AllocError> {
     ops ::= a.Vec<Op>();
     b.stmts.loop((h, s) {
         ops.add(s.kind.match({
-            Bind(bd) => src.op_after(s.span.start, name_end(tree, bd), "=:"),
-            _        => no_op(),
+            Bind(bd)    => src.op_after(s.span.start, name_end(tree, bd), "=:"),
+            Deferred(d) => d.mutable.match({
+                true  => src.op_after(
+                    s.span.start,
+                    tree.expr_at(d.target).span.end,
+                    ":"
+                ),
+                false => no_op(),
+            }),
+            _           => no_op(),
         })).try();
     });
     Ok(ops);
 }
 
-// Statement `i` continues the run ending at `i - 1`: same operator width,
-// starting on the line after the previous statement ends.
+// Statement `i` continues the run ending at `i - 1`: the same operator,
+// starting on the line after the previous statement ends. `::=` and the
+// `::` of `x :: T` both mark a mutable local, so they share one column.
 joins = (ops: Vec<Op>, b: Block, i: usize) bool {
     here = ops.ptr().read(i);
     prev = ops.ptr().read(i - 1);
-    here.width > 0 && here.width == prev.width
+    here.width > 0 && same_marker(here.width, prev.width)
         && stmt_line(b, i, true) == stmt_line(b, i - 1, false) + 1
+}
+
+// Widths name the operator: 1 is `=`, 2 is `::` and 3 is `::=`.
+same_marker = (here: usize, prev: usize) bool {
+    here == prev || (here >= 2 && prev >= 2)
 }
 
 stmt_line = (b: Block, i: usize, first: bool) usize {
@@ -241,9 +258,14 @@ stmt_line = (b: Block, i: usize, first: bool) usize {
     })
 }
 
+// Where the aligned operator's left side ends: a typed mutable binding
+// aligns its `::`, any other typed binding the `=` after its type.
 name_end = (tree: Ast, bd: Bind) Pos {
     bd.type.match({
-        Ok(t) => tree.type_at(t).span.end,
+        Ok(t) => bd.mutable.match({
+            true  => tree.expr_at(bd.target).span.end,
+            false => tree.type_at(t).span.end,
+        }),
         None  => tree.expr_at(bd.target).span.end,
     })
 }

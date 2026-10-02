@@ -932,8 +932,8 @@ lower_str_literal = (l: Literal, out :: String) Res<(), AllocError> {
 // Escaped backslashes stay paired so \\01 remains three ordinary bytes.
 write_c_literal* = (out :: String, raw: str) Res<(), AllocError> {
     out.add('"').try();
-    start: usize ::= 0;
-    at: usize    ::= 0;
+    start :: usize = 0;
+    at    :: usize = 0;
     loop(() { at < raw.len }, (h) {
         (raw[at] == '\\').match({
             true  => {

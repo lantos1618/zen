@@ -3,7 +3,7 @@
 Lines = std.text
 
 show = (name: str, input: str) {
-    count: usize ::= 0;
+    count :: usize = 0;
     input.lines().loop((h, index, line) {
         first = line.get(0).match({ Ok(b) => b.to_usize(), None => 0 });
         last  = line.get(
@@ -43,7 +43,7 @@ main = (env: Env) Res<i32, AllocError> {
     show("tail", "a\nb");
     show("trailing-cr", "a\n\r");
 
-    calls: usize ::= 0;
+    calls :: usize = 0;
     stopped = source(calls).loop((h, index, line) {
         line.eq("skip").then(() { h.next(); });
         println("walk {} {}", index, line);
@@ -54,7 +54,7 @@ main = (env: Env) Res<i32, AllocError> {
         None     => println("missing stop"),
     });
     calls = 0;
-    count: usize ::= 0;
+    count :: usize = 0;
     source(calls).loop((line) { count = count + 1; });
     println("value source {} count {}", calls, count);
     "first\nunseen".lines().loop((h, line) {
@@ -76,7 +76,7 @@ main = (env: Env) Res<i32, AllocError> {
         cursor.next().match({ None => true, Ok(_) => false })
     );
 
-    seen: usize ::= 0;
+    seen :: usize = 0;
     try_lines(seen).match({
         Ok(_)  => println("unexpected success"),
         Err(_) => println("try {}", seen),
@@ -96,7 +96,7 @@ main = (env: Env) Res<i32, AllocError> {
     text ::= alloc.String().try();
     Range(0, 16384).loop((i) { text.add("x\r\n").try(); });
     count = 0;
-    width: usize ::= 0;
+    width :: usize = 0;
     text.view().lines().loop((line) {
         count = count + 1;
         width = width + line.len;

@@ -1,0 +1,11 @@
+// A closure written before a deferred local is assigned may run before the
+// assignment does, so naming the local inside it is refused.
+//
+// position: the name inside the closure.
+
+main = () i32 {
+    limit :: i32;
+    Range(0, 3).loop((i) { println("{}", limit); });
+    limit = 3;
+    0
+}

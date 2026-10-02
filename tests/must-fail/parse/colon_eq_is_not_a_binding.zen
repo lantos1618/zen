@@ -1,0 +1,11 @@
+// `:=` is not a Zen binding. An inferred binding is `name = value`, or
+// `name ::= value` when it is mutable; the diagnostic names both rather than
+// asking for the type `:` would introduce.
+//
+// position: the `=` after the `:`.
+
+main = () i32 {
+    count := 3;
+    println("{}", count);
+    0
+}

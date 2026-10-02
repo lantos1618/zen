@@ -1,0 +1,10 @@
+// A loop body may run more than once, so assigning an immutable deferred
+// local declared outside it would assign it again on the next pass.
+//
+// position: the assignment inside the loop body.
+
+main = () i32 {
+    last: usize;
+    Range(0, 3).loop((i) { last = i; });
+    0
+}

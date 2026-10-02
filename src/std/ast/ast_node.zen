@@ -332,15 +332,29 @@ Stmt* = {
 }
 
 // Declarations may be nested and do not take a semicolon.
-StmtKind* = Bind(Bind) | Expr(ExprStmt) | Decl(Decl) | Block(BlockId)
+StmtKind* = Bind(Bind)
+    | Deferred(Deferred)
+    | Expr(ExprStmt)
+    | Decl(Decl)
+    | Block(BlockId)
 
-// `x = e;`, `x ::= e;`, `x: T = e;`, `self.len = self.len + 1;`. The target
-// is an expression: a member and an index are binding targets too.
+// `x = e;`, `x ::= e;`, `x: T = e;`, `x :: T = e;`,
+// `self.len = self.len + 1;`. The target is an expression: a member and an
+// index are binding targets too.
 Bind* = {
     target*: ExprId,
     type*: Res<TypeId>,
     mutable*: bool,
     value*: ExprId,
+}
+
+// `x :: T;` or `x: T;`: a local with a type and no value yet. A later
+// `x = e;` assigns it; sema proves every read comes after an assignment on
+// every path, and that an immutable one is assigned exactly once.
+Deferred* = {
+    target*: ExprId,
+    type*: TypeId,
+    mutable*: bool,
 }
 
 ExprStmt* = {

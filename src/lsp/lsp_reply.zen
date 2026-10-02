@@ -115,8 +115,8 @@ Decoded* = {
         }).ensure().try();
         edits = self.param("contentChanges");
         count = self.array_size(edits).try();
-        result   ::= text;
-        i: usize ::= 0;
+        result ::= text;
+        i      :: usize = 0;
         loop(() { i < count }, (h) {
             edit = self.item_at(edits, i).try();
             self.field(

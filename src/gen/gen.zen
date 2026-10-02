@@ -315,7 +315,7 @@ COutput = {
 // before rendering so the program is refused with a reason (IR_ARCHITECTURE
 // §2.3: support boundaries are declared, not discovered).
 refused_by_asm = (program: Program) Res<str> {
-    found: Res<str> ::= None;
+    found :: Res<str> = None;
     program.functions.loop((function) {
         function.slots.loop((ty) {
             float(ty).then(() { found = Ok("floating-point values"); });

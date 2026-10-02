@@ -155,6 +155,12 @@ The shape of every rule below is the same: **reject rather than reinterpret.** A
 
 **Conventions settled:** fields mirror bindings: `name: T` is set at construction and never reassigned, `name :: T` is mutable, and `= default` makes a field optional at construction. `*` on a field means readable outside the module; mutation only ever goes through exported methods.
 
+**Locals mirror fields too, and `::` means mutable wherever it is written.** A local is `name = value` or, when it may be reassigned, `name :: [T] = value` with the type optional — `name ::= value` is the same binding without the space and without a type. An immutable local may write its type the same way, `name: T = value`. `c :: Circle = Circle(r: 2.0)` and `count ::= 0` are the two mutable spellings; there is no third.
+
+**A local may be declared before it has a value.** `name :: T;` declares a mutable local and `name: T;` an immutable one; a later `name = value;` assigns it. The compiler proves definite assignment over the control flow the language actually has: every read, `consume` or capture of the local must follow an assignment on **every** path to it — a match's arms are joined, `bool.then` may not run its body, a loop body may run any number of times (and its entry state includes every way back to it), `h.break()` leaves for the point after its loop, and `.try()` leaves the function. An immutable one is assigned exactly once: an assignment on a path that may already have assigned it is refused. A declared local that nothing assigns at all is refused at its declaration, even if it is never read. Each fault is one diagnostic, at the read or the assignment, naming the local. A closure that is not called where it is written (a local function, a lambda held as a value) is checked as if it ran any number of times from where it is written, and an assignment it makes is not counted for the code after it.
+
+**`name: T ::= value` is not a binding.** It was the typed mutable local before `::` took that job; it is refused with a diagnostic naming `name :: T = value`.
+
 **A DEFAULT IS WRITTEN `name :: T = value`, AND ONLY THERE.** Inside a struct body `name: T = value` is already taken: it is a **constant on the type**, one value per type, read as `Type.NAME` — the form `i32.MAX` is declared with. The two are the same syntax down to the one character that elsewhere means mutability, so one of them has to lose, and the constant wins because it has no other spelling while a default has `::`. **The price is that an immutable field with a default is unspellable**, and it is written here rather than left in a grammar comment: a field you may supply and may omit, and that never changes after, is written `::` and kept immutable by the rule above it — mutation only ever goes through exported methods, and a type that exports none has none.
 
 A field the construction omits **is its default**, not zero. `Cursor()` on a `Cursor` whose every field declares a value is that value in every field, and the same is true of the fields a partial construction leaves out.
@@ -307,6 +313,8 @@ Shape = Circle(Circle) | Unit    // declaration: enum. no semicolon.
 area* = (c: Circle) f64 { .. }   // declaration: function with a body. no semicolon.
 
 v ::= alloc.Vec<i32>();          // statement. semicolon.
+n :: usize = 0;                  // a typed mutable binding. semicolon.
+label :: str;                    // declared now, assigned before any read. semicolon.
 Circle1 = AddFoo(Circle);        // a binding inside a body is a statement. semicolon.
 println("done");                 // statement. semicolon.
 ```

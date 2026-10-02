@@ -32,7 +32,7 @@ ByteReader* = {
     read_order = (self :: @Self, width: usize, little: bool) Res<u64, ByteError> {
         (width > 0 && width <= 8).ensure(ByteError.Invalid).try();
         (width <= self.remaining()).ensure(ByteError.Truncated).try();
-        value: u64 ::= 0;
+        value :: u64 = 0;
         Range(0, width).loop((i) {
             index = little.match({true => width - 1 - i, false => i});
             value = value *% 256 + self.bytes.read(

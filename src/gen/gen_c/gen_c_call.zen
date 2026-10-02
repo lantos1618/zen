@@ -1041,8 +1041,8 @@ def_with_id = (found: Vec<Def>, want: DeclId) Res<Def> {
 selected_def* = (be: CBackend, id: ExprId) Res<Def> {
     selected = be.check.resolved_call(id).try();
     table    = be.check.world.table_at(selected.module.to_usize()).try();
-    from: usize ::= 0;
-    to: usize   ::= table.defs.len;
+    from :: usize = 0;
+    to   :: usize = table.defs.len;
     loop(() { from < to }, (h) {
         middle = from + (to - from) / 2;
         (table.defs.ptr().read(middle).id.decl < selected.decl).match({

@@ -1,0 +1,23 @@
+// A loop body may declare a local and assign it before reading it on each
+// pass. A local declared before `loop((h) { .. })` and assigned on the path
+// that breaks is assigned after the loop: breaking is the only way out.
+
+main = () i32 {
+    sum ::= 0;
+    Range(0, 4).loop((h, i) {
+        square :: usize;
+        square = i * i;
+        sum    = sum + square;
+    });
+    first :: i32;
+    n     ::= 5;
+    loop((h) {
+        (n % 3 == 0).then(() {
+            first = n;
+            h.break();
+        });
+        n = n + 1;
+    });
+    println("{} {}", sum, first);
+    0
+}

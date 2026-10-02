@@ -17,7 +17,7 @@ probe = (s: str, at: usize) bool {
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
     sb    ::= alloc.String("").try();
-    b: u32 = 128;
+    b     :: u32 = 128;
     loop(() { b < 194 }, (h) {
         b.to_u8().match({
             Ok(byte) => sb.add(byte),
@@ -30,7 +30,7 @@ main = (env: Env) Res<i32, AllocError> {
     println("len {}", v.len);
     bad  ::= 0;
     good ::= 0;
-    i: usize = 0;
+    i    :: usize = 0;
     loop(() { i < 132 }, (h) {
         probe(v, i).match({
             true  => println("accepted a forbidden lead"),

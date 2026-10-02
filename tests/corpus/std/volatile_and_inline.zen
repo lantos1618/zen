@@ -13,7 +13,7 @@ main = (env: Env) Res<(), AllocError> {
     a     = env.mem.alloc();
     words = a.raw(32, 16).try().to<u32>();
     Range(0, 8).loop((i) { words.write_volatile(i, i.truncate_u32() *% 16843009); });
-    total: u32 ::= 0;
+    total :: u32 = 0;
     Range(0, 8).loop((i) { total = total +% words.read_volatile(i); });
     println("volatile sum: {}", total);
     compiler_barrier();

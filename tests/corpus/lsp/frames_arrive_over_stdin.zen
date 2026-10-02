@@ -145,7 +145,7 @@ drained = (held: str, p: Pass) Pass {
 }
 
 byte_sum = (s: str) u64 {
-    n: u64 ::= 0;
+    n :: u64 = 0;
     Range(0, s.len).loop((h, i) {
         n = n + s.index(i).to_u64();
     });

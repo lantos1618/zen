@@ -17,7 +17,7 @@ try_values = (values: Vec<str>, seen :: usize) Res<(), AllocError> {
 }
 
 main = (env: Env) Res<i32, AllocError> {
-    calls: usize ::= 0;
+    calls :: usize = 0;
     result: Res<usize> = source(calls).loop((value) {
         println("range {}", value);
     });
@@ -34,7 +34,7 @@ main = (env: Env) Res<i32, AllocError> {
     values.add("stop").try();
     values.add("vec-c").try();
     values.loop((value) { println("{}", value); });
-    seen: usize ::= 0;
+    seen :: usize = 0;
     try_values(values, seen).match({
         Ok(_)  => println("unexpected success"),
         Err(_) => println("try {}", seen),

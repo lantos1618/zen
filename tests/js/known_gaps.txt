@@ -269,6 +269,7 @@ tests/corpus/ptr/comparisons_preserve_element_types # UNSUPPORTED: comparisons_p
 tests/corpus/range/a_literal_range_sums_in_i32 # UNSUPPORTED: a_literal_range_sums_in_i32.zen:5:16: error: unsupported by this backend: folding loops
 tests/corpus/range/a_range_is_a_seq_of_its_values # UNSUPPORTED: std/core/eq.zen:12:22: error: unsupported by this backend: a type sema did not settle
 tests/corpus/range/one_bound_starts_at_zero # UNSUPPORTED: std/core/loop/loop_iter.zen:49:5: error: unsupported by this backend: folding loops
+tests/corpus/range/one_bound_takes_the_written_type # UNSUPPORTED: std/core/loop/loop_iter.zen:49:5: error: unsupported by this backend: folding loops
 tests/corpus/range/signed_bounds_walk_signed_values # UNSUPPORTED: std/core/loop/loop_iter.zen:49:5: error: unsupported by this backend: folding loops
 tests/corpus/sema/bound_third_module/ # UNSUPPORTED: boxy/boxy.zen:8:35: error: unsupported by this backend: a field of a value without record layout
 tests/corpus/sema/checked_calls_survive_contextual_rechecking # UNSUPPORTED: checked_calls_survive_contextual_rechecking.zen:3:16: nothing is at that path: tried `sema/sema_chec

@@ -458,6 +458,14 @@ owners_of = (
                     generic: Ok(decl),
                     kind: OwnerKind.Own
                 )).try(LowerError.OutOfMemory),
+                // An enum body's methods are its own, as a struct's are.
+                Enum(e)   => out.add(Owner(
+                    decl: decl,
+                    members: e.members,
+                    inst: inst,
+                    generic: Ok(decl),
+                    kind: OwnerKind.Own
+                )).try(LowerError.OutOfMemory),
                 _         => (),
             });
         });

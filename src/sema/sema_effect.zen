@@ -92,7 +92,7 @@ dropped_in = (c: Checker, id: ExprId, ty: TyId) Res<Dropped> {
 }
 
 dropped_in_args = (c: Checker, args: Vec<Arg>) Res<Dropped> {
-    found: Res<Dropped> ::= None;
+    found :: Res<Dropped> = None;
     args.loop((h, a) {
         found = c.lambda_failure(a.value);
         found.match({ Ok(_) => h.break(), None => () });

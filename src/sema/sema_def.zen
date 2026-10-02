@@ -305,7 +305,7 @@ World* = {
     // the import a bare use of the name is missing. None when no module
     // exports it.
     importable_from* = (self: @Self, name: str) Res<Res<str>, AllocError> {
-        best: Res<str> ::= None;
+        best :: Res<str> = None;
         Range(0, self.tables.len).loop((h, mi) {
             found ::= self.alloc.Vec<Def>();
             self.exported_defs(mi, name, found).try();

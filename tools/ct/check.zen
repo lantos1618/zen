@@ -7,6 +7,7 @@
 //    flagged.
 // 2. Where valgrind exists, the ctgrind check (ct-grind) with its own
 //    constant-time cases and leaky controls.
+// 3. The inlined audit's negative control (tools/ct/inlined).
 // The timing test is separate (build/ct-timing) because it needs a quiet,
 // pinned core; see tools/ct/timing.zen.
 Vec = std.collections
@@ -85,6 +86,49 @@ main = (env: Env) Res<i32, AllocError> {
         },
         Err(_) => false,
     });
+    // 3. The inlined audit's negative control (tools/ct/inlined): the
+    //    default audit passes it, and the inlined audit (--roots) must flag
+    //    it for each Clang compiler targeting x86-64 and pass it elsewhere.
+    emit_inlined ::= a.Vec<str>();
+    [str, 10](zen, "build", "tools/ct/inlined", "--entry", "main.zen", "--std", std, "--emit-c", "-o", "build/ct/inlined.c")
+        .loop((w) { emit_inlined.add(w).try(); });
+    inlined_emitted = env.proc.run_argv(a, "", emit_inlined).match({ Ok(r) => r.code == 0, Err(_) => false });
+    (!inlined_emitted).then(() { println("FAIL could not emit tools/ct/inlined with {}", zen); });
+    control_manifest = env.fs.read(a, "tools/ct/inlined/manifest.txt").match({ Ok(t) => t.view(), Err(_) => "" });
+    control_roots    = env.fs.read(a, "tools/ct/inlined/roots.txt").match({ Ok(t) => t.view(), Err(_) => "" });
+    expected ::= a.Vec<str>();
+    compilers.loop((cc) {
+        clang_x86(env, a, cc).then(() { expected.add(a.String("select_control@{}", cc).try().view()).try(); });
+    });
+    default_ok = inlined_emitted && run_audit(
+        env,
+        a,
+        Audit(manifest: control_manifest, compilers: compilers, levels: levels, leaky: a.Vec<str>(), work: work),
+        "build/ct/inlined.c"
+    ).match({
+        Ok(o)  => {
+            println("inlined control, default audit: {} passed, {} failed", o.passed, o.failed);
+            o.failed == 0
+        },
+        Err(_) => false,
+    });
+    inlined_ok = inlined_emitted && run_audit(
+        env,
+        a,
+        Audit(manifest: control_manifest, roots: control_roots, compilers: compilers, levels: levels, leaky: expected, work: work),
+        "build/ct/inlined.c"
+    ).match({
+        Ok(o)  => {
+            println(
+                "inlined control, inlined audit: {} passed, {} failed, {} negative control(s) flagged",
+                o.passed,
+                o.failed,
+                o.controls
+            );
+            o.failed == 0 && o.controls == expected.len * levels.len
+        },
+        Err(_) => false,
+    });
     probe ::= a.Vec<str>();
     probe.add("valgrind").try();
     probe.add("--version").try();
@@ -126,5 +170,21 @@ main = (env: Env) Res<i32, AllocError> {
             true
         },
     });
-    Ok((static_ok && grind_ok).match({ true => 0, false => 1 }))
+    Ok((static_ok && default_ok && inlined_ok && grind_ok).match({ true => 0, false => 1 }))
+}
+
+// True when `cc` is Clang generating x86-64 code.
+clang_x86 = (env: Env, a: Alloc, cc: str) bool {
+    says(env, a, cc, "--version", "clang") && says(env, a, cc, "-dumpmachine", "x86_64")
+}
+
+// True when `cc flag` runs and prints `text`.
+says = (env: Env, a: Alloc, cc: str, flag: str, text: str) bool {
+    argv ::= a.Vec<str>();
+    argv.add(cc).match({ _ => () });
+    argv.add(flag).match({ _ => () });
+    env.proc.run_argv(a, "", argv).match({
+        Ok(r)  => r.out.view().contains(text),
+        Err(_) => false,
+    })
 }

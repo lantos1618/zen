@@ -1,0 +1,41 @@
+// The inlined audit's negative control (tools/ct/check.zen): a mask formed
+// in one function and spent in a select in its caller. manifest.txt lists
+// control_select, so the default audit keeps it out of line, where it is
+// branch-free, and the caller passes. roots.txt makes select_control the
+// root of the inlined audit, which leaves control_select to the compiler:
+// Clang inlines it, and on x86-64 its CMOV conversion turns the select into
+// a branch on whether `bz` is zero (a select with a memory operand becomes
+// a branch). That branch must be flagged there; GCC and arm64 keep the
+// select and pass.
+bit_and, bit_or, bit_xor, shift_right = std.core.num
+Ptr = std.mem
+
+ALL: u64 = 0xffffffffffffffff
+pick = inline (mask: u64, a: u64, b: u64) u64 { a.bit_and(mask).bit_or(b.bit_and(mask.bit_xor(ALL))) }
+
+// src if move == 1, else dst.
+control_select = (dst: [u64, 4], src: [u64, 4], move: u64) [u64, 4] {
+    mask = 0 -% move;
+    [pick(mask, src[0], dst[0]), pick(mask, src[1], dst[1]), pick(mask, src[2], dst[2]), pick(mask, src[3], dst[3])]
+}
+
+// 1 if every limb is zero.
+control_is_zero = (a: [u64, 4]) u64 {
+    x = a[0].bit_or(a[1]).bit_or(a[2]).bit_or(a[3]);
+    1 -% x.bit_or(0 -% x).shift_right(63)
+}
+
+select_control = (out: Ptr<u64>, a: [u64, 4], az: [u64, 4], b: [u64, 4], bz: [u64, 4]) {
+    r ::= [a[0] *% a[1], a[1] *% a[2], a[2] *% a[3], a[3] *% a[0]];
+    r = control_select(r, b, control_is_zero(bz));
+    r = control_select(r, az, control_is_zero(a));
+    Range(0, 4).loop((i) { out.write(i, r[i]); });
+}
+
+main = (env: Env) Res<(), AllocError> {
+    a = env.mem.alloc();
+    out = a.raw(32, 16).try().to<u64>();
+    select_control(out, [1, 2, 3, 4], [0, 0, 0, 0], [5, 6, 7, 8], [0, 0, 0, 0]);
+    println("{}", out.read(0));
+    Ok(())
+}

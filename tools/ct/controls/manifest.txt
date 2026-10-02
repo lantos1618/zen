@@ -17,3 +17,20 @@ main  leaky_schedule       **s
 main  schedule_mix         **s *out
 # lookup's index is public by its audit; its table holds secrets.
 main  lookup               *table
+main  leaky_libcall       key
+main  leaky_jump_table   key
+main  leaky_offset_read  *key
+# peek_first reads its lent buffer as public; its table holds secrets.
+main  peek_first         *table
+main  leaky_lend         *key
+main  leaky_delay        key
+main  leaky_block_copy   *key
+main  leaky_set_bit      key
+main  leaky_stack_walk   *key
+# pick's index is public by its audit; its table holds secrets.
+main  pick               *table
+main  leaky_call_if      key
+main  leaky_wide_divide  key
+# split_key returns key material in two vector registers on arm64.
+main  split_key          *key
+main  leaky_second_half  *key

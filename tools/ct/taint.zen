@@ -28,8 +28,9 @@
 // argument registers and the stack argument area its C prototype implies
 // (tools/ct/abi). A callee that is itself audited must be seeded with every
 // secret the call passes it, or the call is reported, since its audit did
-// not assume that input secret. Its result is public only when its audit
-// proved that; otherwise the result, and memory behind a hidden result
+// not assume that input secret. An argument holding the address of secret
+// bytes in this frame points at secrets. Its result is public only when its
+// audit proved that; otherwise the result, and memory behind a hidden result
 // pointer, is secret whenever any argument is secret or points at secrets.
 // A secret-bearing call that passes a writable stack address smears the
 // stack.
@@ -37,11 +38,17 @@
 // Reported, as in ctgrind and the constant-time literature:
 //   branch    a conditional branch whose flags or register are secret
 //   address   a load or store whose base or index register is secret
-//   divide    a division with a secret operand (variable latency)
+//   divide    a division with a secret operand (variable latency), or a
+//             call of the runtime library's 128-bit division given one
 //   indirect  an indirect jump or call through a secret register
 //   call      a secret passed to an audited callee that was not seeded
 //             with it
 //   result    a secret returned by a function audited as public-result
+//   unaudited a secret passed to a callee nobody audited (a helper the
+//             compiler kept out of line, or a library routine)
+//   repeat    a rep string instruction with a secret count
+//   unreached code after a label no path reaches (never analysed)
+//   unconverged  taint still growing when the analysis gave up
 //
 // Not modelled, so not reported: memory other than the stack and the
 // secret pointees (a secret copied into a heap buffer and read back is
@@ -75,6 +82,21 @@ Seed* = {
     // is returned through memory ("" otherwise): no secret may be stored
     // through it.
     result_pointer*: str,
+    // The precise diagnostic (ct-asm CT_PRECISE): see State.precise.
+    precise* :: bool = false,
+}
+
+// `seed` with the precise diagnostic set to `on`.
+with_precise* = (seed: Seed, on: bool) Seed {
+    Seed(
+        values: seed.values,
+        pointers: seed.pointers,
+        slots: seed.slots,
+        pointer_slots: seed.pointer_slots,
+        pointers2: seed.pointers2,
+        result_pointer: seed.result_pointer,
+        precise: on
+    )
 }
 
 // An integer argument register holding a pointer the callee may write
@@ -91,8 +113,15 @@ CallShape* = {
     returns*: bool,           // a result in registers (not void, not hidden)
     pair*: bool,              // an integer result in a register pair
     vector_result*: bool,     // a result in the first vector register
+    // Vector registers the result takes from the first: several for an
+    // arm64 aggregate of vectors (v0..v3).
+    vector_results*: usize,
     hidden*: usize,           // bytes returned through a hidden pointer
     writable*: Vec<Writable>, // pointers the callee may write through
+    // Pointer arguments that name one value, with its size: a `::` or lent
+    // parameter, or arm64's hidden pointer to a by-value copy. Any other
+    // pointer may reach any extent.
+    extents*: Vec<Writable>,
     // Argument registers holding a std.simd CPU capability: a proof token
     // with no data, which compilers need not even load, so whatever the
     // register holds is not an input.
@@ -147,6 +176,9 @@ State = {
     guards :: Vec<str>,
     guard_slots :: Vec<i64>,
     flags :: bool,
+    // x86's carry flag, which inc, dec and adox leave alone and adcx alone
+    // writes; `flags` is the rest (and all of NZCV on arm64).
+    carry :: bool,
     // Bytes the stack pointer has moved down since entry.
     delta :: i64,
     // The frame pointer as an entry-relative offset, once it is set.
@@ -154,6 +186,11 @@ State = {
     // A secret went somewhere on the stack the analysis could not place.
     smear :: bool,
     addr :: Vec<StackAddr>,
+    // A diagnostic that drops the two coarse rules: a store the analysis
+    // cannot place does not smear the stack, and a call does not taint
+    // the memory its callee may write. Unsound, so never a pass; what it
+    // still reports did not come from those rules.
+    precise :: bool = false,
 }
 
 // Where a memory operand lands: a known entry-relative stack offset, the
@@ -166,7 +203,7 @@ Place = | Exact(i64) | Somewhere | Elsewhere
 
 // A global label starts a function: not indented, not a directive, not a
 // compiler-local label (.L on ELF, L/Ltmp on Mach-O), not a comment.
-global_label = (line: str) Res<str> {
+global_label* = (line: str) Res<str> {
     colon = line.find(':').try();
     plain = !line.starts_with(" ") && !line.starts_with("\t")
         && !line.starts_with(".") && !line.starts_with("L")
@@ -231,6 +268,96 @@ split_operands = (a: Alloc, text: str) Res<Vec<str>, AllocError> {
     Ok(out)
 }
 
+// An x86 instruction without the prefixes that leave its effect alone:
+// `notrack` (CET, on GCC's jump-table `notrack jmp *%rax`), `bnd` and
+// `lock`, and `rep` on anything but a string instruction (`rep ret`, and
+// `rep bsf`, which is tzcnt).
+without_prefix = (line: str) str {
+    rest ::= line;
+    loop((h) {
+        cut = Range(0, rest.len).find((i) { rest.index(i) == ' ' || rest.index(i) == '\t' });
+        word = cut.match({ Ok(i) => rest.slice(0, i), None => rest });
+        next = cut.match({ Ok(i) => rest.slice(i, rest.len).trim().value_or(""), None => "" });
+        drop = word.eq("notrack") || word.eq("bnd") || word.eq("lock")
+            || (repeat_prefix(word) && !string_operation(first_word(next)));
+        (cut.match({ Ok(_) => true, None => false }) && drop).match({
+            true  => { rest = next; },
+            false => h.break(),
+        });
+    });
+    rest
+}
+
+first_word = (text: str) str {
+    Range(0, text.len).find((i) { text.index(i) == ' ' || text.index(i) == '\t' }).match({
+        Ok(i) => text.slice(0, i),
+        None  => text,
+    })
+}
+
+repeat_prefix = (word: str) bool { word.is_in(["rep", "repe", "repz", "repne", "repnz"]) }
+
+// The x86 string instructions: movs, stos, cmps, scas and lods with a
+// size suffix (AT&T writes the doubleword forms with `l`).
+string_operation* = (word: str) bool {
+    base = (word.len == 5).match({ true => word.slice(0, 4), false => "" });
+    base.is_in(["movs", "stos", "cmps", "scas", "lods"])
+        && word.slice(4, word.len).is_in(["b", "w", "l", "d", "q"])
+}
+
+// One instruction's text as a Line. A string instruction under a `rep`
+// prefix keeps the prefix as its mnemonic and the instruction as its
+// operand.
+instruction = (a: Alloc, text: str, raw: str) Res<Line, AllocError> {
+    line     = without_prefix(text);
+    space    = Range(0, line.len).find((i) { line.index(i) == ' ' || line.index(i) == '\t' });
+    mnemonic = space.match({ Ok(i) => line.slice(0, i), None => line });
+    rest     = space.match({ Ok(i) => line.slice(i + 1, line.len).trim().value_or(""), None => "" });
+    repeated = repeat_prefix(mnemonic);
+    operands ::= a.Vec<str>();
+    repeated.match({
+        true  => operands.add(first_word(rest)).try(),
+        false => { operands = split_operands(a, rest).try(); },
+    });
+    Ok(Line(label: "", mnemonic: mnemonic, operands: operands, text: raw.trim().value_or(raw)))
+}
+
+// The count a `rep` string instruction repeats, when an instruction just
+// before it in the same block put a constant in %rcx (GCC's `movl $16,
+// %ecx; rep movsq`): added as its second operand, `$16`.
+repeat_counts = (a: Alloc, lines :: Vec<Line>) Res<(), AllocError> {
+    known: Res<str> ::= None;
+    Range(0, lines.len).loop((i) {
+        l = lines.get(i).ok_or(AllocError.OutOfMemory).try();
+        ops = l.operands;
+        last = ops.get(ops.len -% 1).value_or("");
+        (l.label.len > 0).match({
+            true  => { known = None; },
+            false => repeat_prefix(l.mnemonic).match({
+                true  => {
+                    known.when_ok((n) {
+                        out ::= a.Vec<str>();
+                        out.add(ops.get(0).value_or("")).try();
+                        out.add(n).try();
+                        lines.ptr().write(i, Line(label: l.label, mnemonic: l.mnemonic, operands: out, text: l.text));
+                    });
+                    known = None;
+                },
+                false => {
+                    to_rcx = x86_reg(a, last).match({ Ok(r) => r.eq("rcx"), None => false });
+                    constant = ops.len == 2 && ops.get(0).value_or("").starts_with("$")
+                        && (l.mnemonic.eq("movl") || l.mnemonic.eq("movq")) && (last.eq("%ecx") || last.eq("%rcx"));
+                    constant.match({
+                        true  => { known = Ok(ops.get(0).value_or("")); },
+                        false => { (to_rcx || l.mnemonic.starts_with("call") || l.mnemonic.starts_with("xchg")).then(() { known = None; }); },
+                    });
+                },
+            }),
+        });
+    });
+    Ok(())
+}
+
 parse_lines* = (a: Alloc, isa: Isa, body: Vec<str>) Res<Vec<Line>, AllocError> {
     out ::= a.Vec<Line>();
     body.loop((raw) {
@@ -258,28 +385,19 @@ parse_lines* = (a: Alloc, isa: Isa, body: Vec<str>) Res<Vec<Line>, AllocError> {
                     operands: a.Vec<str>(),
                     text: raw
                 )).try(),
-                false => { (line.len > 0).then(() {
-                    space    = Range(0, line.len).find((i) {
-                        line.index(i) == ' ' || line.index(i) == '\t'
-                    });
-                    mnemonic = space.match({ Ok(i) => line.slice(
-                        0,
-                        i
-                    ), None => line });
-                    rest     = space.match({ Ok(i) => line.slice(
-                        i + 1,
-                        line.len
-                    ), None => "" });
-                    out.add(Line(
-                        label: "",
-                        mnemonic: mnemonic,
-                        operands: split_operands(a, rest).try(),
-                        text: raw.trim().value_or(raw)
-                    )).try();
-                }); },
+                // On x86 `;` separates statements (inline asm, Clang's
+                // `rep;movsb`).
+                false => isa.match({
+                    X86 => line.split(';').loop((part) {
+                        text = part.trim().value_or("");
+                        (text.len > 0).then(() { out.add(instruction(a, text, raw).try()).try(); });
+                    }),
+                    Arm => out.add(instruction(a, line, raw).try()).try(),
+                }),
             });
         });
     });
+    isa.match({ X86 => repeat_counts(a, out).try(), Arm => () });
     Ok(out)
 }
 
@@ -534,10 +652,12 @@ copy_state = (a: Alloc, s: State) Res<State, AllocError> {
         guards: s.guards.map(a, (x) { x }).try(),
         guard_slots: s.guard_slots.map(a, (x) { x }).try(),
         flags: s.flags,
+        carry: s.carry,
         delta: s.delta,
         frame: s.frame,
         smear: s.smear,
-        addr: s.addr.map(a, (x) { x }).try()
+        addr: s.addr.map(a, (x) { x }).try(),
+        precise: s.precise
     ))
 }
 
@@ -555,6 +675,7 @@ dead_state = (a: Alloc) State {
         guards: a.Vec<str>(),
         guard_slots: a.Vec<i64>(),
         flags: false,
+        carry: false,
         delta: 0,
         frame: None,
         smear: false,
@@ -570,6 +691,7 @@ join = (a: Alloc, into :: State, from: State) Res<bool, AllocError> {
         was_live = into.live;
         (!was_live).then(() {
             into.live  = true;
+            into.precise = from.precise;
             into.delta = from.delta;
             into.frame = from.frame;
             into.addr  = from.addr.map(a, (x) { x }).try();
@@ -636,6 +758,9 @@ join = (a: Alloc, into :: State, from: State) Res<bool, AllocError> {
         (from.flags && !into.flags).then(
             () { into.flags = true; grew = true; }
         );
+        (from.carry && !into.carry).then(
+            () { into.carry = true; grew = true; }
+        );
         (from.smear && !into.smear).then(
             () { into.smear = true; grew = true; }
         );
@@ -659,6 +784,10 @@ Analysis* = {
     // Each called symbol's calling shape, from its C prototype; an unknown
     // callee is assumed to take every argument register.
     shapes: Map<str, CallShape>,
+    // Callees audited from another build (the inlined audit's functions
+    // whose signature the optimizer changed): called as unknown functions,
+    // but not unaudited ones.
+    elsewhere: Vec<str>,
     // Registers that must not be secret at a return (a public-result audit).
     result_check: Vec<str>,
     // Print every instruction of the final pass with the tainted registers
@@ -667,8 +796,14 @@ Analysis* = {
     // Some instruction consumed a tainted register (argument_reads).
     observed :: bool,
 
+    // A label's state. GNU numeric labels (`1:`, reached as `1f` or `1b`
+    // from inline asm) share one state per number: a join over every
+    // definition, which covers whichever one a reference means.
     state_at = (self: @Self, label: str) Res<usize> {
-        Range(0, self.labels.len).find((i) { self.labels.get(i).value_or("").eq(label) })
+        numeric = label.len > 1 && (label.ends_with("f") || label.ends_with("b"))
+            && Range(0, label.len - 1).find((i) { !is_digit(label.index(i)) }).match({ Ok(_) => false, None => true });
+        name = numeric.match({ true => label.slice(0, label.len - 1), false => label });
+        Range(0, self.labels.len).find((i) { self.labels.get(i).value_or("").eq(name) })
     }
 
     report = (self :: @Self, kind: str, text: str) Res<(), AllocError> {
@@ -715,7 +850,8 @@ analyze* = (
     seed         : Seed,
     shapes       : Map<str, CallShape>,
     result_check : Vec<str>,
-    trace        : bool
+    trace        : bool,
+    elsewhere    : Vec<str>
 ) Res<Vec<Finding>, AllocError> {
     an ::= Analysis(
         alloc: a,
@@ -727,6 +863,7 @@ analyze* = (
         reporting: false,
         grew: false,
         shapes: shapes,
+        elsewhere: elsewhere,
         result_check: result_check,
         trace: trace,
         observed: false
@@ -742,16 +879,25 @@ analyze* = (
         an.grew = false;
         an.pass(seed).try();
         rounds = rounds + 1;
-        (!an.grew || rounds > 64).then(() { h.break(); });
+        (!an.grew || rounds >= MAX_ROUNDS).then(() { h.break(); });
     });
     an.reporting = true;
+    // Taint still growing: the final pass would report from states that
+    // miss some of it.
+    an.grew.then(() {
+        an.report("unconverged", an.alloc.String("taint still growing after {} passes", rounds).try().view()).try();
+    });
     an.pass(seed).try();
     Ok(an.findings)
 }
 
+// Passes over a function before the analysis gives up on a fixed point.
+MAX_ROUNDS: usize = 1000
+
 entry_state = (a: Alloc, seed: Seed) Res<State, AllocError> {
     s ::= dead_state(a);
     s.live = true;
+    s.precise = seed.precise;
     seed.values.loop((r) { put(s.val, r, true).try(); });
     seed.pointers.loop((r) { put(s.pts, r, true).try(); });
     seed.slots.loop((o) { mark(s.slots, o, 8, true).try(); });
@@ -772,6 +918,9 @@ show_bytes = (shown :: String, bits: Vec<u64>) Res<(), AllocError> {
 
 pass = (an :: Analysis, seed: Seed) Res<(), AllocError> {
     cur ::= entry_state(an.alloc, seed).try();
+    // A label no path reaches, while instructions follow it: code the
+    // analysis never saw, reported rather than passed.
+    unreached: Res<str> ::= None;
     an.lines.loop((l) {
         (l.label.len > 0).match({
             true  => {
@@ -783,11 +932,21 @@ pass = (an :: Analysis, seed: Seed) Res<(), AllocError> {
                     grew.then(() { an.grew = true; });
                     cur = copy_state(an.alloc, here).try();
                 });
+                unreached = cur.live.match({ true => None, false => Ok(l.text) });
             },
-            false => { cur.live.then(() {
+            false => { cur.live.match({
+                false => {
+                    (an.reporting && !l.mnemonic.eq("zen:declassify")).then(() {
+                        unreached.when_ok((label) {
+                            an.report("unreached", an.alloc.String("{} (first instruction: {})", label.trim().value_or(label), l.text).try().view()).try();
+                        });
+                    });
+                    unreached = None;
+                },
+                true  => {
                 (an.trace && an.reporting).then(() {
                     shown ::= an.alloc.String().try();
-                    shown.fmt("flags={} smear={} secret:", cur.flags, cur.smear).try();
+                    shown.fmt("flags={} carry={} smear={} secret:", cur.flags, cur.carry, cur.smear).try();
                     cur.val.loop((r) { shown.fmt(" {}", r).try(); });
                     shown.add(" stack:").try();
                     show_bytes(shown, cur.slots).try();
@@ -799,9 +958,36 @@ pass = (an :: Analysis, seed: Seed) Res<(), AllocError> {
                     X86 => an.x86(cur, l).try(),
                     Arm => an.arm(cur, l).try(),
                 });
+                },
             }); },
         });
     });
+    Ok(())
+}
+
+// The taken edge of a conditional branch: to a label of this function, or
+// out of it, a conditional tail call (Clang's `jne f # TAILCALL`), which
+// is a call and a return on that path.
+branch_to = (an :: Analysis, cur: State, target: str, l: Line) Res<(), AllocError> {
+    an.state_at(target).match({
+        Ok(_) => an.flow(target, cur).try(),
+        None  => { (!target.starts_with(".") && !target.starts_with("L")).then(() {
+            taken ::= copy_state(an.alloc, cur).try();
+            an.isa.match({
+                X86 => an.x86_call(taken, target, l).try(),
+                Arm => an.arm_call(taken, target, l).try(),
+            });
+            an.returns(taken, l).try();
+        }); },
+    });
+    Ok(())
+}
+
+// An indirect jump that is not a return (a jump table, a computed goto, a
+// tail call through a pointer): its targets are not written, so every
+// label of the function may be one.
+flow_everywhere = (an :: Analysis, cur: State) Res<(), AllocError> {
+    an.labels.loop((label) { an.flow(label, cur).try(); });
     Ok(())
 }
 
@@ -877,14 +1063,14 @@ stack_store = (
     place.match({
         Exact(o)  => {
             placed = mark(cur.slots, o, width, secret).try();
-            (!placed && secret).then(() { cur.smear = true; });
+            (!placed && secret && !cur.precise).then(() { cur.smear = true; });
             Range(0, width).loop((k) {
                 put_slot(cur.pslots, o + wide(k), false).try();
                 put_slot(cur.p2slots, o + wide(k), false).try();
             });
             (points && width == 8).then(() { put_slot(cur.pslots, o, true).try(); });
         },
-        Somewhere => { secret.then(() { cur.smear = true; }); },
+        Somewhere => { (secret && !cur.precise).then(() { cur.smear = true; }); },
         Elsewhere => (),
     });
     Ok(())
@@ -911,11 +1097,51 @@ never_returns = (name: str) bool {
 call_target* = (op: str) str {
     plain = op.split_once('@').match({ Ok(p) => p.before, None => op });
     base  = plain.split_once('.').match({ Ok(p) => p.before, None => plain });
-    base.starts_with("_zu_").match({ true => base.slice(1, base.len), false => base })
+    (base.starts_with("_zu_") || base.starts_with("_zg_")).match({ true => base.slice(1, base.len), false => base })
+}
+
+// Whether `reg` holds an address in this frame with secret bytes in the
+// `bytes` it reaches, or, when that is 0 (unknown), at or above it: up to
+// the return address for a local (no object lies across it), anywhere
+// above for the incoming arguments, and anywhere at all when the offset is
+// not known.
+stack_behind = (cur: State, reg: str, bytes: usize) bool {
+    entry_of(cur, reg).match({
+        None    => false,
+        Ok(e)   => cur.smear || e.exact.match({
+            false => any_marked(cur.slots),
+            true  => (bytes > 0).match({
+                true  => marked(cur.slots, e.at, bytes),
+                false => marked_between(cur.slots, e.at, (e.at < 0).match({ true => 0, false => WINDOW_LOW + WINDOW_SPAN })),
+            }),
+        }),
+    })
+}
+
+// Whether any byte in [from, to) is marked.
+marked_between = (bits: Vec<u64>, from: i64, to: i64) bool {
+    start = bit_of(from).value_or(0);
+    stop  = bit_of(to).value_or(bits.len * 64).min(bits.len * 64);
+    at ::= start;
+    found ::= false;
+    loop(() { at < stop && !found }, (h) {
+        word = bits.get(at / 64).value_or(0);
+        (at % 64 == 0 && at + 64 <= stop).match({
+            true  => { found = word != 0; at = at + 64; },
+            false => { found = word.shift_right(at % 64).bit_and(1) == 1; at = at + 1; },
+        });
+    });
+    found
+}
+
+// A direct call of a compiler-made clone: a `.` suffix on the symbol.
+clone_call = (op: str) bool {
+    plain = op.split_once('@').match({ Ok(p) => p.before, None => op });
+    plain.contains('.')
 }
 
 // What a callee is assumed to take when its prototype is unknown.
-unknown_shape = (a: Alloc, isa: Isa) CallShape {
+unknown_shape* = (a: Alloc, isa: Isa) CallShape {
     writable ::= a.Vec<Writable>();
     Range(0, isa.match({ X86 => 6, Arm => 8 })).loop((i) { writable.add(Writable(index: i, bytes: 0)).match({ _ => () }); });
     CallShape(
@@ -925,11 +1151,52 @@ unknown_shape = (a: Alloc, isa: Isa) CallShape {
         returns: true,
         pair: true,
         vector_result: true,
+        vector_results: isa.match({ X86 => 2, Arm => 4 }),
         hidden: 0,
         writable: writable,
+        extents: a.Vec<Writable>(),
         ignored: a.Vec<str>(),
         pointer_args: a.Vec<str>(),
         known: false,
+        reads: a.Vec<str>(),
+        reads_known: false,
+        audited: false,
+        public_result: false,
+        values: a.Vec<str>(),
+        pointers: a.Vec<str>(),
+        slots: a.Vec<i64>(),
+        pointer_slots: a.Vec<i64>(),
+        pointers2: a.Vec<str>()
+    )
+}
+
+// memcpy, memmove, memset and bzero: they read the source pointer (or the
+// fill byte) and the length, and write only through the destination, whose
+// incoming bytes they never read. bzero (what Clang calls for a zero fill
+// on Darwin) takes two arguments and returns nothing.
+library_shape = (a: Alloc, conv: Convention, target: str) CallShape {
+    zero = clears(target);
+    fill = zero || call_target(target).ends_with("memset");
+    writable ::= a.Vec<Writable>();
+    writable.add(Writable(index: 0, bytes: 0)).match({ _ => () });
+    ignored ::= a.Vec<str>();
+    ignored.add(conv.gprs.get(0).value_or("")).match({ _ => () });
+    pointers ::= a.Vec<str>();
+    (!fill).then(() { pointers.add(conv.gprs.get(1).value_or("")).match({ _ => () }); });
+    CallShape(
+        gprs: zero.match({ true => 2, false => 3 }),
+        vectors: 0,
+        stack: 0,
+        returns: !zero,
+        pair: false,
+        vector_result: false,
+        vector_results: 0,
+        hidden: 0,
+        writable: writable,
+        extents: a.Vec<Writable>(),
+        ignored: ignored,
+        pointer_args: pointers,
+        known: true,
         reads: a.Vec<str>(),
         reads_known: false,
         audited: false,
@@ -1014,9 +1281,18 @@ call = (
     line   : Line,
     conv   : Convention
 ) Res<(), AllocError> {
-    shape = an.shapes.get(call_target(target)).match({
-        Ok(s)  => s,
-        None => unknown_shape(an.alloc, an.isa),
+    // A GCC clone (`f.isra.0`, `f.constprop.0`, `f.part.0`) may take its
+    // arguments differently from f's prototype: ISRA passes fields of an
+    // aggregate in registers of their own.
+    shape = (returns_first(target) || clears(target)).match({
+        true  => library_shape(an.alloc, conv, target),
+        false => clone_call(target).match({
+            true  => unknown_shape(an.alloc, an.isa),
+            false => an.shapes.get(call_target(target)).match({
+                Ok(s)  => s,
+                None => unknown_shape(an.alloc, an.isa),
+            }),
+        }),
     });
     secret ::= false;   // some argument is secret or points at secrets
     points ::= false;   // some argument points at secrets
@@ -1027,12 +1303,22 @@ call = (
         dead = has(shape.ignored, r) || (shape.reads_known && !has(shape.reads, r));
         deref = !shape.known || has(shape.pointer_args, r);
         v = has(cur.val, r) && !dead;
-        p = has(cur.pts, r) && !dead && deref;
+        // The address of secret bytes in this frame hands the callee those
+        // secrets as surely as a pointer to secret memory does. The hidden
+        // result pointer is only written.
+        extent = shape.extents.find((w) { w.index == i }).match({ Ok(w) => w.bytes, None => 0 });
+        behind = !(shape.hidden > 0 && r.eq(conv.hidden_reg)) && stack_behind(cur, r, extent);
+        p = (has(cur.pts, r) || behind) && !dead && deref;
         q = has(cur.pts2, r) && !dead && deref;
         secret = secret || v || p || q;
         points = points || p;
+        // A callee seeded with `**r` takes the words behind r as pointers
+        // to secret memory (the manifest vouches for that); this frame's
+        // copy of such a struct, filled by a callee whose result counts
+        // as secret, satisfies it.
+        lent = behind && !has(cur.pts, r) && has(shape.pointers2, r);
         (shape.audited && ((v && !has(shape.values, r))
-            || (p && !has(shape.values, r) && !has(shape.pointers, r))
+            || (p && !lent && !has(shape.values, r) && !has(shape.pointers, r))
             || (q && !has(shape.pointers2, r)))).then(() {
             stray = true;
             which.fmt(" {}", r).try();
@@ -1068,6 +1354,18 @@ call = (
     stray.then(() {
         an.report("call", an.alloc.String("{} (unseeded:{})", line.text, which.view()).try().view()).try();
     });
+    // A callee nobody audited was handed a secret: its own branches and
+    // addresses were never checked. The runtime library's wide divisions
+    // are divisions; the copies and fills, the entropy source and calls
+    // that never return are known not to depend on the data.
+    (secret && !shape.audited && !call_target(target).is_in(an.elsewhere)).then(() {
+        wide_division(target).match({
+            true  => an.report("divide", line.text).try(),
+            false => { (!returns_first(target) && !no_return(target) && !data_blind(target)).then(() {
+                an.report("unaudited", line.text).try();
+            }); },
+        });
+    });
     out = secret && !(shape.audited && shape.public_result && !stray);
     // Memory behind a hidden result pointer holds the result: marked when
     // it is a known part of this frame; somewhere in the frame smears it;
@@ -1076,7 +1374,7 @@ call = (
     (shape.hidden > 0).then(() {
         addr_of(cur, conv.hidden_reg).match({
             Ok(o)  => stack_store(cur, Place.Exact(o), shape.hidden, out, false).try(),
-            None   => { (out && on_stack(cur, conv.hidden_reg)).then(() { cur.smear = true; }); },
+            None   => { (out && !cur.precise && on_stack(cur, conv.hidden_reg)).then(() { cur.smear = true; }); },
         });
     });
     // A callee given secrets may write what it derives from them through
@@ -1084,7 +1382,7 @@ call = (
     // borrow names, or anywhere.
     shape.writable.loop((w) {
         r = conv.gprs.get(w.index).value_or("");
-        (secret && on_stack(cur, r) && !(shape.hidden > 0 && r.eq(conv.hidden_reg))).then(() {
+        (secret && !cur.precise && on_stack(cur, r) && !(shape.hidden > 0 && r.eq(conv.hidden_reg))).then(() {
             (w.bytes > 0).match({
                 true  => addr_of(cur, r).match({
                     Ok(o) => { mark(cur.slots, o, w.bytes, true).try().match({ true => (), false => { cur.smear = true; } }); },
@@ -1094,6 +1392,12 @@ call = (
             });
         });
     });
+    // memcpy, memmove and memset return their destination pointer.
+    dest     = conv.gprs.get(0).value_or("");
+    returns_dest = returns_first(target);
+    dest_val = has(cur.val, dest);
+    dest_pts = has(cur.pts, dest);
+    dest_at: Res<StackAddr> = entry_of(cur, dest);
     conv.clobbered.loop((r) {
         put(cur.val, r, false).try();
         put(cur.low, r, false).try();
@@ -1104,16 +1408,63 @@ call = (
     });
     // An audited callee's result is never a pointer into secret memory
     // (a public-result audit checks that at its returns); an unknown
-    // callee's may be whenever it was given one.
+    // callee's may be whenever it was given one. A callee without a
+    // prototype may return in either the integer or the vector registers.
     first  = conv.results.get(0).value_or("");
     second = conv.results.get(1).value_or("");
-    integer = shape.returns && !shape.vector_result;
+    integer = shape.returns && (!shape.vector_result || !shape.known);
     put(cur.val, first, out && integer).try();
     put(cur.pts, first, points && integer && !shape.audited).try();
     put(cur.val, second, out && integer && shape.pair).try();
-    put(cur.val, conv.vector_result, out && shape.returns && shape.vector_result).try();
+    Range(0, (shape.vector_results > 0).match({ true => shape.vector_results, false => 1 }).min(conv.vectors.len)).loop((i) {
+        put(cur.val, conv.vectors.get(i).value_or(""), out && shape.returns && shape.vector_result).try();
+    });
+    returns_dest.then(() {
+        put(cur.val, first, dest_val).try();
+        put(cur.pts, first, dest_pts).try();
+        put(cur.val, second, false).try();
+        put(cur.val, conv.vector_result, false).try();
+        dest_at.when_ok((e) {
+            e.exact.match({
+                true  => set_addr(cur.addr, first, Ok(e.at)).try(),
+                false => set_somewhere(cur.addr, first).try(),
+            });
+        });
+    });
     cur.flags = false;
+    cur.carry = false;
     Ok(())
+}
+
+// The runtime library's 128-bit divisions, which take variable time.
+wide_division = (op: str) bool {
+    name = call_target(op);
+    bare = name.starts_with("_").match({ true => name.slice(1, name.len), false => name });
+    list = ["__udivti3", "__umodti3", "__divti3", "__modti3", "__udivmodti4", "__divmodti4"];
+    name.is_in(list) || bare.is_in(list)
+}
+
+// Library calls whose timing does not depend on the data they are given:
+// clearing, the entropy source and the CPU feature probe.
+data_blind = (op: str) bool {
+    name = call_target(op);
+    bare = name.starts_with("_").match({ true => name.slice(1, name.len), false => name });
+    list = ["bzero", "explicit_bzero", "memset_s", "arc4random_buf", "getentropy", "__cpu_indicator_init"];
+    name.is_in(list) || bare.is_in(list)
+}
+
+// The C library's zero fills.
+clears = (op: str) bool {
+    name = call_target(op);
+    bare = name.starts_with("_").match({ true => name.slice(1, name.len), false => name });
+    name.is_in(["bzero", "explicit_bzero"]) || bare.is_in(["bzero", "explicit_bzero"])
+}
+
+// The C library's copies and fills, whose result is their first argument.
+returns_first = (op: str) bool {
+    name = call_target(op);
+    bare = name.starts_with("_").match({ true => name.slice(1, name.len), false => name });
+    name.is_in(["memcpy", "memmove", "memset"]) || bare.is_in(["memcpy", "memmove", "memset"])
 }
 
 // ---------------------------------------------------------------------
@@ -1148,6 +1499,7 @@ argument_reads* = (
             reporting: false,
             grew: false,
             shapes: shapes,
+            elsewhere: a.Vec<str>(),
             result_check: a.Vec<str>(),
             trace: false,
             observed: false
@@ -1163,9 +1515,10 @@ argument_reads* = (
             an.grew = false;
             an.pass(seed).try();
             rounds = rounds + 1;
-            (an.observed || !an.grew || rounds > 64).then(() { h.break(); });
+            (an.observed || !an.grew || rounds >= MAX_ROUNDS).then(() { h.break(); });
         });
-        an.observed.then(() { read.add(r).try(); });
+        // Unsettled, the register may yet be read.
+        (an.observed || an.grew).then(() { read.add(r).try(); });
     });
     Ok(read)
 }
@@ -1193,6 +1546,13 @@ x86_mem = (a: Alloc, op: str) Res<X86Mem> {
 }
 
 x86_is_mem = (op: str) bool { op.contains('(') }
+
+// Whether the base or the index register of `m` is in `set`: a compiler
+// may put the pointer in either (`(%rdx,%rdi)` for key + 2n).
+x86_mem_in = (m: X86Mem, set: Vec<str>) bool {
+    m.base.match({ Ok(b) => has(set, b), None => false })
+        || m.index.match({ Ok(i) => has(set, i), None => false })
+}
 
 // The entry-relative stack address a register holds, if the analysis knows.
 x86_base_at = (cur: State, base: str) Res<i64> {
@@ -1261,7 +1621,7 @@ x86_value = (
         true  => {
             m = x86_mem(an.alloc, op).ok_or(AllocError.OutOfMemory).try();
             an.x86_address(cur, m, line).try();
-            base_points = m.base.match({ Ok(b) => has(cur.pts, b), None => false });
+            base_points = x86_mem_in(m, cur.pts);
             Ok(base_points || stack_secret(cur, x86_place(cur, m), width))
         },
         false => Ok(
@@ -1300,7 +1660,7 @@ x86_points = (an :: Analysis, cur: State, op: str, width: usize) bool {
         // it is pointer-sized.
         true  => x86_mem(an.alloc, op).match({
             Ok(m) => stack_points(cur, x86_place(cur, m), width)
-                || (width == 8 && m.base.match({ Ok(b) => has(cur.pts2, b), None => false })),
+                || (width == 8 && x86_mem_in(m, cur.pts2)),
             None  => false,
         }),
         false => x86_reg(an.alloc, op).match({ Ok(r) => has(cur.pts, r), None => false }),
@@ -1341,7 +1701,7 @@ x86_write = (
         true  => {
             m = x86_mem(an.alloc, op).ok_or(AllocError.OutOfMemory).try();
             an.x86_address(cur, m, line).try();
-            (secret && m.base.match({ Ok(b) => has(cur.rps, b), None => false })).then(() {
+            (secret && x86_mem_in(m, cur.rps)).then(() {
                 an.report("result", line.text).try();
             });
             stack_store(cur, x86_place(cur, m), width, secret, points).try();
@@ -1387,6 +1747,29 @@ x86_reads_destination = (m: str) bool {
         || m.starts_with("vfmsub") || m.starts_with("vfnmadd") || m.starts_with("vfnmsub")
 }
 
+// Whether an x86 condition code (`ne`, `b`, `nbe`, ...) reads a secret
+// flag: the carry for b/ae/c, the carry and zero flags for a/be, the rest
+// otherwise. A size suffix (Clang's `cmovneq`) is dropped; an unknown code
+// reads everything.
+x86_condition = (cur: State, code: str) bool {
+    codes = ["o", "no", "b", "nae", "c", "ae", "nb", "nc", "e", "z", "ne", "nz", "be", "na", "a", "nbe",
+        "s", "ns", "p", "pe", "np", "po", "l", "nge", "ge", "nl", "le", "ng", "g", "nle"];
+    cond = code.is_in(codes).match({
+        true  => code,
+        false => (code.len > 1 && code.slice(0, code.len - 1).is_in(codes)).match({
+            true  => code.slice(0, code.len - 1),
+            false => "",
+        }),
+    });
+    cond.is_in(["b", "nae", "c", "ae", "nb", "nc"]).match({
+        true  => cur.carry,
+        false => cond.is_in(["be", "na", "a", "nbe"]).match({
+            true  => cur.carry || cur.flags,
+            false => (cond.len == 0).match({ true => cur.carry || cur.flags, false => cur.flags }),
+        }),
+    })
+}
+
 // Vector instructions and the BMI2/move family leave the flags alone.
 x86_writes_flags = (m: str, ops: Vec<str>) bool {
     vector = ops.find((op) { x86_vector_reg(op) || op.starts_with("%k") }).match({ Ok(_) => true, None => false });
@@ -1394,6 +1777,81 @@ x86_writes_flags = (m: str, ops: Vec<str>) bool {
         || m.starts_with("shrx") || m.starts_with("sarx") || m.starts_with("rorx")
         || m.starts_with("mulx") || m.starts_with("pdep") || m.starts_with("pext")
         || m.starts_with("movbe") || m.starts_with("xchg") || m.starts_with("cvt"))
+}
+
+// A string instruction: `op` (movs, stos, cmps, scas or lods with its
+// size) through %rsi and %rdi, once or, `repeated`, %rcx times; `count` is
+// %rcx when a constant set it (tools/ct's `$n` operand), 0 when unknown.
+x86_string = (
+    an       :: Analysis,
+    cur      :: State,
+    l        : Line,
+    op       : str,
+    repeated : bool,
+    count    : usize
+) Res<(), AllocError> {
+    size: usize = op.ends_with("b").match({
+        true  => 1,
+        false => op.ends_with("w").match({ true => 2, false => (op.ends_with("q")).match({ true => 8, false => 4 }) }),
+    });
+    kind  = op.slice(0, 4);
+    bytes = repeated.match({ true => count * size, false => size });
+    reads_source = kind.is_in(["movs", "cmps", "lods"]);
+    reads_dest   = kind.is_in(["cmps", "scas"]);
+    // The addresses are %rsi and %rdi.
+    ((reads_source && has(cur.val, "rsi")) || (!kind.eq("lods") && has(cur.val, "rdi"))).then(() {
+        an.report("address", l.text).try();
+    });
+    // A secret count repeats a secret number of times.
+    (repeated && has(cur.val, "rcx")).then(() { an.report("repeat", l.text).try(); });
+    source = reads_source.match({
+        true  => has(cur.pts, "rsi") || stack_behind(cur, "rsi", bytes),
+        false => has(cur.val, "rax") && !kind.eq("lods"),
+    });
+    dest = reads_dest && (has(cur.pts, "rdi") || stack_behind(cur, "rdi", bytes));
+    compared = source || dest;
+    (source || dest || has(cur.val, "rax")).then(() { an.observed = true; });
+    // cmps and scas stop at the first difference (or match) under repe
+    // and repne: an early exit on the data.
+    (kind.is_in(["cmps", "scas"])).then(() {
+        (repeated && compared).then(() { an.report("branch", l.text).try(); });
+        cur.flags = compared;
+        cur.carry = compared;
+        repeated.then(() { put(cur.val, "rcx", compared).try(); });
+    });
+    kind.eq("lods").then(() { put(cur.val, "rax", source).try(); set_addr(cur.addr, "rax", None).try(); });
+    // movs and stos write `bytes` at %rdi.
+    (kind.eq("movs") || kind.eq("stos")).then(() {
+        (source && has(cur.rps, "rdi")).then(() { an.report("result", l.text).try(); });
+        from: Res<i64> = addr_of(cur, "rsi");
+        entry_of(cur, "rdi").when_ok((e) {
+            (e.exact && bytes > 0).match({
+                true  => {
+                    stack_store(cur, Place.Exact(e.at), bytes, source, false).try();
+                    stack_guard(cur, Place.Exact(e.at), bytes, false).try();
+                    // A copy moves the pointer words with it.
+                    (kind.eq("movs")).then(() { from.when_ok((f) {
+                        Range(0, bytes / 8).loop((k) {
+                            has_slot(cur.pslots, f + wide(8 * k)).then(() { put_slot(cur.pslots, e.at + wide(8 * k), true).try(); });
+                            has_slot(cur.p2slots, f + wide(8 * k)).then(() { put_slot(cur.p2slots, e.at + wide(8 * k), true).try(); });
+                        });
+                    }); });
+                },
+                false => { source.then(() { cur.smear = true; }); },
+            });
+        });
+    });
+    // The pointers advance past what was moved; %rcx counts down to 0.
+    [str, 2]("rsi", "rdi").loop((r) {
+        entry_of(cur, r).when_ok((e) {
+            (e.exact && bytes > 0).match({
+                true  => set_addr(cur.addr, r, Ok(e.at + wide(bytes))).try(),
+                false => set_somewhere(cur.addr, r).try(),
+            });
+        });
+    });
+    (repeated && !kind.is_in(["cmps", "scas"])).then(() { put(cur.val, "rcx", false).try(); });
+    Ok(())
 }
 
 x86_call = (an :: Analysis, cur :: State, target: str, l: Line) Res<(), AllocError> {
@@ -1422,6 +1880,17 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             });
             h.break();
         });
+        // String instructions, repeated or once.
+        (repeat_prefix(m) && string_operation(first)).then(() {
+            given = x86_imm(ops.get(1).value_or(""));
+            count = (given > 0).match({ true => given.to_usize().value_or(0), false => 0 });
+            an.x86_string(cur, l, first, true, count).try();
+            h.break();
+        });
+        (string_operation(m) && (n == 0 || ops.find((o) { o.contains("%es:") }).match({ Ok(_) => true, None => false }))).then(() {
+            an.x86_string(cur, l, m, false, 1).try();
+            h.break();
+        });
         // Control flow.
         (m.starts_with("j")).then(() {
             (m.eq("jmp") || m.eq("jmpq")).match({
@@ -1430,6 +1899,7 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
                         true  => {
                             target = last.slice(1, last.len);
                             (an.x86_value(cur, target, l, 8).try()).then(() { an.report("indirect", l.text).try(); });
+                            an.flow_everywhere(cur).try();
                         },
                         false => an.state_at(last).match({
                             Ok(_)  => an.flow(last, cur).try(),
@@ -1443,8 +1913,12 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
                     cur.live = false;
                 },
                 false => {
-                    cur.flags.then(() { an.report("branch", l.text).try(); });
-                    an.flow(last, cur).try();
+                    secret = m.is_in(["jrcxz", "jecxz"]).match({
+                        true  => has(cur.val, "rcx"),
+                        false => x86_condition(cur, m.slice(1, m.len)),
+                    });
+                    secret.then(() { an.report("branch", l.text).try(); });
+                    an.branch_to(cur, last, l).try();
                 },
             });
             h.break();
@@ -1458,7 +1932,12 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             no_return(last).then(() { cur.live = false; });
             h.break();
         });
-        (m.starts_with("cmp") || m.starts_with("test") || m.starts_with("bt")
+        // A bit test with a register bit offset and a memory operand
+        // addresses the word the offset selects, beyond the operand.
+        bit_test = m.is_in(["bt", "btw", "btl", "btq", "bts", "btsw", "btsl", "btsq", "btr", "btrw", "btrl", "btrq", "btc", "btcw", "btcl", "btcq"]);
+        (bit_test && n == 2 && x86_is_mem(last) && !first.starts_with("$")
+            && an.x86_value(cur, first, l, 8).try()).then(() { an.report("address", l.text).try(); });
+        (m.starts_with("cmp") || m.starts_with("test") || m.is_in(["bt", "btw", "btl", "btq"])
             || m.starts_with("ucomis") || m.starts_with("comis") || m.starts_with("ptest")
             || m.starts_with("vptest") || m.starts_with("vtestp")).then(() {
             secret ::= false;
@@ -1466,14 +1945,16 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
                 (op) { secret = secret || an.x86_value(cur, op, l, width).try(); }
             );
             cur.flags = secret;
+            cur.carry = secret;
             h.break();
         });
         (m.starts_with("set")).then(() {
-            an.x86_write(cur, last, cur.flags, false, l, 1).try();
+            an.x86_write(cur, last, x86_condition(cur, m.slice(3, m.len)), false, l, 1).try();
             h.break();
         });
         (m.starts_with("cmov")).then(() {
-            secret = an.x86_value(cur, first, l, width).try() || an.x86_value(cur, last, l, width).try() || cur.flags;
+            secret = an.x86_value(cur, first, l, width).try() || an.x86_value(cur, last, l, width).try()
+                || x86_condition(cur, m.slice(4, m.len));
             an.x86_write(cur, last, secret, false, l, width).try();
             h.break();
         });
@@ -1494,10 +1975,7 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             mem    = x86_mem(an.alloc, first).ok_or(AllocError.OutOfMemory).try();
             secret = mem.base.match({ Ok(b) => has(cur.val, b), None => false })
                 || mem.index.match({ Ok(i) => has(cur.val, i), None => false });
-            points = mem.base.match({ Ok(b) => has(
-                cur.pts,
-                b
-            ), None => false });
+            points = x86_mem_in(mem, cur.pts);
             // `lea d(%rsp), %rbp`-style frame setup.
             (mem.base.value_or("").eq("rsp") && last.eq("%rbp")).then(() {
                 cur.frame = Ok(mem.disp - cur.delta);
@@ -1509,10 +1987,10 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
                     None  => None,
                 }),
             });
-            points2 = mem.index.match({ Ok(_) => false, None => mem.base.match({ Ok(b) => has(cur.pts2, b), None => false }) });
+            points2 = x86_mem_in(mem, cur.pts2);
             stacky = mem.base.match({ Ok(b) => on_stack(cur, b) || b.eq("rsp"), None => false })
                 || mem.index.match({ Ok(i) => on_stack(cur, i), None => false });
-            result_pointer = mem.index.match({ Ok(_) => false, None => mem.base.match({ Ok(b) => has(cur.rps, b), None => false }) });
+            result_pointer = x86_mem_in(mem, cur.rps);
             an.x86_write(cur, last, secret, points, l, 8).try();
             an.x86_mark_points2(cur, last, 8, points2).try();
             x86_reg(an.alloc, last).when_ok((r) { put(cur.rps, r, result_pointer).try(); });
@@ -1543,7 +2021,7 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             an.x86_mark_points2(cur, first, 8, points2).try();
             h.break();
         });
-        (m.starts_with("xchg") && n == 2 && !x86_is_mem(first) && !x86_is_mem(last)).then(() {
+        (m.starts_with("xchg") && n == 2).then(() {
             a_secret = an.x86_value(cur, first, l, width).try();
             b_secret = an.x86_value(cur, last, l, width).try();
             an.x86_write(cur, first, b_secret, false, l, width).try();
@@ -1554,16 +2032,15 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             (has(cur.val, "rax") || has(cur.val, "rdx")).then(() { an.observed = true; });
             secret = an.x86_value(cur, first, l, width).try() || has(cur.val, "rax") || has(cur.val, "rdx");
             secret.then(() { an.report("divide", l.text).try(); });
-            put(cur.val, "rax", secret).try();
-            put(cur.val, "rdx", secret).try();
+            [str, 2]("rax", "rdx").loop((r) { put(cur.val, r, secret).try(); put(cur.low, r, false).try(); });
             h.break();
         });
         ((m.starts_with("mul") || m.starts_with("imul")) && n == 1).then(() {
             has(cur.val, "rax").then(() { an.observed = true; });
             secret = an.x86_value(cur, first, l, width).try() || has(cur.val, "rax");
-            put(cur.val, "rax", secret).try();
-            put(cur.val, "rdx", secret).try();
+            [str, 2]("rax", "rdx").loop((r) { put(cur.val, r, secret).try(); put(cur.low, r, false).try(); });
             cur.flags = secret;
+            cur.carry = secret;
             h.break();
         });
         // MULX src, lo, hi (BMI2) writes both halves of %rdx * src and
@@ -1578,6 +2055,7 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
         (m.is_in(["cqto", "cqo", "cltd", "cdq", "cltq", "cdqe", "cwtl"])).then(() {
             has(cur.val, "rax").then(() { an.observed = true; });
             put(cur.val, "rdx", has(cur.val, "rax")).try();
+            put(cur.low, "rdx", false).try();
             h.break();
         });
         // Stack pointer arithmetic keeps slot offsets entry-relative.
@@ -1596,7 +2074,7 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
         (same && (m.starts_with("xor") || m.starts_with("sub") || m.starts_with("pxor")
             || m.starts_with("xorp") || m.starts_with("pcmpeq") || m.starts_with("psub"))).then(() {
             an.x86_write(cur, last, false, false, l, width).try();
-            m.starts_with("p").match({ true => (), false => { cur.flags = false; } });
+            m.starts_with("p").match({ true => (), false => { cur.flags = false; cur.carry = false; } });
             h.break();
         });
         (n == 3 && (m.starts_with("vpxor") || m.starts_with("vxorp") || m.starts_with("vpcmpeq")
@@ -1610,7 +2088,7 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
         (m.starts_with("mov") || m.starts_with("vmov") || m.starts_with("cvt")).then(() {
             (n == 2).then(() {
                 merge = (m.is_in(["movss", "movsd"]) && x86_vector_reg(first) && x86_vector_reg(last))
-                    || (m.is_in(["movlps", "movhps", "movlpd", "movhpd"]) && x86_vector_reg(last));
+                    || (m.is_in(["movlps", "movhps", "movlpd", "movhpd", "movlhps", "movhlps"]) && x86_vector_reg(last));
                 secret = an.x86_value(cur, first, l, width).try()
                     || (merge && an.x86_value(cur, last, l, width).try());
                 points = an.x86_points(cur, first, width);
@@ -1687,10 +2165,11 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
                 points2 = points2 || an.x86_points2(cur, op, width);
             });
         });
-        (m.starts_with("adc") || m.starts_with("adox") || m.starts_with("sbb") || m.starts_with("rcl")
-            || m.starts_with("rcr")).then(() {
-            secret = secret || cur.flags;
+        // adc, sbb, adcx, rcl and rcr read the carry; adox the overflow.
+        (m.starts_with("adc") || m.starts_with("sbb") || m.starts_with("rcl") || m.starts_with("rcr")).then(() {
+            secret = secret || cur.carry;
         });
+        m.starts_with("adox").then(() { secret = secret || cur.flags; });
         // `add $k, %reg` on a register holding a stack address moves it.
         moved: Res<i64> = (n == 2 && first.starts_with("$") && !x86_is_mem(last)
             && (m.starts_with("add") || m.starts_with("sub"))).match({
@@ -1728,7 +2207,16 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
                 });
             });
         });
-        x86_writes_flags(m, ops).then(() { cur.flags = secret; });
+        x86_writes_flags(m, ops).then(() {
+            // inc and dec leave the carry; adcx writes only the carry and
+            // adox only the overflow; a shift or rotate by %cl leaves every
+            // flag when the count is 0.
+            by_count = first.eq("%cl") && (m.starts_with("sh") || m.starts_with("sa") || m.starts_with("ro") || m.starts_with("rc"));
+            keeps_carry = m.starts_with("inc") || m.starts_with("dec") || m.starts_with("adox");
+            keeps_rest = m.starts_with("adcx");
+            (!keeps_rest).then(() { cur.flags = secret || (by_count && cur.flags); });
+            (!keeps_carry).then(() { cur.carry = secret || (by_count && cur.carry); });
+        });
         h.break();
     });
     Ok(())
@@ -1924,8 +2412,11 @@ arm_memory = (
         }),
         None  => stacky.match({ true => Place.Somewhere, false => Place.Elsewhere }),
     });
-    points_in  = mem.base.match({ Ok(b) => has(cur.pts, b), None => false });
-    points2_in = mem.base.match({ Ok(b) => has(cur.pts2, b), None => false });
+    // The pointer may be either register of `[x0, x1]`.
+    points_in  = mem.base.match({ Ok(b) => has(cur.pts, b), None => false })
+        || mem.index.match({ Ok(i) => has(cur.pts, i), None => false });
+    points2_in = mem.base.match({ Ok(b) => has(cur.pts2, b), None => false })
+        || mem.index.match({ Ok(i) => has(cur.pts2, i), None => false });
     block = l.mnemonic.starts_with("ld2") || l.mnemonic.starts_with("ld3") || l.mnemonic.starts_with("ld4")
         || l.mnemonic.starts_with("st2") || l.mnemonic.starts_with("st3") || l.mnemonic.starts_with("st4");
     total ::= 0;
@@ -1946,7 +2437,8 @@ arm_memory = (
         span = block.match({ true => total, false => t.width });
         store.match({
             true  => {
-                (mem.base.match({ Ok(b) => has(cur.rps, b), None => false })
+                ((mem.base.match({ Ok(b) => has(cur.rps, b), None => false })
+                    || mem.index.match({ Ok(i) => has(cur.rps, i), None => false }))
                     && block.match({ true => any_secret, false => has(cur.val, t.reg) })).then(() {
                     an.report("result", l.text).try();
                 });
@@ -1977,6 +2469,22 @@ arm_memory = (
         offset = offset + t.width;
     });
     (post.starts_with("#") && sp_base).then(() { cur.delta = cur.delta - arm_imm(post); });
+    // Writeback moves any other base too: `[x9], #8` and `[x9, #8]!` step
+    // a pointer through a stack array.
+    (!sp_base && (mem.pre || post.len > 0)).then(() {
+        mem.base.when_ok((b) {
+            entry_of(cur, b).when_ok((e) {
+                step: Res<i64> = mem.pre.match({
+                    true  => Ok(mem.disp),
+                    false => post.starts_with("#").match({ true => Ok(arm_imm(post)), false => None }),
+                });
+                (e.exact && step.match({ Ok(_) => true, None => false })).match({
+                    true  => set_addr(cur.addr, b, Ok(e.at + step.value_or(0))).try(),
+                    false => set_somewhere(cur.addr, b).try(),
+                });
+            });
+        });
+    });
     Ok(())
 }
 
@@ -2064,15 +2572,16 @@ arm = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             h.break();
         });
         (m.starts_with("b.") || (m.starts_with("b") && m.len == 3 && !m.eq("bic") && !m.eq("bfi")
-            && !m.eq("bit") && !m.eq("bif") && !m.eq("bsl") && !m.eq("brk") && !m.eq("bfm"))).then(() {
+            && !m.eq("bit") && !m.eq("bif") && !m.eq("bsl") && !m.eq("brk") && !m.eq("bfm")
+            && !m.eq("blr") && !m.eq("bti"))).then(() {
             cur.flags.then(() { an.report("branch", l.text).try(); });
-            an.flow(last, cur).try();
+            an.branch_to(cur, last, l).try();
             h.break();
         });
         (m.is_in(["cbz", "cbnz", "tbz", "tbnz"])).then(() {
             (an.arm_reads(cur, ops, 0).try() && dst.match({ Ok(r) => has(cur.val, r), None => false }))
                 .then(() { an.report("branch", l.text).try(); });
-            an.flow(last, cur).try();
+            an.branch_to(cur, last, l).try();
             h.break();
         });
         (m.eq("b")).then(() {
@@ -2089,6 +2598,7 @@ arm = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
         });
         (m.eq("br")).then(() {
             dst.match({ Ok(r) => has(cur.val, r), None => false }).then(() { an.report("indirect", l.text).try(); });
+            an.flow_everywhere(cur).try();
             cur.live = false;
             h.break();
         });

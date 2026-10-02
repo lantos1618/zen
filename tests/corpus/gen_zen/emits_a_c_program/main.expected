@@ -16,6 +16,12 @@ the backend lowered everything it was given: true
 
 typedef struct zg_str { unsigned char *data; size_t len; } zg_str;
 
+#if defined(__OPTIMIZE__)
+#define ZG_INLINE inline __attribute__((always_inline))
+#else
+#define ZG_INLINE inline
+#endif
+
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 #define ZG_NORETURN _Noreturn
 #elif defined(__GNUC__)

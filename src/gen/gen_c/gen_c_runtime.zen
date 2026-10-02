@@ -48,6 +48,18 @@ emit_floor* = (out :: Emit) Res<(), AllocError> {
         "typedef struct zg_str { unsigned char *data; size_t len; } zg_str;"
     ).try();
     out.line().try();
+    // `inline` functions are always inlined when the C compiler optimizes.
+    // Unoptimized (-O0), always_inline would still paste every body into
+    // its caller, each copy with its own stack slots: a vector kernel built
+    // from inline helpers then needs megabytes of stack (ChaCha20-Poly1305's
+    // AVX2 seal took 1.7 MiB), more than a thread's default stack. There
+    // they stay ordinary static functions.
+    out.say("#if defined(__OPTIMIZE__)").try();
+    out.say("#define ZG_INLINE inline __attribute__((always_inline))").try();
+    out.say("#else").try();
+    out.say("#define ZG_INLINE inline").try();
+    out.say("#endif").try();
+    out.line().try();
     emit_trap(out).try();
     emit_index(out).try();
     Ok(());

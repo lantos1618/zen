@@ -48,6 +48,10 @@ Marked* = {
     // The result register must be public at every return; callers may
     // rely on that.
     public_result* :: bool = false,
+    // Declared by the manifest (`public-only`) to handle public data only:
+    // not analysed, but counted as audited where audited code is inlined
+    // into it (the inlined audit's coverage check).
+    public_only* :: bool = false,
 }
 
 // `vector`: passed in the SIMD&FP registers (a vector, a float, or a small
@@ -67,13 +71,22 @@ marked_functions* = (a: Alloc, c: str) Res<Vec<Marked>, AllocError> {
     Ok(out)
 }
 
-// An `inline` function's definition carries the always_inline attribute
-// (after any target attribute), whose parentheses come before the parameter
-// list; parsing reads the line without it.
+// An `inline` function's definition carries ZG_INLINE (in C from an older
+// Zen compiler, the always_inline attribute itself) after any target
+// attribute, and the runtime's CPU-feature helper the unused attribute.
+// Parsing reads the line without them: the attributes' parentheses come
+// before the parameter list, and a function forced out of line must not
+// keep always_inline.
 ALWAYS_INLINE*: str = "inline __attribute__((always_inline)) "
+ZG_INLINE: str = "ZG_INLINE "
+UNUSED: str = "__attribute__((unused)) "
 plain_definition* = (a: Alloc, line: str) Res<str, AllocError> {
-    line.find(ALWAYS_INLINE).match({
-        Ok(at) => a.String("{}{}", line.slice(0, at), line.slice(at + ALWAYS_INLINE.len, line.len)).match({
+    without(a, without(a, without(a, line, ALWAYS_INLINE).try(), ZG_INLINE).try(), UNUSED)
+}
+
+without = (a: Alloc, line: str, attribute: str) Res<str, AllocError> {
+    line.find(attribute).match({
+        Ok(at) => a.String("{}{}", line.slice(0, at), line.slice(at + attribute.len, line.len)).match({
             Ok(s)  => Ok(s.view()),
             Err(e) => Err(e),
         }),
@@ -81,12 +94,45 @@ plain_definition* = (a: Alloc, line: str) Res<str, AllocError> {
     })
 }
 
+// The parenthesis that opens a definition's parameter list: the first one
+// outside any `__attribute__((...))` written before the name (the runtime's
+// `static __attribute__((unused)) int zg_cpu_masked(...)` and its
+// `__attribute__((target("aes")))` helpers).
+param_open* = (line: str) Res<usize> {
+    at    ::= 0;
+    found: Res<usize> ::= None;
+    loop(() { at < line.len }, (h) {
+        line.slice(at, line.len).starts_with("__attribute__").match({
+            true  => {
+                // Skip to the parenthesis that closes the attribute.
+                depth ::= 0;
+                j     ::= at + 13;
+                loop(() { j < line.len }, (h2) {
+                    c = line.index(j);
+                    (c == '(').then(() { depth = depth + 1; });
+                    (c == ')').then(() {
+                        depth = depth - 1;
+                        (depth == 0).then(() { h2.break(); });
+                    });
+                    j = j + 1;
+                });
+                at = j + 1;
+            },
+            false => {
+                (line.index(at) == '(').then(() { found = Ok(at); h.break(); });
+                at = at + 1;
+            },
+        });
+    });
+    found
+}
+
 targets_avx = (line: str) bool {
     line.contains("ZG_TARGET_AVX") || line.contains("target(\"avx")
 }
 
 parse_definition = (a: Alloc, line: str) Res<Marked> {
-    open   = line.find('(').try();
+    open   = param_open(line).try();
     mark   = line.find(MARK).try();
     close  = line.slice(0, mark).rfind(')').try();
     head   = line.slice(0, open).trim().try();
@@ -140,8 +186,7 @@ last_identifier = (text: str) usize {
     at
 }
 
-// `static inline __attribute__((always_inline)) T` and
-// `static ZG_TARGET_AVX2 T` -> `T`.
+// `static ZG_INLINE T` and `static ZG_TARGET_AVX2 T` -> `T`.
 strip_qualifiers = (result: str) str {
     close = result.rfind(')');
     rest ::= close.match({
@@ -491,21 +536,32 @@ result_registers* = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Vec<str>, AllocE
     m.public_result.then(() {
         layout_of(a, c, m.result).when_ok((l) {
             in_result_registers(isa, l, vector_type(m.result), m.avx).then(() {
-                l.vector.match({
-                    true  => out.add(vector_name(a, isa, 0).try()).try(),
-                    false => {
-                        // A byte-sized result (bool, u8) is only its low byte.
-                        out.add(isa.match({
-                            X86 => (l.size == 1).match({ true => "rax/1", false => "rax" }),
-                            Arm => "x0",
-                        })).try();
-                        (l.size > 8).then(() { out.add(isa.match({ X86 => "rdx", Arm => "x1" })).try(); });
-                    },
+                l.vector.then(() {
+                    Range(0, result_vectors(isa, l, vector_type(m.result))).loop((i) {
+                        out.add(vector_name(a, isa, i).try()).try();
+                    });
+                });
+                (!l.vector).then(() {
+                    // A byte-sized result (bool, u8) is only its low byte.
+                    out.add(isa.match({
+                        X86 => (l.size == 1).match({ true => "rax/1", false => "rax" }),
+                        Arm => "x0",
+                    })).try();
+                    (l.size > 8).then(() { out.add(isa.match({ X86 => "rdx", Arm => "x1" })).try(); });
                 });
             });
         });
     });
     Ok(out)
+}
+
+// Vector registers a vector-class result returned in registers takes: an
+// arm64 aggregate of 16-byte vectors takes one each (v0..v3).
+result_vectors = (isa: Isa, l: Layout, vector: bool) usize {
+    isa.match({
+        X86 => 1,
+        Arm => (!vector && l.size > 16).match({ true => l.size / 16, false => 1 }),
+    })
 }
 
 wide = (n: usize) i64 { n.truncate_u32().to_i64() }
@@ -546,7 +602,10 @@ vector_name = (a: Alloc, isa: Isa, i: usize) Res<str, AllocError> {
 // `branches=N` allows N secret-dependent conditional branches (see Marked);
 // `public-result` requires the result register to be public at every
 // return (for a result returned through a hidden pointer: that no secret is
-// stored through it), which lets callers treat it as public. `**name` is a pointer to
+// stored through it), which lets callers treat it as public. `public-only`
+// declares a function that handles public data only (parsing a peer's
+// public key, say): it is not analysed, and the inlined audit counts
+// audited code inlined into it as covered. `**name` is a pointer to
 // memory whose words point at secret memory (a struct of key-schedule
 // pointers): a load through it yields a pointer to secrets.
 Entry* = {
@@ -558,6 +617,7 @@ Entry* = {
     optional*: bool,
     branches*: usize,
     public_result*: bool,
+    public_only*: bool,
 }
 
 manifest_entries* = (a: Alloc, text: str) Res<Vec<Entry>, AllocError> {
@@ -572,17 +632,21 @@ manifest_entries* = (a: Alloc, text: str) Res<Vec<Entry>, AllocError> {
             pointee2 ::= a.Vec<str>();
             branches ::= 0;
             public   ::= false;
+            only     ::= false;
             Range(2, words.len).loop((i) {
                 w = words.get(i).value_or("");
                 w.starts_with("branches=").match({
                     true  => { branches = w.slice(9, w.len).parse_usize().value_or(0); },
                     false => w.eq("public-result").match({
                         true  => { public = true; },
-                        false => w.starts_with("**").match({
-                            true  => pointee2.add(w.slice(2, w.len)).try(),
-                            false => w.starts_with("*").match({
-                                true  => pointee.add(w.slice(1, w.len)).try(),
-                                false => secret.add(w).try(),
+                        false => w.eq("public-only").match({
+                            true  => { only = true; },
+                            false => w.starts_with("**").match({
+                                true  => pointee2.add(w.slice(2, w.len)).try(),
+                                false => w.starts_with("*").match({
+                                    true  => pointee.add(w.slice(1, w.len)).try(),
+                                    false => secret.add(w).try(),
+                                }),
                             }),
                         }),
                     }),
@@ -594,6 +658,7 @@ manifest_entries* = (a: Alloc, text: str) Res<Vec<Entry>, AllocError> {
                 optional: optional,
                 branches: branches,
                 public_result: public,
+                public_only: only,
                 module: optional.match({ true => head.slice(
                     1,
                     head.len
@@ -636,7 +701,7 @@ manifest_functions* = (
     c.lines().loop((raw) {
         (raw.starts_with("static ") && raw.ends_with("{")).then(() {
             line   = plain_definition(a, raw).try();
-            open   = line.find('(').value_or(0);
+            open   = param_open(line).value_or(0);
             head   = line.slice(0, open);
             space  = head.rfind(' ').value_or(0);
             symbol = head.slice(space + 1, head.len);
@@ -664,7 +729,8 @@ manifest_functions* = (
                         pointee2: pointee2,
                         branches: e.branches,
                         avx: m.avx,
-                        public_result: e.public_result
+                        public_result: e.public_result,
+                        public_only: e.public_only
                     )).try();
                 });
             });
@@ -823,6 +889,7 @@ shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
     vectors: usize ::= 0;
     stack: usize ::= 0;
     writable ::= a.Vec<Writable>();
+    extents  ::= a.Vec<Writable>();
     ignored  ::= a.Vec<str>();
     // A `::` or lent parameter names exactly one value; a Ptr<T> any extent.
     kinds: Res<Vec<bool>> = pointer_params(a, m.symbol);
@@ -846,6 +913,12 @@ shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
                         false => layout_of(a, c, pointee).match({ Ok(l) => l.size, None => 0 }),
                     });
                     writable.add(Writable(index: i, bytes: bytes)).try();
+                    (bytes > 0).then(() { extents.add(Writable(index: i, bytes: bytes)).try(); });
+                });
+                // A lent by-value parameter: exactly one value behind it.
+                (pl.param.ctype.ends_with("*") && pl.param.ctype.starts_with("const ")).then(() {
+                    pointee = pl.param.ctype.slice(6, pl.param.ctype.len - 1).trim().value_or("");
+                    layout_of(a, c, pointee).when_ok((l) { extents.add(Writable(index: i, bytes: l.size)).try(); });
                 });
             },
             Vreg(i)          => { vectors = vectors.max(i + pl.regs); },
@@ -853,6 +926,7 @@ shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
             GprPointer(i)    => {
                 gprs = gprs.max(i + 1);
                 pointer_args.add(reg_name(a, isa, i).try()).try();
+                extents.add(Writable(index: i, bytes: pl.layout.size)).try();
             },
             StackPointer(at) => { stack = stack.max(at + 8 - base); },
         });
@@ -865,8 +939,13 @@ shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
         returns: result.match({ Ok(_) => hidden == 0, None => false }),
         pair: result.match({ Ok(l) => !l.vector && l.size > 8 && l.size <= 16, None => false }),
         vector_result: result.match({ Ok(l) => l.vector && hidden == 0, None => false }),
+        vector_results: result.match({
+            Ok(l) => (l.vector && hidden == 0).match({ true => result_vectors(isa, l, vector_type(m.result)), false => 0 }),
+            None  => 0,
+        }),
         hidden: hidden,
         writable: writable,
+        extents: extents,
         ignored: ignored,
         pointer_args: pointer_args,
         known: true,
@@ -903,8 +982,10 @@ audited_shape* = (
         returns: shape.returns,
         pair: shape.pair,
         vector_result: shape.vector_result,
+        vector_results: shape.vector_results,
         hidden: shape.hidden,
         writable: shape.writable,
+        extents: shape.extents,
         ignored: shape.ignored,
         pointer_args: shape.pointer_args,
         known: true,

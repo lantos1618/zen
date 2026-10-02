@@ -1052,9 +1052,9 @@ undefined_or_unimported* = (c :: Checker, at: Span, name: str)
     })
 }
 
-// `Ok(..)` and `Err(..)` construct a `Res` when the name resolves to the
-// prelude's variant: a local, a declaration or an import of the same name
-// is called like any other function.
+// `Ok(..)` and `Err(..)` construct a `Res` when the name resolves to
+// std.core's variant: a local, a declaration, or an import of another
+// module's function of the same name is called like any other function.
 calls_res_ctor = (c :: Checker, name: str, mi: usize) Res<bool, AllocError> {
     (c.lookup(name).match({ Ok(_) => false, None => true })
         && (name.eq("None") == false)).match({

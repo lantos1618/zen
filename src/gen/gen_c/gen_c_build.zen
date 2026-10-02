@@ -172,7 +172,7 @@ keep_arg = (found: Inst, v: TyId, out :: Vec<TyId>) Res<(), AllocError> {
     })
 }
 
-// Prelude declarations of primitive names use the primitive C layout.
+// std.core declarations of primitive names use the primitive C layout.
 prim_named = (be :: CBackend, s: Struct, ty: TyId) Res<TyId, AllocError> {
     is_prim(s.name.text).match({
         false => Ok(ty),

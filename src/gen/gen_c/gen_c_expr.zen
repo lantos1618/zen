@@ -1123,7 +1123,7 @@ lower_global_name = (
     })
 }
 
-// A bare `None` is absence when it resolves to the prelude's variant.
+// A bare `None` is absence when it resolves to std.core's variant.
 names_none = (be :: CBackend, text: str, ctx: Ctx) Res<bool, AllocError> {
     text.eq("None").match({
         false => Ok(false),

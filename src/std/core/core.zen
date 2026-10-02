@@ -1,4 +1,5 @@
-// Language prelude re-exports.
+// The built-in types' members and the names the compiler recognises by
+// declaration, re-exported for modules to import.
 
 Res*, Ok*, Err*, None*, ok_or*, value_or*, map_err*, replace_err* = std.core.result
 ignore*, without_err*, when_ok* = std.core.result

@@ -1,5 +1,5 @@
 // Public standard-library surface. Names absent from these starred re-exports
-// remain module-private. `std.core` is also auto-imported as the prelude.
+// remain module-private. Nothing is imported implicitly.
 
 Res*, Ok*, Err*, None*, ok_or*, value_or*, map_err*, replace_err*, then*, ensure*, bool* = std.core
 ignore*, without_err*, when_ok*, Rng* = std.core

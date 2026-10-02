@@ -922,7 +922,7 @@ write_indirect_arg = (
 }
 
 // `Ok(..)` and `Err(..)` construct the destination `Res` when the name
-// resolves to the prelude's variant, as sema decided; a closure slot of the
+// resolves to std.core's variant, as sema decided; a closure slot of the
 // name has already been ruled out by the caller.
 is_res_ctor* = (be :: CBackend, name: str, ctx: Ctx) Res<bool, AllocError> {
     (name.eq("None") == false).match({

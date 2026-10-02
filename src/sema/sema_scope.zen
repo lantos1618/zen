@@ -223,7 +223,7 @@ member_escapes = (c :: Checker, o :: Own, a: Access) bool {
     })
 }
 
-// A parameter whose written type is the prelude's `Alloc`, as the member's
+// A parameter whose written type is std.core's `Alloc`, as the member's
 // own module resolves it.
 takes_alloc = (c :: Checker, f: Function, mi: usize) bool {
     f.params.find((p) { c.param_is_alloc(p, mi) }).match({
@@ -236,7 +236,7 @@ param_is_alloc = (c :: Checker, p: Param, mi: usize) bool {
     p.type.match({
         None    => false,
         Ok(tid) => c.tree.type_at(tid).kind.match({
-            Named(n) => c.world.names_prelude(mi, n.name.text, "Alloc")
+            Named(n) => c.world.names_core(mi, n.name.text, "Alloc")
                 .match({ Ok(b) => b, Err(_) => false }),
             _        => false,
         }),

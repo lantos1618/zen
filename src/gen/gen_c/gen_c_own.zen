@@ -413,11 +413,11 @@ keep_drop_member = (
     })
 }
 
-// The bound is the prelude's `Drop` as the impl's module resolves it —
+// The bound is std.core's `Drop` as the impl's module resolves it —
 // the same question `sema_drop.zen`'s is_drop_impl asks.
 bounds_drop = (be :: CBackend, i: ImplId, im: Impl) Res<bool, AllocError> {
     be.tree.type_at(im.bound).kind.match({
-        Named(n) => be.check.world.names_prelude(
+        Named(n) => be.check.world.names_core(
             i.decl.module.to_usize(),
             n.name.text,
             "Drop"

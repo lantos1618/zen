@@ -238,7 +238,7 @@ foreign_binding = (be: CBackend, n: TyNamed) Res<COpaque> {
     })
 }
 
-// The prelude's `Ptr`, by declaration: a module's own `Ptr` is an ordinary
+// std.core's `Ptr`, by declaration: a module's own `Ptr` is an ordinary
 // struct.
 is_ptr_named* = (types: Types, n: TyNamed) bool { types.is_ptr(n) }
 

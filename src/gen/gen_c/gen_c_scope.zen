@@ -28,7 +28,7 @@ write_position = gen.gen_c.gen_c_op
 // Frame is the authority, exactly as it is for a `LoopHandle`. But a
 // `Scope` can be written down (`s: Scope`), so the type has to exist:
 // the ordinary named type `std/core/scope.zen` declares, taken from the
-// prelude rather than from whatever the module calls `Scope`.
+// std.core declaration rather than whatever the module calls `Scope`.
 
 is_scope_ref* = (be :: CBackend, id: ExprId) bool {
     be.tree.expr_at(id).kind.match({

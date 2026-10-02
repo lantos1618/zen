@@ -91,7 +91,7 @@ insert_imports* = (a: Alloc, file: str, text: str, wanted: Vec<Missing>)
 unparsed = (a: Alloc, text: str, wanted: Vec<Missing>)
            Res<Edited, EditError> {
     block ::= a.String().try(EditError.OutOfMemory);
-    added ::= 0;
+    added :: usize = 0;
     modules(a, wanted).try(EditError.OutOfMemory).loop((m) {
         names = ordered(a, wanted, m).try(EditError.OutOfMemory);
         added = added + module_line(names, m, block).try(EditError.OutOfMemory);
@@ -110,7 +110,7 @@ unparsed = (a: Alloc, text: str, wanted: Vec<Missing>)
 
 // The first line that is neither blank nor a comment.
 first_code_line = (text: str) usize {
-    line ::= 1;
+    line :: usize = 1;
     loop((h) {
         start = line_start(text, line);
         (start >= text.len).match({
@@ -133,7 +133,7 @@ into_module = (a: Alloc, text: str, decls: Vec<Decl>, wanted: Vec<Missing>)
     opening = openings(a, text, decls).try(EditError.OutOfMemory);
     changes ::= a.Vec<Change>();
     block   ::= a.String().try(EditError.OutOfMemory);
-    added   ::= 0;
+    added :: usize = 0;
     modules(a, wanted).try(EditError.OutOfMemory).loop((m) {
         names = ordered(a, wanted, m).try(EditError.OutOfMemory);
         opening.find((o) { o.module.eq(m) }).match({
@@ -339,8 +339,8 @@ line_text = (text: str, n: usize) str {
 // The byte offset where line `n` (1-based) begins; the end of the text when
 // there are fewer lines.
 line_start = (text: str, n: usize) usize {
-    seen ::= 1;
-    at   ::= 0;
+    seen :: usize = 1;
+    at :: usize = 0;
     loop((h) {
         (seen >= n || at >= text.len).match({
             true  => h.break(),
@@ -358,7 +358,7 @@ applied = (a: Alloc, text: str, changes: Vec<Change>)
           Res<Edited, AllocError> {
     out    ::= a.String().try();
     shifts ::= a.Vec<Shift>();
-    cursor ::= 0;
+    cursor :: usize = 0;
     done   ::= a.Vec<usize>();
     Range(0, changes.len).loop((h, step) {
         next = earliest(changes, done);
@@ -421,7 +421,7 @@ line_count = (s: str) usize { s.count("\n") }
 module_line = (names: Vec<str>, module: str, out :: String)
               Res<usize, AllocError> {
     lines ::= 1;
-    width ::= 0;
+    width :: usize = 0;
     names.loop((h, i, n) {
         last  = i + 1 == names.len;
         piece = n.len + last.match({ true => 3 + module.len, false => 1 });

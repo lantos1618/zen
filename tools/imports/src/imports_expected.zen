@@ -208,7 +208,7 @@ shift_tokens_in = (env: Env, a: Alloc, owner: Owner, shifts: Vec<Shift>)
 
 shift_tokens = (text: str, named: str, shifts: Vec<Shift>, out :: String)
                Res<(), AllocError> {
-    at ::= 0;
+    at :: usize = 0;
     loop((h) {
         text.slice(at, text.len).find(named).match({
             None      => {

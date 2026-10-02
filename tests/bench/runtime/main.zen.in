@@ -29,7 +29,7 @@ main = (env: Env) Res<i32, AllocError> {
     calls.write(0, 0);
     a = Counting(inner: arena, calls: calls);
     n: usize = @N@;
-    sum: usize ::= 0;
+    sum :: usize = 0;
 @BODY@
     println("{} {}", sum, calls.read(0));
     Ok(0)

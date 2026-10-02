@@ -87,7 +87,7 @@ poly_lanes{sfx} = ({tok}p: Ptr<u64>, m: Ptr<u8>, count: usize) {{
         a3: first.a3.with_lane(0, first.a3.lane(0) +% h.l3),
         a4: first.a4.with_lane(0, first.a4.lane(0) +% h.l4)
     );
-    offset: usize ::= {16*L};
+    offset :: usize = {16*L};
     (offset < count).loop((loop) {{
         acc    = add{sfx}({cap}mulr{sfx}({cap}acc, step), message{sfx}({cap}m, offset));
         offset = offset + {16*L};

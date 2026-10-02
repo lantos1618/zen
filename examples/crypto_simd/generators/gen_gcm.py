@@ -151,8 +151,8 @@ xor_block = (output: Ptr<u8>, input: Ptr<u8>, at: usize, stream: u8x16) {
 
 // CTR from counter block 2 (J0 + 1), eight blocks at a time.
 ctr_hw = (cpu: Aes, hw: Hardware, output: Ptr<u8>, input: Ptr<u8>, count: usize, pad: Ptr<u8>) {
-    at: usize ::= 0;
-    counter: u32 ::= 2;
+    at :: usize = 0;
+    counter :: u32 = 2;
     (count - at >= 128).loop((h) {
         s = aes8(cpu, hw.keys, Blocks8(''')
 w(",\n".join(f"            b{i}: counter_block(hw.base, counter +% {i})" for i in range(8)))
@@ -198,7 +198,7 @@ seal_hw = (cpu: Aes, gh: Clmul, sp: Spans, output: Ptr<u8>, message: Ptr<u8>, co
 open_hw = (cpu: Aes, gh: Clmul, sp: Spans, output: Ptr<u8>, ciphertext: Ptr<u8>, count: usize, aad: Ptr<u8>, aad_count: usize, key: Ptr<u8>, nonce: Ptr<u8>, powers: Ptr<u8>) bool {
     hw = hardware_setup(cpu, gh, sp, key, nonce, powers);
     tag_hw(cpu, gh, hw, sp, ciphertext, count, aad, aad_count);
-    difference: u64 ::= 0;
+    difference :: u64 = 0;
     Range(0, 16).loop((i) { difference = or64(difference, sp.tag.read(i).to_u64().bit_xor(ciphertext.read(count + i).to_u64())); });
     authentic = difference == 0;
     authentic.then(() { ctr_hw(cpu, hw, output, ciphertext, count, sp.block); });

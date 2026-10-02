@@ -39,7 +39,7 @@ produce = (
     producer : usize
 ) Res<Thread, ThreadError> {
     env.threads.spawn(a, () Res<u64, ThreadError> {
-        sequence ::= 0;
+        sequence :: u64 = 0;
         full     ::= 0;
         loop(() { sequence < PER_PRODUCER }, (h) {
             tally.add(producer, sequence).match({

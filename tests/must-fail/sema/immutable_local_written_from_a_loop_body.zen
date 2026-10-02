@@ -3,7 +3,7 @@
 // position: the write.
 
 main = () i32 {
-    x: usize = 0;
+    x: i32 = 0;
     Range(0, 3).loop((i) { x = i; });
     println("{}", x);
     0

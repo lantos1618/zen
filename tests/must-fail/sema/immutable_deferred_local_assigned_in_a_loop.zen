@@ -4,7 +4,7 @@
 // position: the assignment inside the loop body.
 
 main = () i32 {
-    last: usize;
+    last: i32;
     Range(0, 3).loop((i) { last = i; });
     0
 }

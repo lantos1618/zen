@@ -35,7 +35,7 @@ COUNT: u64 = 64
 main = (env: Env) Res<i32, Error> {
     first = env.spawn(Node(index: 0)).try();
     previous ::= first;
-    i        ::= 1;
+    i        :: u64 = 1;
     loop(() { i < COUNT }, (h) {
         node = env.spawn(Node(index: i)).try();
         previous.link(node).try();

@@ -1,0 +1,4 @@
+ok =line human=default from-env=env
+error: argument `--json` cannot be used with `--mode`
+ok =line human=default from-env=env
+ok =line artifact=line human=default

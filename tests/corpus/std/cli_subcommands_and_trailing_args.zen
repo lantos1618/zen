@@ -1,0 +1,107 @@
+// A subcommand word ends its parent's arguments; the subcommand parses the
+// rest with its own id enum, and `--` hands the remaining words through.
+
+Vec = std.collections
+str = std.text
+Command, command, Spec, Matches = std.cli
+
+Tool = Verbose | Deploy | Status
+Deploy = DryRun | Name
+
+main = (env: Env) Res<i32, AllocError> {
+    a    ::= env.mem.alloc();
+    root ::= command<Tool>(a, "tool", "Ship things");
+    root.flag(Tool.Verbose, "--verbose", Spec(short: 'v')).try();
+    root.command(Tool.Deploy, "deploy", "Deploy a release").try();
+    root.command(Tool.Status, "status", "Show the current release").try();
+
+    run(env, a, root, "").try();
+    run(env, a, root, "wat").try();
+    run(env, a, root, "-v deploy --dry-run prod -- x -y").try();
+    run(env, a, root, "deploy prod --bogus").try();
+    run(env, a, root, "-h deploy").try();
+    run(env, a, root, "status").try();
+    Ok(0)
+}
+
+deploy = (a: Alloc) Res<Command<Deploy>, AllocError> {
+    cmd ::= command<Deploy>(a, "tool deploy", "Deploy a release");
+    cmd.flag(
+        Deploy.DryRun,
+        "--dry-run",
+        Spec(help: "Print what would change")
+    ).try();
+    cmd.positional(
+        Deploy.Name,
+        "NAME",
+        Spec(required: true, help: "Release name")
+    ).try();
+    cmd.trailing_args();
+    Ok(cmd)
+}
+
+run = (
+    env   : Env,
+    a     : Alloc,
+    root  : Command<Tool>,
+    words : str
+) Res<(), AllocError> {
+    argv   = line(a, words).try();
+    parsed = root.parse(env, argv, 1).try();
+    parsed.problem.match({
+        Ok(usage) => {
+            message = usage.message(a, root.name).try();
+            println("error: {}", message.view());
+        },
+        None      => parsed.picked.match({
+            None       => println("no command; help={}", parsed.help),
+            Ok(picked) => picked.id.match({
+                Verbose => (),
+                Status  => println("status"),
+                Deploy  => {
+                    model = deploy(a).try();
+                    child = model.parse(env, argv, picked.next).try();
+                    (parsed.help || child.help).match({
+                        true  => {
+                            text = model.help().try();
+                            print("{}", text.view());
+                        },
+                        false => child.problem.match({
+                            Ok(usage) => {
+                                message = usage.message(a, model.name).try();
+                                println("error: {}", message.view());
+                            },
+                            None      => {
+                                dry  ::= false;
+                                name ::= "";
+                                child.found.loop((f) {
+                                    f.id.match({
+                                        DryRun => { dry = true; },
+                                        Name   => { name = f.text; },
+                                    });
+                                });
+                                println(
+                                    "deploy {} dry={} verbose={} trailing={}",
+                                    name,
+                                    dry,
+                                    parsed.found.len,
+                                    argv.len - child.rest
+                                );
+                            },
+                        }),
+                    });
+                },
+            }),
+        }),
+    });
+    Ok(())
+}
+
+line = (a: Alloc, words: str) Res<Vec<str>, AllocError> {
+    argv ::= a.Vec<str>();
+    argv.add("tool").try();
+    (!words.is_empty()).then(
+        () { words.split(' ').loop((word) { argv.add(word).try(); }); }
+    );
+    Ok(argv)
+}

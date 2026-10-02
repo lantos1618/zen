@@ -3,15 +3,14 @@ cli = zen
 show = (env: Env, words: Vec<str>) Res<(), AllocError> {
     a ::= env.mem.alloc();
     cli(env, a, words).try().match({
-        Build(job)               => {
+        Build(job)       => {
             destination = job.emission.match({
                 Check => "check", Stdout => "stdout", File(_) => "file", Directory(_) => "directory"
             });
             println("{} {}", job.backend.stable_name(), destination);
         },
-        UnavailableBackend(name) => println("unavailable {}", name),
-        Usage(word)              => println("usage {}", word),
-        _                        => println("unexpected command"),
+        Refused(refusal) => println("usage {}", refusal.message.view()),
+        _                => println("unexpected command"),
     });
     Ok(())
 }

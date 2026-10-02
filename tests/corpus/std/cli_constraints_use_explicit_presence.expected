@@ -1,4 +1,0 @@
-clean values=2
-error: argument `--json` conflicts with `--mode`
-error: argument `--upload` requires `--output`
-clean values=3

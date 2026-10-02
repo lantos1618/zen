@@ -3,5 +3,5 @@ c file
 c directory
 js stdout
 asm stdout
-unavailable unknown
-usage --backend
+usage invalid value `unknown` for `--backend`
+usage option `--backend` requires a value

@@ -1,0 +1,102 @@
+// `zen init [DIR]`: start a project with a build graph, a program and a
+// .gitignore. Existing files are never overwritten.
+
+Alloc, AllocError = std.mem
+str, String = std.text
+Path, Range, join_path = std.core
+make_dirs = zen.zen_path
+
+init* = (env: Env, a: Alloc, dir: str) Res<i32, AllocError> {
+    graph_file      = join_path(a, dir, "build.zen").try();
+    main_file       = join_path(a, dir, "src/main.zen").try();
+    ignore          = join_path(a, dir, ".gitignore").try();
+    src             = join_path(a, dir, "src").try();
+    taken: Res<str> = loop((h) {
+        env.fs.exists(graph_file.view()).then(() { h.break(graph_file.view()); });
+        env.fs.exists(main_file.view()).then(() { h.break(main_file.view()); });
+        h.break();
+    });
+    taken.match({
+        Ok(path) => {
+            println("zen init: `{}` already exists; nothing was written", path);
+            Ok(1)
+        },
+        None     => make_dirs(env, a, src.view()).match({
+            false => {
+                println("zen init: cannot create directory `{}`", src.view());
+                Ok(1)
+            },
+            true  => {
+                name    = target_name(env, a, dir).try();
+                graph   = build_graph(a, name.view()).try();
+                written = env.fs.write(
+                    graph_file.view(),
+                    graph.view()
+                ).match({ Ok(_) => true, Err(_) => false })
+                    && env.fs.write(
+                        main_file.view(),
+                        MAIN
+                    ).match({ Ok(_) => true, Err(_) => false });
+                fresh   = !env.fs.exists(ignore.view());
+                fresh.then(
+                    () { env.fs.write(ignore.view(), "build/\n").ignore(); }
+                );
+                written.match({
+                    false => {
+                        println(
+                            "zen init: cannot write the project files in `{}`",
+                            dir
+                        );
+                        Ok(1)
+                    },
+                    true  => {
+                        println(
+                            "Created {} and {}{}",
+                            graph_file.view(),
+                            main_file.view(),
+                            fresh.match({ true => ", with a .gitignore", false => "" })
+                        );
+                        (!fresh).then(() {
+                            println(
+                                "The existing .gitignore was kept; ignore `build/` in it."
+                            );
+                        });
+                        dir.eq(".").match({
+                            true  => println("Next: zen run"),
+                            false => println("Next: cd {} && zen run", dir),
+                        });
+                        Ok(0)
+                    },
+                })
+            },
+        }),
+    })
+}
+
+// The project directory's own name, kept to characters that a target name
+// and a file name can both carry.
+target_name = (env: Env, a: Alloc, dir: str) Res<String, AllocError> {
+    named = Path(dir).name();
+    base  = (named.is_empty() || named.eq(".") || named.eq("..")).match({
+        false => named,
+        true  => env.fs.cwd(a).match({ Ok(cwd) => Path(cwd.view()).name(), Err(_) => "" }),
+    });
+    out ::= a.String().try();
+    Range(0, base.len).loop((i) {
+        c     = base.index(i);
+        plain = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+            || c == '_' || c == '-';
+        out.add(plain.match({ true => c, false => '-' })).try();
+    });
+    out.view().is_empty().then(() { out.add("app").try(); });
+    Ok(out)
+}
+
+// A format string is read where it is written, so the template is a literal.
+build_graph = (a: Alloc, name: str) Res<String, AllocError> {
+    a.String(
+        "// The project's build graph. `zen run` builds and runs `{name}`;\n// `zen run --release` optimizes it. `zen help build` lists the options.\n\nBuilder, BuildError = std.build\n\nbuild = (b :: Builder) Res<(), BuildError> {{\n    b.exe(\"{name}\", {{\n        src: Path(\"src/main.zen\"),\n        deps: [],\n    }}).try();\n    Ok(())\n}}\n"
+    )
+}
+
+MAIN: str = "// `main` receives the Env, which carries every capability the program may use.\nmain = (env: Env) {\n    println(\"Hello, world!\");\n}\n"

@@ -13,26 +13,21 @@ main = (env: Env) Res<i32, AllocError> {
 show = (env: Env, argv: Vec<str>) Res<(), AllocError> {
     a ::= env.mem.alloc();
     cli(env, a, argv).try().match({
-        Project(job)             => println(
+        Project(job)     => println(
             "project root={} target={} args={}",
             job.root,
             job.target,
             job.argv.len - job.args_at
         ),
-        Run(job)                 => println(
+        Run(job)         => println(
             "run root={} target={} args={}",
             job.root,
             job.target,
             job.argv.len - job.args_at
         ),
-        Build(_)                 => println("raw build"),
-        Fmt(_)                   => println("fmt"),
-        Test(_)                  => println("test"),
-        Later(name)              => println("later {}", name),
-        Version(v)               => println("version {}", v),
-        Usage(word)              => println("usage {}", word),
-        UnavailableBackend(name) => println("unavailable backend {}", name),
-        Missing(flag)            => println("missing {}", flag),
+        Build(_)         => println("raw build"),
+        Refused(refusal) => println("usage {}", refusal.message.view()),
+        _                => println("other"),
     });
     Ok(())
 }

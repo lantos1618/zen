@@ -1,7 +1,771 @@
-// Public command-line surface. The scanner stays available for compatibility;
-// Command is the declarative terminal-facing layer.
+// Declarative command lines. A Command declares its arguments once; that one
+// declaration drives parsing, validation, usage errors and help.
+//
+// `T` is the program's enum of argument ids, one enum per command. Parsing
+// reports every argument it found with its id, so a program folds the matches
+// into its own options with an exhaustive `match` and never looks a value up
+// by its spelling. Each declaration also returns an `Arg` handle, which is how
+// relations such as `conflicts` name the arguments they relate.
+//
+//     Id = Verbose | Jobs | Input
+//     cmd ::= command<Id>(a, "tool", "Build things");
+//     cmd.flag(Id.Verbose, "--verbose", Spec(short: 'v')).try();
+//     cmd.option(Id.Jobs, "--jobs", Spec(kind: Kind.Unsigned, default: "4")).try();
+//     cmd.positional(Id.Input, "INPUT", Spec(required: true)).try();
+//     parsed = cmd.parse(env, env.argv, 1).try();
+//     parsed.found.loop((f) { f.id.match({ Verbose => .., Jobs => .., Input => .. }) });
 
-Spec*, Item*, Options*, Args*, options*, is_flag*, is_word*, arg_at*,
-    OPTIONS_END* = std.cli.cli_scan
-ValueType*, ParameterKind*, CliValue*, DiagnosticKind*, Diagnostic*,
-    Parameter*, Match*, Matches*, Command*, command* = std.cli.cli_command
+Alloc, AllocError = std.mem
+str, String = std.text
+Vec = std.collections
+Range = std.core
+Env = std.env
+
+// Ends option parsing: later words are positionals, or the program's own
+// arguments when the command takes trailing arguments.
+END*: str = "--"
+
+// Text is accepted as written. Unsigned and Signed values are checked
+// integers, so a program may convert them without a failure path.
+Kind* = Text | Unsigned | Signed
+
+// Everything about an argument except its id and its spelling. `value` names
+// an option's value in help; `choices` lists the accepted values separated by
+// `|`; `env` names a variable consulted when the command line omits the
+// argument. A switch's variable turns it on with `1`, `true` or `yes`. A
+// hidden argument is accepted but left out of help.
+Spec* = {
+    help* :: str = "",
+    short* :: Res<u8> = None,
+    value* :: str = "VALUE",
+    kind* :: Kind = Kind.Text,
+    choices* :: Res<str> = None,
+    default* :: Res<str> = None,
+    env* :: Res<str> = None,
+    required* :: bool = false,
+    many* :: bool = false,
+    hidden* :: bool = false,
+}
+
+// A declared argument, as returned by its declaration.
+Arg* = { at: usize }
+
+// Where a found value came from. Relations count only explicit values.
+Origin* = Line | Variable | Default
+
+Found*<T> = {
+    id*: T,
+    arg*: Arg,
+    // The value as written; empty for a switch.
+    text*: str,
+    origin*: Origin,
+}
+
+// The subcommand word, and the index of the first argument that belongs to it.
+Picked*<T> = { id*: T, name*: str, next*: usize }
+
+// Why a declaration cannot be parsed. These are the program's mistakes, but
+// they are reported like the user's so that a terminal tool never traps.
+Fault* = LongName
+    | BuiltIn
+    | Twice
+    | SwitchDefault
+    | Unaccepted
+    | Spelled
+    | AfterMany
+    | AfterOptional
+    | Ambiguous
+    | SelfRelation
+
+reason = (fault: Fault) str {
+    fault.match({
+        LongName      => "a long option starts with `--`",
+        BuiltIn       => "`-h` and `--help` are built in",
+        Twice         => "its spelling is declared twice",
+        SwitchDefault => "a switch has no default",
+        Unaccepted    => "its default is not a value it accepts",
+        Spelled       => "a positional is not spelled as an option",
+        AfterMany     => "no positional can follow one that takes many values",
+        AfterOptional => "a required positional cannot follow an optional one",
+        Ambiguous     => "subcommands and positionals are ambiguous",
+        SelfRelation  => "a relation must join two different arguments",
+    })
+}
+
+Problem* = UnknownOption
+    | UnknownCommand
+    | Unexpected
+    | MissingValue
+    | BadValue
+    | Missing
+    | Repeated
+    | Conflict
+    | Required
+    | Declaration(Fault)
+
+// `word` is the argument or token at fault. `other` is the rejected value of
+// BadValue or the second argument of a relation.
+Usage* = {
+    problem*: Problem,
+    word*: str,
+    other* :: str = "",
+
+    message* = (self: @Self, a: Alloc, command: str) Res<String, AllocError> {
+        word  = self.word;
+        other = self.other;
+        self.problem.match({
+            UnknownOption      => a.String(
+                "unknown option `{word}` for `{command}`"
+            ),
+            UnknownCommand     => a.String(
+                "unknown command `{word}` for `{command}`"
+            ),
+            Unexpected         => a.String(
+                "unexpected argument `{word}` for `{command}`"
+            ),
+            MissingValue       => a.String("option `{word}` requires a value"),
+            BadValue           => a.String(
+                "invalid value `{other}` for `{word}`"
+            ),
+            Missing            => a.String(
+                "required argument `{word}` is missing"
+            ),
+            Repeated           => a.String(
+                "argument `{word}` cannot be used more than once"
+            ),
+            Conflict           => a.String(
+                "argument `{word}` cannot be used with `{other}`"
+            ),
+            Required           => a.String(
+                "argument `{word}` requires `{other}`"
+            ),
+            Declaration(fault) => a.String(
+                "invalid declaration of `{}`: {}",
+                word,
+                fault.reason()
+            ),
+        })
+    }
+}
+
+// The outcome of one parse. A problem leaves `found` incomplete; `help` is
+// set when `-h` or `--help` appeared before any `--`.
+Matches*<T> = {
+    found* :: Vec<Found<T>>,
+    help* :: bool = false,
+    picked* :: Res<Picked<T>> = None,
+    // The first word after `--` for a command with trailing arguments;
+    // otherwise the end of argv.
+    rest* :: usize,
+    problem* :: Res<Usage> = None,
+
+    has* = (self: @Self, arg: Arg) bool {
+        self.found.find(
+            (f) { f.arg.at == arg.at }
+        ).match({ Ok(_) => true, None => false })
+    }
+
+    // The last value given for `arg`.
+    text* = (self: @Self, arg: Arg) Res<str> {
+        last: Res<str> ::= None;
+        self.found.loop(
+            (f) { (f.arg.at == arg.at).then(() { last = Ok(f.text); }); }
+        );
+        last
+    }
+
+    given = (self: @Self, arg: Arg) bool {
+        self.found.find((f) {
+            f.arg.at == arg.at && f.origin.match({ Default => false, _ => true })
+        }).match({ Ok(_) => true, None => false })
+    }
+}
+
+Shape = Switch | Option | Positional
+
+Relation = Conflicts | Requires
+
+Link = { from: Arg, to: Arg, relation: Relation }
+
+Sub<T> = { id: T, name: str, about: str }
+
+Param<T> = {
+    id: T,
+    name: str,
+    shape: Shape,
+    spec: Spec,
+
+    named = (self: @Self) bool { self.shape.match({ Positional => false, _ => true }) }
+
+    takes_value = (self: @Self) bool { self.shape.match({ Switch => false, _ => true }) }
+
+    has_short = (self: @Self) bool { self.spec.short.match({ Ok(_) => true, None => false }) }
+
+    spelled = (self: @Self, word: str) bool {
+        short = self.has_short() && word.len == 2 && word.index(1) == self.spec.short.value_or(0);
+        self.named() && word.starts_with("--").match({ true => self.name.eq(word), false => short })
+    }
+
+    // Whether this declaration and a later one share a spelling.
+    clashes = (self: @Self, later: Param<T>) bool {
+        short = self.has_short() && later.spec.short.value_or(0) == self.spec.short.value_or(0);
+        self.named() && later.named() && (self.name.eq(later.name) || short)
+    }
+
+    // Faults visible in this declaration alone.
+    fault = (self: @Self) Res<(), Fault> {
+        self.named().match({
+            true  => {
+                (self.name.starts_with("--") && self.name.len > 2).ensure(Fault.LongName).try();
+                builtin = self.name.eq("--help") || self.spec.short.value_or(0) == 'h';
+                (!builtin).ensure(Fault.BuiltIn).try();
+            },
+            false => (!self.name.starts_with("-") && !self.has_short()).ensure(Fault.Spelled).try(),
+        });
+        self.spec.default.match({
+            None        => Ok(()),
+            Ok(written) => {
+                self.takes_value().ensure(Fault.SwitchDefault).try();
+                self.accepts(written).ensure(Fault.Unaccepted)
+            },
+        })
+    }
+
+    accepts = (self: @Self, value: str) bool {
+        typed  = self.spec.kind.match({
+            Text     => true,
+            Unsigned => value.parse_usize().match({ Ok(_) => true, None => false }),
+            Signed   => value.parse_i64().match({ Ok(_) => true, None => false }),
+        });
+        listed = self.spec.choices.match({
+            None        => true,
+            Ok(choices) => choices.split('|').loop((h, choice) {
+                choice.eq(value).then(() { h.break(choice); });
+            }).match({ Ok(_) => true, None => false }),
+        });
+        typed && listed
+    }
+
+    // A word beginning with `-` is the next option rather than this option's
+    // value, unless this option takes numbers and the word is one.
+    takes_word = (self: @Self, word: str) bool {
+        numeric = self.spec.kind.match({ Text => false, _ => true });
+        number  = word.parse_i64().match({ Ok(_) => true, None => false });
+        !word.starts_with("-") || word.eq("-") || numeric && number
+    }
+
+    // The help column naming the argument: `-v, --verbose`, `--mode <MODE>`
+    // or `<NAME>` (`[NAME]` when optional). Long-only options are indented to align with short ones.
+    left = (self: @Self, a: Alloc) Res<String, AllocError> {
+        out ::= a.String().try();
+        self.named().match({
+            false => self.spec.required.match({
+                true  => out.fmt("<{}>", self.name),
+                false => out.fmt("[{}]", self.name),
+            }).try(),
+            true  => {
+                self.spec.short.match({
+                    Ok(c) => { out.add('-').try(); out.add(c).try(); out.add(", ").try(); },
+                    None  => out.add("    ").try(),
+                });
+                out.add(self.name).try();
+                self.takes_value().then(
+                    () { out.fmt(" <{}>", self.spec.value).try(); }
+                );
+            },
+        });
+        Ok(out)
+    }
+
+    // The help column describing the argument.
+    notes = (self: @Self, a: Alloc) Res<String, AllocError> {
+        out ::= a.String().try();
+        out.add(self.spec.help).try();
+        self.spec.default.when_ok(
+            (value) { out.fmt(" [default: {}]", value).try(); }
+        );
+        self.spec.choices.when_ok((choices) {
+            out.add(" [possible values: ").try();
+            choices.split('|').loop((h, i, choice) {
+                (i > 0).then(() { out.add(", ").try(); });
+                out.add(choice).try();
+            });
+            out.add("]").try();
+        });
+        self.spec.env.when_ok((name) { out.fmt(" [env: {}]", name).try(); });
+        self.spec.many.then(() { out.add(" [repeatable]").try(); });
+        Ok(out)
+    }
+}
+
+Command*<T> = {
+    // The command path shown in usage, such as `zen run`.
+    name*: str,
+    about*: str,
+    alloc: Alloc,
+    params :: Vec<Param<T>>,
+    links :: Vec<Link>,
+    subs :: Vec<Sub<T>>,
+    trailing :: bool = false,
+    after :: str = "",
+
+    flag* = (self :: @Self, id: T, long: str, spec: Spec) Res<Arg, AllocError> {
+        self.declare(Param<T>(
+            id: id,
+            name: long,
+            shape: Shape.Switch,
+            spec: spec
+        ))
+    }
+
+    option* = (self :: @Self, id: T, long: str, spec: Spec) Res<Arg, AllocError> {
+        self.declare(Param<T>(
+            id: id,
+            name: long,
+            shape: Shape.Option,
+            spec: spec
+        ))
+    }
+
+    // A positional is named only in help, as `<NAME>`.
+    positional* = (self :: @Self, id: T, name: str, spec: Spec) Res<Arg, AllocError> {
+        self.declare(Param<T>(
+            id: id,
+            name: name,
+            shape: Shape.Positional,
+            spec: spec
+        ))
+    }
+
+    // A subcommand word ends this command's arguments; the program parses the
+    // rest with the subcommand's own Command, starting at `Picked.next`.
+    command* = (self :: @Self, id: T, name: str, about: str) Res<(), AllocError> {
+        self.subs.add(Sub<T>(id: id, name: name, about: about))
+    }
+
+    // Words after `--` are left untouched for the program.
+    trailing_args* = (self :: @Self) { self.trailing = true; }
+
+    // Free text printed after the generated help, such as environment notes.
+    note* = (self :: @Self, text: str) { self.after = text; }
+
+    conflicts* = (self :: @Self, one: Arg, other: Arg) Res<(), AllocError> {
+        self.links.add(Link(from: one, to: other, relation: Relation.Conflicts))
+    }
+
+    requires* = (self :: @Self, one: Arg, other: Arg) Res<(), AllocError> {
+        self.links.add(Link(from: one, to: other, relation: Relation.Requires))
+    }
+
+    // The subcommand declared with this name.
+    subcommand* = (self: @Self, name: str) Res<T> {
+        found = self.subs.find((sub) { sub.name.eq(name) }).try();
+        Ok(found.id)
+    }
+
+    declare = (self :: @Self, param: Param<T>) Res<Arg, AllocError> {
+        self.params.add(param).try();
+        Ok(Arg(at: self.params.len - 1))
+    }
+
+    parse* = (self: @Self, env: Env, argv: Vec<str>, start: usize)
+             Res<Matches<T>, AllocError> {
+        scan ::= Scan<T>(
+            params: self.params,
+            links: self.links,
+            subs: self.subs,
+            trailing: self.trailing,
+            env: env,
+            argv: argv,
+            at: start,
+            out: Matches<T>(found: self.alloc.Vec<Found<T>>(), rest: argv.len)
+        );
+        self.declared().match({
+            Err(usage) => { scan.out.problem = Ok(usage); },
+            Ok(_)      => scan.run().try(),
+        });
+        Ok(scan.out)
+    }
+
+    // The first malformed declaration, in declaration order.
+    declared = (self: @Self) Res<(), Usage> {
+        optional  ::= false;
+        unbounded ::= false;
+        self.params.loop((h, i, p) {
+            p.fault().map_err((fault) { refused(p.name, fault) }).try();
+            Range(i + 1, self.params.len).loop((j) {
+                self.params.get(j).when_ok((later) {
+                    (!p.clashes(later)).ensure(refused(later.name, Fault.Twice)).try();
+                });
+            });
+            (!p.named()).then(() {
+                (self.subs.len == 0).ensure(refused(
+                    p.name,
+                    Fault.Ambiguous
+                )).try();
+                (!unbounded).ensure(refused(p.name, Fault.AfterMany)).try();
+                (!optional || !p.spec.required).ensure(refused(
+                    p.name,
+                    Fault.AfterOptional
+                )).try();
+                optional  = optional || !p.spec.required;
+                unbounded = p.spec.many;
+            });
+        });
+        self.links.loop((link) {
+            (link.from.at != link.to.at).ensure(refused(
+                self.name,
+                Fault.SelfRelation
+            )).try();
+        });
+        Ok(())
+    }
+
+    help* = (self: @Self) Res<String, AllocError> {
+        out ::= self.alloc.String().try();
+        (!self.about.is_empty()).then(
+            () { out.fmt("{}\n\n", self.about).try(); }
+        );
+        out.fmt("Usage: {}", self.name).try();
+        self.params.find((p) { p.named() }).when_ok((_) { out.add(" [OPTIONS]").try(); });
+        (self.subs.len > 0).then(() { out.add(" <COMMAND>").try(); });
+        self.params.loop((p) {
+            (!p.named()).then(() {
+                p.spec.required.match({
+                    true  => out.fmt(" <{}>", p.name),
+                    false => out.fmt(" [{}]", p.name),
+                }).try();
+                p.spec.many.then(() { out.add("...").try(); });
+            });
+        });
+        self.trailing.then(() { out.add(" [-- <ARGS>...]").try(); });
+        out.add("\n").try();
+
+        rows ::= Rows(out: out, width: self.left_width().try());
+        (self.subs.len > 0).then(() {
+            rows.out.add("\nCommands:\n").try();
+            self.subs.loop((sub) { rows.row(sub.name, sub.about).try(); });
+        });
+        self.params.find((p) { !p.named() }).when_ok((_) {
+            rows.out.add("\nArguments:\n").try();
+            self.params.loop(
+                (p) { (!p.named()).then(() { self.row(rows, p).try(); }); }
+            );
+        });
+        rows.out.add("\nOptions:\n").try();
+        self.params.loop(
+            (p) { p.named().then(() { self.row(rows, p).try(); }); }
+        );
+        rows.row("-h, --help", "Print help").try();
+        (!self.after.is_empty()).then(
+            () { rows.out.fmt("\n{}\n", self.after).try(); }
+        );
+        Ok(rows.out)
+    }
+
+    row = (self: @Self, rows :: Rows, p: Param<T>) Res<(), AllocError> {
+        p.spec.hidden.match({
+            true  => Ok(()),
+            false => {
+                left  = p.left(self.alloc).try();
+                notes = p.notes(self.alloc).try();
+                rows.row(left.view(), notes.view())
+            },
+        })
+    }
+
+    left_width = (self: @Self) Res<usize, AllocError> {
+        widest ::= 10;
+        self.subs.loop(
+            (sub) { (sub.name.len > widest).then(
+                () { widest = sub.name.len; }
+            ); }
+        );
+        self.params.loop((p) {
+            left = p.left(self.alloc).try();
+            (!p.spec.hidden && left.view().len > widest)
+                .then(() { widest = left.view().len; });
+        });
+        Ok(widest)
+    }
+}
+
+command* = <T>(a: Alloc, name: str, about: str) Command<T> {
+    Command<T>(
+        name: name,
+        about: about,
+        alloc: a,
+        params: a.Vec<Param<T>>(),
+        links: a.Vec<Link>(),
+        subs: a.Vec<Sub<T>>()
+    )
+}
+
+refused = (word: str, fault: Fault) Usage {
+    Usage(problem: Problem.Declaration(fault), word: word)
+}
+
+// Two help columns, the left padded to one width.
+Rows = {
+    out :: String,
+    width: usize,
+
+    row = (self :: @Self, left: str, right: str) Res<(), AllocError> {
+        self.out.fmt("  {}", left).try();
+        (!right.is_empty()).then(() {
+            Range(left.len, self.width + 2).loop((_) { self.out.add(' ').try(); });
+            self.out.add(right).try();
+        });
+        self.out.add("\n")
+    }
+}
+
+// One pass over argv. The first problem stops the pass.
+Scan<T> = {
+    params: Vec<Param<T>>,
+    links: Vec<Link>,
+    subs: Vec<Sub<T>>,
+    trailing: bool,
+    env: Env,
+    argv: Vec<str>,
+    at :: usize,
+    out :: Matches<T>,
+    ended :: bool = false,
+    position :: usize = 0,
+
+    run = (self :: @Self) Res<(), AllocError> {
+        loop(() { self.at < self.argv.len && self.clean() }, (h) {
+            word    = self.argv.get(self.at).value_or("");
+            self.at = self.at + 1;
+            self.ended.match({
+                true  => self.word(word).try(),
+                false => self.token(word).try(),
+            });
+            self.out.picked.when_ok((_) { h.break(); });
+            (self.ended && self.trailing).then(
+                () { self.out.rest = self.at; h.break(); }
+            );
+        });
+        (self.clean() && !self.out.help).then(() {
+            self.fill().try();
+            self.check();
+        });
+        Ok(())
+    }
+
+    // A word before any `--`.
+    token = (self :: @Self, word: str) Res<(), AllocError> {
+        help   = word.eq("-h") || word.eq("--help");
+        option = word.starts_with("-") && word.len > 1;
+        word.eq(END).match({
+            true  => { self.ended = true; Ok(()) },
+            false => (self.out.help || help).match({
+                // Once help is asked for, only a subcommand word still
+                // matters: `tool -h build` asks for build's help.
+                true  => {
+                    self.out.help = true;
+                    self.subs.find((s) { s.name.eq(word) }).when_ok((s) { self.pick(s); });
+                    Ok(())
+                },
+                false => option.match({
+                    true  => self.option(word),
+                    false => self.word(word),
+                }),
+            }),
+        })
+    }
+
+    pick = (self :: @Self, sub: Sub<T>) {
+        self.out.picked = Ok(Picked<T>(
+            id: sub.id,
+            name: sub.name,
+            next: self.at
+        ));
+    }
+
+    // `--name`, `--name=value`, `-x`, `-x value` or `-xvalue`.
+    option = (self :: @Self, word: str) Res<(), AllocError> {
+        long             = word.starts_with("--");
+        name             = long.match({
+            true  => word.find('=').match({ Ok(at) => word.slice(0, at), None => word }),
+            false => word.slice(0, 2),
+        });
+        skip             = long.match({ true => 1, false => 0 });
+        inline: Res<str> = (name.len < word.len).match({
+            true  => Ok(word.slice(name.len + skip, word.len)),
+            false => None,
+        });
+        found            = Range(0, self.params.len).find((i) {
+            self.params.get(i).match({ Ok(p) => p.spelled(name), None => false })
+        });
+        found.match({
+            None  => { self.refuse(Problem.UnknownOption, word, ""); Ok(()) },
+            Ok(i) => self.params.get(i).match({
+                None  => Ok(()),
+                Ok(p) => p.takes_value().match({
+                    true  => self.option_value(i, p, name, inline),
+                    false => inline.match({
+                        Ok(text) => { self.refuse(Problem.BadValue, name, text); Ok(()) },
+                        None     => self.record(i, p, "", Origin.Line),
+                    }),
+                }),
+            }),
+        })
+    }
+
+    // The value written after `=` or attached to a short option, else the
+    // next word.
+    option_value = (self :: @Self, i: usize, p: Param<T>, written: str, inline: Res<str>)
+                   Res<(), AllocError> {
+        next    = self.argv.get(self.at).value_or("");
+        follows = self.at < self.argv.len && !next.eq(END) && p.takes_word(next);
+        inline.match({
+            Ok(text) => self.value(i, p, written, text, Origin.Line),
+            None     => follows.match({
+                false => { self.refuse(Problem.MissingValue, written, ""); Ok(()) },
+                true  => {
+                    self.at = self.at + 1;
+                    self.value(i, p, written, next, Origin.Line)
+                },
+            }),
+        })
+    }
+
+    // A bare word: the subcommand it names, else the next positional.
+    word = (self :: @Self, word: str) Res<(), AllocError> {
+        sub: Res<Sub<T>> = (self.ended || self.position > 0).match({
+            true  => None,
+            false => self.subs.find((s) { s.name.eq(word) }),
+        });
+        sub.match({
+            Ok(s) => { self.pick(s); Ok(()) },
+            None  => self.positional().match({
+                Ok(i) => self.params.get(i).match({
+                    None  => Ok(()),
+                    Ok(p) => {
+                        (!p.spec.many).then(
+                            () { self.position = self.position + 1; }
+                        );
+                        self.value(i, p, p.name, word, Origin.Line)
+                    },
+                }),
+                None  => {
+                    unknown = self.subs.len > 0 && !self.ended;
+                    self.refuse(
+                        unknown.match({ true => Problem.UnknownCommand, false => Problem.Unexpected }),
+                        word,
+                        ""
+                    );
+                    Ok(())
+                },
+            }),
+        })
+    }
+
+    // The positional the next bare word fills.
+    positional = (self: @Self) Res<usize> {
+        wanted ::= self.position;
+        Range(0, self.params.len).find((i) {
+            self.params.get(i).match({
+                None  => false,
+                Ok(p) => !p.named() && (wanted == 0).match({
+                    true  => true,
+                    false => { wanted = wanted - 1; false },
+                }),
+            })
+        })
+    }
+
+    // `written` is the spelling to blame: the option as typed, or a
+    // positional's name.
+    value = (self :: @Self, i: usize, p: Param<T>, written: str, text: str, origin: Origin)
+            Res<(), AllocError> {
+        p.accepts(text).match({
+            true  => self.record(i, p, text, origin),
+            false => { self.refuse(Problem.BadValue, written, text); Ok(()) },
+        })
+    }
+
+    record = (self :: @Self, i: usize, p: Param<T>, text: str, origin: Origin)
+             Res<(), AllocError> {
+        found = Found<T>(id: p.id, arg: Arg(at: i), text: text, origin: origin);
+        (!p.spec.many && self.out.has(found.arg)).match({
+            true  => { self.refuse(Problem.Repeated, p.name, ""); Ok(()) },
+            false => self.out.found.add(found),
+        })
+    }
+
+    // Arguments absent from the command line take their variable, then
+    // their default.
+    fill = (self :: @Self) Res<(), AllocError> {
+        self.params.loop((h, i, p) {
+            (!self.out.has(Arg(at: i))).then(() {
+                text = p.spec.env.match({ Ok(name) => self.env.var(name).value_or(""), None => "" });
+                (!text.is_empty()).then(
+                    () { self.variable(i, p, text).try(); }
+                );
+            });
+            (!self.out.has(Arg(at: i))).then(() {
+                p.spec.default.when_ok(
+                    (text) { self.record(i, p, text, Origin.Default).try(); }
+                );
+            });
+        });
+        Ok(())
+    }
+
+    variable = (self :: @Self, i: usize, p: Param<T>, text: str) Res<(), AllocError> {
+        on = text.eq("1") || text.eq("true") || text.eq("yes");
+        p.takes_value().match({
+            true  => self.value(
+                i,
+                p,
+                p.spec.env.value_or(p.name),
+                text,
+                Origin.Variable
+            ),
+            false => on.match({ true => self.record(i, p, "", Origin.Variable), false => Ok(()) }),
+        })
+    }
+
+    check = (self :: @Self) {
+        self.params.loop((h, i, p) {
+            (p.spec.required && !self.out.has(Arg(at: i))).then(() {
+                self.refuse(Problem.Missing, p.name, "");
+                h.break();
+            });
+        });
+        self.links.loop((h, link) {
+            one   = self.params.get(
+                link.from.at
+            ).match({ Ok(p) => p.name, None => "" });
+            other = self.params.get(
+                link.to.at
+            ).match({ Ok(p) => p.name, None => "" });
+            given = self.out.given(link.to);
+            self.out.given(link.from).then(() {
+                link.relation.match({
+                    Conflicts => given.then(
+                        () { self.refuse(Problem.Conflict, one, other); }
+                    ),
+                    Requires  => (!given).then(
+                        () { self.refuse(Problem.Required, one, other); }
+                    ),
+                });
+            });
+            (!self.clean()).then(() { h.break(); });
+        });
+    }
+
+    refuse = (self :: @Self, problem: Problem, word: str, other: str) {
+        self.clean().then(() {
+            self.out.problem = Ok(Usage(
+                problem: problem,
+                word: word,
+                other: other
+            ));
+        });
+    }
+
+    clean = (self: @Self) bool { self.out.problem.match({ Ok(_) => false, None => true }) }
+}

@@ -7,7 +7,6 @@ Env = std.env
 Vec = std.collections
 str = std.text
 Range = std.core
-Options, options = std.cli
 
 Module* = {
     functions* = (self: @Self, a: Alloc) Res<Vec<Function>, AllocError>
@@ -158,10 +157,20 @@ Exe* = {
     deps*: Vec<Dep>,
 
     backend* :: Codegen = Codegen.C,
-    optimize* :: str = "speed",
+    // None follows the build mode; a target may also match on `b.mode()`.
+    optimize* :: Res<Optimize> = None,
     language* :: str = "c",
     frameworks* :: Res<Vec<str>> = None,
+    // Remove the symbol table. The small mode always strips.
     strip* :: bool = false,
+
+    // The C toolchain. `--cc` and the CC variable override `cc`, and CFLAGS
+    // words follow `cflags`. A define is NAME or NAME=value; a lib links
+    // as `-l<name>`.
+    cc* :: Res<Cc> = None,
+    cflags* :: Res<Vec<str>> = None,
+    defines* :: Res<Vec<str>> = None,
+    libs* :: Res<Vec<str>> = None,
 
     // JavaScript for a page: `out` is a directory that receives index.html,
     // runtime.js and app.js (the `js-browser` layout).
@@ -209,6 +218,34 @@ Budget* = {
     ns_op*: u64,
     allocs_op*: u64,
     bytes_op*: u64,
+}
+
+// The build profile chosen on the command line: `debug` (the default),
+// `release` (`--release`) or `small`. A build file reads it with `b.mode()`.
+// Debug compiles unoptimized, Release optimizes for speed, and Small
+// optimizes for size, drops unreferenced code at link time and strips.
+Mode* = Debug | Release | Small
+
+// A target's own optimization, overriding its mode's.
+Optimize* = Debug | Speed | Size
+
+// The C compiler for a native target. Custom names an executable.
+Cc* = Clang | Gcc | Tcc | Custom(Path)
+
+Mode.impl(StableName, {
+    stable_name = (self: @Self) str {
+        self.match({ Debug => "debug", Release => "release", Small => "small" })
+    }
+})
+
+// Spell a mode as `--mode` accepts it.
+mode_named* = (text: str) Res<Mode> {
+    text.match({
+        "debug"   => Ok(Mode.Debug),
+        "release" => Ok(Mode.Release),
+        "small"   => Ok(Mode.Small),
+        _         => None,
+    })
 }
 
 // Generator choice is independent of artifact delivery and OS/arch/ABI.
@@ -297,163 +334,16 @@ ProjectArgs* = {
     std_root* :: str = "",
     argv*: Vec<str>,
     args_at* :: usize = 0,
+    mode* :: Mode = Mode.Debug,
+    // Print each phase, command and timing.
+    verbose* :: bool = false,
+    // `--cc`: clang, gcc, tcc or an executable path.
+    cc* :: Res<str> = None,
+    // `--target`: the platform to build for, when not the host.
+    triple* :: Res<str> = None,
 }
 
-BuildFlags* = {
-    root* :: str = "",
-    out* :: str = "",
-    dir* :: str = "",
-    entry* :: str = "",
-    std_root* :: str = "",
-    symbol_map* :: str = "",
-    emit_c* :: bool = false,
-    backend* :: str = "",
-    ffi* :: bool = false,
-    repeat* :: usize = 1,
-    permute* :: str = "",
-    target* :: str = "",
-
-    set_root* = (self :: @Self, value: str) { self.root = value; }
-    set_out* = (self :: @Self, value: str) { self.out = value; }
-    set_dir* = (self :: @Self, value: str) {
-        self.emit_c = true;
-        self.dir    = value;
-    }
-    set_entry* = (self :: @Self, value: str) { self.entry = value; }
-    set_std_root* = (self :: @Self, value: str) { self.std_root = value; }
-    set_symbol_map* = (self :: @Self, value: str) {
-        self.symbol_map = value;
-    }
-    set_repeat* = (self :: @Self, value: usize) { self.repeat = value; }
-    set_permute* = (self :: @Self, value: str) { self.permute = value; }
-    set_backend* = (self :: @Self, value: str) { self.backend = value; }
-    set_target* = (self :: @Self, value: str) { self.target = value; }
-    enable_emit_c* = (self :: @Self) { self.emit_c = true; }
-    enable_ffi* = (self :: @Self) { self.ffi = true; }
-
-    apply_switch* = (self :: @Self, flag: BuildFlag) {
-        flag.match({
-            EmitC => self.enable_emit_c(),
-            Ffi   => self.enable_ffi(),
-            _     => (),
-        });
-    }
-
-    apply_setting* = (self :: @Self, flag: BuildFlag, value: str) {
-        flag.match({
-            EmitDir    => self.set_dir(value),
-            Out        => self.set_out(value),
-            Entry      => self.set_entry(value),
-            StdRoot    => self.set_std_root(value),
-            Backend    => self.set_backend(value),
-            SymbolMap  => self.set_symbol_map(value),
-            Repeat     => self.set_repeat(value.repeat_count()),
-            Permute    => self.set_permute(value),
-            TargetName => self.set_target(value),
-            _          => (),
-        });
-    }
-
-    // Any compiler-output option selects the raw Zen-to-C interface. A build
-    // command with no such option starts at build.zen instead.
-    compiles_source* = (self: @Self) bool {
-        self.emit_c || !self.backend.is_empty()
-            || !self.out.is_empty()
-            || !self.dir.is_empty()
-            || !self.entry.is_empty()
-            || !self.symbol_map.is_empty()
-            || self.ffi
-            || self.repeat != 1
-            || !self.permute.is_empty()
-    }
-
-    finish* = (self: @Self) Res<BuildArgs, BuildArgFault> {
-        self.root.is_empty().match({
-            true  => Err(BuildArgFault.MissingRoot),
-            false => (self.emit_c || !self.backend.is_empty()).match({
-                false => Err(BuildArgFault.MissingEmit),
-                true  => Ok(BuildArgs(
-                    root: self.root,
-                    backend: self.selected_backend().try(),
-                    emission: self.emission(),
-                    entry: self.entry,
-                    std_root: self.std_root,
-                    symbol_map: self.symbol_map,
-                    ffi: self.ffi,
-                    repeat: self.repeat,
-                    permute: permutation(self.permute),
-                    target: self.target
-                )),
-            }),
-        })
-    }
-
-    selected_backend = (self: @Self) Res<Codegen, BuildArgFault> {
-        self.backend.is_empty().match({
-            true  => Ok(Codegen.C),
-            false => Codegen(self.backend).ok_or(BuildArgFault.UnavailableBackend(self.backend)),
-        })
-    }
-
-    emission = (self: @Self) Emission {
-        self.dir.is_empty().match({
-            false => Emission.Directory(self.dir),
-            true  => self.out.is_empty().match({
-                true  => Emission.Stdout,
-                false => Emission.File(self.out),
-            }),
-        })
-    }
-}
-
-BuildArgFault* = MissingRoot | MissingEmit | UnavailableBackend(str)
-
-BuildFlag* = EmitC
-    | EmitDir
-    | Out
-    | Entry
-    | StdRoot
-    | Backend
-    | SymbolMap
-    | Repeat
-    | Permute
-    | Ffi
-    | TargetName
-
-FLAG_EMIT_C*: str = "--emit-c"
-FLAG_EMIT_DIR*: str = "--emit-c-dir"
-FLAG_OUT*: str = "-o"
-FLAG_ENTRY*: str = "--entry"
-FLAG_STD*: str = "--std"
-FLAG_BACKEND*: str = "--backend"
-FLAG_SYMBOL_MAP*: str = "--symbol-map"
-FLAG_REPEAT*: str = "--repeat"
-FLAG_PERMUTE*: str = "--permute"
-FLAG_FFI*: str = "--ffi"
-FLAG_TARGET*: str = "--target"
 ZEN_STD_ENV*: str = "ZEN_STD"
-
-build_options* = (a: Alloc) Res<Options<BuildFlag>, AllocError> {
-    declared ::= options<BuildFlag>(a);
-    declared.flag(FLAG_EMIT_C, BuildFlag.EmitC).try();
-    declared.setting(FLAG_EMIT_DIR, BuildFlag.EmitDir).try();
-    declared.setting(FLAG_OUT, BuildFlag.Out).try();
-    declared.setting(FLAG_ENTRY, BuildFlag.Entry).try();
-    declared.setting(FLAG_STD, BuildFlag.StdRoot).try();
-    declared.setting(FLAG_BACKEND, BuildFlag.Backend).try();
-    declared.setting(FLAG_SYMBOL_MAP, BuildFlag.SymbolMap).try();
-    declared.setting(FLAG_REPEAT, BuildFlag.Repeat).try();
-    declared.setting(FLAG_PERMUTE, BuildFlag.Permute).try();
-    declared.flag(FLAG_FFI, BuildFlag.Ffi).try();
-    declared.setting(FLAG_TARGET, BuildFlag.TargetName).try();
-    Ok(declared)
-}
-
-// Anything but a positive count means once.
-repeat_count = (text: str) usize {
-    n = text.parse_usize().value_or(1);
-    (n > 0).match({ true => n, false => 1 })
-}
 
 // The compiler driver supplies these methods.
 Builder* = {
@@ -466,6 +356,7 @@ Builder* = {
     module* = (self: @Self, path: Path) Module
 
     target* = (self: @Self) Target
+    mode* = (self: @Self) Mode
 
     add* ::= (self :: @Self, name: str, pkg: Package) Res<Dep, BuildError>
     remove* ::= (self :: @Self, name: str) Res<(), BuildError>

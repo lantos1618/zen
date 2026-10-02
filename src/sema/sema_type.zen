@@ -2,7 +2,7 @@ Expr, ExprId, Literal = std.ast
 Decl, Const = std.ast
 Block, BlockId, Stmt = std.ast
 Binary, BinOp, Unary, Bind, Match, Access, Call, Lambda = std.ast
-ArrayLit, FixedArray, Index = std.ast
+ArrayLit, FixedArray, Index, Record = std.ast
 AllocError = std.mem
 Vec = std.collections
 str = std.text
@@ -76,8 +76,29 @@ expr_kind = (c :: Checker, id: ExprId, node: Expr, ctx: Ctx)
         FixedArray(f) => c.fixed_array_type(f, ctx),
         Index(x)      => c.index_element_type(node, x, ctx),
         Meta(_)       => c.meta_type(node, ctx),
+        Record(r)     => c.record_literal_type(r, ctx),
         _             => c.types.unknown(),
     })
+}
+
+// A brace record literal, as build.zen passes to Builder members, takes its
+// type from the parameter it fills. Its field values are still checked, so a
+// misspelled enum variant such as `Optimize.Fastest` is a diagnostic.
+record_literal_type = (
+    c   :: Checker,
+    r   : Record,
+    ctx : Ctx
+) Res<TyId, AllocError> {
+    r.entries.loop((m) {
+        m.kind.match({
+            Field(f) => f.value.match({ Ok(value) => { c.type_of(
+                value,
+                ctx
+            ).try(); }, None => () }),
+            _        => (),
+        });
+    });
+    c.types.unknown()
 }
 
 lambda_type* = (c :: Checker, l: Lambda) Res<TyId, AllocError> {

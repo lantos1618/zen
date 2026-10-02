@@ -1,122 +1,91 @@
-Alloc, AllocError = std.mem
+// A malformed declaration is reported before any word is read.
+
 Vec = std.collections
-str = std.text
-Command, command, DiagnosticKind, ValueType = std.cli
+Command, command, Spec, Kind, Arg = std.cli
 
 Id = A | B
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();
 
-    duplicate ::= command<Id>(a, "tool", "");
-    duplicate.flag("--same", Id.A, "").try();
-    duplicate.flag("--same", Id.B, "").try();
-    show(a, duplicate).try();
+    twice ::= command<Id>(a, "tool", "");
+    twice.flag(Id.A, "--same", Spec()).try();
+    twice.flag(Id.B, "--same", Spec()).try();
+    show(env, a, twice).try();
 
-    aliases ::= command<Id>(a, "tool", "");
-    aliases.flag("--alpha", Id.A, "").try();
-    aliases.alias("--alpha", "-x").try();
-    aliases.flag("--beta", Id.B, "").try();
-    aliases.alias("--beta", "-x").try();
-    show(a, aliases).try();
+    shorts ::= command<Id>(a, "tool", "");
+    shorts.flag(Id.A, "--alpha", Spec(short: 'x')).try();
+    shorts.flag(Id.B, "--beta", Spec(short: 'x')).try();
+    show(env, a, shorts).try();
 
-    alias_name ::= command<Id>(a, "tool", "");
-    alias_name.flag("--alpha", Id.A, "").try();
-    alias_name.alias("--alpha", "--beta").try();
-    alias_name.flag("--beta", Id.B, "").try();
-    show(a, alias_name).try();
+    help ::= command<Id>(a, "tool", "");
+    help.flag(Id.A, "--alpha", Spec(short: 'h')).try();
+    show(env, a, help).try();
 
-    name_alias ::= command<Id>(a, "tool", "");
-    name_alias.flag("--alpha", Id.A, "").try();
-    name_alias.flag("--beta", Id.B, "").try();
-    name_alias.alias("--beta", "--alpha").try();
-    show(a, name_alias).try();
-
-    // The first colliding declaration is reported. Its collision check has
-    // precedence over an invalid default or link on that same declaration.
-    precedence ::= command<Id>(a, "tool", "");
-    precedence.flag("--alpha", Id.A, "").try();
-    precedence.default_value("--alpha", "true");
-    precedence.requires("--alpha", "--missing").try();
-    precedence.flag("--beta", Id.B, "").try();
-    precedence.flag("--beta", Id.B, "").try();
-    precedence.flag("--alpha", Id.A, "").try();
-    show(a, precedence).try();
+    single ::= command<Id>(a, "tool", "");
+    single.flag(Id.A, "-a", Spec()).try();
+    show(env, a, single).try();
 
     distinct ::= command<Id>(a, "tool", "");
-    distinct.flag("--alpha", Id.A, "").try();
-    distinct.alias("--alpha", "-a").try();
-    distinct.flag("--beta", Id.B, "").try();
-    distinct.alias("--beta", "-b").try();
-    show(a, distinct).try();
-
-    unknown_link ::= command<Id>(a, "tool", "");
-    unknown_link.flag("--alpha", Id.A, "").try();
-    unknown_link.conflicts("--alpha", "--missing").try();
-    show(a, unknown_link).try();
-
-    self_link ::= command<Id>(a, "tool", "");
-    self_link.flag("--alpha", Id.A, "").try();
-    self_link.requires("--alpha", "--alpha").try();
-    show(a, self_link).try();
+    distinct.flag(Id.A, "--alpha", Spec(short: 'a')).try();
+    distinct.flag(Id.B, "--beta", Spec(short: 'b')).try();
+    show(env, a, distinct).try();
 
     switch_default ::= command<Id>(a, "tool", "");
-    switch_default.flag("--alpha", Id.A, "").try();
-    switch_default.default_value("--alpha", "true");
-    show(a, switch_default).try();
+    switch_default.flag(Id.A, "--alpha", Spec(default: "true")).try();
+    show(env, a, switch_default).try();
 
     bad_default ::= command<Id>(a, "tool", "");
-    bad_default.option("--count", Id.A, "N", ValueType.Usize, "").try();
-    bad_default.default_value("--count", "many");
-    show(a, bad_default).try();
-
-    positional_alias ::= command<Id>(a, "tool", "");
-    positional_alias.positional(
-        "input",
+    bad_default.option(
         Id.A,
-        "INPUT",
-        ValueType.Text,
-        ""
+        "--count",
+        Spec(kind: Kind.Unsigned, default: "many")
     ).try();
-    positional_alias.alias("input", "-i").try();
-    show(a, positional_alias).try();
+    show(env, a, bad_default).try();
 
-    wrong_order ::= command<Id>(a, "tool", "");
-    wrong_order.positional("maybe", Id.A, "MAYBE", ValueType.Text, "").try();
-    wrong_order.positional("needed", Id.B, "NEEDED", ValueType.Text, "").try();
-    wrong_order.required("needed");
-    show(a, wrong_order).try();
+    unlisted ::= command<Id>(a, "tool", "");
+    unlisted.option(
+        Id.A,
+        "--mode",
+        Spec(choices: "fast|small", default: "slow")
+    ).try();
+    show(env, a, unlisted).try();
+
+    spelled ::= command<Id>(a, "tool", "");
+    spelled.positional(Id.A, "INPUT", Spec(short: 'i')).try();
+    show(env, a, spelled).try();
+
+    order ::= command<Id>(a, "tool", "");
+    order.positional(Id.A, "MAYBE", Spec()).try();
+    order.positional(Id.B, "NEEDED", Spec(required: true)).try();
+    show(env, a, order).try();
 
     unreachable ::= command<Id>(a, "tool", "");
-    unreachable.positional("many", Id.A, "MANY", ValueType.Text, "").try();
-    unreachable.repeatable("many");
-    unreachable.positional("later", Id.B, "LATER", ValueType.Text, "").try();
-    show(a, unreachable).try();
-
-    duplicate_command ::= command<Id>(a, "tool", "");
-    duplicate_command.subcommand(command<Id>(a, "go", "")).try();
-    duplicate_command.subcommand(command<Id>(a, "go", "")).try();
-    show(a, duplicate_command).try();
+    unreachable.positional(Id.A, "MANY", Spec(many: true)).try();
+    unreachable.positional(Id.B, "LATER", Spec()).try();
+    show(env, a, unreachable).try();
 
     ambiguous ::= command<Id>(a, "tool", "");
-    ambiguous.positional("input", Id.A, "INPUT", ValueType.Text, "").try();
-    ambiguous.subcommand(command<Id>(a, "run", "")).try();
-    show(a, ambiguous).try();
+    ambiguous.command(Id.B, "run", "").try();
+    ambiguous.positional(Id.A, "INPUT", Spec()).try();
+    show(env, a, ambiguous).try();
+
+    itself ::= command<Id>(a, "tool", "");
+    alpha = itself.flag(Id.A, "--alpha", Spec()).try();
+    itself.requires(alpha, alpha).try();
+    show(env, a, itself).try();
     Ok(0)
 }
 
-show = (a: Alloc, model: Command<Id>) Res<(), AllocError> {
+show = (env: Env, a: Alloc, model: Command<Id>) Res<(), AllocError> {
     argv ::= a.Vec<str>();
     argv.add("tool").try();
-    parsed = model.parse(argv, 1).try();
-    parsed.error.match({
-        None           => println("clean"),
-        Ok(diagnostic) => {
-            message = diagnostic.message(a).try();
-            diagnostic.kind.match({
-                InvalidDeclaration => println("{}", message.view()),
-                _                  => println("unexpected parser diagnostic"),
-            });
+    parsed = model.parse(env, argv, 1).try();
+    parsed.problem.match({
+        None      => println("clean"),
+        Ok(usage) => {
+            message = usage.message(a, model.name).try();
+            println("{}", message.view());
         },
     });
     Ok(())

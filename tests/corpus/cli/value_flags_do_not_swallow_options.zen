@@ -55,7 +55,7 @@ valid = (a: Alloc) Res<Vec<str>, AllocError> {
 show = (env: Env, argv: Vec<str>) Res<(), AllocError> {
     a ::= env.mem.alloc();
     cli(env, a, argv).try().match({
-        Build(j)                 => j.emission.match({
+        Build(j)         => j.emission.match({
             File(out) => println(
                 "build root={} entry={} out={} symbols={} ffi={}",
                 j.root,
@@ -66,15 +66,10 @@ show = (env: Env, argv: Vec<str>) Res<(), AllocError> {
             ),
             _         => println("unexpected emission"),
         }),
-        Project(j)               => println("project {} {}", j.root, j.target),
-        Run(j)                   => println("run {} {}", j.root, j.target),
-        Usage(w)                 => println("usage `{}`", w),
-        UnavailableBackend(name) => println("unavailable backend {}", name),
-        Missing(f)               => println("missing `{}`", f),
-        Fmt(_)                   => println("fmt"),
-        Test(_)                  => println("test"),
-        Later(n)                 => println("later {}", n),
-        Version(v)               => println("version {}", v),
+        Project(j)       => println("project {} {}", j.root, j.target),
+        Run(j)           => println("run {} {}", j.root, j.target),
+        Refused(refusal) => println("usage {}", refusal.message.view()),
+        _                => println("other"),
     });
     Ok(())
 }

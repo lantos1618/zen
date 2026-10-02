@@ -14,15 +14,15 @@ args = (a: Alloc, root: str, flag: str, value: str) Res<Vec<str>, AllocError> {
 show = (env: Env, words: Vec<str>) Res<(), AllocError> {
     a ::= env.mem.alloc();
     cli(env, a, words).try().match({
-        Build(job)  => println(
+        Build(job)       => println(
             "check {} entry={} emit={} ffi={}",
             job.root,
             job.entry,
             job.emits(),
             job.ffi
         ),
-        Usage(word) => println("usage `{}`", word),
-        _           => println("unexpected"),
+        Refused(refusal) => println("usage {}", refusal.message.view()),
+        _                => println("unexpected"),
     });
     Ok(())
 }

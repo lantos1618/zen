@@ -24,7 +24,7 @@ run = (
         println("frontend {}", report.view());
     });
     source_path = backend.match({ C => "candidate.c", Js => "candidate.js", Asm => "candidate.s" });
-    host        = host_target(env, a).try();
+    host        = host_target();
     generation  = Generation(
         alloc: a,
         mem: env.mem,
@@ -122,7 +122,7 @@ refused = (
         layout: layout,
         ffi: false,
         symbols: false,
-        target: host_target(env, a).try()
+        target: host_target()
     );
     called ::= false;
     faults = generation.emit(report, (artifact) { called = true; Ok(0) }).try();

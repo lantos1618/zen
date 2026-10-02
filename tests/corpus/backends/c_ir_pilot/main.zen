@@ -17,11 +17,11 @@ Backend = LegacyC | IrC | Js | Asm
 // The host's native renderer; an unsupported host yields empty text, which
 // then fails to assemble.
 host_assembly = (env: Env, a: Alloc, program: Program) Res<String, AllocError> {
-    host_target(env, a).try().match({
-        None        => a.String(),
-        Ok(machine) => emit_assembly(a, machine, program).try().match({
-            None     => a.String(),
-            Ok(text) => Ok(text),
+    host_target().match({
+        None          => a.String(),
+        Ok(machine)   => emit_assembly(a, machine, program).try().match({
+            None       => a.String(),
+            Ok(text)   => Ok(text),
         }),
     })
 }
@@ -129,16 +129,8 @@ Case = {
                 // Native assembly uses the system assembler and linker only.
                 Asm => {
                     log ::= a.String().try();
-                    built = host_target(env, a).try().match({
-                        Ok(machine) => assemble_and_link(
-                            env,
-                            a,
-                            machine,
-                            source,
-                            "candidate",
-                            false,
-                            log
-                        ).try(),
+                    built = host_target().match({
+                        Ok(machine) => assemble_and_link(env, a, machine, source, "candidate", false, log).try(),
                         None        => false,
                     });
                     (!built).then(

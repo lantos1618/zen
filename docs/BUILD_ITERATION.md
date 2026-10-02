@@ -5,14 +5,17 @@ The compiler is an ordinary Zen project defined by the root `build.zen`.
 that compiler's `build .` command. Zen checks the project graph, emits the
 compiler's C, invokes the native toolchain, and publishes `./zen`.
 `make bootstrap` uses the same path. Neither command needs Python or an
-installed Zen compiler. Once bootstrapped, `./zen build .` rebuilds itself.
+installed Zen compiler. Once bootstrapped, `./zen build --release .` rebuilds itself.
 Make supplies `ZEN_STD` as the checkout's own `src`, so the seed executable
 locates the standard library from its bootstrap directory and builds against
 the library versioned with the compiler. A `ZEN_STD` exported by the shell does
 not reach the build; `make build ZEN_STD=<dir>` selects another tree.
 
-Project builds currently regenerate and compile each selected target in full.
-The Python incremental driver and its cache have been retired. `J` controls
+Project builds skip the front end and the C compiler for targets whose
+recorded inputs are unchanged; DESIGN.md ("How the compiler gets built") lists
+what is recorded. `zen build -v` shows which steps ran. Project builds default
+to the unoptimized debug mode, and the Makefile's exported `CFLAGS=-O2` follows
+the mode's flag, so `make build` still produces an optimized compiler. `J` controls
 parallel test/fixpoint work; it does not parallelize project C compilation.
 The Make seed compilation can use optional `ccache` through `CACHE`.
 
@@ -35,7 +38,7 @@ For an isolated build, run from the repository root:
 ```sh
 make dev-build DEV_DIR=build/lanes/example CFLAGS='-O0 -std=c99'
 # Or use an existing compiler directly:
-ZEN_BUILD_DIR=build/lanes/direct ZEN_BUILD_OUTPUT=build/lanes/direct/zen ./zen build .
+ZEN_BUILD_DIR=build/lanes/direct ZEN_BUILD_OUTPUT=build/lanes/direct/zen ./zen build --release .
 ```
 
 Batch related edits before rebuilding. `make` or `make check` combines a build

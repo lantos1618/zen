@@ -15,7 +15,7 @@ run = (env: Env, alloc: Alloc, target: str) Res<(), AllocError> {
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
-    target = host_target(env, alloc).try().ok_or(AllocError.OutOfMemory).try();
+    target = host_target().ok_or(AllocError.OutOfMemory).try();
     script = alloc.String(
         "src/app/build/{}-{}/script.js",
         target.os.stable_name(),

@@ -55,7 +55,8 @@ module_name* = (a: Alloc, root: str, path: str) Res<str, AllocError> {
 }
 
 // Resolve the standard-library root for an embedded driver. `ZEN_STD` wins;
-// otherwise an absolute program path may locate a sibling `src/std` tree.
+// otherwise the running compiler may sit beside a `src/std` tree, as `./zen`
+// does in a checkout. Empty means neither names a standard library.
 std_root_for* = (env: Env, a: Alloc) str {
     env.var(ZEN_STD_ENV).match({
         Ok(path) => path.is_empty().match({
@@ -68,25 +69,45 @@ std_root_for* = (env: Env, a: Alloc) str {
 
 std_root_beside_program = (env: Env, a: Alloc) str {
     found: Res<str> = loop<str>((h) {
-        program = env.argv.get(0).match({
-            None     => { h.break(""); "" },
-            Ok(path) => path,
-        });
-        dir     = Path(program).parent().value_or(Path("")).text;
-        dir.is_empty().then(() { h.break(""); });
-
-        root   = join_path(a, dir, "src").match({
-            Err(_)    => { h.break(""); "" },
-            Ok(value) => value.view(),
-        });
-        marker = join_path(a, root, "std/std.zen").match({
-            Err(_)    => { h.break(""); "" },
-            Ok(value) => value.view(),
-        });
-        (!env.fs.exists(marker)).then(() { h.break(""); });
-        h.break(root);
+        dir = Path(program_path(env, a)).parent().value_or(Path("")).text;
+        dir.is_empty().then(() { h.break(); });
+        root = join_path(
+            a,
+            dir,
+            "src"
+        ).match({ Err(_) => { h.break(); "" }, Ok(value) => value.view() });
+        holds_std(env, a, root).then(() { h.break(root); });
+        h.break();
     });
-    found.match({ Ok(root) => root, None => "" })
+    found.value_or("")
+}
+
+// Whether `root` holds a standard library.
+holds_std* = (env: Env, a: Alloc, root: str) bool {
+    join_path(a, root, "std/std.zen").match({
+        Err(_)     => false,
+        Ok(marker) => env.fs.exists(marker.view()),
+    })
+}
+
+// The running compiler: argv[0] when it names a path, otherwise its first
+// match on PATH. Empty when neither locates it.
+program_path* = (env: Env, a: Alloc) str {
+    name = env.argv.get(0).value_or("");
+    (name.is_empty() || name.contains('/')).match({
+        true  => name,
+        false => {
+            found: Res<str> = env.var("PATH").value_or("").split(':').loop((h, dir) {
+                (!dir.is_empty()).then(() {
+                    join_path(a, dir, name).match({
+                        Ok(path) => env.fs.exists(path.view()).then(() { h.break(path.view()); }),
+                        Err(_)   => (),
+                    });
+                });
+            });
+            found.value_or("")
+        },
+    })
 }
 
 // Infer an editor compilation root without climbing above `floor`. Folder
@@ -221,14 +242,32 @@ unit_at* = (a: Alloc, root: str, path: str) Res<Unit, AllocError> {
 // `<root>/<name>/<last>.zen`. When neither exists, return the flat candidate
 // so the eventual read reports the requested path.
 candidate* = (env: Env, a: Alloc, root: str, name: str) Res<Unit, AllocError> {
-    flat ::= a.String("{}/{}.zen", root, name).try();
-    last = Path(name).name();
-    nest ::= a.String("{}/{}/{}.zen", root, name, last).try();
-    take_flat = env.fs.exists(flat.view()) || !env.fs.exists(nest.view());
-    take_flat.match({
-        true  => unit_at(a, root, flat.view()),
-        false => unit_at(a, root, nest.view()),
-    })
+    paths     = candidate_paths(a, root, name).try();
+    take_flat = env.fs.exists(paths.flat) || !env.fs.exists(paths.nest);
+    paths.choose(a, root, take_flat)
+}
+
+// The two spellings a module name can take on disk.
+CandidatePaths* = {
+    flat*: str,
+    nest*: str,
+
+    choose* = (self: @Self, a: Alloc, root: str, flat: bool) Res<Unit, AllocError> {
+        flat.match({
+            true  => unit_at(a, root, self.flat),
+            false => unit_at(a, root, self.nest),
+        })
+    }
+}
+
+candidate_paths* = (
+    a    : Alloc,
+    root : str,
+    name : str
+) Res<CandidatePaths, AllocError> {
+    flat = a.String("{}/{}.zen", root, name).try();
+    nest = a.String("{}/{}/{}.zen", root, name, Path(name).name()).try();
+    Ok(CandidatePaths(flat: flat.view(), nest: nest.view()))
 }
 
 // Conventional program entry module and declaration name.
@@ -276,4 +315,17 @@ joined* = (a: Alloc, root: str, q: QualifiedName, folder: bool)
     folder.then(() { out.fmt("/{}", q.last_segment()).try() });
     out.add(".zen").try();
     Ok(out.view());
+}
+
+// Create `dir` and any missing parents, like `mkdir -p`. False means a level
+// could not be created, or something other than a directory is in the way.
+make_dirs* = (env: Env, a: Alloc, dir: str) bool {
+    (dir.is_empty() || env.fs.is_dir(dir)).match({
+        true  => true,
+        false => {
+            parent = Path(dir).parent().match({ Ok(p) => p.text, None => "" });
+            made   = parent.is_empty() || make_dirs(env, a, parent);
+            made && env.fs.mkdir(dir).match({ Ok(_) => true, Err(_) => env.fs.is_dir(dir) })
+        },
+    })
 }

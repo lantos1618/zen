@@ -1,6 +1,6 @@
 Build = zen.zen_build
 plan = zen.zen_build_plan
-Target, Os, Arch, Abi = std.build
+Target, Os, Arch, Abi, Mode = std.build
 Map = std.collections
 
 main = (env: Env) Res<i32, AllocError> {
@@ -10,7 +10,7 @@ main = (env: Env) Res<i32, AllocError> {
     docs    = a.Map<str, str>();
     checked = b.whole("build.zen", docs).try();
     target  = Target(os: Os.Linux, arch: Arch.X86_64, abi: Abi.Gnu);
-    plan(a, b.tree, checked, target).match({
+    plan(a, b.tree, checked, target, Mode.Debug).match({
         Err(e) => println("plan refused"),
         Ok(p)  => {
             println(

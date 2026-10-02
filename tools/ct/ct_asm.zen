@@ -20,7 +20,7 @@ main = (env: Env) Res<i32, AllocError> {
     compilers ::= a.Vec<str>();
     levels    ::= a.Vec<str>();
     leaky     ::= a.Vec<str>();
-    i         ::= 1;
+    i: usize  ::= 1;
     loop(() { i + 1 < env.argv.len }, (h) {
         flag  = env.argv.get(i).value_or("");
         value = env.argv.get(i + 1).value_or("");

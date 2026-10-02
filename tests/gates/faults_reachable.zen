@@ -148,10 +148,10 @@ moved = (enum: str, decl: str) Res<Tally, AllocError> {
 
 weigh = (env: Env, alloc: Alloc, enum: str, decl: str, names: Vec<str>)
         Res<Tally, AllocError> {
-    missing ::= 0;
-    stale   ::= 0;
-    built_n ::= 0;
-    owed_n  ::= 0;
+    missing: usize ::= 0;
+    stale: usize   ::= 0;
+    built_n: usize ::= 0;
+    owed_n: usize  ::= 0;
     names.loop((h, name) {
         built = constructed(env, alloc, name, decl);
         built.then(() { built_n = built_n + 1; });

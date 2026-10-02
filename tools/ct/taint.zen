@@ -216,7 +216,7 @@ strip_comment = (isa: Isa, line: str) str {
 split_operands = (a: Alloc, text: str) Res<Vec<str>, AllocError> {
     out   ::= a.Vec<str>();
     depth ::= 0;
-    start ::= 0;
+    start: usize ::= 0;
     Range(0, text.len).loop((i) {
         c = text.index(i);
         (c == '(' || c == '[' || c == '{').then(() { depth = depth + 1; });
@@ -917,7 +917,7 @@ call_target* = (op: str) str {
 // What a callee is assumed to take when its prototype is unknown.
 unknown_shape = (a: Alloc, isa: Isa) CallShape {
     writable ::= a.Vec<Writable>();
-    Range(0, isa.match({ X86 => 6, Arm => 8 })).loop((i) { writable.add(Writable(index: i, bytes: 0)).match({ _ => () }); });
+    Range<usize>(0, isa.match({ X86 => 6, Arm => 8 })).loop((i) { writable.add(Writable(index: i, bytes: 0)).match({ _ => () }); });
     CallShape(
         gprs: isa.match({ X86 => 6, Arm => 8 }),
         vectors: 8,
@@ -1928,12 +1928,12 @@ arm_memory = (
     points2_in = mem.base.match({ Ok(b) => has(cur.pts2, b), None => false });
     block = l.mnemonic.starts_with("ld2") || l.mnemonic.starts_with("ld3") || l.mnemonic.starts_with("ld4")
         || l.mnemonic.starts_with("st2") || l.mnemonic.starts_with("st3") || l.mnemonic.starts_with("st4");
-    total ::= 0;
+    total: usize ::= 0;
     moved.loop((t) { total = total + t.width; });
     any_secret ::= false;
     moved.loop((t) { any_secret = any_secret || has(cur.val, t.reg); });
     (store && any_secret).then(() { an.observed = true; });
-    offset ::= 0;
+    offset: usize ::= 0;
     moved.loop((t) {
         here = block.match({
             true  => place,

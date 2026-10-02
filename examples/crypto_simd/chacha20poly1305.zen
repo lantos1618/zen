@@ -121,7 +121,7 @@ chacha20poly1305_open* = (
             authenticate(scratch, aad, aad_count, ciphertext, count);
             tag = scratch.offset(38).to<u8>();
             different: u32 ::= 0;
-            Range(0, 16).loop((i) {
+            Range<usize>(0, 16).loop((i) {
                 different = different +% tag.read(i).to_u32().bit_xor(ciphertext.read(count + i).to_u32());
             });
             (different == 0).match({
@@ -171,9 +171,9 @@ initialize* = (scratch: Ptr<u64>, key: Ptr<u8>, nonce: Ptr<u8>) {
     initial = scratch.to<u32>();
     initial.write(0, 1634760805); initial.write(1, 857760878);
     initial.write(2, 2036477234); initial.write(3, 1797285236);
-    Range(0, 8).loop((i) { initial.write(4 + i, load32(key, i * 4)); });
+    Range<usize>(0, 8).loop((i) { initial.write(4 + i, load32(key, i * 4)); });
     initial.write(12, 0);
-    Range(0, 3).loop((i) { initial.write(13 + i, load32(nonce, i * 4)); });
+    Range<usize>(0, 3).loop((i) { initial.write(13 + i, load32(nonce, i * 4)); });
 }
 // chacha20_ref.c: one keystream block for counter into scratch words 8..15.
 block = (scratch: Ptr<u64>, counter: u32) {
@@ -182,7 +182,7 @@ block = (scratch: Ptr<u64>, counter: u32) {
     x4 ::= j.read(4); x5 ::= j.read(5); x6 ::= j.read(6); x7 ::= j.read(7);
     x8 ::= j.read(8); x9 ::= j.read(9); x10 ::= j.read(10); x11 ::= j.read(11);
     x12 ::= counter; x13 ::= j.read(13); x14 ::= j.read(14); x15 ::= j.read(15);
-    Range(0, 10).loop((round) {
+    Range<usize>(0, 10).loop((round) {
         x0 = x0 +% x4; x12 = x12.bit_xor(x0).rotate_right(16);
         x8 = x8 +% x12; x4 = x4.bit_xor(x8).rotate_right(20);
         x0 = x0 +% x4; x12 = x12.bit_xor(x0).rotate_right(24);
@@ -273,7 +273,7 @@ blocks8 = (
     x13 ::= o13;
     x14 ::= o14;
     x15 ::= o15;
-    Range(0, 10).loop((round) {
+    Range<usize>(0, 10).loop((round) {
         x0 = x0.add_wrap(x4); x12 = x12.bit_xor(x0).rotate_left(16);
         x1 = x1.add_wrap(x5); x13 = x13.bit_xor(x1).rotate_left(16);
         x2 = x2.add_wrap(x6); x14 = x14.bit_xor(x2).rotate_left(16);
@@ -396,7 +396,7 @@ blocks4 = (
     x13 ::= o13;
     x14 ::= o14;
     x15 ::= o15;
-    Range(0, 10).loop((round) {
+    Range<usize>(0, 10).loop((round) {
         x0 = x0.add_wrap(x4); x12 = x12.bit_xor(x0).rotate_left(16);
         x1 = x1.add_wrap(x5); x13 = x13.bit_xor(x1).rotate_left(16);
         x2 = x2.add_wrap(x6); x14 = x14.bit_xor(x2).rotate_left(16);
@@ -531,11 +531,11 @@ MASK44: u64 = 17592186044415
 MASK42: u64 = 4398046511103
 load64 = (m: Ptr<u8>, offset: usize) u64 {
     v: u64 ::= 0;
-    Range(0, 8).loop((i) { v = v.bit_or(m.read(offset + i).to_u64().shift_left(8 * i)); });
+    Range<usize>(0, 8).loop((i) { v = v.bit_or(m.read(offset + i).to_u64().shift_left(8 * i)); });
     v
 }
 store64 = (output: Ptr<u8>, offset: usize, value: u64) {
-    Range(0, 8).loop((i) { output.write(offset + i, value.shift_right(8 * i).truncate_u8()); });
+    Range<usize>(0, 8).loop((i) { output.write(offset + i, value.shift_right(8 * i).truncate_u8()); });
 }
 poly_key* = (scratch: Ptr<u64>) {
     block(scratch, 0);
@@ -593,7 +593,7 @@ poly_padded = (p: Ptr<u64>, buffer: Ptr<u8>, input: Ptr<u8>, count: usize) {
     done = poly_bulk(p, input, full);
     (full > done).then(() { poly_blocks(p, input.offset(done), full - done); });
     (count != full).then(() {
-        Range(0, 16).loop((i) { buffer.write(i, 0); });
+        Range<usize>(0, 16).loop((i) { buffer.write(i, 0); });
         Range(0, count - full).loop((i) { buffer.write(i, input.read(full + i)); });
         poly_blocks(p, buffer, 16);
     });

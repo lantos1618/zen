@@ -32,11 +32,11 @@ run_case* = (env: Env, a: Alloc, name: str) Res<i32, AllocError> {
     other = a.raw(32, 16).try();
     table = a.raw(256, 16).try();
     out   = a.raw(16, 16).try();
-    Range(0, 32).loop((i) {
+    Range<usize>(0, 32).loop((i) {
         key.write(i, i.truncate_u8() *% 7);
         other.write(i, i.truncate_u8() *% 7);
     });
-    Range(0, 256).loop((i) { table.write(i, i.truncate_u8()); });
+    Range<usize>(0, 256).loop((i) { table.write(i, i.truncate_u8()); });
     secret_bytes(key, 32);
     name.match({
         "ct_memeq"           => out.write(0, ct_memeq(key, other, 32).to_u8()),
@@ -57,8 +57,8 @@ run_case* = (env: Env, a: Alloc, name: str) Res<i32, AllocError> {
             ct_lt(key.read(1), 100).ct_select(key.read(2), 9)
         ),
         "early_exit_compare" => {
-            same ::= 1;
-            Range(0, 32).loop((h, i) {
+            same: u8 ::= 1;
+            Range<usize>(0, 32).loop((h, i) {
                 (key.read(i) != other.read(i)).then(() { same = 0; h.break(); });
             });
             out.write(0, same);

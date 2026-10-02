@@ -22,7 +22,7 @@ frontend in Zen: `src/std/lex` and `src/std/parse`.
 
 ```text
 entry + root
-    -> module walk (overlay, disk, imports, prelude)
+    -> module walk (overlay, disk, imports, std.core)
     -> lexer -> parser -> one shared Ast
     -> World + memoized Checker queries
     -> ownership, layout, impl and termination walks
@@ -102,8 +102,10 @@ folder modules and respecting `build.zen` as root evidence.
 before disk. It queues each physical module once and appends every parsed
 module to one AST.
 
-`World.defs_of` searches the current module, explicit imports, then the
-prelude. Locals shadow globals. Overloads are lists of definitions, not a
+`World.defs_of` searches the current module, then its imports; there is no
+prelude. A standard name a module uses without its import is reported once
+(`missing import`) and then resolves as the import would. Locals shadow
+globals. Overloads are lists of definitions, not a
 special namespace. Enum variants have a parallel lookup. UFCS and impl lookup
 start from whole-program candidates, then filter by receiver identity.
 

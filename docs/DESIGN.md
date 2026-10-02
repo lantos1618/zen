@@ -506,7 +506,42 @@ Names are qualified by path, imports bind locally, and two modules may define th
 **A one-segment path imports when the module it names exports the binding's name, and aliases the module otherwise.** `Circle = shapes` imports `Circle` from `shapes`, exactly as `Circle, area = shapes` would; `sh = shape` makes `sh` a qualifier for module `shape`, because `shape` exports no `sh`. A local declaration or visible name spelled like the path's segment still wins, so `Chosen = model` beside a local `model` type is a type alias.
 **A module-qualified name reads an export.** After `Controller = controller`, `Controller.run(..)` calls the module's exported function, `Controller.Config(..)` constructs its exported struct, and `Controller.ATTACH_PATH` is its exported constant — the same value, folded in the declaring module, that a bare import of `ATTACH_PATH` would give, and usable anywhere a constant is, including inside another constant's value. A name without `*` is refused through the qualifier exactly as it is through an import. A module-qualified *function* is only called, never read as a value.
 
-**A name that is not imported is not visible, and the prelude is the only exception.** That exception is what "auto-imported" means: `std.core` is imported into every module, so `Res`, `Ok`, `Vec`, `Map`, `str`, `Env` and the rest are in scope everywhere without a line. Everything else needs its import, and this is not a formality — a compiler that resolves any exported top-level name program-wide makes "two modules may define the same top-level name" impossible, which is the property the flat namespace exists to provide. A whole-program name table also hides missing imports until the day two modules disagree, which is the worst day to find out.
+**A name that is not imported is not visible, and there is no prelude.** `Res`, `Ok`, `Vec`, `String`, `Env` and `println` are ordinary declarations in `std`, and a module that names one imports it like any other name. Everything else needs its import too, and this is not a formality — a compiler that resolves any exported top-level name program-wide makes "two modules may define the same top-level name" impossible, which is the property the flat namespace exists to provide. A whole-program name table also hides missing imports until the day two modules disagree, which is the worst day to find out. An implicit prelude is the same hiding on a smaller scale: a name that appears from nowhere, whose meaning depends on what a list in another file happens to hold.
+
+**What is built in, and nothing else.** These need no import, because they are the language rather than its library:
+
+| built in | what it is |
+|---|---|
+| `i8` `i16` `i32` `i64` `u8` `u16` `u32` `u64` `u128` `usize` `f32` `f64` `bool` `str` `()` | the primitive types, by spelling |
+| `true` `false` | the two `bool` values |
+| `consume` | hands over a unique value |
+| `@Self` `@meta` `@scope` | the enclosing type, compile-time reflection, the enclosing block |
+| `.match` `.try` | the conditional and the early return, which are syntax on any value |
+| `std` | the root every standard import starts from |
+| `main` | the entry point the build looks for |
+
+The C ABI integers (`c_int` and the rest) and the SIMD vectors (`u8x16` and the rest) are also primitive types the compiler knows by spelling; they belong with the `std.c` bindings and the `std.simd` operations, which are the only code that uses them, and whether naming one should require that import is still open. A primitive's members — `i32.MAX`, `s.len`, `b.then(..)` — are declared in `std.core` and its submodules, and they travel with the primitive: `std.core` is part of every program for that reason, but loading it binds no name.
+
+Everything else is imported, with the binding syntax every import uses:
+
+```zen
+Res, Ok, Err, None = std.core     // results, Range, Eq, Hash, Display, IoError, Drop, Scope ...
+Alloc, AllocError = std.mem
+Vec, Map = std.collections
+String = std.text
+Env = std.env
+println, print = std.io
+```
+
+Each name is imported from the module that owns it: `std.core` for what is declared under `std/core`, and the folder root otherwise. `std.core` still re-exports `Vec`, `String`, `Env` and the rest, so `Vec = std.core` also resolves, but the owning module is the one the compiler suggests and the one written in this tree. There is no wildcard import and no "common names" line: a reader learns where a name comes from by reading the top of the file, and a module's imports are the list of what it depends on.
+
+**A standard name used without its import is an error that names the fix.**
+
+```
+main.zen:3:16: missing import: `Vec` is not imported; add `Vec = std.collections`
+```
+
+The diagnostic is reported once per module and name, and the name then resolves as that import would, so one omission is one error rather than a cascade. `Res`, `Ok`, `Err` and `None` are covered exactly like `Vec`: the compiler still recognises them by declaration, but a module that writes one must import it. So is a member of a union of types, `Fail = AllocError | IoError` — a member naming an unimported type would otherwise become an enum variant in silence, which is the worst kind of wrong. A name that no standard module exports is still `undefined name`. `tools/imports` (`zen-imports`) applies these diagnostics to a tree: it asks the compiler which imports each file is missing and writes them.
 
 **That rule is about BARE names. A UFCS function is reached through a value, so it travels with the value's type.** `x.f(..)` never names `f`, so it cannot collide with anything and needs no import: the candidates are the members of `x`'s type, its impls' and its bounds' methods, and every exported free function whose **first parameter type** is `x`'s type. Two modules may both declare `size` as long as they take different first parameters — and if they take the same one, that is a real collision and is reported. This is what "importing a type pulls its world along" means, said as a rule rather than as a comment in an example: the world travels with the *type*, and you are holding one.
 
@@ -540,7 +575,7 @@ a sema refusal and focused regression before changing lowering.
 
 *There is no `Ord`.* `std.core` has `Eq` and `Hash` and nothing that orders. Adding one is not a fifth trait beside them: **`Ord` and `Eq` must agree**, exactly as `Eq` and `Hash` must, and a type where `eq` says equal while `compare` says less is a sorted container that loses rows. Whichever is sealed in terms of the other, the relationship is the design.
 
-*A clock is authority and a duration is not.* `Duration`, `Instant`, `Timestamp` and a broken-down civil time are values — no `Env`, constructible in a test, no capability. A `Clock` that reads one, and the timers it schedules, need `Ref` and `Context` and therefore the actor runtime. They do not belong in the same module: `std.core` sits below everything, and a `Clock` declared there would make the prelude's core depend on stage 5. It is also what makes "comptime has no clock" true by construction rather than by convention — comptime has no `Env`, and now no import path to one.
+*A clock is authority and a duration is not.* `Duration`, `Instant`, `Timestamp` and a broken-down civil time are values — no `Env`, constructible in a test, no capability. A `Clock` that reads one, and the timers it schedules, need `Ref` and `Context` and therefore the actor runtime. They do not belong in the same module: `std.core` sits below everything, and a `Clock` declared there would make `std.core` depend on stage 5. It is also what makes "comptime has no clock" true by construction rather than by convention — comptime has no `Env`, and now no import path to one.
 
 **Live process output and periodic work are capability operations.**
 `env.proc.run_argv_into(alloc, cwd, argv, out, err)` drains both child pipes
@@ -572,11 +607,11 @@ original layout.
 
 The information already exists at the call site: whoever invokes the compiler knows which file is the entry. So `zen build <root> --entry <file>` is the answer, and the capability surface does not grow. A build is still a root — the entry names where to start inside it, and everything else follows imports as it always did.
 
-**A constructor does not travel with the type it constructs, and that is the hole associated functions fill.** `seconds(n: u64) Duration` takes a `u64`, so by the rule above it travels with `u64` — which means `Duration = std.core.time` gives you every method and no way to make one. The two obvious answers are both wrong: listing the constructors in every import is the noise this rule exists to remove, and letting them travel with `u64` puts `.seconds()`, `.minutes()` and every other module's `u64`-taking function on every integer in every program, because `u64` is in the prelude.
+**A constructor does not travel with the type it constructs, and that is the hole associated functions fill.** `seconds(n: u64) Duration` takes a `u64`, so by the rule above it travels with `u64` — which means `Duration = std.core.time` gives you every method and no way to make one. The two obvious answers are both wrong: listing the constructors in every import is the noise this rule exists to remove, and letting them travel with `u64` puts `.seconds()`, `.minutes()` and every other module's `u64`-taking function on every integer in every program, because `u64` is a primitive every program has.
 
 The answer is that a struct body may bind a **function**, read as `Type.name(..)` — `Duration.seconds(60)`. This is the existing "a struct body may bind a name to a value, read as `Type.NAME`" rule plus the fact that a function *is* a value here, and it puts the constructor in the one namespace that is already exactly right: the type it constructs. A name that is neither a variant nor a receiverless member is still refused rather than guessed at — `src/gen/gen_c/gen_c_member.zen` raises a positioned `codegen does not lower this yet`, because a backend that emits C for a form it does not understand turns one diagnostic into a C compiler's.
 
-**A prelude declaration of a primitive's name IS that primitive.** `str` and `i32` are declared as ordinary structs in the prelude — `str` in `std.text.text_str` carrying `len`, `get`, `index` and `slice`; `i32` in `std.core.num` carrying `MIN`, `MAX` and `BITS` — and the members they declare belong to the primitive the compiler already knows. They are not a second nominal type that shadows it. Getting this wrong is not a small error: it mints a `str` beside the `str` every literal has, and then every literal, every trap check and every standard-library signature disagrees about which one they meant.
+**`std.core`'s declaration of a primitive's name IS that primitive.** `str` and `i32` are declared as ordinary structs that `std.core` re-exports — `str` in `std.text.text_str` carrying `len`, `get`, `index` and `slice`; `i32` in `std.core.num` carrying `MIN`, `MAX` and `BITS` — and the members they declare belong to the primitive the compiler already knows. They are not a second nominal type that shadows it. Getting this wrong is not a small error: it mints a `str` beside the `str` every literal has, and then every literal, every trap check and every standard-library signature disagrees about which one they meant.
 
 **Re-export is an import whose bindings are starred.** No `export`, no `from` — `*` doing the same job it does everywhere else, and `=` being the binding it already is:
 
@@ -587,7 +622,26 @@ Res*, Ok*, None* = std.core.result  // imported AND re-exported
 str*, String* = std.text.string     // types travel with their methods and impls
 ```
 
-A folder root is then just a file of starred bindings, which is why re-export is what makes folders work — and why the prelude can span several files instead of being one enormous one.
+A folder root is then just a file of starred bindings, which is why re-export is what makes folders work — and why `std.core` can span several files instead of being one enormous one.
+
+## Printing
+
+`println` and `print` are declarations in `std.io`, imported like anything else:
+
+```zen
+println = std.io
+
+main = () i32 {
+    println("hello, {}", "world");
+    0
+}
+```
+
+They are bodyless declarations whose bodies the compiler supplies, recognised by **declaration identity**: sema validates them where `std.io` declares them and records each as a printer, and every backend lowers a call that selected one. A `println` imported from any other module is that module's function and nothing more. A leading string literal is read as a format at compile time exactly as `Sink.fmt` reads one — holes, `{name}` lookups and the hole count are checked at the call — and any other first argument is written as a value.
+
+**They answer `()`, and a failed write is not reported.** A closed pipe ends the process with `SIGPIPE`; any other failure loses the bytes. The alternative, `Res<(), IoError>`, puts a `.try()` or `.ignore()` on every diagnostic line a program prints, and a result that is ignored everywhere teaches readers to ignore results — the opposite of what a must-use `Res` is for. Output whose arrival matters goes through `env.out`, whose `println` returns `Res<(), IoError>`, and a function that should be handed its output rather than reach for it takes a `Console` or a `Sink`.
+
+**This is the one ambient effect in the standard library.** `Env` carries every other authority, so a function's signature says what it can touch. Standard output is exempt because hello-world should not need a capability parameter, and the exemption is visible: a module that prints this way says `println = std.io` at the top.
 
 ---
 
@@ -744,7 +798,7 @@ x = i32.MAX;              // a constant, resolved at comptime
 buf: [u8, i32.BITS]       // usable wherever a comptime value is
 ```
 
-The distinction from a field: a field declares storage per value, a constant declares one value per type. `MAX: i32 = 2147483647` inside `i32` is the second, because `i32` has no instances to give it storage in. Every primitive numeric type carries `MIN`, `MAX`, and `BITS` from the prelude.
+The distinction from a field: a field declares storage per value, a constant declares one value per type. `MAX: i32 = 2147483647` inside `i32` is the second, because `i32` has no instances to give it storage in. Every primitive numeric type carries `MIN`, `MAX`, and `BITS` from `std.core.num`, with no import.
 
 **The spelling is what decides, and it decides everywhere.** `name: T = value` in a struct body is a constant whether or not the type has instances; `name :: T = value` is storage with a default. That is the whole rule, and the "Declarations" section above prices what it costs.
 
@@ -857,7 +911,7 @@ Display* = {
 }
 
 
-// std.core (prelude, auto-imported)
+// std.core: imported like any module, `Res, Ok, Err, None = std.core`
 
 Res*<T> = Ok(T) | None
 
@@ -925,13 +979,10 @@ Scope* = {
 
 
 // the capability root. main receives one, and ALL authority
-// flows from it, pony-style: no ambient io, net, threads, or
-// page allocation.
-//
-// println(...) is sugar for `<the Env in scope>.out.println(...)`,
-// resolved BY TYPE, not by the name of the binding. no Env in
-// scope is a compile error, so printing exists exactly where the
-// capability does and the law is not bent to make hello-world short
+// flows from it, pony-style: no ambient net, threads, files or
+// page allocation. The one ambient effect is standard output
+// through std.io's println and print, and a module declares it
+// by importing them (see "Printing" below)
 ArgError* = Missing(str)   // required field absent; names the field
           | Parse(str)     // value present but not the field's type
 
@@ -1534,6 +1585,8 @@ build = (b :: Builder) Res<(), BuildError> {
 // ~/example_zen/src/main_test.zen
 // tests live next to code. no annotations: build.zen's walk
 // finds these because their single parameter is a Tester
+Res, Ok = std.core
+Tester, TestError, Bencher = std.test
 
 vec_grows* = (t: Tester) Res<(), TestError> {
     v ::= t.alloc.Vec<i32>();
@@ -1571,7 +1624,16 @@ vec_add* = (bn: Bencher) Res<(), TestError> {
 // trait impls, and exported ufcs functions (a free function
 // whose first param is the type is callable as a method).
 // * is the one gate — it means "this name crosses a module
-// boundary" — so Vec travels with add/get but never grow or Entry
+// boundary" — so Vec travels with add/get but never grow or Entry.
+// nothing else is implicit: every name below that this file does
+// not declare is on one of these lines
+Res, Ok, Err, None, Display, Sink, WriteError, IoError = std.core
+Alloc, AllocError = std.mem
+Vec = std.collections
+String = std.text
+Env, ArgError, ThreadError = std.env
+Actor, Context, Ref = std.actor
+println = std.io
 json = pkg.json
 sodium = pkg.libsodium
 
@@ -1670,8 +1732,7 @@ AddFoo<T> = (a :: Ast, n: T) Res<T, Error> {
 Foo = {}
 
 Foo.impl(Actor, {
-    // optional lifecycle hooks. println resolves through
-    // ctx.env — a Context carries an Env, so one is in scope
+    // optional lifecycle hooks
     started ::= (self :: @Self, ctx: Context) {
         println("actor started") 
     }
@@ -1719,7 +1780,7 @@ Error = AllocError
     | ThreadError
 
 // main receives the capability root. it is not named `self`:
-// main is not a method on Env. println finds the Env by TYPE
+// main is not a method on Env
 main = (env: Env) Res<i32, Error> {
 
     // Env fills the schema via @meta; missing required fields
@@ -1854,7 +1915,6 @@ main = (env: Env) Res<i32, Error> {
 
 # Still open
 
-- **`println` and `Env`.** Resolving `println` to the in-scope binding *of type* `Env` gives `Env` a slightly privileged position in name resolution. That is the cost of keeping both the no-ambient-authority law and a two-line hello-world. The alternative is no sugar at all: `env.out.println(..)` everywhere.
 - **Operator overloading.** `==` through `Eq` is the only operator that dispatches to an impl, so `a + b` on a `Duration` is not writable and a module that wants it writes `add`. Whether arithmetic should dispatch is the difference between a `Duration` reading like a number and one reading like a record, and it is a language decision nobody has made.
 - **`Ord`.** `std.core` has `Eq` and `Hash` and nothing that orders. The open question is not whether to add a trait: `Ord` and `Eq` must agree exactly as `Eq` and `Hash` must, so which of the two is sealed in terms of the other is the design.
 - **Supervision.** A trap aborts the process. Killing only the offending actor is the Pony answer and needs a supervision story that does not exist yet.

@@ -12,6 +12,7 @@ std_root_for, holds_std = zen.zen_path
 build* = zen.zen_run
 project, Action = zen.zen_project
 format = zen.zen_fmt
+init = zen.zen_init
 Server, serve, serve_stdio = lsp
 
 main = (env: Env) Res<i32, AllocError> {
@@ -22,6 +23,7 @@ main = (env: Env) Res<i32, AllocError> {
         Run(job)         => project_cli(env, alloc, job, Action.Run),
         Test(job)        => project_cli(env, alloc, job, Action.Test),
         Fmt(job)         => format(env, alloc, job),
+        Init(dir)        => init(env, alloc, dir),
         Lsp(job)         => lsp(env, alloc, job),
         Version(v)       => {
             println("zen {}", v);

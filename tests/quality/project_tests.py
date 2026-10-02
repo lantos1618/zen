@@ -243,6 +243,24 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse((self.root / "build/linux-x86_64/test").exists())
 
+    def test_init_creates_a_runnable_project_and_never_overwrites(self):
+        created = self.run_zen("init", "fresh app")
+        self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
+        self.assertIn("Next: cd fresh app && zen run", created.stdout)
+        project = self.root / "fresh app"
+        self.assertEqual((project / ".gitignore").read_text(), "build/\n")
+        self.assertIn('b.exe("fresh-app"', (project / "build.zen").read_text())
+        ran = subprocess.run([str(ZEN), "run"], cwd=project,
+                             env={**os.environ, "ZEN_STD": str(ROOT / "src")},
+                             capture_output=True, text=True, timeout=90)
+        self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)
+        self.assertEqual(ran.stdout, "Hello, world!\n")
+        (project / "src/main.zen").write_text("main = () i32 { 3 }\n")
+        again = self.run_zen("init", "fresh app")
+        self.assertEqual(again.returncode, 1, again.stdout + again.stderr)
+        self.assertIn("already exists", again.stdout)
+        self.assertEqual((project / "src/main.zen").read_text(), "main = () i32 { 3 }\n")
+
     def test_suite_rejects_empty_and_reports_assertions(self):
         self.write("suite.zen", 'Suite = std.test\n'
                    'main = (env: Env) Res<i32, IoError> {\n'

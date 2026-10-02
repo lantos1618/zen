@@ -298,3 +298,16 @@ joined* = (a: Alloc, root: str, q: QualifiedName, folder: bool)
     out.add(".zen").try();
     Ok(out.view());
 }
+
+// Create `dir` and any missing parents, like `mkdir -p`. False means a level
+// could not be created, or something other than a directory is in the way.
+make_dirs* = (env: Env, a: Alloc, dir: str) bool {
+    (dir.is_empty() || env.fs.is_dir(dir)).match({
+        true  => true,
+        false => {
+            parent = Path(dir).parent().match({ Ok(p) => p.text, None => "" });
+            made   = parent.is_empty() || make_dirs(env, a, parent);
+            made && env.fs.mkdir(dir).match({ Ok(_) => true, Err(_) => env.fs.is_dir(dir) })
+        },
+    })
+}

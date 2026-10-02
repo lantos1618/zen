@@ -18,6 +18,7 @@ Cli* = Build(BuildArgs)
     | Run(ProjectArgs)
     | Test(ProjectArgs)
     | Fmt(FmtJob)
+    | Init(str)
     | Lsp(LspJob)
     | Version(str)
     | Help(String)
@@ -47,7 +48,7 @@ ENVIRONMENT: str = "Environment:\n  ZEN_STD           Standard library root; def
 
 PROJECT_NOTE: str = "A word naming a directory that holds build.zen selects that project;\nany other word names a target declared by ./build.zen."
 
-Tool = Version | Build | Check | Run | Test | Fmt | Lsp | Help
+Tool = Version | Build | Check | Run | Test | Fmt | Init | Lsp | Help
 
 tool = (a: Alloc) Res<Command<Tool>, AllocError> {
     cmd ::= command<Tool>(a, "zen", "The Zen compiler and project tool");
@@ -73,6 +74,11 @@ tool = (a: Alloc) Res<Command<Tool>, AllocError> {
         "Check source without generating artifacts"
     ).try();
     cmd.command(Tool.Fmt, "fmt", "Format Zen source files").try();
+    cmd.command(
+        Tool.Init,
+        "init",
+        "Create a project: build.zen, src/main.zen and .gitignore"
+    ).try();
     cmd.command(Tool.Lsp, "lsp", "Run the language server").try();
     cmd.command(
         Tool.Help,
@@ -326,6 +332,23 @@ fmt_model = (a: Alloc) Res<Command<FmtId>, AllocError> {
     Ok(cmd)
 }
 
+InitId = | Dir
+
+init_model = (a: Alloc) Res<Command<InitId>, AllocError> {
+    cmd ::= command<InitId>(
+        a,
+        "zen init",
+        "Create a project: build.zen, src/main.zen and .gitignore"
+    );
+    cmd.positional(
+        InitId.Dir,
+        "DIR",
+        Spec(default: ".", help: "Project directory, created when missing")
+    ).try();
+    cmd.note("Existing files are never overwritten.");
+    Ok(cmd)
+}
+
 LspId = Stdio | Requests | Replies
 
 lsp_model = (a: Alloc) Res<Command<LspId>, AllocError> {
@@ -384,6 +407,7 @@ help_of = (a: Alloc, id: Tool) Res<String, AllocError> {
         Run     => run_model(a).try().help(),
         Test    => test_model(a).try().help(),
         Fmt     => fmt_model(a).try().help(),
+        Init    => init_model(a).try().help(),
         Lsp     => lsp_model(a).try().help(),
         Help    => help_model(a).try().help(),
     })
@@ -433,6 +457,7 @@ command_cli = (
             Run     => run_cli(env, a, argv, at),
             Test    => test_cli(env, a, argv, at),
             Fmt     => fmt_cli(env, a, argv, at),
+            Init    => init_cli(env, a, argv, at),
             Lsp     => lsp_cli(env, a, argv, at),
             Help    => help_cli(env, a, argv, at),
         }),
@@ -779,6 +804,26 @@ fmt_cli = (env: Env, a: Alloc, argv: Vec<str>, at: usize) Res<Cli, AllocError> {
                 });
             });
             Ok(Cli.Fmt(FmtJob(paths: paths, check: check)))
+        },
+    })
+}
+
+init_cli = (
+    env  : Env,
+    a    : Alloc,
+    argv : Vec<str>,
+    at   : usize
+) Res<Cli, AllocError> {
+    model  = init_model(a).try();
+    parsed = model.parse(env, argv, at).try();
+    settled(a, model, parsed, false).try().match({
+        Ok(early) => Ok(early),
+        None      => {
+            dir ::= ".";
+            parsed.found.loop(
+                (f) { f.id.match({ Dir => { dir = f.text; } }); }
+            );
+            Ok(Cli.Init(dir))
         },
     })
 }

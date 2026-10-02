@@ -12,6 +12,11 @@
 // all equal: 3 and 14 swap places quietly if the construction reaches C
 // as a brace list in the wrong order.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Pos = {
     line*: i64,
     col*: i64,

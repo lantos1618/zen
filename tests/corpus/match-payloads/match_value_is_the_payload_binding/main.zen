@@ -10,6 +10,11 @@
 // The None case is the one a tag-only backend cannot fake: no binding is
 // in scope, so whatever lands in the slot came from the ARM.
 
+Res, Ok, None = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     a: Res<i64> = Ok(40);
     x: i64      = a.match({

@@ -1,3 +1,7 @@
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 // A bare `Ok(..)` raises nothing, so its error set is an open `_` with
 // nothing in it. Propagating THAT into a `Res<T>` whose failure is an
 // absence is not a conversion -- it is the absence of one.

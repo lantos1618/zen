@@ -22,6 +22,11 @@
 // through Vec would still pass if the exemption were replaced by a
 // special case on `Vec` itself.
 
+Res, Ok = std.core
+AllocError, Ptr, null_ptr = std.mem
+Env = std.env
+println = std.io
+
 Slot*<T> = {
     data*:: Ptr<T> = null_ptr<T>(),
     len*:: usize = 3,

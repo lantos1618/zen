@@ -11,6 +11,11 @@
 // members are read off its declaration rather than the inline spelling,
 // and through member names (`Err(Fail)`), which test the member tag.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Kind = Io | Protocol | Authentication
 Fail = Mismatch | Accepted
 Both = Kind | Fail

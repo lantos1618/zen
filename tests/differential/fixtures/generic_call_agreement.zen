@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // A generic call is accepted only after its argument and answer agree on T.
 // The native answer makes a wrong monomorphization observable.
 identity = <T>(value: T) T { value }

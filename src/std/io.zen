@@ -1,0 +1,20 @@
+// Standard output without a capability parameter.
+//
+// `println` and `print` write to the process's standard output; `println`
+// adds a newline. A leading string literal is a format, read at compile time
+// exactly as `Sink.fmt` reads one: each `{}` takes the next argument and
+// `{name}` takes the binding of that name where the call is written. Any
+// other first argument is written as a value. Both are compiler primitives
+// validated by declaration identity (sema_print), so a module that imports
+// another `println` calls that function and nothing else.
+//
+// They answer nothing. A write that fails is not reported: the bytes are
+// lost, and a closed pipe ends the process with SIGPIPE. Code whose output
+// must arrive, or that should be handed its output rather than reach for it,
+// writes through `env.out`, whose `println` returns `Res<(), IoError>`.
+//
+// This module is the one ambient effect in the standard library, and the
+// import line is where a program declares that it uses it.
+
+println* = (args: ...) ()
+print* = (args: ...) ()

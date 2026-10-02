@@ -16,6 +16,7 @@
 
 str = std.text.text_str
 Sink, WriteError = std.core.io
+Res, loop = std.core
 
 // One format step. `literal` borrows a slice of the format string.
 FmtStep* = {

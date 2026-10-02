@@ -34,6 +34,9 @@ ExprId, TypeId = std.ast.ast_id
 Alloc, AllocError = std.mem
 Vec = std.collections
 str, String = std.text
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 // the operator's own position, which is what a trap prints. Each
 // expression gets its own line so the diagnostic can be told apart.

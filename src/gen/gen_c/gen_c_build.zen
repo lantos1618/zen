@@ -20,6 +20,7 @@ expr, ty_of = gen.gen_c.gen_c_expr
 is_pure_value = gen.gen_c.gen_c_const
 holds, value_held = gen.gen_c.gen_c_expr
 Call = std.ast
+Res, Ok, None = std.core
 
 construct* = (
     be  :: CBackend,

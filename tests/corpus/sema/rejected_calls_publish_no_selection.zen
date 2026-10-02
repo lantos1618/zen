@@ -2,6 +2,10 @@ Source, scan = std.lex
 Parser, module = std.parse
 Checker = sema.sema_check
 check_all = sema.sema_decl
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+Env = std.env
+println = std.io
 
 inspect = (a: Alloc, name: str, source: str) Res<(), AllocError> {
     lexed = scan(a, Source(file: "calls.zen", text: source)).try();

@@ -1,3 +1,7 @@
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 // A leading bar distinguishes a one-variant enum from a type alias.
 //
 //   Alias = Shape       no bar -> an alias. Alias.Circle exists,

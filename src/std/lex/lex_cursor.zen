@@ -4,6 +4,7 @@
 Pos = std.lex.lex_token
 BOM_FIRST, BOM_SECOND, BOM_THIRD = std.text.text_utf8
 str = std.text
+Res, loop = std.core
 
 Cursor* = {
     src: str,

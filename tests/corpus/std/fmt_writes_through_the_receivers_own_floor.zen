@@ -9,6 +9,12 @@
 // answer goes. The counter pins that ONE call is SEVERAL writes -- a
 // literal run, a hole, a literal run.
 
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+String = std.text
+Env = std.env
+println = std.io
+
 Log = {
     text :: String,
     writes :: usize,

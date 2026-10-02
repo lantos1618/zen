@@ -53,6 +53,12 @@
     line 12 char 61 len 3 type 0 mod 0  [try]
     line 13 char 4 len 2 type 5 mod 0  [Ok]
     line 13 char 7 len 1 type 5 mod 0  [n]
+    line 16 char 0 len 3 type 5 mod 0  [Res]
+    line 16 char 5 len 2 type 5 mod 0  [Ok]
+    line 16 char 9 len 4 type 5 mod 0  [None]
+    line 16 char 14 len 1 type 4 mod 0  [=]
+    line 16 char 16 len 3 type 5 mod 0  [std]
+    line 16 char 20 len 4 type 5 mod 0  [core]
 --- an undefined name breaks the build
     {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/app.zen","diagnostics":[{"range":{"start":{"line":3,"character":14},"end":{"line":3,"character":21}},"severity":1,"source":"zen","message":"undefined name: no binding of this name is in scope `missing`"}]}}
 --- a broken build answers lexically
@@ -107,6 +113,12 @@
     line 12 char 61 len 3 type 5 mod 0  [try]
     line 13 char 4 len 2 type 5 mod 0  [Ok]
     line 13 char 7 len 1 type 5 mod 0  [n]
+    line 16 char 0 len 3 type 5 mod 0  [Res]
+    line 16 char 5 len 2 type 5 mod 0  [Ok]
+    line 16 char 9 len 4 type 5 mod 0  [None]
+    line 16 char 14 len 1 type 4 mod 0  [=]
+    line 16 char 16 len 3 type 5 mod 0  [std]
+    line 16 char 20 len 4 type 5 mod 0  [core]
 --- fixed again
     {"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"file://src/app/app.zen","diagnostics":[]}}
 --- the semantic answer is back
@@ -161,3 +173,9 @@
     line 12 char 61 len 3 type 0 mod 0  [try]
     line 13 char 4 len 2 type 5 mod 0  [Ok]
     line 13 char 7 len 1 type 5 mod 0  [n]
+    line 16 char 0 len 3 type 5 mod 0  [Res]
+    line 16 char 5 len 2 type 5 mod 0  [Ok]
+    line 16 char 9 len 4 type 5 mod 0  [None]
+    line 16 char 14 len 1 type 4 mod 0  [=]
+    line 16 char 16 len 3 type 5 mod 0  [std]
+    line 16 char 20 len 4 type 5 mod 0  [core]

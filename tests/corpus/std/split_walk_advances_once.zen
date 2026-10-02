@@ -1,6 +1,10 @@
 // Split walks a fresh sequential cursor. Its callbacks keep the enclosing
 // function's return context, including through value-only loop overloads.
 Split = std.text
+Res, Ok, Err, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 source = (calls :: usize) Split {
     calls = calls + 1;

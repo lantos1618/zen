@@ -29,6 +29,11 @@
 // VALUE and a boundary OPERATION are two different tests with two
 // different owners.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     i8_min: i8 = i8.MIN;
     i8_max: i8 = 127;

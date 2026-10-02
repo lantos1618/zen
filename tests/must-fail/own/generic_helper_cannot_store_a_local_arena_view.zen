@@ -1,3 +1,7 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+
 Cell<T> = { value :: T }
 store = <T>(cell :: Cell<T>, value: T) { cell.value = value; }
 bad = (env: Env, cell :: Cell<str>) Res<(), AllocError> {

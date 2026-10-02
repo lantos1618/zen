@@ -6,6 +6,10 @@
 // rejected 66 AND ascii 66, both sides of the contract.
 String = std.text.text_string
 Utf8Error, codepoint_at = std.text.text_utf8
+Res, Ok, loop = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 probe = (s: str, at: usize) bool {
     codepoint_at(s, at).match({

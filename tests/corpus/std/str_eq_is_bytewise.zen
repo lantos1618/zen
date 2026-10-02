@@ -3,6 +3,11 @@
 // of it, so a prefix is not equal to the whole - the classic bug
 // is a memcmp over the shorter length with no length test
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     ("abc" == "abc").match({
         true  => println("same same"),

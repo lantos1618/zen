@@ -3,7 +3,7 @@
 
 Alloc, AllocError = std.mem
 str, String = std.text
-Path, Range, join_path = std.core
+Res, Ok, Err, None, loop, Range, Path, join_path = std.core
 Map, Vec = std.collections
 
 BuildArgs, ProjectArgs, Emission, Target, Os, Arch, Abi, Dep, Codegen = std.build
@@ -15,6 +15,8 @@ Inputs, inputs, digest = zen.zen_inputs
 rename = std.fs.posix
 BuildPlan, ExeNode, LibNode, plan, PlanFault = zen.zen_build_plan
 resolve, PackageFault = zen.zen_packages
+Env = std.env
+println = std.io
 
 Action* = Build | Run | Test
 

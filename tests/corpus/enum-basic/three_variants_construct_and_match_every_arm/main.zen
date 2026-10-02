@@ -13,6 +13,11 @@
 // `.zg_data.<that member>`; resolving the case by position instead
 // makes every construction here a First, and `gap` goes quiet.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Mix = First(i64) | Gap | Last(i64)
 
 main = (env: Env) Res<i32, AllocError> {

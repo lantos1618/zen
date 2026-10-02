@@ -14,6 +14,11 @@
 // ever shadowed the type's own field, line 3 would print 2, not 40 --
 // and 40 survives mutation while a shadowed read does not.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Boxy = {
     width: i32,
     height: i32,

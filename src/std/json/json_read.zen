@@ -4,7 +4,7 @@
 str, String, push_utf8 = std.text
 Vec = std.collections
 Alloc = std.mem
-Range = std.core
+Res, Ok, Err, None, loop, Range = std.core
 HEX_BASE = std.core.byte
 Jsons, Json, JsonId, Pair = std.json.json_write
 

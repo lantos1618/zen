@@ -1,3 +1,7 @@
+Res, Ok = std.core
+Alloc, AllocError, Ptr = std.mem
+Env = std.env
+
 Counting = { base: Alloc, tag: usize }
 Counting.impl(Alloc, {
     raw = (self: @Self, count: usize, alignment: usize) Res<Ptr<u8>, AllocError> {

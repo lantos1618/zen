@@ -8,6 +8,11 @@
 // truncation) and the negative Err payload both have to arrive intact.
 // One call each way, same code path, different halves exercised.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 A = | Miss(i64)
 Set = A | AllocError
 

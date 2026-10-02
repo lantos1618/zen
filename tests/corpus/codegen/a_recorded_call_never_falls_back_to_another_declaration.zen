@@ -6,6 +6,10 @@ Inst = sema.sema_inst
 DeclId = sema.sema_id
 CBackend = gen.gen_c.gen_c_state
 selected_def, lower_plain_call = gen.gen_c.gen_c_call
+Res, Ok, None, Range = std.core
+Alloc, AllocError, Ptr = std.mem
+Env = std.env
+println = std.io
 
 SelectionAlloc = {
     base: Alloc,

@@ -8,6 +8,11 @@
 // k*100 term makes each pass distinct (7 / 107 / 207) so an off-by-one
 // in start/end or a loop that ran the wrong count still shows.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Slot = {
     held: i32,
 }

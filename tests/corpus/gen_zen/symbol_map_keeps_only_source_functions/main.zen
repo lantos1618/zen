@@ -7,6 +7,9 @@ Span, Pos = std.source
 Checker = sema.sema_check
 Emit = gen.gen_emit
 CBackend, emit_program, render_symbol_map = gen.gen_c
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 PROGRAM : str = "helper = () i32 { 7 }\nmain = (env: i32) i32 { helper() }\n"
 

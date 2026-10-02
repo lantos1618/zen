@@ -20,6 +20,10 @@ Vec = std.collections
 str, String = std.text
 Isa, Line, function_lines, parse_lines = taint
 Entry, manifest_entries, manifest_functions = abi
+Res, Ok, Range = std.core
+Alloc, AllocError = std.mem
+Env = std.env
+println = std.io
 out_of_line = audit
 
 PROBES: str = "main dual_product\nmain dual_square\nmain wide_bmi2\nmain wide\nmain carry_chain\nmain borrow_chain\nmain portable_product\n"

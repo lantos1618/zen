@@ -1,5 +1,10 @@
 // `None` named twice on an optional: the second arm never runs.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 read = (r: Res<i32>) i32 {
     r.match({
         None  => 0,

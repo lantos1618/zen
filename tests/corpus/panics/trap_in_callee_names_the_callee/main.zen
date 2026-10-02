@@ -13,6 +13,11 @@
 // nothing after `println("start")` runs: the trap is an abort, not a
 // value any caller can match.
 
+Res, Ok = std.core
+OutOfBounds = std.collections
+Env = std.env
+println = std.io
+
 Error = Overflow | DivideByZero | OutOfBounds
 
 div_twice = (a: i32, b: i32) i32 {

@@ -7,8 +7,12 @@
 // statement that yields NOTHING is a statement.
 //
 // Written without the `;` it IS the return, and then it must fit:
-// must-fail/sema/print_sugar_returns_nothing is the same two lines with
+// must-fail/sema/print_returns_nothing is the same two lines with
 // one byte removed.
+
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 CfgError = Missing | Bad
 

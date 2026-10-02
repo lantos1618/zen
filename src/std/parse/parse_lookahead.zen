@@ -6,6 +6,7 @@
 
 TokenKind, is_trivia = std.parse.parse_token
 Parser = std.parse.parser
+Range = std.core
 
 ValueShape* = StructValue
     | EnumValue

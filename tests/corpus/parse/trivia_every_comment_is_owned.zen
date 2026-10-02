@@ -42,6 +42,10 @@ Unary, Binary, Consume, Meta, Arg, Arm = std.ast.ast_node
 Type, Named, Union, FnType, ArrayType = std.ast.ast_node
 Pattern, PatName, Destructure = std.ast.ast_node
 Member, Field, Param, TParam, ImportName = std.ast.ast_node
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 SOURCE: str = "// before the declaration\nPoint = {\n    x: i32,\n}\n\nname = (b: bool) str {\n    b.match({\n        // first inside the arm body\n        true => \"c\",\n        false => \"s\",\n    });\n} // trailing on the closing brace\n\nf = () () {\n    // the only content of a closure body\n}\n\nmain = () () {\n    {\n        // the only content of a bare block\n    }\n}\n// at end of file\n"
 

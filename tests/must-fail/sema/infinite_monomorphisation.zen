@@ -4,6 +4,11 @@
 //
 // position: the recursive call that widens T.
 
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+Vec = std.collections
+Env = std.env
+
 grow = <T>(alloc: Alloc, x: T) Res<(), AllocError> {
     v ::= alloc.Vec<T>();
     v.add(x).try();

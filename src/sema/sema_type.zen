@@ -26,6 +26,7 @@ check_binary, check_index, check_literal = sema.sema_trap
 element_agrees = sema.sema_trap
 check_arms, check_arms_agree = sema.sema_hoist
 check_statement = sema.sema_effect
+missing_import, require_bound = sema.sema_import
 check_eq = sema.sema_bound
 operands_agree, check_neg, check_bit_not = sema.sema_operand
 seed_left_spine, spine_ahead = sema.sema_spine
@@ -185,13 +186,16 @@ bound_name_type = (c :: Checker, id: ExprId, b: Binding)
     Ok(b.ty);
 }
 
-// A bare `None` is absence when the name resolves to the prelude's
+// A bare `None` is absence when the name resolves to std.core's
 // variant; a module's own `None` reads as written.
 unbound_name_type = (c :: Checker, node: Expr, text: str, ctx: Ctx)
                     Res<TyId, AllocError> {
     (text.eq("None")
         && c.world.names_res_variant(c.tree, ctx.module, text).try()).match({
-        true  => c.none_type(),
+        true  => {
+            c.require_bound(ctx.module, text, node.span).try();
+            c.none_type()
+        },
         false => c.global_name_type(node, text, ctx),
     })
 }
@@ -221,8 +225,21 @@ variant_name_type = (c :: Checker, node: Expr, text: str, ctx: Ctx)
     found ::= c.alloc.Vec<Def>();
     c.world.variant_defs(c.tree, ctx.module, text, found).try();
     found.get(0).match({
-        None  => c.unresolved_name(node, text),
+        None  => c.missing_import(ctx.module, text, node.span).try().match({
+            false => c.unresolved_name(node, text),
+            true  => c.granted_name_type(node, text, ctx),
+        }),
         Ok(d) => c.bare_variant_type(d, text),
+    })
+}
+
+// A standard name just reported as a missing import, resolved as the import
+// would resolve it.
+granted_name_type = (c :: Checker, node: Expr, text: str, ctx: Ctx)
+                    Res<TyId, AllocError> {
+    c.world.first_def_of(ctx.module, text).try().match({
+        None  => c.types.unknown(),
+        Ok(d) => c.value_def_type(node, d),
     })
 }
 

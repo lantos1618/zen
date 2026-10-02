@@ -14,6 +14,9 @@ Checker = sema.sema_check
 check_all = sema.sema_decl
 Emit = gen.gen_emit
 CBackend, emit_program = gen.gen_c
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 // Four traversal shapes, each written so a wrong lowering
 // shows in the C: a non-zero-based range, a condition whose variable

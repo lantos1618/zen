@@ -1,6 +1,11 @@
 // C keywords are mangled in every declaration position: file-scope values,
 // types, fields, methods, variants, functions, parameters, and type parameters.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // file scope in C, which is a third identifier space again
 inline = 11
 

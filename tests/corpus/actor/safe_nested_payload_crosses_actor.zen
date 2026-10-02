@@ -1,6 +1,10 @@
 // Nested value-only fields remain transferable. This is the positive boundary
 // for the recursive actor-payload classifier.
 
+Res, Ok, IoError = std.core
+Env = std.env
+Actor, ActorError, ActorStartError, Context = std.actor
+
 SafeFault = SafeFault
 Leaf = { number: i32, ready: bool }
 SafePayload = {

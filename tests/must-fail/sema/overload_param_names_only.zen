@@ -6,6 +6,11 @@
 // positions: both declarations. NOT the call site -- the call is only
 // what triggers the check.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 combine = <T>(first: T, second: T) T { first }
 
 combine = <T>(left: T, right: T) T { right }

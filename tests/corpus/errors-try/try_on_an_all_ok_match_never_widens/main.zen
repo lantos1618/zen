@@ -9,6 +9,11 @@
 // a real failure follows on the same path so the function still
 // propagates what it is given.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Kind = Io | Protocol
 Fail = Mismatch | Accepted
 

@@ -1,6 +1,11 @@
 // Parse integer rows from Env.argv and an in-program Vec<str>. The harness
-// supplies no extra arguments, so the stable total is 12. parse_i64 is used
-// through the prelude without an explicit import.
+// supplies no extra arguments, so the stable total is 12. parse_i64 travels
+// with `str`, so it is reached through the dot without an import.
+
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a    ::= env.mem.alloc();

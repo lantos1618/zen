@@ -2,6 +2,7 @@
 // plus-prefixed, or out-of-range input returns None. Signed parsing accumulates
 // a negative value so i64.MIN is representable without overflow.
 DIGIT_ZERO = std.core.byte
+Res, Ok, None, loop, Range = std.core
 
 parse_i64* = (self: str) Res<i64> {
     parsed: Res<i64> = loop<i64>((h) {

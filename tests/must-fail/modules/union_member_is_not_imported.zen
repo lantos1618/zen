@@ -1,0 +1,10 @@
+// `Fail = AllocError | IoError` joins two types only because both names are
+// types. An unimported one would read as an enum variant of that name, so
+// it is reported as a missing import before any union is classified.
+//
+// position: the `AllocError` member.
+IoError = std.core
+
+Fail = AllocError | IoError
+
+main = () i32 { 0 }

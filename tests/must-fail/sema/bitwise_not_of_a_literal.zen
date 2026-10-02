@@ -1,3 +1,5 @@
+println = std.io
+
 main = () {
     flipped = ~0;
     println("{}", flipped);

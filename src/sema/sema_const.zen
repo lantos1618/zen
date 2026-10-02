@@ -7,6 +7,7 @@ TyId = sema.sema_ty
 SemaFault, NameFault = sema.sema_diag
 Def, decl_at = sema.sema_def
 Checker, Ctx = sema.sema_check
+Res, Ok, None, loop = std.core
 
 I64_MAX* : i64 = 9223372036854775807
 I64_MIN* : i64 = -9223372036854775807 - 1

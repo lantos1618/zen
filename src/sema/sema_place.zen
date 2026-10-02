@@ -12,6 +12,7 @@ type_of = sema.sema_type
 type_from_ast = sema.sema_denote
 settle_variant_at = sema.sema_apply
 refuse_handle_value = sema.sema_handle
+Res, Ok, None = std.core
 
 bind_stmt* = (c :: Checker, b: Bind, ctx: Ctx) Res<TyId, AllocError> {
     got = c.type_of(b.value, ctx).try();

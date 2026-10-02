@@ -4,6 +4,11 @@
 // String main made. an inner toString that allocated would still
 // print this, which is why the bench next door counts allocs
 
+Res, Ok, Display, IoError, WriteError, Sink = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Error = AllocError | IoError
 
 Point = {

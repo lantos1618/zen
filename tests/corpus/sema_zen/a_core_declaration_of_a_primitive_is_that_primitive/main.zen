@@ -1,7 +1,7 @@
-// A prelude declaration of a primitive's name IS that primitive.
+// std.core's declaration of a primitive's name IS that primitive.
 //
 // DESIGN.md, Modules: "`str` and `i32` are declared as ordinary structs
-// in the prelude — `str` in `std.text.text_str` carrying `len`, `get`,
+// that `std.core` re-exports — `str` in `std.text.text_str` carrying `len`, `get`,
 // `index` and `slice`; `i32` in `std.core.num` carrying `MIN`, `MAX` and
 // `BITS` — and the members they declare belong to the primitive the
 // compiler already knows. They are not a second nominal type that
@@ -13,7 +13,7 @@
 // So there are FOUR properties, and the last two are the ones a
 // hardcoded member table would pass while still being wrong:
 //
-//   - a member the prelude declares on `str` is reachable on a `str`  -> yes
+//   - a member std.core declares on `str` is reachable on a `str`     -> yes
 //   - a member it does not declare is still a diagnostic              -> yes
 //   - a string LITERAL and a `str`-typed value are ONE type, not two  -> yes
 //   - the receiver stays the PRIMITIVE, so `@Self` in the declared
@@ -29,7 +29,7 @@
 
 Checker, Ctx = sema.sema_check
 Types, TyId = sema.sema_ty
-PRELUDE = sema.sema_def
+CORE = sema.sema_def
 Ast = std.ast.ast_arena
 Expr, ExprKind, Access, Name, Literal, LiteralKind, Call, Arg = std.ast.ast_node
 Decl, DeclKind, Struct, Import, ImportName, Module = std.ast.ast_node
@@ -41,6 +41,9 @@ Pos, Span = std.source
 Alloc, AllocError = std.mem
 Vec = std.collections
 str, String = std.text
+Res, Ok, None = std.core
+Env = std.env
+println = std.io
 
 at = () Span {
     Span(file: "in.zen", start: Pos(line: 1, col: 1), end: Pos(line: 1, col: 2))
@@ -161,7 +164,7 @@ struct_decl = (a: Alloc, text: str, members: Vec<Member>)
 }
 
 // `str* = std.text.text_str` — a re-export, which is an import whose
-// binding is starred. That is the whole of how the prelude reaches a
+// binding is starred. That is the whole of how std.core reaches a
 // declaration it does not itself hold.
 reexport = (a: Alloc, name: str, module: str) Res<Decl, AllocError> {
     segments ::= a.Vec<Ident>();
@@ -216,12 +219,12 @@ main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
     tree  ::= alloc.Ast();
 
-    // module 0 IS the prelude, under the spelling `defs_of` looks for.
+    // module 0 IS std.core, under the spelling `defs_of` looks for.
     // It declares nothing and re-exports `str`, which is what a folder
     // root is.
     core ::= alloc.Vec<Decl>();
     core.add(reexport(alloc, "str", "std.text.text_str").try()).try();
-    module_of(tree, PRELUDE, core).try();
+    module_of(tree, CORE, core).try();
 
     // module 1 declares `str` the way std.text does: a byte count and a
     // question about it
@@ -255,7 +258,7 @@ main = (env: Env) Res<i32, AllocError> {
     str_ty = c.types.str_ty().try();
     c.bind("s", str_ty, false, false).try();
 
-    // a member the prelude declares on `str` is reachable on one — the
+    // a member std.core declares on `str` is reachable on one — the
     // field read bare, the method through the call #772's remedy requires
     reaches(c, alloc, "s.len", s_len, ctx).try();
     reaches(c, alloc, "s.is_empty()", s_empty, ctx).try();

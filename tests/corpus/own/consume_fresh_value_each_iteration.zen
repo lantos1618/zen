@@ -7,6 +7,10 @@
 // the two files is one line, and a checker that gets it wrong in
 // either direction is useless.
 
+Res, Ok, Drop, Range, IoError = std.core
+Env = std.env
+println = std.io
+
 Buf = {
     id: i32,
 }

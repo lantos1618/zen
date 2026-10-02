@@ -5,6 +5,10 @@
 // scope BY TYPE, and inside drop the only binding is self — so Noisy
 // carries the Env it prints through, the same way Context does.
 
+Res, Ok, Drop, IoError = std.core
+Env = std.env
+println = std.io
+
 Noisy = {
     env: Env,
     tag: str,

@@ -10,6 +10,7 @@ WalkNode, WalkEvent, WalkVisitor, DeclVisit, DeclSite, DeclParent = std.ast
 Alloc, AllocError = std.mem
 Vec = std.collections
 str, String = std.text
+Res, Ok, None = std.core
 
 Operator* = SwapError
     | FlipEquality

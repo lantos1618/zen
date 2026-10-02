@@ -1,3 +1,7 @@
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
+
 // A local function is a closure over one frame and is inlined at its calls;
 // it has no type parameters of its own.
 main = (env: Env) Res<i32, IoError> {

@@ -14,6 +14,12 @@
 // through the read-only receiver, plus the miss past the end so the None arm
 // is still exercised beside a hit rather than instead of one.
 
+Res, Ok, IoError = std.core
+Alloc, AllocError = std.mem
+Vec = std.collections
+Env = std.env
+println = std.io
+
 Error = AllocError | IoError
 
 filled = (alloc: Alloc) Res<Vec<i32>, AllocError> {

@@ -1,3 +1,8 @@
+Res, Ok, Err, Drop = std.core
+Alloc, AllocError, Ptr = std.mem
+Env = std.env
+println = std.io
+
 Refuse = {}
 
 Refuse.impl(Alloc, {

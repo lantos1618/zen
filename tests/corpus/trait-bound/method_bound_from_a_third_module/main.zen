@@ -10,6 +10,10 @@
 
 Meter = meter.meter
 Wheel = wheel.wheel
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 pressure = <T: Meter>(m: T) i32 { m.read() * 2 }
 

@@ -1,6 +1,10 @@
 // Byte-valued summaries make lone CR data visible without embedding CR in
 // expected output. Empty input differs deliberately from split('\n').
 Lines = std.text
+Res, Ok, Err, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 show = (name: str, input: str) {
     count :: usize = 0;

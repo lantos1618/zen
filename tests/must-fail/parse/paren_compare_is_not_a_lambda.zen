@@ -1,3 +1,7 @@
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 // `(i + 1) < f.len` was read as a LAMBDA's parameter list, because the
 // lookahead saw `<` after the `)` and `<T>(a: T) T` is a type that
 // begins with an angle. One wrong fork then unwound into EIGHT

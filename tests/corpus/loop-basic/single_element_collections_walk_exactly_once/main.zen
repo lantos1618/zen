@@ -5,6 +5,11 @@
 // does not fit an i32 - a pass that hands elements through a word-wide
 // slot prints a truncated value that still looks like a number
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
 

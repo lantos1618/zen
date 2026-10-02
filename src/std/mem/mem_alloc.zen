@@ -5,6 +5,7 @@
 // behind the handle controls lifetime and cleanup.
 
 Ptr = std.mem.mem_ptr
+Res = std.core
 
 AllocError* = | OutOfMemory
 

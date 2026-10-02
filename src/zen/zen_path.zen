@@ -8,12 +8,13 @@
 
 Alloc, AllocError = std.mem
 str, String = std.text
-Range, Path = std.core
+Res, Ok, loop, Range, Path = std.core
 Vec = std.collections
 join_path = std.core.path
 
 QualifiedName = std.ast.ast_span
 ZEN_STD_ENV = std.build
+Env = std.env
 
 // Anchor a filesystem path at the actual process directory. Redundant `/`
 // and `.` components share one spelling; `..` stays intact because resolving

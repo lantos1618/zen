@@ -16,6 +16,11 @@
 // breaks this: tearing down (or reusing) the loop's result slot before
 // the break's jump lands.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     total: Res<usize> = Range<usize>(0, 4).loop((ho, o) {
         // one inner loop's full work, folded in this pass alone

@@ -4,7 +4,7 @@ ExprId, TypeId, Const, Field = std.ast
 AllocError = std.mem
 Vec = std.collections
 str = std.text
-Range = std.core
+Res, Ok, None, Range = std.core
 TyId = sema.sema_ty
 Def, DefKind, ModuleTable, decl_at = sema.sema_def
 Checker, Ctx = sema.sema_check
@@ -33,6 +33,7 @@ finish_ownership = sema.sema_store
 check_enum_discriminants = sema.sema_discriminant
 check_numeric_conversions = sema.sema_numeric
 check_secret = sema.sema_secret
+check_union_imports = sema.sema_import
 
 // Every declaration rule, for one module.
 check_module* = (c :: Checker, mi: usize) Res<(), AllocError> {
@@ -43,6 +44,7 @@ check_module* = (c :: Checker, mi: usize) Res<(), AllocError> {
 }
 
 check_all* = (c :: Checker) Res<(), AllocError> {
+    c.check_union_imports().try();
     c.check_numeric_conversions().try();
     Range(0, c.world.count()).loop((h, mi) {
         c.check_module(mi).try();

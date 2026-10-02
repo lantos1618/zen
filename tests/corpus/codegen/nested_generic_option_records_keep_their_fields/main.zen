@@ -1,4 +1,8 @@
 str = std.text
+Res, Ok, None = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 // A local written in a generic method must be substituted at the method's
 // current instantiation. Otherwise both methods below declare one open

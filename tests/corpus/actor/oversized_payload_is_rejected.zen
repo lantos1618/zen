@@ -1,6 +1,10 @@
 // Synthetic descriptor: rejection must happen before reading payload bytes.
 Ptr, null_ptr = std.mem
 str_at = std.text
+Res, Ok = std.core
+Env = std.env
+Actor, ActorStartError, Context = std.actor
+println = std.io
 Sink = {}
 Sink.impl(Actor, {
     accept = (self :: @Self, ctx: Context, bytes: str) { println(

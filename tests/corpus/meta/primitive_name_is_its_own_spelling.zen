@@ -26,7 +26,7 @@
 // produces. Routing primitives to the empty string, which is the
 // plausible wrong answer design_meta.md 6.4 names, prints ` 0` five
 // times. `str` and `bool` ride along because their companions are
-// declared in other modules again (`std.text`, the prelude), so a
+// declared in other modules again (`std.text`, `std.core.bool`), so a
 // lookup that only ever reached `std.core.num` still moves two lines.
 //
 // THE LAST LINE IS THE CONTROL, and it is what makes the five above
@@ -34,6 +34,11 @@
 // ordinary user-declaration route, so a mutation that breaks only the
 // primitives leaves it standing and the diff names the half that
 // moved.
+
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 Wrap<T> = {
     v: T,

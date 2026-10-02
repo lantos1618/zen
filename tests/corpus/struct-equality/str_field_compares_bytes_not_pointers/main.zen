@@ -2,7 +2,7 @@
 // and the operands are built so no literal pooling can rescue a wrong
 // lowering.
 //
-// str is an ordinary struct in the prelude (data: Ptr<u8>, len: usize)
+// str is declared as an ordinary struct (data: Ptr<u8>, len: usize)
 // and it is ON THE NON-SCALAR SIDE of scalar_eq's line, so `Tag == Tag`
 // dispatches to std.text's impl: lengths first, then bytes. Two
 // lowerings fail here while passing every literal-vs-literal test in
@@ -19,6 +19,11 @@
 // same-length text shares neither bytes nor address (different must
 // hold -- this is also the prefix bug, "ab" vs "ac", caught by length-
 // FIRST comparison rather than by luck).
+
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+Env = std.env
+println = std.io
 
 Tag = {
     name*: str,

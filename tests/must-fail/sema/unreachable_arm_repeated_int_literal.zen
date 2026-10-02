@@ -1,5 +1,10 @@
 // An integer literal named twice: the second arm never runs.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 digit = (n: i32) str {
     n.match({
         0 => "zero",

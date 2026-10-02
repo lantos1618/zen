@@ -1,6 +1,11 @@
 // A positional supply does not disable the missing-field check.
 // position: the incomplete construction.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Point = {
     x: i32,
     y: i32,

@@ -5,6 +5,9 @@
 scan, Source, kind_name, message = std.lex.lex
 Alloc, AllocError = std.mem
 str, String = std.text
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 dump = (env: Env, alloc: Alloc, label: str, text: str) Res<(), AllocError> {
     out = scan(alloc, Source(file: "in.zen", text: text)).try();

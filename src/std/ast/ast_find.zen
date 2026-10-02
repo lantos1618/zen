@@ -4,6 +4,7 @@ str = std.text
 Pos, Span, nowhere = std.source
 ExprId, TypeId, PatternId, BlockId = std.ast.ast_id
 Ast = std.ast.ast_arena
+Res, Ok, None = std.core
 
 // Typed reference to the arena family containing a result.
 NodeRef* = ExprNode(ExprId)

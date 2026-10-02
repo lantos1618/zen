@@ -12,6 +12,11 @@
 //     inside a loop body is a fresh closure on every pass;
 //   - a deferred closure calling a local function runs it at block exit.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     succ = (x: i32) i32 { x + 1 }
     println("succ {}", succ(2));

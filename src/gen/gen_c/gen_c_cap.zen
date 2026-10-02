@@ -28,6 +28,7 @@ write_position = gen.gen_c.gen_c_op
 lower_clock_read = gen.gen_c.gen_c_clock
 lower_sleep, lower_spawn, lower_join = gen.gen_c.gen_c_threads
 lower_actor_spawn, lower_actor_stop, lower_actor_join = gen.gen_c.gen_c_actor
+Res, Ok, loop = std.core
 
 // Classification is closed and travels with MethodKind into lowering,
 // so receiver ownership and an overloaded name such as `read` are

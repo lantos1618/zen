@@ -2,6 +2,11 @@
 // Three wide allocations must not overlap. Writing them after all three
 // calls makes an undersized `create<T>` visible in the earlier values.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Wide = {
     head: i64,
     p1: i64,

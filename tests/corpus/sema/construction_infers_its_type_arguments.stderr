@@ -1,1 +1,1 @@
-construction_infers_its_type_arguments.zen:40:27: trap: integer overflow
+construction_infers_its_type_arguments.zen:45:27: trap: integer overflow

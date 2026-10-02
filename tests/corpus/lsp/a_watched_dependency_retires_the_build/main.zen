@@ -6,6 +6,9 @@ Alloc, AllocError = std.mem
 Server, serve = lsp.lsp_serve
 write_frame, frame_at = lsp.lsp_frame
 write_text = std.json
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 DOC*: str = "Point = app.shape\n\norigin = () Point { Point(x: 0) }\n"
 URI*: str = "file://src/app/app.zen"

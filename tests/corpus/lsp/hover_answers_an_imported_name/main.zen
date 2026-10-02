@@ -8,6 +8,10 @@ Alloc, AllocError = std.mem
 Server, serve = lsp.lsp_serve
 write_frame, frame_at = lsp.lsp_frame
 write_text = std.json
+Res, Ok, loop = std.core
+Vec = std.collections
+Env = std.env
+println = std.io
 
 // The overlay buffer uses q where the disk file uses p.
 DOC*: str = "Point = app.shape\n\nnear = (q: Point, n: i32) i32 {\n    s = q.x + n;\n    s\n}\n"

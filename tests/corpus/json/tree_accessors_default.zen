@@ -4,6 +4,10 @@
 
 Jsons = std.json.json_write
 read = std.json.json_read
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 TEXT: str = "{\"name\":\"zen\",\"n\":7,\"calls\":[1,2,3],\"nested\":{\"k\":\"v\"}}"
 

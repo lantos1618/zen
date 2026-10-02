@@ -442,7 +442,7 @@ Completion = {
     collect_prim = (self: @Self, name: str, cands :: Vec<Item>)
                    Res<(), AllocError> {
         defs ::= self.a.Vec<Def>();
-        self.c.world.prelude_of(name, defs).try();
+        self.c.world.core_of(name, defs).try();
         defs.get(0).match({
             None  => written(),
             Ok(d) => decl_at(self.c.tree, d.id).match({

@@ -1,0 +1,12 @@
+// A `println` imported from another module is that module's function. The
+// compiler recognises std.io's printers by declaration, not by spelling, so
+// this call returns the count `log.println` computes and writes nothing on
+// its own.
+println = log
+print = std.io
+
+main = () i32 {
+    n = println("abc");
+    print("{}\n", n);
+    0
+}

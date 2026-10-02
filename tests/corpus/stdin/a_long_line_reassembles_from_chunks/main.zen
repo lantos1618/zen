@@ -11,6 +11,10 @@
 // main.stdin holds exactly those 86 bytes.
 
 Vec    = std.collections
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 CHUNK: usize = 7
 

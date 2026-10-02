@@ -1,5 +1,6 @@
-Sink, WriteError = std.core
+Res, Ok, Err, IoError, WriteError, Sink = std.core
 ProcStreamError, Process = std.proc
+Env = std.env
 
 Reject = {}
 Reject.impl(Sink, {

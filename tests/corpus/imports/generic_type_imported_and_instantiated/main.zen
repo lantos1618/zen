@@ -17,6 +17,9 @@
 
 Box = box.box
 unwrap = box.box
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
 
 main = (env: Env) Res<i32, IoError> {
     a = Box<i32>(value: 9);

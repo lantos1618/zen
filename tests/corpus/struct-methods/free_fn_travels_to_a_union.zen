@@ -13,6 +13,11 @@
 // Breaks if: the world does not travel to unions -- the dot line rejects
 // or answers a different arm.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Color = Red | Green | Blue
 
 name = (c: Color) str {

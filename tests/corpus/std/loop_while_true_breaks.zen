@@ -3,6 +3,11 @@
 // h.break is the only way out. break is the same non-local exit
 // as .try(), so a non-escaping body may return through its caller
 
+Res, Ok, loop = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     i ::= 0;
     loop((h) {

@@ -7,6 +7,10 @@
 // way, so the second probe is what pins resynchronisation.
 String = std.text.text_string
 Utf8Error, codepoint_at, validate_utf8 = std.text.text_utf8
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 verdict = (s: str) i64 {
     s.validate_utf8().match({

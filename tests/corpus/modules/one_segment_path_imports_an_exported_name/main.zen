@@ -5,6 +5,11 @@
 // written `Circle.<name>`. A binding the module does not export is still
 // a module alias, and `sh.area` and `ut.twice` pin that reading.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Circle = shapes
 area = shapes
 Util = util

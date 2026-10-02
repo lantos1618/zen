@@ -9,6 +9,11 @@
 // the stub from the other side: a find that always answers None cannot
 // print `found 7`, and one that answers the first element cannot either.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     Range(0, 10).find((value) {
         println("saw {}", value);

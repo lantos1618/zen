@@ -1,3 +1,8 @@
+Res, Ok, Range = std.core
+Alloc, AllocError, Ptr, null_ptr = std.mem
+Env = std.env
+println = std.io
+
 Moving = { arena: Alloc, refuse: Ptr<bool>, calls: Ptr<usize> }
 Moving.impl(Alloc, {
     raw = (self: @Self, size: usize, align: usize) Res<Ptr<u8>, AllocError> {

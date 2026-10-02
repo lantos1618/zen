@@ -1,5 +1,10 @@
 // Angle arguments apply only to a declaration that has type parameters.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 id = (value: i32) i32 { value }
 
 main = (env: Env) Res<i32, AllocError> {

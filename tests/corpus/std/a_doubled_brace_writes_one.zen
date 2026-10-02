@@ -12,6 +12,11 @@
 // hole is seen first and the trailing `}` is a byte, while in `{{}` the
 // pair is seen first and the trailing `}` is a byte as well.
 
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Error = AllocError | IoError
 
 main = (env: Env) Res<i32, Error> {

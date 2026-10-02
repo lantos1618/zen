@@ -1,6 +1,10 @@
 // Using a released js.Ref traps even after its slot holds another object:
 // the id's generation no longer matches, so it cannot reach the new one.
 Ref = std.js
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 Objects = js.bind("Object", {
     create* = (proto: Ref) Ref

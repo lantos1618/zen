@@ -1,5 +1,9 @@
 // `/` binds tighter than `+`: 10 + 20 / 4 is 10 + (20 / 4), not (10 + 20) / 4.
 
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 main = (env: Env) Res<i32, ArgError> {
     v = 10 + 20 / 4;
     println("{}", v);

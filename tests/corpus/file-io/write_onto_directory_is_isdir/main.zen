@@ -12,7 +12,9 @@
 // earlier -- without it a floor refusing every write would still print
 // one matching line.
 
-FsError = std.env
+Env, FsError = std.env
+Res, Ok = std.core
+println = std.io
 
 main = (env: Env) Res<i32, FsError> {
     env.fs.write("writable.txt", "ok").try();

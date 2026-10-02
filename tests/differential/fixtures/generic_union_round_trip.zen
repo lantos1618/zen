@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // One generic union is instantiated at different payload widths. Both values
 // must retain their tag and payload through native C.
 Opt<T> = Some(T) | None

@@ -4,6 +4,11 @@
 //
 // position: the match expression (its receiver).
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Cell = Full(i32) | Blank
 
 Slot = Left(Cell) | Right(Cell) | Gone

@@ -16,6 +16,11 @@
 // scrutinee -- sort's answers become "lost"/garbage while the Red arm still
 // prints "red".
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Pill = Red(i64) | Blue | Green
 
 sort = (p: Pill) str {

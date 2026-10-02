@@ -3,6 +3,10 @@
 // generations are used up. Misuse (a second release, a stale id) traps;
 // those are the ref_release_twice and ref_use_after_release cases.
 Ref = std.js
+Res, Ok, loop = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 Objects = js.bind("Object", {
     create* = (proto: Ref) Ref

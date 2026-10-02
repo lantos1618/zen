@@ -1,3 +1,7 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+
 // A nonzero language result remains distinct from compilation rejection.
 main = (env: Env) Res<i32, AllocError> {
     (env.argv.len == 0).match({

@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Opt<T> = Some(T) | None
 
 value = (o: Opt<i64>) i64 { o.match({ Some(v) => v, None => 0 }) }

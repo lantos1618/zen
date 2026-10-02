@@ -2,6 +2,10 @@
 // functions. Writing a concrete application proves each argument at the type
 // use, before layout or construction can treat the application as legitimate.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+
 Shape = { width: i32 }
 Dot = {}
 

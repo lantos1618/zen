@@ -1,6 +1,11 @@
 // A generic variant constructor returns the instantiated enum. A payload-free
 // variant instead takes its instantiation from the expected type.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Opt<T> = Some(T) | None
 
 pick = (o: Opt<i32>) i32 {

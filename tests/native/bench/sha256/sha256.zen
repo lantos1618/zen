@@ -2,7 +2,7 @@
 // Caller owns 72 aligned u32 words and 64 writable bytes, mutually disjoint
 // and disjoint from input/output. Pointers and capacities are caller contracts.
 Ptr = std.mem
-Range = std.core
+Res, Ok, Range = std.core
 bit_xor, bit_and, rotate_right, shift_right, to_u32, to_u64, to_u8, to_usize = std.core.num
 
 Sha256* = {

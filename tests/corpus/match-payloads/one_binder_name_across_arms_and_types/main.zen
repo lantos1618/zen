@@ -10,6 +10,11 @@
 // again. A slot left on top of the scope stack makes every later use of
 // the name read a variable declared inside a closed branch.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     n: i64      = 7;
     r: Res<i64> = Ok(3000000000);

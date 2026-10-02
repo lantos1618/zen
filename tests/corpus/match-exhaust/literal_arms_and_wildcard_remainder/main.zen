@@ -14,6 +14,11 @@
 // Breaks if: the literal comparison is emitted at the wrong width --
 // lines two, three or four answer 99/10/99 instead of 20/40/50.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 bucket = (v: i64) i32 {
     v.match({
         1                   => 10,

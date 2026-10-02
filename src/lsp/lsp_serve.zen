@@ -3,7 +3,7 @@
 
 str, String = std.text
 Vec, Map = std.collections
-Range = std.core
+Res, Ok, Err, None, Drop, loop, Range = std.core
 Alloc, AllocError, Arena = std.mem
 Checker = sema.sema_check
 Jsons, JsonId, written, read = std.json
@@ -23,6 +23,7 @@ Decoded, RequestTurn, write_capabilities = lsp.lsp_reply
 RpcFault, request_of, notice_of = lsp.lsp_reply
 path_of = lsp.lsp_uri
 Document, Documents = lsp.lsp_document
+Env = std.env
 
 Server* = {
     a: Alloc,

@@ -1,6 +1,10 @@
 // Filesystem paths are byte strings. Construction preserves bytes exactly;
 // validation belongs to the filesystem operation that consumes the path.
 
+Res, Ok, None = std.core
+Alloc, AllocError = std.mem
+String = std.text
+
 Path* = {
     text*: str,
 

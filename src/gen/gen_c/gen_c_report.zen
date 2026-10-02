@@ -11,6 +11,7 @@ AllocError = std.mem
 GenFault = gen.gen_diag
 CBackend = gen.gen_c.gen_c_state
 LocalSlot = gen.gen_c.gen_c_frame
+Res, Ok = std.core
 
 closure_storage* = (
     be   :: CBackend,

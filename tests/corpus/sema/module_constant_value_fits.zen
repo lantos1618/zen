@@ -43,6 +43,11 @@
 // constant that compiles is not a constant that arrived: no truncation,
 // no sign flip and no zero prints any line below the way it stands.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 NEG:  i32 = -1234567
 WIDE: i64 = 9000000000
 TINY: u8  = 250

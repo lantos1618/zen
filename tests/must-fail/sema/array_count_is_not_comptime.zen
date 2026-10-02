@@ -21,6 +21,11 @@
 // position: the count's own expression, not the `[`, not the
 // initialiser, and not the index.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 SIZE: usize = 4
 
 main = (env: Env) Res<i32, AllocError> {

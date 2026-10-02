@@ -11,6 +11,7 @@ Def, decl_at = sema.sema_def
 type_from_ast, alias_target_of, type_decl = sema.sema_denote
 Found, base_of, members_of = sema.sema_member
 block_type, type_of = sema.sema_type
+Res, Ok, None = std.core
 
 // A standalone @meta expression is unsupported; report once and return poison.
 meta_type* = (c :: Checker, node: Expr, ctx: Ctx) Res<TyId, AllocError> {

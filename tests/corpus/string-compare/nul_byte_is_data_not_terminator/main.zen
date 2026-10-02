@@ -18,6 +18,11 @@
 // Breaks it: emit `(strcmp(a.data, b.data) == 0)` instead of the Eq call
 // -- row 3 turns true; or memcmp over min(len) -- row 5 turns false.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     nul = "a\0b";
     println("{}", nul.len);

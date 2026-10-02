@@ -1,3 +1,7 @@
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 // `Env` used to carry `vars: Map<str, str>`, and it was never filled: the
 // Env is a C compound literal written before `main` is entered, so C's
 // rule zeroed the map, and a zeroed map has no slots — `get` answered

@@ -1,3 +1,8 @@
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // every line in this file ends with CRLF. the lexer must treat \r\n as
 // one line break and must not leak the \r into any token or position.
 Error = AllocError | IoError

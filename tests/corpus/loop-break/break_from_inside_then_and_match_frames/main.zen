@@ -16,6 +16,11 @@
 // breaks this: lowering h.break as "return from the enclosing closure"
 // instead of a labelled goto to the handle's own loop.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     hit: Res<usize> = Range<usize>(0, 9).loop((h, n) {
         (n == 1).then(() {

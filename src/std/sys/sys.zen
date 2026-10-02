@@ -15,7 +15,7 @@
 
 Alloc, AllocError, Ptr, null_ptr = std.mem
 str, String = std.text
-Sink, WriteError = std.core
+Res, Ok, Err, None, loop, WriteError, Sink = std.core
 
 // ---------------------------------------------------------------------
 // operations (compiler-provided per target)

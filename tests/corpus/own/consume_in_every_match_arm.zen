@@ -1,3 +1,7 @@
+Res, Ok, Drop, IoError = std.core
+Env = std.env
+println = std.io
+
 // Both alternatives transfer one owner; each selected value drops once.
 Buf = { id: i32 }
 Buf.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id); } })

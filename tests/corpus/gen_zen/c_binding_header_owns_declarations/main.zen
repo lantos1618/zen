@@ -8,6 +8,9 @@ Ast, CHeader, CTypeBinding, CBinding, ModuleOrigin = std.ast
 Checker = sema.sema_check
 Emit = gen.gen_emit
 CBackend, emit_program = gen.gen_c
+Res, Ok, None, Range = std.core
+Env = std.env
+println = std.io
 
 RAW : str = "rand* = () c_int\n"
 PROGRAM : str = "rand = raw.raw\nmain = (env: i32) i32 { rand(); 0 }\n"

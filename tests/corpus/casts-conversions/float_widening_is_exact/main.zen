@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // THE FLOAT WIDENINGS ARE EXACTNESS CONTRACTS, NOT FORMAT ONES.
 //
 // num.zen declares exactly two: i32 -> f64 and f32 -> f64, both

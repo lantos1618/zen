@@ -1,6 +1,11 @@
 // A positional argument after the final storage seat is never discarded.
 // position: the first surplus argument.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Single = {
     value: i32,
 }

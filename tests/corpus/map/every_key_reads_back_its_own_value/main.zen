@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // A MAP IS ADDRESSED BY ITS KEY, NOT BY WHERE THE KEY SITS.
 //
 // Every key reads back its own value, and the values are chosen so a

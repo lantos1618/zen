@@ -7,6 +7,10 @@
 
 new_call, new_dot = new_user
 old_call, old_dot = old_user
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 a = alpha
 b = beta
 

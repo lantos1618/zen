@@ -2,6 +2,11 @@
 // program. two unrelated types declare `size`, and each call gets its
 // own -- the other one is not a candidate and never was.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Box = {
     w: i32,
     size = (self: @Self) i32 { self.w * self.w }

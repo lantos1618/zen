@@ -7,7 +7,9 @@
 // The runner stages this directory as `src/`, so the empty file this
 // test ships is `src/empty.zen`.
 
-FsError = std.env
+Env, FsError = std.env
+Res, Ok = std.core
+println = std.io
 
 main = (env: Env) Res<i32, FsError> {
     alloc ::= env.mem.alloc();

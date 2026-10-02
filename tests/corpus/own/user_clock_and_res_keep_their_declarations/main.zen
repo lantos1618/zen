@@ -1,4 +1,7 @@
 run = mine.mine
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
 
 Optional = { value: Res<i32> }
 

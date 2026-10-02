@@ -8,6 +8,7 @@ TyId = sema.sema_ty
 Ctx = sema.sema_check
 Inst = sema.sema_inst
 Lambda = std.ast
+Res = std.core
 
 // One binding in scope, and the number that makes its C name unique
 // inside its function.

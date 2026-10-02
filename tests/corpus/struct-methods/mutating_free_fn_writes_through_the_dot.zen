@@ -15,6 +15,11 @@
 // becomes an accept and `a.v` changes) or gains an extra one the method
 // does not have (`c`/`d` stop compiling).
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 W = {
     v*:: i32,
 

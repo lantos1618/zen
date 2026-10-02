@@ -15,6 +15,11 @@
 // and drops 30 -- the failure field_defaults.zen's `Mixed` hunts, seen
 // here with all-same types so it cannot hide behind a cast.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Slots = {
     a :: i64 = 1,
     b :: i64 = 2,

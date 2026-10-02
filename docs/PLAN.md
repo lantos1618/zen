@@ -68,12 +68,12 @@ zen/
 │   │                                #     and the residue has to be type-checked
 │   │
 │   └── std/                         # (0.6) the floor. written BEFORE the compiler.
-│       ├── std.zen                  #       starred re-exports; the prelude assembles here
+│       ├── std.zen                  #       starred re-exports
 │       ├── lex/lex.zen              # (1)   the compiler's lexer, importable as std.lex
 │       ├── parse/parse.zen          # (1)   the parser: parse_decl, parse_expr, parse_match
 │       │                            #       siblings repeat the folder as a prefix
 │       ├── ast/ast.zen              # (1)   THE ast. compiler, @meta and gen_c share it.
-│       ├── core/core.zen            #       prelude root
+│       ├── core/core.zen            #       std.core root: loaded by every program, binds nothing
 │       ├── core/result.zen          #       Res<T>, Res<T,E>, .try()
 │       ├── core/bool.zen            #       then
 │       ├── core/loop/loop.zen       #       the loop family, find, filter, map

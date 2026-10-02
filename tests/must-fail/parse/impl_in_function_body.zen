@@ -1,3 +1,6 @@
+Res, Ok = std.core
+Env, ArgError = std.env
+
 // UNRESOLVED in DESIGN.md: `A.impl(B, {..})` is shown only at module
 // level. in statement position it is a call expression that declares,
 // and a declaration inside a body would have to say what its scope is.

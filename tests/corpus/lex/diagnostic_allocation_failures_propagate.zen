@@ -1,4 +1,8 @@
 scan, Source = std.lex
+Res, Ok, Range = std.core
+Alloc, AllocError, Ptr = std.mem
+Env = std.env
+println = std.io
 
 FailAt = {
     base: Alloc,

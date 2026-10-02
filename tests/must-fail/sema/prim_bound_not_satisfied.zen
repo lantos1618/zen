@@ -6,6 +6,11 @@
 //
 // position: the call whose argument fails the bound.
 
+Res, Ok, ToU32 = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 as_u32 = <T: ToU32>(x: T) u32 { x.widen_u32() }
 
 main = (env: Env) Res<i32, AllocError> {

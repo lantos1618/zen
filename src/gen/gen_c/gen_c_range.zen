@@ -24,12 +24,13 @@ intern_res_open, recv_inst, sub_with = gen.gen_c.gen_c_mono
 enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
 Dest, block, deliver = gen.gen_c.gen_c_stmt
 array_of = gen.gen_c.gen_c_array
+Res, Ok, None, loop = std.core
 
 // A range that stores its bounds.
 
 // Whether this declaration physically stores both bounds. This structural
 // question also recognizes the Range declaration in small compiler fixtures
-// that intentionally build no prelude world.
+// that intentionally load no std.core.
 supplies_bounds* = (be :: CBackend, rty: TyId) bool {
     be.has_field(rty, "start") && be.has_field(rty, "end")
 }
@@ -79,14 +80,14 @@ range_impl* = (be :: CBackend, rty: TyId) Res<Res<RangeImpl>, AllocError> {
     })
 }
 
-// Primitive impls live on the prelude declaration of their spelling, just as
+// Primitive impls live on std.core's declaration of their spelling, just as
 // ordinary member lookup and bound checking already define. Range lowering
 // must use that same ownership rule: `str.impl(Seq<u8>, ..)` is not less of
 // an impl merely because `str` has a built-in C representation.
 primitive_range_impl = (be :: CBackend, p: Prim)
                        Res<Res<RangeImpl>, AllocError> {
     defs ::= be.alloc.Vec<Def>();
-    be.check.world.prelude_of(p.name, defs).try();
+    be.check.world.core_of(p.name, defs).try();
     defs.get(0).match({
         None    => Ok(None),
         Ok(def) => be.named_range_impl(TyNamed(

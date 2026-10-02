@@ -1,3 +1,9 @@
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+Vec = std.collections
+Env = std.env
+println = std.io
+
 cli = zen
 
 show = (env: Env, words: Vec<str>) Res<(), AllocError> {

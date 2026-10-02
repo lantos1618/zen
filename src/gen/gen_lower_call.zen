@@ -18,6 +18,7 @@ nowhere = std.source
 Checker, DeclId, Def, TyId, Ctx, Inst, decl_at, CheckedCall, TyNamed = sema.sema
 subst = sema.sema
 Found, members_of = sema.sema_member
+Printer = sema.sema_print
 Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print = gen.gen_ir
 Instruction, Terminator, Convert, Address, Load, Store, CopyMem, StaticBytes = gen.gen_ir
 Write, Stream, TrapKind, Marshal, HostCall = gen.gen_ir
@@ -87,23 +88,9 @@ named_call = (
     span : Span
 ) Res<Value, LowerError> {
     selected = lo.check.checked_call(id);
-    resolved = selected.match({
-        Ok(checked) => checked.declaration.match({ Ok(_) => true, None => false }),
-        None        => false,
-    });
-    sugar ::= name.is_in(["print", "println"]) && !resolved;
-    sugar.then(() {
-        defs ::= lo.alloc.Vec<Def>();
-        lo.check.world.defs_of(
-            lo.here().module,
-            name,
-            defs
-        ).try(LowerError.OutOfMemory);
-        sugar = defs.len == 0;
-    });
-    sugar.match({
-        true  => lo.print_call(c.args, 0, name.eq("println"), Stream.Out, span),
-        false => selected.match({
+    lo.printer_at(id, name).match({
+        Ok(how) => lo.print_call(c.args, 0, how.match({ Line => true, Bare => false }), Stream.Out, span),
+        None    => selected.match({
             Ok(checked) => checked.declaration.match({
                 Ok(_) => lo.checked_invoke(id, c, checked, None, span),
                 None  => lo.construction(id, c, name, span),
@@ -111,6 +98,24 @@ named_call = (
             None        => lo.construction(id, c, name, span),
         }),
     })
+}
+
+// The std.io printer a call names: the one sema selected, or, in a body sema
+// checked under another context, the declaration the name resolves to.
+printer_at = (lo :: Lowerer, id: ExprId, name: str) Res<Printer> {
+    lo.check.printer_call(id).match({
+        Ok(how) => Ok(how),
+        None    => lo.printer_named(name),
+    })
+}
+
+printer_named = (lo :: Lowerer, name: str) Res<Printer> {
+    defs ::= lo.alloc.Vec<Def>();
+    found = lo.check.world.defs_of(lo.here().module, name, defs).match({
+        Ok(_)  => defs.get(0),
+        Err(_) => None,
+    });
+    lo.check.printer_of(found.try().id)
 }
 
 // A call without a checked function: a struct construction or a variant.

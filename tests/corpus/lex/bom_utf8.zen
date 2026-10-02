@@ -1,4 +1,9 @@
 ﻿// this file starts with a utf-8 BOM (EF BB BF) before anything else, so the
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // BOM is followed by a COMMENT rather than by code. What is printed is
 // derived from the declaration that follows, so the test cannot pass on
 // compile-survival alone.

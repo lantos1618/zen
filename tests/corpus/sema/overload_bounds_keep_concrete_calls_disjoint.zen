@@ -1,3 +1,8 @@
+Res, Ok, ToU64, ToI64, LoopHandle, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // Concrete arguments excluded by a generic bound select their own overload,
 // regardless of declaration order. Literals and explicit types keep ordinary
 // bound inference and diagnostics.

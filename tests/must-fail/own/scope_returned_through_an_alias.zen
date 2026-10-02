@@ -2,6 +2,10 @@
 // value read through either name is the same dead frame to the caller,
 // so the flag propagates one written step at declaration time.
 
+Res, Ok, Scope, IoError = std.core
+Env = std.env
+println = std.io
+
 here = () Scope {
     s = @scope;
     t = s;

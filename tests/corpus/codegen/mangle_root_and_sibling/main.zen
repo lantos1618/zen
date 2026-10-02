@@ -29,6 +29,10 @@
 
 sub_run, Sub_Box = pkg.pkg
 run, Box         = pkg.pkg_sub
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     println("fns {} {}", sub_run(), run());

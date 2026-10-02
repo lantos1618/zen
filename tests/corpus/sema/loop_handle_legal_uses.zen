@@ -9,6 +9,10 @@
 // exactly one tail per pass (3 of 4 print); a nested body breaks the
 // INNER handle without disturbing the outer's count.
 
+Res, Ok, Range = std.core
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32> {
     // h.break(v): the loop evaluates to Ok(411)
     Range(0, 100).loop((h, v) {

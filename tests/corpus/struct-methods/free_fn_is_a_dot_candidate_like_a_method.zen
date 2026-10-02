@@ -16,6 +16,11 @@
 // Breaks if: dot-candidates stop at struct-body members -- `w.double()`
 // is rejected ("no `double` on `W`") or answered by another type's body.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 W = {
     v: i32,
     half = (self: @Self) i32 { self.v / 2 }

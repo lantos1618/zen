@@ -9,6 +9,7 @@ str, String = std.text
 Emit, order = gen.gen_emit
 CBackend = gen.gen_c.gen_c_state
 c_prim, is_signed = gen.gen_c.gen_c_type
+Res, Ok, Range = std.core
 
 // The C standard this backend targets, stated in exactly one place.
 C_STANDARD* : str = "C99 (ISO/IEC 9899:1999)"

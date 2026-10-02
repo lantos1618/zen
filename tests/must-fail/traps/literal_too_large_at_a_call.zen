@@ -4,6 +4,11 @@
 // `int` literal fits every integer type — so the value was never asked
 // about, and the argument truncated to -2147483648 in silence
 
+Res, Ok = std.core
+OutOfBounds = std.collections
+Env = std.env
+println = std.io
+
 // main must name an error type. a trap never lifts into Res:
 // it aborts the process
 Error = Overflow | DivideByZero | OutOfBounds

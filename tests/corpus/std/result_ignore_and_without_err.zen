@@ -1,6 +1,11 @@
 // `ignore` says at the call site that a failure is not acted on;
 // `without_err` forgets the reason so the one-type-parameter helpers apply.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     failing: Res<u64, str> = Err("no");
     fine: Res<u64, str>    = Ok(3);

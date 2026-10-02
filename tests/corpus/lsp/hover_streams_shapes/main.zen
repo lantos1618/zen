@@ -3,6 +3,9 @@
 Alloc, AllocError = std.mem
 String, str = std.text
 hover_at = lsp.lsp_hover
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 show = (a: Alloc, label: str, declaration: str, name: str)
        Res<(), AllocError> {

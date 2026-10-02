@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError, Ptr, null_ptr = std.mem
+Env = std.env
+println = std.io
+
 Record = c.record("probe.h", "struct fixture_record", {
     value: i32,
     pointer: Ptr<u8>,

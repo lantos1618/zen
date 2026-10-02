@@ -12,7 +12,9 @@
 // \x is not one of them) -- \\ and \" among them, so the writer cannot
 // eat a backslash or a quote on the way down either.
 
-FsError = std.env
+Env, FsError = std.env
+Res, Ok, Hasher = std.core
+println = std.io
 
 main = (env: Env) Res<i32, FsError> {
     alloc ::= env.mem.alloc();

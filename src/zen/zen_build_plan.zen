@@ -7,7 +7,7 @@
 Alloc, AllocError = std.mem
 str = std.text
 Vec = std.collections
-Path = std.core
+Res, Ok, Err, None, Range, Path = std.core
 
 Ast, ExprId, Expr, Call, Access, Record, Block, Function, Try = std.ast
 Match, PatternId = std.ast

@@ -23,7 +23,8 @@ Diag, diag = std.parse.parse_diag
 scan, Source, Lexed = std.lex.lex
 Parser, module = std.parse.parse
 Checker, check_all = sema.sema
-PRELUDE = sema.sema
+CORE = sema.sema
+println = std.io
 check_module_graph = sema.sema
 Def = sema.sema
 Generation, Layout = gen.gen
@@ -179,7 +180,7 @@ Build* = {
         seen ::= self.alloc.Vec<Unit>();
         self.entry_rel = entry.rel;
         seen.add(entry).try();
-        self.seed_prelude(seen).try();
+        self.seed_core(seen).try();
         self.libraries.match({
             None        => (),
             Ok(entries) => entries.loop((unit) { seen.add(unit).try(); }),
@@ -193,26 +194,27 @@ Build* = {
         Ok(());
     }
 
-    // Probe the implicit `std.core` import. Roots without a stdlib are valid
-    // and simply have no prelude.
-    seed_prelude = (self :: @Self, seen :: Vec<Unit>) Res<(), AllocError> {
-        flat = self.dotted_path(PRELUDE, false).try();
+    // Load `std.core`, which declares the built-in types' members, into every
+    // program. It binds no name. Roots without a stdlib are valid and load
+    // nothing.
+    seed_core = (self :: @Self, seen :: Vec<Unit>) Res<(), AllocError> {
+        flat = self.dotted_path(CORE, false).try();
         self.exists(flat).match({
             true  => self.queue(flat, seen),
-            false => self.seed_prelude_folder(seen),
+            false => self.seed_core_folder(seen),
         })
     }
 
-    seed_prelude_folder = (self :: @Self, seen :: Vec<Unit>)
-                          Res<(), AllocError> {
-        nest = self.dotted_path(PRELUDE, true).try();
+    seed_core_folder = (self :: @Self, seen :: Vec<Unit>)
+                       Res<(), AllocError> {
+        nest = self.dotted_path(CORE, true).try();
         self.exists(nest).match({
             true  => self.queue(nest, seen),
             false => Ok(()),
         })
     }
 
-    // Resolve the prelude's dotted constant without an import AST node.
+    // Resolve std.core's dotted path without an import AST node.
     dotted_path = (self: @Self, dotted: str, folder: bool)
                   Res<str, AllocError> {
         base = self.std_base();

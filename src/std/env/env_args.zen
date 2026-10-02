@@ -17,7 +17,8 @@
 
 str = std.text
 Vec = std.collections
-Range = std.core
+Res, Ok, Err, None, Range = std.core
+Env = std.env
 
 // Two faces and no third: a required field was absent, or it was there
 // and did not parse as its type. The payload is the field name.

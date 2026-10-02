@@ -33,6 +33,9 @@ Alloc, AllocError = std.mem
 Server, serve = lsp.lsp_serve
 write_frame, frame_at = lsp.lsp_frame
 write_text = std.json
+Res, Ok, loop = std.core
+Env = std.env
+println = std.io
 
 // THE BUFFER, not the file on disk: one good import, one name nobody
 // bound. `Bag` sits at line 2, characters 21-23.

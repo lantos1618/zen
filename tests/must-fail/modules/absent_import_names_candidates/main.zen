@@ -16,6 +16,9 @@
 // must not blur that.
 
 Thing = nope.deep
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
 
 main = (env: Env) Res<i32, AllocError> {
     Ok(0);

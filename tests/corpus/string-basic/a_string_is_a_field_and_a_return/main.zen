@@ -20,6 +20,12 @@
 // The len()s are printed beside every view: a truncated copy that
 // still prints would disagree with its own count.
 
+Res, Ok, WriteError = std.core
+Alloc, AllocError = std.mem
+String = std.text
+Env = std.env
+println = std.io
+
 Error = AllocError | WriteError
 
 Tag = {

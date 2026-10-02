@@ -1,3 +1,8 @@
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // `\v` and `\f` are in the escape set, and each carries the byte a C
 // programmer expects: vertical tab is 11, form feed is 12. Before they
 // were spellable, std.core.byte.is_space had to write those two as bare

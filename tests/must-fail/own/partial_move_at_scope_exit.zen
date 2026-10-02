@@ -5,6 +5,10 @@
 // to drop. the fix is to move the whole value or none of it, so the
 // diagnostic points at the binding that is about to be dropped.
 
+Res, Ok, Drop, IoError = std.core
+Env = std.env
+println = std.io
+
 Buf = {
     id: i32,
 }

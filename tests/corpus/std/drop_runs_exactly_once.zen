@@ -4,6 +4,11 @@
 // drop change the count. drop is where an arena would release
 // pages, so twice is a real double free
 
+Res, Ok, Drop = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Noisy = {
     id: i32,
     env: Env,   // drop prints, and printing needs an Env in scope

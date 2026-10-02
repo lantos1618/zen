@@ -16,9 +16,10 @@
 // one machine, compiler and input distribution, not a proof. Run it pinned
 // to an otherwise idle core; tools/ct/timing does.
 Alloc, AllocError, Ptr = std.mem
-Rng = std.core
+Res, Ok, Rng, loop, Range = std.core
 sqrt = std.math
 to_i32, to_f64, truncate_u8 = std.core.num
+Env = std.env
 
 // The operation under test.
 Probe* = {

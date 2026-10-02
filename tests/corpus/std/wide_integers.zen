@@ -2,6 +2,7 @@ bit_or, bit_and, bit_xor, shift_left, shift_right = std.core.num
 rotate_left, rotate_right, mul_wide = std.core.num
 truncate_u8, truncate_u16, truncate_u32, truncate_u64 = std.core.num
 to_u128, to_u64 = std.core.num
+println = std.io
 
 once = (calls :: i32, value: u64) u64 {
     calls = calls + 1;

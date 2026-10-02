@@ -2,7 +2,9 @@
 // reason through the generated error-tag chain. An ordinal mismatch can
 // silently turn it into another FsError variant.
 
-FsError = std.env
+Env, FsError = std.env
+Res, Ok = std.core
+println = std.io
 
 main = (env: Env) Res<i32, FsError> {
     got ::= env.fs.lock("no/such/dir/x.lock");

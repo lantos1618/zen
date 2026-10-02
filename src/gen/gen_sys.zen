@@ -8,6 +8,7 @@
 // every target: Darwin wrappers translate libSystem's `-1` plus `errno` into
 // that form, so code above this layer never inspects an OS-specific errno.
 str = std.text
+Res, Ok, None = std.core
 
 Sys* = Read
     | Write

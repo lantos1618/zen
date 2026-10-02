@@ -7,6 +7,10 @@
 // `n` is a `::` field, so field mutability is not what is wrong here.
 // the caller below is a `::` binding, so the call site is not either.
 
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
+
 Counter = {
     n :: i32,
 

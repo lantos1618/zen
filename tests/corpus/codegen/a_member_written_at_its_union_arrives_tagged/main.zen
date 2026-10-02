@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // A MEMBER written where its UNION is declared arrives TAGGED AS THE
 // MEMBER -- at the declared set's own type, through every door a value
 // goes through: a binding, an argument, a return, a field.

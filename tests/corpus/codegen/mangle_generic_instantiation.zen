@@ -17,6 +17,11 @@
 // separator, or a reserved prefix no user name can start with — pick one
 // and the whole class is closed. Pick none and this file is the bug report.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Pair<A, B> = {
     first: A,
     second: B

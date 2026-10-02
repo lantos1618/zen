@@ -1,6 +1,6 @@
 // STD'S `Sink` HAS EXACTLY ONE IMPLEMENTOR IN THE TREE: `String`
 // (`text_string.zen:77`). Every Display test writes into that one, or
-// into the Console the prelude hands `println`, and the only other
+// into the Console std.io's `println` writes to, and the only other
 // `impl(Sink, ..)` anywhere is `corpus/parse/fn_returning_unit_at_
 // module_level`, whose `Sink` is a struct of its own that happens to
 // share the name. So the claim io.zen makes — "a sink is anything
@@ -35,6 +35,10 @@
 //   `write_byte` are each proved to reach the impl at all — a
 //   dispatch that fell back to String's impl would not move these
 //   counters.
+
+Res, Ok, Display, WriteError, Sink = std.core
+Env = std.env
+println = std.io
 
 Tag = {
     ch: u8,

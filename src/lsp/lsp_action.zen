@@ -1,4 +1,4 @@
-// Writes auto-import quick fixes for undefined module-level names.
+// Writes auto-import quick fixes for undefined and unimported names.
 
 str, String = std.text
 Vec = std.collections
@@ -83,9 +83,20 @@ Fixes = {
             false => written(),
             true  => d.fault.match({
                 UndefinedName(nf) => self.offer_name(nf.name),
+                NotImported(ef)   => self.offer_import(ef.name, ef.module),
                 _                 => written(),
             }),
         })
+    }
+
+    // The import a missing-import diagnostic names.
+    offer_import = (self :: @Self, name: str, module: str)
+                   Res<(), AllocError> {
+        self.found.find((a) { a.name.eq(name) && a.module.eq(module) })
+            .match({
+                Ok(_) => written(),
+                None  => self.found.add(Action(name: name, module: module)),
+            })
     }
 
     offer_name = (self :: @Self, name: str) Res<(), AllocError> {

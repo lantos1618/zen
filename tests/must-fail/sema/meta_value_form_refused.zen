@@ -13,6 +13,11 @@
 // to remove without blaming an otherwise valid operand.
 // The expected source position is therefore line 20, column 19.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Point = { x: i64, y: i64 }
 
 main = (env: Env) Res<i32, AllocError> {

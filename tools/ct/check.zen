@@ -13,6 +13,10 @@
 Vec = std.collections
 str = std.text
 Audit, run_audit = audit
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+Env = std.env
+println, print = std.io
 
 // Run argv; true when it exits 0. Output is shown only on failure.
 run = (env: Env, a: Alloc, words: Vec<str>) bool {

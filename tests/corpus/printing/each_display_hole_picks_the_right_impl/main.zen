@@ -22,6 +22,11 @@
 // writers by type: 2^63 must survive the inner signed/unsigned choice
 // mid-sentence.
 
+Res, Ok, Display, IoError, WriteError, Sink = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Error = AllocError | IoError
 
 Point = {

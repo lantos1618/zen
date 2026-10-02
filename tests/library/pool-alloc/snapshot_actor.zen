@@ -1,4 +1,8 @@
-Pool, PoolStats = std.mem
+AllocError, Pool, PoolStats = std.mem
+Res, Ok = std.core
+Env = std.env
+Actor, ActorError, ActorStartError, Context = std.actor
+println = std.io
 Native = c.bind("stdlib.h", { abort* = () () })
 Reader = { received :: bool = false }
 Reader.impl(Actor, {

@@ -1,6 +1,10 @@
 // a postfix field access binds tighter than prefix `-`: -p.x is
 // -(p.x). the other reading, (-p).x, does not type-check.
 
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 Point = {
     x: i32,
     y: i32,

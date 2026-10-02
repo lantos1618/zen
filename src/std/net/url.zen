@@ -2,7 +2,7 @@
 // allocates nothing; protocols map Invalid into their own error set.
 
 str = std.text
-Res, ok_or = std.core
+Res, Ok, ok_or = std.core
 
 UrlError* = | Invalid
 

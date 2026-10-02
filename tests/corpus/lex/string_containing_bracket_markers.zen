@@ -1,3 +1,7 @@
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 // a bracket inside a literal is not a bracket -- the sibling of
 // `string_containing_comment_markers`, for the other thing an editor
 // decides before it has read a single token. `line.add(");")`

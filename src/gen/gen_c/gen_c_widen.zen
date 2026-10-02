@@ -16,6 +16,7 @@ carrier, wrap_error = gen.gen_c.gen_c_try
 ctype = gen.gen_c.gen_c_type
 sym_union_variant, sym_union_member = gen.gen_name
 has_var = sema.sema_inst
+Res, Ok = std.core
 
 // Whether the value has to be rebuilt to reach the `Res` that is wanted.
 needs_widen* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)

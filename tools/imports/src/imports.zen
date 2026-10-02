@@ -1,0 +1,241 @@
+// zen-imports: add the import lines a module needs for the standard names it
+// uses. Nothing is implicit in Zen, so a module that names `Res`, `Vec`,
+// `Env` or `println` imports it; this tool asks the compiler which imports
+// are missing and writes them.
+//
+//   zen-imports --zen ZEN --std DIR --list FILE [--root DIR] [--stage DIR]
+//               [--write]
+//
+// FILE lists one source path per line. Each path is checked with
+// `ZEN check ROOT --entry PATH --std DIR`, and every `missing import`
+// diagnostic becomes an import in the file it names: joined to an import
+// from the same module among those that open the file, or on a new line per
+// module (see imports_edit). ZEN_EXPLICIT_IMPORTS is set for the check so
+// that a compiler from before the prelude was removed reports the same
+// diagnostics; later compilers ignore it. Without `--root`, each path is its
+// own root: it is checked from its own directory and only that file is
+// edited; it is checked in a stage that also links the top-level modules
+// of the --std directory, as the test runner stages a test. With `--root`,
+// paths are entries under ROOT and any file under ROOT the compiler
+// reports is edited.
+//
+// When an edited file is a tests/must-fail program, the positions in its
+// `.expected` that sit below the inserted lines move down with them.
+//
+// Without `--write` the tool only prints what it would add. Run it again
+// until it reports nothing: a file whose imports were missing can hide
+// another file's from the compiler.
+//
+// Exit status: 0 nothing (more) to add, 1 imports were added or would be,
+// 2 the run could not be carried out.
+Res, Ok, Err, None = std.core
+Alloc, AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+Env = std.env
+println = std.io
+Missing, missing_in = imports_report
+insert_imports, Edited, EditError = imports_edit
+shift_positions = imports_expected
+
+Cli = {
+    zen:      str,
+    std:      str,
+    list:     str,
+    root ::   str  = "",
+    stage ::  str  = "build/zen-imports-stage",
+    write ::  bool = false,
+}
+
+USAGE: str = "usage: zen-imports --zen ZEN --std DIR --list FILE [--root DIR] [--stage DIR] [--write]"
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    env.args<Cli>().match({
+        Ok(cli) => run(env, a, cli),
+        Err(_)  => { println("{}", USAGE); Ok(2) },
+    })
+}
+
+run = (env: Env, a: Alloc, cli: Cli) Res<i32, AllocError> {
+    env.fs.read(a, cli.list).match({
+        Err(_)   => { println("zen-imports: cannot read {}", cli.list); Ok(2) },
+        Ok(list) => {
+            found ::= a.Vec<Missing>();
+            list.view().lines().loop((line) {
+                line.trim().match({
+                    None     => (),
+                    Ok(path) => check(env, a, cli, path, found).try(),
+                });
+            });
+            apply(env, a, cli, found)
+        },
+    })
+}
+
+// Check one entry and keep what it reports for the files this run edits,
+// each missing name once per file.
+check = (env: Env, a: Alloc, cli: Cli, path: str, found :: Vec<Missing>)
+        Res<(), AllocError> {
+    root    = cli.root.is_empty().match({ true => dir_of(
+        path
+    ), false => cli.root });
+    entry   = cli.root.is_empty().match({ true => base_of(
+        path
+    ), false => path });
+    checked = cli.root.is_empty().match({
+        true  => staged(env, a, cli, root).try(),
+        false => root,
+    });
+    cmd ::= a.String().try();
+    cmd.fmt(
+        "ZEN_EXPLICIT_IMPORTS=1 '{}' check '{}' --entry '{}' --std '{}'",
+        cli.zen,
+        checked,
+        entry,
+        cli.std
+    ).try();
+    env.proc.run(a, "", cmd.view()).match({
+        Err(_)  => { println("zen-imports: cannot run {}", cli.zen); },
+        Ok(got) => got.out.view().lines().loop((line) {
+            missing_in(line).match({
+                None  => (),
+                Ok(m) => keep(a, cli, root, entry, m, found).try(),
+            });
+        }),
+    });
+    Ok(())
+}
+
+// A file checked on its own is checked the way the test runner stages it:
+// its directory's entries beside the top-level modules of the --std
+// directory (`std`, and in the compiler's tree `sema`, `gen` and the rest),
+// so an import of `sema.sema_check` resolves and the code that uses it is
+// checked too. The stage, `--stage`, is a directory of symbolic links rebuilt
+// for every file; runs in parallel need one each.
+staged = (env: Env, a: Alloc, cli: Cli, dir: str) Res<str, AllocError> {
+    cwd = env.fs.cwd(a).match({ Ok(c) => c.view(), Err(_) => "." });
+    stage ::= a.String().try();
+    absolute(cwd, cli.stage, stage).try();
+    from ::= a.String().try();
+    absolute(cwd, dir, from).try();
+    modules ::= a.String().try();
+    absolute(cwd, cli.std, modules).try();
+    at   = stage.view();
+    here = from.view();
+    mods = modules.view();
+    cmd ::= a.String().try();
+    cmd.fmt(
+        "rm -rf '{at}' && mkdir -p '{at}' && for f in '{here}'/*; do ln -s \"$f\" '{at}'/; done && for m in '{mods}'/*; do [ -e '{at}'/\"$(basename \"$m\")\" ] || ln -s \"$m\" '{at}'/; done"
+    ).try();
+    env.proc.run(a, "", cmd.view()).match({
+        Ok(_)  => (),
+        Err(_) => { println("zen-imports: cannot stage {}", dir); },
+    });
+    Ok(stage.view())
+}
+
+absolute = (cwd: str, path: str, out :: String) Res<(), AllocError> {
+    path.starts_with("/").match({
+        true  => out.add(path),
+        false => out.fmt("{}/{}", cwd, path),
+    })
+}
+
+keep = (
+    a     : Alloc,
+    cli   : Cli,
+    root  : str,
+    entry : str,
+    m     : Missing,
+    found :: Vec<Missing>
+) Res<(), AllocError> {
+    // A standard-library path is only this run's to edit when the library
+    // is the root being migrated.
+    mine = cli.root.is_empty().match({
+        true  => m.file.eq(entry),
+        false => !m.file.starts_with("std/") || cli.root.eq(cli.std),
+    });
+    file ::= a.String().try();
+    file.fmt("{}/{}", root, m.file).try();
+    seen = found.find((f) { f.file.eq(file.view()) && f.name.eq(m.name) })
+        .match({ Ok(_) => true, None => false });
+    (mine && !seen).match({
+        false => Ok(()),
+        true  => found.add(Missing(
+            file: file.view(),
+            name: m.name,
+            module: m.module
+        )),
+    })
+}
+
+apply = (env: Env, a: Alloc, cli: Cli, found: Vec<Missing>)
+        Res<i32, AllocError> {
+    files ::= a.Vec<str>();
+    found.loop((m) {
+        m.file.is_in(files).match({ true => (), false => files.add(m.file).try() });
+    });
+    failed ::= false;
+    files.loop((file) {
+        wanted ::= a.Vec<Missing>();
+        found.loop((m) { m.file.eq(file).then(() { wanted.add(m).try(); }); });
+        report(file, wanted);
+        cli.write.then(() {
+            rewrite(env, a, file, wanted).try().match({
+                true  => (),
+                false => { failed = true; },
+            });
+        });
+    });
+    println("zen-imports: {} file(s), {} name(s)", files.len, found.len);
+    Ok(failed.match({
+        true  => 2,
+        false => (files.len > 0).match({ true => 1, false => 0 }),
+    }))
+}
+
+report = (file: str, wanted: Vec<Missing>) {
+    wanted.loop((m) { println("{}: {} = {}", file, m.name, m.module); });
+}
+
+// Write `file` with its imports added; false when it could not be edited.
+rewrite = (env: Env, a: Alloc, file: str, wanted: Vec<Missing>)
+          Res<bool, AllocError> {
+    env.fs.read(a, file).match({
+        Err(_)   => { println("zen-imports: cannot read {}", file); Ok(false) },
+        Ok(text) => insert_imports(a, file, text.view(), wanted).match({
+            Err(e)     => {
+                println("zen-imports: {}: {}", file, edit_message(e));
+                Ok(false)
+            },
+            Ok(edited) => save(env, a, file, edited),
+        }),
+    })
+}
+
+save = (env: Env, a: Alloc, file: str, edited: Edited) Res<bool, AllocError> {
+    env.fs.write(file, edited.text.view()).match({
+        Err(_) => { println("zen-imports: cannot write {}", file); Ok(false) },
+        Ok(_)  => {
+            shift_positions(env, a, file, edited.shifts).try();
+            Ok(true)
+        },
+    })
+}
+
+edit_message = (e: EditError) str {
+    e.match({
+        Unparsed      => "does not parse, so it was left unchanged",
+        NoDeclaration => "declares nothing, so there is nowhere to import into",
+        OutOfMemory   => "out of memory",
+    })
+}
+
+dir_of = (path: str) str {
+    path.rfind('/').match({ Ok(i) => path.slice(0, i), None => "." })
+}
+
+base_of = (path: str) str {
+    path.rfind('/').match({ Ok(i) => path.slice(i + 1, path.len), None => path })
+}

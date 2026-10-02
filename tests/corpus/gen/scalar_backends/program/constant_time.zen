@@ -1,6 +1,7 @@
 // std.ct masks and value barriers: JavaScript makes no timing promise and
 // the scalar assembly path lowers no barrier, so both must refuse.
 ct_eq = std.ct
+println = std.io
 
 main = () {
     word: u32 = 7;

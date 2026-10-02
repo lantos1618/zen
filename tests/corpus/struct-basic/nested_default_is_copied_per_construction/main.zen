@@ -16,6 +16,11 @@
 // a copy made at read time). Only per-construction defaults give
 // `9 8 1 1`.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Pos = {
     x :: i64 = 1,
     y :: i64 = 2,

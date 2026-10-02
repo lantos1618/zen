@@ -2,6 +2,11 @@
 // each call is answered by the receiver's own -- a Vec index is a
 // usize, a Map key is whatever K is, and the two never meet.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
 

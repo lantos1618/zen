@@ -1,6 +1,8 @@
-bare sees Vec: 1 std.core.Vec
+bare sees Vec: 0
+own sees Vec: 1 std.core.Vec
+bare sees i32: 1 std.core.i32
+bare sees a reported Vec: 1 std.core.Vec
 bare sees Gadget: 0
-bare sees Scratch: 0
 own sees Gadget: 1 other.Gadget
 own sees Widget: 1 own.Widget
 other sees Widget: 1 other.Widget

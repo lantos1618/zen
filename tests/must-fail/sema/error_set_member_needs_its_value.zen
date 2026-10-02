@@ -6,6 +6,11 @@
 //
 // position: the member access.
 
+Res, Ok, Err, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Error = AllocError | IoError
 
 fails = () Res<i32, Error> {

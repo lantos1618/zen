@@ -6,6 +6,10 @@
 // U+00E9 must produce exactly the 2 bytes that make len 6 possible.
 String = std.text.text_string
 Utf8Error, push_utf8, count_codepoints = std.text.text_utf8
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 Error = Utf8Error | AllocError
 

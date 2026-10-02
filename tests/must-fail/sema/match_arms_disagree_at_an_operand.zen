@@ -1,3 +1,7 @@
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 // MUST FAIL: two arms of a `.match` disagree, and the match is an
 // OPERAND of `+`.
 //

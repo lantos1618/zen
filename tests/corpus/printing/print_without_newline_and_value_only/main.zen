@@ -1,5 +1,5 @@
 // tests/corpus/printing/print_without_newline_and_value_only/main.zen
-// The prelude has exactly TWO console spellings (`is_print`): `println`
+// std.io has exactly TWO printers: `println`
 // appends one `\n`, `print` appends none — and a call whose first
 // argument is NOT a string literal has no format at all, so every
 // argument is "just a value" written back to back with no separators.
@@ -15,6 +15,11 @@
 //
 // The mixed middle rows show the two doors interleaving: `print` ends a
 // line mid-sentence and the next call's literal continues it.
+
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println, print = std.io
 
 Error = AllocError | IoError
 

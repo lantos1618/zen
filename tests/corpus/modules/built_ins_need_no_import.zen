@@ -1,0 +1,10 @@
+// A program that imports nothing. The primitive types, their members, the
+// literals, `.match` and `main` are the language; everything else in std is
+// imported. A primitive's members — `i32.MAX`, `str.len` — travel with it.
+
+main = () i32 {
+    s    = "abcd";
+    wide = (i32.MAX > 1000000).match({ true => 1, false => 0 });
+    four = (s.len == 4).match({ true => 2, false => 0 });
+    wide + four
+}

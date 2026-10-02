@@ -8,6 +8,12 @@
 //
 // position: the `vararg` in the field's type.
 
+Res, Ok = std.core
+AllocError = std.mem
+vararg = std.collections
+Env = std.env
+println = std.io
+
 Bag = {
     held: vararg<i32>,
 }

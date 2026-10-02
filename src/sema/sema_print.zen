@@ -1,0 +1,68 @@
+// Standard output primitives: `std.io.println` and `std.io.print`.
+//
+// They are ordinary imported declarations whose bodies the compiler supplies.
+// Only a validated bodyless declaration in `std.io` acquires the operation,
+// and backends consume the recorded `Printer` by declaration identity, never
+// by a callee's spelling: a module that imports some other `println` calls
+// that function.
+Function = std.ast
+AllocError = std.mem
+str = std.text
+Checker, Ctx = sema.sema_check
+Def = sema.sema_def
+param_type, ret_type = sema.sema_denote
+SemaFault, NameFault = sema.sema_diag
+Res, Ok, None = std.core
+
+// The module that declares the printers. A missing-import diagnostic for
+// either name points here.
+IO_MODULE*: str = "std.io"
+
+// `Line` writes a newline after its arguments; `Bare` does not.
+Printer* = Line | Bare
+
+printer_named* = (name: str) Res<Printer> {
+    name.match({
+        "println" => Ok(Printer.Line),
+        "print"   => Ok(Printer.Bare),
+        _         => None,
+    })
+}
+
+// Every bodyless declaration in std.io must be one of the two printers,
+// exported, taking only `args: ...` and answering `()`.
+printer_signature* = (c :: Checker, d: Def, f: Function)
+                     Res<(), AllocError> {
+    printer_named(f.name.text).match({
+        None    => c.invalid_printer(d),
+        Ok(how) => c.printer_shape(d, f).try().match({
+            false => c.invalid_printer(d),
+            true  => c.printers.set(d.id, how),
+        }),
+    })
+}
+
+printer_shape = (c :: Checker, d: Def, f: Function) Res<bool, AllocError> {
+    ctx  = Ctx(d.id.module.to_usize(), c.types.unknown().try());
+    only = f.params.get(0).match({
+        None    => false,
+        Ok(arg) => !arg.mutable && f.params.len == 1,
+    });
+    (only && f.exported && f.tparams.len == 0).match({
+        false => Ok(false),
+        true  => {
+            arg    = f.params.get(0).ok_or(AllocError.OutOfMemory).try();
+            pack   = c.param_type(arg, ctx).try();
+            result = c.ret_type(f, ctx).try();
+            Ok(c.prim_name(pack).eq("...") && c.prim_name(result).eq("()"))
+        },
+    })
+}
+
+invalid_printer = (c :: Checker, d: Def) Res<(), AllocError> {
+    c.report(
+        d.span.file,
+        d.span,
+        SemaFault.InvalidPrinter(NameFault(name: d.name))
+    )
+}

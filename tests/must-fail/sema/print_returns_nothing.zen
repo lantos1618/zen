@@ -1,0 +1,18 @@
+// std.io's `println` answers `()`. So a body that ends in one returns
+// NOTHING, and nothing does not close a function that promised an `i32`.
+// The declaration says so; a print typed as poison would agree with every
+// return type and make this program legal.
+//
+// WITHOUT THE CLOSING `;`, ON PURPOSE. A `;`-terminated last statement
+// that yields nothing is a statement, and `println("done");` stays
+// legal wherever it stands. The `;` is the whole difference between a
+// print and a return.
+//
+// position: the tail expression.
+
+Env = std.env
+println = std.io
+
+main = (env: Env) i32 {
+    println("x")
+}

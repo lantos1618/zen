@@ -7,6 +7,10 @@
 // some printed number moves off 223 or 224.
 String = std.text.text_string
 Utf8Error, push_utf8 = std.text.text_utf8
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 push = (v: u32, out :: String) Res<(), AllocError> {
     out.push_utf8(v).match({

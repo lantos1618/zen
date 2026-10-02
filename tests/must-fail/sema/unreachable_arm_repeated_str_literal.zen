@@ -1,5 +1,10 @@
 // A string literal named twice: the second arm never runs.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 greet = (s: str) i32 {
     s.match({
         "hello" => 1,

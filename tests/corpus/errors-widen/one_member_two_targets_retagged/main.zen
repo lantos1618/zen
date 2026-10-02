@@ -8,6 +8,11 @@
 // Mid orders [Narrow, Other], Wide3 orders [Other, Big, Narrow], and the
 // Err arm of each read names the member that arrived.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Narrow = | Nope
 Other  = | Also
 Big    = | Boom

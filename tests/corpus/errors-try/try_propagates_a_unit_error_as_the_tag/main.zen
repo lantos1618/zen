@@ -1,3 +1,7 @@
+Res, Ok, Err = std.core
+Env = std.env
+println = std.io
+
 // A unit error has no C payload member, so `.try()` propagates only its tag.
 maybe = (b: bool) Res<i32, ()> {
     b.match({

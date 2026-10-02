@@ -3,6 +3,10 @@
 // .try() carries it out of the frame. this is the guard clause,
 // written without a conditional
 
+Res, Ok = std.core
+Env = std.env
+println = std.io
+
 GuardError = | NotPositive
 
 checked_double = (n: i32) Res<i32, GuardError> {

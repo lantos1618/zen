@@ -8,6 +8,11 @@
 // arm regardless of the tag would still print "red" twice and only this
 // line would catch it.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Colour = Red | Green | Blue
 
 name = (c: Colour) str {

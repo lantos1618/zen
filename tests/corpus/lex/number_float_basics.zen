@@ -1,3 +1,8 @@
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // float literals. printed via comparison, because DESIGN.md does not
 // say how many digits {} produces for an f64.
 Error = AllocError | IoError

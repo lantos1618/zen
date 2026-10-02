@@ -18,6 +18,8 @@ shift_ahead = std.parse.parse_lookahead
 pattern = std.parse.parse_pattern
 block, body_block = std.parse.parse_stmt
 record_body, params_list, type_params = std.parse.parse_member
+Res, Ok, None = std.core
+Vec = std.collections
 
 // `consume` has the lowest binding strength: `consume a + b` moves the sum.
 // Every nested expression may use `|` again, even inside a discriminant.

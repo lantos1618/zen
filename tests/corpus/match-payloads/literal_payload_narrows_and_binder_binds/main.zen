@@ -11,6 +11,11 @@
 // luck everywhere else. And the scrutinee built INLINE (`Ok(3).match`)
 // must behave as the bound one does: same lowering, no special path.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     r: Res<i64> = Ok(4);
     r.match({

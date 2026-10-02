@@ -1,6 +1,11 @@
 // Formatted text, raw strings, and raw bytes append to one buffer in order.
 // Formatting after raw writes must preserve the prefix and count every byte.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
     sb    ::= alloc.String().try();

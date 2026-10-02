@@ -25,6 +25,11 @@
 // name — a zero-extended 3000000000, not the negative number a
 // signed intermediate would have minted.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 takes_sz = (m: usize) usize { m }
 
 main = (env: Env) Res<i32, AllocError> {

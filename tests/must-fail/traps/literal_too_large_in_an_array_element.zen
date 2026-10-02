@@ -1,3 +1,8 @@
+Res, Ok = std.core
+OutOfBounds = std.collections
+Env = std.env
+println = std.io
+
 // tests/must-fail/traps/literal_too_large_in_an_array_element.zen
 // AN ELEMENT IS A LITERAL'S POSITION TOO. `[u8, 3]` is what says the
 // elements are `u8`, and `assignable` lets an `int` literal reach every

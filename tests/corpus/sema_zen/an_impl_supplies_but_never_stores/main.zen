@@ -42,6 +42,9 @@ ExprId, TypeId, BlockId = std.ast.ast_id
 Alloc, AllocError = std.mem
 Vec = std.collections
 str, String = std.text
+Res, Ok, None = std.core
+Env = std.env
+println = std.io
 
 at_line = (line: usize) Span {
     Span(
@@ -493,9 +496,11 @@ main = (env: Env) Res<i32, AllocError> {
     // `p.x = e` has to fit the storage, so the storage's type must be
     // asked for — and this fixture's `width` has two suppliers with no
     // bound in scope, which is an error at every node that names it. The
-    // read at `t.width` above is a DIFFERENT node from this target, and
-    // the type memo is per-node, so each reports once. The computed-field
-    // rule is still the last thing said, and it is what this case is for.
+    // target is a different node from the read at `t.width` above, but
+    // this fixture gives every node the same position, so its ambiguity
+    // is the diagnostic already reported and is not repeated. The
+    // computed-field rule is the one new thing said, and it is what this
+    // case is for.
     before3 = c.diag_count();
     c.block_type(assign_block, ctx).try();
     c.asked(alloc, "t.width = 2", before3).try();

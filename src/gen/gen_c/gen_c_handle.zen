@@ -19,6 +19,7 @@ expr = gen.gen_c.gen_c_expr
 bare_name = gen.gen_c.gen_c_stmt
 write_label = gen.gen_c.gen_c_loop
 unwind_to = gen.gen_c.gen_c_own
+Res, Ok = std.core
 
 // the two verbs — the same jump `.try()` is, one frame down
 

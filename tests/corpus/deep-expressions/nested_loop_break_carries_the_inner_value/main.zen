@@ -16,6 +16,11 @@
 // 104 (lost the outer n*10), 120 (lost the inner n*2), 40 (outer ran
 // to completion after the inner break), 77 (took the None arm), 0.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     broke_with ::= Range(1, 5).loop((h, n) {
         (n == 2).then(() {

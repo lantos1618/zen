@@ -1,6 +1,11 @@
 // Declaration-internal type variables remain open until instantiation, while
 // a concrete argument equal to its bound is immediately provable.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Shape = { width: i32 }
 Box<T: Shape> = { value: T }
 Maybe<T: Shape> = Some(T) | None

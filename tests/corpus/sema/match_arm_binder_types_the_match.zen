@@ -6,6 +6,13 @@
 // the sibling arm produces nothing, and nothing does not become a
 // Res: this match is written in statement position for its effect.
 
+Res, Ok = std.core
+AllocError = std.mem
+Vec = std.collections
+String = std.text
+Env = std.env
+println = std.io
+
 Diag = { code*: i32 }
 
 render = (d: Diag, out :: String) Res<(), AllocError> {

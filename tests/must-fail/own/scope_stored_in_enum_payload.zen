@@ -2,6 +2,9 @@
 // constructor, not a struct construction, so the old decl_is_struct gate
 // never saw it and the block left the frame inside an enum payload.
 
+Res, Ok, Scope, IoError = std.core
+Env = std.env
+
 Box = Held(Scope) | Empty
 
 here = () Box {

@@ -3,6 +3,10 @@
 // Res<i32, E> function exactly as `Ok(n * 2);` does. only success
 // lifts - the Err below is written out, and always will be
 
+Res, Ok, Err = std.core
+Env = std.env
+println = std.io
+
 CalcError = | Negative
 
 // closes with a bare i32 on one path and an explicit Err on the

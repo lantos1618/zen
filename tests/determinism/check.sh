@@ -25,10 +25,9 @@
 # strongest property in the plan sat behind a gate that exited 2 on its
 # first line and had, on the day this was fixed, never run once.
 #
-# THE FIXTURE IS STAGED, not compiled where it sits. A Zen program stands on
-# the prelude -- `Env`, `Res`, `Ok` and `println` are `std.core` names that
-# no module imports -- and the driver looks for `std/` beneath the root it
-# was given. So each tree this script compiles is a fresh directory holding
+# THE FIXTURE IS STAGED, not compiled where it sits. A Zen program imports
+# from std -- `Env`, `Res`, `Ok` and `println` among others -- and the driver
+# looks for `std/` beneath the root it was given. So each tree this script compiles is a fresh directory holding
 # the fixture and a copy of `src/std`, which is exactly what `tests/run.py`
 # does for every corpus test and for the same reason.
 
@@ -89,13 +88,13 @@ files=$(find "$fixture" -type f -name '*.zen' | LC_ALL=C sort)
 nfiles=$(printf '%s\n' "$files" | wc -l | tr -d ' ')
 [ "$nfiles" -ge 4 ] || die "fixture has $nfiles module(s); the walk check needs at least 4"
 
-# The prelude the fixture stands on. Missing it is a setup error and not a
-# skip: compiling the fixture without it fails on `Env` in the first line of
-# main.zen and says nothing at all about determinism.
-prelude=$root/src/std
-[ -d "$prelude" ] || die "missing prelude: $prelude
-     Every Zen program stands on std.core, and the driver looks for it
-     beneath the root it is given. Nothing can be compiled without it."
+# The standard library the fixture imports from. Missing it is a setup error
+# and not a skip: compiling the fixture without it fails on its first import
+# and says nothing at all about determinism.
+stdlib=$root/src/std
+[ -d "$stdlib" ] || die "missing standard library: $stdlib
+     Every Zen program loads std.core, and the driver looks for it beneath
+     the root it is given. Nothing can be compiled without it."
 
 work=${TMPDIR:-/tmp}/zen-determinism.$$
 mkdir -p "$work" || die "cannot create work directory $work"
@@ -115,11 +114,12 @@ printf '%s: fixture %s (%s modules)\n' "$progname" "$fixture" "$nfiles"
 
 # ------------------------------------------------------------- emitting
 
-# stage <dir> -- a compilable root: the fixture, and the prelude under it.
+# stage <dir> -- a compilable root: the fixture, and the standard library
+# under it.
 stage() {
     mkdir -p "$1" || die "cannot create $1"
     cp -R "$fixture/." "$1/" || die "cannot copy the fixture into $1"
-    cp -R "$prelude" "$1/std" || die "cannot copy the prelude into $1"
+    cp -R "$stdlib" "$1/std" || die "cannot copy the standard library into $1"
 }
 
 # emit <out> <root> [extra flags...]

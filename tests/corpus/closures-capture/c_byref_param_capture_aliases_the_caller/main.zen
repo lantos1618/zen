@@ -15,6 +15,10 @@
 // of this rule (a plain binding snapshots); this pins the `::` half, and
 // the pair together are what "captures keep their kind" means.
 
+Res, Ok, Scope, IoError = std.core
+Env = std.env
+println = std.io
+
 adder = (s: Scope, total :: i64) {
     s.defer(() {
         total = total + 2500;

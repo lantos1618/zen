@@ -10,6 +10,10 @@
 // value was born (first). a backend that tracked drops by value identity
 // instead of by live binding would print 3, 2, then 1 last.
 
+Res, Ok, Drop, IoError = std.core
+Env = std.env
+println = std.io
+
 Noisy = {
     env: Env,
     id: i32,

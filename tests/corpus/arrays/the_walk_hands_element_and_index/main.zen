@@ -10,6 +10,11 @@
 //
 // The explicit usize element type keeps index arithmetic homogeneous.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     xs = [usize, 4](10, 20, 30, 40);
     total :: usize = 0;

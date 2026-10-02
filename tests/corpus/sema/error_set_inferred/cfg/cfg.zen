@@ -5,6 +5,8 @@
 //               inferred -- the inference-order case TESTING.md names
 //   read_cfg*   exported, so the set is written out
 
+Res, Ok, Err = std.core
+
 CfgError* = Missing | Bad
 
 read_num = (s: str) Res<i32, _> {

@@ -1,6 +1,11 @@
 // tests/corpus/string-basic/a_string_grows_through_three_reallocs/main.zen
 // Exercise every growth boundary and verify bytes survive realloc.
 
+Res, Ok, Range, WriteError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Error = AllocError | WriteError
 
 main = (env: Env) Res<i32, Error> {

@@ -4,6 +4,8 @@ Alloc, AllocError = std.mem
 str, String = std.text
 Vec, vararg = std.collections
 Package, Lib = std.build
+Res, Ok, Range, Path = std.core
+Env = std.env
 
 PackageFault* = InvalidSpec
     | FetchFailed

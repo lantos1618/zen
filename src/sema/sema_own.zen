@@ -7,7 +7,7 @@ Record, FixedArray, Field, Const = std.ast
 Alloc, AllocError = std.mem
 Vec = std.collections
 str, String = std.text
-Range = std.core
+Res, Ok, None, loop, Range = std.core
 TyId = sema.sema_ty
 Checker, Ctx, UNRESOLVED, truncate = sema.sema_check
 SemaFault, NameFault = sema.sema_diag
@@ -1216,7 +1216,7 @@ own_destruction = (c :: Checker, o :: Own, id: ExprId, k: Call)
     c.resolved_member_provider(id).match({
         None      => Ok(()),
         Ok(bound) => c.types.at(bound).match({
-            Named(n) => c.world.is_prelude_decl(n.decl, "Drop").try().match({
+            Named(n) => c.world.is_core_decl(n.decl, "Drop").try().match({
                 false => Ok(()),
                 true  => c.drop_receiver(k).match({
                     None         => Ok(()),
@@ -1360,7 +1360,7 @@ repeating_body* = (c :: Checker, id: ExprId) Res<bool, AllocError> {
         None     => Ok(true),
         Ok(decl) => c.world.module_name(decl).eq("std.core.bool").match({
             false => Ok(true),
-            true  => Ok(!c.world.is_prelude_decl(decl, "then").try()),
+            true  => Ok(!c.world.is_core_decl(decl, "then").try()),
         }),
     })
 }

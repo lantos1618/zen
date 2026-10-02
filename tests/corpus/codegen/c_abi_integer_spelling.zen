@@ -1,6 +1,11 @@
 // C ABI integers are valid in foreign signatures without pretending their
 // target-dependent widths are Zen's fixed-width arithmetic types.
 
+Res, Ok = std.core
+Ptr = std.mem
+Env = std.env
+println = std.io
+
 abs = (n: c_int) c_int
 to_c_int, to_i32 = std.core.num
 

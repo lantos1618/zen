@@ -16,6 +16,11 @@
 // print true. (A comptime `HALF = BIG / 2` was tried first and refused
 // by the backend for a different reason -- see LANE.md.)
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 BIG: i64 = 4294967296
 
 SEED: u64 = 14695981039346656037

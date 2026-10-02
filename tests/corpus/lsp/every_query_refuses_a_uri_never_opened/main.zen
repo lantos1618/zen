@@ -23,6 +23,9 @@ Alloc, AllocError = std.mem
 write_text = std.json
 Server, serve = lsp.lsp_serve
 write_frame, frame_at = lsp.lsp_frame
+Res, Ok, loop = std.core
+Env = std.env
+println = std.io
 
 // A document that opens, parses and checks. It exists so that the store
 // is not empty; nothing is ever asked about it.

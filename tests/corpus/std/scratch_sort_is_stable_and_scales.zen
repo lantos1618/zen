@@ -1,4 +1,8 @@
 Ordered, sort = std.collections
+Res, Ok, Err, Range = std.core
+Alloc, AllocError, Ptr = std.mem
+Env = std.env
+println = std.io
 
 Item = { key: usize, index: usize, comparisons: Ptr<usize> }
 Item.impl(Ordered, {

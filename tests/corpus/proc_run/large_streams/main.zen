@@ -4,6 +4,9 @@
 // and the two seqs run concurrently so neither pipe is drained in order.
 
 AllocError = std.mem
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     out = env.proc.run(

@@ -1,3 +1,8 @@
+Res, Ok, Eq, Hash, Hasher = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // A STRUCT KEY IS ITS FIELD VALUES, NOT ITS BINDING -- AND EQ READS
 // EVERY FIELD.
 //

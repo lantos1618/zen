@@ -4,7 +4,12 @@ module = std.parse.parse_decl
 Checker = sema.sema_check
 Emit = gen.gen_emit
 CBackend, emit_program = gen.gen_c
-FsError = std.env
+Env, FsError = std.env
+Res, Ok = std.core
+AllocError = std.mem
+println = std.io
+
+STD_IO: str = "println* = (args: ...) ()\n"
 
 // Ask the C compiler whether the generated receiver bindings are unused, then
 // execute the program. Other runtime helpers have separate warning coverage.
@@ -17,8 +22,14 @@ main = (env: Env) Res<(), AllocError | FsError> {
     parser ::= a.Parser(lexed);
     parsed = parser.module("main").try();
     parser.tree.add_module(parsed).try();
-    check   ::= a.Checker(parser.tree).try();
-    backend ::= a.CBackend(parser.tree, check).try();
+    // The program prints through std.io, the one standard module this tree
+    // carries; everything else it uses it declares itself.
+    io_lexed = scan(a, Source(file: "std/io.zen", text: STD_IO)).try();
+    io ::= a.Parser(io_lexed, parser.tree);
+    io_module = io.module("std.io").try();
+    io.tree.add_module(io_module).try();
+    check   ::= a.Checker(io.tree).try();
+    backend ::= a.CBackend(io.tree, check).try();
     out     ::= a.Emit().try();
     backend.emit_program(0, out).try();
     faults ::= a.String().try();

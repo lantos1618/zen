@@ -30,7 +30,7 @@ path -- the one-line compiler change that breaks it.
 - free_fn_reaches_every_receiver_shape.zen -- require a named local binding
   as receiver: whichever of temporary / match join / loop-closure parameter
   loses its receiver changes that line (18/10/7).
-- free_fn_travels_to_a_prelude_primitive.zen -- special-case primitives as
+- free_fn_travels_to_a_primitive.zen -- special-case primitives as
   builtin C types with no member table: `n.halve()` rejects while
   `halve(n)` compiles.
 - free_fn_travels_to_a_union.zen -- hold UFCS candidates for nominal

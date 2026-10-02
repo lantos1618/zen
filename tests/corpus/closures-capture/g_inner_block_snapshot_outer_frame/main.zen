@@ -15,6 +15,10 @@
 // instead of own-record; make them equal and you have one shared cell.
 // Both wrong shapes compile and print plausible numbers.
 
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, IoError> {
     n ::= 5;
     @scope.defer(() { println("outer {}", n * 100) });

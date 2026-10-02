@@ -5,6 +5,8 @@ Ast = std.ast.ast_arena
 ExprId, TypeId, PatternId, BlockId = std.ast.ast_id
 Decl, Member, Stmt, Function, TParam, Param = std.ast.ast_node
 Alloc, AllocError = std.mem
+Res, Ok, loop = std.core
+Vec = std.collections
 
 DeclParent* = Module(usize) | Block(BlockId)
 DeclSite* = { parent*: DeclParent, index*: usize }

@@ -19,6 +19,11 @@
 // breaks this: copying less than the full payload (or aliasing it) when
 // h.break(x) hands a struct out of the loop.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Point = {
     x*:: i64,
     y*:: i64,

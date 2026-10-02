@@ -11,6 +11,7 @@ SemaFault, ExportFault = sema.sema_diag
 Checker, Ctx = sema.sema_check
 def_type, decl_as_type = sema.sema_type
 signature_type = sema.sema_denote
+Res, None = std.core
 
 // The module a base names, when the base is an alias for one.
 module_named_by* = (c :: Checker, ty: TyId) Res<usize> {

@@ -3,6 +3,12 @@
 // large value copied into the worker mailbox and a struct copied into the
 // receiver mailbox. One sender preserves order, so the output is stable.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+Actor, Ref, ActorError, ActorStartError, Context = std.actor
+println = std.io
+
 Big = {
     a: i64,
     b: i64,

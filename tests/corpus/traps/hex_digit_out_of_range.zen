@@ -1,3 +1,8 @@
+Res, Ok, hex_digit = std.core
+OutOfBounds = std.collections
+Env = std.env
+println = std.io
+
 // tests/corpus/traps/hex_digit_out_of_range.zen
 // a nibble is 0..15 by construction, so 16 is a bug in the caller's
 // shift and not a miss -- it traps rather than returning a Res.

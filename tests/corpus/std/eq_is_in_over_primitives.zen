@@ -24,6 +24,11 @@
 // literals and `false` carry their types, which is why only this one
 // line needs the bindings.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     b: u8 = '\t';
     println("space {}", b.is_in([' ', '\t', '\n', '\r']));

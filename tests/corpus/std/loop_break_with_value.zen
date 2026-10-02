@@ -2,6 +2,11 @@
 // h.break(value) makes the loop an EXPRESSION: it evaluates to
 // Ok(value), and the passes after the break never run
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     seen ::= 0;
     Range(0, 10).loop((h, value) {

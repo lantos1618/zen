@@ -5,6 +5,12 @@
 // mutability composes down the path: every link from the binding to
 // the receiver has to permit the write, and here every link does.
 
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Vec = std.collections
+Env = std.env
+println = std.io
+
 Bag = {
     items :: Vec<i32>,
 

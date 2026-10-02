@@ -4,7 +4,7 @@
 
 Alloc, AllocError, Ptr, null_ptr = std.mem
 str = std.text
-Res = std.core
+Res, Ok, Err, loop, Range = std.core
 Drop = std.core
 Vec = std.collections
 Socket = std.net.socket

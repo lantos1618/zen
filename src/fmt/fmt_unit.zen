@@ -4,7 +4,7 @@
 Alloc, AllocError = std.mem
 str, String = std.text
 Vec = std.collections
-Range = std.core
+Res, Ok, loop, Range = std.core
 TypeId = std.ast.ast_id
 Function, Member = std.ast.ast_node
 Lexed, Source, scan, TokenKind = std.lex.lex

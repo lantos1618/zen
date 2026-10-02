@@ -1,6 +1,10 @@
 // Immutable str values may be sent repeatedly. The mailbox owns the bytes, so
 // the receiver never borrows storage from the sender.
 
+Res, Ok, IoError = std.core
+Env = std.env
+Actor, ActorError, ActorStartError, Context = std.actor
+
 Foo = {}
 
 Foo.impl(Actor, {

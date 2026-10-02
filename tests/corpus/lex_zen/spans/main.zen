@@ -7,8 +7,11 @@
 // exactly the token.
 
 scan, Source, kind_name = std.lex.lex
-Alloc = std.mem
+Alloc, AllocError = std.mem
 str = std.text
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 dump = (env: Env, alloc: Alloc, label: str, text: str) Res<(), AllocError> {
     src = Source(file: "in.zen", text: text);

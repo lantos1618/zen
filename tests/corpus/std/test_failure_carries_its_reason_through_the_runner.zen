@@ -27,6 +27,10 @@
 // first and its line is part of the expectation.
 
 TestError = std.test
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 // A runner has more than one way to stop; a test has one.
 Halted  = | OutOfTime

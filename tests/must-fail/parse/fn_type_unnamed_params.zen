@@ -1,3 +1,7 @@
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 // DESIGN.md, Overloading: "Function types must name their parameters."
 // the offending type is the one on `f`, and the diagnostic points at
 // the first unnamed parameter, not at the whole type.

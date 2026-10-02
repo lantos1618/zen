@@ -1,3 +1,7 @@
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 // `main` used to receive `(Env){0}` — a zeroed struct — so env.argv was
 // empty in every program ever compiled, while gen_c dutifully assigned
 // zg_argc/zg_argv in main and nothing read them. A compiler cannot be

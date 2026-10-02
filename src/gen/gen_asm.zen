@@ -4,6 +4,7 @@
 AllocError = std.mem
 String = std.text
 Program = gen.gen_ir
+Res = std.core
 
 // Implementations preserve ordered effects, control flow, checked arithmetic,
 // source-position traps and byte output. Machine instructions, register and

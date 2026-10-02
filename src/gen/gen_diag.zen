@@ -5,6 +5,7 @@
 Span = std.source
 str, String = std.text
 AllocError = std.mem
+Res = std.core
 
 GenFault* = Unsupported(str)     // a node form this backend does not lower yet
           | Unresolved(str)      // a name with no declaration behind it

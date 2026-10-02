@@ -21,6 +21,11 @@
 // spellable; the shadow it tests needs only to be a binding in a frame
 // BELOW main's, which its parameter provides.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 SHADOWED: i64 = 1111
 
 twice = (shadowed: i64) i64 { shadowed * 2 }

@@ -2,6 +2,11 @@
 // the layout terminates. TESTING.md, Sema: `Node = { next: Ptr<Node> }`
 // is legal, and only a field of the struct's own type is not.
 
+Res, Ok = std.core
+AllocError, Ptr = std.mem
+Env = std.env
+println = std.io
+
 Node = {
     value: i32,
     next: Ptr<Node>,

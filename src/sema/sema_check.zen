@@ -18,6 +18,7 @@ DiscriminantCall = sema.sema_discriminant
 VariantNameCall = sema.sema_variant_name
 NumericConversion, IntegerBitOperation = sema.sema_numeric
 Primitive = sema.sema_prim
+Printer, IO_MODULE, printer_named = sema.sema_print
 OwnCheck, StoreEffects = sema.sema_store
 owning_copy_unsafe, mailbox_payload_unsafe, mailbox_byte_buffer = sema.sema_copy
 
@@ -93,6 +94,8 @@ Checker* = {
     diags :: Vec<Diag>,
     // Closures whose tail failure their call returns, by closure id.
     lambda_failures :: Map<ExprId, Dropped>,
+    // Every reported diagnostic, rendered, so a repeat is dropped.
+    reported :: Map<str, bool>,
 
     // Query results keyed by stable AST node ids.
     expr_memo* :: Map<ExprId, TyId>,
@@ -139,6 +142,8 @@ Checker* = {
     integer_bits* :: Map<DeclId, IntegerBitOperation>,
     // Validated machine primitives (wide multiply, truncation, vectors).
     primitives* :: Map<DeclId, Primitive>,
+    // Validated std.io printers (`println`, `print`).
+    printers* :: Map<DeclId, Printer>,
     // Literal-only bitwise expressions and whether an expected unsigned type
     // has given them a width. See `sema_trap.defer_width`.
     bit_widths* :: Map<ExprId, bool>,
@@ -251,6 +256,27 @@ Checker* = {
 
     resolved_call* = (self: @Self, id: ExprId) Res<DeclId> {
         self.checked_call(id).try().declaration
+    }
+
+    // The std.io printer a call selected, and `None` for every other call.
+    printer_call* = (self: @Self, id: ExprId) Res<Printer> {
+        self.printer_of(self.resolved_call(id).try())
+    }
+
+    // The printer a declaration is. `check_all` validates std.io's bodyless
+    // declarations and records them; a tree lowered without that pass still
+    // finds them by the same identity, the declaring module and the name.
+    printer_of* = (self: @Self, did: DeclId) Res<Printer> {
+        self.printers.get(did).match({
+            Ok(how) => Ok(how),
+            None    => self.world.module_name(did).eq(IO_MODULE).match({
+                false => None,
+                true  => self.tree.decl_at(did).try().kind.match({
+                    Function(f) => printer_named(f.name.text),
+                    _           => None,
+                }),
+            }),
+        })
     }
 
     resolved_member_provider* = (self: @Self, id: ExprId) Res<TyId> {
@@ -442,9 +468,20 @@ Checker* = {
         self.expr_memo.get(id).match({ Ok(ty) => ty, None => UNRESOLVED })
     }
 
+    // A diagnostic identical to one already reported is the same mistake
+    // found again by a second walk over the same node, so it is kept once.
     report* = (self :: @Self, file: str, span: Span, fault: SemaFault)
               Res<(), AllocError> {
-        self.diags.add(Diag(file: file, span: span, fault: fault))
+        d = Diag(file: file, span: span, fault: fault);
+        key ::= self.alloc.String().try();
+        d.render(self.types, key).try();
+        self.reported.get(key.view()).match({
+            Ok(_) => Ok(()),
+            None  => {
+                self.reported.set(key.view(), true).try();
+                self.diags.add(d)
+            },
+        })
     }
 
     // `report` at the position's own file.
@@ -873,6 +910,7 @@ Checker* = (a: Alloc, tree: Ast) Res<Checker, AllocError> {
         types: a.Types(),
         diags: a.Vec<Diag>(),
         lambda_failures: a.Map<ExprId, Dropped>(),
+        reported: a.Map<str, bool>(),
         expr_memo: a.Map<ExprId, TyId>(),
         type_memo: a.Map<TypeId, TyId>(),
         resolved_types: a.Vec<bool>(),
@@ -892,6 +930,7 @@ Checker* = (a: Alloc, tree: Ast) Res<Checker, AllocError> {
         numeric_conversions: a.Map<DeclId, NumericConversion>(),
         integer_bits: a.Map<DeclId, IntegerBitOperation>(),
         primitives: a.Map<DeclId, Primitive>(),
+        printers: a.Map<DeclId, Printer>(),
         bit_widths: a.Map<ExprId, bool>(),
         discriminant_calls: a.Map<ExprId, DiscriminantCall>(),
         variant_name_calls: a.Map<ExprId, VariantNameCall>(),

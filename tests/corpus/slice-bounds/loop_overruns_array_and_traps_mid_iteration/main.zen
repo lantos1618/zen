@@ -10,6 +10,11 @@
 // in-range prefix, in order, then nothing: the abort cuts the loop
 // before its fifth iteration can print.
 
+Res, Ok, Range = std.core
+OutOfBounds = std.collections
+Env = std.env
+println = std.io
+
 // a trap never lifts into Res: it aborts the process
 Error = Overflow | DivideByZero | OutOfBounds
 

@@ -1,6 +1,11 @@
 // Bounds on an impl-supplied member come from the bound declaration, including
 // a return-only type parameter that no value argument can reveal.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Boxy = { width: i32 }
 Dot = {}
 

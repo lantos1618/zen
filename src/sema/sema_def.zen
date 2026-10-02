@@ -6,6 +6,7 @@ Vec, Map = std.collections
 str, String = std.text
 Range, Eq, Hash = std.core
 DeclId, ImplId = sema.sema_id
+is_prim = sema.sema_ty
 
 DefKind* = StructDef | EnumDef | AliasDef | FunctionDef | ConstDef
 
@@ -46,11 +47,13 @@ WorldIndex = {
     members :: Map<DeclId, Map<str, Vec<usize>>>,
 }
 
-// The module every other module imports implicitly. Bootstrap must use the
-// same spelling.
-PRELUDE*: str = "std.core"
+// The module every program loads: it declares the members of the built-in
+// types (`i32.MAX`, `str.len`, `bool.then`) and the declarations the
+// compiler recognises by identity. Loading it binds no name; a module
+// imports what it uses from it like from any other module.
+CORE*: str = "std.core"
 
-PRELUDE_FILE*: str = "std.core.core"
+CORE_FILE*: str = "std.core.core"
 
 World* = {
     tables :: Vec<ModuleTable>,
@@ -58,6 +61,35 @@ World* = {
     folders :: Map<str, usize>,
     index: Ptr<WorldIndex>,
     alloc: Alloc,
+
+    // Standard names reported as missing imports, keyed by module and name.
+    // Each resolves through std.core afterwards, as its import would, so one
+    // missing import is one diagnostic.
+    granted :: Map<str, bool>,
+
+    grant* = (self :: @Self, mi: usize, name: str) Res<(), AllocError> {
+        key = self.alloc.String("{} {}", mi, name).try();
+        self.granted.set(key.view(), true)
+    }
+
+    is_granted* = (self: @Self, mi: usize, name: str) Res<bool, AllocError> {
+        key = self.alloc.String("{} {}", mi, name).try();
+        Ok(self.granted.get(key.view()).match({ Ok(_) => true, None => false }))
+    }
+
+    // Whether an unbound `name` in `mi` resolves through std.core: a
+    // primitive type's name always does, because the primitive is built in
+    // and std.core declares its members; any other name only once it has
+    // been reported as a missing import.
+    falls_back = (self: @Self, mi: usize, name: str) Res<bool, AllocError> {
+        (self.binds_name(mi, name)).match({
+            true  => Ok(false),
+            false => name.is_prim().match({
+                true  => Ok(true),
+                false => self.is_granted(mi, name),
+            }),
+        })
+    }
 
     count* = (self: @Self) usize { self.tables.len }
 
@@ -100,8 +132,8 @@ World* = {
                Res<(), AllocError> {
         self.own_defs(mi, name, out).try();
         (out.len == 0).then(() { self.imported_defs(mi, name, out).try() });
-        (out.len == 0 && (self.binds_name(mi, name) == false))
-            .then(() { self.prelude_defs(mi, name, out).try() });
+        (out.len == 0 && self.falls_back(mi, name).try())
+            .then(() { self.core_defs(mi, name, out).try() });
         Ok(());
     }
 
@@ -118,9 +150,9 @@ World* = {
         imported = self.first_imported(mi, name).try();
         imported.match({
             Ok(d) => Ok(Ok(d)),
-            None  => (self.binds_name(mi, name)).match({
-                true  => Ok(None),
-                false => self.first_prelude_for(mi, name),
+            None  => self.falls_back(mi, name).try().match({
+                false => Ok(None),
+                true  => self.first_core_for(mi, name),
             }),
         })
     }
@@ -132,9 +164,9 @@ World* = {
         })
     }
 
-    first_prelude_for = (self: @Self, mi: usize, name: str)
+    first_core_for = (self: @Self, mi: usize, name: str)
                         Res<Res<Def>, AllocError> {
-        self.prelude_index().match({
+        self.core_index().match({
             None    => Ok(None),
             Ok(pre) => (pre == mi).match({
                 true  => Ok(None),
@@ -223,23 +255,23 @@ World* = {
         })
     }
 
-    prelude_defs = (self: @Self, mi: usize, name: str, out :: Vec<Def>)
+    core_defs = (self: @Self, mi: usize, name: str, out :: Vec<Def>)
                    Res<(), AllocError> {
-        self.prelude_index().match({
-            Ok(p) => self.prelude_exports(p, mi, name, out),
+        self.core_index().match({
+            Ok(p) => self.core_exports(p, mi, name, out),
             None  => Ok(()),
         }).try();
         Ok(());
     }
 
-    prelude_index = (self: @Self) Res<usize> {
-        self.index_of(PRELUDE).match({
+    core_index* = (self: @Self) Res<usize> {
+        self.index_of(CORE).match({
             Ok(p) => Ok(p),
-            None  => self.index_of(PRELUDE_FILE),
+            None  => self.index_of(CORE_FILE),
         })
     }
 
-    prelude_exports = (self: @Self, p: usize, mi: usize, name: str,
+    core_exports = (self: @Self, p: usize, mi: usize, name: str,
                        out :: Vec<Def>) Res<(), AllocError> {
         (p == mi).match({
             true  => Ok(()),
@@ -255,9 +287,9 @@ World* = {
         self.exports_of(p, name, out, seen)
     }
 
-    prelude_of* = (self: @Self, name: str, out :: Vec<Def>)
+    core_of* = (self: @Self, name: str, out :: Vec<Def>)
                   Res<(), AllocError> {
-        self.prelude_index().match({
+        self.core_index().match({
             Ok(p) => self.exported_defs(p, name, out),
             None  => Ok(()),
         }).try();
@@ -265,12 +297,12 @@ World* = {
     }
 
     // Whether `name`, read in module `mi` where no local binds it, is a
-    // variant of the prelude's `Res`. The name resolves like any other: a
+    // variant of std.core's `Res`. The name resolves like any other: a
     // declaration or import of the module wins, then an enum the module
-    // sees that declares the variant, and only then the prelude. What it
-    // resolves to is compared with the prelude's own `Res`, so a module's
+    // sees that declares the variant, and only then std.core. What it
+    // resolves to is compared with std.core's own `Res`, so a module's
     // `Ok` function is called as written. A program compiled without std
-    // has no prelude to compare with; there an unbound `Ok`, `Err` or
+    // has no std.core to compare with; there an unbound `Ok`, `Err` or
     // `None` keeps the meaning `Res` gives it in the type language.
     names_res_variant* = (self: @Self, tree: Ast, mi: usize, name: str)
                          Res<bool, AllocError> {
@@ -285,20 +317,20 @@ World* = {
         found ::= self.alloc.Vec<Def>();
         self.variant_defs(tree, mi, name, found).try();
         (found.len == 0).then(() {
-            self.prelude_index().match({
+            self.core_index().match({
                 Ok(p) => self.variant_defs(tree, p, name, found).try(),
                 None  => (),
             });
         });
         found.get(0).match({
-            None  => Ok((self.has_prelude() == false)
+            None  => Ok((self.has_core() == false)
                 && name.is_in(["Ok", "Err", "None"])),
-            Ok(d) => self.is_prelude_decl(d.id, "Res"),
+            Ok(d) => self.is_core_decl(d.id, "Res"),
         })
     }
 
-    has_prelude* = (self: @Self) bool {
-        self.prelude_index().match({ Ok(_) => true, None => false })
+    has_core* = (self: @Self) bool {
+        self.core_index().match({ Ok(_) => true, None => false })
     }
 
     // The shortest module path that exports `name`, re-exports included:
@@ -324,20 +356,20 @@ World* = {
     }
 
     // Whether `name`, read in module `mi`, resolves to the declaration the
-    // prelude exports as `exported`. A module's own declaration or import of
+    // std.core exports as `exported`. A module's own declaration or import of
     // the same name is a different type and answers false.
-    names_prelude* = (self: @Self, mi: usize, name: str, exported: str)
+    names_core* = (self: @Self, mi: usize, name: str, exported: str)
                      Res<bool, AllocError> {
         self.first_def_of(mi, name).try().match({
             None  => Ok(false),
-            Ok(d) => self.is_prelude_decl(d.id, exported),
+            Ok(d) => self.is_core_decl(d.id, exported),
         })
     }
 
-    is_prelude_decl* = (self: @Self, id: DeclId, name: str)
+    is_core_decl* = (self: @Self, id: DeclId, name: str)
                        Res<bool, AllocError> {
         defs ::= self.alloc.Vec<Def>();
-        self.prelude_of(name, defs).try();
+        self.core_of(name, defs).try();
         Ok(
             defs.find(
                 (d) { d.id.eq(id) }
@@ -568,6 +600,7 @@ World* = (a: Alloc, tree: Ast) Res<World, AllocError> {
         folders: a.Map<str, usize>(),
         index: slot,
         alloc: a,
+        granted: a.Map<str, bool>(),
     );
     // IDs step beside usize positions; no unchecked narrowing.
     module_id :: u32 = 0;

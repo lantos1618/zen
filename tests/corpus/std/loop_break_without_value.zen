@@ -2,6 +2,11 @@
 // h.break() with no argument: the loop evaluates to None. same
 // non-local exit, no value carried out
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     Range(0, 10).loop((h, value) {
         println("{}", value);

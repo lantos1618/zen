@@ -30,6 +30,9 @@ Alloc, AllocError = std.mem
 str, String = std.text
 Vec, Ordered, sort = std.collections
 ProcOutput = std.proc
+Res, Ok, None, loop, Range = std.core
+Env = std.env
+println = std.io
 
 Verdict = Pass | Fail | Unsupported | Broken
 

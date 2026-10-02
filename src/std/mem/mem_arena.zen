@@ -5,6 +5,7 @@
 
 Alloc, AllocError = std.mem.mem_alloc
 Ptr, null_ptr = std.mem.mem_ptr
+Res, Ok, Drop, loop = std.core
 
 PAGE_BYTES: usize = 65536
 

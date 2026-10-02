@@ -1,3 +1,5 @@
+Env = std.env
+
 Code = | Unknown(u8) | First = 1
 
 main = (env: Env) i32 { 0 }

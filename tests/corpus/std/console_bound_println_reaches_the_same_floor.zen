@@ -1,12 +1,15 @@
-// DESIGN.md makes `println(..)` sugar for `<the Env in scope>.out.println(..)`
-// resolved BY TYPE, so the two spellings name ONE call and must print the
-// same bytes. The written form is not a corner: `drop` cannot use the sugar,
-// because the sugar resolves the Env by type and inside `drop` the only
-// binding is `self` -- so a type that prints as it dies carries an Env in a
-// field and reaches the console exactly this way.
+// std.io's `println` and a Console's `println` write to the same standard
+// output and must print the same bytes. The Console form is the one code
+// takes when it is handed its output rather than reaching for it: a type
+// that prints as it dies carries an Env in a field and reaches the console
+// exactly this way.
 //
 // Its value is the declared Res and not unit, which is what `.try()` here
 // asserts: a console write has no failure to report, and the answer is Ok.
+
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
 
 Holder = {
     env: Env,
@@ -17,7 +20,7 @@ Holder = {
 }
 
 main = (env: Env) Res<i32, IoError> {
-    println("sugar {}", 1);
+    println("std.io {}", 1);
     env.out.println("bound {}", 2).try();
     Holder(env: env).say(3).try();
     Ok(0);

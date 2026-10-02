@@ -1,3 +1,7 @@
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
+
 Frame = | Data = 0x0 | Ping = 0x6 | Unknown(u8)
 Closed = | Red = 1 | Blue = 2
 

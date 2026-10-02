@@ -4,7 +4,7 @@ Function = std.ast
 AllocError = std.mem
 Vec = std.collections
 str = std.text
-Range = std.core
+Res, Ok, None, Range = std.core
 ImplId = sema.sema_id
 TyId, TyNamed, Prim = sema.sema_ty
 Def, decl_at = sema.sema_def
@@ -42,11 +42,11 @@ local_impls* = (c :: Checker, n: TyNamed, out :: Vec<LocalImpl>)
     Ok(());
 }
 
-// The prelude declaration of a primitive's name, as the type its impls
+// std.core's declaration of a primitive's name, as the type its impls
 // attach to.
 prim_named* = (c :: Checker, p: Prim) Res<Res<TyNamed>, AllocError> {
     defs ::= c.alloc.Vec<Def>();
-    c.world.prelude_of(p.name, defs).try();
+    c.world.core_of(p.name, defs).try();
     Ok(defs.get(0).match({
         None  => None,
         Ok(d) => Ok(TyNamed(

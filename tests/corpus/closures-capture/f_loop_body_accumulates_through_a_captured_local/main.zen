@@ -14,6 +14,10 @@
 // and NOT into any per-pass storage the defers could see: every snapshot
 // froze at registration, before the first pass ran.
 
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, IoError> {
     sum ::= 0;
     @scope.defer(() { println("frozen {}", sum) });

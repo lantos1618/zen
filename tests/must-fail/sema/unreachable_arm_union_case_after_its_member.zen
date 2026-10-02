@@ -3,6 +3,11 @@
 // bare case no test at all, which made the FIRST such arm take every
 // error; the checker must read the case as inside its member.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Kind = Io | Protocol | Authentication
 Fail = Mismatch | Accepted
 

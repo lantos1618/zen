@@ -1,23 +1,24 @@
-// A name that is not imported is not visible, and the prelude is the
-// only exception.
+// A name that is not imported is not visible, and there is no prelude.
 //
-// DESIGN.md, Modules: "That exception is what 'auto-imported' means:
-// `std.core` is imported into every module, so `Res`, `Ok`, `Vec`,
-// `Map`, `str`, `Env` and the rest are in scope everywhere without a
-// line. Everything else needs its import, and this is not a formality —
-// a compiler that resolves any exported top-level name program-wide
-// makes 'two modules may define the same top-level name' impossible,
-// which is the property the flat namespace exists to provide."
+// DESIGN.md, Modules: "`Res`, `Ok`, `Vec`, `String`, `Env` and `println`
+// are ordinary declarations in `std`, and a module that names one imports
+// it like any other name. ... a compiler that resolves any exported
+// top-level name program-wide makes 'two modules may define the same
+// top-level name' impossible, which is the property the flat namespace
+// exists to provide."
 //
-// So there are FIVE properties, and the negative ones carry the weight:
-// a fallback that answers every name is the whole-program table that
-// paragraph rules out, and it would pass the positive tests alone.
+// The negative properties carry the weight: a fallback that answers every
+// name is the whole-program table that paragraph rules out, and it would
+// pass the positive tests alone.
 //
-//   - a prelude name resolves with no import                   -> yes
-//   - a name NOT in the prelude and NOT imported does not       -> no
+//   - a std.core name does not resolve without an import       -> no
+//   - it resolves where it is imported                         -> yes
+//   - a primitive's name resolves to std.core's declaration of
+//     it with no import, because the primitive is built in     -> yes
+//   - a name reported as a missing import resolves afterwards,
+//     so one omission is one diagnostic                        -> yes
+//   - a name NOT imported from another module does not         -> no
 //   - the same name DOES resolve where it was imported          -> yes
-//   - an UNSTARRED declaration in the prelude stays private:
-//     the `*` gate applies at the prelude hop like any other    -> no
 //   - two modules declaring one name are two declarations, and
 //     each module sees its OWN                                  -> yes
 //
@@ -29,7 +30,7 @@
 // test of name resolution, and routing it through a parser would make a
 // parser bug read as a resolution bug.
 
-World, Def, PRELUDE = sema.sema_def
+World, Def, CORE = sema.sema_def
 Ast = std.ast.ast_arena
 Decl, DeclKind, Struct, Import, ImportName, Member, Module = std.ast.ast_node
 TParam = std.ast.ast_node
@@ -38,6 +39,9 @@ Pos, Span = std.source
 Alloc, AllocError = std.mem
 Vec = std.collections
 str, String = std.text
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 at = () Span {
     Span(file: "in.zen", start: Pos(line: 1, col: 1), end: Pos(line: 1, col: 2))
@@ -122,13 +126,13 @@ main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
     tree  ::= alloc.Ast();
 
-    // module 0 IS the prelude — the name is `PRELUDE`'s, because a
-    // module is addressable by its full dotted path only and the
-    // resolver has to find this one by that spelling
+    // module 0 IS std.core — the name is `CORE`'s, because a module is
+    // addressable by its full dotted path only and the resolver finds
+    // this one by that spelling
     core ::= alloc.Vec<Decl>();
     core.add(struct_decl(alloc, "Vec", true).try()).try();
-    core.add(struct_decl(alloc, "Scratch", false).try()).try();
-    module_of(tree, PRELUDE, core).try();
+    core.add(struct_decl(alloc, "i32", true).try()).try();
+    module_of(tree, CORE, core).try();
 
     // module 1: declares `Gadget` and its own `Widget`, exports both
     other ::= alloc.Vec<Decl>();
@@ -140,23 +144,33 @@ main = (env: Env) Res<i32, AllocError> {
     bare ::= alloc.Vec<Decl>();
     module_of(tree, "bare", bare).try();
 
-    // module 3: imports `Gadget` from `other`, and declares a `Widget`
-    // of its OWN — the collision the flat namespace has to survive
+    // module 3: imports `Gadget` from `other` and `Vec` from std.core, and
+    // declares a `Widget` of its OWN — the collision the flat namespace has
+    // to survive
     own ::= alloc.Vec<Decl>();
     own.add(import_decl(alloc, "Gadget", "other").try()).try();
+    own.add(import_decl(alloc, "Vec", CORE).try()).try();
     own.add(struct_decl(alloc, "Widget", true).try()).try();
     module_of(tree, "own", own).try();
 
     w ::= alloc.World(tree).try();
 
-    // the prelude is in scope with no import
+    // std.core is not in scope without an import
     visible(w, alloc, "bare sees Vec", 2, "Vec").try();
 
-    // and nothing else is
-    visible(w, alloc, "bare sees Gadget", 2, "Gadget").try();
+    // and an import is what makes it visible
+    visible(w, alloc, "own sees Vec", 3, "Vec").try();
 
-    // the `*` gate applies at the prelude hop like any other
-    visible(w, alloc, "bare sees Scratch", 2, "Scratch").try();
+    // a primitive's name is the language's, and std.core declares it
+    visible(w, alloc, "bare sees i32", 2, "i32").try();
+
+    // after a missing import is reported, the name resolves as its
+    // import would
+    w.grant(2, "Vec").try();
+    visible(w, alloc, "bare sees a reported Vec", 2, "Vec").try();
+
+    // nothing from another module is visible without an import
+    visible(w, alloc, "bare sees Gadget", 2, "Gadget").try();
 
     // a written import is what makes it visible
     visible(w, alloc, "own sees Gadget", 3, "Gadget").try();

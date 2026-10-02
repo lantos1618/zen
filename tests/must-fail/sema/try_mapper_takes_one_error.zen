@@ -1,3 +1,6 @@
+Res, Err = std.core
+Env = std.env
+
 SourceError = | Bad
 TargetError = | Changed
 

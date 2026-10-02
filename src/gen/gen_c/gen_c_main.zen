@@ -17,6 +17,7 @@ ctype, is_c_integer, write_zero = gen.gen_c.gen_c_type
 field_of = gen.gen_c.gen_c_type
 plain_ctx, return_type = gen.gen_c.gen_c_decl
 passes_address = gen.gen_c.gen_c_borrow
+Res, Ok = std.core
 
 emit_main* = (be :: CBackend, mi: usize, out :: Emit) Res<(), AllocError> {
     found ::= be.alloc.Vec<Def>();

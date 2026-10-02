@@ -1,3 +1,8 @@
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+Env = std.env
+println = std.io
+
 copy = (env: Env, target: Alloc, text: str) Res<str, AllocError> {
     scratch   = env.mem.alloc();
     temporary = scratch.String("{}", text).try();

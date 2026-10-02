@@ -3,6 +3,11 @@
 //
 // position: the call whose argument fails the bound.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Boxy = {
     width: i32,
     height: i32,

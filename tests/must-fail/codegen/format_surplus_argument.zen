@@ -10,6 +10,10 @@
 //
 // position: the `1` of `1, 2`, the first argument no hole asked for.
 
+Res, Ok = std.core
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32> {
     println("surplus {}", 1, 2);
     Ok(0);

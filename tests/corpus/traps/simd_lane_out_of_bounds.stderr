@@ -1,1 +1,1 @@
-simd_lane_out_of_bounds.zen:10:19: trap: index out of bounds
+simd_lane_out_of_bounds.zen:11:19: trap: index out of bounds

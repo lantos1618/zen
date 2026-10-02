@@ -3,12 +3,13 @@ Span = std.source
 AllocError = std.mem
 Vec = std.collections
 str = std.text
-Range = std.core
+Res, Ok, Range = std.core
 DeclId = sema.sema_id
 TyId = sema.sema_ty
 Def, decl_at = sema.sema_def
 Checker, Ctx, UNRESOLVED = sema.sema_check
 tparam_vars, push_tparams = sema.sema_inst
+has_var, unify, subst, Inst = sema.sema_inst
 satisfies_bound = sema.sema_bound
 can_hoist = sema.sema_hoist
 type_from_ast, param_type = sema.sema_denote
@@ -98,8 +99,26 @@ takes_receiver = (c :: Checker, k: Cand, rty: TyId) Res<bool, AllocError> {
         None  => Ok(false),
         Ok(t) => c.is_tvar(t).match({
             true  => Ok(true),
-            false => c.satisfies_bound(rty, t),
+            false => c.satisfies_bound(rty, t).try().match({
+                true  => Ok(true),
+                false => c.generic_receiver(t, rty),
+            }),
         }),
+    })
+}
+
+// `ok_or(r: Res<T>, ..)` travels with every `Res<X>`: a first parameter
+// written over the function's type variables takes any receiver it can be
+// instantiated to.
+generic_receiver = (c :: Checker, t: TyId, rty: TyId) Res<bool, AllocError> {
+    c.has_var(t).match({
+        false => Ok(false),
+        true  => {
+            inst ::= c.alloc.Inst();
+            c.unify(t, rty, inst).try();
+            settled = c.subst(t, inst).try();
+            Ok(c.same_type(settled, rty))
+        },
     })
 }
 

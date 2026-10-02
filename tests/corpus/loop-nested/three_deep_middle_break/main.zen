@@ -15,6 +15,11 @@
 // middle pass; as an OUTER break, "middle done" would print once in
 // total. Both counts are visible in the expected file.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     Range(0, 3).loop((h_out, o) {
         println("outer {}", o);

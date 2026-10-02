@@ -8,6 +8,10 @@
 // order is `drop one`, then the body line, then scope exit drops
 // "two": `drop one` / `body` / `drop two`.
 
+Res, Ok, Drop, IoError = std.core
+Env = std.env
+println = std.io
+
 Noisy = { env: Env, tag: str }
 
 Noisy.impl(Drop, {

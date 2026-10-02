@@ -12,6 +12,8 @@ Parser, Mark = std.parse.parser
 expr = std.parse.parse_expr
 params_list, type_params = std.parse.parse_member
 ret_ahead = std.parse.parse_lookahead
+Res, Ok, loop = std.core
+Vec = std.collections
 
 type* = (p :: Parser) Res<TypeId, AllocError> {
     p.enter().try();

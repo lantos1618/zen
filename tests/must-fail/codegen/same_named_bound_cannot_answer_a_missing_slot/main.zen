@@ -2,6 +2,10 @@
 // same-spelled Optional impl cannot fill this Optional's slot.
 
 Answered = optional.optional
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 Optional = {
     read* ::= (self: @Self) i32

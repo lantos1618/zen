@@ -1,6 +1,12 @@
 // Both halves of Res and every member of its error union participate in the
 // actor-transfer classification.
 
+Res, Ok = std.core
+AllocError = std.mem
+Vec = std.collections
+Env = std.env
+Actor, Ref, ActorError, Context = std.actor
+
 HeapFault = { bytes: Vec<u8> }
 PlainFault = { code: i32 }
 Reply = Res<i32, HeapFault | PlainFault>

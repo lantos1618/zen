@@ -7,7 +7,9 @@
 // `.` is the working directory, so this test asserts nothing about
 // where the runner staged it.
 
-FsError = std.env
+Env, FsError = std.env
+Res, Ok = std.core
+println = std.io
 
 main = (env: Env) Res<i32, FsError> {
     alloc ::= env.mem.alloc();

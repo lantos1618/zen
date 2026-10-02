@@ -22,6 +22,11 @@
 // neighbour's leaf value, or a trap from dereferencing the payload as
 // a pointer.
 
+Res, Ok = std.core
+AllocError, Ptr = std.mem
+Env = std.env
+println = std.io
+
 Leaf = { v: i64 }
 Node = End(Leaf) | More(Ptr<Node>)
 Vine = Tip(Leaf) | Crawl(Ptr<Vine>)

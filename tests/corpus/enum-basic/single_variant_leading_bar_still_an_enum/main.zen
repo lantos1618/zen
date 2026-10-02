@@ -11,6 +11,11 @@
 // enum whose member sits after the tag prints the tag (0) or garbage. Only
 // the real layout survives BOTH the x13 multiply and Duo's second arm.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Solo = | Lone(i64)
 Duo  = Heads | Tails
 

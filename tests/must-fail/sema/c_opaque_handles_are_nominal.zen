@@ -1,3 +1,5 @@
+Ptr = std.mem
+
 SSL_CTX = {}
 SSL = {}
 

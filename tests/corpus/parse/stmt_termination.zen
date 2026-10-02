@@ -2,6 +2,10 @@
 // a statement ends with `;`. a declaration does not. that is the
 // whole rule — no newline sensitivity, no insertion.
 
+Res, Ok = std.core
+Env = std.env
+println = std.io
+
 Error = | Failed
 
 // declarations: no semicolon

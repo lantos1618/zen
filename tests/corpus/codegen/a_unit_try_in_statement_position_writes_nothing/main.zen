@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // A unit `.try()` in statement position evaluates its operand and emits no
 // payload read. Unit-payload Res has no stored Ok member to read.
 inner = () Res<(), AllocError> { Ok(()); }

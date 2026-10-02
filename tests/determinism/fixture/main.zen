@@ -11,6 +11,13 @@ b = beta
 d = delta
 g = gamma
 
+// The standard imports come after the four modules, so every permutation
+// check.sh asks for moves the four modules relative to one another.
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     println("total {} {} {}", a.total(), b.total(), d.total());
     println("name {} {} {} {}", a.name(), b.name(), d.name(), g.name());

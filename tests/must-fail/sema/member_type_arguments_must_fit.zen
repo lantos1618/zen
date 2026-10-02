@@ -1,6 +1,11 @@
 // A member's own explicit arguments obey the same exact arity and settled
 // signature rules as a free function's arguments.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Tool = {
     first = <T, U>(self: @Self, a: T, b: U) T { a }
     plain = (self: @Self, value: i32) i32 { value }

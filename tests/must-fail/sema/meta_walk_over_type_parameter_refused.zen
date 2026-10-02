@@ -5,6 +5,10 @@
 //
 // position: the `@meta` token — the form that has nothing to walk.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+
 show* = <T>(v: T) {
     @meta(x: T).fields().loop((h, field) {
         println("{}", field.name);

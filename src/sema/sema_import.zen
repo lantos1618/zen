@@ -1,0 +1,165 @@
+// A standard name used where it is not imported.
+//
+// Only the primitive types, `true` and `false`, and the language's own
+// syntax are built in; `Res`, `Vec`, `Env` and `println` are imported like
+// any other name. When a module uses one of them without the import, the
+// diagnostic names the line to add, and the name then resolves as that
+// import would, so one omission is one diagnostic rather than a cascade.
+Span, Enum, Variant = std.ast
+Res, Ok, Range = std.core
+AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+Checker = sema.sema_check
+CORE, Def, decl_at = sema.sema_def
+is_type_def = sema.sema_member
+SemaFault, ExportFault = sema.sema_diag
+IO_MODULE = sema.sema_print
+
+// Report `name` as a missing import in `mi` when a standard module exports
+// it, and let later lookups of it in `mi` succeed. False when `name` is not
+// a standard name, so the caller reports its own undefined-name fault.
+missing_import* = (c :: Checker, mi: usize, name: str, span: Span)
+                  Res<bool, AllocError> {
+    // An import of the name that fails to resolve is that import's error.
+    imported = c.world.table_at(mi).match({
+        Ok(t) => t.imports_name(name),
+        None  => false,
+    });
+    c.standard_home(name).match({
+        None       => Ok(false),
+        Ok(module) => imported.match({
+            true  => Ok(false),
+            false => c.report_missing(mi, name, module, span),
+        }),
+    })
+}
+
+report_missing = (c :: Checker, mi: usize, name: str, module: str, span: Span)
+                 Res<bool, AllocError> {
+    c.world.is_granted(mi, name).try().match({
+        true  => Ok(true),
+        false => {
+            c.world.grant(mi, name).try();
+            c.report(
+                span.file,
+                span,
+                SemaFault.NotImported(ExportFault(name: name, module: module))
+            ).try();
+            Ok(true)
+        },
+    })
+}
+
+// A name the language resolves by its spelling — `Res`, `Ok`, `Err` and
+// `None` — must still be bound in the module that writes it.
+require_bound* = (c :: Checker, mi: usize, name: str, span: Span)
+                 Res<(), AllocError> {
+    c.binds(mi, name).try().match({
+        true  => Ok(()),
+        false => {
+            c.missing_import(mi, name, span).try();
+            Ok(())
+        },
+    })
+}
+
+binds = (c :: Checker, mi: usize, name: str) Res<bool, AllocError> {
+    imported = c.world.table_at(mi).match({
+        Ok(t) => t.imports_name(name),
+        None  => false,
+    });
+    own ::= c.alloc.Vec<Def>();
+    c.world.own_defs(mi, name, own).try();
+    variants ::= c.alloc.Vec<Def>();
+    (imported || own.len > 0).match({
+        true  => Ok(true),
+        false => {
+            c.world.variant_defs(c.tree, mi, name, variants).try();
+            Ok(variants.len > 0)
+        },
+    })
+}
+
+// The module a program imports `name` from: std.io for the printers, and
+// otherwise the module std.core takes it from. Names std.core declares in
+// its own submodules are imported from std.core itself.
+standard_home* = (c: Checker, name: str) Res<str> {
+    (name.eq("println") || name.eq("print")).match({
+        true  => Ok(IO_MODULE),
+        false => c.core_source(name),
+    })
+}
+
+core_source = (c: Checker, name: str) Res<str> {
+    core    = c.world.core_index().try();
+    table   = c.world.table_at(core).try();
+    binding = table.imports.find((b) { b.exported && b.name.eq(name) }).try();
+    binding.module.starts_with("std.core.").match({
+        true  => Ok(CORE),
+        false => Ok(binding.module),
+    })
+}
+
+// `A = IoError | AllocError` joins types only when its members name types,
+// so a member naming an unimported standard type would silently become an
+// enum variant. Each such member is reported before any union is classified.
+check_union_imports* = (c :: Checker) Res<(), AllocError> {
+    Range(0, c.world.count()).loop((h, mi) { c.module_unions(mi).try() });
+    Ok(());
+}
+
+module_unions = (c :: Checker, mi: usize) Res<(), AllocError> {
+    c.world.table_at(mi).match({
+        None  => Ok(()),
+        Ok(t) => {
+            t.defs.loop((h, d) {
+                decl_at(c.tree, d.id).match({
+                    None    => Ok(()),
+                    Ok(row) => row.kind.match({
+                        Enum(e) => c.union_members(mi, e),
+                        _       => Ok(()),
+                    }),
+                }).try();
+            });
+            Ok(())
+        },
+    })
+}
+
+union_members = (c :: Checker, mi: usize, e: Enum) Res<(), AllocError> {
+    e.variants.loop((h, v) { c.union_member(mi, v).try() });
+    Ok(());
+}
+
+union_member = (c :: Checker, mi: usize, v: Variant) Res<(), AllocError> {
+    name = v.name.text;
+    bare = v.payload.match({ Ok(_) => false, None => true });
+    own ::= c.alloc.Vec<Def>();
+    c.world.own_defs(mi, name, own).try();
+    imported = c.world.table_at(mi).match({
+        Ok(t) => t.imports_name(name),
+        None  => false,
+    });
+    (bare && own.len == 0 && !imported).match({
+        false => Ok(()),
+        true  => c.standard_type(name).try().match({
+            false => Ok(()),
+            true  => {
+                c.missing_import(mi, name, v.name.span).try();
+                Ok(())
+            },
+        }),
+    })
+}
+
+// Whether the standard library exports a type under `name`; `None` and the
+// other variants a union member could also spell are not types.
+standard_type = (c :: Checker, name: str) Res<bool, AllocError> {
+    defs ::= c.alloc.Vec<Def>();
+    c.world.core_of(name, defs).try();
+    Ok(defs.find((d) { d.kind.is_type_def() }).match({
+        Ok(_) => true,
+        None  => false,
+    }))
+}

@@ -3,6 +3,10 @@
 //
 // position: the call whose argument does not fit the element type.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
     values ::= alloc.Vec<i32>();

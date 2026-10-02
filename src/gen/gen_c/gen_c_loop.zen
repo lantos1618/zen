@@ -29,6 +29,7 @@ is_res = gen.gen_c.gen_c_type
 RangeImpl, range_impl, range_pass_type = gen.gen_c.gen_c_range
 supplied_bound, take_pass = gen.gen_c.gen_c_range
 array_of, lower_array_walk = gen.gen_c.gen_c_array
+Res, Ok, None, loop = std.core
 
 // Lowering.
 

@@ -1,0 +1,8 @@
+// A standard type is imported like any other name: there is no prelude.
+// The diagnostic names the line to add, at the first use in the module.
+//
+// position: the `Vec` of the parameter type.
+
+len_of = (v: Vec<i32>) usize { v.len }
+
+main = () i32 { 0 }

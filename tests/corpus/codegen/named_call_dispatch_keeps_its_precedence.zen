@@ -2,6 +2,10 @@
 // `Ok` and `Err` use the destination `Res`, and a declared `println` shadows
 // print sugar.
 
+Res, Ok, Err, IoError = std.core
+AllocError = std.mem
+Env = std.env
+
 Fault = | Bad
 Error = AllocError | IoError
 

@@ -1,3 +1,9 @@
+Res, Ok = std.core
+AllocError = std.mem
+Vec = std.collections
+Env = std.env
+println = std.io
+
 Position = { line: usize, column: usize }
 read = (positions: Vec<Position>) Res<Position, AllocError> {
     position = positions.get(0).ok_or(AllocError.OutOfMemory).try();

@@ -1,3 +1,8 @@
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // the classic: -2147483648 is unary minus applied to 2147483648, which
 // does NOT fit in i32 on its own. it must still be accepted as i32.MIN.
 Error = AllocError | IoError

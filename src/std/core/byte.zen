@@ -1,3 +1,5 @@
+Res, Ok, None, loop = std.core
+
 // ASCII byte predicates and conversions. UTF-8 codepoint operations live in
 // std.text.text_utf8.
 DIGIT_ZERO* : u8 = '0'

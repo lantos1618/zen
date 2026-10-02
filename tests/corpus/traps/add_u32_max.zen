@@ -2,6 +2,11 @@
 // u32.MAX + 1 traps. unsigned overflow is still overflow: it
 // wraps only where +% says so
 
+Res, Ok = std.core
+OutOfBounds = std.collections
+Env = std.env
+println = std.io
+
 // main must name an error type. a trap never lifts into Res:
 // it aborts the process
 Error = Overflow | DivideByZero | OutOfBounds

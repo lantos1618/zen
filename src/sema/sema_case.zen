@@ -7,6 +7,7 @@ decl_at = sema.sema_def
 Checker, Ctx = sema.sema_check
 type_from_ast = sema.sema_denote
 union_reading, union_member, member_of = sema.sema_union
+Res, Ok = std.core
 
 // One value a scrutinee can be. `payload` is `()` when there is none.
 Case* = {

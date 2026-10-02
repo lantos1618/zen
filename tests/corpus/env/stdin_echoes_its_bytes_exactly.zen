@@ -16,6 +16,10 @@
 // (docs/TESTING.md) and that is precisely why it cannot carry a frame.
 Vec = std.collections
 str_at = std.text
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println, print = std.io
 
 // The chunk asked for per read. Small on purpose — the input is longer
 // than one chunk, so the loop really loops and a reader that answers

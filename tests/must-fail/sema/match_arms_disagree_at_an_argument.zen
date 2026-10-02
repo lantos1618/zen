@@ -1,3 +1,7 @@
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 // MUST FAIL: two arms of a `.match` disagree, and the match stands in an
 // ARGUMENT. `g`'s parameter is the position and `i32` is its word — no
 // arm is entitled to speak for it, so both arms owe it.

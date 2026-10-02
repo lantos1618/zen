@@ -2,6 +2,8 @@
 // ANDN): the scalar SHA-512 round below must agree with the same code
 // compiled for the baseline target. Prints the same without the feature.
 bmi2, Bmi2 = std.simd
+Range = std.core
+println = std.io
 
 round = (e: u64, f: u64, g: u64, h: u64) u64 {
     s1 = e.rotate_right(14).bit_xor(e.rotate_right(18)).bit_xor(e.rotate_right(41));

@@ -1,3 +1,6 @@
+Drop = std.core
+println = std.io
+
 Item = {
     id: i32,
     read = (self: @Self) i32 { self.id }

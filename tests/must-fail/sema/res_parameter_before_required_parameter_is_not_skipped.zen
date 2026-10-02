@@ -1,3 +1,6 @@
+Res, Ok = std.core
+Env = std.env
+
 read = (maybe: Res<i32>, fallback: i32) i32 {
     maybe.value_or(fallback)
 }

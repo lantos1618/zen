@@ -1,6 +1,10 @@
 // `len` is starred and readable here; `slack` is not, and reaching the
 // type through a folder-root alias does not change which is which.
 
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
+
 zz = vec
 
 main = (env: Env) Res<i32, IoError> {

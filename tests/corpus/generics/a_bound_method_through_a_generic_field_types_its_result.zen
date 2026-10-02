@@ -8,6 +8,11 @@
 // a match scrutinee would be declared as a C `int` with `void` binders, and a
 // `.try()` would have no operand type to unwrap.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Step = Wait | Go
 Fault = | Broke
 

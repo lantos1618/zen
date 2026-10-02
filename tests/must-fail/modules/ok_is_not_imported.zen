@@ -1,0 +1,8 @@
+// Constructing a result names `Ok`, and `Ok` is imported.
+//
+// position: the `Ok` of the call.
+Res = std.core
+
+one = () Res<i32> { Ok(1) }
+
+main = () i32 { 0 }

@@ -8,6 +8,11 @@
 // printer and `==` would have no type to lower, and a match scrutinee's
 // temporary would be declared at an unresolved type.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Buf = {
     n: i32,
 

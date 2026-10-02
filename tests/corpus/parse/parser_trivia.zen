@@ -22,6 +22,10 @@ Ast = std.ast.ast_arena
 TriviaRun = std.ast.ast_span
 Decl, Block = std.ast.ast_node
 ExprId = std.ast.ast_id
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 //   1  // before the declaration
 //   2  Point = {

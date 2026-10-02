@@ -14,6 +14,10 @@
 //
 // position: `h`, the argument whose passing was the mistake.
 
+Res, Ok, LoopHandle, Range, IoError = std.core
+Env = std.env
+println = std.io
+
 keep = (g: LoopHandle) { }
 
 main = (env: Env) Res<i32, IoError> {

@@ -9,6 +9,11 @@
 // "The error type of a `Res` is a union, and propagation merges sets"
 // (DESIGN.md, Errors) is the rule; it applies across arms too.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Fault = | Bad
 
 fails = (n: usize) Res<(), AllocError> {

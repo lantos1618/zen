@@ -17,10 +17,12 @@
 // not be carried out.
 Alloc, AllocError = std.mem
 Vec = std.collections
-Range = std.core
+Res, Ok, loop, Range = std.core
 str, String = std.text
 Mutant, operator_name, collect = mutate_site
 Runner, Plan, Outcome, outcome_name, run_message = mutate_run
+Env = std.env
+println = std.io
 
 Cli = {
     root:        str,

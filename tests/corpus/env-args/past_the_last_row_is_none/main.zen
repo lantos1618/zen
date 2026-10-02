@@ -18,6 +18,10 @@
 // harness layout rather than the compiler.
 
 count_codepoints, Utf8Error = std.text
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 main = (env: Env) Res<i32, AllocError | Utf8Error> {
     println("count {}", env.argv.len);

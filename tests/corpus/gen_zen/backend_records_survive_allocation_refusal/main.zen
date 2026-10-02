@@ -2,6 +2,11 @@ Ast = std.ast
 Checker = sema.sema_check
 CBackend = gen.gen_c
 TyId = sema.sema_ty
+Res, Ok, Range = std.core
+Alloc, AllocError, Ptr = std.mem
+String = std.text
+Env = std.env
+println = std.io
 
 Refusal = {
     base: Alloc,

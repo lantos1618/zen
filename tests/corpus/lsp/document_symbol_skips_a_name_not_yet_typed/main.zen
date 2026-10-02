@@ -12,6 +12,9 @@ Alloc, AllocError = std.mem
 Server, serve = lsp.lsp_serve
 write_frame, frame_at = lsp.lsp_frame
 write_text = std.json
+Res, Ok, loop = std.core
+Env = std.env
+println = std.io
 
 // One real declaration, then the not-yet-typed one.
 DOC*: str = "main = () {\n    println(\"hi\")\n}\n\n= \n"

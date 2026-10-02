@@ -3,6 +3,7 @@
 Budget, Builder, BuildError, Function, Package = std.build
 Bencher, Tester = std.test
 seconds = std.core.time
+Res, Ok, Path = std.core
 
 // Packages are hash-locked values; `zen add json` can add this declaration.
 json_pkg = Package(

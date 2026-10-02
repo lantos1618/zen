@@ -3,6 +3,7 @@
 
 str, String = std.text
 AllocError = std.mem
+Res, Ok, Err, loop = std.core
 
 Envelope* = {
     body*: str,

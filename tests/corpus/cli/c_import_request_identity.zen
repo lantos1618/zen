@@ -3,6 +3,11 @@ Ast, CHeader, ModuleOrigin = std.ast
 Source, scan = std.lex
 Parser = std.parse
 request = zen.zen_c_import
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+Vec = std.collections
+Env = std.env
+println = std.io
 
 spec = (a: Alloc, headers: Vec<str>) Res<CImport, AllocError> {
     includes ::= a.Vec<str>();

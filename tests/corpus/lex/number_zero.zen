@@ -1,3 +1,8 @@
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // zero, and zero in every position it can appear.
 //
 // EVERY EXPECTATION HERE IS DELIBERATELY NON-ZERO. This tree lost weeks to

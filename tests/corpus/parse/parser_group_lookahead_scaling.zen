@@ -3,6 +3,10 @@
 
 scan, Source = std.lex.lex
 Parser = std.parse.parser
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 SOURCE: str = "value = (one + (two * three));\n"
 

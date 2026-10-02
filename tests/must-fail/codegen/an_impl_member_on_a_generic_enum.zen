@@ -16,6 +16,11 @@
 //
 // position: each call to the supplied member.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Boxed<T> = Empty | Full(T)
 
 Sized* = { size* = (self: @Self) i64 }

@@ -12,6 +12,8 @@ expr = std.parse.parse_expr
 type = std.parse.parse_type
 declaration = std.parse.parse_decl
 decl_head_ahead = std.parse.parse_lookahead
+Res, Ok, None = std.core
+Vec = std.collections
 
 // `{ statement* expression? }`
 block* = (p :: Parser) Res<BlockId, AllocError> {

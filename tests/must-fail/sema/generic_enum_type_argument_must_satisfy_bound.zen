@@ -1,6 +1,11 @@
 // Enum applications carry the same declaration-level bounds as structs. An
 // explicit variant instantiation cannot bypass them.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Boxy = { width: i32 }
 Dot = {}
 

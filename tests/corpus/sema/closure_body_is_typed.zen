@@ -14,6 +14,11 @@
 // it — because a walk that pushed a scope wrongly would lose the
 // enclosing binding rather than report anything.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Cell = {
     n*: i32,
 

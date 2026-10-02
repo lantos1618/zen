@@ -9,6 +9,11 @@
 // usize.MAX itself stays unprinted -- no corpus test may print a usize
 // extreme (std/core/num.zen says why).
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 check = (x: bool) str {
     x.match({
         true  => "yes",

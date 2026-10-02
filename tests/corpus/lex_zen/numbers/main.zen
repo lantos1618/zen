@@ -6,8 +6,11 @@
 // unsigned and why the token carries a u64.
 
 scan, Source, kind_name, message = std.lex.lex
-Alloc = std.mem
+Alloc, AllocError = std.mem
 str = std.text
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 dump = (env: Env, alloc: Alloc, text: str) Res<(), AllocError> {
     src = Source(file: "in.zen", text: text);

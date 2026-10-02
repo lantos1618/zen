@@ -8,6 +8,10 @@
 // the depth: 64 parens, 65 ones, and a parser that stopped descending at
 // any level would print a smaller number rather than the same one.
 
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 main = (env: Env) Res<i32, ArgError> {
     v = 1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1+(1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
     println("{}", v);

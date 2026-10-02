@@ -5,6 +5,8 @@
 Alloc, AllocError = std.mem
 Vec = std.collections
 str, String = std.text
+Res, Ok = std.core
+Env = std.env
 
 // Survived: every test passed with the mutation in place, so no test
 // distinguishes it from the original. Stillborn: the mutant did not build,

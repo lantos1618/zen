@@ -1,6 +1,10 @@
 // a second `consume` is just another use of a dead binding. one
 // value, one drop, so the second move has nothing to move.
 
+Res, Ok, Drop, IoError = std.core
+Env = std.env
+println = std.io
+
 Buf = {
     id: i32,
 }

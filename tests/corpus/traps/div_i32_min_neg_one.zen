@@ -3,6 +3,11 @@
 // is i32.MAX + 1, and on x86 it faults exactly like a zero divisor.
 // the message must say overflow, not divide by zero
 
+Res, Ok = std.core
+OutOfBounds = std.collections
+Env = std.env
+println = std.io
+
 // main must name an error type. a trap never lifts into Res:
 // it aborts the process
 Error = Overflow | DivideByZero | OutOfBounds

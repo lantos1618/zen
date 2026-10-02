@@ -10,6 +10,11 @@
 // three members take a turn, so nothing here can pass by matching only
 // the first-raised case.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 NotFound = | NotFound
 Denied   = | Denied
 Corrupt  = Corrupt(str) | Short(i32)

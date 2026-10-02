@@ -1,6 +1,9 @@
 // Ptr<u8> byte-order verbs (mem_ptr.zen): little- and big-endian, 32 and
 // 64 bits, at an unaligned offset, against the bytes written one at a time.
-Ptr = std.mem
+AllocError, Ptr = std.mem
+Res, Ok, Range = std.core
+Env = std.env
+println = std.io
 main = (env: Env) Res<(), AllocError> {
     a = env.mem.alloc();
     p = a.raw(16, 1).try();

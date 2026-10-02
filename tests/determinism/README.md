@@ -273,10 +273,9 @@ the corpus runner is ever pointed at it — `main.expected` is that line, and
 it is checked by hand rather than by this script, which compares C and never
 runs it.
 
-**It is compiled STAGED, never where it sits.** A Zen program stands on the
-prelude — `Env`, `Res`, `Ok` and `println` are `std.core` names that no
-module imports — and the driver looks for `std/` beneath the root it is
-given. So `check.sh` builds each tree it compiles as a fresh directory
+**It is compiled STAGED, never where it sits.** A Zen program imports from
+std — `Env`, `Res`, `Ok` and `println` among others — and the driver looks
+for `std/` beneath the root it is given. So `check.sh` builds each tree it compiles as a fresh directory
 holding `fixture/` and a copy of `src/std`, exactly as `tests/run.py` stages
 every corpus test and for the same reason. A consequence worth knowing: the
 gate compiles the whole of `std` too, which is most of the 22 kB it compares

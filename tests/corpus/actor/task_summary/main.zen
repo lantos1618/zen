@@ -1,6 +1,12 @@
 // A task actor borrows its message, builds a result in request-local storage,
 // and reports malformed input before printing any partial summary.
 
+Res, Ok, None = std.core
+Alloc = std.mem
+Vec = std.collections
+Env = std.env
+Actor, ActorError, ActorStartError, Context = std.actor
+
 Status = Todo | Done
 
 Task = {

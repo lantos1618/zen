@@ -9,6 +9,11 @@
 // The enum-target alias rides along: the DECL of `Colors = Color` is
 // `Alias`, not `Enum`, and the written name must survive that too.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Point = {
     x: i64,
     y: i64,

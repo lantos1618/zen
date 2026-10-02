@@ -23,6 +23,10 @@
 // call one -- see must-fail/std/the_frameworks_expect_eq_does_not_lower,
 // which pins why (expect lowers now; expect_eq's body is #742).
 
+Res, Ok = std.core
+Env = std.env
+println = std.io
+
 Error = | Boom
 
 BenchStats = std.test

@@ -3,6 +3,8 @@ Span = std.source
 Checker = sema.sema_check
 SemaFault, CaptureFault = sema.sema_diag
 Own, ViewRoot, path_root = sema.sema_own
+Res, Ok = std.core
+AllocError = std.mem
 
 // A capture that forbids every later move of a binding: the binding, and
 // where the capture was written. A bound value built over a `::`

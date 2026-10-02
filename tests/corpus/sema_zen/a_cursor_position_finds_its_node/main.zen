@@ -11,6 +11,9 @@ check_all = sema.sema_decl
 Types = sema.sema_ty
 Alloc, AllocError = std.mem
 str, String = std.text
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 SRC: str = "add = (a: i32, b: i32) i32 { a + b }\npick = (n: i32) i32 { [i32, 4](2, 3, 5, 7)[n] }\n"
 

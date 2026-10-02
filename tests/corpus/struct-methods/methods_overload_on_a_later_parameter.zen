@@ -14,6 +14,11 @@
 // Breaks if: overload matching stops at the receiver or at C-visible
 // types -- one line changes.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 W = {
     v: i32,
     twice = (self: @Self, k: i64) i32 { self.v * 100 }

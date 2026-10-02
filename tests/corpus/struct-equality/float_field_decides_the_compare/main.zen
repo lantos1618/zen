@@ -20,6 +20,11 @@
 // The values are dyadic fractions (0.5, 0.25, 2.5, 1.5): exact in
 // binary, so no printing-rounding question can mask a miscompare.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Reading = {
     gain*: f64,
     bias*: f64,

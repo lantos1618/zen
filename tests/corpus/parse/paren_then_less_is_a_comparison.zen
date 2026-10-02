@@ -12,6 +12,10 @@
 // type does not occur in this language's own source or in DESIGN.md;
 // a parenthesised comparison occurs constantly.
 
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 lt = (a: usize, b: usize) bool { (a) < b }
 
 // the same shape one operator up, which never broke, kept beside it so

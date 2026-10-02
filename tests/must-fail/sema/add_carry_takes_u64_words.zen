@@ -1,4 +1,5 @@
 add_carry = std.core.num
+println = std.io
 
 main = () {
     x: u32 = 7;

@@ -1,3 +1,5 @@
+Env = std.env
+
 // A method declared in a struct body is a body like any other, and the
 // write in it is checked like any other write. It compiled clean for as
 // long as an un-annotated bind checked the value against ITS OWN type:

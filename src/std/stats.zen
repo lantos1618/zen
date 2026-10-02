@@ -1,6 +1,7 @@
 // Bounded statistics over nonnegative finite measurements, in caller-chosen units.
 Alloc, AllocError, Ptr, null_ptr = std.mem
 Range = std.core.range
+Res, Ok, loop = std.core
 
 Summary* = {
     count*: usize,

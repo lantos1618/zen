@@ -2,6 +2,11 @@
 // `field` and nested loop handle `h` therefore shadow the walk binders without
 // changing the outer walk after their scopes end.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Row = {
     n: i64,
     tag: str,

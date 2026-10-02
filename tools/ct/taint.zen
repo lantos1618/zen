@@ -58,9 +58,10 @@
 Alloc, AllocError = std.mem
 Vec, Map = std.collections
 str, String = std.text
-Range = std.core
+Res, Ok, None, loop, Range = std.core
 parse_i64 = std.text
 truncate_u32, to_i64, to_usize, shift_left, shift_right, bit_or, bit_and, bit_xor = std.core.num
+println = std.io
 
 Isa* = X86 | Arm
 

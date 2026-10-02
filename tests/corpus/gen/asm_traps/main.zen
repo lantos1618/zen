@@ -3,7 +3,7 @@
 // every case is a separately launched executable. Each executable is built for the host with the system
 // assembler and linker only: no C compiler and no libc.
 Alloc, AllocError = std.mem
-FsError = std.env
+Env, FsError = std.env
 ProcError, ProcOutput = std.proc
 Span, Pos = std.source
 Program, Func, Instruction, BasicBlock, Terminator, Const, Binary, Op, Scalar = gen.gen_ir
@@ -12,6 +12,10 @@ X86_64Linux = gen.gen_asm_x86
 Arm64, Arm64Os = gen.gen_asm_arm64
 verify, VerifyError = gen.gen_verify
 Host, detect = machine
+Res, Ok, loop, Range = std.core
+Vec = std.collections
+String = std.text
+println = std.io
 
 BuildFault = Compile | UnknownHost
 

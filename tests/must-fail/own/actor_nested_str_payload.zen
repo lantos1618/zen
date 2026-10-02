@@ -1,6 +1,11 @@
 // The C mailbox owns direct str arguments, but it emits no slice descriptor
 // for a str stored inside another value.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+Actor, Ref, ActorError, Context = std.actor
+
 TextBox = { text: str }
 
 Worker = {}

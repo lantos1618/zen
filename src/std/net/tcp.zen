@@ -2,7 +2,7 @@
 
 Alloc = std.mem
 str = std.text
-Res = std.core
+Res, Ok, Err = std.core
 Drop = std.core
 Vec = std.collections
 Socket, SocketFault = std.net.socket

@@ -4,6 +4,7 @@
 Alloc = std.mem
 String = std.text
 Sink, WriteError = std.core.io
+Res, Ok = std.core
 
 Display* = {
     dump* ::= (self: @Self, out :: Sink) Res<(), WriteError>

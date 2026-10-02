@@ -1,0 +1,9 @@
+// `println` is a declaration in std.io, not a name the compiler supplies.
+// The call is still checked as a print, so nothing else is reported.
+//
+// position: the callee.
+
+main = () i32 {
+    println("x = {}", 1);
+    0
+}

@@ -13,7 +13,7 @@
 Alloc, AllocError, null_ptr = std.mem
 Vec, Map = std.collections
 String, str = std.text
-Range = std.core
+Res, Ok, Err, None, loop, Range = std.core
 decode_literal = std.lex
 Ast, ExprId, BlockId, TypeId, Function, Literal, Bind, Deferred = std.ast
 Span = std.source

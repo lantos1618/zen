@@ -9,6 +9,12 @@
 // builds the pack in one place (`write_call_args`), so if the two ever
 // disagree about where the pack begins, one of these five lines moves.
 
+Res, Ok = std.core
+AllocError = std.mem
+vararg = std.collections
+Env = std.env
+println = std.io
+
 Box = {
     w: i32,
 

@@ -5,9 +5,9 @@
 // its own name — stops short on an ordinary project layout:
 // `src/proj/app` here holds no `app.zen`, so a document opened at
 // `src/proj/app/deep.zen` used to root at `src/proj/app`, where no
-// `std` is. The prelude never seeded and every prelude name the buffer
-// touches (`Vec`, `str`, `usize`) came back `undefined name` — a
-// screen of phantom errors on a program that compiles fine. That was
+// `std` is. Its `Vec = std.collections` named nothing there, and the
+// buffer came back with errors — a screen of phantom diagnostics on a
+// program that compiles fine. That was
 // the example project's state: `example/src/main.zen` rooted at
 // `example/src` while the tree carrying `std` sits at `example`, next
 // to `example/build.zen`.
@@ -18,8 +18,8 @@
 // a directory holding `build.zen` answers. Here that is `src` — this
 // directory is staged to `<work>/src` and `std` is staged beside the
 // marker — so the opened buffer's ONE publishDiagnostics is an EMPTY
-// list. Every diagnostic the old rule printed named a prelude name, so
-// an empty list is reachable no other way.
+// list. Every diagnostic the old rule printed followed from the missing
+// `std`, so an empty list is reachable no other way.
 //
 // `app` sits INSIDE `proj`, a module shaped right, because lint's
 // dir-module-shape rule reads a test's immediate subdirectories — and
@@ -38,11 +38,13 @@ Alloc, AllocError = std.mem
 Server, serve = lsp.lsp_serve
 write_frame, frame_at = lsp.lsp_frame
 write_text = std.json
+Res, Ok, loop = std.core
+Env = std.env
+println = std.io
 
-// THE BUFFER, byte for byte the file on disk — no imports at all, so
-// every name in it resolves through the prelude or not at all, and the
-// prelude only seeds when the root is the directory carrying `std`.
-DOC*: str = "// Two directories under the marker, and `app` holds no `app.zen`: the\n// holds-its-own-name climb stops here, and only the `build.zen` rule\n// climbs the last levels to `src`, where `std` is.\ntally* = (xs: Vec<i32>) usize {\n    xs.len\n}\n"
+// THE BUFFER, byte for byte the file on disk. Its one import resolves only
+// when the root is the directory carrying `std`.
+DOC*: str = "Vec = std.collections\n\n// Two directories under the marker, and `app` holds no `app.zen`: the\n// holds-its-own-name climb stops here, and only the `build.zen` rule\n// climbs the last levels to `src`, where `std` is.\ntally* = (xs: Vec<i32>) usize {\n    xs.len\n}\n"
 
 // `tests/run.py` stages a directory test into `<work>/src` and runs the
 // program from `<work>`, so these are the paths the server will open.

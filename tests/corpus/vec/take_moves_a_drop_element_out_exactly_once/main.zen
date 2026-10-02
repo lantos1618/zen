@@ -17,6 +17,11 @@
 // (Reading elements BACK with get() would hand out fresh owned copies
 // — by-value reads — which is a different corner, not this one.)
 
+Res, Ok, Drop = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Noisy = {
     env: Env,
     id: i64,

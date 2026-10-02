@@ -15,6 +15,11 @@
 // The final pair pins byte-level reads through views: index(0) is 'a'
 // as a NUMBER (97) and the last index is len-1, not len.
 
+Res, Ok, WriteError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Error = AllocError | WriteError
 
 main = (env: Env) Res<i32, Error> {

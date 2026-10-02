@@ -5,6 +5,7 @@ TyId, is_integer, c_integer, is_float = sema.sema_ty
 Checker = sema.sema_check
 SemaFault, TypeFault = sema.sema_diag
 check_literal, defer_width, unsigned_word, refuse_bit_operand = sema.sema_trap
+Res, Ok = std.core
 
 // An operator first asks whether both operands belong to its domain, then
 // asks whether the pair settles to one type. Literal families take the other

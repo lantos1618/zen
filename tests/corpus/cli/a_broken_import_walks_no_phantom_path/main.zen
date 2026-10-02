@@ -3,8 +3,10 @@
 
 Alloc, AllocError = std.mem
 str = std.text
-FsError = std.env
+Env, FsError = std.env
 BuildArgs = std.build
+Res, Ok = std.core
+println = std.io
 build = zen
 
 BROKEN*: str = "A, B = 42\n"

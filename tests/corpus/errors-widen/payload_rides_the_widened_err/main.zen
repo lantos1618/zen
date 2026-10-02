@@ -9,6 +9,11 @@
 // members of different sizes, and the read goes through the member's
 // own field — reachable only when the tag said Big.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Small = | Tiny
 Big   = {
     n: i64,

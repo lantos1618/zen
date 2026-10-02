@@ -14,6 +14,11 @@
 // whole grown buffer. Whichever way the backend actually orders the
 // read against the realloc, this line pins it.
 
+Res, Ok, WriteError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Error = AllocError | WriteError
 
 main = (env: Env) Res<i32, Error> {

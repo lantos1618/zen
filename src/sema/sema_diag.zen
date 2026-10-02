@@ -77,7 +77,7 @@ SemaFault* =
     // resolution
       UndefinedName(NameFault)         // no binding of this name is in scope
     | NotExported(ExportFault)         // the name exists; `*` does not
-    | NotImported(ExportFault)         // another module exports it; nothing here imports it
+    | NotImported(ExportFault)         // a name another module exports and this one does not import
     | NotWritable(ExportFault)         // `*` on a field grants reading, never writing
     | ModuleNotAValue(ExportFault)     // a module is a namespace, not a value
     | NoSuchField(TypeFault)           // the type has no member of that name
@@ -98,6 +98,7 @@ SemaFault* =
     | ActorPayload(NameFault)          // payload storage cannot cross a mailbox
     | InvalidNumericConversion(NameFault)
     | InvalidPrimitive(NameFault)
+    | InvalidPrinter(NameFault)
     | ForgedCapability(NameFault)
     | InvalidEnumRepresentation(NameFault)
     | InvalidEnumDiscriminant(NameFault)
@@ -227,7 +228,7 @@ message* = (fault: SemaFault) str {
     fault.match({
         UndefinedName(_)             => "undefined name: no binding of this name is in scope",
         NotExported(_)               => "a name crosses a module boundary only with `*`",
-        NotImported(_)               => "a bare name is visible only through an import",
+        NotImported(_)               => "missing import:",
         NotWritable(_)               => "`*` on a field means readable outside the module: mutation goes through exported methods",
         ModuleNotAValue(_)           => "a module is only usable qualified",
         NoSuchField(_)               => "a member is resolved on the receiver's type, so a name declared on another type is not a candidate",
@@ -250,6 +251,7 @@ message* = (fault: SemaFault) str {
         NoOverload(_)                => "no overload matches: resolution is on declared parameter types and arity",
         InvalidNumericConversion(_)  => "bodyless numeric conversion requires a supported std.core.num signature; import the shared conversion or provide a function body",
         InvalidPrimitive(_)          => "bodyless machine primitive requires a supported std.core.num, std.simd, std.ct or std.mem signature; import the standard operation or provide a function body",
+        InvalidPrinter(_)            => "a bodyless declaration in std.io is a printer: it must be an exported `println` or `print` taking `(args: ...)` and answering `()`",
         ForgedCapability(_)          => "a CPU capability is proof of runtime detection: only std.simd constructs one; obtain it from the detection function",
         InvalidInstantiation(_)      => "invalid generic instantiation: type arguments must match the declaration and every use of one parameter must agree",
         DuplicateSignature(_)        => "duplicate signature: parameter names are documentation, not identity",
@@ -343,13 +345,14 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
     fault.match({
         UndefinedName(f)             => out.write_name(f),
         NotExported(f)               => out.write_export(f),
-        NotImported(f)               => out.write_import_fix(f),
+        NotImported(f)               => out.write_missing_import(f),
         NotWritable(f)               => out.write_unwritable(f),
         ModuleNotAValue(f)           => out.write_module(f),
         NoOverload(f)                => out.write_name(f),
         InvalidInstantiation(f)      => out.write_name(f),
         InvalidNumericConversion(f)  => out.write_name(f),
         InvalidPrimitive(f)          => out.write_name(f),
+        InvalidPrinter(f)            => out.write_name(f),
         ForgedCapability(f)          => out.write_name(f),
         ImplMissingField(f)          => out.write_missing(f),
         CtorMissingField(f)          => out.write_ctor_missing(f),
@@ -471,6 +474,10 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         AmbiguousMember(f)           => out.write_pair(f),
     }).try();
     Ok(());
+}
+
+write_missing_import = (out :: String, f: ExportFault) Res<(), AllocError> {
+    out.fmt(" `{}` is not imported; add `{} = {}`", f.name, f.name, f.module)
 }
 
 write_name = (out :: String, f: NameFault) Res<(), AllocError> {
@@ -722,16 +729,6 @@ write_under_view = (out :: String, f: CaptureFault) Res<(), AllocError> {
     out.write_at(f.at).try();
     out.add(
         " — the record keeps that address, so after the move it points at the moved-from place; move the owner first and build the bound from its new home"
-    ).try();
-    Ok(());
-}
-
-write_import_fix = (out :: String, f: ExportFault) Res<(), AllocError> {
-    out.fmt(
-        ": `{}` is not imported; add `{} = {}`",
-        f.name,
-        f.name,
-        f.module
     ).try();
     Ok(());
 }

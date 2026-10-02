@@ -1,3 +1,7 @@
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 // MUST FAIL: two arms of a `.match` disagree, and the match stands in a
 // CONSTRUCTOR FIELD. `n: i32` is the position's declared word, and both
 // arms owe it — `sema_hoist.field_fits` already asks the field's two

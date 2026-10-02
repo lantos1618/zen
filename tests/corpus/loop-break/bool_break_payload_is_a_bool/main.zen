@@ -18,6 +18,11 @@
 // the tag and the payload into one word, or never breaking at all --
 // each of the three moves the printed pair, and no two of them agree.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     fs: [bool, 3] = [true, true, false];
     w: Res<bool>  = fs.loop((h, b) {

@@ -10,7 +10,9 @@
 // them here. is_empty is asked too because it reads the SAME length
 // through a different door.
 
-FsError = std.env
+Env, FsError = std.env
+Res, Ok = std.core
+println = std.io
 
 main = (env: Env) Res<i32, FsError> {
     alloc ::= env.mem.alloc();

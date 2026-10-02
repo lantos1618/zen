@@ -2,6 +2,7 @@
 
 Bencher, TestError, Tester = std.test
 Circle, Rect, Shape = main
+Res, Ok, Range = std.core
 
 shape_prints* = (t: Tester) Res<(), TestError> {
     s   = Shape.Unit;

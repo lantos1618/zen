@@ -9,6 +9,11 @@
 // the sink here is the CONSOLE, so main takes no allocator: a value
 // that formats itself through {} still allocates nothing.
 
+Res, Ok, Display, WriteError, Sink = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Tag = {
     ch: u8,
 }

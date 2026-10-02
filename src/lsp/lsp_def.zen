@@ -19,6 +19,8 @@ told_at, module_index_of = std.ast.ast_named
 check_standalone = lsp.lsp_query
 check_build = zen.zen_build
 to_json = std.json
+Res, Ok, None, loop = std.core
+Env = std.env
 
 Target* = {
     found*: bool,

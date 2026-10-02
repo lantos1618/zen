@@ -24,11 +24,16 @@
 // `prim_const_value` gated on `is_integer` alone and declined floats, so
 // the same spelling that worked as a value was refused as a count. An
 // array counted by `f32.BITS` below is the guard: the folder must answer
-// the prelude's 32, not decline and not guess.
+// std.core's 32, not decline and not guess.
 //
 // usize is deliberately absent: `std.core.num` says its width is the
 // target's, not the language's, and "no corpus test may print a usize
 // extreme" for the same reason.
+
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 BYTES: usize = i32.BITS / 8
 
@@ -57,9 +62,9 @@ count64 = (xs: [u8, 64]) i32 {
 }
 
 main = (env: Env) Res<i32, AllocError> {
-    // THE FOLD ROUTE, EVERY WIDTH THE PRELUDE DECLARES. Each array's
+    // THE FOLD ROUTE, EVERY WIDTH STD.CORE DECLARES. Each array's
     // count is whatever `bits_of` answers for the name; the initialiser
-    // is written with the digit the prelude declares, so a row edited on
+    // is written with the digit std.core declares, so a row edited on
     // either side alone is a compile error, and the printed sums prove
     // the folded counts at runtime.
     b8:   [u8, i8.BITS]  = [1, 1, 1, 1, 1, 1, 1, 1];
@@ -107,7 +112,7 @@ main = (env: Env) Res<i32, AllocError> {
     );
 
     // THE FLOAT ROWS OF THE FOLD (#811): the same spelling that types as
-    // a value must fold to the prelude's width where a count is wanted.
+    // a value must fold to std.core's width where a count is wanted.
     fb32: [u8, f32.BITS] = [
         1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
         1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
@@ -123,8 +128,8 @@ main = (env: Env) Res<i32, AllocError> {
     // BITS in ordinary arithmetic, which is where `mem_arena` uses it
     println("bytes {}", BYTES);
 
-    // THE VALUE ROUTE, every width the prelude declares: read through
-    // the prelude declaration, not the folder
+    // THE VALUE ROUTE, every width std.core declares: read through
+    // std.core's declaration, not the folder
     println("signed {} {} {} {}", i8.BITS, i16.BITS, i32.BITS, i64.BITS);
     println("unsigned {} {} {} {}", u8.BITS, u16.BITS, u32.BITS, u64.BITS);
     println("float {} {}", f32.BITS, f64.BITS);

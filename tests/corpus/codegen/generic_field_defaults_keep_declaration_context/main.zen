@@ -1,4 +1,5 @@
 Bundle = schema.schema
+println = std.io
 
 carry = <T>(value: T) T { value }
 

@@ -1,3 +1,9 @@
+Res, Ok = std.core
+AllocError = std.mem
+Vec = std.collections
+Env = std.env
+Actor, ActorError, ActorStartError, Context = std.actor
+
 Probe = c.bind("probe.h", {
     exercise* = () ()
     recorded* = (byte: u8, sequence: u8) ()

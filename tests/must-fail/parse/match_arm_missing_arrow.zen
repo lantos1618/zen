@@ -1,3 +1,7 @@
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 // arms are `pattern => expr`. the `=>` is not optional.
 main = (env: Env) Res<i32, ArgError> {
     n = 0;

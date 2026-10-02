@@ -8,6 +8,7 @@ TyId, TyNamed = sema.sema_ty
 Checker, Ctx = sema.sema_check
 SemaFault, NameFault = sema.sema_diag
 Own = sema.sema_own
+Res, Ok = std.core
 
 // `g = f` on a value with a `Drop` impl would drop it twice.
 check_drop_copy* = (c :: Checker, o :: Own, b: Bind, ctx: Ctx)

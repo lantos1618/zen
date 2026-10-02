@@ -1,3 +1,6 @@
+Res, Ok = std.core
+Env = std.env
+
 pick = <T>(value: T) i32 { 1 }
 pick = (value: i32, label: Res<str>) i32 { 2 }
 

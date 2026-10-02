@@ -18,6 +18,11 @@
 // the one that matters, because until this worked no writer in `src/`
 // could be written as a format at all.
 
+Res, Ok, Display, WriteError, Sink = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Point = {
     x: i64,
     y: i64,

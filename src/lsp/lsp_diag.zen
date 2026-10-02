@@ -13,6 +13,8 @@ write_frame = lsp.lsp_frame
 path_of, doc_text = lsp.lsp_uri
 Built, Spot* = lsp.lsp_built
 Classed = lsp.lsp_colour
+Res, Ok, None, Drop, loop = std.core
+Env = std.env
 
 Diagnostic = {
     range: TextRange,

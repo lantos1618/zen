@@ -24,7 +24,7 @@ check_module_graph*                      = sema.sema_cycle
 // what a name means, and who is allowed to ask
 DefKind*, Def*, ImportBinding*           = sema.sema_def
 ModuleTable*, World*, dotted*, decl_at*  = sema.sema_def
-PRELUDE*                                 = sema.sema_def
+CORE*                                 = sema.sema_def
 
 // Checker state and type agreement.
 Checker*, Ctx*, Binding*                 = sema.sema_check

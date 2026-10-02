@@ -1,6 +1,11 @@
 // A member's explicit generic arguments obey its bounds, including a bound on
 // a return-only parameter that cannot be recovered from value arguments.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Boxy = {
     width: i32,
 }

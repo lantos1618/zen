@@ -19,6 +19,11 @@
 // this rule through Vec; this pins the VALUE FLOW with plain structs,
 // where every printed number is chosen and none comes from std.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 P = {
     n :: i64 = 1,
 }

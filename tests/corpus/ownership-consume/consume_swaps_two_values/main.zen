@@ -13,6 +13,10 @@
 // The temporary starts as a fresh binding; overwrite-and-drop behavior is
 // covered separately. This test isolates byte movement and final drop order.
 
+Res, Ok, Drop, IoError = std.core
+Env = std.env
+println = std.io
+
 Noisy = {
     env: Env,
     tag: str,

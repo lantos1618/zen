@@ -2,6 +2,10 @@
 // value whose type carries it out of the function. The caller's defer
 // then registers on a dead frame, and the loss was silent at -O0.
 
+Res, Ok, Scope, IoError = std.core
+Env = std.env
+println = std.io
+
 here = () Res<Scope, IoError> {
     Ok(@scope)
 }

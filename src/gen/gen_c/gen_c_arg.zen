@@ -12,6 +12,7 @@ expr, value_held = gen.gen_c.gen_c_expr
 declare_temp = gen.gen_c.gen_c_flow
 address_of = gen.gen_c.gen_c_fat
 borrows, write_borrow, note_lend = gen.gen_c.gen_c_borrow
+Res, Ok, None = std.core
 
 arg_text* = (
     be   :: CBackend,

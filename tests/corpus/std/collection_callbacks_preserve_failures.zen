@@ -1,3 +1,9 @@
+Res, Ok, Err, Range = std.core
+Alloc, AllocError, Ptr = std.mem
+Vec = std.collections
+Env = std.env
+println = std.io
+
 // Collection helpers own allocation failures; callback failures leave their
 // lexical caller. Both stop before visiting any later element.
 Failure = | BadInput(str)

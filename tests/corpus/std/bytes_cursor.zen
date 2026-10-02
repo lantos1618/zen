@@ -1,5 +1,9 @@
 // Independent byte patterns, then round trips; failure must be transactional.
 ByteReader, ByteWriter, ByteError = std.bytes
+Res, Ok, Range = std.core
+AllocError, null_ptr = std.mem
+Env = std.env
+println = std.io
 
 invalid = <T>(result: Res<T, ByteError>) bool {
     result.match({Err(e) => e.match({Invalid => true, _ => false}), _ => false})

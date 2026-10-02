@@ -2,6 +2,11 @@
 // required form, and only then may .try() propagate. DESIGN.md, Errors.
 // the rejected shape is must-fail/sema/try_option_into_res.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 LookupError = NotFound | Malformed
 
 Error = LookupError | AllocError

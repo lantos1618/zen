@@ -1,0 +1,448 @@
+// Writing import lines. The parsed module decides where they go. A name
+// joins an import from its module among the imports that open the file;
+// otherwise its module gets a new line after those imports, or, when the
+// file opens with a declaration, above that declaration and the comment
+// attached to it. Names are listed in a fixed order and modules come in a
+// fixed order, so the same names always produce the same text.
+Res, Ok, Err, None, loop, Range = std.core
+scan, Source = std.lex
+Parser = std.parse
+Decl = std.ast
+Alloc, AllocError = std.mem
+Vec = std.collections
+str, String = std.text
+Missing = imports_report
+
+// Modules first in this order, then any other in the order first reported.
+MODULE_ORDER: [str, 7] = [str, 7](
+    "std.core",
+    "std.mem",
+    "std.collections",
+    "std.text",
+    "std.env",
+    "std.actor",
+    "std.io"
+)
+
+// The order std.core has always listed these names in; any other name
+// follows them in the order it was written or reported.
+NAME_ORDER: [str, 90] = [str, 90](
+    "Res", "Ok", "Err", "None", "ok_or", "value_or", "map_err", "replace_err",
+    "ignore", "without_err", "when_ok", "Rng", "then", "ensure", "bool",
+    "Drop", "Scope", "pow2", "ToU16", "ToU32", "ToU64", "ToUsize", "ToI16",
+    "ToI32", "ToI64", "ToF64", "is_ascii", "is_digit", "is_lower",
+    "is_upper", "is_alpha", "is_alnum", "is_space", "is_ident_start",
+    "is_ident_cont", "is_hex_digit", "digit_value", "digit", "hex_value",
+    "hex_usize", "to_lower", "to_upper", "hex_digit", "loop", "find",
+    "filter", "map", "LoopHandle", "Range", "Eq", "is_in", "Hash", "Hasher",
+    "Display", "IoError", "WriteError", "Sink", "Path", "join_path",
+    "Duration", "str", "String", "Vec", "Map", "Ordered", "vararg",
+    "OutOfBounds", "Alloc", "AllocError", "Arena", "Mem", "Ptr", "null_ptr",
+    "Env", "ArgError", "Console", "Stdin", "Fs", "FsError", "Net", "Threads",
+    "Thread", "ThreadError", "Actor", "Ref", "ActorError", "ActorStartError",
+    "Context", "println", "print"
+)
+
+WIDTH: usize = 80
+
+EditError* = Unparsed | NoDeclaration | OutOfMemory
+
+// Source lines numbered `from` or later moved `down` lines down and `up`
+// lines up; one of the two is zero.
+Shift* = { from*: usize, down*: usize, up*: usize }
+
+// The rewritten file and how its lines moved.
+Edited* = {
+    text*: String,
+    shifts*: Vec<Shift>,
+}
+
+// Lines `first` through `last` replaced by `text`, which holds `lines`
+// lines. An insertion before line `first` has `last` equal to `first - 1`.
+Change = {
+    first: usize,
+    last: usize,
+    text: str,
+    lines: usize,
+}
+
+// An import among those that open the file, as written.
+Opening = {
+    module: str,
+    names: Vec<str>,
+    first: usize,
+    last: usize,
+}
+
+// `text` with every name in `wanted` imported. A file that does not parse —
+// a must-fail parser test — gets new lines above its first line of code and
+// that line's comment.
+insert_imports* = (a: Alloc, file: str, text: str, wanted: Vec<Missing>)
+                  Res<Edited, EditError> {
+    parsed(a, file, text).match({
+        Ok(decls) => into_module(a, text, decls, wanted),
+        Err(e)    => e.match({
+            Unparsed => unparsed(a, text, wanted),
+            _        => Err(e),
+        }),
+    })
+}
+
+unparsed = (a: Alloc, text: str, wanted: Vec<Missing>)
+           Res<Edited, EditError> {
+    block ::= a.String().try(EditError.OutOfMemory);
+    added ::= 0;
+    modules(a, wanted).try(EditError.OutOfMemory).loop((m) {
+        names = ordered(a, wanted, m).try(EditError.OutOfMemory);
+        added = added + module_line(names, m, block).try(EditError.OutOfMemory);
+    });
+    at = attached_comment(text, first_code_line(text));
+    changes ::= a.Vec<Change>();
+    changes.add(Change(
+        first: at,
+        last: at - 1,
+        text: block.view(),
+        lines: added + 1
+    ))
+        .try(EditError.OutOfMemory);
+    applied(a, text, changes).try(EditError.OutOfMemory)
+}
+
+// The first line that is neither blank nor a comment.
+first_code_line = (text: str) usize {
+    line ::= 1;
+    loop((h) {
+        start = line_start(text, line);
+        (start >= text.len).match({
+            true  => h.break(),
+            false => line_text(text, line).trim().match({
+                None  => { line = line + 1; },
+                Ok(t) => t.starts_with("//").match({
+                    true  => { line = line + 1; },
+                    false => h.break(),
+                }),
+            }),
+        });
+    });
+    line
+}
+
+into_module = (a: Alloc, text: str, decls: Vec<Decl>, wanted: Vec<Missing>)
+              Res<Edited, EditError> {
+    (decls.len > 0).ensure(EditError.NoDeclaration).try();
+    opening = openings(a, text, decls).try(EditError.OutOfMemory);
+    changes ::= a.Vec<Change>();
+    block   ::= a.String().try(EditError.OutOfMemory);
+    added   ::= 0;
+    modules(a, wanted).try(EditError.OutOfMemory).loop((m) {
+        names = ordered(a, wanted, m).try(EditError.OutOfMemory);
+        opening.find((o) { o.module.eq(m) }).match({
+            Ok(o) => changes.add(merged(a, o, names).try(EditError.OutOfMemory))
+                .try(EditError.OutOfMemory),
+            None  => {
+                added = added + module_line(names, m, block)
+                    .try(EditError.OutOfMemory);
+            },
+        });
+    });
+    (added > 0).then(() {
+        changes.add(new_lines(text, decls, opening, block.view(), added))
+            .try(EditError.OutOfMemory);
+    });
+    applied(a, text, changes).try(EditError.OutOfMemory)
+}
+
+parsed = (a: Alloc, file: str, text: str) Res<Vec<Decl>, EditError> {
+    lexed = scan(a, Source(file: file, text: text))
+        .try(EditError.OutOfMemory);
+    lexed.is_clean().ensure(EditError.Unparsed).try();
+    p ::= a.Parser(lexed);
+    m = p.module(file).try(EditError.OutOfMemory);
+    (p.diags.len == 0).ensure(EditError.Unparsed).try();
+    Ok(m.decls)
+}
+
+is_import = (d: Decl) bool { d.kind.match({ Import(_) => true, _ => false }) }
+
+// The imports before the first other declaration that a name can join: one
+// module path, no comment inside.
+openings = (a: Alloc, text: str, decls: Vec<Decl>)
+           Res<Vec<Opening>, AllocError> {
+    out ::= a.Vec<Opening>();
+    decls.loop((h, d) {
+        is_import(d).match({
+            false => h.break(),
+            true  => d.span.text_in(text).match({
+                None    => (),
+                Ok(src) => opening_of(a, src, d).try().match({
+                    None  => (),
+                    Ok(o) => out.add(o).try(),
+                }),
+            }),
+        });
+    });
+    Ok(out)
+}
+
+opening_of = (a: Alloc, src: str, d: Decl) Res<Res<Opening>, AllocError> {
+    src.contains("//").match({
+        true  => Ok(None),
+        false => src.split_once(" = ").match({
+            None    => Ok(None),
+            Ok(cut) => {
+                names ::= a.Vec<str>();
+                cut.before.split(',').loop((piece) {
+                    piece.trim().match({
+                        None  => (),
+                        Ok(n) => names.add(n).try(),
+                    });
+                });
+                module = cut.after.trim().value_or("");
+                Ok(Ok(Opening(
+                    module: module,
+                    names: names,
+                    first: d.span.start.line,
+                    last: d.span.end.line,
+                )))
+            },
+        }),
+    })
+}
+
+// The modules `wanted` names, in MODULE_ORDER first.
+modules = (a: Alloc, wanted: Vec<Missing>) Res<Vec<str>, AllocError> {
+    out ::= a.Vec<str>();
+    MODULE_ORDER.loop((m) {
+        wanted.find((w) { w.module.eq(m) }).match({
+            Ok(_) => out.add(m).try(),
+            None  => (),
+        });
+    });
+    wanted.loop((w) {
+        w.module.is_in(out).match({
+            true  => (),
+            false => out.add(w.module).try(),
+        });
+    });
+    Ok(out)
+}
+
+// The names `wanted` takes from `module`, in NAME_ORDER first.
+ordered = (a: Alloc, wanted: Vec<Missing>, module: str)
+          Res<Vec<str>, AllocError> {
+    out ::= a.Vec<str>();
+    NAME_ORDER.loop((n) {
+        (takes(wanted, module, n) && !n.is_in(out)).then(() { out.add(n).try(); });
+    });
+    wanted.loop((w) {
+        (w.module.eq(module) && !w.name.is_in(out))
+            .then(() { out.add(w.name).try(); });
+    });
+    Ok(out)
+}
+
+takes = (wanted: Vec<Missing>, module: str, name: str) bool {
+    wanted.find((w) { w.module.eq(module) && w.name.eq(name) })
+        .match({ Ok(_) => true, None => false })
+}
+
+// An opening import rewritten with `more` names, every name in NAME_ORDER
+// first and the rest in the order they were written.
+merged = (a: Alloc, o: Opening, more: Vec<str>) Res<Change, AllocError> {
+    all ::= a.Vec<str>();
+    NAME_ORDER.loop((n) {
+        (bare_in(o.names, n) || n.is_in(more)).then(() {
+            written(o.names, n).match({
+                Ok(w) => all.add(w).try(),
+                None  => all.add(n).try(),
+            });
+        });
+    });
+    o.names.loop(
+        (n) { n.is_in(all).match({ true => (), false => all.add(n).try() }); }
+    );
+    more.loop(
+        (n) { n.is_in(all).match({ true => (), false => all.add(n).try() }); }
+    );
+    out ::= a.String().try();
+    lines = module_line(all, o.module, out).try();
+    Ok(Change(first: o.first, last: o.last, text: out.view(), lines: lines))
+}
+
+// Whether `names` holds `name`, starred or not.
+bare_in = (names: Vec<str>, name: str) bool {
+    written(names, name).match({ Ok(_) => true, None => false })
+}
+
+written = (names: Vec<str>, name: str) Res<str> {
+    names.find(
+        (n) { n.eq(name) || (n.len == name.len + 1 && n.starts_with(name) && n.ends_with("*")) }
+    )
+}
+
+// New module lines go after the opening imports, or above the first
+// declaration and its comment, followed by a blank line.
+new_lines = (
+    text    : str,
+    decls   : Vec<Decl>,
+    opening : Vec<Opening>,
+    block   : str,
+    lines   : usize
+) Change {
+    last_opening(decls).match({
+        Ok(end) => Change(first: end + 1, last: end, text: block, lines: lines),
+        None    => {
+            start = decls.get(
+                0
+            ).match({ Ok(d) => d.span.start.line, None => 1 });
+            at    = attached_comment(text, start);
+            Change(first: at, last: at - 1, text: block, lines: lines + 1)
+        },
+    })
+}
+
+// The last line of the imports that open the module, if it opens with one.
+last_opening = (decls: Vec<Decl>) Res<usize> {
+    opening = Range(0, decls.len).find((i) {
+        decls.get(i).match({ Ok(d) => !is_import(d), None => true })
+    }).value_or(decls.len);
+    (opening == 0).match({
+        true  => None,
+        false => Ok(decls.get(opening - 1).try().span.end.line),
+    })
+}
+
+// The first line of the `//` comment directly above line `line`, or `line`
+// itself when nothing is attached.
+attached_comment = (text: str, line: usize) usize {
+    at ::= line;
+    loop((h) {
+        (at > 1 && is_comment(line_text(text, at - 1))).match({
+            true  => { at = at - 1; },
+            false => h.break(),
+        });
+    });
+    at
+}
+
+is_comment = (line: str) bool {
+    line.trim().match({ Ok(t) => t.starts_with("//"), None => false })
+}
+
+// Line `n` (1-based) without its terminator; empty past the end.
+line_text = (text: str, n: usize) str {
+    start = line_start(text, n);
+    stop  = text.newline_in(start, text.len);
+    text.slice(start, stop)
+}
+
+// The byte offset where line `n` (1-based) begins; the end of the text when
+// there are fewer lines.
+line_start = (text: str, n: usize) usize {
+    seen ::= 1;
+    at   ::= 0;
+    loop((h) {
+        (seen >= n || at >= text.len).match({
+            true  => h.break(),
+            false => {
+                at   = text.newline_in(at, text.len) + 1;
+                seen = seen + 1;
+            },
+        });
+    });
+    (at > text.len).match({ true => text.len, false => at })
+}
+
+// Apply `changes`, which never overlap, in line order.
+applied = (a: Alloc, text: str, changes: Vec<Change>)
+          Res<Edited, AllocError> {
+    out    ::= a.String().try();
+    shifts ::= a.Vec<Shift>();
+    cursor ::= 0;
+    done   ::= a.Vec<usize>();
+    Range(0, changes.len).loop((h, step) {
+        next = earliest(changes, done);
+        done.add(next).try();
+        c    = changes.get(next).ok_or(AllocError.OutOfMemory).try();
+        from = after_bom(text, line_start(text, c.first));
+        out.add(text.slice(cursor, from)).try();
+        // A last line without a terminator still ends before new text.
+        (from == text.len && from > 0 && text.index(from - 1) != '\n')
+            .then(() { out.add("\n").try(); });
+        out.add(c.text).try();
+        gap = c.last + 1 == c.first && c.lines > line_count(c.text);
+        gap.then(() { out.add("\n").try(); });
+        cursor = after_bom(text, line_start(text, c.last + 1));
+        old    = c.last + 1 - c.first;
+        (c.lines > old).then(() {
+            shifts.add(Shift(
+                from: c.last + 1,
+                down: c.lines - old,
+                up: 0
+            )).try();
+        });
+        (c.lines < old).then(() {
+            shifts.add(Shift(
+                from: c.last + 1,
+                down: 0,
+                up: old - c.lines
+            )).try();
+        });
+    });
+    out.add(text.slice(cursor, text.len)).try();
+    Ok(Edited(text: out, shifts: shifts))
+}
+
+// A byte-order mark stays the file's first three bytes.
+after_bom = (text: str, at: usize) usize {
+    bom = at == 0 && text.len >= 3 && text.index(0) == 0xEF
+        && text.index(1) == 0xBB && text.index(2) == 0xBF;
+    bom.match({ true => 3, false => at })
+}
+
+// The index of the change starting earliest among those not yet `done`.
+earliest = (changes: Vec<Change>, done: Vec<usize>) usize {
+    best ::= changes.len;
+    changes.loop((h, i, c) {
+        open   = !i.is_in(done);
+        better = best == changes.len || c.first < changes.get(best).match({
+            Ok(b) => b.first,
+            None  => 0,
+        });
+        (open && better).then(() { best = i; });
+    });
+    best
+}
+
+line_count = (s: str) usize { s.count("\n") }
+
+// One import line, wrapped at WIDTH with a four-space continuation. Answers
+// how many lines it wrote.
+module_line = (names: Vec<str>, module: str, out :: String)
+              Res<usize, AllocError> {
+    lines ::= 1;
+    width ::= 0;
+    names.loop((h, i, n) {
+        last  = i + 1 == names.len;
+        piece = n.len + last.match({ true => 3 + module.len, false => 1 });
+        (i > 0).then(() {
+            (width + 1 + piece > WIDTH).match({
+                true  => {
+                    out.add("\n    ").try();
+                    width = 4;
+                    lines = lines + 1;
+                },
+                false => {
+                    out.add(" ").try();
+                    width = width + 1;
+                },
+            });
+        });
+        out.add(n).try();
+        out.add(last.match({ true => " = ", false => "," })).try();
+        width = width + piece;
+    });
+    out.add(module).try();
+    out.add("\n").try();
+    Ok(lines)
+}

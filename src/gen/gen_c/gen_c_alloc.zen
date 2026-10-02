@@ -21,6 +21,7 @@ convert, write_sizeof, slot_call = gen.gen_c.gen_c_bound
 init_temp = gen.gen_c.gen_c_flow
 is_fat = gen.gen_c.gen_c_fat
 ptr_at = gen.gen_c.gen_c_ptr
+Res, Ok, None = std.core
 
 // The receiver's `raw` declaration and its owning type.
 RawFn* = {

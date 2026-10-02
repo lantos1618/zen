@@ -2,6 +2,7 @@
 // normalized immediately and are not retained.
 
 Res = std.core.result
+Ok, None, loop = std.core
 
 NS_PER_MICRO*  : u64 = 1000
 NS_PER_MILLI*  : u64 = 1000000

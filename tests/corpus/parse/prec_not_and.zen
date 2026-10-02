@@ -6,6 +6,10 @@
 // table below separates all three -- drop-the-`!` differs at (true,true),
 // and the looser binding `!(a && b)` differs at (true,false).
 
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 check = (a: bool, b: bool) str {
     (!a && b).match({
         true  => "true",

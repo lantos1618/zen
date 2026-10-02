@@ -16,6 +16,10 @@
 // Neither fails to compile, which is why the printed words are the
 // assertion.
 
+Res, Ok, Err = std.core
+Env = std.env
+println = std.io
+
 Inner = | InnerBoom
 Outer = | OuterBoom
 Any = Inner | Outer

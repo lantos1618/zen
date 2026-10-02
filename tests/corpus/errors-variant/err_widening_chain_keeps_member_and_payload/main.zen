@@ -11,6 +11,11 @@
 // changes. Each member carries its own number as payload, so the arm
 // taken and the value read identify exactly which member survived.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 A = | AOnly(i64)
 B = | BOnly(i64)
 C = | COnly(i64)

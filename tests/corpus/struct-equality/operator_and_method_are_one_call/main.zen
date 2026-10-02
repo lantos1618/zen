@@ -14,6 +14,11 @@
 // SAME line. Both spellings are evaluated in both orders and folded
 // into one weighted number; any disagreement anywhere moves it.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Pair = {
     x*: i32,
     y*: i32,

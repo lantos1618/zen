@@ -1,5 +1,6 @@
 // Operating-system cryptographic entropy. No allocation, PRNG state or fallback.
 Ptr = std.mem
+Res, Ok = std.core
 // arc4random_buf is declared by <stdlib.h> on every Apple SDK (macOS and iOS,
 // whose SDK has no <sys/random.h>) and by glibc 2.36+. It draws from the OS
 // CSPRNG and has no error result: Apple's never fails, and glibc terminates

@@ -13,6 +13,10 @@
 // would hand A the written 46 and print 460. Independent fields are what
 // keep A at 50, which is why the write is here at all.
 
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, IoError> {
     n ::= 5;
     @scope.defer(() { println("A {}", n * 10) });

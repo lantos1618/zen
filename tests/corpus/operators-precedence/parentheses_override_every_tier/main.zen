@@ -25,6 +25,11 @@
 // `p1` flips 15 -> 13, `p3` flips 1 -> 5, `wallsub` flips 11 -> 5;
 // nothing rejects.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     println("p1 {}", (2 + 3) * (4 - 1));
     println("p2 {}", 2 * (3 + 4) - 5);

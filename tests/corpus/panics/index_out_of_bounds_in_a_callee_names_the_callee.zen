@@ -18,6 +18,11 @@
 // runtime; the in-range read on the line before proves the trap belongs
 // to the SECOND subscript and not to subscripting as such.
 
+Res, Ok = std.core
+OutOfBounds = std.collections
+Env = std.env
+println = std.io
+
 // a trap never lifts into Res: it aborts the process
 Error = Overflow | DivideByZero | OutOfBounds
 

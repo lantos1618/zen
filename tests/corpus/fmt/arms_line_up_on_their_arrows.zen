@@ -38,9 +38,11 @@
 
 Alloc, AllocError = std.mem
 str, String = std.text
-Range = std.core
+Res, Ok, Range = std.core
 scan, Source = std.lex.lex
 render = fmt.fmt
+Env = std.env
+println = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

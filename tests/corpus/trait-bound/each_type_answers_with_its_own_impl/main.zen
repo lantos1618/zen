@@ -13,6 +13,11 @@
 // into one symbol and file order picks -- a bug this suite reports
 // rather than encodes.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Meter = {
     read* = (self: @Self) i32
 }

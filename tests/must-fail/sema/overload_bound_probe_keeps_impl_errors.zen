@@ -1,3 +1,7 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+
 Marker = { tag* = (self: @Self) i32 }
 Broken = { value: i32 }
 Broken.impl(MissingBound, {})

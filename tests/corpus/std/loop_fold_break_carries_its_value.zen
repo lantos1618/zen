@@ -11,6 +11,11 @@
 // moment of the break. That is the shape worth testing: a fold that
 // compiles, runs, and quietly answers with a plausible number.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     values = [1, 2, 3, 4];
 

@@ -10,6 +10,11 @@
 // (`true => { self.data.write(i, value); Ok(()) }`), so the specified form
 // was the broken one.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 g = (n: usize) Res<usize, AllocError> {
     (n == 0).match({
         true  => { m = n + 1; Ok(m + 10) },

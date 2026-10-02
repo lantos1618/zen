@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // f64 to f32 rounds, so it is `narrow_f32`, never `to_f32`: a `to_` name
 // promises either every value or None, and this conversion keeps neither.
 main = (env: Env) Res<i32, AllocError> {

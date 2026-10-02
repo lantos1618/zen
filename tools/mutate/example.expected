@@ -1,24 +1,24 @@
 zen-mutate: 13 mutants of tools/mutate/example/classify.zen, running 13
 baseline passes
-m1  killed  delete-statement  classify.zen:5:5  `(n != 0).ensure(Fail.Zero).try();` -> ``
-m2  killed  negate  classify.zen:5:5  `(n != 0)` -> `(!((n != 0)))`
-m3  killed  flip-equality  classify.zen:5:8  `!=` -> `==`
-m4  killed  constant  classify.zen:5:11  `0` -> `1`
-m5  killed  delete-statement  classify.zen:6:5  `(n < 100).ensure(Fail.High).try();` -> ``
-m6  killed  negate  classify.zen:6:5  `(n < 100)` -> `(!((n < 100)))`
-m7  SURVIVED  flip-order  classify.zen:6:8  `<` -> `<=`
-m8  SURVIVED  delete-statement  classify.zen:7:5  `(n > -100).ensure(Fail.Low).try();` -> ``
-m9  killed  negate  classify.zen:7:5  `(n > -100)` -> `(!((n > -100)))`
-m10  SURVIVED  flip-order  classify.zen:7:8  `>` -> `>=`
-m11  killed  swap-error  classify.zen:5:26  `Zero` -> `High`
-m12  SURVIVED  swap-error  classify.zen:6:27  `High` -> `Low`
-m13  SURVIVED  swap-error  classify.zen:7:28  `Low` -> `Zero`
+m1  killed  delete-statement  classify.zen:7:5  `(n != 0).ensure(Fail.Zero).try();` -> ``
+m2  killed  negate  classify.zen:7:5  `(n != 0)` -> `(!((n != 0)))`
+m3  killed  flip-equality  classify.zen:7:8  `!=` -> `==`
+m4  killed  constant  classify.zen:7:11  `0` -> `1`
+m5  killed  delete-statement  classify.zen:8:5  `(n < 100).ensure(Fail.High).try();` -> ``
+m6  killed  negate  classify.zen:8:5  `(n < 100)` -> `(!((n < 100)))`
+m7  SURVIVED  flip-order  classify.zen:8:8  `<` -> `<=`
+m8  SURVIVED  delete-statement  classify.zen:9:5  `(n > -100).ensure(Fail.Low).try();` -> ``
+m9  killed  negate  classify.zen:9:5  `(n > -100)` -> `(!((n > -100)))`
+m10  SURVIVED  flip-order  classify.zen:9:8  `>` -> `>=`
+m11  killed  swap-error  classify.zen:7:26  `Zero` -> `High`
+m12  SURVIVED  swap-error  classify.zen:8:27  `High` -> `Low`
+m13  SURVIVED  swap-error  classify.zen:9:28  `Low` -> `Zero`
 summary: 8 killed, 0 timed out, 5 survived, 0 stillborn (did not build)
 mutation score: 61%
 survivors (no test failed with this change):
-  m7  flip-order  classify.zen:6:8  `<` -> `<=`
-  m8  delete-statement  classify.zen:7:5  `(n > -100).ensure(Fail.Low).try();` -> ``
-  m10  flip-order  classify.zen:7:8  `>` -> `>=`
-  m12  swap-error  classify.zen:6:27  `High` -> `Low`
-  m13  swap-error  classify.zen:7:28  `Low` -> `Zero`
+  m7  flip-order  classify.zen:8:8  `<` -> `<=`
+  m8  delete-statement  classify.zen:9:5  `(n > -100).ensure(Fail.Low).try();` -> ``
+  m10  flip-order  classify.zen:9:8  `>` -> `>=`
+  m12  swap-error  classify.zen:8:27  `High` -> `Low`
+  m13  swap-error  classify.zen:9:28  `Low` -> `Zero`
 original classify.zen: unchanged

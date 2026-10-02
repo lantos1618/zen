@@ -1,3 +1,6 @@
+Res, Ok = std.core
+Env = std.env
+
 Fault = | Bad
 
 read = (value: Res<i32, Fault>) i32 {

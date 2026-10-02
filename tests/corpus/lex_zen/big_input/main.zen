@@ -14,6 +14,9 @@
 scan, Source, kind_name = std.lex.lex
 Alloc, AllocError = std.mem
 str, String = std.text
+Res, Ok, Range = std.core
+Env = std.env
+println = std.io
 
 MEGABYTE: usize = 1048576
 TEN_MEGABYTES: usize = 10485760

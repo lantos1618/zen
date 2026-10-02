@@ -14,6 +14,11 @@
 // `self.data == other.data && ..`) -- row 2 flips while rows 3-5 stay
 // exactly as they are, so the failure names the broken half by itself.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     s    = "abcdef";
     head = s.slice(0, 3);      // "abc", borrowed out of the front

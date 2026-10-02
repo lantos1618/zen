@@ -1,3 +1,8 @@
+Res, Ok, Drop = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Owner = { id: i32 }
 Owner.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id); } })
 main = (env: Env) Res<i32, AllocError> { v ::= env.mem.alloc().Vec<Owner>(); a ::= Owner(id: 1); v.add(a).try(); v.clear(); Ok(0) }

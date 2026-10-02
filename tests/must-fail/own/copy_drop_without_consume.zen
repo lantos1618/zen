@@ -6,6 +6,10 @@
 // trait and no implicit move: want a second one, construct a second
 // one (corpus/own/consume_then_construct_again.zen).
 
+Res, Ok, Drop, IoError = std.core
+Env = std.env
+println = std.io
+
 Buf = {
     id: i32,
 }

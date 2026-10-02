@@ -14,6 +14,11 @@
 // DOUBLED beside its position -- order and pairing land on their own
 // numbers: filter keeps every value equal to 1 (positions 1 and 3).
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
     xs = [3, 1, 4, 1, 5];

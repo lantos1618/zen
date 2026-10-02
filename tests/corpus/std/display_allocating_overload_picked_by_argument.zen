@@ -5,6 +5,11 @@
 // buffer reaches the first. the second is DERIVED from the first, so
 // they can never disagree - and this test is what says so out loud
 
+Res, Ok, Display, IoError, WriteError, Sink = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Error = AllocError | IoError
 
 Point = {

@@ -4,6 +4,10 @@
 //
 // position: the inferred set.
 
+Res, Ok, Err = std.core
+Env = std.env
+println = std.io
+
 CfgError = Missing | Bad
 
 read_cfg* = (s: str) Res<i32, _> {

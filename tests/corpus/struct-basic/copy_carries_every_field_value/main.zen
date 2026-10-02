@@ -15,6 +15,11 @@
 // must not move f, and vice versa. A shared representation prints 9
 // where 3 belongs.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Cell = {
     v :: i64 = 30,
     w :: i64 = 20,

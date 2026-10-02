@@ -19,6 +19,11 @@
 // SAME variants through different arm positions (first arm and `_`
 // fallback respectively).
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Shape = Circle(i32) | Square(i32) | Unit
 
 area = (s: Shape) i32 {

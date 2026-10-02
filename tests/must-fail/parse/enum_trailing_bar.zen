@@ -1,3 +1,6 @@
+Res, Ok = std.core
+Env, ArgError = std.env
+
 // variants are `|`-separated, so the trailing-separator mistake is a
 // trailing BAR, not a trailing comma. (the fixture this replaces was
 // written against the old comma syntax and contained no trailing comma

@@ -1,6 +1,9 @@
 // A value of the wrong shape is Parse, named after the field.
 
-ArgError = std.env
+Env, ArgError = std.env
+Res, Ok = std.core
+AllocError = std.mem
+println = std.io
 
 // The shape the agent-zen entry point wants: switches, numbers with
 // defaults, a text default, a one-letter flag that is also the first

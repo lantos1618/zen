@@ -4,7 +4,7 @@
 Alloc, AllocError = std.mem
 str, String = std.text
 Vec, Ordered, sort = std.collections
-Range = std.core
+Res, Ok, loop, Range = std.core
 
 INDENT: str = "    "
 

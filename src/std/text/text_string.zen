@@ -6,6 +6,7 @@ Alloc, AllocError = std.mem.mem
 str, str_at = std.text.text_str
 Sink, WriteError = std.core.io
 Range = std.core.range
+Res, Ok = std.core
 
 String* = {
     data :: Vec<u8>,

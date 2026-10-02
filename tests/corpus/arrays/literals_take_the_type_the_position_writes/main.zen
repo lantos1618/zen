@@ -15,6 +15,11 @@
 // how many expressions were written, so the last index is N-1 by type and
 // not by counting.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     // the self-describing form: type rides in the literal
     primes = [i32, 4](2, 3, 5, 7);

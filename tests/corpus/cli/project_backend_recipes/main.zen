@@ -1,6 +1,10 @@
 project, Action = zen.zen_project
 host_target = zen.zen_build
 ProjectArgs = std.build
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+Env = std.env
+println = std.io
 
 run = (env: Env, alloc: Alloc, target: str) Res<(), AllocError> {
     job = ProjectArgs(

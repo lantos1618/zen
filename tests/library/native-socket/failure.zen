@@ -1,4 +1,8 @@
 Socket, resolve_addr = std.net.socket
+Res, Ok, Err, Range = std.core
+Alloc, AllocError, Ptr = std.mem
+Env = std.env
+println = std.io
 Native = c.bind("probe.h", {
     probe_check* = (yes: i32) ()
     probe_fds* = () i32

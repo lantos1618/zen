@@ -11,6 +11,10 @@
 // the two multipliers differ so a body that read `width` where it meant
 // `height` prints the wrong answer instead of a symmetric one.
 
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 Rect = {
     width: f64,
     height: f64,

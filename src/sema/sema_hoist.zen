@@ -13,6 +13,7 @@ check_literal = sema.sema_trap
 refuse_handle_value = sema.sema_handle
 check_dropped_tail = sema.sema_effect
 type_of = sema.sema_type
+Res, Ok, None, loop = std.core
 
 can_hoist* = (c: Checker, got: TyId, want: TyId) bool {
     c.types.at(want).match({

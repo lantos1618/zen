@@ -7,6 +7,10 @@
 // reverse order over bindings prints 1 before 2. only c then b, with 99
 // never appearing, is right.
 
+Res, Ok, Drop, IoError = std.core
+Env = std.env
+println = std.io
+
 Noisy = {
     env: Env,
     id: i32,

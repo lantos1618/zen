@@ -16,6 +16,11 @@
 // bare typed form, and a cascade are still the wall, pinned by
 // `must-fail/sema/meta_*`.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Point = {
     x: i64,
     y: i64,

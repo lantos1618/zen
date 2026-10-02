@@ -9,6 +9,7 @@ Inst, inst_of_named, subst, push_tparams, owner_of = sema.sema_inst
 variant_payload = sema.sema_case
 type_from_ast = sema.sema_denote
 is_drop_type = sema.sema_drop
+Res, Ok = std.core
 
 PayloadPolicy = ActorMessage | OwningCopy | BoundCarrier
 

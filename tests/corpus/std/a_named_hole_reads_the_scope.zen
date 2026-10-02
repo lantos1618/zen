@@ -12,6 +12,11 @@
 // `{`, the bytes `name`, and a literal `}` -- not a hole -- because the
 // walk classifies `{{` before it ever looks for an identifier.
 
+Res, Ok, Range, IoError = std.core
+Alloc, AllocError = std.mem
+Env = std.env
+println = std.io
+
 Error = AllocError | IoError
 
 show = (a: Alloc, tag: str, depth: usize) Res<(), Error> {

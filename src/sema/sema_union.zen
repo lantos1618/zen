@@ -7,6 +7,7 @@ TyId, TyNamed, TyUnion = sema.sema_ty
 Def, decl_at, has_variant = sema.sema_def
 Checker = sema.sema_check
 enum_has_discriminants = sema.sema_discriminant
+Res, Ok, None = std.core
 
 named_or_union* = (c :: Checker, d: Def, args: Vec<TyId>)
                   Res<TyId, AllocError> {

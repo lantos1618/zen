@@ -16,6 +16,11 @@
 // four times per outer pass, and the outer tail line proves the exit
 // stopped at the right depth.
 
+Res, Ok, loop, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     Range(0, 3).loop((h_outer, outer) {
         count ::= 0;

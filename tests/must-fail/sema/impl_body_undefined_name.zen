@@ -6,6 +6,11 @@
 //
 // position: the name that resolves to nothing.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Boxy = {
     width: i32,
     height: i32,

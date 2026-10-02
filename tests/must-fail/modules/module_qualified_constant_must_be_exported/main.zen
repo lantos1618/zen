@@ -2,6 +2,10 @@
 // Lowering now resolves `Config.NAME` itself, so the `*` gate must still be
 // what refuses an unexported one, before any code is generated.
 
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
+
 Config = config
 
 main = (env: Env) Res<i32, IoError> {

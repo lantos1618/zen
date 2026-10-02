@@ -8,6 +8,8 @@ str, String = std.text
 Vec = std.collections
 Target, Arch = std.build
 host_target = zen.zen_build
+Res, Ok = std.core
+Env = std.env
 
 // Targets with an assembly renderer and a recipe below.
 asm_native* = (target: Target) bool {

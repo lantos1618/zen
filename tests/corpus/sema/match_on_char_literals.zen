@@ -2,6 +2,11 @@
 // on near misses. Escaped newline, tab, quote, and backslash cases also pin
 // decoded string length by printing each input byte beside its classification.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 classify = (b: u8) str {
     b.match({
         'a'  => "letter-a",

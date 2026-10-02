@@ -2,6 +2,7 @@
 // operations whose refusal, on a backend that cannot lower them yet, names
 // the operation.
 machine_op, machine_refusal = gen.gen_ir_machine
+println = std.io
 
 main = () {
     [str, 4]("add_carry", "sub_borrow", "mul_limbs", "square_limbs").loop((

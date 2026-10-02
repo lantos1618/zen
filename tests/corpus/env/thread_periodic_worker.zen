@@ -1,4 +1,5 @@
-Tick, ThreadError = std.env
+Env, ThreadError, Tick = std.env
+Res, Ok = std.core
 
 Once = { env: Env }
 Once.impl(Tick, {

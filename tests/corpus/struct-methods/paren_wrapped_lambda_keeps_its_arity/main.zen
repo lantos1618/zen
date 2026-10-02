@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 W = {
     v: i32,
     run = (self: @Self, f: (x: i32) i32) i32 { f(self.v) + 10 }

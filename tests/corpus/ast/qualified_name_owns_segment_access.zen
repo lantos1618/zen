@@ -6,6 +6,9 @@
 Ident, QualifiedName = std.ast.ast_span
 Pos, Span = std.source
 Alloc, AllocError = std.mem
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 at = () Span {
     Span(

@@ -1,3 +1,8 @@
+Res, Ok, None = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<(), AllocError> {
     present: Res<i32> = Ok(7);
     missing: Res<i32> = None;

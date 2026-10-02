@@ -3,6 +3,11 @@
 // function on bool. it lands in Res - Ok(v) when true, None when
 // false - so it matches like anything else and nothing is hidden
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     (1 == 1).then(() { "ran" }).match({
         Ok(s) => println("true {}", s),

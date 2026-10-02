@@ -14,6 +14,11 @@
 // Breaks if: dot-dispatch requires a named local receiver -- whichever
 // line corresponds to the dropped shape changes.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 W = {
     v: i32,
 }

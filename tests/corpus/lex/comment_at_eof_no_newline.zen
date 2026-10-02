@@ -1,3 +1,8 @@
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // a line comment terminated by EOF rather than by a newline: the file
 // does not end with \n.
 Error = AllocError | IoError

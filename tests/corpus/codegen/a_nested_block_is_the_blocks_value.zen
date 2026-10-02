@@ -2,6 +2,9 @@
 // and lambda contexts. A nested block in statement position remains unit.
 
 AllocError = std.mem
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 inner  = () Res<i32, AllocError> { Ok(11) }
 

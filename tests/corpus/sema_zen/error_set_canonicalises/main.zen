@@ -22,6 +22,9 @@ Pos, Span = std.source
 Alloc, AllocError = std.mem
 Vec = std.collections
 str, String = std.text
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 // A CALLER BRINGS ITS OWN ALLOCATOR. `Types` keeps `kinds`, `keys`,
 // `by_key`, `count` and `alloc` unstarred — it is an intern store and

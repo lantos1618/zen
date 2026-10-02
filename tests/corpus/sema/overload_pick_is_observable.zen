@@ -12,6 +12,11 @@
 // arity" (DESIGN.md, Overloading) is what says which, and this test is
 // what makes disobeying it visible.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Box = {
     w: i32,
     of = (self: @Self, k: i32) i32 { self.w + k }

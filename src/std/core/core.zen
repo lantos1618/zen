@@ -45,5 +45,4 @@ Env*, ArgError*,
     Console*, Stdin*, Fs*, FsError*,
     Net*, Threads*, Thread*, ThreadError* = std.env
 
-Actor*, Ref*, ActorError*, ActorStartError* = std.actor.actor_core
-Context* = std.actor.actor_context
+Actor*, Ref*, ActorError*, ActorStartError*, Context* = std.actor

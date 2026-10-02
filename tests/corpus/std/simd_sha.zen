@@ -48,7 +48,7 @@ maj = (x: u32, y: u32, z: u32) u32 { x.bit_and(y).bit_xor(x.bit_and(z)).bit_xor(
 model_rnds2 = (cdgh: u32x4, abef: u32x4, wk: u32x4) u32x4 {
     a ::= abef.lane(3); b ::= abef.lane(2); c ::= cdgh.lane(3); d ::= cdgh.lane(2);
     e ::= abef.lane(1); f ::= abef.lane(0); g ::= cdgh.lane(1); h ::= cdgh.lane(0);
-    Range(0, 2).loop((i) {
+    Range<usize>(0, 2).loop((i) {
         t1 = h +% big_sigma1(e) +% ch(e, f, g) +% wk.lane(i);
         t2 = big_sigma0(a) +% maj(a, b, c);
         h  = g; g = f; f = e; e = d +% t1;
@@ -79,7 +79,7 @@ model_msg2 = (w: u32x4, prev: u32x4) u32x4 {
 model_hash = (abcd: u32x4, efgh: u32x4, wk: u32x4, part1: bool) u32x4 {
     a ::= abcd.lane(0); b ::= abcd.lane(1); c ::= abcd.lane(2); d ::= abcd.lane(3);
     e ::= efgh.lane(0); f ::= efgh.lane(1); g ::= efgh.lane(2); h ::= efgh.lane(3);
-    Range(0, 4).loop((i) {
+    Range<usize>(0, 4).loop((i) {
         t1 = h +% big_sigma1(e) +% ch(e, f, g) +% wk.lane(i);
         t2 = big_sigma0(a) +% maj(a, b, c);
         h  = g; g = f; f = e; e = d +% t1;
@@ -232,7 +232,7 @@ x86_abc = (cpu: ShaNi) bool {
     cdgh ::= lanes_u32x4(1541459225, 528734635, 2773480762, 1013904242);
     m0   ::= abc_words(0); m1 ::= abc_words(1); m2 ::= abc_words(2); m3 ::= abc_words(3);
     start_abef = abef; start_cdgh = cdgh;
-    Range(0, 16).loop((g) {
+    Range<usize>(0, 16).loop((g) {
         wk   = m0.add_wrap(k4(g));
         t0   = cdgh.sha256_rnds2(abef, wk, cpu);
         cdgh = abef; abef = t0;
@@ -251,7 +251,7 @@ arm_abc = (cpu: ArmSha2) bool {
     efgh ::= lanes_u32x4(1359893119, 2600822924, 528734635, 1541459225);
     m0   ::= abc_words(0); m1 ::= abc_words(1); m2 ::= abc_words(2); m3 ::= abc_words(3);
     start_abcd = abcd; start_efgh = efgh;
-    Range(0, 16).loop((g) {
+    Range<usize>(0, 16).loop((g) {
         wk     = m0.add_wrap(k4(g));
         before = abcd;
         abcd   = abcd.sha256h(efgh, wk, cpu);

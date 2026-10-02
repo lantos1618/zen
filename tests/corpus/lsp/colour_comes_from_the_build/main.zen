@@ -182,8 +182,8 @@ batch = (s :: Server, a: Alloc, what: str, text: str, input: str)
 }
 
 walk = (a: Alloc, out: str, text: str) Res<(), AllocError> {
-    from  ::= 0;
-    going ::= true;
+    from: usize ::= 0;
+    going       ::= true;
     loop(() { going && from < out.len }, (h) {
         frame_at(out, from).match({
             Err(_) => { going = false; },
@@ -223,10 +223,10 @@ data_of = (tree: Jsons, msg: JsonId) Res<JsonId> {
 // the encoding means.
 walk_groups = (a: Alloc, tree: Jsons, array: JsonId, text: str)
               Res<(), AllocError> {
-    line      ::= 0;
-    character ::= 0;
-    at        ::= 0;
-    going     ::= true;
+    line: usize      ::= 0;
+    character: usize ::= 0;
+    at: usize        ::= 0;
+    going            ::= true;
     going.loop((h) {
         tree.item(array, at).match({
             None  => { going = false; },

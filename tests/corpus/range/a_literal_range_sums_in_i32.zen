@@ -1,0 +1,8 @@
+// A range's values have its bounds' type, and literal bounds with nothing
+// else to go on are i32, the literal default: this fold is i32 arithmetic
+// all the way through, with no conversion written.
+main = () i32 {
+    sum: i32 = Range(0, 100).loop(0, (h, i, v, acc: i32) { acc + v }).value_or(0);
+    println("{}", sum);
+    0
+}

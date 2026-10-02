@@ -25,7 +25,7 @@ be indexed, walked, and **passed on**.
 **It is an ordinary declared struct**, `src/std/collections/collections_vararg.zen`:
 
     vararg*<T> = { data: Ptr<T>, len*: usize, get*, index*, is_empty* }
-    vararg.impl(Range<T>, { start: 0, end: self.len, at ::= .. })
+    vararg.impl(Seq<T>, { start: 0, end: self.len, at ::= .. })
 
 That is the whole design, and everything cheap about this lane follows from it:
 
@@ -36,7 +36,7 @@ That is the whole design, and everything cheap about this lane follows from it:
 | interning it | `Types.declared`, unchanged | **nothing** |
 | a C type for it | `gen_c_type.named_ctype`, unchanged | **nothing** — a monomorphised struct |
 | copying / forwarding it | C struct assignment | **nothing** |
-| `v.loop(..)`, `v.find(..)` | the `Range<T>` impl above | six lines of Zen |
+| `v.loop(..)`, `v.find(..)` | the `Seq<T>` impl above | six lines of Zen |
 
 No new `TypeKind`, no new `Ty` variant, no tuple, no boxing, no vtable, no
 comptime evaluator. **Nothing structural is introduced**: `vararg<T>` is
@@ -196,7 +196,7 @@ All of the following are held by the vararg corpus, including
 - a fixed prefix then a pack: `label("ab", "cde", "f")`, `label("ab")`
 - **forwarding**: `relay("ab", "cde", "f")` passing its own pack to `label`
 - a **method**: `b.widest(1, 9, 4)`, `b.widest()`
-- a pack of `str`, and iteration through the `Range<T>` impl
+- a pack of `str`, and iteration through the `Seq<T>` impl
 - a **generic struct's** method, `Bag<T>.take(vs: vararg<T>)` — `T` from the
   receiver
 - a **generic function**, `count = <T>(v: vararg<T>)` — `T` inferred from the

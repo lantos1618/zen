@@ -29,7 +29,7 @@ CtEqual = { c: Common }
 CtEqual.impl(Probe, {
     prepare = (self: @Self, class: u8, input: Ptr<u8>, rng :: Rng) {
         (class == 0).match({
-            true  => Range(0, 32).loop((i) { input.write(i, self.c.reference.read(i)); }),
+            true  => Range<usize>(0, 32).loop((i) { input.write(i, self.c.reference.read(i)); }),
             false => fill(input, 32, rng),
         });
     }
@@ -46,13 +46,13 @@ LeakyEqual = { c: Common }
 LeakyEqual.impl(Probe, {
     prepare = (self: @Self, class: u8, input: Ptr<u8>, rng :: Rng) {
         (class == 0).match({
-            true  => Range(0, 32).loop((i) { input.write(i, self.c.reference.read(i)); }),
+            true  => Range<usize>(0, 32).loop((i) { input.write(i, self.c.reference.read(i)); }),
             false => fill(input, 32, rng),
         });
     }
     run = (self: @Self, input: Ptr<u8>) {
-        same ::= 1;
-        Range(0, 32).loop((h, i) {
+        same: u8 ::= 1;
+        Range<usize>(0, 32).loop((h, i) {
             (input.read_volatile(i) != self.c.reference.read(i)).then(() {
                 same = 0;
                 h.break();
@@ -95,7 +95,7 @@ LeakyDivide.impl(Probe, {
     prepare = (self: @Self, class: u8, input: Ptr<u8>, rng :: Rng) {
         (class == 0).match({
             true  => {
-                Range(0, 8).loop((i) { input.write(i, 0); });
+                Range<usize>(0, 8).loop((i) { input.write(i, 0); });
                 input.write(0, 1);
             },
             false => fill(input, 8, rng),
@@ -230,10 +230,10 @@ run_all = (env: Env, a: Alloc) Res<i32, AllocError> {
     reference    = a.raw(32, 16).try();
     table        = a.raw(256, 16).try();
     sink         = a.raw(16, 16).try();
-    Range(0, 32).loop((i) { reference.write(i, i.truncate_u8() *% 37); });
-    Range(0, 256).loop((i) { table.write(i, i.truncate_u8() *% 29); });
+    Range<usize>(0, 32).loop((i) { reference.write(i, i.truncate_u8() *% 37); });
+    Range<usize>(0, 256).loop((i) { table.write(i, i.truncate_u8() *% 29); });
     words = a.raw(160, 16).try().to<u64>();
-    Range(0, 20).loop((i) { words.write(i, i.to_u64()); });
+    Range<usize>(0, 20).loop((i) { words.write(i, i.to_u64()); });
     c      = Common(reference: reference, table: table, sink: sink);
     config = TimingConfig(
         measurements: measurements,
@@ -272,7 +272,7 @@ run_all = (env: Env, a: Alloc) Res<i32, AllocError> {
         result: measure(env, a, LeakyDivide(c: c), config).try(),
         control: true
     )).try();
-    failed ::= 0;
+    failed: usize ::= 0;
     rows.loop((row) { (!report(row)).then(() { failed = failed + 1; }); });
     println(
         "ct-timing: {} of {} rows as expected",

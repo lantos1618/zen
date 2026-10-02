@@ -3,8 +3,8 @@ Unary, Paren, Index, Match, ArrayLit = std.ast
 AllocError = std.mem
 str = std.text
 TyId, TyArray, is_integer = sema.sema_ty
-SemaFault, NameFault, TypeFault = sema.sema_diag
-Checker = sema.sema_check
+SemaFault, NameFault, TypeFault, HeldFault = sema.sema_diag
+Checker, Binding = sema.sema_check
 const_int, const_literal, fits, fits_magnitude, fold = sema.sema_const
 len_of, min_of = sema.sema_const
 check_binary* = (c :: Checker, b: Binary, ty: TyId) Res<(), AllocError> {
@@ -194,7 +194,49 @@ folded_within = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
 unfoldable_within = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
     c.tree.expr_at(id).kind.match({
         Literal(l) => c.literal_kind_within(id, l, want),
+        Name(n)    => c.held_within(id, n.text, want),
         _          => Ok(()),
+    })
+}
+
+// `n ::= 250` holds an i64 that changes at run time, so no use can prove it
+// fits a narrower integer type; the binding has to say which type it is.
+changing_within = (c :: Checker, id: ExprId, bnd: Binding, want: TyId)
+                  Res<(), AllocError> {
+    narrower = is_integer(c.prim_name(want)) && !c.prim_name(want).eq("i64");
+    (bnd.mutable && !bnd.param && c.prim_name(bnd.ty).eq("int") && narrower).match({
+        false => Ok(()),
+        true  => c.refuse(
+            c.tree.expr_at(id).span,
+            SemaFault.UntypedVariable(TypeFault(
+                name: bnd.name,
+                expected: want,
+                found: bnd.ty
+            ))
+        ),
+    })
+}
+
+// `big = 3000000000; z: i32 = big` is the literal written at `z`, so it is
+// refused the same way, at the use, naming the binding to widen.
+held_within = (c :: Checker, id: ExprId, name: str, want: TyId)
+              Res<(), AllocError> {
+    c.lookup(name).match({
+        None    => Ok(()),
+        Ok(bnd) => bnd.held.match({
+            None  => c.changing_within(id, bnd, want),
+            Ok(v) => fits(v, c.prim_name(want)).match({
+                Ok(false) => c.refuse(
+                    c.tree.expr_at(id).span,
+                    SemaFault.HeldOutOfRange(HeldFault(
+                        name: name,
+                        value: v,
+                        expected: want
+                    ))
+                ),
+                _         => Ok(()),
+            }),
+        }),
     })
 }
 

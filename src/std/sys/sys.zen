@@ -178,7 +178,7 @@ NO_MEMORY*: i64 = -12
 
 // The length of a NUL-terminated byte string.
 c_len* = (p: Ptr<u8>) usize {
-    n ::= 0;
+    n: usize ::= 0;
     loop(() { p.read(n) != 0 }, (h) { n = n + 1; });
     n
 }
@@ -197,7 +197,7 @@ arg* = (i: usize) Res<str> {
 // An environment variable's value, borrowed from the process's own block.
 env_var* = (name: str) Res<str> {
     block = envp();
-    i ::= 0;
+    i: usize ::= 0;
     found: Res<str> = loop<str>((h) {
         entry = block.read(i);
         entry.is_null().then(() { h.break(); });
@@ -212,7 +212,7 @@ env_var* = (name: str) Res<str> {
 
 // Write every byte, retrying interrupted and short writes.
 write_all* = (fd: i32, bytes: str) Res<(), i64> {
-    done ::= 0;
+    done: usize ::= 0;
     failure: Res<i64> = loop<i64>(() { done < bytes.len }, (h) {
         n = write(fd, bytes.ptr().offset(done), bytes.len - done);
         (n < 0 && n != 0 - eintr()).then(() { h.break(n); });
@@ -224,7 +224,7 @@ write_all* = (fd: i32, bytes: str) Res<(), i64> {
 // Read until `n` bytes arrive at `base` or input ends. The count read, or
 // -errno when the first read fails.
 read_full* = (fd: i32, base: Ptr<u8>, n: usize) Res<usize, i64> {
-    got ::= 0;
+    got: usize ::= 0;
     failure: Res<i64> = loop<i64>(() { got < n }, (h) {
         r = read(fd, base.offset(got), n - got);
         (r == 0).then(() { h.break(); });
@@ -297,7 +297,7 @@ realtime_ns* = () u64 { clock_ns(clock_realtime()) }
 
 // Fill `len` bytes at `buf` with kernel randomness.
 random_bytes* = (buf: Ptr<u8>, len: usize) Res<(), i64> {
-    done ::= 0;
+    done: usize ::= 0;
     failure: Res<i64> = loop<i64>(() { done < len }, (h) {
         n = getrandom(buf.offset(done), len - done, 0);
         (n < 0 && n != 0 - eintr()).then(() { h.break(n); });

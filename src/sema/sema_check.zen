@@ -32,6 +32,10 @@ Binding* = {
     param*: bool,
     span*: Span,
     deferred*: bool,
+    // The value of an immutable binding of an untyped integer literal
+    // (`big = 3000000000`). Its type is still the literal's, so each use
+    // checks this value against the type the use wants.
+    held* :: Res<i64> = None,
 }
 
 // Binders for the active @meta field walk. Parameter spans distinguish the
@@ -190,6 +194,15 @@ Checker* = {
     diag_count* = (self: @Self) usize { self.diags.len }
 
     diag_at* = (self: @Self, i: usize) Res<Diag> { self.diags.get(i) }
+
+    // Whether a diagnostic already starts where `span` does: a second rule
+    // reaching the same mistake stays silent.
+    reported_at* = (self: @Self, span: Span) bool {
+        self.diags.find((d) {
+            d.file.eq(span.file) && d.span.start.line == span.start.line
+                && d.span.start.col == span.start.col
+        }).match({ Ok(_) => true, None => false })
+    }
 
     type_store* = (self: @Self) Types { self.types }
 
@@ -470,6 +483,18 @@ Checker* = {
             param: false,
             span: span,
             deferred: true
+        ))
+    }
+
+    bind_held* = (self :: @Self, name: str, ty: TyId, held: i64, span: Span)
+                 Res<(), AllocError> {
+        self.locals.add(Binding(
+            name: name,
+            ty: ty,
+            mutable: false,
+            param: false,
+            span: span,
+            held: Ok(held)
         ))
     }
 

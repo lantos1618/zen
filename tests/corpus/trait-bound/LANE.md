@@ -68,7 +68,7 @@ purpose -- do not encode wrong answers as expectations):
    no-bound variant /tmp/zproto/method_collision_nobound.zen.
 
 2. A FOLD OVER A BOUND WHOSE RANGE AN IMPL SUPPLIES IS REFUSED IN CODEGEN,
-   NOT IN SEMA. `r.loop(0, (h,i,v,acc) ..)` over `<R: Range<i32>>` reaches
+   NOT IN SEMA. `r.loop(0, (h,i,v,acc) ..)` over `<R: Seq<i32>>` reaches
    cc-green sema and then dies with "codegen does not lower this yet: a
    fold over a range whose bounds an impl supplies"
    (/tmp/zproto/t7*.zen history). std.core.range says "a bound

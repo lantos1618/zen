@@ -48,13 +48,13 @@ main = (env: Env) Res<i32, AllocError> {
     println("len {}", held.len);
 
     // order preserved end to end: the payload is HEAD, 78 letters, TAIL
-    Range(0, 4).loop((h, i) { held.get(i).match({ Ok(c) => println("{} {}", i, c), None => {} }) });
+    Range<usize>(0, 4).loop((h, i) { held.get(i).match({ Ok(c) => println("{} {}", i, c), None => {} }) });
     println("mid {}", byte_is(held, 50, 'u'));
     println("tail {}", byte_is(held, 82, 'T'));
 
     // the checksum a duplicated, dropped or overwritten chunk misses:
     // every byte of the stream, added up
-    total ::= 0;
+    total: u64 ::= 0;
     Range(0, held.len).loop((h, i) {
         held.get(i).match({
             Ok(byte) => { total = total + byte.to_u64(); },

@@ -231,9 +231,9 @@ bound_members* = (c :: Checker, bound: TyId, out :: Vec<Member>)
 // and struct constants have no per-value storage and take no seat.
 storage_seat_name* = (c :: Checker, ty: TyId, i: usize)
                      Res<str, AllocError> {
-    name    ::= "";
-    seen    ::= 0;
-    members ::= c.alloc.Vec<Member>();
+    name        ::= "";
+    seen: usize ::= 0;
+    members     ::= c.alloc.Vec<Member>();
     c.bound_members(ty, members).try();
     members.loop((h, m) {
         m.storage_member().then(() {

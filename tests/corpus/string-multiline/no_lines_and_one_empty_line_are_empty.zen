@@ -1,0 +1,12 @@
+// With no line between the delimiters, or one empty line, the text is empty.
+main = () i32 {
+    none  = """
+        """;
+    blank = """
+
+        """;
+    println("[{}] {}", none, none.len);
+    println("[{}] {}", blank, blank.len);
+    println("{}", none == "" && blank == "");
+    0
+}

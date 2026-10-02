@@ -36,8 +36,8 @@ main = (env: Env) Res<i32, AllocError> {
     inc2 = (v: i64) i64 { inc(inc(v)) }
     println("nested {}", inc2(40));
 
-    total :: usize = 0;
-    Range(0, 4).loop((h, i) {
+    total: usize ::= 0;
+    Range<usize>(0, 4).loop((h, i) {
         square = (k: usize) usize { k * k }
         total = total + square(i);
     });

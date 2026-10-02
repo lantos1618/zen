@@ -1,10 +1,14 @@
-Res = std.core.result
-
-// A half-open interval `[start, end)`. Implementations may map each index to a
-// value with `at`; None ends iteration early.
+// The integers from `start` up to, but not including, `end`, of one integer
+// type T: `Range(2, 5)` holds 2, 3 and 4. T is the bounds' type, so a loop
+// over a `Range<i32>` visits i32 values and a loop over `Range(0, v.len)`
+// visits usize ones. A literal bound takes its type from the other bound or,
+// failing that, from context like any literal. A range whose end is not past
+// its start is empty. Looping over a Range is the compiler's: a Range is a
+// Seq<T> of its own values (std.core.seq).
 Range*<T> = {
-    start*: usize,
-    end*: usize,
-
-    at* ::= (self: @Self, index: usize) Res<T>
+    start*: T,
+    end*: T,
 }
+
+// `Range(end)` is `Range(0, end)`.
+Range*<T> = (end: T) Range<T> { Range<T>(start: 0, end: end) }

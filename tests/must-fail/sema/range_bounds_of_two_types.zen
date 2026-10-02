@@ -1,0 +1,9 @@
+// A range's bounds have one type. An i32 start and a usize end are refused at
+// the end, naming both types and the conversion that makes them one, rather
+// than converted in silence.
+main = () i32 {
+    a: i32 = 0;
+    b: usize = 10;
+    Range(a, b).loop((v) { println("{}", v); });
+    0
+}

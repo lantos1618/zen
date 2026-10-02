@@ -29,7 +29,7 @@
 Pt = { x: i32, y: i32 }
 
 area = (ps: vararg<Pt>) i32 {
-    t ::= 0;
+    t: i32 ::= 0;
     ps.loop((h, p) { t = t + p.x * p.y; });
     t;
 }

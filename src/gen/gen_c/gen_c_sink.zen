@@ -454,9 +454,9 @@ SinkWalk = {
     walk_format = (self: @Self, be :: CBackend, id: ExprId, raw: str,
                    used0: usize) Res<(), AllocError> {
         end = body_end(raw);
-        start ::= 1;
-        used  ::= used0;
-        i     ::= 1;
+        start: usize ::= 1;
+        used         ::= used0;
+        i: usize     ::= 1;
         loop(i < end, (h) {
             at = source_fmt_at(raw, i, end);
             at.ends_run().then(() {

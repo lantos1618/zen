@@ -174,8 +174,8 @@ seed_root = (be :: CBackend, d: Def) Res<(), AllocError> {
 // `MAX_FUNCTIONS` bounds the reachable set and turns exhaustion into a
 // Diagnostic rather than incomplete output.
 drain = (be :: CBackend) Res<(), AllocError> {
-    fi ::= 0;
-    mi ::= 0;
+    fi: usize ::= 0;
+    mi: usize ::= 0;
     loop(be.more(fi, mi), (h) {
         (fi < be.fn_queue.len).then(() {
             be.lower_queued(fi).try();

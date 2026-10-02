@@ -2,7 +2,7 @@
 // vararg cannot escape the call. A vararg can be forwarded but cannot nest.
 
 Ptr = std.mem
-Range = std.core.range
+Seq = std.core.seq
 
 vararg*<T> = {
     data: Ptr<T>,
@@ -24,7 +24,7 @@ vararg*<T> = {
     is_empty* = (self: @Self) bool { self.len == 0 }
 }
 
-vararg.impl(Range<T>, {
+vararg.impl(Seq<T>, {
     start: 0,
     end: self.len,
 

@@ -33,25 +33,25 @@
 BYTES: usize = i32.BITS / 8
 
 count8 = (xs: [u8, 8]) i32 {
-    n ::= 0;
+    n: i32 ::= 0;
     xs.loop((h, v) { n = n + v.to_i32(); });
     n;
 }
 
 count16 = (xs: [u8, 16]) i32 {
-    n ::= 0;
+    n: i32 ::= 0;
     xs.loop((h, v) { n = n + v.to_i32(); });
     n;
 }
 
 count32 = (xs: [u8, 32]) i32 {
-    n ::= 0;
+    n: i32 ::= 0;
     xs.loop((h, v) { n = n + v.to_i32(); });
     n;
 }
 
 count64 = (xs: [u8, 64]) i32 {
-    n ::= 0;
+    n: i32 ::= 0;
     xs.loop((h, v) { n = n + v.to_i32(); });
     n;
 }

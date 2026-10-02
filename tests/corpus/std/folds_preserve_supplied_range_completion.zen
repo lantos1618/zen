@@ -1,7 +1,7 @@
 // Supplied ranges fold their values, preserve a distinct accumulator type,
 // and treat at(None) as exhaustion rather than an explicit break.
 Window = { values: Vec<str>, start: usize }
-Window.impl(Range<str>, {
+Window.impl(Seq<str>, {
     start: self.start,
     end: self.start + self.values.len + 2,
     at = (self: @Self, index: usize) Res<str> {

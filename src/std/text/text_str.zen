@@ -3,7 +3,7 @@
 
 Ptr = std.mem.mem
 Eq, Hash, Hasher = std.core.core
-Range, loop, LoopHandle = std.core.core
+Range, Seq, loop, LoopHandle = std.core.core
 
 str* = {
     data: Ptr<u8>,
@@ -99,7 +99,7 @@ str* = {
     count* = (self: @Self, needle: str) usize {
         n ::= 0;
         (needle.len > 0).then(() {
-            at ::= 0;
+            at: usize ::= 0;
             loop(at <= self.len, (h) {
                 self.slice(at, self.len).find(needle).match({
                     Ok(i) => { n = n + 1; at = at + i + needle.len; },
@@ -327,14 +327,14 @@ Split* = {
     }
 }
 
-Split.impl(Range<str>, {
+Split.impl(Seq<str>, {
     start: 0,
     end: self.bytes.len + 1,
 
     at ::= (self: @Self, index: usize) Res<str> {
         s = self.bytes;
-        from   ::= 0;
-        n      ::= 0;
+        from   :: usize = 0;
+        n      :: usize = 0;
         answer :: Res<str> = None;
         Range(0, s.len + 1).loop((h, i) {
             edge = s.get(i).match({
@@ -454,7 +454,7 @@ str.impl(Hash, {
     }
 })
 
-str.impl(Range<u8>, {
+str.impl(Seq<u8>, {
     start: 0,
     end: self.len,
 

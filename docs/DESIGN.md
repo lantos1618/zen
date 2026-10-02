@@ -186,7 +186,31 @@ The shape of every rule below is the same: **reject rather than reinterpret.** A
 
 **Escapes.** The set is `\n \t \r \v \f \0 \\ \' \"` and nothing else. An unknown escape is an error, never a silent literal character: `"\q"` does not mean `q`.
 
-**A string or character literal does not span lines.** The newline is the error, and the diagnostic points at the **opening quote** — pointing at end-of-file names no useful location, because end-of-file is not where the mistake is.
+**A `"…"` string or character literal does not span lines.** The newline is the error, and the diagnostic points at the **opening quote** — pointing at end-of-file names no useful location, because end-of-file is not where the mistake is. The diagnostic names the form that may span lines.
+
+**Multi-line strings are written `"""` … `"""`.** Text that has lines is written as lines, not as `\n` escapes on one line:
+
+```zen
+USAGE: str = """
+    usage: zen <command>
+
+    commands:
+        build   compile a project
+        run     build and run it
+    """
+```
+
+The rules, each chosen so that what the eye sees on the page is the value:
+
+- **The text starts on the line after the opening `"""`.** Nothing else may follow the opening `"""` on its line; text there is an error at its first byte. There is no one-line `"""text"""` form — a one-line string is `"text"`.
+- **The closing `"""` is the first text on its own line**, and the whitespace before it is the literal's **indentation**. Text before the closing `"""` on its line is an error.
+- **The indentation is removed from every line.** So the literal sits at the code's indentation and a deeper line keeps only its extra indentation. Every line of text must begin with exactly the indentation's bytes — compared byte for byte, so a tab is not four spaces — or be whitespace only; a line that starts left of the closing `"""` is an error at its first byte of text, never a guess at what to strip. A whitespace-only line shorter than the indentation is an empty line.
+- **Neither delimiter's line break is text.** The line break after the opening `"""` and the one before the closing line are not part of the value, so the example above ends in `it`, not in a newline. A value that ends in a newline ends with an empty line before the closing `"""`. With no line between the delimiters, or one empty line, the value is `""`.
+- **Line breaks in the value are LF**, whatever the file was saved with: a CR before a line break is not text.
+- **Escapes are the one-line set and mean the same bytes.** `"` and `""` need no escape; `\"""` writes three quotes without closing the literal. An escaped `\n` is a byte of text, not a line of the literal. A backslash does not continue a line.
+- **It is a string literal**: type `str`, usable wherever `"…"` is — as a `println` or `String` format string, and as a match pattern.
+
+The scanner reads the whole literal as one token, and the parser keeps its value as the equivalent one-line literal, so every later phase and every backend reads one form. The formatter prints the literal's source bytes; no layout rule reaches inside it.
 
 **A character literal holds exactly one byte.** `str` is bytes, so `''` and `'ab'` are both errors. `'é'` is two bytes and therefore not a character literal.
 
@@ -815,6 +839,40 @@ The distinction from a field: a field declares storage per value, a constant dec
 
 ---
 
+# Ranges and sequences
+
+**`Range<T>` is the integers from `start` up to, but not including, `end`, of one integer type `T`** — signed or unsigned, any width. `T` is the bounds' type and the type of every value a loop over the range visits, so a sum over `Range(0, 100)` is i32 arithmetic and a walk over `Range(0, v.len)` visits usize positions. `Range(end)` is `Range(0, end)`. A range whose end is not past its start is empty, and stepping never overflows: the last value is `end - 1`.
+
+```zen
+sum: i32 = Range(0, 100).loop(0, (h, i, v, acc: i32) { acc + v }).value_or(0)
+
+Range(10).loop((v) { .. })                 // 0 through 9, i32
+to: usize = 10;
+Range(0, to).loop((v) { .. })              // usize: the literal takes `to`'s type
+a: i32 = -3; b: i32 = 3;
+Range(a, b).loop((h, i, v) { .. })         // i = 0..5 (passes, usize), v = -3..2 (i32)
+r: Range<u8> = Range(0, 200);              // the written type settles the literals
+Range<i64>(0, 5).loop((v) { .. })          // or the call writes it
+```
+
+**The bounds' type is read off the bounds, as any literal's type is read off its context.** A typed bound decides it and a literal bound takes that type; with only literals, a written binding type (`r: Range<u8> = Range(0, 200)`) or written type arguments (`Range<usize>(0, 4)`) decide it, and otherwise the literal default, i32, does. Two typed bounds of different types are an error at the second, naming both types and the conversion that makes them one — `Range(a, b)` with an i32 `a` and a usize `b` says to write `.to_i32()` on `b` or `.to_usize()` on `a`. There is no implicit widening between them, the same rule arithmetic follows. The rule is not Range's: every generic construction reads its type arguments off its field values this way.
+
+**`Seq<T>` is what a loop walks.** `loop`, `find`, `map`, `filter` and `is_in` take any `R: Seq<T>`: a type with usize positions `start` up to `end` and an `at` that maps a position to its value, `None` ending the walk early. A collection implements it — `Vec.impl(Seq<T>, { start: 0, end: self.len, at ::= .. })` — and a fixed array and a `Range` are Seqs of their elements and values without an impl: the compiler walks those directly, a range's counter running in `T` itself.
+
+Before this split, `Range<T>` was both: a usize index interval and the bound whose `at` mapped an index to a `T`. So `Range(0, 100)` always walked usize, an i32 sum over it was a type mismatch, `Range(a, b)` refused i32 bounds, and `r: Range<i32> = Range(0, 1)` produced two different C types. The migration is mechanical:
+
+```zen
+// before                                  // after
+X.impl(Range<T>, { start: .., at ::= .. }) X.impl(Seq<T>, { start: .., at ::= .. })
+walk = <R: Range<T>, T>(r: R) ..           walk = <R: Seq<T>, T>(r: R) ..
+Range(0, 4).loop((i) { p.write(i, 0) })    Range<usize>(0, 4).loop((i) { p.write(i, 0) })
+Range(0, v.len).loop((h, i) { .. })        unchanged: v.len is usize
+```
+
+Only a range whose bounds are all literals and whose values are used as usize changes, and the compiler names each one.
+
+---
+
 # Overloading
 
 Resolution is on **declared parameter types and arity**, and a closure's type is its full signature. There is no carve-out: `loop` overloads on `(value: T)`, `(h: LoopHandle, value: T)`, and `(h: LoopHandle, index: usize, value: T)` for exactly the reason `toString` overloads on a buffer versus an allocator.
@@ -826,7 +884,7 @@ Function types must name their parameters: `(i32, i32) i32` says nothing about w
 One consequence worth stating: an unconstrained generic parameter swallows a concrete one, so `fold`'s `(init: A, body: ..)` and a hypothetical `(alloc: Alloc, body: ..)` cannot be overloads. The allocating variant gets its own name, `map` — which is honest anyway, since it is the one that allocates.
 
 A generic bound can prove that a structurally matching concrete parameter is
-excluded. For example, `R: Range<T>` excludes a concrete boolean condition when
+excluded. For example, `R: Seq<T>` excludes a concrete boolean condition when
 the substituted bound is known. An unresolved type or bound is not proof of
 disjointness. The current check is conservative for optional tails and does
 not attempt general logical reasoning between generic constraints.
@@ -840,7 +898,7 @@ remain, and empty input or a final terminator adds no extra line. A lone CR
 remains data. `next()` advances the cursor; its three `loop` callback forms
 start from the beginning without advancing that cursor. These operations do
 not allocate or extend the input's lifetime. `Lines` currently supports direct
-`next`/`loop` traversal, not the generic indexed `Range` consumer APIs.
+`next`/`loop` traversal, not the generic indexed `Seq` consumer APIs.
 
 ```groovy // just using this for highlighting
 // std.text.string
@@ -1342,26 +1400,26 @@ loop*<T> = (cond: () bool, body: (h: LoopHandle) ()) Res<T>
 loop*<T> = (cond: bool, body: (h: LoopHandle) ()) Res<T>
 
 // ranged / collection iteration: value, control, or control and index
-loop*<R: Range<T>, T> = (range: R, body: (value: T) ()) Res<T>
-loop*<R: Range<T>, T> = (range: R, body: (h: LoopHandle, value: T) ()) Res<T>
-loop*<R: Range<T>, T> = (range: R, body: (h: LoopHandle, index: usize, value: T) ()) Res<T>
+loop*<R: Seq<T>, T> = (range: R, body: (value: T) ()) Res<T>
+loop*<R: Seq<T>, T> = (range: R, body: (h: LoopHandle, value: T) ()) Res<T>
+loop*<R: Seq<T>, T> = (range: R, body: (h: LoopHandle, index: usize, value: T) ()) Res<T>
 
 // fold: init seeds acc; natural completion returns Ok(acc).
 // at(None) exhausts a supplied range. h.break() returns None;
 // h.break(value) returns that value instead of the accumulator.
-loop*<R: Range<T>, T, A> = (range: R, init: A, body: (value: T, acc: A) A) Res<A>
-loop*<R: Range<T>, T, A> = (range: R, init: A, body: (h: LoopHandle, value: T, acc: A) A) Res<A>
-loop*<R: Range<T>, T, A> = (range: R, init: A, body: (h: LoopHandle, index: usize, value: T, acc: A) A) Res<A>
+loop*<R: Seq<T>, T, A> = (range: R, init: A, body: (value: T, acc: A) A) Res<A>
+loop*<R: Seq<T>, T, A> = (range: R, init: A, body: (h: LoopHandle, value: T, acc: A) A) Res<A>
+loop*<R: Seq<T>, T, A> = (range: R, init: A, body: (h: LoopHandle, index: usize, value: T, acc: A) A) Res<A>
 
 // map: collect one value per element in caller-chosen storage.
 // The handle forms can skip an element or stop with the values made so far.
-map*<R: Range<T>, T, U> = (range: R, alloc: Alloc, body: (value: T) U) Res<Vec<U>, AllocError>
-map*<R: Range<T>, T, U> = (range: R, alloc: Alloc, body: (h: LoopHandle, value: T) U) Res<Vec<U>, AllocError>
-map*<R: Range<T>, T, U> = (range: R, alloc: Alloc, body: (h: LoopHandle, index: usize, value: T) U) Res<Vec<U>, AllocError>
+map*<R: Seq<T>, T, U> = (range: R, alloc: Alloc, body: (value: T) U) Res<Vec<U>, AllocError>
+map*<R: Seq<T>, T, U> = (range: R, alloc: Alloc, body: (h: LoopHandle, value: T) U) Res<Vec<U>, AllocError>
+map*<R: Seq<T>, T, U> = (range: R, alloc: Alloc, body: (h: LoopHandle, index: usize, value: T) U) Res<Vec<U>, AllocError>
 
 // find borrows; filter collects accepted elements in order.
-find*<R: Range<T>, T> = (range: R, pred: (value: T) bool) Res<T>
-filter*<R: Range<T>, T> = (range: R, alloc: Alloc, pred: (value: T) bool) Res<Vec<T>, AllocError>
+find*<R: Seq<T>, T> = (range: R, pred: (value: T) bool) Res<T>
+filter*<R: Seq<T>, T> = (range: R, alloc: Alloc, pred: (value: T) bool) Res<Vec<T>, AllocError>
 
 // key/value containers
 loop*<K, V> = (map: Map<K, V>, body: (h: LoopHandle, key: K, value: V) ()) Res<()>

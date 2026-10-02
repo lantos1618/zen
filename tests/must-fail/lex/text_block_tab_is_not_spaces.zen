@@ -1,0 +1,8 @@
+// Indentation is compared byte for byte: a tab is not four spaces, or eight.
+// The closing line below is indented with a tab; the line of text with spaces.
+main = () i32 {
+    text = """
+        spaces
+	""";
+    0
+}

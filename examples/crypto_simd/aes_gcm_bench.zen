@@ -17,7 +17,7 @@ measure = (
     start = env.clock.since_start().ns;
     elapsed :: u64 = 0; bytes :: u64 = 0; rounds :: u64 = 0;
     (elapsed < target).loop((h) {
-        Range(0, 64).loop((i) {
+        Range<usize>(0, 64).loop((i) {
             seal.match({
                 true  => { ok = aes128gcm_seal(sealed, count + 16, buffer, count, key, 5, key, nonce, scratch, AES_GCM_SCRATCH_WORDS) && ok; },
                 false => { ok = aes128gcm_open(buffer, count, sealed, count + 16, key, 5, key, nonce, scratch, AES_GCM_SCRATCH_WORDS) && ok; },
@@ -45,10 +45,10 @@ main = (env: Env) Res<i32, AllocError> {
     sealed  = a.realloc<u8>(null_ptr<u8>(), 16384 + 64).try();
     key     = a.realloc<u8>(null_ptr<u8>(), 64).try();
     scratch = a.realloc<u64>(null_ptr<u64>(), AES_GCM_SCRATCH_WORDS).try();
-    Range(0, 64).loop((i) { key.write(i, (i * 7 + 3).to_u8().match({Ok(b) => b, None => 0})); });
-    Range(0, 16384).loop((i) { buffer.write(i, (i % 251).to_u8().match({Ok(b) => b, None => 0})); });
+    Range<usize>(0, 64).loop((i) { key.write(i, (i * 7 + 3).to_u8().match({Ok(b) => b, None => 0})); });
+    Range<usize>(0, 16384).loop((i) { buffer.write(i, (i % 251).to_u8().match({Ok(b) => b, None => 0})); });
     ok ::= true;
-    Range(0, 4).loop((i) {
+    Range<usize>(0, 4).loop((i) {
         count: usize = i.match({0 => 64, 1 => 512, 2 => 1024, _ => 16384});
         ok = measure(env, true, buffer, sealed, count, key, key.offset(32), scratch) && ok;
         ok = measure(env, false, buffer, sealed, count, key, key.offset(32), scratch) && ok;

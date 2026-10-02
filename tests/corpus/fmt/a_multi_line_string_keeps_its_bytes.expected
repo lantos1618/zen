@@ -1,0 +1,16 @@
+diagnostics: 0
+faithful: true
+---
+1 |main = () i32 {
+2 |    v = [1, 2, 3];
+3 |    s = """
+4 |        keep   these   spaces,  "quotes",  { braces }
+5 |            a deeper line,   x = y
+6 |        k:   v
+7 |        """;
+8 |    long_function_name(first_argument, second_argument, third_argument, """
+9 |        text
+10 |        """);
+11 |    0
+12 |}
+---

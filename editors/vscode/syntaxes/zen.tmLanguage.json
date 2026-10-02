@@ -23,13 +23,29 @@
       ]
     },
     "string": {
-      "name": "string.quoted.double.zen",
-      "begin": "\"",
-      "end": "\"",
       "patterns": [
         {
-          "name": "constant.character.escape.zen",
-          "match": "\\\\."
+          "comment": "A multi-line string; listed first so its three quotes are not read as an empty string and an opening one.",
+          "name": "string.quoted.triple.zen",
+          "begin": "\"\"\"",
+          "end": "\"\"\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.zen",
+              "match": "\\\\."
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.zen",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.zen",
+              "match": "\\\\."
+            }
+          ]
         }
       ]
     },

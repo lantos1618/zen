@@ -1,0 +1,7 @@
+// A written range type settles literal bounds, and a bound it cannot hold is
+// refused at that bound.
+main = () i32 {
+    r: Range<u8> = Range(0, 256);
+    r.loop((v) { println("{}", v); });
+    0
+}

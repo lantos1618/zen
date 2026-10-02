@@ -1,0 +1,9 @@
+// A written binding type settles `Range(end)` as it settles `Range(0, end)`.
+main = () i32 {
+    r: Range<u8> = Range(4);
+    total: u8    = r.loop(0, (v, acc: u8) { acc + v }).value_or(0);
+    println("{}", total);
+    w: Range<i64> = Range(3);
+    w.loop((v) { println("{}", v); });
+    0
+}

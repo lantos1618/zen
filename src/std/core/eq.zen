@@ -5,9 +5,9 @@ Eq* = {
     ne* = (self: @Self, other: @Self) bool { !self.eq(other) }
 }
 
-// Test membership over any Range and stop at the first equal value. Floats do
+// Test membership over any Seq and stop at the first equal value. Floats do
 // not implement Eq because NaN is not equal to itself.
-is_in* = <T: Eq, R: Range<T>>(x: T, xs: R) bool {
+is_in* = <T: Eq, R: Seq<T>>(x: T, xs: R) bool {
     hit ::= false;
     xs.loop((h, v) { v.eq(x).then(() { hit = true; h.break(); }) });
     hit

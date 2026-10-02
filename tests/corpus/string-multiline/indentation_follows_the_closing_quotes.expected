@@ -1,0 +1,8 @@
+|fn main() {|
+|    body();|
+||
+|}|
+|  two spaces|
+|    four spaces|
+|    twelve|
+|eight|

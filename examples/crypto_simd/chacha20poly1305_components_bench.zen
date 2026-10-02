@@ -4,7 +4,7 @@ time = (env: Env, label: str, count: usize, run: () ()) {
     start = env.clock.since_start().ns;
     elapsed :: u64 = 0; bytes :: u64 = 0;
     (elapsed < target).loop((h) {
-        Range(0, 64).loop((i) { run(); });
+        Range<usize>(0, 64).loop((i) { run(); });
         bytes   = bytes + 64 * count.to_u64();
         elapsed = env.clock.since_start().ns - start;
     });
@@ -17,8 +17,8 @@ main = (env: Env) Res<i32, AllocError> {
     out     = a.realloc<u8>(null_ptr<u8>(), 16384 + 64).try();
     key     = a.realloc<u8>(null_ptr<u8>(), 64).try();
     scratch = a.realloc<u64>(null_ptr<u64>(), 40).try();
-    Range(0, 64).loop((i) { key.write(i, (i * 7 + 3).to_u8().match({Ok(b) => b, None => 0})); });
-    Range(0, 16384).loop((i) { buffer.write(i, (i % 251).to_u8().match({Ok(b) => b, None => 0})); });
+    Range<usize>(0, 64).loop((i) { key.write(i, (i * 7 + 3).to_u8().match({Ok(b) => b, None => 0})); });
+    Range<usize>(0, 16384).loop((i) { buffer.write(i, (i % 251).to_u8().match({Ok(b) => b, None => 0})); });
     initialize(scratch, key, key.offset(32));
     poly_key(scratch);
     count: usize = 16384;

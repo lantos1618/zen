@@ -140,10 +140,10 @@ xtime_word = (w: u64) u64 { xtime_long(w).bit_and(0xffffffff) }
 
 byte_of = (w: u64, k: usize) u64 { w.shift_right(k * 8).bit_and(255) }
 load_le = (p: Ptr<u8>) u64 {
-    v :: u64 = 0; Range(0, 8).loop((i) { v = v *% 256 +% p.read(7 - i).to_u64(); }); v
+    v: u64 ::= 0; Range<usize>(0, 8).loop((i) { v = v *% 256 +% p.read(7 - i).to_u64(); }); v
 }
 store_le = (p: Ptr<u8>, value: u64) {
-    Range(0, 8).loop((i) { p.write(i, byte_of(value, i).to_usize().value_or(0).to_u8().value_or(0)); });
+    Range<usize>(0, 8).loop((i) { p.write(i, byte_of(value, i).to_usize().value_or(0).to_u8().value_or(0)); });
 }
 // ShiftRows: byte c*4+r of the block takes byte ((c+r)%4)*4+r (upstream's
 // byte loop). Columns 0-1 are the low word, 2-3 the high word, row r is byte
@@ -202,7 +202,7 @@ aes128_expand_key* = (key: Ptr<u8>, w: Ptr<u64>) {
 // Cipher (nr = 10). `input` and `output` may be the same 16 bytes.
 aes128_encrypt_block* = (w: Ptr<u64>, input: Ptr<u8>, output: Ptr<u8>) {
     s ::= State(lo: load_le(input).bit_xor(w.read(0)), hi: load_le(input.offset(8)).bit_xor(w.read(1)));
-    Range(1, 10).loop((i) {
+    Range<usize>(1, 10).loop((i) {
         s = shift_rows(State(lo: sub_long(s.lo), hi: sub_long(s.hi)));
         s = State(lo: mix_word(s.lo).bit_xor(w.read(i * 2)), hi: mix_word(s.hi).bit_xor(w.read(i * 2 + 1)));
     });
@@ -227,15 +227,15 @@ be_u32 = (p: Ptr<u8>) u64 {
     p.read(0).to_u64() *% 16777216 +% p.read(1).to_u64() *% 65536 +% p.read(2).to_u64() *% 256 +% p.read(3).to_u64()
 }
 put_be_u32 = (p: Ptr<u8>, v: u64) {
-    Range(0, 4).loop((i) { p.write(i, byte_of(v, 3 - i).to_usize().value_or(0).to_u8().value_or(0)); });
+    Range<usize>(0, 4).loop((i) { p.write(i, byte_of(v, 3 - i).to_usize().value_or(0).to_u8().value_or(0)); });
 }
 // GHASH state: y[0..4] at g, h[0..4] at g+4 (32-bit lanes, h[3-i] = BE32(H[4i..])).
 ghash_init = (g: Ptr<u64>, key_h: Ptr<u8>) {
-    Range(0, 4).loop((i) { g.write(i, 0); g.write(4 + 3 - i, be_u32(key_h.offset(i * 4))); });
+    Range<usize>(0, 4).loop((i) { g.write(i, 0); g.write(4 + 3 - i, be_u32(key_h.offset(i * 4))); });
 }
 // One 16-byte block: y ^= block; y = y * h (Karatsuba over nine ghashMuls).
 ghash_block = (g: Ptr<u64>, block: Ptr<u8>) {
-    Range(0, 4).loop((i) { g.write(3 - i, g.read(3 - i).bit_xor(be_u32(block.offset(i * 4)))); });
+    Range<usize>(0, 4).loop((i) { g.write(3 - i, g.read(3 - i).bit_xor(be_u32(block.offset(i * 4)))); });
     y0 = g.read(0); y1 = g.read(1); y2 = g.read(2); y3 = g.read(3);
     h0 = g.read(4); h1 = g.read(5); h2 = g.read(6); h3 = g.read(7);
     lo0 = ghash_mul(y0, h0); hi0 = ghash_mul(y1, h1); sum0 = ghash_mul(y0.bit_xor(y1), h0.bit_xor(h1));
@@ -270,13 +270,13 @@ ghash_update = (g: Ptr<u64>, data: Ptr<u8>, count: usize, pad: Ptr<u8>) {
     Range(0, full).loop((i) { ghash_block(g, data.offset(i * 16)); });
     rest = count % 16;
     (rest > 0).then(() {
-        Range(0, 16).loop((i) { pad.write(i, 0); });
+        Range<usize>(0, 16).loop((i) { pad.write(i, 0); });
         pad.copy_from(data.offset(full * 16), rest);
         ghash_block(g, pad);
     });
 }
 ghash_finish = (g: Ptr<u64>, out: Ptr<u8>) {
-    Range(0, 4).loop((i) { put_be_u32(out.offset(i * 4), g.read(3 - i)); });
+    Range<usize>(0, 4).loop((i) { put_be_u32(out.offset(i * 4), g.read(3 - i)); });
 }
 
 // ---- GCM (gcm_generic.go) ----------------------------------------------------
@@ -297,7 +297,7 @@ inc32 = (counter: Ptr<u8>) {
 // counter = J0 + 1 (deriveCounterGeneric for 96-bit nonces).
 setup = (sp: Spans, key: Ptr<u8>, nonce: Ptr<u8>) {
     aes128_expand_key(key, sp.schedule);
-    Range(0, 16).loop((i) { sp.h.write(i, 0); });
+    Range<usize>(0, 16).loop((i) { sp.h.write(i, 0); });
     aes128_encrypt_block(sp.schedule, sp.h, sp.h);
     sp.counter.copy_from(nonce, 12);
     sp.counter.write(12, 0); sp.counter.write(13, 0); sp.counter.write(14, 0); sp.counter.write(15, 1);
@@ -329,14 +329,14 @@ authenticate = (sp: Spans, ciphertext: Ptr<u8>, count: usize, aad: Ptr<u8>, aad_
     ghash_init(sp.g, sp.h);
     (aad_count > 0).then(() { ghash_update(sp.g, aad, aad_count, sp.block); });
     (count > 0).then(() { ghash_update(sp.g, ciphertext, count, sp.block); });
-    Range(0, 16).loop((i) { sp.block.write(i, 0); });
+    Range<usize>(0, 16).loop((i) { sp.block.write(i, 0); });
     put_be_u32(sp.block.offset(0), (aad_count.to_u64() *% 8).shift_right(32));
     put_be_u32(sp.block.offset(4), (aad_count.to_u64() *% 8).bit_and(M32));
     put_be_u32(sp.block.offset(8), (count.to_u64() *% 8).shift_right(32));
     put_be_u32(sp.block.offset(12), (count.to_u64() *% 8).bit_and(M32));
     ghash_block(sp.g, sp.block);
     ghash_finish(sp.g, sp.tag);
-    Range(0, 16).loop((i) { sp.tag.write(i, (sp.tag.read(i).to_u64().bit_xor(sp.mask.read(i).to_u64())).to_usize().value_or(0).to_u8().value_or(0)); });
+    Range<usize>(0, 16).loop((i) { sp.tag.write(i, (sp.tag.read(i).to_u64().bit_xor(sp.mask.read(i).to_u64())).to_usize().value_or(0).to_u8().value_or(0)); });
 }
 
 valid = (output: Ptr<u8>, key: Ptr<u8>, nonce: Ptr<u8>, scratch: Ptr<u64>, words: usize, message: Ptr<u8>, count: usize, aad: Ptr<u8>, aad_count: usize) bool {
@@ -401,8 +401,8 @@ open_soft = (sp: Spans, output: Ptr<u8>, ciphertext: Ptr<u8>, count: usize, aad:
 }
 // subtle.ConstantTimeCompare over the full tag, shared by both paths.
 tag_matches = (sp: Spans, ciphertext: Ptr<u8>, count: usize) bool {
-    difference :: u64 = 0;
-    Range(0, 16).loop((i) { difference = or64(difference, sp.tag.read(i).to_u64().bit_xor(ciphertext.read(count + i).to_u64())); });
+    difference: u64 ::= 0;
+    Range<usize>(0, 16).loop((i) { difference = or64(difference, sp.tag.read(i).to_u64().bit_xor(ciphertext.read(count + i).to_u64())); });
     authentic = difference == 0;
     authentic
 }
@@ -484,7 +484,7 @@ aes8 = (cpu: Aes, keys: Ptr<u8>, x: Blocks8) Blocks8 {
     b5 ::= x.b5.bit_xor(k0);
     b6 ::= x.b6.bit_xor(k0);
     b7 ::= x.b7.bit_xor(k0);
-    Range(1, 10).loop((r) {
+    Range<usize>(1, 10).loop((r) {
         k = load_u8x16(keys, 16 * r);
         b0 = b0.aes_round(k, cpu);
         b1 = b1.aes_round(k, cpu);
@@ -510,7 +510,7 @@ aes8 = (cpu: Aes, keys: Ptr<u8>, x: Blocks8) Blocks8 {
 
 aes1 = (cpu: Aes, keys: Ptr<u8>, x: u8x16) u8x16 {
     b ::= x.bit_xor(load_u8x16(keys, 0));
-    Range(1, 10).loop((r) { b = b.aes_round(load_u8x16(keys, 16 * r), cpu); });
+    Range<usize>(1, 10).loop((r) { b = b.aes_round(load_u8x16(keys, 16 * r), cpu); });
     b.aes_round_last(load_u8x16(keys, 160), cpu)
 }
 
@@ -531,11 +531,11 @@ Hardware = { keys: Ptr<u8>, powers: Ptr<u8>, base: u8x16 }
 expand_key_hw = (cpu: Aes, key: Ptr<u8>, keys: Ptr<u8>) {
     words = keys.to<u32>();
     zero  = splat_u8x16(0);
-    Range(0, 4).loop((i) {
+    Range<usize>(0, 4).loop((i) {
         words.write(i, load_u32x4(key, 0).lane(i));
     });
-    rcon :: u32 = 1;
-    Range(4, 44).loop((i) {
+    rcon: u32 ::= 1;
+    Range<usize>(4, 44).loop((i) {
         temp ::= words.read(i - 1);
         (i % 4 == 0).then(() {
             rotated = temp.rotate_right(8);
@@ -550,14 +550,14 @@ expand_key_hw = (cpu: Aes, key: Ptr<u8>, keys: Ptr<u8>) {
 hardware_setup = (aes_cpu: Aes, gh: Clmul, sp: Spans, key: Ptr<u8>, nonce: Ptr<u8>, powers: Ptr<u8>, bulk: bool) Hardware {
     keys = sp.schedule.to<u8>();
     expand_key_hw(aes_cpu, key, keys);
-    Range(0, 16).loop((i) { sp.block.write(i, 0); });
+    Range<usize>(0, 16).loop((i) { sp.block.write(i, 0); });
     sp.block.copy_from(nonce, 12);
     base = load_u8x16(sp.block, 0);
     h1 = twist(reflect(aes1(aes_cpu, keys, splat_u8x16(0))));
     h1.store(powers, 0);
     hk ::= h1;
     bulk.then(() {
-        Range(1, 8).loop((i) {
+        Range<usize>(1, 8).loop((i) {
             hk = reduce(karatsuba(gh, hk, h1, zero_wide()));
             hk.store(powers, 16 * i);
         });
@@ -588,7 +588,7 @@ ghash_hw = (gh: Clmul, hw: Hardware, x: u64x2, data: Ptr<u8>, count: usize, pad:
         at = at + 16;
     });
     (at < count).then(() {
-        Range(0, 16).loop((i) { pad.write(i, 0); });
+        Range<usize>(0, 16).loop((i) { pad.write(i, 0); });
         pad.copy_from(data.offset(at), count - at);
         y = reduce(karatsuba(gh, y.bit_xor(reflect(load_u8x16(pad, 0))), power(hw, 1), zero_wide()));
     });

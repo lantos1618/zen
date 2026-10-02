@@ -386,9 +386,9 @@ unary_operand = (p :: Parser, m: Mark) Res<ExprId, AllocError> {
 // Parse a left-associative postfix chain iteratively. Every produced AST link
 // still counts toward the shared depth limit.
 postfix = (p :: Parser, m: Mark) Res<ExprId, AllocError> {
-    base    ::= p.primary(m).try();
-    links   ::= 0;
-    running ::= true;
+    base         ::= p.primary(m).try();
+    links: usize ::= 0;
+    running      ::= true;
     running.loop((h) {
         running = !p.too_deep && p.postfix_continues();
         running.then(() {
@@ -722,19 +722,8 @@ literal_expr = (
     m    : Mark,
     kind : LiteralKind
 ) Res<ExprId, AllocError> {
-    token   = p.bump().try();
-    integer = token.kind.match({
-        Int(value) => Ok(value),
-        _          => None,
-    });
-    p.add_expr(
-        ExprKind.Literal(Literal(
-            kind: kind,
-            text: p.text(token),
-            integer: integer
-        )),
-        m
-    );
+    token = p.bump().try();
+    p.add_expr(ExprKind.Literal(p.literal(kind, token).try()), m);
 }
 
 word_expr = (p :: Parser, m: Mark, kind: ExprKind) Res<ExprId, AllocError> {

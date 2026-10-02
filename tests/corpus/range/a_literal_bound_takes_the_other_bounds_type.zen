@@ -1,0 +1,12 @@
+// A literal bound takes the type of the typed one, so a range up to a usize
+// length walks usize positions and indexes with them directly.
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    v ::= a.Vec<u8>();
+    v.add(7).try();
+    v.add(8).try();
+    v.add(9).try();
+    to: usize = v.len;
+    Range(1, to).loop((h, i, at) { println("{} {}", i, v.get(at).value_or(0)); });
+    Ok(0)
+}

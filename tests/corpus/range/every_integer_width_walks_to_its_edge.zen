@@ -1,0 +1,12 @@
+// A range ends one before `end`, so a walk up to a type's maximum never steps
+// past it, and a signed range may start at its type's minimum.
+main = () i32 {
+    tiny: i8 = 127;
+    Range<i8>(-128, -126).loop((v) { println("{}", v); });
+    Range<i8>(125, tiny).loop((v) { println("{}", v); });
+    top: u64 = 18446744073709551615;
+    Range(top - 2, top).loop((h, i, v) { println("{} {}", i, v); });
+    wide: i64 = -9223372036854775807 - 1;
+    Range(wide, wide + 2).loop((v) { println("{}", v); });
+    0
+}

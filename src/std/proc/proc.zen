@@ -84,7 +84,7 @@ Stream = {
 
     spawn = (self: @Self, a: Alloc, args: Arguments) Res<(), ProcError> {
         pipes = a.realloc<i32>(null_ptr<i32>(), 4).try(ProcError.ReadFailed);
-        Range(0, 4).loop((i) { pipes.write(i, -1); });
+        Range<usize>(0, 4).loop((i) { pipes.write(i, -1); });
         @scope.defer(() {
             zg_os_proc_close(pipes.read(1));
             zg_os_proc_close(pipes.read(3));

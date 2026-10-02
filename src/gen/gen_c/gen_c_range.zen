@@ -1,5 +1,5 @@
-// Range recognition and pass lowering. Concrete Range values store start/end;
-// bound implementations supply start/end expressions and optionally at. None
+// Range and Seq recognition and pass lowering. Range values store start/end;
+// Seq implementations supply start/end expressions and optionally at. None
 // from at ends the walk. Bounds are recognized structurally, and synthesized
 // at calls inline the impl body with parameters bound to emitted C text.
 
@@ -49,8 +49,7 @@ decl_has_field = (be :: CBackend, decl: DeclId, name: str) bool {
 }
 
 // A real impl outranks coincidentally stored names because it may supply an
-// `at` hook. The concrete Range declaration has no impl and takes the direct
-// stored-bound path.
+// `at` hook. Range has no impl and takes the direct stored-bound path.
 uses_stored_bounds* = (be :: CBackend, rty: TyId)
                       Res<bool, AllocError> {
     be.supplies_bounds(rty).match({
@@ -82,7 +81,7 @@ range_impl* = (be :: CBackend, rty: TyId) Res<Res<RangeImpl>, AllocError> {
 
 // Primitive impls live on the prelude declaration of their spelling, just as
 // ordinary member lookup and bound checking already define. Range lowering
-// must use that same ownership rule: `str.impl(Range<u8>, ..)` is not less of
+// must use that same ownership rule: `str.impl(Seq<u8>, ..)` is not less of
 // an impl merely because `str` has a built-in C representation.
 primitive_range_impl = (be :: CBackend, p: Prim)
                        Res<Res<RangeImpl>, AllocError> {

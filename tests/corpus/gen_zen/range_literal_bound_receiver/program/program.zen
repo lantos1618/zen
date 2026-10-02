@@ -1,9 +1,9 @@
 LoopHandle = {}
-Range<T> = { start: usize, end: usize }
+Seq<T> = { start: usize, end: usize }
 loop = <R, T>(range: R, body: (h: LoopHandle, value: T) ()) Res<T>
 
 Window = { limit: usize }
-Window.impl(Range<usize>, {
+Window.impl(Seq<usize>, {
     start: (0),
     end: self.limit,
     at ::= (self: @Self, index: usize) Res<usize> {

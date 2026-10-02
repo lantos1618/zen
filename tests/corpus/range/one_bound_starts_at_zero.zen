@@ -1,0 +1,8 @@
+// `Range(end)` is `Range(0, end)`, in the end's type.
+main = () i32 {
+    Range(4).loop((v) { println("{}", v); });
+    n: u8     = 3;
+    total: u8 = Range(n).loop(0, (v, acc: u8) { acc + v }).value_or(0);
+    println("{}", total);
+    0
+}

@@ -6,6 +6,10 @@ TyId, Types = sema.sema_ty
 // Something the program named, or failed to.
 NameFault* = { name*: str }
 
+// A binding of an untyped literal, the value it holds, and the type a use of
+// it wants.
+HeldFault* = { name*: str, value*: i64, expected*: TyId }
+
 // A name and the module that does not export it.
 ExportFault* = { name*: str, module*: str }
 
@@ -87,6 +91,8 @@ SemaFault* =
     | NotCallable(TypeFault)           // the callee is not a function
     | MethodNotValue(TypeFault)        // the name is a method, and the call is missing
     | LiteralOutOfRange(TypeFault)     // the family fits, the value does not
+    | HeldOutOfRange(HeldFault)        // a literal-held binding's value does not fit its use
+    | UntypedVariable(TypeFault)       // a `::=` binding of an untyped number used as a narrower integer
     | ActorPayload(NameFault)          // payload storage cannot cross a mailbox
     | InvalidNumericConversion(NameFault)
     | InvalidPrimitive(NameFault)
@@ -111,6 +117,7 @@ SemaFault* =
     | CtorMissingField(NameFault)      // a required field the construction never named
     | CtorNamesNoMember(TypeFault)     // an argument naming a member the type does not declare
     | CtorSurplusArgument(TypeFault)   // a positional argument with no storage seat
+    | CtorArgsDisagree(TypeFault)      // two field values settle one type parameter differently
     | ResSurplusArgument(NameFault)    // `Ok`/`Err` hold one value, and a second has no seat
     | CtorNamesConstant(TypeFault)     // an argument naming a constant, which is not storage
     | DuplicateField(PairFault)        // a struct declares one storage name twice
@@ -229,6 +236,8 @@ message* = (fault: SemaFault) str {
         NotCallable(_)               => "this is not a function, so it cannot be called",
         MethodNotValue(_)            => "a method is a value only when the call is written: `s.len` names the function, `s.len()` reads it",
         LiteralOutOfRange(_)         => "out of range: a literal's type comes from its context, and the context here cannot hold it",
+        HeldOutOfRange(_)            => "out of range: a binding of a number with no written type holds that number, and the type wanted here cannot hold it",
+        UntypedVariable(_)           => "a variable of a number with no written type is an i64, and the value it holds at run time may not fit the type wanted here",
         ActorPayload(_)              => "actor message payload is not transferable: owned allocator-backed graphs need receiver-arena transfer",
         InvalidEnumRepresentation(_) => "a represented enum's final payload catch-all must use a fixed-width integer type",
         InvalidEnumDiscriminant(_)   => "invalid enum discriminant: every known variant needs one unique compile-time integer; one payload catch-all may appear last",
@@ -246,6 +255,7 @@ message* = (fault: SemaFault) str {
         CtorMissingField(_)          => "construction is missing a required field",
         CtorNamesNoMember(_)         => "construction names no member: every argument must name a field of the type, so a name it does not declare is not an argument to discard",
         CtorSurplusArgument(_)       => "construction has a surplus positional argument",
+        CtorArgsDisagree(_)          => "these values must have one type, and there is no implicit conversion between types",
         ResSurplusArgument(_)        => "a Res constructor carries one value, so a second argument is evaluated and then dropped:",
         CtorNamesConstant(_)         => "construction names a constant: a construction names fields, and the constant keeps its one value per type",
         DuplicateField(_)            => "duplicate field declaration: a struct has one storage slot per name",
@@ -340,6 +350,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         CtorMissingField(f)          => out.write_ctor_missing(f),
         CtorNamesNoMember(f)         => out.write_member(types, f),
         CtorSurplusArgument(f)       => out.write_ctor_surplus(types, f),
+        CtorArgsDisagree(f)          => out.write_args_disagree(types, f),
         ResSurplusArgument(f)        => out.write_name(f),
         CtorNamesConstant(f)         => out.write_ctor_constant(types, f),
         OrphanImpl(f)                => out.write_orphan(f),
@@ -439,6 +450,8 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         NoErrorConversion(f)         => out.write_types(types, f),
         HoistAmbiguous(f)            => out.write_types(types, f),
         LiteralOutOfRange(f)         => out.write_literal(types, f),
+        HeldOutOfRange(f)            => out.write_held(types, f),
+        UntypedVariable(f)           => out.write_untyped_variable(types, f),
         ActorPayload(f)              => out.write_name(f),
         InvalidEnumRepresentation(f) => out.write_name(f),
         InvalidEnumDiscriminant(f)   => out.write_name(f),
@@ -786,6 +799,22 @@ write_bit_widths = (out :: String, types: Types, f: TypeFault)
     Ok(())
 }
 
+// `Range(a, b)` with an i32 `a` and a usize `b`: name both types and the
+// conversion that makes them one.
+write_args_disagree = (out :: String, types: Types, f: TypeFault)
+                      Res<(), AllocError> {
+    earlier ::= types.name_of(f.expected).try();
+    here    ::= types.name_of(f.found).try();
+    out.fmt(
+        " — `{}` is `{}` from an earlier value and `{}` here: convert one to the other's type, such as with `.to_{}()` here or `.to_{}()` on the earlier value",
+        f.name,
+        earlier.view(),
+        here.view(),
+        earlier.view(),
+        here.view()
+    )
+}
+
 write_bit_untyped = (out :: String, f: TypeFault) Res<(), AllocError> {
     out.fmt(" — `{}`", f.name).try();
     f.name.eq("^").match({
@@ -813,6 +842,33 @@ write_literal = (out :: String, types: Types, f: TypeFault)
     expected ::= types.name_of(f.expected).try();
     out.fmt(" does not fit {}", expected.view()).try();
     Ok(());
+}
+
+// `3000000000 does not fit in i32: give `big` a type that holds it, such as
+// `big: i64 = 3000000000``. i64 holds every value a literal binding can.
+write_held = (out :: String, types: Types, f: HeldFault)
+             Res<(), AllocError> {
+    expected ::= types.name_of(f.expected).try();
+    out.fmt(
+        ": {} does not fit in `{}` — give `{}` a type that holds it, such as `{}: i64 = {}`",
+        f.value,
+        expected.view(),
+        f.name,
+        f.name,
+        f.value
+    )
+}
+
+write_untyped_variable = (out :: String, types: Types, f: TypeFault)
+                         Res<(), AllocError> {
+    expected ::= types.name_of(f.expected).try();
+    out.fmt(
+        " — `{}` is wanted as `{}`: declare it with that type, such as `{}: {} ::= …`",
+        f.name,
+        expected.view(),
+        f.name,
+        expected.view()
+    )
 }
 
 // The two declarations may be in different files.

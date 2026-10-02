@@ -238,10 +238,10 @@ run took 0.06 seconds; this is an observed local result, not a timing budget.
   than guessing an element type. Overload exclusion uses only conservative
   proofs and preserves declaration diagnostics.
 - Folds accept value/accumulator, handle/value/accumulator, and full indexed
-  callbacks. Stored ranges, arrays, Vec, and supplied Range implementations use
+  callbacks. Stored ranges, arrays, Vec, and supplied Seq implementations use
   the accumulator type independently of the element type. `at(None)` is natural
   exhaustion and returns `Ok(acc)`; `h.break()` still returns `None`, and
-  `h.break(value)` overrides the accumulator. `Range.at` has its own inline
+  `h.break(value)` overrides the accumulator. `Seq.at` has its own inline
   return target for optional propagation.
 - Inline unions of uniquely named members support exhaustive constructor
   matching with their existing tags and payloads. Nested payload patterns
@@ -262,8 +262,8 @@ calls in the same order as free calls, without overriding explicit arguments
 or incompatible concrete values.
 
 Sequential iteration is still incomplete as a shared protocol. `Lines` cannot
-feed generic Range-based `find`/`map`/`filter` consumers. `Split`'s generic/free
-indexed Range paths can still rescan and be quadratic; the sequential guarantee
+feed generic Seq-based `find`/`map`/`filter` consumers. `Split`'s generic/free
+indexed Seq paths can still rescan and be quadratic; the sequential guarantee
 belongs to its direct methods. Generic callback inference
 also remains distinct from complete first-class callback support. Enum-name
 parsing, enum JSON policy, complete lifetime checking, and recoverable allocation
@@ -505,7 +505,7 @@ must not retain those temporary borrows.
 
 ### 2. Repair sequential iteration and add the missing string operations
 
-Split.next already walks sequentially, but Split's Range.at rescans from the
+Split.next already walks sequentially, but Split's Seq.at rescans from the
 beginning. Current generated C confirms the nested rescanning loop. Introduce
 a coherent sequential iteration path, distinct from indexed access where
 appropriate. Avoid a growing list of compiler special cases for particular

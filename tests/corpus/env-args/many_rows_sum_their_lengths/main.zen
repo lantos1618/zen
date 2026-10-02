@@ -25,7 +25,7 @@ main = (env: Env) Res<i32, AllocError | Utf8Error> {
     rows.add("日本").try();      // 6 bytes, 2 chars
     rows.add("🌸").try();       // 4 bytes, 1 char
 
-    total ::= 0;
+    total: usize ::= 0;
     Range(0, rows.len).loop((h, i) {
         p ::= rows.get(i).ok_or(Utf8Error.Invalid(i)).try();
         total = total + p.len;

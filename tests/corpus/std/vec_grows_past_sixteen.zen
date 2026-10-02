@@ -15,7 +15,7 @@ main = (env: Env) Res<i32, AllocError> {
 
     println("len {}", v.len);
     println("latest grew in place {}", at8.same(v.ptr()));
-    Range(0, 17).loop((h, i) {
+    Range<usize>(0, 17).loop((h, i) {
         v.get(i).match({
             Ok(n) => println("{}", n),
             None  => println("missing {}", i),

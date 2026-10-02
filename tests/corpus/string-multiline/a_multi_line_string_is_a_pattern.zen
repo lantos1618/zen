@@ -1,0 +1,18 @@
+// A multi-line string is matched as the one-line literal with its value.
+classify = (text: str) i32 {
+    text.match({
+        """
+        a
+        b
+        """ => 1,
+        "a" => 2,
+        _   => 3,
+    })
+}
+
+main = () i32 {
+    println("{}", classify("a\nb"));
+    println("{}", classify("a"));
+    println("{}", classify("a\n b"));
+    0
+}

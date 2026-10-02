@@ -1,0 +1,7 @@
+// Three quotes on both sides of one line are not a one-line form: a
+// multi-line string has lines. The literal ends at the second `"""`, so this
+// is one diagnostic and the rest of the file is read as code.
+main = () i32 {
+    text = """one line""";
+    0
+}

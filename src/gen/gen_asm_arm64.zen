@@ -184,7 +184,7 @@ Assembly = {
     }
 
     layout_frame = (self :: @Self, function: Func) {
-        outgoing ::= 0;
+        outgoing: usize ::= 0;
         function.blocks.loop((block) {
             block.code.loop((instruction) {
                 instruction.match({
@@ -1354,7 +1354,7 @@ Assembly = {
                 self.out.add("    bl za_copy\n").try();
             },
             false => {
-                at ::= 0;
+                at: usize ::= 0;
                 loop(() { at + 8 <= size }, (h) {
                     self.out.fmt(
                         "    ldr x2, [x1, #{}]\n    str x2, [x0, #{}]\n",

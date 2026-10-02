@@ -45,9 +45,9 @@ no_files = () Res<i32, AllocError> {
 }
 
 run = (env: Env, alloc: Alloc) Res<i32, AllocError> {
-    bad  ::= 0;
-    seen ::= 0;
-    oom  ::= false;
+    bad: usize ::= 0;
+    seen       ::= 0;
+    oom        ::= false;
     Range(1, env.argv.len).loop((h, i) {
         path = env.argv.get(i).match({ Ok(s) => s, None => "" });
         seen = seen + 1;
@@ -128,9 +128,9 @@ check = (alloc: Alloc, path: str, text: str) Res<usize, AllocError> {
         );
     });
 
-    w        ::= Walk(text: text, off: 0, line: 1, col: 1);
-    prev_end ::= 0;
-    first    ::= true;
+    w               ::= Walk(text: text, off: 0, line: 1, col: 1);
+    prev_end: usize ::= 0;
+    first           ::= true;
 
     out.tokens.loop((h, t) {
         // TILING: in order, no overlap, and only whitespace in between

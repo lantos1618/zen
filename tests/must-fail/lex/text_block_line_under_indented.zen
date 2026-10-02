@@ -1,0 +1,10 @@
+// Every line of text starts with the closing line's indentation. A line that
+// starts left of it has no stated meaning (strip less? keep what is there?),
+// so it is refused at its first byte of text rather than guessed.
+main = () i32 {
+    text = """
+        inside
+      outside
+        """;
+    0
+}

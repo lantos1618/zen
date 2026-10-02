@@ -17,6 +17,7 @@ walk, WalkVisitor, WalkEvent, WalkNode = std.ast.ast_walk
 nowhere = std.source
 Checker, DeclId, Def, TyId, Ctx, Inst, decl_at, CheckedCall, TyNamed = sema.sema
 subst = sema.sema
+Found, members_of = sema.sema_member
 Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print = gen.gen_ir
 Instruction, Terminator, Convert, Address, Load, Store, CopyMem, StaticBytes = gen.gen_ir
 Write, Stream, TrapKind, Marshal, HostCall = gen.gen_ir
@@ -702,9 +703,9 @@ unify = (
     Ok(())
 }
 
-// A traversal `<R: Range<T>, T>` whose element type sema left open takes it
-// from the range: an array's element, str's byte, a Range's index, or the
-// argument of the range type's Range impl.
+// A traversal `<R: Seq<T>, T>` whose element type sema left open takes it
+// from the range: an array's element, str's byte, a Range's bound type, or
+// the argument of the range type's Seq impl.
 settle_range = (lo :: Lowerer, callee: Callee) Res<Callee, LowerError> {
     range_var: Res<TyId> = lo.var_named(callee.inst, "R");
     elem_var: Res<TyId>  = lo.var_named(callee.inst, "T");
@@ -784,10 +785,20 @@ range_elem* = (lo :: Lowerer, range: TyId) Res<Res<TyId>, LowerError> {
             p.name.eq("str").match({ true => Ok(lo.prim("u8").try()), false => None })
         ),
         Named(n) => lo.qualified(range).eq("std.core.range.Range").match({
-            true  => Ok(Ok(lo.prim("usize").try())),
+            true  => Ok(Ok(lo.range_bound(range).try())),
             false => lo.impl_range_elem(range, n),
         }),
         _        => Ok(None),
+    })
+}
+
+// The type of a Range's bounds and values: the type its `start` holds.
+range_bound = (lo :: Lowerer, range: TyId) Res<TyId, LowerError> {
+    found ::= lo.alloc.Vec<Found>();
+    lo.check.members_of(range, "start", found).try(LowerError.OutOfMemory);
+    found.get(0).match({
+        Ok(f) => Ok(f.ty),
+        None  => lo.prim("usize"),
     })
 }
 
@@ -808,7 +819,7 @@ impl_range_elem = (
             lo.check.world.impl_at(lo.tree, id).when_ok((i) {
                 lo.check.type_memo.get(i.bound).when_ok((bound) {
                     lo.check.types.at(bound).match({
-                        Named(b) => (b.name.eq("Range")).then(() {
+                        Named(b) => (b.name.eq("Seq")).then(() {
                             b.args.get(0).when_ok((arg) {
                                 h.break(
                                     lo.check.subst(
@@ -861,7 +872,7 @@ bind_sources* = (
                 Res<Vec<Source>, LowerError> {
     out ::= lo.alloc.Vec<Source>();
     f.params.loop((_) { out.add(Source.Absent).try(LowerError.OutOfMemory); });
-    next ::= 0;
+    next: usize ::= 0;
     receiver.when_ok((r) {
         out.set(0, Source.Given(r));
         next = 1;
@@ -2513,7 +2524,8 @@ run_body = (lo :: Lowerer, body: LambdaRef, loop_id: usize, values: Vec<Value>)
 }
 
 // Walk [start, end) of a Range, a fixed array, or a type implementing
-// Range whose `at` supplies each value.
+// Seq whose `at` supplies each value. A Range's counter is its value, in the
+// bounds' own type; `count` counts passes separately.
 // With `acc`, the body is a fold's: it also receives the accumulator and
 // its value replaces it. `exhausted` is where running out of values goes.
 range_loop = (
@@ -2541,7 +2553,8 @@ range_loop = (
         ),
         _               => lo.range_bounds(range, span).try(),
     });
-    index      = lo.copy_slot(walk.start).try();
+    index = lo.copy_slot(walk.start).try();
+    step  = lo.word_const(lo.slots.get(index).value_or(Scalar.U64), 1).try();
     // The pass count starts at zero whatever the range's start.
     count = lo.word_const(Scalar.U64, 0).try();
     pass  = lo.label().try();
@@ -2562,8 +2575,8 @@ range_loop = (
             place = lo.element_place(range, index).try();
             lo.read(place).try()
         },
-        Indices  => lo.copy_value(position).try(),
-        At(at)   => lo.at_value(range, at, position, exhausted, span).try(),
+        Indices(t) => lo.copy_value(Value(slot: index, ty: t)).try(),
+        At(at)     => lo.at_value(range, at, position, exhausted, span).try(),
     });
     args ::= lo.alloc.Vec<Value>();
     folding = acc.match({ Ok(_) => true, None => false });
@@ -2589,7 +2602,7 @@ range_loop = (
     lo.add(Instruction.BinaryValue(Binary(
         out: index,
         left: index,
-        right: one,
+        right: step,
         op: Op.WrapAdd,
         span: nowhere()
     ))).try();
@@ -2603,7 +2616,7 @@ range_loop = (
     lo.jump(top)
 }
 
-WalkKind = Elements | Indices | At(AtHook)
+WalkKind = Elements | Indices(TyId) | At(AtHook)
 AtHook = { decl: DeclId, f: Function, impl_module: usize }
 Walk = { start: usize, end: usize, kind: WalkKind }
 
@@ -2641,8 +2654,8 @@ element_place = (
     Ok(Place(base: Base.Through(at), offset: 0, ty: elements.elem))
 }
 
-// A Range record reads its fields; another type supplies start/end/at
-// through its Range impl.
+// A Range record reads its fields, and its values are its bounds' type;
+// another type supplies start/end/at through its Seq impl.
 range_bounds = (lo :: Lowerer, range: Value, span: Span) Res<Walk, LowerError> {
     qualified = lo.qualified_name(range.ty);
     qualified.eq("std.core.range.Range").match({
@@ -2650,7 +2663,7 @@ range_bounds = (lo :: Lowerer, range: Value, span: Span) Res<Walk, LowerError> {
             place = lo.spill(range);
             start = lo.read(lo.field_place(place, "start", span).try()).try();
             end   = lo.read(lo.field_place(place, "end", span).try()).try();
-            Ok(Walk(start: start.slot, end: end.slot, kind: WalkKind.Indices))
+            Ok(Walk(start: start.slot, end: end.slot, kind: WalkKind.Indices(start.ty)))
         },
         false => lo.impl_bounds(range, span),
     })
@@ -2684,25 +2697,22 @@ impl_bounds = (lo :: Lowerer, range: Value, span: Span) Res<Walk, LowerError> {
                 bound = lo.tree.type_at(
                     i.bound
                 ).kind.match({ Named(n) => n.name.text, _ => "" });
-                bound.eq("Range").then(() { h.break(i); });
+                bound.eq("Seq").then(() { h.break(i); });
             });
         });
         h.break();
     });
-    impl             = found.ok_or(unsupported(
-        span,
-        "a loop over a type without a Range impl"
-    )).try();
-    start_expr       = impl.field_value("start").ok_or(unsupported(span, "a Range impl without start")).try();
-    end_expr         = impl.field_value("end").ok_or(unsupported(span, "a Range impl without end")).try();
-    at               = impl.bodied_fn("at").ok_or(unsupported(span, "a Range impl without at")).try();
-    impl_decl        = ids.find((id) {
+    impl = found.ok_or(unsupported(span, "a loop over a type without a Seq impl")).try();
+    start_expr = impl.field_value("start").ok_or(unsupported(span, "a Seq impl without start")).try();
+    end_expr = impl.field_value("end").ok_or(unsupported(span, "a Seq impl without end")).try();
+    at = impl.bodied_fn("at").ok_or(unsupported(span, "a Seq impl without at")).try();
+    impl_decl = ids.find((id) {
         lo.check.world.impl_at(lo.tree, id).match({
-            Ok(i) => lo.tree.type_at(i.bound).kind.match({ Named(n) => n.name.text.eq("Range"), _ => false }),
+            Ok(i) => lo.tree.type_at(i.bound).kind.match({ Named(n) => n.name.text.eq("Seq"), _ => false }),
             None  => false,
         })
-    }).ok_or(unsupported(span, "a missing Range impl")).try();
-    module           = impl_decl.decl.module.to_usize();
+    }).ok_or(unsupported(span, "a missing Seq impl")).try();
+    module = impl_decl.decl.module.to_usize();
     // The impl's field expressions read `self`.
     inst  = lo.check.types.at(range.ty).match({
         Named(n) => lo.check.inst_of_named(n).try(LowerError.OutOfMemory),

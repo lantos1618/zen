@@ -8,7 +8,7 @@ ImplId = sema.sema_id
 TyId, TyNamed, Prim, is_prim, is_vector, literal_default = sema.sema_ty
 Def, decl_at = sema.sema_def
 SemaFault, NameFault, TypeFault, ExportFault = sema.sema_diag
-Checker = sema.sema_check
+Checker, UNRESOLVED = sema.sema_check
 opaque, Found, members_of, member_type, named_as = sema.sema_member
 bound_members, bound_member_type, has_member, impl_span, impl_bound_type = sema.sema_supply
 storage_seat_name, LocalImpl, local_impls, prim_named = sema.sema_supply
@@ -429,7 +429,10 @@ member_is = (
 
 impls_bound = (c :: Checker, ty: TyId, bound: TyId) Res<bool, AllocError> {
     c.types.at(ty).match({
-        Named(n) => c.named_impls_bound(n, bound),
+        Named(n) => c.range_seq_arg(n, bound).match({
+            Ok(arg) => Ok(c.same_type(arg, c.range_value(n))),
+            None    => c.named_impls_bound(n, bound),
+        }),
         Prim(p)  => c.prim_named(p).try().match({
             None   => Ok(false),
             Ok(pn) => c.named_impls_bound(pn, bound),
@@ -437,6 +440,25 @@ impls_bound = (c :: Checker, ty: TyId, bound: TyId) Res<bool, AllocError> {
         Array(_) => Ok(c.array_range_shape(bound)),
         _        => Ok(false),
     })
+}
+
+// A Range is a Seq of its own values with no impl: `Range<i32>` satisfies
+// `Seq<i32>`, and walking it is the compiler's. Ok(the bound's value type)
+// when `n` is the core Range and `bound` the core Seq.
+range_seq_arg* = (c: Checker, n: TyNamed, bound: TyId) Res<TyId> {
+    c.is_core_range(n).ensure().try();
+    b = c.types.at(bound).match({ Named(b) => Ok(b), _ => None }).try();
+    c.named_as(b, "Seq", "std.core.seq").ensure().try();
+    b.args.get(0)
+}
+
+is_core_range* = (c: Checker, n: TyNamed) bool {
+    c.named_as(n, "Range", "std.core.range")
+}
+
+// The type a Range's bounds and values have.
+range_value* = (c: Checker, n: TyNamed) TyId {
+    n.args.get(0).value_or(UNRESOLVED)
 }
 
 array_range_shape* = (c: Checker, bound: TyId) bool {

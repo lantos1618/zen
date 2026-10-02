@@ -1,10 +1,10 @@
 // The bounded receiver cannot select the bool or condition-closure overload
 // while its element type is still open. Nested wrappers keep the same value.
-walk = <R: Range<T>, T>(range: R, body: (value: T) ()) {
+walk = <R: Seq<T>, T>(range: R, body: (value: T) ()) {
     range.loop((value) { body(value); });
 }
 
-walk_again = <R: Range<T>, T>(range: R, body: (value: T) ()) {
+walk_again = <R: Seq<T>, T>(range: R, body: (value: T) ()) {
     walk(range, (value) { body(value); });
 }
 

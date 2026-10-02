@@ -6,7 +6,7 @@ ExprId, Literal = std.ast
 Call, Arg = std.ast
 Span, Pos = std.source
 AllocError = std.mem
-literal_byte_len = std.lex
+literal_byte_len, text_block_at = std.lex
 str, String = std.text
 Range = std.core
 FmtAt, fmt_at, ends_run, arguments_taken = std.text.text_fmt
@@ -179,9 +179,9 @@ write_format = (
     ctx    : Ctx
 ) Res<(), AllocError> {
     end = body_end(raw);
-    start ::= 1;
-    used  ::= 1;
-    i     ::= 1;
+    start: usize ::= 1;
+    used: usize  ::= 1;
+    i: usize     ::= 1;
     loop(i < end, (h) {
         at = source_fmt_at(raw, i, end);
         at.ends_run().then(() {
@@ -283,8 +283,9 @@ HOLE_WITHOUT_ARGUMENT* : str = "a format hole with no argument left"
 
 ARGUMENT_WITHOUT_HOLE* : str = "an argument with no format hole left"
 
-// Format faults point at the offending byte. String literals cannot span
-// source lines, so a raw byte offset is also a column offset.
+// Format faults point at the offending byte. A one-line string cannot span
+// source lines, so its byte offset is a column offset; a multi-line string
+// maps the offset back through its source spelling.
 
 report_in_format* = (
     be    :: CBackend,
@@ -292,16 +293,31 @@ report_in_format* = (
     at    : FmtAt,
     fault : GenFault
 ) Res<(), AllocError> {
-    lit = be.tree.expr_at(id).span;
-    be.report(lit.file, at_span(lit, at.keep, at.next), fault)
+    node          = be.tree.expr_at(id);
+    lit           = node.span;
+    raw: Res<str> = node.kind.match({ Literal(l) => l.block, _ => None });
+    be.report(
+        lit.file,
+        Span(
+            file: lit.file,
+            start: format_pos(lit, raw, at.keep),
+            end: format_pos(lit, raw, at.next)
+        ),
+        fault
+    )
 }
 
-at_span = (lit: Span, from: usize, to: usize) Span {
-    Span(
-        file: lit.file,
-        start: Pos(line: lit.start.line, col: lit.start.col + from),
-        end:   Pos(line: lit.start.line, col: lit.start.col + to)
-    )
+format_pos = (lit: Span, block: Res<str>, offset: usize) Pos {
+    block.match({
+        None    => Pos(line: lit.start.line, col: lit.start.col + offset),
+        Ok(raw) => {
+            at = raw.text_block_at(offset);
+            (at.line == 0).match({
+                true  => Pos(line: lit.start.line, col: lit.start.col + at.col),
+                false => Pos(line: lit.start.line + at.line, col: 1 + at.col),
+            })
+        },
+    })
 }
 
 step_of = (raw: str, i: usize) usize {

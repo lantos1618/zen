@@ -50,8 +50,8 @@ module* = (p :: Parser, name: str) Res<Module, AllocError> {
 // Recover at the next identifier outside brackets.
 recover = (p :: Parser) Res<(), AllocError> {
     p.bump().try();
-    depth   ::= 0;
-    running ::= !p.at_eof();
+    depth: usize ::= 0;
+    running      ::= !p.at_eof();
     running.loop((h) {
         kind  = p.peek().kind;
         depth = kind.delim_step(depth);
@@ -213,7 +213,7 @@ native_text = (p :: Parser) Res<str, AllocError> {
     (token.kind == TokenKind.Str).match({
         false => { p.error("expected a literal native header or symbol name").try(); Ok("") },
         true  => {
-            raw = p.text(token);
+            raw = p.literal_text(token).try();
             p.bump().try();
             Ok(raw.slice(1, raw.len - 1))
         },

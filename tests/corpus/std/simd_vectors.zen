@@ -71,7 +71,7 @@ main = (env: Env) Res<(), AllocError> {
     ).show();
 
     buf = env.mem.alloc().raw(64, 16).try();
-    Range(0, 64).loop((i) { buf.write(i, i.truncate_u8()); });
+    Range<usize>(0, 64).loop((i) { buf.write(i, i.truncate_u8()); });
     loaded = load_u32x4(buf, 1);
     show(loaded);
     loaded.bit_xor(splat_u32x4(4294967295)).store(buf, 3);

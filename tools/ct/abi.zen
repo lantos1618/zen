@@ -389,8 +389,8 @@ Placed = { param: Param, layout: Layout, at: Where, regs: usize }
 // Every parameter's location under the target's calling convention.
 placements = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Vec<Placed>, AllocError> {
     out   ::= a.Vec<Placed>();
-    next  ::= 0;
-    vnext ::= 0;
+    next: usize ::= 0;
+    vnext: usize ::= 0;
     // Stack arguments start above the return address on x86-64 and at the
     // stack pointer on arm64.
     stack :: usize = isa.match({ X86 => 8, Arm => 0 });
@@ -630,7 +630,7 @@ manifest_entries* = (a: Alloc, text: str) Res<Vec<Entry>, AllocError> {
             secret   ::= a.Vec<str>();
             pointee  ::= a.Vec<str>();
             pointee2 ::= a.Vec<str>();
-            branches ::= 0;
+            branches: usize ::= 0;
             public   ::= false;
             only     ::= false;
             Range(2, words.len).loop((i) {

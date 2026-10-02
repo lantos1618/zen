@@ -1,0 +1,16 @@
+// find, map, filter and is_in take any Seq; a Range is a Seq of its own
+// values in its own type.
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    lo: i32 = -5;
+    hi: i32 = 5;
+    println("{}", Range(lo, hi).find((v) { v * v == 9 }).value_or(0));
+    squares = Range(lo, 0).map(a, (v) { v * v }).try();
+    squares.loop((v) { print("{} ", v); });
+    println("");
+    odd = Range(lo, hi).filter(a, (v) { v % 2 != 0 }).try();
+    println("{}", odd.len);
+    two: i32 = -2;
+    println("{}", two.is_in(Range(lo, hi)));
+    Ok(0)
+}

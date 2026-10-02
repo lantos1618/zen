@@ -19,7 +19,7 @@ main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
 
     v ::= alloc.Vec<usize>();
-    Range(0, 12).loop((h, n) { v.add(n).try(); });
+    Range<usize>(0, 12).loop((h, n) { v.add(n).try(); });
 
     // filter keeps every third element, in order
     kept = v.filter(alloc, (x) { (x % 3) == 0 }).try();

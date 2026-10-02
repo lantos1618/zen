@@ -12,7 +12,7 @@
 
 main = (env: Env) Res<i32, AllocError> {
     xs = [usize, 4](10, 20, 30, 40);
-    total ::= 0;
+    total: usize ::= 0;
     xs.loop((h, i, v) {
         total = total + i * v;
         println("{} {}", i, v);

@@ -1,4 +1,4 @@
-// C layout, literals, checked indexing, and intrinsic Range walking for fixed
+// C layout, literals, checked indexing, and intrinsic Seq walking for fixed
 // arrays. `[T, N]` uses a struct around a C array to preserve value semantics;
 // N lives in the type and requires no runtime length field.
 
@@ -257,7 +257,7 @@ helper_of = (be :: CBackend, ity: TyId) str {
 
 // the walk
 // `lower_bounded` in `gen_c_loop.zen` is the same shape with two reads
-// swapped: a concrete `Range` takes bounds off `start`/`end`, an
+// swapped: a `Range` takes bounds off `start`/`end`, an
 // array's are 0 and a type-known constant. What it can't share is the
 // value handed to the body — an element, not the counter — an array's
 // intrinsic `at`.

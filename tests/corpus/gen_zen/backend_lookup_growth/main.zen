@@ -25,7 +25,7 @@ main = (env: Env) Res<i32, AllocError> {
         be.queue_type(name, TyId(index: 0)).try();
     });
     kept ::= true;
-    Range(0, 96).loop((h, i) {
+    Range<usize>(0, 96).loop((h, i) {
         scratch.clear();
         scratch.fmt("function_{}", i).try();
         kept = kept && !be.need_thunk(scratch.view()).try();

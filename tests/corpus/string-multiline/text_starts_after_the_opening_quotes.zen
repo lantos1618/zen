@@ -1,0 +1,13 @@
+// A multi-line string's text runs from the line after the opening `"""` to
+// the line before the closing `"""`: neither of those line breaks is text,
+// so two lines of text hold exactly one `\n`.
+main = () i32 {
+    two = """
+        first line
+        second line
+        """;
+    println(two);
+    println("{}", two.len);
+    println("{}", two == "first line\nsecond line");
+    0
+}

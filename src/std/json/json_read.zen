@@ -286,7 +286,7 @@ Reader* = {
         from = self.at;
         v  :: u32 = 0;
         ok ::= self.at + 4 <= self.text.len;
-        Range(0, 4).loop((h, i) {
+        Range<usize>(0, 4).loop((h, i) {
             ok.then(() {
                 self.text.index(from + i).hex_value().match({
                     Ok(d) => { v = v * HEX_BASE.to_u32() + d.to_u32(); },

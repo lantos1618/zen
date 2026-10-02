@@ -5,7 +5,7 @@
 str, String = std.text
 Vec = std.collections
 Alloc = std.mem
-Range = std.core
+Seq = std.core
 JsonFault, TextByte, decode_text_token, number_token, MAX_NESTING = std.json.json_read
 
 JsonEvent* = ObjectStart
@@ -44,7 +44,7 @@ Decoder* = {
 
     // A feed may end anywhere, including between the digits of a unicode
     // escape or number. Only complete events are appended to `events`.
-    feed* = <B: Range<u8>>(
+    feed* = <B: Seq<u8>>(
         self   :: @Self,
         bytes  : B,
         events :: Vec<JsonEvent>
@@ -55,7 +55,7 @@ Decoder* = {
         })
     }
 
-    feed_open = <B: Range<u8>>(
+    feed_open = <B: Seq<u8>>(
         self   :: @Self,
         bytes  : B,
         events :: Vec<JsonEvent>

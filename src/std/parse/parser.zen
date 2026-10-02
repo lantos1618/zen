@@ -7,6 +7,8 @@ Ast = std.ast.ast_arena
 Trivia, TriviaKind, TriviaRun, no_trivia, Ident, QualifiedName = std.ast.ast_span
 Span, Pos = std.source
 Token, TokenKind, Source, Lexed, is_trivia, empty_eof = std.parse.parse_token
+text_block_literal = std.lex.lex
+Literal, LiteralKind = std.ast.ast_node
 Diag, diag, diag_at, truncated = std.parse.parse_diag
 
 // Nesting limit for the recursive grammar. Binary spines are iterative and do
@@ -112,12 +114,34 @@ Parser* = {
     // Raw token bytes including quotes, escapes, and comment markers.
     text* = (self: @Self, t: Token) str { self.source.text_of(t) }
 
+    // A literal token as the AST keeps it. A multi-line string's `text` is
+    // its equivalent one-line literal, so later phases read one form; the
+    // formatter and the language server read the source bytes instead.
+    literal* = (self: @Self, kind: LiteralKind, t: Token)
+               Res<Literal, AllocError> {
+        raw     = self.text(t);
+        integer = t.kind.match({ Int(value) => Ok(value), _ => None });
+        (t.kind == TokenKind.Str && raw.starts_with("\"\"\"")).match({
+            true  => Ok(Literal(
+                kind: kind,
+                text: text_block_literal(raw, self.alloc).try(),
+                block: Ok(raw)
+            )),
+            false => Ok(Literal(kind: kind, text: raw, integer: integer)),
+        })
+    }
+
+    // A literal token's text as the AST keeps it; see `literal`.
+    literal_text* = (self: @Self, t: Token) Res<str, AllocError> {
+        Ok(self.literal(LiteralKind.Str, t).try().text)
+    }
+
     peek_next* = (self: @Self) Token { self.peek_n(1) }
 
     // The nth non-trivia token from the cursor; zero is current.
     peek_n* = (self: @Self, n: usize) Token {
-        found ::= self.eof_token();
-        seen  ::= 0;
+        found       ::= self.eof_token();
+        seen: usize ::= 0;
         Range(self.at, self.tokens.len).loop((h, k) {
             t = self.token_at(k);
             t.kind.is_trivia().match({

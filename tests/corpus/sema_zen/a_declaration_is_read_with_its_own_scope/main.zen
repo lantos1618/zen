@@ -7,7 +7,7 @@
 //   - a STRUCT's `<T>` is in scope in the members it declares, or
 //     `Vec`'s own `get* = (self: @Self, i: usize) Res<T>` reports `T`
 //     as an undefined name inside the declaration that binds it
-//   - an IMPL borrows the TARGET's, because `Vec.impl(Range<T>, ..)`
+//   - an IMPL borrows the TARGET's, because `Vec.impl(Seq<T>, ..)`
 //     writes `Vec`'s `T` and `ast.Impl` has no `tparams` field to hold
 //     one of its own
 //   - a CONSTANT denotes its DECLARED type and not itself: `PATH : str`

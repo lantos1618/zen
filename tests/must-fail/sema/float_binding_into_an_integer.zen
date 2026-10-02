@@ -1,0 +1,8 @@
+// A binding of a float literal is a float; an integer use of it is refused,
+// never truncated.
+main = () i32 {
+    fl = 2.5;
+    q: i32 = fl;
+    println("{}", q);
+    0
+}

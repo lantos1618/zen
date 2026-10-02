@@ -174,8 +174,8 @@ min* = (self: usize, other: usize) usize {
 
 // 2^self; ordinary usize overflow traps.
 pow2* = (self: usize) usize {
-    power ::= 1;
-    i     ::= 0;
+    power    ::= 1;
+    i: usize ::= 0;
     (i < self).loop((h) {
         power = power * 2;
         i     = i + 1;

@@ -1,0 +1,13 @@
+Res = std.core.result
+
+// A sequence walked by position: the positions `start` up to, but not
+// including, `end`, and `at`, which maps each position to its value. None
+// from `at` ends the walk early. A type is walked by `loop`, `find`, `map`
+// and `filter` when it implements Seq (`Vec.impl(Seq<T>, {..})`); a fixed
+// array and a Range are Seqs of their elements and values without one.
+Seq*<T> = {
+    start*: usize,
+    end*: usize,
+
+    at* ::= (self: @Self, index: usize) Res<T>
+}

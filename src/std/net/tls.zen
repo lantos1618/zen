@@ -186,7 +186,7 @@ TlsStream* = {
 
     write* = (self: @Self, bytes: str) Res<(), TlsError> {
         self.open.ensure(TlsError.Closed).try();
-        sent ::= 0;
+        sent: usize ::= 0;
         written = self.io_counts.ptr();
         failed ::= false;
         loop(() { sent < bytes.len && !failed }, (h) {

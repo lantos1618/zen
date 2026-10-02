@@ -149,7 +149,7 @@ Build* = {
             None        => (),
             Ok(entries) => entries.loop((unit) { seen.add(unit).try(); }),
         });
-        i ::= 0;
+        i: usize ::= 0;
         loop(i < seen.len, (h) {
             u = seen.get(i).match({ Ok(v) => v, None => entry });
             i = i + 1;

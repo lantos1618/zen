@@ -49,8 +49,8 @@ module* = (p :: Parser, name: str) Res<Module, AllocError> {
 // Recover at the next identifier outside brackets.
 recover = (p :: Parser) Res<(), AllocError> {
     p.bump().try();
-    depth   ::= 0;
-    running ::= !p.at_eof();
+    depth: usize ::= 0;
+    running      ::= !p.at_eof();
     running.loop((h) {
         kind  = p.peek().kind;
         depth = kind.delim_step(depth);

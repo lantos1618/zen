@@ -119,9 +119,9 @@ ask = (a: Alloc, id: usize, uri: str, into :: String) Res<(), AllocError> {
 // Reply 0 is `initialize` and the last is `shutdown`; the five in
 // between are this test's rows.
 walk_replies = (out: str) {
-    at    ::= 0;
-    seen  ::= 0;
-    going ::= true;
+    at: usize   ::= 0;
+    seen: usize ::= 0;
+    going       ::= true;
     loop(() { going && at < out.len }, (h) {
         frame_at(out, at).match({
             Err(_) => { going = false; },

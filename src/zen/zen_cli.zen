@@ -302,9 +302,9 @@ help_requested = (argv: Vec<str>) bool {
 // `zen fmt [--check] <file.zen>...` requires at least one path.
 fmt_of = (a: Alloc, argv: Vec<str>) Res<Cli, AllocError> {
     declared = fmt_options(a).try();
-    scan  ::= declared.args(argv, ARGS);
-    check ::= false;
-    words ::= 0;
+    scan         ::= declared.args(argv, ARGS);
+    check        ::= false;
+    words: usize ::= 0;
     loop(() { !scan.done() }, (h) {
         scan.next().match({
             Ok(item) => item.named.match({

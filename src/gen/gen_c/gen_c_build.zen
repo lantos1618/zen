@@ -269,8 +269,8 @@ Storage = {
 
     name_at = (self: @Self, be :: CBackend, i: usize)
               Res<str, AllocError> {
-        name ::= "";
-        seen ::= 0;
+        name        ::= "";
+        seen: usize ::= 0;
         self.decl.members.loop((h, m) {
             self.is_stored(be, m).then(() {
                 (seen == i).then(() { name = m.name().text; });
@@ -334,7 +334,7 @@ Initialisers = {
 
     defaults = (self: @Self, be :: CBackend, seen: usize, out :: String)
                Res<usize, AllocError> {
-        wrote ::= 0;
+        wrote: usize ::= 0;
         self.fields.decl.members.loop((h, m) {
             wrote = wrote + self.default_one(be, m, seen + wrote, out).try();
         });

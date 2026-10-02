@@ -137,9 +137,9 @@ ask = (
 // after — `shutdown`, then the settle's diagnostics notifications — is
 // another test's subject.
 walk_replies = (out: str) {
-    at    ::= 0;
-    seen  ::= 0;
-    going ::= true;
+    at: usize   ::= 0;
+    seen: usize ::= 0;
+    going       ::= true;
     loop(() { going && at < out.len }, (h) {
         frame_at(out, at).match({
             Err(_) => { going = false; },

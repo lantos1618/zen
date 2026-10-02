@@ -39,7 +39,7 @@ main = (env: Env) Res<i32, AllocError> {
     ws    ::= alloc.Vec<W>();
     ws.add(W(v: 3)).try();
     ws.add(W(v: 4)).try();
-    total ::= 0;
+    total: i32 ::= 0;
     ws.loop((h, w) {
         total = total + w.scale(1);
     });

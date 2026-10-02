@@ -97,7 +97,7 @@ Assembly = {
     // Aggregates are laid out upward from their lowest address.
     layout_frame = (self :: @Self, function: Func) usize {
         self.offsets.clear();
-        cursor ::= 8;
+        cursor: usize ::= 8;
         self.result_offset = cursor;
         function.slots.loop((ty) {
             size  = round_up(at_least_word(stored_size(ty)), 8);
@@ -557,7 +557,7 @@ Assembly = {
                 self.out.fmt("    movq ${}, %rcx\n    rep movsb\n", size).try();
             },
             false => {
-                at ::= 0;
+                at: usize ::= 0;
                 loop(() { at + 8 <= size }, (h) {
                     self.out.fmt(
                         "    movq {}({}), %rdx\n    movq %rdx, {}({})\n",

@@ -827,7 +827,7 @@ ActorSendEmission = {
                 count.view()
             ).try();
         });
-        slice ::= 0;
+        slice: usize ::= 0;
         self.send.call.args.loop((h, i, arg) {
             ty = self.signature.get(i + 2).match({
                 Ok(t) => t,

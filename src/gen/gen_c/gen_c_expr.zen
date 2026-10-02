@@ -178,7 +178,7 @@ any_arg_calls = (be: CBackend, c: Call) bool {
 
 // The index of the last argument containing a call.
 last_call_arg = (be: CBackend, c: Call) usize {
-    at ::= 0;
+    at: usize ::= 0;
     c.args.loop((h, i, a) { at = later(at, i, be.has_call(a.value)); });
     at
 }

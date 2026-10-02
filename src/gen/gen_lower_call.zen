@@ -652,7 +652,7 @@ bind_sources* = (lo :: Lowerer, f: Function, c: Call, receiver: Res<ExprId>, spa
                 Res<Vec<Source>, LowerError> {
     out ::= lo.alloc.Vec<Source>();
     f.params.loop((_) { out.add(Source.Absent).try(LowerError.OutOfMemory); });
-    next ::= 0;
+    next: usize ::= 0;
     receiver.when_ok((r) {
         out.set(0, Source.Given(r));
         next = 1;

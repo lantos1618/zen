@@ -16,7 +16,7 @@ serve_stdio* = (env: Env, a: Alloc) Res<i32, AllocError> {
     server      ::= a.Server(env);
     input_arena ::= env.mem.alloc();
     held        ::= input_arena.Vec<u8>();
-    at          ::= 0;
+    at: usize   ::= 0;
     open        ::= true;
     framed      ::= true;
     loop(() { open && framed && !server.stopped() }, (h) {

@@ -213,8 +213,8 @@ behaviour_only* = (s: Struct) bool {
 record = (lo :: Lowerer, n: TyNamed, s: Struct) Res<Shape, LowerError> {
     fields = lo.field_types(n, s).try();
     placed ::= lo.alloc.Vec<FieldAt>();
-    cursor ::= 0;
-    align  ::= 1;
+    cursor: usize ::= 0;
+    align: usize ::= 1;
     fields.loop((field) {
         class = lo.class_of(field.ty).try();
         a     = align_of(class);
@@ -266,8 +266,8 @@ field_types* = (lo :: Lowerer, n: TyNamed, s: Struct) Res<Vec<FieldAt>, LowerErr
 // are the tag word alone.
 tagged = (lo :: Lowerer, cases: Vec<Case>) Res<Shape, LowerError> {
     variants ::= lo.alloc.Vec<VariantAt>();
-    size  ::= 0;
-    align ::= 1;
+    size: usize ::= 0;
+    align: usize ::= 1;
     cases.loop((c) {
         payload: Res<TyId> = c.has_payload.match({ true => Ok(c.payload), false => None });
         payload.when_ok((p) {

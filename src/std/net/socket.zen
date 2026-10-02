@@ -83,7 +83,7 @@ SocketFd* = {
     }
 
     send* = (self: @Self, bytes: str) Res<(), SocketFault> {
-        sent ::= 0;
+        sent: usize ::= 0;
         loop(sent < bytes.len, (h) {
             n = self.send(bytes.ptr().offset(sent), bytes.len - sent, 0).try();
             (n == 0).match({
@@ -177,7 +177,7 @@ resolve_addr* = (a: Alloc, host: str) Res<ResolvedAddr, SocketFault> {
     (rc == 0).match({
         false => Err(SocketFault.ReadFault),
         true  => {
-            n ::= 0;
+            n: usize ::= 0;
             loop(() { n < Resolver.NI_MAXHOST.to_usize() && bytes.ptr().read(
                 n
             ) != 0 }, (h) {
@@ -215,8 +215,8 @@ Socket* = {
         );
         // Linux admits CLOEXEC atomically. Platforms without that socket flag
         // set it before publishing the descriptor; concurrent fork needs care.
-        raw ::= -1;
-        at  ::= head;
+        raw: i32 ::= -1;
+        at       ::= head;
         loop(() { !at.is_null() && raw < 0 }, (h) {
             info      = at.read(0);
             candidate = Native.socket(

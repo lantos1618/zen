@@ -73,7 +73,7 @@ main = () {
         });
     });
     println("carries agree on edges: {}", edges);
-    s      ::= 88172645463325252;
+    s: u64 ::= 88172645463325252;
     random ::= true;
     Range<usize>(0, 10000).loop((k) {
         a = next(s); b = next(a); c = next(b); s = c;
@@ -99,7 +99,7 @@ main = () {
                     [ALL, ALL, ALL, ALL],
                     [ALL, ALL, ALL, ALL]
                 );
-                r ::= 2463534242;
+                r: u64 ::= 2463534242;
                 Range<usize>(0, 2000).loop((k) {
                     a = next(r); b = next(a); c = next(b); d = next(c);
                     e = next(d); f = next(e); g = next(f); h = next(g); r = h;

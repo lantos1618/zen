@@ -355,7 +355,7 @@ settled = (c: Checker, args: Vec<TyId>) bool {
 
 // Structural size is the growth signal that detects widening recursion.
 args_size = (c: Checker, args: Vec<TyId>) usize {
-    total ::= 0;
+    total: usize ::= 0;
     args.loop((h, t) { total = total + c.ty_size(t); });
     total
 }

@@ -30,8 +30,8 @@ LineRun* = {
     }
     // Byte offset of a UTF-16 column, clamped to this line.
     byte_offset* = (self: @Self, text: str, character: usize) usize {
-        at    ::= self.start;
-        units ::= 0;
+        at           ::= self.start;
+        units: usize ::= 0;
         loop(() { at < self.end && units < character }, (h) {
             step = utf16_step_at(text, at);
             ((units + step.units) > character).then(() { h.break(); });
@@ -43,8 +43,8 @@ LineRun* = {
 
     utf16_column = (self: @Self, text: str, col: usize) usize {
         target = self.target_of(col);
-        at    ::= self.start;
-        units ::= 0;
+        at           ::= self.start;
+        units: usize ::= 0;
         loop(() { at < target }, (h) {
             step = utf16_step_at(text, at);
             ((at + step.bytes) > target).then(() { h.break(); });
@@ -57,8 +57,8 @@ LineRun* = {
 }
 
 run_of* = (text: str, line: usize) LineRun {
-    at   ::= 0;
-    seen ::= 0;
+    at: usize   ::= 0;
+    seen: usize ::= 0;
     (line > 0).then(() {
         Range(0, text.len).loop((h, i) {
             (text.index(i) == '\n').then(() {
@@ -119,8 +119,8 @@ whole_range* = (text: str) TextRange {
 }
 
 utf16_units* = (text: str, from: usize, upto: usize) usize {
-    at    ::= from;
-    units ::= 0;
+    at           ::= from;
+    units: usize ::= 0;
     loop(at < upto, (h) {
         step  = utf16_step_at(text, at);
         at    = at + step.bytes;

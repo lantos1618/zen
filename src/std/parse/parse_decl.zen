@@ -12,7 +12,8 @@
 // The leading bar distinguishes a one-variant enum from an alias.
 
 AllocError = std.mem
-Span, Pos, Ident, no_trivia = std.ast.ast_span
+Ident, no_trivia = std.ast.ast_span
+Span, Pos = std.source
 ExprId, TypeId = std.ast.ast_id
 Decl, DeclKind, Struct, Enum, Alias, Impl, Import, Const = std.ast.ast_node
 Member, MemberKind, Field, Variant, ImportName, TParam, Module = std.ast.ast_node

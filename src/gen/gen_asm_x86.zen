@@ -16,7 +16,7 @@ Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.g
 Scalar, Layout, Op, TrapKind, Fault = gen.gen_ir
 Convert, Load, Store, SysCall, Start, Stream = gen.gen_ir
 width, signed, word, trap_message = gen.gen_ir
-Span = std.ast
+Span = std.source
 Target = gen.gen_asm
 Sys, linux_x86_64, constant_value, Platform = gen.gen_sys
 

@@ -11,13 +11,12 @@ Ast = std.ast
 Checker = sema.sema
 Codegen, Target = std.build
 String, str = std.text
-LowerError = gen.gen_lower
-lower_native = gen.gen_lower_core
+lower, LowerError = gen.gen_lower
 Program, float = gen.gen_ir
 emit_js, emit_app, emit_runtime, PAGE = gen.gen_js
 X86_64Linux = gen.gen_asm_x86
 Arm64, Arm64Os = gen.gen_asm_arm64
-verify_native, message = gen.gen_verify
+verify, message = gen.gen_verify
 
 Layout* = Single | Modules
 ArtifactKind* = Source | Symbols
@@ -121,16 +120,16 @@ Generation* = {
         })
     }
 
-    // JavaScript and assembly both render the one full lowering.
+    // Every backend renders the one lowering.
     lowered = (self: @Self, backend: ScalarBackend) Res<Program, LowerError> {
-        lower_native(self.alloc, self.tree, self.check, self.entry)
+        lower(self.alloc, self.tree, self.check, self.entry)
     }
 
     render_scalar = (self: @Self, backend: ScalarBackend, program: Program,
                      report :: String,
                      publish: (artifact: Artifact) Res<usize, AllocError>)
                     Res<usize, AllocError> {
-        program.verify_native(self.alloc).match({
+        program.verify(self.alloc).match({
             Err(error) => error.match({
                 OutOfMemory    => Err(AllocError.OutOfMemory),
                 Invalid(fault) => {
@@ -195,7 +194,6 @@ Generation* = {
             )),
         })
     }
-
 
     assembly = (self: @Self, program: Program)
                Res<Res<String>, AllocError> {

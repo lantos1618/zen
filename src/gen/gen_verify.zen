@@ -1,11 +1,14 @@
-// Validate the scalar IR before rendering. Structural checks cover every
-// block. Definite assignment intersects the outgoing facts of reachable
+// Validate the one IR before any renderer sees it. There is a single rule
+// set: what a particular backend can render is its `supports` declaration
+// (gen_ir_feature), checked separately, not a second verifier. Structural
+// checks cover every block. Definite assignment intersects the outgoing facts of reachable
 // predecessors until stable, so a backedge cannot invent an initial value.
 Alloc = std.mem
 Vec = std.collections
 Range = std.core
 str = std.text
 Program, Func, Scalar, Instruction, Terminator, Op, Marshal = gen.gen_ir
+Guards, TagGuard, PayloadRead, Binary = gen.gen_ir
 same, word, integer, signed, float = gen.gen_ir
 arity = gen.gen_sys
 
@@ -20,7 +23,8 @@ IrReason* = EntryFunction
     | Arguments
     | Target
     | Uninitialized
-    | Surface
+    | Guard
+    | UnguardedPayload
 
 message* = (reason: IrReason) str {
     reason.match({
@@ -35,7 +39,8 @@ message* = (reason: IrReason) str {
         Arguments       => "call argument count does not match its signature",
         Target          => "terminator refers to a missing block",
         Uninitialized   => "slot is read before initialization on a reachable path",
-        Surface         => "instruction or slot class is outside this renderer's surface",
+        Guard           => "a recorded tag guard does not branch on that slot's tag",
+        UnguardedPayload => "a payload is read without a test for its alternative on every path",
     })
 }
 
@@ -62,17 +67,10 @@ fits = (ty: Scalar, value: i64) bool {
     })
 }
 
-// The classes the scalar renderers (JavaScript, IR C) understand.
-scalar_class = (ty: Scalar) bool {
-    ty.match({ I32 => true, Bool => true, Unit => true, _ => false })
-}
-
 Check = {
     program: Program,
     function: Func,
     index: usize,
-    // The native surface admits every instruction and slot class.
-    native: bool,
     block :: usize = 0,
 
     fault = (self: @Self, reason: IrReason) VerifyError {
@@ -96,11 +94,6 @@ Check = {
         (index < self.function.blocks.len).ensure(self.fault(
             IrReason.Target
         )).try();
-        Ok(())
-    }
-
-    native_only = (self: @Self) Res<(), VerifyError> {
-        self.native.ensure(self.fault(IrReason.Surface)).try();
         Ok(())
     }
 
@@ -149,59 +142,48 @@ Check = {
             },
             Text(_)            => Ok(()),
             Cast(value)        => {
-                self.native_only().try();
                 self.word_slot(value.input).try();
                 self.word_slot(value.out).try();
                 Ok(())
             },
             AddressOf(value)   => {
-                self.native_only().try();
                 self.slot(value.slot).try();
                 self.expect(value.out, Scalar.Ptr)
             },
             LoadValue(value)   => {
-                self.native_only().try();
                 self.slot(value.out).try();
                 self.expect(value.base, Scalar.Ptr)
             },
             StoreValue(value)  => {
-                self.native_only().try();
                 self.slot(value.value).try();
                 self.expect(value.base, Scalar.Ptr)
             },
             CopyBytes(value)   => {
-                self.native_only().try();
                 self.expect(value.dest, Scalar.Ptr).try();
                 self.expect(value.source, Scalar.Ptr).try();
                 self.expect(value.bytes, Scalar.U64)
             },
             Bytes(value)       => {
-                self.native_only().try();
                 self.expect(value.out, Scalar.Ptr)
             },
             WriteOut(value)    => {
-                self.native_only().try();
                 self.expect(value.data, Scalar.Ptr).try();
                 self.expect(value.len, Scalar.U64)
             },
             System(call)       => {
-                self.native_only().try();
                 (call.args.len == arity(call.call)).ensure(self.fault(IrReason.Arguments)).try();
                 call.args.loop((slot) { self.word_slot(slot).try(); });
                 self.expect(call.out, Scalar.I64)
             },
             MapPages(value)    => {
-                self.native_only().try();
                 self.expect(value.bytes, Scalar.U64).try();
                 self.expect(value.out, Scalar.Ptr)
             },
             UnmapPages(slot)   => {
-                self.native_only().try();
                 self.expect(slot, Scalar.Ptr)
             },
-            Flush              => self.native_only(),
+            Flush              => Ok(()),
             Host(call)         => {
-                self.native_only().try();
                 (call.args.len == call.marshal.len).ensure(self.fault(IrReason.Arguments)).try();
                 call.args.loop((h, i, slot) {
                     ty = self.slot(slot).try();
@@ -230,16 +212,13 @@ Check = {
                 Ok(())
             },
             Wait(slot)         => {
-                self.native_only().try();
                 self.expect(slot, Scalar.U32)
             },
             SysConst(value)    => {
-                self.native_only().try();
                 integer(self.slot(value.out).try()).ensure(self.fault(IrReason.Type)).try();
                 Ok(())
             },
             Startup(value)     => {
-                self.native_only().try();
                 ty = value.value.match({ Argc => Scalar.U64, _ => Scalar.Ptr });
                 self.expect(value.out, ty)
             },
@@ -248,7 +227,6 @@ Check = {
         })
     }
 
-    // Scalar renderers keep the original i32 arithmetic and comparisons.
     binary = (self: @Self, left: usize, right: usize, out: usize, op: Op)
              Res<(), VerifyError> {
         input = self.slot(left).try();
@@ -258,54 +236,35 @@ Check = {
         shift = op.match({ Shl => true, Shr => true, Rotr => true, _ => false });
         (pointer_step || (shift && same(rhs, Scalar.U64)) || same(input, rhs))
             .ensure(self.fault(IrReason.Type)).try();
-        self.native.match({
-            false => {
-                result = op.match({
-                    Equal => Scalar.Bool, NotEqual => Scalar.Bool,
-                    Add => Scalar.I32, Sub => Scalar.I32, Mul => Scalar.I32,
-                    Div => Scalar.I32, Rem => Scalar.I32,
-                    Less => Scalar.Bool, LessEqual => Scalar.Bool,
-                    Greater => Scalar.Bool, GreaterEqual => Scalar.Bool,
-                    _ => Scalar.Unit,
-                });
-                same(result, Scalar.Unit).match({
-                    true  => Err(self.fault(IrReason.Surface)),
-                    false => Ok(()),
-                }).try();
-                op.match({ Equal => true, NotEqual => true, _ => same(input, Scalar.I32) })
-                    .ensure(self.fault(IrReason.Type)).try();
-                self.expect(out, result)
-            },
-            true  => {
-                valid = op.match({
-                    Equal        => word(input),
-                    NotEqual     => word(input),
-                    Less         => integer(input) || float(input) || same(input, Scalar.Ptr),
-                    LessEqual    => integer(input) || float(input) || same(input, Scalar.Ptr),
-                    Greater      => integer(input) || float(input) || same(input, Scalar.Ptr),
-                    GreaterEqual => integer(input) || float(input) || same(input, Scalar.Ptr),
-                    Add          => integer(input) || float(input),
-                    Sub          => integer(input) || float(input),
-                    Mul          => integer(input) || float(input),
-                    Div          => integer(input) || float(input),
-                    Rem          => integer(input) || float(input),
-                    WrapAdd      => integer(input) || pointer_step,
-                    WrapSub      => integer(input) || pointer_step,
-                    And          => integer(input) || same(input, Scalar.Bool),
-                    Or           => integer(input) || same(input, Scalar.Bool),
-                    Xor          => integer(input) || same(input, Scalar.Bool),
-                    _            => integer(input),
-                });
-                valid.ensure(self.fault(IrReason.Type)).try();
-                result = op.match({
-                    Equal => Scalar.Bool, NotEqual => Scalar.Bool,
-                    Less => Scalar.Bool, LessEqual => Scalar.Bool,
-                    Greater => Scalar.Bool, GreaterEqual => Scalar.Bool,
-                    _ => input,
-                });
-                self.expect(out, result)
-            },
-        })
+        // Unit values compare equal: there is only one.
+        unit = same(input, Scalar.Unit);
+        valid = op.match({
+            Equal        => word(input) || unit,
+            NotEqual     => word(input) || unit,
+            Less         => integer(input) || float(input) || same(input, Scalar.Ptr),
+            LessEqual    => integer(input) || float(input) || same(input, Scalar.Ptr),
+            Greater      => integer(input) || float(input) || same(input, Scalar.Ptr),
+            GreaterEqual => integer(input) || float(input) || same(input, Scalar.Ptr),
+            Add          => integer(input) || float(input),
+            Sub          => integer(input) || float(input),
+            Mul          => integer(input) || float(input),
+            Div          => integer(input) || float(input),
+            Rem          => integer(input) || float(input),
+            WrapAdd      => integer(input) || pointer_step,
+            WrapSub      => integer(input) || pointer_step,
+            And          => integer(input) || same(input, Scalar.Bool),
+            Or           => integer(input) || same(input, Scalar.Bool),
+            Xor          => integer(input) || same(input, Scalar.Bool),
+            _            => integer(input),
+        });
+        valid.ensure(self.fault(IrReason.Type)).try();
+        result = op.match({
+            Equal => Scalar.Bool, NotEqual => Scalar.Bool,
+            Less => Scalar.Bool, LessEqual => Scalar.Bool,
+            Greater => Scalar.Bool, GreaterEqual => Scalar.Bool,
+            _ => input,
+        });
+        self.expect(out, result)
     }
 
     exit = (self: @Self, exit: Terminator) Res<(), VerifyError> {
@@ -317,18 +276,13 @@ Check = {
                 self.target(branch.yes).try();
                 self.target(branch.no)
             },
-            Trap(_)        => self.native_only(),
+            Trap(_)        => Ok(()),
         })
     }
 
     structure = (self :: @Self) Res<(), VerifyError> {
         (self.function.parameters <= self.function.slots.len)
             .ensure(self.fault(IrReason.ParameterSlots)).try();
-        (self.native || scalar_class(self.function.result))
-            .ensure(self.fault(IrReason.Surface)).try();
-        self.function.slots.loop((ty) {
-            (self.native || scalar_class(ty)).ensure(self.fault(IrReason.Surface)).try();
-        });
         (self.function.blocks.len > 0).ensure(self.fault(
             IrReason.MissingBlock
         )).try();
@@ -554,17 +508,13 @@ Flow = {
     }
 }
 
-// The scalar surface every renderer accepts.
+// The one verifier. A program that passes it is well formed for every
+// renderer; whether a renderer implements each construct is its `supports`.
 verify* = (program: Program, alloc: Alloc) Res<(), VerifyError> {
-    checked(program, alloc, false)
+    checked(program, alloc)
 }
 
-// The full surface; only the assembly targets render it.
-verify_native* = (program: Program, alloc: Alloc) Res<(), VerifyError> {
-    checked(program, alloc, true)
-}
-
-checked = (program: Program, alloc: Alloc, native: bool) Res<(), VerifyError> {
+checked = (program: Program, alloc: Alloc) Res<(), VerifyError> {
     entry = program.functions.get(program.entry).ok_or(VerifyError.Invalid(IrFault(function: program.entry, block: 0, reason: IrReason.EntryFunction))).try();
     (entry.parameters == 0).ensure(VerifyError.Invalid(IrFault(
         function: program.entry,
@@ -572,13 +522,13 @@ checked = (program: Program, alloc: Alloc, native: bool) Res<(), VerifyError> {
         reason: IrReason.EntryParameters
     ))).try();
     program.functions.loop((h, index, function) {
-        check ::= Check(program: program, function: function, index: index, native: native);
+        check ::= Check(program: program, function: function, index: index);
         check.structure().try();
     });
     program.functions.loop((h, index, function) {
         flow ::= Flow(
             alloc: alloc,
-            check: Check(program: program, function: function, index: index, native: native),
+            check: Check(program: program, function: function, index: index),
             reachable: flags(alloc, function.blocks.len, false).try(),
             predecessors: alloc.Vec<Vec<usize>>(),
             outgoing: alloc.Vec<Vec<bool>>(),
@@ -587,5 +537,286 @@ checked = (program: Program, alloc: Alloc, native: bool) Res<(), VerifyError> {
         flow.graph().try();
         flow.solve().try();
     });
+    program.functions.loop((h, index, function) {
+        function.guards.when_ok((guards) {
+            payloads ::= Payloads(
+                alloc: alloc,
+                function: function,
+                index: index,
+                guards: guards,
+                entry: alloc.Vec<Vec<usize>>(),
+                block: 0
+            );
+            payloads.check().try();
+        });
+    });
     Ok(())
+}
+
+// Rule 3 of docs/IR_ARCHITECTURE.md §4.1: a payload read sits behind a test
+// of the same slot for the same alternative on every path to it, with no
+// write to the slot in between. The lowering records its tests and reads
+// (gen_ir.Guards); each test is first checked to be what it claims, a
+// branch on `Equal(Load(AddressOf(subject), 0), Const(variant))`, so the
+// record cannot vouch for a read the code does not guard.
+//
+// Facts are one known alternative per slot: KNOWN_NONE when nothing is
+// known, UNREACHED before any path arrives. A write to the slot forgets its
+// fact, and so does a store or call through a pointer to it; a store
+// through a pointer of unknown origin forgets every fact.
+// Alternative indices are small; these two never name one.
+UNREACHED: usize = 4294967295
+KNOWN_NONE: usize = 4294967294
+// No slot or alternative has this index.
+NO_SLOT: usize = 4294967293
+
+Payloads = {
+    alloc: Alloc,
+    function: Func,
+    index: usize,
+    guards: Guards,
+    entry :: Vec<Vec<usize>>,
+    block :: usize,
+
+    fault = (self: @Self, reason: IrReason) VerifyError {
+        VerifyError.Invalid(IrFault(function: self.index, block: self.block, reason: reason))
+    }
+
+    check = (self :: @Self) Res<(), VerifyError> {
+        self.guards.tests.loop((g) {
+            self.block = g.block;
+            self.genuine(g).ensure(self.fault(IrReason.Guard)).try();
+        });
+        self.solve().try();
+        self.guards.reads.loop((r) {
+            self.block = r.block;
+            state ::= self.state_at(r.block, r.at).try();
+            known = state.get(r.subject).value_or(KNOWN_NONE);
+            (known == UNREACHED || known == r.variant)
+                .ensure(self.fault(IrReason.UnguardedPayload)).try();
+        });
+        Ok(())
+    }
+
+    // The only instruction writing `slot`, when exactly one does.
+    only_def = (self: @Self, slot: usize) Res<Instruction> {
+        found: Res<Instruction> ::= None;
+        count ::= 0;
+        self.function.blocks.loop((block) {
+            block.code.loop((instruction) {
+                (written(instruction).value_or(NO_SLOT) == slot).then(() {
+                    count = count + 1;
+                    found = Ok(instruction);
+                });
+            });
+        });
+        (count == 1).match({ true => found, false => None })
+    }
+
+    genuine = (self: @Self, g: TagGuard) bool {
+        branch: Res<usize> = self.function.blocks.get(g.block).match({
+            None    => None,
+            Ok(b)   => b.exit.match({ Branch(br) => Ok(br.value), _ => None }),
+        });
+        test: Res<Instruction> = branch.match({ Ok(v) => self.only_def(v), None => None });
+        compare: Res<Binary> = test.match({
+            Ok(i) => i.match({ BinaryValue(b) => b.op.match({ Equal => Ok(b), _ => None }), _ => None }),
+            None  => None,
+        });
+        compare.match({
+            None    => false,
+            Ok(b)   => self.constant_is(b.right, g.variant) && self.loads_tag_of(b.left, g.subject),
+        })
+    }
+
+    constant_is = (self: @Self, slot: usize, variant: usize) bool {
+        self.only_def(slot).match({
+            Ok(i) => i.match({ Constant(c) => c.value.to_usize().value_or(NO_SLOT) == variant, _ => false }),
+            None  => false,
+        })
+    }
+
+    loads_tag_of = (self: @Self, slot: usize, subject: usize) bool {
+        self.only_def(slot).match({
+            Ok(i) => i.match({
+                LoadValue(l) => l.offset == 0 && self.pointee(l.base).value_or(NO_SLOT) == subject,
+                _            => false,
+            }),
+            None  => false,
+        })
+    }
+
+    // The slot a pointer addresses, followed through copies and pointer
+    // arithmetic; None when its origin is not a slot of this function.
+    pointee = (self: @Self, pointer: usize) Res<usize> {
+        self.only_def(pointer).try().match({
+            AddressOf(a)   => Ok(a.slot),
+            Copy(m)        => self.pointee(m.source),
+            BinaryValue(b) => b.op.match({
+                WrapAdd => self.pointee(b.left),
+                WrapSub => self.pointee(b.left),
+                _       => None,
+            }),
+            _              => None,
+        })
+    }
+
+    solve = (self :: @Self) Res<(), VerifyError> {
+        slots = self.function.slots.len;
+        self.function.blocks.loop((h, i, _) {
+            self.entry.add(filled(self.alloc, slots, UNREACHED).try()).try(VerifyError.OutOfMemory);
+        });
+        first = filled(self.alloc, slots, KNOWN_NONE).try();
+        self.entry.set(0, first);
+        changed ::= true;
+        loop(() { changed }, (lh) {
+            changed = false;
+            self.function.blocks.loop((bh, index, block) {
+                start = self.entry.get(index).ok_or(VerifyError.OutOfMemory).try();
+                reached = start.get(0).match({ Ok(v) => v != UNREACHED, None => true });
+                reached.then(() {
+                    out ::= self.state_at(index, block.code.len).try();
+                    block.exit.match({
+                        Jump(to)   => { changed = self.merge(to, out).try() || changed; },
+                        Branch(br) => {
+                            guard: Res<TagGuard> = self.guards.tests.find((g) { g.block == index });
+                            yes ::= copied(self.alloc, out).try();
+                            no  ::= copied(self.alloc, out).try();
+                            guard.when_ok((g) {
+                                yes.set(g.subject, g.variant);
+                                g.otherwise.when_ok((o) { no.set(g.subject, o); });
+                            });
+                            changed = self.merge(br.yes, yes).try() || changed;
+                            changed = self.merge(br.no, no).try() || changed;
+                        },
+                        _          => (),
+                    });
+                });
+            });
+        });
+        Ok(())
+    }
+
+    // Meet `incoming` into the entry facts of `block`; true when they changed.
+    merge = (self :: @Self, block: usize, incoming: Vec<usize>) Res<bool, VerifyError> {
+        facts ::= self.entry.get(block).ok_or(VerifyError.OutOfMemory).try();
+        changed ::= false;
+        Range(0, facts.len).loop((slot) {
+            old = facts.get(slot).value_or(KNOWN_NONE);
+            new = incoming.get(slot).value_or(KNOWN_NONE);
+            met = (old == UNREACHED).match({
+                true  => new,
+                false => (old == new).match({ true => old, false => KNOWN_NONE }),
+            });
+            (met != old).then(() { facts.set(slot, met); changed = true; });
+        });
+        self.entry.set(block, facts);
+        Ok(changed)
+    }
+
+    // The facts in `block` before instruction `at`.
+    state_at = (self: @Self, block: usize, at: usize) Res<Vec<usize>, VerifyError> {
+        start = self.entry.get(block).ok_or(VerifyError.OutOfMemory).try();
+        state ::= copied(self.alloc, start).try();
+        code = self.function.blocks.get(block).ok_or(VerifyError.OutOfMemory).try().code;
+        code.loop((h, i, instruction) {
+            (i >= at).then(() { h.break(); });
+            self.forget(state, instruction);
+        });
+        Ok(state)
+    }
+
+    forget = (self: @Self, state :: Vec<usize>, instruction: Instruction) {
+        written(instruction).when_ok((slot) { state.set(slot, KNOWN_NONE); });
+        // Writes through a pointer, listed without a fallback for the same
+        // reason as `written`.
+        instruction.match({
+            StoreValue(s)  => self.forget_through(state, s.base),
+            CopyBytes(c)   => self.forget_through(state, c.dest),
+            Invoke(c)      => c.args.loop((a) { self.forget_argument(state, a); }),
+            System(c)      => c.args.loop((a) { self.forget_argument(state, a); }),
+            Host(c)        => c.args.loop((a) { self.forget_argument(state, a); }),
+            Machine(c)     => {
+                c.outs.loop((slot) { state.set(slot, KNOWN_NONE); });
+                c.args.loop((a) { self.forget_argument(state, a); });
+            },
+            Wait(_)        => (),
+            Constant(_)    => (),
+            Copy(_)        => (),
+            UnaryValue(_)  => (),
+            BinaryValue(_) => (),
+            PrintValue(_)  => (),
+            Text(_)        => (),
+            Cast(_)        => (),
+            AddressOf(_)   => (),
+            LoadValue(_)   => (),
+            Bytes(_)       => (),
+            WriteOut(_)    => (),
+            Startup(_)     => (),
+            MapPages(_)    => (),
+            UnmapPages(_)  => (),
+            SysConst(_)    => (),
+            Flush          => (),
+        });
+    }
+
+    forget_argument = (self: @Self, state :: Vec<usize>, slot: usize) {
+        self.function.slots.get(slot).match({
+            Ok(ty) => ty.match({ Ptr => self.forget_through(state, slot), _ => () }),
+            None   => (),
+        });
+    }
+
+    forget_through = (self: @Self, state :: Vec<usize>, pointer: usize) {
+        self.pointee(pointer).match({
+            Ok(slot) => { state.set(slot, KNOWN_NONE); },
+            None     => Range(0, state.len).loop((slot) {
+                (state.get(slot).value_or(KNOWN_NONE) != UNREACHED).then(() { state.set(slot, KNOWN_NONE); });
+            }),
+        });
+    }
+}
+
+// The slot an instruction writes, if any. Every instruction is listed, with
+// no fallback: a new instruction that writes a slot must say so here, or a
+// payload fact about that slot would outlive the write.
+written = (instruction: Instruction) Res<usize> {
+    instruction.match({
+        Constant(v)    => Ok(v.out),
+        Copy(v)        => Ok(v.out),
+        UnaryValue(v)  => Ok(v.out),
+        BinaryValue(v) => Ok(v.out),
+        Invoke(v)      => Ok(v.out),
+        Cast(v)        => Ok(v.out),
+        AddressOf(v)   => Ok(v.out),
+        LoadValue(v)   => Ok(v.out),
+        Bytes(v)       => Ok(v.out),
+        System(v)      => Ok(v.out),
+        Startup(v)     => Ok(v.out),
+        MapPages(v)    => Ok(v.out),
+        SysConst(v)    => Ok(v.out),
+        Host(v)        => Ok(v.out),
+        Wait(slot)     => Ok(slot),
+        // A machine primitive writes several slots; `forget` clears each.
+        Machine(_)     => None,
+        PrintValue(_)  => None,
+        Text(_)        => None,
+        StoreValue(_)  => None,
+        CopyBytes(_)   => None,
+        WriteOut(_)    => None,
+        UnmapPages(_)  => None,
+        Flush          => None,
+    })
+}
+
+filled = (alloc: Alloc, count: usize, value: usize) Res<Vec<usize>, VerifyError> {
+    out ::= alloc.Vec<usize>();
+    Range(0, count).loop((_) { out.add(value).try(VerifyError.OutOfMemory); });
+    Ok(out)
+}
+
+copied = (alloc: Alloc, from: Vec<usize>) Res<Vec<usize>, VerifyError> {
+    out ::= alloc.Vec<usize>();
+    from.loop((v) { out.add(v).try(VerifyError.OutOfMemory); });
+    Ok(out)
 }

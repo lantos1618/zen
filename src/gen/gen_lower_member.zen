@@ -9,8 +9,9 @@ Alloc, AllocError = std.mem
 Vec, Map = std.collections
 String, str = std.text
 Range = std.core
-ExprId, BlockId, Span, Function, Call, Struct, Impl, Member, Decl = std.ast
-nowhere = std.ast
+ExprId, BlockId, Function, Call, Struct, Impl, Member, Decl = std.ast
+Span = std.source
+nowhere = std.source
 Checker, DeclId, Def, TyId, Inst, decl_at, CheckedCall, ImplId = sema.sema
 Sys = gen.gen_sys
 Scalar, Op, Const, Move, Binary, Instruction, Load, Store, Address, Pages = gen.gen_ir
@@ -35,6 +36,22 @@ Bound* = { decl*: DeclId, ty*: TyId, implementors*: Vec<TyId> }
 // resolution
 // ---------------------------------------------------------------------
 
+// A bound's `create<T>()` on a receiver sema could not type (a `create`
+// on an allocator reached through a generic helper) is left open; its
+// written type argument still says what it makes: Res<Ptr<T>, AllocError>.
+call_type = (lo :: Lowerer, id: ExprId, c: Call, name: str) Res<TyId, LowerError> {
+    own = lo.type_of(id).try();
+    (lo.settled(own) || !name.eq("create") || c.targs.len != 1).match({
+        true  => Ok(own),
+        false => {
+            elem = lo.written(c.targs.get(0).ok_or(unsupported(nowhere(), "a missing type argument")).try()).try();
+            pointer = lo.ptr_to(elem).try();
+            failure = lo.std_named("AllocError", "std.mem.mem_alloc", lo.alloc.Vec<TyId>()).try();
+            lo.check.types.res_failure(pointer, failure).try(LowerError.OutOfMemory)
+        },
+    })
+}
+
 member_call* = (lo :: Lowerer, id: ExprId, c: Call, checked: CheckedCall, receiver: ExprId,
                 name: str, span: Span) Res<Value, LowerError> {
     recv_ty = lo.type_of(receiver).try();
@@ -51,7 +68,16 @@ member_call* = (lo :: Lowerer, id: ExprId, c: Call, checked: CheckedCall, receiv
                 // An allocator hook its implementor leaves out keeps the
                 // bound's meaning.
                 Err(e)     => name.is_in(["create", "free"]).match({
-                    false => Err(e),
+                    false => lo.ufcs(recv_ty, name, c.args.len + 1).match({
+                        // Sema decides UFCS for the written types; a
+                        // receiver it could not type (see `type_of`) gets
+                        // the free function its instance type selects.
+                        Ok(callee) => {
+                            sources = lo.bind_sources(callee.f, c, Ok(receiver), span).try();
+                            lo.invoke(id, callee, sources, c, span)
+                        },
+                        None       => Err(e),
+                    }),
                     true  => {
                         place = lo.place_of(receiver).try().match({
                             Ok(p) => p,
@@ -60,9 +86,53 @@ member_call* = (lo :: Lowerer, id: ExprId, c: Call, checked: CheckedCall, receiv
                         args ::= lo.alloc.Vec<Source>();
                         c.args.loop((a) { args.add(Source.Computed(lo.expr(a.value).try())).try(LowerError.OutOfMemory); });
                         alloc_bound = lo.bound_named("Alloc", span).try();
-                        lo.implementor_call(recv_ty, alloc_bound, name, place, args, method_inst, lo.type_of(id).try(), span)
+                        lo.implementor_call(recv_ty, alloc_bound, name, place, args, method_inst, lo.call_type(id, c, name).try(), span)
                     },
                 }),
+            }),
+        }),
+    })
+}
+
+// The visible free function `name` taking `arity` parameters whose first
+// parameter is written as the receiver's type or as a type parameter.
+ufcs = (lo :: Lowerer, receiver: TyId, name: str, arity: usize) Res<Callee> {
+    defs ::= lo.alloc.Vec<Def>();
+    lo.check.world.defs_of(lo.here().module, name, defs).match({ Ok(_) => (), Err(_) => () });
+    found: Res<Callee> = loop<Callee>((h) {
+        defs.loop((d) {
+            decl_at(lo.tree, d.id).when_ok((decl) {
+                decl.kind.match({
+                    Function(f) => (f.params.len == arity && lo.accepts_first(f, d.id, receiver)).then(() {
+                        h.break(Callee(
+                            f: f,
+                            owner: d.id,
+                            member: None,
+                            module: d.id.module.to_usize(),
+                            inst: lo.alloc.Inst(),
+                            self_ty: None,
+                            generic_owner: None
+                        ));
+                    }).ignore_none(),
+                    _           => (),
+                });
+            });
+        });
+        h.break();
+    });
+    found
+}
+
+accepts_first = (lo :: Lowerer, f: Function, owner: DeclId, receiver: TyId) bool {
+    probe = Callee(f: f, owner: owner, member: None, module: owner.module.to_usize(),
+                   inst: lo.alloc.Inst(), self_ty: None, generic_owner: None);
+    f.params.get(0).match({
+        None    => false,
+        Ok(p)   => p.type.match({
+            None    => false,
+            Ok(t)   => lo.callee_type(probe, t).match({
+                Ok(ty) => ty == receiver || lo.check.types.at(ty).match({ Var(_) => true, _ => false }),
+                Err(_) => false,
             }),
         }),
     })
@@ -71,8 +141,10 @@ member_call* = (lo :: Lowerer, id: ExprId, c: Call, checked: CheckedCall, receiv
 // The function named `name` for receiver type `ty`: the body sema checked
 // when known, otherwise the first function of that name and arity on the
 // type, its impls (for `via`, only impls of that bound) or their bounds.
-resolve* = (lo :: Lowerer, ty: TyId, name: str, body: Res<BlockId>, arity: usize,
+resolve* = (lo :: Lowerer, written: TyId, name: str, body: Res<BlockId>, arity: usize,
             method_inst: Inst, via: Res<DeclId>, span: Span) Res<Callee, LowerError> {
+    // An open integer literal is the C path's i64, and has its methods.
+    ty = lo.prim_name(written).eq("int").match({ true => lo.prim("i64").try(), false => written });
     owners = lo.owners_of(ty, via).try();
     found: Res<Callee> = loop<Callee>((h) {
         owners.loop((owner) {
@@ -473,7 +545,7 @@ dynamic_call = (lo :: Lowerer, id: ExprId, c: Call, bound: Bound, receiver: Expr
         });
         args.add(source).try(LowerError.OutOfMemory);
     });
-    lo.dispatch(bound, handle, name, args, method_inst, lo.type_of(id).try(), span)
+    lo.dispatch(bound, handle, name, args, method_inst, lo.call_type(id, c, name).try(), span)
 }
 
 // Branch on a bound handle's implementor tag and call that implementor's
@@ -519,7 +591,12 @@ implementor_call = (lo :: Lowerer, implementor: TyId, bound: Bound, name: str, r
         Err(e)     => name.match({
             "free"   => lo.unit(),
             "create" => {
-                elem = method_inst.arg_at(0).ok_or(unsupported(span, "create without an element type")).try();
+                // The element is the call's type argument, or else the
+                // pointee of the `Res<Ptr<T>, E>` the call produces.
+                elem = method_inst.arg_at(0).match({
+                    Ok(t) => Ok(t),
+                    None  => lo.created_element(ty),
+                }).ok_or(unsupported(span, lo.described("create without an element type", ty))).try();
                 bytes = lo.word_const(Scalar.U64, size_of(lo.class_of(elem).try()).to_i64_bits()).try();
                 align = lo.word_const(Scalar.U64, 16).try();
                 usize_ty = lo.prim("usize").try();
@@ -534,6 +611,12 @@ implementor_call = (lo :: Lowerer, implementor: TyId, bound: Bound, name: str, r
             _        => Err(e),
         }),
     })
+}
+
+// `T` of a `Res<Ptr<T>, E>`.
+created_element = (lo :: Lowerer, ty: TyId) Res<TyId> {
+    pointer = lo.check.types.at(ty).match({ Res(r) => Ok(r.value), _ => None }).try();
+    lo.check.types.at(pointer).match({ Named(n) => n.args.get(0), _ => None })
 }
 
 // Call a resolved member with already-evaluated receiver and arguments.

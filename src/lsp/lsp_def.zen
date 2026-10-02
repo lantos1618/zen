@@ -4,8 +4,9 @@
 str, String = std.text
 Vec, Map = std.collections
 Alloc, AllocError = std.mem
-ExprId, TypeId, Span, Pos, Access, QualifiedName = std.ast
-nowhere = std.ast
+ExprId, TypeId, Access, QualifiedName = std.ast
+Span, Pos = std.source
+nowhere = std.source
 Checker = sema.sema_check
 TyId = sema.sema_ty
 Def, decl_at, dotted = sema.sema_def

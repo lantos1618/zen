@@ -2,7 +2,7 @@
 // these faults describe source forms or types that code generation could not
 // translate, plus the backend's explicit reachability bound.
 
-Span = std.ast.ast_span
+Span = std.source
 str, String = std.text
 AllocError = std.mem
 

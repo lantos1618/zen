@@ -17,7 +17,6 @@ expr = gen.gen_c.gen_c_expr
 Dest, deliver = gen.gen_c.gen_c_stmt
 init_temp = gen.gen_c.gen_c_flow
 Range = std.core
-contains_drop = sema.sema_copy
 GenFault = gen.gen_diag
 
 // recognising

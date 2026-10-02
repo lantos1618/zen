@@ -1,4 +1,5 @@
-Ast, Type, TypeKind, nowhere, no_trivia = std.ast
+Ast, Type, TypeKind, no_trivia = std.ast
+nowhere = std.source
 Checker, Ctx = sema.sema_check
 type_from_ast = sema.sema_denote
 

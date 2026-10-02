@@ -9,11 +9,12 @@ String, str = std.text
 Range = std.core
 fmt_at = std.text.text_fmt
 decode_literal = std.lex
-Ast, ExprId, BlockId, TypeId, Span, Function, Literal, Call, Arg, Param = std.ast
+Ast, ExprId, BlockId, TypeId, Function, Literal, Call, Arg, Param = std.ast
+Span = std.source
 Expr, Lambda, Access, Struct, Member, Impl = std.ast
 ImplId = sema.sema
 walk, WalkVisitor, WalkEvent, WalkNode = std.ast.ast_walk
-nowhere = std.ast
+nowhere = std.source
 Checker, DeclId, Def, TyId, Ctx, Inst, decl_at, CheckedCall, TyNamed = sema.sema
 subst = sema.sema
 Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print = gen.gen_ir
@@ -42,9 +43,19 @@ call* = (lo :: Lowerer, id: ExprId, c: Call, span: Span) Res<Value, LowerError> 
     callee.kind.match({
         Name(n)   => lo.lookup(n.text).match({
             Ok(Closure(lambda)) => {
-                args ::= lo.alloc.Vec<Value>();
-                c.args.loop((a) { args.add(lo.expr(a.value).try()).try(LowerError.OutOfMemory); });
-                lo.inline_lambda(lambda, args, lo.type_of(id).try())
+                args ::= lo.alloc.Vec<LocalKind>();
+                c.args.loop((a) {
+                    handle: Res<usize> = lo.tree.expr_at(a.value).kind.match({
+                        Name(n) => lo.lookup(n.text).match({ Ok(Handle(loop_id)) => Ok(loop_id), _ => None }),
+                        _       => None,
+                    });
+                    kind = handle.match({
+                        Ok(loop_id) => LocalKind.Handle(loop_id),
+                        None        => LocalKind.Direct(lo.copy_value(lo.expr(a.value).try()).try()),
+                    });
+                    args.add(kind).try(LowerError.OutOfMemory);
+                });
+                lo.inline_bound(lambda, args, lo.type_of(id).try())
             },
             _                   => lo.named_call(id, c, n.text, span),
         }),
@@ -624,12 +635,17 @@ impl_range_elem = (lo :: Lowerer, range: TyId, n: TyNamed) Res<Res<TyId>, LowerE
 }
 
 // The call's substitution with the caller's own parameters resolved.
+// A binding sema could not decide (Unknown: `v.eq(x)` inside a generic
+// `loop` body reached through a bound) is left out, so the arguments
+// settle the parameter instead (settle_params).
 call_inst* = (lo :: Lowerer, raw: Inst) Res<Inst, LowerError> {
     inst ::= lo.alloc.Inst();
     Range(0, raw.len()).loop((i) {
         v = raw.var_at(i).ok_or(unsupported(nowhere(), "a malformed instantiation")).try();
         a = raw.arg_at(i).ok_or(unsupported(nowhere(), "a malformed instantiation")).try();
-        inst.bind(v, lo.concrete(a).try()).try(LowerError.OutOfMemory);
+        arg = lo.concrete(a).try();
+        undecided = lo.check.types.at(arg).match({ Unknown => true, Infer => true, _ => false });
+        (!undecided).then(() { inst.bind(v, arg).try(LowerError.OutOfMemory); });
     });
     Ok(inst)
 }
@@ -1428,10 +1444,7 @@ stdin_read = (lo :: Lowerer, id: ExprId, sources: Vec<Source>, span: Span) Res<V
     result = lo.std_call("std.sys.sys", "read_full", args, span).try();
     variants = lo.variants_of(result.ty).try();
     ok = variant_index(variants, "Ok").ok_or(unsupported(span, "read_full without Ok")).try();
-    tag = lo.tag_of(result).try();
-    expected = lo.word_const(Scalar.U32, ok.to_i64_bits()).try();
-    good = lo.slot_of(Scalar.Bool).try();
-    lo.add(Instruction.BinaryValue(Binary(out: good, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+    good = lo.tag_test(result, ok).try();
     read_ok = lo.label().try();
     read_bad = lo.label().try();
     lo.branch_to(good, read_ok, read_bad).try();
@@ -1520,7 +1533,37 @@ loop_call = (lo :: Lowerer, id: ExprId, f: Function, sources: Vec<Source>, span:
     lo.loops.add(LoopTarget(brk: brk, next: next, result: Ok(result), depth: lo.scopes.len)).try(LowerError.OutOfMemory);
     first = f.params.get(0).ok_or(unsupported(span, "a loop without parameters")).try();
     first_name = first.name.text;
-    (f.params.len < 3).ensure(unsupported(span, "folding loops")).try();
+    (f.params.len < 4).ensure(unsupported(span, "a loop form with more than three parameters")).try();
+    (f.params.len == 3).match({
+        true  => lo.fold_loop(sources, body, body_params, ty, result, loop_id, top, next, brk, span).try(),
+        false => lo.plain_loop(f, first_name, sources, body, body_params, loop_id, top, next, brk, span).try(),
+    });
+    lo.start(brk);
+    lo.loops.take(lo.loops.len - 1);
+    Ok(result)
+}
+
+// `range.loop(init, (h, index, value, acc) { .. })`: the body's value is the
+// next accumulator. Running out of values answers Ok(acc); `h.break(v)`
+// answers Ok(v) instead, through the loop's result like any other break.
+fold_loop = (lo :: Lowerer, sources: Vec<Source>, body: LambdaRef, body_params: usize, ty: TyId,
+             result: Value, loop_id: usize, top: usize, next: usize, brk: usize, span: Span)
+            Res<(), LowerError> {
+    acc_ty = lo.check.types.at(ty).match({ Res(r) => lo.concrete(r.value), _ => Err(unsupported(span, "a fold without a Res result")) }).try();
+    init = lo.argument_value(sources.get(1).value_or(Source.Absent), acc_ty, span).try();
+    acc = lo.temp(acc_ty).try();
+    lo.add(Instruction.Copy(Move(out: acc.slot, source: init.slot))).try();
+    exhausted = lo.label().try();
+    lo.range_loop(sources, body, body_params, loop_id, top, next, exhausted, Ok(acc), span).try();
+    lo.start(exhausted);
+    done = lo.variant_value(ty, "Ok", Ok(acc), span).try();
+    lo.add(Instruction.Copy(Move(out: result.slot, source: done.slot))).try();
+    lo.jump(brk)
+}
+
+plain_loop = (lo :: Lowerer, f: Function, first_name: str, sources: Vec<Source>, body: LambdaRef,
+              body_params: usize, loop_id: usize, top: usize, next: usize, brk: usize, span: Span)
+             Res<(), LowerError> {
     (f.params.len == 1).match({
         // loop((h) {..}) or loop((h, index) {..})
         true  => {
@@ -1547,12 +1590,10 @@ loop_call = (lo :: Lowerer, id: ExprId, f: Function, sources: Vec<Source>, span:
                 lo.enter(next).try();
                 lo.jump(top).try();
             },
-            _       => lo.range_loop(sources, body, body_params, loop_id, top, next, brk, span).try(),
+            _       => lo.range_loop(sources, body, body_params, loop_id, top, next, brk, None, span).try(),
         }),
     });
-    lo.start(brk);
-    lo.loops.take(lo.loops.len - 1);
-    Ok(result)
+    Ok(())
 }
 
 // A loop's Res<T> is settled by its context, else by the first
@@ -1662,7 +1703,7 @@ condition = (lo :: Lowerer, source: Source, span: Span) Res<usize, LowerError> {
 
 // The body runs with its handle bound to this loop.
 run_body = (lo :: Lowerer, body: LambdaRef, loop_id: usize, values: Vec<Value>)
-           Res<(), LowerError> {
+           Res<Value, LowerError> {
     l = lo.tree.expr_at(body.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
         .ok_or(unsupported(nowhere(), "a loop body that is not a lambda")).try();
     saved = lo.use_frame(body.frame);
@@ -1681,16 +1722,18 @@ run_body = (lo :: Lowerer, body: LambdaRef, loop_id: usize, values: Vec<Value>)
             },
         });
     });
-    lo.block(l.body).try();
+    value = lo.block(l.body).try();
     lo.release_locals(mark);
     lo.use_frame(saved);
-    Ok(())
+    Ok(value)
 }
 
 // Walk [start, end) of a Range, a fixed array, or a type implementing
 // Range whose `at` supplies each value.
+// With `acc`, the body is a fold's: it also receives the accumulator and
+// its value replaces it. `exhausted` is where running out of values goes.
 range_loop = (lo :: Lowerer, sources: Vec<Source>, body: LambdaRef, body_params: usize,
-              loop_id: usize, top: usize, next: usize, brk: usize, span: Span)
+              loop_id: usize, top: usize, next: usize, exhausted: usize, acc: Res<Value>, span: Span)
              Res<(), LowerError> {
     range_expr = sources.source_expr(0, span).try();
     range = lo.expr(range_expr).try();
@@ -1711,7 +1754,7 @@ range_loop = (lo :: Lowerer, sources: Vec<Source>, body: LambdaRef, body_params:
     lo.enter(top).try();
     more = lo.slot_of(Scalar.Bool).try();
     lo.add(Instruction.BinaryValue(Binary(out: more, left: index, right: walk.end, op: Op.Less, span: nowhere()))).try();
-    lo.branch_to(more, pass, brk).try();
+    lo.branch_to(more, pass, exhausted).try();
     lo.start(pass);
     position = Value(slot: index, ty: usize_ty);
     value = walk.kind.match({
@@ -1720,12 +1763,19 @@ range_loop = (lo :: Lowerer, sources: Vec<Source>, body: LambdaRef, body_params:
             lo.read(place).try()
         },
         Indices   => lo.copy_value(position).try(),
-        At(at)    => lo.at_value(range, at, position, brk, span).try(),
+        At(at)    => lo.at_value(range, at, position, exhausted, span).try(),
     });
     args ::= lo.alloc.Vec<Value>();
-    (body_params >= 3).then(() { args.add(Value(slot: count, ty: usize_ty)).try(LowerError.OutOfMemory); });
+    folding = acc.match({ Ok(_) => true, None => false });
+    // Value-only bodies take (value); fold bodies always take the index.
+    (body_params >= 3 || folding).then(() { args.add(Value(slot: count, ty: usize_ty)).try(LowerError.OutOfMemory); });
     args.add(value).try(LowerError.OutOfMemory);
-    lo.run_body(body, loop_id, args).try();
+    acc.when_ok((a) { args.add(a).try(LowerError.OutOfMemory); });
+    produced = lo.run_body(body, loop_id, args).try();
+    acc.when_ok((a) {
+        next_acc = lo.coerce(produced, a.ty).try();
+        lo.add(Instruction.Copy(Move(out: a.slot, source: next_acc.slot))).try();
+    });
     lo.enter(next).try();
     one = lo.word_const(Scalar.U64, 1).try();
     lo.add(Instruction.BinaryValue(Binary(out: index, left: index, right: one, op: Op.WrapAdd, span: nowhere()))).try();
@@ -1863,10 +1913,7 @@ at_value = (lo :: Lowerer, range: Value, hook: AtHook, index: Value, brk: usize,
     produced = Value(slot: here.ret_slot, ty: ret);
     variants = lo.variants_of(ret).try();
     ok = variant_index(variants, "Ok").ok_or(unsupported(span, "an at result without Ok")).try();
-    tag = lo.tag_of(produced).try();
-    expected = lo.word_const(Scalar.U32, ok.to_i64_bits()).try();
-    test = lo.slot_of(Scalar.Bool).try();
-    lo.add(Instruction.BinaryValue(Binary(out: test, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+    test = lo.tag_test(produced, ok).try();
     good = lo.label().try();
     lo.branch_to(test, good, brk).try();
     lo.start(good);
@@ -1948,10 +1995,7 @@ string_call = (lo :: Lowerer, id: ExprId, name: str, c: Call, sources: Vec<Sourc
             made = lo.real_call(empty_callee, args, span).try();
             variants = lo.variants_of(made.ty).try();
             ok = variant_index(variants, "Ok").ok_or(unsupported(span, "a String result without Ok")).try();
-            tag = lo.tag_of(made).try();
-            expected = lo.word_const(Scalar.U32, ok.to_i64_bits()).try();
-            test = lo.slot_of(Scalar.Bool).try();
-            lo.add(Instruction.BinaryValue(Binary(out: test, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+            test = lo.tag_test(made, ok).try();
             out = lo.temp(ty).try();
             good = lo.label().try();
             bad = lo.label().try();

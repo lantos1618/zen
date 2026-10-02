@@ -1,4 +1,5 @@
-Expr, ExprId, Block, BlockId, Stmt, Call, Arg, Span = std.ast
+Expr, ExprId, Block, BlockId, Stmt, Call, Arg = std.ast
+Span = std.source
 Match = std.ast
 AllocError = std.mem
 Vec = std.collections

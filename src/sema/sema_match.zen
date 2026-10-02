@@ -1,4 +1,5 @@
-Expr, ExprId, Span, Literal, nowhere = std.ast
+Expr, ExprId, Literal = std.ast
+Span, nowhere = std.source
 Pattern, PatName, Destructure, PatternId = std.ast
 Match, QualifiedName, Lambda = std.ast
 Alloc, AllocError = std.mem
@@ -110,6 +111,22 @@ match_type* = (c :: Checker, node: Expr, mt: Match, ctx: Ctx)
     c.arm_types(ps, mt, sty, rows, ctx)
 }
 
+// Sema's reading of one arm's pattern against the scrutinee type: the
+// normalized constructor tree coverage checking used. A lowering compiles an
+// arm's tests from this reading instead of re-deciding what each name means,
+// so it cannot take `Err(Authentication)` on `Res<T, Kind | Fail>` for a
+// binder when sema read the case `Authentication` of the member `Kind`
+// (normalized to `Err(Kind(Authentication))`). Only checked programs reach a
+// lowering, so normalizing again reports nothing new.
+PatReading* = { pats*: Pats, root*: usize }
+
+read_pattern* = (c :: Checker, pid: PatternId, ty: TyId, ctx: Ctx)
+                Res<PatReading, AllocError> {
+    ps ::= c.alloc.Pats();
+    root = c.norm_pattern(ps, pid, ty, ctx).try();
+    Ok(PatReading(pats: ps, root: root))
+}
+
 norm_arms = (
     c    :: Checker,
     ps   :: Pats,
@@ -145,9 +162,29 @@ norm_destructure = (
 ) Res<usize, AllocError> {
     text = d.name.last_segment();
     c.member_of(ty, text).match({
-        Ok(t) => c.norm_set_ctor(ps, node, d, text, t, ctx),
+        Ok(t) => c.member_name(t).eq(text).match({
+            true  => c.norm_set_ctor(ps, node, d, text, t, ctx),
+            false => c.member_case(ps, node, d, t, text, ctx),
+        }),
         None  => c.plain_ctor(ps, node, d, ty, text, ctx),
     })
+}
+
+// `Protocol(c)` on a set whose member `Kind` declares `Protocol` is that
+// case of that member, `Kind(Protocol(c))`, exactly as a bare
+// `Authentication` reads as `Kind(Authentication)`: the binder takes the
+// case's payload, not the whole member.
+member_case = (
+    c    :: Checker,
+    ps   :: Pats,
+    node : Pattern,
+    d    : Destructure,
+    mty  : TyId,
+    text : str,
+    ctx  : Ctx
+) Res<usize, AllocError> {
+    inner = c.plain_ctor(ps, node, d, mty, text, ctx).try();
+    ps.add(sub_pat(c.member_name(mty), inner, node.span))
 }
 
 // The shape every destructure on a non-set type has always had: the

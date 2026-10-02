@@ -5,7 +5,8 @@
 // whether the body is typed determine field, constant, or method syntax.
 
 AllocError = std.mem
-Span, Ident = std.ast.ast_span
+Ident = std.ast.ast_span
+Span = std.source
 TypeId, ExprId, BlockId = std.ast.ast_id
 Member, MemberKind, Field, Const, Param, TParam, Function, Form = std.ast.ast_node
 TokenKind = std.parse.parse_token

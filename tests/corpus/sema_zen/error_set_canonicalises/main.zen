@@ -18,7 +18,7 @@
 Types, TyId = sema.sema_ty
 DeclId = sema.sema_id
 Diag, SemaFault, TypeFault, NameFault = sema.sema_diag
-Pos, Span = std.ast.ast_span
+Pos, Span = std.source
 Alloc, AllocError = std.mem
 Vec = std.collections
 str, String = std.text

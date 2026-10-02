@@ -9,7 +9,7 @@
 // naming the operation, and the verifier rejects a Machine instruction.
 Vec = std.collections
 str = std.text
-Span = std.ast
+Span = std.source
 
 MachineOp* = MulWide
     | AddCarry

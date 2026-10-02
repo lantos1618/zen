@@ -1,4 +1,5 @@
-Ast, Module, Decl, Import, Span, ExprId, nowhere = std.ast
+Ast, Module, Decl, Import, ExprId = std.ast
+Span, nowhere = std.source
 Alloc, AllocError = std.mem
 Vec = std.collections
 str, String = std.text

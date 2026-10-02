@@ -1,2 +1,2 @@
-// The IR may carry source positions and nothing else from the AST.
-Span = std.ast.ast_span
+// The IR carries source positions, from std.source, and nothing from the AST.
+Span = std.source

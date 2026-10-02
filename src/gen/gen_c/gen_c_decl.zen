@@ -2,7 +2,8 @@
 // Bodies are lowered first so they can discover required types and helpers;
 // emitted definitions and prototypes are then sorted by mangled name.
 
-Decl, Function, Param, Span = std.ast
+Decl, Function, Param = std.ast
+Span = std.source
 BlockId, Struct, Enum, Member = std.ast
 AllocError = std.mem
 Vec = std.collections

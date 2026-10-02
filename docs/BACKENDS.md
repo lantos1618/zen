@@ -1,9 +1,9 @@
 # Code generation
 
 C is the default, full-language backend and the compiler's bootstrap path.
-JavaScript and assembly render the shared full lowering (`gen_lower_core`;
-see `JS_BACKEND.md` and `NATIVE_BACKEND.md` for what each covers). Their support
-boundary is deliberately checked: unsupported reachable code produces a source
+JavaScript and assembly render the one shared lowering (see `JS_BACKEND.md`
+and `NATIVE_BACKEND.md` for what each covers). Their support boundary is
+deliberately checked: unsupported reachable code produces a source
 diagnostic before the output callback runs. Selecting another backend never
 falls back to C.
 
@@ -42,52 +42,50 @@ currently belong to C. Raw assembly output targets the host unless
 `--target x86_64-linux|aarch64-linux|arm64-darwin` selects another machine; it
 is not a host-independent assembly format.
 
-## Implemented scalar surface
+## One lowering, one IR, declared support
 
-Both new backends share these language rules:
+Every non-C backend renders the same lowered program. `gen_lower` (with
+`gen_lower_core`, `_call`, `_member` and `_shape`) lowers the checked program
+once into `gen_ir`, `gen_verify.verify` checks it, and each renderer then
+declares which part of the IR it implements through `supports(IrFeature)`
+(`gen_ir_feature`). The driver refuses a program that needs a feature the
+selected backend lacks, naming the feature and the first function that uses
+it, before any artifact is published. There is no second IR surface and no
+second verifier.
 
-- `i32`, `bool`, and unit parameters, local values, and function results.
-- A zero-argument `main` returning `i32` or unit; an unused standard `Env`
-  parameter is also accepted. An integer result becomes the process exit code.
-- Monomorphic functions, recursion, positional calls, local assignments, and
-  nested boolean matches with explicit `true` and `false` arms.
-- Checked arithmetic, comparisons, unary negation and boolean negation, and
-  short-circuit `&&` and `||`. Source evaluation order is preserved. Dynamic
-  integer arithmetic requires operands with a settled `i32` type. Unsettled
-  literal arithmetic is accepted only when sema can fold it to a fitting
-  constant; this avoids silently changing the current C path's wider literal
-  arithmetic. The underlying defaulting discrepancy remains compiler work.
-- `print` and `println` of scalar values and literal byte strings, positional
-  and local named format holes, doubled braces, and Zen string escapes.
-- Operator-position arithmetic diagnostics and exit status 134, matching Zen's
-  failure model. Output preceding a trap is flushed before exit.
+- JavaScript (`gen_js`) implements the whole IR, including `f64` values and
+  the JavaScript host calls and event waits of `js.bind`; see `JS_BACKEND.md`.
+- Assembly (`gen_asm_x86`, `gen_asm_arm64`) implements the whole IR except
+  floating-point values and the JavaScript host instructions, which the driver
+  refuses by name before rendering. See [the native backend](NATIVE_BACKEND.md)
+  for what the lowering covers.
+- The IR C renderer (`gen_c_ir`) implements `i32`, `bool` and unit values,
+  checked `i32` arithmetic, calls, standard output and traps. A program whose
+  lowering needs anything else (a wider integer, a string value, memory) is
+  refused with the feature named.
 
-Actors, allocator capabilities, dynamic strings, collections, structural
-results, closures (including local functions declared in a body, refused as
-"nested declarations"), module-qualified constants, generic instantiation,
-foreign calls, named/default call arguments, wrapping arithmetic, bitwise
-operators, floating point (and so the float conversions), and other numeric widths are not
-lowered by these backends yet. Unused generic functions need not be lowered, but the
-frontend still checks the entire imported source graph. JavaScript project
-recipes accept Zen source libraries and refuse native link dependencies.
-(This list describes the scalar surface; the full lowering behind
-`--backend js` and `--backend asm` covers much more, per `JS_BACKEND.md`.)
+The lowering gives every program the C backend's meaning. Unsettled literal
+arithmetic is 64-bit, as in C; where sema folds it to a constant that fits the
+type the context wants (`x: i32 = 41`, an `i32` function returning `0`, the
+arms of an `i32`-valued `match`), the constant is lowered at that type, so an
+`i32` program stays within `i32` slots. A `bool` or unit `main` exits 0.
 
 ## Phase boundaries
 
-The new paths are:
+The paths are:
 
 ```text
 AST + checked semantic facts
-  → gen_lower
-  → gen_ir.Program
-  → gen_verify
-  → gen_js or gen_asm
+  → gen_lower            (one lowering)
+  → gen_ir.Program       (one IR)
+  → gen_verify.verify    (one verifier)
+  → supports check       (per backend, gen_ir_feature)
+  → gen_js, gen_c_ir or gen_asm
   → synchronous artifact publication
 ```
 
-The scalar IR contains typed slots, function signatures, explicit basic blocks
-and terminators, and operator source spans. It uses mutable slots rather than
+The IR contains typed slots, function signatures, explicit basic blocks and
+terminators, and operator source spans. It uses mutable slots rather than
 SSA. The verifier checks references, types, calls, constant representations,
 branch targets, return types, and definite assignment across reachable control
 flow. Structural validation also covers unreachable blocks. Validation failure
@@ -98,12 +96,13 @@ Direct renderer callers must satisfy that precondition. All vectors, source
 spans, and text borrow caller-chosen compilation storage. Returning a Program
 or String does not extend its allocator's lifetime.
 
-`gen.gen_c_ir.emit_c(a, program)` is an experimental C renderer for this same
-scalar IR. It returns `Res<String, AllocError>` after the caller verifies the
-program. Its C11 output uses direct labels and branches, explicit arithmetic
-checks, and length-aware byte output. It is an importable API, not a CLI backend
-selection; `Codegen.C` continues to use the full-language C backend. Its private
-scalar calling convention does not specify the foreign or aggregate ABI.
+`gen.gen_c_ir.emit_c(a, program)` is an experimental C renderer for the same
+IR. It returns `Res<String, AllocError>` after the caller verifies the program
+and checks `supports`. Its C11 output uses direct labels and branches, explicit
+arithmetic checks, and length-aware byte output. It is an importable API, not
+a CLI backend selection; `Codegen.C` continues to use the full-language C
+backend. Its private calling convention does not specify the foreign or
+aggregate ABI.
 
 Generation publishes each borrowed artifact synchronously. The callback must
 consume or copy its bytes before returning. Allocation failures stay typed;

@@ -1,8 +1,5 @@
-// The full lowering: checked Zen to the native IR surface (see gen_verify)
-// consumed by the machine targets. It is target-independent; renderers
-// (`gen_asm_x86`, `gen_asm_arm64`, `gen_js`) consume only its IR and a
-// Target. The scalar `gen_lower` remains the IR-C pilot's path until that
-// renderer accepts the wider IR.
+// The core of the one lowering (see gen_lower): checked Zen to gen_ir. It is
+// target-independent; every renderer consumes only its IR and a Target.
 //
 // Values live in typed slots: words in word slots, aggregates in `Block`
 // slots addressed through `AddressOf` with `Load`/`Store` at field offsets.
@@ -18,18 +15,21 @@ Vec, Map = std.collections
 String, str = std.text
 Range = std.core
 decode_literal = std.lex
-Ast, ExprId, BlockId, TypeId, Span, Function, Literal, Bind = std.ast
+Ast, ExprId, BlockId, TypeId, Function, Literal, Bind = std.ast
+Span = std.source
 BinOp, UnOp, Match, Call, Expr, Pattern, Lambda, Param, Access, Index = std.ast
 TParam, Arg = std.ast
 PatternId = std.ast
-nowhere = std.ast
+nowhere = std.source
 Checker, DeclId, Def, TyId, Ctx, Inst, decl_at = sema.sema
-subst, type_from_ast, is_prim = sema.sema
+subst, type_from_ast, is_prim, const_int, fits = sema.sema
+Pat, PatReading, read_pattern = sema.sema
 is_drop_type = sema.sema_drop
 Scalar, Layout, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print = gen.gen_ir
 Branch, Instruction, Func, Program, BasicBlock, Terminator = gen.gen_ir
 Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault = gen.gen_ir
-word, integer, same = gen.gen_ir
+Guards, TagGuard, PayloadRead = gen.gen_ir
+word, integer, same, width = gen.gen_ir
 LowerError, unsupported = gen.gen_lower
 Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of = gen.gen_lower_shape
 to_bound, resolve = gen.gen_lower_member
@@ -65,6 +65,12 @@ Expected* = { id*: ExprId, ty*: TyId }
 Tail = Expression(ExprId) | Nested(BlockId) | Nothing
 
 Broken* = { ty*: TyId, fault*: LowerError }
+
+// The payload a pattern test read for the reading at index `at`.
+TestedPayload* = { at*: usize, value*: Value }
+
+// A Bool slot holding `subject`'s tag compared with alternative `variant`.
+CaseTest* = { test*: usize, subject*: usize, variant*: usize, otherwise*: Res<usize> }
 
 // One lexical function body: the real function or an inlined callee. Names,
 // types and `.try()` resolve in the frame that wrote them. `scope` says
@@ -147,6 +153,12 @@ Lowerer* = {
     vias* :: Vec<Res<TyId>>,
     made* :: Vec<TyId>,
     broken* :: Vec<Broken>,
+    // Per real function: the tag tests and payload reads the verifier
+    // checks against each other (gen_ir.Guards). `case_tests` remembers
+    // which Bool slots hold a tag test until a branch consumes one.
+    case_tests* :: Vec<CaseTest>,
+    tag_guards* :: Vec<TagGuard>,
+    payload_reads* :: Vec<PayloadRead>,
 
     // -------------------------------------------------------------------
     // blocks and slots
@@ -198,6 +210,18 @@ Lowerer* = {
 
     branch_to* = (self :: @Self, value: usize, yes: usize, no: usize)
                  Res<(), LowerError> {
+        // A branch on a tag test is a guard the verifier can hold payload
+        // reads to.
+        self.current.when_ok((block) {
+            self.case_tests.find((t) { t.test == value }).when_ok((t) {
+                self.tag_guards.add(TagGuard(
+                    block: block,
+                    subject: t.subject,
+                    variant: t.variant,
+                    otherwise: t.otherwise
+                )).try(LowerError.OutOfMemory);
+            });
+        });
         self.finish(Terminator.Branch(Branch(value: value, yes: yes, no: no)))
     }
 
@@ -290,12 +314,61 @@ Lowerer* = {
     }
 
     // The checked type of an expression at this frame's instantiation.
+    // Sema types a generic body once, and a name it could not type there (a
+    // closure parameter of a `loop` reached through a bound, `(h, v)` in
+    // `is_in`) is left open, with every call on it. At an instance the name
+    // has the type of the local this instance bound it to, and a method
+    // call on such a receiver has the result type of the method the
+    // receiver's type resolves it to.
     type_of* = (self :: @Self, id: ExprId) Res<TyId, LowerError> {
-        raw = self.check.expr_memo.get(id).ok_or(unsupported(
-            self.tree.expr_at(id).span,
-            "an expression without a checked type"
-        )).try();
-        self.concrete(raw)
+        raw = self.check.expr_memo.get(id).match({
+            Ok(t) => t,
+            // Arguments of a call sema could not resolve go unchecked.
+            None  => {
+                return_open = self.local_type(id).ok_or(unsupported(
+                    self.tree.expr_at(id).span,
+                    "an expression without a checked type"
+                )).try();
+                return_open
+            },
+        });
+        checked = self.concrete(raw).try();
+        self.settled(checked).match({
+            true  => Ok(checked),
+            false => Ok(self.local_type(id).value_or(checked)),
+        })
+    }
+
+    local_type = (self :: @Self, id: ExprId) Res<TyId> {
+        self.tree.expr_at(id).kind.match({
+            Paren(p) => self.local_type(p.inner),
+            // Literals sema never visited have their literal types.
+            Literal(l) => self.prim(l.kind.match({
+                Bool  => "bool",
+                Str   => "str",
+                Char  => "u8",
+                Int   => "int",
+                Float => "float",
+            })).match({ Ok(t) => Ok(t), Err(_) => None }),
+            Call(c)  => self.tree.expr_at(c.callee).kind.match({
+                Name(n)   => self.function_result(n.text, c.args.len),
+                Access(a) => self.handle_named(a.base).match({
+                    // `h.break()` and `h.next()` leave; as values they are unit.
+                    true  => Ok(self.unit_ty),
+                    false => self.method_result(a, c.args.len + 1),
+                }),
+                _         => None,
+            }),
+            Name(n) => self.lookup(n.text).match({
+                Ok(kind) => kind.match({
+                    Direct(value) => self.settled(value.ty).match({ true => Ok(value.ty), false => None }),
+                    Ref(place)    => self.settled(place.ty).match({ true => Ok(place.ty), false => None }),
+                    _             => None,
+                }),
+                None     => None,
+            }),
+            _       => None,
+        })
     }
 
     // A written type in this frame, with its function's (and owner's) type
@@ -513,13 +586,22 @@ Lowerer* = {
     }
 
     ptr_u8* = (self :: @Self) Res<TyId, LowerError> {
-        defs ::= self.alloc.Vec<Def>();
-        self.check.world.exported_named("Ptr", defs).try(LowerError.OutOfMemory);
-        ptr = defs.find((d) { self.check.world.module_name(d.id).eq("std.mem.mem_ptr") })
-            .ok_or(unsupported(nowhere(), "the std Ptr declaration")).try();
+        self.ptr_to(self.prim("u8").try())
+    }
+
+    ptr_to* = (self :: @Self, elem: TyId) Res<TyId, LowerError> {
         args ::= self.alloc.Vec<TyId>();
-        args.add(self.prim("u8").try()).try(LowerError.OutOfMemory);
-        self.check.types.named(ptr.id, ptr.qname, ptr.name, args).try(LowerError.OutOfMemory)
+        args.add(elem).try(LowerError.OutOfMemory);
+        self.std_named("Ptr", "std.mem.mem_ptr", args)
+    }
+
+    // A std type by its declaring module, at `args`.
+    std_named* = (self :: @Self, name: str, module: str, args: Vec<TyId>) Res<TyId, LowerError> {
+        defs ::= self.alloc.Vec<Def>();
+        self.check.world.exported_named(name, defs).try(LowerError.OutOfMemory);
+        decl = defs.find((d) { self.check.world.module_name(d.id).eq(module) })
+            .ok_or(unsupported(nowhere(), "a std declaration")).try();
+        self.check.types.named(decl.id, decl.qname, decl.name, args).try(LowerError.OutOfMemory)
     }
 
     // The place an expression denotes, when it has one.
@@ -593,7 +675,10 @@ Lowerer* = {
             Literal(l)    => self.literal(id, l, e.span),
             Unit          => self.unit(),
             Paren(p)      => self.expr(p.inner),
-            Block(b)      => self.block(b),
+            Block(b)      => self.expected_of(id).match({
+                Ok(_)  => self.block_want(b, self.narrowed(id).try()),
+                None   => self.block(b),
+            }),
             Unary(u)      => self.unary(id, u.op, u.operand, u.op_span),
             Binary(b)     => self.binary(id, b.op, b.lhs, b.rhs, b.op_span),
             Match(m)      => self.match_expr(id, m, e.span),
@@ -680,9 +765,33 @@ Lowerer* = {
 
     // Evaluate, then settle integer literals of an unsettled type into `ty`.
     expr_as* = (self :: @Self, id: ExprId, ty: TyId) Res<Value, LowerError> {
-        self.expected = Ok(Expected(id: self.unwrapped(id), ty: ty));
-        value = self.expr(id).try();
-        self.coerce(value, ty)
+        self.folded(id, ty).try().match({
+            Ok(value) => Ok(value),
+            None      => {
+                self.expected = Ok(Expected(id: self.unwrapped(id), ty: ty));
+                value = self.expr(id).try();
+                self.coerce(value, ty)
+            },
+        })
+    }
+
+    // Unsettled integer arithmetic (`41`, `-2147483648`, `1 << 4`) that sema
+    // folds to a constant fitting the wanted integer type is that constant at
+    // that type: the C path's 64-bit literal arithmetic gives the same value,
+    // and no wide temporary or conversion is emitted.
+    folded = (self :: @Self, id: ExprId, want: TyId) Res<Res<Value>, LowerError> {
+        own  = self.type_of(id).try();
+        name = self.prim_name(want);
+        (own != want && self.prim_name(own).eq("int") && !name.eq("int")).match({
+            false => Ok(None),
+            true  => self.check.const_int(id).match({
+                None    => Ok(None),
+                Ok(bits) => fits(bits, name).value_or(false).match({
+                    true  => Ok(Ok(self.constant(want, bits).try())),
+                    false => Ok(None),
+                }),
+            }),
+        })
     }
 
     unwrapped = (self: @Self, id: ExprId) ExprId {
@@ -844,6 +953,28 @@ Lowerer* = {
         Ok(out)
     }
 
+    // `~value`: xor with the all-ones word of the value's width. Bitwise
+    // complement is unsigned-only, so the mask is the type's maximum.
+    complement* = (self :: @Self, operand: ExprId, ty: TyId, span: Span)
+                  Res<Value, LowerError> {
+        value = self.expr_as(operand, ty).try();
+        ones  = self.constant(ty, width(self.class_of(ty).try()).match({
+            1 => 255,
+            2 => 65535,
+            4 => 4294967295,
+            _ => -1,
+        })).try();
+        out = self.temp(ty).try();
+        self.add(Instruction.BinaryValue(Binary(
+            out: out.slot,
+            left: value.slot,
+            right: ones.slot,
+            op: Op.Xor,
+            span: span
+        ))).try();
+        Ok(out)
+    }
+
     unary = (self :: @Self, id: ExprId, op: UnOp, operand: ExprId, span: Span)
             Res<Value, LowerError> {
         op.match({
@@ -905,13 +1036,24 @@ Lowerer* = {
             Equal => true, NotEqual => true, Less => true, LessEq => true,
             Greater => true, GreaterEq => true, _ => false,
         });
-        raw_left  = self.expr(lhs).try();
-        raw_right = self.expr(rhs).try();
         // The operands meet at the checked arithmetic type, else at
-        // whichever side is settled and not an open literal.
-        operand = (!compare && self.settled(checked)).match({
+        // whichever side is settled and not an open literal. When that is
+        // an integer type known before either side runs, both sides are
+        // lowered at it, so an open literal operand is a constant of that
+        // type rather than a widened one.
+        early = (!compare && self.settled(checked)).match({
             true  => checked,
-            false => self.meeting(raw_left.ty, raw_right.ty),
+            false => self.meeting(self.type_of(lhs).try(), self.type_of(rhs).try()),
+        });
+        ahead = self.integer_type(early) && !self.prim_name(early).eq("int");
+        raw_left  = ahead.match({ true => self.expr_as(lhs, early), false => self.expr(lhs) }).try();
+        raw_right = ahead.match({ true => self.expr_as(rhs, early), false => self.expr(rhs) }).try();
+        operand = ahead.match({
+            true  => early,
+            false => (!compare && self.settled(checked)).match({
+                true  => checked,
+                false => self.meeting(raw_left.ty, raw_right.ty),
+            }),
         });
         ty = compare.match({ true => checked, false => operand });
         left  = self.coerce(raw_left, operand).try();
@@ -919,24 +1061,7 @@ Lowerer* = {
         (compare && !word(self.class_of(operand).try())).match({
             true  => self.equal_values(op, left, right, span),
             false => {
-                operation = op.match({
-                    Add       => Ok(Op.Add),
-                    Sub       => Ok(Op.Sub),
-                    Mul       => Ok(Op.Mul),
-                    Div       => Ok(Op.Div),
-                    Rem       => Ok(Op.Rem),
-                    AddWrap   => Ok(Op.WrapAdd),
-                    SubWrap   => Ok(Op.WrapSub),
-                    MulWrap   => Ok(Op.WrapMul),
-                    Equal     => Ok(Op.Equal),
-                    NotEqual  => Ok(Op.NotEqual),
-                    Less      => Ok(Op.Less),
-                    LessEq    => Ok(Op.LessEqual),
-                    Greater   => Ok(Op.Greater),
-                    GreaterEq => Ok(Op.GreaterEqual),
-                    // `&&`, `||` and the bit operators lower elsewhere.
-                    _         => None,
-                }).ok_or(unsupported(span, "this operator")).try();
+                operation = binary_op(op).ok_or(unsupported(span, "this operator")).try();
                 out = self.temp(ty).try();
                 self.add(Instruction.BinaryValue(Binary(
                     out: out.slot,
@@ -1064,12 +1189,85 @@ Lowerer* = {
     // -------------------------------------------------------------------
 
     block* = (self :: @Self, id: BlockId) Res<Value, LowerError> {
-        self.block_as(id, true)
+        self.block_as(id, true, None)
+    }
+
+    // A block expression whose value the context wants at `want`.
+    block_want = (self :: @Self, id: BlockId, want: TyId) Res<Value, LowerError> {
+        self.block_as(id, true, Ok(want))
+    }
+
+    // The type a context wants for a `match` or block expression when sema
+    // left the expression's own type open: an unsettled one (a `None` arm
+    // joined with an arm returning `Res<str>` is `Res<?>`), or the open
+    // literal type `int` where an integer type is wanted. Lowering the arms
+    // at the wanted type gives every arm one layout, and lets literal arms
+    // fold to constants of that type.
+    narrowed = (self :: @Self, id: ExprId) Res<TyId, LowerError> {
+        own = self.type_of(id).try();
+        wanted = self.expected.match({
+            Ok(want) => (want.id == id && self.settled(want.ty) && (!self.settled(own)
+                || (self.prim_name(own).eq("int") && !self.prim_name(want.ty).eq("int")
+                    && self.integer_type(want.ty)))).match({
+                true  => Ok(want.ty),
+                false => None,
+            }),
+            None     => None,
+        });
+        Ok(wanted.value_or(own))
+    }
+
+    handle_named = (self: @Self, id: ExprId) bool {
+        self.tree.expr_at(id).kind.match({
+            Name(n) => self.lookup(n.text).match({
+                Ok(kind) => kind.match({ Handle(_) => true, _ => false }),
+                None     => false,
+            }),
+            _       => false,
+        })
+    }
+
+    // The written result type of the one visible function `name` taking
+    // `arity` arguments, when it names no type parameter.
+    function_result = (self :: @Self, name: str, arity: usize) Res<TyId> {
+        defs ::= self.alloc.Vec<Def>();
+        self.check.world.defs_of(self.here().module, name, defs).match({ Ok(_) => (), Err(_) => () });
+        (defs.len == 1).ensure().try();
+        d = defs.get(0).try();
+        f = decl_at(self.tree, d.id).try().kind.match({ Function(f) => Ok(f), _ => None }).try();
+        (f.params.len == arity && f.tparams.len == 0).ensure().try();
+        written = f.ret.try();
+        probe = Callee(f: f, owner: d.id, member: None, module: d.id.module.to_usize(),
+                       inst: self.alloc.Inst(), self_ty: None, generic_owner: None);
+        ty = self.callee_type(probe, written).match({ Ok(t) => Ok(t), Err(_) => None }).try();
+        self.settled(ty).match({ true => Ok(ty), false => None })
+    }
+
+    // The result type of `receiver.name(..)` resolved on the receiver's
+    // type at this instance, when that settles it.
+    method_result = (self :: @Self, a: Access, arity: usize) Res<TyId> {
+        receiver = self.type_of(a.base).match({ Ok(t) => Ok(t), Err(_) => None }).try();
+        self.settled(receiver).ensure().try();
+        callee = self.resolve(receiver, a.name.text, None, arity, self.alloc.Inst(), None, nowhere())
+            .match({ Ok(c) => Ok(c), Err(_) => None }).try();
+        written = callee.f.ret.try();
+        ty = self.callee_type(callee, written).match({ Ok(t) => Ok(t), Err(_) => None }).try();
+        self.settled(ty).match({ true => Ok(ty), false => None })
+    }
+
+    // The type the context asked for this expression, if it asked.
+    expected_of = (self: @Self, id: ExprId) Res<TyId> {
+        want = self.expected.try();
+        (want.id == id).match({ true => Ok(want.ty), false => None })
+    }
+
+    integer_type = (self :: @Self, ty: TyId) bool {
+        self.settled(ty) && self.class_of(ty).match({ Ok(class) => integer(class), Err(_) => false })
     }
 
     // `used` is false for a block in statement position: nothing receives
     // its value, so a binding it would hand out is dropped at its brace.
-    block_as = (self :: @Self, id: BlockId, used: bool) Res<Value, LowerError> {
+    block_as = (self :: @Self, id: BlockId, used: bool, want: Res<TyId>) Res<Value, LowerError> {
         block = self.tree.block_at(id);
         mark  = self.locals.len;
         self.scopes.add(Cleanup(drops: self.drops.len, defers: self.defers.len)).try(LowerError.OutOfMemory);
@@ -1083,11 +1281,15 @@ Lowerer* = {
                     false => { self.expr(e.expr).try(); self.unit() },
                 }),
                 Bind(b)  => { self.bind(b, s.span).try(); self.unit() },
-                Block(b) => self.block_as(b, tail && used),
+                // A final nested block is the block's value, at its type.
+                Block(b) => self.block_as(b, tail && used, tail.match({ true => want, false => None })),
                 Decl(_)  => Err(unsupported(s.span, "nested declarations")),
             }).try();
         });
-        value = block.value.match({ Ok(e) => self.expr(e), None => Ok(last) }).try();
+        value = block.value.match({
+            Ok(e) => want.match({ Ok(t) => self.expr_as(e, t), None => self.expr(e) }),
+            None  => Ok(last),
+        }).try();
         // A binding the block hands out as its value is not dropped here.
         keep = used.match({ true => self.handed_out(id), false => "" });
         self.run_scope(self.scopes.len - 1, keep).try();
@@ -1565,22 +1767,35 @@ Lowerer* = {
             .ok_or(unsupported(nowhere(), self.described("a payload of a value without one", value.ty))).try();
         variant = tagged.variants.get(tag).ok_or(unsupported(nowhere(), "a missing variant")).try();
         ty = variant.payload.ok_or(unsupported(nowhere(), "a payload-free variant")).try();
+        self.current.when_ok((block) {
+            self.payload_reads.add(PayloadRead(block: block, at: self.code.len, subject: value.slot, variant: tag))
+                .try(LowerError.OutOfMemory);
+        });
         self.read(Place(base: Base.InSlot(value.slot), offset: tagged.payload, ty: ty))
     }
 
+    // Each arm's tests come from sema's reading of its pattern (the tree its
+    // coverage check used), not from the pattern's spelling: whether a name
+    // is a binder, a case, or a case of one member of an error set is sema's
+    // decision, and the lowering only follows it. A case the reading names
+    // that the lowered layout lacks is a compiler error, never a binder.
     match_expr = (self :: @Self, id: ExprId, m: Match, span: Span) Res<Value, LowerError> {
-        ty    = self.type_of(id).try();
+        ty    = self.narrowed(id).try();
         subject_ty = self.type_of(m.scrutinee).try();
         subject = self.expr_as(m.scrutinee, subject_ty).try();
         out   = self.temp(ty).try();
         done  = self.label().try();
         m.arms.loop((arm) {
+            reading = self.check.read_pattern(arm.pattern, subject_ty, self.ctx()).try(LowerError.OutOfMemory);
             next = self.label().try();
             body = self.label().try();
             mark = self.locals.len;
-            self.test_pattern(arm.pattern, subject, body, next).try();
+            // Payloads the tests read, by reading index; the binders take
+            // these same values, which the tests' guards cover.
+            read ::= self.alloc.Vec<TestedPayload>();
+            self.test_pattern(reading, reading.root, arm.pattern, subject, body, next, read).try();
             self.start(body);
-            self.bind_pattern(arm.pattern, subject).try();
+            self.bind_pattern(reading, reading.root, arm.pattern, subject, read).try();
             value = self.expr_as(arm.body, ty).try();
             self.add(Instruction.Copy(Move(out: out.slot, source: value.slot))).try();
             self.release_locals(mark);
@@ -1593,37 +1808,73 @@ Lowerer* = {
         Ok(out)
     }
 
-    // Branch to `yes` when the pattern matches, else to `no`. A nested
-    // pattern tests the payload only after its variant matched.
-    test_pattern = (self :: @Self, id: PatternId, subject: Value, yes: usize, no: usize)
-                   Res<(), LowerError> {
-        p = self.tree.pattern_at(id);
+    // Branch to `yes` when the reading `at` matches `subject`, else to `no`.
+    // `node` is the written pattern the reading came from, consulted only
+    // for a literal's value. A nested reading tests the payload only after
+    // its case matched.
+    test_pattern = (self :: @Self, reading: PatReading, at: usize, node: PatternId,
+                    subject: Value, yes: usize, no: usize, read :: Vec<TestedPayload>) Res<(), LowerError> {
+        p = reading.pats.at(at);
         p.kind.match({
-            Wild           => self.jump(yes),
-            Literal(l)     => {
-                expected = self.literal_pattern(l, subject.ty, p.span).try();
-                test = self.equal_test(subject, expected).try();
+            WildPat => self.jump(yes),
+            LitPat  => {
+                test = self.literal_test(node, subject).try();
                 self.branch_to(test, yes, no)
             },
-            Name(n)        => self.variant_position(subject.ty, n.name.last_segment()).match({
-                // A binder always matches.
-                None        => self.jump(yes),
-                Ok(index)   => {
-                    test = self.tag_test(subject, index).try();
+            CtorPat => self.tree.pattern_at(node).kind.match({
+                // `true`/`false` are sema's constructors of bool.
+                Literal(_) => {
+                    test = self.literal_test(node, subject).try();
                     self.branch_to(test, yes, no)
                 },
+                _          => {
+                    index = self.case_index(subject.ty, p).try();
+                    test = self.tag_test(subject, index).try();
+                    sub = p.has_sub.match({ true => Ok(reading.pats.at(p.sub)), false => None });
+                    open = sub.match({ Ok(q) => q.kind.match({ WildPat => false, _ => true }), None => false });
+                    open.match({
+                        false => self.branch_to(test, yes, no),
+                        true  => {
+                            inner = self.label().try();
+                            self.branch_to(test, inner, no).try();
+                            self.start(inner);
+                            payload = self.payload_of(subject, index).try();
+                            read.add(TestedPayload(at: p.sub, value: payload)).try(LowerError.OutOfMemory);
+                            self.test_pattern(reading, p.sub, self.sub_node(node, p), payload, yes, no, read)
+                        },
+                    })
+                },
             }),
-            Destructure(d) => {
-                index = self.variant_position(subject.ty, d.name.last_segment())
-                    .ok_or(unsupported(p.span, "an unknown variant pattern")).try();
-                test = self.tag_test(subject, index).try();
-                inner = self.label().try();
-                self.branch_to(test, inner, no).try();
-                self.start(inner);
-                payload = self.payload_of(subject, index).try();
-                self.test_pattern(d.binder, payload, yes, no)
-            },
         })
+    }
+
+    // The tag of the case a constructor reading names. Sema read a case
+    // here; if the layout has no such alternative the two disagree, and the
+    // program is refused rather than matched by the tag alone.
+    case_index = (self :: @Self, ty: TyId, p: Pat) Res<usize, LowerError> {
+        self.variant_position(ty, p.name).ok_or(unsupported(
+            p.span,
+            self.described("a case sema read in this pattern that the lowered layout lacks", ty)
+        ))
+    }
+
+    // The written pattern beneath a constructor reading. `Err(e)` reads as
+    // `Err` over `e`; `Err(Authentication)` on an error set reads as `Err`
+    // over `Kind(Authentication)`, where `Kind` has no spelling of its own,
+    // so the member level keeps the node that spelled the case.
+    sub_node = (self: @Self, node: PatternId, p: Pat) PatternId {
+        self.tree.pattern_at(node).kind.match({
+            Destructure(d) => d.name.last_segment().eq(p.name).match({ true => d.binder, false => node }),
+            _              => node,
+        })
+    }
+
+    literal_test = (self :: @Self, node: PatternId, subject: Value) Res<usize, LowerError> {
+        written = self.tree.pattern_at(node);
+        l = written.kind.match({ Literal(l) => Ok(l), _ => None })
+            .ok_or(unsupported(written.span, "a literal reading of a pattern that is not a literal")).try();
+        expected = self.literal_pattern(l, subject.ty, written.span).try();
+        self.equal_test(subject, expected)
     }
 
     variant_position = (self :: @Self, ty: TyId, name: str) Res<usize> {
@@ -1636,11 +1887,23 @@ Lowerer* = {
         })
     }
 
-    tag_test = (self :: @Self, subject: Value, index: usize) Res<usize, LowerError> {
+    // A Bool slot that is true when `subject` holds alternative `index`.
+    // For a value with payloads the test is remembered, so the branch that
+    // consumes it becomes a guard (see `branch_to`).
+    tag_test* = (self :: @Self, subject: Value, index: usize) Res<usize, LowerError> {
         tag = self.tag_of(subject).try();
         expected = self.word_const(Scalar.U32, index.to_i64_bits()).try();
         test = self.slot_of(Scalar.Bool).try();
         self.add(Instruction.BinaryValue(Binary(out: test, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+        self.shape(subject.ty).try().form.match({
+            Variants(t) => {
+                // With two alternatives, failing the test proves the other.
+                otherwise: Res<usize> = (t.variants.len == 2).match({ true => Ok(1 - index), false => None });
+                self.case_tests.add(CaseTest(test: test, subject: subject.slot, variant: index, otherwise: otherwise))
+                    .try(LowerError.OutOfMemory);
+            },
+            _           => (),
+        });
         Ok(test)
     }
 
@@ -1702,32 +1965,34 @@ Lowerer* = {
         })
     }
 
-    // Binders: a bare name that is not a variant binds the whole subject; a
-    // destructure binds the payload.
-    bind_pattern = (self :: @Self, id: PatternId, subject: Value) Res<(), LowerError> {
-        p = self.tree.pattern_at(id);
+    // Binders come from the reading too: a wildcard with a name binds the
+    // whole subject, a constructor binds inside its payload. A payload is
+    // read only when something beneath it binds.
+    bind_pattern = (self :: @Self, reading: PatReading, at: usize, node: PatternId,
+                    subject: Value, read :: Vec<TestedPayload>) Res<(), LowerError> {
+        p = reading.pats.at(at);
         p.kind.match({
-            Name(n)        => {
-                is_variant = self.variants_of(subject.ty).match({
-                    Ok(v)  => variant_index(v, n.name.last_segment()).match({ Ok(_) => true, None => false }),
-                    Err(_) => false,
-                });
-                is_variant.match({
-                    true  => Ok(()),
-                    false => {
-                        copy = self.copy_value(subject).try();
-                        self.bind_local(n.name.last_segment(), LocalKind.Direct(copy))
-                    },
-                })
-            },
-            Destructure(d) => {
-                variants = self.variants_of(subject.ty).try();
-                index = variant_index(variants, d.name.last_segment())
-                    .ok_or(unsupported(p.span, "an unknown variant pattern")).try();
-                payload = self.payload_of(subject, index).try();
-                self.bind_pattern(d.binder, payload)
-            },
-            _              => Ok(()),
+            WildPat => p.binder.is_empty().match({
+                true  => Ok(()),
+                false => {
+                    copy = self.copy_value(subject).try();
+                    self.bind_local(p.binder, LocalKind.Direct(copy))
+                },
+            }),
+            CtorPat => (p.has_sub && binds(reading, p.sub)).match({
+                false => Ok(()),
+                true  => {
+                    payload = read.find((t) { t.at == p.sub }).match({
+                        Ok(t) => t.value,
+                        None  => {
+                            index = self.case_index(subject.ty, p).try();
+                            self.payload_of(subject, index).try()
+                        },
+                    });
+                    self.bind_pattern(reading, p.sub, self.sub_node(node, p), payload, read)
+                },
+            }),
+            LitPat  => Ok(()),
         })
     }
 
@@ -1742,10 +2007,7 @@ Lowerer* = {
         value = self.expr(operand).try();
         variants = self.variants_of(value.ty).try();
         ok_tag = variant_index(variants, "Ok").ok_or(unsupported(span, "try on a value without Ok")).try();
-        tag = self.tag_of(value).try();
-        expected = self.word_const(Scalar.U32, ok_tag.to_i64_bits()).try();
-        is_ok = self.slot_of(Scalar.Bool).try();
-        self.add(Instruction.BinaryValue(Binary(out: is_ok, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+        is_ok = self.tag_test(value, ok_tag).try();
         good = self.label().try();
         bad  = self.label().try();
         self.branch_to(is_ok, good, bad).try();
@@ -1857,13 +2119,10 @@ Lowerer* = {
         source = self.variants_of(value.ty).try();
         out = self.temp(target).try();
         done = self.label().try();
-        tag = self.tag_of(value).try();
         source.loop((h, i, variant) {
             yes  = self.label().try();
             next = self.label().try();
-            expected = self.word_const(Scalar.U32, i.to_i64_bits()).try();
-            test = self.slot_of(Scalar.Bool).try();
-            self.add(Instruction.BinaryValue(Binary(out: test, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+            test = self.tag_test(value, i).try();
             self.branch_to(test, yes, next).try();
             self.start(yes);
             target_variants = self.variants_of(target).try();
@@ -1907,16 +2166,23 @@ Lowerer* = {
     // frame that wrote it.
     inline_lambda* = (self :: @Self, lambda: LambdaRef, args: Vec<Value>, want: TyId)
                      Res<Value, LowerError> {
+        kinds ::= self.alloc.Vec<LocalKind>();
+        args.loop((arg) { kinds.add(LocalKind.Direct(self.copy_value(arg).try())).try(LowerError.OutOfMemory); });
+        self.inline_bound(lambda, kinds, want)
+    }
+
+    // Inline a closure body with each parameter bound as given: a copied
+    // value, or a loop handle passed through (`body(h, value)` hands the
+    // caller's `h` on, and `h.break()` in the body leaves that loop).
+    inline_bound* = (self :: @Self, lambda: LambdaRef, args: Vec<LocalKind>, want: TyId)
+                    Res<Value, LowerError> {
         l = self.tree.expr_at(lambda.expr).kind.match({ Lambda(l) => Ok(l), _ => None })
             .ok_or(unsupported(nowhere(), "a closure that is not a lambda")).try();
         saved = self.frame;
         self.frame = lambda.frame;
         mark = self.locals.len;
         l.params.loop((h, i, p) {
-            args.get(i).when_ok((arg) {
-                copy = self.copy_value(arg).try();
-                self.bind_local(p.name.text, LocalKind.Direct(copy)).try();
-            });
+            args.get(i).when_ok((arg) { self.bind_local(p.name.text, arg).try(); });
         });
         value = self.block(l.body).try();
         self.release_locals(mark);
@@ -1989,6 +2255,9 @@ Lowerer* = {
         self.scopes  = self.alloc.Vec<Cleanup>();
         self.drops   = self.alloc.Vec<DropEntry>();
         self.defers  = self.alloc.Vec<DeferEntry>();
+        self.case_tests = self.alloc.Vec<CaseTest>();
+        self.tag_guards = self.alloc.Vec<TagGuard>();
+        self.payload_reads = self.alloc.Vec<PayloadRead>();
         self.depth   = 0;
         self.prologue = self.alloc.Vec<Instruction>();
         entry_block = self.label().try();
@@ -2031,7 +2300,13 @@ Lowerer* = {
         params.loop((h, i, p) {
             kinds.get(i).when_ok((k) { self.bind_local(p.name.text, k).try(); });
         });
-        value = self.block(body).try();
+        // The body's value is lowered at the result type, so an open
+        // literal result is a constant of it and an open `match` result
+        // takes its layout.
+        value = self.settled(ret_ty).match({
+            true  => self.block_want(body, ret_ty),
+            false => self.block(body),
+        }).try();
         here = self.here();
         coerced = self.coerce(value, ret_ty).try();
         self.add(Instruction.Copy(Move(out: here.ret_slot, source: coerced.slot))).try();
@@ -2058,7 +2333,8 @@ Lowerer* = {
             parameters: parameters,
             slots: self.slots,
             blocks: blocks,
-            result: result_class
+            result: result_class,
+            guards: Ok(Guards(tests: self.tag_guards, reads: self.payload_reads))
         ))
     }
 
@@ -2100,10 +2376,7 @@ Lowerer* = {
                 variants = self.variants_of(value.ty).try();
                 ok = variant_index(variants, "Ok").ok_or(unsupported(nowhere(), "a main result without Ok")).try();
                 out = self.word_const(Scalar.I32, 1).try();
-                tag = self.tag_of(value).try();
-                expected = self.word_const(Scalar.U32, ok.to_i64_bits()).try();
-                test = self.slot_of(Scalar.Bool).try();
-                self.add(Instruction.BinaryValue(Binary(out: test, left: tag, right: expected, op: Op.Equal, span: nowhere()))).try();
+                test = self.tag_test(value, ok).try();
                 yes  = self.label().try();
                 done = self.label().try();
                 self.branch_to(test, yes, done).try();
@@ -2113,9 +2386,7 @@ Lowerer* = {
                     Ok(t) => integer(self.class_of(t).try()).match({
                         true  => {
                             p = self.payload_of(value, ok).try();
-                            c = self.slot_of(Scalar.I32).try();
-                            self.add(Instruction.Cast(Convert(out: c, input: p.slot))).try();
-                            c
+                            self.status_word(p.slot).try()
                         },
                         false => self.word_const(Scalar.I32, 0).try(),
                     }),
@@ -2126,15 +2397,64 @@ Lowerer* = {
                 Ok(out)
             },
             _        => integer(s.class).match({
-                true  => {
-                    c = self.slot_of(Scalar.I32).try();
-                    self.add(Instruction.Cast(Convert(out: c, input: value.slot))).try();
-                    Ok(c)
-                },
+                true  => self.status_word(value.slot),
                 false => self.word_const(Scalar.I32, 0),
             }),
         })
     }
+
+    // An integer as the I32 status word; an I32 is already one, so a
+    // renderer without conversions can still run an `i32` main.
+    status_word = (self :: @Self, slot: usize) Res<usize, LowerError> {
+        same(self.slots.get(slot).value_or(Scalar.Unit), Scalar.I32).match({
+            true  => Ok(slot),
+            false => {
+                c = self.slot_of(Scalar.I32).try();
+                self.add(Instruction.Cast(Convert(out: c, input: slot))).try();
+                Ok(c)
+            },
+        })
+    }
+}
+
+// The IR operation of a source operator, listed operator by operator: an
+// operator missing here is refused, never read as another one. `&&` and
+// `||` short-circuit before reaching it, so they have no single operation.
+// The bit operators lower through `bits` (gen_lower_call), by name.
+binary_op = (op: BinOp) Res<Op> {
+    op.match({
+        Add       => Ok(Op.Add),
+        Sub       => Ok(Op.Sub),
+        Mul       => Ok(Op.Mul),
+        Div       => Ok(Op.Div),
+        Rem       => Ok(Op.Rem),
+        AddWrap   => Ok(Op.WrapAdd),
+        SubWrap   => Ok(Op.WrapSub),
+        MulWrap   => Ok(Op.WrapMul),
+        Equal     => Ok(Op.Equal),
+        NotEqual  => Ok(Op.NotEqual),
+        Less      => Ok(Op.Less),
+        LessEq    => Ok(Op.LessEqual),
+        Greater   => Ok(Op.Greater),
+        GreaterEq => Ok(Op.GreaterEqual),
+        And       => None,
+        Or        => None,
+        BitAnd     => None,
+        BitOr      => None,
+        BitXor     => None,
+        ShiftLeft  => None,
+        ShiftRight => None,
+    })
+}
+
+// Whether a reading binds a name anywhere beneath `at`.
+binds = (reading: PatReading, at: usize) bool {
+    p = reading.pats.at(at);
+    p.kind.match({
+        WildPat => !p.binder.is_empty(),
+        CtorPat => p.has_sub && binds(reading, p.sub),
+        LitPat  => false,
+    })
 }
 
 // Two's-complement bits of an unsigned value as a signed constant. The
@@ -2279,7 +2599,10 @@ lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
         defers: alloc.Vec<DeferEntry>(),
         vias: alloc.Vec<Res<TyId>>(),
         made: alloc.Vec<TyId>(),
-        broken: alloc.Vec<Broken>()
+        broken: alloc.Vec<Broken>(),
+        case_tests: alloc.Vec<CaseTest>(),
+        tag_guards: alloc.Vec<TagGuard>(),
+        payload_reads: alloc.Vec<PayloadRead>()
     );
     main_decl = decl_at(tree, main).ok_or(unsupported(module.span, "a missing main function")).try();
     main_fn = main_decl.kind.match({ Function(f) => Ok(f), _ => None })

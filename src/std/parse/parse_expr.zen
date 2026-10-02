@@ -4,7 +4,8 @@
 // nodes, not calls.
 
 AllocError = std.mem
-Span, Ident, no_trivia = std.ast.ast_span
+Ident, no_trivia = std.ast.ast_span
+Span = std.source
 ExprId, TypeId = std.ast.ast_id
 Expr, ExprKind, Name, Paren, ArrayLit, FixedArray, Lambda, Call, Arg = std.ast.ast_node
 Match, Arm, Try, Record, Access, Index, Unary, Binary, Consume, Meta = std.ast.ast_node

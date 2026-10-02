@@ -1,0 +1,22 @@
+// A `None` ARM JOINS AN ARM THAT CALLS A `Res<str>` FUNCTION. Sema types the
+// match from its arms, and `None` alone says nothing about the success
+// payload, so the match's own type leaves it open. The native lowering once
+// gave the match that open type, whose layout is a bare tag, and then copied
+// the call's whole `Res<str>` into it: the IR verifier refused the program
+// ("instruction types do not agree"). The match takes the type the function
+// result wants, and each case below reads back as the arm that made it.
+
+lookup = (x: i32) Res<str> {
+    (x > 0).match({ true => Ok("positive"), false => None })
+}
+
+target = (cond: bool, x: i32) Res<str> {
+    cond.match({ false => None, true => lookup(x) })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    target(true, 3).match({ Ok(s) => println("{}", s), None => println("none") });
+    target(false, 3).match({ Ok(s) => println("{}", s), None => println("none") });
+    target(true, -1).match({ Ok(s) => println("{}", s), None => println("none") });
+    Ok(0)
+}

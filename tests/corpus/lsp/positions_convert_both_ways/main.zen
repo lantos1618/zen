@@ -34,7 +34,7 @@
 
 str = std.text
 AllocError = std.mem
-Pos = std.ast.ast_span
+Pos = std.source
 source_position, lsp_position = lsp.lsp_pos
 
 // line 0  "ab"     ASCII

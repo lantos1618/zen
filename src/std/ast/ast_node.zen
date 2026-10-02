@@ -7,7 +7,8 @@
 // Common source data lives on the wrapper; variant data lives in the kind.
 // Child nodes are stored as typed arena ids rather than by value.
 
-Span, Ident, QualifiedName, TriviaRun = std.ast.ast_span
+Ident, QualifiedName, TriviaRun = std.ast.ast_span
+Span = std.source
 ExprId, TypeId, PatternId, BlockId, CBindingId = std.ast.ast_id
 Alloc, AllocError = std.mem
 

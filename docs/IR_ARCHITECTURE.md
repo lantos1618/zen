@@ -292,7 +292,7 @@ verifier failure, whichever backend was selected. The `ArmTrace` machinery in
 ### 3.1 The rule
 
 > **A backend consumes a `VerifiedProgram` and a `Target`, and nothing else.**
-> It never imports the AST (`std.ast`, except the `Span` type), the lexer, the
+> It never imports the AST (`std.ast`; source positions come from `std.source`), the lexer, the
 > parser, sema (`sema.*`), lowering (`gen.gen_lower*`), or the driver and tools
 > (`zen.*`, `fmt.*`, `lsp.*`), directly or through a helper.
 
@@ -471,7 +471,9 @@ the `VerifiedProgram` token. Its rules, beyond what `gen_verify` checks today
    `Drop` of a possibly moved place requires its drop flag.
 3. **Payload guard (§2.6).** Every `Payload(v)` is dominated by a
    discriminant `Switch` edge for `v` on the same place, with no intervening
-   write.
+   write. *Implemented* over today's IR: the lowering records its tag tests
+   and payload reads in `Func.guards`, and `gen_verify` checks each test's
+   shape and each read's dominating fact.
 4. **Bounds guard.** Every `Index` and every vector `Lane`/`WithLane` is
    dominated by its bounds check, or indexes with a constant below a
    statically known length.
@@ -532,13 +534,16 @@ rule:
 - **Taint is transitive within `src/gen`.** A backend may not import a helper
   that reaches the frontend.
 - **`gen_c` is grandfathered edge by edge** in
-  `tests/gates/arch_boundary.allow`: 306 `(file, module)` edges at 890acb1c.
+  `tests/gates/arch_boundary.allow`: 306 `(file, module)` edges at 890acb1c,
+  304 once gen_c read the copy and mailbox-transfer facts from the Checker's
+  published queries instead of importing `sema.sema_copy`.
   That list is a **ratchet**. It may not name anything outside `gen_c/`, a line
   whose import has gone fails as stale, and its length must equal
   `ARCH_GEN_C_CEILING` in the Makefile. It can therefore shrink, and cannot
   grow without a visible edit to a number commented "DO NOT RAISE".
-- **Tests.** There are 11 fixture cases in `tests/gates/arch_fixtures/`
-  (`run.sh`), covering a clean tree, direct imports, the AST-type exception,
+- **Tests.** There are 12 fixture cases in `tests/gates/arch_fixtures/`
+  (`run.sh`), covering a clean tree, direct imports, `Span` imported from
+  `std.ast` (a violation since positions moved to `std.source`),
   new backend directories, two-hop transitive taint, and each ratchet failure
   (new edge, stale edge, out-of-scope entry, ceiling too high or too low), plus
   exit 2 for unparseable input and for a set with no backends. The fixtures run
@@ -595,7 +600,7 @@ and **A** are the backends.
 | # | Stage | Lane | Depends on | Parallel with |
 |---|---|---|---|---|
 | 0a | This branch: architecture gate, this doc | I | — | all |
-| 0b | Rename the asm branch's `gen_asm_lower/_call/_member/_shape` to `gen_lower_*`, and merge them with `gen_lower` into one lowering. Collapse `verify`/`verify_native` into one verifier plus backend `supports()` (§2.3). | L | asm branch merged | C1 |
+| 0b | Rename the asm branch's `gen_asm_lower/_call/_member/_shape` to `gen_lower_*`, and merge them with `gen_lower` into one lowering. Collapse `verify`/`verify_native` into one verifier plus backend `supports()` (§2.3). **Done** on `shared-lowering`: `gen_lower` is the entry point, `gen_ir_feature` holds `IrFeature` and the refusal check. | L | asm branch merged | C1 |
 | 1 | IR core: type table (named aggregates plus layout per Target, `Int(128)`, `Vector`), places and projections, `SpanId` table, `VerifiedProgram` token, **IR text printer and `--emit ir`**, verifier rules 1, 2, 6, 7. Split `gen_ir` into per-family files (`gen_ir_type`, `gen_ir_mem`, `gen_ir_ctl`, …) so later families do not collide. | I | 0b | C1 |
 | C1 | Per-function strangler in the C driver: try IR lowering, render with IR-C, fall back; plus the fallback counter. At first only scalar functions qualify. | C | 1 | J1, A1 |
 | 2 | Scalars at every width: wrapping, bit operations, `u128`, `MulWide`, `Truncate`/`Extend`/`Checked` conversions, floats. | L+I | 1 | — |
@@ -697,8 +702,7 @@ yours.
    merges, or (b) right after merge, on this lane? *Recommendation: (b). It
    avoids asking an in-flight agent to restructure, and the gate makes the
    merge's four violations the explicit to-do list.*
-8. **Where `Span` lives.** The gate currently allows `Span` (and only
-   `Span`) from `std.ast`, because the IR carries source positions. Moving
-   `Span`/`Pos` to a neutral `std.src` module would remove that exception.
-   It is a mechanical change that touches every file that imports `Span`.
-   *Recommendation: do it in stage 1.*
+8. **Where `Span` lives.** *Decided and done:* `Pos`, `Span` and `nowhere`
+   live in `std.source`, and the gate no longer has an exception for `Span`
+   from `std.ast` (any `std.ast` import by a backend is a violation).
+   `std.ast` still re-exports the three names for frontend code.

@@ -4,7 +4,8 @@
 
 Ast, ExprId = std.ast
 Decl, Function, Param, TypeId = std.ast
-Access, Call, Span = std.ast
+Access, Call = std.ast
+Span = std.source
 Alloc, AllocError = std.mem
 Vec = std.collections
 str = std.text

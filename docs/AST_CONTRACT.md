@@ -10,7 +10,7 @@ explains the relationships that are not obvious from one declaration alone.
 | file | responsibility |
 |---|---|
 | `ast.zen` | public `std.ast` surface |
-| `ast_span.zen` | positions, spans, identifiers, and trivia runs |
+| `ast_span.zen` | identifiers, qualified names, and trivia runs (positions and spans are `std.source`'s, re-exported by `std.ast`) |
 | `ast_id.zen` | typed arena identifiers |
 | `ast_node.zen` | declarations, members, types, expressions, patterns, and statements |
 | `ast_arena.zen` | immutable node and trivia storage |

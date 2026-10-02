@@ -1,5 +1,6 @@
-Ast, ExprId, TypeId, Span, BlockId = std.ast
-nowhere = std.ast
+Ast, ExprId, TypeId, BlockId = std.ast
+Span = std.source
+nowhere = std.source
 BinOp, Unary, Binary, Access = std.ast
 Alloc, AllocError = std.mem
 Vec, Map = std.collections
@@ -18,6 +19,7 @@ VariantNameCall = sema.sema_variant_name
 NumericConversion, IntegerBitOperation = sema.sema_numeric
 Primitive = sema.sema_prim
 OwnCheck, StoreEffects = sema.sema_store
+owning_copy_unsafe, mailbox_payload_unsafe, mailbox_byte_buffer = sema.sema_copy
 
 // One scoped name. Mutability feeds receiver/ownership checks, param feeds LSP
 // classification, and span identifies the original binding in diagnostics.
@@ -229,6 +231,27 @@ Checker* = {
 
     resolved_member_provider* = (self: @Self, id: ExprId) Res<TyId> {
         self.checked_call(id).try().member_provider
+    }
+
+    // Copy and transfer facts about a settled type. The rules live in
+    // sema_copy; these are the published questions a lowering asks once a
+    // generic body is instantiated, since only then is a `Ptr<T>` element or
+    // an actor argument concrete. Sema answers the same questions for the
+    // written types, so a lowering never re-derives who owns what.
+
+    // Copying a value of `ty` by bytes would duplicate a Drop owner.
+    contains_drop* = (self :: @Self, ty: TyId) Res<bool, AllocError> {
+        self.owning_copy_unsafe(ty)
+    }
+
+    // A mailbox copy of `ty` would share memory the sender still owns.
+    actor_payload_unsafe* = (self :: @Self, ty: TyId) Res<bool, AllocError> {
+        self.mailbox_payload_unsafe(ty)
+    }
+
+    // `ty` is the one container a mailbox transfers by ownership: `Vec<u8>`.
+    actor_byte_buffer* = (self: @Self, ty: TyId) bool {
+        self.mailbox_byte_buffer(ty)
     }
 
     mark_discriminant_call* = (

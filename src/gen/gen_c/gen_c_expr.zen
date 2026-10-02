@@ -7,7 +7,8 @@
 // temporaries. Sema remains the authority for types; an absent semantic and
 // contextual type is reported as `Untyped`.
 
-ExprId, Block, Span = std.ast
+ExprId, Block = std.ast
+Span = std.source
 Decl, Consume = std.ast
 Literal, Binary, Unary, Match = std.ast
 Access, Call = std.ast

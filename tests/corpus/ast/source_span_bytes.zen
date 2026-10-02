@@ -1,4 +1,4 @@
-Pos, Span = std.ast
+Pos, Span = std.source
 
 main = () {
     text = "x = \"é\"\r\nnext\n";

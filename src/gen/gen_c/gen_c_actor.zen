@@ -28,7 +28,6 @@ write_assign_ok_unit = gen.gen_c.gen_c_flow
 passes_address = gen.gen_c.gen_c_borrow
 ty_at = sema.sema_cand
 fat_value = gen.gen_c.gen_c_fat
-actor_byte_buffer, actor_payload_unsafe = sema.sema_copy
 
 BehaviorHit* = {
     site*: Site,

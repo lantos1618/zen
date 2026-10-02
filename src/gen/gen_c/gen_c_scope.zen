@@ -2,7 +2,8 @@
 // block record, which owns registrations and capture copies until block exit.
 // This lifetime guarantee is specific to defer, not general escaping closures.
 
-Expr, ExprId, BlockId, Block, Stmt, Bind, Span = std.ast
+Expr, ExprId, BlockId, Block, Stmt, Bind = std.ast
+Span = std.source
 Decl, Lambda, Call, Arg, Access, Match, Try = std.ast
 AllocError = std.mem
 Vec = std.collections

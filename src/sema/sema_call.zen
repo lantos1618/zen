@@ -1,4 +1,5 @@
-Expr, ExprId, Call, Arg, Access, Lambda, Param, Span, Paren, nowhere = std.ast
+Expr, ExprId, Call, Arg, Access, Lambda, Param, Paren = std.ast
+Span, nowhere = std.source
 Struct, Function, BlockId = std.ast
 Ast = std.ast.ast_arena
 Alloc, AllocError = std.mem
@@ -37,7 +38,6 @@ Cand, TBound, Actual, cands_of, exported_cands = sema.sema_cand
 travelled_cands, matches = sema.sema_cand
 ty_at, is_tvar, sig_fits, signature_matches = sema.sema_cand
 omittable_tail, collect_bounds, tail_swallows = sema.sema_cand
-actor_payload_unsafe, actor_byte_buffer, contains_drop = sema.sema_copy
 
 // A recovery signature supplies expected types to argument diagnostics, but
 // it cannot make a call valid when its declared parameters do not match.

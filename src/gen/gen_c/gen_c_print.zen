@@ -3,7 +3,8 @@
 // Output helpers do not allocate in the generated program.
 
 ExprId, Literal = std.ast
-Call, Arg, Span, Pos = std.ast
+Call, Arg = std.ast
+Span, Pos = std.source
 AllocError = std.mem
 literal_byte_len = std.lex
 str, String = std.text

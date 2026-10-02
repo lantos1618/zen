@@ -1,7 +1,7 @@
 // Resolve a byte position to the smallest covering AST node. Nodes are scanned
 // from the arena's flat family lists; these queries do not allocate.
 str = std.text
-Pos, Span, nowhere = std.ast.ast_span
+Pos, Span, nowhere = std.source
 ExprId, TypeId, PatternId, BlockId = std.ast.ast_id
 Ast = std.ast.ast_arena
 

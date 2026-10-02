@@ -1,7 +1,8 @@
 Program, Func, Scalar, BasicBlock, Terminator, Branch = gen.gen_ir
+Layout, Address, Load, Guards, TagGuard, PayloadRead = gen.gen_ir
 Instruction, Const, Move, Unary, UnaryOp, Binary, Op, Invocation, Print = gen.gen_ir
 verify, message = gen.gen_verify
-nowhere = std.ast
+nowhere = std.source
 
 Refuse = {}
 Refuse.impl(Alloc, {
@@ -267,6 +268,74 @@ unreachable = (a: Alloc) Res<(), AllocError> {
     Ok(())
 }
 
+// Read v0's payload word into v6.
+payload_code = (a: Alloc) Res<Vec<Instruction>, AllocError> {
+    code ::= a.Vec<Instruction>();
+    code.add(Instruction.AddressOf(Address(out: 5, slot: 0))).try();
+    code.add(Instruction.LoadValue(Load(out: 6, base: 5, offset: 4))).try();
+    Ok(code)
+}
+
+// A tagged value in v0: block 0 tests its tag against `tested` and claims
+// the test proves `claimed`; block `at` reads its payload as `read`.
+guarded = (
+    a       : Alloc,
+    tested  : i64,
+    claimed : usize,
+    read    : usize,
+    at      : usize
+) Res<Program, AllocError> {
+    slots ::= a.Vec<Scalar>();
+    [
+        Scalar.Block(Layout(size: 8, align: 4)), Scalar.Ptr, Scalar.U32,
+        Scalar.U32, Scalar.Bool, Scalar.Ptr, Scalar.I32
+    ]
+        .loop((ty) { slots.add(ty).try(); });
+    test ::= a.Vec<Instruction>();
+    test.add(Instruction.Constant(Const(out: 3, value: tested))).try();
+    test.add(Instruction.AddressOf(Address(out: 1, slot: 0))).try();
+    test.add(Instruction.LoadValue(Load(out: 2, base: 1, offset: 0))).try();
+    test.add(Instruction.BinaryValue(Binary(
+        out: 4,
+        left: 2,
+        right: 3,
+        op: Op.Equal,
+        span: nowhere()
+    ))).try();
+    blocks ::= a.Vec<BasicBlock>();
+    blocks.add(BasicBlock(
+        code: test,
+        exit: Terminator.Branch(Branch(value: 4, yes: 1, no: 2))
+    )).try();
+    blocks.add(BasicBlock(
+        code: payload_code(a).try(),
+        exit: Terminator.Return(6)
+    )).try();
+    blocks.add(BasicBlock(
+        code: payload_code(a).try(),
+        exit: Terminator.Return(6)
+    )).try();
+    tests ::= a.Vec<TagGuard>();
+    tests.add(TagGuard(
+        block: 0,
+        subject: 0,
+        variant: claimed,
+        otherwise: None
+    )).try();
+    reads ::= a.Vec<PayloadRead>();
+    reads.add(PayloadRead(block: at, at: 1, subject: 0, variant: read)).try();
+    functions ::= a.Vec<Func>();
+    functions.add(Func(
+        name: "main",
+        parameters: 0,
+        slots: slots,
+        blocks: blocks,
+        result: Scalar.I32,
+        guards: Ok(Guards(tests: tests, reads: reads))
+    )).try();
+    Ok(Program(functions: functions, entry: 0))
+}
+
 main = (env: Env) Res<(), AllocError> {
     a = env.mem.alloc();
     structure(a).try();
@@ -276,5 +345,13 @@ main = (env: Env) Res<(), AllocError> {
     show("missing predecessor", diamond(a, false).try(), a);
     show("initialized loop", cycle(a, true).try(), a);
     show("circular initialization", cycle(a, false).try(), a);
+    show("guarded payload", guarded(a, 1, 1, 1, 1).try(), a);
+    show("payload of another alternative", guarded(a, 1, 1, 0, 1).try(), a);
+    show("payload on the failing edge", guarded(a, 1, 1, 1, 2).try(), a);
+    show(
+        "guard that tests another alternative",
+        guarded(a, 0, 1, 1, 1).try(),
+        a
+    );
     Ok(())
 }

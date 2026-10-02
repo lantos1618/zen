@@ -307,7 +307,7 @@ cap: build
 ## ceiling from 306 for the gen_c edges that lang-gaps, cgen-opt, simd-u128,
 ## constant-time and match-safety added; zen-tracker issue #49 ("archcheck
 ## ratchet paydown") tracks migrating them to gen_ir and lowering it back.
-ARCH_GEN_C_CEILING := 327
+ARCH_GEN_C_CEILING := 325
 archcheck: build
 	@mkdir -p build/gates
 	@$(call gate,arch_boundary)

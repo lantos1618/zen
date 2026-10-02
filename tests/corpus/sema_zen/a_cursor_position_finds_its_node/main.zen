@@ -4,7 +4,8 @@
 
 scan, Source = std.lex
 Parser = std.parse
-Ast, Pos, ExprId, NodeRef = std.ast
+Ast, ExprId, NodeRef = std.ast
+Pos = std.source
 Checker = sema.sema_check
 check_all = sema.sema_decl
 Types = sema.sema_ty

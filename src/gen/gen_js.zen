@@ -1,6 +1,5 @@
-// JavaScript rendering of the shared IR (the native surface produced by
-// `gen_lower_core`). This file owns only machine details; every language
-// rule was decided by lowering. docs/JS_BACKEND.md records the model.
+// JavaScript rendering of the one IR (produced by `gen_lower`). This file
+// owns only machine details; every language rule was decided by lowering. docs/JS_BACKEND.md records the model.
 //
 // Machine model (the runtime in `gen_js_runtime` implements its half):
 //
@@ -27,7 +26,7 @@ Alloc, AllocError = std.mem
 str, String = std.text
 Range = std.core
 Vec = std.collections
-Span = std.ast
+Span = std.source
 Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
 Scalar, Op, TrapKind, Stream = gen.gen_ir
 Convert, Load, Store, SysCall, Start, HostCall, Marshal = gen.gen_ir
@@ -35,7 +34,7 @@ width, trap_message = gen.gen_ir
 Sys, constant_value, Platform = gen.gen_sys
 write_runtime = gen.gen_js_runtime
 
-// The caller verifies the program first (gen_verify.verify_native); malformed
+// The caller verifies the program first (gen_verify.verify); malformed
 // IR is a compiler fault, not executable input.
 //
 // One self-contained script (the runtime, then the program): what Node runs.

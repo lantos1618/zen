@@ -1,4 +1,5 @@
-Expr, ExprId, Span = std.ast
+Expr, ExprId = std.ast
+Span = std.source
 Checker = sema.sema_check
 SemaFault, CaptureFault = sema.sema_diag
 Own, ViewRoot, path_root = sema.sema_own

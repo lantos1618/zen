@@ -1,4 +1,5 @@
-Expr, ExprId, Access, Span, TypeId, nowhere = std.ast
+Expr, ExprId, Access, TypeId = std.ast
+Span, nowhere = std.source
 Struct, Member = std.ast
 Field, Const, Function = std.ast
 AllocError = std.mem

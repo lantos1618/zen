@@ -14,7 +14,8 @@ FsError, fs_message = std.env
 
 Ast = std.ast.ast_arena
 Module, Alias, Named = std.ast.ast_node
-Pos, Span, QualifiedName = std.ast.ast_span
+QualifiedName = std.ast.ast_span
+Pos, Span = std.source
 
 message = std.lex.lex
 Diag, diag = std.parse.parse_diag

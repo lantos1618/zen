@@ -100,30 +100,29 @@ machine details stay inside each target; targets never fall back to C.
 ```text
 AST + checked sema facts
   → gen_lower_core / gen_lower_call / gen_lower_member / gen_lower_shape   (full lowering)
-  → gen_ir.Program (native surface)  → gen_verify.verify_native
+  → gen_ir.Program  → gen_verify.verify
   → gen_asm_x86.X86_64Linux | gen_asm_arm64.Arm64(Linux | Darwin)   (renderers)
   → as + ld (zen.zen_native)
 ```
 
-**The IR stays target-neutral.** `gen_ir` has two surfaces. The scalar surface
-(`I32 | Bool | Unit`, the original instructions) is what `gen_lower` produces
-for JavaScript and the IR-C pilot. The native surface adds integer widths
+**The IR stays target-neutral.** There is one IR: integer widths
 (`I8 … U64`), `Ptr`, `Block(Layout)` aggregates held in frame memory,
 `Convert`, `AddressOf`, `Load`/`Store` at byte offsets, `CopyBytes`,
 `StaticBytes`, stream output (`WriteOut`, `Print` with a stream), `System`
 (portable `Sys` operation), `SysConst` (portable constant name), `Startup`
-(argc/argv/envp), `MapPages`/`UnmapPages`, `Flush`, and a `Trap` terminator.
-Nothing in it names a register, an instruction or an ABI; checked arithmetic,
-wrapping arithmetic, shifts and rotates are operations on typed slots. A C,
-JavaScript or LLVM renderer can consume the same program: `verify_native`
-checks it, and `verify` keeps the scalar renderers on their subset.
+(argc/argv/envp), `MapPages`/`UnmapPages`, `Flush`, and a `Trap` terminator,
+beside the original scalar instructions. Nothing in it names a register, an
+instruction or an ABI; checked arithmetic, wrapping arithmetic, shifts and
+rotates are operations on typed slots. One verifier (`gen_verify.verify`)
+checks it; a renderer that implements only part of it (JavaScript and the IR C
+renderer today) declares that part through `supports` (`gen_ir_feature`).
 
 **Full lowering** (`src/gen/gen_lower_*`, target-independent; the arch gate in
 `tests/gates/arch_boundary.zen` classifies `gen.gen_lower*` as frontend, so
 renderers may not import it and it may not import a renderer). It is named
-for lowering, not for assembly: its output is the native IR surface, which any
-renderer that accepts that surface can consume. It stays separate from the
-scalar `gen_lower` and from the C IR pilot for now.
+for lowering, not for assembly: its output is the one IR, which every renderer
+consumes. `gen_lower` is its entry point (`lower`) and owns `LowerError`; the
+former scalar-only lowering is gone.
 
 * `gen_lower_shape` — machine layouts of checked types: words, `str` as
   `{data: Ptr<u8>, len: usize}`, records at natural alignment, tagged
@@ -134,6 +133,16 @@ scalar `gen_lower` and from the C IR pilot for now.
   expressions, patterns (nested), `.try()` across frames, error-set
   widening, coercions (literal widths, `Ok` lifting, union membership,
   same-named alternatives), instantiation of functions per substitution.
+* Matches: each arm's tests are compiled from sema's reading of its pattern
+  (`sema.read_pattern`, the tree coverage checking used), never from the
+  pattern's spelling, so `Err(Authentication)` on `Res<T, Kind | Fail>`
+  tests the member `Kind` and then its case; a case the reading names that
+  the layout lacks refuses the program. Error-set members are tagged in name
+  order, so `Kind | Fail` and a declared `Both = Kind | Fail` share a layout.
+  Every tag test the lowering branches on and every payload read is recorded
+  in `Func.guards`, and `gen_verify` refuses a payload read that is not
+  behind a test of that slot for that alternative on every path
+  (IR_ARCHITECTURE §4.1 rule 3).
 * `gen_lower_call` — calls: arguments in written order, mutable parameters by
   address, closure-taking callees inlined in the frame that wrote the
   closure (so `.try()` and `h.break()` keep their meaning), `loop`
@@ -243,6 +252,12 @@ or linker rejected the output).
 | x86_64-linux (dev-box) | 638 (66.3%) | 0 | 324 | 0 | 962 |
 | aarch64-linux (qemu-user) | 638 (66.3%) | 0 | 324 | 0 | 962 |
 | arm64-darwin (this Mac) | 638 (66.3%) | 1 | 323 | 0 | 962 |
+| x86_64-linux, `shared-lowering` | 708 (72.4%) | 1 | 269 | 0 | 978 |
+
+The `shared-lowering` row is after the lowering merge and the gap work
+below; at the merge point (2b70b639) the same runner read 643 / 3 / 331 of
+977. The remaining failure, `env/fs_read_special_file_with_zero_stat_size`,
+also fails on Linux: the program sees 0 bytes from a zero-stat-size file.
 
 The one macOS failure, `env/fs_read_special_file_with_zero_stat_size`, reads
 a file under `/proc`, which exists only on Linux; its expectation was recorded
@@ -253,13 +268,35 @@ re-run with less parallelism.
 Run it: `cd tests/native && ../../zen build`, then from the repository root
 `tests/native/build/<os>-<arch>/native-corpus ./zen <target> [filter] [shard shards]`.
 
-Refused constructs, by the first one each unsupported program reaches
-(x86_64-linux, 324 programs): types sema left unsettled in generic corners
-(34), other `Env` operations (actors, threads, fs.lock/cwd/mkdir, args
-schema: 27), floats (19), value conversions not modelled yet (19), loop
-handles used as values (10), unknown variants (10), native-only
-expressions (10), folding loops (9), and about 40 compiler-internal test
-roots that import `gen`/`sema`/`lsp` modules the runner does not stage.
+Refused constructs on `shared-lowering`, by the first one each unsupported
+program reaches (x86_64-linux, 269 programs): compiler-internal test roots
+that import `gen`/`sema`/`lsp`/`zen` modules the runner does not stage (117),
+other `Env` operations (actors, threads, fs.lock/cwd/mkdir, args schema: 30),
+floats (19), value conversions not modelled yet (15: `str` to `u8`, AST
+`Variant` to `Member`, unit results into records), unknown variants (11),
+expressions sema left unchecked below a call it could not type (11; mostly
+`alloc.create<T>()` on a bound in `main`, whose result sema leaves open, and
+closure captures), native-only expressions (10), `invalid IR` type mismatches
+in `.then`/`.try()` compositions and the cli library (9), impl-computed fields
+(`width: self.side` in an impl; 5), and a tail of single causes.
+
+Resolved on this branch: unsettled types in generic corners (35 to 1; a name
+sema left open takes its instance local's type, and a method call on it the
+result type of the method its type resolves to, including UFCS free functions
+such as `bool.then`), folding loops, loop handles passed into closures,
+`create<T>()` typed from its type argument, generic enum payloads (`Opt<T>`
+substituted per instance), and the error-set match failures.
+
+Not yet lowered, from branches that have not merged here: module-qualified
+constants such as `Controller.LIMIT` (lang-gaps; `type_member` would send
+them to the variant lookup, so they must go through `global_const`), local
+functions `name = (params) T { .. }` inside a body (lang-gaps; inlined at each
+call with live captures, `.try()` returning from the enclosing function), the
+float conversions `narrow_f32`/`narrow_f64` and checked f64/int conversions
+(lang-gaps), and the bitwise operators `& | ^ ~ << >>` (bitwise-operators:
+the lowering's operator table is now explicit, and `complement` is the `~`
+lowering). Floats themselves need an `F64` slot class, which the JavaScript
+branch adds to the IR and the lowering; the assembly renderers still refuse it.
 
 The runner stages each program as `tests/run.py` does: it runs as
 `<scratch>/prog` in a directory where its root is visible as `src`, with the
@@ -292,9 +329,9 @@ benchmarked; it needs the same work.
    Linux, kqueue on macOS). Missing are threads (`clone` + futex on Linux,
    pthreads through libSystem on macOS), actors over them, and the `Env`
    operations that the corpus still refuses.
-5. **Backend unification** (per `IR_ARCHITECTURE.md`): merge the full
-   lowering with the scalar `gen_lower` and the C IR pilot so one lowering
-   feeds C, JavaScript and assembly. This is deliberately not done yet.
+5. **Backend unification** (per `IR_ARCHITECTURE.md`): done for the IR paths.
+   One lowering feeds JavaScript, the IR C renderer and assembly, and each
+   declares its support. The full C backend (`gen_c`) is still AST-driven.
 
 ### Stage 2: three targets, no libc
 

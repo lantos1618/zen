@@ -1,3 +1,3 @@
 // A clean backend: the IR and a source position, nothing else.
-Span = std.ast
+Span = std.source
 Program = gen.gen_ir

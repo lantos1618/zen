@@ -98,7 +98,7 @@ runtime_call* = (
                 input: code.slot
             ))).try();
             args ::= lo.alloc.Vec<usize>();
-            Range(1, 3).loop((i) { args.add(lo.operand(sources, i, span).try().slot).try(LowerError.OutOfMemory); });
+            Range<usize>(1, 3).loop((i) { args.add(lo.operand(sources, i, span).try().slot).try(LowerError.OutOfMemory); });
             out = lo.unit().try();
             lo.add(Instruction.InvokeAt(IndirectCall(
                 out: out.slot,

@@ -475,7 +475,7 @@ Command*<T> = {
     }
 
     left_width = (self: @Self) Res<usize, AllocError> {
-        widest ::= 10;
+        widest :: usize = 10;
         self.subs.loop(
             (sub) { (sub.name.len > widest).then(
                 () { widest = sub.name.len; }

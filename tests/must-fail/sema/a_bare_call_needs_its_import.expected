@@ -1,2 +1,2 @@
-missing import: `parse_i32` is not imported; add `parse_i32 = std.text`
-18:9
+missing import: `parse_i32` is not imported; add `parse_i32 = std
+17:9

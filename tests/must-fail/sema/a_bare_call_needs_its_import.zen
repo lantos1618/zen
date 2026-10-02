@@ -10,7 +10,6 @@
 
 Res = std.core
 AllocError = std.mem
-parse_i32 = std.text
 Env = std.env
 println = std.io
 

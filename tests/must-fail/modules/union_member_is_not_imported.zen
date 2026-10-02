@@ -4,7 +4,6 @@
 //
 // position: the `AllocError` member.
 IoError = std.core
-AllocError = std.mem
 
 Fail = AllocError | IoError
 

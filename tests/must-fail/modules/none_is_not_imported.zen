@@ -2,7 +2,7 @@
 // name it: `None =>` is read against the matched type.
 //
 // position: the `None` value.
-Res, None = std.core
+Res = std.core
 
 nothing = () Res<i32> { None }
 

@@ -4,8 +4,6 @@
 //
 // position: the first `Vec`.
 
-Vec = std.collections
-
 first = (v: Vec<i32>) usize { v.len }
 second = (v: Vec<i32>, w: Vec<u8>) usize { v.len + w.len }
 

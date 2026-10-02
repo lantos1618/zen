@@ -1,4 +1,4 @@
-Expr, ExprId, Bind, Access = std.ast
+Expr, ExprId, Bind, Deferred, Access = std.ast
 AllocError = std.mem
 str = std.text
 TyId, TyArray, literal_default = sema.sema_ty
@@ -24,6 +24,18 @@ bind_stmt* = (c :: Checker, b: Bind, ctx: Ctx) Res<TyId, AllocError> {
     c.check_assign(b, settled, want, ctx).try();
     c.refuse_bare_none(b, want).try();
     c.bind_target(b, want, ctx).try();
+    c.types.prim("()")
+}
+
+// `x :: T;` and `x: T;` bind the name with its written type and no value.
+// sema_init proves each read follows an assignment on every path.
+deferred_stmt* = (c :: Checker, d: Deferred, ctx: Ctx) Res<TyId, AllocError> {
+    ty     = c.type_from_ast(d.type, ctx).try();
+    target = c.tree.expr_at(d.target);
+    target.kind.match({
+        Name(n) => c.bind_deferred(n.text, ty, d.mutable, target.span),
+        _       => Ok(()),
+    }).try();
     c.types.prim("()")
 }
 
@@ -92,10 +104,14 @@ rebound_of = (c :: Checker, b: Bind) Res<Binding> {
     })
 }
 
-// A mutable first binding is writable and therefore not a rebound fault.
+// A mutable first binding is writable and therefore not a rebound fault, and
+// a deferred one is waiting for exactly this write.
 settled_binding = (found: Res<Binding>) Res<Binding> {
     found.match({
-        Ok(old) => old.mutable.match({ true => None, false => Ok(old) }),
+        Ok(old) => (old.mutable || old.deferred).match({
+            true  => None,
+            false => Ok(old),
+        }),
         None    => None,
     })
 }

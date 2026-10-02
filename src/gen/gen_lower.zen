@@ -6,7 +6,7 @@ Vec, Map = std.collections
 String, str = std.text
 fmt_at = std.text.text_fmt
 decode_literal = std.lex
-Ast, ExprId, BlockId, TypeId, Span, Function, Literal, Bind = std.ast
+Ast, ExprId, BlockId, TypeId, Span, Function, Literal, Bind, Deferred = std.ast
 BinOp, UnOp, Match, Call, nowhere = std.ast
 Checker, DeclId, Def, TyId, decl_at, const_int = sema.sema
 Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print, Branch = gen.gen_ir
@@ -248,10 +248,11 @@ Lowering = {
         last ::= self.constant(0, Scalar.Unit).try();
         block.stmts.loop((s) {
             last = s.kind.match({
-                Expr(e)  => self.expr(e.expr),
-                Bind(b)  => { self.bind(b).try(); self.constant(0, Scalar.Unit) },
-                Block(b) => self.block(b),
-                Decl(_)  => Err(unsupported(s.span, "nested declarations")),
+                Expr(e)     => self.expr(e.expr),
+                Bind(b)     => { self.bind(b).try(); self.constant(0, Scalar.Unit) },
+                Deferred(d) => { self.deferred(d).try(); self.constant(0, Scalar.Unit) },
+                Block(b)    => self.block(b),
+                Decl(_)     => Err(unsupported(s.span, "nested declarations")),
             }).try();
         });
         value = block.value.match({ Ok(e) => self.expr(e), None => Ok(last) }).try();
@@ -260,6 +261,22 @@ Lowering = {
             (h) { self.locals.take(self.locals.len - 1); }
         );
         Ok(value)
+    }
+
+    // `x :: T;` gets a slot holding zero until it is assigned; sema_init has
+    // proved no read reaches it first.
+    deferred = (self :: @Self, d: Deferred) Res<(), LowerError> {
+        target = self.tree.expr_at(d.target);
+        name   = target.kind.match({ Name(n) => Ok(n.text), _ => None })
+            .ok_or(unsupported(
+                target.span,
+                "non-local assignment targets"
+            )).try();
+        ty     = self.written_type(d.type).try();
+        local  = self.constant(0, ty).try();
+        self.locals.add(Local(name: name, value: local))
+            .try(LowerError.OutOfMemory);
+        Ok(())
     }
 
     bind = (self :: @Self, b: Bind) Res<(), LowerError> {

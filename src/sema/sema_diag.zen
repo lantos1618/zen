@@ -38,6 +38,15 @@ LendFault* = {
     field*: bool,
 }
 
+// A local declared without a value, used where some path has not assigned
+// it: how it was used ("read", "captured", "consumed"), and whether some
+// path to the use did assign it.
+InitFault* = {
+    name*: str,
+    verb*: str,
+    maybe*: bool,
+}
+
 // Two conflicting declaration positions.
 PairFault* = {
     name*: str,
@@ -139,6 +148,8 @@ SemaFault* =
 
     // ownership
     | ConsumedUse(NameFault)           // a place that was moved out of
+    | UnassignedUse(InitFault)         // a deferred local used before every path assigns it
+    | AssignedTwice(NameFault)         // an immutable deferred local assigned again
     | NeedsMutableReceiver(NameFault)  // a `::` method reached through `:`
     | ImmutableWrite(NameFault)        // a write through a `:` link of the path
     | SnapshottedReceiver(NameFault)   // a `::` argument call aliases a by-value receiver
@@ -256,6 +267,8 @@ message* = (fault: SemaFault) str {
         NegativeArrayCount(_)        => "an array count cannot be negative: fixed-array lengths are zero or greater",
         ComptimeBudget(_)            => "comptime evaluation ran out of steps: the evaluator is budgeted so the build fails rather than hangs — docs/design_meta.md",
         ConsumedUse(_)               => "use after move:",
+        UnassignedUse(_)             => "a local declared without a value is used before it is assigned:",
+        AssignedTwice(_)             => "an immutable local declared without a value is assigned exactly once:",
         NeedsMutableReceiver(_)      => "the receiver is immutable:",
         ImmutableWrite(_)            => "cannot write through an immutable binding:",
         SnapshottedReceiver(_)       => "an argument call writes the place this call's by-value receiver was copied from:",
@@ -353,6 +366,8 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
             f,
             " was consumed, and a binding is dead from the move onwards"
         ),
+        UnassignedUse(f)             => out.write_unassigned(f),
+        AssignedTwice(f)             => out.write_assigned_twice(f),
         NeedsMutableReceiver(f)      => out.write_place(
             f,
             " needs a mutable receiver, so every link from the binding to it must permit the write"
@@ -558,6 +573,24 @@ write_discarded = (out :: String, types: Types, f: TypeFault)
 write_place = (out :: String, f: NameFault, tail: str) Res<(), AllocError> {
     out.fmt(" {}{}", f.name, tail).try();
     Ok(());
+}
+
+write_assigned_twice = (out :: String, f: NameFault) Res<(), AllocError> {
+    out.fmt(
+        " `{}` may already hold a value here — declare it `{} :: T;` to assign it again",
+        f.name,
+        f.name
+    )
+}
+
+write_unassigned = (out :: String, f: InitFault) Res<(), AllocError> {
+    out.fmt(" `{}` is {} here, but ", f.name, f.verb).try();
+    out.add(f.maybe.match({
+        true  => "not every path to here assigns it",
+        false => "no path to here assigns it",
+    })).try();
+    out.add(" — assign it on each path first").try();
+    Ok(())
 }
 
 // The secret the refused expression reads, when it names one directly.

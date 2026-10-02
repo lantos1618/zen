@@ -215,6 +215,10 @@ statement = (walker :: Walker, s: StmtVisit) Res<(), AllocError> {
             b.type.when_ok((ty) { walker.node(WalkNode.Type(ty)).try(); });
             walker.node(WalkNode.Expr(b.value)).try();
         },
+        Deferred(d) => {
+            walker.node(WalkNode.Expr(d.target)).try();
+            walker.node(WalkNode.Type(d.type)).try();
+        },
         Expr(e)   => walker.node(WalkNode.Expr(e.expr)).try(),
         Decl(d)   => walker.node(WalkNode.Declaration(DeclVisit(
             site: DeclSite(parent: DeclParent.Block(s.block), index: s.index),

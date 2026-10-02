@@ -20,7 +20,7 @@ call_type = sema.sema_call
 meta_type = sema.sema_meta
 meta_refused, walk_name, walk_projection_type = sema.sema_meta
 WalkName = sema.sema_meta
-bind_stmt = sema.sema_place
+bind_stmt, deferred_stmt = sema.sema_place
 is_handle_ty, refuse_handle_at = sema.sema_handle
 check_binary, check_index, check_literal = sema.sema_trap
 element_agrees = sema.sema_trap
@@ -407,9 +407,10 @@ walk_stmts = (c :: Checker, block: Block, ctx: Ctx)
 
 stmt_type* = (c :: Checker, s: Stmt, ctx: Ctx) Res<TyId, AllocError> {
     s.kind.match({
-        Expr(e)  => c.type_of(e.expr, ctx),
-        Bind(b)  => c.bind_stmt(b, ctx),
-        Block(b) => c.block_type(b, ctx),
-        Decl(d)  => c.local_decl(d, ctx),
+        Expr(e)     => c.type_of(e.expr, ctx),
+        Bind(b)     => c.bind_stmt(b, ctx),
+        Deferred(d) => c.deferred_stmt(d, ctx),
+        Block(b)    => c.block_type(b, ctx),
+        Decl(d)     => c.local_decl(d, ctx),
     })
 }

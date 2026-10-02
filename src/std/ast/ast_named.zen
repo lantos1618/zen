@@ -184,6 +184,11 @@ Probe = {
                             found = told(span, b.type, Ok(b.value));
                         });
                     },
+                    Deferred(d) => {
+                        (d.target.index == e.index).then(() {
+                            found = told(span, Ok(d.type), None);
+                        });
+                    },
                     _       => (),
                 });
             });

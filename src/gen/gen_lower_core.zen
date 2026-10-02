@@ -18,7 +18,7 @@ Vec, Map = std.collections
 String, str = std.text
 Range = std.core
 decode_literal = std.lex
-Ast, ExprId, BlockId, TypeId, Span, Function, Literal, Bind = std.ast
+Ast, ExprId, BlockId, TypeId, Span, Function, Literal, Bind, Deferred = std.ast
 BinOp, UnOp, Match, Call, Expr, Pattern, Lambda, Param, Access, Index = std.ast
 TParam, Arg = std.ast
 PatternId = std.ast
@@ -1075,9 +1075,10 @@ Lowerer* = {
                     true  => self.expr(e.expr),
                     false => { self.expr(e.expr).try(); self.unit() },
                 }),
-                Bind(b)  => { self.bind(b, s.span).try(); self.unit() },
-                Block(b) => self.block_as(b, tail && used),
-                Decl(_)  => Err(unsupported(s.span, "nested declarations")),
+                Bind(b)     => { self.bind(b, s.span).try(); self.unit() },
+                Deferred(d) => { self.deferred(d, s.span).try(); self.unit() },
+                Block(b)    => self.block_as(b, tail && used),
+                Decl(_)     => Err(unsupported(s.span, "nested declarations")),
             }).try();
         });
         value = block.value.match({ Ok(e) => self.expr(e), None => Ok(last) }).try();
@@ -1224,8 +1225,14 @@ Lowerer* = {
 
     // Register a fresh binding for cleanup when its type implements Drop.
     note_drop = (self :: @Self, name: str, value: Value) Res<(), LowerError> {
+        self.note_drop_live(name, value, 1)
+    }
+
+    // `armed` is 0 for a binding declared before it holds a value.
+    note_drop_live = (self :: @Self, name: str, value: Value, armed: i64)
+                     Res<(), LowerError> {
         self.check.is_drop_type(value.ty).try(LowerError.OutOfMemory).then(() {
-            live = self.word_const(Scalar.Bool, 1).try();
+            live = self.word_const(Scalar.Bool, armed).try();
             self.drops.add(DropEntry(
                 name: name,
                 frame: self.frame,
@@ -1291,6 +1298,24 @@ Lowerer* = {
                 place = self.place_of(b.target).try().ok_or(unsupported(target.span, "an assignment target")).try();
                 value = self.expr_as(b.value, place.ty).try();
                 self.write(place, value)
+            },
+        })
+    }
+
+    // `x :: T;` reserves the binding's slot. sema_init has proved no read
+    // reaches it before an assignment, so it holds nothing until then; a
+    // Drop value's live flag starts clear and that assignment arms it.
+    deferred = (self :: @Self, d: Deferred, span: Span) Res<(), LowerError> {
+        target = self.tree.expr_at(d.target);
+        name   = target.kind.match({ Name(n) => Ok(n.text), _ => None })
+            .ok_or(unsupported(target.span, "an assignment target")).try();
+        ty     = self.written(d.type).try();
+        self.is_capability(ty).match({
+            true  => Err(unsupported(span, "a capability declared without a value")),
+            false => {
+                slot = self.temp(ty).try();
+                self.bind_local(name, LocalKind.Direct(slot)).try();
+                self.note_drop_live(name, slot, 0)
             },
         })
     }

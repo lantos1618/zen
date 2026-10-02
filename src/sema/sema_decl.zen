@@ -28,6 +28,7 @@ check_return = sema.sema_hoist
 check_literal, report_unsettled_widths = sema.sema_trap
 check_arms = sema.sema_hoist
 check_own = sema.sema_own
+check_init = sema.sema_init
 finish_ownership = sema.sema_store
 check_enum_discriminants = sema.sema_discriminant
 check_numeric_conversions = sema.sema_numeric
@@ -655,6 +656,7 @@ check_block = (c :: Checker, f: Function, body: BlockId, ctx: Ctx, owner: str)
     c.check_return(body, ctx, got).try();
     c.settle_raised(f, ctx, got, rmark).try();
     c.check_secret(f, body, ctx.module).try();
+    c.check_init(f, body).try();
     c.check_own(f, body, ctx)
 }
 

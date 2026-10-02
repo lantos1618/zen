@@ -27,7 +27,8 @@ static_access = sema.sema_static
 filter_visible, hidden_member = sema.sema_member
 inst_bounds_hold, satisfies_bound, note_bound_view = sema.sema_bound
 check_literal = sema.sema_trap
-check_arms, check_arms_agree, hoist_at = sema.sema_hoist
+check_arms, check_arms_agree, hoist_at, tail_expr = sema.sema_hoist
+check_dropped_tail, note_lambda_tail = sema.sema_effect
 bound_declares = sema.sema_supply
 type_of, block_type = sema.sema_type
 push_tparams, module_name = sema.sema_inst
@@ -1406,10 +1407,32 @@ lambda_body = (c :: Checker, id: ExprId, l: Lambda, sig: TyId, ctx: Ctx)
         ty = c.lambda_param(p, ptys, i, ctx).try();
         c.bind(p.name.text, ty, p.mutable, true).try();
     });
-    c.block_type(l.body, ctx).try();
+    got = c.block_type(l.body, ctx).try();
+    c.lambda_dropped_tail(id, l, sig, got).try();
     c.release_tvars(tmark).try();
     c.release(smark).try();
     Ok(());
+}
+
+// A unit closure drops its tail; a closure returning the callee's type
+// parameter hands it to the call's result.
+lambda_dropped_tail = (
+    c   :: Checker,
+    id  : ExprId,
+    l   : Lambda,
+    sig : TyId,
+    got : TyId
+) Res<(), AllocError> {
+    c.types.at(sig).match({
+        Fn(f) => c.tail_expr(c.tree.block_at(l.body)).match({
+            Ok(e) => c.is_var(f.ret).match({
+                true  => c.note_lambda_tail(id, e, got),
+                false => c.check_dropped_tail(e, got, f.ret),
+            }),
+            None  => Ok(()),
+        }),
+        _     => Ok(()),
+    })
 }
 
 resolve_lambda_inst = (

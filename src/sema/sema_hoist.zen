@@ -10,6 +10,7 @@ Found, members_of = sema.sema_member
 storage_seat_name = sema.sema_supply
 check_literal = sema.sema_trap
 refuse_handle_value = sema.sema_handle
+check_dropped_tail = sema.sema_effect
 type_of = sema.sema_type
 
 can_hoist* = (c: Checker, got: TyId, want: TyId) bool {
@@ -113,7 +114,10 @@ check_return* = (c :: Checker, body: BlockId, ctx: Ctx, got: TyId)
     blk = c.tree.block_at(body);
     c.tail_expr(blk).match({
         None  => Ok(()),
-        Ok(e) => c.tail_fits(blk, e, got, ctx.ret),
+        Ok(e) => {
+            c.tail_fits(blk, e, got, ctx.ret).try();
+            c.check_dropped_tail(e, got, ctx.ret)
+        },
     })
 }
 

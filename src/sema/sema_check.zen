@@ -49,6 +49,12 @@ Ctx* = {
     has_self*: bool,
 }
 
+// A failure nothing reads, and where it was produced.
+Dropped* = {
+    at*: Span,
+    ty*: TyId,
+}
+
 // Parameter order includes the implicit receiver when one is present.
 CallSignature* = {
     params*: Vec<TyId>,
@@ -76,6 +82,8 @@ Checker* = {
     world* :: World,
     types* :: Types,
     diags :: Vec<Diag>,
+    // Closures whose tail failure their call returns, by closure id.
+    lambda_failures :: Map<ExprId, Dropped>,
 
     // Query results keyed by stable AST node ids.
     expr_memo* :: Map<ExprId, TyId>,
@@ -380,6 +388,19 @@ Checker* = {
             out.add("\n").try();
         });
         Ok(());
+    }
+
+    note_lambda_failure* = (self :: @Self, lambda: ExprId, d: Dropped)
+                           Res<(), AllocError> {
+        self.lambda_failures.set(lambda, d)
+    }
+
+    lambda_failure* = (self: @Self, lambda: ExprId) Res<Dropped> {
+        self.lambda_failures.get(lambda)
+    }
+
+    memo_ty* = (self: @Self, id: ExprId) TyId {
+        self.expr_memo.get(id).match({ Ok(ty) => ty, None => UNRESOLVED })
     }
 
     report* = (self :: @Self, file: str, span: Span, fault: SemaFault)
@@ -785,6 +806,7 @@ Checker* = (a: Alloc, tree: Ast) Res<Checker, AllocError> {
         world: a.World(tree).try(),
         types: a.Types(),
         diags: a.Vec<Diag>(),
+        lambda_failures: a.Map<ExprId, Dropped>(),
         expr_memo: a.Map<ExprId, TyId>(),
         type_memo: a.Map<TypeId, TyId>(),
         resolved_types: a.Vec<bool>(),

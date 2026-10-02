@@ -1,0 +1,19 @@
+// A `Res<T, E>` carries a reason, so a statement that computes one and
+// reads nothing of it drops a failure nobody handled. Calls are run for
+// their effects, but a call's failure is part of what it did.
+//
+// The fix is named in the diagnostic: `.try()`, `.match`, or `.ignore()`
+// when dropping it is the decision (corpus/sema/failure_handled_or_ignored).
+//
+// position: the dropped expression.
+
+Full* = | Full
+
+push = (n: i32) Res<(), Full> {
+    (n > 2).match({ true => Err(Full.Full), false => Ok(()) })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    push(1);
+    Ok(0)
+}

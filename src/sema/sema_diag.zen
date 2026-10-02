@@ -60,6 +60,7 @@ SemaFault* =
     | TypeMismatch(TypeFault)          // expected X, found Y
     | ArmsDisagree(TypeFault)          // the arms of one match are not one type
     | DiscardedValue(TypeFault)        // a statement's value nothing reads
+    | DroppedFailure(TypeFault)        // a failure nothing handles
     | NotCallable(TypeFault)           // the callee is not a function
     | MethodNotValue(TypeFault)        // the name is a method, and the call is missing
     | LiteralOutOfRange(TypeFault)     // the family fits, the value does not
@@ -198,6 +199,7 @@ message* = (fault: SemaFault) str {
         TypeMismatch(_)              => "type mismatch",
         ArmsDisagree(_)              => "match arms disagree: every arm produces the match's value, and nothing here decides which type that is",
         DiscardedValue(_)            => "discarded value",
+        DroppedFailure(_)            => "unhandled failure",
         NotCallable(_)               => "this is not a function, so it cannot be called",
         MethodNotValue(_)            => "a method is a value only when the call is written: `s.len` names the function, `s.len()` reads it",
         LiteralOutOfRange(_)         => "out of range: a literal's type comes from its context, and the context here cannot hold it",
@@ -392,6 +394,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         BitwiseUntyped(f)            => out.write_bit_untyped(f),
         ShiftCount(f)                => out.write_shift_count(types, f),
         DiscardedValue(f)            => out.write_discarded(types, f),
+        DroppedFailure(f)            => out.write_dropped(types, f),
         TypeMismatch(f)              => out.write_types(types, f),
         ArmsDisagree(f)              => out.write_arms(types, f),
         NotCallable(f)               => out.write_types(types, f),
@@ -550,6 +553,21 @@ write_discarded = (out :: String, types: Types, f: TypeFault)
     out.fmt(
         ": `{}` is computed and read by nothing — bind it, or delete the statement",
         found.view()
+    ).try();
+    Ok(());
+}
+
+// A `Res<T>` wrapping a failure names the failure it holds.
+write_dropped = (out :: String, types: Types, f: TypeFault)
+                Res<(), AllocError> {
+    found ::= types.name_of(f.found).try();
+    out.fmt(": this `{}` is dropped", found.view()).try();
+    (f.expected.eq(f.found) == false).then(() {
+        held ::= types.name_of(f.expected).try();
+        out.fmt(", and with it the `{}` it holds", held.view()).try();
+    });
+    out.add(
+        ": handle it with `.try()` or `.match`, or discard it with `.ignore()`"
     ).try();
     Ok(());
 }

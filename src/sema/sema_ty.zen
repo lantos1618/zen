@@ -370,6 +370,17 @@ Types* = {
         Ok(());
     }
 
+    // The outermost `Res<T, E>` in a chain of `Res<T>` values.
+    failure_in* = (self: @Self, id: TyId) TyId {
+        self.at(id).match({
+            Res(r) => is_failure(r.form).match({
+                true  => id,
+                false => self.failure_in(r.value),
+            }),
+            _      => id,
+        })
+    }
+
     // Allocates a fresh String.
     name_of* = (self: @Self, id: TyId) Res<String, AllocError> {
         out ::= self.alloc.String().try();

@@ -16,10 +16,10 @@
 // pattern below can only come out right if eq reads through both
 // pointers byte-wise AND checks both lengths.
 
-Res, Ok, WriteError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, WriteError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | WriteError
 

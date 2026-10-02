@@ -4,8 +4,8 @@
 //   path:line:col: missing import: `Res` is not imported; add `Res = std.core`
 //
 // so the import to add is read straight from the compiler's own answer.
-Res, Ok, None = std.core
-str = std.text
+{ Res, Ok, None } = std.core
+{ str } = std.text
 
 Missing* = { file*: str, name*: str, module*: str }
 

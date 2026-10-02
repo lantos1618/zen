@@ -9,11 +9,11 @@
 //
 // main.stdin holds exactly those 16 bytes.
 
-Vec    = std.collections
-Res, Ok, Range, IoError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Vec }    = std.collections
+{ Res, Ok, Range, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | IoError
 

@@ -2,10 +2,10 @@
 // supplies no extra arguments, so the stable total is 12. parse_i64 travels
 // with `str`, so it is reached through the dot without an import.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a    ::= env.mem.alloc();

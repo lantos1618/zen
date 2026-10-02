@@ -1,6 +1,6 @@
-Res, Ok, Drop = std.core
-AllocError = std.mem
-Env = std.env
+{ Res, Ok, Drop } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
 Owner = { id: i32 }
 Owner.impl(Drop, { drop = (self :: @Self) {} })

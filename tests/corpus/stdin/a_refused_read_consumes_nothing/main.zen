@@ -9,11 +9,11 @@
 // main.stdin holds "abcdefg\nhij" (11 bytes), none of it consumed by
 // the refused read.
 
-Vec    = std.collections
-Res, Ok, Range, IoError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Vec }    = std.collections
+{ Res, Ok, Range, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | IoError
 

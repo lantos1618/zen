@@ -1,7 +1,7 @@
 // Stable coordinates for AST values stored inside module and declaration Vecs.
 // They provide Eq + Hash identity for sema memos without using addresses.
 
-Eq, Hash, Hasher = std.core
+{ Eq, Hash, Hasher } = std.core
 
 MIX : u64 = 1099511628211
 

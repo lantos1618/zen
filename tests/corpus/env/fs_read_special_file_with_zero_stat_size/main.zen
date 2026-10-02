@@ -1,7 +1,7 @@
-Env, FsError = std.env
-Res, Ok = std.core
-AllocError = std.mem
-println = std.io
+{ Env, FsError } = std.env
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ println } = std.io
 Error = FsError | AllocError
 
 main = (env: Env) Res<i32, Error> {

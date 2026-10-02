@@ -11,11 +11,11 @@
 // The two instantiations of `count` also pin that a pack monomorphises:
 // one `T` per call, not one erased symbol for both.
 
-Res, Ok = std.core
-AllocError = std.mem
-vararg = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ vararg } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 Bag*<T> = {
     n :: usize = 0,

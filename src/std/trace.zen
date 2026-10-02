@@ -1,7 +1,7 @@
 // Single-owner bounded completed spans. Borrowed names must outlive the buffer.
 // No clock, network, global state or allocation in record(). Not thread-safe.
-Alloc, AllocError, Ptr, null_ptr = std.mem
-Res, Ok, None = std.core
+{ Alloc, AllocError, Ptr, null_ptr } = std.mem
+{ Res, Ok, None } = std.core
 Span* = { id*: u64, parent*: u64, name*: str, start_ns*: u64, end_ns*: u64, failed*: bool }
 Buffer* = {
     spans: Ptr<Span>, capacity: usize, count* :: usize, dropped* :: usize,

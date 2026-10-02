@@ -12,9 +12,9 @@
 // the reject side is must-fail/own/consume_in_one_match_arm.zen --
 // consumed on one path and used after the join is still an error.
 
-Res, Ok, Drop, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Noisy = {
     env: Env,

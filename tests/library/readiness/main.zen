@@ -1,8 +1,8 @@
-Readiness, ReadinessError, WaitResult, Interest = std.net.readiness
-Res, Ok, Range = std.core
-Alloc, AllocError = std.mem
-Env = std.env
-println = std.io
+{ Readiness, ReadinessError, WaitResult, Interest } = std.net.readiness
+{ Res, Ok, Range } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 Native = c.bind("probe.h", {
     fixture_start = () i32
     fixture_fd = (index: i32) i32

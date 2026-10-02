@@ -5,16 +5,16 @@
 // any other name. When a module uses one of them without the import, the
 // diagnostic names the line to add, and the name then resolves as that
 // import would, so one omission is one diagnostic rather than a cascade.
-Span, Enum, Variant = std.ast
-Res, Ok, Range = std.core
-AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Checker = sema.sema_check
-CORE, Def, decl_at = sema.sema_def
-is_type_def = sema.sema_member
-SemaFault, ExportFault = sema.sema_diag
-IO_MODULE = sema.sema_print
+{ Span, Enum, Variant } = std.ast
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Checker } = sema.sema_check
+{ CORE, Def, decl_at } = sema.sema_def
+{ is_type_def } = sema.sema_member
+{ SemaFault, ExportFault } = sema.sema_diag
+{ IO_MODULE } = sema.sema_print
 
 // Report `name` as a missing import in `mi` when a standard module exports
 // it, and let later lookups of it in `mi` succeed. False when `name` is not

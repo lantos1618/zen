@@ -8,10 +8,10 @@
 //
 // position: the binding's name, where the missing type belongs.
 
-Res, Ok, None = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, None } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 take = (r: Res<u64>) u64 { r.match({ Ok(v) => v, None => 7 }) }
 

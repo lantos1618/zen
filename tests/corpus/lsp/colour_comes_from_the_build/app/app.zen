@@ -2,7 +2,7 @@
 // because the walk stats a path before it reads one, and because a
 // module that is only ever an overlay would hide a build that had
 // stopped consulting the overlay.
-Point = app.shape
+{ Point } = app.shape
 
 near = (q: Point, n: i32) i32 {
     s = q.x + n;

@@ -1,8 +1,8 @@
-Buffer, Span = std.trace
-AllocError, null_ptr = std.mem
-str_at = std.text
-Res, Ok, Range = std.core
-Env = std.env
+{ Buffer, Span } = std.trace
+{ AllocError, null_ptr } = std.mem
+{ str_at } = std.text
+{ Res, Ok, Range } = std.core
+{ Env } = std.env
 Probe = c.bind("trace_probe.h", { begin = () (), end = () () })
 main = (env: Env) Res<i32, AllocError> {
     a = env.mem.alloc();

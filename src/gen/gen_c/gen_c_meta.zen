@@ -2,20 +2,20 @@
 // becomes the current field's string and `recv.at(field)` reuses ordinary
 // field access lowering. `break` exits the walk; `next` exits one pass.
 
-ExprId, Access, Call, Ident, Lambda = std.ast
-AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-TyId = sema.sema_ty
-Ctx = sema.sema_check
-CBackend = gen.gen_c.gen_c_state
-LoopFrame = gen.gen_c.gen_c_frame
-unsupported = gen.gen_c.gen_c_report
-block, Dest = gen.gen_c.gen_c_stmt
-lower_access = gen.gen_c.gen_c_read
-write_label, write_next_label = gen.gen_c.gen_c_loop
-spelled_lambda = gen.gen_c.gen_c_inline
-Res, Ok = std.core
+{ ExprId, Access, Call, Ident, Lambda } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ TyId } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ CBackend } = gen.gen_c.gen_c_state
+{ LoopFrame } = gen.gen_c.gen_c_frame
+{ unsupported } = gen.gen_c.gen_c_report
+{ block, Dest } = gen.gen_c.gen_c_stmt
+{ lower_access } = gen.gen_c.gen_c_read
+{ write_label, write_next_label } = gen.gen_c.gen_c_loop
+{ spelled_lambda } = gen.gen_c.gen_c_inline
+{ Res, Ok } = std.core
 
 // A field walk is an effect expression and therefore writes unit to `out`.
 lower_meta_walk* = (

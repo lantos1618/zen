@@ -30,18 +30,18 @@
 // test of name resolution, and routing it through a parser would make a
 // parser bug read as a resolution bug.
 
-World, Def, CORE = sema.sema_def
-Ast = std.ast.ast_arena
-Decl, DeclKind, Struct, Import, ImportName, Member, Module = std.ast.ast_node
-TParam = std.ast.ast_node
-Ident, QualifiedName, no_trivia = std.ast.ast_span
-Pos, Span = std.source
-Alloc, AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ World, Def, CORE } = sema.sema_def
+{ Ast } = std.ast.ast_arena
+{ Decl, DeclKind, Struct, Import, ImportName, Member, Module } = std.ast.ast_node
+{ TParam } = std.ast.ast_node
+{ Ident, QualifiedName, no_trivia } = std.ast.ast_span
+{ Pos, Span } = std.source
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 at = () Span {
     Span(file: "in.zen", start: Pos(line: 1, col: 1), end: Pos(line: 1, col: 2))
@@ -77,6 +77,7 @@ import_decl = (a: Alloc, name: str, module: str) Res<Decl, AllocError> {
     names ::= a.Vec<ImportName>();
     names.add(ImportName(
         name: id_of(name),
+        source: id_of(name),
         exported: false,
         span: at(),
         leading: no_trivia(),

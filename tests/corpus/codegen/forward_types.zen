@@ -22,10 +22,10 @@
 // rather than looping (TESTING.md § Sema). The `Ptr<Node>` form below is
 // the one that must WORK.
 
-Res, Ok = std.core
-AllocError, Ptr = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError, Ptr } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Outer = {
     inner: Inner,
@@ -51,9 +51,9 @@ Node = {
     next: Ptr<Node>
 }
 
-Expr = Lit(i32) | Held(Ptr<Stmt>)
+Expr = { Lit: i32 | Held: Ptr<Stmt> }
 
-Stmt = Done | Eval(Ptr<Expr>)
+Stmt = { Done | Eval: Ptr<Expr> }
 
 main = (env: Env) Res<i32, AllocError> {
     o = Outer(inner: Inner(n: 5), tag: 2);

@@ -3,15 +3,15 @@
 // are anchored at the outermost `(` so the reported location identifies the
 // full excessive run rather than an arbitrary inner frame.
 
-scan, Source = std.lex.lex
-Parser, MAX_DEPTH = std.parse.parser
-expr = std.parse.parse_expr
-Ast = std.ast.ast_arena
-ExprId = std.ast.ast_id
-Res, Ok, Range, WriteError = std.core
-Alloc, AllocError = std.mem
-Env = std.env
-println = std.io
+{ scan, Source } = std.lex.lex
+{ Parser, MAX_DEPTH } = std.parse.parser
+{ expr } = std.parse.parse_expr
+{ Ast } = std.ast.ast_arena
+{ ExprId } = std.ast.ast_id
+{ Res, Ok, Range, WriteError } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // `((( .. 1 .. )))`, built rather than written out, which is the only
 // reason a 10,000-deep test is cheap enough to keep.

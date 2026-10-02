@@ -19,10 +19,10 @@
 // The bool arm pins that true/false are spelled out, not printed as 1/0
 // by whatever integer path a lazy dispatch would fall into.
 
-Res, Ok, WriteError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, WriteError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | WriteError
 

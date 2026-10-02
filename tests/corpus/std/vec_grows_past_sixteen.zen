@@ -3,10 +3,10 @@
 // rather than loop, so this fails if realloc moved the buffer and
 // indexed access still points at the old pages
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

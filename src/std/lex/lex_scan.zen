@@ -1,15 +1,15 @@
 // Byte dispatcher for names, comments, literals, punctuation, and invalid
 // runs. Every step advances, and scanning resumes after lexical faults.
 
-Lexer, Lexed = std.lex.lex_state
-TokenKind, Source = std.lex.lex_token
-LexFault = std.lex.lex_diag
-class_of = std.lex.lex_byte
-is_punct = std.lex.lex_punct
-string, character, number = std.lex.lex_literal
-Alloc, AllocError = std.mem
-str = std.text
-Res, Ok, None, loop, Range = std.core
+{ Lexer, Lexed } = std.lex.lex_state
+{ TokenKind, Source } = std.lex.lex_token
+{ LexFault } = std.lex.lex_diag
+{ class_of } = std.lex.lex_byte
+{ is_punct, punct_kind } = std.lex.lex_punct
+{ string, character, number } = std.lex.lex_literal
+{ Alloc, AllocError } = std.mem
+{ str } = std.text
+{ Res, Ok, None, loop, Range } = std.core
 
 // Lexical faults are returned inside Lexed; Err is reserved for allocation
 // failure so scanning can continue after malformed input.

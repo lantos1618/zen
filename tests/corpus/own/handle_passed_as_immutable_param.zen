@@ -10,11 +10,11 @@
 // method receiver is (`add* = (v :: Vec<T>, value: T)` IS Vec.add
 // written outside the body), so only `consume` moves.
 
-Res, Ok, IoError = std.core
-Alloc, AllocError = std.mem
-Vec = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 fill = (a: Alloc, v :: Vec<i32>) Res<(), AllocError> {
     v.add(1).try();

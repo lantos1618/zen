@@ -1,5 +1,5 @@
-to_u128 = std.core.num
-println = std.io
+{ to_u128 } = std.core.num
+{ println } = std.io
 main = () {
     small: u64 = 5;
     wide       = small.to_u128();

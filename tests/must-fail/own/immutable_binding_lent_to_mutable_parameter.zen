@@ -1,7 +1,7 @@
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // DESIGN.md, Ownership: a receiver is only the first parameter, so the
 // receiver rule holds for every `::` parameter. `bump` writes the

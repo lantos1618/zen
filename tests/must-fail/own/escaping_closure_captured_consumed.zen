@@ -8,10 +8,10 @@
 // the later consume is reported where it is written, naming the
 // closure that holds f alive.
 
-Res, Ok, Drop, IoError = std.core
-AllocError = std.mem
-Env, ThreadError = std.env
-println = std.io
+{ Res, Ok, Drop, IoError } = std.core
+{ AllocError } = std.mem
+{ Env, ThreadError } = std.env
+{ println } = std.io
 
 Buf = {
     id: i32,

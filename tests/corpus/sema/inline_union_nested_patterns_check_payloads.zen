@@ -1,10 +1,10 @@
-Res, Ok, Err = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Err } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Left = Number(i32) | Empty
-Right = | Text(str)
+Left = { Number: i32 | Empty }
+Right = { | Text: str }
 
 number = (value: i32) Res<i32, Left | Right> { Err(Left.Number(value)) }
 text = (value: str) Res<i32, Left | Right> { Err(Right.Text(value)) }

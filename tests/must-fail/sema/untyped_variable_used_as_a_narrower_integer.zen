@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 // A `::=` binding of a number with no written type is an i64 whose value
 // changes at run time, so no use can prove it fits a narrower integer type:

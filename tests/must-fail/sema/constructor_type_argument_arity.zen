@@ -1,10 +1,10 @@
 // A named construction's explicit type list is the declaration's complete
 // list, including for a declaration that has no type parameters.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Pair<T, U> = { first: T, second: U }
 Point = { x: i32 }

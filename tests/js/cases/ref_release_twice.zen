@@ -1,11 +1,11 @@
 // Releasing a js.Ref a second time traps: the first release emptied its
 // slot, and the second must not take a reference from whatever object is
 // there now.
-Ref = std.js
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Ref } = std.js
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Objects = js.bind("Object", {
     create* = (proto: Ref) Ref

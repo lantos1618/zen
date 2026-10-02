@@ -8,10 +8,10 @@
 // this module's namespace, either the two collide (loud) or `double(3)`
 // answers 6 through secret's instead of 103 through this one -- a wrong
 // number, from a program that still compiles.
-quad = mid.mid
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ quad } = mid.mid
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 double = (n: i32) i32 { n + 100 }
 

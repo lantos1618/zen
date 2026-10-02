@@ -16,10 +16,10 @@
 // breaks this: taking the last written break site (or the always-taken
 // fall-through) instead of the first executed one.
 
-Res, Ok, loop = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, loop } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     pick: Res<usize> = loop((h) {

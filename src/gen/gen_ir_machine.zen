@@ -7,12 +7,12 @@
 // targets implement one vocabulary; until IR slots can hold u64, u128,
 // vectors and pointers, lowering refuses every call to one with a diagnostic
 // naming the operation, and the verifier rejects a Machine instruction.
-Vec = std.collections
-str = std.text
-Span = std.source
-Res, Ok, None = std.core
+{ Vec } = std.collections
+{ str } = std.text
+{ Span } = std.source
+{ Res, Ok, None } = std.core
 
-MachineOp* = MulWide
+MachineOp* = { MulWide
     | AddCarry
     | SubBorrow
     | Truncate
@@ -56,7 +56,7 @@ MachineOp* = MulWide
     | Sha512Su0
     | Sha512Su1
     | MulLimbs
-    | SquareLimbs
+    | SquareLimbs }
 
 // `outs` and `args` index Func.slots; `word` names the operand type as the
 // primitive's source spelling (`u64`, `u32x8`, `avx2`, ...), so a target can

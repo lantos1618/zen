@@ -1,7 +1,7 @@
-Res, Ok, IoError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // str.len is a BYTE count, not a character count: DESIGN.md says utf-8
 // is functions over bytes, paid for only where the guarantee is wanted.

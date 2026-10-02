@@ -1,12 +1,12 @@
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // A structural union's generated tag and payload member must agree for every
 // member, independent of the union's source order.
-NotFound = | NotFound
-Denied = | Denied
+NotFound = { | NotFound }
+Denied = { | Denied }
 Set = Denied | NotFound
 
 show = (error: Set) {

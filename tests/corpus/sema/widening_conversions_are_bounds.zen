@@ -8,10 +8,10 @@
 // prints, because {}'s digit count is deliberately unspecified
 // (lex/number_float_basics.zen).
 
-Res, Ok, ToU32, ToUsize, ToI64, ToF64 = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, ToU32, ToUsize, ToI64, ToF64 } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 as_u32 = <T: ToU32>(x: T) u32 { x.widen_u32() }
 as_i64 = <T: ToI64>(x: T) i64 { x.widen_i64() }

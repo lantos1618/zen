@@ -3,9 +3,9 @@
 // its own `-o` without one. No append, no mode, no handle — the
 // compiler writes one file once. It takes no Alloc because it
 // allocates nothing: the bytes are the caller's and stay the caller's.
-Env, FsError = std.env
-Res, Ok = std.core
-println = std.io
+{ Env, FsError } = std.env
+{ Res, Ok } = std.core
+{ println } = std.io
 
 main = (env: Env) Res<i32, FsError> {
     alloc ::= env.mem.alloc();

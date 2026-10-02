@@ -1,9 +1,9 @@
 // Volatile pointer access, the compiler barrier, `wipe`, and forced inlining.
-AllocError, Ptr, compiler_barrier, wipe = std.mem
-rotate_left = std.core.num
-Res, Ok, Range = std.core
-Env = std.env
-println = std.io
+{ AllocError, Ptr, compiler_barrier, wipe } = std.mem
+{ rotate_left } = std.core.num
+{ Res, Ok, Range } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 // A module-level `inline` function is inlined into every caller.
 mix = inline (a: u32, b: u32) u32 { a.bit_xor(b).rotate_left(7) +% b }

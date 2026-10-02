@@ -4,7 +4,7 @@
 // Answers join the high halves of two states rather than expose the LCG's
 // weak low bits. This is suitable for repeatable sampling, not cryptography.
 
-loop = std.core
+{ loop } = std.core
 
 Rng* = {
     state :: u64,

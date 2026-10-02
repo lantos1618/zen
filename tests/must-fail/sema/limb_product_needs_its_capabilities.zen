@@ -1,5 +1,5 @@
-adx, Adx, mul_limbs = std.simd
-println = std.io
+{ adx, Adx, mul_limbs } = std.simd
+{ println } = std.io
 
 wrong = (cpu: Adx, x: [u64, 4]) [u64, 8] { x.mul_limbs(x, cpu) }
 

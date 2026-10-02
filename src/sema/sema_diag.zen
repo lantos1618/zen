@@ -1,8 +1,8 @@
-Span = std.source
-str, String = std.text
-AllocError = std.mem
-TyId, Types = sema.sema_ty
-Res, Ok = std.core
+{ Span } = std.source
+{ str, String } = std.text
+{ AllocError } = std.mem
+{ TyId, Types } = sema.sema_ty
+{ Res, Ok } = std.core
 
 // Something the program named, or failed to.
 NameFault* = { name*: str }
@@ -76,139 +76,140 @@ PairFault* = {
 // Every semantic fault has a distinct corrective message below.
 SemaFault* =
     // resolution
-      UndefinedName(NameFault)         // no binding of this name is in scope
-    | NotExported(ExportFault)         // the name exists; `*` does not
-    | NotImported(ExportFault)         // a name another module exports and this one does not import
-    | NotWritable(ExportFault)         // `*` on a field grants reading, never writing
-    | ModuleNotAValue(ExportFault)     // a module is a namespace, not a value
-    | NoSuchField(TypeFault)           // the type has no member of that name
-    | MemberNeedsValue(TypeFault)      // a union's member IS a type, so naming it alone writes no value
-    | Rebound(PairFault)               // a second `=` binding of one name in one block
-    | TypeNotAValue(TypeValueFault)    // `x = Foo;` binds a type, not a value of it
+      { UndefinedName: NameFault         // no binding of this name is in scope
+    | NotExported: ExportFault         // the name exists; `*` does not
+    | NotImported: ExportFault         // a name another module exports and this one does not import
+    | ImportShadowed: PairFault        // imported and declared in one module
+    | NotWritable: ExportFault         // `*` on a field grants reading, never writing
+    | ModuleNotAValue: ExportFault     // a module is a namespace, not a value
+    | NoSuchField: TypeFault           // the type has no member of that name
+    | MemberNeedsValue: TypeFault      // a union's member IS a type, so naming it alone writes no value
+    | BareEnum: NameFault              // `A | B` without braces joins types; an enum is braced
+    | Rebound: PairFault               // a second `=` binding of one name in one block
+    | TypeNotAValue: TypeValueFault    // `x = Foo;` binds a type, not a value of it
 
     // types
-    | TypeMismatch(TypeFault)          // expected X, found Y
-    | ArmsDisagree(TypeFault)          // the arms of one match are not one type
-    | DiscardedValue(TypeFault)        // a statement's value nothing reads
-    | DroppedFailure(TypeFault)        // a failure nothing handles
-    | NotCallable(TypeFault)           // the callee is not a function
-    | MethodNotValue(TypeFault)        // the name is a method, and the call is missing
-    | LiteralOutOfRange(TypeFault)     // the family fits, the value does not
-    | HeldOutOfRange(HeldFault)        // a literal-held binding's value does not fit its use
-    | UntypedVariable(TypeFault)       // a `::=` binding of an untyped number used as a narrower integer
-    | ActorPayload(NameFault)          // payload storage cannot cross a mailbox
-    | InvalidNumericConversion(NameFault)
-    | InvalidPrimitive(NameFault)
-    | InvalidPrinter(NameFault)
-    | ForgedCapability(NameFault)
-    | InvalidEnumRepresentation(NameFault)
-    | InvalidEnumDiscriminant(NameFault)
-    | DuplicateEnumDiscriminant(PairFault)
-    | CatchAllConstruction(NameFault)
-    | BareNoneBinding(NameFault)       // a binding declared from a bare `None`
-    | LiteralLent(NameFault)           // an unannotated number passed to a `::` parameter
-    | ImmutableLent(LendFault)         // a `:` place passed to a `::` parameter
+    | TypeMismatch: TypeFault          // expected X, found Y
+    | ArmsDisagree: TypeFault          // the arms of one match are not one type
+    | DiscardedValue: TypeFault        // a statement's value nothing reads
+    | DroppedFailure: TypeFault        // a failure nothing handles
+    | NotCallable: TypeFault           // the callee is not a function
+    | MethodNotValue: TypeFault        // the name is a method, and the call is missing
+    | LiteralOutOfRange: TypeFault     // the family fits, the value does not
+    | HeldOutOfRange: HeldFault        // a literal-held binding's value does not fit its use
+    | UntypedVariable: TypeFault       // a `::=` binding of an untyped number used as a narrower integer
+    | ActorPayload: NameFault          // payload storage cannot cross a mailbox
+    | InvalidNumericConversion: NameFault
+    | InvalidPrimitive: NameFault
+    | InvalidPrinter: NameFault
+    | ForgedCapability: NameFault
+    | InvalidEnumRepresentation: NameFault
+    | InvalidEnumDiscriminant: NameFault
+    | DuplicateEnumDiscriminant: PairFault
+    | CatchAllConstruction: NameFault
+    | BareNoneBinding: NameFault       // a binding declared from a bare `None`
+    | LiteralLent: NameFault           // an unannotated number passed to a `::` parameter
+    | ImmutableLent: LendFault         // a `:` place passed to a `::` parameter
 
     // overloading
-    | NoOverload(NameFault)            // no candidate of that arity or those types
-    | InvalidInstantiation(NameFault)   // written or inferred type arguments do not fit
-    | DuplicateSignature(PairFault)    // param names are not identity
-    | AmbiguousOverload(PairFault)     // two signatures accept the same call
-    | TravelledTie(PairFault)          // two modules export one signature to a call importing neither
+    | NoOverload: NameFault            // no candidate of that arity or those types
+    | InvalidInstantiation: NameFault   // written or inferred type arguments do not fit
+    | DuplicateSignature: PairFault    // param names are not identity
+    | AmbiguousOverload: PairFault     // two signatures accept the same call
 
     // impls and bounds
-    | ImplMissingField(NameFault)      // an impl supplies every field, or it is not one
-    | CtorMissingField(NameFault)      // a required field the construction never named
-    | CtorNamesNoMember(TypeFault)     // an argument naming a member the type does not declare
-    | CtorSurplusArgument(TypeFault)   // a positional argument with no storage seat
-    | CtorArgsDisagree(TypeFault)      // two field values settle one type parameter differently
-    | ResSurplusArgument(NameFault)    // `Ok`/`Err` hold one value, and a second has no seat
-    | CtorNamesConstant(TypeFault)     // an argument naming a constant, which is not storage
-    | DuplicateField(PairFault)        // a struct declares one storage name twice
-    | OrphanImpl(ExportFault)          // only the target's own module is ever consulted
-    | AmbiguousMember(PairFault)       // two impls, no bound in scope to choose
-    | BoundNotSatisfied(TypeFault)     // no impl of the bound
-    | EqNeedsImpl(TypeFault)           // `==` dispatches to `Eq`, and there is none
-    | InvalidOperator(TypeFault)       // these operands are outside the built-in operator's domain
-    | BitwiseOperand(TypeFault)        // bit operations take unsigned integers only
-    | BitwiseWidths(TypeFault)         // two different unsigned widths, and no implicit widening
-    | BitwiseUntyped(TypeFault)        // literals alone choose no width
-    | ShiftCount(TypeFault)            // a shift count is an unsigned integer
-    | ComputedFieldAssign(NameFault)   // no storage, so nothing to assign into
-    | ComputedFieldAddress(NameFault)  // no storage, so no address exists
+    | ImplMissingField: NameFault      // an impl supplies every field, or it is not one
+    | CtorMissingField: NameFault      // a required field the construction never named
+    | CtorNamesNoMember: TypeFault     // an argument naming a member the type does not declare
+    | CtorSurplusArgument: TypeFault   // a positional argument with no storage seat
+    | CtorArgsDisagree: TypeFault      // two field values settle one type parameter differently
+    | ResSurplusArgument: NameFault    // `Ok`/`Err` hold one value, and a second has no seat
+    | CtorNamesConstant: TypeFault     // an argument naming a constant, which is not storage
+    | DuplicateField: PairFault        // a struct declares one storage name twice
+    | OrphanImpl: ExportFault          // only the target's own module is ever consulted
+    | AmbiguousMember: PairFault       // two impls, no bound in scope to choose
+    | BoundNotSatisfied: TypeFault     // no impl of the bound
+    | EqNeedsImpl: TypeFault           // `==` dispatches to `Eq`, and there is none
+    | InvalidOperator: TypeFault       // these operands are outside the built-in operator's domain
+    | BitwiseOperand: TypeFault        // bit operations take unsigned integers only
+    | BitwiseWidths: TypeFault         // two different unsigned widths, and no implicit widening
+    | BitwiseUntyped: TypeFault        // literals alone choose no width
+    | ShiftCount: TypeFault            // a shift count is an unsigned integer
+    | ComputedFieldAssign: NameFault   // no storage, so nothing to assign into
+    | ComputedFieldAddress: NameFault  // no storage, so no address exists
 
     // Res, and the failure model
-    | TryOutsideRes(TypeFault)         // nowhere to return the failure to
-    | TryNeedsRes(TypeFault)           // `.try()` on something that is not a Res
-    | TryAbsenceIntoFailure(TypeFault) // a None never becomes an Err
-    | TryArgNeedsErr(TypeFault)         // `.try(arg)` maps an Err, not None
-    | NoErrorConversion(TypeFault)     // there is no From
-    | InferredSetExported(NameFault)   // an exported function writes its error set
-    | HoistAmbiguous(TypeFault)        // two variants carry the type
-    | HoistNotSuccess(NameFault)       // only success lifts
+    | TryOutsideRes: TypeFault         // nowhere to return the failure to
+    | TryNeedsRes: TypeFault           // `.try()` on something that is not a Res
+    | TryAbsenceIntoFailure: TypeFault // a None never becomes an Err
+    | TryArgNeedsErr: TypeFault         // `.try(arg)` maps an Err, not None
+    | NoErrorConversion: TypeFault     // there is no From
+    | InferredSetExported: NameFault   // an exported function writes its error set
+    | HoistAmbiguous: TypeFault        // two variants carry the type
+    | HoistNotSuccess: NameFault       // only success lifts
 
     // vararg — the pack's one legal position, and its one type argument
-    | VarargNotLast(NameFault)         // a pack borrows the caller's frame
-    | VarargElement(NameFault)         // a run of T, and never a run of runs
+    | VarargNotLast: NameFault         // a pack borrows the caller's frame
+    | VarargElement: NameFault         // a run of T, and never a run of runs
 
     // match
-    | NotExhaustive(NameFault)         // names the first case left uncovered
-    | UnreachableArm(NameFault)        // every value it matches is covered above
-    | NotACase(NameFault)              // an upper-case arm name that is no variant and no constant
-    | ConstPattern(NameFault)          // a binder spelled like a constant matches everything
+    | NotExhaustive: NameFault         // names the first case left uncovered
+    | UnreachableArm: NameFault        // every value it matches is covered above
+    | NotACase: NameFault              // an upper-case arm name that is no variant and no constant
+    | ConstPattern: NameFault          // a binder spelled like a constant matches everything
 
     // the failure model, proved
-    | ProvenOverflow(NameFault)        // a trap the compiler can prove will fire
-    | ProvenDivideByZero(NameFault)
-    | ProvenIndexOutOfBounds(NameFault)
+    | ProvenOverflow: NameFault        // a trap the compiler can prove will fire
+    | ProvenDivideByZero: NameFault
+    | ProvenIndexOutOfBounds: NameFault
 
     // termination
-    | InfiniteSize(NameFault)          // a field cycle with no indirection
-    | InstantiationDepth(NameFault)    // the instantiation set is infinite
+    | InfiniteSize: NameFault          // a field cycle with no indirection
+    | InstantiationDepth: NameFault    // the instantiation set is infinite
 
     // comptime
-    | MetaNotImplemented(NameFault)    // every `@meta` form but `.name`
-    | CountNotComptime(NameFault)      // an array's count folds, or it is refused
-    | NegativeArrayCount(NameFault)    // a fixed-array count folded below zero
-    | ComptimeBudget(NameFault)        // the evaluator's step budget ran out
+    | MetaNotImplemented: NameFault    // every `@meta` form but `.name`
+    | CountNotComptime: NameFault      // an array's count folds, or it is refused
+    | NegativeArrayCount: NameFault    // a fixed-array count folded below zero
+    | ComptimeBudget: NameFault        // the evaluator's step budget ran out
 
     // ownership
-    | ConsumedUse(NameFault)           // a place that was moved out of
-    | UnassignedUse(InitFault)         // a deferred local used before every path assigns it
-    | AssignedTwice(NameFault)         // an immutable deferred local assigned again
-    | NeverAssigned(UnsetFault)        // a deferred local no statement assigns
-    | NeedsMutableReceiver(NameFault)  // a `::` method reached through `:`
-    | ImmutableWrite(NameFault)        // a write through a `:` link of the path
-    | SnapshottedReceiver(NameFault)   // a `::` argument call aliases a by-value receiver
-    | PartiallyMoved(NameFault)        // a hole reaches the drop
-    | ConsumeNotAPlace(NameFault)      // an element index is not a place
-    | ConsumeThroughHandle(NameFault)  // move only what this frame owns
-    | CopyFromPointer(NameFault)
-    | CopyOfDropValue(NameFault)       // `g = f` would drop twice
-    | ScopeEscapes(NameFault)          // `@scope` left its block
-    | ExplicitDropBorrow(NameFault)
-    | ArenaInvalidated(NameFault)
-    | ArenaStored(NameFault)           // local storage escaped through a parameter
-    | ArenaEscapes(NameFault)          // a view outlived the arena behind it
-    | BoundViewEscapes(FrameViewFault) // a bound value over this frame is returned
-    | BoundViewStored(FrameViewFault)  // ... or stored where the caller keeps it
-    | HandleNotAValue(NameFault)       // a loop handle names its loop, it is not a value
-    | LocalFunctionShape(NameFault)    // a function declared in a body is a plain, typed closure
-    | ConsumedByCapture(CaptureFault)  // a capture outlives the consume
-    | ConsumedUnderView(CaptureFault)  // a bound value built over it outlives the consume
+    | ConsumedUse: NameFault           // a place that was moved out of
+    | UnassignedUse: InitFault         // a deferred local used before every path assigns it
+    | AssignedTwice: NameFault         // an immutable deferred local assigned again
+    | NeverAssigned: UnsetFault        // a deferred local no statement assigns
+    | NeedsMutableReceiver: NameFault  // a `::` method reached through `:`
+    | ImmutableWrite: NameFault        // a write through a `:` link of the path
+    | SnapshottedReceiver: NameFault   // a `::` argument call aliases a by-value receiver
+    | PartiallyMoved: NameFault        // a hole reaches the drop
+    | ConsumeNotAPlace: NameFault      // an element index is not a place
+    | ConsumeThroughHandle: NameFault  // move only what this frame owns
+    | CopyFromPointer: NameFault
+    | CopyOfDropValue: NameFault       // `g = f` would drop twice
+    | ScopeEscapes: NameFault          // `@scope` left its block
+    | ExplicitDropBorrow: NameFault
+    | ArenaInvalidated: NameFault
+    | ArenaStored: NameFault           // local storage escaped through a parameter
+    | ArenaEscapes: NameFault          // a view outlived the arena behind it
+    | BoundViewEscapes: FrameViewFault // a bound value over this frame is returned
+    | BoundViewStored: FrameViewFault  // ... or stored where the caller keeps it
+    | HandleNotAValue: NameFault       // a loop handle names its loop, it is not a value
+    | LocalFunctionShape: NameFault    // a function declared in a body is a plain, typed closure
+    | ConsumedByCapture: CaptureFault  // a capture outlives the consume
+    | ConsumedUnderView: CaptureFault  // a bound value built over it outlives the consume
 
     // the secret discipline: a Secret-derived value may not steer timing
-    | SecretBranch(NameFault)          // match, then, ensure or try on a secret
-    | SecretShortCircuit(NameFault)    // an operand of && or ||
-    | SecretLoop(NameFault)            // a loop condition or looped-over value
-    | SecretIndex(NameFault)           // an index, offset or lane number
-    | SecretShift(NameFault)           // a shift or rotation count
-    | SecretDivide(NameFault)          // an operand of / or %
-    | SecretTrap(NameFault)            // checked arithmetic or conversion
-    | SecretCompare(NameFault)         // an ordinary comparison
-    | SecretCall(NameFault)            // an argument to a public parameter
-    | SecretResult(NameFault)          // a tail value of a public result
-    | SecretStore(NameFault)           // a write through a public parameter
+    | SecretBranch: NameFault          // match, then, ensure or try on a secret
+    | SecretShortCircuit: NameFault    // an operand of && or ||
+    | SecretLoop: NameFault            // a loop condition or looped-over value
+    | SecretIndex: NameFault           // an index, offset or lane number
+    | SecretShift: NameFault           // a shift or rotation count
+    | SecretDivide: NameFault          // an operand of / or %
+    | SecretTrap: NameFault            // checked arithmetic or conversion
+    | SecretCompare: NameFault         // an ordinary comparison
+    | SecretCall: NameFault            // an argument to a public parameter
+    | SecretResult: NameFault          // a tail value of a public result
+    | SecretStore: NameFault }           // a write through a public parameter
 
 Diag* = {
     file*: str,
@@ -232,8 +233,10 @@ message* = (fault: SemaFault) str {
         NotImported(_)               => "missing import:",
         NotWritable(_)               => "`*` on a field means readable outside the module: mutation goes through exported methods",
         ModuleNotAValue(_)           => "a module is only usable qualified",
+        ImportShadowed(_)            => "imported and also declared in this module: a name has one meaning per module, so rename the declaration or bind the import under another name (`other = m.name`)",
         NoSuchField(_)               => "a member is resolved on the receiver's type, so a name declared on another type is not a candidate",
         MemberNeedsValue(_)          => "a union's member is the type it names, so the member alone is not a value",
+        BareEnum(_)                  => "an enum is written in braces, `Name = { A | B: T }`: without them `|` joins existing types into a union, and this declaration names something that is not a type",
         TypeMismatch(_)              => "type mismatch",
         TypeNotAValue(_)             => "",
         ArmsDisagree(_)              => "match arms disagree: every arm produces the match's value, and nothing here decides which type that is",
@@ -257,7 +260,6 @@ message* = (fault: SemaFault) str {
         InvalidInstantiation(_)      => "invalid generic instantiation: type arguments must match the declaration and every use of one parameter must agree",
         DuplicateSignature(_)        => "duplicate signature: parameter names are documentation, not identity",
         AmbiguousOverload(_)         => "ambiguous overload: these two signatures accept the same call",
-        TravelledTie(_)              => "ambiguous call: two modules export this signature and this module imports neither, so import the one you mean by name",
         ImplMissingField(_)          => "impl is missing field",
         CtorMissingField(_)          => "construction is missing a required field",
         CtorNamesNoMember(_)         => "construction names no member: every argument must name a field of the type, so a name it does not declare is not an argument to discard",
@@ -439,6 +441,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         ConsumedUnderView(f)         => out.write_under_view(f),
 
         NoSuchField(f)               => out.write_member(types, f),
+        BareEnum(f)                  => out.write_name(f),
         MemberNeedsValue(f)          => out.write_needs_value(types, f),
         EqNeedsImpl(f)               => out.write_needs_eq(types, f),
         InvalidOperator(f)           => out.write_operator_types(types, f),
@@ -470,8 +473,8 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
 
         DuplicateSignature(f)        => out.write_pair(f),
         DuplicateField(f)            => out.write_pair(f),
+        ImportShadowed(f)            => out.write_pair(f),
         AmbiguousOverload(f)         => out.write_pair(f),
-        TravelledTie(f)              => out.write_pair(f),
         AmbiguousMember(f)           => out.write_pair(f),
     }).try();
     Ok(());

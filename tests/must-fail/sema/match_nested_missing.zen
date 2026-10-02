@@ -4,14 +4,14 @@
 //
 // position: the match expression (its receiver).
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Cell = Full(i32) | Blank
+Cell = { Full: i32 | Blank }
 
-Slot = Left(Cell) | Right(Cell) | Gone
+Slot = { Left: Cell | Right: Cell | Gone }
 
 describe = (env: Env, s: Slot) {
     s.match({

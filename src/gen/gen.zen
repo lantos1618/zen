@@ -2,28 +2,28 @@
 // publish each borrowed artifact synchronously; no filesystem policy lives here.
 // Direct C entry points remain available to compiler tools and backend tests.
 
-Emit*, order* = gen.gen_emit
-CBackend*, emit_program*, render_symbol_map* = gen.gen_c
-lower_program*, emit_header*, emit_unit*, group_bodies*, ModuleBodies* = gen.gen_c
+{ Emit*, order* } = gen.gen_emit
+{ CBackend*, emit_program*, render_symbol_map* } = gen.gen_c
+{ lower_program*, emit_header*, emit_unit*, group_bodies*, ModuleBodies* } = gen.gen_c
 
-Alloc, AllocError, Mem = std.mem
-Ast = std.ast
-Checker = sema.sema
-Codegen, Target = std.build
-String, str = std.text
-lower, LowerError = gen.gen_lower
-Program, float = gen.gen_ir
-emit_js, emit_app, emit_runtime, PAGE, supports = gen.gen_js
-refused, describe = gen.gen_ir_feature
-X86_64Linux = gen.gen_asm_x86
-Arm64, Arm64Os = gen.gen_asm_arm64
-verify, message = gen.gen_verify
-Res, Ok, Err, None = std.core
+{ Alloc, AllocError, Mem } = std.mem
+{ Ast } = std.ast
+{ Checker } = sema.sema
+{ Codegen, Target } = std.build
+{ String, str } = std.text
+{ lower, LowerError } = gen.gen_lower
+{ Program, float } = gen.gen_ir
+{ emit_js, emit_app, emit_runtime, PAGE, supports } = gen.gen_js
+{ refused, describe } = gen.gen_ir_feature
+{ X86_64Linux } = gen.gen_asm_x86
+{ Arm64, Arm64Os } = gen.gen_asm_arm64
+{ verify, message } = gen.gen_verify
+{ Res, Ok, Err, None } = std.core
 
-Layout* = Single | Modules
-ArtifactKind* = Source | Symbols
+Layout* = { Single | Modules }
+ArtifactKind* = { Source | Symbols }
 
-ScalarBackend = Js | Asm
+ScalarBackend = { Js | Asm }
 
 // Names and bytes borrow the renderer's current buffer. Consumers must write
 // or copy them during the callback; retaining this record extends no lifetime.

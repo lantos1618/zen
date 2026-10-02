@@ -15,14 +15,14 @@
 // Breaks if: the inner dispatch reads a fixed payload slot shared across
 // the outer cases -- Right's three answers come out as Left's.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Cell = Full(i64) | Blank | Mark(i64)
+Cell = { Full: i64 | Blank | Mark: i64 }
 
-Slot = Left(Cell) | Right(Cell) | Gone
+Slot = { Left: Cell | Right: Cell | Gone }
 
 route = (s: Slot) i64 {
     s.match({

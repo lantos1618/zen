@@ -2,13 +2,13 @@
 // renderer contract, which is likewise named `Target`. ZEN_ASM_TARGET
 // selects another target (for example aarch64-linux under qemu user mode);
 // otherwise the host is used.
-Target, target_named = std.build
-host_target = zen.zen_build
-assemble_and_link, launcher = zen.zen_native
-Res, Ok, None = std.core
-Alloc, AllocError = std.mem
-Vec = std.collections
-Env = std.env
+{ Target, target_named } = std.build
+{ host_target } = zen.zen_build
+{ assemble_and_link, launcher } = zen.zen_native
+{ Res, Ok, None } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
 
 Host* = {
     target: Target,

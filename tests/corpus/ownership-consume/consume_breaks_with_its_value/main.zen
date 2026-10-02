@@ -17,9 +17,9 @@
 // lex_byte.zen consumes its own loop: see LANE.md for what happens
 // when the loop's value is held in a binding first.
 
-Res, Ok, Drop, loop, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Drop, loop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Buf = {
     env: Env,

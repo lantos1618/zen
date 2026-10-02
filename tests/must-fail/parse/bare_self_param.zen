@@ -8,8 +8,8 @@
 // explicit return type — the shape DESIGN.md:1206 uses for
 // `() Res<i32, ThreadError> { .. }` — and this file parses. Ambiguity A-CLO.
 
-Res, Ok = std.core
-Env, ArgError = std.env
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
 
 len* = (self) usize {
     self.len

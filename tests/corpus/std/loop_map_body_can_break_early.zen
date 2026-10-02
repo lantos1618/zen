@@ -1,10 +1,10 @@
 // Breaking a mapped callback stops its traversal and preserves earlier values.
 // The nested callback must keep the handle bound to the enclosing range loop.
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

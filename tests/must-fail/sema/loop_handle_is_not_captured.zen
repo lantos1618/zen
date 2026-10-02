@@ -19,10 +19,10 @@
 // door proven to escape is `env.threads.spawn`, whose Alloc parameter
 // `member_takes_alloc` sees.
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env, ThreadError = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env, ThreadError } = std.env
+{ println } = std.io
 
 Error = AllocError | ThreadError
 

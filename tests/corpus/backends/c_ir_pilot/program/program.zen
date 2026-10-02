@@ -1,4 +1,4 @@
-println, print = std.io
+{ println, print } = std.io
 
 pair = (a: i32, b: i32) i32 { a * 10 + b }
 fib = (n: i32) i32 { (n < 2).match({ true => n, false => fib(n - 1) + fib(n - 2) }) }

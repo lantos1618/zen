@@ -1,7 +1,7 @@
-Res, Ok, ToU64, ToI64 = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, ToU64, ToI64 } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // Generic conversion through a bound preserves the concrete source width
 // across erased argument and result slots. Boundary values expose sign-fill,

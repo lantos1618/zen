@@ -1,6 +1,6 @@
-Res, Ok = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
 // MUST FAIL: two arms of a `.match` disagree, and the parameter they
 // stand at is DECLARED `T`. `match_arms_disagree_at_an_argument` is the

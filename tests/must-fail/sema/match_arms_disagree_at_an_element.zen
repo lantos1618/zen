@@ -1,6 +1,6 @@
-Res, Ok = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
 // MUST FAIL: two arms of a `.match` disagree, and the match stands as an
 // ARRAY ELEMENT. The array's type is WRITTEN, so `i32` is the position's

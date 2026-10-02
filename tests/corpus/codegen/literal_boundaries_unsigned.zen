@@ -25,10 +25,10 @@
 // expected output containing it would differ between a 32-bit and a
 // 64-bit run and the corpus would stop being a fixed file.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     u8_max: u8 = 255;

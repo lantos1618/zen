@@ -1,12 +1,12 @@
 // Probe functions for tools/ct/isa.zen: each one isolates a machine
 // primitive whose instruction selection the check asserts. Inputs come from
 // the command line so nothing folds to a constant.
-add_carry, sub_borrow, mul_wide, truncate_u64, shift_right, bit_xor, to_u64 = std.core.num
-Adx, Bmi2, adx, bmi2, mul_limbs, square_limbs = std.simd
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ add_carry, sub_borrow, mul_wide, truncate_u64, shift_right, bit_xor, to_u64 } = std.core.num
+{ Adx, Bmi2, adx, bmi2, mul_limbs, square_limbs } = std.simd
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // mul_limbs: MULX with ADCX and ADOX on x86-64.
 dual_product* = (adx: Adx, bmi: Bmi2, x: [u64, 4], y: [u64, 4]) [u64, 8] { x.mul_limbs(y, adx, bmi) }

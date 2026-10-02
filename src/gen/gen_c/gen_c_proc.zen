@@ -1,9 +1,9 @@
 // The process ABI floor exposes POSIX operations. Process state, ownership,
 // argument preparation and stream coordination live in std.proc.
-AllocError = std.mem
-Emit = gen.gen_emit
-CBackend = gen.gen_c.gen_c_state
-Res, Ok = std.core
+{ AllocError } = std.mem
+{ Emit } = gen.gen_emit
+{ CBackend } = gen.gen_c.gen_c_state
+{ Res, Ok } = std.core
 
 uses_proc = (be: CBackend) bool {
     be.foreign_functions.find(

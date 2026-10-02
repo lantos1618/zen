@@ -8,9 +8,9 @@
 // Reading back through a FRESH read also catches a buffer that kept the
 // old length across the rewrite.
 
-Env, FsError = std.env
-Res, Ok = std.core
-println = std.io
+{ Env, FsError } = std.env
+{ Res, Ok } = std.core
+{ println } = std.io
 
 main = (env: Env) Res<i32, FsError> {
     alloc ::= env.mem.alloc();

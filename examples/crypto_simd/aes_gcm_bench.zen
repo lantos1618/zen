@@ -1,7 +1,7 @@
 // Throughput microbenchmark for native AES-128-GCM seal/open.
 // Reports MB/s (10^6 bytes of plaintext per second) for TLS-like records:
 // 5-byte AAD, 64 B, 512 B, 1 KiB and 16 KiB messages, reusing one scratch buffer.
-aes128gcm_seal, aes128gcm_open, AES_GCM_SCRATCH_WORDS = aes_gcm
+{ aes128gcm_seal, aes128gcm_open, AES_GCM_SCRATCH_WORDS } = aes_gcm
 measure = (
     env     : Env,
     seal    : bool,

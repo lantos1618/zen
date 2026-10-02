@@ -4,10 +4,11 @@
 // decode. A decoder that miscounted the trailing ASCII's offset would
 // still print plausible numbers here; the explicit `at 6` and the
 // done-flag are what catch it.
-Utf8Error = std.text.text_utf8
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ Utf8Error } = std.text.text_utf8
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
+{ codepoints } = std.text
 
 main = (env: Env) Res<i32, Utf8Error> {
     s = "x😀y";

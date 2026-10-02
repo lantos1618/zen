@@ -1,5 +1,5 @@
-Res, Ok = std.core
-println = std.io
+{ Res, Ok } = std.core
+{ println } = std.io
 
 LoopHandle = {}
 Seq<T> = { start: usize, end: usize }

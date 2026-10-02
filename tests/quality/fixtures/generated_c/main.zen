@@ -1,13 +1,13 @@
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Box<T> = {
     value: T
 }
 
-Choice = Number(i32) | Empty
+Choice = { Number: i32 | Empty }
 
 score = (choice: Choice) i32 {
     choice.match({
@@ -28,7 +28,7 @@ main = (env: Env) Res<i32, AllocError> {
     Ok(valid.match({ true => 0, false => 1 }));
 }
 
-Ready = Readable | Writable
+Ready = { Readable | Writable }
 readiness = (ready: Ready) i32 {
     ready.match({ Readable => 1, Writable => 2 })
 }

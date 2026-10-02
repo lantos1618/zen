@@ -1,8 +1,8 @@
-Res, Err = std.core
-Env = std.env
+{ Res, Err } = std.core
+{ Env } = std.env
 
-SourceError = | Bad
-TargetError = | Changed
+SourceError = { | Bad }
+TargetError = { | Changed }
 
 raise = () Res<i32, SourceError> { Err(SourceError.Bad) }
 

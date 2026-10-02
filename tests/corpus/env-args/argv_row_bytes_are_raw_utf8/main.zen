@@ -18,11 +18,11 @@
 // codepoint count equals the byte count because every byte is below
 // 128 — the equality itself is the ASCII claim.
 
-count_codepoints, Utf8Error = std.text
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ count_codepoints, Utf8Error } = std.text
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError | Utf8Error> {
     // the literals: two-byte, three-byte, four-byte sequences

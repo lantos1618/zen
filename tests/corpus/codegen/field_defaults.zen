@@ -27,10 +27,10 @@
 //      The bootstrapper already folded it; only the self-hosted backend
 //      did not, which is why this test asserts the OUTPUT.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // Storage, with defaults. `::` is the mutability marker doing its
 // ordinary job; the default is only about construction.

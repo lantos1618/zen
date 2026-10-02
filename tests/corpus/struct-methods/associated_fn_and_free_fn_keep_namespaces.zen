@@ -15,10 +15,10 @@
 // Breaks if: the two forms share a candidate pool -- one line answers the
 // other's body (7/42 swap or a wrong-typed read).
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 W = {
     v: i32,

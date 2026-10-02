@@ -30,10 +30,10 @@
 // target's, not the language's, and "no corpus test may print a usize
 // extreme" for the same reason.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 BYTES: usize = i32.BITS / 8
 

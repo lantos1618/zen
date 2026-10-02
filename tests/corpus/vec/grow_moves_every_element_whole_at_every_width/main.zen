@@ -20,10 +20,10 @@
 // value from `get`, so what is asserted is storage, not a copy made by the
 // walk.
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

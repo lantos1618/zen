@@ -22,18 +22,18 @@
 // - Traps throw `ZenTrap` with the pre-formatted `file:line:col: ` (hex);
 //   the entry wrapper flushes output, reports and exits 134, like C.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Res, Ok, None, loop, Range = std.core
-Vec = std.collections
-Span = std.source
-Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
-Scalar, Op, TrapKind, Stream = gen.gen_ir
-Convert, Load, Store, SysCall, Start, HostCall, Marshal = gen.gen_ir
-width, trap_message = gen.gen_ir
-Sys, constant_value, Platform = gen.gen_sys
-write_runtime = gen.gen_js_runtime
-IrFeature = gen.gen_ir_feature
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Res, Ok, None, loop, Range } = std.core
+{ Vec } = std.collections
+{ Span } = std.source
+{ Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print } = gen.gen_ir
+{ Scalar, Op, TrapKind, Stream } = gen.gen_ir
+{ Convert, Load, Store, SysCall, Start, HostCall, Marshal } = gen.gen_ir
+{ width, trap_message } = gen.gen_ir
+{ Sys, constant_value, Platform } = gen.gen_sys
+{ write_runtime } = gen.gen_js_runtime
+{ IrFeature } = gen.gen_ir_feature
 
 // The part of the IR this renderer implements: all of it except the
 // thread primitives, since a JavaScript program runs on one thread. The

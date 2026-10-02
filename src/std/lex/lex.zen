@@ -1,14 +1,14 @@
 // Public surface of the lexer. `scan(alloc, source)` returns a `Lexed`: the
 // tokens plus the lexical faults found. Allocation failure is the only Err.
 
-Pos*, Span*, TokenKind*, Token*, Source*, kind_name* = std.lex.lex_token
+{ Pos*, Span*, TokenKind*, Token*, Source*, kind_name* } = std.lex.lex_token
 
-LexFault*, Diag*, message*                           = std.lex.lex_diag
+{ LexFault*, Diag*, message* }                           = std.lex.lex_diag
 
-Lexed*                                               = std.lex.lex_state
+{ Lexed* }                                               = std.lex.lex_state
 
-scan*, Keyword*, KEYWORD_COUNT*, keyword_at*, is_keyword*, is_zen_name*
+{ scan*, Keyword*, KEYWORD_COUNT*, keyword_at*, is_keyword*, is_zen_name* }
                                                      = std.lex.lex_scan
 
-LiteralError*, decode_literal*, literal_byte_len*,
-    text_block_literal*, text_block_at*, SourceAt*   = std.lex.lex_literal
+{ LiteralError*, decode_literal*, literal_byte_len*,
+    text_block_literal*, text_block_at*, SourceAt* }   = std.lex.lex_literal

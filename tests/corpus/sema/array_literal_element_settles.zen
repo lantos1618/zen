@@ -24,10 +24,10 @@
 // literal_too_large_in_an_array_element` is this file's other half,
 // where the 300 the `u8` cannot hold is refused rather than wrapped.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 takes_u8s = (xs: [u8, 3]) u32 {
     total :: u32 = 0;

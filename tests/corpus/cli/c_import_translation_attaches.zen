@@ -1,11 +1,11 @@
-CImport, Target, Os, Arch, Abi = std.build
-Ast, ModuleOrigin = std.ast
-CImportRequest, request = zen.zen_c_import
-CModule, CTranslation, CAttachedTranslation, attach, translate_ast = zen.zen_c_translate
-Res, Ok = std.core
-Alloc, AllocError = std.mem
-Env = std.env
-println = std.io
+{ CImport, Target, Os, Arch, Abi } = std.build
+{ Ast, ModuleOrigin } = std.ast
+{ CImportRequest, request } = zen.zen_c_import
+{ CModule, CTranslation, CAttachedTranslation, attach, translate_ast } = zen.zen_c_translate
+{ Res, Ok } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 spec = (a: Alloc) Res<CImport, AllocError> {
     headers ::= a.Vec<str>();

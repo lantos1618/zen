@@ -15,14 +15,14 @@
 //
 // Exit status: 0 nothing survived, 1 some mutant survived, 2 the run could
 // not be carried out.
-Alloc, AllocError = std.mem
-Vec = std.collections
-Res, Ok, loop, Range = std.core
-str, String = std.text
-Mutant, operator_name, collect = mutate_site
-Runner, Plan, Outcome, outcome_name, run_message = mutate_run
-Env = std.env
-println = std.io
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Res, Ok, loop, Range } = std.core
+{ str, String } = std.text
+{ Mutant, operator_name, collect } = mutate_site
+{ Runner, Plan, Outcome, outcome_name, run_message } = mutate_run
+{ Env } = std.env
+{ println } = std.io
 
 Cli = {
     root:        str,

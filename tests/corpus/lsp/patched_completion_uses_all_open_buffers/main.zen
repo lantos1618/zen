@@ -1,13 +1,13 @@
-str, String = std.text
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text = std.json
-Res, Ok, loop = std.core
-Env = std.env
-println = std.io
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text } = std.json
+{ Res, Ok, loop } = std.core
+{ Env } = std.env
+{ println } = std.io
 
-DOC*: str = "Point = app.shape\n\nnear = (q: Point) i32 {\n    q.\n}\n"
+DOC*: str = "{ Point } = app.shape\n\nnear = (q: Point) i32 {\n    q.\n}\n"
 
 URI*: str = "file://src/app/app.zen"
 

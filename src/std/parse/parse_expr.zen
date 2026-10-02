@@ -3,23 +3,23 @@
 // disambiguated by `parse_lookahead`; `.match(` and `.try(` are their own
 // nodes, not calls.
 
-AllocError = std.mem
-Ident, no_trivia = std.ast.ast_span
-Span = std.source
-ExprId, TypeId = std.ast.ast_id
-Expr, ExprKind, Name, Paren, ArrayLit, FixedArray, Lambda, Call, Arg = std.ast.ast_node
-Match, Arm, Try, Record, Access, Index, Unary, Binary, Consume, Meta = std.ast.ast_node
-Literal, LiteralKind, UnOp, BinOp, Param, TParam, Member = std.ast.ast_node
-TokenKind = std.parse.parse_token
-Parser, Mark = std.parse.parser
-type, type_args, written_type = std.parse.parse_type
-lambda_ahead, fixed_array_ahead, targs_ahead, starts_type = std.parse.parse_lookahead
-shift_ahead = std.parse.parse_lookahead
-pattern = std.parse.parse_pattern
-block, body_block = std.parse.parse_stmt
-record_body, params_list, type_params = std.parse.parse_member
-Res, Ok, None = std.core
-Vec = std.collections
+{ AllocError } = std.mem
+{ Ident, no_trivia } = std.ast.ast_span
+{ Span } = std.source
+{ ExprId, TypeId } = std.ast.ast_id
+{ Expr, ExprKind, Name, Paren, ArrayLit, FixedArray, Lambda, Call, Arg } = std.ast.ast_node
+{ Match, Arm, Try, Record, Access, Index, Unary, Binary, Consume, Meta } = std.ast.ast_node
+{ Literal, LiteralKind, UnOp, BinOp, Param, TParam, Member } = std.ast.ast_node
+{ TokenKind } = std.parse.parse_token
+{ Parser, Mark } = std.parse.parser
+{ type, type_args, written_type } = std.parse.parse_type
+{ lambda_ahead, fixed_array_ahead, targs_ahead, starts_type } = std.parse.parse_lookahead
+{ shift_ahead } = std.parse.parse_lookahead
+{ pattern } = std.parse.parse_pattern
+{ block, body_block } = std.parse.parse_stmt
+{ record_body, params_list, type_params } = std.parse.parse_member
+{ Res, Ok, None } = std.core
+{ Vec } = std.collections
 
 // `consume` has the lowest binding strength: `consume a + b` moves the sum.
 // Every nested expression may use `|` again, even inside a discriminant.
@@ -231,7 +231,7 @@ check_grouping = (
 
 // Which side of the outer operator the inner operation sits on, carrying the
 // outer operator's other operand.
-Grouped = Left(ExprId) | Right(ExprId)
+Grouped = { Left: ExprId | Right: ExprId }
 
 // An unparenthesized binary operation that is an operand of another.
 Nested = {

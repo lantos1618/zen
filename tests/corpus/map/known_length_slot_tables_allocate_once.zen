@@ -1,7 +1,7 @@
-Res, Ok, Range, Eq, Hash, Hasher = std.core
-Alloc, AllocError, Ptr = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range, Eq, Hash, Hasher } = std.core
+{ Alloc, AllocError, Ptr } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // Known-length hash slot tables allocate once per rehash.
 // The old geometric slot initializer makes 40 calls instead of 18.

@@ -1,9 +1,9 @@
 // Experimental native SHA-256, RFC 6234. No side-channel/erasure guarantee.
 // Caller owns 72 aligned u32 words and 64 writable bytes, mutually disjoint
 // and disjoint from input/output. Pointers and capacities are caller contracts.
-Ptr = std.mem
-Res, Ok, Range = std.core
-bit_xor, bit_and, rotate_right, shift_right, to_u32, to_u64, to_u8, to_usize = std.core.num
+{ Ptr } = std.mem
+{ Res, Ok, Range } = std.core
+{ bit_xor, bit_and, rotate_right, shift_right, to_u32, to_u64, to_u8, to_usize } = std.core.num
 
 Sha256* = {
     words: Ptr<u32>,

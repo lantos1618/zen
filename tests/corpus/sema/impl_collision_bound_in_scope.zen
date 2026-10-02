@@ -2,10 +2,10 @@
 // scope selects which one is in view -- never file order. DESIGN.md,
 // Declarations. the no-bound case is must-fail/sema/impl_collision_no_bound.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Boxy = {
     width: i32,

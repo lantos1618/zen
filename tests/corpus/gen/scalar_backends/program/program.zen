@@ -1,5 +1,5 @@
-Env = std.env
-println = std.io
+{ Env } = std.env
+{ println } = std.io
 
 maths = helpers
 

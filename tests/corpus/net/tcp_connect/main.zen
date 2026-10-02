@@ -1,11 +1,11 @@
 // Connect, partial reads, full writes and idempotent close over loopback.
 
-TcpStream, TcpError = std.net.tcp
-Res, Ok = std.core
-AllocError = std.mem
-Vec = std.collections
-Env = std.env
-println = std.io
+{ TcpStream, TcpError } = std.net.tcp
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 // tests/run.py replaces this after binding its private IPv4 listener.
 HARNESS_PORT* : u16 = 0

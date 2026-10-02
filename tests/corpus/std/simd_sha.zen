@@ -4,10 +4,10 @@
 // one FIPS 180-4 block ("abc") hashed with each instruction set. Every line
 // prints the same on a CPU without a feature: the check runs only where the
 // capability is detected.
-sha_ni, arm_sha2, arm_sha512, ShaNi, ArmSha2, ArmSha512 = std.simd
-lanes_u32x4, lanes_u64x2 = std.simd
-Range = std.core
-println = std.io
+{ sha_ni, arm_sha2, arm_sha512, ShaNi, ArmSha2, ArmSha512 } = std.simd
+{ lanes_u32x4, lanes_u64x2 } = std.simd
+{ Range } = std.core
+{ println } = std.io
 
 Rng = {
     s :: u64,

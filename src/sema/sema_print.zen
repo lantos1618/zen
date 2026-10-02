@@ -5,21 +5,21 @@
 // and backends consume the recorded `Printer` by declaration identity, never
 // by a callee's spelling: a module that imports some other `println` calls
 // that function.
-Function = std.ast
-AllocError = std.mem
-str = std.text
-Checker, Ctx = sema.sema_check
-Def = sema.sema_def
-param_type, ret_type = sema.sema_denote
-SemaFault, NameFault = sema.sema_diag
-Res, Ok, None = std.core
+{ Function } = std.ast
+{ AllocError } = std.mem
+{ str } = std.text
+{ Checker, Ctx } = sema.sema_check
+{ Def } = sema.sema_def
+{ param_type, ret_type } = sema.sema_denote
+{ SemaFault, NameFault } = sema.sema_diag
+{ Res, Ok, None } = std.core
 
 // The module that declares the printers. A missing-import diagnostic for
 // either name points here.
 IO_MODULE*: str = "std.io"
 
 // `Line` writes a newline after its arguments; `Bare` does not.
-Printer* = Line | Bare
+Printer* = { Line | Bare }
 
 printer_named* = (name: str) Res<Printer> {
     name.match({

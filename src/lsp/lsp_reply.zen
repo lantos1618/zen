@@ -2,13 +2,13 @@
 // capabilities. A message without an `id` is a notification and gets no
 // response.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Jsons, JsonId, write_text, written, obj, arr, Nest,
-    JsonFault, to_json = std.json
-write_bool = std.json.json_meta
-write_legend = lsp.lsp_colour
-Res, Ok, None, loop = std.core
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Jsons, JsonId, write_text, written, obj, arr, Nest,
+    JsonFault, to_json } = std.json
+{ write_bool } = std.json.json_meta
+{ write_legend } = lsp.lsp_colour
+{ Res, Ok, None, loop } = std.core
 
 // Absent fields read as "" / 0 / the enclosing value.
 Decoded* = {
@@ -344,7 +344,7 @@ write_capabilities* = (a: Alloc, out :: String) Res<(), AllocError> {
 
 SEMANTIC_TOKENS: str = "textDocument/semanticTokens/full"
 
-Request* = Initialize
+Request* = { Initialize
     | Shutdown
     | Hover
     | Definition
@@ -353,7 +353,7 @@ Request* = Initialize
     | Colour
     | Format
     | Action
-    | Unknown
+    | Unknown }
 
 request_of* = (method: str) Request {
     found: Res<Request> = loop<Request>((h) {
@@ -374,7 +374,7 @@ request_of* = (method: str) Request {
     });
 }
 
-Notice* = DidOpen | DidChange | DidClose | DidChangeWatched | Ignored
+Notice* = { DidOpen | DidChange | DidClose | DidChangeWatched | Ignored }
 
 notice_of* = (method: str) Notice {
     found: Res<Notice> = loop<Notice>((h) {
@@ -392,11 +392,11 @@ notice_of* = (method: str) Notice {
     });
 }
 
-RpcFault* = InvalidRequest
+RpcFault* = { InvalidRequest
     | ParseError
     | MethodNotFound
     | InvalidParams
-    | NotInitialized
+    | NotInitialized }
 
 rpc_code = (f: RpcFault) i32 {
     f.match({

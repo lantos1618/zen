@@ -1,5 +1,5 @@
-Range = std.core
-println = std.io
+{ Range } = std.core
+{ println } = std.io
 
 // A dense integer match of literals lowers to a static table
 // (gen_c_table.zen); every index, the fallback, and a negative

@@ -5,9 +5,9 @@
 // bound, the call went to `Stream.close` with a `Thing` argument, which
 // only the C compiler caught. `closed` reads the state `close` wrote.
 
-Res, Ok = std.core
-Env = std.env
-Actor, ActorError, ActorStartError, Context = std.actor
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context } = std.actor
 
 Closer = {
     closed* = (self: @Self) i32
@@ -25,7 +25,7 @@ Holder.impl(Actor, {
         ctx.env.out.println("closed {}", self.inner.closed()).ignore();
     }
 })
-Stream = std.net.tls
+{ Stream } = std.net.tls
 
 main = (env: Env) Res<i32, ActorStartError | ActorError> {
     h = env.spawn(Holder<Thing>(inner: Thing())).try();

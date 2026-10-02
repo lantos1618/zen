@@ -14,10 +14,10 @@
 // exist for. Neither file is worth anything without the other: one
 // alone can be passed by doing nothing, or by hoisting everything.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Counter = {
     n :: i32,

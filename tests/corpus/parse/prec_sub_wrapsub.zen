@@ -2,9 +2,9 @@
 // max - one -% max is (max - one) -% max = -1.
 // the other reading, max - (one -% max), TRAPS on overflow.
 
-Res, Ok = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, ArgError> {
     max: i32 = 2147483647;

@@ -15,12 +15,12 @@
 // drops the payload prints 0 or garbage. Only the right unwrap prints
 // 2147483647.
 
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
 
-Inner = | InnerBoom
-Outer = | OuterBoom
+Inner = { | InnerBoom }
+Outer = { | OuterBoom }
 Any = Inner | Outer
 
 leaf = (n: i64) Res<i64, Inner> {

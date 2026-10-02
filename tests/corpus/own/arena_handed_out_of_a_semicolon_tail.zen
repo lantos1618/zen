@@ -1,10 +1,10 @@
 // An arena returned from a semicolon-terminated match arm outlives the arm.
 // Growing a new Vec proves its allocator state remains live.
 
-Res, Ok, Range, IoError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | IoError
 

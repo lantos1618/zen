@@ -1,9 +1,9 @@
 // Process policy lives in Zen. The C backend emits only the POSIX ABI floor.
 // Argument vectors execute directly; `run` explicitly uses /bin/sh -c.
-Alloc, AllocError, Ptr, null_ptr = std.mem
-str, String, str_at, c_text = std.text
-Vec = std.collections
-Res, Ok, Err, ok_or, loop, Range, IoError, WriteError, Sink = std.core
+{ Alloc, AllocError, Ptr, null_ptr } = std.mem
+{ str, String, str_at, c_text } = std.text
+{ Vec } = std.collections
+{ Res, Ok, Err, ok_or, loop, Range, IoError, WriteError, Sink } = std.core
 
 zg_os_proc_pipe = (fds: Ptr<i32>) i32
 zg_os_proc_close = (fd: i32) ()
@@ -21,14 +21,14 @@ zg_os_proc_kill = (pid: i32) ()
 
 // File-creation policy is process-wide, including native libraries and children.
 // Set at startup before concurrent work; this is not an actor-local setting.
-CreationMask* = OwnerOnly | Bits(u32)
+CreationMask* = { OwnerOnly | Bits: u32 }
 FileCreation = c.bind("sys/stat.h", {
     umask = (mask: u32) u32
     S_IRWXG: u32
     S_IRWXO: u32
 })
 
-ProcError* = SpawnFailed | WaitFailed | ReadFailed
+ProcError* = { SpawnFailed | WaitFailed | ReadFailed }
 ProcStreamError* = ProcError | AllocError | IoError
 ProcOutput* = { code*: i32, out*: String, err*: String }
 

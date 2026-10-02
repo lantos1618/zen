@@ -10,9 +10,9 @@
 // the reject side is must-fail/own/double_consume.zen: moving twice
 // from one name is an error; moving THROUGH two names is the point.
 
-Res, Ok, Drop, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Noisy = {
     env: Env,

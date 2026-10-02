@@ -1,6 +1,6 @@
-Res, Ok, hex_digit = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok, hex_digit } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
 // every predicate in std.core.byte answers about the byte ALONE.
 // str is bytes, so a multi-byte character's continuation byte is not

@@ -4,13 +4,13 @@
 // file opens with a declaration, above that declaration and the comment
 // attached to it. Names are listed in a fixed order and modules come in a
 // fixed order, so the same names always produce the same text.
-Res, Ok, Err, None, loop, Range = std.core
-scan, Source = std.lex
-Parser = std.parse
-Decl = std.ast
-Alloc, AllocError = std.mem
-Vec = std.collections
-str, String = std.text
+{ Res, Ok, Err, None, loop, Range } = std.core
+{ scan, Source } = std.lex
+{ Parser } = std.parse
+{ Decl } = std.ast
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
 Missing = imports_report
 
 // Modules first in this order, then any other in the order first reported.
@@ -45,7 +45,7 @@ NAME_ORDER: [str, 90] = [str, 90](
 
 WIDTH: usize = 80
 
-EditError* = Unparsed | NoDeclaration | OutOfMemory
+EditError* = { Unparsed | NoDeclaration | OutOfMemory }
 
 // Source lines numbered `from` or later moved `down` lines down and `up`
 // lines up; one of the two is zero.

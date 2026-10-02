@@ -10,60 +10,60 @@
 // mutable parameter (`::`) receives the address of the caller's place.
 // Unsupported reachable constructs fail before any artifact is published.
 
-Alloc, AllocError, null_ptr = std.mem
-Vec, Map = std.collections
-String, str = std.text
-Res, Ok, Err, None, loop, Range = std.core
-decode_literal = std.lex
-Ast, ExprId, BlockId, TypeId, Function, Literal, Bind, Deferred = std.ast
-Span = std.source
-BinOp, UnOp, Match, Call, Expr, Pattern, Lambda, Param, Access, Index = std.ast
-TParam, Arg = std.ast
-PatternId = std.ast
-nowhere = std.source
-Checker, DeclId, Def, TyId, Ctx, Inst, decl_at = sema.sema
-subst, type_from_ast, is_prim, const_int, fits = sema.sema
-Pat, PatReading, read_pattern = sema.sema
-is_drop_type = sema.sema_drop
-Scalar, Layout, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print = gen.gen_ir
-Branch, Instruction, Func, Program, BasicBlock, Terminator = gen.gen_ir
-Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault = gen.gen_ir
-Guards, TagGuard, PayloadRead = gen.gen_ir
-word, integer, same, width = gen.gen_ir
-LowerError, unsupported = gen.gen_lower
-Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of = gen.gen_lower_shape
-to_bound, resolve = gen.gen_lower_member
-walk, WalkVisitor, WalkEvent, WalkNode = std.ast.ast_walk
-real_call = gen.gen_lower_call
-capability = gen.gen_lower_shape
-variant_index, size_of, TAG_BYTES = gen.gen_lower_shape
-call, construct_named, print_call, sys_env_call, Source, bits, bit_not = gen.gen_lower_call
-SynthAt, lower_pending = gen.gen_lower_thread
+{ Alloc, AllocError, null_ptr } = std.mem
+{ Vec, Map } = std.collections
+{ String, str } = std.text
+{ Res, Ok, Err, None, loop, Range } = std.core
+{ decode_literal } = std.lex
+{ Ast, ExprId, BlockId, TypeId, Function, Literal, Bind, Deferred } = std.ast
+{ Span } = std.source
+{ BinOp, UnOp, Match, Call, Expr, Pattern, Lambda, Param, Access, Index } = std.ast
+{ TParam, Arg } = std.ast
+{ PatternId } = std.ast
+{ nowhere } = std.source
+{ Checker, DeclId, Def, TyId, Ctx, Inst, decl_at } = sema.sema
+{ subst, type_from_ast, is_prim, const_int, fits } = sema.sema
+{ Pat, PatReading, read_pattern } = sema.sema
+{ is_drop_type } = sema.sema_drop
+{ Scalar, Layout, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print } = gen.gen_ir
+{ Branch, Instruction, Func, Program, BasicBlock, Terminator } = gen.gen_ir
+{ Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault } = gen.gen_ir
+{ Guards, TagGuard, PayloadRead } = gen.gen_ir
+{ word, integer, same, width } = gen.gen_ir
+{ LowerError, unsupported } = gen.gen_lower
+{ Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of } = gen.gen_lower_shape
+{ to_bound, resolve } = gen.gen_lower_member
+{ walk, WalkVisitor, WalkEvent, WalkNode } = std.ast.ast_walk
+{ real_call } = gen.gen_lower_call
+{ capability } = gen.gen_lower_shape
+{ variant_index, size_of, TAG_BYTES } = gen.gen_lower_shape
+{ call, construct_named, print_call, sys_env_call, Source, bits, bit_not } = gen.gen_lower_call
+{ SynthAt, lower_pending } = gen.gen_lower_thread
 
 // A value computed into a slot, with its concrete (substituted) type.
 Value* = { slot*: usize, ty*: TyId }
 
 // Where a readable, writable value lives: in a slot, or behind a pointer
 // held in a slot, at a byte offset.
-Base* = InSlot(usize) | Through(usize)
+Base* = { InSlot: usize | Through: usize }
 Place* = { base*: Base, offset*: usize, ty*: TyId }
 
 // A closure is never a runtime value: it is inlined where it is called,
 // in the frame that wrote it.
 LambdaRef* = { expr*: ExprId, frame*: usize }
 
-LocalKind* = Direct(Value)
-    | Ref(Place)
-    | Closure(LambdaRef)
-    | Handle(usize)
-    | Capability(TyId)
+LocalKind* = { Direct: Value
+    | Ref: Place
+    | Closure: LambdaRef
+    | Handle: usize
+    | Capability: TyId }
 
 Local* = { name*: str, frame*: usize, kind*: LocalKind }
 
 Expected* = { id*: ExprId, ty*: TyId }
 
 // What a block's value is written as, for deciding what it hands out.
-Tail = Expression(ExprId) | Nested(BlockId) | Nothing
+Tail = { Expression: ExprId | Nested: BlockId | Nothing }
 
 Broken* = { ty*: TyId, fault*: LowerError }
 

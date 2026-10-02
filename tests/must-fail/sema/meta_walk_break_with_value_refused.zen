@@ -6,9 +6,9 @@
 //
 // position: the break call, which is the refused sentence.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
 One = { only: i64 }
 

@@ -6,9 +6,9 @@
 // walk refuses at the tail is the NAME `s`, carrying the keyword's own
 // fault with it.
 
-Res, Ok, Scope, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Scope, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 here = () Scope {
     s = @scope;

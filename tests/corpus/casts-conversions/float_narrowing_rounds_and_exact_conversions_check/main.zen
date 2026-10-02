@@ -15,10 +15,10 @@
 // {}'s float digit count is unspecified, so every line compares and prints
 // its verdict rather than the float itself.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 opt = (r: Res<i64>) str { r.match({ Ok(_) => "some", None => "none" }) }
 opt32 = (r: Res<i32>) str { r.match({ Ok(_) => "some", None => "none" }) }

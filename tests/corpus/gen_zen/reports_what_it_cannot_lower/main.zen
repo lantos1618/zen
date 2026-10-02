@@ -8,19 +8,19 @@
 // This test is the honest inventory. Each program below names one thing
 // the backend refuses, and the refusal is what is asserted.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec = std.collections
-Source, scan = std.lex
-Parser = std.parse.parser
-module = std.parse.parse_decl
-Ast = std.ast.ast_arena
-Checker = sema.sema_check
-Emit = gen.gen_emit
-CBackend, emit_program = gen.gen_c
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Source, scan } = std.lex
+{ Parser } = std.parse.parser
+{ module } = std.parse.parse_decl
+{ Ast } = std.ast.ast_arena
+{ Checker } = sema.sema_check
+{ Emit } = gen.gen_emit
+{ CBackend, emit_program } = gen.gen_c
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 // a generic function IS monomorphised now — once per set of type
 // arguments, with the arguments in the symbol. What is still refused is

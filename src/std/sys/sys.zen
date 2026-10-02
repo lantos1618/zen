@@ -13,9 +13,9 @@
 // lengths, environment lookup, whole-buffer writes and reads, clocks,
 // randomness, and `Pages`, an `Alloc` that maps each run directly.
 
-Alloc, AllocError, Ptr, null_ptr = std.mem
-str, String = std.text
-Res, Ok, Err, None, loop, WriteError, Sink = std.core
+{ Alloc, AllocError, Ptr, null_ptr } = std.mem
+{ str, String } = std.text
+{ Res, Ok, Err, None, loop, WriteError, Sink } = std.core
 
 // ---------------------------------------------------------------------
 // operations (compiler-provided per target)

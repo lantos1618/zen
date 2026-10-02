@@ -14,10 +14,10 @@
 // The println sits AFTER the inner loop on purpose: it is the proof
 // the exit jumped past both frames and not merely out of one.
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     Range(0, 5).loop((h_outer, outer) {

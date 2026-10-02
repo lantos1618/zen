@@ -1,7 +1,7 @@
-Res, Ok, None = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, None } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 State = {
     number :: Res<i32>,

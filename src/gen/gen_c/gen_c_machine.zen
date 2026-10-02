@@ -6,25 +6,25 @@
 // and vector extensions; another toolchain is refused with #error rather
 // than silently narrowed or scalarized.
 
-Call, ExprId, ArrayLit, Function = std.ast
-AllocError = std.mem
-Vec = std.collections
-String, str = std.text
-Res, Ok, None, Range = std.core
-Primitive, unsigned_width, is_capability, vector_bytes = sema.sema_prim
-Ctx = sema.sema_check
-TyId = sema.sema_ty
-vector_lanes, vector_lane = sema.sema_ty
-const_int = sema.sema_const
-Emit, order = gen.gen_emit
-CBackend = gen.gen_c.gen_c_state
-comment = gen.gen_c.gen_c_runtime
-c_prim = gen.gen_c.gen_c_type
-expr = gen.gen_c.gen_c_expr
-temp = gen.gen_c.gen_c_flow
-recv_arg, arg_value = gen.gen_c.gen_c_arg
-write_position = gen.gen_c.gen_c_op
-ELEMS = gen.gen_c.gen_c_array
+{ Call, ExprId, ArrayLit, Function } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ String, str } = std.text
+{ Res, Ok, None, Range } = std.core
+{ Primitive, unsigned_width, is_capability, vector_bytes } = sema.sema_prim
+{ Ctx } = sema.sema_check
+{ TyId } = sema.sema_ty
+{ vector_lanes, vector_lane } = sema.sema_ty
+{ const_int } = sema.sema_const
+{ Emit, order } = gen.gen_emit
+{ CBackend } = gen.gen_c.gen_c_state
+{ comment } = gen.gen_c.gen_c_runtime
+{ c_prim } = gen.gen_c.gen_c_type
+{ expr } = gen.gen_c.gen_c_expr
+{ temp } = gen.gen_c.gen_c_flow
+{ recv_arg, arg_value } = gen.gen_c.gen_c_arg
+{ write_position } = gen.gen_c.gen_c_op
+{ ELEMS } = gen.gen_c.gen_c_array
 
 emit_machine* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     be.uses_machine().match({

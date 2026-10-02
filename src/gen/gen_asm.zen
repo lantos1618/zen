@@ -1,10 +1,10 @@
 // Assembly targets consume verified scalar IR without consulting the AST or
 // semantic checker. A target identifies its instruction set, object dialect,
 // operating system and calling ABI; it never selects the host implicitly.
-AllocError = std.mem
-String = std.text
-Program = gen.gen_ir
-Res = std.core
+{ AllocError } = std.mem
+{ String } = std.text
+{ Program } = gen.gen_ir
+{ Res } = std.core
 
 // Implementations preserve ordered effects, control flow, checked arithmetic,
 // source-position traps and byte output. Machine instructions, register and

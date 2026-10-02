@@ -25,9 +25,9 @@
 // EXPRESSION statement and nothing else, and this reader now agrees
 // with it rather than guessing.
 
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 apply = <T>(f: () T) T { f() }
 

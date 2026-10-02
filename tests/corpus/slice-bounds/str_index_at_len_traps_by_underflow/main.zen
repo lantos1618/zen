@@ -12,13 +12,13 @@
 // it answering None, the contrast that shows the trap belongs to `[]`,
 // whose out-of-range is a BUG, and not to get, whose miss is a value.
 
-Res, Ok = std.core
-OutOfBounds = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ OutOfBounds } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 // a trap never lifts into Res: it aborts the process
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 at_len = (s: str, i: usize) u8 { s[i] }
 

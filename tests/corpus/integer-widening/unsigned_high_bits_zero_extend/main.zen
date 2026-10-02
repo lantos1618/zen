@@ -25,10 +25,10 @@
 // `must-fail/traps/literal_too_large_in_an_array_element`'s owner;
 // this file only pins that legal values arrive whole.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a: u8 = 255;

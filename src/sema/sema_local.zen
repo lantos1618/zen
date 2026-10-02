@@ -9,15 +9,15 @@
 // function. The name is bound after the body is checked, so a local function
 // cannot call itself.
 
-Decl, Function, Lambda = std.ast
-AllocError = std.mem
-TyId = sema.sema_ty
-Checker, Ctx = sema.sema_check
-SemaFault, NameFault = sema.sema_diag
-param_type, ret_type, signature_type = sema.sema_denote
-check_return = sema.sema_hoist
-block_type = sema.sema_type
-Res, Ok, None = std.core
+{ Decl, Function, Lambda } = std.ast
+{ AllocError } = std.mem
+{ TyId } = sema.sema_ty
+{ Checker, Ctx } = sema.sema_check
+{ SemaFault, NameFault } = sema.sema_diag
+{ param_type, ret_type, signature_type } = sema.sema_denote
+{ check_return } = sema.sema_hoist
+{ block_type } = sema.sema_type
+{ Res, Ok, None } = std.core
 
 // A nested declaration's statement type. Only functions are given meaning
 // here; other nested declarations are refused by lowering.

@@ -16,13 +16,13 @@
 // `cli` takes a `Vec<str>` and touches no capability, which is why this
 // test can hand it argument vectors no real command line would produce.
 
-Alloc, AllocError = std.mem
-Vec = std.collections
-str = std.text
-Cli, cli = zen
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Cli, cli } = zen
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

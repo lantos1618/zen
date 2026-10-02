@@ -1,9 +1,9 @@
 // `+` and `-` are the same precedence and associate LEFT:
 // 10 - 3 + 2 is (10 - 3) + 2 = 9, not 10 - (3 + 2) = 5.
 
-Res, Ok = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, ArgError> {
     v = 10 - 3 + 2;

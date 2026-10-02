@@ -5,14 +5,14 @@
 // unchecked, it reached `zg_div_i8`'s int8_t parameter as -56 and the
 // division answered -1
 
-Res, Ok = std.core
-OutOfBounds = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ OutOfBounds } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 // main must name an error type. a trap never lifts into Res:
 // it aborts the process
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 main = (env: Env) Res<i32, Error> {
     n: i8 = 100;

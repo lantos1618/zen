@@ -3,10 +3,10 @@
 //
 // position: the call with a missing argument.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Shower = {
     show* ::= (self: @Self, a: i32, b: i32) i32

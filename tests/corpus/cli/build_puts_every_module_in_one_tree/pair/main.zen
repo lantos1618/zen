@@ -10,7 +10,7 @@
 // neither module stand alone: drop either one from the tree and the
 // other references an id that is not in it.
 
-Leaf, leaf_value = pair
+{ Leaf, leaf_value } = pair
 
 Tag* = {
     mark*: i32,

@@ -5,9 +5,9 @@
 // wrong number.
 // ASSUMPTION: DESIGN.md never says where `+%` sits relative to `+`.
 
-Res, Ok = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, ArgError> {
     a: i32 = -3;

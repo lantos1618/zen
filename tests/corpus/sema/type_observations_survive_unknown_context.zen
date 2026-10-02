@@ -1,11 +1,11 @@
-Ast, Type, TypeKind, no_trivia = std.ast
-nowhere = std.source
-Checker, Ctx = sema.sema_check
-type_from_ast = sema.sema_denote
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Ast, Type, TypeKind, no_trivia } = std.ast
+{ nowhere } = std.source
+{ Checker, Ctx } = sema.sema_check
+{ type_from_ast } = sema.sema_denote
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a    ::= env.mem.alloc();

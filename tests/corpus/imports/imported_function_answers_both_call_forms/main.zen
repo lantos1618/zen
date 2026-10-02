@@ -1,0 +1,11 @@
+// An imported free function is reachable in both call forms: `b.describe()`
+// and `describe(b)` resolve to the same declaration and print the same value.
+
+{ Box, describe } = box.box
+
+main = (env: Env) Res<i32, IoError> {
+    b = Box(label: 3);
+    println("{}", b.describe());
+    println("{}", describe(b));
+    Ok(0);
+}

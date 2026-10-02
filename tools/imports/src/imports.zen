@@ -28,14 +28,14 @@
 //
 // Exit status: 0 nothing (more) to add, 1 imports were added or would be,
 // 2 the run could not be carried out.
-Res, Ok, Err, None = std.core
-Alloc, AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Env = std.env
-println = std.io
-Missing, missing_in = imports_report
-insert_imports, Edited, EditError = imports_edit
+{ Res, Ok, Err, None } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Env } = std.env
+{ println } = std.io
+{ Missing, missing_in } = imports_report
+{ insert_imports, Edited, EditError } = imports_edit
 shift_positions = imports_expected
 
 Cli = {

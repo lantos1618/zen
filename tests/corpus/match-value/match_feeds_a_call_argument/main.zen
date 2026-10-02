@@ -18,11 +18,11 @@
 // test exists to catch, and value position is where it hides --
 // statement position would force the two halves apart.
 
-Res, Ok = std.core
-AllocError = std.mem
-Vec = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 push = (env: Env, v :: Vec<i32>, n: i32) Res<i32, AllocError> {
     v.add(n).try();

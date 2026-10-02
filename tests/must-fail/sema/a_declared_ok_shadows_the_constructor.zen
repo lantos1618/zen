@@ -4,10 +4,10 @@
 //
 // position: the call.
 
-Res = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Ok = (x: i32) i32 { x + 1 }
 

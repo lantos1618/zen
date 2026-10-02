@@ -2,11 +2,11 @@
 // Phase order is parse modules -> run build.zen -> compile: a build may
 // inspect parsed declarations, but cannot call code from its project.
 
-Alloc, AllocError = std.mem
-Env = std.env
-Vec = std.collections
-str = std.text
-Res, Ok, None, Range, Path, Duration = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ Vec } = std.collections
+{ str } = std.text
+{ Res, Ok, None, Range, Path, Duration } = std.core
 
 Module* = {
     functions* = (self: @Self, a: Alloc) Res<Vec<Function>, AllocError>
@@ -14,15 +14,15 @@ Module* = {
 
 Function* = {}
 
-BuildFault* = NotFound | FetchFailed | VersionConflict | HashMismatch
+BuildFault* = { NotFound | FetchFailed | VersionConflict | HashMismatch }
 
 BuildError* = BuildFault | AllocError
 
-Os* = Macos | Linux | Windows
+Os* = { Macos | Linux | Windows }
 
-Arch* = X86_64 | Arm64
+Arch* = { X86_64 | Arm64 }
 
-Abi* = Gnu | Musl | Msvc | Darwin
+Abi* = { Gnu | Musl | Msvc | Darwin }
 
 StableName* = {
     stable_name* ::= (self: @Self) str
@@ -224,13 +224,13 @@ Budget* = {
 // `release` (`--release`) or `small`. A build file reads it with `b.mode()`.
 // Debug compiles unoptimized, Release optimizes for speed, and Small
 // optimizes for size, drops unreferenced code at link time and strips.
-Mode* = Debug | Release | Small
+Mode* = { Debug | Release | Small }
 
 // A target's own optimization, overriding its mode's.
-Optimize* = Debug | Speed | Size
+Optimize* = { Debug | Speed | Size }
 
 // The C compiler for a native target. Custom names an executable.
-Cc* = Clang | Gcc | Tcc | Custom(Path)
+Cc* = { Clang | Gcc | Tcc | Custom: Path }
 
 Mode.impl(StableName, {
     stable_name = (self: @Self) str {
@@ -250,7 +250,7 @@ mode_named* = (text: str) Res<Mode> {
 
 // Generator choice is independent of artifact delivery and OS/arch/ABI.
 // Only implemented generators are admitted; unknown names never fall back.
-Codegen* = C | Js | Asm
+Codegen* = { C | Js | Asm }
 
 Codegen* = (name: str) Res<Codegen> {
     name.match({
@@ -263,9 +263,21 @@ Codegen.impl(StableName, {
 })
 
 // Check emits nothing. Other modes describe where generated artifacts go.
-Emission* = Check | Stdout | File(str) | Directory(str)
+Emission* = { Check | Stdout | File: str | Directory: str }
 
-Permutation* = Natural | Reverse | Rotate | Interleave
+Permutation* = {
+    Natural | Reverse | Rotate | Interleave,
+
+    // The position the `i`th of `n` items takes in this order.
+    index* = (self: @Self, n: usize, i: usize) usize {
+        self.match({
+            Natural    => i,
+            Reverse    => n - 1 - i,
+            Rotate     => (i + 1) % n,
+            Interleave => interleaved(n, i),
+        })
+    }
+}
 
 Permutation.impl(StableName, {
     stable_name = (self: @Self) str {
@@ -277,15 +289,6 @@ Permutation.impl(StableName, {
         })
     }
 })
-
-index* = (self: Permutation, n: usize, i: usize) usize {
-    self.match({
-        Natural    => i,
-        Reverse    => n - 1 - i,
-        Rotate     => (i + 1) % n,
-        Interleave => interleaved(n, i),
-    })
-}
 
 interleaved = (n: usize, i: usize) usize {
     half = n / 2;

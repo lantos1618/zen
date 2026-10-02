@@ -3,7 +3,7 @@
 A systems language: Pony's actors and capabilities, Zig's explicitness, and one rule for everything else.
 
 ```groovy
-Shape = Circle(Circle) | Rect(Rect) | Unit
+Shape = { Circle: Circle | Rect: Rect | Unit }
 
 Shape.impl(Display, {
     toString ::= (self: @Self, out :: Sink) Res<(), WriteError> {
@@ -44,7 +44,7 @@ have to align with JSON tokens. Text, keys, and number events own their bytes;
 call `finish` once when the document ends.
 
 ```groovy
-JsonEvent, JsonFault = std.json
+{ JsonEvent, JsonFault } = std.json
 
 decode = (alloc: Alloc, first: str, second: str)
          Res<Vec<JsonEvent>, JsonFault> {

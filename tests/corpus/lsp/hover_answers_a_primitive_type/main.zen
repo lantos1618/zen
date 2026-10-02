@@ -1,15 +1,15 @@
 // Hover on a written primitive includes its std.core documentation and exported
 // members. Hover on a value remains its short resolved type name.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text = std.json
-Res, Ok, loop = std.core
-Vec = std.collections
-Env = std.env
-println = std.io
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text } = std.json
+{ Res, Ok, loop } = std.core
+{ Vec } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 // The program hovered over: one function whose every type is a
 // primitive std.core declares.

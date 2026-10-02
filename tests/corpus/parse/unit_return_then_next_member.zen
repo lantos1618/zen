@@ -14,9 +14,9 @@
 //
 // The pair below is the whole test: remove either member and it parses.
 
-Res, Ok = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
 Handle = {
     next* = (self: @Self) ()

@@ -1,2 +1,2 @@
 // Shared, so unchecked itself, but it reaches sema in two hops.
-spell = gen.gen_name
+{ spell } = gen.gen_name

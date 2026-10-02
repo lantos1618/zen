@@ -1,6 +1,6 @@
-Res, Ok = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
 // MUST FAIL: two arms of a `.match` with genuinely different types.
 // src/sema/sema_join.zen's own header states the rule: "two arms of

@@ -7,10 +7,10 @@
 //
 // The harness feeds main.stdin (empty = a pipe that closes at once).
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

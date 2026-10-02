@@ -6,9 +6,9 @@
 // a dead Vec, and there is no single binding the checker could mark
 // dead to prevent that. you may only move what this frame owns.
 
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     args = consume env.argv;

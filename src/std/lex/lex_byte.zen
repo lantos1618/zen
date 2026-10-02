@@ -1,17 +1,17 @@
 // Token-opening byte classes. General ASCII predicates live on u8;
 // punctuation is classified separately by lex_punct.
 
-Res, Ok, None, loop = std.core
+{ Res, Ok, None, loop } = std.core
 
 ByteClass* =
-      Space      // skipped; never a token
+      { Space      // skipped; never a token
     | Slash      // `//`, `/*`, or `/`; lex_scan peeks one byte to decide
     | Quote
     | Apos
     | Digit
     | Letter     // an identifier's first byte, `_` included
     | At         // the `@` namespace; lex_scan validates the name
-    | Other      // punctuation, or a byte that begins no token
+    | Other }      // punctuation, or a byte that begins no token
 
 // Valid single-byte escapes. Unknown escapes are lexical errors.
 is_escape* = (b: u8) bool {

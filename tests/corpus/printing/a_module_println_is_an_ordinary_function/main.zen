@@ -3,7 +3,7 @@
 // this call returns the count `log.println` computes and writes nothing on
 // its own.
 println = log
-print = std.io
+{ print } = std.io
 
 main = () i32 {
     n = println("abc");

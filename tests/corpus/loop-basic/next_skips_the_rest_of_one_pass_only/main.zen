@@ -6,10 +6,10 @@
 // the loop's end instead of its increment, eats passes; each shape
 // here names how many tails printed, so a eaten pass moves a count
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

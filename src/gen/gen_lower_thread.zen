@@ -11,26 +11,26 @@
 // record, where `join` reads it at the type the join is expected at, the
 // same contract the C backend's pthread trampoline keeps.
 
-Alloc, AllocError = std.mem
-Vec, Map = std.collections
-String, str = std.text
-Res, Ok, Err, None, Range = std.core
-ExprId, Call, Lambda, TypeId = std.ast
-Span, nowhere = std.source
-TyId, Inst, Def, decl_at = sema.sema
-walk, WalkNode = std.ast.ast_walk
-Scalar, Layout, Op, Const, Move, Binary, Instruction, Load, Store, Address = gen.gen_ir
-Update, UpdateOp, Compare, CodeRef, IndirectCall, Start, StartValue, SysCall = gen.gen_ir
-Invocation, Pages, Convert, width, integer = gen.gen_ir
-Func, BasicBlock, Terminator, Fault, TrapKind = gen.gen_ir
-Sys = gen.gen_sys
-LowerError, unsupported = gen.gen_lower
-Lowerer, Value, Place, Base, Callee, Frame, LocalKind, LambdaRef, Local = gen.gen_lower_core
-to_i64_bits, LoopTarget, Cleanup, DropEntry, DeferEntry, NameFinder = gen.gen_lower_core
-size_of, align_of, round_up, class_of, variant_index = gen.gen_lower_shape
-ActorEntry, actor_function = gen.gen_lower_actor
-Source, argument_value, argument_place, sys_env_call, closure_of = gen.gen_lower_call
-pointee_of, payload_type = gen.gen_lower_member
+{ Alloc, AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ String, str } = std.text
+{ Res, Ok, Err, None, Range } = std.core
+{ ExprId, Call, Lambda, TypeId } = std.ast
+{ Span, nowhere } = std.source
+{ TyId, Inst, Def, decl_at } = sema.sema
+{ walk, WalkNode } = std.ast.ast_walk
+{ Scalar, Layout, Op, Const, Move, Binary, Instruction, Load, Store, Address } = gen.gen_ir
+{ Update, UpdateOp, Compare, CodeRef, IndirectCall, Start, StartValue, SysCall } = gen.gen_ir
+{ Invocation, Pages, Convert, width, integer } = gen.gen_ir
+{ Func, BasicBlock, Terminator, Fault, TrapKind } = gen.gen_ir
+{ Sys } = gen.gen_sys
+{ LowerError, unsupported } = gen.gen_lower
+{ Lowerer, Value, Place, Base, Callee, Frame, LocalKind, LambdaRef, Local } = gen.gen_lower_core
+{ to_i64_bits, LoopTarget, Cleanup, DropEntry, DeferEntry, NameFinder } = gen.gen_lower_core
+{ size_of, align_of, round_up, class_of, variant_index } = gen.gen_lower_shape
+{ ActorEntry, actor_function } = gen.gen_lower_actor
+{ Source, argument_value, argument_place, sys_env_call, closure_of } = gen.gen_lower_call
+{ pointee_of, payload_type } = gen.gen_lower_member
 
 // ---------------------------------------------------------------------
 // std.sys runtime operations
@@ -222,7 +222,7 @@ element = (
 // A function instance with no declaration of its own. It occupies a slot in
 // `Lowerer.pending` like any instance (so calls and code addresses name it
 // by index) and is lowered from this description instead of a Function.
-Synth* = Lifted(LiftedBody) | Actor(ActorEntry)
+Synth* = { Lifted: LiftedBody | Actor: ActorEntry }
 SynthAt* = { index*: usize, synth*: Synth }
 
 // A pending instance: synthesized, or an ordinary function.
@@ -320,7 +320,7 @@ RECORD_RESULT: usize = 16
 // How a captured name reaches the lifted body: a copy of the value in the
 // record, the address of the spawner's place (a `::` binding, as the C
 // backend captures it), or a capability, which has no storage.
-CaptureKind* = Copied | Address | Authority
+CaptureKind* = { Copied | Address | Authority }
 
 Capture* = { name*: str, ty*: TyId, offset*: usize, kind*: CaptureKind }
 

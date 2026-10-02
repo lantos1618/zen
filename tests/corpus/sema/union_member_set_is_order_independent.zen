@@ -3,10 +3,10 @@
 // positions force `Error` to be queried before `WriteError` is otherwise
 // settled and make the ordering invariant observable.
 
-Res, Ok, WriteError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, WriteError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | WriteError
 

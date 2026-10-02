@@ -3,21 +3,21 @@
 // Field paths are bounded by widening to the containing value. Return origins
 // and stores share the same domain, including recursive helper calls.
 
-Alloc, AllocError = std.mem
-Vec, Map = std.collections
-str, String = std.text
-Res, Ok, None, loop, Range = std.core
-Function, BlockId, ExprId, Call, Bind, Deferred = std.ast
-tail_expr = sema.sema_hoist
-is_construction = sema.sema_scope
-decl_at = sema.sema_def
-TyId = sema.sema_ty
-member_type = sema.sema_member
-type_from_ast = sema.sema_denote
-WalkVisitor, WalkEvent, WalkNode, walk = std.ast
-Checker, Ctx, Binding, UNRESOLVED = sema.sema_check
-Own, check_own_body, store_origin, transfer_store_origin = sema.sema_own
-truncate = sema.sema_check
+{ Alloc, AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ str, String } = std.text
+{ Res, Ok, None, loop, Range } = std.core
+{ Function, BlockId, ExprId, Call, Bind, Deferred } = std.ast
+{ tail_expr } = sema.sema_hoist
+{ is_construction } = sema.sema_scope
+{ decl_at } = sema.sema_def
+{ TyId } = sema.sema_ty
+{ member_type } = sema.sema_member
+{ type_from_ast } = sema.sema_denote
+{ WalkVisitor, WalkEvent, WalkNode, walk } = std.ast
+{ Checker, Ctx, Binding, UNRESOLVED } = sema.sema_check
+{ Own, check_own_body, store_origin, transfer_store_origin } = sema.sema_own
+{ truncate } = sema.sema_check
 
 OwnCheck* = {
     function*: Function,

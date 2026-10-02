@@ -10,12 +10,12 @@
 // match returns None for a key that is present. both are visible in
 // the counts below.
 
-Alloc, AllocError = std.mem
-Map = std.collections
-Range = std.core.range
-Res, Ok, Eq, Hash, Hasher = std.core
-Env = std.env
-println = std.io
+{ Alloc, AllocError } = std.mem
+{ Map } = std.collections
+{ Range } = std.core.range
+{ Res, Ok, Eq, Hash, Hasher } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 COUNT: usize = 64
 HASHES: u64 = 4

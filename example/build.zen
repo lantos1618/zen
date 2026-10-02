@@ -1,9 +1,9 @@
 // Build files are Zen programs. The mutable Builder records the target graph.
 
-Budget, Builder, BuildError, Function, Package = std.build
-Bencher, Tester = std.test
-seconds = std.core.time
-Res, Ok, Path = std.core
+{ Budget, Builder, BuildError, Function, Package } = std.build
+{ Bencher, Tester } = std.test
+{ seconds } = std.core.time
+{ Res, Ok, Path } = std.core
 
 // Packages are hash-locked values; `zen add json` can add this declaration.
 json_pkg = Package(
@@ -43,7 +43,7 @@ build = (b :: Builder) Res<(), BuildError> {
         _       => "",
     });
 
-    // A target may import only from the dependencies declared here.
+    // Its modules import these through `deps.`: `json = deps.json`.
     b.exe("example", {
         src: Path("src/main.zen"),
         deps: [json, libsodium, extern_add],

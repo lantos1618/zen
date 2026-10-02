@@ -15,7 +15,7 @@
 //
 // WHAT THE OUTPUT PROVES. `twice.zen` imports `std.mem`, and there is no
 // `std` under `src/twice` — so a driver that read the file reports the
-// import it could not follow at twice.zen:4:9, where the fix goes, and
+// import it could not follow at twice.zen:4:13, where the fix goes, and
 // a driver that never opened it reports nothing and exits 0. The
 // mistake is deliberate and it is the evidence.
 //
@@ -26,13 +26,13 @@
 // `build` is called directly rather than through `main` because
 // `env.argv` is empty in the generated C — see the report.
 
-Alloc, AllocError = std.mem
-str = std.text
-BuildArgs = std.build
-Res, Ok = std.core
-Env = std.env
-println = std.io
-build = zen
+{ Alloc, AllocError } = std.mem
+{ str } = std.text
+{ BuildArgs } = std.build
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
+{ build } = zen.zen_run
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

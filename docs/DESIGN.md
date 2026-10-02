@@ -52,7 +52,7 @@ link time (`-Wl,-dead_strip` on macOS, `--gc-sections` elsewhere) and the
 executable stripped. A target can choose for itself:
 
 ```zen
-Builder, BuildError, Optimize, Cc = std.build
+{ Builder, BuildError, Optimize, Cc } = std.build
 
 build = (b :: Builder) Res<(), BuildError> {
     b.exe("app", {
@@ -260,32 +260,33 @@ A field the construction omits **is its default**, not zero. `Cursor()` on a `Cu
 
 The corner this closes is sharp and was found by a parser: `*` is also multiplication, so a statement beginning `n *` has to be either an exported declaration or a product, and the parser cannot ask which until it has read further. Restricting `*` to the two places it has meaning removes the fork entirely at body level, which is the only place the ambiguity is reachable.
 
-**Sum types are written with `|`, always.** A nominal enum and an error union are the same construct — the doc already says a union "is an anonymous enum of two variants" — so they get one syntax and not two:
+**Sum types are written with `|`. Braces make an enum; without them `|` joins existing types into a union.**
 
 ```groovy
-Shape = Circle(Circle) | Rect(Rect) | Unit      // nominal, with payloads
+Shape = { Circle: Circle | Rect: Rect | Unit }  // an enum, with payloads
 Error = AllocError | IoError | ArgError         // a union of existing types
-AllocError* = | OutOfMemory                     // one variant: the bar leads
+AllocError* = { | OutOfMemory }                 // one variant: the bar leads
 Alias = Shape                                   // no bar, so an alias. unambiguous.
 ```
 
-**A variant name that is also a type in scope must be reported, not silently reinterpreted.** What separates `Error = AllocError | IoError` (a union of existing types) from `Signal = Start | Stop` (a nominal enum) is whether every variant name *is* a type. That rule is what lets one syntax serve both, and it has a sharp edge: the answer depends on what else is in scope, so **adding an import to an unrelated module can change what a declaration in this one means.** Found by writing `DefKind = Struct | Enum | ..` in a module that imports `std.ast`, where every one of those names is a type — the declaration silently became a union of `std.ast`'s types rather than the enum it was written as.
+**A body's separator decides its kind.** Inside braces, `|` joins an enum's variants and `,` joins a struct's fields, and a body mixing them is rejected. A variant's payload is written like a field, `Circle: Circle`; a variant takes no `::`, because it is not a binding; and `= n` gives it a discriminant. After the `,` that ends the variants come the enum's methods and constants, exactly as in a struct body, so an enum's behaviour travels with it the way a struct's does:
 
-The rule stays, because the alternative is a second syntax for a distinction nobody wants to spell twice. The *silence* goes: when a variant name collides with a type in scope, the compiler says so and names both, exactly as it does for an impl collision. An author who meant the union renames nothing; an author who meant the enum renames the variant. Cost to accept knowingly: a nominal enum cannot use a name that is a type in scope without being told about it.
+```groovy
+Permutation* = {
+    Natural | Reverse | Rotate: usize,
+    index* = (self: @Self, n: usize, i: usize) usize { .. }
+}
+```
 
-**Cost to accept knowingly:** a declaration does not terminate and nothing is newline-sensitive, so a trailing bar swallows the next declaration's name as a variant. `Shape = Circle | Square |` followed by `main = ..` reads as `Shape = Circle | Square | main` with a stray `=`, and the diagnostic lands on the `=` rather than on the bar. That is the parser being right. The alternative — ending a declaration with a token, or making a newline mean something — costs more everywhere than this costs here.
+**Why braces and not one syntax for both.** An earlier rule used one spelling: `A | B` was a union when every name was a type in scope and an enum otherwise. That made **an import in one module able to change what a declaration in another means** — writing `DefKind = Struct | Enum | ..` in a module that imports `std.ast` silently turned the enum into a union of `std.ast`'s types. Braces remove the question: an enum says so where it is written, and a bare `|` whose names are not all types is an error naming the braced form as the fix. Inside a body a top-level `|` always separates variants, so a union-typed field or payload is declared under a name first (`Num = u32 | i64`).
 
 **An alias is the type, not a name that forwards to it.** `Alias = Shape` binds `Alias` to `Shape` itself, so `Alias.Circle` is `Shape.Circle` and a value of one is a value of the other — there is no conversion, because there are not two types. This is what makes the pair above observably different: under the alias reading `Alias.Circle` exists, and under the one-variant-enum reading it does not.
 
-**Which of the two readings applies is not local to the file, and that is the sharp edge.** `A | B` is a union of existing types when *every* variant names a type in scope, and a nominal enum otherwise — so `DefKind = Struct | Enum | Alias` is nominal until someone imports types with those names into the same module, at which point the declaration silently becomes a union of them. An import in one place changes what a declaration means in another; the compiler has previously worked around the ambiguity by renaming variants.
-
-The rule, so the surprise is a diagnostic rather than a silent reinterpretation: **when every variant of an enum names a type in scope, the declaration IS a union of those types.** If that is not what was meant, the variant names collide with types and one of them must be renamed — and the compiler must say so, naming the variant and the type it collided with, rather than quietly picking the other reading. The alternative — two spellings, one per reading — was rejected because a nominal enum and an error union really are the same construct, and paying for a second syntax to disambiguate a case this rare is the worse trade.
-
-**A union is its members. Order and spelling are not part of its identity.** `WriteError = IoError | AllocError` and `Error = AllocError | IoError` are the same type, and so is the `IoError | AllocError` an inferred error set arrives at with no declaration behind it at all. This is not a new rule; it is the two above read together. The union reading says the declaration *is* a union of those types, not a fresh nominal type wrapping them — and the alias rule says a name does not create identity. A union of the same members, however it was spelled or in whatever order, is one type.
+**A union is its members. Order and spelling are not part of its identity.** `WriteError = IoError | AllocError` and `Error = AllocError | IoError` are the same type, and so is the `IoError | AllocError` an inferred error set arrives at with no declaration behind it at all. This is not a new rule; it is the two above read together. A bare `|` declaration *is* a union of those types, not a fresh nominal type wrapping them — and the alias rule says a name does not create identity. A union of the same members, however it was spelled or in whatever order, is one type.
 
 The consequence is a layout rule, and it is the reason to state this explicitly rather than leave it derivable: **a union's tags are numbered by a canonical order over its members, never by declaration order.** Number them by declaration and two spellings of one set get different tags, so `.try()` from one into the other needs a runtime map to renumber — a per-member switch at every widening site, for a difference that the type system says does not exist. Canonical numbering makes the widening a copy. The tag is internal either way: a program matches variants by name and can no more observe a tag's value than it can observe a struct's padding.
 
-Nominal enums are unaffected. `Signal = Start | Stop` is not a union, its variants name no types, and there is no second spelling of it to agree with — so it is numbered by declaration order, which is the order its author wrote and the order its exhaustiveness diagnostics read best in.
+Enums are unaffected. `Signal = { Start | Stop }` is not a union, its variants name no types, and there is no second spelling of it to agree with — so it is numbered by declaration order, which is the order its author wrote and the order its exhaustiveness diagnostics read best in.
 
 **A nominal enum may assign integer discriminants for a wire or file format.** Every known variant writes one unique compile-time integer. A final payload variant both preserves unassigned values and states the external domain; a closed represented enum uses `u64`:
 
@@ -388,7 +389,7 @@ A `Sink` dissolves it. A console is a sink, a `String` is a sink, and `println` 
 
 ```groovy fragment
 Vec*<T> = { .. }                 // declaration: struct. no semicolon.
-Shape = Circle(Circle) | Unit    // declaration: enum. no semicolon.
+Shape = { Circle: Circle | Unit }  // declaration: enum. no semicolon.
 area* = (c: Circle) f64 { .. }   // declaration: function with a body. no semicolon.
 
 v ::= alloc.Vec<i32>();          // statement. semicolon.
@@ -598,7 +599,8 @@ buf.add(2).try();              // ERROR: buf was consumed
 
 Names are qualified by path, imports bind locally, and two modules may define the same top-level name without colliding.
 
-**A one-segment path imports when the module it names exports the binding's name, and aliases the module otherwise.** `Circle = shapes` imports `Circle` from `shapes`, exactly as `Circle, area = shapes` would; `sh = shape` makes `sh` a qualifier for module `shape`, because `shape` exports no `sh`. A local declaration or visible name spelled like the path's segment still wins, so `Chosen = model` beside a local `model` type is a type alias.
+**An import is a binding, in one of two forms.** `pick = one.pick` names one thing by its path: the last segment is the item, everything before it is the module, and the left side is the local name — so `choose = one.pick` renames it. `{ Bag, reseat } = shape` destructures several names out of a module, each bound under its own name. The braces are what make it a destructure; `a, b = m` without them is rejected, so one name and several names can never mean different things by count alone. A path can also name a module: `mem = std.mem` binds the module when `std` exports no item `mem`, and `mem.Alloc` then reads through it. An exported item wins over a module of the same path, so adding a module never changes what an existing import binds. A single bare name on the right aliases a root module (`sh = shape`) or a type (`Alias = Shape`). A name that a module both imports and declares is an error rather than one hiding the other.
+
 **A module-qualified name reads an export.** After `Controller = controller`, `Controller.run(..)` calls the module's exported function, `Controller.Config(..)` constructs its exported struct, and `Controller.ATTACH_PATH` is its exported constant — the same value, folded in the declaring module, that a bare import of `ATTACH_PATH` would give, and usable anywhere a constant is, including inside another constant's value. A name without `*` is refused through the qualifier exactly as it is through an import. A module-qualified *function* is only called, never read as a value.
 
 **A name that is not imported is not visible, and there is no prelude.** `Res`, `Ok`, `Vec`, `String`, `Env` and `println` are ordinary declarations in `std`, and a module that names one imports it like any other name. Everything else needs its import too, and this is not a formality — a compiler that resolves any exported top-level name program-wide makes "two modules may define the same top-level name" impossible, which is the property the flat namespace exists to provide. A whole-program name table also hides missing imports until the day two modules disagree, which is the worst day to find out. An implicit prelude is the same hiding on a smaller scale: a name that appears from nowhere, whose meaning depends on what a list in another file happens to hold.
@@ -615,32 +617,32 @@ Names are qualified by path, imports bind locally, and two modules may define th
 | `std` | the root every standard import starts from |
 | `main` | the entry point the build looks for |
 
-The C ABI integers (`c_int` and the rest) and the SIMD vectors (`u8x16` and the rest) are also primitive types the compiler knows by spelling; they belong with the `std.c` bindings and the `std.simd` operations, which are the only code that uses them, and whether naming one should require that import is still open. A primitive's members — `i32.MAX`, `s.len`, `b.then(..)` — are declared in `std.core` and its submodules, and they travel with the primitive: `std.core` is part of every program for that reason, but loading it binds no name.
+The C ABI integers (`c_int` and the rest) and the SIMD vectors (`u8x16` and the rest) are also primitive types the compiler knows by spelling; they belong with the `std.c` bindings and the `std.simd` operations, which are the only code that uses them, and whether naming one should require that import is still open. A primitive's members — `i32.MAX`, `s.len`, `b.then(..)` — are declared in `std.core` and its submodules, in the primitive's own body, so they come with the primitive: `std.core` is part of every program for that reason, but loading it binds no name.
 
 Everything else is imported, with the binding syntax every import uses:
 
 ```zen
-Res, Ok, Err, None = std.core     // results, Range, Eq, Hash, Display, IoError, Drop, Scope ...
-Alloc, AllocError = std.mem
-Vec, Map = std.collections
-String = std.text
-Env = std.env
-println, print = std.io
+{ Res, Ok, Err, None } = std.core     // results, Range, Eq, Hash, Display, IoError, Drop, Scope ...
+{ Alloc, AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ String } = std.text
+{ Env } = std.env
+{ println, print } = std.io
 ```
 
-Each name is imported from the module that owns it: `std.core` for what is declared under `std/core`, and the folder root otherwise. `std.core` still re-exports `Vec`, `String`, `Env` and the rest, so `Vec = std.core` also resolves, but the owning module is the one the compiler suggests and the one written in this tree. There is no wildcard import and no "common names" line: a reader learns where a name comes from by reading the top of the file, and a module's imports are the list of what it depends on.
+Each name is imported from the module that owns it: `std.core` for what is declared under `std/core`, and the folder root otherwise. `std.core` still re-exports `Vec`, `String`, `Env` and the rest, so `{ Vec } = std.core` also resolves, but the owning module is the one the compiler suggests and the one written in this tree. There is no wildcard import and no "common names" line: a reader learns where a name comes from by reading the top of the file, and a module's imports are the list of what it depends on.
 
 **A standard name used without its import is an error that names the fix.**
 
 ```
-main.zen:3:16: missing import: `Vec` is not imported; add `Vec = std.collections`
+main.zen:3:16: missing import: `Vec` is not imported; add `{ Vec } = std.collections`
 ```
 
 The diagnostic is reported once per module and name, and the name then resolves as that import would, so one omission is one error rather than a cascade. `Res`, `Ok`, `Err` and `None` are covered exactly like `Vec`: the compiler still recognises them by declaration, but a module that writes one must import it. So is a member of a union of types, `Fail = AllocError | IoError` — a member naming an unimported type would otherwise become an enum variant in silence, which is the worst kind of wrong. A name that no standard module exports is still `undefined name`. `tools/imports` (`zen-imports`) applies these diagnostics to a tree: it asks the compiler which imports each file is missing and writes them.
 
-**That rule is about BARE names. A UFCS function is reached through a value, so it travels with the value's type.** `x.f(..)` never names `f`, so it cannot collide with anything and needs no import: the candidates are the members of `x`'s type, its impls' and its bounds' methods, and every exported free function whose **first parameter type** is `x`'s type. Two modules may both declare `size` as long as they take different first parameters — and if they take the same one, that is a real collision and is reported. This is what "importing a type pulls its world along" means, said as a rule rather than as a comment in an example: the world travels with the *type*, and you are holding one.
+**The dot does not relax that rule. A type brings what its body declares, and nothing else.** `x.f(..)` finds the members written in `x`'s type — its body's methods and associated functions, its impls, and its bounds' methods — and otherwise the free functions this module already sees: its own declarations, its imports, and the prelude. A free function declared in another module is not reachable until it is imported, however its first parameter is typed. Nothing is gathered program-wide, so two modules may both export `size` for the same first parameter without colliding: a module that imports one calls that one, and a module that imports both has an ordinary overload set that must tell them apart.
 
-The two halves fit together because they answer different questions. A bare name asks "what is `Vec` here", which two modules can disagree about, so it needs an import. `x.get(0)` asks "what can this value do", which only `x`'s type can answer.
+The two questions have different answers. A bare name asks "what is `Vec` here", which this module's imports answer. `x.get(0)` asks "what can this value do", which `x`'s type answers for its members and this module's imports answer for everything else — so what a call means is always readable from two files, the type's and the caller's.
 
 **Where behavior lives follows from that rule, and there is no third form.** A fact every consumer asks of a type — a member's name, its exportedness — is a struct-body method, written once, in the type's file. An operation one consumer owns is a free function in that consumer's file, *called on* its receiver: the dot finds the calling module's own names whether they are exported or not, so the call reads `c.check_args(..)` while the declaration never leaves the module that owns the operation. There is deliberately **no out-of-line `impl Member { .. }`** — no block that adds methods to a type from another file, the mechanism Rust scatters a type's surface across a crate with — because the dot already gives the call its method shape without moving the declaration, and `A.impl(B, {..})` exists only to satisfy a bound and lives with `A`. The dividing rule: a fact two modules would both write belongs on the type; an operation one module owns stays in that module and is dot-called. **Cost to accept knowingly:** a type's full callable surface is not readable from its file — what `x` can do depends on what the calling module has in scope — which is the same scatter Rust has, resolved by import rather than aggregated crate-wide, and without a second declaration form to learn.
 
@@ -702,7 +704,7 @@ original layout.
 
 The information already exists at the call site: whoever invokes the compiler knows which file is the entry. So `zen build <root> --entry <file>` is the answer, and the capability surface does not grow. A build is still a root — the entry names where to start inside it, and everything else follows imports as it always did.
 
-**A constructor does not travel with the type it constructs, and that is the hole associated functions fill.** `seconds(n: u64) Duration` takes a `u64`, so by the rule above it travels with `u64` — which means `Duration = std.core.time` gives you every method and no way to make one. The two obvious answers are both wrong: listing the constructors in every import is the noise this rule exists to remove, and letting them travel with `u64` puts `.seconds()`, `.minutes()` and every other module's `u64`-taking function on every integer in every program, because `u64` is a primitive every program has.
+**A constructor belongs to the type it constructs, and that is the hole associated functions fill.** A free `seconds(n: u64) Duration` takes a `u64`, so by the rule above `{ Duration } = std.core.time` gives you every method and no way to make one until `seconds` is imported too. The two obvious answers are both wrong: listing the constructors in every import is noise, and making them visible wherever a `u64` is puts `.seconds()`, `.minutes()` and every other module's `u64`-taking function on every integer in every program, because `u64` is a primitive every program has.
 
 The answer is that a struct body may bind a **function**, read as `Type.name(..)` — `Duration.seconds(60)`. This is the existing "a struct body may bind a name to a value, read as `Type.NAME`" rule plus the fact that a function *is* a value here, and it puts the constructor in the one namespace that is already exactly right: the type it constructs. A name that is neither a variant nor a receiverless member is still refused rather than guessed at — `src/gen/gen_c/gen_c_member.zen` raises a positioned `codegen does not lower this yet`, because a backend that emits C for a form it does not understand turns one diagnostic into a C compiler's.
 
@@ -712,9 +714,9 @@ The answer is that a struct body may bind a **function**, read as `Type.name(..)
 
 ```groovy fragment
 // src/std/core/core.zen
-Res, Ok, None = std.core.result     // imported, local to this module
-Res*, Ok*, None* = std.core.result  // imported AND re-exported
-str*, String* = std.text.string     // types travel with their methods and impls
+{ Res, Ok, None } = std.core.result     // imported, local to this module
+{ Res*, Ok*, None* } = std.core.result  // imported AND re-exported
+{ str*, String* } = std.text.string     // a type brings its body's methods and its impls
 ```
 
 A folder root is then just a file of starred bindings, which is why re-export is what makes folders work — and why `std.core` can span several files instead of being one enormous one.
@@ -724,7 +726,7 @@ A folder root is then just a file of starred bindings, which is why re-export is
 `println` and `print` are declarations in `std.io`, imported like anything else:
 
 ```zen
-println = std.io
+{ println } = std.io
 
 main = () i32 {
     println("hello, {}", "world");
@@ -736,7 +738,7 @@ They are bodyless declarations whose bodies the compiler supplies, recognised by
 
 **They answer `()`, and a failed write is not reported.** A closed pipe ends the process with `SIGPIPE`; any other failure loses the bytes. The alternative, `Res<(), IoError>`, puts a `.try()` or `.ignore()` on every diagnostic line a program prints, and a result that is ignored everywhere teaches readers to ignore results — the opposite of what a must-use `Res` is for. Output whose arrival matters goes through `env.out`, whose `println` returns `Res<(), IoError>`, and a function that should be handed its output rather than reach for it takes a `Console` or a `Sink`.
 
-**This is the one ambient effect in the standard library.** `Env` carries every other authority, so a function's signature says what it can touch. Standard output is exempt because hello-world should not need a capability parameter, and the exemption is visible: a module that prints this way says `println = std.io` at the top.
+**This is the one ambient effect in the standard library.** `Env` carries every other authority, so a function's signature says what it can touch. Standard output is exempt because hello-world should not need a capability parameter, and the exemption is visible: a module that prints this way says `{ println } = std.io` at the top.
 
 ---
 
@@ -748,7 +750,7 @@ zero. These operations allocate nothing and preserve the native math library's
 NaN/infinity behavior for domain and range errors. They do not return `Res`.
 
 ```groovy fragment
-cos, sin, sqrt = std.math
+{ cos, sin, sqrt } = std.math
 magnitude = sqrt(real * real + imaginary * imaginary);
 ```
 
@@ -773,7 +775,7 @@ A call such as `C.getpid()` is checked against the Zen signature and lowers to
 `getpid()` with `#include <unistd.h>`. There is no generated forwarding wrapper
 or duplicate native prototype. The C compiler sees the actual header. Bindings
 can live in ordinary Zen modules and be imported by name (for example,
-`C, VERSION = posix` when `posix.zen` exports both). Library and framework linking remains a project build
+`{ C, VERSION } = posix` when `posix.zen` exports both). Library and framework linking remains a project build
 dependency; the header expression does not infer link flags.
 
 An optional second literal selects a native symbol independently of the Zen
@@ -831,7 +833,7 @@ names when a call is emitted; unused bindings do not cause includes.
 `std.native.callback` exposes a named Zen function to a native callback API:
 
 ```groovy fragment
-callback = std.native
+{ callback } = std.native
 compare = (left: Ptr<()>, right: Ptr<()>) i32 {
     left.to<i32>().read(0) - right.to<i32>().read(0)
 }
@@ -1040,11 +1042,11 @@ Display* = {
 }
 
 
-// std.core: imported like any module, `Res, Ok, Err, None = std.core`
+// std.core: imported like any module, `{ Res, Ok, Err, None } = std.core`
 
-Res*<T> = Ok(T) | None
+Res*<T> = { Ok: T | None }
 
-Res*<T, E> = Ok(T) | Err(E)
+Res*<T, E> = { Ok: T | Err: E }
 
 // hoisting: a bare T lifts into Res<T> wherever a Res is
 // expected, so the obvious thing just works:
@@ -1112,8 +1114,8 @@ Scope* = {
 // page allocation. The one ambient effect is standard output
 // through std.io's println and print, and a module declares it
 // by importing them (see "Printing" below)
-ArgError* = Missing(str)   // required field absent; names the field
-          | Parse(str)     // value present but not the field's type
+ArgError* = { Missing: str   // required field absent; names the field
+          | Parse: str }   // value present but not the field's type
 
 // the disk. Each member earns its place: a compiler reads a whole
 // file at once, never streams and never seeks, so there is no
@@ -1129,7 +1131,7 @@ ArgError* = Missing(str)   // required field absent; names the field
 // missing file is a caller's problem and not a bug, and is `:`
 // because a handle's methods are `:` -- a bitwise copy of an Fs sees
 // the same filesystem.
-FsError* = NotFound | Denied | IsDir | Failed | OutOfMemory
+FsError* = { NotFound | Denied | IsDir | Failed | OutOfMemory }
 
 Fs* = {
     read*   = (self: @Self, a: Alloc, path: str) Res<String, FsError>
@@ -1340,7 +1342,7 @@ Map*<K: Eq + Hash, V> = {
 // proposed. Today `zen test` runs explicit Builder.exe_test(Exe) targets, and
 // std.test.Suite supplies per-callback arenas and assertion reporting.
 
-TestError* = | Failed(str)
+TestError* = { | Failed: str }
 
 Tester* = {
     env: Env,
@@ -1529,7 +1531,7 @@ and an incompatible already-typed argument is still rejected.
 // Records are retained until runtime shutdown, including stopped actors.
 // This does not provide bounded actor churn or checked raw-pointer lifetimes.
 
-ActorError* = Closed | Full
+ActorError* = { Closed | Full }
 
 // the address of an actor. freely sendable. behavior calls on
 // a Ref are messages. every Ref also carries:
@@ -1567,7 +1569,7 @@ Actor* = {}
 // creator — so it hangs off Env like io and pages do. there is
 // no ambient thread.spawn
 
-ThreadError* = SpawnFailed | Panicked
+ThreadError* = { SpawnFailed | Panicked }
 
 Thread* = {
     id: u64,
@@ -1661,7 +1663,7 @@ build = (b :: Builder) Res<(), BuildError> {
     });
 
     // deps are wired per target, swift-style: main.zen may only
-    // import from pkg what this list declares. out defaults to
+    // import through `deps.` what this list declares. out defaults to
     // build/{os}-{arch}/{name} if omitted; gitignore covers build/
     b.exe("example_zen", {
         src: Path("src/main.zen"),
@@ -1714,8 +1716,8 @@ build = (b :: Builder) Res<(), BuildError> {
 // ~/example_zen/src/main_test.zen
 // tests live next to code. no annotations: build.zen's walk
 // finds these because their single parameter is a Tester
-Res, Ok = std.core
-Tester, TestError, Bencher = std.test
+{ Res, Ok } = std.core
+{ Tester, TestError, Bencher } = std.test
 
 vec_grows* = (t: Tester) Res<(), TestError> {
     v ::= t.alloc.Vec<i32>();
@@ -1745,33 +1747,34 @@ vec_add* = (bn: Bencher) Res<(), TestError> {
 ```groovy
 // ~/example_zen/src/main.zen
 
-// imports are just bindings; std and pkg are namespaces.
-// pkg contains exactly what build.zen declared for THIS target,
-// importing anything else is a compile error.
+// imports are just bindings, with three roots: a project folder,
+// `std`, and `deps`. deps holds exactly what build.zen's `deps`
+// list granted THIS target; any other name under deps is an error,
+// and a dependency is never reachable by its bare name.
 //
-// importing a type pulls its world along: its methods, its
-// trait impls, and exported ufcs functions (a free function
-// whose first param is the type is callable as a method).
+// importing a type brings what its body declares: its methods,
+// its associated functions, and its impls. a free function over
+// the type is imported by name, like any other function.
 // * is the one gate — it means "this name crosses a module
-// boundary" — so Vec travels with add/get but never grow or Entry.
+// boundary" — so Vec brings add/get but never grow or Entry.
 // nothing else is implicit: every name below that this file does
 // not declare is on one of these lines
-Res, Ok, Err, None, Display, Sink, WriteError, IoError = std.core
-Alloc, AllocError = std.mem
-Vec = std.collections
-String = std.text
-Env, ArgError, ThreadError = std.env
-Actor, Context, Ref = std.actor
-println = std.io
-json = pkg.json
-sodium = pkg.libsodium
+{ Res, Ok, Err, None, Display, Sink, WriteError, IoError } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ String } = std.text
+{ Env, ArgError, ThreadError } = std.env
+{ Actor, Context, Ref } = std.actor
+{ println } = std.io
+json = deps.json
+sodium = deps.libsodium
 
 Circle = {
     radius: f64,
 }
 
-// ufcs: a free function whose first param is Circle, so it
-// travels with Circle when imported and calls like a method.
+// ufcs: a free function whose first param is Circle calls like a
+// method in any module that declares or imports it.
 // this IS the method form — a method is a ufcs function whose
 // first parameter is named self and whose type is inferred
 area* = (c: Circle) f64 {
@@ -1785,7 +1788,7 @@ Rect = {
 
 // variants carry payload types; a default payload and a
 // discriminant are different things and are written apart
-Shape = Circle(Circle) | Rect(Rect) | Unit
+Shape = { Circle: Circle | Rect: Rect | Unit }
 
 Shape.impl(Display, {
     // defining the outlined toString: pretty output for {}.

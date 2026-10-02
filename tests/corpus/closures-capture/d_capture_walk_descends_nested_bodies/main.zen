@@ -16,9 +16,9 @@
 // each line carries its own non-zero arithmetic so a truncated or
 // misplaced read cannot pass for another line's answer.
 
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 apply = (f: () i64) i64 { f() }
 

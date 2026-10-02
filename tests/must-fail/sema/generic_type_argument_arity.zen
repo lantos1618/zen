@@ -1,10 +1,10 @@
 // Once an explicit list is written it supplies exactly the declaration's list:
 // neither a prefix nor a surplus suffix is a complete instantiation.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 first = <T, U>(a: T, b: U) T { a }
 

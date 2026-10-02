@@ -1,4 +1,4 @@
-cpu_avx2 = std.simd
+{ cpu_avx2 } = std.simd
 
 main = () i32 {
     fast = cpu_avx2();

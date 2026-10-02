@@ -1,11 +1,11 @@
-Ast, Module, Decl, Function, Param, Struct, Impl, Member, Type, TypeId = std.ast
-AllocError = std.mem
-Vec = std.collections
-str = std.text
-Res, Ok, None, Range = std.core
-TyId, Types, TyNamed = sema.sema_ty
-Checker = sema.sema_check
-SemaFault, NameFault = sema.sema_diag
+{ Ast, Module, Decl, Function, Param, Struct, Impl, Member, Type, TypeId } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Res, Ok, None, Range } = std.core
+{ TyId, Types, TyNamed } = sema.sema_ty
+{ Checker } = sema.sema_check
+{ SemaFault, NameFault } = sema.sema_diag
 
 VARARG: str = "vararg"
 
@@ -148,6 +148,7 @@ decl_tails = (d: Decl, out :: Vec<TypeId>) Res<(), AllocError> {
     d.kind.match({
         Function(f) => f.fn_tail(out),
         Struct(s)   => s.members.member_tails(out),
+        Enum(e)     => e.members.member_tails(out),
         Impl(im)    => im.members.member_tails(out),
         _           => Ok(()),
     })

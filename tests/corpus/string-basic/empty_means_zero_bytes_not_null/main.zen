@@ -13,10 +13,10 @@
 // that an empty slice of a non-empty string does not inherit the
 // source's length.
 
-Res, Ok, WriteError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, WriteError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | WriteError
 

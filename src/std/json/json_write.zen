@@ -3,11 +3,11 @@
 // Num stores its original lexeme because JSON accepts spellings that Zen
 // numeric literals do not, including exponents and negative zero.
 
-str, String = std.text
-Vec = std.collections
-Alloc, AllocError = std.mem
-Res, Ok, None, Range = std.core
-hex_digit, HEX_BASE = std.core.byte
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Alloc, AllocError } = std.mem
+{ Res, Ok, None, Range } = std.core
+{ hex_digit, HEX_BASE } = std.core.byte
 
 JsonId* = { index*: usize }
 
@@ -22,12 +22,12 @@ Pair* = {
     value*: JsonId,
 }
 
-Json* = Null
-      | Bool(bool)
-      | Num(str)      // the lexeme, verbatim
-      | Text(str)     // the decoded bytes
-      | Arr(Run)      // a run of `items`
-      | Obj(Run)      // a run of `pairs`
+Json* = { Null
+      | Bool: bool
+      | Num: str      // the lexeme, verbatim
+      | Text: str     // the decoded bytes
+      | Arr: Run      // a run of `items`
+      | Obj: Run }      // a run of `pairs`
 
 // Owns JSON values and the contiguous child runs referenced by arrays/objects.
 Jsons* = {

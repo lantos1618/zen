@@ -1,8 +1,8 @@
-Res, Ok, Err, Range = std.core
-AllocError = std.mem
-Vec = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok, Err, Range } = std.core
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 // One callback argument is the element. A handle and then an optional index
 // occupy the established two- and three-argument forms.

@@ -1,9 +1,9 @@
 // Both sides of arithmetic must be numbers of one settled type; C must not
 // become the checker for a string passed to the i32 addition helper.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
 add = (n: i32, text: str) i32 { n + text }
 

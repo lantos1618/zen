@@ -10,10 +10,10 @@
 //     what decides"), so no construction names one; the reads fold to
 //     the declaration.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 B = { x: i32, y:: i32 = 20, z:: i32 = 30 }
 A = { x: i32, y: i32 = 20, z: i32 = 30 }

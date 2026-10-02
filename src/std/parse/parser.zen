@@ -2,16 +2,16 @@
 // Syntax errors append diagnostics and poison nodes so parsing can continue;
 // allocation failure is the only returned failure.
 
-Alloc, AllocError = std.mem
-Ast = std.ast.ast_arena
-Trivia, TriviaKind, TriviaRun, no_trivia, Ident, QualifiedName = std.ast.ast_span
-Span, Pos = std.source
-Token, TokenKind, Source, Lexed, is_trivia, empty_eof = std.parse.parse_token
-text_block_literal = std.lex.lex
-Literal, LiteralKind = std.ast.ast_node
-Diag, diag, diag_at, truncated = std.parse.parse_diag
-Res, Ok, None, loop, Range = std.core
-Vec = std.collections
+{ Alloc, AllocError } = std.mem
+{ Ast } = std.ast.ast_arena
+{ Trivia, TriviaKind, TriviaRun, no_trivia, Ident, QualifiedName } = std.ast.ast_span
+{ Span, Pos } = std.source
+{ Token, TokenKind, Source, Lexed, is_trivia, empty_eof } = std.parse.parse_token
+{ text_block_literal } = std.lex.lex
+{ Literal, LiteralKind } = std.ast.ast_node
+{ Diag, diag, diag_at, truncated } = std.parse.parse_diag
+{ Res, Ok, None, loop, Range } = std.core
+{ Vec } = std.collections
 
 // Nesting limit for the recursive grammar. Binary spines are iterative and do
 // not consume it.

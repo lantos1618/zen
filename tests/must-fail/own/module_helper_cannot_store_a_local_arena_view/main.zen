@@ -1,7 +1,7 @@
-Box, store = helper
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
+{ Box, store } = helper
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 bad = (env: Env, box :: Box) Res<(), AllocError> {
     a    = env.mem.alloc();
     text = a.String("hello").try();

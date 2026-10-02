@@ -7,13 +7,13 @@
 //
 // position: the arm whose success type disagrees with the arms above it.
 
-Res, Ok, Err = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Err } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Kind = | Bad | Worse
-Fail = | Broke
+Kind = { | Bad | Worse }
+Fail = { | Broke }
 Both = Kind | Fail
 
 one = (k: i32) Res<(), Fail> { (k == 0).match({ true => Ok(()), false => Err(Fail.Broke) }) }

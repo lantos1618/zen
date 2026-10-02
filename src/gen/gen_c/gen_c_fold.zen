@@ -5,25 +5,25 @@
 // that result. The accumulator type is the seed/result payload, not the walked
 // element type.
 
-ExprId, Lambda, Function, Call = std.ast
-AllocError = std.mem
-str, String = std.text
-TyId = sema.sema_ty
-Ctx = sema.sema_check
-sym_member, sym_variant, RES_PATH = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
-LoopFrame = gen.gen_c.gen_c_frame
-unsupported = gen.gen_c.gen_c_report
+{ ExprId, Lambda, Function, Call } = std.ast
+{ AllocError } = std.mem
+{ str, String } = std.text
+{ TyId } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ sym_member, sym_variant, RES_PATH } = gen.gen_name
+{ CBackend } = gen.gen_c.gen_c_state
+{ LoopFrame } = gen.gen_c.gen_c_frame
+{ unsupported } = gen.gen_c.gen_c_report
 
-ctype, declarator, res_value = gen.gen_c.gen_c_type
-ty_of = gen.gen_c.gen_c_expr
-Dest, deliver = gen.gen_c.gen_c_stmt
-lower_walk, settle_res, bind_element = gen.gen_c.gen_c_loop
-Shape, LoopArgs, shape_of, loop_element, loop_fn_at = gen.gen_c.gen_c_shape
-arg_value = gen.gen_c.gen_c_shape
-has_var = sema.sema_inst
-literal_default = sema.sema_ty
-Res, Ok, None = std.core
+{ ctype, declarator, res_value } = gen.gen_c.gen_c_type
+{ ty_of } = gen.gen_c.gen_c_expr
+{ Dest, deliver } = gen.gen_c.gen_c_stmt
+{ lower_walk, settle_res, bind_element } = gen.gen_c.gen_c_loop
+{ Shape, LoopArgs, shape_of, loop_element, loop_fn_at } = gen.gen_c.gen_c_shape
+{ arg_value } = gen.gen_c.gen_c_shape
+{ has_var } = sema.sema_inst
+{ literal_default } = sema.sema_ty
+{ Res, Ok, None } = std.core
 
 // One automatic accumulator, or no accumulator for non-fold loop shapes.
 Fold* = {

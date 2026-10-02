@@ -1,27 +1,27 @@
 // Project builds start at build.zen. This driver executes its checked target
 // graph, compiles each selected Zen entry, links it, and optionally runs it.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Res, Ok, Err, None, loop, Range, Path, join_path, Duration = std.core
-Map, Vec = std.collections
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Res, Ok, Err, None, loop, Range, Path, join_path, Duration } = std.core
+{ Map, Vec } = std.collections
 
-BuildArgs, ProjectArgs, Emission, Target, Os, Arch, Abi, Dep, Codegen = std.build
-Mode, Optimize, Cc, target_named = std.build
-Build, host_target = zen.zen_build
-asm_native, assemble_and_link = zen.zen_native
-entry_of, holds_build_zen, make_dirs, program_path = zen.zen_path
-Inputs, inputs, digest = zen.zen_inputs
-rename = std.fs.posix
-BuildPlan, ExeNode, LibNode, plan, PlanFault = zen.zen_build_plan
-resolve, PackageFault = zen.zen_packages
-Env = std.env
-println = std.io
+{ BuildArgs, ProjectArgs, Emission, Target, Os, Arch, Abi, Dep, Codegen } = std.build
+{ Mode, Optimize, Cc, target_named } = std.build
+{ Build, host_target } = zen.zen_build
+{ asm_native, assemble_and_link } = zen.zen_native
+{ entry_of, holds_build_zen, make_dirs, program_path } = zen.zen_path
+{ Inputs, inputs, digest } = zen.zen_inputs
+{ rename } = std.fs.posix
+{ BuildPlan, ExeNode, LibNode, plan, PlanFault } = zen.zen_build_plan
+{ resolve, PackageFault } = zen.zen_packages
+{ Env } = std.env
+{ println } = std.io
 
-Action* = Build | Run | Test
+Action* = { Build | Run | Test }
 
 // The flag dialect of a C compiler.
-Family = Clang | Gcc | Tcc
+Family = { Clang | Gcc | Tcc }
 
 // A resolved compiler executable and the SDK it compiles against.
 Toolchain = { compiler: str, sysroot: str }
@@ -233,7 +233,7 @@ prepare_packages = (
 
 // An empty selection means `zen build` builds every executable. `zen run`
 // requires one unambiguous target.
-Unselected = Unknown | Ambiguous | Empty
+Unselected = { Unknown | Ambiguous | Empty }
 
 select_exe = (planned: BuildPlan, named: str, execute: bool)
              Res<Res<ExeNode>, Unselected> {

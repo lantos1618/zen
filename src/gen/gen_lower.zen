@@ -13,14 +13,14 @@
 // reachable constructs fail here, before any artifact is published; which
 // backend can render which part of the IR is that backend's `supports`
 // (gen_ir_feature), not a property of the lowering.
-Ast = std.ast
-Span = std.source
-str = std.text
-Alloc = std.mem
-Checker = sema.sema
-Program = gen.gen_ir
-lower_native = gen.gen_lower_core
-Res = std.core
+{ Ast } = std.ast
+{ Span } = std.source
+{ str } = std.text
+{ Alloc } = std.mem
+{ Checker } = sema.sema
+{ Program } = gen.gen_ir
+{ lower_native } = gen.gen_lower_core
+{ Res } = std.core
 
 // Lower the program whose `main` is in module `entry`.
 lower* = (
@@ -33,7 +33,7 @@ lower* = (
 }
 
 Fault* = { span*: Span, what*: str }
-LowerError* = OutOfMemory | Unsupported(Fault)
+LowerError* = { OutOfMemory | Unsupported: Fault }
 
 unsupported* = (span: Span, what: str) LowerError {
     LowerError.Unsupported(Fault(span: span, what: what))

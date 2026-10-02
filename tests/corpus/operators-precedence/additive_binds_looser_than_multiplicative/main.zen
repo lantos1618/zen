@@ -21,10 +21,10 @@
 // precedence — or equivalently delete the multiplicative tier. Any single
 // line below then prints a different number, and none of them rejects.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     println("mul {}", 2 + 3 * 4);

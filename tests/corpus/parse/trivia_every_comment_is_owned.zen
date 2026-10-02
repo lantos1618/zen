@@ -29,23 +29,23 @@
 //   24  }
 //   25  // at end of file                     -> Module.trailing
 
-scan, Source = std.lex.lex
-Parser, module = std.parse
-Ast = std.ast.ast_arena
-TriviaRun = std.ast.ast_span
-ExprId, TypeId, PatternId, BlockId = std.ast.ast_id
-Decl, Struct, Enum, Alias, Function, Impl, Import, Const = std.ast.ast_node
-Module, Block, Stmt, Bind, ExprStmt = std.ast.ast_node
-Expr, Name, Literal, Paren, ArrayLit, FixedArray = std.ast.ast_node
-Lambda, Call, Match, Try, Record, Access, Index = std.ast.ast_node
-Unary, Binary, Consume, Meta, Arg, Arm = std.ast.ast_node
-Type, Named, Union, FnType, ArrayType = std.ast.ast_node
-Pattern, PatName, Destructure = std.ast.ast_node
-Member, Field, Param, TParam, ImportName = std.ast.ast_node
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ scan, Source } = std.lex.lex
+{ Parser, module } = std.parse
+{ Ast } = std.ast.ast_arena
+{ TriviaRun } = std.ast.ast_span
+{ ExprId, TypeId, PatternId, BlockId } = std.ast.ast_id
+{ Decl, Struct, Enum, Alias, Function, Impl, Import, Const } = std.ast.ast_node
+{ Module, Block, Stmt, Bind, ExprStmt } = std.ast.ast_node
+{ Expr, Name, Literal, Paren, ArrayLit, FixedArray } = std.ast.ast_node
+{ Lambda, Call, Match, Try, Record, Access, Index } = std.ast.ast_node
+{ Unary, Binary, Consume, Meta, Arg, Arm } = std.ast.ast_node
+{ Type, Named, Union, FnType, ArrayType } = std.ast.ast_node
+{ Pattern, PatName, Destructure } = std.ast.ast_node
+{ Member, Field, Param, TParam, ImportName } = std.ast.ast_node
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 SOURCE: str = "// before the declaration\nPoint = {\n    x: i32,\n}\n\nname = (b: bool) str {\n    b.match({\n        // first inside the arm body\n        true => \"c\",\n        false => \"s\",\n    });\n} // trailing on the closing brace\n\nf = () () {\n    // the only content of a closure body\n}\n\nmain = () () {\n    {\n        // the only content of a bare block\n    }\n}\n// at end of file\n"
 

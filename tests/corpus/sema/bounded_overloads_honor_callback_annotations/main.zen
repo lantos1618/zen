@@ -1,7 +1,7 @@
-Res, Ok, ToU64 = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, ToU64 } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // Callback annotations must select the same bounded overload as explicit
 // type arguments, regardless of declaration order or callback parameter index.

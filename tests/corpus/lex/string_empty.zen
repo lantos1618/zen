@@ -1,7 +1,7 @@
-Res, Ok, IoError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // the empty string literal, and adjacent quotes that are not one token.
 //

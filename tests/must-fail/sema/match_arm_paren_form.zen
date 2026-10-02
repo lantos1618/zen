@@ -12,8 +12,8 @@
 // The Ok arm is wrapped to ensure punctuation does not hide the closure's
 // shape. Both arm values and the match must still be rejected as non-i32.
 
-Res, Ok, IoError = std.core
-Env = std.env
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
 
 get* = (r: Res<i32, IoError>) i32 {
     r.match({

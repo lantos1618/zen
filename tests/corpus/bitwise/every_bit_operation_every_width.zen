@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 // Every named bit operation of std.core.num and every bit operator, on
 // every unsigned width (the rotations exist for u32 and u64), at counts 0,

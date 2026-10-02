@@ -1,4 +1,4 @@
-Ptr, null_ptr = std.mem
+{ Ptr, null_ptr } = std.mem
 
 Slot<T> = {
     data* :: Ptr<T> = null_ptr<T>(),

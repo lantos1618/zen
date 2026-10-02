@@ -8,7 +8,7 @@
 //
 // Needs <valgrind/memcheck.h> where a program calls these; programs that do
 // not call them do not include the header.
-Ptr = std.mem
+{ Ptr } = std.mem
 
 Memcheck = c.bind("valgrind/memcheck.h", {
     VALGRIND_MAKE_MEM_UNDEFINED = (addr: Ptr<u8>, len: usize) usize

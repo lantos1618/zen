@@ -1,9 +1,9 @@
-Res, Ok = std.core
-AllocError = std.mem
-Vec = std.collections
-Env = std.env
-Actor, ActorError, ActorStartError, Context = std.actor
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
 
 Bytes = Vec<u8> | bool
 Worker = {}

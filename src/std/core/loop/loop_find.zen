@@ -1,12 +1,12 @@
 // Derived traversal operations. find borrows; filter and map collect into
 // storage chosen by the caller and preserve allocation failures.
-Res, Ok, None = std.core.result
-then          = std.core.bool
-Alloc, AllocError = std.mem
-Vec           = std.collections
-Seq           = std.core.seq
-LoopHandle    = std.core.loop.loop_handle
-loop          = std.core.loop.loop_iter
+{ Res, Ok, None } = std.core.result
+{ then }          = std.core.bool
+{ Alloc, AllocError } = std.mem
+{ Vec }           = std.collections
+{ Seq }           = std.core.seq
+{ LoopHandle }    = std.core.loop.loop_handle
+{ loop }          = std.core.loop.loop_iter
 
 // First element accepted by the predicate, or None.
 find*<R: Seq<T>, T> = (range: R, pred: (value: T) bool) Res<T> {

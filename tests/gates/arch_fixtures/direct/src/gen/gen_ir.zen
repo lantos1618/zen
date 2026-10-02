@@ -1,2 +1,2 @@
 // The IR carries source positions, from std.source, and nothing from the AST.
-Span = std.source
+{ Span } = std.source

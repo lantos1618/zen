@@ -2,9 +2,9 @@
 // overload set. Identical parameter types make the free declaration
 // unreachable through either spelling, so the pair is rejected at declaration.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
 W = {
     v: i32,

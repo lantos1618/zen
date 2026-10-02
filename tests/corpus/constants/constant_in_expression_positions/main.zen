@@ -14,10 +14,10 @@
 // than 12, and the sum is even but past the square, so no single
 // off-by-one in one operand can fake it.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 K: i64 = 300
 

@@ -13,10 +13,10 @@
 // Breaks if: the candidate table is keyed by NAME without arity -- the
 // second `mix` overwrites the first and one line reads the other body.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 W = {
     v: i32,

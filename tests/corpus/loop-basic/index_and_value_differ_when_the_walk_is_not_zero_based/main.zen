@@ -6,10 +6,10 @@
 // whose elements are not its indexes: a non-zero range, an array of
 // negatives, a vec of values too wide for one machine word
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

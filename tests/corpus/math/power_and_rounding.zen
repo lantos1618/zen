@@ -1,5 +1,5 @@
-pow, exp, log, floor, ceil, tan, atan2 = std.math
-println = std.io
+{ pow, exp, log, floor, ceil, tan, atan2 } = std.math
+{ println } = std.io
 near = (left: f64, right: f64) bool {
     difference = left - right;
     difference > -0.000000001 && difference < 0.000000001

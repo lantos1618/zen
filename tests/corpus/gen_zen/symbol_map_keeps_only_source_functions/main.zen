@@ -1,15 +1,15 @@
-Alloc, AllocError = std.mem
-str, String = std.text
-Source, scan = std.lex
-Parser = std.parse.parser
-module = std.parse.parse_decl
-Span, Pos = std.source
-Checker = sema.sema_check
-Emit = gen.gen_emit
-CBackend, emit_program, render_symbol_map = gen.gen_c
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Source, scan } = std.lex
+{ Parser } = std.parse.parser
+{ module } = std.parse.parse_decl
+{ Span, Pos } = std.source
+{ Checker } = sema.sema_check
+{ Emit } = gen.gen_emit
+{ CBackend, emit_program, render_symbol_map } = gen.gen_c
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 PROGRAM : str = "helper = () i32 { 7 }\nmain = (env: i32) i32 { helper() }\n"
 

@@ -1,5 +1,5 @@
-Range = std.core
-println = std.io
+{ Range } = std.core
+{ println } = std.io
 
 // A written binding type settles `Range(end)` as it settles `Range(0, end)`.
 main = () i32 {

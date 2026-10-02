@@ -17,13 +17,13 @@
 // to hand back 0 on overflow does not abort: it prints 1 and exits 0,
 // which is the silent answer this file exists to make impossible.
 
-Res, Ok = std.core
-OutOfBounds = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ OutOfBounds } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 // a trap never lifts into Res: it aborts the process
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 scale = (a: i32, b: i32) i32 {
     a * b

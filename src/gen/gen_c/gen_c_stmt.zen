@@ -4,29 +4,29 @@
 // directly into their destination. Destination types provide context for
 // literals and joins, and statements are typed before emission.
 
-Expr, ExprId, BlockId, Block, Stmt, Bind, Deferred = std.ast
-Decl = std.ast
-Match = std.ast
-AllocError = std.mem
-str, String = std.text
-TyId = sema.sema_ty
-Ctx = sema.sema_check
-subst = sema.sema_inst
-stmt_type = sema.sema_type
-type_from_ast = sema.sema_denote
-settled_array = sema.sema_place
-sym_local = gen.gen_name
-GenFault = gen.gen_diag
-CBackend = gen.gen_c.gen_c_state
-lower_match = gen.gen_c.gen_c_flow
-lower_try = gen.gen_c.gen_c_try
-declarator, is_unit, has_storage, void_discard, write_zero = gen.gen_c.gen_c_type
-expr, ty_of, spills = gen.gen_c.gen_c_expr
-declare_local_function = gen.gen_c.gen_c_inline
-enter_block, leave_block, note_drop, note_unset_drop, displace = gen.gen_c.gen_c_own
-Res, Ok, None = std.core
+{ Expr, ExprId, BlockId, Block, Stmt, Bind, Deferred } = std.ast
+{ Decl } = std.ast
+{ Match } = std.ast
+{ AllocError } = std.mem
+{ str, String } = std.text
+{ TyId } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ subst } = sema.sema_inst
+{ stmt_type } = sema.sema_type
+{ type_from_ast } = sema.sema_denote
+{ settled_array } = sema.sema_place
+{ sym_local } = gen.gen_name
+{ GenFault } = gen.gen_diag
+{ CBackend } = gen.gen_c.gen_c_state
+{ lower_match } = gen.gen_c.gen_c_flow
+{ lower_try } = gen.gen_c.gen_c_try
+{ declarator, is_unit, has_storage, void_discard, write_zero } = gen.gen_c.gen_c_type
+{ expr, ty_of, spills } = gen.gen_c.gen_c_expr
+{ declare_local_function } = gen.gen_c.gen_c_inline
+{ enter_block, leave_block, note_drop, note_unset_drop, displace, has_drop } = gen.gen_c.gen_c_own
+{ Res, Ok, None } = std.core
 
-Dest* = Discard | Return | Into(str)
+Dest* = { Discard | Return | Into: str }
 
 // A block yields its explicit trailing value, or its last expression statement
 // when the parser represents a semicolon-terminated tail that way.

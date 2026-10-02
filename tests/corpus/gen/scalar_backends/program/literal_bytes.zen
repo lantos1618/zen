@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 main = () i32 {
     println("\\01|\01|\00|\000|\07|\08|end");

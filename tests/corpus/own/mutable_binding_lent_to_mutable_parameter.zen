@@ -1,7 +1,7 @@
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // A `::` parameter writes the caller's value: through a `::` binding, a
 // `::` field path, method syntax, or into a fresh temporary.

@@ -2,15 +2,15 @@
 // payload supplies the integer domain, and the leading bar still distinguishes
 // a one-variant enum from an alias.
 
-scan, Source = std.lex
-Parser, module = std.parse
-Ast, Decl, ExprId = std.ast
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ scan, Source } = std.lex
+{ Parser, module } = std.parse
+{ Ast, Decl, ExprId } = std.ast
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-GrammarProbe = | Zero = 0 | Other = 7 | Raw(u8)
+GrammarProbe = { | Zero = 0 | Other = 7 | Raw: u8 }
 
 SOURCE: str = "FrameType* = | Data = 0 | Headers = (1 + 1) | Unknown(u8)\nSolo = | Only = 7\nholder = () () { Local = | Low = 3 | High = 4 }\n"
 

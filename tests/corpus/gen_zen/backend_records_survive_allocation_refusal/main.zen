@@ -1,12 +1,12 @@
-Ast = std.ast
-Checker = sema.sema_check
-CBackend = gen.gen_c
-TyId = sema.sema_ty
-Res, Ok, Range = std.core
-Alloc, AllocError, Ptr = std.mem
-String = std.text
-Env = std.env
-println = std.io
+{ Ast } = std.ast
+{ Checker } = sema.sema_check
+{ CBackend } = gen.gen_c
+{ TyId } = sema.sema_ty
+{ Res, Ok, Range } = std.core
+{ Alloc, AllocError, Ptr } = std.mem
+{ String } = std.text
+{ Env } = std.env
+{ println } = std.io
 
 Refusal = {
     base: Alloc,
@@ -28,7 +28,7 @@ Refusal.impl(Alloc, {
     }
 })
 
-Operation = Function | Foreign | Type
+Operation = { Function | Foreign | Type }
 Observation = { allocations: usize, refused: bool, intact: bool }
 
 publish = (

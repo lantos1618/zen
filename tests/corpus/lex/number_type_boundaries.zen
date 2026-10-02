@@ -1,7 +1,7 @@
-Res, Ok, IoError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // the largest literal of each unsigned type, written exactly at the
 // boundary. u64.MAX does not fit a C long, which is a codegen trap.

@@ -1,5 +1,5 @@
-bool, i32 = std.core
-println = std.io
+{ bool, i32 } = std.core
+{ println } = std.io
 
 Value = i32 | bool
 identity = (n: i32) i32 { n }

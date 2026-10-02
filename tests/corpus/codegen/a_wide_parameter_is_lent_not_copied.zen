@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 // A wide `:` parameter is received by address (gen_c_borrow.zen), yet it
 // keeps the meaning of a by-value parameter: a `::` copy of it is this

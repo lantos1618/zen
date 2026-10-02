@@ -1,9 +1,9 @@
-render = fmt.fmt
-scan, Source = std.lex
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ render } = fmt.fmt
+{ scan, Source } = std.lex
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 check = (env: Env, count: usize) Res<(), AllocError> {
     a = env.mem.alloc();

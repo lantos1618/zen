@@ -4,8 +4,8 @@
 // its first assignment: there is nothing to drop then, and its value is
 // dropped once, at the end of its own scope.
 
-Drop = std.core
-println = std.io
+{ Drop } = std.core
+{ println } = std.io
 
 Noisy = { tag: str }
 

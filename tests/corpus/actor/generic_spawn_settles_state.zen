@@ -1,7 +1,7 @@
-Res, Ok = std.core
-Env = std.env
-Actor, Ref, ActorError, ActorStartError, Context = std.actor
-println = std.io
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
 
 // A generic function spawning a generic actor must record the concrete
 // actor state type of the instantiation being lowered, including for the

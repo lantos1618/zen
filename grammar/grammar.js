@@ -26,10 +26,10 @@
 //
 // R1. SUM TYPES USE `|`, NOT `,`.
 //
-//       Shape = Circle(Circle) | Rect(Rect) | Unit   // nominal, with payloads
-//       Error = AllocError | IoError | ArgError      // a union of existing types
-//       AllocError* = | OutOfMemory                  // one variant: the bar LEADS
-//       Alias = Shape                                // no bar at all: an alias
+//       Shape = { Circle: Circle | Rect: Rect | Unit }  // an enum: braces
+//       Error = AllocError | IoError | ArgError         // a union of existing types
+//       AllocError* = { | OutOfMemory }                 // one variant: the bar LEADS
+//       Alias = Shape                                   // no bar at all: an alias
 //
 //     A declaration whose right-hand side contains a top-level `|` is an enum;
 //     one that does not is an alias (or an import, or a constant — see R1a).
@@ -43,11 +43,11 @@
 //
 //     R1a. What is left of `Name = <thing>` is decided by the SHAPE of
 //     <thing>, in the deleted bootstrapper reader, not by more grammar:
-//       `{ .. }`            struct
+//       `{ .. }`            struct, or an enum when its entries join with `|`
 //       variants with `|`   enum
 //       `(..) T { .. }`     function, with a body
 //       `(..) T`            function, signature only
-//       `a.b.c`             import (dotted path)
+//       `a.b.c`             import of the item `c` from module `a.b`
 //       `Name` / `Name<T>`  alias
 //       anything else       a constant (module level) / a binding (in a body)
 //
@@ -235,10 +235,10 @@ module.exports = grammar({
     // `Vec<i32>` — an alias target / a type, or `Vec < i32`? Decided at the
     // token after the `>`. (A-ANGLE)
     [$.generic_type, $._expression, $._callee],
-    [$.generic_type, $._type],
+    [$.generic_type, $._single_type],
     // the payload of the enum fork: `str` in `Failed(str)` is a type on one
     // side and an expression on the other.
-    [$._type, $._expression],
+    [$._single_type, $._expression],
     // D7: `x*` at the head of a statement — an export marker, or `x * y`?
     // And `x<T> =` — type parameters, or `x < T`? Decided one token later.
     [$.declaration_name, $._binding_target],
@@ -255,6 +255,13 @@ module.exports = grammar({
     // `x: T` — a binding's target and type, or a deferred local? Decided at
     // the `=` or `;` after the type.
     [$._binding_target, $.deferred_statement],
+    // `(..) T` then `{` — a function body, or a signature followed by a
+    // braced import? Decided after the matching `}`: only an import is
+    // followed by `=`.
+    [$.function, $.function_signature],
+    // `{ Name: T` — an enum's variant or a struct's field? Decided at the
+    // separator that follows: `|` joins variants, `,` joins fields.
+    [$.declaration_name, $.braced_variant],
   ],
 
   rules: {
@@ -262,7 +269,8 @@ module.exports = grammar({
 
     // Module level is DECLARATIONS ONLY, so nothing here ends in `;` — R2.
     // `A.impl(B, {..})` is the one call-shaped thing that declares (D16).
-    _module_item: ($) => choice($.declaration, $.impl_declaration),
+    _module_item: ($) =>
+      choice($.declaration, $.impl_declaration, $.import_declaration),
 
     // ------------------------------------------------------------------
     // names
@@ -289,22 +297,20 @@ module.exports = grammar({
     // only place that knowledge lives:
     //
     //   Vec*<T> = { .. }                     struct
-    //   Shape = Circle(Circle) | Unit        enum
-    //   AllocError* = | OutOfMemory          enum, one variant
+    //   Shape = { Circle: Circle | Unit }    enum
+    //   AllocError* = { | OutOfMemory }      enum, one variant
     //   Alias = Shape                        alias
-    //   Res*, Ok*, None* = std.core.result   import, re-exported
+    //   str = std.text.str                   import of one item
     //   area* = (c: Circle) f64 { .. }       function, with a body
     //   then* = <T>(b: bool, f: () T) Res<T> function, signature only
     //   json_pkg = Package(url: "..", ..)    module constant
     //
-    // The name list exists for imports: "Re-export is an import whose
-    // bindings are starred. No `export`, no `from`" (DESIGN.md:328).
     // No `;` — a declaration does not take one (R2).
     // ------------------------------------------------------------------
 
     declaration: ($) =>
       seq(
-        comma_sep1(field('name', $.declaration_name)),
+        field('name', $.declaration_name),
         optional(seq(':', field('type', $._type))),
         field('operator', choice('=', '::=')),
         field('value', $._declaration_value),
@@ -314,6 +320,7 @@ module.exports = grammar({
       choice(
         $.native_binding,
         $.struct_body,
+        $.braced_enum_body,
         $.enum_body,
         $.inline_function,
         $.function_signature,
@@ -330,6 +337,27 @@ module.exports = grammar({
         optional(seq(field('symbol', $.string_literal), ',')),
         field('body', $.struct_body), optional(','), ')',
       )),
+
+    // `{ Res*, Ok*, None* } = std.core.result` destructures names out of a
+    // module; a starred name is re-exported. Only a module-level item begins
+    // with `{`, so the braces cannot be a block.
+    import_declaration: ($) =>
+      seq(
+        '{',
+        comma_sep1(field('name', $.import_name)),
+        optional(','),
+        '}',
+        '=',
+        field('module', $.module_path),
+      ),
+
+    import_name: ($) =>
+      seq(
+        field('name', $.identifier),
+        optional(field('exported', $.export_marker)),
+      ),
+
+    module_path: ($) => seq($.identifier, repeat(seq('.', $.identifier))),
 
     // `Circle.impl(Rect, { width: .., height: .. })` — D16. The shape is
     // fixed (a target, a trait, and a record) because that is the only shape
@@ -369,7 +397,7 @@ module.exports = grammar({
         choice(
           seq(
             field('mutability', choice(':', '::')),
-            field('type', $._type),
+            field('type', $._single_type),
             optional(seq('=', field('value', $._expression))),
           ),
           seq(
@@ -410,6 +438,29 @@ module.exports = grammar({
     // or inside one is parenthesized, as the compiler requires.
     _discriminant: ($) => prec.left(PREC.bitwise_or, $._expression),
 
+    // `{ A: T | B = 2, method* = .. }`: variants joined by `|`, then after
+    // the first `,` the enum's members, as in a struct body. The separator
+    // decides the kind; a body mixing `|` and `,` among its entries is
+    // neither.
+    braced_enum_body: ($) =>
+      seq(
+        '{',
+        // One variant takes the leading bar, as in the bare form.
+        choice(
+          seq('|', $.braced_variant, repeat(seq('|', $.braced_variant))),
+          seq($.braced_variant, repeat1(seq('|', $.braced_variant))),
+        ),
+        optional(seq(',', repeat(seq($.member_declaration, optional(','))))),
+        '}',
+      ),
+
+    braced_variant: ($) =>
+      seq(
+        field('name', $.identifier),
+        optional(seq(':', field('payload', $._single_type))),
+        optional(seq('=', field('discriminant', $._expression))),
+      ),
+
     // ------------------------------------------------------------------
     // statements — R2. Every one of these ends with `;` EXCEPT a nested
     // declaration (which is a declaration, wherever it stands) and a bare
@@ -442,7 +493,7 @@ module.exports = grammar({
       seq(
         field('name', $.declaration_name),
         field('operator', choice('=', '::=')),
-        field('value', choice($.struct_body, $.enum_body, $.function, $.function_signature)),
+        field('value', choice($.struct_body, $.braced_enum_body, $.enum_body, $.function, $.function_signature)),
       ),
 
     // `x = e;`, `x ::= e;`, `x: T = e;`, `x :: T = e;`, `x :: = e;`
@@ -514,12 +565,10 @@ module.exports = grammar({
     // rather than an empty parameter list — otherwise `Res<(), IoError>` reads
     // as a function type.
     function_signature: ($) =>
-      prec.right(
-        seq(
-          optional(field('type_parameters', $.type_parameters)),
-          field('parameters', $.parameters),
-          field('return_type', $._type),
-        ),
+      seq(
+        optional(field('type_parameters', $.type_parameters)),
+        field('parameters', $.parameters),
+        field('return_type', $._type),
       ),
 
     parameters: ($) => seq('(', comma_list($.parameter), ')'),
@@ -553,7 +602,12 @@ module.exports = grammar({
     // types
     // ------------------------------------------------------------------
 
-    _type: ($) =>
+    _type: ($) => choice($._single_type, $.union_type),
+
+    // One type, never a union. Inside a body a top-level `|` separates enum
+    // variants, so a member's or payload's type is written this way and a
+    // union is declared under a name first.
+    _single_type: ($) =>
       choice(
         $.identifier,
         $.generic_type,
@@ -561,7 +615,6 @@ module.exports = grammar({
         $.function_signature,
         $.unit,
         $.self_type,
-        $.union_type,
         $.inferred_type,
         $.variadic_type,
       ),

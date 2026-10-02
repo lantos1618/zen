@@ -12,10 +12,10 @@
 // breaks this: sizing the loop's result slot (or spilling its break
 // argument) through anything narrower than the break argument's type.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     xs: [i64, 3] = [5000001234, 6, 7000001234];

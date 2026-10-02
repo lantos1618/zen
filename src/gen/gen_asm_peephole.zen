@@ -11,17 +11,17 @@
 // Only 64-bit moves are touched, and only between adjacent lines: a label,
 // a call or any other instruction in between ends the window, so no rule
 // needs to know what else may read or write the slot.
-Alloc, AllocError = std.mem
-str, String = std.text
-Res, Ok, None = std.core
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Res, Ok, None } = std.core
 
-Dialect* = Att | Arm
+Dialect* = { Att | Arm }
 
 // A two-operand instruction line, split at its first ", ".
 Line = { mnemonic: str, first: str, second: str }
 
 // What becomes of an instruction line after the one before it.
-Action = Hold | Discard | Replace(Line)
+Action = { Hold | Discard | Replace: Line }
 
 peephole* = (
     alloc   : Alloc,

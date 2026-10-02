@@ -5,10 +5,10 @@
 //
 // position: the second use of the dead binding.
 
-Res, Ok, Drop = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Drop } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Buf = {
     id: i32,

@@ -1,15 +1,15 @@
-Source, scan = std.lex
-Parser = std.parse.parser
-module = std.parse.parse_decl
-Checker = sema.sema_check
-check_all = sema.sema_decl
-analyse, RootPolicy, UsageReport, UsageError, review = sema.sema_usage
-Env, FsError = std.env
-Build = zen.zen_build
-read, Jsons = std.json
-Res, Ok = std.core
-AllocError = std.mem
-println = std.io
+{ Source, scan } = std.lex
+{ Parser } = std.parse.parser
+{ module } = std.parse.parse_decl
+{ Checker } = sema.sema_check
+{ check_all } = sema.sema_decl
+{ analyse, RootPolicy, UsageReport, UsageError, review } = sema.sema_usage
+{ Env, FsError } = std.env
+{ Build } = zen.zen_build
+{ read, Jsons } = std.json
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ println } = std.io
 
 marked = (
     report    : UsageReport,

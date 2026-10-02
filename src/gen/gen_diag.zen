@@ -2,19 +2,19 @@
 // these faults describe source forms or types that code generation could not
 // translate, plus the backend's explicit reachability bound.
 
-Span = std.source
-str, String = std.text
-AllocError = std.mem
-Res = std.core
+{ Span } = std.source
+{ str, String } = std.text
+{ AllocError } = std.mem
+{ Res } = std.core
 
-GenFault* = Unsupported(str)     // a node form this backend does not lower yet
-          | Unresolved(str)      // a name with no declaration behind it
-          | Ambiguous(str)       // a name with more than one, and no overload rule
-          | Untyped(str)         // sema returned no type and context supplied none
-          | Unspellable(str)     // a type with no C spelling yet
-          | CopyFromPointer(str)
-          | Overrun(usize)       // more functions reachable than the backend's bound
-          | ArmDisagrees(str)    // an arm's emitted test is not its pattern: a compiler bug
+GenFault* = { Unsupported: str     // a node form this backend does not lower yet
+          | Unresolved: str      // a name with no declaration behind it
+          | Ambiguous: str       // a name with more than one, and no overload rule
+          | Untyped: str         // sema returned no type and context supplied none
+          | Unspellable: str     // a type with no C spelling yet
+          | CopyFromPointer: str
+          | Overrun: usize       // more functions reachable than the backend's bound
+          | ArmDisagrees: str }    // an arm's emitted test is not its pattern: a compiler bug
 
 GenDiag* = {
     file*: str,

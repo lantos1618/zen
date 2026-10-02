@@ -1,10 +1,10 @@
 // Owns one POSIX socket and closes it on drop.
 
-Alloc, AllocError, Ptr, null_ptr = std.mem
-str, String, str_at = std.text
-Res, Ok, Err, loop = std.core
-Drop = std.core
-Vec = std.collections
+{ Alloc, AllocError, Ptr, null_ptr } = std.mem
+{ str, String, str_at, c_text } = std.text
+{ Res, Ok, Err, loop } = std.core
+{ Drop } = std.core
+{ Vec } = std.collections
 
 // Header-owned layout: the native compiler supplies offsets, size and alignment.
 AddrInfo = c.record("netdb.h", "struct addrinfo", {
@@ -51,7 +51,7 @@ with_flag = (flags: i32, bit: i32) i32 {
     (bit > 0 && (flags / bit) % 2 == 0).match({true => flags + bit, false => flags})
 }
 
-SocketFault* = ConnectFault | WriteFault | ReadFault | PeerClosed
+SocketFault* = { ConnectFault | WriteFault | ReadFault | PeerClosed }
 
 ResolvedAddr* = {
     ip*: String,

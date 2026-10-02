@@ -12,10 +12,10 @@
 // its own row. The reversed final read checks every copied slot directly,
 // and the values straddle 2^31 so a 32-bit-truncating copy is visible.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     xs: [i64, 4] = [1000000007, 2, 998244353, 5];

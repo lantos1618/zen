@@ -6,12 +6,12 @@
 // Inputs are assembled at runtime because a literal containing a comment
 // opener would itself be tokenized as a comment.
 
-scan, Source, kind_name, message = std.lex.lex
-Alloc, AllocError = std.mem
-str, String = std.text
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ scan, Source, kind_name, message } = std.lex.lex
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 // `//` followed by whatever the caller wants
 line_comment = (alloc: Alloc, rest: str) Res<String, AllocError> {

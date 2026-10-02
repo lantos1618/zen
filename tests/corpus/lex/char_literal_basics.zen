@@ -1,7 +1,7 @@
-Res, Ok, IoError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // char literals: 'a', the escaped quote, the escaped backslash, and
 // the whitespace escapes. a char literal is one BYTE (str is bytes).

@@ -4,10 +4,10 @@
 // comment runs to EOF instead -- that reading is
 // tests/must-fail/lex/block_comment_nested_eof.zen, same source.
 /* a /* b */
-Res, Ok, IoError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | IoError
 

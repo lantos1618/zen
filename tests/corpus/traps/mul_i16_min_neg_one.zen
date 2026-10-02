@@ -2,14 +2,14 @@
 // i16.MIN * -1 traps: the product is i16.MAX + 1, which does not
 // exist. i16.MIN is the one value whose negation is unrepresentable
 
-Res, Ok = std.core
-OutOfBounds = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ OutOfBounds } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 // main must name an error type. a trap never lifts into Res:
 // it aborts the process
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 main = (env: Env) Res<i32, Error> {
     x: i16       = i16.MIN;

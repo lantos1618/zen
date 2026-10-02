@@ -4,10 +4,10 @@
 // hello-world does not grow an arena because one of its values is a
 // Display.
 
-Res, Ok, Display, WriteError, Sink = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Display, WriteError, Sink } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Tag = {
     ch: u8,

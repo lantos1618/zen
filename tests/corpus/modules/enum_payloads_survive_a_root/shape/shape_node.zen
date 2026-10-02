@@ -2,4 +2,4 @@ Pos* = {
     line*: usize,
 }
 
-Node* = Leaf(i32) | At(Pos) | Empty
+Node* = { Leaf: i32 | At: Pos | Empty }

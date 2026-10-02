@@ -13,10 +13,10 @@
 // expected total is 15. Number parsing is intentionally local to keep this
 // test focused on string search and slicing.
 
-Env, FsError = std.env
-Res, Ok, Range = std.core
-AllocError = std.mem
-println = std.io
+{ Env, FsError } = std.env
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ println } = std.io
 
 Error = FsError | AllocError
 

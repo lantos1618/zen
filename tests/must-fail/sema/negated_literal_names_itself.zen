@@ -11,10 +11,10 @@
 // the literal one an i8 cannot hold, matching what
 // sema_trap.out_of_range points its caret at.
 
-AllocError = std.mem
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ AllocError } = std.mem
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     q: i8 = -200;

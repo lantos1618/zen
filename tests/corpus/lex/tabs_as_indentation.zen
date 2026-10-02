@@ -1,7 +1,7 @@
-Res, Ok, IoError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // indentation is hard tabs, including inside the match arms.
 Error = AllocError | IoError

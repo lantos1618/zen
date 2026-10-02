@@ -5,16 +5,16 @@
 // flag it. Both groups include vector (std.simd) code: secrets in XMM/YMM
 // and V registers, vectors passed by value, spilled to the stack and
 // combined by instructions that also read their destination.
-Secret, declassify, Choice = std.ct
-ct_eq, ct_lt, ct_select, ct_swap, ct_memeq, ct_lookup = std.ct
-bit_xor, bit_and, shift_right, mul_wide, truncate_u64, truncate_u8 = std.core.num
-to_u64, to_usize, add_carry, sub_borrow, bit_or, shift_left = std.core.num
-AllocError, Ptr = std.mem
-Avx2, Clmul, Adx, Bmi2, avx2, clmul, adx, bmi2, mul_limbs, square_limbs = std.simd
-load_u8x16, load_u32x4, load_u64x2, load_u32x8, lanes_u64x2, splat_u32x4 = std.simd
-Res, Ok, Range = std.core
-Env = std.env
-println = std.io
+{ Secret, declassify, Choice } = std.ct
+{ ct_eq, ct_lt, ct_select, ct_swap, ct_memeq, ct_lookup } = std.ct
+{ bit_xor, bit_and, shift_right, mul_wide, truncate_u64, truncate_u8 } = std.core.num
+{ to_u64, to_usize, add_carry, sub_borrow, bit_or, shift_left } = std.core.num
+{ AllocError, Ptr } = std.mem
+{ Avx2, Clmul, Adx, Bmi2, avx2, clmul, adx, bmi2, mul_limbs, square_limbs } = std.simd
+{ load_u8x16, load_u32x4, load_u64x2, load_u32x8, lanes_u64x2, splat_u32x4 } = std.simd
+{ Res, Ok, Range } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 // Branch-free selection on a secret comparison.
 select_min* = (a: Secret<u64>, b: Secret<u64>) Secret<u64> {

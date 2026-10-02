@@ -1,7 +1,7 @@
-Res, Ok, Drop = std.core
-AllocError, Arena = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Drop } = std.core
+{ AllocError, Arena } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Item = { id: i32 }
 Item.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id); } })

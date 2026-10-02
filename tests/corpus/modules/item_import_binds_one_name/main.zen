@@ -1,0 +1,11 @@
+// `x = m.c` binds the one item `c` of module `m`, under the name on the
+// left. Both modules export `pick`; renaming one binds each without a
+// clash, and a destructure binds under the module's own name.
+choose = one.one.pick
+{ pick } = two.two
+{ other } = one.one
+
+main = (env: Env) Res<i32, IoError> {
+    println("{} {} {}", choose(1), pick(2), other(1));
+    Ok(0);
+}

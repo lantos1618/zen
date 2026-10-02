@@ -1,8 +1,8 @@
 // Native binding bodies contain declarations, including generic pointer types.
-Ptr = std.mem
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Ptr } = std.mem
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 SocketConstants = c.bind("sys/socket.h", {
     AF_INET6*: c_int
     MSG_NOSIGNAL*: c_int = 0

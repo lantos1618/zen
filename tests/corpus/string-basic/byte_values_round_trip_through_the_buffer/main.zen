@@ -12,10 +12,10 @@
 // anywhere between add's u8 parameter and view()'s pointer-and-
 // length moves at least one of these digits.
 
-Res, Ok, WriteError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, WriteError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | WriteError
 

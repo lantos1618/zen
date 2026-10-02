@@ -4,12 +4,12 @@
 // knows. The encoded line pins which bytes get a short escape and which
 // get `\u00XX`.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Jsons, read, write_text = std.json
-Res, Ok, loop = std.core
-Env = std.env
-println = std.io
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Jsons, read, write_text } = std.json
+{ Res, Ok, loop } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a   ::= env.mem.alloc();

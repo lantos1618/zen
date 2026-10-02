@@ -13,11 +13,11 @@
 // `Fn` is deliberately NOT imported: `make`'s return type is what says what
 // `f` is, and that is a type question, not a scope one.
 
-make = pm.pm
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ make } = pm.pm
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     f = make(3);

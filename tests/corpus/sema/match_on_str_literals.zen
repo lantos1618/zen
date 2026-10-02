@@ -1,6 +1,6 @@
-Res, Ok = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
 // `s.match({ "i8" => .. })` on a str scrutinee. A str is a STRUCT, so
 // the ordinary scalar lowering emitted `zg_str == "i8"` -- a struct

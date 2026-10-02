@@ -13,12 +13,12 @@
 // written type to settle them from the outside, so the join is the only
 // thing that can. They must type the same.
 
-Res, Ok, None = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, None } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Op = Not | Neg
+Op = { Not | Neg }
 
 name_of = (o: Op) str {
     o.match({ Not => "not", Neg => "neg" })

@@ -15,10 +15,10 @@
 // Breaks if: instantiation is lost on either side of the call -- the
 // direct line answers 42, the dot line 12; any mismatch breaks one.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Box*<T> = {
     n*: T,

@@ -27,23 +27,23 @@
 // test of member lookup, and routing it through a parser would make a
 // parser bug read as a lookup bug.
 
-Checker, Ctx = sema.sema_check
-Types, TyId = sema.sema_ty
-CORE = sema.sema_def
-Ast = std.ast.ast_arena
-Expr, ExprKind, Access, Name, Literal, LiteralKind, Call, Arg = std.ast.ast_node
-Decl, DeclKind, Struct, Import, ImportName, Module = std.ast.ast_node
-Member, MemberKind, Field, Function, Form, Param, TParam = std.ast.ast_node
-Type, TypeKind, Named = std.ast.ast_node
-ExprId, TypeId = std.ast.ast_id
-Ident, QualifiedName, no_trivia = std.ast.ast_span
-Pos, Span = std.source
-Alloc, AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Res, Ok, None = std.core
-Env = std.env
-println = std.io
+{ Checker, Ctx } = sema.sema_check
+{ Types, TyId } = sema.sema_ty
+{ CORE } = sema.sema_def
+{ Ast } = std.ast.ast_arena
+{ Expr, ExprKind, Access, Name, Literal, LiteralKind, Call, Arg } = std.ast.ast_node
+{ Decl, DeclKind, Struct, Import, ImportName, Module } = std.ast.ast_node
+{ Member, MemberKind, Field, Function, Form, Param, TParam } = std.ast.ast_node
+{ Type, TypeKind, Named } = std.ast.ast_node
+{ ExprId, TypeId } = std.ast.ast_id
+{ Ident, QualifiedName, no_trivia } = std.ast.ast_span
+{ Pos, Span } = std.source
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Res, Ok, None } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 at = () Span {
     Span(file: "in.zen", start: Pos(line: 1, col: 1), end: Pos(line: 1, col: 2))

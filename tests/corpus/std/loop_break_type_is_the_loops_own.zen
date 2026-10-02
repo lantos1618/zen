@@ -13,10 +13,10 @@
 //     before the gate existed this file's shape was also how an i64
 //     slipped through and answered 44 for 300.
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     ["a", "b"].loop((h, v) {

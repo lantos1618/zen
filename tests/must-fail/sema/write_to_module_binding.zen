@@ -17,9 +17,9 @@
 // position: the target name, which is the link that refuses -- the same
 // choice `p.n = 2` makes in own/write_through_immutable_field.
 
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 C*: i32 = 0
 

@@ -26,13 +26,13 @@
 // refused or does not assemble. They pin behaviour a native backend once got
 // silently wrong, such as bit operations lowered as other operations.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec = std.collections
-ProcOutput = std.proc
-Res, Ok, None, Range = std.core
-Env = std.env
-println = std.io
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ ProcOutput } = std.proc
+{ Res, Ok, None, Range } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Target = { arch: str, os: str, cross: str, runner: str }
 

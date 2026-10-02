@@ -1,18 +1,18 @@
 // Converts semantic-checker memos into token classifications without running
 // another name-resolution pass.
 
-str = std.text
-Alloc, AllocError = std.mem
-Vec = std.collections
-Res, Ok, Range = std.core
-Ast, Module, Decl, Block = std.ast
-Struct, Enum, Alias, Impl, Member, Function, Named, Call, Match, Try = std.ast
-ExprId, TypeId, BlockId = std.ast
-Span = std.source
-Checker = sema.sema_check
-decl_at = sema.sema_def
-Classed, Colour = lsp.lsp_colour
-written = std.json
+{ str } = std.text
+{ Alloc, AllocError } = std.mem
+{ Vec, sort } = std.collections
+{ Res, Ok, Range } = std.core
+{ Ast, Module, Decl, Block } = std.ast
+{ Struct, Enum, Alias, Impl, Member, Function, Named, Call, Match, Try } = std.ast
+{ ExprId, TypeId, BlockId } = std.ast
+{ Span } = std.source
+{ Checker } = sema.sema_check
+{ decl_at } = sema.sema_def
+{ Classed, Colour } = lsp.lsp_colour
+{ written } = std.json
 
 classify* = (a: Alloc, c: Checker, file: str)
            Res<Vec<Classed>, AllocError> {
@@ -83,7 +83,7 @@ Classes = {
         d.kind.match({
             Function(f) => self.fn_site(f),
             Struct(s)   => self.member_sites(s.name.span, s.members),
-            Enum(e)     => self.class_as(e.name.span, Colour.type),
+            Enum(e)     => self.member_sites(e.name.span, e.members),
             Alias(x)    => self.class_as(x.name.span, Colour.type),
             Impl(im)    => self.member_sites(im.target.span, im.members),
             Const(_)    => written(),

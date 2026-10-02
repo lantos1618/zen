@@ -10,11 +10,11 @@
 // interval is the hull of every position where it is read, written, live
 // into a block or live out of one, so an operand that dies at an
 // instruction and the value that instruction writes never overlap.
-Alloc, AllocError = std.mem
-Vec = std.collections
-Res, Ok, None, loop, Range = std.core
-Func, Instruction, Terminator, Scalar, Op, UnaryOp = gen.gen_ir
-word = gen.gen_ir
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Res, Ok, None, loop, Range } = std.core
+{ Func, Instruction, Terminator, Scalar, Op, UnaryOp } = gen.gen_ir
+{ word } = gen.gen_ir
 
 NONE*: usize = 18446744073709551615
 

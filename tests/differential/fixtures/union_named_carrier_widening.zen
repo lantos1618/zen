@@ -1,13 +1,13 @@
-Res, Ok, Err = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Err } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // Inner and Outer flatten to the same semantic set, but Outer carries Inner
 // as a nested C variant. Widening must wrap that carrier, not copy the larger
 // destination payload from the smaller source object.
-A = | AValue(i32)
-B = | BValue(str)
+A = { | AValue: i32 }
+B = { | BValue: str }
 Inner = A | B
 Outer = A | Inner
 

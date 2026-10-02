@@ -2,22 +2,23 @@
 // pointer movement scales by the element type and `to<U>` changes that type.
 // Element byte sizes are emitted with sizeof so they agree with C layout.
 
-ExprId, Access, Call, TypeId = std.ast
-AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-TyId, TyNamed = sema.sema_ty
-Checker, Ctx = sema.sema_check
-CBackend = gen.gen_c.gen_c_state
-untyped, unsupported = gen.gen_c.gen_c_report
-sub = gen.gen_c.gen_c_mono
-ctype, request_type = gen.gen_c.gen_c_type
-write_qname = gen.gen_c.gen_c_layout
-expr = gen.gen_c.gen_c_expr
-Dest, deliver = gen.gen_c.gen_c_stmt
-init_temp = gen.gen_c.gen_c_flow
-Res, Ok, None, Range = std.core
-GenFault = gen.gen_diag
+{ ExprId, Access, Call, TypeId } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ TyId, TyNamed } = sema.sema_ty
+{ Checker, Ctx } = sema.sema_check
+{ CBackend } = gen.gen_c.gen_c_state
+{ untyped, unsupported } = gen.gen_c.gen_c_report
+{ sub } = gen.gen_c.gen_c_mono
+{ ctype, request_type, is_unit } = gen.gen_c.gen_c_type
+{ write_qname } = gen.gen_c.gen_c_layout
+{ expr } = gen.gen_c.gen_c_expr
+{ Dest, deliver } = gen.gen_c.gen_c_stmt
+{ init_temp } = gen.gen_c.gen_c_flow
+{ Res, Ok, None, Range } = std.core
+{ GenFault } = gen.gen_diag
+{ type_from_ast } = sema.sema_denote
 
 // recognising
 
@@ -144,7 +145,7 @@ ptr_member_type* = (
 
 // the nine
 
-PtrUnitPolicy = PtrLower | PtrRefuse | PtrZero
+PtrUnitPolicy = { PtrLower | PtrRefuse | PtrZero }
 
 ptr_unit_policy = (be: CBackend, et: TyId, name: str) PtrUnitPolicy {
     be.is_unit(et).match({

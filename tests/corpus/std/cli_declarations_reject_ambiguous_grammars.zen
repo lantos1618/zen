@@ -1,13 +1,13 @@
 // A malformed declaration is reported before any word is read.
 
-Vec = std.collections
-Command, command, Spec, Kind, Arg = std.cli
-Res, Ok = std.core
-Alloc, AllocError = std.mem
-Env = std.env
-println = std.io
+{ Vec } = std.collections
+{ Command, command, Spec, Kind, Arg } = std.cli
+{ Res, Ok } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Id = A | B
+Id = { A | B }
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

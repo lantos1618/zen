@@ -11,9 +11,9 @@
 // embedding; edit the JavaScript in place and keep one statement per line
 // where practical so diffs stay readable.
 
-String = std.text
-AllocError = std.mem
-Res, Ok = std.core
+{ String } = std.text
+{ AllocError } = std.mem
+{ Res, Ok } = std.core
 
 write_runtime* = (out :: String) Res<(), AllocError> {
     LINES.loop((line) {

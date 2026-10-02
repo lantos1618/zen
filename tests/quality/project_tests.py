@@ -25,8 +25,8 @@ class ProjectTests(unittest.TestCase):
         (self.root / name).write_text(text)
 
     def build_file(self, registrations):
-        self.write("build.zen", "Builder, BuildError, Mode, Optimize, Cc = std.build\n"
-                   "Res, Ok, Path = std.core\n"
+        self.write("build.zen", "{ Builder, BuildError, Mode, Optimize, Cc } = std.build\n"
+                   "{ Res, Ok, Path } = std.core\n"
                    "build = (b :: Builder) Res<(), BuildError> {\n"
                    + registrations + "\nOk(())\n}\n")
 
@@ -80,7 +80,7 @@ class ProjectTests(unittest.TestCase):
         return result.stdout
 
     def package_manifest(self, repo, rev, src="sample.zen", used=True):
-        self.write("client.zen", 'answer, marker = sample\nmain = () i32 { answer() - 42 }\n')
+        self.write("client.zen", '{ answer, marker } = deps.sample\nmain = () i32 { answer() - 42 }\n')
         target_src = "client.zen" if used else "pass.zen"
         deps = "[sample]" if used else "[]"
         self.build_file(f'sample = b.add("sample", {{url: "{repo.as_uri()}", rev: "{rev}", '
@@ -177,7 +177,7 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(local.returncode, 0, local.stdout + local.stderr)
 
     def test_std_math_links_without_project_native_dependency(self):
-        self.write("math.zen", 'sqrt = std.math\nmain = () i32 { (sqrt(9.0) == 3.0).match({ true => 0, false => 1 }) }\n')
+        self.write("math.zen", '{ sqrt } = std.math\nmain = () i32 { (sqrt(9.0) == 3.0).match({ true => 0, false => 1 }) }\n')
         self.build_file('b.exe_test("math", {src: Path("math.zen"), deps: [], optimize: Optimize.Debug}).try();')
         checker = self.root / "check-math-link"
         checker.write_text(f"#!{sys.executable}\nimport os, sys\n"
@@ -420,14 +420,14 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(self.exit_status(), 0)
 
     def test_suite_rejects_empty_and_reports_assertions(self):
-        self.write("suite.zen", 'Suite = std.test\nRes, IoError = std.core\nEnv = std.env\n'
+        self.write("suite.zen", '{ Suite } = std.test\n{ Res, IoError } = std.core\n{ Env } = std.env\n'
                    'main = (env: Env) Res<i32, IoError> {\n'
                    'suite ::= Suite(env: env);\nsuite.finish()\n}\n')
         self.build_file('b.exe_test("suite", {src: Path("suite.zen"), deps: []}).try();')
         empty = self.run_zen("test")
         self.assertEqual(empty.returncode, 1, empty.stdout + empty.stderr)
         self.assertIn("0 passed, 0 failed", empty.stdout)
-        self.write("suite.zen", 'Suite = std.test\nRes, IoError = std.core\nEnv = std.env\n'
+        self.write("suite.zen", '{ Suite } = std.test\n{ Res, IoError } = std.core\n{ Env } = std.env\n'
                    'main = (env: Env) Res<i32, IoError> {\n'
                    'suite ::= Suite(env: env);\n'
                    'suite.run("first", (t) { t.expect(false) }).try();\n'

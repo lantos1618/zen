@@ -11,10 +11,10 @@
 // matched names rather than instantiations would reject the array or
 // accept everything and answer 0.
 
-Res, Ok, Seq = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Seq } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 draw = <R: Seq<i32>>(r: R) i32 {
     acc :: i32 = 0;

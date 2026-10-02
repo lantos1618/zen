@@ -3,12 +3,12 @@
 // the IR says so through a `supports` function over this closed list, and the
 // driver refuses a program that uses anything else before any artifact is
 // published. docs/IR_ARCHITECTURE.md §2.3 is the design.
-str = std.text
-Program, Func, Scalar, Instruction, Terminator, Op = gen.gen_ir
-Res, Ok, None = std.core
-Threads = std.env
+{ str } = std.text
+{ Program, Func, Scalar, Instruction, Terminator, Op } = gen.gen_ir
+{ Res, Ok, None } = std.core
+{ Threads } = std.env
 
-IrFeature* = WideInt
+IrFeature* = { WideInt
     | Float
     | Memory
     | Aggregates
@@ -19,7 +19,7 @@ IrFeature* = WideInt
     | Sys
     | Traps
     | Host
-    | Threads
+    | Threads }
 
 describe* = (feature: IrFeature) str {
     feature.match({

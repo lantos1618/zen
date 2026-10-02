@@ -4,13 +4,13 @@
 // The missing `=` in `Point` must produce one diagnostic anchored at `{`.
 // Recovery must then continue far enough to parse the following declarations.
 
-scan, Source = std.lex.lex
-Parser, module = std.parse
-Decl = std.ast.ast_node
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ scan, Source } = std.lex.lex
+{ Parser, module } = std.parse
+{ Decl } = std.ast.ast_node
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 SOURCE: str = "Point { x: i32 }\nmain = () i32 { 0 }\nOther { }\nlast = () i32 { 1 }\n"
 

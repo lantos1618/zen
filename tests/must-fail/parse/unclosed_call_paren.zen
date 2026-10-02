@@ -1,6 +1,6 @@
-Res, Ok = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
 // the argument list is never closed. same convention: point at the `(`.
 main = (env: Env) Res<i32, ArgError> {

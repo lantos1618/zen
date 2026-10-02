@@ -4,12 +4,12 @@
 // `Res<T>` statement — a `pop` whose value is not wanted — stays legal.
 // The refusals are must-fail/sema/dropped_failure_*.
 
-Res, Ok, Err, None = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Err, None } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Full* = | Full
+Full* = { | Full }
 
 push = (n: i32) Res<(), Full> {
     (n > 2).match({ true => Err(Full.Full), false => Ok(()) })

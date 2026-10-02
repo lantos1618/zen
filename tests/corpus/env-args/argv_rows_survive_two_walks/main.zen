@@ -20,11 +20,11 @@
 // states it.) A builder that serves a stale or zeroed row after the
 // first pass fails; so does one that hands back a shared static row.
 
-count_codepoints, Utf8Error = std.text
-Res, Ok, loop, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ count_codepoints, Utf8Error } = std.text
+{ Res, Ok, loop, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError | Utf8Error> {
     pass ::= 0;

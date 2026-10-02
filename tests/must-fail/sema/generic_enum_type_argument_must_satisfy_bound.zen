@@ -1,15 +1,15 @@
 // Enum applications carry the same declaration-level bounds as structs. An
 // explicit variant instantiation cannot bypass them.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Boxy = { width: i32 }
 Dot = {}
 
-Choice<T: Boxy> = Some(T) | None
+Choice<T: Boxy> = { Some: T | None }
 
 main = (env: Env) Res<i32, AllocError> {
     choice = Choice.Some<Dot>(Dot());

@@ -15,11 +15,11 @@
 
 
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-String = std.text
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ String } = std.text
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a = env.mem.alloc();

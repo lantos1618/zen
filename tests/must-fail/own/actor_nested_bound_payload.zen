@@ -1,7 +1,7 @@
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-Actor, Ref, ActorError, Context = std.actor
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ Actor, Ref, ActorError, Context } = std.actor
 
 Reader = { read = (self: @Self) i32 }
 TextBox = { value: Reader }

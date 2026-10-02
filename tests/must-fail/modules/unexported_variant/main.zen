@@ -1,7 +1,7 @@
-speed, Fast = mode.mode
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ speed, Fast } = mode.mode
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     println("{}", speed(true));

@@ -23,20 +23,21 @@
 // `ArrayType.count` — so half the rule would fire on one shape and stay
 // silent on the one people write. It is named in the report instead.
 
-Checker, Ctx = sema.sema_check
-TyId, Types = sema.sema_ty
-Ast = std.ast.ast_arena
-Expr, ExprKind, Literal, LiteralKind, Name, Access, Binary, BinOp = std.ast.ast_node
-Unary, UnOp, Type, TypeKind, Named = std.ast.ast_node
-Ident, no_trivia = std.ast.ast_span
-Pos, Span = std.source
-ExprId, TypeId = std.ast.ast_id
-Alloc, AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ Checker, Ctx } = sema.sema_check
+{ TyId, Types } = sema.sema_ty
+{ Ast } = std.ast.ast_arena
+{ Expr, ExprKind, Literal, LiteralKind, Name, Access, Binary, BinOp } = std.ast.ast_node
+{ Unary, UnOp, Type, TypeKind, Named } = std.ast.ast_node
+{ Ident, no_trivia } = std.ast.ast_span
+{ Pos, Span } = std.source
+{ ExprId, TypeId } = std.ast.ast_id
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
+{ type_of } = sema.sema_type
 
 // the operator's own position, which is what a trap prints. Each
 // expression gets its own line so the diagnostic can be told apart.

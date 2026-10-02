@@ -3,7 +3,7 @@
 // here, beside no AST type, so a backend can hold a position without
 // importing the AST (docs/IR_ARCHITECTURE.md §3.1).
 
-Res, Ok, loop, Display, WriteError, Sink = std.core
+{ Res, Ok, loop, Display, WriteError, Sink } = std.core
 
 // A source point with a one-based line and byte column.
 Pos* = {

@@ -13,7 +13,7 @@
 // THE LEFT, not one: a single name against a bare root is a module
 // ALIAS, not an import.
 
-Tag, twice = main
+{ Tag, twice } = main
 
 Leaf* = {
     n*: i32,

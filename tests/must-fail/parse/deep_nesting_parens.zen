@@ -1,5 +1,5 @@
-Res = std.core
-Env, ArgError = std.env
+{ Res } = std.core
+{ Env, ArgError } = std.env
 
 // 10000 nested parens. a recursive-descent parser overflows its stack
 // here, which is a crash and not a diagnostic.

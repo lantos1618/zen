@@ -2,19 +2,19 @@
 // process-lifetime bytes. Its NUL-terminated name buffer is sized from the
 // input, preserving the capability's allocation-free signature.
 
-Call = std.ast
-AllocError = std.mem
-str, String = std.text
-TyId = sema.sema_ty
-Ctx = sema.sema_check
-Emit = gen.gen_emit
-CBackend = gen.gen_c.gen_c_state
-declare_temp = gen.gen_c.gen_c_flow
-comment = gen.gen_c.gen_c_runtime
-str_arg = gen.gen_c.gen_c_arg
-close_else, close_brace = gen.gen_c.gen_c_flow
-write_assign_ok, write_assign_none = gen.gen_c.gen_c_flow
-Res, Ok = std.core
+{ Call } = std.ast
+{ AllocError } = std.mem
+{ str, String } = std.text
+{ TyId } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ Emit } = gen.gen_emit
+{ CBackend } = gen.gen_c.gen_c_state
+{ declare_temp } = gen.gen_c.gen_c_flow
+{ comment } = gen.gen_c.gen_c_runtime
+{ str_arg } = gen.gen_c.gen_c_arg
+{ close_else, close_brace } = gen.gen_c.gen_c_flow
+{ write_assign_ok, write_assign_none } = gen.gen_c.gen_c_flow
+{ Res, Ok } = std.core
 
 // The floor: `getenv`, emitted only for a program that asks — an
 // uncalled `static` is a warning.

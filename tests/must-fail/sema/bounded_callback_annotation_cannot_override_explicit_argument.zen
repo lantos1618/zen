@@ -1,6 +1,6 @@
-Res, Ok, ToU64 = std.core
-AllocError = std.mem
-Env = std.env
+{ Res, Ok, ToU64 } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
 pick = <T: ToU64>(value: T, body: (value: T) T) i32 { 1 }
 pick = (value: i32, body: (value: i32) i32) i32 { 2 }

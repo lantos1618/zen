@@ -2,9 +2,9 @@
 // which wraps to -2147483645.
 // the other reading, (max +% 2) * 2, is -2147483647 * 2 and TRAPS.
 
-Res, Ok = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, ArgError> {
     max: i32 = 2147483647;

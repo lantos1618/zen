@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 main = () {
     println("{}", (2147483648).to_i64());

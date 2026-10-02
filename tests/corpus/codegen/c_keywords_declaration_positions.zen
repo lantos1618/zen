@@ -1,10 +1,10 @@
 // C keywords are mangled in every declaration position: file-scope values,
 // types, fields, methods, variants, functions, parameters, and type parameters.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // file scope in C, which is a third identifier space again
 inline = 11
@@ -19,7 +19,7 @@ static = {
 }
 
 // an enum type named after a keyword, with keyword-named variants
-union = case(i32) | goto(i32) | extern
+union = { case: i32 | goto: i32 | extern }
 
 // a top-level function named after a keyword, with keyword-named parameters
 sizeof = (register: i32, restrict: i32) i32 { register + restrict }

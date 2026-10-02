@@ -24,21 +24,21 @@
 // that never returns is not known to, so a path through it still has to
 // assign.
 
-ExprId, BlockId, Stmt, Bind, Deferred = std.ast
-Function, Param, Call, Arg, Match, Lambda = std.ast
-Binary, PatternId, Span, Pos, nowhere = std.ast
-Alloc, AllocError = std.mem
-Vec = std.collections
-str = std.text
-Res, Ok, None, loop, Range = std.core
-fmt_at = std.text.text_fmt
-Checker, UNRESOLVED, truncate = sema.sema_check
-SemaFault, NameFault, InitFault, UnsetFault = sema.sema_diag
-TyId = sema.sema_ty
-is_handle_ty = sema.sema_handle
-spelled_lambda = sema.sema_call
-local_lambda = sema.sema_local
-repeating_body = sema.sema_own
+{ ExprId, BlockId, Stmt, Bind, Deferred } = std.ast
+{ Function, Param, Call, Arg, Match, Lambda } = std.ast
+{ Binary, PatternId, Span, Pos, nowhere } = std.ast
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Res, Ok, None, loop, Range } = std.core
+{ fmt_at } = std.text.text_fmt
+{ Checker, UNRESOLVED, truncate } = sema.sema_check
+{ SemaFault, NameFault, InitFault, UnsetFault } = sema.sema_diag
+{ TyId } = sema.sema_ty
+{ is_handle_ty } = sema.sema_handle
+{ spelled_lambda } = sema.sema_call
+{ local_lambda } = sema.sema_local
+{ repeating_body } = sema.sema_own
 
 LOOP_MODULE: str = "std.core.loop.loop_iter"
 

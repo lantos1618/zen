@@ -1,5 +1,5 @@
-Actor, Ref, Context = std.actor
-Env = std.env
+{ Actor, Ref, Context } = std.actor
+{ Env } = std.env
 
 Worker = {}
 

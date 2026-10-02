@@ -5,10 +5,10 @@
 // arena reuses the first's freed block and overwrites the bytes `a`
 // still names.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 word = (env: Env, letters: str) Res<str, AllocError> {
     alloc ::= env.mem.alloc();

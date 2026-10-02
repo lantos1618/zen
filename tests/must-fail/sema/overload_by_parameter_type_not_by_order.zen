@@ -20,11 +20,11 @@
 //
 // position: the binding whose declared type the call cannot produce.
 
-Res, Ok, IoError, WriteError, Sink = std.core
-Alloc, AllocError = std.mem
-String = std.text
-Env = std.env
-println = std.io
+{ Res, Ok, IoError, WriteError, Sink } = std.core
+{ Alloc, AllocError } = std.mem
+{ String } = std.text
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | IoError
 

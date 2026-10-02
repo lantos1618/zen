@@ -26,7 +26,7 @@
 // with a `Handler` only queues that handler's id, and `wait` suspends the
 // program until an id is queued. Zen stays one synchronous thread.
 
-Ptr = std.mem.mem
+{ Ptr } = std.mem.mem
 
 // A host object in the runtime's handle table. Id 0 is `null`/`undefined`.
 //

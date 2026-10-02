@@ -1,8 +1,8 @@
 // Integer parsing accepts complete digits within the requested type and
 // radix, rejecting malformed input, overflow, and unsupported bases.
 
-Env = std.env
-println = std.io
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) i32 {
     i32_max  = "2147483647".parse_i32().match({

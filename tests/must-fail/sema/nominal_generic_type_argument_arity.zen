@@ -2,12 +2,12 @@
 // infer omitted arguments from their fields, but an annotation has no such
 // source of evidence: bare, short and surplus applications are all invalid.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
 Box<T, U> = { left: T, right: U }
-Maybe<T, U> = First(T) | Second(U)
+Maybe<T, U> = { First: T | Second: U }
 
 bare_box = (value: Box) {}
 short_box = (value: Box<i32>) {}

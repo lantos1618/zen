@@ -1,14 +1,14 @@
 // The only semantic normalization: omit an explicit unit result on a function
 // with a body. AST identity distinguishes it from parameters, values, function
 // types and bodiless bindings. Every other token remains byte-for-byte intact.
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec = std.collections
-Res, Ok, loop, Range = std.core
-TypeId = std.ast.ast_id
-Function, Member = std.ast.ast_node
-Lexed, Source, scan, TokenKind = std.lex.lex
-Parsed = fmt.fmt_src
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Res, Ok, loop, Range } = std.core
+{ TypeId } = std.ast.ast_id
+{ Function, Member } = std.ast.ast_node
+{ Lexed, Source, scan, TokenKind } = std.lex.lex
+{ Parsed } = fmt.fmt_src
 UnitEdit* = { text*: String, changed*: bool, faithful*: bool }
 Omissions = {
     parsed: Parsed,
@@ -66,6 +66,7 @@ omit_unit_returns* = (
         d.kind.match({
             Function(f) => edits.function(f).try(),
             Struct(s)   => edits.members(s.members).try(),
+            Enum(e)     => edits.members(e.members).try(),
             Impl(i)     => edits.members(i.members).try(),
             _           => {},
         });

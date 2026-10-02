@@ -1,12 +1,12 @@
 // Lexical faults and their fixed messages. A Diag is a collected value, not
 // an Err; its span marks the bytes to fix. Messages allocate nothing.
 
-Span = std.lex.lex_token
-str = std.text
-println = std.io
+{ Span } = std.lex.lex_token
+{ str } = std.text
+{ println } = std.io
 
 LexFault* =
-      UnterminatedString       // end of file inside "..."
+      { UnterminatedString       // end of file inside "..."
     | StringSpansLine          // a newline inside "..."
     | UnterminatedTextBlock    // end of file inside """...
     | TextBlockOpening         // text on the line of an opening """
@@ -26,7 +26,7 @@ LexFault* =
     | IntegerOutOfRange        // exceeds u64
     | UnknownAtName            // @foo
     | MisplacedBom             // a byte-order mark past offset 0
-    | StrayByte                // a byte that begins no token
+    | StrayByte }                // a byte that begins no token
 
 Diag* = {
     file*: str,

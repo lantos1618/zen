@@ -3,8 +3,8 @@
 // it is reported as a missing import before any union is classified.
 //
 // position: the `AllocError` member.
-IoError = std.core
+{ IoError } = std.core
 
-Fail = AllocError | IoError
+Fail = { AllocError | IoError }
 
 main = () i32 { 0 }

@@ -3,7 +3,7 @@
 //
 // position: the write.
 
-println = std.io
+{ println } = std.io
 
 main = () i32 {
     x = 1;

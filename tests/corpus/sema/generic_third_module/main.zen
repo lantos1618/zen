@@ -3,11 +3,11 @@
 // whole-program compilation exists for -- DESIGN.md: "separate
 // compilation would have to decide which object file owns Vec<Circle>".
 
-Circle, area = circle.circle
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Circle, area } = circle.circle
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     alloc  ::= env.mem.alloc();

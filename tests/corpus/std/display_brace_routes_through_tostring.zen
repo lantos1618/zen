@@ -3,10 +3,10 @@
 // is the same machinery for a Point nested in a sentence and for a
 // Point printed on its own
 
-Res, Ok, Display, IoError, WriteError, Sink = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Display, IoError, WriteError, Sink } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | IoError
 

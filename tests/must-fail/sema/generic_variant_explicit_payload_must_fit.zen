@@ -1,12 +1,12 @@
 // Written variant type arguments settle the payload slot before a value is
 // checked. A nonliteral str cannot be stored in Some<i32>.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Opt<T> = Some(T) | None
+Opt<T> = { Some: T | None }
 
 main = (env: Env) Res<i32, AllocError> {
     text: str = "one";

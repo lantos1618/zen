@@ -1,13 +1,13 @@
 // Nodes reference contiguous runs in the AST's source-ordered trivia list.
 
-Ast = std.ast.ast_arena
-Expr, ExprKind, Name = std.ast.ast_node
-Trivia, TriviaKind, no_trivia = std.ast.ast_span
-Span, Pos = std.source
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Ast } = std.ast.ast_arena
+{ Expr, ExprKind, Name } = std.ast.ast_node
+{ Trivia, TriviaKind, no_trivia } = std.ast.ast_span
+{ Span, Pos } = std.source
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 line_span = (line: usize) Span {
     Span(

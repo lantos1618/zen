@@ -30,10 +30,10 @@
 // `alpha` by DESIGN.md's `<folder>/<folder>.zen` rule. DESIGN.md does not
 // say what the root of a compilation is, so the corpus fixes it here.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 a = alpha
 ab = alpha_beta

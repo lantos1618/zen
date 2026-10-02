@@ -1,7 +1,7 @@
-Actor, Context, Receive, Ref = std.actor
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
+{ Actor, Context, Receive, Ref } = std.actor
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
 Chunk = { n: i32 }
 Wrong = {}

@@ -3,12 +3,12 @@
 // The gate fails only when it cannot perform the review: no inputs or an
 // unreadable file.
 
-Alloc, AllocError = std.mem
-str = std.text
-Vec = std.collections
-Res, Ok, Range = std.core
-Env, FsError = std.env
-println = std.io
+{ Alloc, AllocError } = std.mem
+{ str } = std.text
+{ Vec } = std.collections
+{ Res, Ok, Range } = std.core
+{ Env, FsError } = std.env
+{ println } = std.io
 
 Over = {
     rel*: str,

@@ -1,7 +1,7 @@
-Res, Ok = std.core
-Alloc, AllocError, Ptr = std.mem
-Vec = std.collections
-Env = std.env
+{ Res, Ok } = std.core
+{ Alloc, AllocError, Ptr } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
 
 // `Vec` keeps the `Alloc` it was made with, so a vector made from a
 // by-value allocator keeps a pointer to this body's copy of it.

@@ -28,11 +28,11 @@
 // str.index's bound check; a backend that also broke the ORDER would
 // print true.
 
-str = std.text
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ str } = std.text
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     hay     ::= "abcde";

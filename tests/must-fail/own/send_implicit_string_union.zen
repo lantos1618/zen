@@ -1,9 +1,9 @@
-Res, Ok, bool = std.core
-AllocError = std.mem
-str = std.text
-Env = std.env
-Actor, ActorError, ActorStartError, Context = std.actor
-println = std.io
+{ Res, Ok, bool } = std.core
+{ AllocError } = std.mem
+{ str } = std.text
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
 
 Bytes = str | bool
 Worker = {}

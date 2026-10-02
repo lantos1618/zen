@@ -5,10 +5,10 @@
 // slot with five, the loop counts five passes, and a rule that ever
 // starts refusing the call form (over-refusal) reddens here.
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError
 

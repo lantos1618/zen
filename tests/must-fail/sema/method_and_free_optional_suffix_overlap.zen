@@ -1,9 +1,9 @@
 // Omitting the free function's final Res argument produces exactly the method
 // signature, so a two-argument call cannot select one declaration.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
 W = {
     mix = (self: @Self, value: i32) i32 { 1 }

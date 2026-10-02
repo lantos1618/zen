@@ -1,4 +1,4 @@
-https://example.test/json 1.4.2 b7c9
+https://example.test/json 0123456789abcdef0123456789abcdef01234567 src/json.zen 1
 parse 125000 3 4096
 deps 2 http
 linux

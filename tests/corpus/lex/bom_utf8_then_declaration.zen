@@ -1,7 +1,7 @@
-﻿Res, Ok, IoError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+﻿{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 seed: i32 = 5381
 // a utf-8 BOM (EF BB BF) sits immediately before the first import, with no

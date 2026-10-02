@@ -6,9 +6,9 @@
 // declaration). a defer registered after a binding still runs first —
 // they are two stacks, not one interleaved one.
 
-Res, Ok, Drop, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Noisy = {
     env: Env,

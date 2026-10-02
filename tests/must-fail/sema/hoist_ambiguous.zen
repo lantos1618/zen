@@ -4,9 +4,9 @@
 //
 // position: the value that would have been hoisted.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
 Pair = {
     bar: Res<i32, i32>,

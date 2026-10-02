@@ -1,26 +1,26 @@
 // Resolves definition locations from semantic-checker memos. A position with
 // no settled declaration returns a target whose `found` field is false.
 
-str, String = std.text
-Vec, Map = std.collections
-Alloc, AllocError = std.mem
-ExprId, TypeId, Access, QualifiedName = std.ast
-Span, Pos = std.source
-nowhere = std.source
-Checker = sema.sema_check
-TyId = sema.sema_ty
-Def, decl_at, dotted = sema.sema_def
-def_type = sema.sema_type
-DeclId = sema.sema_id
-Found, members_of, first_found = sema.sema_member
-source_position, lsp_position, Position, TextRange = lsp.lsp_pos
-path_of, uri_at, doc_text, disk_text = lsp.lsp_uri
-told_at, module_index_of = std.ast.ast_named
-check_standalone = lsp.lsp_query
-check_build = zen.zen_build
-to_json = std.json
-Res, Ok, None, loop = std.core
-Env = std.env
+{ str, String } = std.text
+{ Vec, Map } = std.collections
+{ Alloc, AllocError } = std.mem
+{ ExprId, TypeId, Access, QualifiedName } = std.ast
+{ Span, Pos } = std.source
+{ nowhere } = std.source
+{ Checker } = sema.sema_check
+{ TyId } = sema.sema_ty
+{ Def, decl_at, dotted } = sema.sema_def
+{ def_type } = sema.sema_type
+{ DeclId } = sema.sema_id
+{ Found, members_of, first_found } = sema.sema_member
+{ source_position, lsp_position, Position, TextRange } = lsp.lsp_pos
+{ path_of, uri_at, doc_text, disk_text } = lsp.lsp_uri
+{ told_at, module_index_of } = std.ast.ast_named
+{ check_standalone } = lsp.lsp_query
+{ check_build } = zen.zen_build
+{ to_json } = std.json
+{ Res, Ok, None, loop } = std.core
+{ Env } = std.env
 
 Target* = {
     found*: bool,

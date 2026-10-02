@@ -1,4 +1,4 @@
-Drop = std.core
+{ Drop } = std.core
 
 Item = { id: i32 }
 Item.impl(Drop, { drop = (self :: @Self) {} })

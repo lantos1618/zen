@@ -3,9 +3,9 @@
 //
 // position: the field that closes the cycle.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
 Room = {
     door: Door,

@@ -15,10 +15,10 @@
 // The accumulator is printed once after the loop because a per-
 // iteration println cannot tell "wrong every time" from "right twice".
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

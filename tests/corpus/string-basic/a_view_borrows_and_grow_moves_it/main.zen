@@ -16,11 +16,11 @@
 // The second half pins the same rule through a CALLEE's growth: the
 // realloc happens in a frame that cannot see `before` at all.
 
-Res, Ok, Range, WriteError = std.core
-AllocError = std.mem
-String = std.text
-Env = std.env
-println = std.io
+{ Res, Ok, Range, WriteError } = std.core
+{ AllocError } = std.mem
+{ String } = std.text
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | WriteError
 

@@ -11,12 +11,12 @@
 // `println` inside the loop body also pins that stdout before a trap
 // survives.
 
-Res, Ok, Range = std.core
-OutOfBounds = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ OutOfBounds } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 main = (env: Env) Res<i32, Error> {
     ds = [i32, 2](6, 0);

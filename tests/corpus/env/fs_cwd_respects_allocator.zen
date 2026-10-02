@@ -1,7 +1,7 @@
-Res, Err = std.core
-Alloc, AllocError, Ptr = std.mem
-Env = std.env
-println = std.io
+{ Res, Err } = std.core
+{ Alloc, AllocError, Ptr } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Refuse = {}
 

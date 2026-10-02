@@ -1,5 +1,5 @@
-Range = std.core
-println = std.io
+{ Range } = std.core
+{ println } = std.io
 
 // A written range type settles literal bounds, and a bound it cannot hold is
 // refused at that bound.

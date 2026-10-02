@@ -1,13 +1,13 @@
-Source, scan = std.lex
-Parser = std.parse.parser
-module = std.parse.parse_decl
-Checker = sema.sema_check
-Emit = gen.gen_emit
-CBackend, emit_program = gen.gen_c
-Env, FsError = std.env
-Res, Ok = std.core
-AllocError = std.mem
-println = std.io
+{ Source, scan } = std.lex
+{ Parser } = std.parse.parser
+{ module } = std.parse.parse_decl
+{ Checker } = sema.sema_check
+{ Emit } = gen.gen_emit
+{ CBackend, emit_program } = gen.gen_c
+{ Env, FsError } = std.env
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ println } = std.io
 
 STD_IO: str = "println* = (args: ...) ()\n"
 

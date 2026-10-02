@@ -2,10 +2,10 @@
 // The completion list iterates the same table, so its order and extent are
 // observable here as well as through the lexer.
 
-KEYWORD_COUNT, keyword_at, is_keyword, is_zen_name = std.lex
-Range = std.core
-Env = std.env
-println = std.io
+{ KEYWORD_COUNT, keyword_at, is_keyword, is_zen_name } = std.lex
+{ Range } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) i32 {
     println("count {}", KEYWORD_COUNT);

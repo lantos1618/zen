@@ -1,5 +1,5 @@
-Range = std.core
-println = std.io
+{ Range } = std.core
+{ println } = std.io
 
 // `Range(end)` is `Range(0, end)`, in the end's type.
 main = () i32 {

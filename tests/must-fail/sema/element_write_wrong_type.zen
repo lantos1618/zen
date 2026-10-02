@@ -1,4 +1,4 @@
-Env = std.env
+{ Env } = std.env
 
 // An element is storage too. `buf[i] = e` is the same statement shape as
 // `p.x = e` and had the same hole: with no written type the value was

@@ -17,9 +17,9 @@
 // other than 42. The comma after the second arm stays, so what is under
 // test is exactly the separator between two block-or-call bodies.
 
-Res, Ok = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, ArgError> {
     good ::= 0;

@@ -2,13 +2,13 @@
 // lifetime; build.zen supplies the ssl and crypto libraries. Stream is the one
 // shape HTTP clients dial over plain TCP or TLS.
 
-Alloc, AllocError, Ptr, null_ptr = std.mem
-str = std.text
-Res, Ok, Err, loop, Range = std.core
-Drop = std.core
-Vec = std.collections
-Socket = std.net.socket
-TcpStream, TcpError = std.net.tcp
+{ Alloc, AllocError, Ptr, null_ptr } = std.mem
+{ str, c_text } = std.text
+{ Res, Ok, Err, loop, Range } = std.core
+{ Drop } = std.core
+{ Vec } = std.collections
+{ Socket } = std.net.socket
+{ TcpStream, TcpError } = std.net.tcp
 
 SSL_VERIFY_PEER: i32 = 1
 SSL_CTRL_SET_TLSEXT_HOSTNAME: i32 = 55
@@ -55,7 +55,7 @@ SSL_read_ex = (
 SSL_get_error = (ssl: Ptr<u8>, rc: i32) i32
 SSL_shutdown = (ssl: Ptr<u8>) i32
 
-TlsError* = ConnectFailed | TlsFailed | WriteFailed | ReadFailed | Closed
+TlsError* = { ConnectFailed | TlsFailed | WriteFailed | ReadFailed | Closed }
 
 alpn_h2 = (a: Alloc) Res<Vec<u8>, TlsError> {
     out ::= a.Vec<u8>();
@@ -272,7 +272,7 @@ TlsStream.impl(Drop, {
 // TlsError covers both transports' faults. The union owns the stream it
 // wraps: leaving scope closes it, and a `consume` into close disarms that
 // drop so the fd and SSL context are released once.
-Stream* = Tcp(TcpStream) | Tls(TlsStream)
+Stream* = { Tcp: TcpStream | Tls: TlsStream }
 
 tls_error = (e: TcpError) TlsError {
     e.match({

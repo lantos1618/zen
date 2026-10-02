@@ -133,8 +133,8 @@ DIR_ENV_NAMES = (".env", "{name}.env", "main.env")
 # two diagnostics on one position are two, and the position list cannot tell.
 DIAG_TOTAL = re.compile(r"(\d+) diagnostic\(s\)")
 
-# The module named by an import's right-hand side: `Res* = std.core.result`
-# and `Kind, Pos = leaf` both name their first component. Module paths are
+# The module named by an import's right-hand side: `{ Res* } = std.core.result`
+# and `{ Kind, Pos } = leaf` both name their first component. Module paths are
 # lowercase by convention, which is what keeps `= Package(..)` out.
 IMPORT_RHS = re.compile(r"=\s*([a-z][A-Za-z0-9_]*)\s*(?:\.|$)")
 

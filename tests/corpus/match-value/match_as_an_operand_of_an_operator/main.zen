@@ -19,10 +19,10 @@
 // The `_` arm values are deliberately distinct from the matched ones so
 // a backend that always takes the LAST arm written still fails.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     c ::= 3;

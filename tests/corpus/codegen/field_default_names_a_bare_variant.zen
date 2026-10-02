@@ -21,14 +21,14 @@
 // default cannot pass as C zeroing; `Shade.Green` rides along as the
 // qualified spelling of the same rule, already legal before this fix.
 
-Res, Ok, IoError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | IoError
 
-Shade = Red | Green | Blue
+Shade = { Red | Green | Blue }
 
 Box = {
     n*: i32,

@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 main = () {
     println("{}", (u8.MAX ^ 15) + 16);

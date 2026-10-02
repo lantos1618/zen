@@ -1,5 +1,5 @@
-Drop = std.core
-println = std.io
+{ Drop } = std.core
+{ println } = std.io
 
 Item = {
     id: i32,

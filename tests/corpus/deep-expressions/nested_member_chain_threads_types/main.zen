@@ -16,10 +16,10 @@
 // each printed number names its own path, so any single mis-resolved
 // link is visible as the WRONG NUMBER rather than a crash.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Leaf    = { v: i64 }
 Inner   = { v: i64 }

@@ -8,16 +8,16 @@
 // average and waits while it is above --max-load, since other work on the
 // machine is the main source of false positives. Exit status 0 means every
 // constant-time probe showed no leak (|t| <= 10) and every control leaked.
-Alloc, AllocError, Ptr = std.mem
-Vec = std.collections
-str = std.text
-Res, Ok, None, Rng, loop, Range = std.core
-ct_memeq, ct_lookup, ct_swap, ct_eq, Choice = std.ct
-Probe, TimingConfig, TimingResult, Verdict, measure = std.ct.ct_timing
-truncate_u8, to_u64, bit_and = std.core.num
-parse_usize = std.text
-Env = std.env
-println, print = std.io
+{ Alloc, AllocError, Ptr } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Res, Ok, None, Rng, loop, Range } = std.core
+{ ct_memeq, ct_lookup, ct_swap, ct_eq, Choice } = std.ct
+{ Probe, TimingConfig, TimingResult, Verdict, measure } = std.ct.ct_timing
+{ truncate_u8, to_u64, bit_and } = std.core.num
+{ parse_usize } = std.text
+{ Env } = std.env
+{ println, print } = std.io
 
 // Every probe keeps its result in `sink` with a volatile write.
 Common = { reference: Ptr<u8>, table: Ptr<u8>, sink: Ptr<u8> }

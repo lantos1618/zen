@@ -1,6 +1,6 @@
-Res, Ok = std.core
-Alloc, AllocError, Ptr = std.mem
-Env = std.env
+{ Res, Ok } = std.core
+{ Alloc, AllocError, Ptr } = std.mem
+{ Env } = std.env
 
 // A concrete allocator passed by value reaches `adopt` as an `Alloc`: the
 // bound value points at this body's copy of `tracking`, and the session

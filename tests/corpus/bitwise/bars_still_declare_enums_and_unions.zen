@@ -1,11 +1,11 @@
-Res, Ok, WriteError = std.core
-AllocError = std.mem
-println = std.io
+{ Res, Ok, WriteError } = std.core
+{ AllocError } = std.mem
+{ println } = std.io
 
 // `|` keeps declaring enums and unions; in an expression it is bitwise or.
-Color = Red | Green | Blue
-Shape = | Circle(u32) | Square(u32)
-Code = | Low = 1 | High = 2 | Other(u8)
+Color = { Red | Green | Blue }
+Shape = { | Circle: u32 | Square: u32 }
+Code = { | Low = 1 | High = 2 | Other: u8 }
 
 Failure = AllocError | WriteError
 

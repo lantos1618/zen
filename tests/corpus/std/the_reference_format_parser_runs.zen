@@ -1,11 +1,11 @@
 // The shared format grammar preserves literal runs, hole roles, and malformed
 // named-hole boundaries. These inputs are text arguments, not format strings.
 
-FmtStep, fmt_next = std.text
-Res, Ok, loop, IoError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ FmtStep, fmt_next } = std.text
+{ Res, Ok, loop, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | IoError
 

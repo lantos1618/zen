@@ -1,7 +1,7 @@
-Res, Ok, Err = std.core
-Alloc, AllocError, Ptr, null_ptr = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Err } = std.core
+{ Alloc, AllocError, Ptr, null_ptr } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // A bound value built from a concrete one is a view of the storage it was
 // built over, and is accepted wherever it does not outlive that storage:

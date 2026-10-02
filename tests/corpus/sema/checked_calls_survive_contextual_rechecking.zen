@@ -1,13 +1,13 @@
-Source, scan = std.lex
-Parser, module = std.parse
-Checker, Ctx = sema.sema_check
-check_all = sema.sema_decl
-call_type = sema.sema_call
-ExprId, Call = std.ast
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Source, scan } = std.lex
+{ Parser, module } = std.parse
+{ Checker, Ctx } = sema.sema_check
+{ check_all } = sema.sema_decl
+{ call_type } = sema.sema_call
+{ ExprId, Call } = std.ast
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 recheck = (c :: Checker, id: ExprId, call: Call, ty: str)
           Res<(), AllocError> {

@@ -6,13 +6,13 @@
 // disjoint from `Kind`: it demanded an arm for `Err` that nothing could
 // reach, and accepted an `Err(Protocol(c))` placed after `Err(Kind)`.
 
-Res, Ok, Err = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Err } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Kind = Io(i32) | Protocol(i32)
-Fail = Mismatch | Accepted
+Kind = { Io: i32 | Protocol: i32 }
+Fail = { Mismatch | Accepted }
 Both = Kind | Fail
 
 pick = (n: i32) Res<i32, Kind | Fail> {

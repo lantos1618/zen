@@ -15,10 +15,10 @@
 // order hides. The empty-string rows also catch a zero-byte walk that
 // incorrectly declares every string equal to an empty prefix.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     println("{}", "ab" == "ab");

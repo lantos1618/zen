@@ -1,11 +1,11 @@
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // Guards evaluate once and propagate absence or a typed failure through
 // non-escaping callbacks, including the enclosing frame's cleanup.
-Failure = | NotPositive
+Failure = { | NotPositive }
 
 positive = (value: i32, checks :: usize) bool {
     checks = checks + 1;

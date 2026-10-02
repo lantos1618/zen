@@ -1,13 +1,13 @@
 // The same rule through a declared set: on `Both = Kind | Fail`,
 // `Err(Kind)` covers `Err(Authentication)`.
 
-Res, Ok, Err = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Err } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Kind = Io | Protocol | Authentication
-Fail = Mismatch | Accepted
+Kind = { Io | Protocol | Authentication }
+Fail = { Mismatch | Accepted }
 Both = Kind | Fail
 
 name = (r: Res<i32, Both>) str {

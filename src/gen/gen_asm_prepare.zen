@@ -11,20 +11,20 @@
 //
 // Tables are written little-endian, the byte order of every target this
 // layer renders.
-Alloc, AllocError = std.mem
-Vec = std.collections
-String, str = std.text
-Res, Ok, None, loop, Range = std.core
-Program, Func, BasicBlock, Instruction, Terminator, Scalar, Op = gen.gen_ir
-Const, Move, Unary, Binary, Invocation, Print, Convert, Address, Load, Store = gen.gen_ir
-same = gen.gen_ir
-CopyMem, StaticBytes, Write, SysCall, Start, Pages, SysValue, Branch = gen.gen_ir
-width, word = gen.gen_ir
-Update, Compare, CodeRef, IndirectCall, HostCall = gen.gen_ir
-MachineCall = gen.gen_ir_machine
-simplify = gen.gen_asm_regalloc
-Flow, flow, reads, written, exit_read, successors, zeros, bits, group, NONE = gen.gen_asm_flow
-nowhere = std.source
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ String, str } = std.text
+{ Res, Ok, None, loop, Range } = std.core
+{ Program, Func, BasicBlock, Instruction, Terminator, Scalar, Op } = gen.gen_ir
+{ Const, Move, Unary, Binary, Invocation, Print, Convert, Address, Load, Store } = gen.gen_ir
+{ same } = gen.gen_ir
+{ CopyMem, StaticBytes, Write, SysCall, Start, Pages, SysValue, Branch } = gen.gen_ir
+{ width, word } = gen.gen_ir
+{ Update, Compare, CodeRef, IndirectCall, HostCall } = gen.gen_ir
+{ MachineCall } = gen.gen_ir_machine
+{ simplify } = gen.gen_asm_regalloc
+{ Flow, flow, reads, written, exit_read, successors, zeros, bits, group, NONE } = gen.gen_asm_flow
+{ nowhere } = std.source
 
 // Callees with at most this many instructions are inlined.
 INLINE_LIMIT: usize = 48

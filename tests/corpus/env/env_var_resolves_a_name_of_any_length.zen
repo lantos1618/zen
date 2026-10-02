@@ -1,6 +1,6 @@
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 // The runner exports names of 5039 `V` bytes and 4096 `B` bytes for this
 // test. Both must resolve, while an unset name remains distinguishable.

@@ -1,9 +1,9 @@
-render = fmt.fmt
-scan, Source = std.lex
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ render } = fmt.fmt
+{ scan, Source } = std.lex
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 SOURCE: str = "// f = () () {} remains comment text\nfirst = () /* before */ () /* after */ {}\ninside = () (/* unit */) {}\nlast = () () { /* () */ } // ()\n"
 WANTED: str = "// f = () () {} remains comment text\nfirst = () /* before */ /* after */ {}\ninside = () /* unit */ {}\nlast = () { /* () */ } // ()\n"
 main = (env: Env) Res<(), AllocError> {

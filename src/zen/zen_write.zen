@@ -1,13 +1,13 @@
 // Output destinations belong to the driver. The generator publishes borrowed
 // artifacts one at a time after lowering has succeeded.
 
-AllocError = std.mem
-str = std.text
-Emission = std.build
-Artifact = gen.gen
-Env, fs_message = std.env
-Res, Ok = std.core
-println = std.io
+{ AllocError } = std.mem
+{ str } = std.text
+{ Emission } = std.build
+{ Artifact } = gen.gen
+{ Env, fs_message } = std.env
+{ Res, Ok } = std.core
+{ println } = std.io
 
 Publisher* = {
     env*: Env,

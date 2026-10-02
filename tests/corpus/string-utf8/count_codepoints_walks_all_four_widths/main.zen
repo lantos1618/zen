@@ -8,10 +8,11 @@
 // the end pin each width's arithmetic individually -- a wrong
 // continuation scale (5 payload bits instead of the correct 6) changes
 // 233 or 8364 or 128512 while leaving every length untouched.
-Utf8Error = std.text.text_utf8
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ Utf8Error } = std.text.text_utf8
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
+{ codepoints, count_codepoints } = std.text
 
 main = (env: Env) Res<i32, Utf8Error> {
     s = "aé€😀b";

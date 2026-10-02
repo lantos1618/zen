@@ -17,9 +17,9 @@
 // `scoped` must NOT change: a nested block in statement position is
 // asked for no value, so what it makes dies at the inner brace.
 
-Res, Ok, Drop, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Noisy = {
     env: Env,

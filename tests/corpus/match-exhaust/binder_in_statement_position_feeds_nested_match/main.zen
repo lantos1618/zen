@@ -12,14 +12,14 @@
 // Breaks if: a binder arm terminates the arm chain instead of carrying a
 // guard -- Left's two lines read "3000"/"400" instead of "1"/"10".
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Cell = Full(i64) | Blank
+Cell = { Full: i64 | Blank }
 
-Slot = Left(Cell) | Right(Cell) | Gone
+Slot = { Left: Cell | Right: Cell | Gone }
 
 score = (s: Slot) i64 {
     s.match({

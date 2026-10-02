@@ -1,11 +1,12 @@
-Arg, ExprId = std.ast
-AllocError = std.mem
-str = std.text
-Vec = std.collections
-TyId = sema.sema_ty
-Checker, Ctx = sema.sema_check
-SemaFault, NameFault = sema.sema_diag
-Res, Ok = std.core
+{ Arg, ExprId } = std.ast
+{ AllocError } = std.mem
+{ str } = std.text
+{ Vec } = std.collections
+{ TyId } = sema.sema_ty
+{ Checker, Ctx } = sema.sema_check
+{ SemaFault, NameFault } = sema.sema_diag
+{ Res, Ok } = std.core
+{ type_of } = sema.sema_type
 
 // A loop handle names its loop and has no storage: it may be read only as
 // `h.break(..)` or `h.next()`, and passed only to a parameter that takes

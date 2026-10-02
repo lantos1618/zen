@@ -18,9 +18,9 @@
 // block owns its own fresh stack); the enclosing-block accumulation
 // this test pins is the one a reader can hit without a loop at all.
 
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     s = @scope;

@@ -1,18 +1,18 @@
 // Pinned Git sources for the project driver. All storage belongs to its arena;
 // dependency code and dependency build scripts are never executed here.
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec, vararg = std.collections
-Package, Lib = std.build
-Res, Ok, Range, Path = std.core
-Env = std.env
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec, vararg } = std.collections
+{ Package, Lib } = std.build
+{ Res, Ok, Range, Path } = std.core
+{ Env } = std.env
 
-PackageFault* = InvalidSpec
+PackageFault* = { InvalidSpec
     | FetchFailed
     | CacheMismatch
     | DirtyCache
     | Unavailable
-    | MissingSource
+    | MissingSource }
 PackageError* = PackageFault | AllocError
 
 resolve* = (

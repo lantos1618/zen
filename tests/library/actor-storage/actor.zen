@@ -1,7 +1,7 @@
-Res, Ok, Err, loop = std.core
-Env = std.env
-Actor, ActorError, ActorStartError, Context = std.actor
-println = std.io
+{ Res, Ok, Err, loop } = std.core
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
 
 Native = c.bind("stdlib.h", { abort* = () () })
 Pause = c.bind("unistd.h", { usleep* = (microseconds: u32) i32 })

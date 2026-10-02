@@ -1,0 +1,26 @@
+// A DOT CALL REACHES A FUNCTION WHOSE FIRST PARAMETER IS A BOUND THE
+// RECEIVER IMPLEMENTS, not only one declaring the exact type.
+//
+// `env.mem.alloc()` hands back an `Arena` and `boxed` declares an `Alloc`,
+// so "the receiver is argument zero" has to mean what it means for every
+// other parameter: an impl of the bound counts. This is the shape every
+// program opens with, `alloc.Vec<i32>()` on an `Arena`.
+//
+// The gate is still a gate. `labelled` has the same arity and declares a
+// `str` first, so an `Arena` must not reach it, and a `str` receiver must.
+
+{ Box, boxed, labelled } = box.box
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+
+    // the receiver is an Arena; `boxed` declares an Alloc
+    b = alloc.boxed(7);
+    println("{}", b.n);
+    println("{}", b.twice());
+
+    // `labelled` declares a str first, so a str receiver reaches it
+    l = "abc".labelled(10);
+    println("{}", l.n);
+    Ok(0);
+}

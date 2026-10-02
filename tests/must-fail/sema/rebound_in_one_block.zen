@@ -24,9 +24,9 @@
 // positions: the second binding, then BOTH — a diagnostic that reports a
 // collision and shows one side of it sends the reader hunting.
 
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     n = 42;

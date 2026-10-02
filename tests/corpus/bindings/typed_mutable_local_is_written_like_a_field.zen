@@ -2,7 +2,7 @@
 // mutability on a local exactly as it does on a field or a parameter, and
 // the type is optional only in the inferred form `name ::= value`.
 
-println = std.io
+{ println } = std.io
 
 Circle = { r: f64 }
 

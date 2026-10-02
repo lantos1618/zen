@@ -1,9 +1,9 @@
-Res, Ok, None, loop, IoError = std.core
-AllocError = std.mem
-Vec = std.collections
-Env, FsError = std.env
-Actor, Ref, ActorError, ActorStartError, Context = std.actor
-println = std.io
+{ Res, Ok, None, loop, IoError } = std.core
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Env, FsError } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
 
 // The worker cannot enter a turn until the sender arena has died. Retaining
 // and growing the accepted buffers must use receiver-owned storage, including

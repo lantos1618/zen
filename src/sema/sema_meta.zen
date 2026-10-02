@@ -1,17 +1,17 @@
-Expr, Type, TypeId, Access, Meta, Alias, Call, Struct = std.ast
-ExprId, Lambda, Param = std.ast
-Span = std.source
-AllocError = std.mem
-Vec = std.collections
-str = std.text
-TyId = sema.sema_ty
-Checker, Ctx, WalkBind = sema.sema_check
-SemaFault, NameFault, TypeFault = sema.sema_diag
-Def, decl_at = sema.sema_def
-type_from_ast, alias_target_of, type_decl = sema.sema_denote
-Found, base_of, members_of = sema.sema_member
-block_type, type_of = sema.sema_type
-Res, Ok, None = std.core
+{ Expr, Type, TypeId, Access, Meta, Alias, Call, Struct } = std.ast
+{ ExprId, Lambda, Param } = std.ast
+{ Span } = std.source
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ TyId } = sema.sema_ty
+{ Checker, Ctx, WalkBind } = sema.sema_check
+{ SemaFault, NameFault, TypeFault } = sema.sema_diag
+{ Def, decl_at } = sema.sema_def
+{ type_from_ast, alias_target_of, type_decl } = sema.sema_denote
+{ Found, base_of, members_of } = sema.sema_member
+{ block_type, type_of } = sema.sema_type
+{ Res, Ok, None } = std.core
 
 // A standalone @meta expression is unsupported; report once and return poison.
 meta_type* = (c :: Checker, node: Expr, ctx: Ctx) Res<TyId, AllocError> {
@@ -246,7 +246,7 @@ is_count_chain* = (c :: Checker, ac: Access) bool {
     })
 }
 
-WalkName* = WalkNone | WalkHandle | WalkField
+WalkName* = { WalkNone | WalkHandle | WalkField }
 
 walk_name* = (c: Checker, text: str) WalkName {
     c.walk_row().match({
@@ -283,7 +283,7 @@ meta_name_fold* = (c :: Checker, id: ExprId, node: Expr, ac: Access)
     })
 }
 
-MetaCall* = Answered(TyId) | Ordinary
+MetaCall* = { Answered: TyId | Ordinary }
 
 meta_member_call* = (
     c    :: Checker,

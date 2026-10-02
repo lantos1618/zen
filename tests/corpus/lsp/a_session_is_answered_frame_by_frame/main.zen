@@ -18,15 +18,15 @@
 //
 // Hover positions use zero-based LSP wire coordinates.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Res, Ok, Range = std.core
-Server, serve = lsp.lsp_serve
-write_frame = lsp.lsp_frame
-write_text = std.json
-uri_at = lsp.lsp_uri
-Env = std.env
-println = std.io
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Res, Ok, Range } = std.core
+{ Server, serve } = lsp.lsp_serve
+{ write_frame } = lsp.lsp_frame
+{ write_text } = std.json
+{ uri_at } = lsp.lsp_uri
+{ Env } = std.env
+{ println } = std.io
 
 // The same one-line module `sema_zen` uses, so a changed hover answer
 // has two possible causes and they are easy to tell apart.

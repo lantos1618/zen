@@ -1,5 +1,5 @@
-Env = std.env
+{ Env } = std.env
 
-Code = | First = 1 | Second = 1
+Code = { | First = 1 | Second = 1 }
 
 main = (env: Env) i32 { 0 }

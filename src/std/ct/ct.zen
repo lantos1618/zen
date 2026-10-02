@@ -25,11 +25,11 @@
 // The JavaScript backend has no constant-time guarantee at all and the
 // assembly backend refuses these types; see DESIGN.md.
 
-bit_xor, bit_and, bit_or, shift_right = std.core.num
-to_u16, to_u32, to_u64, to_u128, to_usize, to_i32 = std.core.num
-truncate_u8, truncate_u64 = std.core.num
-Ptr = std.mem
-Range = std.core
+{ bit_xor, bit_and, bit_or, shift_right } = std.core.num
+{ to_u16, to_u32, to_u64, to_u128, to_usize, to_i32 } = std.core.num
+{ truncate_u8, truncate_u64 } = std.core.num
+{ Ptr } = std.mem
+{ Range } = std.core
 
 // A value the secret discipline tracks (docs/DESIGN.md, "Secret values").
 // It is exactly T: no wrapper and no conversion, so every operation on T

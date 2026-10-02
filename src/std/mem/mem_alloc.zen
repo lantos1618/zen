@@ -4,10 +4,10 @@
 // Alloc is a copied handle containing its receiver and operations. The owner
 // behind the handle controls lifetime and cleanup.
 
-Ptr = std.mem.mem_ptr
-Res = std.core
+{ Ptr } = std.mem.mem_ptr
+{ Res } = std.core
 
-AllocError* = | OutOfMemory
+AllocError* = { | OutOfMemory }
 
 // Allocator interface implemented by arenas, fixed buffers, or foreign heaps.
 Alloc* = {

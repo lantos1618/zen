@@ -2,19 +2,19 @@
 // checked conversion evaluates its operand once and returns None on overflow;
 // exact integer/float conversion returns None unless the value survives;
 // rounding conversion always produces the nearest representable value.
-ExprId = std.ast
-AllocError = std.mem
-String, str = std.text
-NumericConversion, NarrowTarget, ConversionKind, signed_shift_word = sema.sema_numeric
-IntegerBitOperation = sema.sema_numeric
-Ctx = sema.sema_check
-CBackend = gen.gen_c.gen_c_state
-expr = gen.gen_c.gen_c_expr
-c_prim = gen.gen_c.gen_c_type
-temp, write_assign_none, write_assign_ok = gen.gen_c.gen_c_flow
-lower_bits = gen.gen_c.gen_c_op
-unsigned_width = sema.sema_prim
-Res = std.core
+{ ExprId } = std.ast
+{ AllocError } = std.mem
+{ String, str } = std.text
+{ NumericConversion, NarrowTarget, ConversionKind, signed_shift_word } = sema.sema_numeric
+{ IntegerBitOperation } = sema.sema_numeric
+{ Ctx } = sema.sema_check
+{ CBackend } = gen.gen_c.gen_c_state
+{ expr } = gen.gen_c.gen_c_expr
+{ c_prim, request_type } = gen.gen_c.gen_c_type
+{ temp, write_assign_none, write_assign_ok } = gen.gen_c.gen_c_flow
+{ lower_bits } = gen.gen_c.gen_c_op
+{ unsigned_width } = sema.sema_prim
+{ Res } = std.core
 
 lower_numeric* = (
     be        :: CBackend,

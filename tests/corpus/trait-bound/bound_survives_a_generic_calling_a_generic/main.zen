@@ -9,10 +9,10 @@
 // inner instantiation loses the bound and falls back to "first impl
 // emitted", line 2 answers 95 instead of -39, plausible and silent.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Meter = {
     read* = (self: @Self) i32

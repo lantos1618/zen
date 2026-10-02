@@ -14,9 +14,9 @@
 // Byte writes do not interpret braces: String.add("]}}") writes two closing
 // braces, while String.fmt("]}}") writes one.
 
-str = std.text.text_str
-Sink, WriteError = std.core.io
-Res, loop = std.core
+{ str } = std.text.text_str
+{ Sink, WriteError } = std.core.io
+{ Res, loop } = std.core
 
 // One format step. `literal` borrows a slice of the format string.
 FmtStep* = {
@@ -27,11 +27,11 @@ FmtStep* = {
     next*: usize,      // start of the next step; f.len when spent
 }
 
-FmtWhat* = Byte           // an ordinary byte: the literal run goes on
+FmtWhat* = { Byte           // an ordinary byte: the literal run goes on
          | Hole           // `{}`, filled by the next argument
          | Pair           // `{{` or `}}`: the run keeps ONE of the two
-         | Named(str)     // `{name}`, filled by that name's binding
-         | NoName         // a `{` that meant a hole and closed on nothing
+         | Named: str     // `{name}`, filled by that name's binding
+         | NoName }         // a `{` that meant a hole and closed on nothing
 
 FmtAt* = {
     what*: FmtWhat,

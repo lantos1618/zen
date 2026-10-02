@@ -2,10 +2,10 @@
 // type, not at the comparison's bool result type. These cases cover matches
 // on both sides and scrutinees whose type differs from the arm result.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a = true.match({ true => 2, false => 102 });

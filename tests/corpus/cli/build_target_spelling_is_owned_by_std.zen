@@ -1,8 +1,8 @@
-Os, Arch, Abi, Target = std.build
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Os, Arch, Abi, Target } = std.build
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     show(Target(os: Os.Linux, arch: Arch.X86_64, abi: Abi.Gnu));

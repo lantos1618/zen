@@ -6,8 +6,8 @@
 // -1 for a negative one. The narrow words pin that the result is cast back
 // after C's promotion to int, and the once-counters that the receiver and
 // the count are each evaluated once, receiver first.
-shift_right = std.core.num
-println = std.io
+{ shift_right } = std.core.num
+{ println } = std.io
 
 once = (calls :: i32, value: i64) i64 {
     calls = calls + 1;

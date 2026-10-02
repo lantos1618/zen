@@ -27,14 +27,14 @@
 // runs exactly these five lines. `env.argv` is empty in the generated C
 // — see the report — so a real command line cannot reach either.
 
-Alloc, AllocError = std.mem
-str = std.text
-Res, Ok = std.core
-Env = std.env
-println = std.io
-Build = zen
-BuildArgs = std.build
-entry_of = zen.zen_path
+{ Alloc, AllocError } = std.mem
+{ str } = std.text
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
+{ Build } = zen.zen_build
+{ BuildArgs } = std.build
+{ entry_of } = zen.zen_path
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

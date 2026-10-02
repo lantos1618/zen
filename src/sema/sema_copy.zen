@@ -1,17 +1,17 @@
-Decl, Struct, Enum, Alias, Member, Variant = std.ast
-AllocError = std.mem
-Vec = std.collections
-TyId, TyNamed = sema.sema_ty
-Checker, Ctx = sema.sema_check
-decl_at = sema.sema_def
-member_type, enter_struct_tvars, named_as = sema.sema_member
-Inst, inst_of_named, subst, push_tparams, owner_of = sema.sema_inst
-variant_payload = sema.sema_case
-type_from_ast = sema.sema_denote
-is_drop_type = sema.sema_drop
-Res, Ok = std.core
+{ Decl, Struct, Enum, Alias, Member, Variant } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ TyId, TyNamed } = sema.sema_ty
+{ Checker, Ctx } = sema.sema_check
+{ decl_at } = sema.sema_def
+{ member_type, enter_struct_tvars, named_as } = sema.sema_member
+{ Inst, inst_of_named, subst, push_tparams, owner_of } = sema.sema_inst
+{ variant_payload } = sema.sema_case
+{ type_from_ast } = sema.sema_denote
+{ is_drop_type } = sema.sema_drop
+{ Res, Ok } = std.core
 
-PayloadPolicy = ActorMessage | OwningCopy | BoundCarrier
+PayloadPolicy = { ActorMessage | OwningCopy | BoundCarrier }
 
 // Copying inline fields duplicates their owners; pointer/allocator handles
 // remain copyable because they do not own their pointees.

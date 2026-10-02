@@ -14,13 +14,13 @@
 // before exiting, so the last IN-RANGE element is the expectation, and
 // any run reaching the println below adds a line no correct build has.
 
-Res, Ok = std.core
-OutOfBounds = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ OutOfBounds } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 // a trap never lifts into Res: it aborts the process
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 at = (a: [i32, 4], i: usize) i32 { a[i] }
 

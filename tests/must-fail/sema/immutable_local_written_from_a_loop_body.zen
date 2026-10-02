@@ -2,8 +2,8 @@
 //
 // position: the write.
 
-Range = std.core
-println = std.io
+{ Range } = std.core
+{ println } = std.io
 
 main = () i32 {
     x: i32 = 0;

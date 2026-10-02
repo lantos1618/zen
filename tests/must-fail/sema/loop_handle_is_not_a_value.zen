@@ -13,9 +13,9 @@
 //
 // position: the VALUE, the one byte that names what cannot be kept.
 
-Res, Ok, Range, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Range, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     Range(0, 1).loop((h, x) {

@@ -24,10 +24,10 @@
 // false line needs MORE than the first field consulted. Between them,
 // no truncated lowering survives.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Box = {
     w*: i32,

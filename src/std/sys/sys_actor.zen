@@ -20,14 +20,14 @@
 //
 // Lock order: the registry lock before an actor's lock.
 
-Ptr, null_ptr = std.mem
-loop, Range = std.core
-MAX_MESSAGES, MAX_MESSAGE_BYTES, CACHE_BYTES, CACHE_BLOCK, CACHE_COUNT = std.actor.actor_limits
-Pages, process_block, call_entry, pointer_at, address_of, nanosleep_ns = std.sys
-atomic_load_u32, atomic_store_u32, atomic_cas_u32, atomic_store_usize = std.sys
-MUTEX_BYTES, COND_BYTES, mutex_init, mutex_lock, mutex_unlock, mutex_destroy = std.sys.sys_thread
-cond_init, cond_wait, cond_signal, cond_broadcast, cond_destroy = std.sys.sys_thread
-thread_spawn, thread_join, thread_is_current = std.sys.sys_thread
+{ Ptr, null_ptr } = std.mem
+{ loop, Range } = std.core
+{ MAX_MESSAGES, MAX_MESSAGE_BYTES, CACHE_BYTES, CACHE_BLOCK, CACHE_COUNT } = std.actor.actor_limits
+{ Pages, process_block, call_entry, pointer_at, address_of, nanosleep_ns } = std.sys
+{ atomic_load_u32, atomic_store_u32, atomic_cas_u32, atomic_store_usize } = std.sys
+{ MUTEX_BYTES, COND_BYTES, mutex_init, mutex_lock, mutex_unlock, mutex_destroy } = std.sys.sys_thread
+{ cond_init, cond_wait, cond_signal, cond_broadcast, cond_destroy } = std.sys.sys_thread
+{ thread_spawn, thread_join, thread_is_current } = std.sys.sys_thread
 
 // A message in the mailbox: the mailbox cache's own 16-byte header, then
 // this 32-byte header (next, turn, charged bytes, padding), then the

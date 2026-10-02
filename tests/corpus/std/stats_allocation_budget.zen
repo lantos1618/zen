@@ -1,8 +1,8 @@
-Samples, Summary = std.stats
-Res, Ok, Range = std.core
-Alloc, AllocError, Ptr, null_ptr = std.mem
-Env = std.env
-println = std.io
+{ Samples, Summary } = std.stats
+{ Res, Ok, Range } = std.core
+{ Alloc, AllocError, Ptr, null_ptr } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Budget = {
     base: Alloc,

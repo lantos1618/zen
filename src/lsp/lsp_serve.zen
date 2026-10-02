@@ -1,29 +1,29 @@
 // Owns LSP session state and routes one decoded JSON-RPC message at a time.
 // Full-sync document contents are retained as an in-memory build overlay.
 
-str, String = std.text
-Vec, Map = std.collections
-Res, Ok, Err, None, Drop, loop, Range = std.core
-Alloc, AllocError, Arena = std.mem
-Checker = sema.sema_check
-Jsons, JsonId, written, read = std.json
-frame_at, write_frame, write_fault = lsp.lsp_frame
-hover_at, hover_in, hover_with = lsp.lsp_hover
-definition_at, definition_in, definition_with = lsp.lsp_def
-symbols_at, write_symbols = lsp.lsp_symbol
-write_edits = lsp.lsp_fmt
-Item, MemberCache, complete_at, complete_shared, write_items = lsp.lsp_compl
-write_tokens = lsp.lsp_colour
-Diagnostics, Shared = lsp.lsp_diag
-write_actions = lsp.lsp_action
-SourceRoot = zen.zen_path
-join_path = std.core.path
-Position = lsp.lsp_pos
-Decoded, RequestTurn, write_capabilities = lsp.lsp_reply
-RpcFault, request_of, notice_of = lsp.lsp_reply
-path_of = lsp.lsp_uri
-Document, Documents = lsp.lsp_document
-Env = std.env
+{ str, String } = std.text
+{ Vec, Map, sort } = std.collections
+{ Res, Ok, Err, None, Drop, loop, Range } = std.core
+{ Alloc, AllocError, Arena } = std.mem
+{ Checker } = sema.sema_check
+{ Jsons, JsonId, written, read } = std.json
+{ frame_at, write_frame, write_fault } = lsp.lsp_frame
+{ hover_at, hover_in, hover_with } = lsp.lsp_hover
+{ definition_at, definition_in, definition_with } = lsp.lsp_def
+{ symbols_at, write_symbols } = lsp.lsp_symbol
+{ write_edits } = lsp.lsp_fmt
+{ Item, MemberCache, complete_at, complete_shared, write_items } = lsp.lsp_compl
+{ write_tokens } = lsp.lsp_colour
+{ Diagnostics, Shared } = lsp.lsp_diag
+{ write_actions } = lsp.lsp_action
+{ SourceRoot } = zen.zen_path
+{ join_path } = std.core.path
+{ Position } = lsp.lsp_pos
+{ Decoded, RequestTurn, write_capabilities } = lsp.lsp_reply
+{ RpcFault, request_of, notice_of } = lsp.lsp_reply
+{ path_of } = lsp.lsp_uri
+{ Document, Documents } = lsp.lsp_document
+{ Env } = std.env
 
 Server* = {
     a: Alloc,

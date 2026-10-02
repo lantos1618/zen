@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 // Logical shifts at counts 0, width - 1, width, width + 1 and usize.MAX.
 // Bits moved out are discarded without a trap, and a count at or above the

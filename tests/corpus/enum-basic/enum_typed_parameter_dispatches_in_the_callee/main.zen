@@ -10,12 +10,12 @@
 // readable. Three distinct arguments stop any single misdispatch from
 // looking like consistency.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Word = Zebra | Yonder | Apple
+Word = { Zebra | Yonder | Apple }
 
 name_of = (w: Word) str {
     w.match({

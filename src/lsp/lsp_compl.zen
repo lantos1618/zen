@@ -2,32 +2,32 @@
 // partial name replaced by `DUMMY`, so the base expression has a type; the
 // member answer is cached per patched buffer.
 
-str, String, dup = std.text
-Vec, Map, Ordered = std.collections
-Alloc, AllocError, Arena = std.mem
-Res, Ok, Err, None, Drop, loop, Range = std.core
-ExprId, Access, Member, Impl, Ident = std.ast
-nowhere = std.source
-module_index_of = std.ast.ast_named
-Checker = sema.sema_check
-TyId, TyNamed = sema.sema_ty
-Def, DefKind, decl_at = sema.sema_def
-Found, members_of, first_hidden = sema.sema_member
-Case, cases_of = sema.sema_case
-def_type = sema.sema_type
-ImplId = sema.sema_id
-run_of = lsp.lsp_pos
-check_standalone = lsp.lsp_query
-check_workspace = zen.zen_build
-root_for, relative_to = zen.zen_path
-path_of = lsp.lsp_uri
-SourceRoot = zen.zen_path
-obj, arr, Nest, written, to_json = std.json
-KEYWORD_COUNT, keyword_at = std.lex
-Env = std.env
+{ str, String, dup } = std.text
+{ Vec, Map, Ordered } = std.collections
+{ Alloc, AllocError, Arena } = std.mem
+{ Res, Ok, Err, None, Drop, loop, Range } = std.core
+{ ExprId, Access, Member, Impl, Ident } = std.ast
+{ nowhere } = std.source
+{ module_index_of } = std.ast.ast_named
+{ Checker } = sema.sema_check
+{ TyId, TyNamed } = sema.sema_ty
+{ Def, DefKind, decl_at } = sema.sema_def
+{ Found, members_of, first_hidden } = sema.sema_member
+{ Case, cases_of } = sema.sema_case
+{ def_type } = sema.sema_type
+{ ImplId } = sema.sema_id
+{ run_of } = lsp.lsp_pos
+{ check_standalone } = lsp.lsp_query
+{ check_workspace } = zen.zen_build
+{ root_for, relative_to } = zen.zen_path
+{ path_of } = lsp.lsp_uri
+{ SourceRoot } = zen.zen_path
+{ obj, arr, Nest, written, to_json } = std.json
+{ KEYWORD_COUNT, keyword_at } = std.lex
+{ Env } = std.env
 
 // Protocol values belong to the kind; convert only when writing JSON.
-CompletionKind* = | Method = 2
+CompletionKind* = { | Method = 2
     | Function = 3
     | Field = 5
     | Class = 7       // LSP has no type-alias completion kind.
@@ -35,7 +35,7 @@ CompletionKind* = | Method = 2
     | Keyword = 14
     | EnumMember = 20
     | Constant = 21
-    | Struct = 22
+    | Struct = 22 }
 
 Item* = {
     label*: str,
@@ -405,9 +405,9 @@ Completion = {
                     Res<(), AllocError> {
         decl_at(self.c.tree, n.decl).match({
             None  => written(),
-            Ok(d) => d.kind.match({
-                Struct(s) => s.members.member_names(cands),
-                _         => written(),
+            Ok(d) => d.body_members().match({
+                Ok(members) => members.member_names(cands),
+                None        => written(),
             }),
         }).try();
         self.collect_impls(n, cands)

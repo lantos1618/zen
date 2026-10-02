@@ -1,9 +1,9 @@
-render = fmt.fmt
-scan, Source = std.lex
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ render } = fmt.fmt
+{ scan, Source } = std.lex
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 SOURCE: str = "Native = c.bind(\"unit.h\", { call = () () })\nContract = {\n    required = () ()\n    hook ::= () ()\n}\nCallback = (value: i32) ()\nunit_value: () = ()\nfallible = () Res<(), ()> { Ok(()) }\napply = () { map(<T>(value: T) () { use(value); }); }\ntext: str = \"f = () () {}\"\n"
 WANTED: str = "Native = c.bind(\"unit.h\", { call = () () })\nContract = {\n    required = () ()\n    hook ::= () ()\n}\nCallback = (value: i32) ()\nunit_value: () = ()\nfallible = () Res<(), ()> { Ok(()) }\napply = () { map(<T>(value: T) () { use(value); }); }\ntext: str = \"f = () () {}\"\n"
 main = (env: Env) Res<(), AllocError> {

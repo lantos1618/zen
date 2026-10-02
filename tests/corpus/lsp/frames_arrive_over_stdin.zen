@@ -18,13 +18,13 @@
 // to back with no separator, and a body holding a `\r\n` of its own —
 // which is exactly the byte pair a reader with any line discipline would
 // cut the message at.
-str, String, str_at = std.text
-Vec = std.collections
-Alloc, AllocError = std.mem
-Res, Ok, loop, Range = std.core
-frame_at, short_by = lsp.lsp_frame
-Env = std.env
-println = std.io
+{ str, String, str_at } = std.text
+{ Vec } = std.collections
+{ Alloc, AllocError } = std.mem
+{ Res, Ok, loop, Range } = std.core
+{ frame_at, short_by } = lsp.lsp_frame
+{ Env } = std.env
+{ println } = std.io
 
 // How far a pass got, and how many messages it has answered in total.
 //

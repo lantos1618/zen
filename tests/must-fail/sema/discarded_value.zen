@@ -12,9 +12,9 @@
 //
 // position: the statement, semicolon included.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
 Point* = { x :: i32 }
 

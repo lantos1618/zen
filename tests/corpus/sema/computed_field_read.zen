@@ -3,10 +3,10 @@
 // DESIGN.md, Declarations. `&s.width` and `s.width = ..` are rejected --
 // see must-fail/sema/computed_field_address and computed_field_assign.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Boxy = {
     width: i32,

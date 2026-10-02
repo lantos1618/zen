@@ -1,39 +1,41 @@
-Module, Decl, Function, TParam, BlockId, Ident = std.ast
-Struct, Impl, Member, Enum = std.ast
-ExprId, TypeId, Const, Field = std.ast
-AllocError = std.mem
-Vec = std.collections
-str = std.text
-Res, Ok, None, Range = std.core
-TyId = sema.sema_ty
-Def, DefKind, ModuleTable, decl_at = sema.sema_def
-Checker, Ctx = sema.sema_check
-SemaFault, NameFault, PairFault = sema.sema_diag
-check_impl, satisfies_bound = sema.sema_bound
-check_overloads, same_fn_signature, fn_signatures_overlap = sema.sema_call
-Cand, cands_of, omittable_tail = sema.sema_cand
-check_depth = sema.sema_depth
-check_varargs = sema.sema_vararg
-check_layout = sema.sema_layout
-type_of, block_type = sema.sema_type
-bound_member_type = sema.sema
-type_from_ast, param_type, ret_type, type_decl = sema.sema_denote
-decl_as_type = sema.sema_type
-enter_struct_tvars, member_type, self_ctx = sema.sema_member
-settle_variant_at = sema.sema_apply
-variant_payload = sema.sema_case
-owner_of, push_tparams = sema.sema_inst
-settle_raised = sema.sema_raise
-check_return = sema.sema_hoist
-check_literal, report_unsettled_widths = sema.sema_trap
-check_arms = sema.sema_hoist
-check_own = sema.sema_own
-check_init = sema.sema_init
-finish_ownership = sema.sema_store
-check_enum_discriminants = sema.sema_discriminant
-check_numeric_conversions = sema.sema_numeric
-check_secret = sema.sema_secret
-check_union_imports = sema.sema_import
+{ Module, Decl, Function, TParam, BlockId, Ident } = std.ast
+{ Struct, Impl, Member, Enum, Variant } = std.ast
+{ ExprId, TypeId, Const, Field } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Res, Ok, None, Range } = std.core
+{ TyId } = sema.sema_ty
+{ Def, DefKind, ModuleTable, decl_at } = sema.sema_def
+{ Checker, Ctx } = sema.sema_check
+{ SemaFault, NameFault, PairFault } = sema.sema_diag
+{ check_impl, satisfies_bound } = sema.sema_bound
+{ check_overloads, same_fn_signature, fn_signatures_overlap } = sema.sema_call
+{ Cand, cands_of, omittable_tail } = sema.sema_cand
+{ check_depth } = sema.sema_depth
+{ check_varargs } = sema.sema_vararg
+{ check_layout } = sema.sema_layout
+{ type_of, block_type } = sema.sema_type
+{ bound_member_type } = sema.sema
+{ type_from_ast, param_type, ret_type, type_decl } = sema.sema_denote
+{ decl_as_type } = sema.sema_type
+{ enter_struct_tvars, enter_type_tvars, member_type, self_ctx } = sema.sema_member
+{ settle_variant_at } = sema.sema_apply
+{ variant_payload } = sema.sema_case
+{ owner_of, push_tparams } = sema.sema_inst
+{ settle_raised } = sema.sema_raise
+{ check_return } = sema.sema_hoist
+{ check_literal, report_unsettled_widths } = sema.sema_trap
+{ check_arms } = sema.sema_hoist
+{ check_own } = sema.sema_own
+{ check_init } = sema.sema_init
+{ finish_ownership } = sema.sema_store
+{ check_enum_discriminants } = sema.sema_discriminant
+{ check_numeric_conversions } = sema.sema_numeric
+{ check_secret } = sema.sema_secret
+{ check_union_imports } = sema.sema_import
+{ alias_module } = sema.sema_module
+{ impl_bound_type } = sema.sema_supply
 
 // Every declaration rule, for one module.
 check_module* = (c :: Checker, mi: usize) Res<(), AllocError> {
@@ -113,7 +115,8 @@ check_decl = (c :: Checker, d: Decl, m: Module, mi: usize)
         Enum(e)     => {
             c.enum_payloads(e, mi).try();
             c.check_enum_discriminants(e, mi).try();
-            c.check_members(e, mi)
+            c.check_members(e, mi).try();
+            c.enum_bodies(e, m, mi)
         },
         Impl(im)    => c.impl_bodies(im, m, mi),
         Const(k)    => c.const_body(k, mi),
@@ -151,43 +154,58 @@ enum_payloads = (c :: Checker, e: Enum, mi: usize) Res<(), AllocError> {
     c.release_tvars(tmark)
 }
 
+// A braced body declares an enum's own variants. Without braces, `|` joins
+// existing types into a union: every name must be a type, and anything an
+// enum would write there is reported with the braced form as the fix.
 check_members = (c :: Checker, e: Enum, mi: usize)
                 Res<(), AllocError> {
-    miss_at    ::= e.variants.len;   // sentinel: no bare member missed
-    miss_count ::= 0;
-    types      ::= 0;
-    values     ::= 0;
-    Range(0, e.variants.len).loop((h, i) {
-        v = e.variants.get(i).ok_or(AllocError.OutOfMemory).try();
-        v.payload.match({
-            // a variant with a payload cannot be a member name
-            Ok(_) => (),
-            None  => c.binds_nothing(mi, v.name.text).try().match({
-                true  => {
-                    miss_count = miss_count + 1;
-                    (miss_count == 1).then(() { miss_at = i; });
-                },
+    e.braced.match({
+        true  => Ok(()),
+        false => c.check_union_members(e, mi),
+    })
+}
+
+// Names that bind nothing are misspelled union members when others are
+// types, and an enum written without braces when none is.
+check_union_members = (c :: Checker, e: Enum, mi: usize)
+                      Res<(), AllocError> {
+    enum_like ::= e.variants.len < 2 || e.leading_bar.match({
+        Ok(_) => true,
+        None  => false,
+    });
+    types     ::= 0;
+    misses    ::= c.alloc.Vec<Variant>();
+    e.variants.loop((h, v) {
+        written = v.payload.match({ Ok(_) => true, None => false })
+            || v.discriminant.match({ Ok(_) => true, None => false });
+        written.match({
+            true  => { enum_like = true; },
+            false => c.binds_nothing(mi, v.name.text).try().match({
+                true  => misses.add(v).try(),
                 false => c.binds_a_type(mi, v.name.text).try().match({
                     true  => { types = types + 1; },
-                    false => { values = values + 1; },
+                    false => { enum_like = true; },
                 }),
             }),
         });
     });
-    ((miss_count == 1) && (types > 0) && (values == 0)).match({
-        false => Ok(()),
-        true  => c.report_member_miss(e, miss_at),
+    (enum_like || types == 0).match({
+        true  => c.report(
+            e.name.span.file,
+            e.name.span,
+            SemaFault.BareEnum(NameFault(name: e.name.text))
+        ),
+        false => {
+            misses.loop((h, v) {
+                c.report(
+                    v.name.span.file,
+                    v.name.span,
+                    SemaFault.UndefinedName(NameFault(name: v.name.text))
+                ).try();
+            });
+            Ok(())
+        },
     })
-}
-
-report_member_miss = (c :: Checker, e: Enum, at: usize)
-                     Res<(), AllocError> {
-    name = e.variants.get(at).ok_or(AllocError.OutOfMemory).try().name;
-    c.report(
-        name.span.file,
-        name.span,
-        SemaFault.UndefinedName(NameFault(name: name.text))
-    )
 }
 
 // Whether the name binds nothing at all in the declaring module --
@@ -222,7 +240,7 @@ struct_bodies = (c :: Checker, s: Struct, m: Module, mi: usize)
     tmark   = c.tvar_mark();
     bmark   = c.bound_mark();
     c.enter_struct_generics(s, mi).try();
-    c.check_member_overloads(s, self_ty, mi).try();
+    c.check_member_overloads(s.members, self_ty, mi).try();
     s.members.loop((mem) {
         c.member_body(mem, self_ty, m, mi).try();
         mem.kind.match({
@@ -236,6 +254,23 @@ struct_bodies = (c :: Checker, s: Struct, m: Module, mi: usize)
     c.release_bounds(bmark).try();
     c.release_tvars(tmark).try();
     Ok(());
+}
+
+// An enum body's methods and constants get the same checks as a struct's.
+enum_bodies = (c :: Checker, e: Enum, m: Module, mi: usize)
+              Res<(), AllocError> {
+    (e.members.len == 0).match({
+        true  => Ok(()),
+        false => {
+            self_ty = c.named_self(e.name.text, mi).try();
+            tmark   = c.tvar_mark();
+            c.enter_type_tvars(e.name, e.tparams, mi).try();
+            c.check_member_overloads(e.members, self_ty, mi).try();
+            e.members.loop((mem) { c.member_body(mem, self_ty, m, mi).try(); });
+            c.release_tvars(tmark).try();
+            Ok(())
+        },
+    })
 }
 
 // The parser restricts native fallbacks to integer literals. Fixed-width
@@ -278,10 +313,14 @@ field_default = (c :: Checker, field: Field, self_ty: TyId, mi: usize)
     Ok(())
 }
 
-check_member_overloads = (c :: Checker, s: Struct, self_ty: TyId, mi: usize)
-                         Res<(), AllocError> {
+check_member_overloads = (
+    c       :: Checker,
+    members : Vec<Member>,
+    self_ty : TyId,
+    mi      : usize
+) Res<(), AllocError> {
     seen ::= c.alloc.Vec<Member>();
-    s.members.loop((h, m) {
+    members.loop((h, m) {
         m.kind.match({
             Function(_) => {
                 seen.loop((h2, first) {
@@ -292,7 +331,7 @@ check_member_overloads = (c :: Checker, s: Struct, self_ty: TyId, mi: usize)
             _           => Ok(()),
         }).try();
     });
-    s.members.loop((h, m) {
+    members.loop((h, m) {
         c.check_free_member_overloads(m, self_ty, mi).try();
     });
     Ok(())
@@ -588,6 +627,7 @@ target_decl_tvars = (c :: Checker, d: Decl, mi: usize)
                     Res<(), AllocError> {
     d.kind.match({
         Struct(s) => c.enter_struct_generics(s, mi),
+        Enum(e)   => c.enter_type_tvars(e.name, e.tparams, mi),
         _         => Ok(()),
     })
 }

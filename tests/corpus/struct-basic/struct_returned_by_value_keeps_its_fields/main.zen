@@ -16,10 +16,10 @@
 // makes this worth pinning beside struct_return_large.zen rather than
 // inside it.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Inner = {
     lo :: i64 = 100,

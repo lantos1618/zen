@@ -1,9 +1,9 @@
 // Division accepts floats, but remainder is an integer-only operation: C has
 // no `%` operator for f64 values.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
 remainder = (left: f64, right: f64) f64 { left % right }
 

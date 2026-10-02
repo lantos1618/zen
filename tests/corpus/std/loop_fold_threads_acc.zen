@@ -4,10 +4,10 @@
 // capture-free body this is a plain C for-loop - see
 // tests/bench/bench_loop.zen, which gates it at allocs_op: 0
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     values = [1, 2, 3, 4];

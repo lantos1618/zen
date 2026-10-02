@@ -1,6 +1,6 @@
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 // A local function is a declaration, and a declaration ends at its body.
 main = (env: Env) Res<i32, IoError> {

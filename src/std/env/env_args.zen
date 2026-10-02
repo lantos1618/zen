@@ -15,14 +15,14 @@
 // and a positional word past the last field that takes one is `Parse` of
 // that field.
 
-str = std.text
-Vec = std.collections
-Res, Ok, Err, None, Range = std.core
-Env = std.env
+{ str } = std.text
+{ Vec } = std.collections
+{ Res, Ok, Err, None, Range } = std.core
+{ Env } = std.env
 
 // Two faces and no third: a required field was absent, or it was there
 // and did not parse as its type. The payload is the field name.
-ArgError* = Missing(str) | Parse(str)
+ArgError* = { Missing: str | Parse: str }
 
 // argv is bounded at this many words for the door: the claim mask is one
 // u64. Longer command lines answer `Parse("argv")`.

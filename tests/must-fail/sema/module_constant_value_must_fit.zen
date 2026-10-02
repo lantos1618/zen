@@ -15,10 +15,10 @@
 // position: the `-`, not the digits -- the negation is what makes the
 // literal one a u32 cannot hold.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 UMINUS: u32 = -1
 

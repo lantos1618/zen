@@ -21,21 +21,21 @@
 // like the C backend's receiver-owned arenas, that memory lives until the
 // actor's arena is dropped after `stopped`.
 
-Vec = std.collections
-String, str = std.text
-Res, Ok, None, Range = std.core
-ExprId, Call = std.ast
-Span, nowhere = std.source
-TyId, Def, DeclId, CheckedCall = sema.sema
-Scalar, Layout, Op, Move, Binary, Instruction, Store, Address, Convert = gen.gen_ir
-CodeRef, Func, Pages, CopyMem, TrapKind = gen.gen_ir
-LowerError, unsupported = gen.gen_lower
-Lowerer, Value, Place, Base, Callee, to_i64_bits = gen.gen_lower_core
-Source, argument_value, param_type, real_call = gen.gen_lower_call
-resolve, handle_for_place, payload_type, pointee_of, bound_of, dispatch = gen.gen_lower_member
-size_of, align_of, round_up, class_of, FieldAt = gen.gen_lower_shape
-Synth, std_call, std_function, enqueue_synth, begin_synth, finish_synth = gen.gen_lower_thread
-succeeded, is_null, byte_pointer, ok_payload = gen.gen_lower_thread
+{ Vec } = std.collections
+{ String, str } = std.text
+{ Res, Ok, None, Range } = std.core
+{ ExprId, Call } = std.ast
+{ Span, nowhere } = std.source
+{ TyId, Def, DeclId, CheckedCall } = sema.sema
+{ Scalar, Layout, Op, Move, Binary, Instruction, Store, Address, Convert } = gen.gen_ir
+{ CodeRef, Func, Pages, CopyMem, TrapKind } = gen.gen_ir
+{ LowerError, unsupported } = gen.gen_lower
+{ Lowerer, Value, Place, Base, Callee, to_i64_bits } = gen.gen_lower_core
+{ Source, argument_value, param_type, real_call } = gen.gen_lower_call
+{ resolve, handle_for_place, payload_type, pointee_of, bound_of, dispatch } = gen.gen_lower_member
+{ size_of, align_of, round_up, class_of, FieldAt } = gen.gen_lower_shape
+{ Synth, std_call, std_function, enqueue_synth, begin_synth, finish_synth } = gen.gen_lower_thread
+{ succeeded, is_null, byte_pointer, ok_payload } = gen.gen_lower_thread
 
 // The generated record of one actor type.
 ActorLayout* = {
@@ -48,7 +48,7 @@ ActorLayout* = {
     size*: usize,
 }
 
-EntryKind* = Turn | Started | Stopped
+EntryKind* = { Turn | Started | Stopped }
 
 // One generated entry point. A turn's `hook` is its behavior and `fields`
 // place the behavior's arguments in the payload record; `Started` and

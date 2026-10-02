@@ -23,10 +23,10 @@
 // `x.to_u32()` two answers"); this file pins the free functions'
 // side of that bargain.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a: i8  = -100;

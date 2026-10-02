@@ -1,0 +1,9 @@
+// `Mode.Fast` could name the variant or the constant.
+Mode = {
+    Fast | Slow,
+    Fast*: i32 = 1
+}
+
+main = (env: Env) Res<i32, IoError> {
+    Ok(0);
+}

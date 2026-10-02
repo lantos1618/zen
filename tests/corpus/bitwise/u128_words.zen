@@ -1,7 +1,7 @@
 // The operators reach u128 as the named operations do. There is no u128
 // printer, so each result prints as its high and low halves.
-truncate_u64 = std.core.num
-println = std.io
+{ truncate_u64 } = std.core.num
+{ println } = std.io
 
 halves = (label: str, v: u128) {
     println("{}: {} {}", label, (v >> 64).truncate_u64(), v.truncate_u64());

@@ -1,6 +1,6 @@
-Res, Ok, IoError = std.core
-Env = std.env
-println, print = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println, print } = std.io
 
 main = (env: Env) Res<(), IoError> {
     print("ready");

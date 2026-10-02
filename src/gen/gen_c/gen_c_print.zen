@@ -2,23 +2,23 @@
 // holes are type-directed; non-primitive values write through `Display`.
 // Output helpers do not allocate in the generated program.
 
-ExprId, Literal = std.ast
-Call, Arg = std.ast
-Span, Pos = std.source
-AllocError = std.mem
-literal_byte_len, text_block_at = std.lex
-str, String = std.text
-Res, Ok, None, loop, Range = std.core
-FmtAt, fmt_at, ends_run, arguments_taken = std.text.text_fmt
-TyId, is_float = sema.sema_ty
-Ctx = sema.sema_check
-Printer = sema.sema_print
-GenFault = gen.gen_diag
-sym_variant, RES_PATH = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
-is_c_integer, is_signed, ctype = gen.gen_c.gen_c_type
-expr, ty_of, named_hole, write_c_literal = gen.gen_c.gen_c_expr
-console_display, stderr_console = gen.gen_c.gen_c_display
+{ ExprId, Literal } = std.ast
+{ Call, Arg } = std.ast
+{ Span, Pos } = std.source
+{ AllocError } = std.mem
+{ literal_byte_len, text_block_at } = std.lex
+{ str, String } = std.text
+{ Res, Ok, None, loop, Range } = std.core
+{ FmtAt, fmt_at, ends_run, arguments_taken } = std.text.text_fmt
+{ TyId, is_float } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ Printer } = sema.sema_print
+{ GenFault } = gen.gen_diag
+{ sym_variant, RES_PATH } = gen.gen_name
+{ CBackend } = gen.gen_c.gen_c_state
+{ is_c_integer, is_signed, ctype } = gen.gen_c.gen_c_type
+{ expr, ty_of, named_hole, write_c_literal } = gen.gen_c.gen_c_expr
+{ console_display, stderr_console } = gen.gen_c.gen_c_display
 
 // Console includes a raw stderr write for incremental diagnostics.
 is_console_print* = (name: str) bool {

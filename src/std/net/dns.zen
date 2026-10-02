@@ -1,11 +1,11 @@
 // DNS policy over the same raw POSIX address lookup used by Socket.
 
-Alloc = std.mem
-Res, Ok, Err = std.core
-ResolvedAddr, SocketFault, resolve_addr = std.net.socket
-String = std.text
+{ Alloc } = std.mem
+{ Res, Ok, Err } = std.core
+{ ResolvedAddr, SocketFault, resolve_addr } = std.net.socket
+{ String } = std.text
 
-DnsError* = NotFound | Failed
+DnsError* = { NotFound | Failed }
 
 DnsAddr* = {
     ip*: String,

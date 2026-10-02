@@ -5,7 +5,7 @@
 //
 // position: the `::=`.
 
-println = std.io
+{ println } = std.io
 
 main = () i32 {
     count: i32 ::= 3;

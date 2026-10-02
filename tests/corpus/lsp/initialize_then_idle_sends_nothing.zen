@@ -18,14 +18,14 @@
 // carries a CR and a `.expected` may not (docs/TESTING.md). Every byte
 // of the envelope is `a_session_is_answered_frame_by_frame`'s subject.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text = std.json
-Res, Ok, loop = std.core
-Env = std.env
-println = std.io
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text } = std.json
+{ Res, Ok, loop } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 // No `rootUri` on purpose: even the workspace is absent, so any frame
 // here is unambiguously unsolicited.

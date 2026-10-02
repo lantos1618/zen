@@ -16,14 +16,14 @@
 // dual_product's without a capability, must contain none of MULX, ADCX and
 // ADOX on x86-64, and wide no ADCS on arm64, so a check that stopped
 // telling functions apart fails.
-Vec = std.collections
-str, String = std.text
-Isa, Line, function_lines, parse_lines = taint
-Entry, manifest_entries, manifest_functions = abi
-Res, Ok, Range = std.core
-Alloc, AllocError = std.mem
-Env = std.env
-println = std.io
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Isa, Line, function_lines, parse_lines } = taint
+{ Entry, manifest_entries, manifest_functions } = abi
+{ Res, Ok, Range } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 out_of_line = audit
 
 PROBES: str = "main dual_product\nmain dual_square\nmain wide_bmi2\nmain wide\nmain carry_chain\nmain borrow_chain\nmain portable_product\n"

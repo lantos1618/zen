@@ -2,33 +2,34 @@
 // Method calls remain in `gen_c_member`. Primitive fields use runtime-floor
 // names; declared fields use mangled names.
 
-ExprId, Decl, Struct, Member = std.ast
-Const, Access, Impl, Field = std.ast
-AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-DeclId, ImplId = sema.sema_id
-TyId, TyNamed = sema.sema_ty
-Def, decl_at = sema.sema_def
-Ctx = sema.sema_check
-has_var* = sema.sema_inst
-alias_enum = sema.sema_denote
-impl_bound_type, bound_member_type = sema.sema_supply
-sym_member, sym_variant = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
-unsupported, unresolved = gen.gen_c.gen_c_report
-constructed, recv_inst = gen.gen_c.gen_c_mono
-enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
-ctype, struct_decl, has_storage = gen.gen_c.gen_c_type
-write_qname = gen.gen_c.gen_c_layout
-bind_text = gen.gen_c.gen_c_range
-expr, ty_of = gen.gen_c.gen_c_expr
-field_of, is_native_record = gen.gen_c.gen_c_type
-base_of = sema.sema_member
-lower_const_value, lower_const = gen.gen_c.gen_c_const
-module_named_by = sema.sema_module
-type_from_ast = sema.sema_denote
-Res, Ok, None = std.core
+{ ExprId, Decl, Struct, Member } = std.ast
+{ Const, Access, Impl, Field } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ DeclId, ImplId } = sema.sema_id
+{ TyId, TyNamed } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ Ctx } = sema.sema_check
+{ has_var* } = sema.sema_inst
+{ alias_enum } = sema.sema_denote
+{ impl_bound_type, bound_member_type } = sema.sema_supply
+{ sym_member, sym_variant } = gen.gen_name
+{ CBackend } = gen.gen_c.gen_c_state
+{ unsupported, unresolved } = gen.gen_c.gen_c_report
+{ constructed, recv_inst } = gen.gen_c.gen_c_mono
+{ enter_struct_tparams, leave_tparams } = gen.gen_c.gen_c_mono
+{ ctype, struct_decl, has_storage } = gen.gen_c.gen_c_type
+{ write_qname } = gen.gen_c.gen_c_layout
+{ bind_text } = gen.gen_c.gen_c_range
+{ expr, ty_of } = gen.gen_c.gen_c_expr
+{ field_of, is_native_record } = gen.gen_c.gen_c_type
+{ base_of } = sema.sema_member
+{ lower_const_value, lower_const } = gen.gen_c.gen_c_const
+{ module_named_by, alias_module } = sema.sema_module
+{ Case, cases_of, find_case } = sema.sema_case
+{ type_from_ast } = sema.sema_denote
+{ Res, Ok, None } = std.core
 
 // The base's resolved kind separates declaration reads from value fields.
 lower_access* = (
@@ -44,13 +45,16 @@ lower_access* = (
         false => be.native_constant(id, a, ctx, out).try().match({
             true  => Ok(()),
             false => be.base_decl(a.base, ctx).match({
-                Ok(ty) => be.write_variant_value(
-                    id,
-                    ty,
-                    want,
-                    a.name.text,
-                    out
-                ),
+                Ok(ty) => be.names_case(ty, a.name.text).try().match({
+                    true  => be.write_variant_value(
+                        id,
+                        ty,
+                        want,
+                        a.name.text,
+                        out
+                    ),
+                    false => be.lower_type_or_field(id, a, ctx, want, out),
+                }),
                 None   => be.lower_type_or_field(id, a, ctx, want, out),
             }),
         }),
@@ -130,6 +134,13 @@ lower_module_export = (
             ),
         }),
     })
+}
+
+// An enum's body may declare constants beside its variants.
+names_case = (be :: CBackend, ty: TyId, name: str) Res<bool, AllocError> {
+    cases ::= be.alloc.Vec<Case>();
+    be.check.cases_of(ty, cases).try();
+    Ok(find_case(cases, name).match({ Ok(_) => true, None => false }))
 }
 
 // Header constants are runtime reads of the target C implementation. A field
@@ -361,10 +372,34 @@ collect_type_const = (
     name : str,
     out  :: Vec<TypeConst>
 ) Res<(), AllocError> {
-    decl_at(be.tree, d.id).match({
-        None  => Ok(()),
-        Ok(x) => collect_decl_const(x, d, name, out),
+    be.check.alias_module(d.id).match({
+        Ok(mi) => be.collect_module_const(mi, name, out),
+        None   => decl_at(be.tree, d.id).match({
+            None  => Ok(()),
+            Ok(x) => collect_decl_const(x, d, name, out),
+        }),
     })
+}
+
+// `sh.LIMIT` through a module alias reads that module's exported constant.
+collect_module_const = (
+    be   :: CBackend,
+    mi   : usize,
+    name : str,
+    out  :: Vec<TypeConst>
+) Res<(), AllocError> {
+    defs ::= be.alloc.Vec<Def>();
+    be.check.world.exported_defs(mi, name, defs).try();
+    defs.loop((h, d) {
+        decl_at(be.tree, d.id).match({
+            None  => Ok(()),
+            Ok(x) => x.kind.match({
+                Const(k) => out.add(TypeConst(k: k, d: d)),
+                _        => Ok(()),
+            }),
+        }).try();
+    });
+    Ok(());
 }
 
 collect_decl_const = (
@@ -373,19 +408,19 @@ collect_decl_const = (
     name : str,
     out  :: Vec<TypeConst>
 ) Res<(), AllocError> {
-    x.kind.match({
-        Struct(s) => collect_struct_const(s, d, name, out),
-        _         => Ok(()),
+    x.body_members().match({
+        Ok(members) => collect_body_const(members, d, name, out),
+        None        => Ok(()),
     })
 }
 
-collect_struct_const = (
-    s    : Struct,
-    d    : Def,
-    name : str,
-    out  :: Vec<TypeConst>
+collect_body_const = (
+    members : Vec<Member>,
+    d       : Def,
+    name    : str,
+    out     :: Vec<TypeConst>
 ) Res<(), AllocError> {
-    s.members.loop((h, m) { keep_const(m, d, name, out).try() });
+    members.loop((h, m) { keep_const(m, d, name, out).try() });
     Ok(());
 }
 
@@ -639,15 +674,18 @@ named_supplied = (
 }
 
 declares_own = (be: CBackend, id: DeclId, name: str) bool {
-    struct_decl(be, id).match({
-        Ok(s) => struct_has_member(s, name),
+    decl_at(be.tree, id).match({
+        Ok(x) => x.body_members().match({
+            Ok(members) => has_member(members, name),
+            None        => false,
+        }),
         None  => false,
     })
 }
 
-struct_has_member = (s: Struct, name: str) bool {
+has_member = (members: Vec<Member>, name: str) bool {
     got ::= false;
-    s.members.loop((h, m) { m.named(name).then(() { got = true; }) });
+    members.loop((h, m) { m.named(name).then(() { got = true; }) });
     got
 }
 

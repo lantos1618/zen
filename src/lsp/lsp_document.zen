@@ -1,10 +1,10 @@
 // One independently retired editor buffer. Views expire when this owner drops.
-str, dup = std.text
-Arena, Alloc, AllocError = std.mem
-Vec = std.collections
-path_of = lsp.lsp_uri
-Res, Ok, Drop = std.core
-Env = std.env
+{ str, dup } = std.text
+{ Arena, Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ path_of } = lsp.lsp_uri
+{ Res, Ok, Drop } = std.core
+{ Env } = std.env
 
 Document* = {
     arena :: Arena,

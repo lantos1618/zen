@@ -5,30 +5,30 @@
 // provided memory operations (`Mem.alloc`, `Mem.page`, `Mem.release`) are
 // lowered here too.
 
-Alloc, AllocError = std.mem
-Vec, Map = std.collections
-String, str = std.text
-Res, Ok, Err, None, loop, Range = std.core
-ExprId, BlockId, Function, Call, Struct, Impl, Member, Decl = std.ast
-Span = std.source
-nowhere = std.source
-Checker, DeclId, Def, TyId, Inst, decl_at, CheckedCall, ImplId = sema.sema
-Sys = gen.gen_sys
-Scalar, Op, Const, Move, Binary, Instruction, Load, Store, Address, Pages = gen.gen_ir
-Invocation, SysCall, SysValue, Start, StartValue, Convert, Layout, Write, Stream = gen.gen_ir
-sys_named, constant_named = gen.gen_sys
-TrapKind = gen.gen_ir
-LowerError, unsupported = gen.gen_lower
-Lowerer, Value, Place, Base, Callee = gen.gen_lower_core
-to_i64_bits = gen.gen_lower_core
-Shape, Form, shape, size_of = gen.gen_lower_shape
-Source, bind_sources, invoke, call_inst, source_expr, result_type, real_call = gen.gen_lower_call
-settle_params = gen.gen_lower_call
-runtime_call = gen.gen_lower_thread
-actor_of_ref, actor_member = gen.gen_lower_actor
+{ Alloc, AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ String, str } = std.text
+{ Res, Ok, Err, None, loop, Range } = std.core
+{ ExprId, BlockId, Function, Call, Struct, Impl, Member, Decl } = std.ast
+{ Span } = std.source
+{ nowhere } = std.source
+{ Checker, DeclId, Def, TyId, Inst, decl_at, CheckedCall, ImplId } = sema.sema
+{ Sys } = gen.gen_sys
+{ Scalar, Op, Const, Move, Binary, Instruction, Load, Store, Address, Pages } = gen.gen_ir
+{ Invocation, SysCall, SysValue, Start, StartValue, Convert, Layout, Write, Stream } = gen.gen_ir
+{ sys_named, constant_named } = gen.gen_sys
+{ TrapKind } = gen.gen_ir
+{ LowerError, unsupported } = gen.gen_lower
+{ Lowerer, Value, Place, Base, Callee } = gen.gen_lower_core
+{ to_i64_bits } = gen.gen_lower_core
+{ Shape, Form, shape, size_of } = gen.gen_lower_shape
+{ Source, bind_sources, invoke, call_inst, source_expr, result_type, real_call } = gen.gen_lower_call
+{ settle_params } = gen.gen_lower_call
+{ runtime_call } = gen.gen_lower_thread
+{ actor_of_ref, actor_member } = gen.gen_lower_actor
 
 // How a member call reaches its body.
-Target = Static(Callee) | Dynamic(Bound)
+Target = { Static: Callee | Dynamic: Bound }
 
 // A bound value: the bound's declaration and its program-wide implementors
 // in tag order.
@@ -397,7 +397,7 @@ variadic* = (lo :: Lowerer, f: Function) bool {
 
 // A place a member may be declared: the type's own declaration, an impl for
 // it, or the bound such an impl satisfies.
-OwnerKind = Own | Supply | Default
+OwnerKind = { Own | Supply | Default }
 
 Aliased = { f: Function, owner: DeclId }
 

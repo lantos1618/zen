@@ -1,91 +1,91 @@
 // how a declaration and a member are named, so a memo can key on one
-DeclId*, MemberId*, ImplId* = sema.sema_id
+{ DeclId*, MemberId*, ImplId* } = sema.sema_id
 
 // Generic substitution and call-site instantiation.
-Inst*, InstEdge*, subst*, subst_list*    = sema.sema_inst
-has_var*                                 = sema.sema_inst
-inst_of_named*, unify*, unify_list*      = sema.sema_inst
-tparam_vars*, owner_of*, zip*            = sema.sema_inst
+{ Inst*, InstEdge*, subst*, subst_list* }    = sema.sema_inst
+{ has_var* }                                 = sema.sema_inst
+{ inst_of_named*, unify*, unify_list* }      = sema.sema_inst
+{ tparam_vars*, owner_of*, zip* }            = sema.sema_inst
 
 // what sema computes: the interned type language
-TyId*, Ty*, Types*                       = sema.sema_ty
-Prim*, TyNamed*, TyFn*, TyUnion*, TyVar* = sema.sema_ty
-ResForm*, TyRes*                         = sema.sema_ty
-res_arity*, is_failure*                  = sema.sema_ty
+{ TyId*, Ty*, Types* }                       = sema.sema_ty
+{ Prim*, TyNamed*, TyFn*, TyUnion*, TyVar* } = sema.sema_ty
+{ ResForm*, TyRes* }                         = sema.sema_ty
+{ res_arity*, is_failure* }                  = sema.sema_ty
 
 // what sema says when a program means nothing
-SemaFault*, Diag*, message*              = sema.sema_diag
-NameFault*, TypeFault*, PairFault*       = sema.sema_diag
+{ SemaFault*, Diag*, message* }              = sema.sema_diag
+{ NameFault*, TypeFault*, PairFault* }       = sema.sema_diag
 
 // what a module may not depend on: itself, and a constant that needs
 // one that needs it back
-check_module_graph*                      = sema.sema_cycle
+{ check_module_graph* }                      = sema.sema_cycle
 
 // what a name means, and who is allowed to ask
-DefKind*, Def*, ImportBinding*           = sema.sema_def
-ModuleTable*, World*, dotted*, decl_at*  = sema.sema_def
-CORE*                                 = sema.sema_def
+{ DefKind*, Def*, ImportBinding* }           = sema.sema_def
+{ ModuleTable*, World*, dotted*, decl_at* }  = sema.sema_def
+{ CORE* }                                 = sema.sema_def
 
 // Checker state and type agreement.
-Checker*, Ctx*, Binding*                 = sema.sema_check
-CheckedCall*, CallSignature*, CallResolution* = sema.sema_check
-is_prim*, is_integer*, is_float*         = sema.sema_ty
+{ Checker*, Ctx*, Binding* }                 = sema.sema_check
+{ CheckedCall*, CallSignature*, CallResolution* } = sema.sema_check
+{ is_prim*, is_integer*, is_float* }         = sema.sema_ty
 
 // Expression and written-type queries.
-type_of*, block_type*                    = sema.sema_type
-type_from_ast*                           = sema.sema_denote
+{ type_of*, block_type* }                    = sema.sema_type
+{ type_from_ast* }                           = sema.sema_denote
 
 // what a value of a type can BE, and what a `.match` over it means
-Case*, cases_of*, case_payload*          = sema.sema_case
-is_case*                                 = sema.sema_case
-PatKind*, Pat*, Pats*, PatMatrix*        = sema.sema_match
-match_type*, PatReading*, read_pattern*    = sema.sema_match
-join*                                    = sema.sema_join
+{ Case*, cases_of*, case_payload* }          = sema.sema_case
+{ is_case* }                                 = sema.sema_case
+{ PatKind*, Pat*, Pats*, PatMatrix* }        = sema.sema_match
+{ match_type*, PatReading*, read_pattern* }    = sema.sema_match
+{ join* }                                    = sema.sema_join
 
 // what a dot reaches
-Found*, Base*, access_type*, members_of* = sema.sema_member
-computed_member*                         = sema.sema_member
+{ Found*, Base*, access_type*, members_of* } = sema.sema_member
+{ computed_member* }                         = sema.sema_member
 
 // Members supplied by impls and bounds.
-impl_members*, bound_members*            = sema.sema_supply
-bound_member_type*, impl_bound_type*     = sema.sema_supply
+{ impl_members*, bound_members* }            = sema.sema_supply
+{ bound_member_type*, impl_bound_type* }     = sema.sema_supply
 
 // what a bound promises, and what an impl owes it
-check_impl*, satisfies_bound*            = sema.sema_bound
+{ check_impl*, satisfies_bound* }            = sema.sema_bound
 
 // which declaration a call means
-call_type*, check_overloads*             = sema.sema_call
-Cand*, TBound*, Actual*                  = sema.sema_cand
-cands_of*, matches*, travelled_cands*    = sema.sema_cand
+{ call_type*, check_overloads* }             = sema.sema_call
+{ Cand*, TBound*, Actual* }                  = sema.sema_cand
+{ cands_of*, matches* }                      = sema.sema_cand
 
 // a trap the compiler can prove will fire
-check_binary*                            = sema.sema_trap
+{ check_binary* }                            = sema.sema_trap
 
 // which integer is this, and what fits what
-const_int*, fits*                        = sema.sema_const
+{ const_int*, fits* }                        = sema.sema_const
 
 // Whole-program semantic passes.
-check_all*, check_module*, check_function* = sema.sema_decl
-check_layout*                            = sema.sema_layout
+{ check_all*, check_module*, check_function* } = sema.sema_decl
+{ check_layout* }                            = sema.sema_layout
 
 // who owns a value
-check_own*, Own*, OwnVar*, Place*        = sema.sema_own
-path_root*, place_type*                  = sema.sema_own
+{ check_own*, Own*, OwnVar*, Place* }        = sema.sema_own
+{ path_root*, place_type* }                  = sema.sema_own
 
 // what may not be copied
-check_drop_copy*, is_drop_type*                           = sema.sema_drop
+{ check_drop_copy*, is_drop_type* }                           = sema.sema_drop
 
 // who may write through a name
-check_receiver*                          = sema.sema_recv
+{ check_receiver* }                          = sema.sema_recv
 
 // a block, as a value, that may not leave its block
-check_scope_returned*, check_scope_stored* = sema.sema_scope
-check_scope_captured*, call_escapes*       = sema.sema_scope
-is_construction*                           = sema.sema_scope
+{ check_scope_returned*, check_scope_stored* } = sema.sema_scope
+{ check_scope_captured*, call_escapes* }       = sema.sema_scope
+{ is_construction* }                           = sema.sema_scope
 
 // why the instantiation set is finite, and who to blame when it is not
-check_depth*                             = sema.sema_depth
+{ check_depth* }                             = sema.sema_depth
 
 // where a `vararg<T>` may be written, and what a call site asks of one
-check_varargs*, pack_elem*, pack_slot*   = sema.sema_vararg
-tail_is_pack*                            = sema.sema_vararg
+{ check_varargs*, pack_elem*, pack_slot* }   = sema.sema_vararg
+{ tail_is_pack* }                            = sema.sema_vararg

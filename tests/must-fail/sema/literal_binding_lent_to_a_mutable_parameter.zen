@@ -9,10 +9,10 @@
 //
 // position: the argument that lends the unsettled storage.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 bump = (n :: usize) { n = n + 1; }
 

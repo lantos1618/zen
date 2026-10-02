@@ -1,7 +1,7 @@
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // A match whose every arm returns closes its final `else` with
 // `zg_unreachable`, so unannotated the chain reads to cc as a non-void
@@ -16,7 +16,7 @@ println = std.io
 //   1
 //   2
 //   3
-Color = | Red | Green | Blue
+Color = { | Red | Green | Blue }
 
 code = (c: Color) i32 {
     c.match({

@@ -1,10 +1,10 @@
 // Unit has no C storage, but its printable spelling is still `()`.
 // Pin both a format hole and the value-only console form.
 
-Res, Ok, IoError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | IoError
 

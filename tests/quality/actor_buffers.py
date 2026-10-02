@@ -28,7 +28,11 @@ with tempfile.TemporaryDirectory(prefix='zen-actor-buffers-') as folder:
                         '-fsanitize=' + sanitizers, '-fno-sanitize-recover=all', '-I', str(work), str(path), '-o', str(work / name)],
                        check=True, timeout=120)
         try:
-            result = subprocess.run([str(work / name)], cwd=work, capture_output=True, text=True, timeout=timeout)
+            # A broken control must fail on every allocator: glibc and macOS
+            # both fill freed memory when asked, so a use after free reads
+            # garbage instead of the stale value a lazy allocator leaves.
+            scribble = dict(os.environ, MALLOC_PERTURB_='165', MallocScribble='1') if failure else None
+            result = subprocess.run([str(work / name)], cwd=work, capture_output=True, text=True, timeout=timeout, env=scribble)
         except subprocess.TimeoutExpired:
             assert timeout_failure, f'{name}: unexpected timeout'
             print(f'PASS: {name} detected deadlock')

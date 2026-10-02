@@ -12,10 +12,10 @@
 // One-line breaker: drop unstarred bindings from the importing
 // module's own scope -> "cannot resolve `double`" (or 0 / 7 printed).
 
-quad = mid.mid
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ quad } = mid.mid
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     println("{}", quad(2));

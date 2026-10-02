@@ -1,6 +1,6 @@
-Res, Ok = std.core
-Env = std.env
-Actor, ActorError, ActorStartError, Context = std.actor
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context } = std.actor
 
 Probe = c.bind("probe.h", { exercise* = () () })
 Worker = {}

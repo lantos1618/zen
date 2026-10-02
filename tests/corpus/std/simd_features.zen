@@ -1,12 +1,12 @@
 // Runtime CPU-feature dispatch and the capability-gated AES and carry-less
 // multiply instructions. Every line prints the same on a CPU without a
 // feature: the portable path must agree with the dispatched one.
-avx2, aes, clmul, Avx2, Aes, Clmul = std.simd
-splat_u32x8, lanes_u32x8, load_u8x16, lanes_u64x2, lanes_u64x4 = std.simd
-AllocError, Ptr = std.mem
-Res, Ok, Range = std.core
-Env = std.env
-println = std.io
+{ avx2, aes, clmul, Avx2, Aes, Clmul } = std.simd
+{ splat_u32x8, lanes_u32x8, load_u8x16, lanes_u64x2, lanes_u64x4 } = std.simd
+{ AllocError, Ptr } = std.mem
+{ Res, Ok, Range } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 // Compiled for AVX2: 32-byte vectors stay in YMM registers.
 mix8 = (cpu: Avx2, v: u32x8) u32x8 { v.add_wrap(v.rotate_left(16)).bit_xor(v) }

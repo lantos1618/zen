@@ -16,9 +16,9 @@
 // Red without #757 ("no `remove` on `Fs`", one diagnostic per call site),
 // green with it.
 
-Env, FsError = std.env
-Res, Ok = std.core
-println = std.io
+{ Env, FsError } = std.env
+{ Res, Ok } = std.core
+{ println } = std.io
 
 main = (env: Env) Res<i32, FsError> {
     env.fs.write("writable.txt", "ok").try();

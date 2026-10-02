@@ -1,7 +1,7 @@
-Alloc, AllocError, Ptr, null_ptr, Pool, PoolAlloc, PoolPolicy = std.mem
-Res, Ok, Range = std.core
-Env = std.env
-println = std.io
+{ Alloc, AllocError, Ptr, null_ptr, Pool, PoolAlloc, PoolPolicy } = std.mem
+{ Res, Ok, Range } = std.core
+{ Env } = std.env
+{ println } = std.io
 verify = (a: Alloc, pool: Ptr<Pool>) Res<(), AllocError> {
     old = a.realloc<u8>(null_ptr<u8>(), 16).try();
     Range<usize>(0, 16).loop((i) { old.write(i, 42); });

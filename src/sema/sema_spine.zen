@@ -1,9 +1,9 @@
-Expr, ExprId, Binary = std.ast
-AllocError = std.mem
-Vec = std.collections
-Checker, Ctx = sema.sema_check
-type_of = sema.sema_type
-Res, Ok, None, loop = std.core
+{ Expr, ExprId, Binary } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Checker, Ctx } = sema.sema_check
+{ type_of } = sema.sema_type
+{ Res, Ok, None, loop } = std.core
 
 // Guard the heavier iterative walk; most operands have no left binary spine.
 spine_ahead* = (c: Checker, id: ExprId) bool {

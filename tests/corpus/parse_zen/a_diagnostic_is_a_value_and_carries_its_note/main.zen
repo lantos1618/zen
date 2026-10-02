@@ -30,15 +30,15 @@
 // diagnostic it has just collected, so a driver that stopped collecting
 // would print nothing at all.
 
-scan, Source = std.lex
-Parser = std.parse
-Ast = std.ast
-Diag = std.parse.parse_diag
-Alloc, AllocError = std.mem
-str = std.text
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ scan, Source } = std.lex
+{ Parser, module } = std.parse
+{ Ast } = std.ast
+{ Diag } = std.parse.parse_diag
+{ Alloc, AllocError } = std.mem
+{ str } = std.text
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 // The argument list on line 2 is never closed, and the block opened on
 // line 1 goes with the file — TWO unclosed delimiters and ONE

@@ -1,6 +1,6 @@
-Res, Ok = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
 // A leading bar distinguishes a one-variant enum from a type alias.
 //
@@ -8,11 +8,11 @@ println = std.io
 //                       because Alias IS Shape.
 //   Only  = | Circle    bar leads -> a one-variant enum of its own.
 //                       Only.Circle is Only's variant, not Shape's.
-Shape = Circle | Square
+Shape = { Circle | Square }
 
 Alias = Shape
 
-Only = | Circle
+Only = { | Circle }
 
 name = (s: Shape) str {
     s.match({

@@ -24,13 +24,13 @@
 // mutation — make `bump` skip the newline count and the position check goes
 // red on the first file with two lines in it.
 
-Alloc, AllocError = std.mem
-str = std.text
-Res, Ok, loop, Range = std.core
-Env, FsError = std.env
+{ Alloc, AllocError } = std.mem
+{ str } = std.text
+{ Res, Ok, loop, Range } = std.core
+{ Env, FsError } = std.env
 
-scan, Source, Token, TokenKind, kind_name = std.lex.lex
-println = std.io
+{ scan, Source, Token, TokenKind, kind_name } = std.lex.lex
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

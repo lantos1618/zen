@@ -2,23 +2,23 @@
 // translated at the call site; the enum's internal dense tag never becomes an
 // ABI promise.
 
-ExprId, Access, Call, Enum, Variant = std.ast
-AllocError = std.mem
-str, String = std.text
-TyId, TyNamed = sema.sema_ty
-Ctx = sema.sema_check
-DiscriminantCall, RepresentedEnum = sema.sema_discriminant
-represented_enum, has_catch_all = sema.sema_discriminant
-is_discriminant_catch_all = sema.sema_discriminant
-const_int = sema.sema_const
-type_of = sema.sema_type
-sym_variant, sym_member, RES_PATH = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
-expr = gen.gen_c.gen_c_expr
-temp, init_temp = gen.gen_c.gen_c_flow
-write_qname = gen.gen_c.gen_c_layout
-ctype = gen.gen_c.gen_c_type
-Res, Ok, Err, None = std.core
+{ ExprId, Access, Call, Enum, Variant } = std.ast
+{ AllocError } = std.mem
+{ str, String } = std.text
+{ TyId, TyNamed } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ DiscriminantCall, RepresentedEnum } = sema.sema_discriminant
+{ represented_enum, has_catch_all } = sema.sema_discriminant
+{ is_discriminant_catch_all } = sema.sema_discriminant
+{ const_int } = sema.sema_const
+{ type_of } = sema.sema_type
+{ sym_variant, sym_member, RES_PATH } = gen.gen_name
+{ CBackend } = gen.gen_c.gen_c_state
+{ expr } = gen.gen_c.gen_c_expr
+{ temp, init_temp } = gen.gen_c.gen_c_flow
+{ write_qname } = gen.gen_c.gen_c_layout
+{ ctype } = gen.gen_c.gen_c_type
+{ Res, Ok, Err, None } = std.core
 
 lower_discriminant_call* = (
     be   :: CBackend,

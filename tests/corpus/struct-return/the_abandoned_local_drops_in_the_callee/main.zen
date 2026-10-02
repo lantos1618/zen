@@ -21,10 +21,10 @@
 // sugar — the sugar resolves the Env in scope by type, and inside drop
 // the only binding is self (drop_order_reverse.zen says this too).
 
-Res, Ok, Drop = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Drop } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Noisy = {
     env: Env,

@@ -1,9 +1,9 @@
 // A borrowed run of variadic arguments. The caller owns the storage, so a
 // vararg cannot escape the call. A vararg can be forwarded but cannot nest.
 
-Ptr = std.mem
-Seq = std.core.seq
-Res, Ok, None = std.core
+{ Ptr } = std.mem
+{ Seq } = std.core.seq
+{ Res, Ok, None } = std.core
 
 vararg*<T> = {
     data: Ptr<T>,

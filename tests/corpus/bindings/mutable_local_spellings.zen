@@ -2,7 +2,7 @@
 // `:: =` are one binding written with and without the space, `:: Foo =`
 // writes the type, and `:: Foo;` declares the local now and assigns it later.
 
-println = std.io
+{ println } = std.io
 
 Foo = { x :: i32 = 0 }
 

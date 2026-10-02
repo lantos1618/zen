@@ -15,10 +15,10 @@
 //      count (a FIELD here, not a call), and 7 is what the declared
 //      "gandalf" lays out; a half-written slot reads short.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 WHO*: str = "gandalf"
 

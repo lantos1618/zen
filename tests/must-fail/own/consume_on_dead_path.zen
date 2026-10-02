@@ -6,9 +6,9 @@
 // decide an edge is dead. anything else makes acceptance depend on
 // how clever constant folding was that day.
 
-Res, Ok, Drop, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Buf = {
     id: i32,

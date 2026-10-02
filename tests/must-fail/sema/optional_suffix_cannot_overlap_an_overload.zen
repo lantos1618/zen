@@ -1,5 +1,5 @@
-Res, Ok = std.core
-Env = std.env
+{ Res, Ok } = std.core
+{ Env } = std.env
 
 pick = (n: i32) i32 { n }
 pick = (n: i32, label: Res<str>) i32 { n }

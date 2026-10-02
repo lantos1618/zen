@@ -1,5 +1,5 @@
-Range = std.core
-println = std.io
+{ Range } = std.core
+{ println } = std.io
 
 // A range whose end is not past its start is empty, signed or not.
 main = () i32 {

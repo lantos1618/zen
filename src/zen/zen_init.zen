@@ -1,12 +1,12 @@
 // `zen init [DIR]`: start a project with a build graph, a program and a
 // .gitignore. Existing files are never overwritten.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Res, Ok, loop, Range, Path, join_path = std.core
-make_dirs = zen.zen_path
-Env = std.env
-println = std.io
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Res, Ok, loop, Range, Path, join_path } = std.core
+{ make_dirs } = zen.zen_path
+{ Env } = std.env
+{ println } = std.io
 
 init* = (env: Env, a: Alloc, dir: str) Res<i32, AllocError> {
     graph_file      = join_path(a, dir, "build.zen").try();

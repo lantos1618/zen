@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 // Every line of this file ends with CRLF. A multi-line string's line
 // breaks are LF in its value whatever the file's line endings, so the

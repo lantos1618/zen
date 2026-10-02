@@ -16,13 +16,13 @@
 // selection nor the divisor is a compile-time question, and the trap
 // has to survive into the generated C.
 
-Res, Ok = std.core
-OutOfBounds = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ OutOfBounds } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 // a trap never lifts into Res: it aborts the process
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 main = (env: Env) Res<i32, Error> {
     zero: i32 = env.var("ZEN_TRAP_NEVER_SET").match({

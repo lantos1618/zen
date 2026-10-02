@@ -20,10 +20,10 @@
 // compile, not on output. That is the pin: these shapes must keep
 // being REACHABLE, not merely non-crashing.
 
-Res, Ok, Display, IoError, WriteError, Sink = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Display, IoError, WriteError, Sink } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | IoError
 

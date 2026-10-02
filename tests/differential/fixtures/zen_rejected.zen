@@ -1,6 +1,6 @@
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
 // Calls are accepted only when each argument has the declared parameter type.
 takes_i32 = (value: i32) i32 { value }

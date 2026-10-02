@@ -1,2 +1,2 @@
 // Grandfathered: today's C backend reads sema directly.
-Checker = sema.sema_check
+{ Checker } = sema.sema_check

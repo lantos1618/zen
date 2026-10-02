@@ -1,12 +1,12 @@
 // Explicit unit returns remain valid parser input. Executable functions use
 // the canonical omitted annotation; the quoted source preserves the legacy
 // lookahead case where a second parenthesized group denotes the return type.
-scan, Source = std.lex
-Parser, module = std.parse
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ scan, Source } = std.lex
+{ Parser, module } = std.parse
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 SOURCE: str = "shout = (env: Env, n: i32) () {}\n"
 

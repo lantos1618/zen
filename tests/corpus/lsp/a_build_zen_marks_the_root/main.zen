@@ -33,14 +33,14 @@
 // `diagnostics_publish_and_clear` — a `Content-Length` header carries a
 // CR and a `.expected` may not (docs/TESTING.md).
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text = std.json
-Res, Ok, loop = std.core
-Env = std.env
-println = std.io
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text } = std.json
+{ Res, Ok, loop } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 // THE BUFFER, byte for byte the file on disk. Its one import resolves only
 // when the root is the directory carrying `std`.

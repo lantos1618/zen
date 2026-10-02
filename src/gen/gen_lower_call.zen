@@ -3,40 +3,40 @@
 // pointers, numeric conversions and bit operations, console output) and
 // formatted printing. Every other bodiless declaration is refused.
 
-Alloc, AllocError = std.mem
-Vec, Map = std.collections
-String, str = std.text
-Res, Ok, Err, None, loop, Range = std.core
-fmt_at = std.text.text_fmt
-decode_literal = std.lex
-Ast, ExprId, BlockId, TypeId, Function, Literal, Call, Arg, Param = std.ast
-Span = std.source
-Expr, Lambda, Access, Struct, Member, Impl = std.ast
-ImplId = sema.sema
-walk, WalkVisitor, WalkEvent, WalkNode = std.ast.ast_walk
-nowhere = std.source
-Checker, DeclId, Def, TyId, Ctx, Inst, decl_at, CheckedCall, TyNamed = sema.sema
-subst = sema.sema
-Found, members_of = sema.sema_member
-Printer = sema.sema_print
-Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print = gen.gen_ir
-Instruction, Terminator, Convert, Address, Load, Store, CopyMem, StaticBytes = gen.gen_ir
-Write, Stream, TrapKind, Marshal, HostCall = gen.gen_ir
-word, integer, signed, same, float = gen.gen_ir
-LowerError, unsupported = gen.gen_lower
-machine_op, machine_refusal = gen.gen_ir_machine
-Lowerer, Value, Place, Base, LocalKind, LambdaRef, LoopTarget, Frame, Callee = gen.gen_lower_core
-DeferEntry, Local = gen.gen_lower_core
-member_call, mem_call, sys_call, resolve, to_bound, handle_for_place = gen.gen_lower_member
-sleep_thread, spawn_thread, join_thread, fs_lock, fs_unlock = gen.gen_lower_thread
-spawn_actor = gen.gen_lower_actor
-bound_of, dispatch, Bound = gen.gen_lower_member
-to_i64_bits = gen.gen_lower_core
-Shape, Form, FieldAt, VariantAt, shape, class_of, field_types = gen.gen_lower_shape
-variant_index, size_of = gen.gen_lower_shape
+{ Alloc, AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ String, str } = std.text
+{ Res, Ok, Err, None, loop, Range } = std.core
+{ fmt_at } = std.text.text_fmt
+{ decode_literal } = std.lex
+{ Ast, ExprId, BlockId, TypeId, Function, Literal, Call, Arg, Param } = std.ast
+{ Span } = std.source
+{ Expr, Lambda, Access, Struct, Member, Impl } = std.ast
+{ ImplId } = sema.sema
+{ walk, WalkVisitor, WalkEvent, WalkNode } = std.ast.ast_walk
+{ nowhere } = std.source
+{ Checker, DeclId, Def, TyId, Ctx, Inst, decl_at, CheckedCall, TyNamed } = sema.sema
+{ subst } = sema.sema
+{ Found, members_of } = sema.sema_member
+{ Printer } = sema.sema_print
+{ Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print } = gen.gen_ir
+{ Instruction, Terminator, Convert, Address, Load, Store, CopyMem, StaticBytes } = gen.gen_ir
+{ Write, Stream, TrapKind, Marshal, HostCall } = gen.gen_ir
+{ word, integer, signed, same, float } = gen.gen_ir
+{ LowerError, unsupported } = gen.gen_lower
+{ machine_op, machine_refusal } = gen.gen_ir_machine
+{ Lowerer, Value, Place, Base, LocalKind, LambdaRef, LoopTarget, Frame, Callee } = gen.gen_lower_core
+{ DeferEntry, Local } = gen.gen_lower_core
+{ member_call, mem_call, sys_call, resolve, to_bound, handle_for_place } = gen.gen_lower_member
+{ sleep_thread, spawn_thread, join_thread, fs_lock, fs_unlock } = gen.gen_lower_thread
+{ spawn_actor } = gen.gen_lower_actor
+{ bound_of, dispatch, Bound } = gen.gen_lower_member
+{ to_i64_bits } = gen.gen_lower_core
+{ Shape, Form, FieldAt, VariantAt, shape, class_of, field_types } = gen.gen_lower_shape
+{ variant_index, size_of } = gen.gen_lower_shape
 
 // One argument position after binding names and the receiver.
-Source* = Given(ExprId) | Absent | Computed(Value) | Located(Place)
+Source* = { Given: ExprId | Absent | Computed: Value | Located: Place }
 
 // ---------------------------------------------------------------------
 // dispatch
@@ -2630,7 +2630,7 @@ range_loop = (
     lo.jump(top)
 }
 
-WalkKind = Elements | Indices(TyId) | At(AtHook)
+WalkKind = { Elements | Indices: TyId | At: AtHook }
 AtHook = { decl: DeclId, f: Function, impl_module: usize }
 Walk = { start: usize, end: usize, kind: WalkKind }
 
@@ -3026,7 +3026,7 @@ std_callee_arity = (
 }
 
 // Where formatted text goes: a console stream, or the String at a place.
-FmtTo* = Console(Stream) | Into(Place)
+FmtTo* = { Console: Stream | Into: Place }
 
 // `print`/`println` and Console output: a literal format string with
 // positional and named holes, or plain values.

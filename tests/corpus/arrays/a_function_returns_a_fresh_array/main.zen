@@ -14,10 +14,10 @@
 // `second()` runs, so a shared static slot or an un-copied sret buffer
 // makes second()'s answer depend on first()'s having existed.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 make = (base: i64) [i64, 3] {
     [i64, 3](base + 1000000007, base * 2, base - 998244353)

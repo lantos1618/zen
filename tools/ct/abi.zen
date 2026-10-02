@@ -20,13 +20,13 @@
 // parameters take vector registers and are treated as public. A result
 // larger than 16 bytes takes %rdi for its return pointer on x86-64 (x8 on
 // arm64, which takes no argument register).
-Alloc, AllocError = std.mem
-Vec, Map = std.collections
-str, String = std.text
-Res, Ok, Err, None, loop, Range = std.core
-parse_usize = std.text
-truncate_u32, to_i64 = std.core.num
-Isa, Seed, CallShape, Writable = taint
+{ Alloc, AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ str, String } = std.text
+{ Res, Ok, Err, None, loop, Range } = std.core
+{ parse_usize } = std.text
+{ truncate_u32, to_i64 } = std.core.num
+{ Isa, Seed, CallShape, Writable } = taint
 
 Param* = { ctype*: str, name*: str }
 
@@ -382,7 +382,7 @@ X86_ARGS = [str, 6]("rdi", "rsi", "rdx", "rcx", "r8", "r9")
 // Placed.regs the count; Stack the entry-relative offset of its bytes;
 // the *Pointer forms a hidden pointer to a copy (arm64 aggregates over 16
 // bytes and 32-byte vectors).
-Where = | Gpr(usize) | Vreg(usize) | Stack(usize) | GprPointer(usize) | StackPointer(usize)
+Where = { | Gpr: usize | Vreg: usize | Stack: usize | GprPointer: usize | StackPointer: usize }
 
 Placed = { param: Param, layout: Layout, at: Where, regs: usize }
 

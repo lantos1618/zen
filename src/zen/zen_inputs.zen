@@ -5,9 +5,9 @@
 // can rebuild the record from the filesystem; equal records mean the front
 // end would read the same program.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Res, Ok, Range, Hasher = std.core
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Res, Ok, Range, Hasher } = std.core
 
 Inputs* = {
     paths* :: String,

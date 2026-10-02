@@ -1,10 +1,10 @@
 // Vec iteration preserves insertion order and separates indexes from values
 // for both borrowed strings and integers wider than i32.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

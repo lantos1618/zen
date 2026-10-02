@@ -1,17 +1,17 @@
-Expr, ExprId = std.ast
-Struct, Member, Function = std.ast
-Call, Arg, Access, Index, Name, Paren, Field, Const = std.ast
-AllocError = std.mem
-str = std.text
-TyId, TyNamed = sema.sema_ty
-decl_at = sema.sema_def
-Checker, Ctx = sema.sema_check
-SemaFault, NameFault, LendFault = sema.sema_diag
-Own, path_root, place_type = sema.sema_own
-is_construction = sema.sema_scope
-storage_seat_name = sema.sema_supply
-is_bound_ty = sema.sema_bound
-Res, Ok, None = std.core
+{ Expr, ExprId } = std.ast
+{ Struct, Member, Function } = std.ast
+{ Call, Arg, Access, Index, Name, Paren, Field, Const } = std.ast
+{ AllocError } = std.mem
+{ str } = std.text
+{ TyId, TyNamed } = sema.sema_ty
+{ decl_at } = sema.sema_def
+{ Checker, Ctx } = sema.sema_check
+{ SemaFault, NameFault, LendFault } = sema.sema_diag
+{ Own, path_root, place_type } = sema.sema_own
+{ is_construction } = sema.sema_scope
+{ storage_seat_name } = sema.sema_supply
+{ is_bound_ty } = sema.sema_bound
+{ Res, Ok, None } = std.core
 
 check_receiver* = (c :: Checker, o :: Own, k: Call, ctx: Ctx)
                   Res<(), AllocError> {
@@ -337,12 +337,12 @@ named_member = (c: Checker, n: TyNamed, name: str) Res<Member> {
         None     => None,
         Ok(rows) => c.tree.decl_at(n.decl).match({
             None  => None,
-            Ok(d) => d.kind.match({
-                Struct(st) => rows.get(0).match({
+            Ok(d) => d.body_members().match({
+                Ok(members) => rows.get(0).match({
                     None  => None,
-                    Ok(i) => st.members.get(i),
+                    Ok(i) => members.get(i),
                 }),
-                _          => None,
+                None        => None,
             }),
         }),
     })

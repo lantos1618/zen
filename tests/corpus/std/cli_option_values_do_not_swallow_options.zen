@@ -1,14 +1,14 @@
 // An option's value is the next word unless that word is itself an option;
 // numeric options also take negative numbers.
 
-Vec = std.collections
-Command, command, Spec, Kind, Matches = std.cli
-Res, Ok = std.core
-Alloc, AllocError = std.mem
-Env = std.env
-println = std.io
+{ Vec } = std.collections
+{ Command, command, Spec, Kind, Matches } = std.cli
+{ Res, Ok } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Id = Text | Number | Unsigned | Other
+Id = { Text | Number | Unsigned | Other }
 
 main = (env: Env) Res<i32, AllocError> {
     a     ::= env.mem.alloc();

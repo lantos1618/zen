@@ -1,10 +1,10 @@
 // A consumed Lock remains held in the callee and is released exactly once at
 // that frame's exit, allowing the caller to acquire it again afterward.
 
-Env, FsError = std.env
-Lock = std.env
-Res, Ok = std.core
-println = std.io
+{ Env, FsError } = std.env
+{ Lock } = std.env
+{ Res, Ok } = std.core
+{ println } = std.io
 
 swallow = (env: Env, l: Lock) Res<i32, FsError> {
     kept ::= consume l;

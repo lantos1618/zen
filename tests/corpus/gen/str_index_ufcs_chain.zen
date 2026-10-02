@@ -1,7 +1,7 @@
-Res, Ok, None = std.core
-println = std.io
+{ Res, Ok, None } = std.core
+{ println } = std.io
 
-Failure = Missing(usize) | Other
+Failure = { Missing: usize | Other }
 
 accepted = (byte: u8) Res<u8> {
     (byte != '?').match({ true => Ok(byte), false => None })

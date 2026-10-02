@@ -30,12 +30,12 @@
 // spelling are not part of its identity", so `Both` is the set `either`
 // already answers with and `.try()` carries the value into it unchanged.
 
-Res, Ok, Err = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Err } = std.core
+{ Env } = std.env
+{ println } = std.io
 
-Fault = | Bad | Worse
-Snag  = | Low | High
+Fault = { | Bad | Worse }
+Snag  = { | Low | High }
 
 Both = Fault | Snag
 

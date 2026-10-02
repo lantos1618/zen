@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 // With no line between the delimiters, or one empty line, the text is empty.
 main = () i32 {

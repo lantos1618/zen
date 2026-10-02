@@ -3,14 +3,14 @@
 // runtime trap. the value never exists, so there is nothing to
 // trap on: 2147483648 is i32.MAX + 1
 
-Res, Ok = std.core
-OutOfBounds = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ OutOfBounds } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 // main must name an error type. a trap never lifts into Res:
 // it aborts the process
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 main = (env: Env) Res<i32, Error> {
     too_big: i32 = 2147483648;

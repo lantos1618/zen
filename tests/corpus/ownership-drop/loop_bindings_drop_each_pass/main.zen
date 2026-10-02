@@ -6,9 +6,9 @@
 // first. both look like working output until you read closely; the exact
 // interleaving is what this pins.
 
-Res, Ok, Drop, Range, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Drop, Range, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Noisy = {
     env: Env,

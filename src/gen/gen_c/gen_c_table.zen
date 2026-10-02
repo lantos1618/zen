@@ -13,17 +13,17 @@
 // Only the exact shape qualifies — arms `0, 1, .., n-1` in order, then `_`,
 // every body an integer literal — so the table is the match, value for value.
 
-Expr, Match, Arm = std.ast
-AllocError = std.mem
-String = std.text
-Res, Ok, Range = std.core
-TyId = sema.sema_ty
-Ctx = sema.sema_check
-CBackend = gen.gen_c.gen_c_state
-ctype, is_c_integer = gen.gen_c.gen_c_type
-Dest, deliver, write_dest = gen.gen_c.gen_c_stmt
-declare_temp = gen.gen_c.gen_c_flow
-res_type_of, expr = gen.gen_c.gen_c_expr
+{ Expr, Match, Arm } = std.ast
+{ AllocError } = std.mem
+{ String } = std.text
+{ Res, Ok, Range } = std.core
+{ TyId } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ CBackend } = gen.gen_c.gen_c_state
+{ ctype, is_c_integer } = gen.gen_c.gen_c_type
+{ Dest, deliver, write_dest } = gen.gen_c.gen_c_stmt
+{ declare_temp } = gen.gen_c.gen_c_flow
+{ res_type_of, expr } = gen.gen_c.gen_c_expr
 
 // Fewer arms than this read as clearly, and run as fast, as an `if` chain.
 MIN_TABLE: usize = 4

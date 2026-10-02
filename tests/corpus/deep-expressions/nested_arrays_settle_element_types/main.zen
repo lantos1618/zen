@@ -13,10 +13,10 @@
 // plausible wrong answers: 4 (one level flattened), 44 read from the
 // wrong sub-array, 0 (index applied to the wrong slot).
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 deep_take = <T>(t: T) usize { 1 }
 

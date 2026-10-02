@@ -6,10 +6,10 @@
 // the `:` field is an Alloc and calling through it is legal. same
 // field marker, different answer, decided by the bitwise-copy test.
 
-Res, Ok, IoError = std.core
-AllocError = std.mem
-Vec = std.collections
-Env = std.env
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
 
 Bag = {
     items: Vec<i32>,

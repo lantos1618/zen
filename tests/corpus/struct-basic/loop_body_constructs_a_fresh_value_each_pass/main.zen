@@ -16,10 +16,10 @@
 // with the pass: the next iteration's `k.base * k.step` must see the
 // default 1 again, not the 5 the previous pass left.
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Tick = {
     step :: i64 = 1,

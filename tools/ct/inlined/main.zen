@@ -7,11 +7,11 @@
 // a branch on whether `bz` is zero (a select with a memory operand becomes
 // a branch). That branch must be flagged there; GCC and arm64 keep the
 // select and pass.
-bit_and, bit_or, bit_xor, shift_right = std.core.num
-AllocError, Ptr = std.mem
-Res, Ok, Range = std.core
-Env = std.env
-println = std.io
+{ bit_and, bit_or, bit_xor, shift_right } = std.core.num
+{ AllocError, Ptr } = std.mem
+{ Res, Ok, Range } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 ALL: u64 = 0xffffffffffffffff
 pick = inline (mask: u64, a: u64, b: u64) u64 { a.bit_and(mask).bit_or(b.bit_and(mask.bit_xor(ALL))) }

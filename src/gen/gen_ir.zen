@@ -8,13 +8,13 @@
 // access, system calls, JavaScript host calls and traps. A renderer that
 // implements only part of it declares that part through `supports`
 // (gen_ir_feature) or refuses it before rendering; there is no second IR.
-Vec, OutOfBounds = std.collections
-str = std.text
-Span = std.source
-Sys, SysConstant = gen.gen_sys
-MachineCall = gen.gen_ir_machine
-Res, None = std.core
-Ptr = std.mem
+{ Vec, OutOfBounds } = std.collections
+{ str } = std.text
+{ Span } = std.source
+{ Sys, SysConstant } = gen.gen_sys
+{ MachineCall } = gen.gen_ir_machine
+{ Res, None } = std.core
+{ Ptr } = std.mem
 
 // Size and alignment of an aggregate slot, in bytes.
 Layout* = { size*: usize, align*: usize }
@@ -24,7 +24,7 @@ Layout* = { size*: usize, align*: usize }
 // `Ptr` zero-extend). `F64` is an IEEE-754 binary64 value; a `Constant`
 // into an `F64` slot holds its bit pattern. `Block` is an aggregate stored
 // in frame memory; it is copied by value and never held in a register.
-Scalar* = I32
+Scalar* = { I32
     | Bool
     | Unit
     | I8
@@ -36,14 +36,14 @@ Scalar* = I32
     | U64
     | Ptr
     | F64
-    | Block(Layout)
+    | Block: Layout }
 
 // Arithmetic `Add`/`Sub`/`Mul`/`Div`/`Rem` and unary `Neg` trap on overflow
 // and on a zero divisor; on `F64` they are IEEE operations and never trap
 // (`Rem` is C's fmod). `Wrap*` operations wrap at the slot width. Bit
 // operations act on unsigned words; a shift or rotate count is a `U64`
 // operand. Comparisons are signed or unsigned according to the operands.
-Op* = Add
+Op* = { Add
     | Sub
     | Mul
     | Div
@@ -62,8 +62,8 @@ Op* = Add
     | Xor
     | Shl
     | Shr
-    | Rotr
-UnaryOp* = Neg | Not
+    | Rotr }
+UnaryOp* = { Neg | Not }
 
 // `value` holds the constant's bits as a signed 64-bit number; a `U64`
 // above `i64.MAX` is stored in two's complement.
@@ -74,7 +74,7 @@ Binary* = { out*: usize, left*: usize, right*: usize, op*: Op, span*: Span }
 Invocation* = { out*: usize, function*: usize, args*: Vec<usize> }
 // Standard output is buffered and flushed at exit and before a trap report;
 // standard error is written through.
-Stream* = Out | Err
+Stream* = { Out | Err }
 Print* = { value*: usize, ty*: Scalar, stream* :: Stream = Stream.Out }
 Branch* = { value*: usize, yes*: usize, no*: usize }
 
@@ -103,7 +103,7 @@ SysValue* = { out*: usize, name*: SysConstant }
 // function taking no arguments, which the runtime calls on the main thread
 // after the entry function returns and before standard output is flushed.
 // The rest belongs to std.sys (see `std.sys.sys_actor`).
-StartValue* = Argc | Argv | Envp | Globals
+StartValue* = { Argc | Argv | Envp | Globals }
 Start* = { out*: usize, value*: StartValue }
 // Anonymous zeroed memory of at least `bytes` (a U64 slot) bytes, 16-byte
 // aligned; the pointer is null when the kernel refuses. `UnmapPages`
@@ -117,7 +117,7 @@ Pages* = { out*: usize, bytes*: usize }
 // Uint8Array view of those heap bytes (no copy, valid for the call only),
 // `Handle` a U32 id in the host's object table, `Handler` a U32 event
 // handler id, `Nothing` no value (results only).
-Marshal* = Number | Flag | Text | Bytes | Handle | Handler | Nothing
+Marshal* = { Number | Flag | Text | Bytes | Handle | Handler | Nothing }
 
 // A call of a `js.bind` member. `object` is the binding's object path; with
 // `receiver` the first argument is the object and the path after its first
@@ -143,7 +143,7 @@ HostCall* = {
 // the word's width is the class of the value slot (`out`, or `value` for a
 // store). `AtomicUpdate` and `CompareSwap` leave the previous contents in
 // `out`; `CompareSwap` writes `desired` only when they equal `expected`.
-UpdateOp* = Swap | Add
+UpdateOp* = { Swap | Add }
 Update* = { out*: usize, base*: usize, value*: usize, op*: UpdateOp }
 Compare* = { out*: usize, base*: usize, expected*: usize, desired*: usize }
 
@@ -155,46 +155,50 @@ Compare* = { out*: usize, base*: usize, expected*: usize, desired*: usize }
 CodeRef* = { out*: usize, function*: usize }
 IndirectCall* = { out*: usize, target*: usize, args*: Vec<usize> }
 
-Instruction* = Constant(Const)
-    | Copy(Move)
-    | UnaryValue(Unary)
-    | BinaryValue(Binary)
-    | Invoke(Invocation)
-    | PrintValue(Print)
-    | Text(str)
-    | Cast(Convert)
-    | AddressOf(Address)
-    | LoadValue(Load)
-    | StoreValue(Store)
-    | CopyBytes(CopyMem)
-    | Bytes(StaticBytes)
-    | WriteOut(Write)
-    | System(SysCall)
-    | Startup(Start)
-    | MapPages(Pages)
-    | UnmapPages(usize)
-    | SysConst(SysValue)
+Instruction* = { Constant: Const
+    | Copy: Move
+    | UnaryValue: Unary
+    | BinaryValue: Binary
+    | Invoke: Invocation
+    | PrintValue: Print
+    | Text: str
+    | Cast: Convert
+    | AddressOf: Address
+    | LoadValue: Load
+    | StoreValue: Store
+    | CopyBytes: CopyMem
+    | Bytes: StaticBytes
+    | WriteOut: Write
+    | System: SysCall
+    | Startup: Start
+    | MapPages: Pages
+    | UnmapPages: usize
+    | SysConst: SysValue
     // Write out buffered standard output now (before blocking on input).
     | Flush
     // A validated machine primitive (gen_ir_machine). Not yet produced:
     // its operands need slot types beyond Scalar, so the verifier rejects it.
-    | Machine(MachineCall)
+    | Machine: MachineCall
     // JavaScript host only: a `js.bind` call, and a suspension until a
     // registered event handler fires (its id into the U32 slot).
-    | Host(HostCall)
-    | Wait(usize)
-    | AtomicLoad(Load)
-    | AtomicStore(Store)
-    | AtomicUpdate(Update)
-    | CompareSwap(Compare)
-    | CodeAddress(CodeRef)
-    | InvokeAt(IndirectCall)
+    | Host: HostCall
+    | Wait: usize
+    | AtomicLoad: Load
+    | AtomicStore: Store
+    | AtomicUpdate: Update
+    | CompareSwap: Compare
+    | CodeAddress: CodeRef
+    | InvokeAt: IndirectCall }
 
 // A terminator that ends the process with Zen's trap report.
-TrapKind* = Overflow | DivideByZero | OutOfBounds | Unreachable | OutOfMemory
+TrapKind* = { Overflow
+    | DivideByZero
+    | OutOfBounds
+    | Unreachable
+    | OutOfMemory }
 Fault* = { what*: TrapKind, span*: Span }
 
-Terminator* = Return(usize) | Jump(usize) | Branch(Branch) | Trap(Fault)
+Terminator* = { Return: usize | Jump: usize | Branch: Branch | Trap: Fault }
 
 // Every block has exactly one terminator; its targets index Func.blocks.
 BasicBlock* = {

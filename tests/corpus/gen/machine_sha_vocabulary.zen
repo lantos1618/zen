@@ -1,7 +1,7 @@
 // Every SHA instruction std.simd declares maps to a machine operation whose
 // refusal, on a backend that cannot lower it yet, names the instruction.
-machine_op, machine_refusal = gen.gen_ir_machine
-println = std.io
+{ machine_op, machine_refusal } = gen.gen_ir_machine
+{ println } = std.io
 
 main = () {
     [str, 11](

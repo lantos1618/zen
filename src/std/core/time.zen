@@ -1,8 +1,8 @@
 // Duration stores an unsigned nanosecond count. Constructor units are
 // normalized immediately and are not retained.
 
-Res = std.core.result
-Ok, None, loop = std.core
+{ Res } = std.core.result
+{ Ok, None, loop } = std.core
 
 NS_PER_MICRO*  : u64 = 1000
 NS_PER_MILLI*  : u64 = 1000000
@@ -10,7 +10,7 @@ NS_PER_SECOND* : u64 = 1000000000
 NS_PER_MINUTE* : u64 = 60000000000
 
 // Presentation unit; it is not stored in Duration.
-Unit* = Nano | Micro | Milli | Second | Minute
+Unit* = { Nano | Micro | Milli | Second | Minute }
 
 Duration* = {
     ns*: u64,

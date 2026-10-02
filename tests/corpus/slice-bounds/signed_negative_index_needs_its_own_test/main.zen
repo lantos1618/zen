@@ -13,13 +13,13 @@
 // reach runtime; the in-range load before it proves the trap belongs to
 // THIS subscript.
 
-Res, Ok = std.core
-OutOfBounds = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ OutOfBounds } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 // a trap never lifts into Res: it aborts the process
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 at = (a: [i32, 4], i: i64) i32 { a[i] }
 

@@ -6,8 +6,8 @@
 //
 // position: `h`, the statement the block falls out through.
 
-Res, Ok, Range = std.core
-Env = std.env
+{ Res, Ok, Range } = std.core
+{ Env } = std.env
 
 main = (env: Env) Res<i32> {
     Range(0, 1).loop((h, x) {

@@ -1,19 +1,19 @@
-Expr, ExprId, Block, BlockId, Stmt, Call, Arg = std.ast
-Span = std.source
-Match = std.ast
-AllocError = std.mem
-Vec = std.collections
-str = std.text
-TyId, TyRes = sema.sema_ty
-SemaFault, NameFault, TypeFault = sema.sema_diag
-Checker, Ctx = sema.sema_check
-Found, members_of = sema.sema_member
-storage_seat_name = sema.sema_supply
-check_literal = sema.sema_trap
-refuse_handle_value = sema.sema_handle
-check_dropped_tail = sema.sema_effect
-type_of = sema.sema_type
-Res, Ok, None, loop = std.core
+{ Expr, ExprId, Block, BlockId, Stmt, Call, Arg } = std.ast
+{ Span } = std.source
+{ Match } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ TyId, TyRes } = sema.sema_ty
+{ SemaFault, NameFault, TypeFault } = sema.sema_diag
+{ Checker, Ctx } = sema.sema_check
+{ Found, members_of } = sema.sema_member
+{ storage_seat_name } = sema.sema_supply
+{ check_literal } = sema.sema_trap
+{ refuse_handle_value } = sema.sema_handle
+{ check_dropped_tail } = sema.sema_effect
+{ type_of } = sema.sema_type
+{ Res, Ok, None, loop } = std.core
 
 can_hoist* = (c: Checker, got: TyId, want: TyId) bool {
     c.types.at(want).match({
@@ -297,7 +297,7 @@ check_arms_agree* = (c :: Checker, id: ExprId) Res<(), AllocError> {
     })
 }
 
-Blame* = Position | Arms
+Blame* = { Position | Arms }
 
 arms_owe = (c :: Checker, id: ExprId, want: TyId, blame: Blame)
            Res<(), AllocError> {

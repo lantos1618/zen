@@ -4,9 +4,9 @@
 //
 // position: the field whose type is the struct being declared.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
 Node = {
     value: i32,

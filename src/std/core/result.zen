@@ -1,9 +1,9 @@
 // Res<T> represents optional presence. Res<T, E> represents failure with a
 // reason. A bare success value may lift to Ok; None and Err remain explicit.
 
-Res*<T> = Ok(T) | None
+Res*<T> = { Ok: T | None }
 
-Res*<T, E> = Ok(T) | Err(E)
+Res*<T, E> = { Ok: T | Err: E }
 
 // A bare T lifts to Ok when exactly one variant carries T:
 //

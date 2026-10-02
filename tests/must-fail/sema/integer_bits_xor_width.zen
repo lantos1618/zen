@@ -1,4 +1,4 @@
-bit_xor, rotate_right = std.core.num
+{ bit_xor, rotate_right } = std.core.num
 main = () {
     small: i16 = 1;
     value      = bit_xor(1, small);

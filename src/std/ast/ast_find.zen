@@ -1,16 +1,16 @@
 // Resolve a byte position to the smallest covering AST node. Nodes are scanned
 // from the arena's flat family lists; these queries do not allocate.
-str = std.text
-Pos, Span, nowhere = std.source
-ExprId, TypeId, PatternId, BlockId = std.ast.ast_id
-Ast = std.ast.ast_arena
-Res, Ok, None = std.core
+{ str } = std.text
+{ Pos, Span, nowhere } = std.source
+{ ExprId, TypeId, PatternId, BlockId } = std.ast.ast_id
+{ Ast } = std.ast.ast_arena
+{ Res, Ok, None } = std.core
 
 // Typed reference to the arena family containing a result.
-NodeRef* = ExprNode(ExprId)
-    | TypeNode(TypeId)
-    | PatternNode(PatternId)
-    | BlockNode(BlockId)
+NodeRef* = { ExprNode: ExprId
+    | TypeNode: TypeId
+    | PatternNode: PatternId
+    | BlockNode: BlockId }
 
 // The smallest span seen so far that covers the cursor. A later candidate
 // replaces it only when nested strictly inside it.

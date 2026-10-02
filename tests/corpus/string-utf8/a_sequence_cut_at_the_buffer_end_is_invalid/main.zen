@@ -5,12 +5,12 @@
 // alternative is reading past the length, which is silent garbage or a
 // segfault, not an error. `len` prints prove each buffer really is
 // shorter than the sequence wants to be.
-String = std.text.text_string
-Utf8Error, codepoint_at, validate_utf8 = std.text.text_utf8
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ String } = std.text.text_string
+{ Utf8Error, codepoint_at, validate_utf8 } = std.text.text_utf8
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 verdict = (s: str) i64 {
     s.validate_utf8().match({

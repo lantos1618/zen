@@ -15,11 +15,11 @@
 //     parsed = cmd.parse(env, env.argv, 1).try();
 //     parsed.found.loop((f) { f.id.match({ Verbose => .., Jobs => .., Input => .. }) });
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec = std.collections
-Res, Ok, None, loop, Range = std.core
-Env = std.env
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Res, Ok, None, loop, Range } = std.core
+{ Env } = std.env
 
 // Ends option parsing: later words are positionals, or the program's own
 // arguments when the command takes trailing arguments.
@@ -27,7 +27,7 @@ END*: str = "--"
 
 // Text is accepted as written. Unsigned and Signed values are checked
 // integers, so a program may convert them without a failure path.
-Kind* = Text | Unsigned | Signed
+Kind* = { Text | Unsigned | Signed }
 
 // Everything about an argument except its id and its spelling. `value` names
 // an option's value in help; `choices` lists the accepted values separated by
@@ -51,7 +51,7 @@ Spec* = {
 Arg* = { at: usize }
 
 // Where a found value came from. Relations count only explicit values.
-Origin* = Line | Variable | Default
+Origin* = { Line | Variable | Default }
 
 Found*<T> = {
     id*: T,
@@ -66,7 +66,7 @@ Picked*<T> = { id*: T, name*: str, next*: usize }
 
 // Why a declaration cannot be parsed. These are the program's mistakes, but
 // they are reported like the user's so that a terminal tool never traps.
-Fault* = LongName
+Fault* = { LongName
     | BuiltIn
     | Twice
     | SwitchDefault
@@ -75,7 +75,7 @@ Fault* = LongName
     | AfterMany
     | AfterOptional
     | Ambiguous
-    | SelfRelation
+    | SelfRelation }
 
 reason = (fault: Fault) str {
     fault.match({
@@ -92,7 +92,7 @@ reason = (fault: Fault) str {
     })
 }
 
-Problem* = UnknownOption
+Problem* = { UnknownOption
     | UnknownCommand
     | Unexpected
     | MissingValue
@@ -101,7 +101,7 @@ Problem* = UnknownOption
     | Repeated
     | Conflict
     | Required
-    | Declaration(Fault)
+    | Declaration: Fault }
 
 // `word` is the argument or token at fault. `other` is the rejected value of
 // BadValue or the second argument of a relation.
@@ -181,9 +181,9 @@ Matches*<T> = {
     }
 }
 
-Shape = Switch | Option | Positional
+Shape = { Switch | Option | Positional }
 
-Relation = Conflicts | Requires
+Relation = { Conflicts | Requires }
 
 Link = { from: Arg, to: Arg, relation: Relation }
 

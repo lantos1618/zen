@@ -2,12 +2,12 @@
 // It is formed after build.zen runs and before the synthetic module enters
 // sema. Identity includes the normalized target and ordered import inputs.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec = std.collections
-Target, CImport = std.build
-Ast, Module, CHeader, CTypeBinding, CBinding, CBindingId = std.ast
-Res, Ok = std.core
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Target, CImport } = std.build
+{ Ast, Module, CHeader, CTypeBinding, CBinding, CBindingId } = std.ast
+{ Res, Ok } = std.core
 
 CImportRequest* = {
     spec*: CImport,

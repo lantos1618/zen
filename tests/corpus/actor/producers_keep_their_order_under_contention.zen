@@ -4,11 +4,11 @@
 // actor checks that and counts. After the joins, stop drains and a send is
 // refused as Closed.
 
-Res, Ok, loop = std.core
-Alloc = std.mem
-Env, Thread, ThreadError = std.env
-Actor, Ref, ActorError, ActorStartError, Context = std.actor
-println = std.io
+{ Res, Ok, loop } = std.core
+{ Alloc } = std.mem
+{ Env, Thread, ThreadError } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
 
 Tally = {
     received :: u64 = 0,

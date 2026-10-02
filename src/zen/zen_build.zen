@@ -6,39 +6,50 @@
 // paths determine the module tree without directory enumeration. Every module
 // is parsed into one shared Ast, making ids unique across the program.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec, Map = std.collections
-Res, Ok, None, loop, Range, Path = std.core
-Env, FsError, fs_message = std.env
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec, Map } = std.collections
+{ Res, Ok, None, loop, Range, Path } = std.core
+{ Env, FsError, fs_message } = std.env
 
-Ast = std.ast.ast_arena
-Module, Alias, Named = std.ast.ast_node
-QualifiedName = std.ast.ast_span
-Pos, Span = std.source
+{ Ast } = std.ast.ast_arena
+{ Module, Alias, Named, Import } = std.ast.ast_node
+{ QualifiedName, Ident } = std.ast.ast_span
+{ Pos, Span } = std.source
 
-message = std.lex.lex
-Diag, diag = std.parse.parse_diag
+{ message } = std.lex.lex
+{ Diag, diag } = std.parse.parse_diag
 
-scan, Source, Lexed = std.lex.lex
-Parser, module = std.parse.parse
-Checker, check_all = sema.sema
-CORE = sema.sema
-println = std.io
-check_module_graph = sema.sema
-Def = sema.sema
-Generation, Layout = gen.gen
+{ scan, Source, Lexed } = std.lex.lex
+{ Parser, module } = std.parse.parse
+{ Checker, check_all } = sema.sema
+{ CORE } = sema.sema
+{ println } = std.io
+{ package_of } = sema.sema_def
+{ check_module_graph } = sema.sema
+{ Def } = sema.sema
+{ Generation, Layout } = gen.gen
 
-BuildArgs, Emission, Permutation, Target, Os, Arch, Abi, target_named = std.build
+{ BuildArgs, Emission, Permutation, Target, Os, Arch, Abi, target_named } = std.build
 
-slash_for, under = zen.zen_path
-unit_at, candidate_paths, joined, relative_to = zen.zen_path
-root_for, std_root_for, SourceRoot, anchored_path = zen.zen_path
-ENTRY, entry_of = zen.zen_path
-Unit = zen.zen_path
+{ slash_for, under } = zen.zen_path
+{ unit_at, candidate_paths, joined, relative_to } = zen.zen_path
+{ root_for, std_root_for, SourceRoot, anchored_path } = zen.zen_path
+{ ENTRY, entry_of } = zen.zen_path
+{ Unit } = zen.zen_path
 
-Publisher = zen.zen_write
-Inputs, inputs = zen.zen_inputs
+{ Publisher } = zen.zen_write
+{ Inputs, inputs } = zen.zen_inputs
+
+// The import root of a target's dependencies, named after its `deps` list.
+DEPS: str = "deps"
+
+// Where module `deps.<root>.a.b` would live beside the dependency's entry.
+LibraryPaths = {
+    name: str,
+    flat: str,
+    folder: str,
+}
 
 // One build: the phase inputs and the fault tally that becomes the exit code.
 Build* = {
@@ -51,17 +62,25 @@ Build* = {
     // Selected build-graph libraries own their namespace and sibling modules.
     libraries* :: Res<Vec<Unit>> = None,
 
+    // A dependency's modules are named under `deps.`, the root a module
+    // imports them through: `b.add("audio", ..)` is module `deps.audio`.
     register_library* = (self :: @Self, name: str, path: str) Res<(), AllocError> {
         entries ::= self.libraries.value_or(self.alloc.Vec<Unit>());
-        entries.add(Unit(name: name, path: path, rel: path)).try();
+        full    ::= self.alloc.String("{}.{}", DEPS, name).try();
+        entries.add(Unit(name: full.view(), path: path, rel: path)).try();
         self.libraries = Ok(entries);
         Ok(())
     }
 
+    // The dependency this target registered under `name`.
     library = (self: @Self, name: str) Res<Unit> {
         self.libraries.match({
             None        => None,
-            Ok(entries) => entries.find((unit) { unit.name.eq(name) }),
+            Ok(entries) => entries.find((unit) {
+                unit.name.len == DEPS.len + 1 + name.len
+                    && unit.name.starts_with(DEPS)
+                    && unit.name.ends_with(name)
+            }),
         })
     }
 
@@ -328,8 +347,11 @@ Build* = {
             m.decls.get(self.permute.index(m.decls.len, i)).match({
                 None  => Ok(()),
                 Ok(d) => d.kind.match({
-                    Import(im) => self.enqueue(im.module, seen),
-                    Alias(al)  => self.alias_of(al, seen),
+                    Import(im) => self.enqueue_import(
+                        self.package_import(m.name, im).try(),
+                        seen
+                    ),
+                    Alias(al)  => self.alias_of(m.name, al, seen),
                     _          => Ok(()),
                 }),
             }).try();
@@ -337,52 +359,217 @@ Build* = {
         Ok(());
     }
 
+    enqueue_import = (self :: @Self, im: Import, seen :: Vec<Unit>)
+                     Res<(), AllocError> {
+        (im.names.len == 1).match({
+            true  => self.enqueue_named(im, seen),
+            false => self.enqueue(im.module, seen),
+        })
+    }
+
+    // Inside a dependency, a root that is neither `std` nor `deps` is one of
+    // the dependency's own modules, as sema reads it (`package_path`).
+    package_import = (self :: @Self, owner: str, im: Import)
+                     Res<Import, AllocError> {
+        pkg  = package_of(owner);
+        root = im.module.segment_at(0);
+        (pkg.is_empty() || root.eq("std") || root.eq(DEPS)).match({
+            true  => Ok(im),
+            false => Ok(Import(
+                names: im.names,
+                module: self.in_package(pkg, im.module).try()
+            )),
+        })
+    }
+
+    in_package = (self :: @Self, pkg: str, q: QualifiedName)
+                 Res<QualifiedName, AllocError> {
+        segments ::= self.alloc.Vec<Ident>();
+        segments.add(Ident(text: DEPS, span: q.span)).try();
+        segments.add(Ident(text: pkg, span: q.span)).try();
+        q.segments.loop((h, s) { segments.add(s).try() });
+        Ok(QualifiedName(segments: segments, span: q.span))
+    }
+
     enqueue = (self :: @Self, q: QualifiedName, seen :: Vec<Unit>)
               Res<(), AllocError> {
-        self.library(q.segment_at(0)).match({
-            None     => self.enqueue_source(q, seen),
-            Ok(root) => self.enqueue_library(root, q, seen),
+        q.segment_at(0).eq(DEPS).match({
+            false => self.enqueue_source(q, seen),
+            true  => self.library(q.segment_at(1)).match({
+                None     => self.not_a_dependency(q),
+                Ok(root) => self.enqueue_library(root, q, seen),
+            }),
+        })
+    }
+
+    // `deps.x` names only what this target's `deps` list in build.zen grants.
+    not_a_dependency = (self :: @Self, q: QualifiedName)
+                       Res<(), AllocError> {
+        why ::= self.alloc.String().try();
+        why.fmt(
+            "`{}` is not a dependency of this target: add it to the target's `deps` in build.zen",
+            q.segment_at(1)
+        ).try();
+        self.report(diag(why.view(), q.span))
+    }
+
+    // `x = a.b.c` binds the module `a.b.c` when there is one, and otherwise
+    // the item `c` of module `a.b`. Sema prefers an exported item, so an
+    // existing `a.b` is still loaded; it is only required when `a.b.c` is
+    // not a module.
+    enqueue_named = (self :: @Self, im: Import, seen :: Vec<Unit>)
+                    Res<(), AllocError> {
+        whole = self.named_path(im).try();
+        // Module names are lowercase, so a capitalised segment names an item.
+        // Probing it would find `Env.zen` as `env.zen` on a case-insensitive
+        // filesystem and load that module twice.
+        item = whole.last_segment().match({
+            ""   => true,
+            name => name.index(0).is_upper(),
+        });
+        item.match({
+            true  => self.enqueue(im.module, seen),
+            false => self.enqueue_whole(im, whole, seen),
+        })
+    }
+
+    enqueue_whole = (self :: @Self, im: Import, whole: QualifiedName,
+                     seen :: Vec<Unit>) Res<(), AllocError> {
+        whole.segment_at(0).eq(DEPS).match({
+            true  => self.enqueue_named_dep(im, whole, seen),
+            false => self.source_module(whole).try().match({
+                None     => self.enqueue(im.module, seen),
+                Ok(path) => {
+                    self.queue(path, seen).try();
+                    self.folder_root(path, seen).try();
+                    self.probe_module(im.module, seen)
+                },
+            }),
+        })
+    }
+
+    // The same probe inside a dependency. `x = deps.audio` names the
+    // dependency's root module itself.
+    enqueue_named_dep = (
+        self  :: @Self,
+        im    : Import,
+        whole : QualifiedName,
+        seen  :: Vec<Unit>
+    ) Res<(), AllocError> {
+        self.library(whole.segment_at(1)).match({
+            None     => self.not_a_dependency(whole),
+            Ok(root) => (whole.segments.len == 2).match({
+                true  => Ok(()),
+                false => self.library_module(root, whole).try().match({
+                    None     => self.enqueue(im.module, seen),
+                    Ok(unit) => {
+                        queue_unit(unit, seen).try();
+                        (im.module.segments.len > 2).match({
+                            false => Ok(()),
+                            true  => self.library_module(root, im.module)
+                                .try().match({
+                                    None  => Ok(()),
+                                    Ok(u) => queue_unit(u, seen),
+                                }),
+                        })
+                    },
+                }),
+            }),
+        })
+    }
+
+    // The import's module path with the bound name's source appended.
+    named_path = (self :: @Self, im: Import) Res<QualifiedName, AllocError> {
+        segments ::= self.alloc.Vec<Ident>();
+        im.module.segments.loop((h, s) { segments.add(s).try() });
+        im.names.get(0).match({
+            None  => Ok(()),
+            Ok(n) => segments.add(n.source),
+        }).try();
+        Ok(QualifiedName(segments: segments, span: im.module.span))
+    }
+
+    // The source file of module `q`, flat or folder form, when it exists.
+    source_module = (self :: @Self, q: QualifiedName)
+                    Res<Res<str>, AllocError> {
+        empty = q.segments.find((s) { s.text.is_empty() }).match({
+            Ok(_) => true,
+            None  => false,
+        });
+        empty.match({
+            true  => Ok(None),
+            false => {
+                base   = self.import_root(q);
+                flat   = joined(self.alloc, base, q, false).try();
+                folder = joined(self.alloc, base, q, true).try();
+                Ok(self.import_path(flat, folder))
+            },
+        })
+    }
+
+    // Load module `q` if it exists, silently otherwise.
+    probe_module = (self :: @Self, q: QualifiedName, seen :: Vec<Unit>)
+                   Res<(), AllocError> {
+        self.source_module(q).try().match({
+            None     => Ok(()),
+            Ok(path) => {
+                self.queue(path, seen).try();
+                self.folder_root(path, seen)
+            },
         })
     }
 
     enqueue_library = (self :: @Self, root: Unit, q: QualifiedName,
                        seen :: Vec<Unit>) Res<(), AllocError> {
+        (q.segments.len <= 2).match({
+            true  => Ok(()),
+            false => self.library_module(root, q).try().match({
+                Ok(unit) => queue_unit(unit, seen),
+                None     => {
+                    paths = self.library_paths(root, q).try();
+                    self.missing_import(q, paths.flat, paths.folder)
+                },
+            }),
+        })
+    }
+
+    // Module `deps.<root>.a.b`, flat or folder form beside the dependency's
+    // entry, when it exists.
+    library_module = (self :: @Self, root: Unit, q: QualifiedName)
+                     Res<Res<Unit>, AllocError> {
+        paths = self.library_paths(root, q).try();
+        Ok(self.import_path(paths.flat, paths.folder).match({
+            None     => None,
+            Ok(path) => Ok(Unit(name: paths.name, path: path, rel: path)),
+        }))
+    }
+
+    library_paths = (self :: @Self, root: Unit, q: QualifiedName)
+                    Res<LibraryPaths, AllocError> {
         name   ::= self.alloc.String(root.name).try();
         suffix ::= self.alloc.String().try();
-        Range(1, q.segments.len).loop((i) {
+        Range(2, q.segments.len).loop((i) {
             name.fmt(".{}", q.segment_at(i)).try();
-            (i > 1).then(() { suffix.add('/').try(); });
+            (i > 2).then(() { suffix.add('/').try(); });
             suffix.add(q.segment_at(i)).try();
         });
-        seen.find((unit) { unit.name.eq(name.view()) }).match({
-            Ok(_) => Ok(()),
-            None  => {
-                directory = Path(root.path).parent().value_or(Path(""));
-                flat      = self.alloc.String(
-                    "{}/{}.zen",
-                    directory.text,
-                    suffix.view()
-                ).try();
-                folder    = self.alloc.String(
-                    "{}/{}/{}.zen",
-                    directory.text,
-                    suffix.view(),
-                    q.last_segment()
-                ).try();
-                self.import_path(flat.view(), folder.view()).match({
-                    None     => self.missing_import(
-                        q,
-                        flat.view(),
-                        folder.view()
-                    ),
-                    Ok(path) => seen.add(Unit(
-                        name: name.view(),
-                        path: path,
-                        rel: path
-                    )),
-                })
-            },
-        })
+        directory = Path(root.path).parent().value_or(Path(""));
+        flat      = self.alloc.String(
+            "{}/{}.zen",
+            directory.text,
+            suffix.view()
+        ).try();
+        folder    = self.alloc.String(
+            "{}/{}/{}.zen",
+            directory.text,
+            suffix.view(),
+            q.last_segment()
+        ).try();
+        Ok(LibraryPaths(
+            name: name.view(),
+            flat: flat.view(),
+            folder: folder.view()
+        ))
     }
 
     enqueue_source = (self :: @Self, q: QualifiedName, seen :: Vec<Unit>)
@@ -449,6 +636,15 @@ Build* = {
             relative_to(self.root, flat),
             relative_to(self.root, folder)
         ).try();
+        self.library(q.segment_at(0)).match({
+            None  => Ok(()),
+            Ok(_) => why.fmt(
+                "; `{}` is a dependency, reached as `{}.{}`",
+                q.segment_at(0),
+                DEPS,
+                q.segment_at(0)
+            ),
+        }).try();
         self.report(diag(why.view(), q.span))
     }
 
@@ -496,28 +692,45 @@ Build* = {
 
     // Before sema, a bare alias target may name a module; probe it without
     // turning a missing candidate into an import fault.
-    alias_of = (self :: @Self, al: Alias, seen :: Vec<Unit>)
+    alias_of = (self :: @Self, owner: str, al: Alias, seen :: Vec<Unit>)
                Res<(), AllocError> {
         self.tree.type_at(al.target).kind.match({
-            Named(n) => self.alias_named(n, seen),
+            Named(n) => self.alias_named(owner, n, seen),
             _        => Ok(()),
         })
     }
 
     // `Vec<u8>` names no module: a module path takes no type arguments.
-    alias_named = (self :: @Self, n: Named, seen :: Vec<Unit>)
+    alias_named = (self :: @Self, owner: str, n: Named, seen :: Vec<Unit>)
                   Res<(), AllocError> {
         (n.args.len == 0).match({
             false => Ok(()),
-            true  => self.probe(n.name.text, seen),
+            true  => self.probe(owner, n.name, seen),
         })
     }
 
-    probe = (self :: @Self, name: str, seen :: Vec<Unit>)
+    // A bare alias target is a project module, or inside a dependency one of
+    // the dependency's own.
+    probe = (self :: @Self, owner: str, name: Ident, seen :: Vec<Unit>)
             Res<(), AllocError> {
-        self.library(name).match({
-            Ok(_) => Ok(()),
-            None  => self.probe_source(name, seen),
+        pkg = package_of(owner);
+        pkg.is_empty().match({
+            true  => self.probe_source(name.text, seen),
+            false => self.library(pkg).match({
+                None     => Ok(()),
+                Ok(root) => {
+                    one ::= self.alloc.Vec<Ident>();
+                    one.add(name).try();
+                    q = self.in_package(
+                        pkg,
+                        QualifiedName(segments: one, span: name.span)
+                    ).try();
+                    self.library_module(root, q).try().match({
+                        None     => Ok(()),
+                        Ok(unit) => queue_unit(unit, seen),
+                    })
+                },
+            }),
         })
     }
 
@@ -839,4 +1052,12 @@ host_target* = () Res<Target> {
         arch: arch,
         abi: os.match({ Macos => Abi.Darwin, _ => Abi.Gnu })
     ))
+}
+
+// Add a dependency module to the walk unless it is already queued.
+queue_unit = (unit: Unit, seen :: Vec<Unit>) Res<(), AllocError> {
+    seen.find((u) { u.name.eq(unit.name) }).match({
+        Ok(_) => Ok(()),
+        None  => seen.add(unit),
+    })
 }

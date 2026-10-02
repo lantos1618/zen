@@ -1,29 +1,28 @@
-Expr, ExprId, Access, TypeId = std.ast
-Span, nowhere = std.source
-Struct, Member = std.ast
-Field, Const, Function = std.ast
-AllocError = std.mem
-Vec = std.collections
-str = std.text
-DeclId = sema.sema_id
-TyId, TyNamed, TyFn, Prim = sema.sema_ty
-Def, DefKind, decl_at, module_display = sema.sema_def
-SemaFault, TypeFault, PairFault, NameFault = sema.sema_diag
-ExportFault = sema.sema_diag
-Checker, Ctx, Binding = sema.sema_check
-Inst, subst, inst_of_named, owner_of, push_tparams = sema.sema_inst
-is_prim, literal_default = sema.sema_ty
-check_literal = sema.sema_trap
-impl_members, bound_member_types, LocalImpl, local_impls = sema.sema_supply
-bound_module = sema.sema_supply
-impl_bound_type, impl_span, prim_named = sema.sema_supply
-type_of = sema.sema_type
-type_from_ast, param_type = sema.sema_denote
-global_name_type, def_type = sema.sema_type
-static_value = sema.sema_static
-meta_access, meta_len_chain, is_count_chain = sema.sema_meta
-meta_name_fold, meta_refused, walk_name, WalkName = sema.sema_meta
-Res, Ok, None = std.core
+{ Expr, ExprId, Access, TypeId, Struct, Member, Span, nowhere, Ident, TParam } = std.ast
+{ Span, nowhere } = std.source
+{ Field, Const, Function } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ DeclId } = sema.sema_id
+{ TyId, TyNamed, TyFn, Prim } = sema.sema_ty
+{ Def, DefKind, decl_at, module_display } = sema.sema_def
+{ SemaFault, TypeFault, PairFault, NameFault } = sema.sema_diag
+{ ExportFault } = sema.sema_diag
+{ Checker, Ctx, Binding } = sema.sema_check
+{ Inst, subst, inst_of_named, owner_of, push_tparams } = sema.sema_inst
+{ is_prim, literal_default } = sema.sema_ty
+{ check_literal } = sema.sema_trap
+{ impl_members, bound_member_types, LocalImpl, local_impls, bound_members } = sema.sema_supply
+{ bound_module } = sema.sema_supply
+{ impl_bound_type, impl_span, prim_named } = sema.sema_supply
+{ type_of } = sema.sema_type
+{ type_from_ast, param_type } = sema.sema_denote
+{ global_name_type, def_type } = sema.sema_type
+{ static_value } = sema.sema_static
+{ meta_access, meta_len_chain, is_count_chain } = sema.sema_meta
+{ meta_name_fold, meta_refused, walk_name, WalkName } = sema.sema_meta
+{ Res, Ok, None } = std.core
 
 Found* = {
     name*: str,
@@ -728,7 +727,29 @@ named_members = (
 ) Res<(), AllocError> {
     c.tree.decl_at(n.decl).match({
         Ok(d) => d.kind.match({
-            Struct(s) => c.struct_members(s, n, ty, name, out),
+            Struct(s) => c.own_members(
+                s.members,
+                s.name,
+                s.tparams,
+                !s.native_record && s.native_header.match({
+                    Ok(_) => true,
+                    None  => false,
+                }),
+                n,
+                ty,
+                name,
+                out
+            ),
+            Enum(e)   => c.own_members(
+                e.members,
+                e.name,
+                e.tparams,
+                false,
+                n,
+                ty,
+                name,
+                out
+            ),
             _         => Ok(()),
         }),
         None  => Ok(()),
@@ -737,13 +758,17 @@ named_members = (
     Ok(());
 }
 
-struct_members = (
-    c    :: Checker,
-    s    : Struct,
-    n    : TyNamed,
-    ty   : TyId,
-    name : str,
-    out  :: Vec<Found>
+// The members a struct or enum body declares under `name`.
+own_members = (
+    c       :: Checker,
+    members : Vec<Member>,
+    owner   : Ident,
+    tparams : Vec<TParam>,
+    native  : bool,
+    n       : TyNamed,
+    ty      : TyId,
+    name    : str,
+    out     :: Vec<Found>
 ) Res<(), AllocError> {
     c.world.member_rows(n.decl, name).match({
         None     => Ok(()),
@@ -752,9 +777,9 @@ struct_members = (
             poison = c.types.unknown().try();
             inst   = c.inst_of_named(n).try();
             tmark  = c.tvar_mark();
-            c.enter_struct_tvars(s, mi).try();
+            c.enter_type_tvars(owner, tparams, mi).try();
             rows.loop((h, i) {
-                s.members.get(i).match({
+                members.get(i).match({
                     None  => Ok(()),
                     Ok(m) => c.add_own(
                         m,
@@ -763,7 +788,7 @@ struct_members = (
                         ty,
                         poison,
                         inst,
-                        !s.native_record && s.native_header.match({ Ok(_) => true, None => false }),
+                        native,
                         out
                     ),
                 }).try();
@@ -778,8 +803,18 @@ struct_members = (
 // arguments of an instantiation.
 enter_struct_tvars* = (c :: Checker, s: Struct, mi: usize)
                      Res<(), AllocError> {
-    owner = c.owner_of(mi, s.name.text).try();
-    c.push_tparams(s.tparams, owner)
+    c.enter_type_tvars(s.name, s.tparams, mi)
+}
+
+// The same for any type declaring a body: a struct or an enum.
+enter_type_tvars* = (
+    c       :: Checker,
+    name    : Ident,
+    tparams : Vec<TParam>,
+    mi      : usize
+) Res<(), AllocError> {
+    owner = c.owner_of(mi, name.text).try();
+    c.push_tparams(tparams, owner)
 }
 
 add_own = (

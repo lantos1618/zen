@@ -1,7 +1,7 @@
-Res, Ok = std.core
+{ Res, Ok } = std.core
 
 // The code under mutation. Each guard names its own failure.
-Fail* = Low | High | Zero
+Fail* = { Low | High | Zero }
 
 classify* = (n: i32) Res<i32, Fail> {
     (n != 0).ensure(Fail.Zero).try();

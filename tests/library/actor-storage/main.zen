@@ -1,8 +1,8 @@
-Pool, HEADER_BYTES = std.mem.mem_pool
-AllocError, Ptr, null_ptr = std.mem
-Res, Ok, Range = std.core
-Env = std.env
-println = std.io
+{ Pool, HEADER_BYTES } = std.mem.mem_pool
+{ AllocError, Ptr, null_ptr } = std.mem
+{ Res, Ok, Range } = std.core
+{ Env } = std.env
+{ println } = std.io
 main = (env: Env) Res<i32, AllocError> {
     pool ::= Pool();
     first = pool.take(64);

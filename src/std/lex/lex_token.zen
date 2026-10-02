@@ -1,8 +1,9 @@
 // Token kinds and half-open source positions. Offsets slice source bytes;
 // one-based line and byte-column values are used in diagnostics.
 
-str = std.text
-Res, Eq, Display, WriteError, Sink = std.core
+{ str } = std.text
+{ Res, Eq, Display, WriteError, Sink } = std.core
+{ fmt } = std.text.text_fmt
 
 // A byte position. `line` and `col` are one-based; `col` counts bytes.
 Pos* = {
@@ -26,8 +27,8 @@ Span* = {
 // Complete token alphabet. Comments are tokens so the formatter can preserve
 // them; whitespace is derived from gaps between spans.
 TokenKind* =
-      Ident              // `[A-Za-z_][A-Za-z0-9_]*`; `_` is a wildcard only in patterns
-    | Int(u64)           // validated unsigned magnitude; sign is a unary operator
+      { Ident              // `[A-Za-z_][A-Za-z0-9_]*`; `_` is a wildcard only in patterns
+    | Int: u64           // validated unsigned magnitude; sign is a unary operator
     | Float              // source digits; conversion waits for the target type
     | Str
     | Char
@@ -53,7 +54,7 @@ TokenKind* =
     | Slash | Percent
     | Caret | Tilde
 
-    | Eof                // exactly one, always last, empty span
+    | Eof }                // exactly one, always last, empty span
 
 // Token equality compares Int payloads and otherwise compares variant tags.
 TokenKind.impl(Eq, {

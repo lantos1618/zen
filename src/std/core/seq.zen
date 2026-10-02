@@ -1,4 +1,4 @@
-Res = std.core.result
+{ Res } = std.core.result
 
 // A sequence walked by position: the positions `start` up to, but not
 // including, `end`, and `at`, which maps each position to its value. None

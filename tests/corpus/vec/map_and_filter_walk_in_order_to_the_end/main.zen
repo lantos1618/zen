@@ -15,10 +15,10 @@
 // succeeded, it kept nothing") -- asserted by len 0 with no Err path,
 // which is the case a `Res<Vec>`-vs-`Res<None>` confusion flips silently.
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

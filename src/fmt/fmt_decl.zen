@@ -1,12 +1,12 @@
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec = std.collections
-Res, Ok, loop, Range = std.core
-Pos = std.source
-ExprId, TypeId, BlockId = std.ast.ast_id
-Ast = std.ast.ast_arena
-Expr, Match, Block, Stmt, Bind, Decl, Type, Param = std.ast.ast_node
-Src, Parsed = fmt.fmt_src
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Res, Ok, loop, Range } = std.core
+{ Pos } = std.source
+{ ExprId, TypeId, BlockId } = std.ast.ast_id
+{ Ast } = std.ast.ast_arena
+{ Expr, Match, Block, Stmt, Bind, Decl, Type, Param } = std.ast.ast_node
+{ Src, Parsed } = fmt.fmt_src
 
 // The spaces in `[from, to)` on one line become `width` spaces. `to` of 0
 // marks a line with nothing to align.

@@ -9,11 +9,11 @@
 // The runner stages this directory as `src/`, so the module tree this
 // test ships is rooted at `src/`.
 
-Env, FsError = std.env
-Alloc = std.mem
-str = std.text
-Res, Ok = std.core
-println = std.io
+{ Env, FsError } = std.env
+{ Alloc } = std.mem
+{ str } = std.text
+{ Res, Ok } = std.core
+{ println } = std.io
 
 // exactly the two questions the resolver asks, and in this order
 resolve = (env: Env, alloc: Alloc, root: str, module: str) Res<i32, FsError> {

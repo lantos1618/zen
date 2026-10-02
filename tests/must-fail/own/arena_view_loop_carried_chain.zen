@@ -1,7 +1,7 @@
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 word = (env: Env, letters: str) Res<str, AllocError> {
     alloc ::= env.mem.alloc();

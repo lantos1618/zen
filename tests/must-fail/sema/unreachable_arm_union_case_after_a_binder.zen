@@ -1,12 +1,12 @@
 // `Err(e)` binds every error; a case below it never runs.
 
-Res, Ok, Err = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Err } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Kind = Io | Protocol
-Fail = Mismatch | Accepted
+Kind = { Io | Protocol }
+Fail = { Mismatch | Accepted }
 
 name = (r: Res<i32, Kind | Fail>) str {
     r.match({

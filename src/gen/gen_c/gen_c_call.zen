@@ -2,53 +2,53 @@
 // constructors. Recorded sema choices are authoritative. Deferred member
 // constants and contextual bodies without a recorded choice retain candidate lookup.
 
-ExprId = std.ast
-Decl, Function = std.ast
-Access, Call, Arg = std.ast
-Param, TypeId = std.ast
-ModuleOrigin, CBinding, CBindingId = std.ast
-AllocError = std.mem
-DeclId = sema.sema_id
-satisfies_bound = sema.sema_bound
-materialize_literal = gen.gen_c.gen_c_mono
-Vec = std.collections
-str, String = std.text
-Res, Ok, None, loop, Range = std.core
-TyId, TyRes = sema.sema_ty
-Def, decl_at = sema.sema_def
-Ctx = sema.sema_check
-Inst = sema.sema_inst
-type_from_ast = sema.sema_denote
-pack_slot, pack_elem = sema.sema_vararg
-sym_member, sym_variant, sym_fn = gen.gen_name
-RES_PATH = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
-unsupported, unresolved, untyped, ambiguous = gen.gen_c.gen_c_report
-sub_with, any_open, inst_at = gen.gen_c.gen_c_mono
-settled_inst, inst_open, enter_tparams, leave_tparams = gen.gen_c.gen_c_mono
-complete_inst = gen.gen_c.gen_c_infer
-ctype, is_unit, has_storage, c_prim, spellable, declared_ret = gen.gen_c.gen_c_type
-write_none = gen.gen_c.gen_c_type
-lower_numeric, lower_integer_bits = gen.gen_c.gen_c_num
-lower_primitive, avx2_boundary = gen.gen_c.gen_c_machine
-expr, ty_of, want_of = gen.gen_c.gen_c_expr
-value_held, holds = gen.gen_c.gen_c_expr
-Dest, deliver = gen.gen_c.gen_c_stmt
-lower_print = gen.gen_c.gen_c_print
-lower_dot_call = gen.gen_c.gen_c_member
-lower_loop = gen.gen_c.gen_c_loop
-is_loop_shape = gen.gen_c.gen_c_shape
-inlines, inline_call, closure_slot = gen.gen_c.gen_c_inline
-is_null_ptr, lower_null_ptr = gen.gen_c.gen_c_ptr
-lower_closure_call = gen.gen_c.gen_c_inline
-construct = gen.gen_c.gen_c_build
-is_format_door, lower_format_door = gen.gen_c.gen_c_fmt
-is_json_door, lower_json_door = gen.gen_c.gen_c_json
-recv_arg, arg_value, write_arg_at = gen.gen_c.gen_c_arg
-passes_address = gen.gen_c.gen_c_borrow
-call_callee = sema.sema_call
-omittable = sema.sema_cand
-is_native_callback, lower_native_callback = gen.gen_c.gen_c_callback
+{ ExprId } = std.ast
+{ Decl, Function } = std.ast
+{ Access, Call, Arg } = std.ast
+{ Param, TypeId } = std.ast
+{ ModuleOrigin, CBinding, CBindingId } = std.ast
+{ AllocError } = std.mem
+{ DeclId } = sema.sema_id
+{ satisfies_bound } = sema.sema_bound
+{ materialize_literal } = gen.gen_c.gen_c_mono
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Res, Ok, None, loop, Range } = std.core
+{ TyId, TyRes } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ Ctx } = sema.sema_check
+{ Inst } = sema.sema_inst
+{ type_from_ast } = sema.sema_denote
+{ pack_slot, pack_elem } = sema.sema_vararg
+{ sym_member, sym_variant, sym_fn } = gen.gen_name
+{ RES_PATH } = gen.gen_name
+{ CBackend } = gen.gen_c.gen_c_state
+{ unsupported, unresolved, untyped, ambiguous } = gen.gen_c.gen_c_report
+{ sub_with, any_open, inst_at } = gen.gen_c.gen_c_mono
+{ settled_inst, inst_open, enter_tparams, leave_tparams } = gen.gen_c.gen_c_mono
+{ complete_inst } = gen.gen_c.gen_c_infer
+{ ctype, is_unit, has_storage, c_prim, spellable, declared_ret } = gen.gen_c.gen_c_type
+{ write_none } = gen.gen_c.gen_c_type
+{ lower_numeric, lower_integer_bits } = gen.gen_c.gen_c_num
+{ lower_primitive, avx2_boundary } = gen.gen_c.gen_c_machine
+{ expr, ty_of, want_of, holdable } = gen.gen_c.gen_c_expr
+{ value_held, holds } = gen.gen_c.gen_c_expr
+{ Dest, deliver } = gen.gen_c.gen_c_stmt
+{ lower_print } = gen.gen_c.gen_c_print
+{ lower_dot_call } = gen.gen_c.gen_c_member
+{ lower_loop } = gen.gen_c.gen_c_loop
+{ is_loop_shape } = gen.gen_c.gen_c_shape
+{ inlines, inline_call, closure_slot } = gen.gen_c.gen_c_inline
+{ is_null_ptr, lower_null_ptr } = gen.gen_c.gen_c_ptr
+{ lower_closure_call } = gen.gen_c.gen_c_inline
+{ construct } = gen.gen_c.gen_c_build
+{ is_format_door, lower_format_door } = gen.gen_c.gen_c_fmt
+{ is_json_door, lower_json_door } = gen.gen_c.gen_c_json
+{ recv_arg, arg_value, write_arg_at } = gen.gen_c.gen_c_arg
+{ passes_address } = gen.gen_c.gen_c_borrow
+{ call_callee } = sema.sema_call
+{ omittable, ty_at } = sema.sema_cand
+{ is_native_callback, lower_native_callback } = gen.gen_c.gen_c_callback
 
 // Resolve and emit one source call. The site owns source identity, receiver,
 // and context; backend services remain borrowed method parameters.
@@ -92,27 +92,42 @@ CallSite = {
                   out :: String) Res<(), AllocError> {
         found ::= be.alloc.Vec<Def>();
         be.check.world.defs_of(self.ctx.module, name, found).try();
-        self.add_travelled(be, name, found).try();
         // A receiver whose type this generic body cannot name yet still
-        // reaches std.core's functions, which travel with the built-in types
-        // sema checked it against.
+        // reaches the std.core functions sema checked the body against.
         (found.len == 0 && self.recv.match({ Ok(_) => true, None => false }))
             .then(() { be.check.world.core_of(name, found).try() });
-        self.only(be, name, found, want, out)
+        (found.len > 1).match({
+            false => self.only(be, name, found, want, out),
+            true  => {
+                kept ::= be.alloc.Vec<Def>();
+                self.receiving(be, found, kept).try();
+                self.only(be, name, kept, want, out)
+            },
+        })
     }
 
-    // Use the same travelled-function pool as sema: only the dot form
-    // travels, through the receiver's type.
-    add_travelled = (self: @Self, be :: CBackend, name: str,
-                     found :: Vec<Def>) Res<(), AllocError> {
-        self.recv.match({
-            Ok(r) => {
-                unknown = be.check.types.unknown().try();
-                raw     = be.ty_of(r, self.ctx, unknown).try();
-                rty     = be.materialize_literal(raw).try();
-                be.travelled_for_type(name, rty, found)
+    // Overloads visible under one name are told apart by the receiver's
+    // type: the dot form reads the receiver, the free form argument zero.
+    receiving = (self: @Self, be :: CBackend, found: Vec<Def>,
+                 kept :: Vec<Def>) Res<(), AllocError> {
+        unknown = be.check.types.unknown().try();
+        rty     = self.recv.match({
+            Ok(r) => Ok(
+                be.materialize_literal(
+                    be.ty_of(r, self.ctx, unknown).try()
+                ).try()
+            ),
+            None  => self.c.args.get(0).match({
+                None  => None,
+                Ok(a) => Ok(be.ty_of(a.value, self.ctx, unknown).try()),
+            }),
+        });
+        rty.match({
+            None   => Ok(()),
+            Ok(ty) => {
+                found.loop((h, d) { be.add_receiving(d, ty, kept).try() });
+                Ok(())
             },
-            None  => Ok(()),
         })
     }
 
@@ -950,27 +965,6 @@ lower_plain_call* = (
     s.resolve(be, name, want, out)
 }
 
-travelled_for_type = (
-    be    :: CBackend,
-    name  : str,
-    rty   : TyId,
-    found :: Vec<Def>
-) Res<(), AllocError> {
-    defs ::= be.alloc.Vec<Def>();
-    be.check.world.exported_named(name, defs).try();
-    defs.loop((h, d) { be.keep_travelled(d, rty, found).try() });
-    Ok(());
-}
-
-keep_travelled = (be :: CBackend, d: Def, rty: TyId, found :: Vec<Def>)
-                 Res<(), AllocError> {
-    dup = has_def(found, d.id);
-    dup.match({
-        true  => Ok(()),
-        false => be.add_receiving(d, rty, found),
-    })
-}
-
 add_receiving = (be :: CBackend, d: Def, rty: TyId, found :: Vec<Def>)
                 Res<(), AllocError> {
     be.receives(d, rty).try().match({
@@ -1002,22 +996,8 @@ first_is = (be :: CBackend, sig: Vec<TyId>, rty: TyId)
     })
 }
 
-// Candidate membership and retrieval use one declaration-id search.
-has_def = (found: Vec<Def>, id: DeclId) bool {
-    def_with_id(found, id).match({ Ok(_) => true, None => false })
-}
-
-def_with_id = (found: Vec<Def>, want: DeclId) Res<Def> {
-    Range(0, found.len).find((i) {
-        found.get(i).match({ Ok(d) => d.id.eq(want), None => false })
-    }).match({
-        Ok(i) => found.get(i),
-        None  => None,
-    })
-}
-
-// The checked declaration is authoritative even when its name travelled
-// through an import or receiver. Module definition rows preserve declaration
+// The checked declaration is authoritative even when its name arrived
+// through an import or a receiver's members. Module definition rows preserve declaration
 // order but omit imports and impls, so search the stable coordinate, not a row
 // offset or another visible candidate set.
 selected_def* = (be: CBackend, id: ExprId) Res<Def> {

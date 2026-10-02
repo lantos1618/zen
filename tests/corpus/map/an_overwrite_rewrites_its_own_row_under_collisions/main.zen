@@ -1,7 +1,7 @@
-Res, Ok, Eq, Hash, Hasher = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Eq, Hash, Hasher } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // AN OVERWRITE REWRITES ITS OWN ROW -- EVEN WHEN EVERY KEY COLLIDES.
 //

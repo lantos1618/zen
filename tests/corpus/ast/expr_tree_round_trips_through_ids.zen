@@ -4,15 +4,15 @@
 // no size -- so every child is an id into Ast. Build the tree, read it
 // back through expr_at, and the spans and the operator survive.
 
-Ast = std.ast.ast_arena
-Expr, ExprKind, Binary, Literal, LiteralKind, BinOp = std.ast.ast_node
-ExprId = std.ast.ast_id
-no_trivia = std.ast.ast_span
-Span, Pos = std.source
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Ast } = std.ast.ast_arena
+{ Expr, ExprKind, Binary, Literal, LiteralKind, BinOp } = std.ast.ast_node
+{ ExprId } = std.ast.ast_id
+{ no_trivia } = std.ast.ast_span
+{ Span, Pos } = std.source
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // line 1, one column wide per character, which is all this test needs
 // a span to be

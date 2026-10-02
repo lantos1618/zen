@@ -19,10 +19,10 @@
 // onto PREC.additive (`add_eq` reads `1 + (1==2)` and prints 1, not
 // true). Either single edit reddens this test.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     println("add_eq {}", 1 + 1 == 2);

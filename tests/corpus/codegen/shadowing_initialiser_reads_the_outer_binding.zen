@@ -1,10 +1,10 @@
 // A shadowing declaration enters scope after its initializer, so the
 // initializer reads the outer binding, including through a closure.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     k: i32 = 5;

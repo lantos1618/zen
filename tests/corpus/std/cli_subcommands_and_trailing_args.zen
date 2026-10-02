@@ -1,16 +1,16 @@
 // A subcommand word ends its parent's arguments; the subcommand parses the
 // rest with its own id enum, and `--` hands the remaining words through.
 
-Vec = std.collections
-str = std.text
-Command, command, Spec, Matches = std.cli
-Res, Ok = std.core
-Alloc, AllocError = std.mem
-Env = std.env
-println, print = std.io
+{ Vec } = std.collections
+{ str } = std.text
+{ Command, command, Spec, Matches } = std.cli
+{ Res, Ok } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println, print } = std.io
 
-Tool = Verbose | Deploy | Status
-Deploy = DryRun | Name
+Tool = { Verbose | Deploy | Status }
+Deploy = { DryRun | Name }
 
 main = (env: Env) Res<i32, AllocError> {
     a    ::= env.mem.alloc();

@@ -1,4 +1,4 @@
-Vec = std.collections
+{ Vec } = std.collections
 
 // Two directories under the marker, and `app` holds no `app.zen`: the
 // holds-its-own-name climb stops here, and only the `build.zen` rule

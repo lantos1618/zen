@@ -1,2 +1,2 @@
 // Parses source again instead of reading the IR.
-Parser = std.parse.parser
+{ Parser } = std.parse.parser

@@ -20,10 +20,10 @@
 // PREC.additive/PREC.multiplicative into their own row (either direction).
 // `w2` flips 18 -> 30 lifted, `w1` flips 11 -> 5 lowered; nothing errors.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     println("w1 {}", 10 -% 2 + 3);

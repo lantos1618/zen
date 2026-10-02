@@ -20,10 +20,10 @@
 // hold -- this is also the prefix bug, "ab" vs "ac", caught by length-
 // FIRST comparison rather than by luck).
 
-Res, Ok = std.core
-Alloc, AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Tag = {
     name*: str,

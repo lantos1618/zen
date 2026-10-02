@@ -1,6 +1,6 @@
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Loud* = {
     shout* = (self: @Self, n: u64) ()

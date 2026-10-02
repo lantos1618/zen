@@ -1,10 +1,10 @@
-cli, build = zen
-help = zen.zen_cli
-Res, Ok = std.core
-Alloc, AllocError = std.mem
-Vec = std.collections
-Env, FsError = std.env
-println = std.io
+{ cli, build } = zen
+{ help } = zen.zen_cli
+{ Res, Ok } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Env, FsError } = std.env
+{ println } = std.io
 
 args = (a: Alloc, root: str, flag: str, value: str) Res<Vec<str>, AllocError> {
     words ::= a.Vec<str>();

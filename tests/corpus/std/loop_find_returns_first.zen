@@ -2,10 +2,10 @@
 // find is the loop word that deletes a guard: it stops at the
 // FIRST match, so the answer is 6 and not 9
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     Range(0, 10).find((value) {

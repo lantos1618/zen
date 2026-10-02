@@ -25,13 +25,13 @@
 // bytes, whatever they are — and a rule that reached in there would be
 // this stage having an opinion about a form it does not print.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Res, Ok, Range = std.core
-scan, Source = std.lex.lex
-render = fmt.fmt
-Env = std.env
-println = std.io
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Res, Ok, Range } = std.core
+{ scan, Source } = std.lex.lex
+{ render } = fmt.fmt
+{ Env } = std.env
+{ println } = std.io
 
 // A comment in every position the parser has a run for: leading a
 // declaration, trailing one on its own line, continuing a trailing

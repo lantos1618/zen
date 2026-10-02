@@ -1,17 +1,17 @@
-Decl, Struct, Member, Field = std.ast
-Span, nowhere = std.source
-Alloc, AllocError = std.mem
-Vec, Map = std.collections
-str, String = std.text
-Res, Ok, Range = std.core
-DeclId = sema.sema_id
-TyId, TyNamed = sema.sema_ty
-SemaFault, NameFault = sema.sema_diag
-decl_at = sema.sema_def
-Checker = sema.sema_check
-Inst, InstEdge, subst, subst_list = sema.sema_inst
-has_var, zip, owner_of = sema.sema_inst
-enter_struct_tvars, member_type = sema.sema_member
+{ Decl, Struct, Member, Field } = std.ast
+{ Span, nowhere } = std.source
+{ Alloc, AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ str, String } = std.text
+{ Res, Ok, Range } = std.core
+{ DeclId } = sema.sema_id
+{ TyId, TyNamed } = sema.sema_ty
+{ SemaFault, NameFault } = sema.sema_diag
+{ decl_at } = sema.sema_def
+{ Checker } = sema.sema_check
+{ Inst, InstEdge, subst, subst_list } = sema.sema_inst
+{ has_var, zip, owner_of } = sema.sema_inst
+{ enter_struct_tvars, member_type } = sema.sema_member
 
 // Instantiation-chain depth past which sema reports divergence.
 DEPTH_BUDGET: usize = 24

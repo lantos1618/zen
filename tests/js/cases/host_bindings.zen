@@ -2,11 +2,11 @@
 // program that can reach std.js.wait runs as a resumable generator (with no
 // event source, wait answers 0). JavaScript-only: the C backend refuses
 // js.bind members, so this lives beside the JS gate, not in tests/corpus.
-Ref, Handler, wait = std.js
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Ref, Handler, wait } = std.js
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 MathJs = js.bind("Math", {
     max* = (a: f64, b: f64) f64

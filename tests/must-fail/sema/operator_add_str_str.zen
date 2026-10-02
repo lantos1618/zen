@@ -1,9 +1,9 @@
 // Agreement is not legality: two strings have one type, but the language
 // supplies no arithmetic operator for that type.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
 add = (left: str, right: str) str { left + right }
 

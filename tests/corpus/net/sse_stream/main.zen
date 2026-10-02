@@ -1,9 +1,9 @@
-SseDecoder, SseEvent = std.net.sse
-Res, Ok = std.core
-AllocError = std.mem
-Vec = std.collections
-Env = std.env
-println = std.io
+{ SseDecoder, SseEvent } = std.net.sse
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 show = (events: Vec<SseEvent>) {
     events.loop((h, event) {

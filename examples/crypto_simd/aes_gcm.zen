@@ -18,12 +18,12 @@
 // narrowing); every lane is masked where upstream truncates.
 //
 // Encryption-only: GCM never needs the inverse cipher.
-Ptr = std.mem
-bit_xor, bit_and, bit_or, shift_left, shift_right = std.core.num
+{ Ptr } = std.mem
+{ bit_xor, bit_and, bit_or, shift_left, shift_right } = std.core.num
 or64 = bits64
-aes, clmul, Aes, Clmul, load_u8x16, splat_u8x16, splat_u64x2, lanes_u64x2, load_u64x2 = std.simd
-splat_u32x4, load_u32x4 = std.simd
-rotate_right = std.core.num
+{ aes, clmul, Aes, Clmul, load_u8x16, splat_u8x16, splat_u64x2, lanes_u64x2, load_u64x2 } = std.simd
+{ splat_u32x4, load_u32x4 } = std.simd
+{ rotate_right } = std.core.num
 
 // Scratch layout (u64 words): key schedule 0..22, H 22..24, counter 24..26,
 // tag mask 26..28, block 28..30, ghash y/h 30..38, tag 38..40, hardware

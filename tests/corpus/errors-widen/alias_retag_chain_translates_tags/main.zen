@@ -9,14 +9,14 @@
 // arm of the final match. The Ok line proves the value survived both
 // hops; the Err line proves the identity did too.
 
-Res, Ok, Err = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Err } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Narrow = | Nope
-Other  = | Also
-Big    = | Boom
+Narrow = { | Nope }
+Other  = { | Also }
+Big    = { | Boom }
 Mid    = Narrow | Other
 All    = Big | Other | Narrow
 

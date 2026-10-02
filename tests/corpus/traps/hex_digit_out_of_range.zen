@@ -1,7 +1,7 @@
-Res, Ok, hex_digit = std.core
-OutOfBounds = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok, hex_digit } = std.core
+{ OutOfBounds } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 // tests/corpus/traps/hex_digit_out_of_range.zen
 // a nibble is 0..15 by construction, so 16 is a bug in the caller's
@@ -18,7 +18,7 @@ println = std.io
 // stdout above it exercises the in-range nibbles, so a hex_digit that
 // trapped on EVERY input, or answered the wrong byte for the legal ones,
 // is red here rather than green on the trap alone.
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 main = (env: Env) Res<i32, Error> {
     println(

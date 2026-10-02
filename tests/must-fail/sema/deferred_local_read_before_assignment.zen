@@ -2,7 +2,7 @@
 //
 // position: the read.
 
-println = std.io
+{ println } = std.io
 
 main = () i32 {
     total :: i32;

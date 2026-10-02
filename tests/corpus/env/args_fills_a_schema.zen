@@ -6,10 +6,10 @@
 // negative i64 and u64.MAX, and conflicting FLEET/MODEL variables prove
 // that a flag wins rather than merely coexisting with the environment.
 
-Env, ArgError = std.env
-Res, Ok = std.core
-AllocError = std.mem
-println = std.io
+{ Env, ArgError } = std.env
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ println } = std.io
 
 // The shape the agent-zen entry point wants: switches, numbers with
 // defaults, a text default, a one-letter flag that is also the first

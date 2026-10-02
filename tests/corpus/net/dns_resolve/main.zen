@@ -1,10 +1,10 @@
 // Resolve loopback, then fail the first post-resolve allocation.
 
-DnsAddr, DnsError, resolve = std.net.dns
-Res, Ok, Err = std.core
-Alloc, AllocError, Ptr = std.mem
-Env = std.env
-println = std.io
+{ DnsAddr, DnsError, resolve } = std.net.dns
+{ Res, Ok, Err } = std.core
+{ Alloc, AllocError, Ptr } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 FailAlloc = {
     base: Alloc,

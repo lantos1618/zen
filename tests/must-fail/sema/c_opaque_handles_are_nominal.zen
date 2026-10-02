@@ -1,4 +1,4 @@
-Ptr = std.mem
+{ Ptr } = std.mem
 
 SSL_CTX = {}
 SSL = {}

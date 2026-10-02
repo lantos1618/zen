@@ -2,18 +2,18 @@
 // final expression is the block's value. Recovery is contained to statement
 // boundaries so one malformed statement does not consume the rest of a block.
 
-AllocError = std.mem
-no_trivia = std.ast.ast_span
-ExprId, TypeId, BlockId = std.ast.ast_id
-Block, Stmt, StmtKind, Bind, Deferred, ExprStmt = std.ast.ast_node
-TokenKind = std.parse.parse_token
-Parser, Mark = std.parse.parser
-expr = std.parse.parse_expr
-type = std.parse.parse_type
-declaration = std.parse.parse_decl
-decl_head_ahead = std.parse.parse_lookahead
-Res, Ok, None = std.core
-Vec = std.collections
+{ AllocError } = std.mem
+{ no_trivia } = std.ast.ast_span
+{ ExprId, TypeId, BlockId } = std.ast.ast_id
+{ Block, Stmt, StmtKind, Bind, Deferred, ExprStmt } = std.ast.ast_node
+{ TokenKind } = std.parse.parse_token
+{ Parser, Mark } = std.parse.parser
+{ expr } = std.parse.parse_expr
+{ type } = std.parse.parse_type
+{ declaration } = std.parse.parse_decl
+{ decl_head_ahead } = std.parse.parse_lookahead
+{ Res, Ok, None } = std.core
+{ Vec } = std.collections
 
 // `{ statement* expression? }`
 block* = (p :: Parser) Res<BlockId, AllocError> {

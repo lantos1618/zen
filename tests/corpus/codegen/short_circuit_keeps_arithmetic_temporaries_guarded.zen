@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 main = () i32 {
     zero: i32 = 0;

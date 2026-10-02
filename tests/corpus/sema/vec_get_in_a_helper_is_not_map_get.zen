@@ -4,10 +4,10 @@
 // at K = ?, V = ?, which then reported three diagnostics inside
 // std/collections about code this file never calls.
 
-Res, Ok = std.core
-Alloc, AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Found = { computed*: bool }
 

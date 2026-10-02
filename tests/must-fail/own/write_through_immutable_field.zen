@@ -12,9 +12,9 @@
 // types ARE known: `p` is `:`, so `p.x` is refused even though `x` is
 // `::`. every link from the binding to the target has to permit it.
 
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Inner = { n :: i32 }
 

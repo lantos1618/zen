@@ -3,10 +3,10 @@
 // occupied bucket. a get that stops at `e.hash == h` answers Ok
 // with somebody else's value; the required answer is None
 
-Res, Ok, Eq, Hash, Hasher = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Eq, Hash, Hasher } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Key = {
     id: i32,

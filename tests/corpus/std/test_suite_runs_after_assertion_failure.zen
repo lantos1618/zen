@@ -1,6 +1,6 @@
-Suite = std.test
-Res, IoError = std.core
-Env = std.env
+{ Suite } = std.test
+{ Res, IoError } = std.core
+{ Env } = std.env
 
 main = (env: Env) Res<i32, IoError> {
     suite ::= Suite(env: env);

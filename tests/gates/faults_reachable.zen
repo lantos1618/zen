@@ -29,17 +29,18 @@
 // GREEN HERE DOES NOT MEAN EVERY DIAGNOSTIC WORKS. It means no fault is
 // silently absent.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec = std.collections
-Res, Ok, Range = std.core
-Env, FsError = std.env
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Res, Ok, Range } = std.core
+{ Env, FsError } = std.env
 
-scan, Source = std.lex.lex
-Parser = std.parse.parser
-Ast = std.ast.ast_arena
-Module, Decl = std.ast.ast_node
-println = std.io
+{ scan, Source } = std.lex.lex
+{ Parser } = std.parse.parser
+{ module } = std.parse
+{ Ast } = std.ast.ast_arena
+{ Module, Decl } = std.ast.ast_node
+{ println } = std.io
 
 // fault enum -> the file that declares it. The declaring file is skipped when
 // hunting for construction sites: `message()` mentions every variant by name

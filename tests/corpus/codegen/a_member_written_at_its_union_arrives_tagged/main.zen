@@ -1,7 +1,7 @@
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // A MEMBER written where its UNION is declared arrives TAGGED AS THE
 // MEMBER -- at the declared set's own type, through every door a value
@@ -26,8 +26,8 @@ println = std.io
 // unwrapped. The gate asks the resolved set now, and builds the declared
 // spelling the way `.try()` propagation always built one: tagged with
 // the variant that carries the member.
-IoError = | IsADirectory
-ParseError = | NotANumber
+IoError = { | IsADirectory }
+ParseError = { | NotANumber }
 Trouble = IoError | ParseError
 
 say = (door: str, t: Trouble) {

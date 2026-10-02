@@ -1,8 +1,8 @@
-dup, truncate_with = std.text
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ dup, truncate_with } = std.text
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<(), AllocError> {
     a = env.mem.alloc();

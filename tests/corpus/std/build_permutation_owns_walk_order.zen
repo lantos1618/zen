@@ -1,8 +1,8 @@
-Permutation, permutation = std.build
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Permutation, permutation } = std.build
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 show = (p: Permutation) {
     println(

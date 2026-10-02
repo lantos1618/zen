@@ -30,10 +30,10 @@
 //   - a `Res<Big, E>` return: the struct is now inside a tagged union, so
 //     the payload's alignment and the tag's placement both matter
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 One = { a: i64 }
 

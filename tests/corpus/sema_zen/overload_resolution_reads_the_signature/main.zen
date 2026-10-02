@@ -25,22 +25,23 @@
 // test of sema, and routing it through a parser would make a parser bug
 // read as a sema bug.
 
-Checker, Ctx = sema.sema_check
-check_overloads = sema.sema_call
-TyId, Types = sema.sema_ty
-Ast = std.ast.ast_arena
-Expr, ExprKind, Literal, LiteralKind, Name, Call, Arg, Lambda = std.ast.ast_node
-Block, Stmt, Type, TypeKind, Named, FnType = std.ast.ast_node
-Decl, DeclKind, Function, Form, Param, TParam, Module = std.ast.ast_node
-Ident, no_trivia = std.ast.ast_span
-Pos, Span = std.source
-ExprId, TypeId, BlockId = std.ast.ast_id
-Alloc, AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Res, Ok, None, Range = std.core
-Env = std.env
-println = std.io
+{ Checker, Ctx } = sema.sema_check
+{ check_overloads } = sema.sema_call
+{ TyId, Types } = sema.sema_ty
+{ Ast } = std.ast.ast_arena
+{ Expr, ExprKind, Literal, LiteralKind, Name, Call, Arg, Lambda } = std.ast.ast_node
+{ Block, Stmt, Type, TypeKind, Named, FnType } = std.ast.ast_node
+{ Decl, DeclKind, Function, Form, Param, TParam, Module } = std.ast.ast_node
+{ Ident, no_trivia } = std.ast.ast_span
+{ Pos, Span } = std.source
+{ ExprId, TypeId, BlockId } = std.ast.ast_id
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Res, Ok, None, Range } = std.core
+{ Env } = std.env
+{ println } = std.io
+{ type_of } = sema.sema_type
 
 // a declaration's span is the one thing that has to differ per line:
 // the duplicate-signature diagnostic names BOTH declarations, and a

@@ -4,9 +4,9 @@
 // chosen by what the elements ARE, which is the ambiguity PLAN.md 0.1
 // names.
 
-Res, Ok = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, ArgError> {
     primes = [i32, 4](2, 3, 5, 7);

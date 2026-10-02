@@ -12,10 +12,10 @@
 // expectation file nobody compared closely. The len() beside each view
 // catches the subtler cousin: braces dropped instead of written.
 
-Res, Ok, WriteError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, WriteError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | WriteError
 

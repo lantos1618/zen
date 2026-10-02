@@ -1,8 +1,8 @@
-fill_random, EntropyError = std.entropy
-Res, Ok = std.core
-AllocError, null_ptr = std.mem
-Env = std.env
-println = std.io
+{ fill_random, EntropyError } = std.entropy
+{ Res, Ok } = std.core
+{ AllocError, null_ptr } = std.mem
+{ Env } = std.env
+{ println } = std.io
 main = (env: Env) Res<(), AllocError> {
     a     = env.mem.alloc();
     bytes = a.raw(515, 1).try();

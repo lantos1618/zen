@@ -1,9 +1,9 @@
 // A raw pointer remains non-transferable when it sits inside a stored field.
 
-Res, Ok = std.core
-AllocError, Ptr = std.mem
-Env = std.env
-Actor, Ref, ActorError, Context = std.actor
+{ Res, Ok } = std.core
+{ AllocError, Ptr } = std.mem
+{ Env } = std.env
+{ Actor, Ref, ActorError, Context } = std.actor
 
 PointerBox = { data: Ptr<u8> }
 

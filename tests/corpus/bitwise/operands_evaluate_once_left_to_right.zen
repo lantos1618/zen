@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 // Each operand is evaluated exactly once, left before right, including a
 // shift's count, which the guarded lowering reads twice.

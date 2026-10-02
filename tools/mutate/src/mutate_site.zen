@@ -3,22 +3,22 @@
 // a comment is never a site, and every replacement covers exactly the node
 // it names. Mutants are numbered in AST walk order, error-variant swaps
 // last, so the same file always yields the same numbered mutants.
-scan, Source = std.lex
-Parser = std.parse
-Ast, Span, Expr, ExprId, Stmt, Decl, Match, Call, Binary = std.ast
-WalkNode, WalkEvent, WalkVisitor, DeclVisit, DeclSite, DeclParent = std.ast
-Alloc, AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Res, Ok, None = std.core
+{ scan, Source } = std.lex
+{ Parser } = std.parse
+{ Ast, Span, Expr, ExprId, Stmt, Decl, Match, Call, Binary } = std.ast
+{ WalkNode, WalkEvent, WalkVisitor, DeclVisit, DeclSite, DeclParent } = std.ast
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Res, Ok, None } = std.core
 
-Operator* = SwapError
+Operator* = { SwapError
     | FlipEquality
     | FlipOrder
     | Negate
     | Constant
     | DeleteStatement
-    | SwapArms
+    | SwapArms }
 
 operator_name* = (op: Operator) str {
     op.match({
@@ -59,7 +59,7 @@ ErrorUse = {
     span: Span,
 }
 
-ParseFailed* = Lexical | Syntax | OutOfMemory
+ParseFailed* = { Lexical | Syntax | OutOfMemory }
 
 // Every mutant of `text`, or why the file does not parse.
 collect* = (a: Alloc, file: str, text: str) Res<Vec<Mutant>, ParseFailed> {

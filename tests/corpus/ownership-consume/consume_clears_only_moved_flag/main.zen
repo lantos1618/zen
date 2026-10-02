@@ -9,9 +9,9 @@
 // answers to its construction tag "b" even though the name `b` is
 // dead from the move onwards.
 
-Res, Ok, Drop, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Noisy = {
     env: Env,

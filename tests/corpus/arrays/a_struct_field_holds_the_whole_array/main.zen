@@ -14,10 +14,10 @@
 // a stomp loses the 99, a skip prints zeros for the cells, and neither
 // can produce "99 5 7 9".
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Cell = { v: i32 }
 

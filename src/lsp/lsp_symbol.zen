@@ -1,20 +1,21 @@
 // Writes flat document symbols from declarations in the open buffer.
 
-str, String = std.text
-Vec = std.collections
-Alloc, AllocError = std.mem
-Decl, Ident = std.ast
-Span = std.source
-TextRange, text_range = lsp.lsp_pos
-parse_standalone = lsp.lsp_query
-arr, Nest, to_json = std.json
-Res, Ok, None = std.core
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Alloc, AllocError } = std.mem
+{ Decl, Ident } = std.ast
+{ Span } = std.source
+{ TextRange, text_range } = lsp.lsp_pos
+{ parse_standalone } = lsp.lsp_query
+{ arr, Nest, to_json } = std.json
+{ Res, Ok, None } = std.core
+{ module } = std.parse.parse_decl
 
-SymbolKind* = | Class = 5 // LSP has no type-alias symbol kind.
+SymbolKind* = { | Class = 5 // LSP has no type-alias symbol kind.
     | Enum = 10
     | Function = 12
     | Constant = 14
-    | Struct = 23
+    | Struct = 23 }
 
 Sym* = {
     name*: str,

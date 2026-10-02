@@ -1,4 +1,4 @@
-Env = std.env
+{ Env } = std.env
 
 main = (env: Env) i32 {
     byte: u8 = 0x100;

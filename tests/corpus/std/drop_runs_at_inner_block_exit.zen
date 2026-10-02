@@ -4,10 +4,10 @@
 // main. a drop hoisted to the end of the function prints these
 // two in the wrong order
 
-Res, Ok, Drop = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Drop } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Noisy = {
     id: i32,

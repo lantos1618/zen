@@ -1,13 +1,13 @@
 // Recursive payloads terminate classification, while an unsafe branch later
 // in the same enum is still found.
 
-Res, Ok = std.core
-AllocError = std.mem
-Vec = std.collections
-Env = std.env
-Actor, Ref, ActorError, Context = std.actor
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ Actor, Ref, ActorError, Context } = std.actor
 
-Message = End | Next(Message) | Bytes(Vec<u8>)
+Message = { End | Next: Message | Bytes: Vec<u8> }
 
 Worker = {}
 

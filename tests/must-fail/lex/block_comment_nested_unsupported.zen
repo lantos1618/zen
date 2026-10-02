@@ -4,7 +4,7 @@
 // reading is tests/corpus/lex/block_comment_nested.zen, same source
 // line. Exactly one of the two can pass.
 /* outer /* inner */ $$ */
-Error = AllocError | IoError
+Error = { AllocError | IoError }
 
 main = (env: Env) Res<i32, Error> {
     println("unreachable under the non-nesting reading");

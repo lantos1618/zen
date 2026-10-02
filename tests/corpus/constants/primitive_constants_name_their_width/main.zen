@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 // BITS, MAX and MIN of every integer primitive, and u128.BITS. Each width is
 // named in the lowering: a default once gave u128.BITS as 64 on the asm and

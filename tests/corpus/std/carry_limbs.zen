@@ -2,10 +2,10 @@
 // multi-limb products against schoolbook multiplication, on edge and
 // pseudo-random limbs. Every line prints the same on a CPU without ADX:
 // there the products are not run and the line reports agreement.
-add_carry, sub_borrow, mul_wide, truncate_u64, shift_right, bit_and, bit_xor, shift_left, to_u128 = std.core.num
-adx, bmi2, Adx, Bmi2, mul_limbs, square_limbs = std.simd
-Range = std.core
-println = std.io
+{ add_carry, sub_borrow, mul_wide, truncate_u64, shift_right, bit_and, bit_xor, shift_left, to_u128 } = std.core.num
+{ adx, bmi2, Adx, Bmi2, mul_limbs, square_limbs } = std.simd
+{ Range } = std.core
+{ println } = std.io
 
 ALL: u64 = 18446744073709551615
 

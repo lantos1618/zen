@@ -26,15 +26,15 @@
 // When `node` is not on PATH the gate prints a notice and succeeds: the JS
 // backend is optional tooling on build hosts.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec, Ordered, sort = std.collections
-ProcOutput = std.proc
-Res, Ok, None, loop, Range = std.core
-Env = std.env
-println = std.io
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec, Ordered, sort } = std.collections
+{ ProcOutput } = std.proc
+{ Res, Ok, None, loop, Range } = std.core
+{ Env } = std.env
+{ println } = std.io
 
-Verdict = Pass | Fail | Unsupported | Broken
+Verdict = { Pass | Fail | Unsupported | Broken }
 
 Outcome = { base: str, lane: str, verdict: Verdict, reason: str }
 

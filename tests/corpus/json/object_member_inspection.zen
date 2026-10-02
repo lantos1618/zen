@@ -1,9 +1,9 @@
 // Unknown schema keys must be inspectable without serializing or reparsing.
 // Nested objects exercise side-list offsets; duplicates retain stored order.
-Jsons, JsonFault, read = std.json
-Res, Ok, Range = std.core
-Env = std.env
-println = std.io
+{ Jsons, JsonFault, read } = std.json
+{ Res, Ok, Range } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<(), JsonFault> {
     a = env.mem.alloc();

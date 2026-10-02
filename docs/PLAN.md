@@ -152,11 +152,11 @@ registration remains owed. Never a second parser, AST, or formatter-only path.
 
 `grammar/grammar.js`, tree-sitter. **This is written before any other code.** It lives in its own directory because `tree-sitter generate` emits to `./src/`, and in this tree `src/` is the compiler. It is the artifact that turns `DESIGN.md`'s examples into things a machine can disagree with, and it outlives the bootstrapper as the editor/LSP grammar.
 
-Every example in `DESIGN.md` becomes a parse test. Expect the grammar to surface ambiguities the prose hides — one is already known:
+Every example in `DESIGN.md` becomes a parse test. Expect the grammar to surface ambiguities the prose hides — one was known and is now closed by braces:
 
 ```groovy
-Alias = Shape                  // an alias?
-Shape = Circle(Circle)         // or a one-variant enum?
+Alias = Shape                  // an alias
+Shape = { | Circle: Circle }   // a one-variant enum
 ```
 
 Resolve each one *in `DESIGN.md`*, not in the parser. A parser that quietly picks a reading is how a language ends up with no specification.
@@ -174,7 +174,7 @@ Constructs the grammar must cover, all present in `DESIGN.md`:
 - generics `Vec<T>`, `Map<K, V>`, error unions `A | B`
 - `@Self`, `@meta`, `@scope`
 - `consume e`, `e.try()`, `+% -% *%`
-- module bindings and re-export: `Res*, Ok* = std.core.result`
+- module bindings and re-export: `{ Res*, Ok* } = std.core.result`
 
 **Gate:** `tree-sitter test` green on a corpus containing every **Zen** code block in `DESIGN.md` (the tree listing, the `.gitignore`, and the C source are not Zen), plus an `errors/` directory of things that must *fail* to parse. Both directions matter — a grammar that accepts everything is not a grammar.
 

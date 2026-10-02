@@ -1,14 +1,15 @@
 // Resolve declaration names and bind targets under a cursor, including
 // by-value identifiers with no arena id.
 
-str = std.text
-Res, Ok, None, Range = std.core
-Ident = std.ast.ast_span
-Pos, Span = std.source
-ExprId, TypeId = std.ast.ast_id
-Ast = std.ast.ast_arena
-Decl, Function, Param, Member, Import, Bind = std.ast.ast_node
-Vec = std.collections
+{ str } = std.text
+{ Res, Ok, None, Range } = std.core
+{ Ident } = std.ast.ast_span
+{ Pos, Span } = std.source
+{ ExprId, TypeId } = std.ast.ast_id
+{ Ast } = std.ast.ast_arena
+{ Decl, Function, Param, Member, Import, Bind } = std.ast.ast_node
+{ Vec } = std.collections
+{ node_at } = std.ast.ast_find
 
 TypeAt* = {
     span*: Span,
@@ -21,11 +22,11 @@ ValueAt* = {
 }
 
 // Import bindings resolve definitions but have no local type or expression.
-Tell* = Nothing
-    | Sig(Function)
-    | OfType(TypeAt)
-    | OfValue(ValueAt)
-    | Imported(Ident)
+Tell* = { Nothing
+    | Sig: Function
+    | OfType: TypeAt
+    | OfValue: ValueAt
+    | Imported: Ident }
 
 told_at* = (tree: Ast, file: str, p: Pos) Tell {
     probe = Probe(tree: tree, file: file, p: p);
@@ -104,7 +105,7 @@ Probe = {
             Alias(al)   => self.answer(al.name.span, Ok(al.target), None),
             Struct(st)  => self.members(st.members),
             Impl(im)    => self.members(im.members),
-            Enum(_)     => Tell.Nothing,
+            Enum(en)    => self.members(en.members),
             Import(im)  => self.import(im),
         })
     }

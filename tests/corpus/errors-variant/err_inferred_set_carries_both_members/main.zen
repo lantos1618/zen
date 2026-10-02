@@ -11,13 +11,13 @@
 // carry payloads of different types so the arm taken AND the value read
 // identify what arrived.
 
-Res, Ok, Err = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Err } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-A = | A1(i64)
-B = | B1(str)
+A = { | A1: i64 }
+B = { | B1: str }
 
 Set = B | A
 

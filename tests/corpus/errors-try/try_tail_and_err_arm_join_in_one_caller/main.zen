@@ -13,12 +13,12 @@
 // the Ok edge ran prints "total 42". The Err arm naming Outer is what
 // proves the second run actually failed.
 
-Res, Ok, Err = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Err } = std.core
+{ Env } = std.env
+{ println } = std.io
 
-Inner = | InnerBoom
-Outer = | OuterBoom
+Inner = { | InnerBoom }
+Outer = { | OuterBoom }
 Any = Inner | Outer
 
 source = (n: i64) Res<i64, Outer> {

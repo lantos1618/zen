@@ -1,9 +1,9 @@
 // The callback parameter list selects the loop form. Bodiless forms lower
 // directly; value-only traversal delegates to the handle form. No form allocates.
 
-LoopHandle = std.core.loop.loop_handle
-Seq        = std.core.seq
-Res        = std.core.result
+{ LoopHandle } = std.core.loop.loop_handle
+{ Seq }        = std.core.seq
+{ Res }        = std.core.result
 
 // Repeat until the body calls h.break().
 loop*<T> = (body: (h: LoopHandle) ()) Res<T>

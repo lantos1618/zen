@@ -1,12 +1,12 @@
-Source, scan = std.lex
-Parser, module = std.parse
-ExprId = std.ast
-Checker = sema.sema_check
-check_all = sema.sema_decl
-Res, Ok, Range = std.core
-Alloc, AllocError = std.mem
-Env = std.env
-println = std.io
+{ Source, scan } = std.lex
+{ Parser, module } = std.parse
+{ ExprId } = std.ast
+{ Checker } = sema.sema_check
+{ check_all } = sema.sema_decl
+{ Res, Ok, Range } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 inspect = (a: Alloc, source: str) Res<(), AllocError> {
     lexed = scan(a, Source(file: "members.zen", text: source)).try();

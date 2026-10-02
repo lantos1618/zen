@@ -3,10 +3,10 @@
 // ban on `==` over named types. Without this the check could pass by
 // rejecting everything, which is a gate that cannot fail from the other end.
 
-Res, Ok, Eq = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Eq } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Point = { x*: usize, y*: usize }
 

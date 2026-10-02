@@ -11,13 +11,13 @@
 // the inlined audit, which forces only those out of line
 // (tools/ct/audit.zen). Exits 0 only when every audited function passes
 // on every compiler and level and every control is caught.
-Vec = std.collections
-str = std.text
-Audit, run_audit = audit
-Res, Ok, loop = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Vec } = std.collections
+{ str } = std.text
+{ Audit, run_audit } = audit
+{ Res, Ok, loop } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a = env.mem.alloc();

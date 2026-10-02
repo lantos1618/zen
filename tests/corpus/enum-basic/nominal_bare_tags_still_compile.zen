@@ -7,12 +7,12 @@
 //
 // position: the declaration compiles, runs, and prints.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Color = Red | Green | Blue
+Color = { Red | Green | Blue }
 
 pick = (c: Color) str {
     c.match({

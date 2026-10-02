@@ -1,10 +1,10 @@
-splat_u32x4, lanes_u32x4, load_u32x4, lanes_u64x2, load_u64x2 = std.simd
-splat_u32x8, lanes_u32x8, load_u32x8, splat_u8x16, load_u8x16 = std.simd
-splat_u8x32, load_u8x32, lanes_u64x4, splat_u64x4 = std.simd
-AllocError, Ptr = std.mem
-Res, Ok, Range = std.core
-Env = std.env
-println = std.io
+{ splat_u32x4, lanes_u32x4, load_u32x4, lanes_u64x2, load_u64x2 } = std.simd
+{ splat_u32x8, lanes_u32x8, load_u32x8, splat_u8x16, load_u8x16 } = std.simd
+{ splat_u8x32, load_u8x32, lanes_u64x4, splat_u64x4 } = std.simd
+{ AllocError, Ptr } = std.mem
+{ Res, Ok, Range } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 show = (v: u32x4) {
     println("{} {} {} {}", v.lane(0), v.lane(1), v.lane(2), v.lane(3));

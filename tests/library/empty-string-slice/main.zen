@@ -1,6 +1,6 @@
-null_ptr = std.mem
-str = std.text
-println = std.io
+{ null_ptr } = std.mem
+{ str } = std.text
+{ println } = std.io
 
 main = () {
     empty = str(data: null_ptr<u8>(), len: 0);

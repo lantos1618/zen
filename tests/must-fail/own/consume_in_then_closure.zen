@@ -7,9 +7,9 @@
 // unsound; one that treats it as unconditional straight-line code
 // rejects the corpus counterpart. it has to be a real edge.
 
-Res, Ok, Drop, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Buf = {
     id: i32,

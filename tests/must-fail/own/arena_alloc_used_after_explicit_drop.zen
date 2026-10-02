@@ -1,6 +1,7 @@
-Res, Ok = std.core
-Alloc, AllocError = std.mem
-Env = std.env
+{ Res, Ok } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ dup } = std.text
 
 allocator = (alloc: Alloc) Alloc { alloc }
 main = (env: Env) Res<i32, AllocError> {

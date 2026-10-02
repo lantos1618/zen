@@ -1,23 +1,23 @@
 // Renders settled types or independently validated written annotations.
 // Without either source of evidence, the hover has `found` set to false.
 
-str, String = std.text
-Vec = std.collections
-Res, Ok, loop, Range = std.core
-Alloc, AllocError = std.mem
-Ast, Decl, ExprId, Member, TypeId, Function, TriviaRun = std.ast
-Span = std.source
-Variant = std.ast
-Checker = sema.sema_check
-TyId, TyNamed, Prim = sema.sema_ty
-Def, decl_at = sema.sema_def
-source_position, lsp_position, Position, TextRange = lsp.lsp_pos
-run_of, zero_based = lsp.lsp_pos
-Tell, told_at = std.ast.ast_named
-check_standalone = lsp.lsp_query
-check_build = zen.zen_build
-to_json = std.json
-Env = std.env
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Res, Ok, loop, Range } = std.core
+{ Alloc, AllocError } = std.mem
+{ Ast, Decl, ExprId, Member, TypeId, Function, TriviaRun } = std.ast
+{ Span } = std.source
+{ Variant } = std.ast
+{ Checker } = sema.sema_check
+{ TyId, TyNamed, Prim } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ source_position, lsp_position, Position, TextRange } = lsp.lsp_pos
+{ run_of, zero_based } = lsp.lsp_pos
+{ Tell, told_at } = std.ast.ast_named
+{ check_standalone } = lsp.lsp_query
+{ check_build } = zen.zen_build
+{ to_json } = std.json
+{ Env } = std.env
 
 Hover* = {
     found*: bool,
@@ -265,7 +265,11 @@ ShapeNote = {
                 s.members.loop((h, m) { self.member(m, out).try(); });
                 Ok(())
             },
-            Enum(e)   => self.variants(e.variants, out),
+            Enum(e)   => {
+                self.variants(e.variants, out).try();
+                e.members.loop((h, m) { self.member(m, out).try(); });
+                Ok(())
+            },
             _         => Ok(()),
         })
     }

@@ -18,10 +18,10 @@
 // value (2.25), and the third pair overrides only ONE of the two fields
 // so a default that jumps slots cannot land on a matching value.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Rate = {
     gain*:: f64 = 7.5,

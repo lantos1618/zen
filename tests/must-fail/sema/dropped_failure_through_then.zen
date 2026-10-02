@@ -5,11 +5,11 @@
 //
 // position: the closure's tail.
 
-Res, Ok, Err = std.core
-AllocError = std.mem
-Env = std.env
+{ Res, Ok, Err } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
-Full* = | Full
+Full* = { | Full }
 
 push = (n: i32) Res<(), Full> {
     (n > 2).match({ true => Err(Full.Full), false => Ok(()) })

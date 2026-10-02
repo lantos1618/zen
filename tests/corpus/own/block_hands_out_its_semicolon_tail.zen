@@ -15,9 +15,9 @@
 // that block's to destroy, and its drop belongs at the inner brace
 // rather than at the end of `main`. Sparing it there would leak.
 
-Res, Ok, Drop, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Noisy = {
     env: Env,

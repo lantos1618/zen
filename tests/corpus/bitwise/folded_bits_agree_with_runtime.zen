@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 // The constant folder and the generated code agree: the same expression over
 // primitive constants and over runtime bindings prints one value, and a

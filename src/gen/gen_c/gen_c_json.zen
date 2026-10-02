@@ -2,26 +2,27 @@
 // the call site, so field walking happens here while escaping and primitive
 // spelling remain ordinary functions in std.json.
 
-Decl, Struct, Member, Function, ExprId, Call = std.ast
-AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Res, Ok, Range = std.core
-TyId, TyNamed = sema.sema_ty
-Def, decl_at = sema.sema_def
-Ctx = sema.sema_check
-Inst = sema.sema_inst
-param_type = sema.sema_denote
-GenFault = gen.gen_diag
-CBackend = gen.gen_c.gen_c_state
-expr, ty_of = gen.gen_c.gen_c_expr
-declare_temp, write_assign_err = gen.gen_c.gen_c_flow
-field_type, request_type = gen.gen_c.gen_c_type
-decl_ctx, decl_inst = gen.gen_c.gen_c_type
-enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
-call_symbol, bodyless, write_done, write_goto = gen.gen_c.gen_c_sink
-sym_member = gen.gen_name
-unsupported = gen.gen_c.gen_c_report
+{ Decl, Struct, Member, Function, ExprId, Call } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Res, Ok, Range } = std.core
+{ TyId, TyNamed } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ Ctx } = sema.sema_check
+{ Inst } = sema.sema_inst
+{ param_type, type_from_ast } = sema.sema_denote
+{ GenFault } = gen.gen_diag
+{ CBackend } = gen.gen_c.gen_c_state
+{ expr, ty_of } = gen.gen_c.gen_c_expr
+{ declare_temp, write_assign_err } = gen.gen_c.gen_c_flow
+{ field_type, request_type } = gen.gen_c.gen_c_type
+{ decl_ctx, decl_inst } = gen.gen_c.gen_c_type
+{ enter_struct_tparams, leave_tparams } = gen.gen_c.gen_c_mono
+{ call_symbol, bodyless, write_done, write_goto } = gen.gen_c.gen_c_sink
+{ sym_member, sym_variant } = gen.gen_name
+{ unsupported } = gen.gen_c.gen_c_report
+{ type_of } = sema.sema_type
 
 JSON_MODULE: str = "std.json.json_meta"
 

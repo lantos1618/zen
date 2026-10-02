@@ -1,9 +1,9 @@
-project, Action = zen.zen_project
-ProjectArgs = std.build
-Res, Ok = std.core
-Alloc, AllocError = std.mem
-Env = std.env
-println = std.io
+{ project, Action } = zen.zen_project
+{ ProjectArgs } = std.build
+{ Res, Ok } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 run = (env: Env, a: Alloc, target: str) Res<(), AllocError> {
     job  = ProjectArgs(

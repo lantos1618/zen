@@ -16,15 +16,15 @@
 //   - a node's span does NOT include its leading trivia
 //   - the module's span is the whole file, trivia included
 
-scan, Source = std.lex.lex
-Parser, module = std.parse
-Ast = std.ast.ast_arena
-Span = std.source
-Decl, Block, Bind = std.ast.ast_node
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ scan, Source } = std.lex.lex
+{ Parser, module } = std.parse
+{ Ast } = std.ast.ast_arena
+{ Span } = std.source
+{ Decl, Block, Bind } = std.ast.ast_node
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // The file, with the columns it asserts:
 //

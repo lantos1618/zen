@@ -12,10 +12,10 @@
 // the constant path and the literal path are pinned separately and a
 // backend that special-cases the wrong one of the two is caught.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     lowest: i64  = -9223372036854775808;

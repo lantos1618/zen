@@ -1,7 +1,7 @@
-Res, Err = std.core
-Env = std.env
+{ Res, Err } = std.core
+{ Env } = std.env
 
-Error = | Bad
+Error = { | Bad }
 
 raise = () Res<i32, Error> { Err(Error.Bad) }
 

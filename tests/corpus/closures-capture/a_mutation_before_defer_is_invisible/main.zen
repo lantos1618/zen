@@ -12,9 +12,9 @@
 // the arithmetic is deliberately non-round: 7 * 11 + 2 = 79 would become
 // 1091 under by-reference and 79 under snapshot -- no zero, no default.
 
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     n ::= 7;

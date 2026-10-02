@@ -6,7 +6,7 @@ executed by the compiler's project driver. `std.build` defines the public types;
 The driver does not yet execute arbitrary Zen build functions.
 
 ```zen
-Builder, BuildError = std.build
+{ Builder, BuildError } = std.build
 build = (b :: Builder) Res<(), BuildError> {
     audio = b.add("audio", {
         url: "https://github.com/lantos1618/zen-audio.git",
@@ -20,6 +20,25 @@ build = (b :: Builder) Res<(), BuildError> {
     Ok(())
 }
 ```
+
+A target's modules reach each dependency its `deps` list names through the
+`deps` root, under the name given to `b.add` or `b.lib`:
+
+```zen
+{ play } = deps.audio        // an item from the dependency's entry module
+mixer = deps.audio.mixer     // a module beside the entry, bound as a module
+```
+
+The dependency's entry is module `deps.audio`; a module beside it is
+`deps.audio.mixer`, flat or folder form. A name the target's `deps` does not
+list is an error that says so, and a dependency is never reachable by its bare
+name, so it cannot collide with a project folder of the same name.
+
+Inside a dependency the same rule is relative to the dependency: an import
+root other than `std` and `deps` names one of its own modules, so
+`{ VALUE } = detail` in the entry of `deps.audio` is `deps.audio.detail`. A
+package therefore never depends on the name a consumer registers it under,
+and it cannot reach the consumer's project modules.
 
 `exe` and `exe_test` return `Res<Builder, BuildError>`. `.try()` propagates a
 failed registration before evaluating the next one. Existing standalone calls

@@ -11,12 +11,12 @@
 // element type's first buffer never reaches the size where it shows.
 // This test fills past several growth points and asks for everything back.
 
-Alloc, AllocError = std.mem
-Map = std.collections
-Range = std.core.range
-Res, Ok, Eq, Hash, Hasher = std.core
-Env = std.env
-println = std.io
+{ Alloc, AllocError } = std.mem
+{ Map } = std.collections
+{ Range } = std.core.range
+{ Res, Ok, Eq, Hash, Hasher } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 COUNT: usize = 300
 MIX: u64 = 1000003

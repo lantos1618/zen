@@ -1,9 +1,9 @@
 // POSIX streaming file operations. Descriptors are explicit native handles:
 // the caller closes each opened descriptor exactly once, after its last use.
 // No destructor or copy-ownership guarantee is implied. Paths use caller storage.
-Alloc, AllocError, Ptr = std.mem
-c_text, str_at = std.text
-Res, Ok, loop = std.core
+{ Alloc, AllocError, Ptr } = std.mem
+{ c_text, str_at } = std.text
+{ Res, Ok, loop } = std.core
 
 Native = c.bind("unistd.h", {
     read = (fd: i32, bytes: Ptr<u8>, length: usize) i64
@@ -23,13 +23,13 @@ Temporary = c.bind("stdlib.h", {
 })
 Errors = c.bind("errno.h", { errno: i32, EINTR: i32 })
 
-FileError* = InvalidPath
+FileError* = { InvalidPath
     | OpenFailed
     | ReadFailed
     | UnexpectedEnd
     | WriteFailed
     | SeekFailed
-    | CloseFailed
+    | CloseFailed }
 
 Descriptor* = {
     fd*: i32,

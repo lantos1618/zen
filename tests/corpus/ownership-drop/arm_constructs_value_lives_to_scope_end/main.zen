@@ -6,9 +6,9 @@
 // "drop 20" before "picked", or drop nothing at all if it also skipped
 // temporaries. the false arm exists so neither arm is dead code.
 
-Res, Ok, Drop, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Noisy = {
     env: Env,

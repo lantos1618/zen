@@ -1,10 +1,10 @@
 // Fixed arrays copy their cells, not allocator-backed graphs stored in them.
 
-Res, Ok = std.core
-AllocError = std.mem
-Vec = std.collections
-Env = std.env
-Actor, Ref, ActorError, Context = std.actor
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ Actor, Ref, ActorError, Context } = std.actor
 
 Worker = {}
 

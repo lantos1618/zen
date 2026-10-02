@@ -2,14 +2,14 @@
 // unit values, checked i32 arithmetic, calls, standard output and traps. The
 // caller verifies the program and checks `supports` before rendering; this
 // experimental path does not define Zen's foreign or aggregate ABI.
-Alloc, AllocError = std.mem
-String, str = std.text
-Vec = std.collections
-Res, Ok, Range = std.core
-Span = std.source
-Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
-trap_message = gen.gen_ir
-IrFeature = gen.gen_ir_feature
+{ Alloc, AllocError } = std.mem
+{ String, str } = std.text
+{ Vec } = std.collections
+{ Res, Ok, Range } = std.core
+{ Span } = std.source
+{ Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print } = gen.gen_ir
+{ trap_message } = gen.gen_ir
+{ IrFeature } = gen.gen_ir_feature
 
 supports* = (feature: IrFeature) bool {
     feature.match({ Traps => true, _ => false })

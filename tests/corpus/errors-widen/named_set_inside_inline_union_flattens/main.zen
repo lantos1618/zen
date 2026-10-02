@@ -9,13 +9,13 @@
 // member arm (`Err(Fail)`) and through a match on the error itself down to the
 // nominal variant (`Worse`).
 
-Res, Ok, Err = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Err } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Kind = | Bad | Worse
-Fail = | Broke
+Kind = { | Bad | Worse }
+Fail = { | Broke }
 Both = Kind | Fail
 
 one = (k: i32) Res<(), Fail> {

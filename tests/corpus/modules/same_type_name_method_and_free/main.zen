@@ -14,12 +14,12 @@
 //
 // The old workaround renamed one declaration. This keeps the unrenamed
 // shape under the corpus gate.
-Diag, render = alpha.alpha
-shout = gamma.gamma
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Diag, render } = alpha.alpha
+{ shout } = gamma.gamma
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a = Diag(code: 5);

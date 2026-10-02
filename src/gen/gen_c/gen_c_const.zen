@@ -1,23 +1,24 @@
 // Lower module-level values and decide whether a value may be safely inlined
 // at each use. Frame-local name lookup remains in `gen_c_expr`.
 
-ExprId, Decl, Const = std.ast
-Literal, Binary, Unary, Access, Call, Name, ArrayLit, FixedArray = std.ast
-AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-TyId = sema.sema_ty
-Def, decl_at = sema.sema_def
-Ctx = sema.sema_check
-CBackend = gen.gen_c.gen_c_state
-unresolved, unsupported = gen.gen_c.gen_c_report
-expr = gen.gen_c.gen_c_expr
-base_decl, type_const, TypeConst, module_const = gen.gen_c.gen_c_read
-intern_named, write_variant_value = gen.gen_c.gen_c_read
-plain_ctx = gen.gen_c.gen_c_decl
-is_null_ptr = gen.gen_c.gen_c_ptr
-selected_def = gen.gen_c.gen_c_call
-Res, Ok, None = std.core
+{ ExprId, Decl, Const } = std.ast
+{ Literal, Binary, Unary, Access, Call, Name, ArrayLit, FixedArray } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ TyId } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ Ctx } = sema.sema_check
+{ CBackend } = gen.gen_c.gen_c_state
+{ unresolved, unsupported } = gen.gen_c.gen_c_report
+{ expr } = gen.gen_c.gen_c_expr
+{ base_decl, type_const, TypeConst, module_const } = gen.gen_c.gen_c_read
+{ intern_named, write_variant_value } = gen.gen_c.gen_c_read
+{ plain_ctx } = gen.gen_c.gen_c_decl
+{ is_null_ptr } = gen.gen_c.gen_c_ptr
+{ selected_def } = gen.gen_c.gen_c_call
+{ Res, Ok, None } = std.core
+{ type_from_ast } = sema.sema_denote
 
 // Module constants are inlined at each use and therefore admit only C constant
 // Expressions. Calls are rejected because they would run once per use rather

@@ -1,4 +1,4 @@
-truncate_u32 = std.core.num
+{ truncate_u32 } = std.core.num
 main = () {
     small: u16 = 1;
     cut        = small.truncate_u32();

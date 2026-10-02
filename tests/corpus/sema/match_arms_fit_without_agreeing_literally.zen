@@ -33,12 +33,12 @@
 // panic. `true => return 7` is a syntax error in both compilers, so
 // there is no divergent arm to exempt.
 
-Res, Ok, Err = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok, Err } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
-Fault = | Bad
-Snag  = | Low
+Fault = { | Bad }
+Snag  = { | Low }
 
 fails = (n: usize) Res<(), Fault> {
     (n == 0).match({ true => Err(Fault.Bad), false => Ok(()) });

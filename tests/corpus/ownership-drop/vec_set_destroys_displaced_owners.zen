@@ -1,7 +1,7 @@
-Res, Ok, Drop = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Drop } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Owner = { id: i32 }
 Owner.impl(Drop, {

@@ -3,12 +3,12 @@
 // `Opt<i32>` or `Opt<str>` layout, not the open memo shared by both copies.
 // Otherwise Zen accepts this but C sees three incompatible Opt structures.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Opt<T> = Some(T) | None
+Opt<T> = { Some: T | None }
 
 some = <T>(value: T) Opt<T> { Opt.Some(value) }
 

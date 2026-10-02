@@ -11,9 +11,9 @@
 // the only thing that fits -- inside a `.match` arm, which has no value to
 // give the arms unless the call really is unit.
 
-Res, Ok = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
 shout = (env: Env, n: i32) { println("{}", n * 6 + 4) }
 

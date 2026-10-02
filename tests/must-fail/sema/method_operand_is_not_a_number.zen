@@ -13,11 +13,11 @@
 //
 // position: `.len`, the operand whose missing call is the mistake.
 
-Res, Ok = std.core
-AllocError = std.mem
-String = std.text
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ String } = std.text
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a = env.mem.alloc();

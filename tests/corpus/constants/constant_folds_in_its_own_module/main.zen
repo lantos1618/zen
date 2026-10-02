@@ -12,15 +12,15 @@
 // pins it for MODULE-LEVEL constants crossing modules, the path every
 // real program's configuration constants take.
 //
-// Import spelling note, learned the hard way: a binding names the
-// export it imports (`WIDTH, get_total = helper.helper`), renames
-// nothing, and cannot be dotted into.
+// Only `get_total` is imported: a module that imported helper's WIDTH
+// and declared its own would be rejected, so the two WIDTHs meet only
+// through the function that folded one of them.
 
-get_total, WIDTH = helper.helper
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ get_total, WIDTH } = helper.helper
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 WIDTH*: i64 = 100
 

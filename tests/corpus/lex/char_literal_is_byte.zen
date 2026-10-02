@@ -1,7 +1,7 @@
-Res, Ok, IoError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // a char literal IS its byte value: str is BYTES, indexing yields u8,
 // so 'a' and 97 are the same u8 and must compare equal.

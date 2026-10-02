@@ -1,5 +1,5 @@
-Range = std.core
-println = std.io
+{ Range } = std.core
+{ println } = std.io
 
 // i32 bounds walk i32 values, negative ones included. `index` still counts
 // passes from zero, in usize, separately from the value.

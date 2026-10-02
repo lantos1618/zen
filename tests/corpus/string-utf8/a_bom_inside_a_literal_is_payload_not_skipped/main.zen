@@ -4,10 +4,11 @@
 // cursor by 3. A lexer or decoder that "helpfully" strips BOMs it finds
 // mid-stream would print 4 and 2 here -- and silently corrupt any
 // document whose first character really is U+FEFF.
-Utf8Error = std.text.text_utf8
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ Utf8Error } = std.text.text_utf8
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
+{ codepoints, count_codepoints } = std.text
 
 main = (env: Env) Res<i32, Utf8Error> {
     s = "a﻿b";

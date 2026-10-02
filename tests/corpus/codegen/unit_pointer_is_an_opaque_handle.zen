@@ -1,9 +1,9 @@
 // Ptr<()> remains useful as a null, pass-through, and reinterpreted handle.
 
-Res, Ok = std.core
-AllocError, Ptr, null_ptr = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError, Ptr, null_ptr } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 free = (p: Ptr<()>) ()
 hold = (p: Ptr<()>) Ptr<()> { p }

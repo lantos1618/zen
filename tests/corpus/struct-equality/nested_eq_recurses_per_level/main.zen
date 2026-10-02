@@ -18,10 +18,10 @@
 // The pairs are ordered so the three answers read as a sentence about
 // WHERE the difference sat: nowhere / innermost / middle.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Inner = {
     depth*: i32,

@@ -1,8 +1,8 @@
 // Explicit allocation, arenas, and raw pointer operations.
-AllocError*, Alloc* = std.mem.mem_alloc
+{ AllocError*, Alloc* } = std.mem.mem_alloc
 
-Arena*, Mem*, Page* = std.mem.mem_arena
+{ Arena*, Mem*, Page* } = std.mem.mem_arena
 
-Ptr*, null_ptr*, compiler_barrier*, wipe* = std.mem.mem_ptr
+{ Ptr*, null_ptr*, compiler_barrier*, wipe* } = std.mem.mem_ptr
 
-Pool*, PoolAlloc*, PoolPolicy*, PoolStats* = std.mem.mem_pool
+{ Pool*, PoolAlloc*, PoolPolicy*, PoolStats* } = std.mem.mem_pool

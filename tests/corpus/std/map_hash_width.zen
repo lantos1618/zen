@@ -1,7 +1,7 @@
-Res, Ok, Range, Eq, Hash, Hasher = std.core
-Alloc, AllocError, Ptr = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range, Eq, Hash, Hasher } = std.core
+{ Alloc, AllocError, Ptr } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // Hashes that differ only above bit 31 must be rejected before Eq runs,
 // including when their low bits place every key in the same probe cluster.

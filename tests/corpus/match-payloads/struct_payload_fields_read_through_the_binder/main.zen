@@ -9,15 +9,15 @@
 // Both enums are matched in one program on purpose -- with one enum the
 // bug cannot be expressed, which is exactly how it stayed invisible.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Pos = { line: i64, col: u8 }
 
-Found = At(Pos) | Nowhere
-Mark  = At(u64) | Gone
+Found = { At: Pos | Nowhere }
+Mark  = { At: u64 | Gone }
 
 main = (env: Env) Res<i32, AllocError> {
     f: Found = Found.At(Pos(line: 12, col: 34));

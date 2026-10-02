@@ -1,5 +1,5 @@
-Builder, BuildError, Dep = std.build
-Res, Ok, Path = std.core
+{ Builder, BuildError, Dep } = std.build
+{ Res, Ok, Path } = std.core
 
 build = (b :: Builder) Res<(), BuildError> {
     native  = b.c_import("sys.demo", {

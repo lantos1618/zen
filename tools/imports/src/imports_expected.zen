@@ -3,12 +3,12 @@
 // per line after the first (docs/TESTING.md), and a `.stderr` holds an
 // expected substring that may contain `file.zen:line:col`. Inserting import
 // lines above those positions moves them, so both move with the source.
-Res, Ok, Err, None, ensure, loop = std.core
-Alloc, AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Env = std.env
-println = std.io
+{ Res, Ok, Err, None, ensure, loop } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Env } = std.env
+{ println } = std.io
 Shift = imports_edit
 
 // Move every position naming `file` in its test's sidecars as `shifts`

@@ -1,7 +1,7 @@
-Res, Ok, loop, Range, Seq = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, loop, Range, Seq } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // The bounded receiver cannot select the bool or condition-closure overload
 // while its element type is still open. Nested wrappers keep the same value.

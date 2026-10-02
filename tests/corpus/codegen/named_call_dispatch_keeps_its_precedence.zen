@@ -2,11 +2,11 @@
 // `Ok` and `Err` use the destination `Res`, and a declared `println` shadows
 // print sugar.
 
-Res, Ok, Err, IoError = std.core
-AllocError = std.mem
-Env = std.env
+{ Res, Ok, Err, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
-Fault = | Bad
+Fault = { | Bad }
 Error = AllocError | IoError
 
 println = (n: i32) i32 { n + 1 }

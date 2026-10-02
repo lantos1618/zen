@@ -1,10 +1,10 @@
-Ast, Module, Decl, Import, ExprId = std.ast
-Span, nowhere = std.source
-Alloc, AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Res, Ok, None, loop, Range, Eq = std.core
-World, Def, DefKind, dotted, module_display = sema.sema_def
+{ Ast, Module, Decl, Import, ExprId } = std.ast
+{ Span, nowhere } = std.source
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Res, Ok, None, loop, Range, Eq } = std.core
+{ World, Def, DefKind, dotted, module_display } = sema.sema_def
 
 ConstSite = {
     module: usize,

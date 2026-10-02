@@ -1,19 +1,19 @@
 // Checked declaration/call evidence for source review. This is an intentionally
 // incomplete graph: no absent edge grants permission to remove source.
-Alloc, AllocError = std.mem
-Vec, Map = std.collections
-String, str = std.text
-Ast, Decl, ExprId, BlockId = std.ast
-Span = std.source
-WalkNode, WalkEvent, WalkVisitor, DeclVisit, DeclSite, DeclParent, walk = std.ast
-Checker = sema.sema_check
-DeclId = sema.sema_id
-obj, arr, Nest, write_text = std.json
-Res, Ok, None, loop = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ String, str } = std.text
+{ Ast, Decl, ExprId, BlockId } = std.ast
+{ Span } = std.source
+{ WalkNode, WalkEvent, WalkVisitor, DeclVisit, DeclSite, DeclParent, walk } = std.ast
+{ Checker } = sema.sema_check
+{ DeclId } = sema.sema_id
+{ obj, arr, Nest, write_text } = std.json
+{ Res, Ok, None, loop } = std.core
 
-RootPolicy* = Main | LoadedExports
-UsageError* = OutOfMemory | InvalidInput | InvalidRoots
-CallKind* = Direct | Constructor | Intrinsic | Unresolved
+RootPolicy* = { Main | LoadedExports }
+UsageError* = { OutOfMemory | InvalidInput | InvalidRoots }
+CallKind* = { Direct | Constructor | Intrinsic | Unresolved }
 
 Declaration* = {
     id*: DeclId,

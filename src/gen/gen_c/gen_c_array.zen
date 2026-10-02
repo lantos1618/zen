@@ -2,24 +2,24 @@
 // arrays. `[T, N]` uses a struct around a C array to preserve value semantics;
 // N lives in the type and requires no runtime length field.
 
-ExprId, ArrayLit, FixedArray, Index, Lambda = std.ast
-AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-TyId, TyArray = sema.sema_ty
-Ctx = sema.sema_check
-Emit = gen.gen_emit
-GEN = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
-unsupported = gen.gen_c.gen_c_report
-Shape = gen.gen_c.gen_c_shape
-Fold = gen.gen_c.gen_c_fold
-ctype, declarator, request_type, is_signed = gen.gen_c.gen_c_type
-expr, ty_of, value_held, has_call = gen.gen_c.gen_c_expr
-write_position = gen.gen_c.gen_c_op
-open_result, close_pass, run_body = gen.gen_c.gen_c_loop
-declare_usize, settle_res, walk_temp = gen.gen_c.gen_c_loop
-Res, Ok, None = std.core
+{ ExprId, ArrayLit, FixedArray, Index, Lambda } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ TyId, TyArray } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ Emit } = gen.gen_emit
+{ GEN } = gen.gen_name
+{ CBackend } = gen.gen_c.gen_c_state
+{ unsupported } = gen.gen_c.gen_c_report
+{ Shape } = gen.gen_c.gen_c_shape
+{ Fold } = gen.gen_c.gen_c_fold
+{ ctype, declarator, request_type, is_signed } = gen.gen_c.gen_c_type
+{ expr, ty_of, value_held, has_call } = gen.gen_c.gen_c_expr
+{ write_position } = gen.gen_c.gen_c_op
+{ open_result, close_pass, run_body } = gen.gen_c.gen_c_loop
+{ declare_usize, settle_res, walk_temp } = gen.gen_c.gen_c_loop
+{ Res, Ok, None } = std.core
 
 // The one member every fixed-array struct has — one constant, because
 // the layout, the literals, the index and the walk must spell it alike.

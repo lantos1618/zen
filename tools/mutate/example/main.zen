@@ -1,11 +1,11 @@
 // A deliberately hollow suite: the out-of-range case accepts ANY error and
 // nothing probes the boundaries or the low side, so mutants of those guards
 // survive. zen-mutate must name exactly them.
-Fail, classify = classify
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Fail, classify } = classify
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     ok ::= true;

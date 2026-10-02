@@ -2,11 +2,11 @@
 // mixing; the empty string must retain `STR_HASH_SEED`, distinguishing whether
 // the multiplier is applied before or after the first byte.
 
-count_codepoints, Utf8Error = std.text
-Res, Ok, Hasher = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ count_codepoints, Utf8Error } = std.text
+{ Res, Ok, Hasher } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError | Utf8Error> {
     // an argv-shaped row: the program's own name tail, hashed

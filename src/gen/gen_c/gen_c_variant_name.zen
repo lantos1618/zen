@@ -1,18 +1,18 @@
 // Lower `value.variant_name()` to one evaluation of `value` and a switch over
 // its private dense enum tag. Every result is static borrowed text.
 
-Access, Variant = std.ast
-AllocError = std.mem
-str, String = std.text
-TyId = sema.sema_ty
-Ctx = sema.sema_check
-VariantNameCall, EnumValue, enum_value = sema.sema_variant_name
-sym_variant = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
-expr, lower_meta_name = gen.gen_c.gen_c_expr
-temp = gen.gen_c.gen_c_flow
-write_qname = gen.gen_c.gen_c_layout
-Res, Ok, Err = std.core
+{ Access, Variant } = std.ast
+{ AllocError } = std.mem
+{ str, String } = std.text
+{ TyId } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ VariantNameCall, EnumValue, enum_value } = sema.sema_variant_name
+{ sym_variant } = gen.gen_name
+{ CBackend } = gen.gen_c.gen_c_state
+{ expr, lower_meta_name } = gen.gen_c.gen_c_expr
+{ temp } = gen.gen_c.gen_c_flow
+{ write_qname } = gen.gen_c.gen_c_layout
+{ Res, Ok, Err } = std.core
 
 lower_variant_name_call* = (
     be   :: CBackend,

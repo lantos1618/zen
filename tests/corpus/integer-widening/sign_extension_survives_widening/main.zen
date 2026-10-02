@@ -1,10 +1,10 @@
 // Lossless signed widening sign-extends negative values at every source and
 // target width. MIN constants exercise the isolated sign bit.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a: i8 = -5;

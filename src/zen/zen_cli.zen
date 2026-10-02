@@ -3,27 +3,27 @@
 // help, and answers `zen help <command>`. argv and option values stay
 // borrowed. `--repeat` and `--permute` are hidden determinism controls.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec = std.collections
-Env = std.env
-BuildArgs, ProjectArgs, Emission, Codegen, Mode, mode_named, permutation = std.build
-Command, command, Spec, Kind, Matches, Usage = std.cli
-holds_build_zen = zen.zen_path
-Res, Ok, None, loop = std.core
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Env } = std.env
+{ BuildArgs, ProjectArgs, Emission, Codegen, Mode, mode_named, permutation } = std.build
+{ Command, command, Spec, Kind, Matches, Usage } = std.cli
+{ holds_build_zen } = zen.zen_path
+{ Res, Ok, None, loop } = std.core
 
 VERSION*: str = "0.1.0"
 
-Cli* = Build(BuildArgs)
-    | Project(ProjectArgs)
-    | Run(ProjectArgs)
-    | Test(ProjectArgs)
-    | Fmt(FmtJob)
-    | Init(str)
-    | Lsp(LspJob)
-    | Version(str)
-    | Help(String)
-    | Refused(Refusal)
+Cli* = { Build: BuildArgs
+    | Project: ProjectArgs
+    | Run: ProjectArgs
+    | Test: ProjectArgs
+    | Fmt: FmtJob
+    | Init: str
+    | Lsp: LspJob
+    | Version: str
+    | Help: String
+    | Refused: Refusal }
 
 // A refused command line: what was wrong, and the help of the command it
 // addressed. An empty message means no command was given at all.
@@ -49,7 +49,7 @@ ENVIRONMENT: str = "Environment:\n  ZEN_STD           Standard library root; def
 
 PROJECT_NOTE: str = "A word naming a directory that holds build.zen selects that project;\nany other word names a target declared by ./build.zen."
 
-Tool = Version | Build | Check | Run | Test | Fmt | Init | Lsp | Help
+Tool = { Version | Build | Check | Run | Test | Fmt | Init | Lsp | Help }
 
 tool = (a: Alloc) Res<Command<Tool>, AllocError> {
     cmd ::= command<Tool>(a, "zen", "The Zen compiler and project tool");
@@ -125,7 +125,7 @@ profile = <T>(cmd :: Command<T>, release: T, mode: T, verbose: T, cc: T)
     Ok(())
 }
 
-BuildId = Release
+BuildId = { Release
     | Profile
     | Verbose
     | Cc
@@ -140,7 +140,7 @@ BuildId = Release
     | Ffi
     | SymbolMap
     | Repeat
-    | Permute
+    | Permute }
 
 build_model = (a: Alloc) Res<Command<BuildId>, AllocError> {
     cmd ::= command<BuildId>(
@@ -239,7 +239,7 @@ source_options = <T>(
     Ok(())
 }
 
-RunId = Release | Profile | Verbose | Cc | Project
+RunId = { Release | Profile | Verbose | Cc | Project }
 
 run_model = (a: Alloc) Res<Command<RunId>, AllocError> {
     cmd ::= command<RunId>(a, "zen run", "Build and run an executable target");
@@ -262,7 +262,7 @@ run_model = (a: Alloc) Res<Command<RunId>, AllocError> {
     Ok(cmd)
 }
 
-TestId = Release | Profile | Verbose | Cc | Project | Target
+TestId = { Release | Profile | Verbose | Cc | Project | Target }
 
 test_model = (a: Alloc) Res<Command<TestId>, AllocError> {
     cmd ::= command<TestId>(
@@ -294,7 +294,7 @@ test_model = (a: Alloc) Res<Command<TestId>, AllocError> {
     Ok(cmd)
 }
 
-CheckId = Root | Entry | StdRoot | Ffi
+CheckId = { Root | Entry | StdRoot | Ffi }
 
 check_model = (a: Alloc) Res<Command<CheckId>, AllocError> {
     cmd ::= command<CheckId>(
@@ -316,7 +316,7 @@ check_model = (a: Alloc) Res<Command<CheckId>, AllocError> {
     Ok(cmd)
 }
 
-FmtId = Check | File
+FmtId = { Check | File }
 
 fmt_model = (a: Alloc) Res<Command<FmtId>, AllocError> {
     cmd ::= command<FmtId>(a, "zen fmt", "Format Zen source files");
@@ -333,7 +333,7 @@ fmt_model = (a: Alloc) Res<Command<FmtId>, AllocError> {
     Ok(cmd)
 }
 
-InitId = | Dir
+InitId = { | Dir }
 
 init_model = (a: Alloc) Res<Command<InitId>, AllocError> {
     cmd ::= command<InitId>(
@@ -350,7 +350,7 @@ init_model = (a: Alloc) Res<Command<InitId>, AllocError> {
     Ok(cmd)
 }
 
-LspId = Stdio | Requests | Replies
+LspId = { Stdio | Requests | Replies }
 
 lsp_model = (a: Alloc) Res<Command<LspId>, AllocError> {
     cmd ::= command<LspId>(a, "zen lsp", "Run the language server");
@@ -372,7 +372,7 @@ lsp_model = (a: Alloc) Res<Command<LspId>, AllocError> {
     Ok(cmd)
 }
 
-HelpId = | Topic
+HelpId = { | Topic }
 
 help_model = (a: Alloc) Res<Command<HelpId>, AllocError> {
     cmd ::= command<HelpId>(

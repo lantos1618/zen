@@ -2,13 +2,13 @@
 // to sema. A destructure binder is itself a pattern, preserving the distinction
 // between `Unit` and `Unit(_)`.
 
-AllocError = std.mem
-QualifiedName, no_trivia = std.ast.ast_span
-PatternId = std.ast.ast_id
-Pattern, PatternKind, PatName, Destructure, Literal, LiteralKind = std.ast.ast_node
-TokenKind, WILDCARD = std.parse.parse_token
-Parser, Mark = std.parse.parser
-Res, Ok, None = std.core
+{ AllocError } = std.mem
+{ QualifiedName, no_trivia } = std.ast.ast_span
+{ PatternId } = std.ast.ast_id
+{ Pattern, PatternKind, PatName, Destructure, Literal, LiteralKind } = std.ast.ast_node
+{ TokenKind, WILDCARD } = std.parse.parse_token
+{ Parser, Mark } = std.parse.parser
+{ Res, Ok, None } = std.core
 
 pattern* = (p :: Parser) Res<PatternId, AllocError> {
     p.enter().try();

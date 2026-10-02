@@ -2,16 +2,17 @@
 // keyed by the declaration the impl targets; receiver-site lookup remains in
 // `gen_c_member.zen`. Overload selection here narrows candidates by arity.
 
-Decl, Struct, Enum, Member, Function, Impl, ExprId = std.ast
-AllocError = std.mem
-Vec = std.collections
-str = std.text
-Res, Ok, None, Range = std.core
-DeclId, ImplId = sema.sema_id
-decl_at = sema.sema_def
-tail_is_pack = sema.sema_vararg
-CBackend = gen.gen_c.gen_c_state
-last_is_variadic = gen.gen_c.gen_c_sink
+{ Decl, Struct, Enum, Member, Function, Impl, ExprId } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Res, Ok, None, Range } = std.core
+{ DeclId, ImplId } = sema.sema_id
+{ decl_at } = sema.sema_def
+{ tail_is_pack } = sema.sema_vararg
+{ CBackend } = gen.gen_c.gen_c_state
+{ last_is_variadic } = gen.gen_c.gen_c_sink
+{ bound_members, impl_bound_type } = sema.sema_supply
 
 // Pick a member with the requested arity. Argument-type disambiguation is
 // handled by `gen_c_member.zen`; an arity miss must not fall back to a

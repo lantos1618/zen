@@ -1,5 +1,5 @@
-Res = std.core
-Env, ArgError = std.env
+{ Res } = std.core
+{ Env, ArgError } = std.env
 
 // 10000 nested blocks. same crash, different recursion.
 main = (env: Env) Res<i32, ArgError> {

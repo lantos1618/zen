@@ -1,5 +1,5 @@
-Res, Ok = std.core
-Env = std.env
+{ Res, Ok } = std.core
+{ Env } = std.env
 
 // A struct member writes its type; `x = value` is record syntax.
 D = {

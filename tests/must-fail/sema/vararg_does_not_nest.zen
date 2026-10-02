@@ -12,11 +12,11 @@
 // outer says its element may not be a pack, the inner says a pack is a last
 // parameter's type. The author deletes both halves either way.
 
-Res, Ok = std.core
-AllocError = std.mem
-vararg = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ vararg } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 nested = (v: vararg<vararg<i32>>) i32 { 0 }
 

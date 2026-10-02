@@ -2,12 +2,12 @@
 // is surplus — the same count as the one-seat face, at arity zero.
 // position: the argument.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Sh = | A(i32) | B
+Sh = { | A: i32 | B }
 
 main = (env: Env) Res<i32, AllocError> {
     v = Sh.B(1);

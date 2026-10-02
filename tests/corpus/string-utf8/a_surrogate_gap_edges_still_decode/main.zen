@@ -5,10 +5,11 @@
 // the gap. The ED A0 80 surrogate case in
 // a_well_formed_lead_with_a_forbidden_value_is_invalid/ proves the MIDDLE
 // of the band is rejected; this one proves the edges survive.
-Utf8Error = std.text.text_utf8
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ Utf8Error } = std.text.text_utf8
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
+{ codepoints, count_codepoints } = std.text
 
 main = (env: Env) Res<i32, Utf8Error> {
     s = "퟿";

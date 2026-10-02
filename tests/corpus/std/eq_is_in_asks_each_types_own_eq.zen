@@ -12,10 +12,10 @@
 // with something appended are both absent, so nothing here is comparing
 // over the shorter length.
 
-Res, Ok, Eq = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Eq } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Tag = { n*: i32 }
 

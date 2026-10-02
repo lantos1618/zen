@@ -16,10 +16,10 @@
 // observable: if a scope is emitted wrong, `depth` is wrong or the file
 // does not compile.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     depth ::= 0;

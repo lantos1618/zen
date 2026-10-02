@@ -3,33 +3,34 @@
 // spelling may bind an index or a value. Loop control uses backend labels, and
 // range storage and pass values remain owned by gen_c_range.
 
-ExprId, Lambda = std.ast
-Function, Param = std.ast
-Call = std.ast
-AllocError = std.mem
-str, String = std.text
-TyId = sema.sema_ty
-Ctx = sema.sema_check
-sym_member, sym_gen, sym_variant = gen.gen_name
-RES_PATH = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
-LoopFrame = gen.gen_c.gen_c_frame
-Shape, LoopArgs, shape_of = gen.gen_c.gen_c_shape
-Fold, no_fold, lower_fold, bind_acc = gen.gen_c.gen_c_fold
-write_fold_result = gen.gen_c.gen_c_fold
-unsupported = gen.gen_c.gen_c_report
-ctype, declarator = gen.gen_c.gen_c_type
-intern_res_open = gen.gen_c.gen_c_mono
-has_var = sema.sema_inst
-expr, ty_of = gen.gen_c.gen_c_expr
-Dest, block = gen.gen_c.gen_c_stmt
-uses_stored_bounds = gen.gen_c.gen_c_range
-bind_text = gen.gen_c.gen_c_range
-is_res = gen.gen_c.gen_c_type
-RangeImpl, range_impl, range_pass_type = gen.gen_c.gen_c_range
-supplied_bound, take_pass = gen.gen_c.gen_c_range
-array_of, lower_array_walk = gen.gen_c.gen_c_array
-Res, Ok, None, loop = std.core
+{ ExprId, Lambda } = std.ast
+{ Function, Param } = std.ast
+{ Call } = std.ast
+{ AllocError } = std.mem
+{ str, String } = std.text
+{ TyId } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ sym_member, sym_gen, sym_variant } = gen.gen_name
+{ RES_PATH } = gen.gen_name
+{ CBackend } = gen.gen_c.gen_c_state
+{ LoopFrame } = gen.gen_c.gen_c_frame
+{ Shape, LoopArgs, shape_of, broken_element, loop_element } = gen.gen_c.gen_c_shape
+{ Fold, no_fold, lower_fold, bind_acc } = gen.gen_c.gen_c_fold
+{ write_fold_result } = gen.gen_c.gen_c_fold
+{ unsupported } = gen.gen_c.gen_c_report
+{ ctype, declarator, res_value } = gen.gen_c.gen_c_type
+{ intern_res_open } = gen.gen_c.gen_c_mono
+{ has_var } = sema.sema_inst
+{ expr, ty_of } = gen.gen_c.gen_c_expr
+{ Dest, block } = gen.gen_c.gen_c_stmt
+{ uses_stored_bounds } = gen.gen_c.gen_c_range
+{ bind_text } = gen.gen_c.gen_c_range
+{ is_res } = gen.gen_c.gen_c_type
+{ RangeImpl, range_impl, range_pass_type } = gen.gen_c.gen_c_range
+{ supplied_bound, take_pass } = gen.gen_c.gen_c_range
+{ array_of, lower_array_walk } = gen.gen_c.gen_c_array
+{ Res, Ok, None, loop } = std.core
+{ spelled_lambda } = gen.gen_c.gen_c_inline
 
 // Lowering.
 

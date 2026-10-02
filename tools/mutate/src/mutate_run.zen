@@ -2,16 +2,16 @@
 // directory, the mutated text written into the copy, the build and test
 // commands run inside it, and the copy removed. The original root is only
 // ever read.
-Alloc, AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Res, Ok = std.core
-Env = std.env
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Res, Ok } = std.core
+{ Env } = std.env
 
 // Survived: every test passed with the mutation in place, so no test
 // distinguishes it from the original. Stillborn: the mutant did not build,
 // which says nothing about the tests.
-Outcome* = Survived | Killed | TimedOut | Stillborn
+Outcome* = { Survived | Killed | TimedOut | Stillborn }
 
 outcome_name* = (o: Outcome) str {
     o.match({
@@ -22,7 +22,7 @@ outcome_name* = (o: Outcome) str {
     })
 }
 
-RunError* = Copy | Write | Spawn | OutOfMemory
+RunError* = { Copy | Write | Spawn | OutOfMemory }
 
 run_message* = (e: RunError) str {
     e.match({

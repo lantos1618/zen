@@ -3,6 +3,6 @@
 // overlay, not these bytes, is what the server checks. If the overlay
 // is ever ignored, no diagnostic means no quickfix and `main.expected`
 // goes red on the first row.
-Point = app.shape
+{ Point } = app.shape
 
 near = (p: Point) i32 { p.x }

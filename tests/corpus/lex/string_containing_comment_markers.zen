@@ -1,6 +1,6 @@
-Res, Ok = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
 // a string is one TOKEN, so nothing inside it is read as syntax.
 // as a `seq` rule the grammar let `extras` -- whitespace and both

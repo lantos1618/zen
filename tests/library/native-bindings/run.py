@@ -42,7 +42,7 @@ def main():
                     'mutation': 'immutable',
                     'namespace-construction': 'construction names a constant',
                     'invalid-record-name': 'invalid native record',
-                    'record-union': 'invalid native record',
+                    'record-union': '`|` joins an enum',
                     'record-function': 'native records require',
                     'record-generic': 'cannot be generic',
                 }[fixture.stem]

@@ -14,12 +14,12 @@
 // close with the payload -- not fall into the error path because the
 // tag was read once and never cleared.
 
-Res, Ok, Err = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Err } = std.core
+{ Env } = std.env
+{ println } = std.io
 
-Inner = | InnerBoom
-Outer = | OuterBoom
+Inner = { | InnerBoom }
+Outer = { | OuterBoom }
 Any = Inner | Outer
 
 leaf = (n: i64) Res<i64, Outer> {

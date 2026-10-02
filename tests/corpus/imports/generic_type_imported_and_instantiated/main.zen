@@ -15,11 +15,11 @@
 // type instead of the file that DECLARES it -> two distinct C structs
 // for one Box<i32>, and cc rejects the program.
 
-Box = box.box
-unwrap = box.box
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Box } = box.box
+{ unwrap } = box.box
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     a = Box<i32>(value: 9);

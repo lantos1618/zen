@@ -1,10 +1,10 @@
 // Array element types participate in generic inference and substitution just
 // like named-container arguments. The return type must settle to i64 here.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 first = <T>(values: [T, 2]) T { values[0] }
 

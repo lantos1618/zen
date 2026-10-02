@@ -2,13 +2,13 @@
 // is planned, and a written field the planner cannot evaluate is an error
 // that names the field.
 
-Build = zen.zen_build
-plan = zen.zen_build_plan
-Target, Os, Arch, Abi, Mode, Exe = std.build
-Res, Ok = std.core
-Alloc, AllocError = std.mem
-Env = std.env
-println = std.io
+{ Build } = zen.zen_build
+{ plan } = zen.zen_build_plan
+{ Target, Os, Arch, Abi, Mode, Exe } = std.build
+{ Res, Ok } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 show = (
     env    : Env,

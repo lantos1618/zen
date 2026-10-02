@@ -11,23 +11,23 @@
 // pointer to the caller's copy, and an aggregate result is written through a
 // hidden pointer passed in %rdi, as System V does for MEMORY-class values.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Res, Ok, None, loop, Range = std.core
-Vec = std.collections
-Program, Func, BasicBlock, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
-Scalar, Layout, Op, TrapKind, Fault = gen.gen_ir
-Convert, Load, Store, SysCall, Start, Stream = gen.gen_ir
-width, signed, word, trap_message = gen.gen_ir
-Span = std.source
-Target = gen.gen_asm
-Sys, linux_x86_64, constant_value, Platform = gen.gen_sys
-LINUX_X86_64_EXIT, LINUX_X86_64_ARCH_PRCTL = gen.gen_sys
-Update, Compare, IndirectCall = gen.gen_ir
-Plan, Home, Pool, Address, Modes, plan = gen.gen_asm_regalloc
-prepare = gen.gen_asm_prepare
-peephole, Dialect = gen.gen_asm_peephole
-NONE, SMALL_AGGREGATE, log2, low_mask, modulo, bit_width, scale_of = gen.gen_asm_flow
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Res, Ok, None, loop, Range } = std.core
+{ Vec } = std.collections
+{ Program, Func, BasicBlock, Instruction, Terminator, Unary, Binary, Invocation, Print } = gen.gen_ir
+{ Scalar, Layout, Op, TrapKind, Fault } = gen.gen_ir
+{ Convert, Load, Store, SysCall, Start, Stream } = gen.gen_ir
+{ width, signed, word, trap_message } = gen.gen_ir
+{ Span } = std.source
+{ Target } = gen.gen_asm
+{ Sys, linux_x86_64, constant_value, Platform } = gen.gen_sys
+{ LINUX_X86_64_EXIT, LINUX_X86_64_ARCH_PRCTL } = gen.gen_sys
+{ Update, Compare, IndirectCall } = gen.gen_ir
+{ Plan, Home, Pool, Address, Modes, plan } = gen.gen_asm_regalloc
+{ prepare } = gen.gen_asm_prepare
+{ peephole, Dialect } = gen.gen_asm_peephole
+{ NONE, SMALL_AGGREGATE, log2, low_mask, modulo, bit_width, scale_of } = gen.gen_asm_flow
 
 // This target fixes the instruction set, object dialect, OS and calling ABI:
 // x86-64, ELF with GNU assembler syntax, Linux system calls, System V calls.
@@ -2037,7 +2037,7 @@ system_register = (index: usize) str {
 
 // An instruction operand: a hardware register (by encoding), a frame slot
 // (its distance below %rbp), an immediate, or the address of a frame slot.
-Operand = Reg(usize) | Mem(usize) | Imm(i64) | Addr(usize)
+Operand = { Reg: usize | Mem: usize | Imm: i64 | Addr: usize }
 
 is_immediate = (
     value : Operand

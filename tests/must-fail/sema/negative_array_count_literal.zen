@@ -2,10 +2,10 @@
 // negative. The diagnostic belongs to the count expression itself; the
 // unknown recovery type prevents the initializer and index from cascading.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     values: [u8, -1] = [1, 2];

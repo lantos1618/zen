@@ -1,7 +1,7 @@
-CfgError, read_cfg = cfg.cfg
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ CfgError, read_cfg } = cfg.cfg
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, CfgError> {
     println("{}", read_cfg("7").try());

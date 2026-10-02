@@ -7,9 +7,9 @@
 // double-drops. ids are per-pass so a double free cannot masquerade as
 // correct output.
 
-Res, Ok, Drop, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Noisy = {
     env: Env,

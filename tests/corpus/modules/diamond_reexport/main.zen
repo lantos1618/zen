@@ -7,11 +7,11 @@
 // cannot answer, and a Token that is two types cannot be passed down
 // both -- while the numbers, 5 and 21 in and 521 and 42 out, come from
 // no field a compiler could have zeroed or swapped.
-Token, token_id, token_tagged = alpha.alpha
-Token, token_twice = beta.beta
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Token, token_id, token_tagged } = alpha.alpha
+{ Token, token_twice } = beta.beta
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     t = Token(id: 21, tag: 5);

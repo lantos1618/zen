@@ -1,6 +1,6 @@
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 // A local function has no storage: it is called by name and inlined, and
 // is never copied into another binding.

@@ -11,11 +11,11 @@
 //
 // position: the `vararg` in the parameter list.
 
-Res, Ok = std.core
-AllocError = std.mem
-vararg = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ vararg } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 notlast = (v: vararg<i32>, tail: i32) i32 { tail }
 

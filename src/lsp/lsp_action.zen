@@ -1,17 +1,17 @@
 // Writes auto-import quick fixes for undefined and unimported names.
 
-str, String = std.text
-Vec = std.collections
-Alloc, AllocError = std.mem
-Res, Ok, Range = std.core
-Pos, Span = std.source
-module_index_of = std.ast.ast_named
-Checker = sema.sema_check
-Diag = sema.sema_diag
-Def, module_display = sema.sema_def
-ModuleTable = sema.sema_def
-source_position, lsp_position, Position, TextRange = lsp.lsp_pos
-written, obj, arr, Nest, to_json = std.json
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Alloc, AllocError } = std.mem
+{ Res, Ok, Range } = std.core
+{ Pos, Span } = std.source
+{ module_index_of } = std.ast.ast_named
+{ Checker } = sema.sema_check
+{ Diag } = sema.sema_diag
+{ Def, module_display } = sema.sema_def
+{ ModuleTable } = sema.sema_def
+{ source_position, lsp_position, Position, TextRange } = lsp.lsp_pos
+{ written, obj, arr, Nest, to_json } = std.json
 
 Action = {
     name: str,
@@ -19,7 +19,7 @@ Action = {
 
     write = (self: @Self, t: Alloc, at: Position, uri: str, list :: Nest,
              out :: String) Res<(), AllocError> {
-        stmt  ::= t.String("{} = {}", self.name, self.module).try();
+        stmt  ::= t.String("{{ {} }} = {}", self.name, self.module).try();
         title ::= t.String("Import {}", stmt.view()).try();
         stmt.add("\n").try();
 

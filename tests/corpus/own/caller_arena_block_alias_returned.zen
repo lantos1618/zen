@@ -1,7 +1,7 @@
-Res, Ok = std.core
-Alloc, AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 word = (alloc: Alloc, letters: str) Res<str, AllocError> {
     buf ::= alloc.String().try();

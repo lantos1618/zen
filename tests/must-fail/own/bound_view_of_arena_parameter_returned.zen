@@ -1,7 +1,7 @@
-Res, Ok = std.core
-AllocError, Arena = std.mem
-Map = std.collections
-Env = std.env
+{ Res, Ok } = std.core
+{ AllocError, Arena } = std.mem
+{ Map } = std.collections
+{ Env } = std.env
 
 // An `Arena` taken by value is this body's copy; the map made from it
 // keeps that copy's address.

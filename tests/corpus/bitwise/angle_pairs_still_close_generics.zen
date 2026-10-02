@@ -1,5 +1,5 @@
-Res, Ok = std.core
-println = std.io
+{ Res, Ok } = std.core
+{ println } = std.io
 
 // `<<` and `>>` are two adjacent angle tokens, so nested type arguments keep
 // closing with `>>` while expressions read the same pair as a shift.

@@ -2,9 +2,9 @@
 // the parser alone decides — which tokens are trivia, and that `_` is an
 // identifier until a pattern or type position reads it as a wildcard.
 
-Token*, TokenKind*, Source*, Lexed* = std.lex.lex
+{ Token*, TokenKind*, Source*, Lexed* } = std.lex.lex
 
-Pos, Span = std.lex.lex
+{ Pos, Span } = std.lex.lex
 
 // Synthetic Eof for an empty token stream.
 empty_eof* = () Token {

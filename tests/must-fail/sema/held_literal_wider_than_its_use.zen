@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 // A binding of a number with no written type holds that number, and each use
 // checks it as if the number were written there. 3000000000 does not fit the

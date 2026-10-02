@@ -3,15 +3,15 @@
 // Recoverable faults may still emit a token; unterminated or unrepresentable
 // literals do not.
 
-Lexer = std.lex.lex_state
-Pos, TokenKind = std.lex.lex_token
-LexFault = std.lex.lex_diag
-is_escape, escape_value = std.lex.lex_byte
-Alloc, AllocError = std.mem
-str, String = std.text
-Res, Ok, loop, Range = std.core
+{ Lexer } = std.lex.lex_state
+{ Pos, TokenKind } = std.lex.lex_token
+{ LexFault } = std.lex.lex_diag
+{ is_escape, escape_value } = std.lex.lex_byte
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Res, Ok, loop, Range } = std.core
 
-LiteralError* = OutOfMemory | IncompleteEscape(usize) | UnknownEscape(usize)
+LiteralError* = { OutOfMemory | IncompleteEscape: usize | UnknownEscape: usize }
 
 // Byte length of an unquoted, lexer-validated literal body or format fragment.
 // Each Zen escape denotes one byte; counting needs no decoded allocation.
@@ -100,7 +100,7 @@ BlockEnd = { at: Pos, indent: str }
 
 // How the search for a closing `"""` ended. `Reported` means a fault inside
 // the literal was already diagnosed.
-Closing = Closed(BlockEnd) | Reported | Unclosed
+Closing = { Closed: BlockEnd | Reported | Unclosed }
 
 // A multi-line string: `"""`, a line break, the lines of text, and a closing
 // `"""` as the first text on its own line (DESIGN.md, "Multi-line strings").

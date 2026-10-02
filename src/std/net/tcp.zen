@@ -1,13 +1,13 @@
 // TCP policy over the portable owned socket handle.
 
-Alloc = std.mem
-str = std.text
-Res, Ok, Err = std.core
-Drop = std.core
-Vec = std.collections
-Socket, SocketFault = std.net.socket
+{ Alloc } = std.mem
+{ str } = std.text
+{ Res, Ok, Err } = std.core
+{ Drop } = std.core
+{ Vec } = std.collections
+{ Socket, SocketFault } = std.net.socket
 
-TcpError* = ConnectFailed | WriteFailed | ReadFailed | Closed
+TcpError* = { ConnectFailed | WriteFailed | ReadFailed | Closed }
 
 tcp_error = (fault: SocketFault) TcpError {
     fault.match({

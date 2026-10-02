@@ -1,7 +1,7 @@
-Res, Ok = std.core
-OutOfBounds = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ OutOfBounds } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 // tests/must-fail/traps/literal_too_large_in_an_array_element.zen
 // AN ELEMENT IS A LITERAL'S POSITION TOO. `[u8, 3]` is what says the
@@ -12,7 +12,7 @@ println = std.io
 // The written form `[u8, 3](1, 2, 300)` has been checked since
 // `fixed_array_type` landed; this is the form that takes its type from
 // the position instead of from beside the values.
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 main = (env: Env) Res<i32, Error> {
     xs: [u8, 3] = [1, 2, 300];

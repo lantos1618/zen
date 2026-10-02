@@ -2,15 +2,15 @@
 // function is the native meaning of one bodiless Env, Fs, Stdin or Clock
 // member; the C backend supplies its own.
 
-Alloc, AllocError, Ptr = std.mem
-str, String = std.text
-Vec = std.collections
-FsError = std.env
-Res, Ok, Err, Range, IoError, Duration = std.core
-read_file, write_file, env_var, arg, argc, Pages = std.sys
-monotonic_ns, realtime_ns, c_path, openat, close, at_fdcwd, o_rdonly, o_cloexec = std.sys
-o_directory, o_rdwr, o_creat, flock, eagain = std.sys
-sleep_ns = std.sys.sys_thread
+{ Alloc, AllocError, Ptr } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ FsError } = std.env
+{ Res, Ok, Err, Range, IoError, Duration } = std.core
+{ read_file, write_file, env_var, arg, argc, Pages } = std.sys
+{ monotonic_ns, realtime_ns, c_path, openat, close, at_fdcwd, o_rdonly, o_cloexec } = std.sys
+{ o_directory, o_rdwr, o_creat, flock, eagain } = std.sys
+{ sleep_ns } = std.sys.sys_thread
 
 // A kernel -errno as the Fs error a caller can act on.
 fs_error* = (errno: i64) FsError {

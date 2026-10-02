@@ -1,0 +1,14 @@
+// `x = a.b.c` binds the module `a.b.c` when the module `a.b` exports no
+// item `c`: a project module, a std module, and one re-exported by lib.
+mem = std.mem
+shape = app.shape
+{ geo } = lib
+
+main = (env: Env) Res<i32, IoError> {
+    b = shape.Bag(n: 4);
+    println("{}", shape.area(b));
+    println("{}", geo.area(geo.Bag(n: 5)));
+    p = mem.null_ptr<u8>();
+    println("{}", p.is_null());
+    Ok(0);
+}

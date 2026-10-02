@@ -2,9 +2,9 @@
 // alias is not an export: an unstarred TYPE has to be as invisible as an
 // unstarred function is.
 
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 zz = vec
 

@@ -12,9 +12,9 @@
 // involved at all -- and a module is not a callable value under any
 // export status, starred or not.
 
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 reseat = vec
 

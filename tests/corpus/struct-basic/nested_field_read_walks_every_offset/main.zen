@@ -15,10 +15,10 @@
 // emitted as the sibling's offset by accident, the two lines would
 // print the same number.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Inner = {
     value :: i64 = 5,

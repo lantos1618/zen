@@ -4,4 +4,4 @@ ArrayLit = {
     n*: i32,
 }
 
-Expr = Unit | Array(ArrayLit)
+Expr = { Unit | Array: ArrayLit }

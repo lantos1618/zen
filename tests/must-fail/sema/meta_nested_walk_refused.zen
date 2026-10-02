@@ -7,9 +7,9 @@
 // position: the inner walk's `@meta` — the sentence that is refused,
 // not the body that happens to contain it.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
 One = { only: i64 }
 

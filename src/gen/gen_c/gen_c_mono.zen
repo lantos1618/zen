@@ -3,20 +3,21 @@
 // reading written types, and rejects open types before mangling. Inst entries
 // remain in declaration order for deterministic names.
 
-Decl, Enum, Struct, TParam, ExprId, Call, Function = std.ast
-AllocError = std.mem
-Vec = std.collections
-str = std.text
-Res, Ok, None, Range = std.core
-DeclId = sema.sema_id
-TyId, TyNamed, TyRes, literal_default = sema.sema_ty
-Def, decl_at = sema.sema_def
-Checker, Ctx = sema.sema_check
-Inst, subst, has_var, inst_of_named, owner_of = sema.sema_inst
-tparam_vars = sema.sema_inst
-self_ctx = sema.sema_member
-CBackend = gen.gen_c.gen_c_state
-ty_of = gen.gen_c.gen_c_expr
+{ Decl, Enum, Struct, TParam, ExprId, Call, Function } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Res, Ok, None, Range } = std.core
+{ DeclId } = sema.sema_id
+{ TyId, TyNamed, TyRes, literal_default } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ Checker, Ctx } = sema.sema_check
+{ Inst, subst, has_var, inst_of_named, owner_of } = sema.sema_inst
+{ tparam_vars } = sema.sema_inst
+{ self_ctx } = sema.sema_member
+{ CBackend } = gen.gen_c.gen_c_state
+{ ty_of } = gen.gen_c.gen_c_expr
+{ param_type, type_from_ast } = sema.sema_denote
 
 // The type a declaration names, applied to `args`.
 intern_named* = (c :: Checker, d: Def, args: Vec<TyId>)

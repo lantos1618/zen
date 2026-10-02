@@ -16,11 +16,11 @@
 // free enum never carrying its tag across the alias — print the one line
 // the test already expected. Four lines, four distinct answers, and no
 // two of them are the same bytes.
-Marked, label = alpha.alpha
-Ring, tag = beta.beta
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Marked, label } = alpha.alpha
+{ Ring, tag } = beta.beta
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     m: Marked = Marked.Small;

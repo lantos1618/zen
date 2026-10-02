@@ -43,7 +43,7 @@ indirect cause: it is why one type's operations sit in several files.
 - **An unannotated `Res<T>` binder inside a loop lambda can lose `T` for
   intrinsic conversions.** `self[i].hex_value().match({ Ok(d) => d.to_u64() })`
   inside `Range.loop` fails with "codegen cannot resolve `to_u64`"; binding
-  `digit: Res<u8> = ..` first resolves it (`text_num.zen:parse_u64_radix`).
+  `digit: Res<u8> = ..` first resolves it (`str.parse_u64_radix` in `text_str.zen`).
   Sema reports nothing; only codegen does.
 
 ## The four issue classes, with what the lexer showed
@@ -113,7 +113,7 @@ the best comments in the module; keep those, delete ones that echo the name.
 ### 4. Local redefinitions of std, and uncollated twins
 
 Lexer: no byte predicate was redefined (all resolve to `std.core.byte`), but
-the u64 accumulator duplicated `text_num.parse_usize`'s overflow loop (now
+the u64 accumulator duplicated `str.parse_usize`'s overflow loop (now
 `str.parse_u64` / `parse_u64_radix` in `std.text`), `keyword_of` hand-rolled
 `Range.find`, and `since` duplicated `text_of`. No twin disagreed with its
 owner — check this explicitly; a disagreeing twin is a bug, not a cleanup.

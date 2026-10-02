@@ -2,22 +2,26 @@
 // Distinct field and variant values make layout or default-value regressions
 // observable, including Exe.out's default None.
 
-Builder, Module, Function = std.build
-Budget, Package, Dep, Exe, Os, Arch, BuildFault, BuildError = std.build
-Vec = std.collections
-Res, Ok, Path = std.core
-Env = std.env
-println = std.io
+{ Builder, Module, Function } = std.build
+{ Budget, Package, Dep, Exe, Os, Arch, BuildFault, BuildError } = std.build
+{ Vec } = std.collections
+{ Res, Ok, Path } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, BuildError> {
     alloc ::= env.mem.alloc();
 
+    libs ::= alloc.Vec<str>();
+    libs.add("sodium").try();
     p = Package(
         url: "https://example.test/json",
-        version: "1.4.2",
-        hash: "b7c9"
+        rev: "0123456789abcdef0123456789abcdef01234567",
+        src: Path("src/json.zen"),
+        libs: libs,
+        paths: alloc.Vec<str>()
     );
-    println("{} {} {}", p.url, p.version, p.hash);
+    println("{} {} {} {}", p.url, p.rev, p.src.text, p.libs.len);
 
     bud = Budget(name: "parse", ns_op: 125000, allocs_op: 3, bytes_op: 4096);
     println("{} {} {} {}", bud.name, bud.ns_op, bud.allocs_op, bud.bytes_op);

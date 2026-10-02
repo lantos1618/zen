@@ -14,10 +14,10 @@
 // passes before it breaks — a break wired to fire unconditionally is
 // indistinguishable from a broken inner loop that runs zero times.
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     Range(0, 3).loop((h_outer, outer) {

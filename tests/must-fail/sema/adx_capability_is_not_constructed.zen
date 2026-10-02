@@ -1,4 +1,4 @@
-Adx = std.simd
+{ Adx } = std.simd
 main = () {
     forged = Adx(proof: 1);
 }

@@ -1,7 +1,7 @@
 // Level-triggered OS readiness, independent of HTTP and actor scheduling.
 // A single owner calls wait/change; watched descriptors are borrowed.
-Alloc, Ptr, null_ptr = std.mem
-Res, Ok, Err, Drop = std.core
+{ Alloc, Ptr, null_ptr } = std.mem
+{ Res, Ok, Err, Drop } = std.core
 Native = c.bind("zen_readiness.h", {
     zen_ready_words = (capacity: i32) usize
     zen_ready_open = () i32
@@ -13,9 +13,9 @@ Native = c.bind("zen_readiness.h", {
     zen_ready_interrupted = (error: i32) i32
 })
 Io = c.bind("unistd.h", { close = (fd: i32) i32 })
-ReadinessError* = Invalid | Allocation | Closed | System(i32)
-Interest* = Read | Write
-WaitResult* = Ready(usize) | Interrupted
+ReadinessError* = { Invalid | Allocation | Closed | System: i32 }
+Interest* = { Read | Write }
+WaitResult* = { Ready: usize | Interrupted }
 
 Readiness* = {
     alloc: Alloc,

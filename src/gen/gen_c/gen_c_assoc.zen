@@ -2,31 +2,31 @@
 // take their receiver as an explicit argument. Both calling forms use the
 // same qualified symbols and queued definitions.
 
-ExprId, Member = std.ast
-Function, Access, Call = std.ast
-AllocError = std.mem
-Vec = std.collections
-Res, Ok, None, Range = std.core
-str, String = std.text
-TyId = sema.sema_ty
-Ctx = sema.sema_check
-Actual, sig_fits = sema.sema_cand
-Inst = sema.sema_inst
-Def, decl_at = sema.sema_def
-module_named_by = sema.sema_module
-sym_fn = gen.gen_name
-CBackend = gen.gen_c.gen_c_state
-unsupported = gen.gen_c.gen_c_report
-any_open, recv_inst, inst_open = gen.gen_c.gen_c_mono
-signature_of, plain, write_extern, write_call_args = gen.gen_c.gen_c_call
-write_arg_at = gen.gen_c.gen_c_arg
-ctype = gen.gen_c.gen_c_type
-want_of = gen.gen_c.gen_c_expr
-holds = gen.gen_c.gen_c_expr
-construct = gen.gen_c.gen_c_build
-Site, site_of, member_at, method_sig, call_actuals = gen.gen_c.gen_c_member
-member_symbol = gen.gen_c.gen_c_member
-by_arity, kept_or_arity, has_body, impl_member_at = gen.gen_c.gen_c_impl
+{ ExprId, Member } = std.ast
+{ Function, Access, Call } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Res, Ok, None, Range } = std.core
+{ str, String } = std.text
+{ TyId } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ Actual, sig_fits } = sema.sema_cand
+{ Inst } = sema.sema_inst
+{ Def, decl_at } = sema.sema_def
+{ module_named_by } = sema.sema_module
+{ sym_fn } = gen.gen_name
+{ CBackend } = gen.gen_c.gen_c_state
+{ unsupported } = gen.gen_c.gen_c_report
+{ any_open, recv_inst, inst_open } = gen.gen_c.gen_c_mono
+{ signature_of, plain, write_extern, write_call_args } = gen.gen_c.gen_c_call
+{ write_arg_at } = gen.gen_c.gen_c_arg
+{ ctype } = gen.gen_c.gen_c_type
+{ want_of } = gen.gen_c.gen_c_expr
+{ holds } = gen.gen_c.gen_c_expr
+{ construct } = gen.gen_c.gen_c_build
+{ Site, site_of, member_at, method_sig, call_actuals } = gen.gen_c.gen_c_member
+{ member_symbol } = gen.gen_c.gen_c_member
+{ by_arity, kept_or_arity, has_body, impl_member_at } = gen.gen_c.gen_c_impl
 
 // Lower a call whose base was resolved as a type or module. `false` leaves
 // non-associated members to the caller without producing a second diagnostic.

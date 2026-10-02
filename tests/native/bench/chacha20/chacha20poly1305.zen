@@ -2,9 +2,9 @@
 // No C crypto calls. Fixed rounds, limb arithmetic and full-tag comparison;
 // generated code and side-channel behavior have not been independently audited.
 // Scratch retains key material; callers must use a vetted erasure mechanism.
-Ptr = std.mem
-Range = std.core
-bit_xor, bit_and, rotate_right, to_u32, to_u64, to_usize, to_u8 = std.core.num
+{ Ptr } = std.mem
+{ Range } = std.core
+{ bit_xor, bit_and, rotate_right, to_u32, to_u64, to_usize, to_u8 } = std.core.num
 
 // Key spans 32 readable bytes; nonce spans 12. Never reuse a nonce with a key.
 // Scratch spans >=40 aligned u64 words and cannot overlap any other buffer.

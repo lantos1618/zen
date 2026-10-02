@@ -11,12 +11,12 @@
 // sites; the lex one the two in `zen fmt`, and it carries a byte OFFSET
 // that must NOT print -- an offset slices, it never speaks -- so the lex
 // half drives the REAL lexer over a real stray byte.
-scan, Source, message = std.lex.lex
-Pos = std.source
-Env, Console = std.env
-Res, Ok = std.core
-Alloc, AllocError = std.mem
-println = std.io
+{ scan, Source, message } = std.lex.lex
+{ Pos } = std.source
+{ Env, Console } = std.env
+{ Res, Ok } = std.core
+{ Alloc, AllocError } = std.mem
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

@@ -1,6 +1,6 @@
-Vec*, OutOfBounds* = std.collections.collections_vec
-Map* = std.collections.collections_map
+{ Vec*, OutOfBounds* } = std.collections.collections_vec
+{ Map* } = std.collections.collections_map
 
-vararg* = std.collections.collections_vararg
+{ vararg* } = std.collections.collections_vararg
 
-sort*, Ordered* = std.collections.collections_sort
+{ sort*, Ordered* } = std.collections.collections_sort

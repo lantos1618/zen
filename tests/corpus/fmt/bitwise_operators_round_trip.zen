@@ -2,12 +2,12 @@
 // requires around them, the adjacent angles of `<<` and `>>`, and the bars
 // of enums declared beside bitwise-or bindings.
 
-Alloc, AllocError = std.mem
-Res, Ok, Range = std.core
-scan, Source = std.lex.lex
-render = fmt.fmt
-Env = std.env
-println = std.io
+{ Alloc, AllocError } = std.mem
+{ Res, Ok, Range } = std.core
+{ scan, Source } = std.lex.lex
+{ render } = fmt.fmt
+{ Env } = std.env
+{ println } = std.io
 
 SOURCE: str = "LOW: u8  = 0x0F\nHIGH: u8 = 0xF0\nMASK: u8 = LOW | HIGH\n\nKind = Low | High\n\nflags = (word: u32, count: usize) Res<Res<u32>> {\n    Local = First | Second\n    mask       = word & 0xFF;\n    set        = (word & mask) != 0;\n    moved: u32 = (word << count) | (word >> 1);\n    Ok(Ok(~moved ^ mask))\n}\n"
 

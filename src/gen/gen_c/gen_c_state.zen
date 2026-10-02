@@ -2,24 +2,24 @@
 // stable insertion data, then sort by mangled name before output. Per-function
 // locals and temporary counters are reset at each body boundary.
 
-Ast, ExprId = std.ast
-Span = std.source
-str, String = std.text
-Alloc, AllocError = std.mem
-Vec, Map = std.collections
-Res, Ok, Err, None, Range = std.core
-DeclId = sema.sema_id
-TyId, Types = sema.sema_ty
-World, Def = sema.sema_def
-Checker = sema.sema_check
-ArmTrace = sema.sema_arm_trace
-Inst = sema.sema_inst
-CallEffects = gen.gen_c.gen_c_effect
-LoopSyntax = gen.gen_c.gen_c_shape
-Emit = gen.gen_emit
-GenDiag, GenFault = gen.gen_diag
-sym_gen = gen.gen_name
-LocalSlot, Closure, InlineReturn, LoopFrame, DropEntry, BlockFrame = gen.gen_c.gen_c_frame
+{ Ast, ExprId } = std.ast
+{ Span } = std.source
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ Res, Ok, Err, None, Range } = std.core
+{ DeclId } = sema.sema_id
+{ TyId, Types } = sema.sema_ty
+{ World, Def } = sema.sema_def
+{ Checker, truncate } = sema.sema_check
+{ ArmTrace } = sema.sema_arm_trace
+{ Inst } = sema.sema_inst
+{ CallEffects } = gen.gen_c.gen_c_effect
+{ LoopSyntax } = gen.gen_c.gen_c_shape
+{ Emit } = gen.gen_emit
+{ GenDiag, GenFault } = gen.gen_diag
+{ sym_gen } = gen.gen_name
+{ LocalSlot, Closure, InlineReturn, LoopFrame, DropEntry, BlockFrame } = gen.gen_c.gen_c_frame
 
 // A member queue entry carries its full receiver-inclusive signature because
 // neither a member name nor its arity uniquely identifies an overload.
@@ -34,7 +34,7 @@ MethodRef* = {
 
 // Real declarations have source positions; generated adapters do not. Keep
 // that distinction rather than guessing an origin from a mangled name.
-FnOrigin* = Generated | Source(Span)
+FnOrigin* = { Generated | Source: Span }
 
 // Saved while a lifted closure lowers with its own cleanup depth.
 Cleanup* = {

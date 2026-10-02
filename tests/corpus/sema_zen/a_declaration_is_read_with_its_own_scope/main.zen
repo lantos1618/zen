@@ -26,28 +26,28 @@
 // test of sema, and routing it through a parser would make a parser bug
 // read as a sema bug.
 
-Checker, Ctx = sema.sema_check
-World, Def = sema.sema_def
-check_impl = sema.sema_bound
-DeclId, ImplId = sema.sema_id
-Found, members_of = sema.sema_member
-TyId, Types = sema.sema_ty
-type_of = sema.sema_type
-type_from_ast = sema.sema_denote
-Ast = std.ast.ast_arena
-Expr, ExprKind, Name, Literal, LiteralKind, Access = std.ast.ast_node
-Decl, DeclKind, Struct, Const, Function, Form, Module = std.ast.ast_node
-Member, MemberKind, Field, Param, TParam, Impl = std.ast.ast_node
-Type, TypeKind, Named, Block, Stmt = std.ast.ast_node
-Ident, no_trivia = std.ast.ast_span
-Pos, Span = std.source
-ExprId, TypeId, BlockId = std.ast.ast_id
-Alloc, AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Res, Ok, None = std.core
-Env = std.env
-println = std.io
+{ Checker, Ctx } = sema.sema_check
+{ World, Def } = sema.sema_def
+{ check_impl } = sema.sema_bound
+{ DeclId, ImplId } = sema.sema_id
+{ Found, members_of } = sema.sema_member
+{ TyId, Types } = sema.sema_ty
+{ type_of } = sema.sema_type
+{ type_from_ast } = sema.sema_denote
+{ Ast } = std.ast.ast_arena
+{ Expr, ExprKind, Name, Literal, LiteralKind, Access } = std.ast.ast_node
+{ Decl, DeclKind, Struct, Const, Function, Form, Module } = std.ast.ast_node
+{ Member, MemberKind, Field, Param, TParam, Impl } = std.ast.ast_node
+{ Type, TypeKind, Named, Block, Stmt } = std.ast.ast_node
+{ Ident, no_trivia } = std.ast.ast_span
+{ Pos, Span } = std.source
+{ ExprId, TypeId, BlockId } = std.ast.ast_id
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Res, Ok, None } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 at = () Span {
     Span(file: "in.zen", start: Pos(line: 1, col: 1), end: Pos(line: 1, col: 2))

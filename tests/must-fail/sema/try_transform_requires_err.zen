@@ -1,7 +1,7 @@
-Res, None = std.core
-Env = std.env
+{ Res, None } = std.core
+{ Env } = std.env
 
-TargetError = | Changed
+TargetError = { | Changed }
 
 maybe = () Res<i32> { None }
 

@@ -3,10 +3,10 @@
 // in it. Naming the payload and never reading it left the second half
 // unobserved -- a compiler zeroing every payload printed the same three
 // lines -- so every arm reads what it bound and prints it.
-Pos, Node = shape.shape
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Pos, Node } = shape.shape
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 show = (n: Node) {
     n.match({

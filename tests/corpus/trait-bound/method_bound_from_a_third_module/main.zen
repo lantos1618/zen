@@ -8,12 +8,12 @@
 // 12*2+6 = 30 and 0*2+6 = 6: line 2 is the zero-receiver that proves
 // the +3 came from Wheel's impl and not from anywhere else.
 
-Meter = meter.meter
-Wheel = wheel.wheel
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Meter } = meter.meter
+{ Wheel } = wheel.wheel
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 pressure = <T: Meter>(m: T) i32 { m.read() * 2 }
 

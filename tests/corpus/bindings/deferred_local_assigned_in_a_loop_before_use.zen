@@ -2,8 +2,8 @@
 // pass. A local declared before `loop((h) { .. })` and assigned on the path
 // that breaks is assigned after the loop: breaking is the only way out.
 
-loop, Range = std.core
-println = std.io
+{ loop, Range } = std.core
+{ println } = std.io
 
 main = () i32 {
     sum :: i32 = 0;

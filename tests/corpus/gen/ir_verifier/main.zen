@@ -1,13 +1,13 @@
-Program, Func, Scalar, BasicBlock, Terminator, Branch = gen.gen_ir
-Layout, Address, Load, Guards, TagGuard, PayloadRead = gen.gen_ir
-Instruction, Const, Move, Unary, UnaryOp, Binary, Op, Invocation, Print = gen.gen_ir
-verify, message = gen.gen_verify
-nowhere = std.source
-Res, Ok, Err, None = std.core
-Alloc, AllocError, Ptr = std.mem
-Vec = std.collections
-Env = std.env
-println = std.io
+{ Program, Func, Scalar, BasicBlock, Terminator, Branch } = gen.gen_ir
+{ Layout, Address, Load, Guards, TagGuard, PayloadRead } = gen.gen_ir
+{ Instruction, Const, Move, Unary, UnaryOp, Binary, Op, Invocation, Print } = gen.gen_ir
+{ verify, message } = gen.gen_verify
+{ nowhere } = std.source
+{ Res, Ok, Err, None } = std.core
+{ Alloc, AllocError, Ptr } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 Refuse = {}
 Refuse.impl(Alloc, {

@@ -1,8 +1,8 @@
 /* a block comment before the declarations */
-Res, Ok, IoError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // an ordinary line comment
 //no space after the slashes

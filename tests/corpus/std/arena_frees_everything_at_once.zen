@@ -4,10 +4,10 @@
 // allocations, no frees written anywhere, and the values declared
 // after it drop BEFORE it - so their drops still see live memory
 
-Res, Ok, Drop, Range, IoError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Drop, Range, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | IoError
 

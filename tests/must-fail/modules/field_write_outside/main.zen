@@ -1,7 +1,7 @@
-Counter = counter.counter
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Counter } = counter.counter
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     c ::= Counter(total: 0);

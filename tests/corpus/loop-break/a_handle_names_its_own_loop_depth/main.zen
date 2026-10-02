@@ -17,10 +17,10 @@
 // breaks this: resolving a handle to the wrong loop (depth 0, nearest
 // frame, or one shared brk label per function).
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     // (a) the INNER handle: three outer passes, inner dies at 2 each time.

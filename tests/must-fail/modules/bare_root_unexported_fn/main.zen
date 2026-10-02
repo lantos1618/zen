@@ -2,9 +2,9 @@
 // Every other test in this directory writes the dotted form, so all of
 // them exercised one path into the gate and none of them exercised this.
 
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 zz = vec
 

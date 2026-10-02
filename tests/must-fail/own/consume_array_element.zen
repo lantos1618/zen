@@ -6,9 +6,9 @@
 // consume_field_then_use.zen). an element is not, and the difference
 // is the whole point of this file.
 
-Res, Ok, Drop, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Buf = {
     id: i32,

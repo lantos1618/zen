@@ -1,17 +1,17 @@
-Span = std.source
-Decl, Struct, Impl, Member, Field = std.ast
-Function = std.ast
-AllocError = std.mem
-Vec = std.collections
-str = std.text
-Res, Ok, None, Range = std.core
-ImplId = sema.sema_id
-TyId, TyNamed, Prim = sema.sema_ty
-Def, decl_at = sema.sema_def
-Checker, Ctx = sema.sema_check
-Found, member_type, supplied_found = sema.sema_member
-enter_struct_tvars, decl_span = sema.sema_member
-type_from_ast = sema.sema_denote
+{ Span } = std.source
+{ Decl, Struct, Impl, Member, Field } = std.ast
+{ Function } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Res, Ok, None, Range } = std.core
+{ ImplId } = sema.sema_id
+{ TyId, TyNamed, Prim } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ Checker, Ctx } = sema.sema_check
+{ Found, member_type, supplied_found } = sema.sema_member
+{ enter_struct_tvars, enter_type_tvars, decl_span } = sema.sema_member
+{ type_from_ast } = sema.sema_denote
 
 // One impl declared beside its target type, with its bound resolved.
 LocalImpl* = {
@@ -148,6 +148,7 @@ enter_impl_target_tvars = (c :: Checker, target: str, mi: usize)
 enter_decl_tvars = (c :: Checker, d: Decl, mi: usize) Res<(), AllocError> {
     d.kind.match({
         Struct(s) => c.enter_struct_tvars(s, mi),
+        Enum(e)   => c.enter_type_tvars(e.name, e.tparams, mi),
         _         => Ok(()),
     })
 }

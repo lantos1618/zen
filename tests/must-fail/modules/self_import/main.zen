@@ -1,7 +1,7 @@
-start = solo.solo
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ start } = solo.solo
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     println("{}", start());

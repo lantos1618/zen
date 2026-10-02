@@ -3,16 +3,16 @@
 // (gen_ir_feature), checked separately, not a second verifier. Structural
 // checks cover every block. Definite assignment intersects the outgoing facts of reachable
 // predecessors until stable, so a backedge cannot invent an initial value.
-Alloc = std.mem
-Vec = std.collections
-Res, Ok, Err, None, loop, Range = std.core
-str = std.text
-Program, Func, Scalar, Instruction, Terminator, Op, Marshal = gen.gen_ir
-Guards, TagGuard, PayloadRead, Binary = gen.gen_ir
-same, word, integer, signed, float, width = gen.gen_ir
-arity = gen.gen_sys
+{ Alloc } = std.mem
+{ Vec } = std.collections
+{ Res, Ok, Err, None, loop, Range } = std.core
+{ str } = std.text
+{ Program, Func, Scalar, Instruction, Terminator, Op, Marshal } = gen.gen_ir
+{ Guards, TagGuard, PayloadRead, Binary } = gen.gen_ir
+{ same, word, integer, signed, float, width } = gen.gen_ir
+{ arity } = gen.gen_sys
 
-IrReason* = EntryFunction
+IrReason* = { EntryFunction
     | EntryParameters
     | ParameterSlots
     | MissingBlock
@@ -24,7 +24,7 @@ IrReason* = EntryFunction
     | Target
     | Uninitialized
     | Guard
-    | UnguardedPayload
+    | UnguardedPayload }
 
 message* = (reason: IrReason) str {
     reason.match({
@@ -45,7 +45,7 @@ message* = (reason: IrReason) str {
 }
 
 IrFault* = { function*: usize, block*: usize, reason*: IrReason }
-VerifyError* = OutOfMemory | Invalid(IrFault)
+VerifyError* = { OutOfMemory | Invalid: IrFault }
 
 // The most arguments an indirect call may pass: the smallest register
 // argument count among the targets (System V has six).

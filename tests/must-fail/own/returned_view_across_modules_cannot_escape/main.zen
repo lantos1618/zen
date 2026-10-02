@@ -1,8 +1,8 @@
-Input, view = helpers.helpers
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Input, view } = helpers.helpers
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 Box = { text :: str }
 put = (box :: Box, input: Input) { box.text = view(input); }
 bad = (env: Env, box :: Box) Res<(), AllocError> {

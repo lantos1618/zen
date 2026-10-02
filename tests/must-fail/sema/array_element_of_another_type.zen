@@ -12,10 +12,10 @@
 // The interesting case is the one where the minted type is already
 // right and only the later element disagrees.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     v: i16 = i16.MAX;

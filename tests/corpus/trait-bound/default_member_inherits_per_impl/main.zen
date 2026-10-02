@@ -9,10 +9,10 @@
 // were broken: 3 is "hot", 5 is "plain", and no plausible mix-up of the
 // two bodies produces that pair in this order.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Grade = {
     heat* = (self: @Self) i32

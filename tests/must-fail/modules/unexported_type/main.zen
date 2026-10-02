@@ -1,7 +1,7 @@
-Map, Entry = map.map
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Map, Entry } = map.map
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     m ::= Map(count: 0);

@@ -6,15 +6,15 @@
 // every error and the arms below it were dead. Code generation records each
 // test as it emits it, and the checker compares the recorded shape with the
 // pattern using the same usefulness engine that proves arms reachable.
-Span, PatternId = std.ast
-Alloc, AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-TyId = sema.sema_ty
-Checker, Ctx = sema.sema_check
-Pats, Pat, quiet_pats, norm_pattern, covers, checkable = sema.sema_match
-ctor_pat, sub_pat, lit_pat = sema.sema_match
-Res, Ok, None = std.core
+{ Span, PatternId } = std.ast
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ TyId } = sema.sema_ty
+{ Checker, Ctx } = sema.sema_check
+{ Pats, Pat, quiet_pats, norm_pattern, covers, checkable } = sema.sema_match
+{ ctor_pat, sub_pat, lit_pat } = sema.sema_match
+{ Res, Ok, None } = std.core
 
 // One emitted test: a tag or literal comparison at `slot`. A tag test's
 // payload is tested, if at all, at `child`. Slot 0 is the scrutinee.

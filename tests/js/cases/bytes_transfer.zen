@@ -3,11 +3,11 @@
 // ArrayBuffer or typed array into the heap in one call. Also: the heap
 // growing between transfers keeps Zen's bytes and detaches views that
 // JavaScript kept, rather than leaving them reading moved memory.
-Ref, Bytes, copy = std.js
-AllocError, Ptr, null_ptr = std.mem
-Res, Ok, Range = std.core
-Env = std.env
-println = std.io
+{ Ref, Bytes, copy } = std.js
+{ AllocError, Ptr, null_ptr } = std.mem
+{ Res, Ok, Range } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Typed = js.bind("Uint8Array", {
     from* = (source: Bytes) Ref

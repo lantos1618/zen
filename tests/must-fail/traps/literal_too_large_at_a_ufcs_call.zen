@@ -1,7 +1,7 @@
-Res, Ok = std.core
-OutOfBounds = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ OutOfBounds } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 // tests/must-fail/traps/literal_too_large_at_a_ufcs_call.zen
 // the SAME rule as literal_too_large_at_a_call, written with a dot.
@@ -22,7 +22,7 @@ println = std.io
 // the bootstrapper rejected it. A divergence no differential run could
 // find, because it takes a must-fail test to notice that one compiler
 // said nothing.
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 Box = { v: i32 }
 

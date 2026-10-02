@@ -11,10 +11,10 @@
 // What it does not have is an `impl(Sink, ..)`, and that is the whole
 // difference between the two files.
 
-Res, Ok = std.core
-Alloc, AllocError = std.mem
-String = std.text
-Env = std.env
+{ Res, Ok } = std.core
+{ Alloc, AllocError } = std.mem
+{ String } = std.text
+{ Env } = std.env
 
 Log = {
     text :: String,

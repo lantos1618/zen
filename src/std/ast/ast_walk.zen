@@ -1,16 +1,16 @@
 // Structural traversal follows every child edge, including expressions in
 // types and defaults. Shared arena nodes are visited once per edge, preserving
 // their enclosing owner. Pending events use caller-chosen allocation.
-Ast = std.ast.ast_arena
-ExprId, TypeId, PatternId, BlockId = std.ast.ast_id
-Decl, Member, Stmt, Function, TParam, Param = std.ast.ast_node
-Alloc, AllocError = std.mem
-Res, Ok, loop = std.core
-Vec = std.collections
+{ Ast } = std.ast.ast_arena
+{ ExprId, TypeId, PatternId, BlockId } = std.ast.ast_id
+{ Decl, Member, Stmt, Function, TParam, Param } = std.ast.ast_node
+{ Alloc, AllocError } = std.mem
+{ Res, Ok, loop } = std.core
+{ Vec } = std.collections
 
-DeclParent* = Module(usize) | Block(BlockId)
+DeclParent* = { Module: usize | Block: BlockId }
 DeclSite* = { parent*: DeclParent, index*: usize }
-MemberParent* = Declaration(DeclSite) | Record(ExprId)
+MemberParent* = { Declaration: DeclSite | Record: ExprId }
 MemberSite* = { parent*: MemberParent, index*: usize }
 DeclVisit* = { site*: DeclSite, value*: Decl }
 MemberVisit* = { site*: MemberSite, value*: Member }
@@ -18,14 +18,14 @@ StmtVisit* = { block*: BlockId, index*: usize, value*: Stmt }
 
 // Non-arena nodes carry their value and exact structural position. A lambda
 // is an Expr whose kind is Lambda; its event encloses its signature and body.
-WalkNode* = Declaration(DeclVisit)
-    | Member(MemberVisit)
-    | Statement(StmtVisit)
-    | Expr(ExprId)
-    | Type(TypeId)
-    | Pattern(PatternId)
-    | Block(BlockId)
-WalkEvent* = Enter(WalkNode) | Leave(WalkNode)
+WalkNode* = { Declaration: DeclVisit
+    | Member: MemberVisit
+    | Statement: StmtVisit
+    | Expr: ExprId
+    | Type: TypeId
+    | Pattern: PatternId
+    | Block: BlockId }
+WalkEvent* = { Enter: WalkNode | Leave: WalkNode }
 
 // A synchronous visitor borrows its mutable state for the traversal.
 WalkVisitor* = {
@@ -163,6 +163,15 @@ declaration = (walker :: Walker, d: DeclVisit) Res<(), AllocError> {
                 v.discriminant.when_ok(
                     (value) { walker.node(WalkNode.Expr(value)).try(); }
                 );
+            });
+            e.members.loop((h, index, member) {
+                walker.node(WalkNode.Member(MemberVisit(
+                    site: MemberSite(
+                        parent: MemberParent.Declaration(d.site),
+                        index: index
+                    ),
+                    value: member
+                ))).try();
             });
         },
         Alias(a)    => {

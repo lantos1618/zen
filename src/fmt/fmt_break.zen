@@ -1,12 +1,12 @@
-Alloc, AllocError = std.mem
-str, String = std.text
-Vec, sort, Ordered = std.collections
-Res, Ok, loop, Range = std.core
-Span = std.source
-Ast = std.ast.ast_arena
-ExprId, TypeId, BlockId = std.ast.ast_id
-Module, Decl, Type, Expr, Call, ArrayLit, Union, Enum, Param = std.ast.ast_node
-Src, Parsed = fmt.fmt_src
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec, sort, Ordered } = std.collections
+{ Res, Ok, loop, Range } = std.core
+{ Span } = std.source
+{ Ast } = std.ast.ast_arena
+{ ExprId, TypeId, BlockId } = std.ast.ast_id
+{ Module, Decl, Type, Expr, Call, ArrayLit, Union, Enum, Param } = std.ast.ast_node
+{ Src, Parsed } = fmt.fmt_src
 
 // The formatter's single line-width policy.
 WIDTH: usize = 80
@@ -26,7 +26,7 @@ Item = (src: Src, s: Span) Item {
 // elements) sit in brackets with commas; `Columnar` (parameters) too, but
 // is packed only from one line and blocks no neighbour; `Barred` (union
 // members, enum variants) is `|`-separated with no brackets.
-Form = Stacked | Filled | Columnar | Barred
+Form = { Stacked | Filled | Columnar | Barred }
 
 // A list one round may repack: its bytes, the lines it spans, its form.
 Cand = {

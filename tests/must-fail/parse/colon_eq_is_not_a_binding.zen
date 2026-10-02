@@ -4,7 +4,7 @@
 //
 // position: the `=` after the `:`.
 
-println = std.io
+{ println } = std.io
 
 main = () i32 {
     count := 3;

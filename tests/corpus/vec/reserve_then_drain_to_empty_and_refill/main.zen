@@ -17,10 +17,10 @@
 // The fill values are i64 at odd offsets so any mis-scaled write inside
 // the reserved room reads back shifted rather than merely wrong.
 
-Res, Ok, loop, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, loop, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

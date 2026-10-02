@@ -6,15 +6,15 @@
 // Build source spans are relative to the compilation root. Editor entries
 // outside that root retain their absolute path for overlays and URI replies.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Res, Ok, loop, Range, Path = std.core
-Vec = std.collections
-join_path = std.core.path
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Res, Ok, loop, Range, Path } = std.core
+{ Vec } = std.collections
+{ join_path } = std.core.path
 
-QualifiedName = std.ast.ast_span
-ZEN_STD_ENV = std.build
-Env = std.env
+{ QualifiedName } = std.ast.ast_span
+{ ZEN_STD_ENV } = std.build
+{ Env } = std.env
 
 // Anchor a filesystem path at the actual process directory. Redundant `/`
 // and `.` components share one spelling; `..` stays intact because resolving

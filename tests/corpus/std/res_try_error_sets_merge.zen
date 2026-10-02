@@ -16,13 +16,13 @@
 // built from three arguments in two `fmt` calls so a fill that lost an
 // argument or reordered the pair cannot print it by accident.
 
-Res, Ok, IoError, WriteError, Sink = std.core
-Alloc, AllocError = std.mem
-String = std.text
-Env = std.env
-println = std.io
+{ Res, Ok, IoError, WriteError, Sink } = std.core
+{ Alloc, AllocError } = std.mem
+{ String } = std.text
+{ Env } = std.env
+{ println } = std.io
 
-ParseError = | NotANumber
+ParseError = { | NotANumber }
 
 // AllocError from String(), IoError from the Sink format door, and ParseError
 // from ok_or: three sets merged by three .try()s.

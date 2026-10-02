@@ -1,7 +1,7 @@
 // Raw, unchecked access to a run of T. Callers own all bounds and lifetime
 // checks. The backend supplies these bodies because Ptr<T> lowers to T*.
 
-loop = std.core
+{ loop } = std.core
 
 Ptr*<T> = {
     addr: usize,

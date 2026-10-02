@@ -1,5 +1,5 @@
-bit_xor, bit_and, rotate_right, shift_right = std.core.num
-println = std.io
+{ bit_xor, bit_and, rotate_right, shift_right } = std.core.num
+{ println } = std.io
 
 once = (calls :: i32, value: u64) u64 {
     calls = calls + 1;

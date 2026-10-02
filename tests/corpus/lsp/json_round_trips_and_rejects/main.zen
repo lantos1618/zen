@@ -25,12 +25,12 @@
 // reappear two layers later as a wrong column. The row below emits the
 // same bytes as the raw `😀` one, and that is the assertion.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Jsons, JsonId, read, JsonFault = std.json
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Jsons, JsonId, read, JsonFault } = std.json
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 // Parse, re-emit, and parse the OUTPUT again — a conversion tested one
 // way passes with the error present in both, and a writer that drops a

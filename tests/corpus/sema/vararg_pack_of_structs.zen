@@ -26,11 +26,11 @@
 // pack on from behind a fixed `str` prefix, which is where a wrong
 // offset shows, with an element type that is not a word.
 
-Res, Ok = std.core
-AllocError = std.mem
-vararg = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ vararg } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 Pt = { x: i32, y: i32 }
 

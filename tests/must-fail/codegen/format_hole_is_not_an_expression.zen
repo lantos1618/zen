@@ -18,9 +18,9 @@
 //
 // position: the `{` that opened nothing, on each of the two lines.
 
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Point = { x: i32, y: i32 }
 

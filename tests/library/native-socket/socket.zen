@@ -1,8 +1,8 @@
-Socket, SocketFault, resolve_addr = std.net.socket
-Res, Ok, loop, Range = std.core
-Alloc, AllocError = std.mem
-Env = std.env
-println = std.io
+{ Socket, SocketFault, resolve_addr } = std.net.socket
+{ Res, Ok, loop, Range } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 Native = c.bind("probe.h", {
     probe_check* = (yes: i32) ()
     probe_cloexec* = (fd: i32) i32

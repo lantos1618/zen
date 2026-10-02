@@ -1,7 +1,7 @@
 // `println` and `print` are declarations in std.io, imported like any other
 // name. The compiler supplies their bodies and still reads a leading string
 // literal as a format at compile time, on every backend.
-println, print = std.io
+{ println, print } = std.io
 
 main = () i32 {
     n = 42;

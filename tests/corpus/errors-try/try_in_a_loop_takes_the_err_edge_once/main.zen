@@ -13,12 +13,12 @@
 // pass early; an escape aimed at the loop instead of the frame prints
 // "total 10" and keeps looping. All silent, all plausible.
 
-Res, Ok, Err, Range = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Err, Range } = std.core
+{ Env } = std.env
+{ println } = std.io
 
-Inner = | InnerBoom
-Outer = | OuterBoom
+Inner = { | InnerBoom }
+Outer = { | OuterBoom }
 Any = Inner | Outer
 
 bad = (n: i64) Res<i64, Outer> {

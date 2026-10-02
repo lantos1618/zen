@@ -2,7 +2,7 @@
 // buffer is the build's entry; this copy is what a build with no
 // overlay would read, and keeping the two identical is what makes the
 // expected file answerable by eye.
-Point = app.shape
+{ Point } = app.shape
 
 near = (q: Point, n: i32) i32 {
     s = q.x + n;

@@ -12,10 +12,10 @@
 // '0'-to-';' as the digit arithmetic wraps past '9') and
 // "seed" + twelve dots = sixteen.
 
-Res, Ok, Range, WriteError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range, WriteError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | WriteError
 

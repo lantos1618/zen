@@ -23,11 +23,11 @@
 // union payload of the returned Res — the layout question the large
 // test names, with a live pointer inside it.
 
-Res, Ok, Range = std.core
-Alloc, AllocError = std.mem
-Vec = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 Buf = {
     items :: Vec<i64>,

@@ -22,10 +22,10 @@
 // precedence) — `divchain` flips from 4 to 16 and `mixed` from 12 to 18,
 // with no diagnostic anywhere.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     println("mixed {}", 20 - 5 - 3);

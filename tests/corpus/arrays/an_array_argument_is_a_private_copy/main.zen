@@ -2,10 +2,10 @@
 // element type comes from the parameter. Consuming the caller's binding makes
 // accidental reference aliasing observable.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Point = { x: i32, y: i32 }
 

@@ -12,10 +12,10 @@
 // One-line breaker: emit initialisers from call-site arguments only ->
 // `5 0` instead of `5 77`.
 
-Box = box.box
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Box } = box.box
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     a = Box(label: 5);

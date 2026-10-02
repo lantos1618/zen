@@ -1,7 +1,7 @@
-who = name.name
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ who } = name.name
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 // a local binding with the same name as an import. the local wins
 // inside this body, and the import is untouched everywhere else

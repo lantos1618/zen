@@ -15,10 +15,10 @@
 // position: the tail expression, which is the value that does not fit —
 // not the signature that says what would.
 
-AllocError = std.mem
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ AllocError } = std.mem
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 hand = () Res<(), AllocError> { 3 }
 

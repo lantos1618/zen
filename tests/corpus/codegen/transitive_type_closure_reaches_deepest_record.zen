@@ -1,6 +1,6 @@
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 S9 = { value: i32 }
 S8 = { next: S9 }

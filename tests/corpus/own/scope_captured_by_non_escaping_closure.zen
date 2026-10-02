@@ -10,9 +10,9 @@
 // that fired on any closure capture would redden every combinator in
 // the language.
 
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     s = @scope;

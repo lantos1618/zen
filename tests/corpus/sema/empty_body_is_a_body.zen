@@ -9,11 +9,11 @@
 // last statement that yields nothing is a statement, not the value
 // `main` returns, so it does not have to fit `Res<i32, CfgError>`.
 
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
 
-CfgError = Missing | Bad
+CfgError = { Missing | Bad }
 
 nothing = () { }
 

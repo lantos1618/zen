@@ -1,11 +1,11 @@
 // An accepted consumed buffer is unavailable to the sender.
 // Deep mailbox transfer does not revive the moved binding.
 
-Res, Ok, IoError = std.core
-AllocError = std.mem
-Vec = std.collections
-Env = std.env
-Actor, ActorError, ActorStartError, Context = std.actor
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context } = std.actor
 
 Worker = {}
 

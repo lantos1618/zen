@@ -2,27 +2,27 @@
 // Subscripting because it carries no length; other receivers dispatch to their
 // Declared or supplied `index` member, which owns any bounds policy.
 
-ExprId, Member, Function, Index = std.ast
-AllocError = std.mem
-Vec = std.collections
-String = std.text
-TyId = sema.sema_ty
-Ctx = sema.sema_check
-Inst = sema.sema_inst
-self_ctx = sema.sema_member
-CBackend = gen.gen_c.gen_c_state
-unsupported = gen.gen_c.gen_c_report
-sub_with, any_open, recv_inst, inst_open = gen.gen_c.gen_c_mono
-enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
-is_ptr_named, declared_ret = gen.gen_c.gen_c_type
-expr, ty_of = gen.gen_c.gen_c_expr
-has_call = gen.gen_c.gen_c_expr
-write_arg, write_arg_at = gen.gen_c.gen_c_arg
-Site, site_of, member_at = gen.gen_c.gen_c_member
-bodied_fn, impl_member = gen.gen_c.gen_c_impl
-method_sig, member_symbol = gen.gen_c.gen_c_member
-array_of, write_array_index = gen.gen_c.gen_c_array
-Res, Ok = std.core
+{ ExprId, Member, Function, Index } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ String } = std.text
+{ TyId } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ Inst } = sema.sema_inst
+{ self_ctx } = sema.sema_member
+{ CBackend } = gen.gen_c.gen_c_state
+{ unsupported } = gen.gen_c.gen_c_report
+{ sub_with, any_open, recv_inst, inst_open } = gen.gen_c.gen_c_mono
+{ enter_struct_tparams, leave_tparams } = gen.gen_c.gen_c_mono
+{ is_ptr_named, declared_ret } = gen.gen_c.gen_c_type
+{ expr, ty_of } = gen.gen_c.gen_c_expr
+{ has_call } = gen.gen_c.gen_c_expr
+{ write_arg, write_arg_at } = gen.gen_c.gen_c_arg
+{ Site, site_of, member_at } = gen.gen_c.gen_c_member
+{ bodied_fn, impl_member } = gen.gen_c.gen_c_impl
+{ method_sig, member_symbol } = gen.gen_c.gen_c_member
+{ array_of, write_array_index } = gen.gen_c.gen_c_array
+{ Res, Ok } = std.core
 
 lower_index* = (
     be  :: CBackend,

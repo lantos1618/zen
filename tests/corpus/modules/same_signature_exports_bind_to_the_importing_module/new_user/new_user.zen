@@ -1,4 +1,4 @@
 // Imports beta's digest by name, so both call forms bind to beta.
-digest, BETA = beta
+{ digest, BETA } = beta
 new_call* = (x: u64) u64 { digest(x) }
 new_dot* = (x: u64) u64 { x.digest() }

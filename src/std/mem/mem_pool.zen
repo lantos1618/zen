@@ -4,8 +4,8 @@
 // Supported C targets have malloc alignment of at least 16 bytes. The 16-byte
 // prefix preserves that alignment; take rejects a target where Block exceeds it.
 // The byte cache limit includes metadata; the block limit counts payload bytes.
-Ptr, null_ptr = std.mem.mem_ptr
-Res, Ok, loop = std.core
+{ Ptr, null_ptr } = std.mem.mem_ptr
+{ Res, Ok, loop } = std.core
 Heap = c.bind("stdlib.h", {
     malloc = (bytes: usize) Ptr<u8>
     free = (pointer: Ptr<u8>) ()
@@ -129,7 +129,7 @@ PoolPolicy* = { cache_bytes*: usize, block_bytes*: usize, blocks*: usize }
 // (including to zero) retains the existing capacity; only free releases it.
 // Supported alignment requests are 1, 2, 4, 8 and 16 bytes.
 PoolAlloc* = { pool: Ptr<Pool>, policy: PoolPolicy }
-Alloc, AllocError = std.mem.mem_alloc
+{ Alloc, AllocError } = std.mem.mem_alloc
 PoolAlloc.impl(Alloc, {
     raw = (self: @Self, size: usize, align: usize) Res<Ptr<u8>, AllocError> {
         (!self.pool.is_null() && align > 0 && align <= HEADER_BYTES && HEADER_BYTES % align == 0).ensure(

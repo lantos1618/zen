@@ -16,10 +16,10 @@
 // output bypassed len would still print the right TEXT here but the
 // wrong count next to it.
 
-Res, Ok, Range, Display, WriteError, Sink = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range, Display, WriteError, Sink } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | WriteError
 

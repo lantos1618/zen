@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 // A shift count may be any unsigned type; counts at or above the width
 // still yield zero, and a narrow count does not truncate the check.

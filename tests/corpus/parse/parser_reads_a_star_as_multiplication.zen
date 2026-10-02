@@ -20,15 +20,15 @@
 // in a body — because a fix that reads `n * 2` correctly by forgetting
 // how to see `helper* = ..` has moved the bug rather than removed it.
 
-scan, Source = std.lex.lex
-Parser, module = std.parse
-Ast = std.ast.ast_arena
-Decl, BinOp = std.ast.ast_node
-ExprId = std.ast.ast_id
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ scan, Source } = std.lex.lex
+{ Parser, module } = std.parse
+{ Ast } = std.ast.ast_arena
+{ Decl, BinOp } = std.ast.ast_node
+{ ExprId } = std.ast.ast_id
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 SOURCE: str = "base = 21\ndoubled = base * 2\nmul = (n: i32) i32 { n * 2 }\nwrap = (n: i32) i32 { n *% 2 }\nstmt = (n: i32) i32 { n * 2; 0 }\nstmt_wrap = (n: i32) i32 { n *% 2; 0 }\nlocal = () i32 { k = 3; k * 2 }\narg = (n: i32) i32 { mul(n * 2) }\narm = (n: i32) i32 { n.match({ _ => n * 2 }) }\narm_block = (n: i32) i32 { n.match({ _ => { n * 2 } }) }\nchain = (n: i32) i32 { n * 2 * 3 }\nstar_decl = (n: i32) i32 { helper* = (a: i32) i32 { a * 2 }\n    helper(n) }\n"
 

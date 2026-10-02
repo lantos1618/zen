@@ -1,25 +1,25 @@
 // The compiler/stdlib contract for primitive conversions. Only validated
 // declarations in std.core.num acquire an operation; renderers consume this
 // table by declaration identity instead of interpreting a callee's spelling.
-Function = std.ast
-AllocError = std.mem
-str = std.text
-Res, Ok, None, Range = std.core
-Checker, Ctx = sema.sema_check
-TyId = sema.sema_ty
-Def, decl_at = sema.sema_def
-param_type, ret_type = sema.sema_denote
-SemaFault, NameFault = sema.sema_diag
-primitive_signature = sema.sema_prim
+{ Function } = std.ast
+{ AllocError } = std.mem
+{ str } = std.text
+{ Res, Ok, None, Range } = std.core
+{ Checker, Ctx } = sema.sema_check
+{ TyId } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ param_type, ret_type } = sema.sema_denote
+{ SemaFault, NameFault } = sema.sema_diag
+{ primitive_signature } = sema.sema_prim
 
 IntegerBitOperation* = { name*: str, word*: TyId }
 
-NarrowTarget* = U8 | U16 | U64 | Usize | I32 | CInt
+NarrowTarget* = { U8 | U16 | U64 | Usize | I32 | CInt }
 // Widen: every value converts exactly. Checked: an integer range check.
 // Exact: an integer/float conversion that is None unless the value is
 // represented exactly. Round: `narrow_*`, the one lossy family, which always
 // yields the nearest representable value (see std.core.num).
-ConversionKind* = Widen | Checked(NarrowTarget) | Exact | Round
+ConversionKind* = { Widen | Checked: NarrowTarget | Exact | Round }
 
 NumericConversion* = {
     source*: TyId,

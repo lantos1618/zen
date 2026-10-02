@@ -1,7 +1,7 @@
-Res, Ok = std.core
-Alloc, AllocError, Ptr = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Alloc, AllocError, Ptr } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // A place reached through a `::` parameter is the caller's storage, which
 // outlives the call, so a bound value built over it may be returned to

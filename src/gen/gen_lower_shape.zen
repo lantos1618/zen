@@ -3,19 +3,19 @@
 // Layout follows the C rules the C backend relies on: fields in declaration
 // order at their natural alignment, a u32 tag before a variant payload.
 
-Alloc, AllocError = std.mem
-Vec, Map = std.collections
-str, String = std.text
-Res, Ok, Err, None, loop, Range = std.core
-Decl, Struct, Member = std.ast
-TyId, TyNamed, Case, cases_of, DeclId = sema.sema
-Checker, Ctx, Inst, decl_at = sema.sema
-inst_of_named, owner_of, subst, type_from_ast = sema.sema
-union_reading = sema.sema_union
-Scalar, Layout = gen.gen_ir
-Lowerer = gen.gen_lower_core
-LowerError, unsupported = gen.gen_lower
-nowhere = std.source
+{ Alloc, AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ str, String } = std.text
+{ Res, Ok, Err, None, loop, Range } = std.core
+{ Decl, Struct, Member } = std.ast
+{ TyId, TyNamed, Case, cases_of, DeclId } = sema.sema
+{ Checker, Ctx, Inst, decl_at } = sema.sema
+{ inst_of_named, owner_of, subst, type_from_ast } = sema.sema
+{ union_reading } = sema.sema_union
+{ Scalar, Layout } = gen.gen_ir
+{ Lowerer } = gen.gen_lower_core
+{ LowerError, unsupported } = gen.gen_lower
+{ nowhere } = std.source
 
 // Where a record field lives inside its aggregate.
 FieldAt* = { name*: str, ty*: TyId, offset*: usize }
@@ -33,12 +33,12 @@ Elements* = { elem*: TyId, count*: usize, stride*: usize }
 
 // Plain words and unit need no parts. `Tags` are payload-free enums held in
 // a U32 word whose value is the tag.
-Form* = Plain
-    | Record(Vec<FieldAt>)
-    | Variants(Tagged)
-    | Tags(Vec<VariantAt>)
-    | Array(Elements)
-    | Handle(DeclId)
+Form* = { Plain
+    | Record: Vec<FieldAt>
+    | Variants: Tagged
+    | Tags: Vec<VariantAt>
+    | Array: Elements
+    | Handle: DeclId }
 
 Shape* = { class*: Scalar, form*: Form }
 

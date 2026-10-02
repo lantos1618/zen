@@ -15,11 +15,11 @@
 // no evidence of one, and between is inconclusive. A pass is evidence for
 // one machine, compiler and input distribution, not a proof. Run it pinned
 // to an otherwise idle core; tools/ct/timing does.
-Alloc, AllocError, Ptr = std.mem
-Res, Ok, Rng, loop, Range = std.core
-sqrt = std.math
-to_i32, to_f64, truncate_u8 = std.core.num
-Env = std.env
+{ Alloc, AllocError, Ptr } = std.mem
+{ Res, Ok, Rng, loop, Range } = std.core
+{ sqrt } = std.math
+{ to_i32, to_f64, truncate_u8 } = std.core.num
+{ Env } = std.env
 
 // The operation under test.
 Probe* = {
@@ -42,7 +42,7 @@ TimingConfig* = {
     seed*: u64,
 }
 
-Verdict* = | NoLeak | Inconclusive | Leak
+Verdict* = { | NoLeak | Inconclusive | Leak }
 
 TimingResult* = {
     max_t*: f64,

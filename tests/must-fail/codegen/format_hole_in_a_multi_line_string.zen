@@ -2,9 +2,9 @@
 // the hole's own line and column in the source: the value's byte offset is
 // mapped back through the stripped indentation and the escaped quotes.
 
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     subtotal = 7;

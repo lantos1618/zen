@@ -3,7 +3,7 @@
 //
 // position: the assignment inside the loop body.
 
-Range = std.core
+{ Range } = std.core
 
 main = () i32 {
     last: i32;

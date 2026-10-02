@@ -1,8 +1,8 @@
-Res, Ok, Range, Seq = std.core
-AllocError = std.mem
-Vec = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok, Range, Seq } = std.core
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 // Supplied ranges fold their values, preserve a distinct accumulator type,
 // and treat at(None) as exhaustion rather than an explicit break.

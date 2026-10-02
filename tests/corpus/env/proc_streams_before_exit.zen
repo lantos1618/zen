@@ -1,7 +1,7 @@
-Res, Ok, IoError, WriteError, Sink = std.core
-ProcStreamError, Process = std.proc
-String = std.text
-Env = std.env
+{ Res, Ok, IoError, WriteError, Sink } = std.core
+{ ProcStreamError, Process } = std.proc
+{ String } = std.text
+{ Env } = std.env
 
 Observe = {
     env: Env,

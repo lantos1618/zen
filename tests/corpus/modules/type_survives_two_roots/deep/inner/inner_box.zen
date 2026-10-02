@@ -6,7 +6,7 @@ Box*<T> = {
     seen*: usize,
 }
 
-Tick* = Once | Twice
+Tick* = { Once | Twice }
 
 unwrap*<T> = (b: Box<T>) T { b.value }
 

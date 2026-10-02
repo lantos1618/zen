@@ -11,10 +11,10 @@
 // comparison is written rather than printed because {}'s digit count
 // for a float is deliberately unspecified (lex/number_float_basics).
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     n: u8    = 200;

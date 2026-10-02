@@ -2,12 +2,12 @@
 // and neither is declared here. TESTING.md, Sema: "a bound satisfied by
 // an impl in another module".
 
-Boxy = boxy.boxy
-Tile = tile.tile
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Boxy } = boxy.boxy
+{ Tile } = tile.tile
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 scale = <T: Boxy>(shape: T, k: i32) i32 { shape.area() * k }
 

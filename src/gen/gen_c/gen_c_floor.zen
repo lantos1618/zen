@@ -3,25 +3,25 @@
 // path performs no error conversion. Format parsing and hole dispatch are
 // shared with `gen_c_sink`; this file selects and invokes the concrete writer.
 
-ExprId, Function, Param, Member, Call, Access = std.ast
-AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-TyId = sema.sema_ty
-Ctx = sema.sema_check
-Inst = sema.sema_inst
-self_ctx = sema.sema_member
-type_from_ast, param_type = sema.sema_denote
-CBackend = gen.gen_c.gen_c_state
-unsupported = gen.gen_c.gen_c_report
-declare_temp = gen.gen_c.gen_c_flow
-arg_value, write_arg, by_ref = gen.gen_c.gen_c_arg
-Site, member_at, method_sig, member_symbol = gen.gen_c.gen_c_member
-recv_inst, inst_open, any_open = gen.gen_c.gen_c_mono
-Piece, write_pieces, write_ok, write_done = gen.gen_c.gen_c_sink
-bodyless, sink_door_shape = gen.gen_c.gen_c_sink
-FORMAT_DOOR, SINK_FLOOR = gen.gen_c.gen_c_sink
-Res, Ok = std.core
+{ ExprId, Function, Param, Member, Call, Access } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ TyId } = sema.sema_ty
+{ Ctx } = sema.sema_check
+{ Inst } = sema.sema_inst
+{ self_ctx } = sema.sema_member
+{ type_from_ast, param_type } = sema.sema_denote
+{ CBackend } = gen.gen_c.gen_c_state
+{ unsupported } = gen.gen_c.gen_c_report
+{ declare_temp } = gen.gen_c.gen_c_flow
+{ arg_value, write_arg, by_ref } = gen.gen_c.gen_c_arg
+{ Site, member_at, method_sig, member_symbol } = gen.gen_c.gen_c_member
+{ recv_inst, inst_open, any_open } = gen.gen_c.gen_c_mono
+{ Piece, write_pieces, write_ok, write_done } = gen.gen_c.gen_c_sink
+{ bodyless, sink_door_shape } = gen.gen_c.gen_c_sink
+{ FORMAT_DOOR, SINK_FLOOR } = gen.gen_c.gen_c_sink
+{ Res, Ok } = std.core
 
 RAW_FLOOR: str = "add"
 

@@ -2,9 +2,9 @@
 // last expression is its value whether or not the closing `;` is
 // written, and reading `Block.value` alone saw only the second form.
 
-Res, Ok, Scope, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Scope, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 here = () Scope {
     @scope;

@@ -9,14 +9,14 @@
 // reachability; this pins it at THREE, where the middle level carries no
 // binder of its own -- only its tag test stands between v and the truth.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Cell  = Full(i64) | Empty
-Shell = Sealed | Full(Cell)
-Box   = Closed(Shell) | Open
+Cell  = { Full: i64 | Empty }
+Shell = { Sealed | Full: Cell }
+Box   = { Closed: Shell | Open }
 
 main = (env: Env) Res<i32, AllocError> {
     b1: Box = Box.Closed(Shell.Full(Cell.Full(9000000000)));

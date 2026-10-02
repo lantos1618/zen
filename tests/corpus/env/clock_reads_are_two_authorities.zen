@@ -12,10 +12,10 @@
 // reads WORK and are ordered the way their authorities are. HARNESS_
 // EPOCH below is rewritten by the run to the epoch second just before
 // it executed, so "near" has a number to be near.
-Res, Ok, Duration = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Duration } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 HARNESS_EPOCH* : u64 = 0
 

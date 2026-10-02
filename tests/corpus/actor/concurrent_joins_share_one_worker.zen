@@ -2,11 +2,11 @@
 // working. Exactly one of them performs the native join; the others wait
 // for it, and every join returns only after the stopped hook has run.
 
-Res, Ok, loop = std.core
-Alloc = std.mem
-Env, Thread, ThreadError = std.env
-Actor, Ref, ActorError, ActorStartError, Context = std.actor
-println = std.io
+{ Res, Ok, loop } = std.core
+{ Alloc } = std.mem
+{ Env, Thread, ThreadError } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
 
 Slow = { turns :: u64 = 0 }
 

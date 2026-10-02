@@ -1,6 +1,6 @@
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
 
 Box = { text :: str }
 put = (box :: Box, text: str) { box.text = text; }

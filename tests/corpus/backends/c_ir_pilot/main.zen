@@ -1,23 +1,23 @@
 // Compare one checked input across both C paths and the other scalar renderers.
 // Each native output is compiled with warnings as errors and undefined-behavior
 // checks, then executed; matching source text alone would not prove parity.
-Build, host_target = zen.zen_build
-assemble_and_link = zen.zen_native
-Generation, Layout, emit_assembly = gen.gen
-Codegen = std.build
-Program, Func, BasicBlock, Instruction, Terminator, Const, Scalar, Binary, Op, Branch = gen.gen_ir
-nowhere = std.source
-lower = gen.gen_lower
-verify = gen.gen_verify
-emit_c = gen.gen_c_ir
-emit_js = gen.gen_js
-Res, Ok, Err, None, loop, Range = std.core
-Alloc, AllocError, Ptr = std.mem
-String = std.text
-Env = std.env
-println = std.io
+{ Build, host_target } = zen.zen_build
+{ assemble_and_link } = zen.zen_native
+{ Generation, Layout, emit_assembly } = gen.gen
+{ Codegen } = std.build
+{ Program, Func, BasicBlock, Instruction, Terminator, Const, Scalar, Binary, Op, Branch } = gen.gen_ir
+{ nowhere } = std.source
+{ lower } = gen.gen_lower
+{ verify } = gen.gen_verify
+{ emit_c } = gen.gen_c_ir
+{ emit_js } = gen.gen_js
+{ Res, Ok, Err, None, loop, Range } = std.core
+{ Alloc, AllocError, Ptr } = std.mem
+{ String } = std.text
+{ Env } = std.env
+{ println } = std.io
 
-Backend = LegacyC | IrC | Js | Asm
+Backend = { LegacyC | IrC | Js | Asm }
 
 // The host's native renderer; an unsupported host yields empty text, which
 // then fails to assemble.

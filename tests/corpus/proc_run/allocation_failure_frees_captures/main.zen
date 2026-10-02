@@ -1,10 +1,10 @@
 // Sweep allocation failures through argument preparation, pipe setup and
 // output capture. Every failed run must leave the next process runnable.
 
-Res, Ok, Err, Range = std.core
-Alloc, AllocError, Ptr = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Err, Range } = std.core
+{ Alloc, AllocError, Ptr } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 FailAfter = {
     base: Alloc,

@@ -9,8 +9,8 @@
 // plausible wrong answer looks right: interleaved lines, and stderr
 // carrying text that appears nowhere on stdout.
 
-Res, Ok, IoError = std.core
-Env = std.env
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
 
 main = (env: Env) Res<i32, IoError> {
     n = 7;

@@ -20,10 +20,10 @@
 // `orand` stays true while `not_and` flips false -> ... nothing errors;
 // only this file's expected bytes tell the two worlds apart.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     b1 ::= true;

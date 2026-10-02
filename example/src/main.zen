@@ -1,18 +1,18 @@
 // example/src/main.zen
 // A compact tour of values, formatting, ownership, and actors.
 
-Res, Ok, Range, Display, IoError, WriteError, Sink = std.core
-AllocError = std.mem
-Env = std.env
-Actor, ActorError, ActorStartError, Context = std.actor
-println = std.io
+{ Res, Ok, Range, Display, IoError, WriteError, Sink } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
 
 Circle = {
     radius: f64,
 }
 
-// ufcs: a free function whose first parameter is Circle, so it
-// travels with Circle when imported and calls like a method
+// ufcs: a free function whose first parameter is Circle calls like a
+// method wherever it is declared or imported
 area* = (c: Circle) f64 {
     c.radius * c.radius * 3.14159
 }
@@ -23,7 +23,7 @@ Rect = {
 }
 
 // sum types use `|`. payload variants carry a type
-Shape = Circle(Circle) | Rect(Rect) | Unit
+Shape = { Circle: Circle | Rect: Rect | Unit }
 
 Shape.impl(Display, {
     // the outlined toString: pretty output for {}. dump stays

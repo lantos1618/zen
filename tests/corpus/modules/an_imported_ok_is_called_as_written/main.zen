@@ -4,10 +4,10 @@
 // bind the name — `checks` itself never writes `Ok(..)` as a constructor,
 // and `main`'s own return is built with `Res` through the lift.
 
-Res = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Ok = checks
 

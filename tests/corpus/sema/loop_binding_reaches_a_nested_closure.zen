@@ -3,11 +3,11 @@
 // field read of the binding, and the `.then` receiver is a CALL whose
 // argument is a field of the binding.
 
-Res, Ok = std.core
-AllocError = std.mem
-Vec = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 Row = { name*: str, ty*: usize }
 

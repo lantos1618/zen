@@ -1,11 +1,11 @@
-Alloc, AllocError = std.mem
-Vec = std.collections
-str = std.text
-Cli, cli = zen
-Emission = std.build
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Cli, cli } = zen
+{ Emission } = std.build
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

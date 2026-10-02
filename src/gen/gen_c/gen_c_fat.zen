@@ -5,31 +5,31 @@
 // Typed thunk converts each slot call because casting function pointers is
 // Undefined C behavior.
 
-ExprId, Decl, Struct, Member = std.ast
-Function, Param, TParam = std.ast
-AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Res, Ok, None, Range = std.core
-TyId, TyNamed = sema.sema_ty
-decl_at = sema.sema_def
-Ctx = sema.sema_check
-Inst, has_var = sema.sema_inst
-self_ctx = sema.sema_member
-param_type = sema.sema_denote
-sym_member, sym_fn, sym_gen, qualify = gen.gen_name
-USR, GEN = gen.gen_name
-CBackend, MethodRef = gen.gen_c.gen_c_state
-sub_with, intern_var, recv_inst = gen.gen_c.gen_c_mono
-enter_tparams, leave_tparams, enter_struct_tparams = gen.gen_c.gen_c_mono
-ctype, declarator, is_unit, request_type, declared_ret = gen.gen_c.gen_c_type
-is_ptr_named = gen.gen_c.gen_c_type
-ty_of = gen.gen_c.gen_c_expr
-init_temp = gen.gen_c.gen_c_flow
-Site, site_of, member_at = gen.gen_c.gen_c_member
-impl_member, bodied_fn = gen.gen_c.gen_c_impl
-borrows, passes_address = gen.gen_c.gen_c_borrow
-write_cast = gen.gen_c.gen_c_bound
+{ ExprId, Decl, Struct, Member } = std.ast
+{ Function, Param, TParam } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Res, Ok, None, Range } = std.core
+{ TyId, TyNamed } = sema.sema_ty
+{ decl_at } = sema.sema_def
+{ Ctx } = sema.sema_check
+{ Inst, has_var } = sema.sema_inst
+{ self_ctx } = sema.sema_member
+{ param_type } = sema.sema_denote
+{ sym_member, sym_fn, sym_gen, qualify } = gen.gen_name
+{ USR, GEN } = gen.gen_name
+{ CBackend, MethodRef } = gen.gen_c.gen_c_state
+{ sub_with, intern_var, recv_inst } = gen.gen_c.gen_c_mono
+{ enter_tparams, leave_tparams, enter_struct_tparams } = gen.gen_c.gen_c_mono
+{ ctype, declarator, is_unit, request_type, declared_ret } = gen.gen_c.gen_c_type
+{ is_ptr_named } = gen.gen_c.gen_c_type
+{ ty_of } = gen.gen_c.gen_c_expr
+{ init_temp } = gen.gen_c.gen_c_flow
+{ Site, site_of, member_at } = gen.gen_c.gen_c_member
+{ impl_member, bodied_fn } = gen.gen_c.gen_c_impl
+{ borrows, passes_address } = gen.gen_c.gen_c_borrow
+{ write_cast } = gen.gen_c.gen_c_bound
 
 // which structs these are
 

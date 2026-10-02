@@ -1,7 +1,8 @@
-Res, Ok = std.core
-Alloc, AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+{ dup } = std.text
 
 copy = (env: Env, target: Alloc, text: str) Res<str, AllocError> {
     scratch   = env.mem.alloc();

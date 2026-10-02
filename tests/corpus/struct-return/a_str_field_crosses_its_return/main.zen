@@ -1,10 +1,10 @@
 // A by-value struct return preserves both words of its borrowed str field.
 // The backing arena outlives the builder frame.
 
-Res, Ok, Range = std.core
-Alloc, AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Carry = {
     text: str,

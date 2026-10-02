@@ -1,15 +1,15 @@
 // Machine primitives are granted by validated standard declarations only.
-Source, scan = std.lex
-Parser = std.parse.parser
-module = std.parse.parse_decl
-Checker = sema.sema_check
-check_all = sema.sema_decl
-DeclId = sema.sema_id
-CHeader, CTypeBinding, CBinding = std.ast
-Res, Ok = std.core
-Alloc, AllocError = std.mem
-Env = std.env
-println = std.io
+{ Source, scan } = std.lex
+{ Parser } = std.parse.parser
+{ module } = std.parse.parse_decl
+{ Checker } = sema.sema_check
+{ check_all } = sema.sema_decl
+{ DeclId } = sema.sema_id
+{ CHeader, CTypeBinding, CBinding } = std.ast
+{ Res, Ok } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // The single declaration is checked in `owner`; `bits` selects the scalar
 // bit table rather than the machine primitive table.

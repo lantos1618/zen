@@ -1,7 +1,7 @@
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 // BLAKE2b throughput: zen-crypto's blake2b.zen, unchanged, built with the C
 // backend and the native asm backend. Hashes a 1 MiB buffer `rounds` times
@@ -9,7 +9,7 @@ println = std.io
 // prints the final digest so both builds can be checked for identical output
 // before timing.
 blake2b_candidate = blake2b
-Ptr = std.mem
+{ Ptr } = std.mem
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

@@ -3,9 +3,9 @@
 // All hashing computation is Zen, using compiler-native integer operations.
 // No side-channel audit or secure-erasure guarantee. Retains keyed intermediate
 // state in caller scratch; erase it using a vetted wipe (e.g. the separate zen-sodium package) after use.
-Ptr = std.mem
-Range = std.core
-bit_xor, rotate_right, to_u64, to_usize, to_u8 = std.core.num
+{ Ptr } = std.mem
+{ Range } = std.core
+{ bit_xor, rotate_right, to_u64, to_usize, to_u8 } = std.core.num
 
 // Caller supplies live input/key spans and output_capacity writable bytes.
 // Scratch is 40 aligned, writable u64 words and MUST NOT overlap any span.

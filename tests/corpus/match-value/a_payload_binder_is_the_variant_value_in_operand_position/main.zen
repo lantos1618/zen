@@ -17,12 +17,12 @@
 // `100 / <binder>` is where reading the union whole instead of `b`
 // silently divides by the wrong number.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Cell = Big(i32) | Mid(i32) | Tiny
+Cell = { Big: i32 | Mid: i32 | Tiny }
 
 scale = (c: Cell) i32 {
     c.match({

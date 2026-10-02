@@ -13,10 +13,10 @@
 // `edge` is the boundary itself: 255 is the largest `u8` and must pass,
 // which is what says the comparison is `<=` and not `<`.
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     Range(0, 5).loop((h, i) {

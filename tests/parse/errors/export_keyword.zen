@@ -2,6 +2,6 @@
 // starred. No `export`, no `from` — `*` doing the same job it does everywhere else."
 // The legal form is `Res*, Ok*, None* = std.core.result` (DESIGN.md:292).
 
-Res, Ok, None = std.core.result
+{ Res, Ok, None } = std.core.result
 
 export Res, Ok, None

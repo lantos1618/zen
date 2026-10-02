@@ -2,50 +2,50 @@
 // Bodies are lowered first so they can discover required types and helpers;
 // emitted definitions and prototypes are then sorted by mangled name.
 
-Decl, Function, Param = std.ast
-Span = std.source
-BlockId, Struct, Enum, Member = std.ast
-AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Res, Ok, None, loop, Range = std.core
-TyId = sema.sema_ty
-Def, decl_at = sema.sema_def
-Ctx = sema.sema_check
-Inst = sema.sema_inst
-owner_of = sema.sema_inst
-param_type = sema.sema_denote
-self_ctx = sema.sema_member
-ty_at = sema.sema_cand
-Emit, order = gen.gen_emit
-sym_fn, sym_local = gen.gen_name
-GenFault = gen.gen_diag
-CBackend, MethodRef, FnOrigin = gen.gen_c.gen_c_state
-LocalSlot = gen.gen_c.gen_c_frame
-sub, enter_tparams, leave_tparams = gen.gen_c.gen_c_mono
-open_named = gen.gen_c.gen_c_mono
-enter_struct_tparams = gen.gen_c.gen_c_mono
-signature_of = gen.gen_c.gen_c_call
-ctype, declarator, spellable, is_unit, has_storage, is_res = gen.gen_c.gen_c_type
-declared_ret = gen.gen_c.gen_c_type
-closure_storage = gen.gen_c.gen_c_report
-emit_types = gen.gen_c.gen_c_layout
-Dest, block = gen.gen_c.gen_c_stmt
-takes_closure = gen.gen_c.gen_c_inline
-impl_member_at, by_arity, kept_or_arity = gen.gen_c.gen_c_impl
-method_sig, generic_method_sig = gen.gen_c.gen_c_member
-emit_main = gen.gen_c.gen_c_main
-emit_banner, emit_floor, emit_helpers, emit_print, emit_stderr = gen.gen_c.gen_c_runtime
-emit_fs, emit_scope, emit_scope_floor = gen.gen_c.gen_c_runtime
-emit_stdin = gen.gen_c.gen_c_stdin
-emit_env = gen.gen_c.gen_c_env
-emit_clock = gen.gen_c.gen_c_clock
-emit_native_features, emit_proc = gen.gen_c.gen_c_proc
-emit_threads, emit_spawn_envs = gen.gen_c.gen_c_threads
-emit_actor_floor, emit_actor_defs = gen.gen_c.gen_c_actor
-borrows, passes_address = gen.gen_c.gen_c_borrow
-emit_machine, function_attributes = gen.gen_c.gen_c_machine
-written_secret, written_pointer = sema.sema_secret
+{ Decl, Function, Param } = std.ast
+{ Span } = std.source
+{ BlockId, Struct, Enum, Member } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Res, Ok, None, loop, Range } = std.core
+{ TyId } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ Ctx } = sema.sema_check
+{ Inst } = sema.sema_inst
+{ owner_of } = sema.sema_inst
+{ param_type } = sema.sema_denote
+{ self_ctx } = sema.sema_member
+{ ty_at } = sema.sema_cand
+{ Emit, order } = gen.gen_emit
+{ sym_fn, sym_local } = gen.gen_name
+{ GenFault } = gen.gen_diag
+{ CBackend, MethodRef, FnOrigin } = gen.gen_c.gen_c_state
+{ LocalSlot } = gen.gen_c.gen_c_frame
+{ sub, enter_tparams, leave_tparams } = gen.gen_c.gen_c_mono
+{ open_named } = gen.gen_c.gen_c_mono
+{ enter_struct_tparams } = gen.gen_c.gen_c_mono
+{ signature_of } = gen.gen_c.gen_c_call
+{ ctype, declarator, spellable, is_unit, has_storage, is_res } = gen.gen_c.gen_c_type
+{ declared_ret } = gen.gen_c.gen_c_type
+{ closure_storage } = gen.gen_c.gen_c_report
+{ emit_types } = gen.gen_c.gen_c_layout
+{ Dest, block } = gen.gen_c.gen_c_stmt
+{ takes_closure } = gen.gen_c.gen_c_inline
+{ impl_member_at, by_arity, kept_or_arity } = gen.gen_c.gen_c_impl
+{ method_sig, generic_method_sig } = gen.gen_c.gen_c_member
+{ emit_main } = gen.gen_c.gen_c_main
+{ emit_banner, emit_floor, emit_helpers, emit_print, emit_stderr } = gen.gen_c.gen_c_runtime
+{ emit_fs, emit_scope, emit_scope_floor } = gen.gen_c.gen_c_runtime
+{ emit_stdin } = gen.gen_c.gen_c_stdin
+{ emit_env } = gen.gen_c.gen_c_env
+{ emit_clock } = gen.gen_c.gen_c_clock
+{ emit_native_features, emit_proc } = gen.gen_c.gen_c_proc
+{ emit_threads, emit_spawn_envs } = gen.gen_c.gen_c_threads
+{ emit_actor_floor, emit_actor_defs } = gen.gen_c.gen_c_actor
+{ borrows, passes_address } = gen.gen_c.gen_c_borrow
+{ emit_machine, function_attributes } = gen.gen_c.gen_c_machine
+{ written_secret, written_pointer } = sema.sema_secret
 
 // Bound the reachable set by functions lowered. Crossing it reports Overrun
 // instead of silently emitting an incomplete translation unit.
@@ -311,16 +311,13 @@ lower_method_ref = (be :: CBackend, m: MethodRef) Res<(), AllocError> {
     })
 }
 
-// An enum carries members the way a struct does — `Color.impl(Coloured,
-// { rgb = (self: @Self) rgb<u8> { .. } })` is the encoding for values on
-// variants — but it declares none of its own (a variant is not a
-// member), so everything it answers is what an impl supplies.
+// A struct's or enum's own body members first; `method_member` falls back
+// to what an impl supplies.
 method_in_decl = (be :: CBackend, m: MethodRef, x: Decl)
                  Res<(), AllocError> {
-    x.kind.match({
-        Struct(s) => be.method_member(m, s),
-        Enum(_)   => be.supplied_member(m),
-        _         => Ok(()),
+    x.body_members().match({
+        Ok(members) => be.method_member(m, members),
+        None        => Ok(()),
     })
 }
 
@@ -330,10 +327,10 @@ method_in_decl = (be :: CBackend, m: MethodRef, x: Decl)
 // has none. and at the signature the call site resolved — same rule
 // `pick_member` reads a receiver's members by: a name naming two members
 // names neither on its own.
-method_member = (be :: CBackend, m: MethodRef, s: Struct)
+method_member = (be :: CBackend, m: MethodRef, members: Vec<Member>)
                 Res<(), AllocError> {
     found ::= be.alloc.Vec<Member>();
-    s.members.loop((h, mem) {
+    members.loop((h, mem) {
         mem.named(m.name).then(() { found.add(mem).try() });
     });
     be.by_sig(m, found).try().match({

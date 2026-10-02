@@ -1,10 +1,10 @@
-Descriptor, FileError, open_read, create_temporary = std.fs.posix
-AllocError, Ptr, null_ptr = std.mem
-str_at = std.text
-callback = std.native
-Res, Ok, Err = std.core
-Env, FsError = std.env
-println = std.io
+{ Descriptor, FileError, open_read, create_temporary } = std.fs.posix
+{ AllocError, Ptr, null_ptr } = std.mem
+{ str_at } = std.text
+{ callback } = std.native
+{ Res, Ok, Err } = std.core
+{ Env, FsError } = std.env
+{ println } = std.io
 Native = c.bind("unistd.h", {
     pipe = (fds: Ptr<i32>) i32
     fork = () i32
@@ -22,7 +22,7 @@ Signals = c.bind("signal.h", {
 Wait = c.bind("sys/wait.h", {
     waitpid = (pid: i32, status: Ptr<i32>, options: i32) i32
 })
-Failure = | Check
+Failure = { | Check }
 interrupted = (number: i32) {}
 
 main = (env: Env) Res<i32, AllocError | FileError | FsError | Failure> {

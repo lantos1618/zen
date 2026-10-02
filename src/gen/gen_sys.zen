@@ -7,10 +7,10 @@
 // Every operation returns a machine word. A negative result is `-errno` on
 // every target: Darwin wrappers translate libSystem's `-1` plus `errno` into
 // that form, so code above this layer never inspects an OS-specific errno.
-str = std.text
-Res, Ok, None = std.core
+{ str } = std.text
+{ Res, Ok, None } = std.core
 
-Sys* = Read
+Sys* = { Read
     | Write
     | Openat
     | Close
@@ -53,7 +53,7 @@ Sys* = Read
     | CondWait
     | CondSignal
     | CondBroadcast
-    | CondDestroy
+    | CondDestroy }
 
 // Word arguments each operation consumes, in kernel order.
 arity* = (call: Sys) usize {
@@ -213,7 +213,7 @@ darwin_symbol* = (call: Sys) Res<str> {
 // How a Darwin call reports failure. Most libSystem calls return -1 and set
 // errno; the pthread family returns the error number itself (0 on success);
 // `pthread_self` cannot fail and returns a handle.
-DarwinResult* = Errno | Returned | Handle
+DarwinResult* = { Errno | Returned | Handle }
 
 darwin_result* = (call: Sys) DarwinResult {
     call.match({
@@ -234,7 +234,7 @@ darwin_result* = (call: Sys) DarwinResult {
 }
 
 // Kernel constants whose values differ between the targets.
-SysConstant* = AtFdcwd
+SysConstant* = { AtFdcwd
     | ORdonly
     | OWronly
     | ORdwr
@@ -249,10 +249,10 @@ SysConstant* = AtFdcwd
     | EAgain
     | MapPrivateAnonymous
     // 1 on Darwin, 0 on Linux: which thread primitives std.sys builds on.
-    | IsDarwin
+    | IsDarwin }
 
 // The operating systems and architectures with constant tables.
-Platform* = LinuxX86_64 | LinuxArm64 | Darwin
+Platform* = { LinuxX86_64 | LinuxArm64 | Darwin }
 
 // Linux values come from the uapi headers (asm-generic for AArch64, whose
 // O_DIRECTORY differs from x86-64); Darwin values from the macOS SDK.

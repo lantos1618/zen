@@ -1,5 +1,5 @@
-Range = std.core
-println = std.io
+{ Range } = std.core
+{ println } = std.io
 
 // A range ends one before `end`, so a walk up to a type's maximum never steps
 // past it, and a signed range may start at its type's minimum.

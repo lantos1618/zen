@@ -13,8 +13,8 @@
 // native shuffle. Loads and stores are unaligned and use the target's native
 // byte order; every supported target is little-endian. `lane` and
 // `with_lane` trap on an index at or beyond the lane count.
-Ptr = std.mem
-Res, Ok, None = std.core
+{ Ptr } = std.mem
+{ Res, Ok, None } = std.core
 
 // u8x16: 16 x u8
 splat_u8x16* = (value: u8) u8x16

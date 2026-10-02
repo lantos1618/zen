@@ -1,8 +1,8 @@
-Alloc, AllocError = std.mem
-Vec, Map = std.collections
-str, String = std.text
-Ok, Err, None, Range, Eq, Hash, Hasher = std.core
-DeclId = sema.sema_id
+{ Alloc, AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ str, String } = std.text
+{ Ok, Err, None, Range, Eq, Hash, Hasher } = std.core
+{ DeclId } = sema.sema_id
 
 // Index into Types. u32 supports lossless indexing and hashing conversions.
 TyId* = { index*: u32 }
@@ -113,7 +113,7 @@ TyVar* = {
     owner*: str,
 }
 
-ResForm* = Absence | Failure | Open
+ResForm* = { Absence | Failure | Open }
 
 res_arity* = (form: ResForm) usize {
     form.match({ Failure => 2, Absence => 1, Open => 1 })
@@ -129,15 +129,15 @@ TyRes* = {
     form*: ResForm,
 }
 
-Ty* = Prim(Prim)
-    | Res(TyRes)
-    | Named(TyNamed)
-    | Fn(TyFn)
-    | Union(TyUnion)
-    | Array(TyArray)
-    | Var(TyVar)
+Ty* = { Prim: Prim
+    | Res: TyRes
+    | Named: TyNamed
+    | Fn: TyFn
+    | Union: TyUnion
+    | Array: TyArray
+    | Var: TyVar
     | Infer
-    | Unknown
+    | Unknown }
 
 // std.core's declarations that the backend gives a fixed representation:
 // a `vararg<T>` pack, a raw `Ptr<T>`, the block record a `Scope` names.

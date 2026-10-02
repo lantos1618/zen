@@ -11,13 +11,13 @@
 // dart 200 (member swapped), pixel 0 or pixel 112 (i64 read one byte at a
 // time) -- plausible numbers, quietly wrong.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Darts  = Miss | Hit(i64)
-Pixels = Hit(u8) | Miss
+Darts  = { Miss | Hit: i64 }
+Pixels = { Hit: u8 | Miss }
 
 main = (env: Env) Res<i32, AllocError> {
     d: Darts  = Darts.Hit(4000000000);

@@ -3,9 +3,9 @@
 // because 0x5A precedes 0x61, and a language question about text needs
 // a codepoint, not a byte.
 
-Res, Ok = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, ArgError> {
     println("{}", "abc".before("abd"));    // c < d

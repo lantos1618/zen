@@ -1,5 +1,5 @@
-Builder, BuildError, Codegen = std.build
-Res, Ok, Path = std.core
+{ Builder, BuildError, Codegen } = std.build
+{ Res, Ok, Path } = std.core
 
 choose = () Codegen { Codegen.C }
 

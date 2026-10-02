@@ -1220,28 +1220,28 @@ Collector.impl(Actor, {
 
 ## 12. Modules and imports
 
-### C142 — import binding a list of names from a module path
+### C142 — import destructuring names out of a module path
 ```groovy
-Res, Ok, None = std.core.result     // imported, local to this module
+{ Res, Ok, None } = std.core.result   // imported, local to this module
 ```
-`DESIGN.md:291`. Comma-separated names on the left, a dotted module path on the
-right. FLAG: syntactically a multi-name binding; nothing else in the language binds
-several names at once.
+Braced names on the left, a dotted module path on the right. The braces are
+what make it a destructure: each name is looked up in the module by itself.
+Only a module-level item begins with `{`.
 
 ### C143 — re-export: an import whose bindings are starred
 ```groovy
-Res*, Ok*, None* = std.core.result  // imported AND re-exported
-len*, view* = std.text.string
+{ Res*, Ok*, None* } = std.core.result  // imported AND re-exported
+{ len*, view* } = std.text.string
 ```
-`DESIGN.md:292-293`. "Re-export is an import whose bindings are starred. No `export`,
-no `from`" (`DESIGN.md:287`) — an explicit prohibition.
+"Re-export is an import whose bindings are starred. No `export`, no `from`."
 
-### C144 — single-name import from a namespace
+### C144 — single-item import by path
 ```groovy
-json = pkg.json
-sodium = pkg.libsodium
+str = std.text.str
+pick = one.pick
 ```
-`DESIGN.md:1005-1006`. No `;`. `std` and `pkg` are namespaces (`DESIGN.md:996`).
+No braces: the path's last segment is the item, everything before it is the
+module, and the name on the left is the local binding.
 
 ---
 

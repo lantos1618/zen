@@ -1,10 +1,10 @@
 // An inlined callee's locals remain distinct from same-named caller locals;
 // stores still target bindings in the callee and closure frames that own them.
 
-Res, Ok, None = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, None } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 apply = <T>(gate: bool, thing: () T) Res<T> {
     held ::= 77;

@@ -19,10 +19,10 @@
 // a callee's PARAMETER through the same spelling — a resolver with one
 // global answer prints the right name with the wrong value.
 
-Res, Ok, IoError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | IoError
 

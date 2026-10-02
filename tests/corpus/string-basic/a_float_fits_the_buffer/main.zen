@@ -26,10 +26,10 @@
 // Lengths are printed beside every view: braces dropped or doubled
 // bytes shift the count while leaving most digits intact.
 
-Res, Ok, WriteError = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, WriteError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | WriteError
 

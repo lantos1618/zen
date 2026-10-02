@@ -99,7 +99,7 @@ agent's work.
 ## The graph
 
 ```zen
-Builder, BuildError, Dep, Step = std.build
+{ Builder, BuildError, Dep, Step } = std.build
 
 quality = (b :: Builder, zen: Step) Res<Step, BuildError> {
     architecture = b.run("phase-ownership", {

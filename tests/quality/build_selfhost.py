@@ -28,7 +28,7 @@ class SelfBuildTests(unittest.TestCase):
 
     def write_graph(self, extra=""):
         (self.root / "build.zen").write_text(
-            "Builder, BuildError = std.build\n"
+            "{ Builder, BuildError } = std.build\n"
             "build = (b :: Builder) Res<(), BuildError> {\n"
             'b.exe("chosen", { src: Path("chosen.zen"), deps: [], '
             'out: Ok(Path("chosen")) }).try();\n' + extra + "\nOk(())\n}\n")
@@ -139,7 +139,7 @@ class SelfBuildTests(unittest.TestCase):
         (self.root / "native.c").write_text('#include "value.h"\nint answer(void) { return VALUE; }\n')
         self.source.write_text("answer = () i32\nmain = () i32 { answer() }\n")
         (self.root / "build.zen").write_text(
-            "Builder, BuildError = std.build\nbuild = (b :: Builder) Res<(), BuildError> {\n"
+            "{ Builder, BuildError } = std.build\nbuild = (b :: Builder) Res<(), BuildError> {\n"
             'native = b.extern("native", {src: Path("native.c"), libs: [], paths: []}).try();\n'
             'b.exe("chosen", {src: Path("chosen.zen"), deps: [native], '
             'out: Ok(Path("chosen"))}).try(); Ok(())\n}\n')

@@ -1,9 +1,9 @@
 // `Bag` travels with `add`, never with `rehome` -- and the module alias
 // that carries `Bag` here must not carry `rehome` with it.
 
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 zz = vec
 

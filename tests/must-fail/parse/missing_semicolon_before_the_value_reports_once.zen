@@ -4,7 +4,7 @@
 //
 // position: just after the call, where the `;` goes.
 
-print = std.io
+{ print } = std.io
 
 main = () i32 {
     print("hello")

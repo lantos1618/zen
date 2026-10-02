@@ -1,10 +1,10 @@
 // The std has no entropy, so Rng is a generator the caller seeds: the same
 // seed replays the same sequence, and `below` never reaches its bound.
 
-Res, Ok, Rng = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Rng } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     r1 ::= Rng.seeded(7);

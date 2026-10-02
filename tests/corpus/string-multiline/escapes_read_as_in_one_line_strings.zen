@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 // Escapes are the one-line set and mean the same bytes. Quotes need no
 // escape unless three would close the literal; an escaped `\n` is a byte of

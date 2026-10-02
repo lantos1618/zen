@@ -18,10 +18,10 @@
 // each level is written on one line on purpose: 32 levels of source
 // indentation would be a formatter test, and this is not one.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     yes  = (1 == 1);

@@ -1,6 +1,6 @@
-Res, Ok = std.core
-Env, ArgError = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env, ArgError } = std.env
+{ println } = std.io
 
 // MUST FAIL: two arms of a `.match` disagree, and NOTHING WROTE A TYPE
 // DOWN for them. `x = <match>` takes its type from the value, so there

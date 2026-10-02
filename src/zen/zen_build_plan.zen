@@ -4,34 +4,34 @@
 // Unsupported expression shapes are rejected at their source spans, and a
 // written target field that cannot be evaluated is an error naming it.
 
-Alloc, AllocError = std.mem
-str = std.text
-Vec = std.collections
-Res, Ok, Err, None, Range, Path = std.core
+{ Alloc, AllocError } = std.mem
+{ str } = std.text
+{ Vec } = std.collections
+{ Res, Ok, Err, None, Range, Path } = std.core
 
-Ast, ExprId, Expr, Call, Access, Record, Block, Function, Try = std.ast
-Match, PatternId = std.ast
-Span = std.source
-nowhere = std.source
-Stmt, Bind, Member, Field, Module = std.ast
-Checker, Ctx, type_of = sema.sema
-CImport, Lib, Extern, Exe, Dep, Target, Codegen, Package = std.build
-Mode, Optimize, Cc = std.build
+{ Ast, ExprId, Expr, Call, Access, Record, Block, Function, Try } = std.ast
+{ Match, PatternId } = std.ast
+{ Span } = std.source
+{ nowhere } = std.source
+{ Stmt, Bind, Member, Field, Module } = std.ast
+{ Checker, Ctx, type_of } = sema.sema
+{ CImport, Lib, Extern, Exe, Dep, Target, Codegen, Package } = std.build
+{ Mode, Optimize, Cc } = std.build
 
-PlanFault* = MissingBuild(str)
+PlanFault* = { MissingBuild: str
     | CheckedFaults
-    | MissingField(Span)
-    | UnknownName(Span)
-    | DuplicateTarget(str)
-    | Unsupported(Span)
-    | BadField(FieldFault)
-    | UnknownField(FieldFault)
-    | NoArm(Span)
+    | MissingField: Span
+    | UnknownName: Span
+    | DuplicateTarget: str
+    | Unsupported: Span
+    | BadField: FieldFault
+    | UnknownField: FieldFault
+    | NoArm: Span }
 
 // A written target field the planner could not turn into its value.
 FieldFault* = { at*: Span, name*: str }
 
-PlanError* = OutOfMemory | Refused(PlanFault)
+PlanError* = { OutOfMemory | Refused: PlanFault }
 
 refused = (fault: PlanFault) PlanError { PlanError.Refused(fault) }
 
@@ -75,23 +75,23 @@ BuildPlan* = {
     tests* :: Vec<ExeNode>,
 }
 
-ExecutableRole = Program | Test
+ExecutableRole = { Program | Test }
 
 EXE_FIELDS: str = "src deps backend optimize language frameworks strip cc cflags defines libs web out"
 
-Value = UnitValue
+Value = { UnitValue
     | BuilderValue
-    | TextValue(str)
-    | BoolValue(bool)
-    | PathValue(Path)
-    | TargetValue(Target)
-    | VariantValue(Variant)
-    | CcValue(Cc)
-    | DepValue(Dep)
+    | TextValue: str
+    | BoolValue: bool
+    | PathValue: Path
+    | TargetValue: Target
+    | VariantValue: Variant
+    | CcValue: Cc
+    | DepValue: Dep
     | EmptyList
-    | TextList(Vec<str>)
-    | DepList(Vec<Dep>)
-    | PathOption(Res<Path>)
+    | TextList: Vec<str>
+    | DepList: Vec<Dep>
+    | PathOption: Res<Path> }
 
 // A std.build enum value known while planning: its type's name and the
 // variant's.

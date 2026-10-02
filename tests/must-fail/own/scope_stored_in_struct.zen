@@ -4,9 +4,9 @@
 //
 // passing it INWARD stays legal — corpus/own/scope_passed_inward.zen.
 
-Res, Ok, Scope, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Scope, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Holder = {
     s: Scope,

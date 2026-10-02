@@ -1,2 +1,2 @@
 // A new backend directory: every file in it is held to the rule.
-Program = gen.gen_ir
+{ Program } = gen.gen_ir

@@ -3,11 +3,11 @@
 // sees what the module imports. The refusal of an unimported bare call is
 // must-fail/sema/a_bare_call_needs_its_import.
 
-parse_u64 = std.text
-Res = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ parse_u64 } = std.text
+{ Res } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     println("{}", "12".parse_i32().value_or(0));

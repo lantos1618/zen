@@ -1,10 +1,10 @@
 // A written argument settles T before values are checked against the resulting
 // signature. `id<str>` therefore cannot accept an i32.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 id = <T>(value: T) T { value }
 

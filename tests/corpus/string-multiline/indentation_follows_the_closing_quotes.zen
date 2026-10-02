@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 // The closing `"""` line's indentation is removed from every line, so the
 // literal can sit at the code's indentation while deeper lines keep their

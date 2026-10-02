@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 // A held number stored in a field is checked against the field's type.
 P = { f: u16 }

@@ -7,9 +7,9 @@
 // the interleaved prints make the TIMING observable, not just the order:
 // `mid` sits strictly between the inner drops and outer b's.
 
-Res, Ok, Drop, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Noisy = {
     env: Env,

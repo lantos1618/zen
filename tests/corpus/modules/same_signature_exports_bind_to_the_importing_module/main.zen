@@ -5,12 +5,12 @@
 // The unimported case is refused: must-fail/modules/
 // same_signature_from_two_modules_is_not_chosen_by_load_order.
 
-new_call, new_dot = new_user
-old_call, old_dot = old_user
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ new_call, new_dot } = new_user
+{ old_call, old_dot } = old_user
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 a = alpha
 b = beta
 

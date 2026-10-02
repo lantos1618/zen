@@ -16,10 +16,10 @@
 // truncate it — answered through a byte-wide slot, 123456789 would
 // come back as 21, still a number, quietly wrong.
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 widen = (x: u8) i64 { x.to_i64() }
 

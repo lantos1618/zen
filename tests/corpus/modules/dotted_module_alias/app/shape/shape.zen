@@ -1,0 +1,3 @@
+Bag* = { n*: i32 }
+
+area* = (b: Bag) i32 { b.n * 2 }

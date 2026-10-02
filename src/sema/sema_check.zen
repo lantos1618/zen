@@ -1,26 +1,26 @@
-Ast, ExprId, TypeId, BlockId = std.ast
-Span = std.source
-nowhere = std.source
-BinOp, Unary, Binary, Access = std.ast
-Alloc, AllocError = std.mem
-Vec, Map = std.collections
-str, String = std.text
-Res, Ok, None, loop, Range = std.core
-DeclId = sema.sema_id
-TyId, Types, ResForm, TyRes, TyNamed, TyArray, StdDecls = sema.sema_ty
-is_integer, is_float = sema.sema_ty
-World, ImportBinding, Def = sema.sema_def
-module_display = sema.sema_def
-Diag, SemaFault, TypeFault = sema.sema_diag
-ExportFault = sema.sema_diag
-Inst, InstEdge = sema.sema_inst
-DiscriminantCall = sema.sema_discriminant
-VariantNameCall = sema.sema_variant_name
-NumericConversion, IntegerBitOperation = sema.sema_numeric
-Primitive = sema.sema_prim
-Printer, IO_MODULE, printer_named = sema.sema_print
-OwnCheck, StoreEffects = sema.sema_store
-owning_copy_unsafe, mailbox_payload_unsafe, mailbox_byte_buffer = sema.sema_copy
+{ Ast, ExprId, TypeId, BlockId } = std.ast
+{ Span } = std.source
+{ nowhere } = std.source
+{ BinOp, Unary, Binary, Access } = std.ast
+{ Alloc, AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ str, String } = std.text
+{ Res, Ok, None, loop, Range } = std.core
+{ DeclId } = sema.sema_id
+{ TyId, Types, ResForm, TyRes, TyNamed, TyArray, StdDecls } = sema.sema_ty
+{ is_integer, is_float } = sema.sema_ty
+{ World, ImportBinding, Def, ModuleTable } = sema.sema_def
+{ module_display } = sema.sema_def
+{ Diag, SemaFault, TypeFault } = sema.sema_diag
+{ ExportFault, PairFault } = sema.sema_diag
+{ Inst, InstEdge } = sema.sema_inst
+{ DiscriminantCall } = sema.sema_discriminant
+{ VariantNameCall } = sema.sema_variant_name
+{ NumericConversion, IntegerBitOperation } = sema.sema_numeric
+{ Primitive } = sema.sema_prim
+{ Printer, IO_MODULE, printer_named } = sema.sema_print
+{ OwnCheck, StoreEffects } = sema.sema_store
+{ owning_copy_unsafe, mailbox_payload_unsafe, mailbox_byte_buffer } = sema.sema_copy
 
 // One scoped name. Mutability feeds receiver/ownership checks, param feeds LSP
 // classification, and span identifies the original binding in diagnostics.
@@ -85,7 +85,7 @@ CheckedCall* = {
 
 // An absent entry has no recorded call check. In-progress and
 // rejected calls expose no selection, including after a contextual recheck.
-CallResolution* = Checking | Rejected | Checked(CheckedCall)
+CallResolution* = { Checking | Rejected | Checked: CheckedCall }
 
 Checker* = {
     tree*: Ast,
@@ -975,6 +975,32 @@ check_import_gate = (c :: Checker) Res<(), AllocError> {
         c.world.blocked_imports(c.tree, mi, blocked).try();
     });
     blocked.loop((h, b) { c.report_blocked(b).try() });
+    Range(0, c.world.count()).loop((h, mi) {
+        c.world.table_at(mi).match({
+            None  => Ok(()),
+            Ok(t) => c.report_shadowed(t),
+        }).try();
+    });
+    Ok(());
+}
+
+// An import and a declaration of one name in one module would each hide
+// the other, so neither wins silently.
+report_shadowed = (c :: Checker, t: ModuleTable) Res<(), AllocError> {
+    t.imports.loop((h, b) {
+        t.defs.find((d) { d.name.eq(b.name) }).match({
+            None  => Ok(()),
+            Ok(d) => c.report(
+                b.span.file,
+                b.span,
+                SemaFault.ImportShadowed(PairFault(
+                    name: b.name,
+                    first: b.span,
+                    second: d.span
+                ))
+            ),
+        }).try();
+    });
     Ok(());
 }
 
@@ -983,7 +1009,7 @@ report_blocked = (c :: Checker, b: ImportBinding) Res<(), AllocError> {
         b.span.file,
         b.span,
         SemaFault.NotExported(ExportFault(
-            name: b.name,
+            name: b.source,
             module: module_display(b.module)
         ))
     )

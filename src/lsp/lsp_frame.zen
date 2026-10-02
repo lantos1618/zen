@@ -1,16 +1,19 @@
 // Reads and writes byte-counted `Content-Length` envelopes. Header names are
 // case-insensitive; `Envelope.next` identifies the next frame in the buffer.
 
-str, String = std.text
-AllocError = std.mem
-Res, Ok, Err, loop = std.core
+{ str, String } = std.text
+{ AllocError } = std.mem
+{ Res, Ok, Err, loop } = std.core
 
 Envelope* = {
     body*: str,
     next*: usize,
 }
 
-FrameFault* = NoBlank(usize) | NoLength(usize) | BadLength(usize) | Short(usize)
+FrameFault* = { NoBlank: usize
+    | NoLength: usize
+    | BadLength: usize
+    | Short: usize }
 
 byte* = (f: FrameFault) usize {
     f.match({

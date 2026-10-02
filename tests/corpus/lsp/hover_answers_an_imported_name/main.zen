@@ -3,21 +3,21 @@
 // positions that name no expression. The disk file uses parameter p while the
 // overlay uses q, making overlay selection observable in the signature.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text = std.json
-Res, Ok, loop = std.core
-Vec = std.collections
-Env = std.env
-println = std.io
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text } = std.json
+{ Res, Ok, loop } = std.core
+{ Vec } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 // The overlay buffer uses q where the disk file uses p.
-DOC*: str = "Point = app.shape\n\nnear = (q: Point, n: i32) i32 {\n    s = q.x + n;\n    s\n}\n"
+DOC*: str = "{ Point } = app.shape\n\nnear = (q: Point, n: i32) i32 {\n    s = q.x + n;\n    s\n}\n"
 
 // An overlay-only buffer with an unclosed brace exercises silent diagnostics.
-TORN*: str = "Point = app.shape\n\nnear = (q: Point) i32 {\n    q.x\n"
+TORN*: str = "{ Point } = app.shape\n\nnear = (q: Point) i32 {\n    q.x\n"
 
 // `tests/run.py` stages a directory test into `<work>/src` and runs the
 // program from `<work>`, so these are the paths the server will open.

@@ -7,16 +7,16 @@
 // Common source data lives on the wrapper; variant data lives in the kind.
 // Child nodes are stored as typed arena ids rather than by value.
 
-Ident, QualifiedName, TriviaRun = std.ast.ast_span
-Span = std.source
-ExprId, TypeId, PatternId, BlockId, CBindingId = std.ast.ast_id
-Alloc, AllocError = std.mem
-Res, Ok, None, Scope = std.core
-Vec = std.collections
+{ Ident, QualifiedName, TriviaRun } = std.ast.ast_span
+{ Span } = std.source
+{ ExprId, TypeId, PatternId, BlockId, CBindingId } = std.ast.ast_id
+{ Alloc, AllocError } = std.mem
+{ Res, Ok, None, Scope } = std.core
+{ Vec } = std.collections
 
 // `+ - *` trap on overflow; `+% -% *%` wrap. `& | ^ << >>` are unsigned bit
 // operations and never trap.
-BinOp* = Add
+BinOp* = { Add
     | Sub
     | Mul
     | Div
@@ -36,7 +36,7 @@ BinOp* = Add
     | BitOr
     | BitXor
     | ShiftLeft
-    | ShiftRight
+    | ShiftRight }
 
 // The operator as written.
 glyph* = (op: BinOp) str {
@@ -89,7 +89,7 @@ bit_name* = (op: BinOp) str {
 }
 
 // Unary `!`, `-`, address-of `&`, and bitwise not `~`.
-UnOp* = Not | Neg | Addr | BitNot
+UnOp* = { Not | Neg | Addr | BitNot }
 
 // Method forms. Export (`*`) is stored on the member.
 //     Required   `= sig`        impl must provide it
@@ -98,9 +98,9 @@ UnOp* = Not | Neg | Addr | BitNot
 //     Hook       `::= sig`      optional, impl may provide it
 //
 // A top-level function with a body also uses Sealed.
-Form* = Required | Sealed | Default | Hook
+Form* = { Required | Sealed | Default | Hook }
 
-LiteralKind* = Int | Float | Str | Char | Bool
+LiteralKind* = { Int | Float | Str | Char | Bool }
 
 // `text` is the source spelling, including quotes and escapes; a multi-line
 // string's is its equivalent one-line literal, and `block` keeps the source
@@ -122,14 +122,14 @@ Type* = {
 
 // `Unit` is `()`, `SelfType` is `@Self`, `Infer` is `_`, and `Variadic` is
 // `...`.
-TypeKind* = Named(Named)
-    | Union(Union)
-    | Fn(FnType)
-    | Array(ArrayType)
+TypeKind* = { Named: Named
+    | Union: Union
+    | Fn: FnType
+    | Array: ArrayType
     | Unit
     | SelfType
     | Infer
-    | Variadic
+    | Variadic }
 
 Named* = {
     name*: Ident,
@@ -164,10 +164,10 @@ Pattern* = {
 }
 
 // Sema resolves whether a pattern name is a value or binder.
-PatternKind* = Name(PatName)
-    | Destructure(Destructure)
+PatternKind* = { Name: PatName
+    | Destructure: Destructure
     | Wild
-    | Literal(Literal)
+    | Literal: Literal }
 
 PatName* = {
     name*: QualifiedName,
@@ -186,26 +186,26 @@ Expr* = {
     trailing*: TriviaRun,
 }
 
-ExprKind* = Name(Name)
-    | Literal(Literal)
+ExprKind* = { Name: Name
+    | Literal: Literal
     | Unit
     | SelfType
     | Scope
-    | Meta(Meta)
-    | Paren(Paren)
-    | Array(ArrayLit)
-    | FixedArray(FixedArray)
-    | Lambda(Lambda)
-    | Call(Call)
-    | Match(Match)
-    | Try(Try)
-    | Record(Record)
-    | Access(Access)
-    | Index(Index)
-    | Unary(Unary)
-    | Binary(Binary)
-    | Consume(Consume)
-    | Block(BlockId)
+    | Meta: Meta
+    | Paren: Paren
+    | Array: ArrayLit
+    | FixedArray: FixedArray
+    | Lambda: Lambda
+    | Call: Call
+    | Match: Match
+    | Try: Try
+    | Record: Record
+    | Access: Access
+    | Index: Index
+    | Unary: Unary
+    | Binary: Binary
+    | Consume: Consume
+    | Block: BlockId }
 
 // Bare identifier text; the enclosing Expr carries its span.
 Name* = {
@@ -337,11 +337,11 @@ Stmt* = {
 }
 
 // Declarations may be nested and do not take a semicolon.
-StmtKind* = Bind(Bind)
-    | Deferred(Deferred)
-    | Expr(ExprStmt)
-    | Decl(Decl)
-    | Block(BlockId)
+StmtKind* = { Bind: Bind
+    | Deferred: Deferred
+    | Expr: ExprStmt
+    | Decl: Decl
+    | Block: BlockId }
 
 // `x = e;`, `x ::= e;`, `x: T = e;`, `x :: T = e;`,
 // `self.len = self.len + 1;`. The target is an expression: a member and an
@@ -381,16 +381,26 @@ Decl* = {
     span*: Span,
     leading*: TriviaRun,
     trailing*: TriviaRun,
+
+    // The members a type's body declares: a struct's, or an enum's after the
+    // `,` that ends its variants.
+    body_members* = (self: @Self) Res<Vec<Member>> {
+        self.kind.match({
+            Struct(s) => Ok(s.members),
+            Enum(e)   => Ok(e.members),
+            _         => None,
+        })
+    }
 }
 
 // Imports remain interleaved with declarations in source order.
-DeclKind* = Struct(Struct)
-    | Enum(Enum)
-    | Alias(Alias)
-    | Function(Function)
-    | Impl(Impl)
-    | Import(Import)
-    | Const(Const)
+DeclKind* = { Struct: Struct
+    | Enum: Enum
+    | Alias: Alias
+    | Function: Function
+    | Impl: Impl
+    | Import: Import
+    | Const: Const }
 
 // `body_span` includes a struct's braces for faithful formatting.
 Struct* = {
@@ -418,12 +428,16 @@ Struct* = {
 }
 
 // leading_bar preserves one-variant enum syntax for formatting.
+// `braced` is the body form `{ A: T | B, members }`; its members follow the
+// `,` that ends the variants.
 Enum* = {
     name*: Ident,
     exported*: bool,
     tparams*: Vec<TParam>,
     variants*: Vec<Variant>,
     leading_bar*: Res<Span>,
+    members*: Vec<Member>,
+    braced*: bool,
 }
 
 // A variant accepts at most one type payload and one external discriminant.
@@ -491,14 +505,18 @@ Impl* = {
     }
 }
 
-// Starred import bindings are re-exported.
+// `{ a, b* } = m` binds each name from module `m`; `x = m.c` binds the
+// item `c` of module `m` as `x`. Starred bindings are re-exported.
 Import* = {
     names*: Vec<ImportName>,
     module*: QualifiedName,
 }
 
+// `name` is the local binding; `source` is what the module calls it, the
+// same identifier except in `x = m.c`.
 ImportName* = {
     name*: Ident,
+    source*: Ident,
     exported*: bool,
     span*: Span,
     leading*: TriviaRun,
@@ -552,7 +570,7 @@ Member* = {
 // (immutable) is a constant and `name :: T = value` (mutable) is a field
 // with a default. In an impl body or record literal `name: value` supplies
 // a field, so Const does not appear there.
-MemberKind* = Field(Field) | Const(Const) | Function(Function)
+MemberKind* = { Field: Field | Const: Const | Function: Function }
 
 // `width: f64`, `len* :: usize = 0`, and — in an impl or record —
 // `width: self.radius * 2.0`, where type is absent because the field
@@ -602,14 +620,14 @@ COpaque* = {
     spelling*: str,
 }
 
-CTypeBinding* = | Opaque(COpaque)
+CTypeBinding* = { | Opaque: COpaque }
 
 CBinding* = {
     headers*: Vec<CHeader>,
     types*: Vec<CTypeBinding>,
 }
 
-ModuleOrigin* = Source | CBinding(CBindingId)
+ModuleOrigin* = { Source | CBinding: CBindingId }
 
 // `name` is the dotted module path (`std.core.result`); the source file is
 // `span.file`. `trailing` holds an end-of-file comment.

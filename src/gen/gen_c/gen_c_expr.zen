@@ -7,52 +7,53 @@
 // temporaries. Sema remains the authority for types; an absent semantic and
 // contextual type is reported as `Untyped`.
 
-ExprId, Block = std.ast
-Span = std.source
-Decl, Consume = std.ast
-Literal, Binary, Unary, Match = std.ast
-Access, Call = std.ast
-TypeId = std.ast
-AllocError = std.mem
-literal_byte_len = std.lex
-Vec = std.collections
-str, String = std.text
-Res, Ok, None, loop, Range = std.core
-TyId = sema.sema_ty
-Def, decl_at = sema.sema_def
-Ctx = sema.sema_check
-type_of = sema.sema_type
-type_from_ast = sema.sema_denote
-sym_local = gen.gen_name
-CBackend, HeldExpression = gen.gen_c.gen_c_state
-init_temp = gen.gen_c.gen_c_flow
-LocalSlot = gen.gen_c.gen_c_frame
-sub, constructed, unsettled = gen.gen_c.gen_c_mono
-has_var = sema.sema_inst
-loop_result_type = gen.gen_c.gen_c_shape
-unsupported, closure_storage = gen.gen_c.gen_c_report
-declarator, is_unit, has_storage = gen.gen_c.gen_c_type
-lower_access = gen.gen_c.gen_c_read
-access_field_type = gen.gen_c.gen_c_read
-lower_array_lit, lower_fixed_array = gen.gen_c.gen_c_array
-request_type = gen.gen_c.gen_c_type
-Dest, deliver, destination_type = gen.gen_c.gen_c_stmt
-lower_call, res_value, is_res_ctor = gen.gen_c.gen_c_call
-call_callee = sema.sema_call
-needs_hoist, hoist_expr = gen.gen_c.gen_c_hoist
-needs_widen, widen_expr, needs_set, set_expr = gen.gen_c.gen_c_widen
-call_ret_type = gen.gen_c.gen_c_infer
-lower_unary, lower_binary, binary_type = gen.gen_c.gen_c_op
-lower_index, index_type = gen.gen_c.gen_c_index
-is_ptr_member, ptr_member_type = gen.gen_c.gen_c_ptr
-create_type = gen.gen_c.gen_c_alloc
-field_of = gen.gen_c.gen_c_type
-inline_result_type = gen.gen_c.gen_c_settle
-needs_fat, write_fat_value = gen.gen_c.gen_c_fat
-note_lend = gen.gen_c.gen_c_borrow
-release_binding = gen.gen_c.gen_c_own
-lower_scope_ref, is_scope_ref, scope_type = gen.gen_c.gen_c_scope
-lower_global_value = gen.gen_c.gen_c_const
+{ ExprId, Block } = std.ast
+{ Span } = std.source
+{ Decl, Consume } = std.ast
+{ Literal, Binary, Unary, Match } = std.ast
+{ Access, Call } = std.ast
+{ TypeId } = std.ast
+{ AllocError } = std.mem
+{ literal_byte_len } = std.lex
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Res, Ok, None, loop, Range } = std.core
+{ TyId } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ Ctx } = sema.sema_check
+{ type_of } = sema.sema_type
+{ type_from_ast } = sema.sema_denote
+{ sym_local } = gen.gen_name
+{ CBackend, HeldExpression } = gen.gen_c.gen_c_state
+{ init_temp } = gen.gen_c.gen_c_flow
+{ LocalSlot } = gen.gen_c.gen_c_frame
+{ sub, constructed, unsettled } = gen.gen_c.gen_c_mono
+{ has_var } = sema.sema_inst
+{ loop_result_type } = gen.gen_c.gen_c_shape
+{ unsupported, closure_storage } = gen.gen_c.gen_c_report
+{ declarator, is_unit, has_storage } = gen.gen_c.gen_c_type
+{ lower_access } = gen.gen_c.gen_c_read
+{ access_field_type } = gen.gen_c.gen_c_read
+{ lower_array_lit, lower_fixed_array } = gen.gen_c.gen_c_array
+{ request_type } = gen.gen_c.gen_c_type
+{ Dest, deliver, destination_type } = gen.gen_c.gen_c_stmt
+{ lower_call, res_value, is_res_ctor } = gen.gen_c.gen_c_call
+{ call_callee } = sema.sema_call
+{ needs_hoist, hoist_expr } = gen.gen_c.gen_c_hoist
+{ needs_widen, widen_expr, needs_set, set_expr } = gen.gen_c.gen_c_widen
+{ call_ret_type } = gen.gen_c.gen_c_infer
+{ lower_unary, lower_binary, binary_type } = gen.gen_c.gen_c_op
+{ lower_index, index_type } = gen.gen_c.gen_c_index
+{ is_ptr_member, ptr_member_type } = gen.gen_c.gen_c_ptr
+{ create_type } = gen.gen_c.gen_c_alloc
+{ field_of } = gen.gen_c.gen_c_type
+{ inline_result_type } = gen.gen_c.gen_c_settle
+{ needs_fat, write_fat_value } = gen.gen_c.gen_c_fat
+{ note_lend } = gen.gen_c.gen_c_borrow
+{ release_binding } = gen.gen_c.gen_c_own
+{ lower_scope_ref, is_scope_ref, scope_type } = gen.gen_c.gen_c_scope
+{ lower_global_value } = gen.gen_c.gen_c_const
+{ is_count_chain } = sema.sema_meta
 
 // expressions
 
@@ -237,7 +238,7 @@ ty_of* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
 // frame before the backend, the backend before sema, sema before the
 // context's expectation. Each variant carries the type its own source
 // computed, so nothing below asks a second time.
-TySource = ScopeRef | Frame(TyId) | Backend(TyId) | Sema(TyId) | Unanswered
+TySource = { ScopeRef | Frame: TyId | Backend: TyId | Sema: TyId | Unanswered }
 
 ty_source = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
             Res<TySource, AllocError> {
@@ -621,7 +622,7 @@ render_expr = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId, out :: String)
 }
 
 // Conversion precedence is hoist, widen, then bound-value construction.
-Door = Set | Hoist | Widen | Fat | Plain
+Door = { Set | Hoist | Widen | Fat | Plain }
 
 door_of = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
           Res<Door, AllocError> {
@@ -705,7 +706,7 @@ spill_temp = (
 // What a spilled value can be held in, in the order asked: a type
 // nothing settled has no C declaration to make, and a `()` has no
 // storage to make one in.
-Spill = Unsettled | Effect | Valued
+Spill = { Unsettled | Effect | Valued }
 
 spill_of = (be :: CBackend, ty: TyId) Spill {
     be.settled_place(ty).match({

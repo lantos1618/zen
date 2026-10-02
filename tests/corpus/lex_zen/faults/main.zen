@@ -10,13 +10,13 @@
 // read together with the faults it found, so one bad byte is never the end
 // of the file.
 
-scan, Source, message = std.lex.lex
-BOM_FIRST, BOM_SECOND, BOM_THIRD = std.text.text_utf8
-Alloc, AllocError = std.mem
-str, String = std.text
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ scan, Source, message } = std.lex.lex
+{ BOM_FIRST, BOM_SECOND, BOM_THIRD } = std.text.text_utf8
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 // how many tokens survived, and every fault with where it points
 dump = (env: Env, alloc: Alloc, label: str, text: str) Res<(), AllocError> {

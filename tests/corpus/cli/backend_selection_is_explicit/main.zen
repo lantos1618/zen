@@ -1,10 +1,9 @@
-Res, Ok = std.core
-Alloc, AllocError = std.mem
-Vec = std.collections
-Env = std.env
-println = std.io
-
-cli = zen
+{ Res, Ok } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ println } = std.io
+{ cli } = zen.zen_cli
 
 show = (env: Env, words: Vec<str>) Res<(), AllocError> {
     a ::= env.mem.alloc();

@@ -1,6 +1,6 @@
-Res, Ok = std.core
-AllocError, Arena = std.mem
-Env = std.env
+{ Res, Ok } = std.core
+{ AllocError, Arena } = std.mem
+{ Env } = std.env
 
 destroy = (arena :: Arena) { (consume arena).drop(); }
 main = (env: Env) Res<i32, AllocError> {

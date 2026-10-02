@@ -180,7 +180,7 @@ class ProtocolTests(unittest.TestCase):
         target = workspace / "app/shape.zen"
         target.write_text("Point* = { x*: i32, }\n")
         path = workspace / "app/app.zen"
-        text = "Point = app.shape\nnear* = (p: Point) i32 { p.x }\n"
+        text = "{ Point } = app.shape\nnear* = (p: Point) i32 { p.x }\n"
         path.write_text(text)
         client = self.client(workspace.as_uri())
         client.open(path.as_uri(), text)

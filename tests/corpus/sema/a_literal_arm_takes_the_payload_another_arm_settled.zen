@@ -5,12 +5,12 @@
 // passed on. Joining the arms without that settlement kept the literal
 // payload and refused the first arm as "match arms disagree".
 
-Res, Ok, Err = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Err } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Fault = | Closed | Other
+Fault = { | Closed | Other }
 
 read = (k: i32) Res<usize, Fault> {
     (k == 0).match({

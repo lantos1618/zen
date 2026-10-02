@@ -11,9 +11,9 @@
 // its own binding would open with `drop 1`; a missing re-arm would
 // lose `drop 4`.
 
-Res, Ok, Drop, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Noisy = {
     env: Env,

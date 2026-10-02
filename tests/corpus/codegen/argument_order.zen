@@ -16,10 +16,10 @@
 // receiver must remain the caller's place; copying it into a temporary
 // would hide mutations from the caller.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Counter = {
     n :: i32,

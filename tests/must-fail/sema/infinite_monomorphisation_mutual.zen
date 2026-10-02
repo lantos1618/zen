@@ -4,10 +4,10 @@
 //
 // position: the call that widens T.
 
-Res, Ok = std.core
-Alloc, AllocError = std.mem
-Vec = std.collections
-Env = std.env
+{ Res, Ok } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
 
 ping = <T>(alloc: Alloc, x: T) Res<(), AllocError> {
     v ::= alloc.Vec<T>();

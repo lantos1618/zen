@@ -1,10 +1,10 @@
 // A method and free UFCS function may share a name and arity when a later
 // parameter type keeps their accepted calls disjoint.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 W = {
     v: i32,

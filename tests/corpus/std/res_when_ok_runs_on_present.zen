@@ -1,10 +1,10 @@
 // `when_ok` on a Res<T> is the one-sided match: the closure sees a present
 // value and absence passes through, and it composes like `bool.then`.
 
-Res, Ok, None = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, None } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     present: Res<u64> = Ok(21);

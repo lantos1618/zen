@@ -3,10 +3,10 @@
 // eq. with a colliding hash the probe finds a match on every entry,
 // so a set that overwrites on hash alone clobbers the wrong row
 
-Res, Ok, Eq, Hash, Hasher = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Eq, Hash, Hasher } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Key = {
     id: i32,

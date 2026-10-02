@@ -2,10 +2,10 @@
 // `Ptr` is an ordinary struct with fields, laid out and read like any other;
 // recognising it by its name would spell it as a pointer and read garbage.
 
-Res = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Ptr<T> = { value: T, offset: i32 }
 

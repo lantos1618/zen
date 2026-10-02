@@ -5,12 +5,12 @@
 // a stale slot, or a set that appended a second row instead of
 // overwriting the first, brings the old value back.
 
-Alloc, AllocError = std.mem
-Map = std.collections
-Range = std.core.range
-Res, Ok, Eq, Hash, Hasher = std.core
-Env = std.env
-println = std.io
+{ Alloc, AllocError } = std.mem
+{ Map } = std.collections
+{ Range } = std.core.range
+{ Res, Ok, Eq, Hash, Hasher } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 FILL: usize = 200
 MIX: u64 = 1000003

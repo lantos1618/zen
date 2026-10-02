@@ -5,10 +5,10 @@
 // purpose: the qualified read must never answer with it, and the bare read
 // must never answer with the module's.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Controller = controller
 

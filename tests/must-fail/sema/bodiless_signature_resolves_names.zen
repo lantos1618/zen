@@ -17,10 +17,10 @@
 // deliberate and tracked, not cascade; when whichever of the ledger's
 // (a)/(b)/(c) lands the total drops and this test still passes.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Box = {
     area* = (self: @Self) NoSuchPlainType

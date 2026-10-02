@@ -3,10 +3,10 @@
 // declared before it still being alive in its own drop. that is
 // exactly what makes an arena declared first and dropped last safe
 
-Res, Ok, Drop = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Drop } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Noisy = {
     id: i32,

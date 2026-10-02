@@ -1,7 +1,7 @@
-Tag, One, Two, Three, Only, Single = mode.mode
-Res, Ok, IoError = std.core
-Env = std.env
-println = std.io
+{ Tag, One, Two, Three, Only, Single } = mode.mode
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 name = (t: Tag) str {
     t.match({

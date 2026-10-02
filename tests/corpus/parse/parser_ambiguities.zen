@@ -22,17 +22,17 @@
 // a signature without one (DESIGN.md's `= sig` / `= sig {..}` table),
 // and a dotted path, which is an import rather than a member access.
 
-scan, Source = std.lex.lex
-Parser, module = std.parse
-Ast = std.ast.ast_arena
-Decl, Form = std.ast.ast_node
-ExprId = std.ast.ast_id
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ scan, Source } = std.lex.lex
+{ Parser, module } = std.parse
+{ Ast } = std.ast.ast_arena
+{ Decl, Form } = std.ast.ast_node
+{ ExprId } = std.ast.ast_id
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-SOURCE: str = "Shape = Circle | Square\nAlias = Shape\nOnly = | Circle\nCircle.impl(Rect, { width: 2.0 })\nprimes = [i32, 4](2, 3, 5, 7)\nsmall = [0, 1, 2]\nadd = (a: i32, b: i32) i32 { a }\nsig = (a: i32) i32\nRes, Ok = std.core.result\njson = pkg.json\n"
+SOURCE: str = "Shape = Circle | Square\nAlias = Shape\nOnly = | Circle\nCircle.impl(Rect, { width: 2.0 })\nprimes = [i32, 4](2, 3, 5, 7)\nsmall = [0, 1, 2]\nadd = (a: i32, b: i32) i32 { a }\nsig = (a: i32) i32\n{ Res, Ok } = std.core.result\n{ json } = pkg.json\n"
 
 form_name = (f: Form) str {
     f.match({

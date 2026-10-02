@@ -3,10 +3,10 @@
 // four passes, and the off-by-one that makes it five is the whole
 // reason this test names the count as well as the values
 
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     count ::= 0;

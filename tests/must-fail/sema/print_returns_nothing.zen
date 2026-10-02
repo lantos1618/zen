@@ -10,8 +10,8 @@
 //
 // position: the tail expression.
 
-Env = std.env
-println = std.io
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) i32 {
     println("x")

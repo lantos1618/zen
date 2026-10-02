@@ -1,12 +1,12 @@
-Alloc, AllocError = std.mem
-str = std.text
-Vec = std.collections
-Res, Ok, None, loop, Range = std.core
-Pos = std.source
-Ast = std.ast.ast_arena
-Module = std.ast.ast_node
-scan, Source = std.lex.lex
-Parser, module = std.parse.parse
+{ Alloc, AllocError } = std.mem
+{ str } = std.text
+{ Vec } = std.collections
+{ Res, Ok, None, loop, Range } = std.core
+{ Pos } = std.source
+{ Ast } = std.ast.ast_arena
+{ Module } = std.ast.ast_node
+{ scan, Source } = std.lex.lex
+{ Parser, module } = std.parse.parse
 
 // A source text with its line index. Positions are 1-based; every byte
 // offset returned is clamped to the text.

@@ -1,11 +1,11 @@
 // `At(_)` already takes every `At`; the literal payload below is dead.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Mark = At(i32) | Nowhere
+Mark = { At: i32 | Nowhere }
 
 line = (m: Mark) i32 {
     m.match({

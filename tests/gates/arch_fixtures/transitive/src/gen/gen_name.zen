@@ -1,2 +1,2 @@
 // Shared naming over checked types.
-TyId = sema.sema_ty
+{ TyId } = sema.sema_ty

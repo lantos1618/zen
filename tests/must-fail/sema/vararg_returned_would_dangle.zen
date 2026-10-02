@@ -14,11 +14,11 @@
 //
 // position: the `vararg` in the return type.
 
-Res, Ok = std.core
-AllocError = std.mem
-vararg = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ vararg } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
 escapes = (v: vararg<i32>) vararg<i32> { v }
 

@@ -1,21 +1,21 @@
 // CLI entry point and public driver surface.
 
-Alloc, AllocError = std.mem
-str, String = std.text
-Env, FsError = std.env
-BuildArgs, ProjectArgs = std.build
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Env, FsError } = std.env
+{ BuildArgs, ProjectArgs } = std.build
 
-Cli*, FmtJob*, LspJob*, Refusal*, cli*, help = zen.zen_cli
-Build* = zen.zen_build
-fs_message = std.env
-std_root_for, holds_std = zen.zen_path
-build* = zen.zen_run
-project, Action = zen.zen_project
-format = zen.zen_fmt
-init = zen.zen_init
-Server, serve, serve_stdio = lsp
-Res, Ok, None = std.core
-println, print = std.io
+{ Cli*, FmtJob*, LspJob*, Refusal*, cli*, help } = zen.zen_cli
+{ Build* } = zen.zen_build
+{ fs_message } = std.env
+{ std_root_for, holds_std } = zen.zen_path
+{ build* } = zen.zen_run
+{ project, Action } = zen.zen_project
+{ format } = zen.zen_fmt
+{ init } = zen.zen_init
+{ Server, serve, serve_stdio } = lsp
+{ Res, Ok, None } = std.core
+{ println, print } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

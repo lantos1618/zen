@@ -1,5 +1,5 @@
-Range = std.core
-println = std.io
+{ Range } = std.core
+{ println } = std.io
 
 // `Range(end)` takes its type from a written binding type, and an end that
 // type cannot hold is refused at the end.

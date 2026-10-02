@@ -3,9 +3,9 @@
 // the captures are COPIED when `defer` is called — a later write to the
 // binding cannot be visible, and `note`'s frame has long returned.
 
-Res, Ok, Scope, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Scope, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 note = (s: Scope, tag: str) {
     s.defer(() { println("note {}", tag) });

@@ -1,0 +1,8 @@
+// Without braces `|` joins existing types into a union. `Start` and
+// `Stop` are not types, so this is an enum, and an enum is braced:
+// `Signal = { Start | Stop }`.
+Signal = Start | Stop
+
+main = (env: Env) Res<i32, IoError> {
+    Ok(0);
+}

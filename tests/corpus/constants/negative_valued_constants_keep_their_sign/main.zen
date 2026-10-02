@@ -17,10 +17,10 @@
 // The values are non-round on purpose: a truncated or re-associated
 // fold shows up as a DIFFERENT number, not as zero.
 
-Res, Ok = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 NEG: i64 = -42
 

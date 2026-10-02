@@ -1,6 +1,6 @@
 // The JavaScript-backend differential corpus gate, built with the C backend.
-Builder, BuildError, Codegen = std.build
-Res, Ok, Path = std.core
+{ Builder, BuildError, Codegen } = std.build
+{ Res, Ok, Path } = std.core
 
 build = (b :: Builder) Res<(), BuildError> {
     b.exe("js-corpus", { src: Path("main.zen"), deps: [], backend: Codegen.C }).try();

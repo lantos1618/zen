@@ -1,10 +1,10 @@
-Vec = std.collections
-AllocError = std.mem
-Block, Stmt, ExprStmt, Match, Arm, Arg, ExprId, Span = std.ast
-TyId = sema.sema_ty
-Checker, Dropped = sema.sema_check
-SemaFault, TypeFault = sema.sema_diag
-Res, Ok, None = std.core
+{ Vec } = std.collections
+{ AllocError } = std.mem
+{ Block, Stmt, ExprStmt, Match, Arm, Arg, ExprId, Span } = std.ast
+{ TyId } = sema.sema_ty
+{ Checker, Dropped } = sema.sema_check
+{ SemaFault, TypeFault } = sema.sema_diag
+{ Res, Ok, None } = std.core
 
 // A statement whose value nothing reads is refused when the expression
 // is a pure read: a literal, a name, a member, or a match over those,

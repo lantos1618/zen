@@ -9,9 +9,9 @@
 // three Noisys in a row; this one pins that INTERLEAVED non-Drop bindings
 // do not perturb it.)
 
-Res, Ok, Drop, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 Noisy = {
     env: Env,

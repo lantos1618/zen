@@ -11,7 +11,7 @@ wraps, saturates, rounds, or silently changes an error into absence; the only
 rounding conversions are the explicit `narrow_` family below.
 
 ```zen
-to_i32 = std.core.num
+{ to_i32 } = std.core.num
 
 parse_count = (text: str) Res<i32> {
     text.parse_i64().try().to_i32()

@@ -4,17 +4,17 @@
 // Like numeric conversions, only validated bodyless declarations in the
 // owning standard modules acquire an operation. Backends consume the
 // recorded Primitive by declaration identity, never by a callee's spelling.
-Function, ExprId = std.ast
-AllocError = std.mem
-Vec = std.collections
-str, String = std.text
-Res, Ok, Range = std.core
-Checker, Ctx = sema.sema_check
-TyId, is_vector, vector_lane, vector_lanes = sema.sema_ty
-Def = sema.sema_def
-param_type, ret_type = sema.sema_denote
-SemaFault, NameFault = sema.sema_diag
-IO_MODULE, printer_signature = sema.sema_print
+{ Function, ExprId } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Res, Ok, Range } = std.core
+{ Checker, Ctx } = sema.sema_check
+{ TyId, is_vector, vector_lane, vector_lanes } = sema.sema_ty
+{ Def } = sema.sema_def
+{ param_type, ret_type } = sema.sema_denote
+{ SemaFault, NameFault } = sema.sema_diag
+{ IO_MODULE, printer_signature } = sema.sema_print
 
 // `params` are the declared parameter types in order, receiver first.
 Primitive* = { name*: str, params*: Vec<TyId>, result*: TyId }

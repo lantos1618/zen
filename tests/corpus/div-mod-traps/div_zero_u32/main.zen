@@ -14,12 +14,12 @@
 // turn this into the compile-time error a visible zero would be
 // (DESIGN.md: a provable trap is a compile error, not a runtime one).
 
-Res, Ok = std.core
-OutOfBounds = std.collections
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ OutOfBounds } = std.collections
+{ Env } = std.env
+{ println } = std.io
 
-Error = Overflow | DivideByZero | OutOfBounds
+Error = { Overflow | DivideByZero | OutOfBounds }
 
 main = (env: Env) Res<i32, Error> {
     a: u32 = u32.MAX;

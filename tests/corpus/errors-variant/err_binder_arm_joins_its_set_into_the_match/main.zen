@@ -7,13 +7,13 @@
 // program. Every arm order and nesting below must join to `Kind | Fail`
 // and read each error back as the member it was raised as.
 
-Res, Ok, Err = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Err } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
-Kind = Io | Protocol
-Fail = Mismatch | Accepted
+Kind = { Io | Protocol }
+Fail = { Mismatch | Accepted }
 
 kinded = (n: i32) Res<i32, Kind> {
     n.match({ 0 => Err(Kind.Io), 1 => Err(Kind.Protocol), _ => Ok(n) })

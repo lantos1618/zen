@@ -1,9 +1,9 @@
 // Spawn supplies Context, behavior calls enqueue work, and stop drains the
 // accepted turns before the actor's stopped lifecycle hook runs.
 
-Res, Ok = std.core
-Env = std.env
-Actor, ActorError, ActorStartError, Context = std.actor
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context } = std.actor
 
 Printer = {
     tag: u64,

@@ -1,10 +1,10 @@
 // Converts editor URIs and filesystem paths with caller-owned decoded text.
-str, String, dup = std.text
-Map = std.collections
-Alloc, AllocError = std.mem
-hex_value, hex_digit = std.core.byte
-Res, Ok, loop, Range = std.core
-Env = std.env
+{ str, String, dup } = std.text
+{ Map } = std.collections
+{ Alloc, AllocError } = std.mem
+{ hex_value, hex_digit } = std.core.byte
+{ Res, Ok, loop, Range } = std.core
+{ Env } = std.env
 
 FILE_SCHEME*: str = "file://"
 REMOTE_SCHEME: str = "vscode-remote://"

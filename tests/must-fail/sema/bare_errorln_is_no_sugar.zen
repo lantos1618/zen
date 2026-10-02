@@ -4,8 +4,8 @@
 // is an undefined name -- reached with `env.out.errorln(..)` or not at
 // all. DESIGN.md's sugar clause is about println; nothing here invents.
 
-Res, Ok, IoError = std.core
-Env = std.env
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
 
 main = (env: Env) Res<i32, IoError> {
     errorln("not a sugar");

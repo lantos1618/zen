@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 // An untyped binding of a number holds it with the literal's flexibility: a
 // use that can hold the value takes it, as a binding, an argument or a field.

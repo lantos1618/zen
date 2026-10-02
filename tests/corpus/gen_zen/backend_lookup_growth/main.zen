@@ -1,15 +1,15 @@
 // Lookup keys remain valid after owners and hash indexes grow. A reused
 // caller buffer must not rename a remembered function, and duplicate types
 // retain their first insertion index.
-Ast = std.ast
-AllocError = std.mem
-String = std.text
-Checker = sema.sema_check
-CBackend = gen.gen_c
-TyId = sema.sema_ty
-Res, Ok, Range = std.core
-Env = std.env
-println = std.io
+{ Ast } = std.ast
+{ AllocError } = std.mem
+{ String } = std.text
+{ Checker } = sema.sema_check
+{ CBackend } = gen.gen_c
+{ TyId } = sema.sema_ty
+{ Res, Ok, Range } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

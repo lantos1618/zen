@@ -1,4 +1,4 @@
-println = std.io
+{ println } = std.io
 
 // f64.MAX and f64.MIN are the largest finite doubles; a lowering that took
 // them for an integer's constants printed nan and 0.

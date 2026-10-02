@@ -59,16 +59,16 @@
 // copying bodies, which is exactly when a dropped comment becomes a
 // deleted comment. That is what this file is here to catch first.
 
-scan, Source = std.lex.lex
-Parser, module = std.parse
-Ast = std.ast.ast_arena
-TriviaRun = std.ast.ast_span
-Decl, Block, Stmt = std.ast.ast_node
-ExprId = std.ast.ast_id
-Res, Ok, Range = std.core
-AllocError = std.mem
-Env = std.env
-println = std.io
+{ scan, Source } = std.lex.lex
+{ Parser, module } = std.parse
+{ Ast } = std.ast.ast_arena
+{ TriviaRun } = std.ast.ast_span
+{ Decl, Block, Stmt } = std.ast.ast_node
+{ ExprId } = std.ast.ast_id
+{ Res, Ok, Range } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 //   1  Point = {
 //   2      x: i32,

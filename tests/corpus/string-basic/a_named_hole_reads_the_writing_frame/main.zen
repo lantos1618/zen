@@ -19,10 +19,10 @@
 // prints a plausible permutation of the true values. Only exact values
 // per frame tell the three resolutions apart.
 
-Res, Ok, Range, WriteError = std.core
-Alloc, AllocError = std.mem
-Env = std.env
-println = std.io
+{ Res, Ok, Range, WriteError } = std.core
+{ Alloc, AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 Error = AllocError | WriteError
 

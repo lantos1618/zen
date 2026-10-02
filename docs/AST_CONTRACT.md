@@ -34,7 +34,7 @@ Expr = {
     trailing: TriviaRun,
 }
 
-ExprKind = Name(Name) | Call(Call) | Binary(Binary) | ...
+ExprKind = { Name: Name | Call: Call | Binary: Binary | ... }
 ```
 
 This gives every consumer direct access to source information while preserving

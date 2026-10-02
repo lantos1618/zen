@@ -28,18 +28,18 @@
 // `file://src/...` form `hover_answers_an_imported_name` next door
 // explains.
 
-str, String = std.text
-Alloc, AllocError = std.mem
-Server, serve = lsp.lsp_serve
-write_frame, frame_at = lsp.lsp_frame
-write_text = std.json
-Res, Ok, loop = std.core
-Env = std.env
-println = std.io
+{ str, String } = std.text
+{ Alloc, AllocError } = std.mem
+{ Server, serve } = lsp.lsp_serve
+{ write_frame, frame_at } = lsp.lsp_frame
+{ write_text } = std.json
+{ Res, Ok, loop } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 // THE BUFFER, not the file on disk: one good import, one name nobody
 // bound. `Bag` sits at line 2, characters 21-23.
-DOC*: str = "Point = app.shape\n\nnear = (p: Point, b: Bag, x: Box) i32 {\n    p.x\n}\n"
+DOC*: str = "{ Point } = app.shape\n\nnear = (p: Point, b: Bag, x: Box) i32 {\n    p.x\n}\n"
 
 URI*: str = "file://src/app/app.zen"
 ROOT_URI*: str = "file://."

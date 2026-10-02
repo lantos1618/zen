@@ -1,8 +1,8 @@
-JsonEvent, JsonFault = std.json
-Res, Ok = std.core
-Alloc = std.mem
-Env = std.env
-println = std.io
+{ JsonEvent, JsonFault, Decoder } = std.json
+{ Res, Ok } = std.core
+{ Alloc } = std.mem
+{ Env } = std.env
+{ println } = std.io
 
 at = (fault: JsonFault) usize {
     fault.match({

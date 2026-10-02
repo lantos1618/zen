@@ -3,11 +3,11 @@
 //
 // position: the value in return position.
 
-Res, Ok = std.core
-Env = std.env
-println = std.io
+{ Res, Ok } = std.core
+{ Env } = std.env
+{ println } = std.io
 
-CfgError = Missing | Bad
+CfgError = { Missing | Bad }
 
 load = (n: i32) Res<i32, CfgError> {
     CfgError.Bad;

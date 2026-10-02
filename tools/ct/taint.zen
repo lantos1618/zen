@@ -55,15 +55,15 @@
 // clean here), instructions whose latency depends on operands other than
 // division, and speculative execution. tools/ct/grind (valgrind) tracks
 // memory exactly on Linux; the timing test measures the machine.
-Alloc, AllocError = std.mem
-Vec, Map = std.collections
-str, String = std.text
-Res, Ok, None, loop, Range = std.core
-parse_i64 = std.text
-truncate_u32, to_i64, to_usize, shift_left, shift_right, bit_or, bit_and, bit_xor = std.core.num
-println = std.io
+{ Alloc, AllocError } = std.mem
+{ Vec, Map } = std.collections
+{ str, String } = std.text
+{ Res, Ok, None, loop, Range } = std.core
+{ parse_i64 } = std.text
+{ truncate_u32, to_i64, to_usize, shift_left, shift_right, bit_or, bit_and, bit_xor } = std.core.num
+{ println } = std.io
 
-Isa* = X86 | Arm
+Isa* = { X86 | Arm }
 
 // A label or one instruction with operands split at top-level commas.
 Line* = { label*: str, mnemonic*: str, operands*: Vec<str>, text*: str }
@@ -196,7 +196,7 @@ State = {
 
 // Where a memory operand lands: a known entry-relative stack offset, the
 // stack at an offset that depends on an index register, or other memory.
-Place = | Exact(i64) | Somewhere | Elsewhere
+Place = { | Exact: i64 | Somewhere | Elsewhere }
 
 // ---------------------------------------------------------------------
 // Reading a function out of an assembly file

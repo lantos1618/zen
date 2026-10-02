@@ -10,9 +10,9 @@
 // a generic body may name the body's type parameter and its closure
 // parameter.
 
-Res, Ok, None, IoError = std.core
-Env = std.env
-println = std.io
+{ Res, Ok, None, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 sum_nonneg = (xs: [i64, 3]) Res<i64> {
     pick = (i: usize) i64 {

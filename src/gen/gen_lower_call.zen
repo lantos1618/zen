@@ -70,8 +70,14 @@ named_call = (lo :: Lowerer, id: ExprId, c: Call, name: str, span: Span) Res<Val
         lo.check.world.defs_of(lo.here().module, name, defs).try(LowerError.OutOfMemory);
         sugar = defs.len == 0;
     });
+    printer = lo.check.printer_call(id);
+    printer.match({ Ok(_) => { sugar = true; }, None => () });
+    newline = printer.match({
+        Ok(how) => how.match({ Line => true, Bare => false }),
+        None    => name.eq("println"),
+    });
     sugar.match({
-        true  => lo.print_call(c.args, 0, name.eq("println"), Stream.Out, span),
+        true  => lo.print_call(c.args, 0, newline, Stream.Out, span),
         false => selected.match({
             Ok(checked) => checked.declaration.match({
                 Ok(_) => lo.checked_invoke(id, c, checked, None, span),

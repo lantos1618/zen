@@ -11,6 +11,7 @@ Range = std.core
 FmtAt, fmt_at, ends_run, arguments_taken = std.text.text_fmt
 TyId, is_float = sema.sema_ty
 Ctx = sema.sema_check
+Printer = sema.sema_print
 GenFault = gen.gen_diag
 sym_variant, RES_PATH = gen.gen_name
 CBackend = gen.gen_c.gen_c_state
@@ -43,8 +44,9 @@ pair = (stream: str, stdout: str, stderr: str) str {
 }
 
 // Writes are statements; the expression result is unit.
-lower_print* = (be :: CBackend, c: Call, name: str, ctx: Ctx, out :: String)
+lower_print* = (be :: CBackend, c: Call, how: Printer, ctx: Ctx, out :: String)
                Res<(), AllocError> {
+    name = how.match({ Line => "println", Bare => "print" });
     write_pieces(be, c, name, "stdout", ctx).try();
     out.add("0")
 }

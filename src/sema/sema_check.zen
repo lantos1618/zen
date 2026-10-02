@@ -17,6 +17,7 @@ DiscriminantCall = sema.sema_discriminant
 VariantNameCall = sema.sema_variant_name
 NumericConversion, IntegerBitOperation = sema.sema_numeric
 Primitive = sema.sema_prim
+Printer = sema.sema_print
 OwnCheck, StoreEffects = sema.sema_store
 
 // One scoped name. Mutability feeds receiver/ownership checks, param feeds LSP
@@ -122,6 +123,8 @@ Checker* = {
     integer_bits* :: Map<DeclId, IntegerBitOperation>,
     // Validated machine primitives (wide multiply, truncation, vectors).
     primitives* :: Map<DeclId, Primitive>,
+    // Validated std.io printers (`println`, `print`).
+    printers* :: Map<DeclId, Printer>,
     // Literal-only bitwise expressions and whether an expected unsigned type
     // has given them a width. See `sema_trap.defer_width`.
     bit_widths* :: Map<ExprId, bool>,
@@ -225,6 +228,11 @@ Checker* = {
 
     resolved_call* = (self: @Self, id: ExprId) Res<DeclId> {
         self.checked_call(id).try().declaration
+    }
+
+    // The std.io printer a call selected, and `None` for every other call.
+    printer_call* = (self: @Self, id: ExprId) Res<Printer> {
+        self.printers.get(self.resolved_call(id).try())
     }
 
     resolved_member_provider* = (self: @Self, id: ExprId) Res<TyId> {
@@ -804,6 +812,7 @@ Checker* = (a: Alloc, tree: Ast) Res<Checker, AllocError> {
         numeric_conversions: a.Map<DeclId, NumericConversion>(),
         integer_bits: a.Map<DeclId, IntegerBitOperation>(),
         primitives: a.Map<DeclId, Primitive>(),
+        printers: a.Map<DeclId, Printer>(),
         bit_widths: a.Map<ExprId, bool>(),
         discriminant_calls: a.Map<ExprId, DiscriminantCall>(),
         variant_name_calls: a.Map<ExprId, VariantNameCall>(),

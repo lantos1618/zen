@@ -14,6 +14,7 @@ TyId, is_vector, vector_lane, vector_lanes = sema.sema_ty
 Def = sema.sema_def
 param_type, ret_type = sema.sema_denote
 SemaFault, NameFault = sema.sema_diag
+IO_MODULE, printer_signature = sema.sema_print
 
 // `params` are the declared parameter types in order, receiver first.
 Primitive* = { name*: str, params*: Vec<TyId>, result*: TyId }
@@ -34,9 +35,13 @@ reserved_primitive = (name: str) bool {
 primitive_signature* = (c :: Checker, d: Def, f: Function)
                        Res<(), AllocError> {
     module = c.world.module_name(d.id);
-    (primitive_module(module) || reserved_primitive(f.name.text)).match({
-        false => Ok(()),
-        true  => c.primitive_declaration(d, f, module),
+    module.eq(IO_MODULE).match({
+        true  => c.printer_signature(d, f),
+        false => (primitive_module(module) || reserved_primitive(f.name.text))
+            .match({
+                false => Ok(()),
+                true  => c.primitive_declaration(d, f, module),
+            }),
     })
 }
 

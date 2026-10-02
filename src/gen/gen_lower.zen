@@ -545,6 +545,7 @@ Lowering = {
         name     = self.tree.expr_at(
             call.callee
         ).kind.match({ Name(n) => n.text, _ => "" });
+        printer  = self.check.printer_call(id);
         selected = self.check.resolved_call(
             id
         ).match({ Ok(_) => true, None => false });
@@ -560,9 +561,16 @@ Lowering = {
                 name
             ).match({ None => true, Ok(_) => false });
         });
-        sugar.match({
-            true  => self.print(call, name.eq("println"), span),
-            false => self.invoke(id, call, span),
+        printer.match({
+            Ok(how) => self.print(
+                call,
+                how.match({ Line => true, Bare => false }),
+                span
+            ),
+            None    => sugar.match({
+                true  => self.print(call, name.eq("println"), span),
+                false => self.invoke(id, call, span),
+            }),
         })
     }
 

@@ -17,6 +17,7 @@ Range = std.core
 TyId, TyRes = sema.sema_ty
 Def, decl_at = sema.sema_def
 Ctx = sema.sema_check
+Printer = sema.sema_print
 Inst = sema.sema_inst
 type_from_ast = sema.sema_denote
 pack_slot, pack_elem = sema.sema_vararg
@@ -482,9 +483,17 @@ NamedCallSite = {
 
     sugar_or_plain = (self: @Self, be :: CBackend, out :: String)
                      Res<(), AllocError> {
-        be.is_sugar(self.name, self.site.ctx).try().match({
-            true  => be.lower_print(self.site.c, self.name, self.site.ctx, out),
-            false => self.site.resolve(be, self.name, self.want, out),
+        be.check.printer_call(self.site.id).match({
+            Ok(how) => be.lower_print(self.site.c, how, self.site.ctx, out),
+            None    => be.is_sugar(self.name, self.site.ctx).try().match({
+                true  => be.lower_print(
+                    self.site.c,
+                    sugar_printer(self.name),
+                    self.site.ctx,
+                    out
+                ),
+                false => self.site.resolve(be, self.name, self.want, out),
+            }),
         })
     }
 }
@@ -933,6 +942,10 @@ undeclared = (be :: CBackend, name: str, ctx: Ctx) Res<bool, AllocError> {
     found ::= be.alloc.Vec<Def>();
     be.check.world.defs_of(ctx.module, name, found).try();
     Ok(found.len == 0);
+}
+
+sugar_printer = (name: str) Printer {
+    name.eq("println").match({ true => Printer.Line, false => Printer.Bare })
 }
 
 is_res_ctor* = (name: str) bool { name.eq("Ok") || name.eq("Err") }

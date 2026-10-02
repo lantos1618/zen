@@ -28,8 +28,8 @@ main = (env: Env) Res<(), AllocError | SocketFault> {
     bytes ::= a.Vec<u8>();
     check(socket.read(bytes, 1).try() == 1 && bytes.ptr().read(0) == 'p');
     socket.write("ack").try();
-    remaining ::= 3;
-    offset    ::= 0;
+    remaining :: usize = 3;
+    offset    :: usize = 0;
     expected: str = "ong";
     loop(() { remaining > 0 }, (h) {
         n = socket.read(bytes, remaining).try();

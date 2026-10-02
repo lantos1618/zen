@@ -3,14 +3,14 @@
 // that breaks is assigned after the loop: breaking is the only way out.
 
 main = () i32 {
-    sum ::= 0;
+    sum :: i32 = 0;
     Range(0, 4).loop((h, i) {
-        square :: usize;
+        square :: i32;
         square = i * i;
         sum    = sum + square;
     });
     first :: i32;
-    n     ::= 5;
+    n     :: i32 = 5;
     loop((h) {
         (n % 3 == 0).then(() {
             first = n;

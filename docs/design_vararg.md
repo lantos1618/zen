@@ -209,7 +209,7 @@ All of the following are held by the vararg corpus, including
 - **A pack is not indexable by `v[i]`** through the trap form unless the receiver
   is a place; `v.get(i)` and `v.loop(..)` are the walked forms and are what the
   corpus exercises.
-- **`vararg` is not a keyword.** A module imports it (`vararg = std.collections`)
+- **`vararg` is not a keyword.** A module imports it (`{ vararg } = std.collections`)
   or declares its own, and then `vararg<T>` in that module is that declaration —
   the same rule every imported name follows. The recognition is a name compare, as
   `Res` and `Ptr` already are.

@@ -11,7 +11,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DECLARATIONS = """identity = <T>(value: T) T { value }
+DECLARATIONS = """{ println } = std.io
+identity = <T>(value: T) T { value }
 inferred = <T>(witness: T, value: T) T { value }
 apply = <T>(value: T, body: (value: T) T) T { body(value) }
 element = <T>(values: [T, 1]) T { values[0] }

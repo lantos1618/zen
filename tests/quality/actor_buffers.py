@@ -61,6 +61,12 @@ with tempfile.TemporaryDirectory(prefix='zen-actor-buffers-') as folder:
           failure=True, sanitizers='address,undefined')
 
     paired = generate("""
+{ Res, Ok, Err, None } = std.core
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ Actor, Context, ActorStartError, ActorError } = std.actor
+{ println } = std.io
 Native = c.bind("stdlib.h", { abort* = () () })
 Worker = {}
 Worker.impl(Actor, {
@@ -85,6 +91,12 @@ main = (env: Env) Res<i32, AllocError | ActorStartError | ActorError> {
     check('multiple-buffers-grow-independently', paired, 'first 1 2\nsecond 2 2\n')
 
     refusal = '''
+{ Res, Ok, Err, None } = std.core
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ Actor, Context, ActorStartError, ActorError } = std.actor
+{ println } = std.io
 Native = c.bind("stdlib.h", { abort* = () () })
 Worker = {}
 Worker.impl(Actor, {

@@ -75,7 +75,7 @@ def expression(rng: random.Random, depth: int) -> Expr:
 
 def program(seed: int, count: int) -> tuple[str, str]:
     rng = random.Random(seed)
-    declarations = ["identity = <T>(value: T) T { value }", """Counter = {
+    declarations = ["{ println } = std.io", "identity = <T>(value: T) T { value }", """Counter = {
     count :: i32,
     tick = (self :: @Self, value: i32) i32 {
         self.count = self.count + 1;

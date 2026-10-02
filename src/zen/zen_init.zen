@@ -97,8 +97,8 @@ target_name = (env: Env, a: Alloc, dir: str) Res<String, AllocError> {
 // A format string is read where it is written, so the template is a literal.
 build_graph = (a: Alloc, name: str) Res<String, AllocError> {
     a.String(
-        "// The project's build graph. `zen run` builds and runs `{name}`;\n// `zen run --release` optimizes it. `zen help build` lists the options.\n\nRes, Ok, Path = std.core\nBuilder, BuildError = std.build\n\nbuild = (b :: Builder) Res<(), BuildError> {{\n    b.exe(\"{name}\", {{\n        src: Path(\"src/main.zen\"),\n        deps: [],\n    }}).try();\n    Ok(())\n}}\n"
+        "// The project's build graph. `zen run` builds and runs `{name}`;\n// `zen run --release` optimizes it. `zen help build` lists the options.\n\n{{ Res, Ok, Path }} = std.core\n{{ Builder, BuildError }} = std.build\n\nbuild = (b :: Builder) Res<(), BuildError> {{\n    b.exe(\"{name}\", {{\n        src: Path(\"src/main.zen\"),\n        deps: [],\n    }}).try();\n    Ok(())\n}}\n"
     )
 }
 
-MAIN: str = "Env = std.env\nprintln = std.io\n\n// `main` receives the Env, which carries every capability the program may use.\nmain = (env: Env) {\n    println(\"Hello, world!\");\n}\n"
+MAIN: str = "{ Env } = std.env\n{ println } = std.io\n\n// `main` receives the Env, which carries every capability the program may use.\nmain = (env: Env) {\n    println(\"Hello, world!\");\n}\n"

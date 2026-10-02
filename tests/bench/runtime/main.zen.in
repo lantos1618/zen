@@ -1,4 +1,8 @@
 { Ordered, sort } = std.collections
+{ Res, Ok, Eq, Hash, Hasher, Range } = std.core
+{ Alloc, AllocError, Ptr } = std.mem
+{ Env } = std.env
+{ println } = std.io
 Key = { value: usize }
 Key.impl(Eq, { eq = (self: @Self, other: @Self) bool { self.value == other.value } })
 Key.impl(Hash, {

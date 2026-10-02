@@ -28,7 +28,7 @@ class SelfBuildTests(unittest.TestCase):
 
     def write_graph(self, extra=""):
         (self.root / "build.zen").write_text(
-            "{ Builder, BuildError } = std.build\n"
+            "{ Builder, BuildError } = std.build\n{ Res, Ok, Path } = std.core\n"
             "build = (b :: Builder) Res<(), BuildError> {\n"
             'b.exe("chosen", { src: Path("chosen.zen"), deps: [], '
             'out: Ok(Path("chosen")) }).try();\n' + extra + "\nOk(())\n}\n")
@@ -92,7 +92,7 @@ class SelfBuildTests(unittest.TestCase):
         self.assertEqual(self.status(), 7)
 
     def test_running_executable_survives_replacement(self):
-        self.source.write_text('getchar = () i32\nmain = (env: Env) Res<i32, IoError> {\n'
+        self.source.write_text('{ Res, Ok, IoError } = std.core\n{ Env } = std.env\ngetchar = () i32\nmain = (env: Env) Res<i32, IoError> {\n'
                                'env.out.println("ready").try(); env.out.flush().try();\n'
                                'getchar(); Ok(3)\n}\n')
         self.build()
@@ -128,7 +128,7 @@ class SelfBuildTests(unittest.TestCase):
         self.assertFalse((self.root / "shared").exists())
 
     def test_foreign_symbol_text_does_not_link_unused_libraries(self):
-        self.source.write_text('main = () { println("SSL_read_ex"); }\n')
+        self.source.write_text('{ println } = std.io\nmain = () { println("SSL_read_ex"); }\n')
         self.build()
         result = subprocess.run([str(self.output)], capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0)
@@ -139,7 +139,7 @@ class SelfBuildTests(unittest.TestCase):
         (self.root / "native.c").write_text('#include "value.h"\nint answer(void) { return VALUE; }\n')
         self.source.write_text("answer = () i32\nmain = () i32 { answer() }\n")
         (self.root / "build.zen").write_text(
-            "{ Builder, BuildError } = std.build\nbuild = (b :: Builder) Res<(), BuildError> {\n"
+            "{ Builder, BuildError } = std.build\n{ Res, Ok, Path } = std.core\nbuild = (b :: Builder) Res<(), BuildError> {\n"
             'native = b.extern("native", {src: Path("native.c"), libs: [], paths: []}).try();\n'
             'b.exe("chosen", {src: Path("chosen.zen"), deps: [native], '
             'out: Ok(Path("chosen"))}).try(); Ok(())\n}\n')

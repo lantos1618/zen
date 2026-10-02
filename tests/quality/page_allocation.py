@@ -12,7 +12,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--zen', type=Path, required=True)
 parser.add_argument('--std', type=Path, default=ROOT / 'src')
 args = parser.parse_args()
-program = '''{ Page } = std.mem
+program = '''{ Page, AllocError, Ptr, null_ptr } = std.mem
+{ Res, Ok, Err } = std.core
+{ Env } = std.env
 Native = c.bind("stdbool.h", { aligned* = (p: Ptr<u8>) bool })
 main = (env: Env) Res<i32, AllocError> {
     errors ::= 0;

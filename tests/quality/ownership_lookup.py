@@ -13,7 +13,12 @@ parser.add_argument('--std', type=Path, default=ROOT / 'src')
 parser.add_argument('--old-zen', type=Path)
 parser.add_argument('--old-std', type=Path)
 args = parser.parse_args()
-HEADER = '''Owner = { id: i32 }
+HEADER = '''{ Res, Ok, Drop } = std.core
+{ AllocError, Ptr } = std.mem
+{ Vec, Map } = std.collections
+{ Env } = std.env
+{ println } = std.io
+Owner = { id: i32 }
 Owner.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id); } })
 '''
 

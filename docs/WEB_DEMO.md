@@ -97,7 +97,7 @@ src/web_host.zen (js.bind)┴─▶ parse ─▶ sema ─▶ gen_lower_core ─�
 ### `js.bind`
 
 ```zen
-Ref, Handler, wait = std.js
+{ Ref, Handler, wait } = std.js
 
 Document = js.bind("document", {
     createElement* = (tag: str) Ref

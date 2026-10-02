@@ -291,7 +291,7 @@ class ParallelRunnerTests(unittest.TestCase):
         (staged / "std/runner_probe.zen").write_text(
             'value* = () str { "staged-library" }\n')
         source = staged / "main.zen"
-        source.write_text('{ value } = std.runner_probe\n'
+        source.write_text('{ value } = std.runner_probe\n{ Res, Ok } = std.core\n{ AllocError } = std.mem\n{ Env } = std.env\n{ println } = std.io\n'
                           'main = (env: Env) Res<i32, AllocError> { '
                           'println("{}", value()); Ok(0) }\n')
         compiler = runner.REPO_ROOT / "zen"

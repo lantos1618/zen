@@ -14,7 +14,9 @@ class NativeCallbacks(unittest.TestCase):
 
     def test_qsort_calls_zen_function(self):
         directory, output, _ = self.compile('''
-{ Ptr, null_ptr } = std.mem
+{ Ptr, null_ptr, AllocError } = std.mem
+{ Res, Ok } = std.core
+{ Env } = std.env
 { callback } = std.native
 C = c.bind("stdlib.h", "qsort", {
     sort* = (base: Ptr<()>, count: usize, size: usize, compare: Ptr<()>) ()
@@ -73,7 +75,7 @@ main = () i32 {
         for declaration in cases:
             with self.subTest(declaration=declaration):
                 _, _, result = self.compile(
-                    '{ callback } = std.native\n' + declaration +
+                    '{ callback } = std.native\n{ Env } = std.env\n' + declaration +
                     '\nmain = () i32 { callback(f); 0 }\n', False)
                 self.assertIn('callback', result.stdout + result.stderr)
 

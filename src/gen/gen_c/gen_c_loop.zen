@@ -21,7 +21,6 @@ unsupported = gen.gen_c.gen_c_report
 ctype, declarator = gen.gen_c.gen_c_type
 intern_res_open = gen.gen_c.gen_c_mono
 has_var = sema.sema_inst
-Found, members_of = sema.sema_member
 expr, ty_of = gen.gen_c.gen_c_expr
 Dest, block = gen.gen_c.gen_c_stmt
 uses_stored_bounds = gen.gen_c.gen_c_range
@@ -480,12 +479,14 @@ declare_typed = (be :: CBackend, ty: TyId, name: str) Res<(), AllocError> {
     be.fmt("{};\n", decl.view())
 }
 
-// The type of a Range's bounds and values: the type its `start` holds.
+// The type of a Range's bounds and values: its one type argument, the type
+// its `start` and `end` hold.
 range_bound_type = (be :: CBackend, rty: TyId) Res<TyId, AllocError> {
-    found ::= be.alloc.Vec<Found>();
-    be.check.members_of(rty, "start", found).try();
-    found.get(0).match({
-        Ok(f) => Ok(f.ty),
+    be.check.types.at(rty).match({
+        Named(n) => n.args.get(0),
+        _        => None,
+    }).match({
+        Ok(t) => Ok(t),
         None  => be.check.types.prim("usize"),
     })
 }

@@ -1,0 +1,1269 @@
+// Program-level rewrites of the native IR before allocation. Both keep what
+// the program does, including every trap and the location it reports.
+//
+// - An integer `match` that picks one of several constants becomes a
+//   bounds check and a load from a read-only table: the chain of compares
+//   the lowering produces costs a compare per arm, the table one load.
+// - Calls to small functions that call nothing are inlined: the callee's
+//   blocks are copied into the caller with fresh slots, its parameters
+//   become copies of the arguments, and each return copies the result and
+//   continues after the call.
+//
+// Tables are written little-endian, the byte order of every target this
+// layer renders.
+Alloc, AllocError = std.mem
+Vec = std.collections
+String, str = std.text
+Range = std.core
+Program, Func, BasicBlock, Instruction, Terminator, Scalar, Op = gen.gen_ir
+Const, Move, Unary, Binary, Invocation, Print, Convert, Address, Load, Store = gen.gen_ir
+same = gen.gen_ir
+CopyMem, StaticBytes, Write, SysCall, Start, Pages, SysValue, Branch = gen.gen_ir
+width, word = gen.gen_ir
+Update, Compare, CodeRef, IndirectCall, HostCall = gen.gen_ir
+MachineCall = gen.gen_ir_machine
+simplify = gen.gen_asm_regalloc
+Flow, flow, reads, written, exit_read, successors, zeros, bits, group, NONE = gen.gen_asm_flow
+nowhere = std.source
+
+// Callees with at most this many instructions are inlined.
+INLINE_LIMIT: usize = 48
+
+prepare* = (alloc: Alloc, program: Program) Res<Program, AllocError> {
+    tabled ::= alloc.Vec<Func>();
+    program.functions.loop((function) {
+        simple = simplify(alloc, reachable_only(alloc, function).try()).try();
+        tabled.add(tables(alloc, simple).try()).try();
+    });
+    inlined ::= alloc.Vec<Func>();
+    tabled.loop((h, i, function) {
+        inlined.add(
+            ordered(
+                alloc,
+                scalars(
+                    alloc,
+                    inline_calls(alloc, tabled, i, program.entry).try()
+                ).try()
+            ).try()
+        ).try();
+    });
+    Ok(Program(functions: inlined, entry: program.entry))
+}
+
+// Aggregates that never escape become one word slot per field. A frame
+// aggregate qualifies when it is reached only through pointers written once
+// by `AddressOf` and used only as the base of word loads and stores, and
+// through whole copies to and from other aggregates that qualify. Such a
+// family of aggregates (connected by copies) shares one field layout: the
+// (offset, class) pairs its accesses use, which must not overlap. Loads and
+// stores become copies of field slots, and aggregate copies become
+// field-by-field copies. Parameters and anything a call, a return or
+// memory sees keep their frame storage.
+scalars* = (alloc: Alloc, function: Func) Res<Func, AllocError> {
+    split ::= Split(
+        alloc: alloc,
+        function: function,
+        info: flow(alloc, function).try(),
+        pointee: zeros(alloc, function.slots.len).try(),
+        bad: alloc.Vec<bool>(),
+        parent: alloc.Vec<usize>(),
+        owner: alloc.Vec<usize>(),
+        offset: alloc.Vec<usize>(),
+        class: alloc.Vec<Scalar>(),
+        layout: alloc.Vec<usize>(),
+        starts: alloc.Vec<usize>(),
+        first: alloc.Vec<usize>(),
+        slots: alloc.Vec<Scalar>()
+    );
+    split.run()
+}
+
+Split = {
+    alloc: Alloc,
+    function: Func,
+    info: Flow,
+    // Per slot: the aggregate a qualifying pointer points at, plus one.
+    pointee :: Vec<usize>,
+    bad :: Vec<bool>,
+    // Union-find over aggregates joined by copies.
+    parent :: Vec<usize>,
+    // Accesses: the aggregate, offset and class of each.
+    owner :: Vec<usize>,
+    offset :: Vec<usize>,
+    class :: Vec<Scalar>,
+    // The distinct fields (access indices) of each family, grouped by
+    // root: `layout[starts[root] .. starts[root + 1]]`.
+    layout :: Vec<usize>,
+    starts :: Vec<usize>,
+    // Per aggregate of a good family: the slot of its first field.
+    first :: Vec<usize>,
+    slots :: Vec<Scalar>,
+
+    aggregate = (self: @Self, slot: usize) bool {
+        self.function.slots.get(slot).value_or(Scalar.Unit).match({ Block(_) => true, _ => false })
+    }
+
+    root = (self: @Self, slot: usize) usize {
+        at ::= slot;
+        loop(
+            () { self.parent.get(at).value_or(at) != at },
+            (h) { at = self.parent.get(at).value_or(at); }
+        );
+        at
+    }
+
+    disqualify = (self :: @Self, slot: usize) { self.bad.set(slot, true); }
+
+    good = (self: @Self, slot: usize) bool {
+        self.aggregate(slot) && !self.bad.get(self.root(slot)).value_or(true)
+    }
+
+    note = (self :: @Self, owner: usize, at: usize, class: Scalar) Res<(), AllocError> {
+        self.owner.add(owner).try();
+        self.offset.add(at).try();
+        self.class.add(class).try();
+        Ok(())
+    }
+
+    run = (self :: @Self) Res<Func, AllocError> {
+        count = self.function.slots.len;
+        Range(0, count).loop((i) {
+            self.bad.add(i < self.function.parameters).try();
+            self.parent.add(i).try();
+        });
+        self.function.blocks.loop((block) {
+            block.code.loop((instruction) {
+                instruction.match({
+                    AddressOf(v) => {
+                        self.info.pointer(v.out).when_ok((target) {
+                            self.aggregate(target).then(() { self.pointee.set(v.out, target + 1); });
+                        });
+                    },
+                    _            => (),
+                });
+            });
+        });
+        self.function.blocks.loop((block) {
+            block.code.loop((instruction) { self.survey(instruction).try(); });
+            exit_read(block.exit).when_ok((slot) { self.escape(slot); });
+        });
+        // A family is as good as its worst member.
+        Range(0, count).loop((i) {
+            self.bad.get(i).value_or(false).then(() { self.disqualify(self.root(i)); });
+        });
+        self.fields().try();
+        self.slots.clear();
+        self.function.slots.loop((ty) { self.slots.add(ty).try(); });
+        changed ::= false;
+        Range(0, count).loop((b) {
+            self.first.add(self.slots.len).try();
+            self.good(b).then(() {
+                changed = true;
+                root    = self.root(b);
+                Range(self.starts.get(root).value_or(0), self.starts.get(root + 1).value_or(0)).loop((j) {
+                    self.slots.add(self.class.get(self.layout.get(j).value_or(0)).value_or(Scalar.Unit)).try();
+                });
+            });
+        });
+        changed.match({
+            false => Ok(self.function),
+            true  => self.rewrite(),
+        })
+    }
+
+    // A read that lets a pointer or an aggregate escape.
+    escape = (self :: @Self, slot: usize) {
+        pointed = self.pointee.get(slot).value_or(0);
+        (pointed != 0).then(() { self.disqualify(pointed - 1); });
+        self.aggregate(slot).then(() { self.disqualify(slot); });
+    }
+
+    survey = (self :: @Self, instruction: Instruction) Res<(), AllocError> {
+        instruction.match({
+            AddressOf(v)  => (self.pointee.get(v.out).value_or(0) == 0).then(() { self.disqualify(v.slot); }),
+            Copy(v)       => self.aggregate(v.out).match({
+                true  => { unite(self.parent, v.out, v.source); },
+                false => { self.escape(v.source); },
+            }),
+            LoadValue(v)  => {
+                pointed = self.pointee.get(v.base).value_or(0);
+                self.aggregate(v.out).match({
+                    true  => {
+                        self.disqualify(v.out);
+                        self.escape(v.base);
+                    },
+                    false => {
+                        (pointed != 0).then(() {
+                            self.note(
+                                pointed - 1,
+                                v.offset,
+                                self.function.slots.get(v.out).value_or(Scalar.Unit)
+                            ).try();
+                        });
+                    },
+                });
+            },
+            StoreValue(v) => {
+                pointed = self.pointee.get(v.base).value_or(0);
+                self.escape(v.value);
+                (pointed != 0 && !self.aggregate(v.value)).match({
+                    true  => { self.note(
+                        pointed - 1,
+                        v.offset,
+                        self.function.slots.get(v.value).value_or(Scalar.Unit)
+                    ).try(); },
+                    false => { self.escape(v.base); },
+                });
+            },
+            _             => {
+                operands ::= self.alloc.Vec<usize>();
+                reads(instruction, operands).try();
+                operands.loop((slot) { self.escape(slot); });
+                written(instruction).when_ok((slot) {
+                    self.aggregate(slot).then(() { self.disqualify(slot); });
+                });
+            },
+        });
+        Ok(())
+    }
+
+    // Collect each good family's distinct fields; overlapping or
+    // disagreeing accesses disqualify the family.
+    fields = (self :: @Self) Res<(), AllocError> {
+        count = self.function.slots.len;
+        roots ::= self.alloc.Vec<usize>();
+        order ::= self.alloc.Vec<usize>();
+        self.owner.loop((h, i, owner) {
+            roots.add(self.root(owner)).try();
+            order.add(i).try();
+        });
+        grouped = group(self.alloc, roots, order, count).try();
+        Range(0, count).loop((root) {
+            self.starts.add(self.layout.len).try();
+            (self.root(root) == root && !self.bad.get(root).value_or(true)).then(() {
+                begin = self.layout.len;
+                Range(grouped.at(root), grouped.at(root + 1)).loop((i) {
+                    entry = grouped.value(i);
+                    at    = self.offset.get(entry).value_or(0);
+                    ty    = self.class.get(entry).value_or(Scalar.Unit);
+                    known ::= false;
+                    Range(begin, self.layout.len).loop((j) {
+                        other      = self.layout.get(j).value_or(0);
+                        other_at   = self.offset.get(other).value_or(0);
+                        other_ty   = self.class.get(other).value_or(Scalar.Unit);
+                        same_field = other_at == at && same(other_ty, ty);
+                        overlap    = other_at == at || (at < other_at + width(other_ty) && other_at < at + width(ty));
+                        same_field.match({
+                            true  => { known = true; },
+                            false => overlap.then(
+                                () { self.disqualify(root); }
+                            ),
+                        });
+                    });
+                    (!known).then(() { self.layout.add(entry).try(); });
+                });
+            });
+        });
+        self.starts.add(self.layout.len).try();
+        Ok(())
+    }
+
+    // The slot of member `b`'s field at `at`.
+    field = (self: @Self, b: usize, at: usize) usize {
+        root  = self.root(b);
+        begin = self.starts.get(root).value_or(0);
+        found ::= NONE;
+        Range(begin, self.starts.get(root + 1).value_or(begin)).loop((h, j) {
+            (self.offset.get(self.layout.get(j).value_or(0)).value_or(NONE) == at).then(() {
+                found = self.first.get(b).value_or(0) + (j - begin);
+                h.break();
+            });
+        });
+        found
+    }
+
+    rewrite = (self :: @Self) Res<Func, AllocError> {
+        blocks ::= self.alloc.Vec<BasicBlock>();
+        self.function.blocks.loop((block) {
+            code ::= self.alloc.Vec<Instruction>();
+            block.code.loop((instruction) {
+                instruction.match({
+                    AddressOf(v)  => (!self.good(v.slot)).then(() { code.add(instruction).try(); }),
+                    LoadValue(v)  => {
+                        pointed = self.pointee.get(v.base).value_or(0);
+                        (pointed != 0 && self.good(pointed - 1)).match({
+                            true  => code.add(Instruction.Copy(Move(
+                                out: v.out,
+                                source: self.field(pointed - 1, v.offset)
+                            ))).try(),
+                            false => code.add(instruction).try(),
+                        });
+                    },
+                    StoreValue(v) => {
+                        pointed = self.pointee.get(v.base).value_or(0);
+                        (pointed != 0 && self.good(pointed - 1)).match({
+                            true  => code.add(Instruction.Copy(Move(
+                                out: self.field(pointed - 1, v.offset),
+                                source: v.value
+                            ))).try(),
+                            false => code.add(instruction).try(),
+                        });
+                    },
+                    Copy(v)       => self.good(v.out).match({
+                        true  => {
+                            root = self.root(v.out);
+                            Range(0, self.starts.get(root + 1).value_or(0) - self.starts.get(root).value_or(0)).loop((j) {
+                                code.add(Instruction.Copy(Move(
+                                    out: self.first.get(v.out).value_or(0) + j,
+                                    source: self.first.get(v.source).value_or(0) + j
+                                ))).try();
+                            });
+                        },
+                        false => code.add(instruction).try(),
+                    }),
+                    _             => code.add(instruction).try(),
+                });
+            });
+            blocks.add(BasicBlock(code: code, exit: block.exit)).try();
+        });
+        simplify(
+            self.alloc,
+            Func(
+                name: self.function.name,
+                parameters: self.function.parameters,
+                slots: self.slots,
+                blocks: blocks,
+                result: self.function.result
+            )
+        )
+    }
+}
+
+unite = (parent :: Vec<usize>, a: usize, b: usize) {
+    ra ::= a;
+    loop(
+        () { parent.get(ra).value_or(ra) != ra },
+        (h) { ra = parent.get(ra).value_or(ra); }
+    );
+    rb ::= b;
+    loop(
+        () { parent.get(rb).value_or(rb) != rb },
+        (h) { rb = parent.get(rb).value_or(rb); }
+    );
+    (ra != rb).then(() { parent.set(ra, rb); });
+}
+
+// Blocks in reverse postorder, visiting a branch's `no` target before its
+// `yes` target, so the taken side of a branch (a loop's body, an `if`'s
+// then-arm) follows it directly and whatever comes after a loop is placed
+// after the loop. Every block then comes after the blocks that lead to it,
+// except along loop back edges, which keeps interval hulls tight. Branches
+// to an empty block that only jumps on go straight to its destination, and
+// unreachable blocks are dropped.
+ordered* = (alloc: Alloc, function: Func) Res<Func, AllocError> {
+    count = function.blocks.len;
+    forward ::= alloc.Vec<usize>();
+    function.blocks.loop((h, b, block) {
+        next = block.exit.match({ Jump(t) => t, _ => b });
+        forward.add(
+            (b != 0 && block.code.len == 0).match({ true => next, false => b })
+        ).try();
+    });
+    Range(0, count).loop((b) {
+        at    ::= b;
+        steps ::= 0;
+        loop(() { forward.get(at).value_or(at) != at && steps < count }, (h) {
+            at    = forward.get(at).value_or(at);
+            steps = steps + 1;
+        });
+        forward.set(b, at);
+    });
+    state ::= zeros(alloc, count).try();
+    post  ::= alloc.Vec<usize>();
+    stack ::= alloc.Vec<usize>();
+    // Per stack entry: how many successors were visited.
+    visited ::= alloc.Vec<usize>();
+    targets ::= alloc.Vec<usize>();
+    state.set(0, 1);
+    stack.add(0).try();
+    visited.add(0).try();
+    loop(() { stack.len > 0 }, (h) {
+        top  = stack.len - 1;
+        b    = stack.get(top).value_or(0);
+        done = visited.get(top).value_or(0);
+        targets.clear();
+        function.blocks.get(b).when_ok((block) {
+            block.exit.match({
+                Jump(t)        => targets.add(forward.get(t).value_or(t)).try(),
+                Branch(branch) => {
+                    targets.add(forward.get(branch.no).value_or(branch.no)).try();
+                    targets.add(forward.get(branch.yes).value_or(branch.yes)).try();
+                },
+                _              => (),
+            });
+        });
+        (done < targets.len).match({
+            true  => {
+                visited.set(top, done + 1);
+                t = targets.get(done).value_or(0);
+                (state.get(t).value_or(1) == 0).then(() {
+                    state.set(t, 1);
+                    stack.add(t).try();
+                    visited.add(0).try();
+                });
+            },
+            false => {
+                post.add(b).try();
+                stack.take(top);
+                visited.take(top);
+            },
+        });
+    });
+    position ::= alloc.Vec<usize>();
+    Range(0, count).loop((_) { position.add(NONE).try(); });
+    Range(0, post.len).loop((i) { position.set(post.get(post.len - 1 - i).value_or(0), i); });
+    // A forwarded block answers with its destination's position.
+    Range(0, count).loop((b) { position.set(b, position.get(forward.get(b).value_or(b)).value_or(NONE)); });
+    blocks ::= alloc.Vec<BasicBlock>();
+    Range(0, post.len).loop((i) {
+        b = post.get(post.len - 1 - i).value_or(0);
+        function.blocks.get(b).when_ok((block) {
+            blocks.add(BasicBlock(
+                code: block.code,
+                exit: renumbered(block.exit, position)
+            )).try();
+        });
+    });
+    Ok(Func(
+        name: function.name,
+        parameters: function.parameters,
+        slots: function.slots,
+        blocks: blocks,
+        result: function.result
+    ))
+}
+
+// A compare in a chain: the block branches to `yes` when `subject == key`.
+Link = { subject: usize, key: i64, yes: usize, no: usize }
+
+// A block that writes the constant `value` to `out` and jumps to `join`.
+Arm = { out: usize, value: i64, join: usize }
+
+Tables = {
+    alloc: Alloc,
+    function: Func,
+    flow: Flow,
+    known :: Vec<bool>,
+    value :: Vec<i64>,
+    uses :: Vec<usize>,
+    preds :: Vec<usize>,
+    slots :: Vec<Scalar>,
+    blocks :: Vec<BasicBlock>,
+    // Blocks a rewritten chain passed through; no longer reachable.
+    done :: Vec<bool>,
+    // Per block: the block it is laid out after, or NONE (see `layout`).
+    follow :: Vec<usize>,
+
+    constant = (self: @Self, slot: usize) Res<i64> {
+        self.known.get(slot).value_or(false).match({
+            true  => Ok(self.value.get(slot).value_or(0)),
+            false => None,
+        })
+    }
+
+    // A block whose last instruction compares `subject` with a small
+    // constant and whose branch reads only that comparison.
+    link = (self: @Self, b: usize) Res<Link> {
+        block = self.blocks.get(b).try();
+        (block.code.len > 0).ensure().try();
+        branch  = block.exit.match({ Branch(v) => Ok(v), _ => None }).try();
+        compare = block.code.get(block.code.len - 1).try().match({
+            BinaryValue(v) => Ok(v),
+            _              => None,
+        }).try();
+        (compare.op.match({ Equal => true, _ => false }) && compare.out == branch.value
+            && self.flow.is_local(compare.out) && self.uses.get(compare.out).value_or(0) == 1).ensure().try();
+        self.constant(compare.right).match({
+            Ok(k) => small(k).match({
+                true  => Ok(Link(
+                    subject: compare.left,
+                    key: k,
+                    yes: branch.yes,
+                    no: branch.no
+                )),
+                false => None,
+            }),
+            None  => self.constant(compare.left).match({
+                Ok(k) => small(k).match({
+                    true  => Ok(Link(
+                        subject: compare.right,
+                        key: k,
+                        yes: branch.yes,
+                        no: branch.no
+                    )),
+                    false => None,
+                }),
+                None  => None,
+            }),
+        })
+    }
+
+    // A later link: nothing but constants besides its compare, and only
+    // the previous link reaches it.
+    inner = (self: @Self, b: usize, subject: usize) Res<Link> {
+        found = self.link(b).try();
+        block = self.blocks.get(b).try();
+        (found.subject == subject && self.preds.get(b).value_or(0) == 1).ensure().try();
+        clean ::= true;
+        block.code.loop((h, k, instruction) {
+            (k + 1 < block.code.len).then(() {
+                instruction.match({
+                    Constant(c) => (c.out == subject).then(
+                        () { clean = false; }
+                    ),
+                    _           => { clean = false; },
+                });
+            });
+        });
+        clean.ensure().try();
+        Ok(found)
+    }
+
+    arm = (self: @Self, b: usize) Res<Arm> {
+        block = self.blocks.get(b).try();
+        join  = block.exit.match({ Jump(to) => Ok(to), _ => None }).try();
+        (block.code.len > 0).ensure().try();
+        last = block.code.get(block.code.len - 1).try();
+        arm  = last.match({
+            Constant(c) => Ok(Arm(out: c.out, value: c.value, join: join)),
+            Copy(c)     => self.constant(c.source).match({
+                Ok(v) => Ok(Arm(out: c.out, value: v, join: join)),
+                None  => None,
+            }),
+            _           => None,
+        }).try();
+        clean ::= true;
+        block.code.loop((h, k, instruction) {
+            (k + 1 < block.code.len).then(() {
+                instruction.match({
+                    Constant(c) => (c.out == arm.out).then(
+                        () { clean = false; }
+                    ),
+                    _           => { clean = false; },
+                });
+            });
+        });
+        (clean && word(self.slots.get(arm.out).value_or(Scalar.Unit))).ensure().try();
+        Ok(arm)
+    }
+
+    add_slot = (self :: @Self, ty: Scalar) Res<usize, AllocError> {
+        self.slots.add(ty).try();
+        Ok(self.slots.len - 1)
+    }
+
+    // Try the chain that starts at block `b`; true when it was rewritten.
+    rewrite = (self :: @Self, b: usize) Res<bool, AllocError> {
+        first: Res<Link> = self.done.get(b).value_or(true).match({
+            true  => None,
+            false => self.link(b),
+        });
+        first.match({
+            None        => Ok(false),
+            Ok(opening) => self.chain(b, opening),
+        })
+    }
+
+    chain = (self :: @Self, b: usize, opening: Link) Res<bool, AllocError> {
+        keys   ::= self.alloc.Vec<i64>();
+        values ::= self.alloc.Vec<i64>();
+        out    ::= NONE;
+        join   ::= NONE;
+        valid  ::= true;
+        link   ::= opening;
+        passed ::= self.alloc.Vec<usize>();
+        loop(() { valid }, (h) {
+            self.arm(link.yes).match({
+                Ok(arm) => {
+                    (out == NONE).then(() {
+                        out  = arm.out;
+                        join = arm.join;
+                    });
+                    (arm.out == out && arm.join == join).match({
+                        true  => {
+                            seen ::= false;
+                            keys.loop(
+                                (k) { (k == link.key).then(
+                                    () { seen = true; }
+                                ); }
+                            );
+                            // The first arm for a key wins, as in the chain.
+                            (!seen).then(() {
+                                keys.add(link.key).try();
+                                values.add(arm.value).try();
+                            });
+                        },
+                        false => { valid = false; },
+                    });
+                },
+                None    => { valid = false; },
+            });
+            valid.then(() {
+                self.inner(link.no, opening.subject).match({
+                    Ok(next) => {
+                        passed.add(link.no).try();
+                        link = next;
+                    },
+                    None     => h.break(),
+                });
+            });
+        });
+        // `link.no` is where every other value goes.
+        fallback = link.no;
+        low: i64  ::= 0;
+        high: i64 ::= 0;
+        keys.loop((h, i, k) {
+            (i == 0 || k < low).then(() { low = k; });
+            (i == 0 || k > high).then(() { high = k; });
+        });
+        count                   = keys.len;
+        span                    = (high - low + 1).to_usize().value_or(0);
+        default_arm             = self.arm(fallback);
+        default_value: Res<i64> = default_arm.match({
+            Ok(arm) => (arm.out == out && arm.join == join).match({
+                true  => Ok(arm.value),
+                false => None,
+            }),
+            None    => None,
+        });
+        dense                   = span == count;
+        worth                   = valid && count >= 4 && span <= 1024 && span <= 2 * count + 8
+            && (dense || default_value.match({ Ok(_) => true, None => false }));
+        worth.match({
+            false => Ok(false),
+            true  => {
+                self.emit(
+                    b,
+                    opening.subject,
+                    low,
+                    span,
+                    keys,
+                    values,
+                    default_value.value_or(0),
+                    out,
+                    join,
+                    fallback
+                ).try();
+                passed.loop((p) { self.done.set(p, true); });
+                Ok(true)
+            },
+        })
+    }
+
+    emit = (self :: @Self, b: usize, subject: usize, low: i64, span: usize, keys: Vec<i64>,
+            values: Vec<i64>, fallback_value: i64, out: usize, join: usize, fallback: usize)
+           Res<(), AllocError> {
+        result = self.slots.get(out).value_or(Scalar.U64);
+        size   = width(result);
+        table ::= self.alloc.String().try();
+        Range(0, span).loop((i) {
+            entry ::= fallback_value;
+            keys.loop((h, j, k) {
+                ((k - low).to_usize().value_or(NONE) == i).then(() { entry = values.get(j).value_or(0); });
+            });
+            append_bytes(table, entry, size).try();
+        });
+        block = self.blocks.get(b).value_or(BasicBlock(code: self.alloc.Vec<Instruction>(), exit: Terminator.Jump(b)));
+        code ::= self.alloc.Vec<Instruction>();
+        block.code.loop((h, k, instruction) {
+            (k + 1 < block.code.len).then(() { code.add(instruction).try(); });
+        });
+        wide   = self.add_slot(Scalar.U64).try();
+        limit  = self.add_slot(Scalar.U64).try();
+        inside = self.add_slot(Scalar.Bool).try();
+        code.add(Instruction.Cast(Convert(out: wide, input: subject))).try();
+        offset ::= wide;
+        (low != 0).then(() {
+            base   = self.add_slot(Scalar.U64).try();
+            offset = self.add_slot(Scalar.U64).try();
+            code.add(Instruction.Constant(Const(out: base, value: low))).try();
+            code.add(Instruction.BinaryValue(Binary(
+                out: offset,
+                left: wide,
+                right: base,
+                op: Op.WrapSub,
+                span: nowhere()
+            ))).try();
+        });
+        code.add(Instruction.Constant(Const(
+            out: limit,
+            value: bits(span)
+        ))).try();
+        code.add(Instruction.BinaryValue(Binary(
+            out: inside,
+            left: offset,
+            right: limit,
+            op: Op.Less,
+            span: nowhere()
+        ))).try();
+        lookup = self.blocks.len;
+        self.blocks.set(
+            b,
+            BasicBlock(
+                code: code,
+                exit: Terminator.Branch(Branch(
+                    value: inside,
+                    yes: lookup,
+                    no: fallback
+                ))
+            )
+        );
+        scale    = self.add_slot(Scalar.U64).try();
+        scaled   = self.add_slot(Scalar.U64).try();
+        start    = self.add_slot(Scalar.Ptr).try();
+        entry_at = self.add_slot(Scalar.Ptr).try();
+        body ::= self.alloc.Vec<Instruction>();
+        // In address order: the multiply right before the add, so a
+        // renderer can fold both into one indexed load.
+        body.add(Instruction.Bytes(StaticBytes(
+            out: start,
+            bytes: table.view()
+        ))).try();
+        body.add(Instruction.Constant(Const(
+            out: scale,
+            value: bits(size)
+        ))).try();
+        body.add(Instruction.BinaryValue(Binary(
+            out: scaled,
+            left: offset,
+            right: scale,
+            op: Op.WrapMul,
+            span: nowhere()
+        ))).try();
+        body.add(Instruction.BinaryValue(Binary(
+            out: entry_at,
+            left: start,
+            right: scaled,
+            op: Op.WrapAdd,
+            span: nowhere()
+        ))).try();
+        body.add(Instruction.LoadValue(Load(
+            out: out,
+            base: entry_at,
+            offset: 0
+        ))).try();
+        self.blocks.add(BasicBlock(
+            code: body,
+            exit: Terminator.Jump(join)
+        )).try();
+        self.follow.add(b).try();
+        Ok(())
+    }
+}
+
+small = (value: i64) bool { value > -2147483648 && value < 2147483648 }
+
+// Append `value`'s low `size` bytes, least significant first.
+append_bytes = (out :: String, value: i64, size: usize) Res<(), AllocError> {
+    pattern ::= (value < 0).match({
+        true  => u64.MAX - (-(value + 1)).to_usize().value_or(0).to_u64(),
+        false => value.to_usize().value_or(0).to_u64(),
+    });
+    Range(0, size).loop((i) {
+        out.add((pattern % 256).to_usize().value_or(0).to_u8().value_or(0)).try();
+        pattern = pattern / 256;
+    });
+    Ok(())
+}
+
+// Rewrite every table-shaped match in `function`, then drop the blocks
+// the rewrites left unreachable.
+tables = (alloc: Alloc, function: Func) Res<Func, AllocError> {
+    info = flow(alloc, function).try();
+    state ::= Tables(
+        alloc: alloc,
+        function: function,
+        flow: info,
+        known: alloc.Vec<bool>(),
+        value: alloc.Vec<i64>(),
+        uses: zeros(alloc, function.slots.len).try(),
+        preds: zeros(alloc, function.blocks.len).try(),
+        slots: alloc.Vec<Scalar>(),
+        blocks: alloc.Vec<BasicBlock>(),
+        done: alloc.Vec<bool>(),
+        follow: alloc.Vec<usize>()
+    );
+    function.slots.loop((ty) {
+        state.slots.add(ty).try();
+        state.known.add(false).try();
+        state.value.add(0).try();
+    });
+    function.blocks.loop((block) {
+        state.blocks.add(block).try();
+        state.done.add(false).try();
+        state.follow.add(NONE).try();
+    });
+    operands ::= alloc.Vec<usize>();
+    targets  ::= alloc.Vec<usize>();
+    function.blocks.loop((block) {
+        block.code.loop((instruction) {
+            instruction.match({
+                Constant(c) => {
+                    info.fixed(c.out).when_ok((v) {
+                        state.known.set(c.out, true);
+                        state.value.set(c.out, v);
+                    });
+                },
+                _           => (),
+            });
+            operands.clear();
+            reads(instruction, operands).try();
+            operands.loop(
+                (slot) { state.uses.set(
+                    slot,
+                    state.uses.get(slot).value_or(0) + 1
+                ); }
+            );
+        });
+        exit_read(block.exit).when_ok((slot) { state.uses.set(slot, state.uses.get(slot).value_or(0) + 1); });
+        targets.clear();
+        successors(block.exit, targets).try();
+        targets.loop(
+            (t) { state.preds.set(t, state.preds.get(t).value_or(0) + 1); }
+        );
+    });
+    changed ::= false;
+    Range(0, function.blocks.len).loop((b) {
+        state.rewrite(b).try().then(() { changed = true; });
+    });
+    changed.match({
+        false => Ok(function),
+        true  => {
+            rewritten = Func(
+                name: function.name,
+                parameters: function.parameters,
+                slots: state.slots,
+                blocks: layout(alloc, state.blocks, state.follow).try(),
+                result: function.result
+            );
+            Ok(reachable_only(alloc, rewritten).try())
+        },
+    })
+}
+
+// `function` without the blocks no path from its entry reaches.
+reachable_only* = (alloc: Alloc, function: Func) Res<Func, AllocError> {
+    seen ::= alloc.Vec<bool>();
+    function.blocks.loop((_) { seen.add(false).try(); });
+    work    ::= alloc.Vec<usize>();
+    targets ::= alloc.Vec<usize>();
+    seen.set(0, true);
+    work.add(0).try();
+    loop(() { work.len > 0 }, (h) {
+        b = work.get(work.len - 1).value_or(0);
+        work.take(work.len - 1);
+        function.blocks.get(b).when_ok((block) {
+            targets.clear();
+            successors(block.exit, targets).try();
+            targets.loop((t) {
+                (!seen.get(t).value_or(true)).then(() {
+                    seen.set(t, true);
+                    work.add(t).try();
+                });
+            });
+        });
+    });
+    // Renumber the survivors in their existing order.
+    position ::= zeros(alloc, function.blocks.len).try();
+    kept     ::= 0;
+    seen.loop((h, b, live) {
+        live.then(() {
+            position.set(b, kept);
+            kept = kept + 1;
+        });
+    });
+    blocks ::= alloc.Vec<BasicBlock>();
+    function.blocks.loop((h, b, block) {
+        seen.get(b).value_or(false).then(() {
+            blocks.add(BasicBlock(
+                code: block.code,
+                exit: renumbered(block.exit, position)
+            )).try();
+        });
+    });
+    Ok(Func(
+        name: function.name,
+        parameters: function.parameters,
+        slots: function.slots,
+        blocks: blocks,
+        result: function.result
+    ))
+}
+
+renumbered = (exit: Terminator, position: Vec<usize>) Terminator {
+    exit.match({
+        Jump(t)        => Terminator.Jump(position.get(t).value_or(0)),
+        Branch(branch) => Terminator.Branch(Branch(
+            value: branch.value,
+            yes: position.get(branch.yes).value_or(0),
+            no: position.get(branch.no).value_or(0)
+        )),
+        _              => exit,
+    })
+}
+
+// Whether `callee` may be inlined into another function: small, calling
+// nothing, and not the program's entry.
+inlinable = (
+    functions : Vec<Func>,
+    callee    : usize,
+    caller    : usize,
+    entry     : usize
+) bool {
+    functions.get(callee).match({
+        Ok(f) => {
+            size ::= 0;
+            leaf ::= true;
+            f.blocks.loop((block) {
+                size = size + block.code.len;
+                block.code.loop((instruction) {
+                    instruction.match({ Invoke(_) => { leaf = false; }, _ => () });
+                });
+            });
+            callee != caller && callee != entry && leaf && size <= INLINE_LIMIT
+        },
+        None  => false,
+    })
+}
+
+inline_calls = (alloc: Alloc, functions: Vec<Func>, index: usize, entry: usize)
+               Res<Func, AllocError> {
+    function = functions.get(index).value_or(Func(name: "", parameters: 0, slots: alloc.Vec<Scalar>(), blocks: alloc.Vec<BasicBlock>(), result: Scalar.Unit));
+    slots  ::= alloc.Vec<Scalar>();
+    blocks ::= alloc.Vec<BasicBlock>();
+    function.slots.loop((ty) { slots.add(ty).try(); });
+    follow ::= alloc.Vec<usize>();
+    function.blocks.loop((block) {
+        blocks.add(block).try();
+        follow.add(NONE).try();
+    });
+    changed ::= false;
+    b       ::= 0;
+    loop(() { b < blocks.len }, (h) {
+        block = blocks.get(b).value_or(BasicBlock(code: alloc.Vec<Instruction>(), exit: Terminator.Jump(b)));
+        site ::= NONE;
+        block.code.loop((ih, k, instruction) {
+            instruction.match({
+                Invoke(call) => inlinable(functions, call.function, index, entry).then(() {
+                    site = k;
+                    ih.break();
+                }),
+                _            => (),
+            });
+        });
+        (site != NONE).then(() {
+            block.code.get(site).when_ok((instruction) {
+                instruction.match({
+                    Invoke(call) => functions.get(call.function).when_ok((callee) {
+                        first = blocks.len;
+                        splice(
+                            alloc,
+                            slots,
+                            blocks,
+                            b,
+                            site,
+                            call,
+                            callee
+                        ).try();
+                        // The callee's blocks, then the continuation, sit
+                        // right after the call so intervals stay short.
+                        Range(first, blocks.len).loop((x) {
+                            follow.add(
+                                (x == first).match({ true => b, false => x - 1 })
+                            ).try();
+                        });
+                        changed = true;
+                    }),
+                    _            => (),
+                });
+            });
+        });
+        // A block that was split continues in a later block, which this
+        // loop reaches in turn.
+        b = b + 1;
+    });
+    changed.match({
+        false => Ok(function),
+        true  => simplify(
+            alloc,
+            Func(
+                name: function.name,
+                parameters: function.parameters,
+                slots: slots,
+                blocks: layout(alloc, blocks, follow).try(),
+                result: function.result
+            )
+        ),
+    })
+}
+
+// Replace the call at `site` in block `b` by the callee's body.
+splice = (
+    alloc  : Alloc,
+    slots  :: Vec<Scalar>,
+    blocks :: Vec<BasicBlock>,
+    b      : usize,
+    site   : usize,
+    call   : Invocation,
+    callee : Func
+) Res<(), AllocError> {
+    block = blocks.get(b).value_or(BasicBlock(code: alloc.Vec<Instruction>(), exit: Terminator.Jump(b)));
+    base  = slots.len;
+    callee.slots.loop((ty) { slots.add(ty).try(); });
+    first = blocks.len;
+    after = first + callee.blocks.len;
+    head ::= alloc.Vec<Instruction>();
+    block.code.loop(
+        (h, k, instruction) { (k < site).then(
+            () { head.add(instruction).try(); }
+        ); }
+    );
+    call.args.loop((h, i, arg) {
+        head.add(Instruction.Copy(Move(out: base + i, source: arg))).try();
+    });
+    blocks.set(b, BasicBlock(code: head, exit: Terminator.Jump(first)));
+    callee.blocks.loop((block) {
+        code ::= alloc.Vec<Instruction>();
+        block.code.loop(
+            (instruction) { code.add(
+                shift(alloc, instruction, base).try()
+            ).try(); }
+        );
+        exit = block.exit.match({
+            Return(slot)   => {
+                code.add(Instruction.Copy(Move(
+                    out: call.out,
+                    source: base + slot
+                ))).try();
+                Terminator.Jump(after)
+            },
+            Jump(to)       => Terminator.Jump(first + to),
+            Branch(branch) => Terminator.Branch(Branch(
+                value: base + branch.value,
+                yes: first + branch.yes,
+                no: first + branch.no
+            )),
+            Trap(fault)    => Terminator.Trap(fault),
+        });
+        blocks.add(BasicBlock(code: code, exit: exit)).try();
+    });
+    tail ::= alloc.Vec<Instruction>();
+    block.code.loop(
+        (h, k, instruction) { (k > site).then(
+            () { tail.add(instruction).try(); }
+        ); }
+    );
+    blocks.add(BasicBlock(code: tail, exit: block.exit)).try();
+    Ok(())
+}
+
+// `instruction` with every slot moved up by `base`.
+shift = (
+    alloc       : Alloc,
+    instruction : Instruction,
+    base        : usize
+) Res<Instruction, AllocError> {
+    Ok(instruction.match({
+        Constant(v)    => Instruction.Constant(Const(
+            out: base + v.out,
+            value: v.value
+        )),
+        Copy(v)        => Instruction.Copy(Move(
+            out: base + v.out,
+            source: base + v.source
+        )),
+        UnaryValue(v)  => Instruction.UnaryValue(Unary(
+            out: base + v.out,
+            input: base + v.input,
+            op: v.op,
+            span: v.span
+        )),
+        BinaryValue(v) => Instruction.BinaryValue(Binary(
+            out: base + v.out,
+            left: base + v.left,
+            right: base + v.right,
+            op: v.op,
+            span: v.span
+        )),
+        Invoke(call)   => Instruction.Invoke(Invocation(
+            out: base + call.out,
+            function: call.function,
+            args: moved(alloc, call.args, base).try()
+        )),
+        PrintValue(v)  => Instruction.PrintValue(Print(
+            value: base + v.value,
+            ty: v.ty,
+            stream: v.stream
+        )),
+        Text(t)        => Instruction.Text(t),
+        Cast(v)        => Instruction.Cast(Convert(
+            out: base + v.out,
+            input: base + v.input
+        )),
+        AddressOf(v)   => Instruction.AddressOf(Address(
+            out: base + v.out,
+            slot: base + v.slot
+        )),
+        LoadValue(v)   => Instruction.LoadValue(Load(
+            out: base + v.out,
+            base: base + v.base,
+            offset: v.offset
+        )),
+        StoreValue(v)  => Instruction.StoreValue(Store(
+            base: base + v.base,
+            offset: v.offset,
+            value: base + v.value
+        )),
+        CopyBytes(v)   => Instruction.CopyBytes(CopyMem(
+            dest: base + v.dest,
+            source: base + v.source,
+            bytes: base + v.bytes
+        )),
+        Bytes(v)       => Instruction.Bytes(StaticBytes(
+            out: base + v.out,
+            bytes: v.bytes
+        )),
+        WriteOut(v)    => Instruction.WriteOut(Write(
+            data: base + v.data,
+            len: base + v.len,
+            stream: v.stream
+        )),
+        System(call)   => Instruction.System(SysCall(
+            out: base + call.out,
+            call: call.call,
+            args: moved(alloc, call.args, base).try()
+        )),
+        Startup(v)     => Instruction.Startup(Start(
+            out: base + v.out,
+            value: v.value
+        )),
+        MapPages(v)    => Instruction.MapPages(Pages(
+            out: base + v.out,
+            bytes: base + v.bytes
+        )),
+        UnmapPages(v)  => Instruction.UnmapPages(base + v),
+        SysConst(v)    => Instruction.SysConst(SysValue(
+            out: base + v.out,
+            name: v.name
+        )),
+        Flush          => Instruction.Flush,
+        AtomicLoad(v)  => Instruction.AtomicLoad(Load(
+            out: base + v.out,
+            base: base + v.base,
+            offset: v.offset
+        )),
+        AtomicStore(v) => Instruction.AtomicStore(Store(
+            base: base + v.base,
+            offset: v.offset,
+            value: base + v.value
+        )),
+        AtomicUpdate(v) => Instruction.AtomicUpdate(Update(
+            out: base + v.out,
+            base: base + v.base,
+            value: base + v.value,
+            op: v.op
+        )),
+        CompareSwap(v) => Instruction.CompareSwap(Compare(
+            out: base + v.out,
+            base: base + v.base,
+            expected: base + v.expected,
+            desired: base + v.desired
+        )),
+        CodeAddress(v) => Instruction.CodeAddress(CodeRef(
+            out: base + v.out,
+            function: v.function
+        )),
+        InvokeAt(c)    => Instruction.InvokeAt(IndirectCall(
+            out: base + c.out,
+            target: base + c.target,
+            args: moved(alloc, c.args, base).try()
+        )),
+        Machine(c)     => Instruction.Machine(MachineCall(
+            op: c.op,
+            word: c.word,
+            outs: moved(alloc, c.outs, base).try(),
+            args: moved(alloc, c.args, base).try(),
+            span: c.span
+        )),
+        Host(c)        => Instruction.Host(HostCall(
+            out: base + c.out,
+            object: c.object,
+            member: c.member,
+            receiver: c.receiver,
+            runtime: c.runtime,
+            args: moved(alloc, c.args, base).try(),
+            marshal: c.marshal,
+            result: c.result
+        )),
+        Wait(v)        => Instruction.Wait(base + v),
+    }))
+}
+
+moved = (
+    alloc : Alloc,
+    slots : Vec<usize>,
+    base  : usize
+) Res<Vec<usize>, AllocError> {
+    out ::= alloc.Vec<usize>();
+    slots.loop((slot) { out.add(base + slot).try(); });
+    Ok(out)
+}
+
+// Blocks in emission order: each original block (`follow` NONE) in index
+// order, each immediately followed by the blocks laid out after it. Branch
+// targets are renumbered; block 0 stays first. Interval hulls follow this
+// order, so blocks created for one place in the code are kept there.
+layout = (
+    alloc  : Alloc,
+    blocks : Vec<BasicBlock>,
+    follow : Vec<usize>
+) Res<Vec<BasicBlock>, AllocError> {
+    count = blocks.len;
+    keys   ::= alloc.Vec<usize>();
+    values ::= alloc.Vec<usize>();
+    follow.loop((h, x, parent) {
+        (parent != NONE).then(() {
+            keys.add(parent).try();
+            values.add(x).try();
+        });
+    });
+    children = group(alloc, keys, values, count).try();
+    order ::= alloc.Vec<usize>();
+    stack ::= alloc.Vec<usize>();
+    Range(0, count).loop((root) {
+        (follow.get(root).value_or(NONE) == NONE).then(() {
+            stack.add(root).try();
+            loop(() { stack.len > 0 }, (h) {
+                x = stack.get(stack.len - 1).value_or(0);
+                stack.take(stack.len - 1);
+                order.add(x).try();
+                // Pushed last-first, so the first child is placed next.
+                from = children.at(x);
+                to   = children.at(x + 1);
+                Range(from, to).loop((i) { stack.add(children.value(to - 1 - (i - from))).try(); });
+            });
+        });
+    });
+    position ::= zeros(alloc, count).try();
+    order.loop((h, at, x) { position.set(x, at); });
+    placed ::= alloc.Vec<BasicBlock>();
+    order.loop((x) {
+        blocks.get(x).when_ok((block) {
+            placed.add(BasicBlock(
+                code: block.code,
+                exit: renumbered(block.exit, position)
+            )).try();
+        });
+    });
+    Ok(placed)
+}

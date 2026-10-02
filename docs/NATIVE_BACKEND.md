@@ -101,8 +101,10 @@ machine details stay inside each target; targets never fall back to C.
 AST + checked sema facts
   → gen_lower_core / gen_lower_call / gen_lower_member / gen_lower_shape   (full lowering)
   → gen_ir.Program  → gen_verify.verify
+  → gen_asm_prepare   (tables, inlining, scalar replacement, block layout)
+  → gen_asm_regalloc  (per function: simplify, liveness, linear scan)
   → gen_asm_x86.X86_64Linux | gen_asm_arm64.Arm64(Linux | Darwin)   (renderers)
-  → as + ld (zen.zen_native)
+  → gen_asm_peephole → as + ld (zen.zen_native)
 ```
 
 **The IR stays target-neutral.** There is one IR: integer widths
@@ -174,8 +176,9 @@ None of these names a register, an instruction or an OS; a `Layout` input
 target arrives.
 
 **Renderers** own registers, frames, calls and object syntax. They consume
-only the IR program and the `Target` value. Words live in
-8-byte slots extended to 64 bits; aggregates are passed by pointer to the
+only the IR program and the `Target` value, through the machine-level
+passes described under *Performance* below. Words hold their value extended
+to 64 bits wherever they live (a register, the frame, or a constant); aggregates are passed by pointer to the
 caller's copy and returned through a hidden pointer (`%rdi` / `x8`), which is
 the System V MEMORY class and the AAPCS64 indirect-result convention for
 large composites (small-struct register classification is not implemented;
@@ -358,23 +361,68 @@ The runner stages each program as `tests/run.py` does: it runs as
 harness-only environment variables, the symlink loop and the rewritten epoch
 for the tests that need them.
 
-### Stage 4: SHA-256 on both backends
+### Stage 4: performance
 
-`tests/native/bench` builds zen-crypto's `sha256.zen` unchanged with the C
-backend (`cc -O2`) and with the asm backend, hashes 16 MiB, and checks that
-both print the same digest (`5d91165a…484186`). On dev-box (x86-64): C 0.07 s,
-asm 1.70 s, about 24x slower. The asm renderers keep every value in a stack
-slot and reload it for each operation, checked arithmetic branches after every
-add, and there is no register allocation, inlining of small callees or
-instruction selection for rotates and loads of whole words. ChaCha20 was not
-benchmarked; it needs the same work.
+`tests/native/bench/{sha256,blake2b,chacha20}` build zen-crypto's
+`sha256.zen`, `blake2b.zen` and `chacha20poly1305.zen` unchanged with the C
+backend (`cc -O2`) and the asm backend, hash or seal a 1 MiB buffer `rounds`
+times, and print a digest that must agree between the two builds. dev-box
+(AMD EPYC-Milan, pinned to one CPU, load below 4), 32 rounds:
+
+| Benchmark | C -O2 | asm before | asm now | ratio before | ratio now |
+| --- | --- | --- | --- | --- | --- |
+| SHA-256 | 0.133 s | 3.18 s | 0.209 s | 23.9x | 1.56x |
+| BLAKE2b | 0.141 s | 2.18 s | 0.184 s | 15.5x | 1.30x |
+| ChaCha20-Poly1305 | 0.218 s | 4.48 s | 0.392 s | 20.6x | 1.79x |
+
+Native corpus verdicts are unchanged by this work on x86_64-linux and
+aarch64-linux (643 pass, the same 3 failures, 331 unsupported of 977).
+
+The work sits in a machine-level layer between the verified IR and the
+renderers; the shared lowering and the IR are unchanged.
+
+* `gen_asm_prepare` rewrites the whole program: an integer `match` choosing
+  among constants becomes a bounds check and a load from a read-only table
+  (little-endian, the byte order of every target here); calls to small
+  functions that call nothing are inlined; aggregates reached only through
+  their own frame address and whole copies are split into one word slot
+  per field; blocks are laid out in reverse postorder (a branch's taken
+  side first) with empty jump blocks threaded away.
+* `gen_asm_regalloc` simplifies each function (copy propagation, constant
+  folding that never removes a trap, removal of dead pure instructions
+  including self-feeding counters, sinking of single-use pure instructions
+  next to their reader) and allocates registers by linear scan over
+  interval hulls computed from per-slot liveness (`gen_asm_flow`). Values
+  live across or read by a call, a kernel call, a large aggregate copy or
+  any instruction not known to be simple get callee-saved registers only
+  (rbx, r12-r15; x19-x28); others prefer caller-saved ones (rsi, rdi,
+  r8-r11; x4-x7, x10-x15). Spills pick the interval with the lowest
+  loop-weighted use density. A slot written only with one constant, or
+  only with one frame address, has no register: it is materialized where
+  read. Address-taken slots and aggregates stay in the frame.
+* The renderers select instructions over those homes: memory and immediate
+  operands, 32-bit instructions for 32-bit classes (the flags check 32-bit
+  overflow, so checked arithmetic keeps its trap and `Wrap*` needs no
+  check), rotates and shifts by immediate, base+index*scale addressing that
+  absorbs the pointer arithmetic before an access, loads folded into ALU
+  operands (x86), compare-and-branch without materializing the boolean,
+  fallthrough to the next block, and unsigned division, remainder and
+  checked multiplication by powers of two as shifts and masks.
+* `gen_asm_peephole` cleans the seams between instructions: a stack store
+  reloaded on the next line becomes a register move, a move straight back
+  is dropped, and so is a jump to the next line.
+
+Not done yet: byte-swapped or whole-word loads for byte-assembled words
+(SHA-256 reads its message a byte at a time; the IR has no byte-swap
+operation, `gen_ir_machine`'s vocabulary is where one would come from),
+multiply-by-reciprocal division by other constants, interval splitting,
+and using %rbp and the scratch registers for allocation.
 
 ### Roadmap to zen-crypto and zen-http on the native backend
 
-1. **Performance.** A per-function register allocator over the slot CFG
-   (linear scan is enough), whole-word loads/stores for `Ptr<u32>`/`Ptr<u64>`,
-   rotates as single instructions, and unchecked arithmetic where the IR
-   says `Wrap*`. The goal is within 2x of `cc -O2` on SHA-256 and ChaCha20.
+1. **Performance.** Done to within 2x of `cc -O2` on SHA-256, BLAKE2b and
+   ChaCha20-Poly1305 (see Stage 4). Next: a byte-swap/whole-word load IR
+   operation, interval splitting, and more allocatable registers.
 2. **Crypto surface** (see the requirements table above): `u128`/`mul_wide`,
    vectors, target-feature dispatch (`CpuHas`), forced inlining, and
    volatile store plus a compiler barrier for wiping secrets.

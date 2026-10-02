@@ -17,10 +17,14 @@
 { pow2*, min* } = std.core.num
 
 // Numeric conversions and bit operations are compiler-provided top-level
-// declarations, not members of the numeric types, so the prelude names them.
-{ to_u8*, to_u16*, to_u32*, to_u64*, to_usize*,
-    to_i16*, to_i32*, to_i64*, to_f64*, to_c_int*,
-    bit_and*, bit_xor*, rotate_right*, shift_right* } = std.core.num
+// declarations, not members of the numeric types; a dot call on a number
+// reaches them through std.core.
+{ to_u8*, to_u16*, to_u32*, to_u64*, to_u128*, to_usize*,
+    to_i16*, to_i32*, to_i64*, to_f32*, to_f64*, to_c_int*,
+    truncate_u8*, truncate_u16*, truncate_u32*, truncate_u64*,
+    narrow_f32*, narrow_f64*, add_carry*, sub_borrow*, mul_wide*,
+    bit_and*, bit_or*, bit_xor*, rotate_left*, rotate_right*,
+    shift_left*, shift_right* } = std.core.num
 
 { ToU16*, ToU32*, ToU64*, ToUsize*,
     ToI16*, ToI32*, ToI64*, ToF64* } = std.core.num

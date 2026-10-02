@@ -28,7 +28,7 @@ walk = (visits :: usize) Res<()> {
 }
 
 main = (env: Env) Res<i32, AllocError> {
-    checks: usize ::= 0;
+    checks :: usize = 0;
     good = double(3, checks);
     bad  = double(0, checks);
     println(
@@ -39,7 +39,7 @@ main = (env: Env) Res<i32, AllocError> {
     );
     required(4).match({ Ok(value) => println("required {}", value), Err(_) => println("unexpected failure") });
     required(0).match({ Ok(_) => println("unexpected success"), Err(error) => println("error {}", error.variant_name()) });
-    visits: usize ::= 0;
+    visits :: usize = 0;
     result = walk(visits);
     println(
         "stopped {} visits {}",

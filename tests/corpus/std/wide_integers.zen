@@ -26,7 +26,7 @@ main = () {
     );
 
     // donna64-style accumulation: 128-bit sums and 44-bit limbs.
-    acc: u128 ::= 0;
+    acc :: u128 = 0;
     acc   = acc + mul_wide(17592186044415, 17592186044415);
     acc   = acc + mul_wide(4398046511103, 81985529216486895);
     carry = acc.shift_right(44).truncate_u64();
@@ -89,7 +89,7 @@ main = () {
     index: usize = 5;
     println("usize: {} {}", index.shift_left(3), index.bit_or(2));
 
-    calls: i32 ::= 0;
+    calls :: i32 = 0;
     both = once(calls, 3).mul_wide(once(calls, 5));
     println("once: {} {}", low(both), calls);
     cut = once(calls, 4294967297).truncate_u32();

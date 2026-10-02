@@ -28,7 +28,7 @@ main = (env: Env) Res<i32, AllocError> {
     words.add("12").try();
     words.add("bad").try();
     words.add("99").try();
-    seen: usize ::= 0;
+    seen :: usize = 0;
     parse(words, arena, seen).match({
         Ok(_)      => println("unexpected parsed values"),
         Err(error) => error.match({

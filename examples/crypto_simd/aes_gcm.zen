@@ -140,7 +140,7 @@ xtime_word = (w: u64) u64 { xtime_long(w).bit_and(0xffffffff) }
 
 byte_of = (w: u64, k: usize) u64 { w.shift_right(k * 8).bit_and(255) }
 load_le = (p: Ptr<u8>) u64 {
-    v: u64 ::= 0; Range(0, 8).loop((i) { v = v *% 256 +% p.read(7 - i).to_u64(); }); v
+    v :: u64 = 0; Range(0, 8).loop((i) { v = v *% 256 +% p.read(7 - i).to_u64(); }); v
 }
 store_le = (p: Ptr<u8>, value: u64) {
     Range(0, 8).loop((i) { p.write(i, byte_of(value, i).to_usize().value_or(0).to_u8().value_or(0)); });
@@ -181,7 +181,7 @@ mix_word = (d: u64) u64 {
 // KeyExpansion for AES-128 (nk = 4, nr = 10): 22 u64 round-key words.
 aes128_expand_key* = (key: Ptr<u8>, w: Ptr<u64>) {
     w.write(0, load_le(key)); w.write(1, load_le(key.offset(8)));
-    rcon: u64 ::= 1;
+    rcon :: u64 = 1;
     n = 2;
     prev ::= w.read(n - 1);
     Range(n, 22).loop((i) {
@@ -401,7 +401,7 @@ open_soft = (sp: Spans, output: Ptr<u8>, ciphertext: Ptr<u8>, count: usize, aad:
 }
 // subtle.ConstantTimeCompare over the full tag, shared by both paths.
 tag_matches = (sp: Spans, ciphertext: Ptr<u8>, count: usize) bool {
-    difference: u64 ::= 0;
+    difference :: u64 = 0;
     Range(0, 16).loop((i) { difference = or64(difference, sp.tag.read(i).to_u64().bit_xor(ciphertext.read(count + i).to_u64())); });
     authentic = difference == 0;
     authentic
@@ -534,7 +534,7 @@ expand_key_hw = (cpu: Aes, key: Ptr<u8>, keys: Ptr<u8>) {
     Range(0, 4).loop((i) {
         words.write(i, load_u32x4(key, 0).lane(i));
     });
-    rcon: u32 ::= 1;
+    rcon :: u32 = 1;
     Range(4, 44).loop((i) {
         temp ::= words.read(i - 1);
         (i % 4 == 0).then(() {
@@ -601,8 +601,8 @@ xor_block = (output: Ptr<u8>, input: Ptr<u8>, at: usize, stream: u8x16) {
 
 // CTR from counter block 2 (J0 + 1), eight blocks at a time.
 ctr_hw = (cpu: Aes, hw: Hardware, output: Ptr<u8>, input: Ptr<u8>, count: usize, pad: Ptr<u8>) {
-    at: usize ::= 0;
-    counter: u32 ::= 2;
+    at :: usize = 0;
+    counter :: u32 = 2;
     (count - at >= 128).loop((h) {
         s = aes8(cpu, hw.keys, Blocks8(
             b0: counter_block(hw.base, counter +% 0),

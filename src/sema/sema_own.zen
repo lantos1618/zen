@@ -56,13 +56,13 @@ Provenance = {
     fields: Vec<FieldOrigin>,
 
     field = (self: @Self, name: str) FieldOrigin {
-        found       ::= FieldOrigin(
+        found ::= FieldOrigin(
             name: name,
             scoped: self.scoped,
             arena: self.arena,
             source: self.source
         );
-        best: usize ::= 0;
+        best  :: usize = 0;
         self.fields.loop((field) {
             matches = field.name.eq(name) || strip_path(name, field.name).match({ None => false, Ok(_) => true });
             (matches && field.name.len >= best).then(() {

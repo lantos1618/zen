@@ -118,7 +118,7 @@ schedule_mix* = (s: Schedule, out: Ptr<u8>) {
 
 // Leaks through an early exit: the loop stops at the first difference.
 leaky_compare* = (tag: Ptr<u8>, expected: Ptr<u8>) bool {
-    same: bool ::= true;
+    same :: bool = true;
     Range(0, 16).loop((h, i) {
         (tag.read(i) != expected.read(i)).then(() {
             same = false;

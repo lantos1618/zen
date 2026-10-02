@@ -25,7 +25,7 @@
 // where the 300 the `u8` cannot hold is refused rather than wrapped.
 
 takes_u8s = (xs: [u8, 3]) u32 {
-    total: u32 ::= 0;
+    total :: u32 = 0;
     xs.loop((h, v) { total = total + v.to_u32(); });
     total;
 }

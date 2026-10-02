@@ -270,8 +270,8 @@ Sites = {
     }
 
     next_variant = (self: @Self, use: ErrorUse) Res<str> {
-        above: Res<str>  ::= None;
-        lowest: Res<str> ::= None;
+        above  :: Res<str> = None;
+        lowest :: Res<str> = None;
         self.each_variant(use.group, (name) {
             (name.before(use.variant) == false && name.eq(use.variant) == false).then(() {
                 above = earlier(above, name);

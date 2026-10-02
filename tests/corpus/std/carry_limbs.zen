@@ -38,9 +38,9 @@ carry_ok = (a: u64, b: u64, c: u64) bool {
 }
 
 model_mul = (x: [u64, 4], y: [u64, 4]) [u64, 8] {
-    r: [u64, 8] ::= [0, 0, 0, 0, 0, 0, 0, 0];
+    r :: [u64, 8] = [0, 0, 0, 0, 0, 0, 0, 0];
     Range(0, 4).loop((i) {
-        carry: u64 ::= 0;
+        carry :: u64 = 0;
         Range(0, 4).loop((j) {
             t        = x[i].mul_wide(
                 y[j]

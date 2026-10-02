@@ -112,7 +112,7 @@ solve = (effects :: StoreEffects, c: Checker) Res<(), AllocError> {
             },
         });
     });
-    cursor: usize ::= 0;
+    cursor :: usize = 0;
     loop(() { cursor < work.len }, (h) {
         body   = work.get(cursor).ok_or(AllocError.OutOfMemory).try();
         cursor = cursor + 1;

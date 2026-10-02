@@ -233,6 +233,11 @@ map* = <T, U>(items: Vec<T>, alloc: Alloc, body: (item: T) U)
   without such storage authority do not allocate.
 - `self :: @Self` means the method writes the receiver's own bytes.
 - `self: @Self` may still act through capabilities or referenced state.
+- A mutable local is `name ::= value`, or `name :: T = value` when the type
+  is worth writing; `::` marks mutability on a local as on a field or
+  parameter. Declare `name :: T;` (or `name: T;` for one assignment) only
+  when the value is decided by a branch below it; give a value at the
+  declaration whenever there is one.
 - Every parameter has a name and type, including parameters in function types.
 - Omit redundant unit return annotations on named functions and methods with a
   body: write `run = () { ... }`, not `run = () () { ... }`. Keep `()`

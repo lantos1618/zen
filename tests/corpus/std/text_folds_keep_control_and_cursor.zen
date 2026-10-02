@@ -40,7 +40,7 @@ main = () {
     lines  = "\na\r\n\n".lines().loop(0, (value, acc: usize) { acc + 1 });
     println("edges {} {}", pieces.value_or(0), lines.value_or(0));
 
-    calls: usize ::= 0;
+    calls :: usize = 0;
     split_sum = split_source(calls).loop(10, (h, index, value, acc: usize) {
         value.eq("skip").then(() { h.next(); });
         println("split {} {} {}", index, value, acc);
@@ -84,7 +84,7 @@ main = () {
         line_cursor.next().value_or("?")
     );
 
-    seen: usize ::= 0;
+    seen :: usize = 0;
     split_failure(seen).match({
         Ok(_)  => println("unexpected split success"),
         Err(_) => println("split failure {}", seen),

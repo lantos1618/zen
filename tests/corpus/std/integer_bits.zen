@@ -61,7 +61,7 @@ main = () {
         high.rotate_right(1),
         value.rotate_right(32)
     );
-    calls: i32 ::= 0;
+    calls :: i32 = 0;
     result = once(calls, 1).bit_xor(once(calls, 3));
     println("once: {} {}", result, calls);
     rotated = once(calls, 8).rotate_right(count_once(calls));

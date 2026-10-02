@@ -36,7 +36,7 @@ main = (env: Env) Res<i32, AllocError> {
     println("vec {}", total.value_or(999));
     concise = values.loop(5, (value, acc: usize) { acc + value.len });
     println("values {}", concise.value_or(999));
-    calls: usize ::= 0;
+    calls :: usize = 0;
     window_total = source(values, calls).loop(5, (h, index, value, acc: usize) {
         println("item {} {}", index, value);
         acc + value.len + index
@@ -66,7 +66,7 @@ main = (env: Env) Res<i32, AllocError> {
         acc
     });
     println("break none {}", missing.match({ None => true, Ok(_) => false }));
-    seen: usize ::= 0;
+    seen :: usize = 0;
     stopped(window, seen).match({
         None  => println("stopped {}", seen),
         Ok(_) => println("unexpected full fold"),

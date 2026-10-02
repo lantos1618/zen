@@ -80,9 +80,9 @@ MergeSort<T> = {
     len: usize,
 
     run = (self :: @Self) {
-        width: usize ::= 1;
+        width :: usize = 1;
         loop(() { width < self.len }, (h) {
-            start: usize ::= 0;
+            start :: usize = 0;
             loop(() { start < self.len }, (h) {
                 mid = start + width.min(self.len - start);
                 end = mid + width.min(self.len - mid);

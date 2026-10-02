@@ -108,7 +108,7 @@ main = (env: Env) Res<(), AllocError> {
     x = load_u64x2(buf, 8);
     println("u64 load: {} {}", x.lane(0), x.rotate_right(8).lane(1));
 
-    calls: i32 ::= 0;
+    calls :: i32 = 0;
     once_vec = lanes_u32x4(
         once(calls, 1),
         once(calls, 2),

@@ -222,7 +222,7 @@ Project = {
 
     execute_tests = (self: @Self, programs: Vec<PreparedTest>)
                     Res<i32, AllocError> {
-        failed: usize ::= 0;
+        failed :: usize = 0;
         programs.loop((test) {
             code = self.run_program(
                 test.executable.view(),
@@ -246,7 +246,7 @@ Project = {
 
     build_selected = (self: @Self, selected: Res<ExeNode>)
                      Res<i32, AllocError> {
-        code: i32 ::= 0;
+        code :: i32 = 0;
         self.planned.exes.loop((h, exe) {
             wanted = selected.match({
                 None       => true,
@@ -520,10 +520,10 @@ Project = {
 
     // CC/CFLAGS use quoted command words, never shell evaluation.
     append_command = (self: @Self, text: str, argv :: Vec<str>) Res<bool, AllocError> {
-        word      ::= self.a.String().try();
-        quote: u8 ::= 0;
-        escaped   ::= false;
-        started   ::= false;
+        word    ::= self.a.String().try();
+        quote   :: u8 = 0;
+        escaped ::= false;
+        started ::= false;
         Range(0, text.len).loop((i) {
             byte = text.index(i);
             escaped.match({

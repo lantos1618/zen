@@ -284,8 +284,8 @@ Reader* = {
 
     four_hex = (self :: @Self) Res<u32, JsonFault> {
         from = self.at;
-        v: u32 ::= 0;
-        ok     ::= self.at + 4 <= self.text.len;
+        v  :: u32 = 0;
+        ok ::= self.at + 4 <= self.text.len;
         Range(0, 4).loop((h, i) {
             ok.then(() {
                 self.text.index(from + i).hex_value().match({

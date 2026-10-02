@@ -455,8 +455,8 @@ ListRelations = {
             false => false,
             true  => {
                 end = candidate.first().hi;
-                from: usize ::= 0;
-                to: usize   ::= self.ending_at.len;
+                from :: usize = 0;
+                to   :: usize = self.ending_at.len;
                 loop(() { from < to }, (h) {
                     middle = from + (to - from) / 2;
                     (self.ending_at.ptr().read(middle).at < end).match({
@@ -506,8 +506,8 @@ ListRelations = (
 }
 
 at_or_after = (offsets: Vec<Offset>, value: usize) usize {
-    from: usize ::= 0;
-    to: usize   ::= offsets.len;
+    from :: usize = 0;
+    to   :: usize = offsets.len;
     loop(() { from < to }, (h) {
         middle = from + (to - from) / 2;
         (offsets.ptr().read(middle).at < value).match({

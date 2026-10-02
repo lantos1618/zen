@@ -56,7 +56,7 @@ compiler_barrier* = () ()
 // for erasing key material. Only these bytes are erased: copies elsewhere
 // (registers, spilled temporaries, other buffers) are not reached.
 wipe* = (bytes: Ptr<u8>, count: usize) {
-    i: usize ::= 0;
+    i :: usize = 0;
     loop(() { i < count }, (h) {
         bytes.write_volatile(i, 0);
         i = i + 1;
@@ -68,7 +68,7 @@ wipe* = (bytes: Ptr<u8>, count: usize) {
 // key schedules and scratch held as aligned words (an eighth of the stores
 // of the byte form).
 wipe* = (words: Ptr<u64>, count: usize) {
-    i: usize ::= 0;
+    i :: usize = 0;
     loop(() { i < count }, (h) {
         words.write_volatile(i, 0);
         i = i + 1;

@@ -2,8 +2,8 @@ word = (env: Env, letters: str) Res<str, AllocError> {
     alloc ::= env.mem.alloc();
     buf   ::= alloc.String().try();
     buf.add(letters).try();
-    first: str  ::= "safe";
-    second: str ::= "safe";
+    first  :: str = "safe";
+    second :: str = "safe";
     Range(0, 2).loop((_) { first = second; second = buf.view(); });
     first = "safe";
     Ok(first)

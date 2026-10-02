@@ -1060,7 +1060,7 @@ Parser<T> = {
 
     setting = (self :: @Self, located: Located<T>, value_type: ValueType)
         Res<(), AllocError> {
-        raw: Res<str> ::= located.inline;
+        raw :: Res<str> = located.inline;
         raw.match({
             Ok(_) => (),
             None  => (self.at < self.argv.len).match({

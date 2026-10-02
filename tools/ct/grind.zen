@@ -70,7 +70,7 @@ run_case* = (env: Env, a: Alloc, name: str) Res<i32, AllocError> {
         _                    => {
             // A loop whose trip count is secret: compilers cannot turn that
             // into a select, unlike a two-way choice between constants.
-            count: usize ::= 0;
+            count :: usize = 0;
             Range(0, key.read(5).to_usize()).loop((i) { out.write_volatile(1, i.truncate_u8()); count = count + 1; });
             out.write(0, count.truncate_u8());
         },

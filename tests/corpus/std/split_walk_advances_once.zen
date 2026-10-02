@@ -34,7 +34,7 @@ main = (env: Env) Res<i32, AllocError> {
     });
     "whole".split(',').loop((value) { println("whole [{}]", value); });
 
-    calls: usize ::= 0;
+    calls :: usize = 0;
     stopped = source(calls).loop((h, index, value) {
         value.eq("skip").then(() { h.next(); });
         println("walk {} {}", index, value);
@@ -45,7 +45,7 @@ main = (env: Env) Res<i32, AllocError> {
         None      => println("missing stop"),
     });
     calls = 0;
-    visits: usize ::= 0;
+    visits :: usize = 0;
     source(calls).loop((value) { visits = visits + 1; });
     println("value source {} visits {}", calls, visits);
     missing = "first,unseen".split(',').loop((h, value) {
@@ -62,7 +62,7 @@ main = (env: Env) Res<i32, AllocError> {
         None      => println("cursor exhausted"),
     });
 
-    seen: usize ::= 0;
+    seen :: usize = 0;
     try_loop(seen).match({
         Ok(_)  => println("try unexpectedly succeeded"),
         Err(_) => println("try loop {}", seen),
@@ -76,8 +76,8 @@ main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
     text  ::= alloc.String().try();
     Range(0, 16384).loop((h, i) { text.add("x,").try(); });
-    count: usize ::= 0;
-    bytes: usize ::= 0;
+    count :: usize = 0;
+    bytes :: usize = 0;
     text.view().split(',').loop((value) {
         count = count + 1;
         bytes = bytes + value.len;

@@ -322,7 +322,7 @@ Initialisers = {
     write = (self: @Self, be :: CBackend, out :: String)
             Res<(), AllocError> {
         out.add("{ ").try();
-        seen: usize ::= 0;
+        seen :: usize = 0;
         self.call.args.loop((h, i, a) {
             hold = be.holds(self.call, i, 0);
             seen = seen + self.supplied(be, a, i, hold, seen, out).try();

@@ -11,7 +11,7 @@ count = (trace :: u64, digit: u64, value: usize) usize {
 }
 
 main = () {
-    trace: u64 ::= 0;
+    trace :: u64 = 0;
     both = step(trace, 1, 12) | step(trace, 2, 3);
     println("or: {} {}", both, trace);
 

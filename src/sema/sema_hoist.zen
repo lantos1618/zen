@@ -215,9 +215,9 @@ hoist_at* = (c :: Checker, id: ExprId, got: TyId, want: TyId)
 // statement supplies its own tail. Walk that chain without growing the stack
 // or copying the checker at each level of a recovered nested block.
 tail_expr* = (c: Checker, blk: Block) Res<ExprId> {
-    current             ::= blk;
-    result: Res<ExprId> ::= None;
-    walking             ::= true;
+    current ::= blk;
+    result  :: Res<ExprId> = None;
+    walking ::= true;
     loop(() { walking }, (h) {
         current.value.match({
             Ok(e) => { result = Ok(e); walking = false; },

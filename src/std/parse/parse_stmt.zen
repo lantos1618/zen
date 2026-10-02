@@ -36,9 +36,9 @@ block_here = (p :: Parser) Res<BlockId, AllocError> {
         TokenKind.BraceOpen,
         "expected `{` to open a block"
     ).try();
-    stmts              ::= p.alloc.Vec<Stmt>();
-    value: Res<ExprId> ::= None;
-    running            ::= !p.at_kind(TokenKind.BraceClose) && !p.at_eof();
+    stmts   ::= p.alloc.Vec<Stmt>();
+    value   :: Res<ExprId> = None;
+    running ::= !p.at_kind(TokenKind.BraceClose) && !p.at_eof();
     running.loop((h) {
         before = p.at;
         opened.then(() { p.resume(); });
@@ -217,14 +217,29 @@ bind_typed = (
             p.bind_rest(stmts, m, target, None, false)
         },
         false => {
-            t       = p.type().try();
-            mutable = p.at_kind(TokenKind.ColonColonEq);
-            p.at_kind(TokenKind.Semicolon).match({
-                true  => p.deferred(stmts, m, target, t, false),
-                false => p.bind_rest(stmts, m, target, Ok(t), mutable),
+            t = p.type().try();
+            p.peek().kind.match({
+                Semicolon    => p.deferred(stmts, m, target, t, false),
+                ColonColonEq => p.old_typed_mutable(stmts, m, target, t),
+                _            => p.bind_rest(stmts, m, target, Ok(t), false),
             })
         },
     });
+}
+
+// `x: T ::= v` was the typed mutable local before `::` took that job. It is
+// named once and kept as the mutable binding it meant, so checking goes on.
+old_typed_mutable = (
+    p      :: Parser,
+    stmts  :: Vec<Stmt>,
+    m      : Mark,
+    target : ExprId,
+    t      : TypeId
+) Res<(), AllocError> {
+    p.error(
+        "a typed mutable local is written `x :: T = v`: `::` marks it mutable, as on a field or parameter, and the value follows `=`"
+    ).try();
+    p.bind_rest(stmts, m, target, Ok(t), true)
 }
 
 // `x :: T;` or `x: T;`. Only a name can wait for its value: a member or an

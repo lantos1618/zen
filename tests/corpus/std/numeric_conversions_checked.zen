@@ -42,7 +42,7 @@ main = (env: Env) {
         "index: {}",
         usize.MAX.to_u64().to_usize().value_or(0) == usize.MAX
     );
-    calls: i32 ::= 0;
+    calls :: i32 = 0;
     first  = once(calls, 42).to_i32();
     second = to_i32(once(calls, 2147483648));
     println(

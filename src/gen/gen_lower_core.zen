@@ -2152,10 +2152,10 @@ to_i64_bits* = (value: usize) i64 {
 // or divide rounds correctly. None outside that range: such a literal is
 // refused rather than rounded twice.
 float_bits* = (a: Alloc, text: str) Res<Res<i64>, AllocError> {
-    mantissa: u64 ::= 0;
+    mantissa :: u64 = 0;
     digits ::= 0;
-    scale: i64 ::= 0;
-    exponent: i64 ::= 0;
+    scale :: i64 = 0;
+    exponent :: i64 = 0;
     negative_exponent ::= false;
     fraction ::= false;
     in_exponent ::= false;
@@ -2288,7 +2288,7 @@ lower_native* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
         generic_owner: None
     )).try();
     functions ::= alloc.Vec<Func>();
-    i: usize ::= 0;
+    i :: usize = 0;
     loop(() { i < state.pending.len }, (h) {
         callee = state.pending.get(i).ok_or(unsupported(module.span, "a missing reachable function")).try();
         via = state.vias.get(i).value_or(None);

@@ -248,7 +248,7 @@ marshal_of = (lo :: Lowerer, ty: TyId) Res<Marshal> {
 // `Handler` crosses as its u32 id; a returned `Ref` is rebuilt from one.
 host_call = (lo :: Lowerer, id: ExprId, c: Call, binding: StructDecl, name: str, span: Span)
             Res<Value, LowerError> {
-    found: Res<usize> ::= None;
+    found :: Res<usize> = None;
     binding.s.members.loop((h, i, m) {
         m.kind.match({ Function(f) => f.name.text.eq(name), _ => false }).then(() { found = Ok(i); });
     });
@@ -2165,9 +2165,9 @@ std_callee* = (lo :: Lowerer, module_name: str, name: str, span: Span) Res<Calle
 format = (lo :: Lowerer, args: Vec<Arg>, first: usize, raw: str, to: FmtTo, span: Span)
          Res<(), LowerError> {
     end = raw.len - 1;
-    start: usize ::= 1;
-    i: usize     ::= 1;
-    used: usize  ::= first + 1;
+    start :: usize = 1;
+    i :: usize = 1;
+    used :: usize = first + 1;
     loop(() { i < end }, (h) {
         at = raw.fmt_at(i, end);
         at.what.match({

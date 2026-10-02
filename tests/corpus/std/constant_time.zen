@@ -44,7 +44,7 @@ edge = (i: usize) u64 {
 
 main = (env: Env) Res<(), AllocError> {
     // Every u8 pair: eq, ne, lt, gt and select.
-    bad: usize ::= 0;
+    bad :: usize = 0;
     Range(0, 256).loop((i) {
         Range(0, 256).loop((j) {
             a  = i.truncate_u8();
@@ -74,8 +74,8 @@ main = (env: Env) Res<(), AllocError> {
 
     // Edge pairs and xorshift pairs for u32, u64, u128 and usize.
     bad = 0;
-    checked: usize ::= 0;
-    state: u64     ::= 88172645463325252;
+    checked :: usize = 0;
+    state   :: u64 = 88172645463325252;
     Range(0, 18 + 4000).loop((i) {
         Range(0, 18).loop((j) {
             a   = (i < 18).match({ true => edge(i), false => next(state) });
@@ -133,8 +133,8 @@ main = (env: Env) Res<(), AllocError> {
         t.mask_u64(),
         f.mask_u64()
     );
-    x: u64 ::= 10;
-    y: u64 ::= 20;
+    x :: u64 = 10;
+    y :: u64 = 20;
     ct_swap(x, y, f);
     println("swap(0): {} {}", x, y);
     ct_swap(x, y, t);
@@ -143,7 +143,7 @@ main = (env: Env) Res<(), AllocError> {
     println("cmov(0): {}", x);
     ct_cmov(x, 99, t);
     println("cmov(1): {}", x);
-    wide: u128 ::= 5;
+    wide :: u128 = 5;
     ct_cmov(wide, u128.MIN -% 1, t);
     println("u128 cmov: {}", wide == u128.MIN -% 1);
     println(

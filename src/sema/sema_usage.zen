@@ -198,12 +198,12 @@ Collector = {
     bodies :: usize = 0,
 
     index = (self :: @Self) Res<(), AllocError> {
-        mi: u32 ::= 0;
+        mi :: u32 = 0;
         loop(() { mi.to_usize() < self.tree.module_count() }, (h) {
             self.tree.module_at(mi.to_usize()).match({
                 None       => (),
                 Ok(module) => {
-                    di: u32 ::= 0;
+                    di :: u32 = 0;
                     module.decls.loop((decl) {
                         id = DeclId(module: mi, decl: di);
                         describe(id, decl, module.name).match({
@@ -430,7 +430,7 @@ Collector = {
                 () { pending.add(row.id).try(UsageError.OutOfMemory); }
             );
         });
-        i: usize ::= 0;
+        i :: usize = 0;
         loop(() { i < pending.len }, (h) {
             owner = pending.get(i).ok_or(UsageError.InvalidInput).try();
             self.outgoing.get(owner).match({
@@ -504,7 +504,7 @@ analyse* = (
         owner: DeclId(module: 0, decl: 0)
     );
     collector.index().try(UsageError.OutOfMemory);
-    roots: usize ::= 0;
+    roots :: usize = 0;
     collector.report.declarations.loop(
         (row) { row.root.then(() { roots = roots + 1; }); }
     );
@@ -550,7 +550,7 @@ review* = (report: UsageReport, a: Alloc, sources: Map<str, str>, limit: usize)
         "Review concrete behavior and ownership before editing. Validate proposed\n",
         "changes with relevant regressions and measured performance where applicable.\n"
     ).loop((text) { pack.out.add(text).try(); });
-    written: usize ::= 0;
+    written :: usize = 0;
     report.declarations.loop((h, row) {
         (written >= limit).then(() { h.break(); });
         row.kind.eq("function").then(() {

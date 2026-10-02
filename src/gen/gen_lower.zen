@@ -507,8 +507,8 @@ Lowering = {
             span,
             "bool matches without two explicit arms"
         )).try();
-        yes: Res<ExprId> ::= None;
-        no: Res<ExprId>  ::= None;
+        yes :: Res<ExprId> = None;
+        no  :: Res<ExprId> = None;
         m.arms.loop((arm) {
             p    = self.tree.pattern_at(arm.pattern);
             text = p.kind.match({ Literal(l) => l.text, _ => "" });
@@ -684,9 +684,9 @@ Lowering = {
     format = (self :: @Self, call: Call, raw: str, span: Span)
              Res<(), LowerError> {
         end = raw.len - 1;
-        start: usize ::= 1;
-        i: usize     ::= 1;
-        used: usize  ::= 1;
+        start :: usize = 1;
+        i     :: usize = 1;
+        used  :: usize = 1;
         loop(() { i < end }, (h) {
             at = raw.fmt_at(i, end);
             at.what.match({
@@ -776,7 +776,7 @@ lower* = (alloc: Alloc, tree: Ast, check: Checker, entry: usize)
     );
     entry_index = state.enqueue(main).try();
     functions ::= alloc.Vec<Func>();
-    i: usize  ::= 0;
+    i         :: usize = 0;
     loop(() { i < state.pending.len }, (h) {
         id = state.pending.get(i).ok_or(unsupported(module.span, "a missing reachable function")).try();
         f  = state.function(id, i == entry_index).try();

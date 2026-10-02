@@ -451,7 +451,7 @@ Parser* = (a: Alloc, lexed: Lexed, tree: Ast) Parser {
     ends ::= a.Vec<usize>();
     // Cache allocation is optional: uncached tokens use the ordinary scan.
     count: usize = lexed.tokens.len;
-    n: usize ::= 0;
+    n :: usize = 0;
     loop(n < count, (h) {
         ends.add(0).match({ Ok(_) => (), _ => h.break() });
         n = n + 1;

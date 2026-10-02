@@ -258,8 +258,8 @@ aggregate = (
     to    : usize,
     union : bool
 ) Res<Layout> {
-    size: usize  ::= 0;
-    align: usize ::= 1;
+    size :: usize = 0;
+    align :: usize = 1;
     vector       ::= true;
     i            ::= from;
     ok           ::= true;
@@ -348,7 +348,7 @@ placements = (a: Alloc, isa: Isa, c: str, m: Marked) Res<Vec<Placed>, AllocError
     vnext ::= 0;
     // Stack arguments start above the return address on x86-64 and at the
     // stack pointer on arm64.
-    stack: usize ::= isa.match({ X86 => 8, Arm => 0 });
+    stack :: usize = isa.match({ X86 => 8, Arm => 0 });
     limit: usize = isa.match({ X86 => 6, Arm => 8 });
     x86 = isa.match({ X86 => true, Arm => false });
     (x86 && hidden_result(a, isa, c, m.result, m.avx) > 0).then(() { next = 1; });
@@ -819,9 +819,9 @@ call_shapes* = (
 shape_of = (a: Alloc, isa: Isa, c: str, m: Marked) Res<CallShape, AllocError> {
     x86      = isa.match({ X86 => true, Arm => false });
     hidden   = hidden_result(a, isa, c, m.result, m.avx);
-    gprs: usize ::= (x86 && hidden > 0).match({ true => 1, false => 0 });
-    vectors: usize ::= 0;
-    stack: usize ::= 0;
+    gprs :: usize = (x86 && hidden > 0).match({ true => 1, false => 0 });
+    vectors :: usize = 0;
+    stack :: usize = 0;
     writable ::= a.Vec<Writable>();
     ignored  ::= a.Vec<str>();
     // A `::` or lent parameter names exactly one value; a Ptr<T> any extent.

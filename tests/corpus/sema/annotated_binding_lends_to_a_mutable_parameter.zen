@@ -13,7 +13,7 @@ narrow = (n: u8) u8 { n + 1 }
 main = (env: Env) Res<i32, AllocError> {
     count ::= 20;
     println("by value {} {}", widen(count), narrow(count));
-    active: usize ::= 0;
+    active :: usize = 0;
     bump(active);
     bump(active);
     println("active {}", active);

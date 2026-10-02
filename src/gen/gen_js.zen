@@ -1127,7 +1127,7 @@ JavaScript = {
             marshal_name(call.result)
         ).try();
         call.marshal.loop((m) { key.fmt("{},", marshal_name(m)).try(); });
-        found: Res<usize> ::= None;
+        found :: Res<usize> = None;
         self.stubs.loop(
             (h, i, known) { known.view().eq(key.view()).then(() { found = Ok(i); }); }
         );

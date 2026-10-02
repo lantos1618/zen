@@ -31,8 +31,8 @@ path_of* = (a: Alloc, uri: str) Res<str, AllocError> {
 }
 
 decoded_path = (a: Alloc, raw: str) Res<str, AllocError> {
-    out       ::= a.String().try();
-    at: usize ::= 0;
+    out ::= a.String().try();
+    at  :: usize = 0;
     loop(() { at < raw.len }, (h) {
         byte    = raw[at];
         decoded = escaped_at(raw, at);

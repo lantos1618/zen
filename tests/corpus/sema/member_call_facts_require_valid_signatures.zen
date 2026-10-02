@@ -11,8 +11,8 @@ inspect = (a: Alloc, source: str) Res<(), AllocError> {
     parser.tree.add_module(parsed).try();
     checker ::= a.Checker(parser.tree).try();
     checker.check_all().try();
-    selected: usize ::= 0;
-    id              ::= ExprId(index: 0);
+    selected :: usize = 0;
+    id       ::= ExprId(index: 0);
     Range(0, parser.tree.expr_ids()).loop((index) {
         checker.resolved_member_provider(id).match({
             Ok(_) => { selected = selected + 1; },

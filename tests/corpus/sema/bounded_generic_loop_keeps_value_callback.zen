@@ -14,8 +14,8 @@ source = (calls :: usize) Range<usize> {
 }
 
 main = (env: Env) Res<i32, AllocError> {
-    calls: usize ::= 0;
-    sum: usize   ::= 0;
+    calls :: usize = 0;
+    sum   :: usize = 0;
     walk_again(source(calls), (n) { sum = sum + n * 2; });
     println("range {} calls {}", sum, calls);
     walk_again([str, 2]("a", "b"), (value) { println("array {}", value); });
@@ -25,7 +25,7 @@ main = (env: Env) Res<i32, AllocError> {
     values.add(7).try();
     walk_again(values, (n) { println("vec {}", n * 2); });
     loop(true, (h) { println("bool"); h.break(); });
-    remaining: usize ::= 2;
+    remaining :: usize = 2;
     loop(() { remaining > 0 }, (h) {
         println("condition {}", remaining);
         remaining = remaining - 1;

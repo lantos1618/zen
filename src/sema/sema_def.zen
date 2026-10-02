@@ -499,7 +499,7 @@ World* = (a: Alloc, tree: Ast) Res<World, AllocError> {
         alloc: a,
     );
     // IDs step beside usize positions; no unchecked narrowing.
-    module_id: u32 ::= 0;
+    module_id :: u32 = 0;
     Range(0, tree.module_count()).loop((h, i) {
         tree.module_at(i).match({
             Ok(m) => add_module(w, a, m, i, module_id),
@@ -517,13 +517,13 @@ World* = (a: Alloc, tree: Ast) Res<World, AllocError> {
 
 add_module = (w :: World, a: Alloc, m: Module, i: usize, mi: u32)
              Res<(), AllocError> {
-    t            ::= ModuleTable(
+    t       ::= ModuleTable(
         name: m.name,
         defs: a.Vec<Def>(),
         imports: a.Vec<ImportBinding>(),
         impls: a.Vec<ImplId>(),
     );
-    decl_id: u32 ::= 0;
+    decl_id :: u32 = 0;
     Range(0, m.decls.len).loop((h, di) {
         m.decls.get(di).match({
             Ok(d) => index_decl(t, a, m, d, mi, decl_id),

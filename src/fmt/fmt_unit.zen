@@ -79,7 +79,7 @@ omit_unit_returns* = (
     // Retain the token guard: permit only the precise AST-selected delimiter
     // tokens, and compare every other token (including comments) in order.
     after = scan(a, Source(file: lexed.source.file, text: out.view())).try();
-    at: usize ::= 0; faithful ::= after.is_clean();
+    at :: usize = 0; faithful ::= after.is_clean();
     lexed.tokens.loop((token) {
         edits.removed.ptr().read(token.span.start.offset).match({
             true  => {

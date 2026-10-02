@@ -2,7 +2,7 @@ word = (env: Env, letters: str) Res<str, AllocError> {
     alloc ::= env.mem.alloc();
     buf   ::= alloc.String().try();
     buf.add(letters).try();
-    output: str ::= "";
+    output :: str = "";
     output = buf.view();
     Ok(output)
 }

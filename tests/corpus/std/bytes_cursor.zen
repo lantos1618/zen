@@ -13,7 +13,7 @@ main = (env: Env) Res<(), AllocError> {
     data = a.realloc<u8>(null_ptr<u8>(), 16).try();
     widths ::= true;
     Range(1, 9).loop((width) {
-        value: u64 ::= 0;
+        value :: u64 = 0;
         Range(1, width + 1).loop((i) { value = value * 256 + i.to_u64(); });
         ByteWriter.open(data, 16).match({
             Err(_)      => { widths = false; },

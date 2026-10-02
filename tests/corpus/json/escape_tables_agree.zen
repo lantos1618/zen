@@ -9,9 +9,9 @@ Alloc, AllocError = std.mem
 Jsons, read, write_text = std.json
 
 main = (env: Env) Res<i32, AllocError> {
-    a     ::= env.mem.alloc();
-    raw   ::= a.String().try();
-    b: u8 ::= 0;
+    a   ::= env.mem.alloc();
+    raw ::= a.String().try();
+    b   :: u8 = 0;
     loop(b < ' ', (h) {
         raw.add(b).try();
         b = b + 1;

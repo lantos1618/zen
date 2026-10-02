@@ -36,7 +36,7 @@ Descriptor* = {
     // The caller supplies writable storage for length bytes. Empty transfers
     // do not touch the pointer or descriptor. Interrupted syscalls are retried.
     read_exact* = (self: @Self, bytes: Ptr<u8>, length: usize) Res<(), FileError> {
-        used: usize ::= 0;
+        used :: usize = 0;
         loop(used < length, (h) {
             count = Native.read(self.fd, bytes.offset(used), length - used);
             (count < 0).match({
@@ -55,7 +55,7 @@ Descriptor* = {
     }
 
     write_all* = (self: @Self, bytes: str) Res<(), FileError> {
-        used: usize ::= 0;
+        used :: usize = 0;
         loop(used < bytes.len, (h) {
             count = Native.write(
                 self.fd,

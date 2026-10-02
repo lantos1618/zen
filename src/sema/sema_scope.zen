@@ -306,14 +306,14 @@ frame_view_within = (c: Checker, id: ExprId) Res<ExprId> {
             Paren(p) => c.frame_view_within(p.inner),
             Try(t)   => c.frame_view_within(t.operand),
             Match(m) => {
-                found: Res<ExprId> ::= None;
+                found :: Res<ExprId> = None;
                 m.arms.loop((h, arm) {
                     c.frame_view_within(arm.body).when_ok((at) { found = Ok(at); h.break(); });
                 });
                 found
             },
             Call(k)  => {
-                found: Res<ExprId> ::= None;
+                found :: Res<ExprId> = None;
                 k.args.loop((h, arg) {
                     c.frame_view_within(arg.value).when_ok((at) { found = Ok(at); h.break(); });
                 });

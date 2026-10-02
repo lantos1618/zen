@@ -754,7 +754,7 @@ Payloads = {
 
     solve = (self :: @Self) Res<(), VerifyError> {
         slots = self.function.slots.len;
-        self.function.blocks.loop((h, i, _) {
+        self.function.blocks.loop((_) {
             self.entry.add(
                 filled(self.alloc, slots, UNREACHED).try()
             ).try(VerifyError.OutOfMemory);

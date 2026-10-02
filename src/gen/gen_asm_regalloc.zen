@@ -604,8 +604,8 @@ propagate = (alloc: Alloc, info: Flow) Res<Func, AllocError> {
     // Resolve chains; a cycle cannot pass verification, but the bound keeps
     // this total.
     Range(0, slots).loop((t) {
-        at    ::= t;
-        steps ::= 0;
+        at           ::= t;
+        steps: usize ::= 0;
         loop(() { alias.get(at).value_or(at) != at && steps < slots }, (h) {
             at    = alias.get(at).value_or(at);
             steps = steps + 1;
@@ -897,7 +897,7 @@ Scan = {
         operands     ::= self.alloc.Vec<usize>();
         function.blocks.loop((h, b, block) {
             depth = depth + opens.get(b).value_or(0) - closes.get(b).value_or(0);
-            cost ::= 1;
+            cost: usize ::= 1;
             Range(0, depth.min(3)).loop((_) { cost = cost * 8; });
             block.code.loop((instruction) {
                 operands.clear();
@@ -979,7 +979,7 @@ Scan = {
                 });
             });
         });
-        total ::= 0;
+        total: usize ::= 0;
         self.crossing.clear();
         marks.loop((m) {
             total = total + m;

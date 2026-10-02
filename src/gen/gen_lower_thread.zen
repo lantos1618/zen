@@ -71,8 +71,8 @@ runtime_call* = (
             ))).try();
             lo.unit()
         },
-        "atomic_swap"   => lo.atomic_update(id, sources, UpdateOp.Swap, span),
-        "atomic_add"    => lo.atomic_update(id, sources, UpdateOp.Add, span),
+        "atomic_swap"   => lo.atomic_update(sources, UpdateOp.Swap, span),
+        "atomic_add"    => lo.atomic_update(sources, UpdateOp.Add, span),
         "atomic_cas"    => {
             word     = lo.operand(sources, 0, span).try();
             expected = lo.element(word, sources, 1, span).try();
@@ -170,7 +170,6 @@ runtime_call* = (
 
 atomic_update = (
     lo      :: Lowerer,
-    id      : ExprId,
     sources : Vec<Source>,
     op      : UpdateOp,
     span    : Span
@@ -379,7 +378,7 @@ spawn_thread* = (
     lo.branch_to(failed, refuse, fill).try();
     lo.start(fill);
     saved_fill = lo.use_frame(lambda.frame);
-    fields.loop((c) { lo.store_capture(record, c, span).try(); });
+    fields.loop((c) { lo.store_capture(record, c).try(); });
     lo.use_frame(saved_fill);
     stand_in = frame.scope.ok_or(unsupported(
         span,
@@ -534,8 +533,7 @@ record_size = (
 store_capture = (
     lo     :: Lowerer,
     record : usize,
-    c      : Capture,
-    span   : Span
+    c      : Capture
 ) Res<(), LowerError> {
     lo.lookup(c.name).match({
         Ok(Direct(v)) => lo.add(Instruction.StoreValue(Store(
@@ -565,9 +563,9 @@ lifted_function = (lo :: Lowerer, body: LiftedBody) Res<Func, LowerError> {
         )).try();
     params ::= lo.alloc.Vec<Scalar>();
     params.add(Scalar.Ptr).try(LowerError.OutOfMemory);
-    entry_block = lo.begin_synth(params).try();
-    record      = 0;
-    frame       = lo.push_frame(
+    entry_block   = lo.begin_synth(params).try();
+    record: usize = 0;
+    frame         = lo.push_frame(
         body.inst,
         body.module,
         body.ret_ty,

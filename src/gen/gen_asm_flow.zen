@@ -354,7 +354,7 @@ Flow* = {
 
     positions = (self :: @Self) Res<(), AllocError> {
         self.base.clear();
-        at ::= 2;
+        at: usize ::= 2;
         self.function.blocks.loop((block) {
             self.base.add(at).try();
             at = at + 2 * block.code.len + 2;
@@ -599,9 +599,9 @@ bits* = (value: usize) i64 {
 
 // k when `value` is 2^k for k below 63, else NONE.
 log2* = (value: i64) usize {
-    k     ::= 0;
-    v     ::= value;
-    found ::= NONE;
+    k: usize ::= 0;
+    v        ::= value;
+    found    ::= NONE;
     loop(() { v > 0 && k < 63 }, (h) {
         (v == 1).then(() {
             found = k;

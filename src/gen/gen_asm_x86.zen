@@ -138,9 +138,9 @@ Assembly = {
     layout_frame = (self :: @Self, function: Func) usize {
         self.offsets.clear();
         self.save_offsets.clear();
-        cursor ::= 8;
+        cursor: usize ::= 8;
         self.result_offset = cursor;
-        self.plan.saved.loop((r) {
+        self.plan.saved.loop((_) {
             cursor = cursor + 8;
             self.save_offsets.add(cursor).ignore();
         });
@@ -230,7 +230,7 @@ Assembly = {
                         _                    => Ok(()),
                     }).try();
                 }),
-                false => self.terminator(id, function, block.exit).try(),
+                false => self.terminator(function, block.exit).try(),
             });
         });
         self.trap_stubs().try();
@@ -413,7 +413,7 @@ Assembly = {
         self.store(call.out, "%rax")
     }
 
-    terminator = (self :: @Self, function_id: usize, function: Func,
+    terminator = (self :: @Self, function: Func,
                   exit: Terminator) Res<(), AllocError> {
         exit.match({
             Return(value)  => {
@@ -1265,9 +1265,9 @@ Assembly = {
                 ).try();
             },
             false => {
-                at ::= 0;
+                at: usize ::= 0;
                 loop(() { at < size }, (h) {
-                    step = (at + 8 <= size).match({ true => 8, false => 1 });
+                    step: usize = (at + 8 <= size).match({ true => 8, false => 1 });
                     self.out.fmt("    mov{} ", suffix(step)).try();
                     self.put_spot(source, at).try();
                     self.out.fmt(
@@ -1462,7 +1462,7 @@ Assembly = {
     addressing = (self :: @Self, block: BasicBlock) Res<(), AllocError> {
         self.addresses.clear();
         self.absorbed.clear();
-        block.code.loop((instruction) {
+        block.code.loop((_) {
             self.addresses.add(Address(
                 base: NONE,
                 index: NONE,
@@ -1579,8 +1579,8 @@ Assembly = {
     // through %rcx (base) and %rdx (index).
     locate = (self :: @Self, address: Address, offset: usize) Res<Place, AllocError> {
         displacement ::= address.displacement;
-        below        ::= 0;
-        base         ::= 1;
+        below: usize ::= 0;
+        base: usize  ::= 1;
         self.operand(address.base).match({
             Reg(n)    => { base = n; },
             Addr(off) => {

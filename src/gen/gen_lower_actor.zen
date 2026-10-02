@@ -719,9 +719,9 @@ actor_function* = (lo :: Lowerer, entry: ActorEntry) Res<Func, LowerError> {
     params ::= lo.alloc.Vec<Scalar>();
     params.add(Scalar.Ptr).try(LowerError.OutOfMemory);
     params.add(Scalar.Ptr).try(LowerError.OutOfMemory);
-    entry_block = lo.begin_synth(params).try();
-    record      = 0;
-    data        = 1;
+    entry_block   = lo.begin_synth(params).try();
+    record: usize = 0;
+    data: usize   = 1;
     lo.use_frame(
         lo.push_frame(lo.alloc.Inst(), 0, lo.unit_ty, None, None).try()
     );

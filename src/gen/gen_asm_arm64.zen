@@ -202,7 +202,7 @@ Assembly = {
         self.result_offset = cursor;
         cursor             = cursor + 8;
         self.save_offsets.clear();
-        self.plan.saved.loop((r) {
+        self.plan.saved.loop((_) {
             self.save_offsets.add(cursor).ignore();
             cursor = cursor + 8;
         });
@@ -291,7 +291,7 @@ Assembly = {
                         _                    => Ok(()),
                     }).try();
                 }),
-                false => self.terminator(id, function, block.exit).try(),
+                false => self.terminator(function, block.exit).try(),
             });
         });
         self.trap_stubs().try();
@@ -490,7 +490,7 @@ Assembly = {
         self.store(call.out, "x0")
     }
 
-    terminator = (self :: @Self, function_id: usize, function: Func,
+    terminator = (self :: @Self, function: Func,
                   exit: Terminator) Res<(), AllocError> {
         exit.match({
             Return(value)  => {
@@ -1157,7 +1157,7 @@ Assembly = {
     addressing = (self :: @Self, block: BasicBlock) Res<(), AllocError> {
         self.addresses.clear();
         self.absorbed.clear();
-        block.code.loop((instruction) {
+        block.code.loop((_) {
             self.addresses.add(Address(
                 base: NONE,
                 index: NONE,

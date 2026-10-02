@@ -927,7 +927,7 @@
                   "name": "discriminant",
                   "content": {
                     "type": "SYMBOL",
-                    "name": "_expression"
+                    "name": "_discriminant"
                   }
                 }
               ]

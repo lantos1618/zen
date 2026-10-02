@@ -1,2 +1,2 @@
-`AllocError` is not imported; add `AllocError = std.mem`
-8:8
+`AllocError` is not imported; add `{ AllocError } = std.mem`
+8:10

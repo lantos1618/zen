@@ -1,11 +1,11 @@
 // one and two both export `pick` for `Tag`, and this module imports
 // neither. A free function is visible only where it is imported, so a
-// bare call finds nothing, whatever its arguments' types are.
+// bare call finds nothing, whatever its arguments' types are, and the
+// diagnostic names an import that would bind it.
 { Tag } = tag.tag
 { Res, Ok, IoError } = std.core
 { Env } = std.env
 { println } = std.io
-{ pick } = one
 o1 = one
 o2 = two
 

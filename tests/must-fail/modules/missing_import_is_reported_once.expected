@@ -1,2 +1,2 @@
-`Vec` is not imported; add `Vec = std.collections`
+`Vec` is not imported; add `{ Vec } = std.collections`
 7:13

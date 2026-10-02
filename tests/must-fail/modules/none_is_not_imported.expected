@@ -1,2 +1,2 @@
-`None` is not imported; add `None = std.core`
+`None` is not imported; add `{ None } = std.core`
 7:25

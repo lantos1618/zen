@@ -1,4 +1,4 @@
-{ avx2, Avx2, splat_u32x8 } = std.simd
+{ avx2, Avx2, splat_u32x8, add_wrap, lane } = std.simd
 { println } = std.io
 
 double = (v: u32x8) u32x8 { v.add_wrap(v) }

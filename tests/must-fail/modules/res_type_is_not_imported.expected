@@ -1,2 +1,2 @@
-`Res` is not imported; add `Res = std.core`
+`Res` is not imported; add `{ Res } = std.core`
 7:10

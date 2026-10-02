@@ -1,11 +1,12 @@
 // A bare name is visible only through an import (docs/DESIGN.md, Modules).
-// `sqrt` is exported by std.math, but nothing here imports it, so a bare
-// `sqrt(9.0)` binds nothing. Resolving the bare call through every module's
+// `sqrt` is exported by std.math, but only `pow` is imported from it, so a
+// bare `sqrt(9.0)` binds nothing. Resolving the bare call through every module's
 // exports by its first argument would let a module's own name lose to one
 // it never imported. The diagnostic names the import that would bind it.
 //
 // position: the call.
 
+{ pow } = std.math
 { Res } = std.core
 { AllocError } = std.mem
 { Env } = std.env

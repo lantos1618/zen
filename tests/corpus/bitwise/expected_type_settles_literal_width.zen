@@ -6,7 +6,7 @@ MASK: u32 = 1 << 4
 TOP: u8   = ~0
 
 Flags = {
-    bits: u16 = 0xF0 | 0x0F,
+    bits: u16 = (0xF0 | 0x0F),
 }
 
 widen = (value: u64) u64 { value }

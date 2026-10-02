@@ -1,0 +1,13 @@
+// A module that declares `Ok` has taken the name: `Ok(1)` calls the
+// function and is the function's `i32`. Resolving it to the `Res`
+// constructor by spelling would report a `Res<int>` here instead.
+//
+// position: the call.
+
+Ok = (x: i32) i32 { x + 1 }
+
+main = (env: Env) Res<i32, AllocError> {
+    flag: bool = Ok(1);
+    println("{}", flag);
+    0
+}

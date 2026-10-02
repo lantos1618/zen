@@ -1,0 +1,19 @@
+// A block whose value is `()` throws its tail away — a unit function's
+// body, a `.loop` body — so a failure in that tail is dropped exactly as
+// one in a statement is, with no semicolon to see.
+//
+// position: each dropped tail.
+
+Full* = | Full
+
+push = (n: i32) Res<(), Full> {
+    (n > 2).match({ true => Err(Full.Full), false => Ok(()) })
+}
+
+fill = () () { push(3) }
+
+main = (env: Env) Res<i32, AllocError> {
+    [1, 2].loop((h, n) { push(n) });
+    fill();
+    Ok(0)
+}

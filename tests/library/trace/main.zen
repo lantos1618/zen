@@ -48,6 +48,6 @@ main = (env: Env) Res<i32, AllocError> {
     Probe.end();
     env.out.println(
         "PASS: bounded spans, invalid inputs, saturation, indexed reads and allocation-free record"
-    );
+    ).ignore();
     Ok(0)
 }

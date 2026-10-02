@@ -124,7 +124,7 @@ created_res = (be :: CBackend, elem: TyId, rt: TyId, x: TyRes)
 // Only byte-pointer allocators have the representation this lowering expects.
 created_named = (be :: CBackend, elem: TyId, rt: TyId, x: TyRes, n: TyNamed)
                 Res<Res<Created>, AllocError> {
-    n.name.eq("Ptr").match({
+    be.check.types.is_ptr(n).match({
         false => Ok(None),
         true  => be.created_ptr(elem, rt, x, n),
     })

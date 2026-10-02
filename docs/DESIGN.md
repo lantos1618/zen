@@ -462,6 +462,14 @@ row = table.get("ada").try();                        // ERROR: Res<User> is not 
 row = table.get("ada").ok_or(Error.NotFound).try();  // required form
 ```
 
+**A failure is handled or discarded in writing.** A `Res<T, E>` that a statement computes and nothing reads — or that is the tail of a block whose value is `()`, such as a unit function's body or a `.loop` body — is refused, and the diagnostic names the three ways out: `.try()`, `.match`, or `.ignore()` when dropping it is the decision. `Res<T>` is absence, not failure, so `v.pop();` stays legal; a `Res<T>` that holds a failure (a `.then` whose body produced one) is refused at the failure.
+
+```groovy fragment
+out.fmt("{}\n", n);           // ERROR: this `Res<(), WriteError>` is dropped
+out.fmt("{}\n", n).try();     // propagate
+out.fmt("{}\n", n).ignore();  // a best-effort write, dropped on purpose
+```
+
 ---
 
 # The failure model

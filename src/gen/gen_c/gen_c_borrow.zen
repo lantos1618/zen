@@ -154,7 +154,7 @@ wide* = (be :: CBackend, ty: TyId) Res<bool, AllocError> {
 
 borrowable = (be :: CBackend, ty: TyId) bool {
     be.types().at(ty).match({
-        Named(n) => (is_ptr_named(n) || is_scope_named(n)
+        Named(n) => (is_ptr_named(be.types(), n) || is_scope_named(be.types(), n)
             || be.is_fat(ty) || be.is_native_record(ty)
             || be.is_foreign_opaque(ty)) == false,
         Res(_)   => true,
@@ -233,7 +233,7 @@ widest = (be :: CBackend, members: Vec<TyId>) Res<usize, AllocError> {
 
 named_width = (be :: CBackend, n: TyNamed)
               Res<usize, AllocError> {
-    (is_ptr_named(n) || is_scope_named(n)).match({
+    (is_ptr_named(be.types(), n) || is_scope_named(be.types(), n)).match({
         true  => Ok(8),
         false => decl_at(be.tree, n.decl).match({
             None  => Ok(8),

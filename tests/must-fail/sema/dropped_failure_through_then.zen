@@ -1,0 +1,17 @@
+// `.then` hands its closure's value back inside a `Res<T>`, so a failure
+// in the closure's tail travels out with the call's result — and is
+// dropped when that result is. The diagnostic points inside the closure,
+// where `.try()` or `.ignore()` goes.
+//
+// position: the closure's tail.
+
+Full* = | Full
+
+push = (n: i32) Res<(), Full> {
+    (n > 2).match({ true => Err(Full.Full), false => Ok(()) })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    (1 > 0).then(() { push(5) });
+    Ok(0)
+}

@@ -27,7 +27,8 @@ write_position = gen.gen_c.gen_c_op
 // it is the block, and a block is not a value sema mints — so the
 // Frame is the authority, exactly as it is for a `LoopHandle`. But a
 // `Scope` can be written down (`s: Scope`), so the type has to exist:
-// the ordinary named type `std/core/scope.zen` declares, resolved once.
+// the ordinary named type `std/core/scope.zen` declares, taken from the
+// prelude rather than from whatever the module calls `Scope`.
 
 is_scope_ref* = (be :: CBackend, id: ExprId) bool {
     be.tree.expr_at(id).kind.match({
@@ -38,7 +39,7 @@ is_scope_ref* = (be :: CBackend, id: ExprId) bool {
 
 scope_type* = (be :: CBackend, ctx: Ctx) Res<TyId, AllocError> {
     found ::= be.alloc.Vec<Def>();
-    be.check.world.defs_of(ctx.module, "Scope", found).try();
+    be.check.world.prelude_of("Scope", found).try();
     found.get(0).match({
         None  => be.check.types.unknown(),
         Ok(d) => be.scope_named(d),
@@ -92,7 +93,7 @@ is_defer* = (be :: CBackend, rty: TyId, name: str) bool {
 
 scope_receiver = (be :: CBackend, rty: TyId) bool {
     be.check.types.at(rty).match({
-        Named(n) => is_scope_named(n),
+        Named(n) => is_scope_named(be.types(), n),
         _        => false,
     })
 }

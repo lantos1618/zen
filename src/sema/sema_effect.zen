@@ -1,12 +1,13 @@
 Vec = std.collections
 AllocError = std.mem
-Block, Stmt, ExprStmt, Match, Arm, ExprId = std.ast
+Block, Stmt, ExprStmt, Match, Arm, Arg, ExprId, Span = std.ast
 TyId = sema.sema_ty
-Checker = sema.sema_check
+Checker, Dropped = sema.sema_check
 SemaFault, TypeFault = sema.sema_diag
 
 // A statement whose value nothing reads is refused when the expression
-// is a pure read: a literal, a name, a member, or a match over those.
+// is a pure read: a literal, a name, a member, or a match over those,
+// and whatever the expression, when the value is a failure.
 check_statement* = (
     c     :: Checker,
     block : Block,
@@ -27,16 +28,89 @@ is_tail = (block: Block, i: usize, n: usize) bool {
 
 check_discarded = (c :: Checker, s: Stmt, ty: TyId) Res<(), AllocError> {
     s.kind.match({
-        Expr(e) => c.discarded_expr(s, e, ty),
-        _       => Ok(()),
+        Expr(e)  => c.discarded_expr(s, e, ty),
+        Block(_) => c.check_dropped(s.span, ty),
+        _        => Ok(()),
     })
 }
 
 discarded_expr = (c :: Checker, s: Stmt, e: ExprStmt, ty: TyId)
                  Res<(), AllocError> {
-    (c.statement_value(ty) && c.pure_read(e.expr)).match({
-        true  => c.report_discarded(s, ty),
+    c.dropped_in(e.expr, ty).match({
+        Ok(d) => c.report_dropped(d),
+        None  => (c.statement_value(ty) && c.pure_read(e.expr)).match({
+            true  => c.report_discarded(s, ty),
+            false => Ok(()),
+        }),
+    })
+}
+
+// A block whose result is `()` throws its tail away: a unit function's
+// body, a `.loop` body. A failure in that tail is dropped as surely as one
+// in a statement.
+check_dropped_tail* = (c :: Checker, tail: ExprId, got: TyId, want: TyId)
+                      Res<(), AllocError> {
+    c.prim_name(want).eq("()").match({
         false => Ok(()),
+        true  => c.dropped_in(tail, got).match({
+            Ok(d) => c.report_dropped(d),
+            None  => Ok(()),
+        }),
+    })
+}
+
+// A closure whose result type is the callee's type parameter hands its
+// tail to the call's result: `(n > 0).then(() { out.fmt(..) })` returns
+// the failure inside a `Res<T>`. That failure is dropped exactly when the
+// call's result is, so it is remembered here and reported when it is.
+note_lambda_tail* = (c :: Checker, lambda: ExprId, tail: ExprId, got: TyId)
+                    Res<(), AllocError> {
+    c.dropped_in(tail, got).match({
+        Ok(d) => c.note_lambda_failure(lambda, d),
+        None  => Ok(()),
+    })
+}
+
+check_dropped = (c :: Checker, at: Span, ty: TyId) Res<(), AllocError> {
+    c.carries_failure(ty).match({
+        true  => c.report_dropped(Dropped(at: at, ty: ty)),
+        false => Ok(()),
+    })
+}
+
+// Where the failure in an unread value was produced: the expression itself,
+// or the tail of a closure whose failure the call returns.
+dropped_in = (c: Checker, id: ExprId, ty: TyId) Res<Dropped> {
+    c.carries_failure(ty).match({
+        true  => Ok(Dropped(at: c.tree.expr_at(id).span, ty: ty)),
+        false => c.tree.expr_at(id).kind.match({
+            Call(k)  => c.dropped_in_args(k.args),
+            Paren(p) => c.dropped_in(p.inner, c.memo_ty(p.inner)),
+            _        => None,
+        }),
+    })
+}
+
+dropped_in_args = (c: Checker, args: Vec<Arg>) Res<Dropped> {
+    found: Res<Dropped> ::= None;
+    args.loop((h, a) {
+        found = c.lambda_failure(a.value);
+        found.match({ Ok(_) => h.break(), None => () });
+    });
+    found
+}
+
+// A `Res<T, E>` is a failure with a reason, and a reason nobody reads is
+// a failure nobody handles. `Res<T>` is absence, which is an answer rather
+// than a failure — `v.pop();` drops a value on purpose — so it is refused
+// only when what it would have held is itself a failure.
+carries_failure = (c: Checker, ty: TyId) bool {
+    c.types.at(ty).match({
+        Res(r) => r.form.match({
+            Failure => true,
+            _       => c.carries_failure(r.value),
+        }),
+        _      => false,
     })
 }
 
@@ -66,6 +140,17 @@ pure_read = (c :: Checker, id: ExprId) bool {
 pure_arms = (c :: Checker, arms: Vec<Arm>) bool {
     arms.find((a) { c.pure_read(a.body) == false })
         .match({ Ok(_) => false, None => true })
+}
+
+report_dropped = (c :: Checker, d: Dropped) Res<(), AllocError> {
+    c.refuse(
+        d.at,
+        SemaFault.DroppedFailure(TypeFault(
+            name: "",
+            expected: c.types.failure_in(d.ty),
+            found: d.ty
+        ))
+    )
 }
 
 report_discarded = (c :: Checker, s: Stmt, ty: TyId) Res<(), AllocError> {

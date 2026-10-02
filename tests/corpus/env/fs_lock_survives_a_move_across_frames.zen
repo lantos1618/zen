@@ -22,7 +22,7 @@ swallow = (env: Env, l: Lock) Res<i32, FsError> {
 main = (env: Env) Res<i32, FsError> {
     first ::= env.fs.lock("move.lock").try();
     println("held");
-    swallow(env, consume first);
+    swallow(env, consume first).try();
     again ::= env.fs.lock("move.lock").try();
     println("relocked");
     Ok(0)

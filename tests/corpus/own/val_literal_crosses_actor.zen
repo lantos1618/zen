@@ -5,7 +5,7 @@ Foo = {}
 
 Foo.impl(Actor, {
     receive_msg = (self :: @Self, ctx: Context, data: str) {
-        ctx.env.out.println("actor has received {}", data)
+        ctx.env.out.println("actor has received {}", data).ignore()
     }
 })
 

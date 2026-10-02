@@ -53,8 +53,9 @@ when_ok* = <T, U>(r: Res<T>, f: (value: T) U) Res<U> {
 }
 
 // Discard a result whose failure the caller has decided not to act on: a
-// best-effort flush, a log line on a path that is already failing. A bare
-// expression statement would discard it too, but silently.
+// best-effort flush, a log line on a path that is already failing. A
+// failure left unread in a statement, or in the tail of a block whose value
+// is `()`, is refused; this is how the decision to drop it is written.
 ignore* = <T, E>(r: Res<T, E>) {
     r.match({ Ok(_) => (), Err(_) => () });
 }

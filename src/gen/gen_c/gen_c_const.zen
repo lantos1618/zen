@@ -193,7 +193,8 @@ pure_elems = (be :: CBackend, elems: Vec<ExprId>, ctx: Ctx) bool {
 }
 
 is_pure_name = (be :: CBackend, text: str, ctx: Ctx) bool {
-    text.eq("None").match({
+    (text.eq("None") && be.check.world.names_res_variant(be.tree, ctx.module, text)
+        .match({ Ok(b) => b, Err(_) => false })).match({
         true  => true,
         false => be.slot_of(text).match({
             Ok(_) => false,

@@ -39,8 +39,12 @@ Summary = {
     }
 
     print = (self: @Self, env: Env) {
-        self.remaining.loop((title) { env.out.println("{}", title); });
-        env.out.println("{} done, {} remaining", self.done, self.remaining.len);
+        self.remaining.loop((title) { env.out.println("{}", title).ignore(); });
+        env.out.println(
+            "{} done, {} remaining",
+            self.done,
+            self.remaining.len
+        ).ignore();
     }
 }
 

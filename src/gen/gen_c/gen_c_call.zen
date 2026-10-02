@@ -96,8 +96,8 @@ CallSite = {
         self.only(be, name, found, want, out)
     }
 
-    // Use the same travelled-function pool as sema. Dot form reads the
-    // receiver; free UFCS form reads argument zero.
+    // Use the same travelled-function pool as sema: only the dot form
+    // travels, through the receiver's type.
     add_travelled = (self: @Self, be :: CBackend, name: str,
                      found :: Vec<Def>) Res<(), AllocError> {
         self.recv.match({
@@ -107,10 +107,7 @@ CallSite = {
                 rty     = be.materialize_literal(raw).try();
                 be.travelled_for_type(name, rty, found)
             },
-            None  => self.c.args.get(0).match({
-                None  => Ok(()),
-                Ok(a) => be.travelled_for(name, a.value, self.ctx, found),
-            }),
+            None  => Ok(()),
         })
     }
 
@@ -447,7 +444,7 @@ NamedCallSite = {
 
     named = (self: @Self, be :: CBackend, out :: String)
             Res<(), AllocError> {
-        is_res_ctor(self.name).match({
+        be.is_res_ctor(self.name, self.site.ctx).try().match({
             true  => self.lower_res(be, out),
             false => self.sugar_or_plain(be, out),
         })
@@ -935,7 +932,15 @@ undeclared = (be :: CBackend, name: str, ctx: Ctx) Res<bool, AllocError> {
     Ok(found.len == 0);
 }
 
-is_res_ctor* = (name: str) bool { name.eq("Ok") || name.eq("Err") }
+// `Ok(..)` and `Err(..)` construct the destination `Res` when the name
+// resolves to the prelude's variant, as sema decided; a closure slot of the
+// name has already been ruled out by the caller.
+is_res_ctor* = (be :: CBackend, name: str, ctx: Ctx) Res<bool, AllocError> {
+    (name.eq("None") == false).match({
+        false => Ok(false),
+        true  => be.check.world.names_res_variant(be.tree, ctx.module, name),
+    })
+}
 
 // `recv` is the receiver a UFCS call reached this name through — "a free
 // function whose first param is the type is callable as a method", so
@@ -954,18 +959,6 @@ lower_plain_call* = (
                     Res<(), AllocError> {
     s = CallSite(id: id, c: c, recv: recv, ctx: ctx);
     s.resolve(be, name, want, out)
-}
-
-travelled_for = (
-    be    :: CBackend,
-    name  : str,
-    r     : ExprId,
-    ctx   : Ctx,
-    found :: Vec<Def>
-) Res<(), AllocError> {
-    unknown = be.check.types.unknown().try();
-    rty     = be.ty_of(r, ctx, unknown).try();
-    be.travelled_for_type(name, rty, found)
 }
 
 travelled_for_type = (

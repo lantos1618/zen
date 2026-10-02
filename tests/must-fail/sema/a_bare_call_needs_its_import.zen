@@ -1,0 +1,15 @@
+// A bare name is visible only through an import (docs/DESIGN.md, Modules).
+// `parse_i32` is exported by std.text and takes a `str` first, so
+// `"12".parse_i32()` reaches it through the receiver's type — but a bare
+// `parse_i32("12")` names it, and nothing here imports it. Resolving the
+// bare call through every module's exports by its first argument would let
+// a module's own name lose to one it never imported. The diagnostic names
+// the import that would bind it.
+//
+// position: the call.
+
+main = (env: Env) Res<i32, AllocError> {
+    n = parse_i32("12").value_or(0);
+    println("{}", n);
+    0
+}

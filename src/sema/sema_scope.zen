@@ -210,27 +210,34 @@ call_escapes* = (c :: Checker, o :: Own, k: Call) bool {
 }
 
 member_escapes = (c :: Checker, o :: Own, a: Access) bool {
-    c.own_member(c.place_type(o, a.base), a.name.text).match({
+    ty = c.place_type(o, a.base);
+    c.own_member(ty, a.name.text).match({
         None  => false,
         Ok(m) => m.kind.match({
-            Function(f) => c.takes_alloc(f),
+            Function(f) => c.types.at(ty).match({
+                Named(n) => c.takes_alloc(f, n.decl.module.to_usize()),
+                _        => false,
+            }),
             _           => false,
         }),
     })
 }
 
-takes_alloc = (c :: Checker, f: Function) bool {
-    f.params.find((p) { c.param_is_alloc(p) }).match({
+// A parameter whose written type is the prelude's `Alloc`, as the member's
+// own module resolves it.
+takes_alloc = (c :: Checker, f: Function, mi: usize) bool {
+    f.params.find((p) { c.param_is_alloc(p, mi) }).match({
         Ok(_) => true,
         None  => false,
     })
 }
 
-param_is_alloc = (c :: Checker, p: Param) bool {
+param_is_alloc = (c :: Checker, p: Param, mi: usize) bool {
     p.type.match({
         None    => false,
         Ok(tid) => c.tree.type_at(tid).kind.match({
-            Named(n) => n.name.text.eq("Alloc"),
+            Named(n) => c.world.names_prelude(mi, n.name.text, "Alloc")
+                .match({ Ok(b) => b, Err(_) => false }),
             _        => false,
         }),
     })

@@ -127,7 +127,7 @@ convert_named = (
     n    : TyNamed,
     out  :: String
 ) Res<(), AllocError> {
-    is_ptr_named(n).match({
+    is_ptr_named(be.types(), n).match({
         true  => be.write_cast(code, dst, out),
         false => out.add(code),
     })

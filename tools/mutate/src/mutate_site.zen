@@ -166,7 +166,7 @@ Sites = {
     // condition; `Err(..)` and `.ensure(..)` name the failure.
     call = (self :: @Self, c: Call) Res<(), AllocError> {
         self.tree.expr_at(c.callee).kind.match({
-            Access(x) => self.method_call(c, x.base, x.name.text),
+            Access(x) => self.method_call(c, x.base, x.name.text).try(),
             Name(n)   => n.text.eq("Err").then(() {
                 self.failure_args(c).try();
             }),

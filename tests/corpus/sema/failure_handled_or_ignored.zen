@@ -1,0 +1,37 @@
+// Every way a failure is legitimately left behind by a statement:
+// propagated with `.try()`, matched, bound, returned as the tail, or
+// discarded on purpose with `.ignore()`. Absence is not a failure, so a
+// `Res<T>` statement — a `pop` whose value is not wanted — stays legal.
+// The refusals are must-fail/sema/dropped_failure_*.
+
+Full* = | Full
+
+push = (n: i32) Res<(), Full> {
+    (n > 2).match({ true => Err(Full.Full), false => Ok(()) })
+}
+
+first = (n: i32) Res<i32> {
+    (n > 0).match({ true => Ok(n), false => None })
+}
+
+relay = (n: i32) Res<(), Full> {
+    push(n).try();
+    push(n)
+}
+
+Error = AllocError | Full
+
+main = (env: Env) Res<i32, Error> {
+    push(1).try();
+    push(7).match({
+        Ok(_)  => println("pushed"),
+        Err(_) => println("full"),
+    });
+    kept = push(9);
+    kept.match({ Ok(_) => println("kept ok"), Err(_) => println("kept full") });
+    push(8).ignore();
+    first(0);
+    (1 > 0).then(() { push(9).ignore() });
+    relay(4).match({ Ok(_) => println("relayed"), Err(_) => println("relay full") });
+    Ok(0)
+}

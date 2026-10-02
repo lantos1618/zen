@@ -19,11 +19,13 @@ Noisy = {
 }
 
 Noisy.impl(Drop, {
-    drop = (self :: @Self) { self.env.out.println("drop {}", self.tag) }
+    drop = (self :: @Self) {
+        self.env.out.println("drop {}", self.tag).ignore()
+    }
 })
 
 passthrough = (env: Env, n :: Noisy) Noisy {
-    env.out.println("mid {}", n.tag);
+    env.out.println("mid {}", n.tag).ignore();
     n
 }
 

@@ -16,7 +16,7 @@ alias_module, module_not_a_value = sema.sema_module
 match_type = sema.sema_match
 access_type, computed_member = sema.sema_member
 variant_type = sema.sema_static
-call_type = sema.sema_call
+call_type, undefined_or_unimported = sema.sema_call
 meta_type = sema.sema_meta
 meta_refused, walk_name, walk_projection_type = sema.sema_meta
 WalkName = sema.sema_meta
@@ -185,9 +185,12 @@ bound_name_type = (c :: Checker, id: ExprId, b: Binding)
     Ok(b.ty);
 }
 
+// A bare `None` is absence when the name resolves to the prelude's
+// variant; a module's own `None` reads as written.
 unbound_name_type = (c :: Checker, node: Expr, text: str, ctx: Ctx)
                     Res<TyId, AllocError> {
-    text.eq("None").match({
+    (text.eq("None")
+        && c.world.names_res_variant(c.tree, ctx.module, text).try()).match({
         true  => c.none_type(),
         false => c.global_name_type(node, text, ctx),
     })
@@ -231,11 +234,7 @@ bare_variant_type = (c :: Checker, d: Def, text: str)
 
 unresolved_name = (c :: Checker, node: Expr, text: str)
                   Res<TyId, AllocError> {
-    c.report(
-        node.span.file,
-        node.span,
-        SemaFault.UndefinedName(NameFault(name: text))
-    ).try();
+    c.undefined_or_unimported(node.span, text).try();
     c.types.unknown()
 }
 

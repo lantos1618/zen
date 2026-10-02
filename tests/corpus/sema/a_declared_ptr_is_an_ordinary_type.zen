@@ -1,0 +1,13 @@
+// The backend spells the prelude's `Ptr<T>` as a raw `T *`. A module's own
+// `Ptr` is an ordinary struct with fields, laid out and read like any other;
+// recognising it by its name would spell it as a pointer and read garbage.
+
+Ptr<T> = { value: T, offset: i32 }
+
+shifted = (p: Ptr<i32>) i32 { p.value + p.offset }
+
+main = (env: Env) Res<i32, AllocError> {
+    p = Ptr<i32>(value: 40, offset: 2);
+    println("{}", shifted(p));
+    0
+}

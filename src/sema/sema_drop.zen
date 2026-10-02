@@ -52,18 +52,28 @@ is_drop_type* = (c :: Checker, ty: TyId) Res<bool, AllocError> {
 named_is_drop = (c :: Checker, n: TyNamed) Res<bool, AllocError> {
     ids ::= c.alloc.Vec<ImplId>();
     c.world.impls_named(c.tree, n.name, ids).try();
-    Ok(ids.find((id) { c.is_drop_impl(n, id) }).match({
-        Ok(_) => true,
-        None  => false,
-    }));
+    found ::= false;
+    ids.loop((h, id) {
+        found = c.is_drop_impl(n, id).try();
+        found.then(() { h.break(); });
+    });
+    Ok(found);
 }
 
-is_drop_impl = (c: Checker, n: TyNamed, id: ImplId) bool {
-    (n.decl.module == id.decl.module) && c.world.impl_at(c.tree, id).match({
-        None   => false,
-        Ok(im) => c.tree.type_at(im.bound).kind.match({
-            Named(b) => b.name.text.eq("Drop"),
-            _        => false,
+// The bound is the prelude's `Drop` as the impl's own module resolves it.
+is_drop_impl = (c: Checker, n: TyNamed, id: ImplId) Res<bool, AllocError> {
+    (n.decl.module == id.decl.module).match({
+        false => Ok(false),
+        true  => c.world.impl_at(c.tree, id).match({
+            None   => Ok(false),
+            Ok(im) => c.tree.type_at(im.bound).kind.match({
+                Named(b) => c.world.names_prelude(
+                    id.decl.module.to_usize(),
+                    b.name.text,
+                    "Drop"
+                ),
+                _        => Ok(false),
+            }),
         }),
     })
 }

@@ -23,13 +23,13 @@ main = (env: Env) Res<i32, AllocError> {
     first(ds).match({
         Ok(d) => d.render(out),
         None  => println("no diagnostics"),
-    });
+    }).try();
 
     ds.add(Diag(code: 42)).try();
     first(ds).match({
         Ok(d) => d.render(out),
         None  => println("no diagnostics"),
-    });
+    }).try();
     println("{}", out.view());
     Ok(0);
 }

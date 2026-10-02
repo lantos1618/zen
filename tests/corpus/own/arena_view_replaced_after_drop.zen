@@ -3,6 +3,6 @@ main = (env: Env) Res<i32, AllocError> {
     text ::= "old".dup(arena).try();
     (consume arena).drop();
     text = "hello";
-    env.out.println("{}", text);
+    env.out.println("{}", text).ignore();
     Ok(0)
 }

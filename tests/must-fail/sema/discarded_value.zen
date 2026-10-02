@@ -5,7 +5,8 @@
 // read: no call, no trap, no propagation — just a computed `i32`,
 // gone.
 //
-// Calls are exempt (they are run for their effects), and so is
+// Calls are exempt (they are run for their effects) unless what they
+// return is a failure — must-fail/sema/dropped_failure_* — and so is
 // arithmetic (it can trap — `self.len - i - 1;` is this tree's range
 // guard); the corpus half is corpus/sema/statement_effects.
 //

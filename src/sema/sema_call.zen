@@ -9,7 +9,7 @@ Range = std.core
 DeclId = sema.sema_id
 TyId, TyFn, TyNamed, literal_default, is_integer = sema.sema_ty
 Def, decl_at = sema.sema_def
-SemaFault, NameFault, TypeFault, PairFault = sema.sema_diag
+SemaFault, NameFault, TypeFault, PairFault, ExportFault = sema.sema_diag
 Checker, Ctx, CheckedCall, CallSignature, CallResolution = sema.sema_check
 refuse_handle_argument = sema.sema_handle
 meta_refused = sema.sema_meta
@@ -28,7 +28,8 @@ static_access = sema.sema_static
 filter_visible, hidden_member = sema.sema_member
 inst_bounds_hold, satisfies_bound, note_bound_view = sema.sema_bound
 check_literal = sema.sema_trap
-check_arms, check_arms_agree, hoist_at, one_value = sema.sema_hoist
+check_arms, check_arms_agree, hoist_at, one_value, tail_expr = sema.sema_hoist
+check_dropped_tail, note_lambda_tail = sema.sema_effect
 bound_declares = sema.sema_supply
 type_of, block_type = sema.sema_type
 push_tparams, module_name = sema.sema_inst
@@ -110,7 +111,7 @@ CallCheck = {
     named = (self :: @Self, c :: Checker, name: str)
             Res<TyId, AllocError> {
         self.load_actuals(c).try();
-        name.is_res_ctor().match({
+        c.calls_res_ctor(name, self.ctx.module).try().match({
             true  => {
                 c.refuse_res_surplus(self.call, name).try();
                 c.res_ctor_type(name, self.actuals)
@@ -180,15 +181,9 @@ CallCheck = {
         cands ::= c.alloc.Vec<Cand>();
         c.cands_of(self.ctx.module, name, cands).try();
         visible = cands.len;
+        // Only a dot travels: `x.f(..)` reaches the exported functions
+        // that take `x`'s type, and a bare `f(x)` sees the names in scope.
         c.travelled_cands(name, recv, cands).try();
-        // Free-form UFCS also considers argument zero as the receiver.
-        recv.match({
-            Ok(_) => Ok(()),
-            None  => actuals.get(0).match({
-                None  => Ok(()),
-                Ok(a) => c.travelled_cands(name, Ok(a.ty), cands),
-            }),
-        }).try();
         self.first_matching(c, cands, actuals).try().match({
             Ok(k) => {
                 self.refuse_travelled_tie(c, name, cands, visible, k).try();
@@ -286,11 +281,7 @@ CallCheck = {
                     None      => false,
                 });
                 (variants.len == 0 && !imported).then(() {
-                    c.report(
-                        self.node.span.file,
-                        self.node.span,
-                        SemaFault.UndefinedName(NameFault(name: name))
-                    ).try();
+                    c.undefined_or_unimported(self.node.span, name).try();
                 });
                 Ok(())
             },
@@ -1040,7 +1031,34 @@ print_type = (c :: Checker, call: Call) Res<TyId, AllocError> {
 
 is_print_sugar = (name: str) bool { name.eq("println") || name.eq("print") }
 
-is_res_ctor = (name: str) bool { name.eq("Ok") || name.eq("Err") }
+// A bare name another module exports is named with the import that would
+// bind it; any other is undefined.
+undefined_or_unimported* = (c :: Checker, at: Span, name: str)
+                           Res<(), AllocError> {
+    c.world.importable_from(name).try().match({
+        Ok(module) => c.report(
+            at.file,
+            at,
+            SemaFault.NotImported(ExportFault(name: name, module: module))
+        ),
+        None       => c.report(
+            at.file,
+            at,
+            SemaFault.UndefinedName(NameFault(name: name))
+        ),
+    })
+}
+
+// `Ok(..)` and `Err(..)` construct a `Res` when the name resolves to the
+// prelude's variant: a local, a declaration or an import of the same name
+// is called like any other function.
+calls_res_ctor = (c :: Checker, name: str, mi: usize) Res<bool, AllocError> {
+    (c.lookup(name).match({ Ok(_) => false, None => true })
+        && (name.eq("None") == false)).match({
+        false => Ok(false),
+        true  => c.world.names_res_variant(c.tree, mi, name),
+    })
+}
 
 // `Ok` and `Err` carry one value each, so a second argument is evaluated
 // and then dropped on the floor: `Ok(41, "x")` is an `Ok(41)` that read
@@ -1511,6 +1529,7 @@ lambda_body = (c :: Checker, id: ExprId, l: Lambda, sig: TyId, ctx: Ctx)
         c.bind(p.name.text, ty, p.mutable, true).try();
     });
     body = c.block_type(l.body, ctx).try();
+    c.lambda_dropped_tail(id, l, sig, body).try();
     c.release_tvars(tmark).try();
     c.release(smark).try();
     // A generic lambda's body type names its own parameters, which mean
@@ -1518,6 +1537,27 @@ lambda_body = (c :: Checker, id: ExprId, l: Lambda, sig: TyId, ctx: Ctx)
     (l.tparams.len == 0).match({
         true  => Ok(body),
         false => c.types.unknown(),
+    })
+}
+
+// A unit closure drops its tail; a closure returning the callee's type
+// parameter hands it to the call's result.
+lambda_dropped_tail = (
+    c   :: Checker,
+    id  : ExprId,
+    l   : Lambda,
+    sig : TyId,
+    got : TyId
+) Res<(), AllocError> {
+    c.types.at(sig).match({
+        Fn(f) => c.tail_expr(c.tree.block_at(l.body)).match({
+            Ok(e) => c.is_var(f.ret).match({
+                true  => c.note_lambda_tail(id, e, got),
+                false => c.check_dropped_tail(e, got, f.ret),
+            }),
+            None  => Ok(()),
+        }),
+        _     => Ok(()),
     })
 }
 

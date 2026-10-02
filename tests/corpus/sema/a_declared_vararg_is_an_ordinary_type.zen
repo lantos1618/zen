@@ -1,0 +1,13 @@
+// `vararg<T>` is a pack because it is the prelude's declaration, not
+// because of its name. A module that declares its own `vararg` has an
+// ordinary generic struct: it may sit in any parameter position and is
+// passed as one value, not spread from a run of arguments.
+
+vararg<T> = { first: T, count: i32 }
+
+total = (pack: vararg<i32>, extra: i32) i32 { pack.first * pack.count + extra }
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{}", total(vararg<i32>(first: 4, count: 3), 1));
+    0
+}

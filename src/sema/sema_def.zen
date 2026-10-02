@@ -264,6 +264,76 @@ World* = {
         Ok(());
     }
 
+    // Whether `name`, read in module `mi` where no local binds it, is a
+    // variant of the prelude's `Res`. The name resolves like any other: a
+    // declaration or import of the module wins, then an enum the module
+    // sees that declares the variant, and only then the prelude. What it
+    // resolves to is compared with the prelude's own `Res`, so a module's
+    // `Ok` function is called as written. A program compiled without std
+    // has no prelude to compare with; there an unbound `Ok`, `Err` or
+    // `None` keeps the meaning `Res` gives it in the type language.
+    names_res_variant* = (self: @Self, tree: Ast, mi: usize, name: str)
+                         Res<bool, AllocError> {
+        self.first_def_of(mi, name).try().match({
+            Ok(_) => Ok(false),
+            None  => self.res_variant_seen(tree, mi, name),
+        })
+    }
+
+    res_variant_seen = (self: @Self, tree: Ast, mi: usize, name: str)
+                       Res<bool, AllocError> {
+        found ::= self.alloc.Vec<Def>();
+        self.variant_defs(tree, mi, name, found).try();
+        (found.len == 0).then(() {
+            self.prelude_index().match({
+                Ok(p) => self.variant_defs(tree, p, name, found).try(),
+                None  => (),
+            });
+        });
+        found.get(0).match({
+            None  => Ok((self.has_prelude() == false)
+                && name.is_in(["Ok", "Err", "None"])),
+            Ok(d) => self.is_prelude_decl(d.id, "Res"),
+        })
+    }
+
+    has_prelude* = (self: @Self) bool {
+        self.prelude_index().match({ Ok(_) => true, None => false })
+    }
+
+    // The shortest module path that exports `name`, re-exports included:
+    // the import a bare use of the name is missing. None when no module
+    // exports it.
+    importable_from* = (self: @Self, name: str) Res<Res<str>, AllocError> {
+        best: Res<str> ::= None;
+        Range(0, self.tables.len).loop((h, mi) {
+            found ::= self.alloc.Vec<Def>();
+            self.exported_defs(mi, name, found).try();
+            (found.len > 0).then(() {
+                path = module_display(self.name_at(mi));
+                best = best.match({
+                    None    => Ok(path),
+                    Ok(was) => path.reads_shorter(was).match({
+                        true  => Ok(path),
+                        false => Ok(was),
+                    }),
+                });
+            });
+        });
+        Ok(best)
+    }
+
+    // Whether `name`, read in module `mi`, resolves to the declaration the
+    // prelude exports as `exported`. A module's own declaration or import of
+    // the same name is a different type and answers false.
+    names_prelude* = (self: @Self, mi: usize, name: str, exported: str)
+                     Res<bool, AllocError> {
+        self.first_def_of(mi, name).try().match({
+            None  => Ok(false),
+            Ok(d) => self.is_prelude_decl(d.id, exported),
+        })
+    }
+
     is_prelude_decl* = (self: @Self, id: DeclId, name: str)
                        Res<bool, AllocError> {
         defs ::= self.alloc.Vec<Def>();
@@ -871,6 +941,13 @@ enum_has_variant = (tree: Ast, d: Def, name: str) bool {
 has_variant* = (e: Enum, name: str) bool {
     e.variants.find((v) { v.name.text.eq(name) })
         .match({ Ok(_) => true, None => false })
+}
+
+// Fewer segments first, then fewer bytes: `std.text` over
+// `std.text.text_num`.
+reads_shorter = (path: str, other: str) bool {
+    (path.count(".") < other.count("."))
+        || (path.count(".") == other.count(".") && path.len < other.len)
 }
 
 module_display* = (name: str) str {

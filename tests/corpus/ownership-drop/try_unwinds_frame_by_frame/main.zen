@@ -16,7 +16,7 @@ Noisy = {
 }
 
 Noisy.impl(Drop, {
-    drop = (self :: @Self) { self.env.out.println("drop {}", self.id) }
+    drop = (self :: @Self) { self.env.out.println("drop {}", self.id).ignore() }
 })
 
 fails = () Res<i32, Fail> {

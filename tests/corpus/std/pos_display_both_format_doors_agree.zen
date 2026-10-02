@@ -36,7 +36,7 @@ main = (env: Env) Res<i32, AllocError> {
     same ::= buf.view().eq(via_alloc.view());
     println("same {}", same);
     same.match({
-        false => { env.out.errorln("the two format doors disagree"); Ok(1); },
+        false => { env.out.errorln("the two format doors disagree").ignore(); Ok(1); },
         true  => {
             // and the whole diagnostic line, continued on the same buffer,
             // pinned byte for byte
@@ -63,7 +63,7 @@ say_lex = (a: Alloc, out: Console) Res<(), AllocError> {
         agree.match({
             false => out.errorln("LEX DOORS DISAGREE"),
             true  => (),
-        });
+        }).ignore();
     });
     Ok(())
 }

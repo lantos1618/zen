@@ -2,11 +2,11 @@ Probe = {}
 
 Probe.impl(Actor, {
     show = (self :: @Self, ctx: Context, left: str, n: i64, right: str) {
-        ctx.env.out.println("{} {} {}", left, n, right)
+        ctx.env.out.println("{} {} {}", left, n, right).ignore()
     }
 
     ping = (self :: @Self, ctx: Context) {
-        ctx.env.out.println("ping")
+        ctx.env.out.println("ping").ignore()
     }
 })
 

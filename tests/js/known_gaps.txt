@@ -68,6 +68,7 @@ tests/corpus/codegen/unit_pointer_is_an_opaque_handle # UNSUPPORTED: unit_pointe
 tests/corpus/codegen/vararg_after_unit_omits_the_erased_argument # UNSUPPORTED: vararg_after_unit_omits_the_erased_argument.zen:7:33: error: unsupported by this backend: more argum
 tests/corpus/constants/module_qualified_constant_reads_the_export/main # UNSUPPORTED: main.zen:19:22: error: unsupported by this backend: a variant of a type without alternatives (`str`)
 tests/corpus/deep-expressions/nested_enum_tags_survive_twenty_wraps/main # UNSUPPORTED: main.zen:46:18: error: unsupported by this backend: an expression without a checked type
+tests/corpus/enums/enum_body_methods/ # UNSUPPORTED: main.zen:44:19: error: unsupported by this backend: a variant of a type without alternatives (`usize`)
 tests/corpus/enums/represented_enum_round_trips # UNSUPPORTED: represented_enum_round_trips.zen:5:15: error: unsupported by this backend: an unknown variant
 tests/corpus/env/args_answer_is_typed_at_the_call # UNSUPPORTED: args_answer_is_typed_at_the_call.zen:18:19: error: unsupported by this backend: this environment ope
 tests/corpus/env/args_fills_a_schema # UNSUPPORTED: args_fills_a_schema.zen:47:10: error: unsupported by this backend: this environment operation
@@ -192,6 +193,7 @@ tests/corpus/meta/field_walk_shadowing # UNSUPPORTED: field_walk_shadowing.zen:1
 tests/corpus/meta/field_walk_via_meta # UNSUPPORTED: field_walk_via_meta.zen:71:25: error: unsupported by this backend: a call without successful semanti
 tests/corpus/meta/primitive_name_is_its_own_spelling # UNSUPPORTED: primitive_name_is_its_own_spelling.zen:43:22: error: unsupported by this backend: this expression in
 tests/corpus/meta/type_name_via_meta # UNSUPPORTED: type_name_via_meta.zen:23:38: error: unsupported by this backend: this expression in a native execut
+tests/corpus/modules/module_alias_reads_a_constant/ # UNSUPPORTED: main.zen:10:32: error: unsupported by this backend: a variant of a type without alternatives (`i32`)
 tests/corpus/net/dns_resolve/main # UNSUPPORTED: std/net/socket.zen:167:19: error: unsupported by this backend: a variant of a type without alternati
 tests/corpus/net/tcp_connect/main # UNSUPPORTED: std/net/socket.zen:213:10: error: unsupported by this backend: a variant of a type without alternati
 tests/corpus/net/tls_connect/main # UNSUPPORTED: std/net/tls.zen:260:13: error: unsupported by this backend: the compiler-provided operation `std.net
@@ -206,7 +208,6 @@ tests/corpus/own/send_consumed_buffer # UNSUPPORTED: send_consumed_buffer.zen:52
 tests/corpus/own/val_literal_crosses_actor # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/parse/impl_decl_statement # UNSUPPORTED: impl_decl_statement.zen:18:35: error: unsupported by this backend: a field of a value without record
 tests/corpus/parse/parser_deep_nesting # BROKEN: /home/ubuntu/scratch/train4-2026-10-01/build/js-corpus/tests_corpus_parse_parser_deep_nesting/run/pr
-tests/corpus/parse/parser_group_lookahead_scaling # UNSUPPORTED: parser_group_lookahead_scaling.zen:13:16: a member is resolved on the receiver's type, so a name dec
 tests/corpus/parse/parser_spans # UNSUPPORTED: parser_spans.zen:50:5: error: unsupported by this backend: a value conversion this backend does not 
 tests/corpus/parse/parser_trivia # UNSUPPORTED: parser_trivia.zen:61:5: error: unsupported by this backend: a value conversion this backend does not
 tests/corpus/parse/represented_enum_discriminants # UNSUPPORTED: represented_enum_discriminants.zen:22:5: error: unsupported by this backend: a value conversion this
@@ -241,9 +242,9 @@ tests/corpus/sema/vararg_pack_forwards # UNSUPPORTED: vararg_pack_forwards.zen:4
 tests/corpus/sema/vararg_pack_of_structs # UNSUPPORTED: vararg_pack_of_structs.zen:54:30: error: unsupported by this backend: more arguments than parameters
 tests/corpus/sema/widening_conversions_are_bounds # UNSUPPORTED: :0:0: error: unsupported by this backend: f32 values
 tests/corpus/sema/zero_array_count_is_valid # UNSUPPORTED: compiler error: invalid IR at function 0 (main), block 1: slot is read before initialization on a re
+tests/corpus/sema_zen/a_core_declaration_of_a_primitive_is_that_primitive/main # UNSUPPORTED: main.zen:30:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
 tests/corpus/sema_zen/a_cursor_position_finds_its_node/main # UNSUPPORTED: main.zen:9:11: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check.
 tests/corpus/sema_zen/a_declaration_is_read_with_its_own_scope/main # UNSUPPORTED: main.zen:29:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
-tests/corpus/sema_zen/a_core_declaration_of_a_primitive_is_that_primitive/main # UNSUPPORTED: main.zen:30:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
 tests/corpus/sema_zen/a_provable_trap_is_a_compile_error/main # UNSUPPORTED: main.zen:26:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
 tests/corpus/sema_zen/an_impl_supplies_but_never_stores/main # UNSUPPORTED: main.zen:29:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
 tests/corpus/sema_zen/an_unimported_name_is_not_visible/main # UNSUPPORTED: main.zen:32:23: nothing is at that path: tried `sema/sema_def.zen` and `sema/sema_def/sema_def.zen`
@@ -253,7 +254,6 @@ tests/corpus/sema_zen/match_covers_the_pattern_space/main # UNSUPPORTED: main.ze
 tests/corpus/sema_zen/overload_resolution_reads_the_signature/main # UNSUPPORTED: main.zen:28:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
 tests/corpus/sema_zen/type_of_is_memoized/main # UNSUPPORTED: main.zen:18:16: nothing is at that path: tried `sema/sema_check.zen` and `sema/sema_check/sema_check
 tests/corpus/std/a_user_type_is_a_sink # UNSUPPORTED: a_user_type_is_a_sink.zen:73:5: error: unsupported by this backend: a member without a body this bac
-tests/corpus/std/build_api_resolves # UNSUPPORTED: build_api_resolves.zen:14:9: construction names no member: every argument must name a field of the t
 tests/corpus/std/carry_limbs # UNSUPPORTED: carry_limbs.zen:32:9: error: unsupported by this backend: the machine primitive add_carry
 tests/corpus/std/cli_nested_commands_and_trailing_args # UNSUPPORTED: cli_nested_commands_and_trailing_args.zen:35:9: error: unsupported by this backend: a value conversi
 tests/corpus/std/console_bound_println_reaches_the_same_floor # UNSUPPORTED: console_bound_println_reaches_the_same_floor.zen:21:5: error: unsupported by this backend: alternati

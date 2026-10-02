@@ -1,0 +1,73 @@
+// `then<T>(b: bool, f: () T) Res<T>` names `T` only in its callback's
+// result, so the call's type is known once the callback's body is typed:
+// `() { println(..) }` makes it `Res<()>`, `() { n }` with `n: i32` makes it
+// `Res<i32>`, and a bare literal `() { 7 }` takes the literal's default
+// width. The match arms below are joined and checked against those types.
+//
+// Statement position: a match whose value nothing reads may have arms of
+// any types, including blocks ending in `;` that hold `Range(..).loop(..)`,
+// `.then(..)` and `.ensure()`, nested or not; its arms are not joined into
+// one C slot.
+//
+// Value position: arms that agree once each callback's body is typed --
+// `.then` against `.ensure()` (both `Res<()>`), `.then(() { 7 })` against a
+// nested match's `Ok(5)` and a `Range(..).loop` broken with an `i32`.
+//
+// A callback body ending in a match whose arms disagree (`when_ok(..)`
+// beside `()`) is written for its effects: its value is unit, so the
+// outer `when_ok` is `Res<()>`, not the first arm's `Res<Res<()>>`.
+
+pick = (k: i32) Res<i32> {
+    n: i32 = k * 7;
+    (k == 3).match({
+        true  => (k > 1).then(() { n }),
+        false => { Range(0, 3).loop((h, i: i32) { (i == 1).then(() { h.break(i * 10) }); }); },
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    k = 2;
+
+    (k == 2).match({
+        true  => { Range(0, 2).loop((h, i: i32) { println("loop {}", i) }); },
+        false => { (k > 5).then(() { println("big") }); },
+    });
+    (k == 2).match({
+        true  => { (k == 1).match({
+            true  => { (k > 1).then(() { println("never") }); },
+            false => { Range(0, 1).loop((h, i: i32) { println("nested {}", i) }); },
+        }); },
+        false => { (k > 5).ensure(); },
+    });
+
+    unit = (k == 2).match({
+        true  => { (k > 1).then(() { println("then ran") }); },
+        false => { (k > 5).ensure(); },
+    });
+    unit.match({ Ok(_) => println("unit ok"), None => println("unit none") });
+
+    lit = (k == 2).match({
+        true  => (k == 1).match({ true => { (k > 1).then(() { 1 }); }, false => Ok(5) }),
+        false => (k > 1).then(() { 3 }),
+    });
+    lit.match({ Ok(v) => println("lit {}", v), None => println("lit none") });
+
+    alone = (k > 1).then(() { 9 });
+    alone.match({ Ok(v) => println("alone {}", v), None => println("alone none") });
+
+    a: Res<i32> = Ok(3);
+    b: Res<i32> = Ok(4);
+    effects     = a.when_ok((x) {
+        (x == 3).match({
+            true  => b.when_ok(
+                (y) { (y > 1).then(() { println("effects {} {}", x, y) }); }
+            ),
+            false => (),
+        });
+    });
+    effects.match({ Ok(_) => println("effects ok"), None => println("effects none") });
+
+    pick(3).match({ Ok(v) => println("pick {}", v), None => println("pick none") });
+    pick(2).match({ Ok(v) => println("pick {}", v), None => println("pick none") });
+    Ok(0);
+}

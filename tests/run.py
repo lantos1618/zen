@@ -2057,8 +2057,13 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     p.add_argument("--zen", default="zen", help="path to the zen binary")
     p.add_argument("--cc", default=os.environ.get("CC", "cc"), help="C compiler")
+    # Emitted C that a C compiler refuses is always a Zen compiler bug. Older
+    # GCC and Clang only WARN about an incompatible pointer or an integer
+    # stored as a pointer, and a warning scrolls past; these make every
+    # compiler the suite runs under refuse it, as current ones do.
     p.add_argument("--cc-flags",
-                   default=os.environ.get("CFLAGS", "-std=c11 -O0 -g -Werror=return-type"),
+                   default=os.environ.get("CFLAGS", "-std=c11 -O0 -g -Werror=return-type "
+                                          "-Werror=incompatible-pointer-types -Werror=int-conversion"),
                    help="flags passed to the C compiler")
     p.add_argument("--cc-cache", default="", metavar="COMMAND",
                    help="optional ccache executable; caches C objects, never test verdicts")

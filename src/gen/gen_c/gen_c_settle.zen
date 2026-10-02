@@ -14,7 +14,7 @@ Range = std.core
 TyId, TyRes = sema.sema_ty
 Def, decl_at = sema.sema_def
 Ctx = sema.sema_check
-tail_expr = sema.sema_hoist
+tail_expr, one_value = sema.sema_hoist
 Inst, has_var, owner_of = sema.sema_inst
 param_type, type_from_ast = sema.sema_denote
 CBackend = gen.gen_c.gen_c_state
@@ -370,14 +370,18 @@ declare_peek_slot = (be :: CBackend, name: str, ty: TyId)
 }
 
 // Use sema's tail-expression rule for both terminated and unterminated block
-// tails. An unsettled or absent tail evaluates to unit.
+// tails. An unsettled or absent tail evaluates to unit, and so does a tail
+// match whose arms disagree (`one_value`), as sema settled it.
 lambda_value_type = (be :: CBackend, l: Lambda, ctx: Ctx)
                     Res<TyId, AllocError> {
     unit = be.check.types.prim("()").try();
     blk  = be.tree.block_at(l.body);
-    be.check.tail_expr(blk).match({
-        Ok(e) => be.value_or_unit(e, ctx, unit),
-        None  => Ok(unit),
+    be.check.one_value(blk).match({
+        false => Ok(unit),
+        true  => be.check.tail_expr(blk).match({
+            Ok(e) => be.value_or_unit(e, ctx, unit),
+            None  => Ok(unit),
+        }),
     })
 }
 

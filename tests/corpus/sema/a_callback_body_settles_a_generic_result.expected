@@ -1,0 +1,11 @@
+loop 0
+loop 1
+nested 0
+then ran
+unit ok
+lit 5
+alone 9
+effects 3 4
+effects ok
+pick 21
+pick 10

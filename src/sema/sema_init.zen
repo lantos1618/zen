@@ -25,14 +25,15 @@
 
 ExprId, BlockId, Stmt, Bind, Deferred = std.ast
 Function, Param, Call, Arg, Match, Lambda = std.ast
-Binary, PatternId, Span, Pos = std.ast
+Binary, PatternId, Span, Pos, nowhere = std.ast
 Alloc, AllocError = std.mem
 Vec = std.collections
 str = std.text
 Range = std.core
 fmt_at = std.text.text_fmt
 Checker, UNRESOLVED, truncate = sema.sema_check
-SemaFault, NameFault, InitFault = sema.sema_diag
+SemaFault, NameFault, InitFault, UnsetFault = sema.sema_diag
+TyId = sema.sema_ty
 is_handle_ty = sema.sema_handle
 spelled_lambda = sema.sema_call
 local_lambda = sema.sema_local
@@ -43,6 +44,8 @@ LOOP_MODULE: str = "std.core.loop.loop_iter"
 // One name the walk can see. Only a deferred slot has a state; every other
 // binding holds a value from its declaration. `frame` is one past the index
 // of the loop frame a handle parameter breaks, and 0 for anything else.
+// `touched` records that some assignment to a deferred slot was written at
+// all, on any path; one that is never assigned is refused at its scope's end.
 Slot = {
     name: str,
     deferred: bool,
@@ -50,6 +53,9 @@ Slot = {
     frame: usize,
     must :: bool,
     may :: bool,
+    touched :: bool,
+    span: Span,
+    ty: TyId,
 }
 
 Init = { must: bool, may: bool }
@@ -156,18 +162,38 @@ push = (w :: InitWalk, slot: Slot) Res<(), AllocError> {
     w.slots.add(slot)
 }
 
-pop_to = (w :: InitWalk, mark: usize) {
+pop_to = (c :: Checker, w :: InitWalk, mark: usize) Res<(), AllocError> {
     Range(mark, w.slots.len).loop((h, i) {
         w.slots.get(i).match({
-            Ok(s) => s.deferred.then(() { w.tracked = w.tracked - 1; }),
+            Ok(s) => s.deferred.then(() {
+                w.tracked = w.tracked - 1;
+                (!s.touched && !w.quiet).then(() {
+                    c.refuse(s.span, SemaFault.NeverAssigned(UnsetFault(
+                        name: s.name,
+                        ty: s.ty,
+                        mutable: s.mutable,
+                    ))).try();
+                });
+            }),
             None  => (),
         });
     });
     truncate(w.slots, mark);
+    Ok(())
 }
 
 assigned = (name: str, frame: usize) Slot {
-    Slot(name: name, deferred: false, mutable: true, frame: frame, must: true, may: true)
+    Slot(
+        name: name,
+        deferred: false,
+        mutable: true,
+        frame: frame,
+        must: true,
+        may: true,
+        touched: true,
+        span: nowhere(),
+        ty: UNRESOLVED
+    )
 }
 
 find_slot = (w: InitWalk, name: str) Res<usize> {
@@ -192,7 +218,7 @@ init_block = (c :: Checker, w :: InitWalk, id: BlockId) Res<(), AllocError> {
     mark = w.slots.len;
     b.stmts.loop((h, s) { c.init_stmt(w, s).try() });
     b.value.match({ Ok(v) => c.init_expr(w, v), None => Ok(()) }).try();
-    w.pop_to(mark);
+    c.pop_to(w, mark).try();
     Ok(())
 }
 
@@ -224,7 +250,10 @@ init_deferred = (c :: Checker, w :: InitWalk, d: Deferred)
             mutable: d.mutable,
             frame: 0,
             must: false,
-            may: false
+            may: false,
+            touched: false,
+            span: c.tree.expr_at(d.target).span,
+            ty: c.type_memo.get(d.type).value_or(UNRESOLVED)
         )),
         _       => Ok(()),
     })
@@ -261,8 +290,9 @@ init_assign = (c :: Checker, w :: InitWalk, i: usize, span: Span)
                     .try();
             });
             row ::= old;
-            row.must = true;
-            row.may  = true;
+            row.must    = true;
+            row.may     = true;
+            row.touched = true;
             w.slots.set(i, row);
             Ok(())
         },
@@ -420,7 +450,7 @@ init_match = (c :: Checker, w :: InitWalk, m: Match) Res<(), AllocError> {
         mark = w.slots.len;
         c.init_pattern(w, arm.pattern).try();
         c.init_expr(w, arm.body).try();
-        w.pop_to(mark);
+        c.pop_to(w, mark).try();
         joined = join(w.alloc, joined, w.snapshot().try()).try();
     });
     w.restore(joined);
@@ -641,7 +671,7 @@ run_closure = (c :: Checker, w :: InitWalk, l: Lambda, quiet: bool)
     frame = w.frames.len;
     l.params.loop((h, p) { c.init_param(w, p, frame).try() });
     c.init_block(w, l.body).try();
-    w.pop_to(mark);
+    c.pop_to(w, mark).try();
     out = w.frames.take(frame - 1).value_or(Frame(
         breaks: dead(w.alloc),
         nexts: dead(w.alloc)

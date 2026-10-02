@@ -173,9 +173,10 @@ tail_value = (
     });
 }
 
-// `name :: T = value` binds a typed mutable local, and `name :: T;` declares
-// one whose value is assigned later — `::` marks mutability exactly as it
-// does on a field or parameter.
+// A mutable local is `name :: T = value` with the type optional:
+// `name :: = value` is `name ::= value` spelled with a space. `name :: T;`
+// declares one whose value is assigned later. `::` marks mutability exactly
+// as it does on a field or parameter.
 bind_mutable_typed = (
     p      :: Parser,
     stmts  :: Vec<Stmt>,
@@ -183,16 +184,21 @@ bind_mutable_typed = (
     target : ExprId
 ) Res<(), AllocError> {
     p.bump().try();
-    t = p.type().try();
-    p.peek().kind.match({
-        Semicolon    => p.deferred(stmts, m, target, t, true),
-        ColonColonEq => {
-            p.error(
-                "a typed mutable local is written `x :: T = v`: `::` already marks it mutable, so the value follows `=`"
-            ).try();
-            p.bind_rest(stmts, m, target, Ok(t), true)
+    p.at_kind(TokenKind.Eq).match({
+        true  => p.bind_rest(stmts, m, target, None, true),
+        false => {
+            t = p.type().try();
+            p.peek().kind.match({
+                Semicolon    => p.deferred(stmts, m, target, t, true),
+                ColonColonEq => {
+                    p.error(
+                        "a typed mutable local is written `x :: T = v`: `::` already marks it mutable, so the value follows `=`"
+                    ).try();
+                    p.bind_rest(stmts, m, target, Ok(t), true)
+                },
+                _            => p.bind_rest(stmts, m, target, Ok(t), true),
+            })
         },
-        _            => p.bind_rest(stmts, m, target, Ok(t), true),
     });
 }
 

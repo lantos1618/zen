@@ -46,10 +46,11 @@ ctype* = (be :: CBackend, id: TyId, out :: String) Res<(), AllocError> {
     Ok(());
 }
 
-// The zero value used for a compiler-synthesised argument or field.
+// The zero value used for a compiler-synthesised argument, field or
+// deferred local. `str` and the vectors are structs in C.
 write_zero* = (be :: CBackend, t: TyId, out :: String) Res<(), AllocError> {
     be.check.types.at(t).match({
-        Prim(p) => is_vector(p.name).match({
+        Prim(p) => (is_vector(p.name) || p.name.eq("str")).match({
             true  => be.write_zero_struct(t, out),
             false => out.add("0"),
         }),

@@ -47,6 +47,20 @@ InitFault* = {
     maybe*: bool,
 }
 
+// A local declared without a value that nothing ever assigns.
+UnsetFault* = {
+    name*: str,
+    ty*: TyId,
+    mutable*: bool,
+}
+
+// A type's name written where a value belongs; `record` when the type is
+// constructed with a call, rather than named through a variant.
+TypeValueFault* = {
+    name*: str,
+    record*: bool,
+}
+
 // Two conflicting declaration positions.
 PairFault* = {
     name*: str,
@@ -64,6 +78,7 @@ SemaFault* =
     | NoSuchField(TypeFault)           // the type has no member of that name
     | MemberNeedsValue(TypeFault)      // a union's member IS a type, so naming it alone writes no value
     | Rebound(PairFault)               // a second `=` binding of one name in one block
+    | TypeNotAValue(TypeValueFault)    // `x = Foo;` binds a type, not a value of it
 
     // types
     | TypeMismatch(TypeFault)          // expected X, found Y
@@ -150,6 +165,7 @@ SemaFault* =
     | ConsumedUse(NameFault)           // a place that was moved out of
     | UnassignedUse(InitFault)         // a deferred local used before every path assigns it
     | AssignedTwice(NameFault)         // an immutable deferred local assigned again
+    | NeverAssigned(UnsetFault)        // a deferred local no statement assigns
     | NeedsMutableReceiver(NameFault)  // a `::` method reached through `:`
     | ImmutableWrite(NameFault)        // a write through a `:` link of the path
     | SnapshottedReceiver(NameFault)   // a `::` argument call aliases a by-value receiver
@@ -207,6 +223,7 @@ message* = (fault: SemaFault) str {
         NoSuchField(_)               => "a member is resolved on the receiver's type, so a name declared on another type is not a candidate",
         MemberNeedsValue(_)          => "a union's member is the type it names, so the member alone is not a value",
         TypeMismatch(_)              => "type mismatch",
+        TypeNotAValue(_)             => "a type is not a value:",
         ArmsDisagree(_)              => "match arms disagree: every arm produces the match's value, and nothing here decides which type that is",
         DiscardedValue(_)            => "discarded value",
         NotCallable(_)               => "this is not a function, so it cannot be called",
@@ -269,6 +286,7 @@ message* = (fault: SemaFault) str {
         ConsumedUse(_)               => "use after move:",
         UnassignedUse(_)             => "a local declared without a value is used before it is assigned:",
         AssignedTwice(_)             => "an immutable local declared without a value is assigned exactly once:",
+        NeverAssigned(_)             => "a local declared without a value must be assigned:",
         NeedsMutableReceiver(_)      => "the receiver is immutable:",
         ImmutableWrite(_)            => "cannot write through an immutable binding:",
         SnapshottedReceiver(_)       => "an argument call writes the place this call's by-value receiver was copied from:",
@@ -326,6 +344,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         CtorNamesConstant(f)         => out.write_ctor_constant(types, f),
         OrphanImpl(f)                => out.write_orphan(f),
         Rebound(f)                   => out.write_pair(f),
+        TypeNotAValue(f)             => out.write_type_value(f),
         ComputedFieldAssign(f)       => out.write_name(f),
         ComputedFieldAddress(f)      => out.write_name(f),
         InferredSetExported(f)       => out.write_name(f),
@@ -368,6 +387,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         ),
         UnassignedUse(f)             => out.write_unassigned(f),
         AssignedTwice(f)             => out.write_assigned_twice(f),
+        NeverAssigned(f)             => out.write_never_assigned(types, f),
         NeedsMutableReceiver(f)      => out.write_place(
             f,
             " needs a mutable receiver, so every link from the binding to it must permit the write"
@@ -580,6 +600,34 @@ write_assigned_twice = (out :: String, f: NameFault) Res<(), AllocError> {
         " `{}` may already hold a value here — declare it `{} :: T;` to assign it again",
         f.name,
         f.name
+    )
+}
+
+write_type_value = (out :: String, f: TypeValueFault) Res<(), AllocError> {
+    f.record.match({
+        true  => out.fmt(
+            " `{}` is a type, not a value: construct it with `{}()`",
+            f.name,
+            f.name
+        ),
+        false => out.fmt(
+            " `{}` is a type, not a value: name one of its variants, `{}.Variant`",
+            f.name,
+            f.name
+        ),
+    })
+}
+
+write_never_assigned = (out :: String, types: Types, f: UnsetFault)
+                       Res<(), AllocError> {
+    ty    ::= types.name_of(f.ty).try();
+    marker = f.mutable.match({ true => " ::", false => ":" });
+    out.fmt(
+        " `{}` is declared but never assigned: give it a value here (`{}{} {} = …`) or assign it before the block ends",
+        f.name,
+        f.name,
+        marker,
+        ty.view()
     )
 }
 

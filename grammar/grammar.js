@@ -427,6 +427,7 @@ module.exports = grammar({
       choice(
         $.declaration_statement,
         $.let_statement,
+        $.deferred_statement,
         $.expression_statement,
         $.block,
       ),
@@ -441,14 +442,29 @@ module.exports = grammar({
         field('value', choice($.struct_body, $.enum_body, $.function, $.function_signature)),
       ),
 
-    // `x = e;`, `x ::= e;`, `x: T = e;`, `x: T ::= e;`
+    // `x = e;`, `x ::= e;`, `x: T = e;`, `x :: T = e;`, `x :: = e;`
     // `self.len = self.len + 1;` — a member expression is a target too.
+    // `::` marks a mutable local as it marks a mutable field or parameter.
     let_statement: ($) =>
       seq(
         field('target', $._binding_target),
-        optional(seq(':', field('type', $._type))),
-        field('operator', choice('=', '::=')),
+        choice(
+          seq(
+            optional(seq(':', field('type', $._type))),
+            field('operator', choice('=', '::=')),
+          ),
+          seq('::', optional(field('type', $._type)), field('operator', '=')),
+        ),
         field('value', $._expression),
+        ';',
+      ),
+
+    // `x :: T;` or `x: T;`: a local declared now and assigned later.
+    deferred_statement: ($) =>
+      seq(
+        field('name', $.identifier),
+        field('marker', choice(':', '::')),
+        field('type', $._type),
         ';',
       ),
 

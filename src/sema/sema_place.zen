@@ -3,7 +3,7 @@ AllocError = std.mem
 str = std.text
 TyId, TyArray, literal_default = sema.sema_ty
 Checker, Ctx, Binding = sema.sema_check
-SemaFault, NameFault, PairFault = sema.sema_diag
+SemaFault, NameFault, PairFault, TypeValueFault = sema.sema_diag
 computed_member, writable_member = sema.sema_member
 check_literal = sema.sema_trap
 const_def = sema.sema_const
@@ -15,6 +15,7 @@ refuse_handle_value = sema.sema_handle
 
 bind_stmt* = (c :: Checker, b: Bind, ctx: Ctx) Res<TyId, AllocError> {
     got = c.type_of(b.value, ctx).try();
+    c.refuse_type_value(b.value, ctx).try();
     c.refuse_handle_value(b.value, got).try();
     want    = c.check_rebound(b).try().match({
         true  => c.types.unknown(),
@@ -25,6 +26,33 @@ bind_stmt* = (c :: Checker, b: Bind, ctx: Ctx) Res<TyId, AllocError> {
     c.refuse_bare_none(b, want).try();
     c.bind_target(b, want, ctx).try();
     c.types.prim("()")
+}
+
+// `x = Foo;` binds a type where a value belongs. A type's name reaches
+// value position as a constructor or as a member's base, never alone, so
+// the binding is refused here rather than left to a backend with nothing to
+// lower.
+refuse_type_value = (c :: Checker, id: ExprId, ctx: Ctx) Res<(), AllocError> {
+    node = c.tree.expr_at(id);
+    node.kind.match({
+        Paren(p) => c.refuse_type_value(p.inner, ctx),
+        Name(n)  => c.lookup(n.text).match({
+            Ok(_) => Ok(()),
+            None  => c.world.first_def_of(ctx.module, n.text).try().match({
+                None  => Ok(()),
+                Ok(d) => d.kind.match({
+                    StructDef => c.refuse(node.span, SemaFault.TypeNotAValue(
+                        TypeValueFault(name: n.text, record: true)
+                    )),
+                    EnumDef   => c.refuse(node.span, SemaFault.TypeNotAValue(
+                        TypeValueFault(name: n.text, record: false)
+                    )),
+                    _         => Ok(()),
+                }),
+            }),
+        }),
+        _        => Ok(()),
+    })
 }
 
 // `x :: T;` and `x: T;` bind the name with its written type and no value.

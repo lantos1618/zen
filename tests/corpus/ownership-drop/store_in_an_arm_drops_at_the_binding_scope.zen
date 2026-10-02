@@ -1,0 +1,27 @@
+// A store made inside a match arm replaces the binding declared outside it,
+// so the new value lives until that binding's scope ends, not until the
+// arm's closing brace. A deferred binding (`x :: T;`) holds nothing until
+// its first assignment: there is nothing to drop then, and its value is
+// dropped once, at the end of its own scope.
+
+Noisy = { tag: str }
+
+Noisy.impl(Drop, {
+    drop = (self :: @Self) { println("drop {}", self.tag); }
+})
+
+main = () i32 {
+    flag = true;
+    kept ::= Noisy(tag: "first");
+    flag.match({
+        true  => { kept = Noisy(tag: "second"); },
+        false => (),
+    });
+    later :: Noisy;
+    flag.match({
+        true  => { later = Noisy(tag: "yes"); },
+        false => { later = Noisy(tag: "no"); },
+    });
+    println("{} {}", kept.tag, later.tag);
+    0
+}

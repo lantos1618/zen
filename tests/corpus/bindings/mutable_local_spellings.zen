@@ -1,0 +1,23 @@
+// A mutable local is `name :: [Type] = value`, the type optional: `::=` and
+// `:: =` are one binding written with and without the space, `:: Foo =`
+// writes the type, and `:: Foo;` declares the local now and assigns it later.
+
+Foo = { x :: i32 = 0 }
+
+main = () i32 {
+    a ::= Foo();
+    b :: = Foo();
+    c :: Foo = Foo();
+    d :: Foo;
+    d = Foo(x: 4);
+    a.x = 1;
+    b.x = 2;
+    c.x = 3;
+    println("{} {} {} {}", a.x, b.x, c.x, d.x);
+    {
+        e :: Foo;
+        e = Foo();
+        println("{}", e.x);
+    }
+    0
+}

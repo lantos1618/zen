@@ -1,0 +1,25 @@
+// `name :: T;` declares a mutable local with no value yet. Every path to a
+// read must assign it first; here both arms of the match do, so the read
+// after the match is accepted, and the later reassignment is a plain write.
+
+label = (n: i32) str {
+    word :: str;
+    (n % 2 == 0).match({
+        true  => { word = "even"; },
+        false => { word = "odd"; },
+    });
+    word
+}
+
+main = () i32 {
+    kind :: i32;
+    three = 3;
+    three.match({
+        1 => { kind = 10; },
+        _ => { kind = 20; },
+    });
+    println("{} {} {}", label(4), label(7), kind);
+    kind = kind + 1;
+    println("{kind}");
+    0
+}

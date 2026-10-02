@@ -1,0 +1,10 @@
+// The immutable binding of a type name is refused the same way.
+//
+// position: the type name.
+
+Foo = {}
+
+main = () i32 {
+    abc = Foo;
+    0
+}

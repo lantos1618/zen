@@ -1,0 +1,12 @@
+// Only a local name can be declared without a value: a member already has
+// storage, so `p.x: i32;` declares nothing.
+//
+// position: the member.
+
+Point = { x :: i32 }
+
+main = () i32 {
+    p ::= Point(x: 1);
+    p.x: i32;
+    0
+}

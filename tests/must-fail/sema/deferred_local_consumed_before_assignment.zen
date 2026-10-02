@@ -1,0 +1,14 @@
+// `consume` moves a value out of a local, so the local must hold one.
+//
+// position: the consumed name.
+
+Box = { n: i32 }
+
+take = (b: Box) i32 { b.n }
+
+main = () i32 {
+    held :: Box;
+    take(consume held);
+    held = Box(n: 1);
+    0
+}

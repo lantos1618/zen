@@ -1,0 +1,15 @@
+// Assigning a deferred local in one arm of a match leaves it unassigned on
+// the path through the other arm, so the read after the match is refused.
+//
+// position: the read after the match.
+
+main = () i32 {
+    flag = true;
+    size :: i32;
+    flag.match({
+        true  => { size = 8; },
+        false => (),
+    });
+    println("{}", size);
+    0
+}

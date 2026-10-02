@@ -1,0 +1,12 @@
+// `Foo` names a type. Binding it as a local's value is one diagnostic naming
+// the construction that was meant, not a failure in the backend.
+//
+// position: the type name.
+
+Foo = { x :: i32 = 0 }
+
+main = () i32 {
+    abc ::= Foo;
+    println("{}", abc.x);
+    0
+}

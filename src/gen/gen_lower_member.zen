@@ -192,6 +192,11 @@ ufcs = (lo :: Lowerer, receiver: TyId, name: str, arity: usize) Res<Callee> {
         name,
         defs
     ).match({ Ok(_) => (), Err(_) => () });
+    // A body sema checked under another context still reaches the std.core
+    // functions for its receiver, as sema's dot calls do.
+    (defs.len == 0).then(() {
+        lo.check.world.core_of(name, defs).match({ Ok(_) => (), Err(_) => () });
+    });
     found: Res<Callee> = loop<Callee>((h) {
         defs.loop((d) {
             decl_at(lo.tree, d.id).when_ok((decl) {

@@ -18,13 +18,13 @@ main = (env: Env) Res<i32, AllocError> {
         1
     ).match({Err(EntropyError.Invalid) => true, _ => false}) && good;
     good = Probe.entropy_probe_calls() == 0 && good;
-    Range(0, 515).loop((i) { bytes.write(i, 173); });
+    Range<usize>(0, 515).loop((i) { bytes.write(i, 173); });
     good = fill_random(
         bytes.offset(1),
         513
     ).match({Ok(_) => true, _ => false}) && good;
     good = Probe.entropy_probe_calls() == 1 && bytes.read(0) == 173 && bytes.read(514) == 173 && good;
-    Range(0, 513).loop((i) { good = bytes.read(i + 1).to_usize() == i % 251 + 1 && good; });
+    Range<usize>(0, 513).loop((i) { good = bytes.read(i + 1).to_usize() == i % 251 + 1 && good; });
     println("entropy span, bounds and null/empty contract: {}", good);
     Ok(good.match({true => 0, false => 1}))
 }

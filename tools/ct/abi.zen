@@ -99,14 +99,14 @@ without = (a: Alloc, line: str, attribute: str) Res<str, AllocError> {
 // `static __attribute__((unused)) int zg_cpu_masked(...)` and its
 // `__attribute__((target("aes")))` helpers).
 param_open* = (line: str) Res<usize> {
-    at    ::= 0;
+    at :: usize = 0;
     found :: Res<usize> = None;
     loop(() { at < line.len }, (h) {
         line.slice(at, line.len).starts_with("__attribute__").match({
             true  => {
                 // Skip to the parenthesis that closes the attribute.
                 depth ::= 0;
-                j     ::= at + 13;
+                j :: usize = at + 13;
                 loop(() { j < line.len }, (h2) {
                     c = line.index(j);
                     (c == '(').then(() { depth = depth + 1; });

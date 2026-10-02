@@ -10,7 +10,7 @@ main = (env: Env) Res<i32, AllocError> {
         AllocError.OutOfMemory
     ).try();
     pool.give(first, 1048576, 65536, 64);
-    Range(0, 10000).loop((i) {
+    Range<usize>(0, 10000).loop((i) {
         pointer = pool.take(64);
         (pointer.same(first) && pointer.read(63) == 42).ensure(AllocError.OutOfMemory).try();
         pool.give(pointer, 1048576, 65536, 64);
@@ -38,14 +38,14 @@ main = (env: Env) Res<i32, AllocError> {
     ).try();
     a      = env.mem.alloc();
     blocks = a.realloc<Ptr<u8>>(null_ptr<Ptr<u8>>(), 65).try();
-    Range(0, 65).loop((i) { pointer = pool.take(32); (!pointer.is_null()).ensure(AllocError.OutOfMemory).try(); blocks.write(i, pointer); });
-    Range(0, 65).loop((i) { pool.give(blocks.read(i), 1048576, 65536, 64); });
+    Range<usize>(0, 65).loop((i) { pointer = pool.take(32); (!pointer.is_null()).ensure(AllocError.OutOfMemory).try(); blocks.write(i, pointer); });
+    Range<usize>(0, 65).loop((i) { pool.give(blocks.read(i), 1048576, 65536, 64); });
     (pool.cached_blocks == 64 && pool.owned == 64 * (32 + HEADER_BYTES)).ensure(
         AllocError.OutOfMemory
     ).try();
     pool.close();
-    Range(0, 64).loop((i) { pointer = pool.take(32768); (!pointer.is_null()).ensure(AllocError.OutOfMemory).try(); blocks.write(i, pointer); });
-    Range(0, 64).loop((i) { pool.give(blocks.read(i), 1048576, 65536, 64); });
+    Range<usize>(0, 64).loop((i) { pointer = pool.take(32768); (!pointer.is_null()).ensure(AllocError.OutOfMemory).try(); blocks.write(i, pointer); });
+    Range<usize>(0, 64).loop((i) { pool.give(blocks.read(i), 1048576, 65536, 64); });
     (pool.cached_blocks == 31 && pool.cached == 31 * (32768 + HEADER_BYTES) && pool.owned == pool.cached).ensure(
         AllocError.OutOfMemory
     ).try();

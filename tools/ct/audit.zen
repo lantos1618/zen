@@ -487,9 +487,9 @@ ir_params = (a: Alloc, ir: str, symbol: str) Res<String, AllocError> {
             line.find(needle.view()).when_ok((at) {
                 rest  = line.slice(at + needle.len(), line.len);
                 depth ::= 0;
-                start ::= 0;
+                start :: usize = 0;
                 first ::= true;
-                i ::= 0;
+                i :: usize = 0;
                 loop(() { i < rest.len }, (h2) {
                     c = rest.index(i);
                     ((c == '(' || c == '<' || c == '[' || c == '{')).then(() { depth = depth + 1; });
@@ -522,7 +522,7 @@ ir_type = (param: str) str {
         true  => {
             depth ::= 0;
             end ::= param.len;
-            i ::= 0;
+            i :: usize = 0;
             loop(() { i < param.len }, (h) {
                 c = param.index(i);
                 (c == '<' || c == '[' || c == '{').then(() { depth = depth + 1; });
@@ -790,7 +790,7 @@ uncovered = (
         seen ::= a.Vec<str>();
         work ::= a.Vec<str>();
         work.add(m.symbol).try();
-        i ::= 0;
+        i :: usize = 0;
         loop(() { i < work.len }, (h) {
             f = work.get(i).value_or("");
             i = i + 1;

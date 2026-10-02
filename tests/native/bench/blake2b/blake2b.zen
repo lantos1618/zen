@@ -28,7 +28,7 @@ blake2b_candidate* = (
             h = scratch;
             m = scratch.offset(8);
             v = scratch.offset(24);
-            Range(0, 8).loop((i) { h.write(i, iv(i)); });
+            Range<usize>(0, 8).loop((i) { h.write(i, iv(i)); });
             parameter: u64 = 16842752 + key_count.to_u64() * 256 + output_count.to_u64();
             h.write(0, h.read(0).bit_xor(parameter));
             (key_count > 0).then(() {
@@ -66,7 +66,7 @@ blake2b_candidate* = (
 }
 
 load_block = (words: Ptr<u64>, input: Ptr<u8>, count: usize) {
-    Range(0, 16).loop((i) { words.write(i, 0); });
+    Range<usize>(0, 16).loop((i) { words.write(i, 0); });
     factor :: u64 = 1;
     Range(0, count).loop((i) {
         (i % 8 == 0).then(() { factor = 1; });
@@ -87,12 +87,12 @@ mix = (v: Ptr<u64>, a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) {
 }
 
 compress = (h: Ptr<u64>, m: Ptr<u64>, v: Ptr<u64>, low: u64, high: u64, last: bool) {
-    Range(0, 8).loop((i) { v.write(i, h.read(i)); v.write(i + 8, iv(i)); });
+    Range<usize>(0, 8).loop((i) { v.write(i, h.read(i)); v.write(i + 8, iv(i)); });
     v.write(12, v.read(12).bit_xor(low));
     v.write(13, v.read(13).bit_xor(high));
     last.then(() { v.write(14, v.read(14).bit_xor(18446744073709551615)); });
-    Range(0, 12).loop((round) { round_mix(v, m, round % 10); });
-    Range(0, 8).loop((i) { h.write(i, h.read(i).bit_xor(v.read(i)).bit_xor(v.read(i + 8))); });
+    Range<usize>(0, 12).loop((round) { round_mix(v, m, round % 10); });
+    Range<usize>(0, 8).loop((i) { h.write(i, h.read(i).bit_xor(v.read(i)).bit_xor(v.read(i + 8))); });
 }
 
 iv = (i: usize) u64 {

@@ -19,7 +19,7 @@ main = (env: Env) Res<i32, AllocError> {
         input.write(0, out.read(0));
     });
     hex ::= a.String().try();
-    Range(0, 64).loop((i) { hex.write_hex_fixed(out.read(i).to_u64(), 2).try(); });
+    Range<usize>(0, 64).loop((i) { hex.write_hex_fixed(out.read(i).to_u64(), 2).try(); });
     println("{} MiB blake2b {}", rounds, hex.view());
     Ok(0);
 }

@@ -1,13 +1,13 @@
 Pool, PoolAlloc, PoolPolicy, Ptr, null_ptr = std.mem
 verify = (a: Alloc, pool: Ptr<Pool>) Res<(), AllocError> {
     old = a.realloc<u8>(null_ptr<u8>(), 16).try();
-    Range(0, 16).loop((i) { old.write(i, 42); });
+    Range<usize>(0, 16).loop((i) { old.write(i, 42); });
     owned = pool.read(0).owned;
     // Harness refuses exactly this 257-byte payload plus its 16-byte header.
     failed = a.realloc(old, 257).match({Ok(_) => false, Err(_) => true});
     failed.ensure(AllocError.OutOfMemory).try();
     (pool.read(0).owned == owned).ensure(AllocError.OutOfMemory).try();
-    Range(0, 16).loop((i) { (old.read(i) == 42).ensure(AllocError.OutOfMemory).try(); });
+    Range<usize>(0, 16).loop((i) { (old.read(i) == 42).ensure(AllocError.OutOfMemory).try(); });
     a.free(old);
     Ok(())
 }

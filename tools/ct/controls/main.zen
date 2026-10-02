@@ -74,7 +74,7 @@ vector_rounds* = (key: Secret<Ptr<u8>>, out: Secret<Ptr<u8>>) {
     b ::= load_u32x4(key, 16);
     c ::= load_u32x4(key, 32);
     d ::= load_u32x4(key, 48);
-    Range(0, 10).loop((i) {
+    Range<usize>(0, 10).loop((i) {
         a = a.add_wrap(b); d = d.bit_xor(a).rotate_left(16);
         c = c.add_wrap(d); b = b.bit_xor(c).rotate_left(12);
         a = a.add_wrap(b); d = d.bit_xor(a).rotate_left(8);
@@ -98,7 +98,7 @@ vector_value* = (x: Secret<u64x2>, y: Secret<u64x2>) Secret<u64x2> {
 wide_rounds* = (cpu: Avx2, key: Secret<Ptr<u8>>, out: Secret<Ptr<u8>>) {
     a ::= load_u32x8(key, 0);
     b ::= load_u32x8(key, 32);
-    Range(0, 8).loop((i) {
+    Range<usize>(0, 8).loop((i) {
         a = a.add_wrap(b).rotate_left(16);
         b = b.bit_xor(a).rotate_left(7).shuffle([7, 0, 1, 2, 3, 4, 5, 6]);
     });
@@ -119,7 +119,7 @@ schedule_mix* = (s: Schedule, out: Ptr<u8>) {
 // Leaks through an early exit: the loop stops at the first difference.
 leaky_compare* = (tag: Ptr<u8>, expected: Ptr<u8>) bool {
     same :: bool = true;
-    Range(0, 16).loop((h, i) {
+    Range<usize>(0, 16).loop((h, i) {
         (tag.read(i) != expected.read(i)).then(() {
             same = false;
             h.break();
@@ -152,7 +152,7 @@ leaky_vector_index* = (key: Ptr<u8>, table: Ptr<u8>) u8 {
 leaky_vector_branch* = (key: Ptr<u8>, other: Ptr<u8>, sink: Ptr<u8>) {
     d = load_u64x2(key, 0).bit_xor(load_u64x2(other, 0));
     (d.lane(0).bit_or(d.lane(1)) == 0).then(() {
-        Range(0, 64).loop((i) { sink.write_volatile(i, i.truncate_u8()); });
+        Range<usize>(0, 64).loop((i) { sink.write_volatile(i, i.truncate_u8()); });
     });
 }
 
@@ -312,7 +312,7 @@ leaky_set_bit* = (flags: u64, key: u64, table: Ptr<u8>) u8 {
 // stepped by writeback).
 leaky_stack_walk* = (key: Ptr<u64>, table: Ptr<u8>, sink: Ptr<u64>, n: usize) u64 {
     words ::= [u64, 16](0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-    Range(1, 16).loop((i) { words[i] = key.read(i); });
+    Range<usize>(1, 16).loop((i) { words[i] = key.read(i); });
     sink.write(0, words[0]);
     sum :: u64 = 0;
     Range(0, n % 16).loop((i) { sum = sum +% table.read(words[i].truncate_u8().to_usize()).to_u64(); });
@@ -353,9 +353,9 @@ leaky_second_half* = (key: Ptr<u8>, table: Ptr<u8>) u8 {
 main = (env: Env) Res<(), AllocError> {
     a     = env.mem.alloc();
     bytes = a.raw(256, 16).try();
-    Range(0, 256).loop((i) { bytes.write(i, i.truncate_u8() *% 29); });
+    Range<usize>(0, 256).loop((i) { bytes.write(i, i.truncate_u8() *% 29); });
     words = a.raw(160, 16).try().to<u64>();
-    Range(0, 20).loop((i) { words.write(i, i.to_u64()); });
+    Range<usize>(0, 20).loop((i) { words.write(i, i.to_u64()); });
     x = [u64, 4](1, 2, 3, 4);
     y = [u64, 4](5, 6, 7, 8);
     ladder_swap(words, words.offset(10), 1);

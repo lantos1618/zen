@@ -44,7 +44,7 @@ Sha256* = {
                 });
                 Range(self.used, 56).loop((i) { self.block.write(i, 0); });
                 bits :: u64 = self.count * 8;
-                Range(0, 8).loop((i) {
+                Range<usize>(0, 8).loop((i) {
                     self.block.write(
                         63 - i,
                         (bits % 256).to_usize().value_or(0).to_u8().value_or(0)
@@ -52,7 +52,7 @@ Sha256* = {
                     bits = bits / 256;
                 });
                 compress(self.words, self.block);
-                Range(0, 32).loop((i) {
+                Range<usize>(0, 32).loop((i) {
                     output.write(
                         i,
                         (self.words.read(i / 4).shift_right((3 - i % 4) * 8) % 256).to_u8().value_or(0)
@@ -104,12 +104,12 @@ sha256_candidate* = (
 
 compress = (state: Ptr<u32>, block: Ptr<u8>) {
     w = state.offset(8);
-    Range(0, 16).loop((i) {
+    Range<usize>(0, 16).loop((i) {
         word :: u32 = 0;
-        Range(0, 4).loop((j) { word = word *% 256 +% block.read(i * 4 + j).to_u32(); });
+        Range<usize>(0, 4).loop((j) { word = word *% 256 +% block.read(i * 4 + j).to_u32(); });
         w.write(i, word);
     });
-    Range(16, 64).loop((i) {
+    Range<usize>(16, 64).loop((i) {
         x = w.read(i - 15); y = w.read(i - 2);
         s0 = x.rotate_right(7).bit_xor(x.rotate_right(18)).bit_xor(x.shift_right(3));
         s1 = y.rotate_right(17).bit_xor(y.rotate_right(19)).bit_xor(y.shift_right(10));
@@ -119,7 +119,7 @@ compress = (state: Ptr<u32>, block: Ptr<u8>) {
     c :: u32 = state.read(2); d :: u32 = state.read(3);
     e :: u32 = state.read(4); f :: u32 = state.read(5);
     g :: u32 = state.read(6); h :: u32 = state.read(7);
-    Range(0, 64).loop((i) {
+    Range<usize>(0, 64).loop((i) {
         s1       = e.rotate_right(6).bit_xor(e.rotate_right(11)).bit_xor(e.rotate_right(25));
         choose   = e.bit_and(f.bit_xor(g)).bit_xor(g);
         t1       = h +% s1 +% choose +% constant(i) +% w.read(i);

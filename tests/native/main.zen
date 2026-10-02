@@ -262,7 +262,7 @@ Runner = {
                         command = self.launch(c, binary.view(), dir.view()).try();
                         commands.fmt("{}\n", command.view()).try();
                         // The first differing run is the one kept.
-                        failed ::= 0;
+                        failed :: usize = 0;
                         first ::= "";
                         Range(0, self.runs).loop((_) {
                             result = self.shell(command.view()).try();

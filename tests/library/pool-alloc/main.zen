@@ -3,22 +3,22 @@ check = (a: Alloc, pool: Ptr<Pool>) Res<(), AllocError> {
     bytes = a.raw(0, 16).try();
     (!bytes.is_null()).ensure(AllocError.OutOfMemory).try();
     a.free(bytes);
-    Range(0, 6).loop((i) {
+    Range<usize>(0, 6).loop((i) {
         alignment = i.match({0 => 0, 1 => 3, 2 => 7, 3 => 24, 4 => 32, _ => usize.MAX});
         a.raw(8, alignment).match({Ok(_) => { Err(AllocError.OutOfMemory).try(); }, Err(_) => ()});
     });
-    Range(0, 5).loop((i) {
+    Range<usize>(0, 5).loop((i) {
         alignment = i.match({0 => 1, 1 => 2, 2 => 4, 3 => 8, _ => 16});
         valid     = a.raw(8, alignment).try(); a.free(valid);
     });
     pointer = a.realloc<u64>(null_ptr<u64>(), 8).try();
-    Range(0, 8).loop((i) { pointer.write(i, i.to_u64() + 10); });
+    Range<usize>(0, 8).loop((i) { pointer.write(i, i.to_u64() + 10); });
     original_allocations = pool.read(0).allocations;
     smaller              = a.realloc(pointer, 3).try();
     smaller.same(pointer).ensure(AllocError.OutOfMemory).try();
     (pool.read(0).allocations == original_allocations).ensure(AllocError.OutOfMemory).try();
     larger = a.realloc(smaller, 16).try();
-    Range(0, 8).loop((i) { (larger.read(i) == i.to_u64() + 10).ensure(AllocError.OutOfMemory).try(); });
+    Range<usize>(0, 8).loop((i) { (larger.read(i) == i.to_u64() + 10).ensure(AllocError.OutOfMemory).try(); });
     owned = pool.read(0).owned;
     a.realloc(larger, usize.MAX).match({Ok(_) => { Err(AllocError.OutOfMemory).try(); }, Err(_) => ()});
     (pool.read(0).owned == owned && larger.read(0) == 10 && larger.read(7) == 17).ensure(AllocError.OutOfMemory).try();
@@ -29,7 +29,7 @@ check = (a: Alloc, pool: Ptr<Pool>) Res<(), AllocError> {
     zero.same(larger).ensure(AllocError.OutOfMemory).try();
     a.free(zero); a.free(null_ptr<u8>());
     before = pool.read(0).allocations;
-    Range(0, 1000).loop((i) { reusable = a.realloc<u64>(null_ptr<u64>(), 16).try(); a.free(reusable); });
+    Range<usize>(0, 1000).loop((i) { reusable = a.realloc<u64>(null_ptr<u64>(), 16).try(); a.free(reusable); });
     (pool.read(0).allocations == before && pool.read(0).reuses >= 1000).ensure(AllocError.OutOfMemory).try();
     Ok(())
 }
@@ -55,7 +55,7 @@ main = (env: Env) Res<i32, AllocError> {
         policy: PoolPolicy(cache_bytes: 0, block_bytes: 0, blocks: 0)
     );
     before   = pool.read(0).allocations;
-    Range(0, 10).loop((i) { pointer = uncached.raw(32, 8).try(); uncached.free(pointer); });
+    Range<usize>(0, 10).loop((i) { pointer = uncached.raw(32, 8).try(); uncached.free(pointer); });
     state = pool.read(0);
     (state.allocations == before + 10 && state.cached == 0 && state.owned == 0).ensure(
         AllocError.OutOfMemory

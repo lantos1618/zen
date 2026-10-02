@@ -29,7 +29,7 @@ select_control = (out: Ptr<u64>, a: [u64, 4], az: [u64, 4], b: [u64, 4], bz: [u6
     r ::= [a[0] *% a[1], a[1] *% a[2], a[2] *% a[3], a[3] *% a[0]];
     r = control_select(r, b, control_is_zero(bz));
     r = control_select(r, az, control_is_zero(a));
-    Range(0, 4).loop((i) { out.write(i, r[i]); });
+    Range<usize>(0, 4).loop((i) { out.write(i, r[i]); });
 }
 
 main = (env: Env) Res<(), AllocError> {

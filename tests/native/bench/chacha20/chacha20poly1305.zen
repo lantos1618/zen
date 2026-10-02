@@ -82,7 +82,7 @@ chacha20poly1305_open* = (
             authenticate(scratch, aad, aad_count, ciphertext, count);
             tag = scratch.offset(38).to<u8>();
             different :: u32 = 0;
-            Range(0, 16).loop((i) {
+            Range<usize>(0, 16).loop((i) {
                 different = different +% tag.read(i).to_u32().bit_xor(ciphertext.read(count + i).to_u32());
             });
             (different == 0).match({
@@ -135,35 +135,35 @@ quarter = (v: Ptr<u32>, a: usize, b: usize, c: usize, d: usize) {
 block = (scratch: Ptr<u64>, counter: u32) {
     v = scratch.to<u32>(); initial = scratch.offset(8).to<u32>();
     initial.write(12, counter);
-    Range(0, 16).loop((i) { v.write(i, initial.read(i)); });
-    Range(0, 10).loop((round) {
+    Range<usize>(0, 16).loop((i) { v.write(i, initial.read(i)); });
+    Range<usize>(0, 10).loop((round) {
         quarter(v, 0, 4, 8, 12); quarter(v, 1, 5, 9, 13);
         quarter(v, 2, 6, 10, 14); quarter(v, 3, 7, 11, 15);
         quarter(v, 0, 5, 10, 15); quarter(v, 1, 6, 11, 12);
         quarter(v, 2, 7, 8, 13); quarter(v, 3, 4, 9, 14);
     });
     output = scratch.offset(16).to<u8>();
-    Range(0, 16).loop((i) { store(output.offset(i * 4), (v.read(i) +% initial.read(i)).to_u64(), 4); });
+    Range<usize>(0, 16).loop((i) { store(output.offset(i * 4), (v.read(i) +% initial.read(i)).to_u64(), 4); });
 }
 initialize = (scratch: Ptr<u64>, key: Ptr<u8>, nonce: Ptr<u8>) {
     initial = scratch.offset(8).to<u32>();
     initial.write(0, 1634760805); initial.write(1, 857760878);
     initial.write(2, 2036477234); initial.write(3, 1797285236);
-    Range(0, 8).loop((i) { initial.write(4 + i, load32(key, i * 4)); });
-    Range(0, 3).loop((i) { initial.write(13 + i, load32(nonce, i * 4)); });
+    Range<usize>(0, 8).loop((i) { initial.write(4 + i, load32(key, i * 4)); });
+    Range<usize>(0, 3).loop((i) { initial.write(13 + i, load32(nonce, i * 4)); });
     block(scratch, 0);
     one_time = scratch.offset(16).to<u8>();
     // RFC clamp: high four bits of bytes3,7,11,15; low two of4,8,12.
-    Range(0, 4).loop((i) { one_time.write(3 + 4 * i, byte(one_time.read(3 + 4 * i).to_u64().bit_and(15))); });
-    Range(1, 4).loop((i) { one_time.write(4 * i, byte(one_time.read(4 * i).to_u64().bit_and(252))); });
+    Range<usize>(0, 4).loop((i) { one_time.write(3 + 4 * i, byte(one_time.read(3 + 4 * i).to_u64().bit_and(15))); });
+    Range<usize>(1, 4).loop((i) { one_time.write(4 * i, byte(one_time.read(4 * i).to_u64().bit_and(252))); });
     p = scratch.offset(24);
     p.write(0, load32(one_time, 0).to_u64() % 67108864);
     p.write(1, load32(one_time, 3).to_u64() / 4 % 67108864);
     p.write(2, load32(one_time, 6).to_u64() / 16 % 67108864);
     p.write(3, load32(one_time, 9).to_u64() / 64 % 67108864);
     p.write(4, load32(one_time, 12).to_u64() / 256);
-    Range(0, 5).loop((i) { p.write(5 + i, 0); });
-    Range(0, 4).loop((i) { p.write(10 + i, load32(one_time, 16 + i * 4).to_u64()); });
+    Range<usize>(0, 5).loop((i) { p.write(5 + i, 0); });
+    Range<usize>(0, 4).loop((i) { p.write(10 + i, load32(one_time, 16 + i * 4).to_u64()); });
 }
 stream_xor = (
     scratch : Ptr<u64>,
@@ -213,7 +213,7 @@ poly_padded = (p: Ptr<u64>, buffer: Ptr<u8>, input: Ptr<u8>, count: usize) {
         (loop) { poly_block(p, input.offset(offset)); offset = offset + 16; }
     );
     (count != offset).then(() {
-        Range(0, 16).loop((i) { buffer.write(i, 0); });
+        Range<usize>(0, 16).loop((i) { buffer.write(i, 0); });
         Range(0, count - offset).loop((i) { buffer.write(i, input.read(offset + i)); });
         poly_block(p, buffer);
     });

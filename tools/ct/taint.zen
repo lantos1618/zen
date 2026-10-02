@@ -874,7 +874,7 @@ analyze* = (
             an.states.add(dead_state(a)).try();
         });
     });
-    rounds ::= 0;
+    rounds :: usize = 0;
     loop((h) {
         an.grew = false;
         an.pass(seed).try();
@@ -1510,7 +1510,7 @@ argument_reads* = (
                 an.states.add(dead_state(a)).try();
             });
         });
-        rounds ::= 0;
+        rounds :: usize = 0;
         loop((h) {
             an.grew = false;
             an.pass(seed).try();

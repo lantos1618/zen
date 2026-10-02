@@ -39,7 +39,7 @@ main = (env: Env) Res<(), AllocError> {
     baseline = Native.probe_fds();
     successful ::= false;
     failed     ::= 0;
-    Range(0, 32).loop((allowance) {
+    Range<usize>(0, 32).loop((allowance) {
         remaining.ptr().write(0, allowance);
         refused.ptr().write(0, false);
         resolve_addr(failing, HOST).match({

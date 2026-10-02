@@ -6,12 +6,12 @@
 // fixed order, so the same names always produce the same text.
 { Res, Ok, Err, None, loop, Range } = std.core
 { scan, Source } = std.lex
-{ Parser } = std.parse
+{ Parser, module } = std.parse
 { Decl } = std.ast
 { Alloc, AllocError } = std.mem
 { Vec } = std.collections
 { str, String } = std.text
-Missing = imports_report
+{ Missing } = imports_report
 
 // Modules first in this order, then any other in the order first reported.
 MODULE_ORDER: [str, 7] = [str, 7](
@@ -191,7 +191,12 @@ opening_of = (a: Alloc, src: str, d: Decl) Res<Res<Opening>, AllocError> {
             None    => Ok(None),
             Ok(cut) => {
                 names ::= a.Vec<str>();
-                cut.before.split(',').loop((piece) {
+                inner = cut.before.trim().value_or("");
+                listed = (inner.starts_with("{") && inner.ends_with("}")).match({
+                    true  => inner.slice(1, inner.len - 1),
+                    false => inner,
+                });
+                listed.split(',').loop((piece) {
                     piece.trim().match({
                         None  => (),
                         Ok(n) => names.add(n).try(),
@@ -421,10 +426,11 @@ line_count = (s: str) usize { s.count("\n") }
 module_line = (names: Vec<str>, module: str, out :: String)
               Res<usize, AllocError> {
     lines ::= 1;
-    width :: usize = 0;
+    out.add("{ ").try();
+    width :: usize = 2;
     names.loop((h, i, n) {
         last  = i + 1 == names.len;
-        piece = n.len + last.match({ true => 3 + module.len, false => 1 });
+        piece = n.len + last.match({ true => 5 + module.len, false => 1 });
         (i > 0).then(() {
             (width + 1 + piece > WIDTH).match({
                 true  => {
@@ -439,7 +445,7 @@ module_line = (names: Vec<str>, module: str, out :: String)
             });
         });
         out.add(n).try();
-        out.add(last.match({ true => " = ", false => "," })).try();
+        out.add(last.match({ true => " } = ", false => "," })).try();
         width = width + piece;
     });
     out.add(module).try();

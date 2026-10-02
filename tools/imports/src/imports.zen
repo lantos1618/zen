@@ -36,7 +36,7 @@
 { println } = std.io
 { Missing, missing_in } = imports_report
 { insert_imports, Edited, EditError } = imports_edit
-shift_positions = imports_expected
+{ shift_positions } = imports_expected
 
 Cli = {
     zen:      str,

@@ -481,7 +481,12 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
 }
 
 write_missing_import = (out :: String, f: ExportFault) Res<(), AllocError> {
-    out.fmt(" `{}` is not imported; add `{} = {}`", f.name, f.name, f.module)
+    out.fmt(
+        " `{}` is not imported; add `{{ {} }} = {}`",
+        f.name,
+        f.name,
+        f.module
+    )
 }
 
 write_name = (out :: String, f: NameFault) Res<(), AllocError> {

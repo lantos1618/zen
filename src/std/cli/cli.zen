@@ -167,7 +167,7 @@ Matches*<T> = {
 
     // The last value given for `arg`.
     text* = (self: @Self, arg: Arg) Res<str> {
-        last: Res<str> ::= None;
+        last :: Res<str> = None;
         self.found.loop(
             (f) { (f.arg.at == arg.at).then(() { last = Ok(f.text); }); }
         );

@@ -562,19 +562,19 @@ emits_source = (id: BuildId) bool {
 
 source_cli = (a: Alloc, model: Command<BuildId>, parsed: Matches<BuildId>)
              Res<Cli, AllocError> {
-    root                  ::= "";
-    out                   ::= "";
-    dir                   ::= "";
-    emit                  ::= false;
-    entry                 ::= "";
-    std_root              ::= "";
-    symbol_map            ::= "";
-    ffi                   ::= false;
-    target                ::= "";
-    permute               ::= "";
-    profiled              ::= "";
-    repeat: usize         ::= 1;
-    backend: Res<Codegen> ::= None;
+    root       ::= "";
+    out        ::= "";
+    dir        ::= "";
+    emit       ::= false;
+    entry      ::= "";
+    std_root   ::= "";
+    symbol_map ::= "";
+    ffi        ::= false;
+    target     ::= "";
+    permute    ::= "";
+    profiled   ::= "";
+    repeat     :: usize = 1;
+    backend    :: Res<Codegen> = None;
     parsed.found.loop((f) {
         line = f.origin.match({ Line => true, _ => false });
         f.id.match({
@@ -834,8 +834,8 @@ lsp_cli = (env: Env, a: Alloc, argv: Vec<str>, at: usize) Res<Cli, AllocError> {
     settled(a, model, parsed, false).try().match({
         Ok(early) => Ok(early),
         None      => {
-            requests: Res<str> ::= None;
-            replies: Res<str>  ::= None;
+            requests :: Res<str> = None;
+            replies  :: Res<str> = None;
             parsed.found.loop((f) {
                 f.id.match({
                     Stdio    => (),
@@ -871,7 +871,7 @@ help_cli = (
         Ok(early) => Ok(early),
         None      => {
             root = tool(a).try();
-            topic: Res<str> ::= None;
+            topic :: Res<str> = None;
             parsed.found.loop(
                 (f) { f.id.match({ Topic => { topic = Ok(f.text); } }); }
             );

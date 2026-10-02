@@ -300,6 +300,28 @@ World* = {
         self.prelude_index().match({ Ok(_) => true, None => false })
     }
 
+    // The shortest module path that exports `name`, re-exports included:
+    // the import a bare use of the name is missing. None when no module
+    // exports it.
+    importable_from* = (self: @Self, name: str) Res<Res<str>, AllocError> {
+        best: Res<str> ::= None;
+        Range(0, self.tables.len).loop((h, mi) {
+            found ::= self.alloc.Vec<Def>();
+            self.exported_defs(mi, name, found).try();
+            (found.len > 0).then(() {
+                path = module_display(self.name_at(mi));
+                best = best.match({
+                    None    => Ok(path),
+                    Ok(was) => path.reads_shorter(was).match({
+                        true  => Ok(path),
+                        false => Ok(was),
+                    }),
+                });
+            });
+        });
+        Ok(best)
+    }
+
     // Whether `name`, read in module `mi`, resolves to the declaration the
     // prelude exports as `exported`. A module's own declaration or import of
     // the same name is a different type and answers false.
@@ -918,6 +940,13 @@ enum_has_variant = (tree: Ast, d: Def, name: str) bool {
 has_variant* = (e: Enum, name: str) bool {
     e.variants.find((v) { v.name.text.eq(name) })
         .match({ Ok(_) => true, None => false })
+}
+
+// Fewer segments first, then fewer bytes: `std.text` over
+// `std.text.text_num`.
+reads_shorter = (path: str, other: str) bool {
+    (path.count(".") < other.count("."))
+        || (path.count(".") == other.count(".") && path.len < other.len)
 }
 
 module_display* = (name: str) str {

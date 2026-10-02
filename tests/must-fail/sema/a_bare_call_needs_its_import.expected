@@ -1,0 +1,2 @@
+a bare name is visible only through an import: `parse_i32` is not imported; add `parse_i32 = std.text`
+12:9

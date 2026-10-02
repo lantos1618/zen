@@ -96,8 +96,8 @@ CallSite = {
         self.only(be, name, found, want, out)
     }
 
-    // Use the same travelled-function pool as sema. Dot form reads the
-    // receiver; free UFCS form reads argument zero.
+    // Use the same travelled-function pool as sema: only the dot form
+    // travels, through the receiver's type.
     add_travelled = (self: @Self, be :: CBackend, name: str,
                      found :: Vec<Def>) Res<(), AllocError> {
         self.recv.match({
@@ -107,10 +107,7 @@ CallSite = {
                 rty     = be.materialize_literal(raw).try();
                 be.travelled_for_type(name, rty, found)
             },
-            None  => self.c.args.get(0).match({
-                None  => Ok(()),
-                Ok(a) => be.travelled_for(name, a.value, self.ctx, found),
-            }),
+            None  => Ok(()),
         })
     }
 
@@ -962,18 +959,6 @@ lower_plain_call* = (
                     Res<(), AllocError> {
     s = CallSite(id: id, c: c, recv: recv, ctx: ctx);
     s.resolve(be, name, want, out)
-}
-
-travelled_for = (
-    be    :: CBackend,
-    name  : str,
-    r     : ExprId,
-    ctx   : Ctx,
-    found :: Vec<Def>
-) Res<(), AllocError> {
-    unknown = be.check.types.unknown().try();
-    rty     = be.ty_of(r, ctx, unknown).try();
-    be.travelled_for_type(name, rty, found)
 }
 
 travelled_for_type = (

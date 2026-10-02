@@ -8,7 +8,7 @@ Range = std.core
 DeclId = sema.sema_id
 TyId, TyFn, TyNamed, literal_default, is_integer = sema.sema_ty
 Def, decl_at = sema.sema_def
-SemaFault, NameFault, TypeFault, PairFault = sema.sema_diag
+SemaFault, NameFault, TypeFault, PairFault, ExportFault = sema.sema_diag
 Checker, Ctx, CheckedCall, CallSignature, CallResolution = sema.sema_check
 refuse_handle_argument = sema.sema_handle
 meta_refused = sema.sema_meta
@@ -181,15 +181,9 @@ CallCheck = {
         cands ::= c.alloc.Vec<Cand>();
         c.cands_of(self.ctx.module, name, cands).try();
         visible = cands.len;
+        // Only a dot travels: `x.f(..)` reaches the exported functions
+        // that take `x`'s type, and a bare `f(x)` sees the names in scope.
         c.travelled_cands(name, recv, cands).try();
-        // Free-form UFCS also considers argument zero as the receiver.
-        recv.match({
-            Ok(_) => Ok(()),
-            None  => actuals.get(0).match({
-                None  => Ok(()),
-                Ok(a) => c.travelled_cands(name, Ok(a.ty), cands),
-            }),
-        }).try();
         self.first_matching(c, cands, actuals).try().match({
             Ok(k) => {
                 self.refuse_travelled_tie(c, name, cands, visible, k).try();
@@ -287,11 +281,7 @@ CallCheck = {
                     None      => false,
                 });
                 (variants.len == 0 && !imported).then(() {
-                    c.report(
-                        self.node.span.file,
-                        self.node.span,
-                        SemaFault.UndefinedName(NameFault(name: name))
-                    ).try();
+                    c.undefined_or_unimported(self.node.span, name).try();
                 });
                 Ok(())
             },
@@ -1018,6 +1008,24 @@ print_type = (c :: Checker, call: Call) Res<TyId, AllocError> {
 }
 
 is_print_sugar = (name: str) bool { name.eq("println") || name.eq("print") }
+
+// A bare name another module exports is named with the import that would
+// bind it; any other is undefined.
+undefined_or_unimported* = (c :: Checker, at: Span, name: str)
+                           Res<(), AllocError> {
+    c.world.importable_from(name).try().match({
+        Ok(module) => c.report(
+            at.file,
+            at,
+            SemaFault.NotImported(ExportFault(name: name, module: module))
+        ),
+        None       => c.report(
+            at.file,
+            at,
+            SemaFault.UndefinedName(NameFault(name: name))
+        ),
+    })
+}
 
 // `Ok(..)` and `Err(..)` construct a `Res` when the name resolves to the
 // prelude's variant: a local, a declaration or an import of the same name

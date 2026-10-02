@@ -16,7 +16,7 @@ alias_module, module_not_a_value = sema.sema_module
 match_type = sema.sema_match
 access_type, computed_member = sema.sema_member
 variant_type = sema.sema_static
-call_type = sema.sema_call
+call_type, undefined_or_unimported = sema.sema_call
 meta_type = sema.sema_meta
 meta_refused, walk_name, walk_projection_type = sema.sema_meta
 WalkName = sema.sema_meta
@@ -213,11 +213,7 @@ bare_variant_type = (c :: Checker, d: Def, text: str)
 
 unresolved_name = (c :: Checker, node: Expr, text: str)
                   Res<TyId, AllocError> {
-    c.report(
-        node.span.file,
-        node.span,
-        SemaFault.UndefinedName(NameFault(name: text))
-    ).try();
+    c.undefined_or_unimported(node.span, text).try();
     c.types.unknown()
 }
 

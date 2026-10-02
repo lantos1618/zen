@@ -50,6 +50,7 @@ SemaFault* =
     // resolution
       UndefinedName(NameFault)         // no binding of this name is in scope
     | NotExported(ExportFault)         // the name exists; `*` does not
+    | NotImported(ExportFault)         // another module exports it; nothing here imports it
     | NotWritable(ExportFault)         // `*` on a field grants reading, never writing
     | ModuleNotAValue(ExportFault)     // a module is a namespace, not a value
     | NoSuchField(TypeFault)           // the type has no member of that name
@@ -192,6 +193,7 @@ message* = (fault: SemaFault) str {
     fault.match({
         UndefinedName(_)             => "undefined name: no binding of this name is in scope",
         NotExported(_)               => "a name crosses a module boundary only with `*`",
+        NotImported(_)               => "a bare name is visible only through an import",
         NotWritable(_)               => "`*` on a field means readable outside the module: mutation goes through exported methods",
         ModuleNotAValue(_)           => "a module is only usable qualified",
         NoSuchField(_)               => "a member is resolved on the receiver's type, so a name declared on another type is not a candidate",
@@ -300,6 +302,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
     fault.match({
         UndefinedName(f)             => out.write_name(f),
         NotExported(f)               => out.write_export(f),
+        NotImported(f)               => out.write_import_fix(f),
         NotWritable(f)               => out.write_unwritable(f),
         ModuleNotAValue(f)           => out.write_module(f),
         NoOverload(f)                => out.write_name(f),
@@ -616,6 +619,16 @@ write_under_view = (out :: String, f: CaptureFault) Res<(), AllocError> {
     out.write_at(f.at).try();
     out.add(
         " — the record keeps that address, so after the move it points at the moved-from place; move the owner first and build the bound from its new home"
+    ).try();
+    Ok(());
+}
+
+write_import_fix = (out :: String, f: ExportFault) Res<(), AllocError> {
+    out.fmt(
+        ": `{}` is not imported; add `{} = {}`",
+        f.name,
+        f.name,
+        f.module
     ).try();
     Ok(());
 }

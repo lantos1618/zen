@@ -109,7 +109,6 @@ Fmt = {
 
 format* = (env: Env, alloc: Alloc, job: FmtJob) Res<i32, AllocError> {
     run ::= Fmt(env: env, alloc: alloc, check: job.check);
-    paths = job.paths(alloc).try();
-    paths.loop((h, path) { run.one(path).try() });
-    run.verdict(paths.len)
+    job.paths.loop((h, path) { run.one(path).try() });
+    run.verdict(job.paths.len)
 }

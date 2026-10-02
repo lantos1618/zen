@@ -1,9 +1,9 @@
 check src/library entry=library.zen emit=false ffi=false
 check src/library entry= emit=false ffi=true
-usage `--emit-c`
-usage `-o`
-usage `--entry`
-usage ``
+usage unknown option `--emit-c` for `zen check`
+usage unknown option `-o` for `zen check`
+usage option `--entry` requires a value
+usage required argument `ROOT` is missing
 help true false
 valid 0
 library.zen:1:12: undefined name: no binding of this name is in scope `Missing`

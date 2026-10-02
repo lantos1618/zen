@@ -22,10 +22,9 @@ str*, String*, replace_once*, dup*, truncate_with*,
 // Entry has no star: collections are sealed
 Vec*, Map*, OutOfBounds* = std.collections
 
-// typed command-line declaration and scanning
-Spec*, Item*, Options*, Args*, options*, is_flag*, is_word*, arg_at*, OPTIONS_END* = std.cli
-ValueType*, ParameterKind*, CliValue*, DiagnosticKind*, Diagnostic* = std.cli
-Parameter*, Match*, Matches*, Command*, command* = std.cli
+// declarative command lines: one declaration drives parsing and help
+Command*, command*, Spec*, Kind*, Arg*, Origin*, Found*, Picked*, Matches*,
+    Usage*, Problem*, Fault* = std.cli
 
 // JSON values are read in an arena. Nest writes dynamic document shapes;
 // to_json encodes typed records with the same escaping and number writers.
@@ -49,7 +48,7 @@ TestError*, Tester*, Bencher*, BenchStats* = std.test
 BuildError*, BuildFault*, Package*, Builder*, Budget* = std.build
 Os*, Arch*, Abi*, StableName*, Target*, Dep*, Exe*, Lib*, Extern*, CImport* = std.build
 Test*, Bench* = std.build
-Codegen*, Emission*, Permutation*, BuildArgs*, ProjectArgs*, BuildFlags*, BuildFlag*, BuildArgFault* = std.build
+Codegen*, Emission*, Permutation*, BuildArgs*, ProjectArgs*, Mode* = std.build
 
 // actors: address, turn context, receive protocol, send and start refusal
 Actor*, Ref*, ActorError*, ActorStartError*, Context*, Receive* = std.actor

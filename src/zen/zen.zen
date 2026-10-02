@@ -5,37 +5,66 @@ str, String = std.text
 FsError = std.env
 BuildArgs, ProjectArgs = std.build
 
-Cli*, FmtJob*, cli*, USAGE, help = zen.zen_cli
+Cli*, FmtJob*, LspJob*, Refusal*, cli*, help = zen.zen_cli
 Build* = zen.zen_build
 fs_message = std.env
-std_root_for = zen.zen_path
+std_root_for, holds_std = zen.zen_path
 build* = zen.zen_run
 project, Action = zen.zen_project
 format = zen.zen_fmt
 Server, serve, serve_stdio = lsp
-arg_at = std.cli
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
     cli(env, alloc, env.argv).try().match({
-        Build(job)               => build_cli(env, alloc, job),
-        Project(job)             => project_cli(env, alloc, job, Action.Build),
-        Run(job)                 => project_cli(env, alloc, job, Action.Run),
-        Test(job)                => project_cli(env, alloc, job, Action.Test),
-        Fmt(job)                 => format(env, alloc, job),
-        Later(name)              => later(env, alloc, name),
-        Version(v)               => {
+        Build(job)       => build_cli(env, alloc, job),
+        Project(job)     => project_cli(env, alloc, job, Action.Build),
+        Run(job)         => project_cli(env, alloc, job, Action.Run),
+        Test(job)        => project_cli(env, alloc, job, Action.Test),
+        Fmt(job)         => format(env, alloc, job),
+        Lsp(job)         => lsp(env, alloc, job),
+        Version(v)       => {
             println("zen {}", v);
             Ok(0)
         },
-        Usage(word)              => usage(alloc, word),
-        Missing(flag)            => missing(alloc, flag),
-        UnavailableBackend(name) => {
-            println(
-                "zen: backend `{}` is unavailable; available backends: c, js, asm",
-                name
-            );
-            Ok(2)
+        Help(text)       => {
+            print("{}", text.view());
+            Ok(0)
+        },
+        Refused(refusal) => usage(env, refusal),
+    })
+}
+
+// Exit 2: a usage error is not a build failure. The message and the help of
+// the command it addressed go to standard error.
+usage = (env: Env, refusal: Refusal) Res<i32, AllocError> {
+    (!refusal.message.view().is_empty()).then(() {
+        env.out.errorln("zen: {}\n", refusal.message.view()).ignore();
+    });
+    env.out.error("{}", refusal.help.view()).ignore();
+    Ok(2)
+}
+
+// The standard library every command compiles against. None has already
+// explained what is missing.
+standard_library = (env: Env, a: Alloc, given: str) Res<str> {
+    root = given.is_empty().match({ true => std_root_for(
+        env,
+        a
+    ), false => given });
+    (!root.is_empty() && holds_std(env, a, root)).match({
+        true  => Ok(root),
+        false => {
+            root.is_empty().match({
+                true  => println(
+                    "zen: standard library not found; set ZEN_STD or install std next to the zen binary"
+                ),
+                false => println(
+                    "zen: standard library not found at `{}`: it holds no std/std.zen; set ZEN_STD to the directory that does",
+                    root
+                ),
+            });
+            None
         },
     })
 }
@@ -43,23 +72,34 @@ main = (env: Env) Res<i32, AllocError> {
 // Project configuration and its resolved paths share the caller allocation.
 project_cli = (env: Env, a: Alloc, job: ProjectArgs, action: Action)
               Res<i32, AllocError> {
-    std_root   = std_root_for(env, a);
-    configured = ProjectArgs(
-        root: job.root,
-        target: job.target,
-        std_root: std_root,
-        argv: job.argv,
-        args_at: job.args_at
-    );
-    project(env, a, configured, action)
+    standard_library(env, a, job.std_root).match({
+        None         => Ok(1),
+        Ok(std_root) => project(
+            env,
+            a,
+            ProjectArgs(
+                root: job.root,
+                target: job.target,
+                std_root: std_root,
+                argv: job.argv,
+                args_at: job.args_at,
+                mode: job.mode,
+                verbose: job.verbose,
+                cc: job.cc,
+                triple: job.triple
+            ),
+            action
+        ),
+    })
 }
 
 build_cli = (env: Env, a: Alloc, job: BuildArgs) Res<i32, AllocError> {
-    job.std_root.is_empty().match({
-        false => build(env, a, job),
-        true  => {
-            std_root   = std_root_for(env, a);
-            configured = BuildArgs(
+    standard_library(env, a, job.std_root).match({
+        None         => Ok(1),
+        Ok(std_root) => build(
+            env,
+            a,
+            BuildArgs(
                 root: job.root,
                 emission: job.emission,
                 backend: job.backend,
@@ -68,60 +108,20 @@ build_cli = (env: Env, a: Alloc, job: BuildArgs) Res<i32, AllocError> {
                 symbol_map: job.symbol_map,
                 ffi: job.ffi,
                 repeat: job.repeat,
-                permute: job.permute
-            );
-            build(env, a, configured)
-        },
+                permute: job.permute,
+                target: job.target
+            )
+        ),
     })
-}
-
-later = (env: Env, alloc: Alloc, name: str) Res<i32, AllocError> {
-    name.eq("lsp").match({
-        true  => lsp(env, alloc),
-        false => not_yet(name),
-    })
-}
-
-not_yet = (name: str) Res<i32, AllocError> {
-    println(
-        "zen {}: not yet — see docs/PLAN.md for the stage it arrives at",
-        name
-    );
-    Ok(2);
 }
 
 // `zen lsp` serves standard I/O; `zen lsp <requests> <replies>` serves the
-// same session over two files for transport tests. `--stdio` is accepted.
-lsp = (env: Env, a: Alloc) Res<i32, AllocError> {
-    from = file_arg(env, 2);
-    to   = file_arg(env, 3);
-    from.is_empty().match({
-        true  => serve_stdio(env, a),
-        false => paired(env, a, from, to),
+// same session over two files for transport tests.
+lsp = (env: Env, a: Alloc, job: LspJob) Res<i32, AllocError> {
+    job.requests.match({
+        None     => serve_stdio(env, a),
+        Ok(from) => answer(env, a, from, job.replies.value_or("")),
     })
-}
-
-// A request file without a reply file is a usage error.
-paired = (env: Env, a: Alloc, from: str, to: str) Res<i32, AllocError> {
-    to.is_empty().match({
-        true  => lsp_usage(),
-        false => answer(env, a, from, to),
-    })
-}
-
-// A transport word is not a file name.
-file_arg = (env: Env, i: usize) str {
-    word = arg_at(env.argv, i);
-    word.eq("--stdio").match({ true => "", false => word })
-}
-
-lsp_usage = () Res<i32, AllocError> {
-    println("zen lsp                       the language server, over stdin and stdout");
-    println(
-        "zen lsp <requests> <replies>  the same server over two files, which is"
-    );
-    println("                              what tests/corpus/lsp drives");
-    Ok(2);
 }
 
 answer = (env: Env, a: Alloc, from: str, to: str) Res<i32, AllocError> {
@@ -147,32 +147,6 @@ unreadable = (path: str, e: FsError) Res<i32, AllocError> {
 }
 
 unwritable = (path: str, e: FsError) Res<i32, AllocError> {
-    println("zen lsp: -o {}: {}", path, fs_message(e));
+    println("zen lsp: {}: {}", path, fs_message(e));
     Ok(1);
-}
-
-// Exit 2: a usage error is not a build failure.
-usage = (a: Alloc, word: str) Res<i32, AllocError> {
-    requested    = word.starts_with("@help/");
-    command_name = requested.match({
-        true  => word.slice(6, word.len).match({ "root" => "", _ => word.slice(6, word.len) }),
-        false => "",
-    });
-    text         = help(a, command_name).try();
-    (word.is_empty() || requested).match({
-        true  => println("{}", text.view()),
-        false => println("zen: unknown argument `{}`\n{}", word, text.view()),
-    });
-    requested.match({ true => Ok(0), false => Ok(2) });
-}
-
-missing = (a: Alloc, flag: str) Res<i32, AllocError> {
-    text = help(a, "build").try();
-    println(
-        "zen build: `{}` is required — a build with no `{}` writes nothing\n{}",
-        flag,
-        flag,
-        text.view()
-    );
-    Ok(2);
 }

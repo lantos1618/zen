@@ -1,9 +1,9 @@
-usage `--entry`
-usage `-o`
-usage `--emit-c-dir`
-usage `--std`
-usage `--symbol-map`
-usage `--repeat`
-usage `--permute`
-usage `--backend`
+usage option `--entry` requires a value
+usage option `-o` requires a value
+usage option `--emit-c-dir` requires a value
+usage option `--std` requires a value
+usage option `--symbol-map` requires a value
+usage option `--repeat` requires a value
+usage option `--permute` requires a value
+usage option `--backend` requires a value
 build root=src entry=main.zen out=out.c symbols=out.sym ffi=true

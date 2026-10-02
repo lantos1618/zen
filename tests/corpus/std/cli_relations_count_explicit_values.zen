@@ -1,0 +1,62 @@
+// Defaults satisfy `required` but never trigger or satisfy a relation; a value
+// from the environment counts as given.
+
+Vec = std.collections
+Command, command, Spec, Matches = std.cli
+
+Id = Mode | Json | Upload | Output | Home
+
+main = (env: Env) Res<i32, AllocError> {
+    a     ::= env.mem.alloc();
+    model ::= command<Id>(a, "tool", "");
+    mode   = model.option(Id.Mode, "--mode", Spec(default: "human")).try();
+    json   = model.flag(Id.Json, "--json", Spec()).try();
+    upload = model.flag(Id.Upload, "--upload", Spec()).try();
+    output = model.option(
+        Id.Output,
+        "--output",
+        Spec(env: "CLI_TEST_OUTPUT")
+    ).try();
+    model.option(Id.Home, "--home", Spec(env: "CLI_TEST_UNSET")).try();
+    model.conflicts(json, mode).try();
+    model.requires(upload, output).try();
+
+    show(a, model, model.parse(env, line(a, "--json").try(), 1).try()).try();
+    show(
+        a,
+        model,
+        model.parse(env, line(a, "--mode compact --json").try(), 1).try()
+    ).try();
+    show(a, model, model.parse(env, line(a, "--upload").try(), 1).try()).try();
+    show(
+        a,
+        model,
+        model.parse(env, line(a, "--upload --output artifact").try(), 1).try()
+    ).try();
+    Ok(0)
+}
+
+show = (a: Alloc, model: Command<Id>, parsed: Matches<Id>) Res<(), AllocError> {
+    parsed.problem.match({
+        Ok(usage) => {
+            message = usage.message(a, model.name).try();
+            println("error: {}", message.view());
+        },
+        None      => {
+            out ::= a.String().try();
+            parsed.found.loop((f) {
+                origin = f.origin.match({ Line => "line", Variable => "env", Default => "default" });
+                out.fmt(" {}={}", f.text, origin).try();
+            });
+            println("ok{}", out.view());
+        },
+    });
+    Ok(())
+}
+
+line = (a: Alloc, words: str) Res<Vec<str>, AllocError> {
+    argv ::= a.Vec<str>();
+    argv.add("tool").try();
+    words.split(' ').loop((word) { argv.add(word).try(); });
+    Ok(argv)
+}

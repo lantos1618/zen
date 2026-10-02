@@ -55,7 +55,8 @@ module_name* = (a: Alloc, root: str, path: str) Res<str, AllocError> {
 }
 
 // Resolve the standard-library root for an embedded driver. `ZEN_STD` wins;
-// otherwise an absolute program path may locate a sibling `src/std` tree.
+// otherwise the running compiler may sit beside a `src/std` tree, as `./zen`
+// does in a checkout. Empty means neither names a standard library.
 std_root_for* = (env: Env, a: Alloc) str {
     env.var(ZEN_STD_ENV).match({
         Ok(path) => path.is_empty().match({
@@ -68,25 +69,45 @@ std_root_for* = (env: Env, a: Alloc) str {
 
 std_root_beside_program = (env: Env, a: Alloc) str {
     found: Res<str> = loop<str>((h) {
-        program = env.argv.get(0).match({
-            None     => { h.break(""); "" },
-            Ok(path) => path,
-        });
-        dir     = Path(program).parent().value_or(Path("")).text;
-        dir.is_empty().then(() { h.break(""); });
-
-        root   = join_path(a, dir, "src").match({
-            Err(_)    => { h.break(""); "" },
-            Ok(value) => value.view(),
-        });
-        marker = join_path(a, root, "std/std.zen").match({
-            Err(_)    => { h.break(""); "" },
-            Ok(value) => value.view(),
-        });
-        (!env.fs.exists(marker)).then(() { h.break(""); });
-        h.break(root);
+        dir = Path(program_path(env, a)).parent().value_or(Path("")).text;
+        dir.is_empty().then(() { h.break(); });
+        root = join_path(
+            a,
+            dir,
+            "src"
+        ).match({ Err(_) => { h.break(); "" }, Ok(value) => value.view() });
+        holds_std(env, a, root).then(() { h.break(root); });
+        h.break();
     });
-    found.match({ Ok(root) => root, None => "" })
+    found.value_or("")
+}
+
+// Whether `root` holds a standard library.
+holds_std* = (env: Env, a: Alloc, root: str) bool {
+    join_path(a, root, "std/std.zen").match({
+        Err(_)     => false,
+        Ok(marker) => env.fs.exists(marker.view()),
+    })
+}
+
+// The running compiler: argv[0] when it names a path, otherwise its first
+// match on PATH. Empty when neither locates it.
+program_path* = (env: Env, a: Alloc) str {
+    name = env.argv.get(0).value_or("");
+    (name.is_empty() || name.contains('/')).match({
+        true  => name,
+        false => {
+            found: Res<str> = env.var("PATH").value_or("").split(':').loop((h, dir) {
+                (!dir.is_empty()).then(() {
+                    join_path(a, dir, name).match({
+                        Ok(path) => env.fs.exists(path.view()).then(() { h.break(path.view()); }),
+                        Err(_)   => (),
+                    });
+                });
+            });
+            found.value_or("")
+        },
+    })
 }
 
 // Infer an editor compilation root without climbing above `floor`. Folder

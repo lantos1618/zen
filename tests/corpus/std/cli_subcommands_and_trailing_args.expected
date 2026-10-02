@@ -1,0 +1,15 @@
+no command; help=false
+error: unknown command `wat` for `tool`
+deploy prod dry=true verbose=1 trailing=2
+error: unknown option `--bogus` for `tool deploy`
+Deploy a release
+
+Usage: tool deploy [OPTIONS] <NAME> [-- <ARGS>...]
+
+Arguments:
+  <NAME>         Release name
+
+Options:
+      --dry-run  Print what would change
+  -h, --help     Print help
+status

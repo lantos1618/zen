@@ -1,4 +1,4 @@
 stdout root=src repeat=1 permute=
 file out.c root=src repeat=3 permute=
 dir gen root=src
-missing --emit-c
+usage `--emit-c` is required: a source build without `--emit-c` or `--backend` writes nothing

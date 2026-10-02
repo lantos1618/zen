@@ -1,62 +1,55 @@
-Alloc, AllocError = std.mem
+// An option's value is the next word unless that word is itself an option;
+// numeric options also take negative numbers.
+
 Vec = std.collections
-str = std.text
-Command, command, Matches, ValueType = std.cli
+Command, command, Spec, Kind, Matches = std.cli
 
 Id = Text | Number | Unsigned | Other
 
 main = (env: Env) Res<i32, AllocError> {
     a     ::= env.mem.alloc();
     model ::= command<Id>(a, "tool", "");
-    model.option("--text", Id.Text, "TEXT", ValueType.Text, "").try();
-    model.option("--number", Id.Number, "N", ValueType.I32, "").try();
-    model.option("--unsigned", Id.Unsigned, "N", ValueType.Usize, "").try();
-    model.flag("--other", Id.Other, "").try();
+    model.option(Id.Text, "--text", Spec()).try();
+    model.option(Id.Number, "--number", Spec(kind: Kind.Signed)).try();
+    model.option(Id.Unsigned, "--unsigned", Spec(kind: Kind.Unsigned)).try();
+    model.flag(Id.Other, "--other", Spec()).try();
 
-    show(a, model.parse(line(a, "--text", "--other", "").try(), 1).try()).try();
-    show(a, model.parse(line(a, "--number", "-1", "").try(), 1).try()).try();
+    show(a, model.parse(env, line(a, "--text --other").try(), 1).try()).try();
+    show(a, model.parse(env, line(a, "--number -1").try(), 1).try()).try();
+    show(a, model.parse(env, line(a, "--number --other").try(), 1).try()).try();
+    show(a, model.parse(env, line(a, "--number=-1").try(), 1).try()).try();
+    show(a, model.parse(env, line(a, "--text=-x").try(), 1).try()).try();
+    show(a, model.parse(env, line(a, "--number=").try(), 1).try()).try();
+    show(a, model.parse(env, line(a, "--text --").try(), 1).try()).try();
+    show(a, model.parse(env, line(a, "--unsigned -1").try(), 1).try()).try();
     show(
         a,
-        model.parse(line(a, "--number", "--other", "").try(), 1).try()
-    ).try();
-    show(a, model.parse(line(a, "--number=-1", "", "").try(), 1).try()).try();
-    show(a, model.parse(line(a, "--text=-x", "", "").try(), 1).try()).try();
-    show(a, model.parse(line(a, "--number=", "", "").try(), 1).try()).try();
-    show(a, model.parse(line(a, "--text", "--", "").try(), 1).try()).try();
-    show(a, model.parse(line(a, "--unsigned", "-1", "").try(), 1).try()).try();
-    show(
-        a,
-        model.parse(line(a, "--unsigned", "--other", "").try(), 1).try()
+        model.parse(env, line(a, "--unsigned --other").try(), 1).try()
     ).try();
     Ok(0)
 }
 
 show = (a: Alloc, parsed: Matches<Id>) Res<(), AllocError> {
-    parsed.error.match({
-        Ok(diagnostic) => {
-            message = diagnostic.message(a).try();
+    parsed.problem.match({
+        Ok(usage) => {
+            message = usage.message(a, "tool").try();
             println("error: {}", message.view());
         },
-        None           => parsed.last("--text").match({
-            Ok(value) => println("text `{}`", value.raw),
-            None      => parsed.last("--number").match({
-                Ok(value) => println("number `{}`", value.raw),
-                None      => println("clean"),
-            }),
+        None      => parsed.found.loop((f) {
+            f.id.match({
+                Text     => println("text `{}`", f.text),
+                Number   => println("number `{}`", f.text),
+                Unsigned => println("unsigned `{}`", f.text),
+                Other    => println("other"),
+            });
         }),
     });
     Ok(())
 }
 
-line = (a: Alloc, one: str, two: str, three: str) Res<Vec<str>, AllocError> {
+line = (a: Alloc, words: str) Res<Vec<str>, AllocError> {
     argv ::= a.Vec<str>();
     argv.add("tool").try();
-    push(argv, one).try();
-    push(argv, two).try();
-    push(argv, three).try();
+    words.split(' ').loop((word) { argv.add(word).try(); });
     Ok(argv)
-}
-
-push = (argv :: Vec<str>, word: str) Res<(), AllocError> {
-    word.is_empty().match({ true => Ok(()), false => argv.add(word) })
 }

@@ -1,15 +1,13 @@
-invalid CLI declaration `--same`: duplicate name or alias
-invalid CLI declaration `--alpha`: duplicate name or alias
-invalid CLI declaration `--alpha`: duplicate name or alias
-invalid CLI declaration `--alpha`: duplicate name or alias
-invalid CLI declaration `--alpha`: duplicate name or alias
+invalid declaration of `--same`: its spelling is declared twice
+invalid declaration of `--beta`: its spelling is declared twice
+invalid declaration of `--alpha`: `-h` and `--help` are built in
+invalid declaration of `-a`: a long option starts with `--`
 clean
-invalid CLI declaration `--alpha`: conflict target is missing or self-referential
-invalid CLI declaration `--alpha`: dependency target is missing or self-referential
-invalid CLI declaration `--alpha`: switches cannot have defaults
-invalid CLI declaration `--count`: default does not match its value type
-invalid CLI declaration `input`: positionals cannot have aliases
-invalid CLI declaration `needed`: a required positional cannot follow an optional one
-invalid CLI declaration `later`: a positional cannot follow a repeatable one
-invalid CLI declaration `go`: duplicate subcommand name
-invalid CLI declaration `tool`: commands and root positionals are ambiguous
+invalid declaration of `--alpha`: a switch has no default
+invalid declaration of `--count`: its default is not a value it accepts
+invalid declaration of `--mode`: its default is not a value it accepts
+invalid declaration of `INPUT`: a positional is not spelled as an option
+invalid declaration of `NEEDED`: a required positional cannot follow an optional one
+invalid declaration of `LATER`: no positional can follow one that takes many values
+invalid declaration of `INPUT`: subcommands and positionals are ambiguous
+invalid declaration of `tool`: a relation must join two different arguments

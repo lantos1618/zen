@@ -116,24 +116,23 @@ prepare_packages = (
 
 // An empty selection means `zen build` builds every executable. `zen run`
 // requires one unambiguous target.
+Unselected = Unknown | Ambiguous | Empty
+
 select_exe = (planned: BuildPlan, named: str, execute: bool)
-             Res<Res<ExeNode>, str> {
+             Res<Res<ExeNode>, Unselected> {
     named.is_empty().match({
         false => planned.exes.find((exe) { exe.name.eq(named) }).match({
-            None      => Err("build.zen declares no such executable target"),
+            None      => Err(Unselected.Unknown),
             Ok(found) => Ok(Ok(found)),
         }),
-        true  => execute.match({
-            false => Ok(None),
-            true  => (planned.exes.len == 1).match({
-                false => Err(
-                    "zen run needs a target when build.zen declares zero or multiple executables"
-                ),
-                true  => planned.exes.get(0).match({
-                    None      => Err("build.zen declares no executable target"),
-                    Ok(found) => Ok(Ok(found)),
-                }),
-            }),
+        true  => (execute && planned.exes.len != 1).match({
+            true  => Err((planned.exes.len == 0).match({
+                true  => Unselected.Empty,
+                false => Unselected.Ambiguous,
+            })),
+            false => Ok(
+                execute.match({ true => planned.exes.get(0), false => None })
+            ),
         }),
     })
 }
@@ -166,7 +165,28 @@ Project = {
     execute_exes = (self: @Self, action: Action) Res<i32, AllocError> {
         run = action.match({ Run => true, _ => false });
         self.planned.select_exe(self.job.target, run).match({
-            Err(message) => { println("zen: {}", message); Ok(1) },
+            Err(why)     => {
+                names ::= self.a.String().try();
+                self.planned.exes.loop((h, i, exe) {
+                    (i > 0).then(() { names.add(", ").try(); });
+                    names.add(exe.name).try();
+                });
+                why.match({
+                    Unknown   => println(
+                        "zen: build.zen declares no executable target `{}`; its targets are: {}",
+                        self.job.target,
+                        names.view()
+                    ),
+                    Ambiguous => println(
+                        "zen run: name the target to run; build.zen declares {}",
+                        names.view()
+                    ),
+                    Empty     => println(
+                        "zen run: build.zen declares no executable target"
+                    ),
+                });
+                Ok(1)
+            },
             Ok(selected) => run.match({
                 true  => self.build_and_run(selected),
                 false => self.build_selected(selected),

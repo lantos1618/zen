@@ -26,6 +26,8 @@
 { settle_params } = gen.gen_lower_call
 { runtime_call } = gen.gen_lower_thread
 { actor_of_ref, actor_member } = gen.gen_lower_actor
+{ class_of } = gen.gen_lower_shape
+{ inst_of_named } = sema.sema_inst
 
 // How a member call reaches its body.
 Target = { Static: Callee | Dynamic: Bound }

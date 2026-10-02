@@ -27,6 +27,7 @@
 { SemaFault, NameFault, TypeFault } = sema.sema_diag
 { catch_all_named } = sema.sema_discriminant
 { forged_capability } = sema.sema_prim
+{ storage_seat_name } = sema.sema_supply
 
 construct* = (c :: Checker, id: ExprId, call: Call, d: Def, ctx: Ctx)
             Res<TyId, AllocError> {

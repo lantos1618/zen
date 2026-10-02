@@ -27,6 +27,7 @@
 { spelled_lambda, call_callee } = sema.sema_call
 { OwnCheck, call_stores, transfer_call_stores, actual, selected_summary } = sema.sema_store
 { append_path, strip_path, copy_allocation, Returned } = sema.sema_store
+{ decl_at } = sema.sema_def
 
 OwnVar* = {
     name*: str,

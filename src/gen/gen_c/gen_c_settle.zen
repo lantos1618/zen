@@ -30,6 +30,7 @@
 { range_element_type } = gen.gen_c.gen_c_range
 { inlines, spelled_lambda } = gen.gen_c.gen_c_inline
 { recv_of } = gen.gen_c.gen_c_shape
+{ self_ctx } = sema.sema_member
 
 // The receiver, if a ufcs call arrived through one, and then the
 // written arguments: `range.find(p)` and `find(range, p)` are one call

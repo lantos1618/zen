@@ -36,6 +36,11 @@
 { size_of, align_of, round_up, class_of, FieldAt } = gen.gen_lower_shape
 { Synth, std_call, std_function, enqueue_synth, begin_synth, finish_synth } = gen.gen_lower_thread
 { succeeded, is_null, byte_pointer, ok_payload } = gen.gen_lower_thread
+{ Inst } = sema.sema_inst
+{ def_type } = sema.sema_type
+{ is_drop_type } = sema.sema_drop
+{ ok_or } = std.core
+{ shape } = gen.gen_lower_shape
 
 // The generated record of one actor type.
 ActorLayout* = {

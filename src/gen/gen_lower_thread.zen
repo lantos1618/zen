@@ -31,6 +31,7 @@
 { ActorEntry, actor_function } = gen.gen_lower_actor
 { Source, argument_value, argument_place, sys_env_call, closure_of } = gen.gen_lower_call
 { pointee_of, payload_type } = gen.gen_lower_member
+{ real_call } = gen.gen_lower_call
 
 // ---------------------------------------------------------------------
 // std.sys runtime operations

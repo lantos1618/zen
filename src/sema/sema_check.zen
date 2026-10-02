@@ -21,6 +21,7 @@
 { Printer, IO_MODULE, printer_named } = sema.sema_print
 { OwnCheck, StoreEffects } = sema.sema_store
 { owning_copy_unsafe, mailbox_payload_unsafe, mailbox_byte_buffer } = sema.sema_copy
+{ decl_at } = sema.sema_def
 
 // One scoped name. Mutability feeds receiver/ownership checks, param feeds LSP
 // classification, and span identifies the original binding in diagnostics.

@@ -39,6 +39,7 @@
 { variant_index, size_of, TAG_BYTES } = gen.gen_lower_shape
 { call, construct_named, print_call, sys_env_call, Source, bits, bit_not } = gen.gen_lower_call
 { SynthAt, lower_pending } = gen.gen_lower_thread
+{ owner_of } = sema.sema_inst
 
 // A value computed into a slot, with its concrete (substituted) type.
 Value* = { slot*: usize, ty*: TyId }

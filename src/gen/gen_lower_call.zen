@@ -34,6 +34,7 @@
 { to_i64_bits } = gen.gen_lower_core
 { Shape, Form, FieldAt, VariantAt, shape, class_of, field_types } = gen.gen_lower_shape
 { variant_index, size_of } = gen.gen_lower_shape
+{ inst_of_named } = sema.sema_inst
 
 // One argument position after binding names and the receiver.
 Source* = { Given: ExprId | Absent | Computed: Value | Located: Place }

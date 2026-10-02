@@ -1,0 +1,13 @@
+// `@scope` names the prelude's `Scope`, which the backend represents as the
+// enclosing block's record. A module's own `Scope` is an ordinary struct and
+// keeps its fields.
+
+Scope = { depth: i32, label: str }
+
+describe = (s: Scope) i32 { s.depth * 10 }
+
+main = (env: Env) Res<i32, AllocError> {
+    s = Scope(depth: 4, label: "outer");
+    println("{} {}", s.label, describe(s));
+    0
+}

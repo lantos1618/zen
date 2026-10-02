@@ -110,7 +110,7 @@ index_ret = (be :: CBackend, rty: TyId, s: Site, f: Function)
 
 is_raw_ptr = (be :: CBackend, rty: TyId) bool {
     be.check.types.at(rty).match({
-        Named(n) => is_ptr_named(n),
+        Named(n) => is_ptr_named(be.types(), n),
         _        => false,
     })
 }

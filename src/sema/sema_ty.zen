@@ -139,12 +139,48 @@ Ty* = Prim(Prim)
     | Infer
     | Unknown
 
+// The prelude's declarations that the backend gives a fixed representation:
+// a `vararg<T>` pack, a raw `Ptr<T>`, the block record a `Scope` names.
+// `from_prelude` is false for a program compiled without std; there the
+// program's own declarations of these names stand in for them.
+StdDecls* = {
+    from_prelude*: bool,
+    vararg*: Res<DeclId>,
+    ptr*: Res<DeclId>,
+    scope*: Res<DeclId>,
+}
+
 Types* = {
     kinds :: Vec<Ty>,
     keys :: Vec<String>,
     by_key :: Map<str, TyId>,
     count :: u32,
+    std_decls :: StdDecls,
     alloc: Alloc,
+
+    // Set once, after the world that holds the prelude is built.
+    know_std* = (self :: @Self, decls: StdDecls) { self.std_decls = decls; }
+
+    is_vararg* = (self: @Self, n: TyNamed) bool {
+        self.is_std(n, self.std_decls.vararg, "vararg")
+    }
+
+    is_ptr* = (self: @Self, n: TyNamed) bool {
+        self.is_std(n, self.std_decls.ptr, "Ptr")
+    }
+
+    is_scope* = (self: @Self, n: TyNamed) bool {
+        self.is_std(n, self.std_decls.scope, "Scope")
+    }
+
+    // The type's declaration is the prelude's, compared by identity: a
+    // module's own `Ptr` is an ordinary struct.
+    is_std = (self: @Self, n: TyNamed, decl: Res<DeclId>, name: str) bool {
+        self.std_decls.from_prelude.match({
+            true  => decl.match({ Ok(d) => d.eq(n.decl), None => false }),
+            false => n.name.eq(name),
+        })
+    }
 
     // -----------------------------------------------------------------
     // reading
@@ -537,6 +573,12 @@ Types* = (a: Alloc) Types {
         keys: a.Vec<String>(),
         by_key: a.Map<str, TyId>(),
         count: 0,
+        std_decls: StdDecls(
+            from_prelude: false,
+            vararg: None,
+            ptr: None,
+            scope: None
+        ),
         alloc: a,
     )
 }

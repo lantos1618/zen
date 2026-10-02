@@ -55,7 +55,7 @@ member_takes = (be: CBackend, m: Member, arity: usize) bool {
 // two predicates separate: `last_is_variadic` also identifies the formatter
 // intrinsic, while a typed pack does not.
 fn_takes = (be: CBackend, f: Function, arity: usize) bool {
-    (be.last_is_variadic(f) || tail_is_pack(be.tree, f)).match({
+    (be.last_is_variadic(f) || tail_is_pack(be.check, f)).match({
         true  => (arity + 1) >= f.params.len,
         false => f.params.len == arity,
     })

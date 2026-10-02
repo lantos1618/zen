@@ -9,7 +9,7 @@ AllocError = std.mem
 Vec = std.collections
 str, String = std.text
 Range = std.core
-TyId, TyNamed, TyRes, c_integer, is_failure, is_vector = sema.sema_ty
+TyId, TyNamed, TyRes, Types, c_integer, is_failure, is_vector = sema.sema_ty
 DeclId = sema.sema_id
 Def, decl_at = sema.sema_def
 Ctx = sema.sema_check
@@ -84,7 +84,7 @@ write_none* = (be :: CBackend, t: TyId, out :: String)
 // legal C declarator with the `*` bound to the name.
 maybe_ptr = (be :: CBackend, id: TyId, n: TyNamed, out :: String)
             Res<(), AllocError> {
-    is_ptr_named(n).match({
+    is_ptr_named(be.types(), n).match({
         true  => be.ptr_ctype(n, out),
         false => be.maybe_scope(id, n, out),
     })
@@ -98,7 +98,7 @@ maybe_ptr = (be :: CBackend, id: TyId, n: TyNamed, out :: String)
 // `gen_c_scope.zen` is its body.
 maybe_scope = (be :: CBackend, id: TyId, n: TyNamed, out :: String)
               Res<(), AllocError> {
-    is_scope_named(n).match({
+    is_scope_named(be.types(), n).match({
         true  => out.add("zg_scope *"),
         false => be.maybe_named_ctype(id, n, out),
     })
@@ -225,7 +225,7 @@ native_scalar_contract = (
 native_record_field = (be: CBackend, id: TyId) bool {
     be.types().at(id).match({
         Prim(p)  => c_prim_known(p.name) && !p.name.eq("str") && !p.name.eq("()"),
-        Named(n) => is_ptr_named(n),
+        Named(n) => is_ptr_named(be.types(), n),
         _        => false,
     })
 }
@@ -237,11 +237,13 @@ foreign_binding = (be: CBackend, n: TyNamed) Res<COpaque> {
     })
 }
 
-is_ptr_named* = (n: TyNamed) bool { n.name.eq("Ptr") }
+// The prelude's `Ptr`, by declaration: a module's own `Ptr` is an ordinary
+// struct.
+is_ptr_named* = (types: Types, n: TyNamed) bool { types.is_ptr(n) }
 
 // Beside `is_ptr_named` because it is the same question: the two named
-// types spelled the runtime floor's way, not their declaration's.
-is_scope_named* = (n: TyNamed) bool { n.name.eq("Scope") }
+// types the runtime floor represents its own way, not their declaration's.
+is_scope_named* = (types: Types, n: TyNamed) bool { types.is_scope(n) }
 
 // The element named by Ptr<T>. Pointer representation is owned here, so
 // lowerings do not need to reopen TyNamed independently.
@@ -335,7 +337,7 @@ spellable* = (be: CBackend, id: TyId) bool {
 }
 
 named_spellable = (be: CBackend, n: TyNamed) bool {
-    is_ptr_named(n).match({
+    is_ptr_named(be.types(), n).match({
         true  => n.args.get(0).match({
             Ok(t) => be.pointer_element_spellable(t),
             None  => true,
@@ -469,7 +471,7 @@ is_foreign_opaque* = (be: CBackend, id: TyId) bool {
 
 is_scope_type* = (be :: CBackend, id: TyId) bool {
     be.types().at(id).match({
-        Named(n) => is_scope_named(n),
+        Named(n) => is_scope_named(be.types(), n),
         _        => false,
     })
 }
@@ -481,13 +483,13 @@ is_scope_type* = (be :: CBackend, id: TyId) bool {
 // reaches through it the way it reaches through a field.
 ptr_element = (be :: CBackend, id: TyId) Res<TyId> {
     be.types().at(id).match({
-        Named(n) => named_element(n),
+        Named(n) => named_element(be.types(), n),
         _        => None,
     })
 }
 
-named_element = (n: TyNamed) Res<TyId> {
-    is_ptr_named(n).match({
+named_element = (types: Types, n: TyNamed) Res<TyId> {
+    is_ptr_named(types, n).match({
         false => None,
         true  => n.args.get(0),
     })

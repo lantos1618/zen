@@ -6,9 +6,9 @@ Vec, Map = std.collections
 str, String = std.text
 Range = std.core
 DeclId = sema.sema_id
-TyId, Types, ResForm, TyRes, TyNamed, TyArray = sema.sema_ty
+TyId, Types, ResForm, TyRes, TyNamed, TyArray, StdDecls = sema.sema_ty
 is_integer, is_float = sema.sema_ty
-World, ImportBinding = sema.sema_def
+World, ImportBinding, Def = sema.sema_def
 module_display = sema.sema_def
 Diag, SemaFault, TypeFault = sema.sema_diag
 ExportFault = sema.sema_diag
@@ -844,7 +844,24 @@ Checker* = (a: Alloc, tree: Ast) Res<Checker, AllocError> {
         alloc: a,
     );
     c.check_import_gate().try();
+    c.know_std_decls().try();
     Ok(c);
+}
+
+know_std_decls = (c :: Checker) Res<(), AllocError> {
+    c.types.know_std(StdDecls(
+        from_prelude: c.world.has_prelude(),
+        vararg: c.prelude_decl("vararg").try(),
+        ptr: c.prelude_decl("Ptr").try(),
+        scope: c.prelude_decl("Scope").try()
+    ));
+    Ok(())
+}
+
+prelude_decl = (c :: Checker, name: str) Res<Res<DeclId>, AllocError> {
+    defs ::= c.alloc.Vec<Def>();
+    c.world.prelude_of(name, defs).try();
+    Ok(defs.get(0).match({ Ok(d) => Ok(d.id), None => None }))
 }
 
 check_import_gate = (c :: Checker) Res<(), AllocError> {

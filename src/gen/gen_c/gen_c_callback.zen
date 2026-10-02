@@ -138,7 +138,7 @@ callback_abi = (
 callback_type = (be: CBackend, ty: TyId) bool {
     be.check.types.at(ty).match({
         Prim(p)  => !p.name.eq("str") && be.spellable(ty),
-        Named(n) => n.name.eq("Ptr") && be.spellable(ty),
+        Named(n) => be.check.types.is_ptr(n) && be.spellable(ty),
         _        => false,
     })
 }

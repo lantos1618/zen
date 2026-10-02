@@ -31,7 +31,7 @@ is_ptr_member* = (be :: CBackend, rty: TyId, name: str) bool {
 
 named_ptr = (be :: CBackend, rty: TyId) bool {
     be.check.types.at(rty).match({
-        Named(n) => n.name.eq("Ptr"),
+        Named(n) => be.check.types.is_ptr(n),
         _        => false,
     })
 }

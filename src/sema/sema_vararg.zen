@@ -9,10 +9,11 @@ SemaFault, NameFault = sema.sema_diag
 
 VARARG: str = "vararg"
 
-// The `T` of a resolved `vararg<T>`, and `None` for every other type.
+// The `T` of a resolved `vararg<T>`, and `None` for every other type. The
+// declaration decides, not the name: a module's own `vararg` is no pack.
 pack_elem* = (types: Types, t: TyId) Res<TyId> {
     types.at(t).match({
-        Named(n) => n.name.eq(VARARG).match({
+        Named(n) => types.is_vararg(n).match({
             true  => n.args.get(0),
             false => None,
         }),
@@ -34,13 +35,22 @@ tail_slot = (types: Types, params: Vec<TyId>, i: usize) Res<usize> {
     })
 }
 
-tail_is_pack* = (tree: Ast, f: Function) bool {
+// Whether `f`'s last parameter is written as a pack, read from the type
+// sema resolved for it.
+tail_is_pack* = (c: Checker, f: Function) bool {
     f.last_param().match({
         None  => false,
         Ok(p) => p.type.match({
             None  => false,
-            Ok(t) => tree.type_at(t).written_pack(),
+            Ok(t) => c.written_pack(t),
         }),
+    })
+}
+
+written_pack = (c: Checker, t: TypeId) bool {
+    c.type_memo.get(t).match({
+        None   => false,
+        Ok(ty) => c.types.pack_elem(ty).match({ Ok(_) => true, None => false }),
     })
 }
 
@@ -55,19 +65,20 @@ last_param = (f: Function) Res<Param> {
 // all mentions and all legal final-parameter positions before comparing them.
 
 check_varargs* = (c :: Checker) Res<(), AllocError> {
+    named ::= c.alloc.Vec<TypeId>();
+    c.tree.types_where((node) { node.is_named() }, named).try();
     found ::= c.alloc.Vec<TypeId>();
-    c.tree.types_where((node) { node.written_pack() }, found).try();
+    named.loop((h, t) {
+        c.written_pack(t).then(() { found.add(t).try() });
+    });
     (found.len == 0).match({
         true  => Ok(()),
         false => c.check_mentions(found),
     })
 }
 
-written_pack = (node: Type) bool {
-    node.kind.match({
-        Named(n) => n.name.text.eq(VARARG),
-        _        => false,
-    })
+is_named = (node: Type) bool {
+    node.kind.match({ Named(_) => true, _ => false })
 }
 
 check_mentions = (c :: Checker, found: Vec<TypeId>) Res<(), AllocError> {
@@ -109,7 +120,7 @@ element_ok = (c: Checker, t: TypeId) bool {
 element_is_pack = (c: Checker, args: Vec<TypeId>) bool {
     args.get(0).match({
         None  => false,
-        Ok(a) => c.tree.type_at(a).written_pack(),
+        Ok(a) => c.written_pack(a),
     })
 }
 

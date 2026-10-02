@@ -30,12 +30,13 @@ Generation, Layout = gen.gen
 BuildArgs, Emission, Permutation, Target, Os, Arch, Abi, target_named = std.build
 
 slash_for, under = zen.zen_path
-unit_at, candidate, joined, relative_to = zen.zen_path
+unit_at, candidate_paths, joined, relative_to = zen.zen_path
 root_for, std_root_for, SourceRoot, anchored_path = zen.zen_path
 ENTRY, entry_of = zen.zen_path
 Unit = zen.zen_path
 
 Publisher = zen.zen_write
+Inputs, inputs = zen.zen_inputs
 
 // One build: the phase inputs and the fault tally that becomes the exit code.
 Build* = {
@@ -124,6 +125,39 @@ Build* = {
         })
     }
 
+    // Opt-in record of the files and probes the walk depends on, for build
+    // reuse. A recording allocation failure discards the record, which only
+    // disables reuse.
+    inputs* :: Res<Inputs> = None,
+
+    record_inputs* = (self :: @Self) Res<(), AllocError> {
+        self.inputs = Ok(inputs(self.alloc).try());
+        Ok(())
+    }
+
+    note_read = (self :: @Self, path: str, text: str) {
+        self.inputs = self.inputs.match({
+            None       => None,
+            Ok(record) => {
+                held ::= record;
+                held.read(path, text).match({ Ok(_) => Ok(held), Err(_) => None })
+            },
+        });
+    }
+
+    // Every existence probe that steers module resolution goes through here.
+    exists = (self :: @Self, path: str) bool {
+        found       = self.env.fs.exists(path);
+        self.inputs = self.inputs.match({
+            None       => None,
+            Ok(record) => {
+                held ::= record;
+                held.probe(path, found).match({ Ok(_) => Ok(held), Err(_) => None })
+            },
+        });
+        found
+    }
+
     // Language-server builds collect diagnostics without writing to stdout.
     speaking* :: bool = true,
 
@@ -162,7 +196,7 @@ Build* = {
     // and simply have no prelude.
     seed_prelude = (self :: @Self, seen :: Vec<Unit>) Res<(), AllocError> {
         flat = self.dotted_path(PRELUDE, false).try();
-        self.env.fs.exists(flat).match({
+        self.exists(flat).match({
             true  => self.queue(flat, seen),
             false => self.seed_prelude_folder(seen),
         })
@@ -171,7 +205,7 @@ Build* = {
     seed_prelude_folder = (self :: @Self, seen :: Vec<Unit>)
                           Res<(), AllocError> {
         nest = self.dotted_path(PRELUDE, true).try();
-        self.env.fs.exists(nest).match({
+        self.exists(nest).match({
             true  => self.queue(nest, seen),
             false => Ok(()),
         })
@@ -208,7 +242,7 @@ Build* = {
     // Borrow the read buffer because lexer and parser spans refer into it.
     read_disk = (self :: @Self, path: str) Res<str> {
         self.env.fs.read(self.alloc, path).match({
-            Ok(text) => Ok(text.view()),
+            Ok(text) => { self.note_read(path, text.view()); Ok(text.view()) },
             Err(e)   => self.fs_fault(path, e),
         })
     }
@@ -386,7 +420,7 @@ Build* = {
     }
 
     import_path_disk = (self :: @Self, flat: str, folder: str) Res<str> {
-        self.env.fs.exists(flat).match({
+        self.exists(flat).match({
             true  => Ok(flat),
             false => self.import_path_folder(folder),
         })
@@ -395,7 +429,7 @@ Build* = {
     import_path_folder = (self :: @Self, folder: str) Res<str> {
         self.overlay.get(folder).match({
             Ok(_) => Ok(folder),
-            None  => self.env.fs.exists(folder).match({
+            None  => self.exists(folder).match({
                 true  => Ok(folder),
                 false => None,
             }),
@@ -436,7 +470,7 @@ Build* = {
             Path(dir).name()
         ).try();
         skip = root_file.view().eq(path)
-            || !self.env.fs.exists(root_file.view());
+            || !self.exists(root_file.view());
         skip.match({
             true  => Ok(()),
             false => self.queue(root_file.view(), seen),
@@ -486,8 +520,10 @@ Build* = {
 
     probe_source = (self :: @Self, name: str, seen :: Vec<Unit>)
             Res<(), AllocError> {
-        u = candidate(self.env, self.alloc, self.root, name).try();
-        self.env.fs.exists(u.path).match({
+        paths     = candidate_paths(self.alloc, self.root, name).try();
+        take_flat = self.exists(paths.flat) || !self.exists(paths.nest);
+        u         = paths.choose(self.alloc, self.root, take_flat).try();
+        self.exists(u.path).match({
             false => Ok(()),
             true  => self.queue(u.path, seen),
         })
@@ -595,15 +631,17 @@ Build* = {
             // never probe the host.
             target: Res<Target> = job.backend.match({
                 Asm => job.target.is_empty().match({
-                    true  => host_target(self.env, self.alloc).try(),
+                    true  => host_target(),
                     false => target_named(job.target),
                 }),
                 _   => None,
             });
             // `--backend js --target js-browser -o DIR` writes the page
             // layout (index.html, runtime.js, app.js) into DIR.
-            browser = job.backend.match({ Js => job.target.eq("js-browser"), _ => false });
-            emission = browser.match({
+            browser    = job.backend.match({ Js => job.target.eq(
+                "js-browser"
+            ), _ => false });
+            emission   = browser.match({
                 false => job.emission,
                 true  => job.emission.match({
                     File(dir) => {
@@ -770,28 +808,32 @@ check_build* = (
     Ok(CheckedBuild(root: root, rel: rel, c: checked.c));
 }
 
-// Detect the machine executing the compiler, rather than assuming Linux/x86.
-host_target* = (env: Env, a: Alloc) Res<Res<Target>, AllocError> {
-    argv ::= a.Vec<str>();
-    argv.add("uname").try();
-    argv.add("-sm").try();
-    host       = env.proc.run_argv(a, "", argv).match({
-        Ok(result) => (result.code == 0).match({ true => result.out.view(), false => "" }),
-        Err(_)     => "",
-    });
-    known_os   = host.starts_with("Darwin ") || host.starts_with("Linux ");
-    known_arch = host.contains("x86_64") || host.contains("arm64") || host.contains("aarch64");
-    (known_os && known_arch).match({
-        false => Ok(None),
-        true  => {
-            os   = host.starts_with(
-                "Darwin "
-            ).match({ true => Os.Macos, false => Os.Linux });
-            arch = host.contains(
-                "x86_64"
-            ).match({ true => Arch.X86_64, false => Arch.Arm64 });
-            abi  = os.match({ Macos => Abi.Darwin, _ => Abi.Gnu });
-            Ok(Ok(Target(os: os, arch: arch, abi: abi)))
-        },
-    })
+// The platform this compiler was built for, read from the C compiler's
+// predefined macros when the compiler itself was compiled. It is the machine
+// running the compiler, without asking the operating system at run time.
+Predefined = c.bind("stddef.h", {
+    __APPLE__: i32 = 0
+    __linux__: i32 = 0
+    __x86_64__: i32 = 0
+    __aarch64__: i32 = 0
+})
+
+host_target* = () Res<Target> {
+    os   = (Predefined.__APPLE__ != 0).match({
+        true  => Ok(Os.Macos),
+        false => (Predefined.__linux__ != 0).match({ true => Ok(
+            Os.Linux
+        ), false => None }),
+    }).try();
+    arch = (Predefined.__x86_64__ != 0).match({
+        true  => Ok(Arch.X86_64),
+        false => (Predefined.__aarch64__ != 0).match({ true => Ok(
+            Arch.Arm64
+        ), false => None }),
+    }).try();
+    Ok(Target(
+        os: os,
+        arch: arch,
+        abi: os.match({ Macos => Abi.Darwin, _ => Abi.Gnu })
+    ))
 }

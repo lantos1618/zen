@@ -28,7 +28,7 @@ Host* = {
     command* = (self: @Self, env: Env, a: Alloc, program: str)
                Res<Vec<str>, AllocError> {
         argv ::= a.Vec<str>();
-        launcher(env, a, self.target, argv).try();
+        launcher(self.target, argv).try();
         argv.add(program).try();
         Ok(argv)
     }
@@ -37,7 +37,7 @@ Host* = {
 detect* = (env: Env, a: Alloc) Res<Res<Host>, AllocError> {
     chosen = env.var("ZEN_ASM_TARGET").match({
         Ok(name) => target_named(name),
-        None     => host_target(env, a).try(),
+        None     => host_target(),
     });
     Ok(chosen.match({ Ok(target) => Ok(Host(target: target)), None => None }))
 }

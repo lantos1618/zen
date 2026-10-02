@@ -10,7 +10,9 @@ BuildArgs, ProjectArgs, Emission, Target, Os, Arch, Abi, Dep, Codegen = std.buil
 Mode, Optimize, Cc, target_named = std.build
 Build, host_target = zen.zen_build
 asm_native, assemble_and_link = zen.zen_native
-entry_of, holds_build_zen = zen.zen_path
+entry_of, holds_build_zen, make_dirs, program_path = zen.zen_path
+Inputs, inputs, digest = zen.zen_inputs
+rename = std.fs.posix
 BuildPlan, ExeNode, LibNode, plan, PlanFault = zen.zen_build_plan
 resolve, PackageFault = zen.zen_packages
 
@@ -18,6 +20,9 @@ Action* = Build | Run | Test
 
 // The flag dialect of a C compiler.
 Family = Clang | Gcc | Tcc
+
+// A resolved compiler executable and the SDK it compiles against.
+Toolchain = { compiler: str, sysroot: str }
 
 project* = (env: Env, a: Alloc, job: ProjectArgs, action: Action)
            Res<i32, AllocError> {
@@ -39,7 +44,7 @@ project_present = (env: Env, a: Alloc, job: ProjectArgs, action: Action)
     report  ::= a.String().try();
     checked.render_diags(report).try();
     (checked.diag_count() > 0).then(() { println("{}", report.view()); });
-    host                  = host_target(env, a).try();
+    host                  = host_target();
     platform: Res<Target> = job.triple.match({
         Ok(name) => target_named(name),
         None     => host,
@@ -503,24 +508,46 @@ Project = {
                         (!self.ensure_parent(symbols).try()).then(() { done.break(); });
                     });
                     (!self.compile_exe(exe, generated).try()).then(() { done.break(); });
-                    (!self.link_exe(exe, generated, candidate.view()).try()).then(() { done.break(); });
-                    argv ::= self.a.Vec<str>();
-                    argv.add("mv").try();
-                    argv.add("-f").try();
-                    argv.add(candidate.view()).try();
-                    argv.add(output.view()).try();
-                    self.run_captured(argv).try().match({
-                        true => done.break(output), false => done.break(),
+                    linked = exe.spec.backend.match({
+                        Asm => self.assemble_exe(
+                            exe,
+                            generated,
+                            candidate.view()
+                        ).try()
+                            && self.replace(
+                                candidate.view(),
+                                output.view()
+                            ).try(),
+                        _   => self.link_c(
+                            exe,
+                            generated,
+                            candidate.view(),
+                            output.view()
+                        ).try(),
                     });
+                    linked.then(() { done.break(output); });
+                    done.break();
                 });
                 Ok(result)
             },
         })
     }
 
+    replace = (self: @Self, from: str, to: str) Res<bool, AllocError> {
+        rename(self.a, from, to).match({
+            Ok(_)            => Ok(true),
+            Err(OutOfMemory) => Err(AllocError.OutOfMemory),
+            Err(_)           => { println("zen: cannot replace `{}`", to); Ok(false) },
+        })
+    }
+
+    // The front end is skipped when the generated file exists and its input
+    // record matches: the same compiler executable, compilation words, files
+    // read (by length and content hash) and probe answers. The record is
+    // removed before compiling and written only after a successful compile,
+    // so it always describes the generated file beside it.
     compile_exe = (self: @Self, exe: ExeNode, generated: str)
                   Res<bool, AllocError> {
-        self.trace.say(self.a.String("compile `{}`", exe.name).try().view());
         source = self.project_path(exe.spec.src.text).try();
         parent = Path(source.view()).parent().value_or(Path(self.job.root));
         root  ::= parent.text;
@@ -534,7 +561,7 @@ Project = {
             root  = src_root.view();
             entry = source.view().slice(prefix.view().len, source.view().len);
         });
-        args = BuildArgs(
+        args        = BuildArgs(
             root: root,
             emission: Emission.File(generated),
             backend: exe.spec.backend,
@@ -547,29 +574,174 @@ Project = {
                 false => self.planned.target.clang_triple().value_or(""),
             })
         );
-        compiler ::= self.a.Build(self.env, root);
-        compiler.set_std_root(self.job.std_root);
-        compiler.enable_ffi();
-        exe.spec.deps.loop((dep) {
-            self.planned.libs.find((lib) { lib.name.eq(dep.name) }).match({
-                None    => (),
-                Ok(lib) => {
-                    path = self.project_path(lib.spec.src.text).try();
-                    compiler.register_library(lib.name, path.view()).try();
-                },
-            });
+        header      = self.compile_header(exe, args).try();
+        record_path = self.a.String("{}.inputs", generated).try();
+        paths_path  = self.a.String("{}.paths", generated).try();
+        reusable    = header.match({
+            None     => false,
+            Ok(head) => self.env.fs.exists(generated)
+                && self.unchanged(
+                    head,
+                    record_path.view(),
+                    paths_path.view()
+                ).try(),
         });
-        compiler.walk(entry_of(self.env, self.a, root, entry).try()).try();
-        compiler.back_end(args).try();
-        compiler.tally();
-        Ok(compiler.code() == 0)
+        reusable.match({
+            true  => {
+                self.trace.say(
+                    self.a.String(
+                        "compile `{}`: sources unchanged",
+                        exe.name
+                    ).try().view()
+                );
+                Ok(true)
+            },
+            false => self.env.fs.remove(record_path.view()).match({
+                Err(_) => { println("zen: cannot clear input record `{}`", record_path.view()); Ok(false) },
+                Ok(_)  => {
+                    self.trace.say(
+                        self.a.String("compile `{}`", exe.name).try().view()
+                    );
+                    compiler ::= self.a.Build(self.env, root);
+                    compiler.set_std_root(self.job.std_root);
+                    compiler.enable_ffi();
+                    header.match({ None => (), Ok(_) => compiler.record_inputs().try() });
+                    exe.spec.deps.loop((dep) {
+                        self.planned.libs.find(
+                            (lib) { lib.name.eq(dep.name) }
+                        ).match({
+                            None    => (),
+                            Ok(lib) => {
+                                path = self.project_path(
+                                    lib.spec.src.text
+                                ).try();
+                                compiler.register_library(
+                                    lib.name,
+                                    path.view()
+                                ).try();
+                            },
+                        });
+                    });
+                    compiler.walk(
+                        entry_of(self.env, self.a, root, entry).try()
+                    ).try();
+                    compiler.back_end(args).try();
+                    compiler.tally();
+                    compiled = compiler.code() == 0;
+                    compiled.then(() {
+                        header.when_ok((head) {
+                            self.save_inputs(
+                                head,
+                                compiler.inputs,
+                                record_path.view(),
+                                paths_path.view()
+                            ).try();
+                        });
+                    });
+                    Ok(compiled)
+                },
+            }),
+        })
     }
 
-    link_exe = (self: @Self, exe: ExeNode, generated: str, output: str)
-               Res<bool, AllocError> {
-        exe.spec.backend.match({
-            Asm => self.assemble_exe(exe, generated, output),
-            _   => self.link_c(exe, generated, output),
+    // The words that decide what a compile produces, led by the compiler's own
+    // content hash. None means the compile cannot be reused: C imports
+    // translate headers in a child process whose reads are not recorded, and
+    // a requested symbol map must be rewritten.
+    compile_header = (self: @Self, exe: ExeNode, args: BuildArgs)
+                     Res<Res<Inputs>, AllocError> {
+        result: Res<Inputs> = loop<Inputs>((done) {
+            (self.imports_c_headers(exe) || !args.symbol_map.is_empty()).then(() { done.break(); });
+            program = program_path(self.env, self.a);
+            head ::= inputs(self.a).try();
+            self.env.fs.read(self.a, program).match({
+                Ok(binary) => head.read(program, binary.view()).try(),
+                Err(_)     => done.break(),
+            });
+            head.word(args.root).try();
+            head.word(args.entry).try();
+            head.word(args.std_root).try();
+            head.word(args.target).try();
+            head.word(
+                args.backend.match({ C => "c", Js => "js", Asm => "asm" })
+            ).try();
+            exe.spec.deps.loop((dep) {
+                self.planned.libs.find((lib) { lib.name.eq(dep.name) }).match({
+                    None    => (),
+                    Ok(lib) => {
+                        head.word(lib.name).try();
+                        head.word(lib.spec.src.text).try();
+                    },
+                });
+            });
+            head.exact.then(() { done.break(head); });
+            done.break();
+        });
+        Ok(result)
+    }
+
+    unchanged = (self: @Self, head: Inputs, record_path: str, paths_path: str)
+                Res<bool, AllocError> {
+        stored  = self.env.fs.read(self.a, record_path);
+        listing = self.env.fs.read(self.a, paths_path);
+        stored.match({
+            Err(_)     => Ok(false),
+            Ok(record) => listing.match({
+                Err(_)    => Ok(false),
+                Ok(paths) => self.replay(paths.view()).try().match({
+                    None    => Ok(false),
+                    Ok(now) => {
+                        text = record.view();
+                        lead = head.record.view();
+                        Ok(text.starts_with(lead) && text.slice(lead.len, text.len).eq(now.record.view()))
+                    },
+                }),
+            }),
+        })
+    }
+
+    // Rebuild the record for a `paths` listing from the filesystem. None means
+    // a listed file can no longer be read, so the old record cannot match.
+    replay = (self: @Self, paths: str) Res<Res<Inputs>, AllocError> {
+        now      ::= inputs(self.a).try();
+        readable ::= true;
+        paths.split('\n').loop((line) {
+            (line.len > 2).then(() {
+                path = line.slice(2, line.len);
+                (line.index(0) == 'R').match({
+                    true  => self.env.fs.read(self.a, path).match({
+                        Ok(text) => now.read(path, text.view()).try(),
+                        Err(_)   => { readable = false; },
+                    }),
+                    false => now.probe(path, self.env.fs.exists(path)).try(),
+                });
+            });
+        });
+        Ok(readable.match({ true => Ok(now), false => None }))
+    }
+
+    // The listing is written before the record, so a record on disk always
+    // has the listing it was built from.
+    save_inputs = (self: @Self, head: Inputs, body: Res<Inputs>, record_path: str, paths_path: str)
+                  Res<(), AllocError> {
+        body.match({
+            None         => Ok(()),
+            Ok(recorded) => recorded.exact.match({
+                false => Ok(()),
+                true  => {
+                    record ::= self.a.String().try();
+                    record.add(head.record.view()).try();
+                    record.add(recorded.record.view()).try();
+                    self.env.fs.write(paths_path, recorded.paths.view()).match({
+                        Err(_) => (),
+                        Ok(_)  => self.env.fs.write(
+                            record_path,
+                            record.view()
+                        ).ignore(),
+                    });
+                    Ok(())
+                },
+            }),
         })
     }
 
@@ -589,7 +761,7 @@ Project = {
         Ok(ok)
     }
 
-    link_c = (self: @Self, exe: ExeNode, generated: str, output: str)
+    link_c = (self: @Self, exe: ExeNode, generated: str, candidate: str, output: str)
              Res<bool, AllocError> {
         argv ::= self.a.Vec<str>();
         valid_cc = self.append_command(
@@ -621,17 +793,202 @@ Project = {
         refusal.match({
             Ok(why) => { println("zen: {}", why); Ok(false) },
             None    => {
+                link ::= self.toolchain(argv, family).try();
                 self.link_command(
                     exe,
                     generated,
-                    output,
-                    argv,
+                    candidate,
+                    link,
                     flag_words,
                     family
                 ).try();
-                self.run_captured(argv)
+                self.publish(exe, generated, link, candidate, output)
             },
         })
+    }
+
+    // The native compiler is skipped when the executable exists and the link
+    // record beside the generated file matches: the same compiler command and
+    // generated source. A current executable is left untouched, which also
+    // spares macOS from verifying a new binary on its first run. The record
+    // is removed before linking, so a failed or interrupted link never leaves
+    // a record describing an executable it did not publish. Libraries found
+    // through search paths and system headers are not recorded; removing the
+    // executable forces a relink.
+    publish = (self: @Self, exe: ExeNode, generated: str, link: Vec<str>, candidate: str, output: str)
+              Res<bool, AllocError> {
+        record_path = self.a.String("{}.linked", generated).try();
+        record      = self.link_record(exe, generated, link).try();
+        current     = record.match({
+            None       => false,
+            Ok(expect) => self.env.fs.exists(output) && self.env.fs.read(self.a, record_path.view()).match({
+                Err(_)   => false,
+                Ok(text) => text.view().eq(expect.view()),
+            }),
+        });
+        current.match({
+            true  => {
+                self.trace.say(
+                    self.a.String("link `{}`: unchanged", exe.name).try().view()
+                );
+                Ok(true)
+            },
+            false => self.env.fs.remove(record_path.view()).match({
+                Err(_) => { println("zen: cannot clear link record `{}`", record_path.view()); Ok(false) },
+                Ok(_)  => {
+                    linked = self.run_captured(link).try() && self.replace(candidate, output).try();
+                    linked.then(() {
+                        record.when_ok(
+                            (text) { self.env.fs.write(
+                                record_path.view(),
+                                text.view()
+                            ).ignore(); }
+                        );
+                    });
+                    Ok(linked)
+                },
+            }),
+        })
+    }
+
+    // None means the link cannot be proven current: extern C sources and C
+    // imports may include project headers this record does not observe. The
+    // candidate path is the same on every build, so the command words compare
+    // as written.
+    link_record = (self: @Self, exe: ExeNode, generated: str, link: Vec<str>)
+                  Res<Res<String>, AllocError> {
+        self.links_c_sources(exe).match({
+            true  => Ok(None),
+            false => self.env.fs.read(self.a, generated).match({
+                Err(_)     => Ok(None),
+                Ok(source) => {
+                    record ::= self.a.String().try();
+                    link.loop(
+                        (word) { record.fmt("{}:{}\n", word.len, word).try(); }
+                    );
+                    record.fmt(
+                        "{} {}\n",
+                        source.view().len,
+                        digest(source.view())
+                    ).try();
+                    Ok(Ok(record))
+                },
+            }),
+        })
+    }
+
+    links_c_sources = (self: @Self, exe: ExeNode) bool {
+        self.imports_c_headers(exe) || exe.spec.deps.find((dep) {
+            self.planned.externs.find(
+                (node) { node.name.eq(dep.name) }
+            ).match({ Ok(_) => true, None => false })
+        }).match({ Ok(_) => true, None => false })
+    }
+
+    imports_c_headers = (self: @Self, exe: ExeNode) bool {
+        exe.spec.deps.find((dep) {
+            self.planned.imports.find(
+                (node) { node.name.eq(dep.name) }
+            ).match({ Ok(_) => true, None => false })
+        }).match({ Ok(_) => true, None => false })
+    }
+
+    // On macOS, /usr/bin/cc, clang and gcc are xcrun shims that locate the
+    // real compiler and SDK on every call. Resolve them once, keep the answer
+    // in the build workspace, and call the compiler with its sysroot
+    // directly. Any other compiler is called as given.
+    toolchain = (self: @Self, argv: Vec<str>, family: Family) Res<Vec<str>, AllocError> {
+        program                  = argv.get(0).value_or("");
+        located                  = program.contains('/').match({
+            true  => program,
+            false => self.on_path(program),
+        });
+        shim                     = self.host.os.match({ Macos => true, _ => false })
+            && family.match({ Clang => true, _ => false })
+            && located.starts_with("/usr/bin/");
+        resolved: Res<Toolchain> = shim.match({
+            true  => self.apple_toolchain().try(),
+            false => None,
+        });
+        out ::= self.a.Vec<str>();
+        resolved.match({
+            Ok(found) => {
+                out.add(found.compiler).try();
+                out.add("-isysroot").try();
+                out.add(found.sysroot).try();
+            },
+            None      => out.add(program).try(),
+        });
+        argv.loop((h, i, word) { (i > 0).then(() { out.add(word).try(); }); });
+        Ok(out)
+    }
+
+    on_path = (self: @Self, name: str) str {
+        found: Res<str> = self.env.var("PATH").value_or("").split(':').loop((h, dir) {
+            (!dir.is_empty()).then(() {
+                join_path(self.a, dir, name).match({
+                    Ok(path) => self.env.fs.exists(path.view()).then(() { h.break(path.view()); }),
+                    Err(_)   => (),
+                });
+            });
+        });
+        found.value_or(name)
+    }
+
+    // The clang and SDK behind Apple's shims, read from the workspace when
+    // both recorded paths still exist, otherwise asked of xcrun and recorded.
+    apple_toolchain = (self: @Self) Res<Res<Toolchain>, AllocError> {
+        workspace             = self.project_path(self.env.var("ZEN_BUILD_DIR").value_or("build")).try();
+        cached                = self.a.String(
+            "{}/.zen/toolchain",
+            workspace.view()
+        ).try();
+        known: Res<Toolchain> = self.env.fs.read(self.a, cached.view()).match({
+            Err(_)   => None,
+            Ok(text) => text.view().split_once('\n').match({
+                None     => None,
+                Ok(pair) => (self.env.fs.exists(pair.before) && self.env.fs.exists(pair.after.trim_end().value_or(""))).match({
+                    true  => Ok(Toolchain(
+                        compiler: pair.before,
+                        sysroot: pair.after.trim_end().value_or("")
+                    )),
+                    false => None,
+                }),
+            }),
+        });
+        known.match({
+            Ok(found) => Ok(Ok(found)),
+            None      => {
+                compiler = self.xcrun("--find", "clang").try();
+                sysroot  = self.xcrun("--show-sdk-path", "").try();
+                (compiler.is_empty() || sysroot.is_empty()).match({
+                    true  => Ok(None),
+                    false => {
+                        text = self.a.String(
+                            "{}\n{}\n",
+                            compiler,
+                            sysroot
+                        ).try();
+                        self.env.fs.write(cached.view(), text.view()).ignore();
+                        Ok(Ok(Toolchain(compiler: compiler, sysroot: sysroot)))
+                    },
+                })
+            },
+        })
+    }
+
+    xcrun = (self: @Self, question: str, tool: str) Res<str, AllocError> {
+        argv ::= self.a.Vec<str>();
+        argv.add("xcrun").try();
+        argv.add(question).try();
+        (!tool.is_empty()).then(() { argv.add(tool).try(); });
+        self.trace.command(self.a, argv).try();
+        Ok(self.env.proc.run_argv(self.a, "", argv).match({
+            Ok(result) => (result.code == 0).match({ true => result.out.view().trim_end().value_or(
+                ""
+            ), false => "" }),
+            Err(_)     => "",
+        }))
     }
 
     // The C compiler command: `--cc` or CC, else the target's `cc`, else `cc`.
@@ -885,16 +1242,10 @@ Project = {
     }
 
     ensure_parent = (self: @Self, path: str) Res<bool, AllocError> {
-        Path(path).parent().match({
-            None       => Ok(true),
-            Ok(parent) => {
-                argv ::= self.a.Vec<str>();
-                argv.add("mkdir").try();
-                argv.add("-p").try();
-                argv.add(parent.text).try();
-                self.run_captured(argv)
-            },
-        })
+        Ok(Path(path).parent().match({
+            None       => true,
+            Ok(parent) => make_dirs(self.env, self.a, parent.text),
+        }))
     }
 
     run_program = (self: @Self, program: str, backend: Codegen)

@@ -121,3 +121,18 @@ create_temporary* = (a: Alloc, template: str, suffix_bytes: usize) Res<Temporary
         path: str_at(name.ptr(), template.len)
     ))
 }
+
+Renames = c.bind("stdio.h", {
+    rename = (from: Ptr<c_char>, to: Ptr<c_char>) i32
+})
+
+// Replace `to` with `from` in one step; both must be on one filesystem. A
+// reader of `to` sees either the old file or the new one, never a mix.
+rename* = (a: Alloc, from: str, to: str) Res<(), AllocError | FileError> {
+    (from.len > 0 && to.len > 0 && !from.contains(0) && !to.contains(0))
+        .ensure(FileError.InvalidPath).try();
+    old = from.c_text(a).try();
+    new = to.c_text(a).try();
+    (Renames.rename(old.ptr().to<c_char>(), new.ptr().to<c_char>()) == 0)
+        .ensure(FileError.WriteFailed)
+}

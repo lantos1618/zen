@@ -1,0 +1,63 @@
+// The inputs one compilation depended on: each file it read, as its length
+// and content hash, and each existence probe, with its answer. Probes matter
+// because creating a flat module file changes which of two candidate paths
+// an import resolves to. `paths` lists the entries in order so a later build
+// can rebuild the record from the filesystem; equal records mean the front
+// end would read the same program.
+
+Alloc, AllocError = std.mem
+str, String = std.text
+Hasher, Range = std.core
+
+Inputs* = {
+    paths* :: String,
+    record* :: String,
+
+    // A path containing a newline cannot be listed in `paths`; such a record
+    // is never reused.
+    exact* :: bool = true,
+
+    read* = (self :: @Self, path: str, text: str) Res<(), AllocError> {
+        self.list('R', path).try();
+        self.record.fmt(
+            "R {}:{} {} {}\n",
+            path.len,
+            path,
+            text.len,
+            digest(text)
+        )
+    }
+
+    probe* = (self :: @Self, path: str, found: bool) Res<(), AllocError> {
+        self.list('P', path).try();
+        self.record.fmt(
+            "P {}:{} {}\n",
+            path.len,
+            path,
+            found.match({ true => "1", false => "0" })
+        )
+    }
+
+    // Words that select how the listed files are compiled or linked.
+    word* = (self :: @Self, text: str) Res<(), AllocError> {
+        self.record.fmt("W {}:{}\n", text.len, text)
+    }
+
+    list = (self :: @Self, kind: u8, path: str) Res<(), AllocError> {
+        path.contains('\n').then(() { self.exact = false; });
+        self.paths.add(kind).try();
+        self.paths.fmt(" {}\n", path)
+    }
+}
+
+inputs* = (a: Alloc) Res<Inputs, AllocError> {
+    Ok(Inputs(paths: a.String().try(), record: a.String().try()))
+}
+
+// A 64-bit content hash. Records also keep each file's length, and any one
+// changed byte always changes the hash.
+digest* = (text: str) u64 {
+    h ::= Hasher();
+    Range(0, text.len).loop((i) { h.write_u8(text.index(i)); });
+    h.finish()
+}

@@ -18,8 +18,10 @@ gen/gen_c/gen_c_actor.zen sema.sema_id
 gen/gen_c/gen_c_actor.zen sema.sema_inst
 gen/gen_c/gen_c_actor.zen sema.sema_supply
 gen/gen_c/gen_c_actor.zen sema.sema_ty
+gen/gen_c/gen_c_actor.zen sema.sema_type
 gen/gen_c/gen_c_actor.zen std.ast
 gen/gen_c/gen_c_alloc.zen sema.sema_check
+gen/gen_c/gen_c_alloc.zen sema.sema_denote
 gen/gen_c/gen_c_alloc.zen sema.sema_inst
 gen/gen_c/gen_c_alloc.zen sema.sema_member
 gen/gen_c/gen_c_alloc.zen sema.sema_ty
@@ -29,6 +31,7 @@ gen/gen_c/gen_c_arg.zen sema.sema_ty
 gen/gen_c/gen_c_arg.zen std.ast
 gen/gen_c/gen_c_args.zen sema.sema_check
 gen/gen_c/gen_c_args.zen sema.sema_def
+gen/gen_c/gen_c_args.zen sema.sema_denote
 gen/gen_c/gen_c_args.zen sema.sema_inst
 gen/gen_c/gen_c_args.zen sema.sema_ty
 gen/gen_c/gen_c_args.zen std.ast
@@ -75,6 +78,8 @@ gen/gen_c/gen_c_callback.zen sema.sema_inst
 gen/gen_c/gen_c_callback.zen sema.sema_ty
 gen/gen_c/gen_c_callback.zen std.ast
 gen/gen_c/gen_c_cap.zen sema.sema_check
+gen/gen_c/gen_c_cap.zen sema.sema_denote
+gen/gen_c/gen_c_cap.zen sema.sema_member
 gen/gen_c/gen_c_cap.zen sema.sema_ty
 gen/gen_c/gen_c_cap.zen std.ast
 gen/gen_c/gen_c_clock.zen sema.sema_check
@@ -82,6 +87,7 @@ gen/gen_c/gen_c_clock.zen sema.sema_ty
 gen/gen_c/gen_c_clock.zen std.ast
 gen/gen_c/gen_c_const.zen sema.sema_check
 gen/gen_c/gen_c_const.zen sema.sema_def
+gen/gen_c/gen_c_const.zen sema.sema_denote
 gen/gen_c/gen_c_const.zen sema.sema_ty
 gen/gen_c/gen_c_const.zen std.ast
 gen/gen_c/gen_c_decl.zen sema.sema_cand
@@ -111,6 +117,7 @@ gen/gen_c/gen_c_expr.zen sema.sema_check
 gen/gen_c/gen_c_expr.zen sema.sema_def
 gen/gen_c/gen_c_expr.zen sema.sema_denote
 gen/gen_c/gen_c_expr.zen sema.sema_inst
+gen/gen_c/gen_c_expr.zen sema.sema_meta
 gen/gen_c/gen_c_expr.zen sema.sema_ty
 gen/gen_c/gen_c_expr.zen sema.sema_type
 gen/gen_c/gen_c_expr.zen std.ast
@@ -129,6 +136,7 @@ gen/gen_c/gen_c_floor.zen sema.sema_member
 gen/gen_c/gen_c_floor.zen sema.sema_ty
 gen/gen_c/gen_c_floor.zen std.ast
 gen/gen_c/gen_c_flow.zen sema.sema_arm_trace
+gen/gen_c/gen_c_flow.zen sema.sema_case
 gen/gen_c/gen_c_flow.zen sema.sema_check
 gen/gen_c/gen_c_flow.zen sema.sema_def
 gen/gen_c/gen_c_flow.zen sema.sema_inst
@@ -138,6 +146,7 @@ gen/gen_c/gen_c_flow.zen std.ast
 gen/gen_c/gen_c_flow.zen std.lex
 gen/gen_c/gen_c_fmt.zen sema.sema_check
 gen/gen_c/gen_c_fmt.zen sema.sema_def
+gen/gen_c/gen_c_fmt.zen sema.sema_denote
 gen/gen_c/gen_c_fmt.zen sema.sema_inst
 gen/gen_c/gen_c_fmt.zen sema.sema_ty
 gen/gen_c/gen_c_fmt.zen std.ast
@@ -161,6 +170,7 @@ gen/gen_c/gen_c_hoist.zen sema.sema_ty
 gen/gen_c/gen_c_hoist.zen std.ast
 gen/gen_c/gen_c_impl.zen sema.sema_def
 gen/gen_c/gen_c_impl.zen sema.sema_id
+gen/gen_c/gen_c_impl.zen sema.sema_supply
 gen/gen_c/gen_c_impl.zen sema.sema_vararg
 gen/gen_c/gen_c_impl.zen std.ast
 gen/gen_c/gen_c_index.zen sema.sema_check
@@ -172,6 +182,7 @@ gen/gen_c/gen_c_infer.zen sema.sema_check
 gen/gen_c/gen_c_infer.zen sema.sema_def
 gen/gen_c/gen_c_infer.zen sema.sema_denote
 gen/gen_c/gen_c_infer.zen sema.sema_inst
+gen/gen_c/gen_c_infer.zen sema.sema_member
 gen/gen_c/gen_c_infer.zen sema.sema_ty
 gen/gen_c/gen_c_infer.zen sema.sema_vararg
 gen/gen_c/gen_c_infer.zen std.ast
@@ -190,6 +201,7 @@ gen/gen_c/gen_c_json.zen sema.sema_def
 gen/gen_c/gen_c_json.zen sema.sema_denote
 gen/gen_c/gen_c_json.zen sema.sema_inst
 gen/gen_c/gen_c_json.zen sema.sema_ty
+gen/gen_c/gen_c_json.zen sema.sema_type
 gen/gen_c/gen_c_json.zen std.ast
 gen/gen_c/gen_c_layout.zen sema.sema_check
 gen/gen_c/gen_c_layout.zen sema.sema_def
@@ -207,6 +219,7 @@ gen/gen_c/gen_c_machine.zen sema.sema_ty
 gen/gen_c/gen_c_machine.zen std.ast
 gen/gen_c/gen_c_main.zen sema.sema_check
 gen/gen_c/gen_c_main.zen sema.sema_def
+gen/gen_c/gen_c_main.zen sema.sema_denote
 gen/gen_c/gen_c_main.zen sema.sema_inst
 gen/gen_c/gen_c_main.zen sema.sema_ty
 gen/gen_c/gen_c_main.zen std.ast
@@ -214,16 +227,19 @@ gen/gen_c/gen_c_member.zen sema.sema_cand
 gen/gen_c/gen_c_member.zen sema.sema_case
 gen/gen_c/gen_c_member.zen sema.sema_check
 gen/gen_c/gen_c_member.zen sema.sema_def
+gen/gen_c/gen_c_member.zen sema.sema_denote
 gen/gen_c/gen_c_member.zen sema.sema_id
 gen/gen_c/gen_c_member.zen sema.sema_inst
 gen/gen_c/gen_c_member.zen sema.sema_member
 gen/gen_c/gen_c_member.zen sema.sema_ty
+gen/gen_c/gen_c_member.zen sema.sema_type
 gen/gen_c/gen_c_member.zen std.ast
 gen/gen_c/gen_c_meta.zen sema.sema_check
 gen/gen_c/gen_c_meta.zen sema.sema_ty
 gen/gen_c/gen_c_meta.zen std.ast
 gen/gen_c/gen_c_mono.zen sema.sema_check
 gen/gen_c/gen_c_mono.zen sema.sema_def
+gen/gen_c/gen_c_mono.zen sema.sema_denote
 gen/gen_c/gen_c_mono.zen sema.sema_id
 gen/gen_c/gen_c_mono.zen sema.sema_inst
 gen/gen_c/gen_c_mono.zen sema.sema_member
@@ -241,10 +257,12 @@ gen/gen_c/gen_c_own.zen sema.sema_id
 gen/gen_c/gen_c_own.zen sema.sema_ty
 gen/gen_c/gen_c_own.zen std.ast
 gen/gen_c/gen_c_print.zen sema.sema_check
+gen/gen_c/gen_c_print.zen sema.sema_print
 gen/gen_c/gen_c_print.zen sema.sema_ty
 gen/gen_c/gen_c_print.zen std.ast
 gen/gen_c/gen_c_print.zen std.lex
 gen/gen_c/gen_c_ptr.zen sema.sema_check
+gen/gen_c/gen_c_ptr.zen sema.sema_denote
 gen/gen_c/gen_c_ptr.zen sema.sema_ty
 gen/gen_c/gen_c_ptr.zen std.ast
 gen/gen_c/gen_c_range.zen sema.sema_check
@@ -254,6 +272,7 @@ gen/gen_c/gen_c_range.zen sema.sema_member
 gen/gen_c/gen_c_range.zen sema.sema_supply
 gen/gen_c/gen_c_range.zen sema.sema_ty
 gen/gen_c/gen_c_range.zen std.ast
+gen/gen_c/gen_c_read.zen sema.sema_case
 gen/gen_c/gen_c_read.zen sema.sema_check
 gen/gen_c/gen_c_read.zen sema.sema_def
 gen/gen_c/gen_c_read.zen sema.sema_denote
@@ -274,6 +293,7 @@ gen/gen_c/gen_c_settle.zen sema.sema_def
 gen/gen_c/gen_c_settle.zen sema.sema_denote
 gen/gen_c/gen_c_settle.zen sema.sema_hoist
 gen/gen_c/gen_c_settle.zen sema.sema_inst
+gen/gen_c/gen_c_settle.zen sema.sema_member
 gen/gen_c/gen_c_settle.zen sema.sema_ty
 gen/gen_c/gen_c_settle.zen std.ast
 gen/gen_c/gen_c_shape.zen sema.sema_check

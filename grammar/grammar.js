@@ -252,6 +252,9 @@ module.exports = grammar({
     // an expression that may or may not turn out to be a callee: decided at
     // the `(` — or at the `<` of a type argument list — that may follow.
     [$._expression, $._callee],
+    // `x: T` — a binding's target and type, or a deferred local? Decided at
+    // the `=` or `;` after the type.
+    [$._binding_target, $.deferred_statement],
   ],
 
   rules: {

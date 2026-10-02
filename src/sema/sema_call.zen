@@ -38,6 +38,7 @@ travelled_cands, matches = sema.sema_cand
 ty_at, is_tvar, sig_fits, signature_matches = sema.sema_cand
 omittable_tail, collect_bounds, tail_swallows = sema.sema_cand
 actor_payload_unsafe, actor_byte_buffer, contains_drop = sema.sema_copy
+missing_import, require_bound = sema.sema_import
 
 // A recovery signature supplies expected types to argument diagnostics, but
 // it cannot make a call valid when its declared parameters do not match.
@@ -112,6 +113,8 @@ CallCheck = {
         self.load_actuals(c).try();
         name.is_res_ctor().match({
             true  => {
+                c.require_bound(self.ctx.module, name, self.callee_span(c))
+                    .try();
                 c.refuse_res_surplus(self.call, name).try();
                 c.res_ctor_type(name, self.actuals)
             },
@@ -142,7 +145,11 @@ CallCheck = {
         found ::= c.alloc.Vec<Def>();
         c.world.defs_of(self.ctx.module, name, found).try();
         (found.len == 0).match({
-            true  => c.print_type(self.call),
+            true  => {
+                c.missing_import(self.ctx.module, name, self.callee_span(c))
+                    .try();
+                c.print_type(self.call)
+            },
             false => self.decl(c, name, None, self.actuals, None),
         })
     }
@@ -150,9 +157,52 @@ CallCheck = {
     local_or_decl = (self :: @Self, c :: Checker, name: str)
                     Res<TyId, AllocError> {
         c.lookup(name).match({
-            None  => self.decl(c, name, None, self.actuals, None),
+            None  => {
+                self.import_check(c, name).try();
+                self.decl(c, name, None, self.actuals, None)
+            },
             Ok(b) => self.local_signature(c, b.ty),
         })
+    }
+
+    // A standard function or type called without its import is reported
+    // here, before resolution, so the call then resolves as the import would.
+    import_check = (self: @Self, c :: Checker, name: str)
+                   Res<(), AllocError> {
+        c.world.explicit.match({
+            false => Ok(()),
+            true  => self.unbound_check(c, name),
+        })
+    }
+
+    unbound_check = (self: @Self, c :: Checker, name: str)
+                    Res<(), AllocError> {
+        found ::= c.alloc.Vec<Def>();
+        c.world.defs_of(self.ctx.module, name, found).try();
+        (found.len == 0).match({
+            false => Ok(()),
+            true  => {
+                variants ::= c.alloc.Vec<Def>();
+                c.world.variant_defs(
+                    c.tree,
+                    self.ctx.module,
+                    name,
+                    variants
+                ).try();
+                (variants.len == 0).then(() {
+                    c.missing_import(
+                        self.ctx.module,
+                        name,
+                        self.callee_span(c)
+                    ).try();
+                });
+                Ok(())
+            },
+        })
+    }
+
+    callee_span = (self: @Self, c: Checker) Span {
+        c.tree.expr_at(self.call.callee).span
     }
 
     local_signature = (self :: @Self, c :: Checker, ty: TyId)

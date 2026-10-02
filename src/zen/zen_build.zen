@@ -23,6 +23,8 @@ scan, Source, Lexed = std.lex.lex
 Parser, module = std.parse.parse
 Checker, check_all = sema.sema
 PRELUDE = sema.sema
+
+EXPLICIT_IMPORTS_ENV: str = "ZEN_EXPLICIT_IMPORTS"
 check_module_graph = sema.sema
 Def = sema.sema
 Generation, Layout = gen.gen
@@ -515,6 +517,11 @@ Build* = {
 
     checked* = (self :: @Self) Res<Checker, AllocError> {
         c ::= self.alloc.Checker(self.tree).try();
+        // Migration switch: report standard names used without an import.
+        c.world.require_imports(self.env.var(EXPLICIT_IMPORTS_ENV).match({
+            Ok(_) => true,
+            None  => false,
+        }));
         c.check_all().try();
         Ok(c);
     }

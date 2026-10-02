@@ -58,6 +58,38 @@ World* = {
     index: Ptr<WorldIndex>,
     alloc: Alloc,
 
+    // Whether a module sees only what it declares and imports. Names a
+    // module was told to import resolve through the prelude afterwards, so
+    // one missing import is one diagnostic.
+    explicit* :: bool = false,
+    granted :: Map<str, bool>,
+
+    require_imports* = (self :: @Self, on: bool) {
+        self.explicit = on;
+    }
+
+    // Resolve `name` in `mi` as its import would after `missing` reports it.
+    grant* = (self :: @Self, mi: usize, name: str) Res<(), AllocError> {
+        key = self.alloc.String("{} {}", mi, name).try();
+        self.granted.set(key.view(), true)
+    }
+
+    is_granted* = (self: @Self, mi: usize, name: str) Res<bool, AllocError> {
+        key = self.alloc.String("{} {}", mi, name).try();
+        Ok(self.granted.get(key.view()).match({ Ok(_) => true, None => false }))
+    }
+
+    // Whether an unbound `name` in `mi` still falls back to the prelude.
+    falls_back = (self: @Self, mi: usize, name: str) Res<bool, AllocError> {
+        (self.binds_name(mi, name)).match({
+            true  => Ok(false),
+            false => self.explicit.match({
+                false => Ok(true),
+                true  => self.is_granted(mi, name),
+            }),
+        })
+    }
+
     count* = (self: @Self) usize { self.tables.len }
 
     table_at* = (self: @Self, i: usize) Res<ModuleTable> { self.tables.get(i) }
@@ -99,7 +131,7 @@ World* = {
                Res<(), AllocError> {
         self.own_defs(mi, name, out).try();
         (out.len == 0).then(() { self.imported_defs(mi, name, out).try() });
-        (out.len == 0 && (self.binds_name(mi, name) == false))
+        (out.len == 0 && self.falls_back(mi, name).try())
             .then(() { self.prelude_defs(mi, name, out).try() });
         Ok(());
     }
@@ -117,9 +149,9 @@ World* = {
         imported = self.first_imported(mi, name).try();
         imported.match({
             Ok(d) => Ok(Ok(d)),
-            None  => (self.binds_name(mi, name)).match({
-                true  => Ok(None),
-                false => self.first_prelude_for(mi, name),
+            None  => self.falls_back(mi, name).try().match({
+                false => Ok(None),
+                true  => self.first_prelude_for(mi, name),
             }),
         })
     }
@@ -231,7 +263,7 @@ World* = {
         Ok(());
     }
 
-    prelude_index = (self: @Self) Res<usize> {
+    prelude_index* = (self: @Self) Res<usize> {
         self.index_of(PRELUDE).match({
             Ok(p) => Ok(p),
             None  => self.index_of(PRELUDE_FILE),
@@ -497,6 +529,7 @@ World* = (a: Alloc, tree: Ast) Res<World, AllocError> {
         folders: a.Map<str, usize>(),
         index: slot,
         alloc: a,
+        granted: a.Map<str, bool>(),
     );
     // IDs step beside usize positions; no unchecked narrowing.
     module_id: u32 ::= 0;

@@ -13,6 +13,7 @@ def_type = sema.sema_type
 Inst, push_tparams, module_name, tparam_vars, zip = sema.sema_inst
 TBound = sema.sema_cand
 inst_bounds_hold = sema.sema_bound
+missing_import, require_bound = sema.sema_import
 
 type_from_ast* = (c :: Checker, id: TypeId, ctx: Ctx)
                  Res<TyId, AllocError> {
@@ -152,7 +153,10 @@ named_type = (
         tys.add(c.type_from_ast(a, ctx).try()).try();
     });
     c.res_sugar(name.text, ctx.module).try().match({
-        true  => c.res_type(tys),
+        true  => {
+            c.require_bound(ctx.module, name.text, name.span).try();
+            c.res_type(tys)
+        },
         false => c.declared_type(node, name, tys, ctx),
     })
 }
@@ -221,7 +225,26 @@ lookup_named = (
     ctx  : Ctx
 ) Res<TyId, AllocError> {
     c.world.first_def_of(ctx.module, name.text).try().match({
-        None  => c.unresolved_type(node, name),
+        None  => c.missing_import(ctx.module, name.text, name.span).try()
+            .match({
+                false => c.unresolved_type(node, name),
+                true  => c.granted_type(node, name, args, ctx),
+            }),
+        Ok(d) => c.checked_declared_type(node, d, args),
+    })
+}
+
+// A standard type just reported as a missing import, resolved as the import
+// would resolve it.
+granted_type = (
+    c    :: Checker,
+    node : Type,
+    name : Ident,
+    args : Vec<TyId>,
+    ctx  : Ctx
+) Res<TyId, AllocError> {
+    c.world.first_def_of(ctx.module, name.text).try().match({
+        None  => c.types.unknown(),
         Ok(d) => c.checked_declared_type(node, d, args),
     })
 }

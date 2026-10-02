@@ -24,7 +24,6 @@
 { Vec, Map } = std.collections
 { str, String } = std.text
 { Res, Ok, Err, None, loop, Range } = std.core
-{ parse_usize } = std.text
 { truncate_u32, to_i64 } = std.core.num
 { Isa, Seed, CallShape, Writable } = taint
 

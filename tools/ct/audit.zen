@@ -21,7 +21,7 @@
 { Env, FsError } = std.env
 { Alloc, AllocError } = std.mem
 { Vec, Map } = std.collections
-{ str, String, parse_usize } = std.text
+{ str, String } = std.text
 { Res, Ok, Err, None, loop, Range } = std.core
 { Isa, Finding, CallShape, function_lines, global_label, parse_lines, analyze, argument_reads, with_precise, unknown_shape } = taint
 { Marked, marked_functions, seed_of, result_registers } = abi

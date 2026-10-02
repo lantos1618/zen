@@ -60,13 +60,13 @@
 
 { Alloc, AllocError } = std.mem
 { str, String } = std.text
-{ parse_usize } = std.text.text_num
 { Vec } = std.collections
 { Res, Ok, None, Range } = std.core
 { Env, FsError } = std.env
 
 { scan, Source } = std.lex.lex
 { Parser } = std.parse.parser
+{ module } = std.parse.parse
 { Module } = std.ast.ast_node
 { Ident } = std.ast.ast_span
 { println } = std.io

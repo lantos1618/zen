@@ -59,7 +59,6 @@
 { Vec, Map } = std.collections
 { str, String } = std.text
 { Res, Ok, None, loop, Range } = std.core
-{ parse_i64 } = std.text
 { truncate_u32, to_i64, to_usize, shift_left, shift_right, bit_or, bit_and, bit_xor } = std.core.num
 { println } = std.io
 
@@ -1540,7 +1539,7 @@ x86_mem = (a: Alloc, op: str) Res<X86Mem> {
         text.slice(open + 1, close)
     ).match({ Ok(v) => v, Err(_) => a.Vec<str>() });
     head  = text.slice(0, open);
-    disp  = parse_i64(head).match({ Ok(n) => n, None => 0 });
+    disp  = head.parse_i64().match({ Ok(n) => n, None => 0 });
     base  = inner.get(0).match({ Ok(r) => x86_reg(a, r), None => None });
     index = inner.get(1).match({ Ok(r) => x86_reg(a, r), None => None });
     Ok(X86Mem(disp: disp, base: base, index: index))
@@ -1726,10 +1725,7 @@ x86_write = (
 
 x86_imm = (op: str) i64 {
     op.starts_with("$").match({
-        true  => parse_i64(op.slice(
-            1,
-            op.len
-        )).match({ Ok(n) => n, None => 0 }),
+        true  => op.slice(1, op.len).parse_i64().match({ Ok(n) => n, None => 0 }),
         false => 0,
     })
 }
@@ -2242,10 +2238,7 @@ arm_mem = (a: Alloc, op: str) Res<ArmMem> {
     second          = inner.get(1).value_or("");
     index: Res<str> = second.starts_with("#").match({ true => None, false => arm_reg(a, second) });
     disp            = second.starts_with("#").match({
-        true  => parse_i64(second.slice(
-            1,
-            second.len
-        )).match({ Ok(n) => n, None => 0 }),
+        true  => second.slice(1, second.len).parse_i64().match({ Ok(n) => n, None => 0 }),
         false => 0,
     });
     Ok(ArmMem(base: base, index: index, disp: disp, pre: op.ends_with("!")))
@@ -2264,10 +2257,7 @@ arm_base_at = (cur: State, base: str) Res<i64> {
 
 arm_imm = (op: str) i64 {
     op.starts_with("#").match({
-        true  => parse_i64(op.slice(
-            1,
-            op.len
-        )).match({ Ok(n) => n, None => 0 }),
+        true  => op.slice(1, op.len).parse_i64().match({ Ok(n) => n, None => 0 }),
         false => 0,
     })
 }

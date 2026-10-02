@@ -1,0 +1,21 @@
+// An untyped binding of a number holds it with the literal's flexibility: a
+// use that can hold the value takes it, as a binding, an argument or a field.
+take = (v: u8) u8 { v }
+
+P = { f: i8 }
+
+main = () i32 {
+    small     = 200;
+    s: u8     = small;
+    neg       = -100;
+    p         = P(f: neg);
+    wide: i64 = 3000000000;
+    big       = 3000000000;
+    w: i64    = big;
+    println("{} {} {} {}", s, take(small), p.f, w == wide);
+    n ::= 0;
+    n      = n + 5;
+    m: i64 = n;
+    println("{}", m);
+    0
+}

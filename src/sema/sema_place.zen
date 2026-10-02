@@ -6,7 +6,7 @@ Checker, Ctx, Binding = sema.sema_check
 SemaFault, NameFault, PairFault = sema.sema_diag
 computed_member, writable_member = sema.sema_member
 check_literal = sema.sema_trap
-const_def = sema.sema_const
+const_def, const_int = sema.sema_const
 check_arms, check_arms_agree = sema.sema_hoist
 type_of = sema.sema_type
 type_from_ast = sema.sema_denote
@@ -217,14 +217,29 @@ fresh_or_refused = (
 )
                    Res<(), AllocError> {
     plain_write(b).match({
-        false => c.bind_at(name, ty, b.mutable, false, target.span),
+        false => c.bind_fresh(b, name, target, ty),
         true  => c.const_def(name, ctx).try().match({
             Ok(_) => c.refuse(
                 target.span,
                 SemaFault.ImmutableWrite(NameFault(name: name))
             ),
-            None  => c.bind_at(name, ty, b.mutable, false, target.span),
+            None  => c.bind_fresh(b, name, target, ty),
         }),
+    })
+}
+
+// An immutable binding of an untyped integer literal keeps the literal's
+// value, so a use that wants a type checks the value exactly as it would
+// check the literal written there.
+bind_fresh = (c :: Checker, b: Bind, name: str, target: Expr, ty: TyId)
+             Res<(), AllocError> {
+    held: Res<i64> = (!b.mutable && c.prim_name(ty).eq("int")).match({
+        true  => c.const_int(b.value),
+        false => None,
+    });
+    held.match({
+        Ok(v) => c.bind_held(name, ty, v, target.span),
+        None  => c.bind_at(name, ty, b.mutable, false, target.span),
     })
 }
 

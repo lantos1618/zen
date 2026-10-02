@@ -1,0 +1,7 @@
+// `Range(end)` takes its type from a written binding type, and an end that
+// type cannot hold is refused at the end.
+main = () i32 {
+    r: Range<u8> = Range(300);
+    r.loop((v) { println("{}", v); });
+    0
+}

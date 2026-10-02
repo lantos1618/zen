@@ -1,0 +1,8 @@
+// A held number passed as an argument is checked against the parameter.
+take = (v: u8) { println("{}", v); }
+
+main = () i32 {
+    k = 300;
+    take(k);
+    0
+}

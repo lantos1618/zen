@@ -6,6 +6,10 @@ TyId, Types = sema.sema_ty
 // Something the program named, or failed to.
 NameFault* = { name*: str }
 
+// A binding of an untyped literal, the value it holds, and the type a use of
+// it wants.
+HeldFault* = { name*: str, value*: i64, expected*: TyId }
+
 // A name and the module that does not export it.
 ExportFault* = { name*: str, module*: str }
 
@@ -63,6 +67,8 @@ SemaFault* =
     | NotCallable(TypeFault)           // the callee is not a function
     | MethodNotValue(TypeFault)        // the name is a method, and the call is missing
     | LiteralOutOfRange(TypeFault)     // the family fits, the value does not
+    | HeldOutOfRange(HeldFault)        // a literal-held binding's value does not fit its use
+    | UntypedVariable(TypeFault)       // a `::=` binding of an untyped number used as a narrower integer
     | ActorPayload(NameFault)          // payload storage cannot cross a mailbox
     | InvalidNumericConversion(NameFault)
     | InvalidPrimitive(NameFault)
@@ -202,6 +208,8 @@ message* = (fault: SemaFault) str {
         NotCallable(_)               => "this is not a function, so it cannot be called",
         MethodNotValue(_)            => "a method is a value only when the call is written: `s.len` names the function, `s.len()` reads it",
         LiteralOutOfRange(_)         => "out of range: a literal's type comes from its context, and the context here cannot hold it",
+        HeldOutOfRange(_)            => "out of range: a binding of a number with no written type holds that number, and the type wanted here cannot hold it",
+        UntypedVariable(_)           => "a variable of a number with no written type is an i64, and the value it holds at run time may not fit the type wanted here",
         ActorPayload(_)              => "actor message payload is not transferable: owned allocator-backed graphs need receiver-arena transfer",
         InvalidEnumRepresentation(_) => "a represented enum's final payload catch-all must use a fixed-width integer type",
         InvalidEnumDiscriminant(_)   => "invalid enum discriminant: every known variant needs one unique compile-time integer; one payload catch-all may appear last",
@@ -407,6 +415,8 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         NoErrorConversion(f)         => out.write_types(types, f),
         HoistAmbiguous(f)            => out.write_types(types, f),
         LiteralOutOfRange(f)         => out.write_literal(types, f),
+        HeldOutOfRange(f)            => out.write_held(types, f),
+        UntypedVariable(f)           => out.write_untyped_variable(types, f),
         ActorPayload(f)              => out.write_name(f),
         InvalidEnumRepresentation(f) => out.write_name(f),
         InvalidEnumDiscriminant(f)   => out.write_name(f),
@@ -729,6 +739,33 @@ write_literal = (out :: String, types: Types, f: TypeFault)
     expected ::= types.name_of(f.expected).try();
     out.fmt(" does not fit {}", expected.view()).try();
     Ok(());
+}
+
+// `3000000000 does not fit in i32: give `big` a type that holds it, such as
+// `big: i64 = 3000000000``. i64 holds every value a literal binding can.
+write_held = (out :: String, types: Types, f: HeldFault)
+             Res<(), AllocError> {
+    expected ::= types.name_of(f.expected).try();
+    out.fmt(
+        ": {} does not fit in `{}` — give `{}` a type that holds it, such as `{}: i64 = {}`",
+        f.value,
+        expected.view(),
+        f.name,
+        f.name,
+        f.value
+    )
+}
+
+write_untyped_variable = (out :: String, types: Types, f: TypeFault)
+                         Res<(), AllocError> {
+    expected ::= types.name_of(f.expected).try();
+    out.fmt(
+        " — `{}` is wanted as `{}`: declare it with that type, such as `{} :: {} = …`",
+        f.name,
+        expected.view(),
+        f.name,
+        expected.view()
+    )
 }
 
 // The two declarations may be in different files.

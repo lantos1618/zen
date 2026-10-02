@@ -1,0 +1,9 @@
+// A held number stored in a field is checked against the field's type.
+P = { f: u16 }
+
+main = () i32 {
+    k = 70000;
+    p = P(f: k);
+    println("{}", p.f);
+    0
+}

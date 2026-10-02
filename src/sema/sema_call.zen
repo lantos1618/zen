@@ -1362,7 +1362,7 @@ literal_lends = (
         lent   = f.params.get(i).match({ Ok(p) => p.mutable, None => false });
         stored = c.prim_name(a.ty).eq("int").match({ true => "i64", false => "f64" });
         wanted = params.get(i).match({ Ok(t) => c.prim_name(t), None => stored });
-        (lent && c.is_literal_ty(a.ty) && !wanted.eq(stored)).then(() {
+        (lent && c.is_literal_ty(a.ty) && !wanted.eq(stored) && !c.reported_at(a.span)).then(() {
             c.refuse(
                 a.span,
                 SemaFault.LiteralLent(NameFault(name: f.params.get(i).match({

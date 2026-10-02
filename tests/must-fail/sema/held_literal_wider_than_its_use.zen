@@ -1,0 +1,9 @@
+// A binding of a number with no written type holds that number, and each use
+// checks it as if the number were written there. 3000000000 does not fit the
+// i32 wanted here, so the use is refused rather than truncated.
+main = () i32 {
+    big = 3000000000;
+    z: i32 = big;
+    println("{}", z);
+    0
+}

@@ -96,8 +96,8 @@ main = (env: Env) Res<i32, AllocError> {
     // Exactly three pieces exist in SOURCE: two comments and one derived
     // Blank. Ownership of all three is the property; the count is how it
     // is asserted without naming an owner.
-    expected: usize ::= 3;
-    ok              ::= w.claimed == expected;
+    expected :: usize = 3;
+    ok       ::= w.claimed == expected;
     ok.match({
         true  => println(
             "every trivia piece owned: {} of {}",

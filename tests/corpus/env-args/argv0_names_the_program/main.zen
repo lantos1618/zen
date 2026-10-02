@@ -33,7 +33,7 @@ main = (env: Env) Res<i32, AllocError | Utf8Error> {
 
     // self-consistency: find the last '/', assert it sits at len - 5,
     // i.e. the row is exactly <something>/prog and len counts ALL of it
-    last: usize ::= 0;
+    last :: usize = 0;
     Range(0, p.len).loop((h, i) {
         (p[i] == 47).then(() { last = i; });
     });

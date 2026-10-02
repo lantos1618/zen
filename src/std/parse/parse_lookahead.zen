@@ -92,8 +92,8 @@ group_end_at* = (p :: Parser, from: usize) usize {
     (cached > 0).match({
         true  => cached,
         false => {
-            depth: usize ::= 0;
-            out          ::= p.tokens_len();
+            depth :: usize = 0;
+            out   ::= p.tokens_len();
             Range(from, p.tokens_len()).loop((h, k) {
                 depth = p.token_kind_at(k).delim_step(depth);
                 (depth == 0).then(() { out = k + 1; h.break() });
@@ -108,8 +108,8 @@ group_end_at* = (p :: Parser, from: usize) usize {
 // Index after a balanced angle group. Return `from` when a token invalidates
 // the type-argument interpretation.
 angles_end_at = (p :: Parser, from: usize) usize {
-    depth: usize ::= 0;
-    out          ::= from;
+    depth :: usize = 0;
+    out   ::= from;
     Range(from, p.tokens_len()).loop((h, k) {
         kind = p.token_kind_at(k);
         kind.angle_stop().match({
@@ -125,9 +125,9 @@ angles_end_at = (p :: Parser, from: usize) usize {
 
 // Number of comma-separated top-level items in a group.
 group_items_at = (p :: Parser, from: usize, to: usize) usize {
-    depth: usize ::= 0;
-    commas       ::= 0;
-    empty        ::= true;
+    depth  :: usize = 0;
+    commas ::= 0;
+    empty  ::= true;
     Range(from + 1, to - 1).loop((h, k) {
         kind = p.token_kind_at(k);
         (kind == TokenKind.Comma && depth == 0).then(
@@ -243,9 +243,9 @@ variant_bar_at = (p :: Parser, from: usize) bool {
 }
 
 discriminant_bar_after = (p :: Parser, from: usize) bool {
-    depth: usize ::= 0;
-    found        ::= false;
-    running      ::= from < p.tokens_len();
+    depth   :: usize = 0;
+    found   ::= false;
+    running ::= from < p.tokens_len();
     Range(from, p.tokens_len()).loop((h, k) {
         running.then(() {
             kind = p.token_kind_at(k);

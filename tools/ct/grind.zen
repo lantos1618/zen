@@ -57,7 +57,7 @@ run_case* = (env: Env, a: Alloc, name: str) Res<i32, AllocError> {
             ct_lt(key.read(1), 100).ct_select(key.read(2), 9)
         ),
         "early_exit_compare" => {
-            same: u8 ::= 1;
+            same :: u8 = 1;
             Range<usize>(0, 32).loop((h, i) {
                 (key.read(i) != other.read(i)).then(() { same = 0; h.break(); });
             });

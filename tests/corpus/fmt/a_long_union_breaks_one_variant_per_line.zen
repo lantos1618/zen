@@ -74,8 +74,8 @@ faithful_of = (a: Alloc, text: str) Res<bool, AllocError> {
 }
 
 show = (text: str) {
-    line        ::= 0;
-    from: usize ::= 0;
+    line ::= 0;
+    from :: usize = 0;
     Range(0, text.len).loop((h, i) {
         (text.index(i) == '\n').then(() {
             line = line + 1;

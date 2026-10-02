@@ -274,8 +274,8 @@ behaviour_only* = (s: Struct) bool {
 record = (lo :: Lowerer, n: TyNamed, s: Struct) Res<Shape, LowerError> {
     fields = lo.field_types(n, s).try();
     placed ::= lo.alloc.Vec<FieldAt>();
-    cursor: usize ::= 0;
-    align: usize ::= 1;
+    cursor :: usize = 0;
+    align  :: usize = 1;
     fields.loop((field) {
         class  = lo.class_of(field.ty).try();
         a      = align_of(class);

@@ -123,10 +123,10 @@ measure* = <P: Probe>(env: Env, a: Alloc, probe: P, config: TimingConfig)
     classes = a.raw(chunk, 16).try();
     times   = a.raw(chunk * 8, 16).try().to<u64>();
     sorted  = a.raw(chunk * 8, 16).try().to<u64>();
-    tests       ::= a.Vec<Test>();
-    done: usize ::= 0;
-    fixed_all   ::= fresh();
-    random_all  ::= fresh();
+    tests      ::= a.Vec<Test>();
+    done       :: usize = 0;
+    fixed_all  ::= fresh();
+    random_all ::= fresh();
     loop(() { done < config.measurements }, (h) {
         n = chunk.min(config.measurements - done);
         Range(0, n).loop((i) {
@@ -172,8 +172,8 @@ measure* = <P: Probe>(env: Env, a: Alloc, probe: P, config: TimingConfig)
         });
         done = done + n;
     });
-    best         ::= 0.0;
-    which: usize ::= 0;
+    best  ::= 0.0;
+    which :: usize = 0;
     Range(0, tests.len).loop((k) {
         t = abs(tests.get(k).ok_or(AllocError.OutOfMemory).try().t());
         (t > best).then(() { best = t; which = k; });

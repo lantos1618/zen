@@ -309,9 +309,9 @@ text_block_at* = (raw: str, offset: usize) SourceAt {
     first  = raw.newline_in(3, close);
     last   = raw.slice(0, close).rfind('\n').value_or(first);
     indent = raw.slice(last + 1, close);
-    seen        ::= 1;
-    line: usize ::= 1;
-    at          ::= first + 1;
+    seen ::= 1;
+    line :: usize = 1;
+    at   ::= first + 1;
     found: Res<SourceAt> = loop<SourceAt>(() { offset > 0 && last > first }, (
         h
     ) {
@@ -351,7 +351,7 @@ add_block_line = (out :: String, line: str, indent: str) Res<(), AllocError> {
         true  => line.slice(indent.len, line.len),
         false => "",
     });
-    at: usize ::= 0;
+    at :: usize = 0;
     loop(() { at < text.len }, (h) {
         b = text[at];
         b.match({

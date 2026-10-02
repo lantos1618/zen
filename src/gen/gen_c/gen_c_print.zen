@@ -179,9 +179,9 @@ write_format = (
     ctx    : Ctx
 ) Res<(), AllocError> {
     end = body_end(raw);
-    start: usize ::= 1;
-    used: usize  ::= 1;
-    i: usize     ::= 1;
+    start :: usize = 1;
+    used  :: usize = 1;
+    i     :: usize = 1;
     loop(i < end, (h) {
         at = source_fmt_at(raw, i, end);
         at.ends_run().then(() {

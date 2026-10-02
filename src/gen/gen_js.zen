@@ -198,7 +198,7 @@ JavaScript = {
                 });
             });
         });
-        cursor: usize ::= 0;
+        cursor :: usize = 0;
         function.slots.loop((h, i, ty) {
             aggregate = is_block(ty);
             (aggregate || self.home(i) != LOCAL).then(() {

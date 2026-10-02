@@ -218,8 +218,8 @@ Classed.impl(Ordered, {
 
 // `names` is sorted; binary search for the entry starting at `line:col`.
 classed_at = (names: Vec<Classed>, line: usize, col: usize) Res<Classed> {
-    lo: usize ::= 0;
-    hi        ::= names.len;
+    lo :: usize = 0;
+    hi ::= names.len;
     loop(lo < hi, (h) {
         mid = (lo + hi) / 2;
         names.get(mid).match({

@@ -120,7 +120,7 @@ chacha20poly1305_open* = (
             poly_key(scratch);
             authenticate(scratch, aad, aad_count, ciphertext, count);
             tag = scratch.offset(38).to<u8>();
-            different: u32 ::= 0;
+            different :: u32 = 0;
             Range<usize>(0, 16).loop((i) {
                 different = different +% tag.read(i).to_u32().bit_xor(ciphertext.read(count + i).to_u32());
             });
@@ -530,7 +530,7 @@ stream_xor* = (
 MASK44: u64 = 17592186044415
 MASK42: u64 = 4398046511103
 load64 = (m: Ptr<u8>, offset: usize) u64 {
-    v: u64 ::= 0;
+    v :: u64 = 0;
     Range<usize>(0, 8).loop((i) { v = v.bit_or(m.read(offset + i).to_u64().shift_left(8 * i)); });
     v
 }

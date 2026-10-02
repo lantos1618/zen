@@ -57,8 +57,8 @@ main = (env: Env) Res<i32, AllocError> {
 // newline of its own, so printing the buffer whole would put a line in
 // the expectation that is not in the file.
 show = (text: str) {
-    line        ::= 0;
-    from: usize ::= 0;
+    line ::= 0;
+    from :: usize = 0;
     Range(0, text.len).loop((h, i) {
         (text.index(i) == '\n').then(() {
             line = line + 1;

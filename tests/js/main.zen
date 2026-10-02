@@ -350,7 +350,7 @@ main = (env: Env) Res<i32, AllocError> {
     filter ::= "";
     shrink ::= false;
     verbose ::= false;
-    i: usize ::= 1;
+    i :: usize = 1;
     loop(() { i < env.argv.len }, (h) {
         word = env.argv.get(i).value_or("");
         word.match({

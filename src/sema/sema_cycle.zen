@@ -32,7 +32,7 @@ Graph = {
     edges :: Vec<Edge>,
 
     self_imports = (self: @Self, out :: String) Res<usize, AllocError> {
-        n: usize ::= 0;
+        n :: usize = 0;
         Range(0, self.tree.module_count()).loop((h, mi) {
             n = n + self.module_self_imports(mi, out).try();
         });
@@ -49,7 +49,7 @@ Graph = {
 
     decls_self_import = (self: @Self, m: Module, mi: usize, out :: String)
                         Res<usize, AllocError> {
-        n: usize ::= 0;
+        n :: usize = 0;
         m.decls.loop((h, d) {
             n = n + self.decl_self_import(m, d, mi, out).try();
         });
@@ -78,7 +78,7 @@ Graph = {
     }
 
     const_cycles = (self: @Self, out :: String) Res<usize, AllocError> {
-        n: usize ::= 0;
+        n :: usize = 0;
         Range(0, self.world.count()).loop((h, mi) {
             n = n + self.cycle_at(mi, out).try();
         });
@@ -160,7 +160,7 @@ Graph = {
         );
         s.order.add(start).try();
         s.prev.add(0).try();
-        i: usize ::= 0;
+        i :: usize = 0;
         loop(() { i < s.order.len && s.closed.len == 0 }, (h) {
             from = s.order.get(i).value_or(start);
             self.edges.loop((g, e) {
@@ -176,7 +176,7 @@ Graph = {
         seen  ::= self.alloc.Vec<usize>();
         front ::= self.alloc.Vec<usize>();
         front.add(start).try();
-        i: usize ::= 0;
+        i :: usize = 0;
         loop(i < front.len, (h) {
             from = front.get(i).value_or(start);
             i    = i + 1;

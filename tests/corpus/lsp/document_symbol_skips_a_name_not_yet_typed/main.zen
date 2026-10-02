@@ -69,9 +69,9 @@ ask = (a: Alloc, into :: String) Res<(), AllocError> {
 // Reply 0 is `initialize`, reply 1 is the outline, the last is
 // `shutdown`; only the middle one is this test's row.
 walk_replies = (out: str) {
-    at: usize   ::= 0;
-    seen: usize ::= 0;
-    going       ::= true;
+    at    :: usize = 0;
+    seen  :: usize = 0;
+    going ::= true;
     loop(() { going && at < out.len }, (h) {
         frame_at(out, at).match({
             Err(_) => { going = false; },

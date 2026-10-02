@@ -7,8 +7,8 @@ parse_i64* = (self: str) Res<i64> {
     parsed: Res<i64> = loop<i64>((h) {
         (self.len == 0).then(() { h.break() });
 
-        negative     ::= self[0] == '-';
-        first: usize ::= negative.match({
+        negative ::= self[0] == '-';
+        first    :: usize = negative.match({
             true  => 1,
             false => 0,
         });

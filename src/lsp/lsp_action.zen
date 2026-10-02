@@ -146,7 +146,7 @@ Fixes = {
 
     // Fixes insert after the last import of the file.
     insert_at = (self: @Self, text: str) Position {
-        line: usize ::= 1;
+        line :: usize = 1;
         module_index_of(self.c.tree, self.file).match({
             None   => {},
             Ok(mi) => self.c.tree.module_at(mi).match({

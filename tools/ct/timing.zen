@@ -51,7 +51,7 @@ LeakyEqual.impl(Probe, {
         });
     }
     run = (self: @Self, input: Ptr<u8>) {
-        same: u8 ::= 1;
+        same :: u8 = 1;
         Range<usize>(0, 32).loop((h, i) {
             (input.read_volatile(i) != self.c.reference.read(i)).then(() {
                 same = 0;
@@ -272,7 +272,7 @@ run_all = (env: Env, a: Alloc) Res<i32, AllocError> {
         result: measure(env, a, LeakyDivide(c: c), config).try(),
         control: true
     )).try();
-    failed: usize ::= 0;
+    failed :: usize = 0;
     rows.loop((row) { (!report(row)).then(() { failed = failed + 1; }); });
     println(
         "ct-timing: {} of {} rows as expected",

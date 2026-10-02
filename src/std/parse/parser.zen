@@ -140,8 +140,8 @@ Parser* = {
 
     // The nth non-trivia token from the cursor; zero is current.
     peek_n* = (self: @Self, n: usize) Token {
-        found       ::= self.eof_token();
-        seen: usize ::= 0;
+        found ::= self.eof_token();
+        seen  :: usize = 0;
         Range(self.at, self.tokens.len).loop((h, k) {
             t = self.token_at(k);
             t.kind.is_trivia().match({

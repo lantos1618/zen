@@ -47,10 +47,10 @@ no_files = () Res<i32, AllocError> {
 }
 
 run = (env: Env, alloc: Alloc) Res<i32, AllocError> {
-    files: usize    ::= 0;
-    failures: usize ::= 0;
-    wasted: usize   ::= 0;
-    unread: usize   ::= 0;
+    files    :: usize = 0;
+    failures :: usize = 0;
+    wasted   :: usize = 0;
+    unread   :: usize = 0;
 
     Range(1, env.argv.len).loop((h, i) {
         rel = arg(env, i);
@@ -81,8 +81,8 @@ scan = (a: Alloc, rel: str, text: str) Res<Hit, AllocError> {
     lines = lines_of(a, text).try();
     runs  = runs_in(a, lines).try();
 
-    blocks: usize ::= 0;
-    waste: usize  ::= 0;
+    blocks :: usize = 0;
+    waste  :: usize = 0;
     // Consecutive PAIRS: a block is compared with the one that follows it and
     // with nothing else, which is what "adjacent, and only adjacent" means.
     Range(1, runs.len).loop((h, i) {
@@ -144,9 +144,9 @@ blank_between = (lines: Vec<str>, a: Run, b: Run) bool {
 
 // Every comment run of at least MIN_BLOCK lines, in source order.
 runs_in = (a: Alloc, lines: Vec<str>) Res<Vec<Run>, AllocError> {
-    out          ::= a.Vec<Run>();
-    start: usize ::= 0;
-    held: usize  ::= 0;
+    out   ::= a.Vec<Run>();
+    start :: usize = 0;
+    held  :: usize = 0;
     Range(0, lines.len).loop((h, i) {
         n = i + 1;
         is_comment(row(lines, n)).match({
@@ -172,8 +172,8 @@ runs_in = (a: Alloc, lines: Vec<str>) Res<Vec<Run>, AllocError> {
 // The lines of `text`, each stripped, as views into `text` — a str is a
 // pointer and a length, so this copies no bytes.
 lines_of = (a: Alloc, text: str) Res<Vec<str>, AllocError> {
-    out         ::= a.Vec<str>();
-    from: usize ::= 0;
+    out  ::= a.Vec<str>();
+    from :: usize = 0;
     Range(0, text.len).loop((h, i) {
         (text.index(i) == '\n').then(() {
             out.add(strip(text.slice(from, i))).try();
@@ -187,8 +187,8 @@ lines_of = (a: Alloc, text: str) Res<Vec<str>, AllocError> {
 }
 
 strip = (s: str) str {
-    from: usize ::= 0;
-    to          ::= s.len;
+    from :: usize = 0;
+    to   ::= s.len;
     Range(0, s.len).loop((h, i) {
         (from == i && is_space(s.index(i))).then(() { from = i + 1; });
     });

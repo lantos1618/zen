@@ -19,7 +19,7 @@ main = (env: Env) Res<i32, AllocError> {
     nums ::= alloc.Vec<i64>();
     nums.add(9000000000).try();
     nums.add(-7).try();
-    m: usize ::= 0;
+    m :: usize = 0;
     nums.loop((h, index, value) {
         println("{} {}", index, value);
         m = m + index + 1;

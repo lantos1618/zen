@@ -872,7 +872,7 @@ bind_sources* = (
                 Res<Vec<Source>, LowerError> {
     out ::= lo.alloc.Vec<Source>();
     f.params.loop((_) { out.add(Source.Absent).try(LowerError.OutOfMemory); });
-    next: usize ::= 0;
+    next :: usize = 0;
     receiver.when_ok((r) {
         out.set(0, Source.Given(r));
         next = 1;
@@ -2553,8 +2553,11 @@ range_loop = (
         ),
         _               => lo.range_bounds(range, span).try(),
     });
-    index = lo.copy_slot(walk.start).try();
-    step  = lo.word_const(lo.slots.get(index).value_or(Scalar.U64), 1).try();
+    index      = lo.copy_slot(walk.start).try();
+    step       = lo.word_const(
+        lo.slots.get(index).value_or(Scalar.U64),
+        1
+    ).try();
     // The pass count starts at zero whatever the range's start.
     count = lo.word_const(Scalar.U64, 0).try();
     pass  = lo.label().try();
@@ -2571,7 +2574,7 @@ range_loop = (
     lo.start(pass);
     position = Value(slot: index, ty: usize_ty);
     value    = walk.kind.match({
-        Elements => {
+        Elements   => {
             place = lo.element_place(range, index).try();
             lo.read(place).try()
         },
@@ -2663,7 +2666,11 @@ range_bounds = (lo :: Lowerer, range: Value, span: Span) Res<Walk, LowerError> {
             place = lo.spill(range);
             start = lo.read(lo.field_place(place, "start", span).try()).try();
             end   = lo.read(lo.field_place(place, "end", span).try()).try();
-            Ok(Walk(start: start.slot, end: end.slot, kind: WalkKind.Indices(start.ty)))
+            Ok(Walk(
+                start: start.slot,
+                end: end.slot,
+                kind: WalkKind.Indices(start.ty)
+            ))
         },
         false => lo.impl_bounds(range, span),
     })
@@ -2702,17 +2709,20 @@ impl_bounds = (lo :: Lowerer, range: Value, span: Span) Res<Walk, LowerError> {
         });
         h.break();
     });
-    impl = found.ok_or(unsupported(span, "a loop over a type without a Seq impl")).try();
-    start_expr = impl.field_value("start").ok_or(unsupported(span, "a Seq impl without start")).try();
-    end_expr = impl.field_value("end").ok_or(unsupported(span, "a Seq impl without end")).try();
-    at = impl.bodied_fn("at").ok_or(unsupported(span, "a Seq impl without at")).try();
-    impl_decl = ids.find((id) {
+    impl             = found.ok_or(unsupported(
+        span,
+        "a loop over a type without a Seq impl"
+    )).try();
+    start_expr       = impl.field_value("start").ok_or(unsupported(span, "a Seq impl without start")).try();
+    end_expr         = impl.field_value("end").ok_or(unsupported(span, "a Seq impl without end")).try();
+    at               = impl.bodied_fn("at").ok_or(unsupported(span, "a Seq impl without at")).try();
+    impl_decl        = ids.find((id) {
         lo.check.world.impl_at(lo.tree, id).match({
             Ok(i) => lo.tree.type_at(i.bound).kind.match({ Named(n) => n.name.text.eq("Seq"), _ => false }),
             None  => false,
         })
     }).ok_or(unsupported(span, "a missing Seq impl")).try();
-    module = impl_decl.decl.module.to_usize();
+    module           = impl_decl.decl.module.to_usize();
     // The impl's field expressions read `self`.
     inst  = lo.check.types.at(range.ty).match({
         Named(n) => lo.check.inst_of_named(n).try(LowerError.OutOfMemory),
@@ -3373,8 +3383,8 @@ format = (
          Res<(), LowerError> {
     end = raw.len - 1;
     start :: usize = 1;
-    i :: usize = 1;
-    used :: usize = first + 1;
+    i     :: usize = 1;
+    used  :: usize = first + 1;
     loop(() { i < end }, (h) {
         at = raw.fmt_at(i, end);
         at.what.match({

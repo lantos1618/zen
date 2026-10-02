@@ -408,7 +408,7 @@ add_doc_line = (line: str, doc :: String) Res<(), AllocError> {
 }
 
 comment_text = (text: str) str {
-    from: usize ::= 0;
+    from :: usize = 0;
     loop(
         () { from < text.len && text.index(from) == '/' },
         (h) { from = from + 1; }

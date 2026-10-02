@@ -12,7 +12,7 @@ entry_of = zen.zen_path
 // Repeat the whole pipeline in one process. Later outputs are numbered before
 // run_once so compilation itself has no repetition policy.
 build* = (env: Env, a: Alloc, job: BuildArgs) Res<i32, AllocError> {
-    worst: i32 ::= 0;
+    worst :: i32 = 0;
     Range(0, at_least_one(job.repeat)).loop((h, i) {
         worst = max_code(
             worst,

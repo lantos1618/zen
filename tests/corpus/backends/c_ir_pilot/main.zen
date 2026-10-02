@@ -18,10 +18,10 @@ Backend = LegacyC | IrC | Js | Asm
 // then fails to assemble.
 host_assembly = (env: Env, a: Alloc, program: Program) Res<String, AllocError> {
     host_target().match({
-        None          => a.String(),
-        Ok(machine)   => emit_assembly(a, machine, program).try().match({
-            None       => a.String(),
-            Ok(text)   => Ok(text),
+        None        => a.String(),
+        Ok(machine) => emit_assembly(a, machine, program).try().match({
+            None     => a.String(),
+            Ok(text) => Ok(text),
         }),
     })
 }
@@ -130,7 +130,15 @@ Case = {
                 Asm => {
                     log ::= a.String().try();
                     built = host_target().match({
-                        Ok(machine) => assemble_and_link(env, a, machine, source, "candidate", false, log).try(),
+                        Ok(machine) => assemble_and_link(
+                            env,
+                            a,
+                            machine,
+                            source,
+                            "candidate",
+                            false,
+                            log
+                        ).try(),
                         None        => false,
                     });
                     (!built).then(

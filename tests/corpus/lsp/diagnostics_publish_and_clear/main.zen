@@ -115,9 +115,9 @@ batch = (s :: Server, a: Alloc, what: str, input: str) Res<(), AllocError> {
 
 // Print every frame body so frame count and ordering remain observable.
 walk = (out: str) {
-    from: usize ::= 0;
-    seen        ::= 0;
-    going       ::= true;
+    from  :: usize = 0;
+    seen  ::= 0;
+    going ::= true;
     loop(() { going && from < out.len }, (h) {
         frame_at(out, from).match({
             Err(_) => { going = false; },

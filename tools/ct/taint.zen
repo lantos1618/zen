@@ -253,7 +253,7 @@ strip_comment = (isa: Isa, line: str) str {
 split_operands = (a: Alloc, text: str) Res<Vec<str>, AllocError> {
     out   ::= a.Vec<str>();
     depth ::= 0;
-    start: usize ::= 0;
+    start :: usize = 0;
     Range(0, text.len).loop((i) {
         c = text.index(i);
         (c == '(' || c == '[' || c == '{').then(() { depth = depth + 1; });
@@ -2419,12 +2419,12 @@ arm_memory = (
         || mem.index.match({ Ok(i) => has(cur.pts2, i), None => false });
     block = l.mnemonic.starts_with("ld2") || l.mnemonic.starts_with("ld3") || l.mnemonic.starts_with("ld4")
         || l.mnemonic.starts_with("st2") || l.mnemonic.starts_with("st3") || l.mnemonic.starts_with("st4");
-    total: usize ::= 0;
+    total :: usize = 0;
     moved.loop((t) { total = total + t.width; });
     any_secret ::= false;
     moved.loop((t) { any_secret = any_secret || has(cur.val, t.reg); });
     (store && any_secret).then(() { an.observed = true; });
-    offset: usize ::= 0;
+    offset :: usize = 0;
     moved.loop((t) {
         here = block.match({
             true  => place,

@@ -79,7 +79,7 @@ Aligned* = {
     // Pad every op in `[from, to)` to one column past the widest left side.
     align = (self :: @Self, ops: Vec<Op>, from: usize, to: usize)
             Res<(), AllocError> {
-        col: usize ::= 0;
+        col :: usize = 0;
         Range(from, to).loop((h, i) {
             op = ops.ptr().read(i);
             (op.width > 0 && op.end.col + 1 > col).then(() {
@@ -133,7 +133,7 @@ Aligned* = {
     align_block = (self :: @Self, a: Alloc, tree: Ast, b: Block)
                   Res<(), AllocError> {
         ops = self.src.stmt_ops(a, tree, b).try();
-        from: usize ::= 0;
+        from :: usize = 0;
         Range(1, ops.len).loop((h, i) {
             joins(ops, b, i).match({
                 true  => (),

@@ -251,9 +251,9 @@ Server* = {
     // A change to a file the client has not opened stales the build.
     watched = (self :: @Self, request: Decoded) Res<(), AllocError> {
         changes = request.param("changes");
-        i: usize ::= 0;
-        stale    ::= false;
-        more     ::= true;
+        i     :: usize = 0;
+        stale ::= false;
+        more  ::= true;
         loop(more, (h) {
             request.item_at(changes, i).match({
                 None       => { more = false; },
@@ -752,8 +752,8 @@ Server* = (a: Alloc, env: Env) Server {
 }
 
 serve* = (s :: Server, input: str, out :: String) Res<(), AllocError> {
-    at: usize ::= 0;
-    going     ::= true;
+    at    :: usize = 0;
+    going ::= true;
     loop(() { going && !s.stopped() && at < input.len }, (h) {
         frame_at(input, at).match({
             Err(f) => {

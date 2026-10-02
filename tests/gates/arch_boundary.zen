@@ -140,7 +140,7 @@ run = (env: Env, alloc: Alloc) Res<i32, AllocError> {
         });
     });
     allowed = allowlist(env, alloc, arg(env, 2)).try();
-    backends: usize ::= 0;
+    backends :: usize = 0;
     units.loop((h, u) {
         u.role.match({ Backend => { backends = backends + 1; }, _ => () });
     });
@@ -176,7 +176,7 @@ judge = (
     backends : usize
 ) Res<i32, AllocError> {
     taint = tainted(a, units).try();
-    bad: usize ::= 0;
+    bad :: usize = 0;
     units.loop((h, u) {
         u.role.match({
             Backend       => { bad = bad + backend_faults(u, units, taint); },
@@ -376,8 +376,8 @@ allowlist = (env: Env, a: Alloc, path: str) Res<Allowlist, AllocError> {
 }
 
 strip = (s: str) str {
-    from: usize ::= 0;
-    to          ::= s.len;
+    from :: usize = 0;
+    to   ::= s.len;
     Range(0, s.len).loop((h, i) {
         (from == i && is_space(s.index(i))).then(() { from = i + 1; });
     });

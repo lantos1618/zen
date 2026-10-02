@@ -20,7 +20,7 @@ Box = {
 }
 
 sum = (v: vararg<i32>) i32 {
-    total: i32 ::= 0;
+    total :: i32 = 0;
     v.loop((h, x) { total = total + x; });
     total;
 }

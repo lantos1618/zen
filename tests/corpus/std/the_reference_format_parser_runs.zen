@@ -10,7 +10,7 @@ Error = AllocError | IoError
 // without being a hole
 walk = (label: str, f: str) Res<(), Error> {
     println("{label}");
-    at: usize ::= 0;
+    at :: usize = 0;
     loop(() { at < f.len }, (h) {
         s = f.fmt_next(at);
         println(

@@ -403,8 +403,8 @@ Round = {
 
     // Edits never overlap: each list owns only its gaps.
     apply = (self: @Self, text: str) Res<String, AllocError> {
-        out       ::= self.a.String().try();
-        at: usize ::= 0;
+        out ::= self.a.String().try();
+        at  :: usize = 0;
         self.edits.loop((h, e) {
             out.fmt("{}{}", text.slice(at, e.from), e.text.view()).try();
             at = e.to;

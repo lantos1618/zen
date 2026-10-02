@@ -56,7 +56,7 @@ aes_known_answer = (cpu: Aes, bytes: Ptr<u8>) bool {
 
 // Bitwise carry-less product of two u64 values, low and high halves.
 clmul_reference = (a: u64, b: u64) u128 {
-    product: u128 ::= 0;
+    product :: u128 = 0;
     Range<usize>(0, 64).loop((i) {
         bit = b.shift_right(i).bit_and(1);
         (bit == 1).then(

@@ -130,8 +130,8 @@ definition = (a: Alloc, id: usize, into :: String) Res<(), AllocError> {
 // Every frame's body, one per line — framing unwrapped, since a
 // `.expected` may not carry the CR a `Content-Length` header does.
 walk = (out: str) {
-    from: usize ::= 0;
-    going       ::= true;
+    from  :: usize = 0;
+    going ::= true;
     loop(() { going && from < out.len }, (h) {
         frame_at(out, from).match({
             Err(_) => { going = false; },
@@ -171,10 +171,10 @@ find_result = (body: str) usize {
 // The nth frame's body, "" when there are fewer — a missing reply then
 // fails the comparison rather than trapping on a slice.
 nth_reply = (out: str, n: usize) str {
-    at: usize   ::= 0;
-    seen: usize ::= 0;
-    body        ::= "";
-    going       ::= true;
+    at    :: usize = 0;
+    seen  :: usize = 0;
+    body  ::= "";
+    going ::= true;
     loop(() { going && at < out.len }, (h) {
         frame_at(out, at).match({
             Err(_) => { going = false; },

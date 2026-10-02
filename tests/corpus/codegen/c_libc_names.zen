@@ -56,7 +56,7 @@ main = (env: Env) Res<i32, AllocError> {
         size_t: 12
     );
 
-    fields: i32 ::= 0;
+    fields :: i32 = 0;
     fields = fields + m.NULL;
     fields = fields + m.EOF;
     fields = fields + m.errno;

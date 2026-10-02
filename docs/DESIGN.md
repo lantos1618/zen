@@ -1943,7 +1943,7 @@ main = (env: Env) Res<i32, Error> {
     const_val_implicit = 1;
     const_val_explicit : i32 = 1;
     mutable_val_implicit ::= 1;
-    mutable_val_explicit : i32 ::= 1;
+    mutable_val_explicit :: i32 = 1;
 
     // arithmetic traps on overflow. want wrapping? say so
     wrapped = const_val_implicit +% 255;

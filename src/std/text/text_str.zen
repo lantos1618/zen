@@ -99,7 +99,7 @@ str* = {
     count* = (self: @Self, needle: str) usize {
         n ::= 0;
         (needle.len > 0).then(() {
-            at: usize ::= 0;
+            at :: usize = 0;
             loop(at <= self.len, (h) {
                 self.slice(at, self.len).find(needle).match({
                     Ok(i) => { n = n + 1; at = at + i + needle.len; },

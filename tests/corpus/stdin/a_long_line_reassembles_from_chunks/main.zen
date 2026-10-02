@@ -54,7 +54,7 @@ main = (env: Env) Res<i32, AllocError> {
 
     // the checksum a duplicated, dropped or overwritten chunk misses:
     // every byte of the stream, added up
-    total: u64 ::= 0;
+    total :: u64 = 0;
     Range(0, held.len).loop((h, i) {
         held.get(i).match({
             Ok(byte) => { total = total + byte.to_u64(); },

@@ -155,9 +155,9 @@ main = (env: Env) Res<i32, AllocError> {
 // because the legend it carries is what every index below is against —
 // and the one holding `data` is decoded.
 replies = (a: Alloc, out: str) Res<(), AllocError> {
-    at: usize   ::= 0;
-    seen: usize ::= 0;
-    going       ::= true;
+    at    :: usize = 0;
+    seen  :: usize = 0;
+    going ::= true;
     loop(() { going && at < out.len }, (h) {
         frame_at(out, at).match({
             Err(_) => { going = false; },
@@ -211,10 +211,10 @@ walked = (tree: Jsons, data: Res<JsonId>) Res<(), AllocError> {
 }
 
 walk_groups = (tree: Jsons, array: JsonId) Res<(), AllocError> {
-    line: usize      ::= 0;
-    character: usize ::= 0;
-    at: usize        ::= 0;
-    going            ::= true;
+    line      :: usize = 0;
+    character :: usize = 0;
+    at        :: usize = 0;
+    going     ::= true;
     going.loop((h) {
         tree.item(array, at).match({
             None  => { going = false; },

@@ -107,7 +107,7 @@ short_name* = (symbol: str) str {
     (symbol.starts_with("zu_f")).match({
         false => symbol,
         true  => {
-            at: usize ::= 4;
+            at :: usize = 4;
             loop(
                 () { at < symbol.len && symbol.index(at) != '_' },
                 (h) { at = at + 1; }
@@ -115,7 +115,7 @@ short_name* = (symbol: str) str {
             at = at + 1;
             last ::= symbol;
             loop(() { at < symbol.len && digit(symbol.index(at)) }, (h) {
-                start: usize ::= at;
+                start :: usize = at;
                 loop(
                     () { at < symbol.len && digit(symbol.index(at)) },
                     (h2) { at = at + 1; }
@@ -203,7 +203,7 @@ with_reads = (s: CallShape, measured: Vec<str>) CallShape {
 
 // No findings beyond `branches` allowed conditional branches.
 within = (found: Vec<Finding>, branches: usize) bool {
-    count: usize ::= 0;
+    count :: usize = 0;
     other ::= false;
     found.loop((f) {
         f.kind.eq(

@@ -140,7 +140,7 @@ xtime_word = (w: u64) u64 { xtime_long(w).bit_and(0xffffffff) }
 
 byte_of = (w: u64, k: usize) u64 { w.shift_right(k * 8).bit_and(255) }
 load_le = (p: Ptr<u8>) u64 {
-    v: u64 ::= 0; Range<usize>(0, 8).loop((i) { v = v *% 256 +% p.read(7 - i).to_u64(); }); v
+    v :: u64 = 0; Range<usize>(0, 8).loop((i) { v = v *% 256 +% p.read(7 - i).to_u64(); }); v
 }
 store_le = (p: Ptr<u8>, value: u64) {
     Range<usize>(0, 8).loop((i) { p.write(i, byte_of(value, i).to_usize().value_or(0).to_u8().value_or(0)); });
@@ -401,7 +401,7 @@ open_soft = (sp: Spans, output: Ptr<u8>, ciphertext: Ptr<u8>, count: usize, aad:
 }
 // subtle.ConstantTimeCompare over the full tag, shared by both paths.
 tag_matches = (sp: Spans, ciphertext: Ptr<u8>, count: usize) bool {
-    difference: u64 ::= 0;
+    difference :: u64 = 0;
     Range<usize>(0, 16).loop((i) { difference = or64(difference, sp.tag.read(i).to_u64().bit_xor(ciphertext.read(count + i).to_u64())); });
     authentic = difference == 0;
     authentic
@@ -534,7 +534,7 @@ expand_key_hw = (cpu: Aes, key: Ptr<u8>, keys: Ptr<u8>) {
     Range<usize>(0, 4).loop((i) {
         words.write(i, load_u32x4(key, 0).lane(i));
     });
-    rcon: u32 ::= 1;
+    rcon :: u32 = 1;
     Range<usize>(4, 44).loop((i) {
         temp ::= words.read(i - 1);
         (i % 4 == 0).then(() {

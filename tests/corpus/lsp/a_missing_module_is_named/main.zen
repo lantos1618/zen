@@ -131,9 +131,9 @@ batch = (s :: Server, a: Alloc, what: str, input: str) Res<(), AllocError> {
 // Every frame's body, one per line. Nothing is filtered: a count that
 // silently dropped a frame would be a count nothing could check.
 walk = (out: str) {
-    from: usize ::= 0;
-    seen        ::= 0;
-    going       ::= true;
+    from  :: usize = 0;
+    seen  ::= 0;
+    going ::= true;
     loop(() { going && from < out.len }, (h) {
         frame_at(out, from).match({
             Err(_) => { going = false; },

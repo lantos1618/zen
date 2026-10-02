@@ -58,7 +58,15 @@ run = (
             Asm => {
                 log ::= a.String().try();
                 built = host.match({
-                    Ok(machine) => assemble_and_link(env, a, machine, source_path, "candidate", false, log).try(),
+                    Ok(machine) => assemble_and_link(
+                        env,
+                        a,
+                        machine,
+                        source_path,
+                        "candidate",
+                        false,
+                        log
+                    ).try(),
                     None        => false,
                 });
                 (!built).then(() { h.break(false); });
@@ -182,9 +190,21 @@ main = (env: Env) Res<(), AllocError> {
     // exits 0).
     [Codegen, 2](Codegen.Js, Codegen.Asm).loop((backend) {
         w = env.mem.alloc();
-        println("{} wide {}", backend.stable_name(), run(env, w, backend, "wide.zen", "12\n", 0).try());
-        println("{} literal width {}", backend.stable_name(), run(env, w, backend, "literal_width.zen", "2147483648\n", 0).try());
-        println("{} bool entry {}", backend.stable_name(), run(env, w, backend, "bool_entry.zen", "", 0).try());
+        println(
+            "{} wide {}",
+            backend.stable_name(),
+            run(env, w, backend, "wide.zen", "12\n", 0).try()
+        );
+        println(
+            "{} literal width {}",
+            backend.stable_name(),
+            run(env, w, backend, "literal_width.zen", "2147483648\n", 0).try()
+        );
+        println(
+            "{} bool entry {}",
+            backend.stable_name(),
+            run(env, w, backend, "bool_entry.zen", "", 0).try()
+        );
     });
     [Codegen, 2](Codegen.Js, Codegen.Asm).loop((backend) {
         b = env.mem.alloc();
@@ -205,41 +225,24 @@ main = (env: Env) Res<(), AllocError> {
             backend.stable_name(),
             refused(env, b, backend, "program.zen", Layout.Modules, "").try()
         );
-        // Each bit operator is refused by name, never lowered as another.
+        // `&`, `>>` and `~` lower as their named operations, never as another.
         println(
-            "{} bitwise refused {}",
+            "{} bitwise {}",
             backend.stable_name(),
-            refused(
-                env,
-                a,
-                backend,
-                "bitwise.zen",
-                Layout.Single,
-                "the `&` operator"
-            ).try()
+            run(env, b, backend, "bitwise.zen", "8\n3\n4294967283\n", 0).try()
         );
+        // The IR's shift is logical, so a signed shift_right is refused by
+        // name rather than lowered as the logical shift.
         println(
-            "{} shift refused {}",
+            "{} signed shift refused {}",
             backend.stable_name(),
             refused(
                 env,
                 a,
                 backend,
-                "shift.zen",
+                "signed_shift.zen",
                 Layout.Single,
-                "the `>>` operator"
-            ).try()
-        );
-        println(
-            "{} complement refused {}",
-            backend.stable_name(),
-            refused(
-                env,
-                a,
-                backend,
-                "complement.zen",
-                Layout.Single,
-                "the `~` operator"
+                "an arithmetic shift of a signed word"
             ).try()
         );
     });

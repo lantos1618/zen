@@ -135,7 +135,11 @@ compute_shape = (lo :: Lowerer, ty: TyId) Res<Shape, LowerError> {
             },
             false => prim_class(p.name).match({
                 Ok(class) => Ok(Shape(class: class, form: Form.Plain)),
-                None      => Err(unsupported(nowhere(), "f32 values")),
+                // Named, so a u128 or f32 value is not reported as another type.
+                None      => Err(unsupported(nowhere(), lo.alloc.String("{} values", p.name).match({
+                    Ok(t)  => t.view(),
+                    Err(_) => "values of this primitive type",
+                }))),
             }),
         }),
         Res(_)   => {

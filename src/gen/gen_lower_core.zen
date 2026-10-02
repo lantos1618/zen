@@ -30,14 +30,14 @@ Scalar, Layout, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print = gen
 Branch, Instruction, Func, Program, BasicBlock, Terminator = gen.gen_ir
 Convert, Address, Load, Store, CopyMem, StaticBytes, Write, TrapKind, Fault = gen.gen_ir
 word, integer, same = gen.gen_ir
-LowerError, unsupported, bit_operator, BIT_NOT = gen.gen_lower
+LowerError, unsupported = gen.gen_lower
 Shape, Form, FieldAt, VariantAt, Tagged, shape, class_of = gen.gen_lower_shape
 to_bound, resolve = gen.gen_lower_member
 walk, WalkVisitor, WalkEvent, WalkNode = std.ast.ast_walk
 real_call = gen.gen_lower_call
 capability = gen.gen_lower_shape
 variant_index, size_of, TAG_BYTES = gen.gen_lower_shape
-call, construct_named, print_call, sys_env_call, Source = gen.gen_lower_call
+call, construct_named, print_call, sys_env_call, Source, bits, bit_not = gen.gen_lower_call
 
 // A value computed into a slot, with its concrete (substituted) type.
 Value* = { slot*: usize, ty*: TyId }
@@ -847,9 +847,13 @@ Lowerer* = {
     unary = (self :: @Self, id: ExprId, op: UnOp, operand: ExprId, span: Span)
             Res<Value, LowerError> {
         op.match({
-            BitNot => Err(unsupported(span, BIT_NOT)),
-            _      => Ok(()),
-        }).try();
+            BitNot => bit_not(self, id, operand, span),
+            _      => self.plain_unary(id, op, operand, span),
+        })
+    }
+
+    plain_unary = (self :: @Self, id: ExprId, op: UnOp, operand: ExprId, span: Span)
+                  Res<Value, LowerError> {
         ty = self.type_of(id).try();
         // The minimum signed literal has no positive intermediate.
         // A negated literal is a constant, including the minimum whose
@@ -887,58 +891,61 @@ Lowerer* = {
         op.match({
             And => self.logical(true, lhs, rhs),
             Or  => self.logical(false, lhs, rhs),
-            _   => {
-                op.is_bitwise().match({
-                    true  => Err(unsupported(span, bit_operator(op))),
-                    false => Ok(()),
-                }).try();
-                checked = self.type_of(id).try();
-                compare = op.match({
-                    Equal => true, NotEqual => true, Less => true, LessEq => true,
-                    Greater => true, GreaterEq => true, _ => false,
-                });
-                raw_left  = self.expr(lhs).try();
-                raw_right = self.expr(rhs).try();
-                // The operands meet at the checked arithmetic type, else at
-                // whichever side is settled and not an open literal.
-                operand = (!compare && self.settled(checked)).match({
-                    true  => checked,
-                    false => self.meeting(raw_left.ty, raw_right.ty),
-                });
-                ty = compare.match({ true => checked, false => operand });
-                left  = self.coerce(raw_left, operand).try();
-                right = self.coerce(raw_right, operand).try();
-                (compare && !word(self.class_of(operand).try())).match({
-                    true  => self.equal_values(op, left, right, span),
-                    false => {
-                        operation = op.match({
-                            Add       => Op.Add,
-                            Sub       => Op.Sub,
-                            Mul       => Op.Mul,
-                            Div       => Op.Div,
-                            Rem       => Op.Rem,
-                            AddWrap   => Op.WrapAdd,
-                            SubWrap   => Op.WrapSub,
-                            MulWrap   => Op.WrapMul,
-                            Equal     => Op.Equal,
-                            NotEqual  => Op.NotEqual,
-                            Less      => Op.Less,
-                            LessEq    => Op.LessEqual,
-                            Greater   => Op.Greater,
-                            GreaterEq => Op.GreaterEqual,
-                            _         => Op.Equal,
-                        });
-                        out = self.temp(ty).try();
-                        self.add(Instruction.BinaryValue(Binary(
-                            out: out.slot,
-                            left: left.slot,
-                            right: right.slot,
-                            op: operation,
-                            span: span
-                        ))).try();
-                        Ok(out)
-                    },
-                })
+            _   => op.is_bitwise().match({
+                true  => bits(self, id, op.bit_name(), lhs, rhs, span),
+                false => self.arithmetic(id, op, lhs, rhs, span),
+            }),
+        })
+    }
+
+    arithmetic = (self :: @Self, id: ExprId, op: BinOp, lhs: ExprId, rhs: ExprId,
+                  span: Span) Res<Value, LowerError> {
+        checked = self.type_of(id).try();
+        compare = op.match({
+            Equal => true, NotEqual => true, Less => true, LessEq => true,
+            Greater => true, GreaterEq => true, _ => false,
+        });
+        raw_left  = self.expr(lhs).try();
+        raw_right = self.expr(rhs).try();
+        // The operands meet at the checked arithmetic type, else at
+        // whichever side is settled and not an open literal.
+        operand = (!compare && self.settled(checked)).match({
+            true  => checked,
+            false => self.meeting(raw_left.ty, raw_right.ty),
+        });
+        ty = compare.match({ true => checked, false => operand });
+        left  = self.coerce(raw_left, operand).try();
+        right = self.coerce(raw_right, operand).try();
+        (compare && !word(self.class_of(operand).try())).match({
+            true  => self.equal_values(op, left, right, span),
+            false => {
+                operation = op.match({
+                    Add       => Ok(Op.Add),
+                    Sub       => Ok(Op.Sub),
+                    Mul       => Ok(Op.Mul),
+                    Div       => Ok(Op.Div),
+                    Rem       => Ok(Op.Rem),
+                    AddWrap   => Ok(Op.WrapAdd),
+                    SubWrap   => Ok(Op.WrapSub),
+                    MulWrap   => Ok(Op.WrapMul),
+                    Equal     => Ok(Op.Equal),
+                    NotEqual  => Ok(Op.NotEqual),
+                    Less      => Ok(Op.Less),
+                    LessEq    => Ok(Op.LessEqual),
+                    Greater   => Ok(Op.Greater),
+                    GreaterEq => Ok(Op.GreaterEqual),
+                    // `&&`, `||` and the bit operators lower elsewhere.
+                    _         => None,
+                }).ok_or(unsupported(span, "this operator")).try();
+                out = self.temp(ty).try();
+                self.add(Instruction.BinaryValue(Binary(
+                    out: out.slot,
+                    left: left.slot,
+                    right: right.slot,
+                    op: operation,
+                    span: span
+                ))).try();
+                Ok(out)
             },
         })
     }
@@ -1357,24 +1364,48 @@ Lowerer* = {
         })
     }
 
+    // Each primitive's width is named, never defaulted: a missing name is
+    // refused rather than given some other type's constants (u128.BITS was
+    // once 64, f64.MAX a NaN).
     prim_constant = (self :: @Self, ty: TyId, prim: str, member: str, span: Span)
                     Res<Value, LowerError> {
-        bits: i64 = prim.match({
-            "i8" => 8, "u8" => 8, "i16" => 16, "u16" => 16, "i32" => 32, "u32" => 32,
-            "f32" => 32, _ => 64,
+        bits: Res<i64> = prim.match({
+            "i8" => Ok(8), "u8" => Ok(8), "i16" => Ok(16), "u16" => Ok(16),
+            "i32" => Ok(32), "u32" => Ok(32), "f32" => Ok(32),
+            "i64" => Ok(64), "u64" => Ok(64), "usize" => Ok(64), "f64" => Ok(64),
+            "u128" => Ok(128),
+            _ => None,
         });
-        is_signed = prim.starts_with("i");
-        value: Res<i64> = member.match({
-            "BITS" => Ok(bits),
-            "MAX"  => is_signed.match({
-                true  => Ok(bits.signed_max()),
-                false => Ok(bits.unsigned_max_bits()),
+        is_signed = prim.is_in(["i8", "i16", "i32", "i64"]);
+        integer = prim.is_in(["i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "usize"]);
+        value: Res<i64> = bits.match({
+            None    => None,
+            Ok(width) => member.match({
+                "BITS" => Ok(width),
+                // The float extremes are IEEE bit patterns, as float
+                // constants are held: +-0x1.fffffffffffffp+1023.
+                "MAX"  => prim.eq("f64").match({
+                    true  => Ok(9218868437227405311),
+                    false => integer.match({
+                        false => None,
+                        true  => is_signed.match({
+                            true  => Ok(width.signed_max()),
+                            false => Ok(width.unsigned_max_bits()),
+                        }),
+                    }),
+                }),
+                "MIN"  => prim.eq("f64").match({
+                    true  => Ok(-4503599627370497),
+                    false => integer.match({
+                        false => None,
+                        true  => is_signed.match({
+                            true  => Ok(-width.signed_max() - 1),
+                            false => Ok(0),
+                        }),
+                    }),
+                }),
+                _      => None,
             }),
-            "MIN"  => is_signed.match({
-                true  => Ok(-bits.signed_max() - 1),
-                false => Ok(0),
-            }),
-            _      => None,
         });
         self.constant(ty, value.ok_or(unsupported(span, "this primitive constant")).try())
     }

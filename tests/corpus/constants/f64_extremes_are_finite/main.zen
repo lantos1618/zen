@@ -1,0 +1,7 @@
+// f64.MAX and f64.MIN are the largest finite doubles; a lowering that took
+// them for an integer's constants printed nan and 0.
+main = () {
+    println("{} {} {}", f64.BITS, f64.MAX, f64.MIN);
+    println("{} {}", f64.MAX > 1.0, f64.MIN < -1.0);
+    println("{}", f64.MAX + f64.MIN);
+}

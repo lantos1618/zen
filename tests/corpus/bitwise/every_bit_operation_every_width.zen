@@ -1,0 +1,161 @@
+// Every named bit operation of std.core.num and every bit operator, on
+// every unsigned width (the rotations exist for u32 and u64), at counts 0,
+// 1, width - 1, width, width + 1, 2 * width, 2 * width + 3, 2^32 + 1 and
+// usize.MAX. The operands have the high bit set so a sign-extending or
+// promoting backend shows up, and each name prints next to its own result
+// so a backend that lowers one operation as another (bit_or as a right
+// shift, say) fails on the line that names it. The asm and JS backends
+// must print exactly what the C backend prints.
+row_u8 = (a: u8, b: u8, n: usize) {
+    println("u8 n={}", n);
+    println(
+        "  bit_and {} bit_or {} bit_xor {}",
+        a.bit_and(b),
+        a.bit_or(b),
+        a.bit_xor(b)
+    );
+    println("  shift_left {} shift_right {}", a.shift_left(n), a.shift_right(n));
+    println("  & {} | {} ^ {} ~ {} ~b {}", a & b, a | b, a ^ b, ~a, ~b);
+    println("  << {} >> {}", a << n, a >> n);
+    println("  chain {}", a.bit_or(b).shift_left(n).bit_xor(~b));
+}
+
+row_u16 = (a: u16, b: u16, n: usize) {
+    println("u16 n={}", n);
+    println(
+        "  bit_and {} bit_or {} bit_xor {}",
+        a.bit_and(b),
+        a.bit_or(b),
+        a.bit_xor(b)
+    );
+    println("  shift_left {} shift_right {}", a.shift_left(n), a.shift_right(n));
+    println("  & {} | {} ^ {} ~ {} ~b {}", a & b, a | b, a ^ b, ~a, ~b);
+    println("  << {} >> {}", a << n, a >> n);
+    println("  chain {}", a.bit_or(b).shift_left(n).bit_xor(~b));
+}
+
+row_u32 = (a: u32, b: u32, n: usize) {
+    println("u32 n={}", n);
+    println(
+        "  bit_and {} bit_or {} bit_xor {}",
+        a.bit_and(b),
+        a.bit_or(b),
+        a.bit_xor(b)
+    );
+    println("  shift_left {} shift_right {}", a.shift_left(n), a.shift_right(n));
+    println(
+        "  rotate_left {} rotate_right {}",
+        a.rotate_left(n),
+        a.rotate_right(n)
+    );
+    println("  & {} | {} ^ {} ~ {} ~b {}", a & b, a | b, a ^ b, ~a, ~b);
+    println("  << {} >> {}", a << n, a >> n);
+    println("  chain {}", a.bit_or(b).rotate_left(n).bit_xor(~b));
+}
+
+row_u64 = (a: u64, b: u64, n: usize) {
+    println("u64 n={}", n);
+    println(
+        "  bit_and {} bit_or {} bit_xor {}",
+        a.bit_and(b),
+        a.bit_or(b),
+        a.bit_xor(b)
+    );
+    println("  shift_left {} shift_right {}", a.shift_left(n), a.shift_right(n));
+    println(
+        "  rotate_left {} rotate_right {}",
+        a.rotate_left(n),
+        a.rotate_right(n)
+    );
+    println("  & {} | {} ^ {} ~ {} ~b {}", a & b, a | b, a ^ b, ~a, ~b);
+    println("  << {} >> {}", a << n, a >> n);
+    println("  chain {}", a.bit_or(b).rotate_left(n).bit_xor(~b));
+}
+
+row_usize = (a: usize, b: usize, n: usize) {
+    println("usize n={}", n);
+    println(
+        "  bit_and {} bit_or {} bit_xor {}",
+        a.bit_and(b),
+        a.bit_or(b),
+        a.bit_xor(b)
+    );
+    println("  shift_left {} shift_right {}", a.shift_left(n), a.shift_right(n));
+    println("  & {} | {} ^ {} ~ {} ~b {}", a & b, a | b, a ^ b, ~a, ~b);
+    println("  << {} >> {}", a << n, a >> n);
+    println("  chain {}", a.bit_or(b).shift_left(n).bit_xor(~b));
+}
+
+main = () {
+    a_u8: u8 = 0xB5;
+    b_u8: u8 = 0x3C;
+    row_u8(a_u8, b_u8, 0);
+    row_u8(a_u8, b_u8, 1);
+    row_u8(a_u8, b_u8, 7);
+    row_u8(a_u8, b_u8, 8);
+    row_u8(a_u8, b_u8, 9);
+    row_u8(a_u8, b_u8, 16);
+    row_u8(a_u8, b_u8, 19);
+    row_u8(a_u8, b_u8, 4294967297);
+    row_u8(a_u8, b_u8, usize.MAX);
+    a_u16: u16 = 0xB5A3;
+    b_u16: u16 = 0x3CC3;
+    row_u16(a_u16, b_u16, 0);
+    row_u16(a_u16, b_u16, 1);
+    row_u16(a_u16, b_u16, 15);
+    row_u16(a_u16, b_u16, 16);
+    row_u16(a_u16, b_u16, 17);
+    row_u16(a_u16, b_u16, 32);
+    row_u16(a_u16, b_u16, 35);
+    row_u16(a_u16, b_u16, 4294967297);
+    row_u16(a_u16, b_u16, usize.MAX);
+    a_u32: u32 = 0xB5A3C381;
+    b_u32: u32 = 0x3CC3F00F;
+    row_u32(a_u32, b_u32, 0);
+    row_u32(a_u32, b_u32, 1);
+    row_u32(a_u32, b_u32, 31);
+    row_u32(a_u32, b_u32, 32);
+    row_u32(a_u32, b_u32, 33);
+    row_u32(a_u32, b_u32, 64);
+    row_u32(a_u32, b_u32, 67);
+    row_u32(a_u32, b_u32, 4294967297);
+    row_u32(a_u32, b_u32, usize.MAX);
+    a_u64: u64 = 0xB5A3C3811F2E4D69;
+    b_u64: u64 = 0x3CC3F00F0FF0C33C;
+    row_u64(a_u64, b_u64, 0);
+    row_u64(a_u64, b_u64, 1);
+    row_u64(a_u64, b_u64, 63);
+    row_u64(a_u64, b_u64, 64);
+    row_u64(a_u64, b_u64, 65);
+    row_u64(a_u64, b_u64, 128);
+    row_u64(a_u64, b_u64, 131);
+    row_u64(a_u64, b_u64, 4294967297);
+    row_u64(a_u64, b_u64, usize.MAX);
+    a_usize: usize = 0xB5A3C3811F2E4D69;
+    b_usize: usize = 0x3CC3F00F0FF0C33C;
+    row_usize(a_usize, b_usize, 0);
+    row_usize(a_usize, b_usize, 1);
+    row_usize(a_usize, b_usize, 63);
+    row_usize(a_usize, b_usize, 64);
+    row_usize(a_usize, b_usize, 65);
+    row_usize(a_usize, b_usize, 128);
+    row_usize(a_usize, b_usize, 131);
+    row_usize(a_usize, b_usize, 4294967297);
+    row_usize(a_usize, b_usize, usize.MAX);
+
+    // An operator's shift count keeps its own unsigned type.
+    k8: u8   = 9;
+    k16: u16 = 17;
+    k32: u32 = 33;
+    k64: u64 = 65;
+    w: u32   = 0x80000001;
+    println("counts {} {} {} {}", w << k8, w >> k16, w << k32, w >> k64);
+    // Literal counts are usize.
+    println(
+        "literals {} {} {} {}",
+        w.shift_left(3),
+        w.rotate_left(1),
+        w.rotate_right(31),
+        w << 4
+    );
+}

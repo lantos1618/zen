@@ -15,6 +15,11 @@
 // UNSUPPORTED (the compiler refused the program before publishing
 // assembly) or BROKEN (assembly or link failed: a backend bug). The summary
 // counts each class over the selected tests.
+//
+// Tests named in tests/native/required.txt must PASS on every target: the
+// runner exits 1, naming each one, when a selected required test fails, is
+// refused or does not assemble. They pin behaviour a native backend once got
+// silently wrong, such as bit operations lowered as other operations.
 
 Alloc, AllocError = std.mem
 str, String = std.text
@@ -214,13 +219,13 @@ Runner = {
         })
     }
 
-    // One test's verdict line. Each test works in `<work>/<test base with /
+    // One test's verdict line; true when it passed. Each test works in `<work>/<test base with /
     // as _>/`: the assembly, object, binary, run directory and any staged
     // copy. A pass deletes it; any other verdict leaves it in place with
     // `command.sh` (the exact compile, assemble, link and run commands),
     // `stdout`, `stderr` and `verdict.txt`, so everything left under the work
     // root after a run is a test that did not pass.
-    case = (self: @Self, original: Case, tally :: Tally) Res<(), AllocError> {
+    case = (self: @Self, original: Case, tally :: Tally) Res<bool, AllocError> {
         dir = self.a.String("{}/{}", self.work, slug(self.a, original.base).try().view()).try();
         mkdir ::= self.a.Vec<str>();
         ["mkdir", "-p", dir.view()].loop((w) { mkdir.add(w).try(); });
@@ -230,6 +235,7 @@ Runner = {
         object = self.a.String("{}/prog.o", dir.view()).try();
         binary = self.a.String("{}/prog", dir.view()).try();
         commands ::= self.a.String("'{}' build '{}' --entry '{}' --std src --backend asm --target '{}' -o '{}'\n", self.zen, c.root, c.entry, self.target_name, source.view()).try();
+        passed ::= false;
         self.compile(c, source.view()).try().match({
             Ok(reason) => {
                 tally.unsupported = tally.unsupported + 1;
@@ -253,6 +259,7 @@ Runner = {
                         verdict.is_empty().match({
                             true  => {
                                 tally.pass = tally.pass + 1;
+                                passed = true;
                                 println("PASS {}", c.base);
                                 (!self.keep_all).then(() {
                                     remove ::= self.a.Vec<str>();
@@ -270,7 +277,7 @@ Runner = {
                 });
             },
         });
-        Ok(())
+        Ok(passed)
     }
 
     keep = (self: @Self, dir: str, base: str, verdict: str, commands: str, out: str, err: str, reason: str) {
@@ -407,12 +414,17 @@ main = (env: Env) Res<i32, AllocError> {
         (!line.is_empty() && line.contains(filter)).then(() { paths.add(line).try(); });
     });
     keep_flag = env.var("KEEP_ARTIFACTS").value_or("");
+    required = listed_tests(a, env.fs.read(a, "tests/native/required.txt").match({ Ok(s) => s.view(), Err(_) => "" })).try();
     runner = Runner(env: env, a: a, zen: zen, target_name: target_name, target: target, work: work.view(), sdk: sdk,
                     keep_all: !keep_flag.eq("") && !keep_flag.eq("0"));
     tally ::= Tally();
+    missed ::= a.Vec<str>();
     paths.loop((h, i, path) {
         (i % shards == shard).then(() {
-            case_of(a, path).try().when_ok((c) { runner.case(c, tally).try(); });
+            case_of(a, path).try().when_ok((c) {
+                passed = runner.case(c, tally).try();
+                (!passed && named(required, c.base)).then(() { missed.add(c.base).try(); });
+            });
         });
     });
     total = tally.pass + tally.fail + tally.unsupported + tally.broken;
@@ -434,5 +446,27 @@ main = (env: Env) Res<i32, AllocError> {
         }),
         Err(_)  => (),
     });
-    Ok(0)
+    missed.loop((base) {
+        println("REQUIRED {} did not pass on {} (tests/native/required.txt)", base, target_name);
+    });
+    (missed.len > 0).then(() {
+        println("native-corpus {}: {} required test(s) did not pass", target_name, missed.len);
+    });
+    Ok((missed.len > 0).match({ true => 1, false => 0 }))
+}
+
+// Test bases listed one per line, ignoring `#` comments and blank lines.
+listed_tests = (a: Alloc, text: str) Res<Vec<str>, AllocError> {
+    names ::= a.Vec<str>();
+    text.split('\n').loop((line) {
+        entry = line.split_once('#').match({ Ok(pair) => pair.before, None => line });
+        entry.trim().when_ok((word) { names.add(word).try(); });
+    });
+    Ok(names)
+}
+
+named = (names: Vec<str>, base: str) bool {
+    found ::= false;
+    names.loop((h, i, n) { n.eq(base).then(() { found = true; h.break(); }); });
+    found
 }

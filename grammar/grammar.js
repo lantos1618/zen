@@ -907,12 +907,21 @@ module.exports = grammar({
     // corrupting every literal after it. A token has no seams for an extra
     // to enter.
     //
-    // `\n` is excluded on both branches because DESIGN.md's lexical rules
-    // say a string literal does not span lines, and a token is where that
-    // is expressible: as a `seq` the newline was matched by `[^"\\]+` and
-    // the rule could not state its own law.
+    // `\n` is excluded on both branches of the one-line form because
+    // DESIGN.md's lexical rules say such a literal does not span lines, and
+    // a token is where that is expressible: as a `seq` the newline was
+    // matched by `[^"\\]+` and the rule could not state its own law.
+    //
+    // A multi-line string (`"""`, a line break, lines of text, a closing
+    // `"""`) is the second branch, and the one place a newline is content.
+    // Inside it one or two quotes are text; three end it. Where the text
+    // starts and how the closing indentation is stripped are lexer rules
+    // (DESIGN.md, "Multi-line strings"), not grammar.
     string_literal: (_) =>
-      token(seq('"', repeat(choice(seq('\\', /[^\n]/), /[^"\\\n]/)), '"')),
+      token(choice(
+        seq('"', repeat(choice(seq('\\', /[^\n]/), /[^"\\\n]/)), '"'),
+        seq('"""', /([^"\\]|\\[^\n]|"(\\[^\n]|[^"\\])|""(\\[^\n]|[^"\\]))*/, '"""'),
+      )),
 
     // "zen has `'a'` char literals; write `b == ':'` not `b == 58`"
     // one token, for the same reason as string_literal above. A char

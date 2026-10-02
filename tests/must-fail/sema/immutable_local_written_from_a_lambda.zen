@@ -1,0 +1,13 @@
+// A lambda passed to a function captures the local; writing an immutable
+// one through the capture is refused.
+//
+// position: the write.
+
+apply = (f: () ()) { f(); }
+
+main = () i32 {
+    x = 1;
+    apply(() { x = 2; });
+    println("{}", x);
+    0
+}

@@ -254,8 +254,24 @@ bind_name = (
 )
            Res<(), AllocError> {
     c.assign_binding(b).match({
-        Ok(_) => Ok(()),
-        None  => c.fresh_or_refused(b, name, target, ty, ctx),
+        Ok(old) => c.refuse_immutable_store(b, old, target),
+        None    => c.fresh_or_refused(b, name, target, ty, ctx),
+    })
+}
+
+// A write to an immutable local from a nested block, an arm, or a closure
+// that captures it is the same fault a field write through `:` is. The same
+// block already reports it as a rebinding, and a deferred local's one
+// assignment is sema_init's to check.
+refuse_immutable_store = (c :: Checker, b: Bind, old: Binding, target: Expr)
+                         Res<(), AllocError> {
+    same_block = c.rebound_of(b).match({ Ok(_) => true, None => false });
+    (old.mutable || old.deferred || same_block).match({
+        true  => Ok(()),
+        false => c.refuse(
+            target.span,
+            SemaFault.ImmutableWrite(NameFault(name: old.name))
+        ),
     })
 }
 

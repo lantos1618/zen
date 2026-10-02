@@ -19,7 +19,7 @@
 main = (env: Env) Res<i32, AllocError> {
     total: Res<usize> = Range(0, 4).loop((ho, o) {
         // one inner loop's full work, folded in this pass alone
-        part: usize = 0;
+        part :: usize = 0;
         Range(0, o + 1).loop((hi, i) {
             part = part + i * 100;
         });

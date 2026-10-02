@@ -1,0 +1,13 @@
+// An immutable local is never reassigned, from its own block or from one
+// nested inside it: `x = 3;` below is a write, not a fresh binding.
+//
+// position: the write.
+
+main = () i32 {
+    x = 1;
+    {
+        x = 3;
+    }
+    println("{}", x);
+    0
+}

@@ -230,7 +230,7 @@ TlsStream* = {
         buf.reserve(n).try(TlsError.ReadFailed);
         got = self.io_counts.ptr().offset(1);
         got.write(0, 0);
-        answer: Res<usize, TlsError> = Err(TlsError.ReadFailed);
+        answer  :: Res<usize, TlsError> = Err(TlsError.ReadFailed);
         waiting ::= true;
         waiting.loop((h) {
             rc = SSL_read_ex(self.ssl, buf.ptr(), n, got);

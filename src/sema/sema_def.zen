@@ -191,7 +191,7 @@ World* = {
     first_follow_imports = (self: @Self, t: ModuleTable, name: str,
                             seen :: Vec<usize>, reexport: bool)
                            Res<Res<Def>, AllocError> {
-        hit: Res<Def> = None;
+        hit :: Res<Def> = None;
         t.imports.loop((h, binding) {
             crosses = binding.exported || (reexport == false);
             open    = hit.match({ None => true, Ok(_) => false });

@@ -9,7 +9,7 @@ main = (env: Env) Res<i32, AllocError> {
     rows.add("4").try();
     rows.add("5").try();
 
-    total: i64 = 0;
+    total :: i64 = 0;
 
     // every row past row 0 — row 0 is the program path, never a number
     env.argv.loop((h, i, arg) {

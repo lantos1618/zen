@@ -64,7 +64,7 @@ flag_at = (env: Env, flag: str) Res<usize> {
 
 // 2^i, spelled by doubling: the number floor has no shift.
 bit = (i: usize) u64 {
-    b: u64 = 1;
+    b :: u64 = 1;
     Range(0, i).loop((h, _) { b = b * 2; });
     b
 }

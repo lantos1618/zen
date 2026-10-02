@@ -1,0 +1,12 @@
+// A local function reads the frame live, and writing an immutable local of
+// that frame is refused like any other write to it.
+//
+// position: the write.
+
+main = () i32 {
+    x = 1;
+    bump = (n: i32) { x = n; }
+    bump(5);
+    println("{}", x);
+    0
+}

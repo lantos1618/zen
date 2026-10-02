@@ -172,6 +172,7 @@ is_pure_value* = (be :: CBackend, id: ExprId, ctx: Ctx) bool {
     be.tree.expr_at(id).kind.match({
         Literal(_)    => true,
         Unit          => true,
+        Paren(p)      => be.is_pure_value(p.inner, ctx),
         Unary(u)      => be.is_pure_value(u.operand, ctx),
         Binary(b)     => be.is_pure_pair(b, ctx),
         Call(c)       => be.is_pure_call(id, c, ctx),

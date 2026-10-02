@@ -619,7 +619,7 @@ impl_range_elem = (lo :: Lowerer, range: TyId, n: TyNamed) Res<Res<TyId>, LowerE
             lo.check.world.impl_at(lo.tree, id).when_ok((i) {
                 lo.check.type_memo.get(i.bound).when_ok((bound) {
                     lo.check.types.at(bound).match({
-                        Named(b) => (b.name.eq("Seq") || b.name.eq("Range")).then(() {
+                        Named(b) => (b.name.eq("Seq")).then(() {
                             b.args.get(0).when_ok((arg) {
                                 h.break(lo.check.subst(arg, inst).try(LowerError.OutOfMemory));
                             });
@@ -1736,7 +1736,7 @@ impl_bounds = (lo :: Lowerer, range: Value, span: Span) Res<Walk, LowerError> {
         ids.loop((id) {
             lo.check.world.impl_at(lo.tree, id).when_ok((i) {
                 bound = lo.tree.type_at(i.bound).kind.match({ Named(n) => n.name.text, _ => "" });
-                (bound.eq("Seq") || bound.eq("Range")).then(() { h.break(i); });
+                bound.eq("Seq").then(() { h.break(i); });
             });
         });
         h.break();
@@ -1747,7 +1747,7 @@ impl_bounds = (lo :: Lowerer, range: Value, span: Span) Res<Walk, LowerError> {
     at = impl.bodied_fn("at").ok_or(unsupported(span, "a Seq impl without at")).try();
     impl_decl = ids.find((id) {
         lo.check.world.impl_at(lo.tree, id).match({
-            Ok(i) => lo.tree.type_at(i.bound).kind.match({ Named(n) => n.name.text.eq("Seq") || n.name.text.eq("Range"), _ => false }),
+            Ok(i) => lo.tree.type_at(i.bound).kind.match({ Named(n) => n.name.text.eq("Seq"), _ => false }),
             None  => false,
         })
     }).ok_or(unsupported(span, "a missing Seq impl")).try();

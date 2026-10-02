@@ -157,16 +157,18 @@ named_type = (
     })
 }
 
+// `Res<..>` is built into the type language when the name resolves to the
+// prelude's `Res`; a module's own `Res` is an ordinary declared type. A
+// program compiled without std has no prelude, and there an unbound `Res`
+// is the built-in one.
 res_sugar* = (c :: Checker, name: str, mi: usize)
              Res<bool, AllocError> {
-    name.eq("Res").match({
-        false => Ok(false),
-        true  => {
-            c.world.first_def_of(mi, name).try().match({
-                None      => Ok(true),
-                Ok(found) => c.world.is_prelude_decl(found.id, name),
-            })
-        },
+    c.world.first_def_of(mi, name).try().match({
+        None      => Ok(name.eq("Res") && (c.world.has_prelude() == false)),
+        Ok(found) => found.name.eq("Res").match({
+            false => Ok(false),
+            true  => c.world.is_prelude_decl(found.id, "Res"),
+        }),
     })
 }
 

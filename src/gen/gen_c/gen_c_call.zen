@@ -447,7 +447,7 @@ NamedCallSite = {
 
     named = (self: @Self, be :: CBackend, out :: String)
             Res<(), AllocError> {
-        is_res_ctor(self.name).match({
+        be.is_res_ctor(self.name, self.site.ctx).try().match({
             true  => self.lower_res(be, out),
             false => self.sugar_or_plain(be, out),
         })
@@ -935,7 +935,15 @@ undeclared = (be :: CBackend, name: str, ctx: Ctx) Res<bool, AllocError> {
     Ok(found.len == 0);
 }
 
-is_res_ctor* = (name: str) bool { name.eq("Ok") || name.eq("Err") }
+// `Ok(..)` and `Err(..)` construct the destination `Res` when the name
+// resolves to the prelude's variant, as sema decided; a closure slot of the
+// name has already been ruled out by the caller.
+is_res_ctor* = (be :: CBackend, name: str, ctx: Ctx) Res<bool, AllocError> {
+    (name.eq("None") == false).match({
+        false => Ok(false),
+        true  => be.check.world.names_res_variant(be.tree, ctx.module, name),
+    })
+}
 
 // `recv` is the receiver a UFCS call reached this name through — "a free
 // function whose first param is the type is callable as a method", so

@@ -1,0 +1,25 @@
+// `Ok`, `Err` and `None` are names the prelude imports, so they resolve like
+// every other name: a module's own declaration wins. A function this module
+// calls `Ok` is called — not read as the `Res` constructor its spelling
+// matches — and an enum of this module with a `None` variant gives that
+// variant to a bare `None` written where the enum is expected.
+//
+// The refusal half, where the shadowing declaration makes a `Res` return
+// impossible to write, is must-fail/sema/a_declared_ok_shadows_the_constructor;
+// an imported `Ok` is corpus/modules/an_imported_ok_is_called_as_written.
+
+Ok = (x: i32) i32 { x + 1 }
+
+Mode = Auto | None
+
+describe = (m: Mode) str {
+    m.match({ Auto => "auto", None => "none" })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    y: i32 = Ok(41);
+    println("{}", y);
+    m: Mode = None;
+    println("{}", describe(m));
+    y - 42
+}

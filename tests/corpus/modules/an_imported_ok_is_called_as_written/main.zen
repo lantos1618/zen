@@ -1,0 +1,12 @@
+// An imported `Ok` is the imported function, exactly as an imported `size`
+// would be: the import binds the name in this module, ahead of the prelude.
+// The prelude's `Res` constructor stays available in modules that do not
+// bind the name — `checks` itself never writes `Ok(..)` as a constructor,
+// and `main`'s own return is built with `Res` through the lift.
+
+Ok = checks
+
+main = (env: Env) Res<i32, AllocError> {
+    println("{} {}", Ok(3), Ok(-3));
+    0
+}

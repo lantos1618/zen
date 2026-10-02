@@ -164,9 +164,12 @@ bound_name_type = (c :: Checker, id: ExprId, b: Binding)
     Ok(b.ty);
 }
 
+// A bare `None` is absence when the name resolves to the prelude's
+// variant; a module's own `None` reads as written.
 unbound_name_type = (c :: Checker, node: Expr, text: str, ctx: Ctx)
                     Res<TyId, AllocError> {
-    text.eq("None").match({
+    (text.eq("None")
+        && c.world.names_res_variant(c.tree, ctx.module, text).try()).match({
         true  => c.none_type(),
         false => c.global_name_type(node, text, ctx),
     })

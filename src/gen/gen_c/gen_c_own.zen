@@ -370,25 +370,32 @@ drop_in_impl = (be :: CBackend, i: ImplId, found :: Vec<Function>)
                Res<(), AllocError> {
     be.check.world.impl_at(be.tree, i).match({
         None   => Ok(()),
-        Ok(im) => be.keep_drop_member(im, found),
+        Ok(im) => be.keep_drop_member(i, im, found),
     })
 }
 
-keep_drop_member = (be :: CBackend, im: Impl, found :: Vec<Function>)
-                   Res<(), AllocError> {
-    be.bounds_drop(im).match({
+keep_drop_member = (
+    be    :: CBackend,
+    i     : ImplId,
+    im    : Impl,
+    found :: Vec<Function>
+) Res<(), AllocError> {
+    be.bounds_drop(i, im).try().match({
         false => Ok(()),
         true  => scan_drop_members(im, found),
     })
 }
 
-// One question per pass, two spellings: `sema_drop.zen`'s
-// bound_named_drop asks this of a Checker. Kept in step by hand until
-// the layers share a helper.
-bounds_drop = (be :: CBackend, im: Impl) bool {
+// The bound is the prelude's `Drop` as the impl's module resolves it —
+// the same question `sema_drop.zen`'s is_drop_impl asks.
+bounds_drop = (be :: CBackend, i: ImplId, im: Impl) Res<bool, AllocError> {
     be.tree.type_at(im.bound).kind.match({
-        Named(n) => n.name.text.eq("Drop"),
-        _        => false,
+        Named(n) => be.check.world.names_prelude(
+            i.decl.module.to_usize(),
+            n.name.text,
+            "Drop"
+        ),
+        _        => Ok(false),
     })
 }
 

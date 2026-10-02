@@ -111,7 +111,7 @@ CallCheck = {
     named = (self :: @Self, c :: Checker, name: str)
             Res<TyId, AllocError> {
         self.load_actuals(c).try();
-        name.is_res_ctor().match({
+        c.calls_res_ctor(name, self.ctx.module).try().match({
             true  => {
                 c.refuse_res_surplus(self.call, name).try();
                 c.res_ctor_type(name, self.actuals)
@@ -1019,7 +1019,16 @@ print_type = (c :: Checker, call: Call) Res<TyId, AllocError> {
 
 is_print_sugar = (name: str) bool { name.eq("println") || name.eq("print") }
 
-is_res_ctor = (name: str) bool { name.eq("Ok") || name.eq("Err") }
+// `Ok(..)` and `Err(..)` construct a `Res` when the name resolves to the
+// prelude's variant: a local, a declaration or an import of the same name
+// is called like any other function.
+calls_res_ctor = (c :: Checker, name: str, mi: usize) Res<bool, AllocError> {
+    (c.lookup(name).match({ Ok(_) => false, None => true })
+        && (name.eq("None") == false)).match({
+        false => Ok(false),
+        true  => c.world.names_res_variant(c.tree, mi, name),
+    })
+}
 
 // `Ok` and `Err` carry one value each, so a second argument is evaluated
 // and then dropped on the floor: `Ok(41, "x")` is an `Ok(41)` that read

@@ -436,7 +436,7 @@ call_type = (be :: CBackend, c: Call, ctx: Ctx, want: TyId)
 
 named_call_type = (be :: CBackend, name: str, ctx: Ctx, want: TyId)
                   Res<TyId, AllocError> {
-    is_res_ctor(name).match({
+    be.is_res_ctor(name, ctx).try().match({
         true  => Ok(want),
         false => be.declared_call_type(name, ctx, want),
     })
@@ -1128,8 +1128,16 @@ lower_global_name = (
     want : TyId,
     out  :: String
 ) Res<(), AllocError> {
-    text.eq("None").match({
+    be.names_none(text, ctx).try().match({
         true  => be.res_value(id, want, "None", out),
         false => be.lower_global_value(id, text, ctx, want, out),
+    })
+}
+
+// A bare `None` is absence when it resolves to the prelude's variant.
+names_none = (be :: CBackend, text: str, ctx: Ctx) Res<bool, AllocError> {
+    text.eq("None").match({
+        false => Ok(false),
+        true  => be.check.world.names_res_variant(be.tree, ctx.module, text),
     })
 }

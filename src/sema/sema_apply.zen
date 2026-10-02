@@ -7,7 +7,7 @@ Range = std.core
 ImplId = sema.sema_id
 TyId, TyNamed, literal_default = sema.sema_ty
 Def, decl_at = sema.sema_def
-Checker, Ctx = sema.sema_check
+Checker, Ctx, CallResolution, CheckedCall = sema.sema_check
 Inst, InstEdge, subst, unify, tparam_vars, zip, push_tparams = sema.sema_inst
 has_var, inst_of_named, decl_tparam_vars = sema.sema_inst
 Cand, TBound, Actual, ty_at, signature_matches = sema.sema_cand
@@ -18,6 +18,7 @@ spelled_lambda = sema.sema_call
 type_from_ast = sema.sema_denote
 check_literal = sema.sema_trap
 array_range_shape, check_inst_bounds, inst_bounds_hold = sema.sema_bound
+range_seq_arg, range_value = sema.sema_bound
 case_payload, Case, cases_of, find_case = sema.sema_case
 check_ctor_fields = sema.sema_hoist
 check_ctor_shape = sema.sema_bound
@@ -43,6 +44,14 @@ valid_construct = (c :: Checker, id: ExprId, call: Call, d: Def, ctx: Ctx)
     args    = c.ctor_args(call, d, ctx).try();
     applied = c.types.named(d.id, d.qname, d.name, args).try();
     ty      = c.settled_ctor_type(call, d, ctx, args, applied).try();
+    c.is_unknown(ty).match({
+        true  => Ok(ty),
+        false => c.checked_construct(id, call, ty, ctx),
+    })
+}
+
+checked_construct = (c :: Checker, id: ExprId, call: Call, ty: TyId, ctx: Ctx)
+                    Res<TyId, AllocError> {
     c.nominal_bounds_hold(ty, c.tree.expr_at(id).span).try().match({
         false => c.types.unknown(),
         true  => {
@@ -83,6 +92,12 @@ settled_ctor_type = (
     })
 }
 
+// A construction's type arguments come from its field values. Typed values
+// go first, so a literal takes the type they settle (`Range(0, n)` has n's
+// type); a parameter that only literals reach takes the literal default, and
+// a written binding may still settle it (`settle_ctor_at`). Two typed values
+// that settle one parameter differently are refused here, naming both types,
+// rather than reported as a field that does not fit the first.
 ctor_type_from_args = (
     c       :: Checker,
     call    : Call,
@@ -92,11 +107,25 @@ ctor_type_from_args = (
     applied : TyId
 )
                       Res<TyId, AllocError> {
-    inst ::= c.alloc.Inst();
-    call.args.loop((h, a) { c.unify_ctor_arg(a, applied, ctx, inst).try() });
-    (inst.len() == 0).match({
-        true  => Ok(applied),
-        false => c.rebuilt_ctor_type(d, vars, inst),
+    inst   ::= c.alloc.Inst();
+    agreed ::= true;
+    call.args.loop((h, i, a) {
+        (!c.unify_ctor_arg(a, i, applied, ctx, false, inst).try()).then(() {
+            agreed = false;
+            h.break();
+        });
+    });
+    call.args.loop((h, i, a) {
+        agreed.then(
+            () { c.unify_ctor_arg(a, i, applied, ctx, true, inst).try(); }
+        );
+    });
+    agreed.match({
+        false => c.types.unknown(),
+        true  => (inst.len() == 0).match({
+            true  => Ok(applied),
+            false => c.rebuilt_ctor_type(d, vars, inst),
+        }),
     })
 }
 
@@ -107,32 +136,74 @@ rebuilt_ctor_type = (c :: Checker, d: Def, vars: Vec<TyId>, inst: Inst)
     c.types.named(d.id, d.qname, d.name, args)
 }
 
+// One pass over the arguments: typed values, or literals. Returns false when
+// this value disagreed with an earlier one and was refused.
 unify_ctor_arg = (
-    c       :: Checker,
-    a       : Arg,
-    applied : TyId,
-    ctx     : Ctx,
-    inst    :: Inst
-) Res<(), AllocError> {
-    a.name.match({
-        None   => Ok(()),
-        Ok(nm) => c.unify_ctor_field(a, nm.text, applied, ctx, inst),
+    c        :: Checker,
+    a        : Arg,
+    i        : usize,
+    applied  : TyId,
+    ctx      : Ctx,
+    literals : bool,
+    inst     :: Inst
+) Res<bool, AllocError> {
+    got = c.type_of(a.value, ctx).try();
+    (c.is_literal_ty(got) == literals).match({
+        false => Ok(true),
+        true  => {
+            name = a.name.match({
+                Ok(nm) => nm.text,
+                None   => c.storage_seat_name(applied, i).try(),
+            });
+            found ::= c.alloc.Vec<Found>();
+            c.members_of(applied, name, found).try();
+            found.get(0).match({
+                None  => Ok(true),
+                Ok(f) => literals.match({
+                    true  => {
+                        c.unify(
+                            f.ty,
+                            c.settled_arg_ty(a, ctx).try(),
+                            inst
+                        ).try();
+                        Ok(true)
+                    },
+                    false => c.ctor_value_agrees(a, f.ty, got, inst),
+                }),
+            })
+        },
     })
 }
 
-unify_ctor_field = (
-    c       :: Checker,
-    a       : Arg,
-    name    : str,
-    applied : TyId,
-    ctx     : Ctx,
-    inst    :: Inst
-) Res<(), AllocError> {
-    found ::= c.alloc.Vec<Found>();
-    c.members_of(applied, name, found).try();
-    found.get(0).match({
-        None  => Ok(()),
-        Ok(f) => c.unify(f.ty, c.settled_arg_ty(a, ctx).try(), inst),
+ctor_value_agrees = (
+    c     :: Checker,
+    a     : Arg,
+    field : TyId,
+    got   : TyId,
+    inst  :: Inst
+) Res<bool, AllocError> {
+    prior: Res<TyId> = c.types.at(field).match({
+        Var(_) => inst.lookup(field),
+        _      => None,
+    });
+    prior.match({
+        None      => {
+            c.unify(field, got, inst).try();
+            Ok(true)
+        },
+        Ok(first) => (c.same_type(first, got) || c.is_unknown(got)).match({
+            true  => Ok(true),
+            false => {
+                c.report(a.span.file, a.span, SemaFault.CtorArgsDisagree(TypeFault(
+                    name: c.types.at(
+                        field
+                    ).match({ Var(v) => v.name, _ => "" }),
+                    expected: first,
+                    found: got,
+                ))).try();
+                Ok(false)
+            },
+        }),
     })
 }
 
@@ -299,8 +370,9 @@ variant_payload_fits = (
     })
 }
 
-// A written binding supplies the same enum application that an explicit
-// call argument would. Retype only a variant call of that declaration.
+// A written binding supplies the same application that explicit type
+// arguments would: to a variant call of the expected enum, and to a
+// construction of the expected type.
 settle_variant_at* = (
     c    :: Checker,
     id   : ExprId,
@@ -309,9 +381,55 @@ settle_variant_at* = (
     ctx  : Ctx
 ) Res<TyId, AllocError> {
     VariantCall(c, id, got, want).match({
-        None     => Ok(got),
+        None     => c.settle_ctor_at(id, got, want, ctx),
         Ok(site) => site.settle(c, ctx),
     })
+}
+
+// `r: Range<u8> = Range(0, 10)` is a Range<u8>: the written type settles
+// what the literals left to their default. The construction is checked again
+// at the written type, so a value that does not fit it is refused there, at
+// the value. A construction that wrote its type arguments keeps them.
+settle_ctor_at = (c :: Checker, id: ExprId, got: TyId, want: TyId, ctx: Ctx)
+                 Res<TyId, AllocError> {
+    site: Res<CtorSite> = CtorSite(c, id, got, want);
+    site.match({
+        None    => Ok(got),
+        Ok(one) => {
+            mark = c.diag_count();
+            c.check_ctor_fields(one.call, want, ctx).try();
+            (c.diag_count() == mark).match({
+                false => c.types.unknown(),
+                true  => {
+                    c.expr_memo.set(id, want).try();
+                    c.record_call(
+                        id,
+                        CallResolution.Checked(CheckedCall(
+                            declaration: one.checked.declaration,
+                            member_provider: one.checked.member_provider,
+                            inst: one.checked.inst,
+                            result: want,
+                            signature: one.checked.signature,
+                            body: one.checked.body
+                        ))
+                    ).try();
+                    Ok(want)
+                },
+            })
+        },
+    })
+}
+
+CtorSite = { call: Call, checked: CheckedCall }
+
+CtorSite = (c: Checker, id: ExprId, got: TyId, want: TyId) Res<CtorSite> {
+    (c.same_head(got, want) && !c.same_type(got, want)).ensure().try();
+    call = c.tree.expr_at(id).kind.match({ Call(value) => Ok(value), _ => None }).try();
+    (call.targs.len == 0).ensure().try();
+    checked = c.checked_call(id).try();
+    decl    = c.tree.decl_at(checked.declaration.try()).try();
+    decl.kind.match({ Struct(_) => Ok(()), _ => None }).try();
+    Ok(CtorSite(call: call, checked: checked))
 }
 
 // An inferred call to a declared variant of the expected enum application.
@@ -825,9 +943,12 @@ infer_array_bound = (c :: Checker, bound: TyId, elem: TyId, inst :: Inst)
 
 infer_named_impl = (c :: Checker, bound: TyId, n: TyNamed, inst :: Inst)
                    Res<(), AllocError> {
-    c.impl_bound_at(bound, n).try().match({
-        None   => Ok(()),
-        Ok(gb) => c.unify(bound, gb, inst),
+    c.range_seq_arg(n, bound).match({
+        Ok(arg) => c.unify(arg, c.range_value(n), inst),
+        None    => c.impl_bound_at(bound, n).try().match({
+            None   => Ok(()),
+            Ok(gb) => c.unify(bound, gb, inst),
+        }),
     })
 }
 

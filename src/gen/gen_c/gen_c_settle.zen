@@ -392,7 +392,7 @@ settled* = (be :: CBackend, t: TyId) bool {
     (be.check.is_unknown(t) == false) && (has_var(be.check, t) == false)
 }
 
-// `find<R: Range<T>, T>` names `T` only inside another parameter's
+// `find<R: Seq<T>, T>` names `T` only inside another parameter's
 // Bound, and the range is what answers — `gen_c_loop.zen`'s rule, said
 // about a call rather than about a loop.
 range_element = (

@@ -21,6 +21,7 @@ unsupported = gen.gen_c.gen_c_report
 ctype, declarator = gen.gen_c.gen_c_type
 intern_res_open = gen.gen_c.gen_c_mono
 has_var = sema.sema_inst
+Found, members_of = sema.sema_member
 expr, ty_of = gen.gen_c.gen_c_expr
 Dest, block = gen.gen_c.gen_c_stmt
 uses_stored_bounds = gen.gen_c.gen_c_range
@@ -175,11 +176,11 @@ write_cond_body = (be :: CBackend, lam: Lambda, brk: usize, ctx: Ctx)
     Ok(());
 }
 
-// Ranges are half-open. The counter is the index space: `Range(0, 5)` is five
-// passes; `index` counts passes and `value` is what the range holds, so
-// over `Range(10, 13)` they are 0,1,2 and 10,11,12 — one name for both
-// would make the two indistinguishable exactly when the range does not
-// start at zero.
+// Ranges are half-open. `index` counts passes and `value` is what the range
+// holds, so over `Range(10, 13)` they are 0,1,2 and 10,11,12 — one name for
+// both would make the two indistinguishable exactly when the range does not
+// start at zero. A Range's counter is its value, in the bounds' own type; a
+// Seq's counter is a usize position its `at` maps to a value.
 
 // These names are allocated, initialized and consumed as one range walk.
 // The range value is deliberately separate: it is evaluated before the loop
@@ -189,6 +190,9 @@ RangeWalk = {
     base: Res<str>,
     limit: str,
     elem: TyId,
+    // The counter is not a usize, so `index` is a difference taken in
+    // uint64_t: exact for every pass count, whatever the bounds' signedness.
+    typed: bool,
 
     start = (self: @Self, be :: CBackend) Res<(), AllocError> {
         self.base.match({
@@ -200,7 +204,14 @@ RangeWalk = {
     body = (self: @Self, be :: CBackend, site: LoopSite, value: str)
            Res<(), AllocError> {
         base = self.base.match({ Ok(name) => name, None => "" });
-        site.run_body(be, self.counter, base, value, self.elem)
+        self.typed.match({
+            false => site.run_body(be, self.counter, base, value, self.elem),
+            true  => {
+                counter = be.alloc.String("(uint64_t){}", self.counter).try();
+                wide    = be.alloc.String("(uint64_t){}", base).try();
+                site.run_body(be, counter.view(), wide.view(), value, self.elem)
+            },
+        })
     }
 }
 
@@ -342,23 +353,32 @@ LoopSite = {
     // Only indexed callbacks need an origin separate from the current value.
     range_walk = (self: @Self, be :: CBackend, elem: TyId)
                  Res<RangeWalk, AllocError> {
+        usize_ty = be.check.types.prim("usize").try();
+        self.counted_walk(be, elem, usize_ty)
+    }
+
+    // `count` is the counter's type: usize for a Seq, the bounds' type for
+    // a Range.
+    counted_walk = (self: @Self, be :: CBackend, elem: TyId, count: TyId)
+                   Res<RangeWalk, AllocError> {
         counter = be.fresh_name("i").try();
-        be.declare_usize(counter.view()).try();
+        be.declare_typed(count, counter.view()).try();
         base: Res<str> = self.shape.wants_index.match({
             true  => {
                 name = be.fresh_name("b").try();
-                be.declare_usize(name.view()).try();
+                be.declare_typed(count, name.view()).try();
                 Ok(name.view())
             },
             false => None,
         });
         limit          = be.fresh_name("n").try();
-        be.declare_usize(limit.view()).try();
+        be.declare_typed(count, limit.view()).try();
         Ok(RangeWalk(
             counter: counter.view(),
             base: base,
             limit: limit.view(),
             elem: elem,
+            typed: !be.check.prim_name(count).eq("usize"),
         ))
     }
 
@@ -366,8 +386,8 @@ LoopSite = {
                want: TyId, out :: String) Res<(), AllocError> {
         range = be.walk_temp(first, rty, self.ctx).try();
         frame = be.open_result(want, out).try();
-        elem  = be.check.types.prim("usize").try();
-        walk  = self.range_walk(be, elem).try();
+        elem  = be.range_bound_type(rty).try();
+        walk  = self.counted_walk(be, elem, elem).try();
         be.assign_member(walk.counter, range.view(), "start").try();
         be.assign_member(walk.limit, range.view(), "end").try();
         walk.start(be).try();
@@ -451,9 +471,23 @@ walk_temp* = (be :: CBackend, one: ExprId, rty: TyId, ctx: Ctx)
 
 declare_usize* = (be :: CBackend, name: str) Res<(), AllocError> {
     usize_ty = be.check.types.prim("usize").try();
+    be.declare_typed(usize_ty, name)
+}
+
+declare_typed = (be :: CBackend, ty: TyId, name: str) Res<(), AllocError> {
     decl ::= be.alloc.String().try();
-    be.declarator(usize_ty, name, decl).try();
+    be.declarator(ty, name, decl).try();
     be.fmt("{};\n", decl.view())
+}
+
+// The type of a Range's bounds and values: the type its `start` holds.
+range_bound_type = (be :: CBackend, rty: TyId) Res<TyId, AllocError> {
+    found ::= be.alloc.Vec<Found>();
+    be.check.members_of(rty, "start", found).try();
+    found.get(0).match({
+        Ok(f) => Ok(f.ty),
+        None  => be.check.types.prim("usize"),
+    })
 }
 
 assign_member = (be :: CBackend, target: str, base: str, member: str)

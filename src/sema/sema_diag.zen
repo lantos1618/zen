@@ -87,6 +87,7 @@ SemaFault* =
     | CtorMissingField(NameFault)      // a required field the construction never named
     | CtorNamesNoMember(TypeFault)     // an argument naming a member the type does not declare
     | CtorSurplusArgument(TypeFault)   // a positional argument with no storage seat
+    | CtorArgsDisagree(TypeFault)      // two field values settle one type parameter differently
     | ResSurplusArgument(NameFault)    // `Ok`/`Err` hold one value, and a second has no seat
     | CtorNamesConstant(TypeFault)     // an argument naming a constant, which is not storage
     | DuplicateField(PairFault)        // a struct declares one storage name twice
@@ -218,6 +219,7 @@ message* = (fault: SemaFault) str {
         CtorMissingField(_)          => "construction is missing a required field",
         CtorNamesNoMember(_)         => "construction names no member: every argument must name a field of the type, so a name it does not declare is not an argument to discard",
         CtorSurplusArgument(_)       => "construction has a surplus positional argument",
+        CtorArgsDisagree(_)          => "these values must have one type, and there is no implicit conversion between types",
         ResSurplusArgument(_)        => "a Res constructor carries one value, so a second argument is evaluated and then dropped:",
         CtorNamesConstant(_)         => "construction names a constant: a construction names fields, and the constant keeps its one value per type",
         DuplicateField(_)            => "duplicate field declaration: a struct has one storage slot per name",
@@ -309,6 +311,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         CtorMissingField(f)          => out.write_ctor_missing(f),
         CtorNamesNoMember(f)         => out.write_member(types, f),
         CtorSurplusArgument(f)       => out.write_ctor_surplus(types, f),
+        CtorArgsDisagree(f)          => out.write_args_disagree(types, f),
         ResSurplusArgument(f)        => out.write_name(f),
         CtorNamesConstant(f)         => out.write_ctor_constant(types, f),
         OrphanImpl(f)                => out.write_orphan(f),
@@ -688,6 +691,22 @@ write_bit_widths = (out :: String, types: Types, f: TypeFault)
         f.name
     ).try();
     Ok(())
+}
+
+// `Range(a, b)` with an i32 `a` and a usize `b`: name both types and the
+// conversion that makes them one.
+write_args_disagree = (out :: String, types: Types, f: TypeFault)
+                      Res<(), AllocError> {
+    earlier ::= types.name_of(f.expected).try();
+    here    ::= types.name_of(f.found).try();
+    out.fmt(
+        " — `{}` is `{}` from an earlier value and `{}` here: convert one to the other's type, such as with `.to_{}()` here or `.to_{}()` on the earlier value",
+        f.name,
+        earlier.view(),
+        here.view(),
+        earlier.view(),
+        here.view()
+    )
 }
 
 write_bit_untyped = (out :: String, f: TypeFault) Res<(), AllocError> {

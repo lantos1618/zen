@@ -28,7 +28,7 @@ Buf = {
     label: str,
 }
 
-fill = (alloc: Alloc, label: str, n: usize) Res<Buf, AllocError> {
+fill = (alloc: Alloc, label: str, n: i64) Res<Buf, AllocError> {
     v ::= alloc.Vec<i64>();
     Range<i64>(0, n).loop((h, k) { v.add(k * k).try(); });
     Ok(Buf(items: v, label: label))

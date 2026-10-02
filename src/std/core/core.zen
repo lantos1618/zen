@@ -25,6 +25,7 @@ is_ascii*, is_digit*, is_lower*, is_upper*, is_alpha*, is_alnum*,
 
 loop*, find*, filter*, map*, LoopHandle* = std.core.loop
 Range* = std.core.range
+Seq* = std.core.seq
 
 Eq*, is_in* = std.core.eq
 

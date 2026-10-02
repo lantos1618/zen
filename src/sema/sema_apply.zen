@@ -610,7 +610,10 @@ instantiated_ret = (
     ctx     : Ctx
 )
                    Res<Res<Instantiation>, AllocError> {
-    inst = c.call_inst(call, k, actuals, ctx).try();
+    inst = c.settled_ret_literals(
+        k.ret,
+        c.call_inst(call, k, actuals, ctx).try()
+    ).try();
     c.check_inst_bounds(k, inst, c.tree.expr_at(id).span).try().match({
         false => Ok(None),
         true  => {
@@ -632,6 +635,37 @@ instantiated_ret = (
                     )))
                 },
             })
+        },
+    })
+}
+
+// A type parameter a literal settled keeps the literal's flexible type in a
+// plain value (`id(7)` still fits a u8), but a declared type over it has a
+// layout, so a parameter the result passes to a declared type takes the
+// literal's default: `Range(10)` is a `Range<i32>`.
+settled_ret_literals = (c :: Checker, ret: TyId, inst: Inst)
+                       Res<Inst, AllocError> {
+    named: Res<TyNamed> = c.types.at(ret).match({ Named(n) => Ok(n), _ => None });
+    named.match({
+        None  => Ok(inst),
+        Ok(n) => {
+            out ::= c.alloc.Inst();
+            Range(0, inst.len()).loop((k) {
+                inst.var_at(k).when_ok((v) {
+                    inst.arg_at(k).when_ok((a) {
+                        held = n.args.find(
+                            (x) { x.eq(v) }
+                        ).match({ Ok(_) => true, None => false });
+                        out.bind(v, (held && c.is_literal_ty(a)).match({
+                            true  => c.types.prim(
+                                c.prim_name(a).literal_default()
+                            ).try(),
+                            false => a,
+                        })).try();
+                    });
+                });
+            });
+            Ok(out)
         },
     })
 }
@@ -853,23 +887,20 @@ same_head = (c: Checker, a: TyId, b: TyId) bool {
     })
 }
 
+// A bound's own type passed as itself settles each type argument it states.
 infer_own_bound = (c :: Checker, bound: TyId, g: TyId, inst :: Inst)
                   Res<(), AllocError> {
-    usize_ty = c.types.prim("usize").try();
     bs ::= c.alloc.Vec<TyId>();
     gs ::= c.alloc.Vec<TyId>();
     c.named_args(bound, bs).try();
     c.named_args(g, gs).try();
     (bs.len == gs.len).then(() {
         bs.loop((h, i, b) {
-            c.unify(b, c.settled_or_index(gs.ty_at(i), usize_ty), inst).try();
+            settled = gs.ty_at(i);
+            (!c.has_var(settled)).then(() { c.unify(b, settled, inst).try(); });
         });
     });
     Ok(());
-}
-
-settled_or_index = (c: Checker, t: TyId, usize_ty: TyId) TyId {
-    c.has_var(t).match({ true => usize_ty, false => t })
 }
 
 named_args = (c :: Checker, ty: TyId, out :: Vec<TyId>)

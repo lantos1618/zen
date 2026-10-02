@@ -1,0 +1,11 @@
+// A range whose end is not past its start is empty, signed or not.
+main = () i32 {
+    count ::= 0;
+    Range(5, 5).loop((v) { count = count + 1; });
+    Range(5, 2).loop((v) { count = count + 1; });
+    hi: i32 = -1;
+    lo: i32 = -4;
+    Range(hi, lo).loop((v) { count = count + 1; });
+    println("{}", count);
+    0
+}

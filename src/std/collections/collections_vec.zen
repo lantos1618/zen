@@ -2,6 +2,7 @@
 
 Alloc, AllocError, Ptr, null_ptr = std.mem
 Range = std.core.range
+Seq = std.core.seq
 
 // An index at or past `len`, named so a caller can propagate the miss
 // honestly instead of borrowing an unrelated error such as OutOfMemory.
@@ -123,7 +124,7 @@ Vec*<T> = {
 }
 
 // Iteration observes the current length, including growth during a loop.
-Vec.impl(Range<T>, {
+Vec.impl(Seq<T>, {
     start: 0,
     end: self.len,
 

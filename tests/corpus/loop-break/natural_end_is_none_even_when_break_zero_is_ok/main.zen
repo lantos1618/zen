@@ -20,7 +20,7 @@
 
 main = (env: Env) Res<i32, AllocError> {
     // runs out of range with no break at all: absence, not zero.
-    gone: Res<usize> = Range(0, 3).loop((h, v) {
+    gone: Res<usize> = Range<usize>(0, 3).loop((h, v) {
         println("pass {}", v);
     });
     gone.match({

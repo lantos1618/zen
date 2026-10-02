@@ -3,7 +3,7 @@
 
 Ptr = std.mem.mem
 Eq, Hash, Hasher = std.core.core
-Range, loop, LoopHandle = std.core.core
+Range, Seq, loop, LoopHandle = std.core.core
 
 str* = {
     data: Ptr<u8>,
@@ -327,7 +327,7 @@ Split* = {
     }
 }
 
-Split.impl(Range<str>, {
+Split.impl(Seq<str>, {
     start: 0,
     end: self.bytes.len + 1,
 
@@ -454,7 +454,7 @@ str.impl(Hash, {
     }
 })
 
-str.impl(Range<u8>, {
+str.impl(Seq<u8>, {
     start: 0,
     end: self.len,
 

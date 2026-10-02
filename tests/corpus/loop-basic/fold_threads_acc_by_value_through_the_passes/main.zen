@@ -22,7 +22,7 @@ main = (env: Env) Res<i32, AllocError> {
     });
 
     // the index thread is real: 0*100+10, 1*100+11, 2*100+12 -> 333
-    Range(10, 13).loop(0, (h, index, value, acc: usize) {
+    Range<usize>(10, 13).loop(0, (h, index, value, acc: usize) {
         acc + index * 100 + value
     }).match({
         Ok(n) => println("threaded {}", n),

@@ -4,19 +4,19 @@ Res, Ok, None = std.core.result
 then          = std.core.bool
 Alloc, AllocError = std.mem
 Vec           = std.collections
-Range         = std.core.range
+Seq           = std.core.seq
 LoopHandle    = std.core.loop.loop_handle
 loop          = std.core.loop.loop_iter
 
 // First element accepted by the predicate, or None.
-find*<R: Range<T>, T> = (range: R, pred: (value: T) bool) Res<T> {
+find*<R: Seq<T>, T> = (range: R, pred: (value: T) bool) Res<T> {
     range.loop((h, value) {
         pred(value).then(() { h.break(value) });
     })
 }
 
 // Every accepted element in order. No matches yields an empty Vec.
-filter*<R: Range<T>, T> = (range: R, alloc: Alloc, pred: (value: T) bool)
+filter*<R: Seq<T>, T> = (range: R, alloc: Alloc, pred: (value: T) bool)
                         Res<Vec<T>, AllocError> {
     kept ::= alloc.Vec<T>();
     range.loop((value) {
@@ -27,7 +27,7 @@ filter*<R: Range<T>, T> = (range: R, alloc: Alloc, pred: (value: T) bool)
 
 // Collect one value per element. A callback's .try() retains its enclosing
 // function's return context; this operation propagates its own allocation error.
-map*<R: Range<T>, T, U> = (range: R, alloc: Alloc, body: (value: T) U)
+map*<R: Seq<T>, T, U> = (range: R, alloc: Alloc, body: (value: T) U)
                         Res<Vec<U>, AllocError> {
     made ::= alloc.Vec<U>();
     range.loop((value) { made.add(body(value)).try(); });
@@ -35,7 +35,7 @@ map*<R: Range<T>, T, U> = (range: R, alloc: Alloc, body: (value: T) U)
 }
 
 // A handle permits skipping an element or an early successful stop.
-map*<R: Range<T>, T, U> = (
+map*<R: Seq<T>, T, U> = (
     range : R,
     alloc : Alloc,
     body  : (h: LoopHandle, value: T) U
@@ -45,7 +45,7 @@ map*<R: Range<T>, T, U> = (
     Ok(made)
 }
 
-map*<R: Range<T>, T, U> = (
+map*<R: Seq<T>, T, U> = (
     range : R,
     alloc : Alloc,
     body  : (h: LoopHandle, index: usize, value: T) U

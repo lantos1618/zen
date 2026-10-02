@@ -78,7 +78,7 @@ factorial = (a: Alloc) Res<Func, AllocError> {
     recursive.add(binary(9, 0, Op.Sub, 7)).try();
     args ::= a.Vec<usize>();
     args.add(9).try();
-    Range(1, 7).loop((i) { args.add(i).try(); });
+    Range<usize>(1, 7).loop((i) { args.add(i).try(); });
     recursive.add(Instruction.Invoke(Invocation(
         out: 10,
         function: 2,
@@ -119,7 +119,7 @@ abi = (a: Alloc) Res<Program, AllocError> {
     ))).try();
     code.add(Instruction.Text("|")).try();
     args ::= a.Vec<usize>();
-    Range(0, 6).loop((i) {
+    Range<usize>(0, 6).loop((i) {
         code.add(Instruction.Constant(Const(out: i, value: digit(i)))).try();
         args.add(i).try();
     });
@@ -143,10 +143,13 @@ abi = (a: Alloc) Res<Program, AllocError> {
     code.add(Instruction.Text("\nraw \"\\\0😀\n")).try();
     // Seven, eight and nine arguments: odd and even stacked counts on
     // x86-64 and one stacked argument on AArch64.
-    Range(7, 10).loop((parameters) {
+    Range<usize>(7, 10).loop((parameters) {
         stacked ::= a.Vec<usize>();
         Range(0, parameters).loop((i) {
-            code.add(Instruction.Constant(Const(out: i, value: digit(i)))).try();
+            code.add(Instruction.Constant(Const(
+                out: i,
+                value: digit(i)
+            ))).try();
             stacked.add(i).try();
         });
         // The last argument starts in the cached register; widening it for
@@ -178,7 +181,7 @@ abi = (a: Alloc) Res<Program, AllocError> {
     functions.add(weighted(a, 6).try()).try();
     functions.add(factorial(a).try()).try();
     functions.add(reloads(a).try()).try();
-    Range(7, 10).loop((parameters) {
+    Range<usize>(7, 10).loop((parameters) {
         functions.add(weighted(a, parameters).try()).try();
     });
     Ok(Program(functions: functions, entry: 0))
@@ -278,13 +281,13 @@ probed = (a: Alloc, host: Host, assembly: String) Res<String, AllocError> {
     host.arm64().match({
         true  => Ok(assembly),
         false => {
-            out ::= a.String().try();
+            out  ::= a.String().try();
             rest ::= assembly.view();
             call = "call za_print_i64\n";
             loop((h) {
                 rest.find(call).match({
-                    None     => { out.add(rest).try(); h.break(); },
-                    Ok(at)   => {
+                    None   => { out.add(rest).try(); h.break(); },
+                    Ok(at) => {
                         out.add(rest.slice(0, at)).try();
                         out.add("call probe_print\n").try();
                         rest = rest.slice(at + call.len, rest.len);

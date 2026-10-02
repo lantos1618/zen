@@ -45,8 +45,8 @@ edge = (i: usize) u64 {
 main = (env: Env) Res<(), AllocError> {
     // Every u8 pair: eq, ne, lt, gt and select.
     bad: usize ::= 0;
-    Range(0, 256).loop((i) {
-        Range(0, 256).loop((j) {
+    Range<usize>(0, 256).loop((i) {
+        Range<usize>(0, 256).loop((j) {
             a  = i.truncate_u8();
             b  = j.truncate_u8();
             ok = ct_eq(a, b).to_u8() == bit(a == b)
@@ -61,7 +61,7 @@ main = (env: Env) Res<(), AllocError> {
 
     // Every u16 value against zero, one and the maximum.
     bad = 0;
-    Range(0, 65536).loop((i) {
+    Range<usize>(0, 65536).loop((i) {
         x         = i.truncate_u16();
         high: u16 = 65535;
         ok        = ct_is_zero(x).to_u8() == bit(x == 0)
@@ -76,8 +76,8 @@ main = (env: Env) Res<(), AllocError> {
     bad = 0;
     checked: usize ::= 0;
     state: u64     ::= 88172645463325252;
-    Range(0, 18 + 4000).loop((i) {
-        Range(0, 18).loop((j) {
+    Range<usize>(0, 18 + 4000).loop((i) {
+        Range<usize>(0, 18).loop((j) {
             a   = (i < 18).match({ true => edge(i), false => next(state) });
             b   = (i < 18).match({
                 true  => edge(j),
@@ -156,7 +156,7 @@ main = (env: Env) Res<(), AllocError> {
     a     = env.mem.alloc();
     left  = a.raw(64, 16).try();
     right = a.raw(64, 16).try();
-    Range(0, 64).loop((i) {
+    Range<usize>(0, 64).loop((i) {
         left.write(i, i.truncate_u8());
         right.write(i, i.truncate_u8());
     });
@@ -166,7 +166,7 @@ main = (env: Env) Res<(), AllocError> {
         ct_memeq(left, right, 0).to_u8()
     );
     bad = 0;
-    Range(0, 64).loop((i) {
+    Range<usize>(0, 64).loop((i) {
         right.write(i, right.read(i) +% 1);
         ne     = ct_memeq(left, right, 64).to_u8() == 0;
         before = ct_memeq(left, right, i).to_u8() == 1;
@@ -185,9 +185,9 @@ main = (env: Env) Res<(), AllocError> {
     );
 
     words = a.raw(64, 16).try().to<u64>();
-    Range(0, 8).loop((i) { words.write(i, i.to_u64() *% 1000003); });
+    Range<usize>(0, 8).loop((i) { words.write(i, i.to_u64() *% 1000003); });
     bad = 0;
-    Range(0, 8).loop((i) {
+    Range<usize>(0, 8).loop((i) {
         (ct_lookup(words, 8, i) != i.to_u64() *% 1000003).then(() { bad = bad + 1; });
     });
     println(

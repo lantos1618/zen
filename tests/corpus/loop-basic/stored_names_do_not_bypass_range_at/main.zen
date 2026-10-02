@@ -7,7 +7,7 @@ Window = {
     end*: usize,
 }
 
-Window.impl(Range<usize>, {
+Window.impl(Seq<usize>, {
     start: self.start,
     end: self.end,
 

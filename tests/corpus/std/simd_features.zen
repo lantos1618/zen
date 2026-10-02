@@ -37,7 +37,7 @@ unhex = (text: str, out: Ptr<u8>) {
 // FIPS-197 Appendix B: AES-128 of 3243f6a8885a308d313198a2e0370734.
 encrypt = (cpu: Aes, keys: Ptr<u8>, block: u8x16) u8x16 {
     s ::= block.bit_xor(load_u8x16(keys, 0));
-    Range(1, 10).loop((i) { s = s.aes_round(load_u8x16(keys, 16 * i), cpu); });
+    Range<usize>(1, 10).loop((i) { s = s.aes_round(load_u8x16(keys, 16 * i), cpu); });
     s.aes_round_last(load_u8x16(keys, 160), cpu)
 }
 
@@ -50,14 +50,14 @@ aes_known_answer = (cpu: Aes, bytes: Ptr<u8>) bool {
     unhex("3925841d02dc09fbdc118597196a0b32", bytes.offset(192));
     got = encrypt(cpu, bytes, load_u8x16(bytes, 176));
     same ::= true;
-    Range(0, 16).loop((i) { same = same && got.lane(i) == bytes.read(192 + i); });
+    Range<usize>(0, 16).loop((i) { same = same && got.lane(i) == bytes.read(192 + i); });
     same
 }
 
 // Bitwise carry-less product of two u64 values, low and high halves.
 clmul_reference = (a: u64, b: u64) u128 {
     product: u128 ::= 0;
-    Range(0, 64).loop((i) {
+    Range<usize>(0, 64).loop((i) {
         bit = b.shift_right(i).bit_and(1);
         (bit == 1).then(
             () { product = product.bit_xor(a.to_u128().shift_left(i)); }

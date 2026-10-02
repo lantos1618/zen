@@ -48,7 +48,7 @@ main = (env: Env) Res<i32, AllocError> {
     });
     samples.clear();
     valid = calls.read(0) == 2 && releases.read(0) == 0 && valid;
-    Range(0, 2).loop((limit) {
+    Range<usize>(0, 2).loop((limit) {
         calls.write(0, 0);
         releases.write(0, 0);
         valid = Samples.create(

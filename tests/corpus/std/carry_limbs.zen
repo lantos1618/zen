@@ -39,9 +39,9 @@ carry_ok = (a: u64, b: u64, c: u64) bool {
 
 model_mul = (x: [u64, 4], y: [u64, 4]) [u64, 8] {
     r: [u64, 8] ::= [0, 0, 0, 0, 0, 0, 0, 0];
-    Range(0, 4).loop((i) {
+    Range<usize>(0, 4).loop((i) {
         carry: u64 ::= 0;
-        Range(0, 4).loop((j) {
+        Range<usize>(0, 4).loop((j) {
             t        = x[i].mul_wide(
                 y[j]
             ) +% r[i + j].to_u128() +% carry.to_u128();
@@ -55,7 +55,7 @@ model_mul = (x: [u64, 4], y: [u64, 4]) [u64, 8] {
 
 same8 = (p: [u64, 8], q: [u64, 8]) bool {
     ok ::= true;
-    Range(0, 8).loop((i) { ok = ok && p[i] == q[i]; });
+    Range<usize>(0, 8).loop((i) { ok = ok && p[i] == q[i]; });
     ok
 }
 
@@ -65,8 +65,8 @@ products_ok = (adx: Adx, bmi: Bmi2, x: [u64, 4], y: [u64, 4]) bool {
 
 main = () {
     edges ::= true;
-    Range(0, 9).loop((i) {
-        Range(0, 9).loop((j) {
+    Range<usize>(0, 9).loop((i) {
+        Range<usize>(0, 9).loop((j) {
             [u64, 5](0, 1, 2, 3, ALL).loop(
                 (c) { edges = edges && carry_ok(edge(i), edge(j), c); }
             );
@@ -75,7 +75,7 @@ main = () {
     println("carries agree on edges: {}", edges);
     s      ::= 88172645463325252;
     random ::= true;
-    Range(0, 10000).loop((k) {
+    Range<usize>(0, 10000).loop((k) {
         a = next(s); b = next(a); c = next(b); s = c;
         random = random && carry_ok(a, b, c);
     });
@@ -86,8 +86,8 @@ main = () {
                 ok ::= true;
                 // Every limb drawn from the edge words: carries through every
                 // position, all-ones and powers of two.
-                Range(0, 9).loop((i) {
-                    Range(0, 9).loop((j) {
+                Range<usize>(0, 9).loop((i) {
+                    Range<usize>(0, 9).loop((j) {
                         x  = [u64, 4](edge(i), edge(j), edge((i + j) % 9), edge((i * j) % 9));
                         y  = [u64, 4](edge(j), edge(i), edge((i + 2 * j) % 9), edge((2 * i + j) % 9));
                         ok = ok && products_ok(fast, bmi, x, y);
@@ -100,7 +100,7 @@ main = () {
                     [ALL, ALL, ALL, ALL]
                 );
                 r ::= 2463534242;
-                Range(0, 2000).loop((k) {
+                Range<usize>(0, 2000).loop((k) {
                     a = next(r); b = next(a); c = next(b); d = next(c);
                     e = next(d); f = next(e); g = next(f); h = next(g); r = h;
                     ok = ok && products_ok(

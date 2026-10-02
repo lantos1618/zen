@@ -1,0 +1,10 @@
+// i32 bounds walk i32 values, negative ones included. `index` still counts
+// passes from zero, in usize, separately from the value.
+main = () i32 {
+    a: i32 = -3;
+    b: i32 = 2;
+    Range(a, b).loop((h, i, v) { println("{} {}", i, v); });
+    neg: i32 = Range(a, 0).loop(0, (v, acc: i32) { acc + v }).value_or(0);
+    println("{}", neg);
+    0
+}

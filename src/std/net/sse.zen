@@ -6,7 +6,7 @@ Alloc, AllocError = std.mem
 str, String, SplitPair = std.text
 BOM_FIRST, BOM_SECOND, BOM_THIRD = std.text.text_utf8
 Vec = std.collections
-Range = std.core
+Seq = std.core
 
 SseMessage* = {
     data*: str,
@@ -24,7 +24,7 @@ SseDecoder* = {
     saw_cr :: bool,
     first_line :: bool,
 
-    feed* = <B: Range<u8>>(
+    feed* = <B: Seq<u8>>(
         self   :: @Self,
         bytes  : B,
         event_a: Alloc,

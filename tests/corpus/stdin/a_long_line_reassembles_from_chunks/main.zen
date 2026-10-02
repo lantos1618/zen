@@ -48,7 +48,7 @@ main = (env: Env) Res<i32, AllocError> {
     println("len {}", held.len);
 
     // order preserved end to end: the payload is HEAD, 78 letters, TAIL
-    Range(0, 4).loop((h, i) { held.get(i).match({ Ok(c) => println("{} {}", i, c), None => {} }) });
+    Range<usize>(0, 4).loop((h, i) { held.get(i).match({ Ok(c) => println("{} {}", i, c), None => {} }) });
     println("mid {}", byte_is(held, 50, 'u'));
     println("tail {}", byte_is(held, 82, 'T'));
 

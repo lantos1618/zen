@@ -7,7 +7,7 @@ k = (
 s = (i: i64) i64 { i.match({ 0 => -1, 1 => -2, 2 => -3, 3 => -4, _ => 99 }) }
 main = () {
     total: u64 ::= 0;
-    Range(0, 8).loop((i) { total = total + k(i).to_u64(); });
+    Range<usize>(0, 8).loop((i) { total = total + k(i).to_u64(); });
     println("{}", total);
     println("{} {} {}", s(0), s(3), s(-1));
     println("{}", s(4));

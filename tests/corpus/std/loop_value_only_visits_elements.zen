@@ -44,7 +44,7 @@ main = (env: Env) Res<i32, AllocError> {
         println("handle {}", value);
     });
     xs.loop((h, index, value) { println("indexed {} {}", index, value); });
-    empty: Res<usize> = Range(4, 4).loop((value) { println("unexpected value {}", value); });
+    empty: Res<usize> = Range<usize>(4, 4).loop((value) { println("unexpected value {}", value); });
     println("empty {}", empty.match({ None => true, Ok(_) => false }));
     Ok(0);
 }

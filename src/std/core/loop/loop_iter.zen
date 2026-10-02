@@ -2,7 +2,7 @@
 // directly; value-only traversal delegates to the handle form. No form allocates.
 
 LoopHandle = std.core.loop.loop_handle
-Range      = std.core.range
+Seq        = std.core.seq
 Res        = std.core.result
 
 // Repeat until the body calls h.break().
@@ -19,21 +19,21 @@ loop*<T> = (cond: () bool, body: (h: LoopHandle) ()) Res<T>
 loop*<T> = (cond: bool, body: (h: LoopHandle) ()) Res<T>
 
 // Iterate values, optionally with a zero-based pass index.
-loop*<R: Range<T>, T> = (range: R, body: (
+loop*<R: Seq<T>, T> = (range: R, body: (
     h     : LoopHandle,
     index : usize,
     value : T
 ) ()) Res<T>
-loop*<R: Range<T>, T> = (range: R, body: (h: LoopHandle, value: T) ()) Res<T>
+loop*<R: Seq<T>, T> = (range: R, body: (h: LoopHandle, value: T) ()) Res<T>
 
 // Visit every value without a handle. Natural completion returns None.
-loop*<R: Range<T>, T> = (range: R, body: (value: T) ()) Res<T> {
+loop*<R: Seq<T>, T> = (range: R, body: (value: T) ()) Res<T> {
     range.loop((h, value) { body(value) })
 }
 
 // Fold from init. Natural completion returns the final accumulator;
 // h.break(value) returns that value instead.
-loop*<R: Range<T>, T, A> = (range: R, init: A, body: (
+loop*<R: Seq<T>, T, A> = (range: R, init: A, body: (
     h     : LoopHandle,
     index : usize,
     value : T,
@@ -41,7 +41,7 @@ loop*<R: Range<T>, T, A> = (range: R, init: A, body: (
 ) A) Res<A>
 
 // Fold values without requesting an index or loop handle.
-loop*<R: Range<T>, T, A> = (
+loop*<R: Seq<T>, T, A> = (
     range : R,
     init  : A,
     body  : (value: T, acc: A) A
@@ -50,7 +50,7 @@ loop*<R: Range<T>, T, A> = (
 }
 
 // Fold with explicit early completion or skipping.
-loop*<R: Range<T>, T, A> = (range: R, init: A, body: (
+loop*<R: Seq<T>, T, A> = (range: R, init: A, body: (
     h     : LoopHandle,
     value : T,
     acc   : A

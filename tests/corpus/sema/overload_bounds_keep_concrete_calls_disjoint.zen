@@ -18,9 +18,9 @@ number = (value: bool) i32 { 42 }
 
 // The generic wrapper comes first. Its element type remains unresolved
 // when only a lambda arity is available, so a proved condition fit wins.
-visit = <R: Range<T>, T>(range: R, body: (value: T) ()) i32 { 51 }
+visit = <R: Seq<T>, T>(range: R, body: (value: T) ()) i32 { 51 }
 visit = (cond: bool, body: (h: LoopHandle) ()) i32 { 52 }
-visit_closure = <R: Range<T>, T>(range: R, body: (value: T) ()) i32 { 61 }
+visit_closure = <R: Seq<T>, T>(range: R, body: (value: T) ()) i32 { 61 }
 visit_closure = (cond: () bool, body: (h: LoopHandle) ()) i32 { 62 }
 
 main = (env: Env) Res<i32, AllocError> {

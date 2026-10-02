@@ -33,7 +33,7 @@ str = std.text
 main = (env: Env) Res<i32, AllocError> {
     hay     ::= "abcde";
     matched ::= hay.index(0) == hay.index(1);
-    Range(0, 6).loop((h, i) {
+    Range<usize>(0, 6).loop((h, i) {
         matched = matched && hay.index(i) == hay.index(i + 1);
     });
     println("matched {}", matched);

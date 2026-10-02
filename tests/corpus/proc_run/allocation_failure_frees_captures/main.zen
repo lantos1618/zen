@@ -43,7 +43,7 @@ main = (env: Env) Res<(), AllocError> {
     errors    ::= false;
     completed ::= false;
     valid     ::= true;
-    Range(0, 32).loop((budget) {
+    Range<usize>(0, 32).loop((budget) {
         left.ptr().write(0, budget);
         env.proc.run(failing, "", "printf out; printf err >&2").match({
             Ok(value) => {

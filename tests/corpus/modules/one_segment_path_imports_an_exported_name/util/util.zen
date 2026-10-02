@@ -1,3 +1,0 @@
-Util* = { k: i32 }
-
-twice* = (u: Util) i32 { u.k * 2 }

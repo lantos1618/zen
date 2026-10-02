@@ -1,3 +1,6 @@
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+
 // an enum stores only its variants; a `,` ends them.
 Mode = { Fast | Slow, count: i32 }
 

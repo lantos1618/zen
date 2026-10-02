@@ -1,3 +1,7 @@
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
 // A module alias reaches the module's exported constants as well as its
 // functions: `sh.OFFSET` reads shape's constant.
 sh = shape

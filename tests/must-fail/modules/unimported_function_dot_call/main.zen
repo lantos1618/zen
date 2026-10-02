@@ -2,6 +2,9 @@
 // function in one and two, not a member of `Tag`, so the dot does not
 // reach it until this module imports it.
 { Tag } = tag.tag
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 o1 = one
 o2 = two
 

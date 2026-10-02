@@ -1,3 +1,6 @@
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+
 // `|` joins variants and `,` joins fields; one body uses one.
 Mixed = { Natural: u32, Reverse: i32 | Rotate }
 

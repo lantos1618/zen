@@ -1,2 +1,0 @@
-// One of two modules exporting `digest(x: u64)`.
-digest* = (x: u64) u64 { x + 1 }

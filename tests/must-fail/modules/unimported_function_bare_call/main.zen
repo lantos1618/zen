@@ -2,6 +2,10 @@
 // neither. A free function is visible only where it is imported, so a
 // bare call finds nothing, whatever its arguments' types are.
 { Tag } = tag.tag
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+{ pick } = one
 o1 = one
 o2 = two
 

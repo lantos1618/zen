@@ -1,2 +1,2 @@
-missing import: `parse_i32` is not imported; add `parse_i32 = std
-17:9
+missing import: `sqrt` is not imported; add `{ sqrt } = std
+15:9

@@ -1,3 +1,7 @@
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
 // An enum body lists its variants joined by `|`, then after the first `,`
 // its members, the way a struct body does. Methods and constants come with
 // the type, a generic enum's methods see its parameter, and `Type.NAME`

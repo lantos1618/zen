@@ -3,6 +3,9 @@
 { Tag } = tag.tag
 { via_one } = wa.wa
 { via_two } = wb.wb
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     t = Tag(v: 0);

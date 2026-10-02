@@ -3,6 +3,9 @@
 mem = std.mem
 shape = app.shape
 { geo } = lib
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     b = shape.Bag(n: 4);

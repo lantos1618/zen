@@ -4,6 +4,9 @@
 choose = one.one.pick
 { pick } = two.two
 { other } = one.one
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     println("{} {} {}", choose(1), pick(2), other(1));

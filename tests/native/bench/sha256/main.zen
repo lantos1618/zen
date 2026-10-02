@@ -7,7 +7,7 @@
 // with the C backend and the native asm backend. Hashes a 1 MiB buffer
 // `rounds` times (argument, default 64) and prints the final digest, so
 // both builds can be checked for identical output before timing.
-sha256_candidate = sha256
+{ sha256_candidate } = sha256
 { Ptr } = std.mem
 
 main = (env: Env) Res<i32, AllocError> {

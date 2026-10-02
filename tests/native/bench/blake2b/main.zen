@@ -8,7 +8,7 @@
 // (argument, default 64), chaining each digest into the next input, and
 // prints the final digest so both builds can be checked for identical output
 // before timing.
-blake2b_candidate = blake2b
+{ blake2b_candidate } = blake2b
 { Ptr } = std.mem
 
 main = (env: Env) Res<i32, AllocError> {

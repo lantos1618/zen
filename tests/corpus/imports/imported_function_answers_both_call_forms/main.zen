@@ -2,6 +2,9 @@
 // and `describe(b)` resolve to the same declaration and print the same value.
 
 { Box, describe } = box.box
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 
 main = (env: Env) Res<i32, IoError> {
     b = Box(label: 3);

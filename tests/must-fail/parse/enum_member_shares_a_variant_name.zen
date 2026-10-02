@@ -1,3 +1,6 @@
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+
 // `Mode.Fast` could name the variant or the constant.
 Mode = {
     Fast | Slow,

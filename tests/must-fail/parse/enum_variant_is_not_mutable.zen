@@ -1,3 +1,6 @@
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+
 // a variant is not a binding, so it has no `::`.
 Holder = { Value :: u32 | Empty }
 

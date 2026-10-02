@@ -2,6 +2,9 @@
 // call through the alias names a module, not a function, so it is
 // rejected rather than resolved against any exported `pick`
 { Tag } = tag.tag
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
 o1 = one
 pick = two
 

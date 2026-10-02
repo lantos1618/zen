@@ -1,3 +1,6 @@
+{ Res, Ok } = std.core
+{ Env } = std.env
+
 // Several names on the left are a destructure, and a destructure is
 // written in braces: `{ Alloc, AllocError } = std.mem`.
 Alloc, AllocError = std.mem

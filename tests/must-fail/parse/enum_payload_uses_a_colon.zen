@@ -1,3 +1,6 @@
+{ Res, Ok, IoError } = std.core
+{ Env } = std.env
+
 // a braced enum writes its payload like a field: `Circle: f64`.
 Shape = { Circle(f64) | Dot }
 

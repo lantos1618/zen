@@ -78,16 +78,38 @@ check_dropped = (c :: Checker, at: Span, ty: TyId) Res<(), AllocError> {
     })
 }
 
-// Where the failure in an unread value was produced: the expression itself,
-// or the tail of a closure whose failure the call returns.
+// Where the failure in an unread value was produced: the expression itself
+// when its own result is a failure, else the tail of a closure whose failure
+// the call returns, else the expression holding that failure. A `.then`
+// whose result settled from its closure (`Res<Res<(), E>>`) still points
+// inside the closure, where `.try()` or `.ignore()` goes.
 dropped_in = (c: Checker, id: ExprId, ty: TyId) Res<Dropped> {
-    c.carries_failure(ty).match({
-        true  => Ok(Dropped(at: c.tree.expr_at(id).span, ty: ty)),
-        false => c.tree.expr_at(id).kind.match({
-            Call(k)  => c.dropped_in_args(k.args),
-            Paren(p) => c.dropped_in(p.inner, c.memo_ty(p.inner)),
-            _        => None,
+    here = Dropped(at: c.tree.expr_at(id).span, ty: ty);
+    c.own_failure(ty).match({
+        true  => Ok(here),
+        false => c.dropped_inside(id).match({
+            Ok(d) => Ok(d),
+            None  => c.carries_failure(ty).match({
+                true  => Ok(here),
+                false => None,
+            }),
         }),
+    })
+}
+
+dropped_inside = (c: Checker, id: ExprId) Res<Dropped> {
+    c.tree.expr_at(id).kind.match({
+        Call(k)  => c.dropped_in_args(k.args),
+        Paren(p) => c.dropped_in(p.inner, c.memo_ty(p.inner)),
+        _        => None,
+    })
+}
+
+// A `Res<T, E>` itself, not one held inside another Res.
+own_failure = (c: Checker, ty: TyId) bool {
+    c.types.at(ty).match({
+        Res(r) => r.form.match({ Failure => true, _ => false }),
+        _      => false,
     })
 }
 

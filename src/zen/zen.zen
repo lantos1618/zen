@@ -96,7 +96,7 @@ project_cli = (env: Env, a: Alloc, job: ProjectArgs, action: Action)
 }
 
 build_cli = (env: Env, a: Alloc, job: BuildArgs) Res<i32, AllocError> {
-    standard_library(env, a, job.std_root).match({
+    standard_library(env, a, own_std(env, a, job)).match({
         None         => Ok(1),
         Ok(std_root) => build(
             env,
@@ -114,6 +114,17 @@ build_cli = (env: Env, a: Alloc, job: BuildArgs) Res<i32, AllocError> {
                 target: job.target
             )
         ),
+    })
+}
+
+// A source root holding std/std.zen, as the compiler's own `src` does, is
+// its own standard library when neither --std, ZEN_STD nor the compiler's
+// location names one.
+own_std = (env: Env, a: Alloc, job: BuildArgs) str {
+    (job.std_root.is_empty() && std_root_for(env, a).is_empty()
+        && holds_std(env, a, job.root)).match({
+        true  => job.root,
+        false => job.std_root,
     })
 }
 

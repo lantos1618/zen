@@ -2,6 +2,9 @@
 // delimiters and children, and exclude leading trivia and following
 // separators. Statement spans include their semicolon.
 
+Res, Ok, loop, Display, WriteError, Sink = std.core
+Vec = std.collections
+
 // A source point with a one-based line and byte column.
 Pos* = {
     line*: usize,

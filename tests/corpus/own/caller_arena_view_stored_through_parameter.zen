@@ -1,3 +1,8 @@
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+Env = std.env
+println = std.io
+
 Box = { value :: str }
 fill = (output :: Box, alloc: Alloc, letters: str) Res<(), AllocError> {
     buffer ::= alloc.String().try();

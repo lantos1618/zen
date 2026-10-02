@@ -25,6 +25,11 @@
 // i8.MIN — where any link that truncates instead of extending turns
 // -128 into +128 mid-chain and the two answers diverge.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     small: i8 = -100;
     println("{}", small.to_i64());

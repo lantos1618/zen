@@ -1,6 +1,11 @@
 // One type parameter is one type throughout a call. Inference cannot keep the
 // first argument's binding and silently ignore a contradictory later use.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 same = <T>(a: T, b: T) T { a }
 
 main = (env: Env) Res<i32, AllocError> {

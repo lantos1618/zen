@@ -1,3 +1,6 @@
+Res, Ok, None = std.core
+println = std.io
+
 Failure = Missing(usize) | Other
 
 accepted = (byte: u8) Res<u8> {

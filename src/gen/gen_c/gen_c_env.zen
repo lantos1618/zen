@@ -14,6 +14,7 @@ comment = gen.gen_c.gen_c_runtime
 str_arg = gen.gen_c.gen_c_arg
 close_else, close_brace = gen.gen_c.gen_c_flow
 write_assign_ok, write_assign_none = gen.gen_c.gen_c_flow
+Res, Ok = std.core
 
 // The floor: `getenv`, emitted only for a program that asks — an
 // uncalled `static` is a warning.

@@ -22,6 +22,8 @@ expr, expr_before_bar = std.parse.parse_expr
 type, written_type = std.parse.parse_type
 value_shape, delim_step, inline_fn_ahead, bar_operands_ahead = std.parse.parse_lookahead
 struct_members, record_body, type_params, fn_value = std.parse.parse_member
+Res, Ok, None, loop = std.core
+Vec = std.collections
 
 // Parse a whole module. Its span and trailing trivia cover the complete file.
 module* = (p :: Parser, name: str) Res<Module, AllocError> {

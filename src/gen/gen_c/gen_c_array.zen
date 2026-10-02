@@ -19,6 +19,7 @@ expr, ty_of, value_held, has_call = gen.gen_c.gen_c_expr
 write_position = gen.gen_c.gen_c_op
 open_result, close_pass, run_body = gen.gen_c.gen_c_loop
 declare_usize, settle_res, walk_temp = gen.gen_c.gen_c_loop
+Res, Ok, None = std.core
 
 // The one member every fixed-array struct has — one constant, because
 // the layout, the literals, the index and the walk must spell it alike.

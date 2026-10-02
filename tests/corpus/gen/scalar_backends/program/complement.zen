@@ -1,3 +1,5 @@
+println = std.io
+
 main = () i32 {
     word: u32 = 12;
     println(~word);

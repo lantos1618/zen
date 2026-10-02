@@ -18,6 +18,10 @@
 // its parameter type -- `b.span()` answers 34 (P's body) instead of 13.
 
 Box = box.box
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 P = {
     w: i32,

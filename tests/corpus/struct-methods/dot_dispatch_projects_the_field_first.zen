@@ -12,6 +12,11 @@
 // Breaks if: the receiver is not re-based onto `inner` before the call --
 // the line stops answering 12.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Inner = {
     v: i32,
 }

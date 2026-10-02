@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // Sema must walk a lambda body and reject a literal outside its declared
 // contextual type before code generation can wrap it.
 main = (env: Env) Res<i32, AllocError> {

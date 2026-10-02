@@ -17,6 +17,10 @@
 // Neither error carries a payload, because what is being checked is
 // which member the tag says it is and nothing else.
 
+Res, Ok, Err = std.core
+Env = std.env
+println = std.io
+
 AErr = | AOnly
 BErr = | BOnly
 CErr = | COnly

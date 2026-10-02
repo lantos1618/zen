@@ -62,13 +62,14 @@ Alloc, AllocError = std.mem
 str, String = std.text
 parse_usize = std.text.text_num
 Vec = std.collections
-Range = std.core
-FsError = std.env
+Res, Ok, None, Range = std.core
+Env, FsError = std.env
 
 scan, Source = std.lex.lex
 Parser = std.parse.parser
 ImportName, Module = std.ast.ast_node
 Ident = std.ast.ast_span
+println = std.io
 
 GRANDFATHERED: str = "gen/gen_c/"
 GEN_DIR: str = "gen/"

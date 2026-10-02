@@ -1,3 +1,7 @@
+Res, Ok, Err = std.core
+Env, ArgError = std.env
+println = std.io
+
 // The other half of try_unconstrained_ok_carries_nothing: an operand
 // that raises a REAL error set may not propagate into a `Res<T>` that
 // declares no error. Allowing an open `_` through must not widen into

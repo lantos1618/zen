@@ -5,6 +5,11 @@
 //
 // position: the method name, after the dot.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Box = {
     w: i32,
 }

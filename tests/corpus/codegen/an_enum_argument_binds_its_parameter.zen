@@ -24,6 +24,11 @@
 // matter — the arm must see `Wide`, and the printed sums must be the
 // values written.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Hold<E> = A(E) | B
 
 Wide = {

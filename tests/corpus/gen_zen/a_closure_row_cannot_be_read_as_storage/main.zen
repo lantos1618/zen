@@ -7,6 +7,9 @@ CBackend, LocalSlot = gen.gen_c
 write_name_slot = gen.gen_c.gen_c_expr
 write_scope_slot = gen.gen_c.gen_c_scope
 write_param_slot = gen.gen_c.gen_c_decl
+Res, Ok = std.core
+Env = std.env
+println, print = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

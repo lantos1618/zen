@@ -21,6 +21,11 @@
 //     is a `Pair<Pair<i32, f64>, i32>`, and reading two fields down
 //     reaches a value only that answer has.
 
+Res, Ok = std.core
+OutOfBounds = std.collections
+Env = std.env
+println = std.io
+
 // main must name an error type. a trap never lifts into Res: it aborts
 // the process
 Error = Overflow | DivideByZero | OutOfBounds

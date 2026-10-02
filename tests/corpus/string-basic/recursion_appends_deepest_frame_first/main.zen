@@ -11,6 +11,12 @@
 // running 1..5 must yield u8 values 49..53. A char-typed receiver or a
 // widening to i32 that stayed i32 would print something else entirely.
 
+Res, Ok, WriteError = std.core
+Alloc, AllocError = std.mem
+String = std.text
+Env = std.env
+println = std.io
+
 Error = AllocError | WriteError
 
 build = (a: Alloc, sb :: String, depth: u8) Res<(), AllocError> {

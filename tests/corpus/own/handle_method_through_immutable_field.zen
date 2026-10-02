@@ -8,6 +8,11 @@
 // if this ever stops compiling, the shallowness bought nothing: every
 // collection in std would need a `::` allocator field.
 
+Res, Ok, IoError = std.core
+Alloc, AllocError, Ptr = std.mem
+Env = std.env
+println = std.io
+
 Buf = {
     data :: Ptr<u8>,
     len :: usize,

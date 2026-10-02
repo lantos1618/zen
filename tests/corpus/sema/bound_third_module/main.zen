@@ -4,6 +4,10 @@
 
 Boxy = boxy.boxy
 Tile = tile.tile
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 scale = <T: Boxy>(shape: T, k: i32) i32 { shape.area() * k }
 

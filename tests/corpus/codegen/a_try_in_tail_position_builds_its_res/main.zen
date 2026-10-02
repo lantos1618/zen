@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // A `.try()` in TAIL position of a `Res`-returning function.
 //
 // DESIGN.md's hoisting rule lifts a bare `T` into `Res<T>` wherever a `Res` is

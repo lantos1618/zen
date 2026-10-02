@@ -5,6 +5,10 @@
 // the dual is corpus/own/consume_fresh_value_each_iteration.zen, where
 // the value is CONSTRUCTED in the body and dies in the same iteration.
 
+Res, Ok, Drop, Range, IoError = std.core
+Env = std.env
+println = std.io
+
 Buf = {
     id: i32,
 }

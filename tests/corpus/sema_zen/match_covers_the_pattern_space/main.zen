@@ -34,6 +34,9 @@ ExprId, TypeId, PatternId = std.ast.ast_id
 Alloc, AllocError = std.mem
 Vec = std.collections
 str, String = std.text
+Res, Ok, None = std.core
+Env = std.env
+println = std.io
 
 // every node in this file is at the same place: the test is about
 // coverage, and a distinct span per node would be noise

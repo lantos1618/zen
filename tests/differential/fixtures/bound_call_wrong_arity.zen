@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // A bound member's receiver is parameter zero; the written call must still
 // supply every remaining required parameter.
 Shower = {

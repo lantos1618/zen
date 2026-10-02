@@ -11,6 +11,10 @@
 // are each written this way. Removing either the comment or the payload
 // made it parse, which is what made the pair look unrelated.
 
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 Kind =
       Word          // a bare name
     | Number(u64)   // a name and how many

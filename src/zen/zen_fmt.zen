@@ -2,9 +2,11 @@
 
 Alloc, AllocError = std.mem
 str = std.text
-FsError, fs_message = std.env
+Env, FsError, fs_message = std.env
 
 scan, Source = std.lex
+Res, Ok, loop = std.core
+println = std.io
 render = fmt
 
 FmtJob = zen.zen_cli

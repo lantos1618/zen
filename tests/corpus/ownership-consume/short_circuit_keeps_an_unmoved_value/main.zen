@@ -1,6 +1,10 @@
 // A consume writes the binding's live flag. That write must remain inside a
 // short-circuit branch so a skipped move still leaves the value to be dropped.
 
+Res, Ok, Drop, IoError = std.core
+Env = std.env
+println = std.io
+
 Noisy = {
     env: Env,
     tag: str,

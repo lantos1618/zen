@@ -7,6 +7,11 @@
 // program. Every arm order and nesting below must join to `Kind | Fail`
 // and read each error back as the member it was raised as.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Kind = Io | Protocol
 Fail = Mismatch | Accepted
 

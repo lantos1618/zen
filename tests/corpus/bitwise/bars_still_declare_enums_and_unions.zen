@@ -1,3 +1,7 @@
+Res, Ok, WriteError = std.core
+AllocError = std.mem
+println = std.io
+
 // `|` keeps declaring enums and unions; in an expression it is bitwise or.
 Color = Red | Green | Blue
 Shape = | Circle(u32) | Square(u32)

@@ -2,6 +2,12 @@
 // isolated-graph transfer may accept `consume buf`; this unconsumed reference
 // must always be rejected.
 
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Vec = std.collections
+Env = std.env
+Actor, ActorError, ActorStartError, Context = std.actor
+
 Worker = {}
 
 Worker.impl(Actor, {

@@ -1,3 +1,7 @@
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
+
 // issue 781: sleep used to lower to a call through the NULL vtable slot
 // of an Env field no lowering populates -- SIGSEGV before the print.
 // It must actually sleep (POSIX nanosleep floor), RETURN, and let the

@@ -1,3 +1,7 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+
 Marker = { tag* = (self: @Self) i32 }
 Marked = { value: i32 }
 Marked.impl(Marker, { tag = (self: @Self) i32 { self.value } })

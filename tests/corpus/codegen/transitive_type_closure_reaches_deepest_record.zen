@@ -1,3 +1,7 @@
+Res, Ok = std.core
+Env = std.env
+println = std.io
+
 S9 = { value: i32 }
 S8 = { next: S9 }
 S7 = { next: S8 }

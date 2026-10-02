@@ -12,6 +12,11 @@
 // uses this name again", which for a handle is a promise about
 // INTENT rather than bytes.
 
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, Error> {
     alloc ::= env.mem.alloc();
     h = consume alloc;

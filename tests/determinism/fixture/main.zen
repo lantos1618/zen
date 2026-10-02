@@ -6,6 +6,11 @@
 // is the place to look. If the output differs too, it is in semantics, and
 // the bug is upstream of gen_c.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 a = alpha
 b = beta
 d = delta

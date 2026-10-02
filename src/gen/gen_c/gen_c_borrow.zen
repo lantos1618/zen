@@ -33,6 +33,7 @@ is_foreign_opaque, decl_ctx, decl_inst = gen.gen_c.gen_c_type
 field_type, variant_type = gen.gen_c.gen_c_type
 is_fat, is_place, spill_address = gen.gen_c.gen_c_fat
 value_held, holdable = gen.gen_c.gen_c_expr
+Res, Ok, None = std.core
 
 // Larger than two machine words: what the C ABIs pass through memory.
 WIDE_BYTES: usize = 16

@@ -2,6 +2,11 @@
 // pattern, as an inner payload of a nested pattern, and as the single
 // arm covering an entire enum.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Cell = Full(i32) | Blank
 
 Slot = Left(Cell) | Right(Cell) | Gone

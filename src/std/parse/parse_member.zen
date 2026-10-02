@@ -14,6 +14,8 @@ expr = std.parse.parse_expr
 type, written_type = std.parse.parse_type
 ret_ahead = std.parse.parse_lookahead
 body_block = std.parse.parse_stmt
+Res, Ok, None, loop = std.core
+Vec = std.collections
 
 // Commas between body members are optional.
 struct_members* = (p :: Parser, out :: Vec<Member>) Res<Span, AllocError> {

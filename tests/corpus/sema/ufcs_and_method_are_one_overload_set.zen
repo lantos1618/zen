@@ -4,6 +4,11 @@
 // competing for a name: they are one overload set, picked apart on
 // declared parameter types and arity like any other.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Box = {
     w: i32,
     grow = (self: @Self) i32 { self.w + 1 }

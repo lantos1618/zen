@@ -28,6 +28,11 @@
 // way out of the printer. usize is absent on purpose: its width is the
 // target's (num.zen), so its extremes are not a fixed expectation.
 
+Res, Ok, Display, IoError, WriteError, Sink = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Error = AllocError | IoError
 
 main = (env: Env) Res<i32, Error> {

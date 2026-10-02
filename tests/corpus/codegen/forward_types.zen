@@ -22,6 +22,11 @@
 // rather than looping (TESTING.md § Sema). The `Ptr<Node>` form below is
 // the one that must WORK.
 
+Res, Ok = std.core
+AllocError, Ptr = std.mem
+Env = std.env
+println = std.io
+
 Outer = {
     inner: Inner,
     tag: i32

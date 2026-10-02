@@ -15,6 +15,7 @@ block, Dest = gen.gen_c.gen_c_stmt
 lower_access = gen.gen_c.gen_c_read
 write_label, write_next_label = gen.gen_c.gen_c_loop
 spelled_lambda = gen.gen_c.gen_c_inline
+Res, Ok = std.core
 
 // A field walk is an effect expression and therefore writes unit to `out`.
 lower_meta_walk* = (

@@ -3,6 +3,7 @@
 
 Ptr = std.mem
 Range = std.core.range
+Res, Ok, None = std.core
 
 vararg*<T> = {
     data: Ptr<T>,

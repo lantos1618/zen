@@ -21,6 +21,11 @@
 //      because the rule is per-member and not per-type
 //   4. an associated function that calls its own type's method
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Duration = {
     ns*: u64,
 

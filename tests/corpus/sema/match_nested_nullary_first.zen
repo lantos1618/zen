@@ -8,6 +8,11 @@
 // The failure this pins is a WRONG ANSWER and not a rejection -- the arm
 // still matches, it is just the wrong one, and the C is valid.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Cell = Full(i32) | Blank
 
 Slot = Left(Cell) | Right(Cell) | Gone

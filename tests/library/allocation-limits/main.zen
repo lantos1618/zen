@@ -1,3 +1,8 @@
+Res, Ok, Err, Range = std.core
+Alloc, AllocError, Ptr, null_ptr = std.mem
+Env = std.env
+println = std.io
+
 Refuse = { calls: Ptr<usize> }
 Refuse.impl(Alloc, {
     raw = (self: @Self, size: usize, align: usize) Res<Ptr<u8>, AllocError> { Err(

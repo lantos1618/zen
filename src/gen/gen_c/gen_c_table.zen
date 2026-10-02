@@ -16,7 +16,7 @@
 Expr, Match, Arm = std.ast
 AllocError = std.mem
 String = std.text
-Range = std.core
+Res, Ok, Range = std.core
 TyId = sema.sema_ty
 Ctx = sema.sema_check
 CBackend = gen.gen_c.gen_c_state

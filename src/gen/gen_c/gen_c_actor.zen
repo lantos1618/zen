@@ -6,7 +6,7 @@ MAX_MESSAGES, MAX_MESSAGE_BYTES = std.actor.actor_limits
 
 AllocError = std.mem
 Vec = std.collections
-Range = std.core
+Res, Ok, Err, None, Range = std.core
 str, String = std.text
 ExprId, Access, Call, Function, Member = std.ast
 Def = sema.sema_def

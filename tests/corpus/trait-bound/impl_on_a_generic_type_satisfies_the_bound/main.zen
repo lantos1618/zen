@@ -11,6 +11,11 @@
 // matched names rather than instantiations would reject the array or
 // accept everything and answer 0.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 draw = <R: Range<i32>>(r: R) i32 {
     acc ::= 0;
     r.loop((h, value) { (value > 0).then(() { acc = acc + value; }); });

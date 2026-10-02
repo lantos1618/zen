@@ -6,6 +6,9 @@ Vec = std.collections
 Alloc, AllocError = std.mem
 Server = lsp.lsp_serve
 frame_at, short_by = lsp.lsp_frame
+Res, Ok, loop = std.core
+Env = std.env
+print = std.io
 
 Drain = {
     at: usize,

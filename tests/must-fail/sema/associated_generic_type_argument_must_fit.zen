@@ -1,6 +1,11 @@
 // Explicit type arguments on associated generic functions settle their
 // signatures before ordinary arguments are checked.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Tool = {
     id = <T>(value: T) T { value }
 }

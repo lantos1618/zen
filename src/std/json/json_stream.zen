@@ -5,7 +5,7 @@
 str, String = std.text
 Vec = std.collections
 Alloc = std.mem
-Range = std.core
+Res, Ok, Err, loop, Range = std.core
 JsonFault, TextByte, decode_text_token, number_token, MAX_NESTING = std.json.json_read
 
 JsonEvent* = ObjectStart

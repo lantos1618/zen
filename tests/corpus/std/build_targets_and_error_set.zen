@@ -40,6 +40,10 @@ Builder, Lib, Extern, CImport, Test, Bench = std.build
 Budget, Dep, Exe, Function, Os, Arch, Abi, Target = std.build
 BuildFault, BuildError = std.build
 Vec = std.collections
+Res, Ok, Err, Path = std.core
+Alloc, AllocError = std.mem
+Env = std.env
+println = std.io
 
 // one signature carrying both members of the union: `.try()` merges
 // the allocator's failure in, and the build's own failure is raised

@@ -7,7 +7,9 @@
 // this test pins the capability's concrete answer without claiming that gap
 // is closed here.
 
-ArgError = std.env
+Env, ArgError = std.env
+Res, Ok = std.core
+println = std.io
 
 Cfg = {
     count :: usize = 7,

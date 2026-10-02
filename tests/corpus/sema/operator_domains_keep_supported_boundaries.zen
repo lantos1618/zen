@@ -1,6 +1,11 @@
 // Numeric arithmetic and ordering, integer remainder and wrapping, bool
 // logic/not, and Eq-backed string equality remain inside their domains.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     left: i32  = 7;
     right: i32 = 3;

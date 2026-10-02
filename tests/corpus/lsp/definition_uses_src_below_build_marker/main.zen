@@ -5,6 +5,9 @@ Checker = sema.sema_check
 definition_with = lsp.lsp_def
 check_build = zen.zen_build
 candidate = zen.zen_path
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 DOC*: str = "CapabilityKind, capability_kind = gen.gen_c.gen_c_cap\nSurface, marker = gen.gen_c\nText, length = std.text\n"
 PATH*: str = "src/project/src/gen/gen_c/gen_c_member.zen"

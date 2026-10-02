@@ -1,3 +1,7 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+
 // An accepted program reaches native execution and preserves a zero result.
 main = (env: Env) Res<i32, AllocError> {
     (env.argv.len == 0).match({

@@ -1,6 +1,12 @@
 // example/src/main.zen
 // A compact tour of values, formatting, ownership, and actors.
 
+Res, Ok, Range, Display, IoError, WriteError, Sink = std.core
+AllocError = std.mem
+Env = std.env
+Actor, ActorError, ActorStartError, Context = std.actor
+println = std.io
+
 Circle = {
     radius: f64,
 }

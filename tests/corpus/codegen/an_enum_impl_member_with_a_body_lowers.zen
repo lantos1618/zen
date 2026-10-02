@@ -9,6 +9,11 @@
 // that the two bodies land under their own mangled symbols rather than
 // colliding on the member's name.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 RGB<T> = { r: T, g: T, b: T }
 
 Coloured* = { rgb* = (self: @Self) RGB<u8> }

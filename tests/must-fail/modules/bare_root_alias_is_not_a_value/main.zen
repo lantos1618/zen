@@ -3,6 +3,10 @@
 // so is the difference between a diagnostic and a puzzle, since the
 // error this used to produce was "cannot print a value of this type".
 
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
+
 zz = vec
 
 main = (env: Env) Res<i32, IoError> {

@@ -1,3 +1,5 @@
+println = std.io
+
 // `& | ^ ~` on every unsigned width, with the high bit set on both sides so
 // a sign-extending or promoting backend shows up in the output.
 main = () {

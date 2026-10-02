@@ -6,6 +6,10 @@ Alloc, AllocError = std.mem
 Server, serve = lsp.lsp_serve
 write_frame, frame_at = lsp.lsp_frame
 write_text = std.json
+Res, Ok, loop = std.core
+Vec = std.collections
+Env = std.env
+println = std.io
 
 // The program hovered over: one function whose every type is a
 // primitive the prelude declares.

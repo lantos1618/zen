@@ -5,6 +5,11 @@
 // refused form, an unannotated number lent to `::`, is
 // must-fail/sema/literal_binding_lent_to_a_mutable_parameter.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 bump = (n :: usize) { n = n + 1; }
 bump64 = (n :: i64) { n = n + 10; }
 widen = (n: usize) usize { n * 2 }

@@ -10,6 +10,11 @@
 // same distinction on the structural type, whose variants are read off its
 // FORM rather than any declaration.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Carry = Bare | Carry(i64)
 
 main = (env: Env) Res<i32, AllocError> {

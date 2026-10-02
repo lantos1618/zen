@@ -3,6 +3,11 @@
 // expression is re-evaluated, and UFCS on a flag re-reads the flag after the
 // body mutates it. The closure form remains for conditions needing a block.
 
+Res, Ok, loop = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     n ::= 0;
     loop(n < 3, (h) {

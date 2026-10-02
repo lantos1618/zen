@@ -9,6 +9,11 @@
 // which lowers at its own level (`comparison_level`) rather than through
 // the trap helpers the first two go through.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Counter = {
     n :: i32,
 

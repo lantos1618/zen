@@ -38,6 +38,9 @@ Alloc, AllocError = std.mem
 Server, serve = lsp.lsp_serve
 write_frame, frame_at = lsp.lsp_frame
 write_text = std.json
+Res, Ok, loop = std.core
+Env = std.env
+println = std.io
 
 // THE BUFFER, byte for byte the file on disk — no imports at all, so
 // every name in it resolves through the prelude or not at all, and the

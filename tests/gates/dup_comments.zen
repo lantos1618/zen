@@ -13,8 +13,9 @@
 Alloc, AllocError = std.mem
 str, String = std.text
 Vec = std.collections
-Range = std.core
-FsError = std.env
+Res, Ok, Range = std.core
+Env, FsError = std.env
+println = std.io
 
 // Under three lines it is a label, not a paragraph, and two identical labels
 // over two declarations are ordinary.

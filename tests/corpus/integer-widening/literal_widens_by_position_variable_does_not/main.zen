@@ -29,6 +29,11 @@
 // settled literals to `i32` before consulting the position cannot pass
 // it by luck.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 takes_i64 = (w: i64) i64 { w }
 
 Box = { v: i64 }

@@ -15,6 +15,11 @@
 // second line flips to 1/0 wrongly) or its <T> is not unified with the
 // receiver's.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Pair*<T> = {
     a*: T,
     b*: T,

@@ -7,6 +7,9 @@
 // a non-zero result for a digit (glibc returns 2048), so that is what is checked.
 
 AllocError = std.mem
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 isdigit = (c: i32) i32
 

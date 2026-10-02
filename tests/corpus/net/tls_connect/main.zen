@@ -1,6 +1,11 @@
 // Trusted hostname verification, rejected mismatch and owned close on loopback.
 
 TlsStream, TlsError = std.net.tls
+Res, Ok = std.core
+AllocError = std.mem
+Vec = std.collections
+Env = std.env
+println = std.io
 
 // tests/run.py replaces this after binding its private TLS listener.
 HARNESS_PORT* : u16 = 0

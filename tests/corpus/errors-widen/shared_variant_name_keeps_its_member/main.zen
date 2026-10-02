@@ -9,6 +9,11 @@
 // payload types so the binder types check out only when the member is
 // read correctly too.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 FaultA = | Hit | Miss
 SnagB  = | Hit
 

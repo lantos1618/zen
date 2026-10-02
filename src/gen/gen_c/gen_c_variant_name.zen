@@ -12,6 +12,7 @@ CBackend = gen.gen_c.gen_c_state
 expr, lower_meta_name = gen.gen_c.gen_c_expr
 temp = gen.gen_c.gen_c_flow
 write_qname = gen.gen_c.gen_c_layout
+Res, Ok, Err = std.core
 
 lower_variant_name_call* = (
     be   :: CBackend,

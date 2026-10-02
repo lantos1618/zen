@@ -10,6 +10,8 @@
 Span, Ident, QualifiedName, TriviaRun = std.ast.ast_span
 ExprId, TypeId, PatternId, BlockId, CBindingId = std.ast.ast_id
 Alloc, AllocError = std.mem
+Res, Ok, None, Scope = std.core
+Vec = std.collections
 
 // `+ - *` trap on overflow; `+% -% *%` wrap. `& | ^ << >>` are unsigned bit
 // operations and never trap.

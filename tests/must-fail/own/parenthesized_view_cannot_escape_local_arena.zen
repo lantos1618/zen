@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 word = (env: Env) Res<str, AllocError> {
     arena = env.mem.alloc();
     text ::= arena.String().try();

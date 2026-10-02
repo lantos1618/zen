@@ -3,6 +3,7 @@
 
 Span = std.lex.lex_token
 str = std.text
+println = std.io
 
 LexFault* =
       UnterminatedString       // end of file inside "..."

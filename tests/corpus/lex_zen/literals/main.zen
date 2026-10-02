@@ -6,8 +6,11 @@
 // one is the case that looks like it should work and does not.
 
 scan, Source, kind_name, message = std.lex.lex
-Alloc = std.mem
+Alloc, AllocError = std.mem
 str = std.text
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 dump = (env: Env, alloc: Alloc, text: str) Res<(), AllocError> {
     src = Source(file: "in.zen", text: text);

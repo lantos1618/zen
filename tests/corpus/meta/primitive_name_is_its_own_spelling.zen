@@ -35,6 +35,11 @@
 // primitives leaves it standing and the diff names the half that
 // moved.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Wrap<T> = {
     v: T,
 }

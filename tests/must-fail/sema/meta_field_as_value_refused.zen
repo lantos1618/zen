@@ -5,6 +5,11 @@
 //
 // position: the `field` use, not the walk and not the `println`.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 One = { only: i64 }
 
 main = (env: Env) Res<i32, AllocError> {

@@ -1,3 +1,8 @@
+Res, Ok, Err = std.core
+Alloc, AllocError, Ptr = std.mem
+Env = std.env
+println = std.io
+
 // create<T> must call the supplied allocator once, with T's layout, and
 // propagate refusal before the caller can access a pointer.
 Probe = {

@@ -4,6 +4,11 @@
 // dropped, and `Sh.A(7, 9)` printed 7 with exit 0.
 // position: the first argument with no seat.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Sh = | A(i32) | B
 
 main = (env: Env) Res<i32, AllocError> {

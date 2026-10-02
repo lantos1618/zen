@@ -3,6 +3,10 @@
 // written with a binding, not `3.double()`, because `3.` is where a
 // float literal would start -- see the report.
 
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 double = (n: i32) i32 { n * 2 }
 inc = (n: i32) i32 { n + 1 }
 

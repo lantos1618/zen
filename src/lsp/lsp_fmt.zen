@@ -7,6 +7,7 @@ scan, Source = std.lex
 render = fmt.fmt
 TextRange, whole_range = lsp.lsp_pos
 arr, to_json = std.json
+Res = std.core
 
 TextEdit = {
     range: TextRange,

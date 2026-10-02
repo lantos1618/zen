@@ -18,6 +18,11 @@
 // breaks this: initialising the loop result to `Ok(zeroed)` (or to tag 0)
 // instead of `None`, or folding a 0 payload into the None tag.
 
+Res, Ok, loop, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     // runs out of range with no break at all: absence, not zero.
     gone: Res<usize> = Range(0, 3).loop((h, v) {

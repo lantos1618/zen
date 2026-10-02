@@ -4,6 +4,7 @@ Vec = std.collections
 TyId, TyRes = sema.sema_ty
 Checker, Ctx = sema.sema_check
 SemaFault, NameFault = sema.sema_diag
+Res, Ok, None = std.core
 
 // Called once per body, with the mark taken before it was walked.
 // Everything raised since then belongs to this function.

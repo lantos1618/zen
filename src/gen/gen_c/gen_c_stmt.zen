@@ -24,6 +24,7 @@ declarator, is_unit, has_storage, void_discard = gen.gen_c.gen_c_type
 expr, ty_of, spills = gen.gen_c.gen_c_expr
 declare_local_function = gen.gen_c.gen_c_inline
 enter_block, leave_block, note_drop, displace = gen.gen_c.gen_c_own
+Res, Ok, None = std.core
 
 Dest* = Discard | Return | Into(str)
 

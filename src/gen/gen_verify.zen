@@ -3,7 +3,7 @@
 // predecessors until stable, so a backedge cannot invent an initial value.
 Alloc = std.mem
 Vec = std.collections
-Range = std.core
+Res, Ok, Err, loop, Range = std.core
 str = std.text
 Program, Func, Scalar, Instruction, Terminator, Op, Marshal = gen.gen_ir
 same, word, integer, signed, float = gen.gen_ir

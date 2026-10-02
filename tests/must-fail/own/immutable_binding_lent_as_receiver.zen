@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // The same rule through method syntax on a free function.
 Counter = { n :: i32 }
 bump = (counter :: Counter) { counter.n = counter.n + 1; }

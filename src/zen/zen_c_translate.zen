@@ -12,6 +12,8 @@ Ast, Module = std.ast
 Source, Lexed, scan, is_zen_name = std.lex
 Parser = std.parse
 CImportRequest, CImportModule = zen.zen_c_import
+Res, Ok, Err, None, Range = std.core
+Env = std.env
 
 ClangExit* = {
     code*: i32,

@@ -10,8 +10,11 @@
 // hop that re-numbers IoError prints one of its other three variants.
 // Only "full" is the value the bottom of the program raised.
 
-IoError = std.core
+Res, Ok, Err, IoError = std.core
 WriteError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 S_a = WriteError | AllocError
 

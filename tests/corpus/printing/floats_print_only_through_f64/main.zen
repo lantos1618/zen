@@ -19,6 +19,11 @@
 // not Zen's — `widening_conversions_are_bounds.zen` compares rather
 // than prints for the same reason — so no value below needs seven.
 
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Error = AllocError | IoError
 
 main = (env: Env) Res<i32, Error> {

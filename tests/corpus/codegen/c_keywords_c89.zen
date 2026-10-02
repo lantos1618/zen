@@ -13,6 +13,11 @@
 //   - a name reaches C unmangled       -> the C compiler rejects the file
 //   - two names mangle to one C name   -> redefinition, or the sum moves
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     auto     = 1;
     break    = 2;

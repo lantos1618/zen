@@ -13,6 +13,9 @@
 // name-table entry that never resolves -> 0 where MAX should be.
 
 Box, spare = box.box
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
 
 main = (env: Env) Res<i32, IoError> {
     b = Box(label: 6);

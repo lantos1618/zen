@@ -18,6 +18,10 @@
 // 55 and "outer" are exact; 54, 45, "total 0" and "ok 0" are all things
 // a near-miss lowering prints without complaint.
 
+Res, Ok, Err = std.core
+Env = std.env
+println = std.io
+
 Inner = | InnerBoom
 Outer = | OuterBoom
 Any = Inner | Outer

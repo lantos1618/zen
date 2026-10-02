@@ -1,6 +1,10 @@
 // Querying an imported module retains its entry's checked graph. Overlay
 // changes invalidate that graph, and independent entries still get checked.
 Diagnostics, Shared = lsp.lsp_diag
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 entry_is = (shared: Shared, file: str) bool {
     shared.c.match({

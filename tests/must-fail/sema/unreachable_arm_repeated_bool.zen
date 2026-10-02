@@ -1,5 +1,10 @@
 // `bool` has two cases; a third arm repeats one.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 pick = (b: bool) i32 {
     b.match({
         true  => 1,

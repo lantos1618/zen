@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // Every link on the path must permit the write: `inner` is a `:` field.
 Counter = { n :: i32 }
 Pair = { inner: Counter }

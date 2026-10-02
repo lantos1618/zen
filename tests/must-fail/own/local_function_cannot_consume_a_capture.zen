@@ -1,3 +1,7 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+
 // A local function may be called any number of times, so moving a captured
 // binding out of it is refused the way it is in a loop body.
 main = (env: Env) Res<i32, AllocError> {

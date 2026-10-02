@@ -1,6 +1,11 @@
 // Looking through a constant name must retain the sign of the value it
 // names; a negative count cannot silently become a zero-length array.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 NEGATIVE: i64 = -1
 
 main = (env: Env) Res<i32, AllocError> {

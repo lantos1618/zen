@@ -16,6 +16,10 @@
 //
 // position: the digits.
 
+Res, Ok = std.core
+Env = std.env
+println = std.io
+
 WIDE: i64 = 18446744073709551615
 
 main = (env: Env) Res<i32> {

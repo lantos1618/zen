@@ -14,6 +14,11 @@
 // the LAST element through arithmetic, so a walk that stops one element
 // early cannot hide.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Point = { x: i32, y: i32 }
 
 main = (env: Env) Res<i32, AllocError> {

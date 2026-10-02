@@ -11,6 +11,11 @@
 // A tag-only representation prints "Closed" here, because a set that
 // remembers only "some IoError" has to invent one on the way back out.
 
+Res, Ok, Err, IoError, WriteError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Error = AllocError | IoError
 
 raise = () Res<(), IoError> {

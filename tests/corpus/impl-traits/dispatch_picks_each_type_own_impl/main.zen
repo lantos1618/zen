@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // PER-TYPE DISPATCH THROUGH A BOUND, at values where a wrong pick
 // still prints a plausible number. Two types satisfy Weighed; the
 // bound's required `weigh` must multiply by EACH type's OWN supplied

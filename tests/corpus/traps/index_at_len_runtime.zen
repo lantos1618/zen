@@ -9,6 +9,11 @@
 // This test hides the exact boundary index behind the environment; only
 // index 4 separates `i >= len` from the incorrect `i > len` check.
 
+Res, Ok = std.core
+OutOfBounds = std.collections
+Env = std.env
+println = std.io
+
 // main must name an error type. a trap never lifts into Res:
 // it aborts the process
 Error = Overflow | DivideByZero | OutOfBounds

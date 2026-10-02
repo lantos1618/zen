@@ -9,6 +9,11 @@
 //
 // The final weighted result makes every flipped comparison observable.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Row = {
     id*: i32,
     x*: i64,

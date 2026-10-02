@@ -1,3 +1,6 @@
+Res, Ok = std.core
+println = std.io
+
 LoopHandle = {}
 Range<T> = { start: usize, end: usize }
 loop = <R, T>(range: R, body: (h: LoopHandle, value: T) ()) Res<T>

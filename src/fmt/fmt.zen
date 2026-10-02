@@ -1,7 +1,7 @@
 Alloc, AllocError = std.mem
 str, String = std.text
 Vec = std.collections
-Range = std.core
+Res, Ok, None, Range = std.core
 Pos, TriviaRun = std.ast.ast_span
 Ast = std.ast.ast_arena
 Decl = std.ast.ast_node

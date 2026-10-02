@@ -7,6 +7,11 @@
 // block. this is the same escaping/non-escaping distinction that
 // bans non-local exit from an escaping closure.
 
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env, ThreadError = std.env
+println = std.io
+
 Error = AllocError | IoError | ThreadError
 
 main = (env: Env) Res<i32, Error> {

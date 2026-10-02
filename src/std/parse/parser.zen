@@ -7,6 +7,8 @@ Ast = std.ast.ast_arena
 Span, Pos, Trivia, TriviaKind, TriviaRun, no_trivia, Ident, QualifiedName = std.ast.ast_span
 Token, TokenKind, Source, Lexed, is_trivia, empty_eof = std.parse.parse_token
 Diag, diag, diag_at, truncated = std.parse.parse_diag
+Res, Ok, loop, Range = std.core
+Vec = std.collections
 
 // Nesting limit for the recursive grammar. Binary spines are iterative and do
 // not consume it.

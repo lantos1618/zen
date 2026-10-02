@@ -9,6 +9,10 @@
 //
 // position: the target name, for the same reason.
 
+Res, Ok = std.core
+Env = std.env
+println = std.io
+
 C ::= 0
 
 bump = () i32 { C = C + 1; C }

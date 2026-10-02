@@ -1,3 +1,7 @@
+Res, Ok = std.core
+Env, ThreadError = std.env
+println = std.io
+
 // `env.threads.spawn` HAS a floor now (pthreads): two bodies run on
 // their own threads and answer, and the joins hand the answers back.
 // The first body captures `x`, so the capture record's heap crossing is

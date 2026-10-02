@@ -13,6 +13,11 @@
 // the read on the right are the SAME storage: any order but Zen's is a
 // wrong number, not a wrong print order.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Counter = {
     n :: i32,
 

@@ -13,6 +13,11 @@
 // Breaks if: the dot skips the primitive's declared members -- the second
 // line rejects or answers with the wrong body.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 halve = (n: i32) i32 { n / 2 }
 
 main = (env: Env) Res<i32, AllocError> {

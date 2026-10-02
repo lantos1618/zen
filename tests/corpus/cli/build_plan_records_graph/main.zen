@@ -2,6 +2,10 @@ Build = zen.zen_build
 plan = zen.zen_build_plan
 Target, Os, Arch, Abi = std.build
 Map = std.collections
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

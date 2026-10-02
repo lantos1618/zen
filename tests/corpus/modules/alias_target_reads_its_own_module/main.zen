@@ -18,6 +18,9 @@
 // two of them are the same bytes.
 Marked, label = alpha.alpha
 Ring, tag = beta.beta
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
 
 main = (env: Env) Res<i32, IoError> {
     m: Marked = Marked.Small;

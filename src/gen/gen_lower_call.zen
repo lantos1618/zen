@@ -6,7 +6,7 @@
 Alloc, AllocError = std.mem
 Vec, Map = std.collections
 String, str = std.text
-Range = std.core
+Res, Ok, Err, None, loop, Range = std.core
 fmt_at = std.text.text_fmt
 decode_literal = std.lex
 Ast, ExprId, BlockId, TypeId, Span, Function, Literal, Call, Arg, Param = std.ast

@@ -1,4 +1,7 @@
 Split, Lines = std.text
+Res, Ok, Err = std.core
+AllocError = std.mem
+println = std.io
 
 split_source = (calls :: usize) Split {
     calls = calls + 1;

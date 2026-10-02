@@ -1,7 +1,10 @@
 // A `std.js.Bytes` that reaches past the heap traps at the boundary
 // instead of handing JavaScript a shorter view than the program asked for.
 Ref, Bytes = std.js
-Ptr, null_ptr = std.mem
+AllocError, Ptr, null_ptr = std.mem
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 Typed = js.bind("Uint8Array", {
     from* = (source: Bytes) Ref

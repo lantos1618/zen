@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Input = { text: str }
 Box = { text :: str }
 store = (box :: Box, input: Input) { box.text = input.text; }

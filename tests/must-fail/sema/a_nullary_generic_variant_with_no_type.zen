@@ -16,6 +16,11 @@
 // position: the argument that carries no answer, where the call asks
 // what `x` is.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Opt<T> = Some(T) | None
 
 pick = (o: Opt<i32>) i32 { o.match({ Some(v) => v, None => 0 }) }

@@ -6,7 +6,7 @@
 str, String = std.text
 Vec = std.collections
 Alloc, AllocError = std.mem
-Range = std.core
+Res, Ok, None, Range = std.core
 hex_digit, HEX_BASE = std.core.byte
 
 JsonId* = { index*: usize }

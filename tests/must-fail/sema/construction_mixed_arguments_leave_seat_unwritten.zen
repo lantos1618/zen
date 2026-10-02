@@ -1,6 +1,11 @@
 // Positional seat numbers are absolute argument positions, matching codegen.
 // position: the construction with x still unwritten.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Point = {
     x: i32,
     y: i32,

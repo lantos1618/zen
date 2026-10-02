@@ -4,7 +4,10 @@ module = std.parse.parse_decl
 Checker = sema.sema_check
 Emit = gen.gen_emit
 CBackend, emit_program = gen.gen_c
-FsError = std.env
+Env, FsError = std.env
+Res, Ok = std.core
+AllocError = std.mem
+println = std.io
 
 // Ask the C compiler whether the generated receiver bindings are unused, then
 // execute the program. Other runtime helpers have separate warning coverage.

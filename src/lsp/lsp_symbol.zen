@@ -7,6 +7,7 @@ Decl, Span, Ident = std.ast
 TextRange, text_range = lsp.lsp_pos
 parse_standalone = lsp.lsp_query
 arr, Nest, to_json = std.json
+Res, Ok, None = std.core
 
 SymbolKind* = | Class = 5 // LSP has no type-alias symbol kind.
     | Enum = 10

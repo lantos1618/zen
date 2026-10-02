@@ -5,6 +5,7 @@ Vec = std.collections
 TyId = sema.sema_ty
 Checker, Ctx = sema.sema_check
 SemaFault, NameFault = sema.sema_diag
+Res, Ok = std.core
 
 // A loop handle names its loop and has no storage: it may be read only as
 // `h.break(..)` or `h.next()`, and passed only to a parameter that takes

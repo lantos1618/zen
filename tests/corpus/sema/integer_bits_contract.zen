@@ -6,6 +6,10 @@ Checker = sema.sema_check
 check_all = sema.sema_decl
 DeclId = sema.sema_id
 CHeader, CTypeBinding, CBinding = std.ast
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+Env = std.env
+println = std.io
 
 accepts = (a: Alloc, text: str, owner: str) Res<bool, AllocError> {
     lexed = scan(a, Source(file: "numeric.zen", text: text)).try();

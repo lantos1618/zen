@@ -4,6 +4,11 @@
 //
 // positions: the ambiguous field, then both impl declarations.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Boxy = {
     width: i32,
     height: i32,

@@ -18,6 +18,7 @@ by_ref = gen.gen_c.gen_c_arg
 method_sig, member_symbol = gen.gen_c.gen_c_member
 Slot, slots_of, thunk_param, address_of = gen.gen_c.gen_c_fat
 borrows = gen.gen_c.gen_c_borrow
+Res, Ok, None = std.core
 
 ConsoleStream = Stdout | Stderr
 

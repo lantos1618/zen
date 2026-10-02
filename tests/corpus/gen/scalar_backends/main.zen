@@ -2,6 +2,11 @@ Build, host_target = zen.zen_build
 assemble_and_link = zen.zen_native
 Generation, Layout = gen.gen
 Codegen = std.build
+Res, Ok, loop = std.core
+Alloc, AllocError = std.mem
+String = std.text
+Env = std.env
+println = std.io
 
 // All three backends consume the same checked source. The output comparison
 // catches reordered mutable reads, short-circuit effects, recursion, shadowed

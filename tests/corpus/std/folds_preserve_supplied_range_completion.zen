@@ -1,3 +1,9 @@
+Res, Ok, Range = std.core
+AllocError = std.mem
+Vec = std.collections
+Env = std.env
+println = std.io
+
 // Supplied ranges fold their values, preserve a distinct accumulator type,
 // and treat at(None) as exhaustion rather than an explicit break.
 Window = { values: Vec<str>, start: usize }

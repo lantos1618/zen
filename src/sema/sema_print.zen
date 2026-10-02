@@ -12,6 +12,7 @@ Checker, Ctx = sema.sema_check
 Def = sema.sema_def
 param_type, ret_type = sema.sema_denote
 SemaFault, NameFault = sema.sema_diag
+Res, Ok, None = std.core
 
 // The module that declares the printers. A missing-import diagnostic for
 // either name points here.

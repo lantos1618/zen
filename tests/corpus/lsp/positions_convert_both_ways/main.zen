@@ -36,6 +36,9 @@ str = std.text
 AllocError = std.mem
 Pos = std.ast.ast_span
 source_position, lsp_position = lsp.lsp_pos
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 // line 0  "ab"     ASCII
 // line 1  "é1"     2-byte lead

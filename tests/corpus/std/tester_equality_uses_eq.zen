@@ -1,4 +1,7 @@
 Tester, TestError = std.test
+Res, Eq = std.core
+Env = std.env
+println = std.io
 
 Modulo = { value: i32 }
 Modulo.impl(Eq, {

@@ -1,3 +1,8 @@
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Left = | Number(i32)
 Right = | Text(str)
 

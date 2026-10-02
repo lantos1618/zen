@@ -33,6 +33,9 @@ Parser = std.parse
 Ast, Span, Decl, Block, Expr = std.ast
 Alloc, AllocError = std.mem
 str = std.text
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 // The file being parsed, and the columns it is asserted at:
 //

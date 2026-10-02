@@ -1,6 +1,10 @@
 // the rule is not a Vec rule. any method declared `self :: @Self`
 // needs a mutable receiver, in user code, with no std type involved.
 
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
+
 Counter = {
     n :: i32,
 

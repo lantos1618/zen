@@ -1,3 +1,8 @@
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // the file's last byte is the closing brace: no trailing newline.
 //
 // This one can only fail LOUDLY -- drop the last byte and the file does not

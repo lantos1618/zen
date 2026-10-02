@@ -4,6 +4,10 @@
 //
 // position: the .try() call.
 
+Res, Ok, Err = std.core
+Env = std.env
+println = std.io
+
 AError = Zero | Negative
 
 BError = TooBig | Odd

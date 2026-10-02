@@ -3,6 +3,11 @@
 // deliberately included: they are the two edges most local copies disagree
 // about.
 
+Res, Ok, join_path = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();
     plain = join_path(a, "work", "file.zen").try();

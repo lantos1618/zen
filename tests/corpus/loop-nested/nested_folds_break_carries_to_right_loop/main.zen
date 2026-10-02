@@ -17,6 +17,11 @@
 // outer fold with the inner break's value, so "outer sum" moves even
 // though every line still prints.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     // break the OUTER fold from the INNER body: one line, the carried
     // value, and silence — the exit jumped out of both loops at once.

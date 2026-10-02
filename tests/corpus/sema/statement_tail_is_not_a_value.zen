@@ -10,6 +10,10 @@
 // must-fail/sema/print_sugar_returns_nothing is the same two lines with
 // one byte removed.
 
+Res, Ok = std.core
+Env = std.env
+println = std.io
+
 CfgError = Missing | Bad
 
 noisy = () i32 {

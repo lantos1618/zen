@@ -1,4 +1,7 @@
 backend_name, emit_c, emit_h, header_name = gen.gen
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
 
 main = (env: Env) Res<i32, IoError> {
     println(backend_name());

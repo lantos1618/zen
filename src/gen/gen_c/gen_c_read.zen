@@ -28,6 +28,7 @@ base_of = sema.sema_member
 lower_const_value, lower_const = gen.gen_c.gen_c_const
 module_named_by = sema.sema_module
 type_from_ast = sema.sema_denote
+Res, Ok, None = std.core
 
 // The base's resolved kind separates declaration reads from value fields.
 lower_access* = (

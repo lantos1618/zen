@@ -1,6 +1,11 @@
 // A nominal type parameter's bound applies at construction, not only to
 // generic function calls.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Boxy = { width: i32 }
 Dot = {}
 

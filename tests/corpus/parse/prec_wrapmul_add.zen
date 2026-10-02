@@ -2,6 +2,10 @@
 // and max *% 2 wraps to -2, so the answer is -1.
 // the other reading, (one + max) *% two, TRAPS on the `+`.
 
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 main = (env: Env) Res<i32, ArgError> {
     max: i32 = 2147483647;
     one: i32 = 1;

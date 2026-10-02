@@ -3,6 +3,10 @@
 //
 // position: the assignment target.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+
 Boxy = {
     width: i32,
     height: i32,

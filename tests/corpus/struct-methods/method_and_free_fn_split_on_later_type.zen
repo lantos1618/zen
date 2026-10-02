@@ -1,6 +1,11 @@
 // A method and free UFCS function may share a name and arity when a later
 // parameter type keeps their accepted calls disjoint.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 W = {
     v: i32,
     choose = (self: @Self, value: i32) i32 { self.v + value }

@@ -1,6 +1,11 @@
 // A function value carries executable environment state and remains unsafe
 // when a struct wraps it.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+Actor, Ref, ActorError, Context = std.actor
+
 CallbackBox = { callback: (value: i32) i32 }
 
 Worker = {}

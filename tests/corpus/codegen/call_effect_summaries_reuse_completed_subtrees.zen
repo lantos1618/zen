@@ -2,6 +2,10 @@ scan, Source = std.lex
 Parser, module = std.parse
 ExprId = std.ast
 CallEffects = gen.gen_c.gen_c_effect
+Res, Ok, Range = std.core
+Alloc, AllocError, Ptr = std.mem
+Env = std.env
+println = std.io
 
 CountAlloc = {
     base: Alloc,

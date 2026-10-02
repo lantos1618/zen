@@ -2,7 +2,10 @@
 // each formatter. Every integer-domain overload must pick the same ASCII
 // table, and u64 hex covers both sides of the 9/a boundary.
 
-digit, hex_digit = std.core
+Res, Ok, digit, hex_digit = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

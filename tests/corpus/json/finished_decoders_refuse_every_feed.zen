@@ -1,4 +1,8 @@
 JsonEvent, JsonFault = std.json
+Res, Ok = std.core
+Alloc = std.mem
+Env = std.env
+println = std.io
 
 finished = (a: Alloc, text: str) Res<(), JsonFault> {
     decoder ::= a.Decoder().try();

@@ -7,6 +7,7 @@ str, String = std.text
 Vec = std.collections
 Target, CImport = std.build
 Ast, Module, CHeader, CTypeBinding, CBinding, CBindingId = std.ast
+Res, Ok = std.core
 
 CImportRequest* = {
     spec*: CImport,

@@ -8,6 +8,9 @@ Ast, CHeader, COpaque, CTypeBinding, CBinding = std.ast
 Checker = sema.sema_check
 Emit = gen.gen_emit
 CBackend, emit_program = gen.gen_c
+Res, Ok, None, Range = std.core
+Env = std.env
+println = std.io
 
 RAW : str = "Ptr*<T> = {}\nSSL_CTX* = {}\nSSL* = {}\nSSL_CTX_new* = () Ptr<SSL_CTX>\nSSL_new* = (ctx: Ptr<SSL_CTX>) Ptr<SSL>\nSSL_free* = (ssl: Ptr<SSL>) ()\n"
 

@@ -19,6 +19,11 @@
 // same call site runs both arms across the two calls, so neither arm's
 // payload path is dead code.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Fail = {
     code: i64,
     note: str,

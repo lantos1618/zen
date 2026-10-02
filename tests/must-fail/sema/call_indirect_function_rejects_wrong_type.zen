@@ -3,6 +3,11 @@
 //
 // position: the call whose argument has the wrong type.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 use = (pick: (value: i32) i32) i32 { (pick)("wrong") }
 
 main = (env: Env) Res<i32, AllocError> {

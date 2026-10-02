@@ -1,5 +1,10 @@
 // A case named twice: the second arm never runs.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Signal = Start | Stop
 
 code = (s: Signal) i32 {

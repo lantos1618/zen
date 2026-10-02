@@ -3,6 +3,10 @@
 // lookahead case where a second parenthesized group denotes the return type.
 scan, Source = std.lex
 Parser, module = std.parse
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 SOURCE: str = "shout = (env: Env, n: i32) () {}\n"
 

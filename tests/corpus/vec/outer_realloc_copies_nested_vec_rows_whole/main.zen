@@ -18,6 +18,12 @@
 // and past 16: two reallocs move all three seed rows before anything is
 // read back through a fresh get().
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Vec = std.collections
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
     grid  ::= alloc.Vec<Vec<i32>>();

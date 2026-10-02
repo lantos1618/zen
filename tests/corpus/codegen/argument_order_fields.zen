@@ -1,6 +1,11 @@
 // Construction field expressions evaluate left to right in written order,
 // including positional, named, reordered, and nested constructions.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Pair = {
     a: i32,
     b: i32,

@@ -11,6 +11,11 @@
 // the line after. The good call runs first so a build whose slicing
 // vanished entirely cannot pass by printing nothing.
 
+Res, Ok = std.core
+OutOfBounds = std.collections
+Env = std.env
+println = std.io
+
 // a trap never lifts into Res: it aborts the process
 Error = Overflow | DivideByZero | OutOfBounds
 

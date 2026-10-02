@@ -14,6 +14,11 @@
 // another spelling (`write_from`: anything not a string literal is "just
 // a value"), so it is pinned beside the mixed form.
 
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Error = AllocError | IoError
 
 main = (env: Env) Res<i32, Error> {

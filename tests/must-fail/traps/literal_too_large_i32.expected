@@ -1,2 +1,2 @@
 literal 2147483648 does not fit i32
-literal_too_large_i32.zen:11:20
+literal_too_large_i32.zen:16:20

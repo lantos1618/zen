@@ -4,7 +4,7 @@
 str = std.text
 Alloc, AllocError = std.mem
 Vec = std.collections
-Range = std.core
+Res, Ok, Range = std.core
 Ast, Module, Decl, Block = std.ast
 Struct, Enum, Alias, Impl, Member, Function, Named, Call, Match, Try = std.ast
 Span, ExprId, TypeId, BlockId = std.ast

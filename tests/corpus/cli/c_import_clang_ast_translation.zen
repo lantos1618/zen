@@ -1,4 +1,9 @@
 translate_ast = zen.zen_c_translate
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+String = std.text
+Env = std.env
+println = std.io
 
 good_ast = (a: Alloc) Res<String, AllocError> {
     out ::= a.String().try();

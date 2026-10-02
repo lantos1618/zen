@@ -1,3 +1,8 @@
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // SHA-256 throughput: the same Zen source (zen-crypto's sha256.zen) built
 // with the C backend and the native asm backend. Hashes a 1 MiB buffer
 // `rounds` times (argument, default 64) and prints the final digest, so

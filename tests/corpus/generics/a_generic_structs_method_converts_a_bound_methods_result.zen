@@ -3,6 +3,9 @@
 // `i64` and the conversion resolves; without the bound the call had no type
 // and codegen could not resolve `to_usize`.
 
+Env = std.env
+println = std.io
+
 Io = { io* = (self: @Self) i64 }
 Plain = {}
 Plain.impl(Io, { io = (self: @Self) i64 { 5 } })

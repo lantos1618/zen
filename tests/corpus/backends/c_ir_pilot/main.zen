@@ -11,6 +11,11 @@ lower = gen.gen_lower
 verify = gen.gen_verify
 emit_c = gen.gen_c_ir
 emit_js = gen.gen_js
+Res, Ok, Err, None, loop, Range = std.core
+Alloc, AllocError, Ptr = std.mem
+String = std.text
+Env = std.env
+println = std.io
 
 Backend = LegacyC | IrC | Js | Asm
 

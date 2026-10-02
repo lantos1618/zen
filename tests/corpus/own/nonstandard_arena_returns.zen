@@ -1,3 +1,5 @@
+println = std.io
+
 Arena = { id: i32 }
 make = () Arena { value = Arena(id: 7); value }
 main = () i32 { println("{}", make().id); 0 }

@@ -2,6 +2,9 @@ Alloc, AllocError = std.mem
 Vec = std.collections
 str, String = std.text
 Command, command, Matches, CliValue, DiagnosticKind, ValueType = std
+Res, Ok, Range = std.core
+Env = std.env
+println, print = std.io
 
 Id = Verbose | Quiet | Jobs | Input | Define
 

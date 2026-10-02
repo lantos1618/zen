@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError, Arena = std.mem
+Map = std.collections
+Env = std.env
+
 // A bound value over a `::` parameter's place may leave with the result,
 // so the place may not move out from under it: the map would keep the
 // caller's address for an arena that now lives in the returned value.

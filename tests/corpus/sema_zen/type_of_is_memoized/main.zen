@@ -23,6 +23,9 @@ Pos, Span, no_trivia = std.ast.ast_span
 ExprId = std.ast.ast_id
 Alloc, AllocError = std.mem
 str, String = std.text
+Res, Ok, None = std.core
+Env = std.env
+println = std.io
 
 // every node in this file is at the same place: the test is about types,
 // and a distinct span per node would be noise in the diagnostics

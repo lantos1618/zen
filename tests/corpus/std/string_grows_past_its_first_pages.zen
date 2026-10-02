@@ -3,6 +3,11 @@
 // every doubling from 8 upward; the bytes written before the first
 // realloc must still be there afterwards
 
+Res, Ok, Range, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Error = AllocError | IoError
 
 main = (env: Env) Res<i32, Error> {

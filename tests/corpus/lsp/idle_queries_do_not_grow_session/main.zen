@@ -2,8 +2,10 @@
 Server = lsp.lsp_serve
 Alloc, AllocError, Ptr = std.mem
 str = std.text
-Range = std.core
+Res, Ok, Range = std.core
 to_json = std.json
+Env = std.env
+println = std.io
 
 Request<T> = { jsonrpc: str, id: i32, method: str, params: T }
 Notification<T> = { jsonrpc: str, method: str, params: T }

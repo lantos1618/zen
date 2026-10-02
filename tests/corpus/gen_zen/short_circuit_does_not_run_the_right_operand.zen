@@ -1,3 +1,7 @@
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 // `&&` and `||` short-circuit, and the right operand may SPILL — a
 // `.match` or a `.try()` is not a C expression, so it lowers to a
 // temporary the left fills and the right fills again under an `if`.

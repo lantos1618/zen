@@ -19,6 +19,11 @@
 //
 // position: the literal, because the literal is what does not fit.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     b: bool = env.var("ZEN_NEVER_SET").match({
         Ok(_) => true,

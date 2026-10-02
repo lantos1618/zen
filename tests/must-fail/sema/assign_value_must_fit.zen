@@ -16,6 +16,10 @@
 //
 // position: the value, because the value is what does not fit.
 
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, IoError> {
     n ::= 42;
     println("n starts as {}", n);

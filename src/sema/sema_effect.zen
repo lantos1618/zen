@@ -4,6 +4,7 @@ Block, Stmt, ExprStmt, Match, Arm, ExprId = std.ast
 TyId = sema.sema_ty
 Checker = sema.sema_check
 SemaFault, TypeFault = sema.sema_diag
+Res, Ok = std.core
 
 // A statement whose value nothing reads is refused when the expression
 // is a pure read: a literal, a name, a member, or a match over those.

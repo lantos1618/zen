@@ -4,6 +4,7 @@
 Ptr = std.mem.mem
 Eq, Hash, Hasher = std.core.core
 Range, loop, LoopHandle = std.core.core
+Res, Ok, None = std.core
 
 str* = {
     data: Ptr<u8>,

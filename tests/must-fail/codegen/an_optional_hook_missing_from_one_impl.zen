@@ -2,6 +2,11 @@
 // supplying an optional hook cannot make another implementation's NULL slot
 // callable.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Optional = {
     read* ::= (self: @Self) i32
 }

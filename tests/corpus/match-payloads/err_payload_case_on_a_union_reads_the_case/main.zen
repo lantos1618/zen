@@ -7,6 +7,11 @@
 // raised with a value `Protocol` never is, so either reading shows up.
 // The declared alias `Both` repeats the pins through a declaration.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Kind = Io(i32) | Protocol(i32)
 Fail = Mismatch | Accepted
 Both = Kind | Fail

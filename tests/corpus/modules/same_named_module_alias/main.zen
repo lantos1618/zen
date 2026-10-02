@@ -1,3 +1,5 @@
+println = std.io
+
 // A module alias may keep the module's own name. Excluding that alias from
 // local lookup must not let a loaded module override a different local type.
 helpers = helpers

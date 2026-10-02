@@ -11,6 +11,7 @@ sym_member = gen.gen_name
 CBackend = gen.gen_c.gen_c_state
 ctype = gen.gen_c.gen_c_type
 comment = gen.gen_c.gen_c_runtime
+Res, Ok = std.core
 
 // Emit only when used. since_start uses CLOCK_MONOTONIC; unix uses
 // CLOCK_REALTIME. Both return nanoseconds in u64 arithmetic.

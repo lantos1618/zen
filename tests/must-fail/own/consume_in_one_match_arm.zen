@@ -5,6 +5,10 @@
 // the dual of this file is corpus/own/consume_in_every_match_arm.zen,
 // where every arm consumes and the join is clean.
 
+Res, Ok, Drop, IoError = std.core
+Env = std.env
+println = std.io
+
 Buf = {
     id: i32,
 }

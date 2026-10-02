@@ -3,6 +3,11 @@
 // the body's signature, the ordinary overload rule. the counter
 // starts at 0 and threads by value
 
+Res, Ok, loop = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     loop((h, index) {
         println("index {}", index);

@@ -30,6 +30,9 @@ render = fmt.fmt
 Jsons, JsonId, write_text, read = std.json
 Server, serve = lsp.lsp_serve
 write_frame, frame_at = lsp.lsp_frame
+Res, Ok, loop = std.core
+Env = std.env
+println = std.io
 
 DOC*: str = "MAX*: i32 = 4\n\n\nname_of = (n: i32) str {\n    n.match({\n        0 => \"none\",\n        22 => \"many\",\n        _ => \"some\",\n    })\n}\n"
 

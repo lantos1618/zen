@@ -18,6 +18,11 @@
 //
 // position: the `@meta` token.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Point = { x: i64, y: i64 }
 
 count_of = (n: i64) i64 { n }

@@ -1,3 +1,7 @@
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
+
 // The name is bound after the body is checked: a local function inlines at
 // every call, so a recursive one would never finish inlining.
 main = (env: Env) Res<i32, IoError> {

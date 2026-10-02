@@ -3,6 +3,11 @@
 // so `Ok(41, "x")` was an `Ok(41)` that read "x" for nothing.
 // position: the second argument.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     r: Res<i32, AllocError> = Ok(41, "x");
     r.match({

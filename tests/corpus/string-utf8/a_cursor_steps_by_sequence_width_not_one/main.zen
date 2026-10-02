@@ -6,6 +6,9 @@
 // `len` says independently; the three intermediate offsets are only
 // correct if each step was exactly right.
 Utf8Error = std.text.text_utf8
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 main = (env: Env) Res<i32, Utf8Error> {
     s = "é€😀x";

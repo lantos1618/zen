@@ -1,4 +1,7 @@
-Pool, PoolAlloc, PoolPolicy, Ptr, null_ptr = std.mem
+Alloc, AllocError, Ptr, null_ptr, Pool, PoolAlloc, PoolPolicy = std.mem
+Res, Ok, Err, Range = std.core
+Env = std.env
+println = std.io
 check = (a: Alloc, pool: Ptr<Pool>) Res<(), AllocError> {
     bytes = a.raw(0, 16).try();
     (!bytes.is_null()).ensure(AllocError.OutOfMemory).try();

@@ -5,7 +5,7 @@
 str, String, dup = std.text
 Vec, Map, Ordered = std.collections
 Alloc, AllocError, Arena = std.mem
-Range = std.core
+Res, Ok, Err, None, Drop, loop, Range = std.core
 ExprId, Access, Member, Impl, Ident, nowhere = std.ast
 module_index_of = std.ast.ast_named
 Checker = sema.sema_check
@@ -23,6 +23,7 @@ path_of = lsp.lsp_uri
 SourceRoot = zen.zen_path
 obj, arr, Nest, written, to_json = std.json
 KEYWORD_COUNT, keyword_at = std.lex
+Env = std.env
 
 // Protocol values belong to the kind; convert only when writing JSON.
 CompletionKind* = | Method = 2

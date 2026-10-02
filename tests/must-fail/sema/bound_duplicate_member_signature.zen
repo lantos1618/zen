@@ -1,3 +1,7 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+
 Dup = {
     go ::= (self: @Self) i32 { 11 },
     go ::= (self: @Self) i32 { 22 },

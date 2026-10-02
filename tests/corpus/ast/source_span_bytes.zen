@@ -1,4 +1,5 @@
 Pos, Span = std.ast
+println = std.io
 
 main = () {
     text = "x = \"é\"\r\nnext\n";

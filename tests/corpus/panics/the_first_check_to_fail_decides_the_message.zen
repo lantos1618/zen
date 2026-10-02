@@ -19,6 +19,11 @@
 // The divisor comes from the environment, so no constant folder can
 // turn any of this into a compile-time question.
 
+Res, Ok = std.core
+OutOfBounds = std.collections
+Env = std.env
+println = std.io
+
 // a trap never lifts into Res: it aborts the process
 Error = Overflow | DivideByZero | OutOfBounds
 

@@ -32,6 +32,7 @@ operands_agree, check_neg, check_bit_not = sema.sema_operand
 seed_left_spine, spine_ahead = sema.sema_spine
 type_from_ast, self_type, declared_or_alias = sema.sema_denote
 local_decl = sema.sema_local
+Res, Ok, None = std.core
 
 type_of* = (c :: Checker, id: ExprId, ctx: Ctx) Res<TyId, AllocError> {
     c.walk_projection_type(id, ctx).try().match({

@@ -36,6 +36,10 @@
 //   dispatch that fell back to String's impl would not move these
 //   counters.
 
+Res, Ok, Display, WriteError, Sink = std.core
+Env = std.env
+println = std.io
+
 Tag = {
     ch: u8,
 }

@@ -5,6 +5,7 @@ Alloc, AllocError = std.mem
 Range = std.core.range
 Vec = std.collections.collections_vec
 LoopHandle = std.core.loop.loop_handle
+Res, Ok, None, Eq, Hash, Hasher = std.core
 
 // Slots store one-based entry positions; zero marks an empty slot.
 SLOT_EMPTY: usize = 0

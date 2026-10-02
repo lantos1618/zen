@@ -1,3 +1,5 @@
+Range = std.core
+
 Eq* = {
     // Implement equality; ne is derived so the two cannot disagree.
     eq* = (self: @Self, other: @Self) bool

@@ -3,11 +3,12 @@
 
 Alloc, AllocError = std.mem
 String = std.text
-Range = std.core
+Res, Ok, Range = std.core
 BuildArgs, Emission = std.build
 
 Build = zen.zen_build
 entry_of = zen.zen_path
+Env = std.env
 
 // Repeat the whole pipeline in one process. Later outputs are numbered before
 // run_once so compilation itself has no repetition policy.

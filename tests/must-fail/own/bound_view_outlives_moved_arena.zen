@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError, Arena = std.mem
+Map = std.collections
+Env = std.env
+
 // The map keeps the address of `fresh` as its allocator. Moving the arena
 // into `owner` takes its pages but leaves that address behind, so the map
 // may not follow it into caller storage.

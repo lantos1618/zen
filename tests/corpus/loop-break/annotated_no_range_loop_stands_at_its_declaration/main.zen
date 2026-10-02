@@ -1,6 +1,10 @@
 // An annotated no-range loop takes its result payload from the declaration;
 // break arguments settle only what that type leaves open.
 
+Res, Ok, loop = std.core
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32> {
     r: Res<i64> = loop((h) { h.break(-7); });
     r.match({ Ok(v) => println("ann {}", v), None => println("none") });

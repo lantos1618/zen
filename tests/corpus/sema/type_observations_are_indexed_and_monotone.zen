@@ -1,5 +1,9 @@
 Ast, Type, TypeKind, TypeId, nowhere, no_trivia = std.ast
 Checker = sema.sema_check
+Res, Ok, Range = std.core
+Alloc, AllocError, Ptr = std.mem
+Env = std.env
+println = std.io
 
 AllocationProbe = { backing: Alloc, refuse: Ptr<bool>, calls: Ptr<usize>, bytes: Ptr<usize> }
 AllocationProbe.impl(Alloc, {

@@ -20,6 +20,9 @@
 // where this expects `false`, and neither is a compile error.
 
 TokenKind = std.lex.lex
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
 
 main = (env: Env) Res<i32, IoError> {
     println("same {}", TokenKind.BraceOpen == TokenKind.BraceOpen);

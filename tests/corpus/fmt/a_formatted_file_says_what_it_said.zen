@@ -27,9 +27,11 @@
 
 Alloc, AllocError = std.mem
 str, String = std.text
-Range = std.core
+Res, Ok, Range = std.core
 scan, Source = std.lex.lex
 render = fmt.fmt
+Env = std.env
+println = std.io
 
 // A comment in every position the parser has a run for: leading a
 // declaration, trailing one on its own line, continuing a trailing

@@ -1,3 +1,6 @@
+Res, Ok = std.core
+Env = std.env
+
 run = (body: (n: i32, label: Res<str>) ()) {
     body(1);
 }

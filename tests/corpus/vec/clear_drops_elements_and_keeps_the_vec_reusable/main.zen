@@ -1,3 +1,8 @@
+Res, Ok, Drop = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Noisy = {
     env: Env,
     id: i64,

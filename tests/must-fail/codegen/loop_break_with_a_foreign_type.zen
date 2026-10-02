@@ -17,6 +17,10 @@
 //
 // position: the break call.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+
 main = (env: Env) Res<i32, AllocError> {
     [1].loop((h, v) {
         h.break("x");

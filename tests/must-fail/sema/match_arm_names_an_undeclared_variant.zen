@@ -11,6 +11,11 @@
 //
 // position: the pattern that binds.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Colour = Red | Green | Blue
 
 name = (c: Colour) str {

@@ -2,7 +2,7 @@
 
 Alloc, AllocError = std.mem
 str, String = std.text
-FsError = std.env
+Env, FsError = std.env
 BuildArgs, ProjectArgs = std.build
 
 Cli*, FmtJob*, cli*, USAGE, help = zen.zen_cli
@@ -14,6 +14,8 @@ project, Action = zen.zen_project
 format = zen.zen_fmt
 Server, serve, serve_stdio = lsp
 arg_at = std.cli
+Res, Ok = std.core
+println = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

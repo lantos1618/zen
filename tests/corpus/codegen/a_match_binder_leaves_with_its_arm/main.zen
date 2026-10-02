@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // A match arm's binder is scoped to the ARM, and gen_c has to mirror that.
 //
 // `Ok(d)` shadows the outer `d`. gen_c renames the binder to avoid the

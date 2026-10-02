@@ -1,3 +1,7 @@
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+Env = std.env
+
 // A type variable may be instantiated with a concrete allocator, and the
 // instance then builds the bound value over this body's copy of it.
 Holder = { alloc: Alloc }

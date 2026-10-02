@@ -4,6 +4,10 @@ definition_with = lsp.lsp_def
 Ctx = sema.sema_check
 type_from_ast = sema.sema_denote
 TypeId = std.ast
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 TEXT: str = "Wrap<T> = { item: T }\nBox = { key = (self: @Self, item: Wrap<@Self>) {} }\n"
 

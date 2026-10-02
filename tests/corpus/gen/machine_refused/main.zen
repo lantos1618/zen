@@ -1,6 +1,10 @@
 Build = zen.zen_build
 Generation, Layout = gen.gen
 Codegen = std.build
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+Env = std.env
+println = std.io
 
 // A reachable machine primitive has no scalar lowering yet. JS and assembly
 // must refuse it by name, before publishing anything; C lowers it.

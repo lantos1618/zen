@@ -8,6 +8,10 @@
 // Its value is the declared Res and not unit, which is what `.try()` here
 // asserts: a console write has no failure to report, and the answer is Ok.
 
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
+
 Holder = {
     env: Env,
 

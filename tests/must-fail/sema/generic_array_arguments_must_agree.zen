@@ -1,6 +1,11 @@
 // T has one meaning through array element positions too. The first argument
 // settles it to i32, so the second [str, 2] cannot fit [T, 2].
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 first = <T>(left: [T, 2], right: [T, 2]) T { left[0] }
 
 main = (env: Env) Res<i32, AllocError> {

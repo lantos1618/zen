@@ -18,6 +18,11 @@
 // float literal -- the same trap DESIGN.md notes for numeric
 // scrutinees.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     v ::= (1).match({ 1 => 2, _ => 601 }).match({ 2 => 3, _ => 602 }).match({ 3 => 4, _ => 603 }).match({ 4 => 5, _ => 604 }).match({ 5 => 6, _ => 605 }).match({ 6 => 7, _ => 606 }).match({ 7 => 8, _ => 607 }).match({ 8 => 9, _ => 608 }).match({ 9 => 10, _ => 609 }).match({ 10 => 11, _ => 610 }).match({ 11 => 12, _ => 611 }).match({ 12 => 13, _ => 612 }).match({ 13 => 14, _ => 613 }).match({ 14 => 15, _ => 614 }).match({ 15 => 16, _ => 615 }).match({ 16 => 17, _ => 616 }).match({ 17 => 18, _ => 617 }).match({ 18 => 19, _ => 618 }).match({ 19 => 20, _ => 619 }).match({ 20 => 21, _ => 620 });
     println("chain {}", v);

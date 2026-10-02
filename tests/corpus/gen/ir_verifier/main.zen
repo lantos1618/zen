@@ -2,6 +2,11 @@ Program, Func, Scalar, BasicBlock, Terminator, Branch = gen.gen_ir
 Instruction, Const, Move, Unary, UnaryOp, Binary, Op, Invocation, Print = gen.gen_ir
 verify, message = gen.gen_verify
 nowhere = std.ast
+Res, Ok, Err = std.core
+Alloc, AllocError, Ptr = std.mem
+Vec = std.collections
+Env = std.env
+println = std.io
 
 Refuse = {}
 Refuse.impl(Alloc, {

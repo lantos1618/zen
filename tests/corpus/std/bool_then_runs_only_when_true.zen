@@ -3,6 +3,11 @@
 // a `then` that evaluated its body eagerly would count twice here
 // and still print the right Res
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     hits ::= 0;
     (1 == 1).then(() { hits = hits + 1; });

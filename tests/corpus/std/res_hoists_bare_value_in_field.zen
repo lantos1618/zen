@@ -3,6 +3,11 @@
 // a bare 32. the two forms are the same value, so they match the
 // same way
 
+Res, Ok, None = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Row = {
     n: Res<i32>,
     label: str,

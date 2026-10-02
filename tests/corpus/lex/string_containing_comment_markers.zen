@@ -1,3 +1,7 @@
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 // a string is one TOKEN, so nothing inside it is read as syntax.
 // as a `seq` rule the grammar let `extras` -- whitespace and both
 // comment forms -- match between the rule's elements, so `"// x"`

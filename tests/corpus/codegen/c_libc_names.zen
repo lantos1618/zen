@@ -25,6 +25,11 @@
 // obvious answer, which kills the link-time half and leaves the
 // declaration-shadowing half. Either way the mangler decides, not luck.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Macros = {
     NULL: i32,
     EOF: i32,

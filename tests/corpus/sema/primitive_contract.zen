@@ -6,6 +6,10 @@ Checker = sema.sema_check
 check_all = sema.sema_decl
 DeclId = sema.sema_id
 CHeader, CTypeBinding, CBinding = std.ast
+Res, Ok = std.core
+Alloc, AllocError = std.mem
+Env = std.env
+println = std.io
 
 // The single declaration is checked in `owner`; `bits` selects the scalar
 // bit table rather than the machine primitive table.

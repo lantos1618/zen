@@ -11,6 +11,11 @@
 // which is where the fix lives either way — hoist it to a local, or
 // give `read`'s receiver `::`.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Box = {
     n :: i32,
 

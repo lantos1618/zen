@@ -2,6 +2,11 @@
 // included: a closure's type is its full signature, and there is no
 // carve-out for it. DESIGN.md, Overloading.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Handle = {
     id: i32,
 }

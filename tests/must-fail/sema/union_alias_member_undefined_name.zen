@@ -11,6 +11,11 @@
 //
 // position: the misspelled member, not the alias or a use site.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 EE = AllocError | NoSuchErrorTypeAnywhere
 
 boom = () Res<i32, EE> { Ok(1) }

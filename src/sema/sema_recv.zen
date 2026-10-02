@@ -11,6 +11,7 @@ Own, path_root, place_type = sema.sema_own
 is_construction = sema.sema_scope
 storage_seat_name = sema.sema_supply
 is_bound_ty = sema.sema_bound
+Res, Ok, None = std.core
 
 check_receiver* = (c :: Checker, o :: Own, k: Call, ctx: Ctx)
                   Res<(), AllocError> {

@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // A match whose every arm returns closes its final `else` with
 // `zg_unreachable`, so unannotated the chain reads to cc as a non-void
 // function that can fall off its end — visible only as `-Wreturn-type`,

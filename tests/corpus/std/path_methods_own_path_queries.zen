@@ -1,3 +1,8 @@
+Res, Ok, Path = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<(), AllocError> {
     path = Path("src/app/main.zen");
     println("{}", path.name());

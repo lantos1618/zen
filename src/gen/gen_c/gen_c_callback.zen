@@ -13,6 +13,7 @@ unsupported = gen.gen_c.gen_c_report
 signature_of = gen.gen_c.gen_c_call
 declared_ret, spellable, is_unit = gen.gen_c.gen_c_type
 sym_fn = gen.gen_name
+Res, Ok, None = std.core
 
 is_native_callback* = (d: Def) bool {
     d.qname.eq("std.native.callback") || d.qname.eq("std.native.native.callback")

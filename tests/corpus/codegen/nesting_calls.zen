@@ -19,6 +19,11 @@
 // applied the outermost operation 128 times, lands on a different number
 // rather than on the same 128.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 bump = (n: i32) i32 { n + 1 }
 
 skip = (n: i32) i32 { n + 3 }

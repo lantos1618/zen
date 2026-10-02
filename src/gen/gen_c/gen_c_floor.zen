@@ -21,6 +21,7 @@ recv_inst, inst_open, any_open = gen.gen_c.gen_c_mono
 Piece, write_pieces, write_ok, write_done = gen.gen_c.gen_c_sink
 bodyless, sink_door_shape = gen.gen_c.gen_c_sink
 FORMAT_DOOR, SINK_FLOOR = gen.gen_c.gen_c_sink
+Res, Ok = std.core
 
 RAW_FLOOR: str = "add"
 

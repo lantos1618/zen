@@ -2,6 +2,9 @@
 // block, and `Holder(s: s)` hands the block to a value whose type
 // carries it out. The field now outlives the frame it points into.
 
+Res, Ok, Scope, IoError = std.core
+Env = std.env
+
 Holder = {
     s: Scope,
 }

@@ -2,6 +2,10 @@
 // the move onwards: drop runs exactly once, so two live names for
 // one value would drop it twice.
 
+Res, Ok, Drop, IoError = std.core
+Env = std.env
+println = std.io
+
 Buf = {
     id: i32,
 }

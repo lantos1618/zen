@@ -2,6 +2,10 @@
 // inner block's defers run at the INNER brace, before anything the outer
 // block registered afterwards — two stacks, not one.
 
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, IoError> {
     outer = @scope;
     {

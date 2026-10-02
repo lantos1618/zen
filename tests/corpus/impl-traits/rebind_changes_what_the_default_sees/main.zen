@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // A DEFAULT (`::=`) IS THE BOUND'S OWN BODY; a rebind in an impl is
 // what the caller sees -- and the DEFAULT CALLING ANOTHER MEMBER must
 // observe the rebinding per type. `twice` has no supplied body

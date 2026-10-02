@@ -1,6 +1,11 @@
 // A wrapped method callee still contributes its receiver slot. If it did
 // not, the held tick would escape the short-circuit and increment `b`.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Counter = {
     n :: i32,
 

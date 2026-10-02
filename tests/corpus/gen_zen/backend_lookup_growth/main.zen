@@ -7,7 +7,9 @@ String = std.text
 Checker = sema.sema_check
 CBackend = gen.gen_c
 TyId = sema.sema_ty
-Range = std.core
+Res, Ok, Range = std.core
+Env = std.env
+println = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();

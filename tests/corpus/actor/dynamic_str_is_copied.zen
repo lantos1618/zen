@@ -1,6 +1,11 @@
 // The sender's arena dies before program shutdown lets the receiver drain.
 // A correct mailbox owns the str bytes rather than retaining this view.
 
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+Actor, Ref, ActorError, ActorStartError, Context = std.actor
+
 Reader = {}
 
 Reader.impl(Actor, {

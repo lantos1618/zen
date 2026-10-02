@@ -21,6 +21,11 @@
 // zero-field values round-trip through calls, fields, `Res` and arrays,
 // and the neighbouring fields still hold their values afterwards.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Empty = {}
 
 make = () Empty { Empty() }

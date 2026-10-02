@@ -8,6 +8,7 @@ Jsons, JsonId, write_text, written, obj, arr, Nest,
     JsonFault, to_json = std.json
 write_bool = std.json.json_meta
 write_legend = lsp.lsp_colour
+Res, Ok, None, loop = std.core
 
 // Absent fields read as "" / 0 / the enclosing value.
 Decoded* = {

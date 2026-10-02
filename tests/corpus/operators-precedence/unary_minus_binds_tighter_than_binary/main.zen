@@ -22,6 +22,11 @@
 // raise PREC.unary above PREC.call). `neg` flips 1 -> -5 and `negcall`
 // flips -16 -> 16 while nothing errors.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 sq = (x: i64) i64 { x * x }
 
 main = (env: Env) Res<i32, AllocError> {

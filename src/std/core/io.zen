@@ -1,3 +1,6 @@
+Res = std.core
+AllocError = std.mem
+
 IoError* = Closed          // the sink is gone: a closed pipe, a dropped socket
           | Full           // no room: a fixed buffer, a full disk
           | Invalid        // the bytes are not what this sink accepts

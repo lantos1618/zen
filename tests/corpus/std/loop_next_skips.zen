@@ -3,6 +3,11 @@
 // print after it must be skipped exactly once, and the loop must
 // still finish the remaining passes
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     Range(0, 5).loop((h, value) {
         (value == 2).then(() { h.next() });

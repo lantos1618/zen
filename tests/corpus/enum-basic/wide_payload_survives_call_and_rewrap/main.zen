@@ -9,6 +9,11 @@
 // this lane's most plausible wrong answer: 12884901891 cannot be reached
 // from a 32-bit payload by luck.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Wide = Vast(i64) | Modest(i64)
 
 loud = (n: i64) Wide {

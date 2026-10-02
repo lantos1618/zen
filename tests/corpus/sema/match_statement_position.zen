@@ -2,6 +2,11 @@
 // one where a dropped case would otherwise be invisible: nothing reads
 // the value, so nothing else would complain.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Signal = Start | Stop | Reset
 
 step = (env: Env, s: Signal) {

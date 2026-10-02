@@ -5,6 +5,7 @@
 // prefix preserves that alignment; take rejects a target where Block exceeds it.
 // The byte cache limit includes metadata; the block limit counts payload bytes.
 Ptr, null_ptr = std.mem.mem_ptr
+Res, Ok, loop = std.core
 Heap = c.bind("stdlib.h", {
     malloc = (bytes: usize) Ptr<u8>
     free = (pointer: Ptr<u8>) ()

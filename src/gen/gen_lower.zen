@@ -12,6 +12,7 @@ Checker, DeclId, Def, TyId, decl_at, const_int = sema.sema
 Scalar, Op, UnaryOp, Const, Move, Unary, Binary, Invocation, Print, Branch = gen.gen_ir
 Instruction, Func, Program, BasicBlock, Terminator = gen.gen_ir
 machine_op, machine_refusal = gen.gen_ir_machine
+Res, Ok, Err, None, loop = std.core
 
 Fault* = { span*: Span, what*: str }
 LowerError* = OutOfMemory | Unsupported(Fault)

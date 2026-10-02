@@ -1,2 +1,2 @@
 literal 200 does not fit i8
-literal_operand_out_of_range.zen:14:24
+literal_operand_out_of_range.zen:19:24

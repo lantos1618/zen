@@ -1,6 +1,11 @@
 // An escaping thread closure cannot capture an already-consumed binding.
 // The sibling escaping_closure_captured_consumed checks capture before consume.
 
+Res, Ok, Drop, IoError = std.core
+AllocError = std.mem
+Env, ThreadError = std.env
+println = std.io
+
 Buf = {
     id: i32,
 }

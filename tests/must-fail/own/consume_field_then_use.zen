@@ -10,6 +10,10 @@
 // must-fail/own/partial_move_at_scope_exit.zen. the position asserted
 // here is the read of the moved field.
 
+Res, Ok, Drop, IoError = std.core
+Env = std.env
+println = std.io
+
 Buf = {
     id: i32,
 }

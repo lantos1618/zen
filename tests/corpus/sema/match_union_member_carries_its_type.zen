@@ -18,6 +18,11 @@
 // at the call site, because that spelling is what `res_try_error_set_
 // keeps_the_variant` exercises and what the bootstrapper still refuses.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Torn = Badly | Barely
 Frayed = { threads: i32 }
 

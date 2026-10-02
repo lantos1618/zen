@@ -1,6 +1,11 @@
 // An explicit impl-supplied specialization retains its concrete parameter and
 // return type through semantic analysis and generated C.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Chooser = {
     choose* ::= <T>(self: @Self, value: T) T
 }

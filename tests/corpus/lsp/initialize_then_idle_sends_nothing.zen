@@ -23,6 +23,9 @@ Alloc, AllocError = std.mem
 Server, serve = lsp.lsp_serve
 write_frame, frame_at = lsp.lsp_frame
 write_text = std.json
+Res, Ok, loop = std.core
+Env = std.env
+println = std.io
 
 // No `rootUri` on purpose: even the workspace is absent, so any frame
 // here is unambiguously unsolicited.

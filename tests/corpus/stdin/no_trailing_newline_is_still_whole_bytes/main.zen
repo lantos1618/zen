@@ -10,6 +10,10 @@
 
 Vec    = std.collections
 str_at = std.text
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println, print = std.io
 
 Error = AllocError | IoError
 

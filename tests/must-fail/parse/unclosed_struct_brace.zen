@@ -1,3 +1,6 @@
+Res, Ok = std.core
+Env, ArgError = std.env
+
 // the struct body is never closed. the diagnostic points at the `{`
 // that opened it -- pointing at EOF names no useful location.
 Point = {

@@ -4,6 +4,7 @@
 Alloc = std.mem
 Env = std.env
 str = std.text
+Res, Ok, Err, Eq, IoError = std.core
 
 TestError* = | Failed(str)
 

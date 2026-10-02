@@ -24,6 +24,7 @@ bodyless = gen.gen_c.gen_c_sink
 site_of, method_sig = gen.gen_c.gen_c_member
 Site = gen.gen_c.gen_c_member
 recv_inst = gen.gen_c.gen_c_mono
+Res, Ok, None = std.core
 
 // Stable call facts are receiver state; the backend and accumulating answer
 // remain explicit mutable borrows.

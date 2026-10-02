@@ -19,6 +19,10 @@
 // position: the whole expression, matching where
 // `module_constant_value_must_fit` puts the caret for the bare form.
 
+Res, Ok = std.core
+Env = std.env
+println = std.io
+
 SUM: i32 = 3000000000 + 234
 
 main = (env: Env) Res<i32> {

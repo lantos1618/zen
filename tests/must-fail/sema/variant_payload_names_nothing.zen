@@ -16,6 +16,11 @@
 // in a GENERIC ARGUMENT rather than named directly. `.count 3` says every
 // one of them is reached and that none of them cascades.
 
+Res, Ok = std.core
+AllocError = std.mem
+Vec = std.collections
+Env = std.env
+
 Sole = | Array(ArrayLit)
 
 Later = Unit | Second | Third(MissingThird)

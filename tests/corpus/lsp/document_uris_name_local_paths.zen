@@ -5,6 +5,9 @@ str = std.text
 Alloc, AllocError = std.mem
 Map = std.collections
 path_of, uri_at, doc_text = lsp.lsp_uri
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 show = (a: Alloc, uri: str) Res<(), AllocError> { println("{}", path_of(a, uri).try()); Ok(()) }
 

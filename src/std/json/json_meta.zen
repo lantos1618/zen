@@ -5,6 +5,7 @@
 Alloc, AllocError = std.mem
 str, String = std.text
 write_text = std.json.json_write
+Res = std.core
 
 to_json* = <T>(self: T, a: Alloc) Res<String, AllocError>
 

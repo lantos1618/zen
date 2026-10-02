@@ -3,6 +3,10 @@
 
 scan, Source = std.lex
 Parser, module = std.parse
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 SOURCE: str = "Window = { start: usize, end: usize }\nWindow.impl(Bounds, {\n    start: 2,\n    end: 5,\n    stop ::= (self: @Self) ()\n    at ::= (self: @Self, index: usize) Res<usize> { Ok(index) }\n})\n"
 

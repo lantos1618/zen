@@ -1,7 +1,7 @@
 Alloc, AllocError = std.mem
 str, String = std.text
 Vec = std.collections
-Range = std.core
+Res, Ok, loop, Range = std.core
 Pos = std.ast.ast_span
 ExprId, TypeId, BlockId = std.ast.ast_id
 Ast = std.ast.ast_arena

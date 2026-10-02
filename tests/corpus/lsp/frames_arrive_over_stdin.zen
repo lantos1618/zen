@@ -21,8 +21,10 @@
 str, String, str_at = std.text
 Vec = std.collections
 Alloc, AllocError = std.mem
-Range = std.core
+Res, Ok, loop, Range = std.core
 frame_at, short_by = lsp.lsp_frame
+Env = std.env
+println = std.io
 
 // How far a pass got, and how many messages it has answered in total.
 //

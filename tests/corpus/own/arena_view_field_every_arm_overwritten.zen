@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Box = { value :: str }
 word = (env: Env, letters: str) Res<str, AllocError> {
     alloc ::= env.mem.alloc();

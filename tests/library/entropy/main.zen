@@ -1,4 +1,8 @@
 fill_random, EntropyError = std.entropy
+Res, Ok, Range = std.core
+AllocError, null_ptr = std.mem
+Env = std.env
+println = std.io
 Probe = c.bind("probe.h", {
     entropy_probe_calls = () usize
     entropy_probe_reset = () ()

@@ -2,6 +2,11 @@
 // intrinsic merely because it also has fields named start and end. Its at
 // hook still decides the value handed to each pass.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Window = {
     start*: usize,
     end*: usize,

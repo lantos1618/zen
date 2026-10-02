@@ -1,3 +1,7 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+
 // A C warning remains an observable compiler outcome instead of being hidden
 // behind a program that happens to run successfully.
 constant_zero = (value: i32) i32 { 0 }

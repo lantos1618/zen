@@ -8,6 +8,9 @@
 Alloc, AllocError = std.mem
 Map = std.collections
 Range = std.core.range
+Res, Ok, Eq, Hash, Hasher = std.core
+Env = std.env
+println = std.io
 
 FILL: usize = 200
 MIX: u64 = 1000003

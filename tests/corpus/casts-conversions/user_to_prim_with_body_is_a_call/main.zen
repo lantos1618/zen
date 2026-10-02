@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // THE CONVERSION MUST NOT FIRE FOR A FUNCTION THAT MERELY LOOKS LIKE ONE.
 //
 // convert_target (gen_c_call.zen) recognises a backend intrinsic by

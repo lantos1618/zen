@@ -12,6 +12,11 @@
 // all three indices are asked for through a nested bool-match so no
 // construction site sits at index 0 by luck.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Word = Zebra | Yonder | Apple
 
 pick = (n: i64) Word {

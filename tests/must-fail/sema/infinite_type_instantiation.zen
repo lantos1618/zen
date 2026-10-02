@@ -4,6 +4,11 @@
 //
 // position: the field whose type widens the parameter.
 
+Res, Ok = std.core
+AllocError = std.mem
+Vec = std.collections
+Env = std.env
+
 Tree<T> = {
     value: T,
     child: Tree<Vec<T>>,

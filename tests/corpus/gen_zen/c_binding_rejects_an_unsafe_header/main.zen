@@ -7,6 +7,9 @@ Ast, CHeader, CTypeBinding, CBinding = std.ast
 Checker = sema.sema_check
 Emit = gen.gen_emit
 CBackend, emit_program = gen.gen_c
+Res, Ok = std.core
+Env = std.env
+print = std.io
 
 PROGRAM : str = "rand = () c_int\nmain = (env: i32) i32 { rand(); 0 }\n"
 

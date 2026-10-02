@@ -18,6 +18,11 @@
 // call's result flows through `.try()` (a spilled scrutinee temp) into
 // println beside it, both halves typed from one rule.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Give<T> = {
     give* ::= (self: @Self) Res<T, AllocError>,
 }

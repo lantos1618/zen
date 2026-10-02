@@ -9,6 +9,7 @@ block_type = sema.sema_type
 param_type, type_from_ast = sema.sema_denote
 push_tparams, module_name = sema.sema_inst
 check_arms_agree = sema.sema_hoist
+Res, Ok, None = std.core
 
 try_type* = (
     c       :: Checker,

@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // A CONVERSION IS AN EXPRESSION, NOT A STATEMENT: it must compose in
 // operand position — as an argument, on a chain, inside arithmetic — and
 // the VALUE it delivers must be the converted one, not the receiver's

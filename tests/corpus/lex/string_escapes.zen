@@ -1,3 +1,8 @@
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // the escapes a string literal must accept, and the exact bytes each
 // one produces.
 Error = AllocError | IoError

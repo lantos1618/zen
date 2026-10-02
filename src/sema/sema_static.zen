@@ -14,6 +14,7 @@ is_case = sema.sema_case
 module_named_by, module_access = sema.sema_module
 value_access = sema.sema_member
 union_carrier = sema.sema_union
+Res, Ok = std.core
 
 // A bare union member that carries a value is refused.
 static_value* = (

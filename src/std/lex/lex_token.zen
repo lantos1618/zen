@@ -2,6 +2,7 @@
 // one-based line and byte-column values are used in diagnostics.
 
 str = std.text
+Res, Eq, Display, WriteError, Sink = std.core
 
 // A byte position. `line` and `col` are one-based; `col` counts bytes.
 Pos* = {

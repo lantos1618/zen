@@ -5,6 +5,10 @@
 // bound, the call went to `Stream.close` with a `Thing` argument, which
 // only the C compiler caught. `closed` reads the state `close` wrote.
 
+Res, Ok = std.core
+Env = std.env
+Actor, ActorError, ActorStartError, Context = std.actor
+
 Closer = {
     closed* = (self: @Self) i32
     close* = (self :: @Self) ()

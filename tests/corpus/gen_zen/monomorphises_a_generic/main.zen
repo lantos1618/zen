@@ -30,6 +30,9 @@ Ast = std.ast.ast_arena
 Checker = sema.sema_check
 Emit = gen.gen_emit
 CBackend, emit_program = gen.gen_c
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 PROGRAM : str = "Box<T> = { held: T\n\n    get = (self: @Self) T { self.held }\n}\nfirst = <T>(a: T, b: T) T { a }\nmain = (env: i32) Res<i32> { bi = Box<i32>(held: 7); bu = Box<u8>(held: 3); n = first<i32>(bi.get(), 100); m = first<u8>(bu.get(), 9); Ok(n) }\n"
 

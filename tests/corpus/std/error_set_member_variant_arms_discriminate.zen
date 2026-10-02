@@ -13,6 +13,11 @@
 // match keeps `_` because NotANumber | TooBig leaves AllocError open;
 // the outer matches need no `_` because their arms are exhaustive.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Trouble = AllocError | ParseError
 
 ParseError = | NotANumber | TooBig

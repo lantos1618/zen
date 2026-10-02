@@ -4,6 +4,7 @@ Vec        = std.collections.collections_vec
 Range      = std.core.range
 Alloc, AllocError, Ptr = std.mem
 min = std.core.num
+Res, Ok, loop = std.core
 
 // Strict ordering; equal elements compare false and retain input order.
 Ordered* = {

@@ -9,7 +9,9 @@
 // name, `Ok(false)` says there was nothing to do, and `Err` is reserved
 // for a path that is there and refuses to leave.
 
-FsError = std.env
+Env, FsError = std.env
+Res, Ok = std.core
+println = std.io
 
 main = (env: Env) Res<i32, FsError> {
     // something there, then not: true, and the name is empty after

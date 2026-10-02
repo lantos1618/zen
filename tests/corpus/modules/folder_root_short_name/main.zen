@@ -8,6 +8,9 @@
 // the floor with no diagnostic. The multi-name guard already accepted
 // the shape; only the dispatch disagreed.
 Kind, Pos, origin = leaf
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
 
 main = (env: Env) Res<i32, ArgError> {
     p = origin();

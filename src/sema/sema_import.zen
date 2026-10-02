@@ -6,7 +6,7 @@
 // diagnostic names the line to add, and the name then resolves as that
 // import would, so one omission is one diagnostic rather than a cascade.
 Span, Enum, Variant = std.ast
-Range = std.core
+Res, Ok, Range = std.core
 AllocError = std.mem
 Vec = std.collections
 str, String = std.text

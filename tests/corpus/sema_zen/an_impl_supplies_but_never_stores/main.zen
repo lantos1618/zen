@@ -41,6 +41,9 @@ ExprId, TypeId, BlockId = std.ast.ast_id
 Alloc, AllocError = std.mem
 Vec = std.collections
 str, String = std.text
+Res, Ok, None = std.core
+Env = std.env
+println = std.io
 
 at_line = (line: usize) Span {
     Span(

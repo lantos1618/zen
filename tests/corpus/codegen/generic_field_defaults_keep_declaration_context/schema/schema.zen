@@ -1,3 +1,5 @@
+Ptr, null_ptr = std.mem
+
 Slot<T> = {
     data* :: Ptr<T> = null_ptr<T>(),
     marker* :: i32 = 7,

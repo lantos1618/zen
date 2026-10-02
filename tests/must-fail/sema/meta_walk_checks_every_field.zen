@@ -8,6 +8,11 @@
 // position: the bind, whose written type the second pass's projection
 // disagrees with.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Pair = {
     a: i64,
     b: bool,

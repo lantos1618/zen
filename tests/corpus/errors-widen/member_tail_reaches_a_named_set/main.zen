@@ -11,6 +11,11 @@
 // members, and an argument. Reading back the member by name pins that
 // the tag, not just the C type, was built.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Narrow = | Nope
 Other  = | Boom
 Mid    = Narrow | Other

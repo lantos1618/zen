@@ -8,6 +8,7 @@ decl_at = sema.sema_def
 Checker = sema.sema_check
 Base = sema.sema_member
 SemaFault, NameFault = sema.sema_diag
+Res, Ok, None = std.core
 
 VariantNameCall* = { ty*: TyId }
 

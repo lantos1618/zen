@@ -1,3 +1,8 @@
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // a negative literal is not representable in u8: unsigned types have no
 // negative side.
 Error = AllocError | IoError

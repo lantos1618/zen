@@ -2,6 +2,10 @@
 // time the caller has the value, so every defer registered on it
 // would run against a dead frame.
 
+Res, Ok, Scope, IoError = std.core
+Env = std.env
+println = std.io
+
 here = () Scope {
     @scope
 }

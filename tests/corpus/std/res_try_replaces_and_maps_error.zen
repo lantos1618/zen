@@ -1,3 +1,7 @@
+Res, Ok, Err = std.core
+Env = std.env
+println = std.io
+
 SourceError = | Bad(i32)
 
 TargetError = Replaced | Mapped(i32)

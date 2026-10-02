@@ -7,6 +7,10 @@
 // the diagnostic points at the receiver, not at the method name: the
 // receiver is the thing that is wrong and `::=` is the fix.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
     v = alloc.Vec<i32>();

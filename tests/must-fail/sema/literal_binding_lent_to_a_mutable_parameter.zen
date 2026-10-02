@@ -8,6 +8,11 @@
 //
 // position: the argument that lends the unsettled storage.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 bump = (n :: usize) { n = n + 1; }
 
 main = (env: Env) Res<i32, AllocError> {

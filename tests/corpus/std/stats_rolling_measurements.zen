@@ -1,5 +1,9 @@
 Samples, Summary = std.stats
 sqrt, log10 = std.math
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     a = env.mem.alloc();

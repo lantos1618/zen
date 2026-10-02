@@ -1,4 +1,9 @@
-﻿seed: i32 = 5381
+﻿Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
+seed: i32 = 5381
 // a utf-8 BOM (EF BB BF) sits immediately before `seed`, with no comment
 // between. The BOM must be stripped EXACTLY -- one byte too few and `\xbf`
 // is a stray character, one byte too many and the name is `eed` -- so the

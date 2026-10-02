@@ -16,6 +16,11 @@
 // remainder counted, so "next broke out" and "break carried i" are two
 // different wrong programs and neither prints this output.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     alloc ::= env.mem.alloc();
 

@@ -18,6 +18,7 @@ expr = gen.gen_c.gen_c_expr
 temp, init_temp = gen.gen_c.gen_c_flow
 write_qname = gen.gen_c.gen_c_layout
 ctype = gen.gen_c.gen_c_type
+Res, Ok, Err, None = std.core
 
 lower_discriminant_call* = (
     be   :: CBackend,

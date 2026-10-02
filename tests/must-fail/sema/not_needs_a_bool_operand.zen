@@ -11,6 +11,11 @@
 //
 // position: the `!`, not the operand.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Thing = {
     n: i32,
 }

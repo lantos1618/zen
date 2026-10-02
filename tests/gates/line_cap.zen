@@ -6,8 +6,9 @@
 Alloc, AllocError = std.mem
 str = std.text
 Vec = std.collections
-Range = std.core
-FsError = std.env
+Res, Ok, Range = std.core
+Env, FsError = std.env
+println = std.io
 
 Over = {
     rel*: str,

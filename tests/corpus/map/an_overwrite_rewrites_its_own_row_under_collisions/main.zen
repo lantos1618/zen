@@ -1,3 +1,8 @@
+Res, Ok, Eq, Hash, Hasher = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // AN OVERWRITE REWRITES ITS OWN ROW -- EVEN WHEN EVERY KEY COLLIDES.
 //
 // All four keys hash to the same bucket on purpose, so the probe path

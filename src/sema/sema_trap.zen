@@ -7,6 +7,7 @@ SemaFault, NameFault, TypeFault = sema.sema_diag
 Checker = sema.sema_check
 const_int, const_literal, fits, fits_magnitude, fold = sema.sema_const
 len_of, min_of = sema.sema_const
+Res, Ok, None = std.core
 check_binary* = (c :: Checker, b: Binary, ty: TyId) Res<(), AllocError> {
     b.op.match({
         Div => c.check_divisor(b, ty),

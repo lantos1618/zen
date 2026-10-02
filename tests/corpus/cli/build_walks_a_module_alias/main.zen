@@ -29,6 +29,9 @@
 Alloc, AllocError = std.mem
 str = std.text
 BuildArgs = std.build
+Res, Ok = std.core
+Env = std.env
+println = std.io
 build = zen
 
 main = (env: Env) Res<i32, AllocError> {

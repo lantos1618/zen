@@ -15,6 +15,11 @@
 // MUST FAIL: accepted on clean main -- it compiled there and printed 0,
 // right by luck -- refused once the arity rule stopped guessing.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Opt<T> = Some(T) | None
 
 pick = (o: Opt<i32>) i32 { o.match({ Some(v) => v, None => 0 }) }

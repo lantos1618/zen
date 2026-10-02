@@ -4,7 +4,7 @@
 Alloc, AllocError = std.mem
 str = std.text
 Vec = std.collections
-Range = std.core
+Res, Ok, loop, Range, Path = std.core
 Env = std.env
 BuildArgs, ProjectArgs, BuildFlags, BuildFlag, build_options = std.build
 FLAG_ENTRY, FLAG_STD, FLAG_FFI = std.build

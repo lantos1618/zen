@@ -9,6 +9,7 @@ is_punct = std.lex.lex_punct
 string, character, number = std.lex.lex_literal
 Alloc, AllocError = std.mem
 str = std.text
+Res, Ok, None, loop, Range = std.core
 
 // Lexical faults are returned inside Lexed; Err is reserved for allocation
 // failure so scanning can continue after malformed input.

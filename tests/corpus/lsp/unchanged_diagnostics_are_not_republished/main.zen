@@ -7,6 +7,9 @@ Alloc, AllocError = std.mem
 Server, serve = lsp.lsp_serve
 write_frame, frame_at = lsp.lsp_frame
 write_text = std.json
+Res, Ok, loop, Range = std.core
+Env = std.env
+println = std.io
 
 // The second in-memory buffer starts with an undefined name.
 SHAPE_BROKEN*: str = "Point* = {\n    x*: i32,\n    y*: i32,\n}\n\narea* = (p: Point) i32 {\n    p.x * missing\n}\n"

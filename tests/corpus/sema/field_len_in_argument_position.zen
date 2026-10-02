@@ -6,6 +6,11 @@
 // that says so. A fix that refuses fields too turns this red while
 // every must-fail stays green.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Error = AllocError
 
 main = (env: Env) Res<i32, Error> {

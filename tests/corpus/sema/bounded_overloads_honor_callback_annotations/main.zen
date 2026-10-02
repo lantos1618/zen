@@ -1,3 +1,8 @@
+Res, Ok, ToU64 = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // Callback annotations must select the same bounded overload as explicit
 // type arguments, regardless of declaration order or callback parameter index.
 pick = <T: ToU64>(value: T, body: (value: T) T) i32 { body(value); 1 }

@@ -8,6 +8,7 @@ WalkNode, WalkEvent, WalkVisitor, DeclVisit, DeclSite, DeclParent, walk = std.as
 Checker = sema.sema_check
 DeclId = sema.sema_id
 obj, arr, Nest, write_text = std.json
+Res, Ok, None, loop = std.core
 
 RootPolicy* = Main | LoadedExports
 UsageError* = OutOfMemory | InvalidInput | InvalidRoots

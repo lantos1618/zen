@@ -17,6 +17,11 @@
 // argument lowers" and "how a typed argument lowers" shows as the two
 // halves of one line disagreeing.
 
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Error = AllocError | IoError
 
 main = (env: Env) Res<i32, Error> {

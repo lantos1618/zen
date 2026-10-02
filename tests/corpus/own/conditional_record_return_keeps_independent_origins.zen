@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Box = { text :: str }
 Input = { text: str, scratch: str }
 choose = (input: Input, static: bool) Input {

@@ -2,6 +2,10 @@ Source, scan = std.lex
 Parser, module = std.parse
 Checker = sema.sema_check
 check_all = sema.sema_decl
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 main = (env: Env) Res<(), AllocError> {
     a      = env.mem.alloc();

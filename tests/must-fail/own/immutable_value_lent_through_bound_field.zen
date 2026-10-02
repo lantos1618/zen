@@ -1,3 +1,8 @@
+Res, Ok, WriteError, Sink = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // A `Sink` built from `text` points at `text`, and `write` is a `::`
 // member: storing the sink in a `::` field lends `text` to every writer
 // of that field, so `text` must be `::` itself.

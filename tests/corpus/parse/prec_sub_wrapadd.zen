@@ -2,6 +2,10 @@
 // max - one +% two is (max - one) +% two = 2147483646 +% 2, which wraps
 // to -2147483648. the other reading, max - (one +% two), is 2147483644.
 
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 main = (env: Env) Res<i32, ArgError> {
     max: i32 = 2147483647;
     one: i32 = 1;

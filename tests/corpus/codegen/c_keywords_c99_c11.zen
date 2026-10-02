@@ -10,6 +10,11 @@
 // reserved-identifier class handles these for free — and a mangler that
 // special-cases keywords one by one does not. see c_reserved_identifiers.zen.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     _Alignas       = 1;
     _Alignof       = 2;

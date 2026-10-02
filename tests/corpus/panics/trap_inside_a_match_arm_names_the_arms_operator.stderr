@@ -1,1 +1,1 @@
-trap_inside_a_match_arm_names_the_arms_operator.zen:30:17: trap: divide by zero
+trap_inside_a_match_arm_names_the_arms_operator.zen:35:17: trap: divide by zero

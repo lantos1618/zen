@@ -2,6 +2,11 @@
 // the same program with every field spelled out — what the walk's
 // unrolling claims to BE. The two share one byte-identical oracle.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Row = {
     n: i64,
     flag: bool,

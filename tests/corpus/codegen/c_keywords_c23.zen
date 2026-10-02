@@ -22,6 +22,11 @@
 // may not, this file needs a note, not a deleted line — `bool` still has to
 // be mangled wherever a user CAN write it.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     alignas       = 1;
     alignof       = 2;

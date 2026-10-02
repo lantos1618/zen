@@ -1,3 +1,6 @@
+Res, Ok, Err = std.core
+Env = std.env
+
 Fault = | Failed
 fail = () Res<(), Fault> { Err(Fault.Failed) }
 main = (env: Env) Res<i32, Fault> {

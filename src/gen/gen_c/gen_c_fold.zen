@@ -23,6 +23,7 @@ Shape, LoopArgs, shape_of, loop_element, loop_fn_at = gen.gen_c.gen_c_shape
 arg_value = gen.gen_c.gen_c_shape
 has_var = sema.sema_inst
 literal_default = sema.sema_ty
+Res, Ok, None = std.core
 
 // One automatic accumulator, or no accumulator for non-fold loop shapes.
 Fold* = {

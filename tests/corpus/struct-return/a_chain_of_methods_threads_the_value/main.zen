@@ -23,6 +23,11 @@
 // bind `@Self`-returning UFCS (codegen cannot spell that type — tried),
 // and because the receiver-slot question only exists on methods.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Acc = {
     sum: i64,
     n: i64,

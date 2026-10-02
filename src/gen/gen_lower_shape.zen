@@ -6,7 +6,7 @@
 Alloc, AllocError = std.mem
 Vec, Map = std.collections
 str, String = std.text
-Range = std.core
+Res, Ok, Err, None, loop, Range = std.core
 Decl, Struct, Member = std.ast
 TyId, TyNamed, Case, cases_of, DeclId = sema.sema
 Checker, Ctx, Inst, decl_at = sema.sema

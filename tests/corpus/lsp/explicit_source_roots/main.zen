@@ -2,7 +2,11 @@ Server, serve = lsp.lsp_serve
 write_frame, frame_at = lsp.lsp_frame
 write_text, Jsons, read = std.json
 SourceRoot, root_for, module_name = zen.zen_path
-FsError = std.env
+Env, FsError = std.env
+Res, Ok, loop, Path = std.core
+Alloc, AllocError = std.mem
+String = std.text
+println = std.io
 
 DOC: str = "Point = lib.helper\nmain = () i32 { item = Point(answer: 42); item.answer }\n"
 BAD: str = "Point = lib.helper\nmain = () i32 { missing }\n"

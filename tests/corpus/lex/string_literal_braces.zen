@@ -1,3 +1,8 @@
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // braces inside a string that is an ARGUMENT are ordinary bytes: only
 // the format string is scanned for {}.
 Error = AllocError | IoError

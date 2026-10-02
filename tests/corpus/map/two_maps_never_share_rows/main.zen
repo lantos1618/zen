@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // TWO MAPS ARE TWO TABLES: NOTHING LEAKS ACROSS.
 //
 // Two Maps of the same K/V type, one key spelled the same in both. A

@@ -1,6 +1,11 @@
 // The chosen signature is declared by the bound even when an impl supplies
 // the body. Written type arguments must settle that signature before fitting.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Chooser = {
     choose* ::= <T>(self: @Self, value: T) T
 }

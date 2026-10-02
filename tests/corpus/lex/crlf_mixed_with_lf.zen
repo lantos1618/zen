@@ -1,3 +1,8 @@
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // line endings are mixed: this line is LF
 // this line is CRLF
 Error = AllocError | IoError

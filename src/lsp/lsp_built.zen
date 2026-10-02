@@ -4,7 +4,7 @@
 str, String, dup = std.text
 Vec, Map = std.collections
 Alloc, AllocError, Arena = std.mem
-Range = std.core
+Res, Ok, None, Drop, Range = std.core
 Span = std.ast.ast_span
 Note = std.parse.parse_diag
 Checker = sema.sema_check
@@ -15,6 +15,7 @@ classify = lsp.lsp_names
 uri_at, path_of = lsp.lsp_uri
 written = std.json
 relative_to, anchored_path = zen.zen_path
+Env = std.env
 
 Spot* = {
     uri*: str,

@@ -1,6 +1,13 @@
 // Capability and bound types used in ordinary signatures are prelude names.
 // This file deliberately imports nothing.
 
+Res, Ok, Range, IoError = std.core
+Alloc, AllocError = std.mem
+Vec, Ordered = std.collections
+String = std.text
+Env, Console, Stdin, Fs, FsError = std.env
+println = std.io
+
 // one failure set for main: allocation, printing, and files all land here
 Fail = AllocError | IoError | FsError
 

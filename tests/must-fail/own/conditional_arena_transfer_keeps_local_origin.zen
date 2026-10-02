@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError, Arena = std.mem
+Env = std.env
+println = std.io
+
 Box = { owner :: Arena, value :: str }
 fill = (output :: Box, env: Env, letters: str) Res<(), AllocError> {
     fresh  ::= env.mem.alloc();

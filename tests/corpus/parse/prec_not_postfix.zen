@@ -2,6 +2,10 @@
 // !(n.is_zero()), which DESIGN.md writes as `!self.eq(other)`.
 // the other reading, (!n).is_zero(), does not type-check.
 
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 is_zero = (n: i32) bool { n == 0 }
 
 main = (env: Env) Res<i32, ArgError> {

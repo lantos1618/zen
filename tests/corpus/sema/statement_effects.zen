@@ -18,6 +18,11 @@
 // caller; and the range guard runs at n=9, one below the value that
 // underflows, so the subtraction is live arithmetic rather than dead code.
 
+Res, Ok, IoError = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 guard = (n: usize) Res<usize, AllocError> {
     10 - n - 1;    // underflows for n > 9: unsigned underflow IS the trap
     n

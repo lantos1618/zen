@@ -32,13 +32,14 @@
 Alloc, AllocError = std.mem
 str, String = std.text
 Vec = std.collections
-Range = std.core
-FsError = std.env
+Res, Ok, Range = std.core
+Env, FsError = std.env
 
 scan, Source = std.lex.lex
 Parser = std.parse.parser
 Ast = std.ast.ast_arena
 Module, Decl = std.ast.ast_node
+println = std.io
 
 // fault enum -> the file that declares it. The declaring file is skipped when
 // hunting for construction sites: `message()` mentions every variant by name

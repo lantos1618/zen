@@ -8,14 +8,15 @@
 // Functions named in `leaky` are negative controls: each must be flagged,
 // or the check itself is broken.
 ProcError = std.proc
-FsError = std.env
+Env, FsError = std.env
 Alloc, AllocError = std.mem
 Vec, Map = std.collections
 str, String, parse_usize = std.text
-Range = std.core
+Res, Ok, Err, loop, Range = std.core
 Isa, Finding, CallShape, function_lines, parse_lines, analyze, argument_reads = taint
 Marked, marked_functions, seed_of, result_registers = abi
 Entry, manifest_entries, manifest_functions, call_shapes, audited_shape, plain_definition = abi
+println = std.io
 
 AuditError* = AllocError | ProcError | FsError | AuditFault
 AuditFault* = | NoMarkedFunctions

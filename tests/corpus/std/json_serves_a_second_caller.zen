@@ -8,8 +8,11 @@
 // so absence is named at every depth.
 
 str, String = std.text
-Alloc = std.mem
+Alloc, AllocError = std.mem
 Jsons, JsonFault, JsonId, write_text, obj, read = std.json
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 // The streaming path a caller with no arena takes — `Nest` owns the
 // commas, the key quoting and the matching bracket, and nothing here

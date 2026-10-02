@@ -1,7 +1,10 @@
 Descriptor, FileError, open_read, create_temporary = std.fs.posix
-Ptr, null_ptr = std.mem
+AllocError, Ptr, null_ptr = std.mem
 str_at = std.text
 callback = std.native
+Res, Ok, Err = std.core
+Env, FsError = std.env
+println = std.io
 Native = c.bind("unistd.h", {
     pipe = (fds: Ptr<i32>) i32
     fork = () i32

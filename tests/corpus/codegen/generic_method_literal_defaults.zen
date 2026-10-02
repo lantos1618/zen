@@ -1,3 +1,6 @@
+Eq = std.core
+println = std.io
+
 Holder<T> = {
     value: T,
 

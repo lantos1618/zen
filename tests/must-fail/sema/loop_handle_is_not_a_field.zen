@@ -11,6 +11,10 @@
 //
 // position: `h`, the value the field was constructed from.
 
+Res, Ok, LoopHandle, Range = std.core
+Env = std.env
+println = std.io
+
 Box = { g*: LoopHandle }
 
 main = (env: Env) Res<i32> {

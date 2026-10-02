@@ -1,3 +1,8 @@
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // THE OPERAND ARRIVES TWICE, AND MUST BE LOWERED WELL BOTH TIMES.
 //
 // One mechanism, two doors: `x.f()` hands the callee the receiver

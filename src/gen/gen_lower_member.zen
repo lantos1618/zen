@@ -8,7 +8,7 @@
 Alloc, AllocError = std.mem
 Vec, Map = std.collections
 String, str = std.text
-Range = std.core
+Res, Ok, Err, None, loop, Range = std.core
 ExprId, BlockId, Span, Function, Call, Struct, Impl, Member, Decl = std.ast
 nowhere = std.ast
 Checker, DeclId, Def, TyId, Inst, decl_at, CheckedCall, ImplId = sema.sema

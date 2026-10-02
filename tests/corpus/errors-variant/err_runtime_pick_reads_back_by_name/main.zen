@@ -10,6 +10,11 @@
 // pins: NotFound and Denied are separate types, so nothing but the tag
 // says which one crossed.
 
+Res, Ok, Err = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 NotFound = | NotFound
 Denied   = | Denied
 Set      = Denied | NotFound

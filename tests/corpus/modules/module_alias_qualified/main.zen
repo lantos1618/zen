@@ -9,6 +9,10 @@
 // take this program with it. A module alias is fine; a module used
 // UNQUALIFIED is not.
 
+Res, Ok = std.core
+Env, ArgError = std.env
+println = std.io
+
 sh = shape
 
 main = (env: Env) Res<i32, ArgError> {

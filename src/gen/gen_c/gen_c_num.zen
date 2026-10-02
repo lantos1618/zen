@@ -14,6 +14,7 @@ c_prim = gen.gen_c.gen_c_type
 temp, write_assign_none, write_assign_ok = gen.gen_c.gen_c_flow
 lower_bits = gen.gen_c.gen_c_op
 unsigned_width = sema.sema_prim
+Res = std.core
 
 lower_numeric* = (
     be        :: CBackend,

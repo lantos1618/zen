@@ -13,6 +13,10 @@
 // with the callee KEEPING the value must leak today -- this test
 // pins the round trip so the fix cannot regress it.
 
+Res, Ok, Drop, IoError = std.core
+Env = std.env
+println = std.io
+
 Noisy = {
     env: Env,
     tag: str,

@@ -11,6 +11,10 @@
 // plausible wrong output: all lines equal, a zero line, or a missing
 // line (an earlier hop's value clobbered by a later one).
 
+Res, Ok = std.core
+Env = std.env
+println = std.io
+
 ChainError = | Nope
 
 main = (env: Env) Res<i32, ChainError> {

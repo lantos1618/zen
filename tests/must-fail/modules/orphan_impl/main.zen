@@ -9,6 +9,10 @@
 // position: the impl declaration.
 
 Tag = tag.tag
+Res, Ok, Eq = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 Tag.impl(Eq, {
     eq ::= (self: @Self, other: @Self) bool { self.n == other.n }

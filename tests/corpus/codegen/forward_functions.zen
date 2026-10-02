@@ -21,6 +21,11 @@
 //      prototype pass has to run over the monomorphised program, not over
 //      the source program
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 is_even = (n: i32) bool {
     (n == 0).match({
         true  => true,

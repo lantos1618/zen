@@ -1,6 +1,12 @@
 // A value wrapper must not hide allocator-backed storage from the actor
 // transfer check.
 
+Res, Ok = std.core
+AllocError = std.mem
+Vec = std.collections
+Env = std.env
+Actor, Ref, ActorError, Context = std.actor
+
 VecBox = { bytes: Vec<u8> }
 Envelope = { box: VecBox }
 

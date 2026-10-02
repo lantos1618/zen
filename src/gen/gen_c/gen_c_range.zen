@@ -24,6 +24,7 @@ intern_res_open, recv_inst, sub_with = gen.gen_c.gen_c_mono
 enter_struct_tparams, leave_tparams = gen.gen_c.gen_c_mono
 Dest, block, deliver = gen.gen_c.gen_c_stmt
 array_of = gen.gen_c.gen_c_array
+Res, Ok, None, loop = std.core
 
 // A range that stores its bounds.
 

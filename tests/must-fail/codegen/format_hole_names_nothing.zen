@@ -20,6 +20,10 @@
 //
 // position: the `{` of `{total}`, not the literal and not the call.
 
+Res, Ok, IoError = std.core
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, IoError> {
     subtotal = 7;
     println("{subtotal} of {total}, plus {}", 2);

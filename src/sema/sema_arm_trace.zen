@@ -14,6 +14,7 @@ TyId = sema.sema_ty
 Checker, Ctx = sema.sema_check
 Pats, Pat, quiet_pats, norm_pattern, covers, checkable = sema.sema_match
 ctor_pat, sub_pat, lit_pat = sema.sema_match
+Res, Ok, None = std.core
 
 // One emitted test: a tag or literal comparison at `slot`. A tag test's
 // payload is tested, if at all, at `child`. Slot 0 is the scrutinee.

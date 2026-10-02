@@ -12,6 +12,11 @@
 // (break bound to inner). The interleaving below is the assertion:
 // every line is present, in this order, with these counts.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     Range(0, 3).loop((h_outer, o) {
         println("outer {}", o);

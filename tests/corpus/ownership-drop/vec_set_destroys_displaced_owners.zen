@@ -1,3 +1,8 @@
+Res, Ok, Drop = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Owner = { id: i32 }
 Owner.impl(Drop, {
     drop = (self :: @Self) { println("drop {}", self.id); }

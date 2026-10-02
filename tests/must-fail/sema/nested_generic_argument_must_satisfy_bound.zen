@@ -1,6 +1,11 @@
 // Inference through Wrap<T> settles T just as a direct T parameter does. The
 // bound applies to that settled type even though T is nested in the signature.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Boxy = {
     width: i32,
 }

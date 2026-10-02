@@ -1,3 +1,8 @@
+Res, Ok, loop, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 // The bounded receiver cannot select the bool or condition-closure overload
 // while its element type is still open. Nested wrappers keep the same value.
 walk = <R: Range<T>, T>(range: R, body: (value: T) ()) {

@@ -4,8 +4,11 @@
 // test that has to exist before the table is trusted.
 
 scan, Source, kind_name = std.lex.lex
-Alloc = std.mem
+Alloc, AllocError = std.mem
 str = std.text
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 // one line per token: its NAME, so a wrong reading is legible rather than a
 // count that happens to match

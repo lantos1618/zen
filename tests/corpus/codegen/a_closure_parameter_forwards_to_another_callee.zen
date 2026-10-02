@@ -12,6 +12,11 @@
 // forwarded name as a value refuses it as "a lambda read as a value"; one
 // that rebinds its free names in the callee's frame prints other numbers.
 
+Res, Ok, Range = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Box = {
     n: i64,
 

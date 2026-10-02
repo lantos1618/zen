@@ -46,6 +46,9 @@ Server, serve = lsp.lsp_serve
 write_frame, frame_at = lsp.lsp_frame
 write_text, Jsons, JsonId, read = std.json
 source_position, run_of = lsp.lsp_pos
+Res, Ok, None, loop = std.core
+Env = std.env
+println = std.io
 
 // THE BUFFER. One type used across a module boundary, one function
 // called, parameters used, a local and a field that must NOT move off

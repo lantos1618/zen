@@ -6,6 +6,11 @@
 // spelling, where the two forms it could have meant can still be named.
 // position: the member with no type.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 D = { x* = 7 }
 
 main = (env: Env) Res<i32, AllocError> {

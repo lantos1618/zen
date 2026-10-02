@@ -1,5 +1,9 @@
 // Ptr<()> is an opaque address with no element to dereference or step over.
 
+Res, Ok = std.core
+AllocError, null_ptr = std.mem
+Env = std.env
+
 main = (env: Env) Res<i32, AllocError> {
     p = null_ptr<()>();
     p.read(0);

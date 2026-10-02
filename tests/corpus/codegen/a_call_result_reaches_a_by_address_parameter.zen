@@ -15,6 +15,11 @@
 // discarded, and the program's only observable is that it compiles,
 // runs, and exits cleanly.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Box = {
     v :: i32,
 }

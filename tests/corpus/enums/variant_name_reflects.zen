@@ -1,6 +1,11 @@
 // Enum variant names are compile-time-known borrowed text. Lowercase wire
 // variants demonstrate that the declaration itself can own protocol spelling.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 Role = system | user | assistant | tool
 Shape = Circle(i32) | Rect
 Opt<T> = Some(T) | None

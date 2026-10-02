@@ -29,6 +29,11 @@
 // none of these are hypothetical: each is a real Zen identifier a user is
 // entitled to write, and each one is legal Zen.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     _x  = 1;
     _y  = 2;

@@ -43,6 +43,9 @@ Pos, Span = std.ast.ast_span
 Note = std.parse.parse_diag
 Spot, publish = lsp.lsp_diag
 frame_at = lsp.lsp_frame
+Res, Ok, None, loop = std.core
+Env = std.env
+println = std.io
 
 // Line 2 opens with a two-byte `é`, which is the whole reason the
 // conversion is visible in the output.

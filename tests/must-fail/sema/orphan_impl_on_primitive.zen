@@ -11,6 +11,11 @@
 //
 // position: the impl declaration.
 
+Res, Ok, Eq = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 u8.impl(Eq, {
     eq ::= (self: @Self, other: @Self) bool { self == other }
 })

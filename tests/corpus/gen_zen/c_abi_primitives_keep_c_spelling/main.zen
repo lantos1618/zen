@@ -1,5 +1,9 @@
 c_prim = gen.gen_c
 is_prim, is_integer, c_integer = sema.sema_ty
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
 
 main = (env: Env) Res<i32, AllocError> {
     println(

@@ -23,6 +23,9 @@ Ast = std.ast.ast_arena
 Checker = sema.sema_check
 Emit = gen.gen_emit
 CBackend, emit_program = gen.gen_c
+Res, Ok = std.core
+Env = std.env
+println = std.io
 
 PROGRAM : str = "Fault = | Odd\nPoint = { x: i32, y: i32 }\nsum = (p: Point) i32 { p.x + p.y }\nhalve = (n: i32) Res<i32, Fault> { (n % 2 == 0).match({ true => Ok(n / 2), false => Err(Fault.Odd) }) }\nmain = (env: i32) Res<i32, Fault> { h = halve(sum(Point(x: 40, y: 44))).try(); Ok(h) }\n"
 

@@ -33,6 +33,9 @@ Alloc, AllocError = std.mem
 Server, serve = lsp.lsp_serve
 write_frame, frame_at = lsp.lsp_frame
 write_text = std.json
+Res, Ok, loop = std.core
+Env = std.env
+println = std.io
 
 // THE BUFFER, IMPORTING WHAT IS NOT THERE. `Absent` is used exactly
 // once, as a parameter type — the use is where sema reports an

@@ -11,6 +11,11 @@
 //
 // position: the missing `;`, which is where the fix goes.
 
+Res, Ok = std.core
+AllocError = std.mem
+Env = std.env
+println = std.io
+
 main = (env: Env) Res<i32, AllocError> {
     x ::= 0;
     (x == 0).then(() { x = 1 });

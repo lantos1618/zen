@@ -3,7 +3,7 @@
 Alloc, AllocError = std.mem
 String, str = std.text
 Vec = std.collections
-Range = std.core
+Res, Ok, Range = std.core
 Span = std.ast
 Program, Func, Instruction, Terminator, Unary, Binary, Invocation, Print = gen.gen_ir
 

@@ -18,6 +18,7 @@ emit_js, emit_app, emit_runtime, PAGE = gen.gen_js
 X86_64Linux = gen.gen_asm_x86
 Arm64, Arm64Os = gen.gen_asm_arm64
 verify_native, message = gen.gen_verify
+Res, Ok, Err, None = std.core
 
 Layout* = Single | Modules
 ArtifactKind* = Source | Symbols

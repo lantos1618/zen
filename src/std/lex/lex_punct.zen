@@ -3,6 +3,7 @@
 
 TokenKind = std.lex.lex_token
 Cursor = std.lex.lex_cursor
+Res, Ok, None = std.core
 
 // Bytes that begin a punctuation token.
 is_punct* = (b: u8) bool {

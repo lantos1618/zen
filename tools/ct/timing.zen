@@ -12,10 +12,9 @@
 { Vec } = std.collections
 { str } = std.text
 { Res, Ok, None, Rng, loop, Range } = std.core
-{ ct_memeq, ct_lookup, ct_swap, ct_eq, Choice } = std.ct
+{ ct_memeq, ct_lookup, ct_swap, ct_eq, Choice, to_u8 } = std.ct
 { Probe, TimingConfig, TimingResult, Verdict, measure } = std.ct.ct_timing
 { truncate_u8, to_u64, bit_and } = std.core.num
-{ parse_usize } = std.text
 { Env } = std.env
 { println, print } = std.io
 

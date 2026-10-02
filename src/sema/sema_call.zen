@@ -35,7 +35,7 @@
 { push_tparams, module_name } = sema.sema_inst
 { param_type, type_from_ast } = sema.sema_denote
 { alias_module, module_not_a_value, module_named_by } = sema.sema_module
-{ Cand, TBound, Actual, cands_of, exported_cands } = sema.sema_cand
+{ Cand, TBound, Actual, cands_of, exported_cands, core_cands } = sema.sema_cand
 { matches } = sema.sema_cand
 { ty_at, is_tvar, sig_fits, signature_matches } = sema.sema_cand
 { omittable_tail, collect_bounds, tail_swallows } = sema.sema_cand
@@ -183,6 +183,12 @@ CallCheck = {
     ) Res<TyId, AllocError> {
         cands ::= c.alloc.Vec<Cand>();
         c.cands_of(self.ctx.module, name, cands).try();
+        // After what the module sees, a dot call reaches std.core's functions
+        // for the receiver's type.
+        recv.match({
+            Ok(rty) => c.core_cands(name, rty, cands).try(),
+            None    => (),
+        });
         self.first_matching(c, cands, actuals).try().match({
             Ok(k) => self.chosen(c, k, actuals),
             None  => self.construct_or_fail(c, name, recv, cands, recovery),

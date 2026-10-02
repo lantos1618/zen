@@ -1577,11 +1577,11 @@ Lowerer* = {
                 Expr(e)     => tail.match({
                     // A semicolon-terminated tail may settle the block value.
                     // One sema left open (`Ok(None)` beside `Ok(Ok(v))`) is
-                    // lowered at the type the block's value is wanted at.
+                    // lowered at the type the block's value is wanted at;
+                    // a unit block discards its tail whatever its type.
                     true  => want.match({
-                        Ok(t) => (used && !self.settled(
-                            self.type_of(e.expr).try()
-                        ))
+                        Ok(t) => (used && t != self.unit_ty && self.settled(t)
+                            && !self.settled(self.type_of(e.expr).try()))
                             .match({
                                 true  => self.expr_as(e.expr, t),
                                 false => self.expr(e.expr),

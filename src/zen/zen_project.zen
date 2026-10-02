@@ -7,13 +7,17 @@ Path, Range, join_path = std.core
 Map, Vec = std.collections
 
 BuildArgs, ProjectArgs, Emission, Target, Os, Arch, Abi, Dep, Codegen = std.build
+Mode, Optimize, Cc, target_named = std.build
 Build, host_target = zen.zen_build
 asm_native, assemble_and_link = zen.zen_native
 entry_of, holds_build_zen = zen.zen_path
-BuildPlan, ExeNode, LibNode, plan = zen.zen_build_plan
+BuildPlan, ExeNode, LibNode, plan, PlanFault = zen.zen_build_plan
 resolve, PackageFault = zen.zen_packages
 
 Action* = Build | Run | Test
+
+// The flag dialect of a C compiler.
+Family = Clang | Gcc | Tcc
 
 project* = (env: Env, a: Alloc, job: ProjectArgs, action: Action)
            Res<i32, AllocError> {
@@ -25,6 +29,8 @@ project* = (env: Env, a: Alloc, job: ProjectArgs, action: Action)
 
 project_present = (env: Env, a: Alloc, job: ProjectArgs, action: Action)
                   Res<i32, AllocError> {
+    trace = Trace(env: env, on: job.verbose, start: env.clock.since_start());
+    trace.say("plan build.zen");
     build ::= a.Build(env, job.root);
     build.set_std_root(job.std_root);
     entry = entry_of(env, a, job.root, "build.zen").try();
@@ -33,38 +39,142 @@ project_present = (env: Env, a: Alloc, job: ProjectArgs, action: Action)
     report  ::= a.String().try();
     checked.render_diags(report).try();
     (checked.diag_count() > 0).then(() { println("{}", report.view()); });
-    (build.faults > 0 || checked.diag_count() > 0).match({
-        true  => Ok(1),
-        false => host_target(env, a).try().match({
-            None       => { println("zen: cannot identify a supported native host"); Ok(1) },
-            Ok(target) => plan(a, build.tree, checked, target).match({
-            Err(OutOfMemory)              => Err(AllocError.OutOfMemory),
-            Err(Refused(Unsupported(at))) => {
+    host                  = host_target(env, a).try();
+    platform: Res<Target> = job.triple.match({
+        Ok(name) => target_named(name),
+        None     => host,
+    });
+    code: Res<i32>        = loop<i32>((h) {
+        (build.faults > 0 || checked.diag_count() > 0).then(() { h.break(1); });
+        host.match({
+            None  => { println("zen: cannot identify a supported native host"); h.break(1); },
+            Ok(_) => (),
+        });
+        platform.match({
+            None  => {
                 println(
-                    "zen: {}:{}:{}: unsupported build expression",
-                    at.file,
-                    at.start.line,
-                    at.start.col
+                    "zen: unknown target `{}`; known targets are x86_64-linux, aarch64-linux, arm64-darwin and x86_64-darwin",
+                    job.triple.value_or("")
                 );
-                Ok(1)
+                h.break(1);
             },
-            Err(Refused(_))               => {
-                println("zen: build.zen uses an unsupported build expression");
-                Ok(1)
+            Ok(_) => (),
+        });
+        target = platform.value_or(host.value_or(Target(
+            os: Os.Linux,
+            arch: Arch.X86_64,
+            abi: Abi.Gnu
+        )));
+        cross  = !target.clang_triple().value_or("").eq(host.value_or(target).clang_triple().value_or(""));
+        (cross && action.match({ Build => false, _ => true })).then(() {
+            println(
+                "zen: cannot run `{}` executables on this host; use `zen build --target`",
+                target.clang_triple().value_or("")
+            );
+            h.break(1);
+        });
+        outcome = plan(a, build.tree, checked, target, job.mode);
+        outcome.match({
+            Err(Refused(why)) => { explain(why); h.break(1); },
+            _                 => (),
+        });
+        planned  = outcome.map_err((e) { AllocError.OutOfMemory }).try();
+        prepared = prepare_packages(env, a, job, planned, action).try();
+        prepared.match({ None => h.break(1), Ok(_) => () });
+        project = Project(
+            env: env,
+            a: a,
+            job: job,
+            planned: prepared.value_or(planned),
+            host: host.value_or(target),
+            trace: trace
+        );
+        h.break(project.execute(action).try());
+    });
+    Ok(code.value_or(1))
+}
+
+// Why build.zen could not be planned, at the source position when one is known.
+explain = (why: PlanFault) {
+    why.match({
+        Unsupported(at)     => println(
+            "zen: {}:{}:{}: build.zen cannot be planned: this expression is outside what the planner evaluates",
+            at.file,
+            at.start.line,
+            at.start.col
+        ),
+        BadField(field)     => println(
+            "zen: {}:{}:{}: field `{}` cannot be planned: write a value of its declared type that the planner evaluates",
+            field.at.file,
+            field.at.start.line,
+            field.at.start.col,
+            field.name
+        ),
+        UnknownField(field) => println(
+            "zen: {}:{}:{}: an executable target has no field `{}`",
+            field.at.file,
+            field.at.start.line,
+            field.at.start.col,
+            field.name
+        ),
+        NoArm(at)           => println(
+            "zen: {}:{}:{}: no arm of this match accepts the planned value",
+            at.file,
+            at.start.line,
+            at.start.col
+        ),
+        MissingField(at)    => println(
+            "zen: {}:{}:{}: a required field is missing",
+            at.file,
+            at.start.line,
+            at.start.col
+        ),
+        UnknownName(at)     => println(
+            "zen: {}:{}:{}: this name is not bound in build",
+            at.file,
+            at.start.line,
+            at.start.col
+        ),
+        DuplicateTarget(n)  => println("zen: build.zen declares `{}` twice", n),
+        MissingBuild(what)  => println(
+            "zen: build.zen has no `build` {}",
+            what
+        ),
+        CheckedFaults       => (),
+    });
+}
+
+// `-v`: each phase and command on stderr, after the milliseconds since the
+// project command began.
+Trace = {
+    env: Env,
+    on: bool,
+    start: Duration,
+
+    say = (self: @Self, what: str) {
+        self.on.then(() {
+            now = self.env.clock.since_start();
+            ms  = now.sub(
+                self.start
+            ).match({ Ok(d) => d.millis_of(), None => 0 });
+            self.env.out.errorln("zen: {}ms {}", ms, what).ignore();
+        });
+    }
+
+    command = (self: @Self, a: Alloc, argv: Vec<str>) Res<(), AllocError> {
+        self.on.match({
+            false => Ok(()),
+            true  => {
+                line ::= a.String().try();
+                argv.loop((h, i, word) {
+                    (i > 0).then(() { line.add(' ').try(); });
+                    line.add(word).try();
+                });
+                self.say(line.view());
+                Ok(())
             },
-            Ok(planned)                   => prepare_packages(
-                env,
-                a,
-                job,
-                planned,
-                action
-            ).try().match({
-                None      => Ok(1),
-                Ok(ready) => Project(env: env, a: a, job: job, planned: ready).execute(action),
-            }),
-            }),
-        }),
-    })
+        })
+    }
 }
 
 // Resolve only dependencies of selected targets, before any compilation.
@@ -145,6 +255,13 @@ Project = {
     a: Alloc,
     job: ProjectArgs,
     planned: BuildPlan,
+    host: Target,
+    trace: Trace,
+
+    // Whether the planned platform is another than the host's.
+    cross = (self: @Self) bool {
+        !self.planned.target.clang_triple().value_or("").eq(self.host.clang_triple().value_or(""))
+    }
 
     execute = (self: @Self, action: Action) Res<i32, AllocError> {
         overridden = self.env.var("ZEN_BUILD_OUTPUT").value_or("");
@@ -403,6 +520,7 @@ Project = {
 
     compile_exe = (self: @Self, exe: ExeNode, generated: str)
                   Res<bool, AllocError> {
+        self.trace.say(self.a.String("compile `{}`", exe.name).try().view());
         source = self.project_path(exe.spec.src.text).try();
         parent = Path(source.view()).parent().value_or(Path(self.job.root));
         root  ::= parent.text;
@@ -474,47 +592,134 @@ Project = {
     link_c = (self: @Self, exe: ExeNode, generated: str, output: str)
              Res<bool, AllocError> {
         argv ::= self.a.Vec<str>();
-        compiler = self.env.var("CC").value_or("cc");
-        valid_cc = self.append_command(compiler, argv).try() && argv.len > 0;
+        valid_cc = self.append_command(
+            self.compiler(exe),
+            argv
+        ).try() && argv.len > 0;
         flag_words ::= self.a.Vec<str>();
-        valid_flags = self.append_command(
+        valid_flags       = self.append_command(
             self.env.var("CFLAGS").value_or(""),
             flag_words
         ).try();
-        (!valid_cc || !valid_flags || (!exe.spec.language.eq("c") && !exe.spec.language.eq("objective-c"))).match({
-            true  => { println("zen: invalid CC or CFLAGS command words"); Ok(false) },
-            false => self.link_command(
-                exe,
-                generated,
-                output,
-                argv,
-                flag_words
-            ),
+        family            = self.family(exe, argv.get(0).value_or(""));
+        refusal: Res<str> = loop((h) {
+            (!valid_cc || !valid_flags).then(
+                () { h.break("invalid CC or CFLAGS command words"); }
+            );
+            (!exe.spec.language.eq("c") && !exe.spec.language.eq("objective-c"))
+                .then(
+                    () { h.break(
+                        "a native target's language is c or objective-c"
+                    ); }
+                );
+            (self.cross() && family.match({ Clang => false, _ => true }))
+                .then(
+                    () { h.break("building for another platform needs clang"); }
+                );
+            h.break();
+        });
+        refusal.match({
+            Ok(why) => { println("zen: {}", why); Ok(false) },
+            None    => {
+                self.link_command(
+                    exe,
+                    generated,
+                    output,
+                    argv,
+                    flag_words,
+                    family
+                ).try();
+                self.run_captured(argv)
+            },
         })
     }
 
-    link_command = (self: @Self, exe: ExeNode, generated: str, output: str, argv :: Vec<str>, flags: Vec<str>)
-                   Res<bool, AllocError> {
-        argv.add(exe.spec.optimize.match({
-            "size"  => "-Oz",
-            "debug" => "-O0",
-            _       => "-O2",
+    // The C compiler command: `--cc` or CC, else the target's `cc`, else `cc`.
+    compiler = (self: @Self, exe: ExeNode) str {
+        self.job.cc.match({
+            Ok(given) => given,
+            None      => self.env.var("CC").match({
+                Ok(given) => given,
+                None      => exe.spec.cc.match({
+                    Ok(Clang)        => "clang",
+                    Ok(Gcc)          => "gcc",
+                    Ok(Tcc)          => "tcc",
+                    Ok(Custom(path)) => path.text,
+                    None             => "cc",
+                }),
+            }),
+        })
+    }
+
+    // Which flag dialect the compiler speaks, judged from its name. A plain
+    // `cc` is clang on macOS and GCC-compatible elsewhere.
+    family = (self: @Self, exe: ExeNode, program: str) Family {
+        name = Path(program).name();
+        loop<Family>((h) {
+            name.contains("tcc").then(() { h.break(Family.Tcc); });
+            name.contains("clang").then(() { h.break(Family.Clang); });
+            (name.contains("gcc") || name.contains("g++")).then(() { h.break(Family.Gcc); });
+            self.host.os.match({ Macos => h.break(Family.Clang), _ => h.break(Family.Gcc) });
+        }).value_or(Family.Gcc)
+    }
+
+    // The mode and the target's own settings, as compiler flags. Size
+    // optimization also drops unreferenced sections at link time.
+    link_command = (
+        self      : @Self,
+        exe       : ExeNode,
+        generated : str,
+        output    : str,
+        argv      :: Vec<str>,
+        flags     : Vec<str>,
+        family    : Family
+    ) Res<(), AllocError> {
+        optimize = exe.spec.optimize.value_or(self.job.mode.match({
+            Debug   => Optimize.Debug,
+            Release => Optimize.Speed,
+            Small   => Optimize.Size,
+        }));
+        macos    = self.planned.target.os.match({ Macos => true, _ => false });
+        dialect  = family.match({ Tcc => false, _ => true });
+        argv.add(optimize.match({
+            Debug => "-O0",
+            Speed => "-O2",
+            Size  => family.match({ Clang => "-Oz", _ => "-Os" }),
         })).try();
-        exe.spec.backend.match({
-            C => argv.add("-std=c99").try(),
-            _ => (),
+        exe.spec.backend.match({ C => argv.add("-std=c99").try(), _ => () });
+        (self.cross() && dialect).then(() {
+            argv.add("-target").try();
+            argv.add(self.planned.target.clang_triple().value_or("")).try();
         });
-        exe.spec.optimize.eq("size").then(() {
+        (dialect && optimize.match({ Size => true, _ => false })).then(() {
             argv.add("-ffunction-sections").try();
             argv.add("-fdata-sections").try();
             // Zen faults are values; unwind tables only cost size.
             argv.add("-fno-asynchronous-unwind-tables").try();
             argv.add("-fno-unwind-tables").try();
-            // Resolve external calls through the GOT without per-symbol PLT code.
-            argv.add("-fno-plt").try();
-            argv.add("-Wl,--gc-sections").try();
+            macos.match({
+                true  => argv.add("-Wl,-dead_strip").try(),
+                false => {
+                    // Resolve external calls through the GOT without
+                    // per-symbol PLT code.
+                    argv.add("-fno-plt").try();
+                    argv.add("-Wl,--gc-sections").try();
+                },
+            });
         });
-        exe.spec.strip.then(() { argv.add("-s").try(); });
+        // Apple's linker ignores `-s`: `-x` drops local symbols and `-S`
+        // debugging symbols, which is all a linked executable can lose.
+        (exe.spec.strip || self.job.mode.match({ Small => true, _ => false })).then(() {
+            macos.match({
+                true  => { argv.add("-Wl,-x").try(); argv.add("-Wl,-S").try(); },
+                false => argv.add("-s").try(),
+            });
+        });
+        exe.spec.defines.value_or(self.a.Vec<str>()).loop((name) {
+            definition = self.a.String("-D{}", name).try();
+            argv.add(definition.view()).try();
+        });
+        exe.spec.cflags.value_or(self.a.Vec<str>()).loop((flag) { argv.add(flag).try(); });
         flags.loop((flag) { argv.add(flag).try(); });
         exe.spec.backend.match({
             C => {
@@ -533,9 +738,13 @@ Project = {
                 argv.add(name).try();
             }),
         });
+        exe.spec.libs.value_or(self.a.Vec<str>()).loop((name) {
+            library = self.a.String("-l{}", name).try();
+            argv.add(library.view()).try();
+        });
         argv.add("-o").try();
         argv.add(output).try();
-        self.run_captured(argv)
+        Ok(())
     }
 
     // CC/CFLAGS use quoted command words, never shell evaluation.
@@ -655,6 +864,7 @@ Project = {
     }
 
     run_captured = (self: @Self, argv: Vec<str>) Res<bool, AllocError> {
+        self.trace.command(self.a, argv).try();
         self.env.proc.run_argv(self.a, "", argv).match({
             Err(_)     => {
                 println("zen: could not start `{}`", argv.get(0).match({
@@ -689,6 +899,7 @@ Project = {
 
     run_program = (self: @Self, program: str, backend: Codegen)
                   Res<i32, AllocError> {
+        self.trace.say(self.a.String("run {}", program).try().view());
         argv ::= self.a.Vec<str>();
         backend.match({ Js => argv.add("node").try(), _ => () });
         argv.add(program).try();

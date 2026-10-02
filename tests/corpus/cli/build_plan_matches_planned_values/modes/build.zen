@@ -1,0 +1,26 @@
+Builder, BuildError, Mode, Optimize, Cc = std.build
+
+build = (b :: Builder) Res<(), BuildError> {
+    flags = b.os.match({
+        Macos => ["-DPLATFORM_MAC", "-pipe"],
+        _     => ["-DPLATFORM_OTHER", "-pipe"],
+    });
+    b.exe("app", {
+        src: Path("src/main.zen"),
+        deps: [],
+        optimize: b.mode().match({
+            Debug   => Optimize.Debug,
+            Release => Optimize.Speed,
+            Small   => Optimize.Size,
+        }),
+        strip: b.mode().match({ Debug => false, _ => true }),
+        cc: b.target().arch.match({ Arm64 => Cc.Custom(Path(
+            "/opt/cross/cc"
+        )), _ => Cc.Gcc }),
+        cflags: flags,
+        defines: ["NAME=zen"],
+        libs: ["m"],
+    }).try();
+    b.exe("plain", { src: Path("src/main.zen"), deps: [] }).try();
+    Ok(())
+}

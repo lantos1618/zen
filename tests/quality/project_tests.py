@@ -25,7 +25,7 @@ class ProjectTests(unittest.TestCase):
         (self.root / name).write_text(text)
 
     def build_file(self, registrations):
-        self.write("build.zen", "Builder, BuildError = std.build\n"
+        self.write("build.zen", "Builder, BuildError, Mode, Optimize, Cc = std.build\n"
                    "build = (b :: Builder) Res<(), BuildError> {\n"
                    + registrations + "\nOk(())\n}\n")
 
@@ -177,7 +177,7 @@ class ProjectTests(unittest.TestCase):
 
     def test_std_math_links_without_project_native_dependency(self):
         self.write("math.zen", 'sqrt = std.math\nmain = () i32 { (sqrt(9.0) == 3.0).match({ true => 0, false => 1 }) }\n')
-        self.build_file('b.exe_test("math", {src: Path("math.zen"), deps: [], optimize: "debug"}).try();')
+        self.build_file('b.exe_test("math", {src: Path("math.zen"), deps: [], optimize: Optimize.Debug}).try();')
         checker = self.root / "check-math-link"
         checker.write_text(f"#!{sys.executable}\nimport os, sys\n"
                            'if "-lm" not in sys.argv: raise SystemExit("missing math library")\n'
@@ -260,6 +260,73 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(again.returncode, 1, again.stdout + again.stderr)
         self.assertIn("already exists", again.stdout)
         self.assertEqual((project / "src/main.zen").read_text(), "main = () i32 { 3 }\n")
+
+    def recording_compiler(self):
+        """A CC that logs its arguments, then runs the real compiler."""
+        compiler = self.root / "recording-cc"
+        compiler.write_text(f"#!{sys.executable}\nimport os, sys\n"
+                            f"open({str(self.root / 'cc.log')!r}, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+                            f"os.execv({shutil.which('cc')!r}, [{shutil.which('cc')!r}, *sys.argv[1:]])\n")
+        compiler.chmod(0o755)
+        return str(compiler)
+
+    def last_command(self):
+        return (self.root / "cc.log").read_text().splitlines()[-1].split()
+
+    def test_modes_select_optimization_and_build_zen_reads_them(self):
+        self.build_file('b.exe("app", {src: Path("pass.zen"), deps: [], '
+                        'defines: ["ANSWER=42"], libs: ["m"], '
+                        'strip: b.mode().match({ Debug => false, _ => true })}).try();')
+        compiler = self.recording_compiler()
+        size = "-Oz" if sys.platform == "darwin" else "-Os"
+        for words, level in ((("run",), "-O0"), (("run", "--release"), "-O2"),
+                             (("run", "--mode", "small"), size), (("build", "--mode=release"), "-O2")):
+            result = self.run_zen(*words, "--cc", compiler)
+            self.assertEqual(result.returncode, 0, (words, result.stdout + result.stderr))
+            command = self.last_command()
+            self.assertIn(level, command, words)
+            self.assertIn("-DANSWER=42", command)
+            self.assertIn("-lm", command)
+            self.assertEqual(level != "-O0", "-s" in command or "-Wl,-x" in command, words)
+
+    def test_target_settings_are_typed_and_written_fields_must_plan(self):
+        self.build_file('b.exe("app", {src: Path("pass.zen"), deps: [], optimize: Optimize.Fastest}).try();')
+        typo = self.run_zen("build")
+        self.assertEqual(typo.returncode, 1, typo.stdout + typo.stderr)
+        self.assertIn("no `Fastest` on `Optimize`", typo.stdout)
+        self.build_file('b.exe("app", {src: Path("pass.zen"), deps: [], optimise: Optimize.Size}).try();')
+        unknown = self.run_zen("build")
+        self.assertEqual(unknown.returncode, 1, unknown.stdout + unknown.stderr)
+        self.assertIn("an executable target has no field `optimise`", unknown.stdout)
+        self.build_file('b.exe("app", {src: Path("pass.zen"), deps: [], optimize: pick()}).try();')
+        self.write("build.zen", (self.root / "build.zen").read_text()
+                   + "pick = () Optimize { Optimize.Size }\n")
+        unplanned = self.run_zen("build")
+        self.assertEqual(unplanned.returncode, 1, unplanned.stdout + unplanned.stderr)
+        self.assertIn("field `optimize` cannot be planned", unplanned.stdout)
+
+    def test_cc_option_overrides_build_zen_and_verbose_traces(self):
+        self.build_file('b.exe("app", {src: Path("pass.zen"), deps: [], cc: Cc.Tcc}).try();')
+        compiler = self.recording_compiler()
+        result = self.run_zen("build", "-v", "--cc", compiler)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(compiler, result.stderr)
+        self.assertIn("compile `app`", result.stderr)
+
+    def test_usage_errors_name_the_command_and_its_targets(self):
+        self.build_file('b.exe("app", {src: Path("pass.zen"), deps: []}).try();\n'
+                        'b.exe("tool", {src: Path("pass.zen"), deps: []}).try();')
+        bogus = self.run_zen("run", "--bogus")
+        self.assertEqual(bogus.returncode, 2)
+        self.assertIn("unknown option `--bogus` for `zen run`", bogus.stderr)
+        self.assertIn("Usage: zen run", bogus.stderr)
+        missing = self.run_zen("run", "build.zen")
+        self.assertEqual(missing.returncode, 1)
+        self.assertIn("its targets are: app, tool", missing.stdout)
+        for words in (("-h", "run"), ("help", "run"), ("run", "--help")):
+            helped = self.run_zen(*words)
+            self.assertEqual(helped.returncode, 0, words)
+            self.assertTrue(helped.stdout.startswith("Build and run an executable target"), words)
 
     def test_suite_rejects_empty_and_reports_assertions(self):
         self.write("suite.zen", 'Suite = std.test\n'

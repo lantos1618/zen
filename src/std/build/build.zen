@@ -157,10 +157,20 @@ Exe* = {
     deps*: Vec<Dep>,
 
     backend* :: Codegen = Codegen.C,
-    optimize* :: str = "speed",
+    // None follows the build mode; a target may also match on `b.mode()`.
+    optimize* :: Res<Optimize> = None,
     language* :: str = "c",
     frameworks* :: Res<Vec<str>> = None,
+    // Remove the symbol table. The small mode always strips.
     strip* :: bool = false,
+
+    // The C toolchain. `--cc` and the CC variable override `cc`, and CFLAGS
+    // words follow `cflags`. A define is NAME or NAME=value; a lib links
+    // as `-l<name>`.
+    cc* :: Res<Cc> = None,
+    cflags* :: Res<Vec<str>> = None,
+    defines* :: Res<Vec<str>> = None,
+    libs* :: Res<Vec<str>> = None,
 
     // JavaScript for a page: `out` is a directory that receives index.html,
     // runtime.js and app.js (the `js-browser` layout).
@@ -211,8 +221,16 @@ Budget* = {
 }
 
 // The build profile chosen on the command line: `debug` (the default),
-// `release` (`--release`) or `small`.
+// `release` (`--release`) or `small`. A build file reads it with `b.mode()`.
+// Debug compiles unoptimized, Release optimizes for speed, and Small
+// optimizes for size, drops unreferenced code at link time and strips.
 Mode* = Debug | Release | Small
+
+// A target's own optimization, overriding its mode's.
+Optimize* = Debug | Speed | Size
+
+// The C compiler for a native target. Custom names an executable.
+Cc* = Clang | Gcc | Tcc | Custom(Path)
 
 Mode.impl(StableName, {
     stable_name = (self: @Self) str {
@@ -338,6 +356,7 @@ Builder* = {
     module* = (self: @Self, path: Path) Module
 
     target* = (self: @Self) Target
+    mode* = (self: @Self) Mode
 
     add* ::= (self :: @Self, name: str, pkg: Package) Res<Dep, BuildError>
     remove* ::= (self :: @Self, name: str) Res<(), BuildError>

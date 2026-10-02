@@ -1,5 +1,8 @@
-// Execute the dependency-graph subset of a checked build.zen AST. Unsupported
-// expression shapes are rejected at their source spans.
+// Execute the dependency-graph subset of a checked build.zen AST: target
+// registrations, local bindings, lists, std.build enum values and `.match`
+// over values known while planning, such as `b.mode()` and `b.os`.
+// Unsupported expression shapes are rejected at their source spans, and a
+// written target field that cannot be evaluated is an error naming it.
 
 Alloc, AllocError = std.mem
 str = std.text
@@ -7,10 +10,12 @@ Vec = std.collections
 Path = std.core
 
 Ast, ExprId, Expr, Call, Access, Record, Block, Function, Span, Try = std.ast
+Match, PatternId = std.ast
 nowhere = std.ast
 Stmt, Bind, Member, Field, Module = std.ast
 Checker, Ctx, type_of = sema.sema
 CImport, Lib, Extern, Exe, Dep, Target, Codegen, Package = std.build
+Mode, Optimize, Cc = std.build
 
 PlanFault* = MissingBuild(str)
     | CheckedFaults
@@ -18,6 +23,12 @@ PlanFault* = MissingBuild(str)
     | UnknownName(Span)
     | DuplicateTarget(str)
     | Unsupported(Span)
+    | BadField(FieldFault)
+    | UnknownField(FieldFault)
+    | NoArm(Span)
+
+// A written target field the planner could not turn into its value.
+FieldFault* = { at*: Span, name*: str }
 
 PlanError* = OutOfMemory | Refused(PlanFault)
 
@@ -65,18 +76,25 @@ BuildPlan* = {
 
 ExecutableRole = Program | Test
 
+EXE_FIELDS: str = "src deps backend optimize language frameworks strip cc cflags defines libs web out"
+
 Value = UnitValue
     | BuilderValue
     | TextValue(str)
     | BoolValue(bool)
     | PathValue(Path)
     | TargetValue(Target)
-    | BackendValue(Codegen)
+    | VariantValue(Variant)
+    | CcValue(Cc)
     | DepValue(Dep)
     | EmptyList
     | TextList(Vec<str>)
     | DepList(Vec<Dep>)
     | PathOption(Res<Path>)
+
+// A std.build enum value known while planning: its type's name and the
+// variant's.
+Variant = { owner: str, name: str }
 
 Local = {
     name: str,
@@ -88,6 +106,7 @@ Executor = {
     tree: Ast,
     check :: Checker,
     builder: str,
+    mode: Mode,
     locals :: Vec<Local>,
     plan :: BuildPlan,
 
@@ -139,7 +158,8 @@ Executor = {
                 _    => Err(unsupported(node.span)),
             }),
             Paren(p)   => self.eval(p.inner),
-            Access(a)  => self.backend_value(id, a, node.span),
+            Access(a)  => self.access(id, a, node.span),
+            Match(m)   => self.choose(m, node.span),
             Array(a)   => self.array(a.elems, node.span),
             Try(t)     => self.eval_try(t),
             Call(c)    => self.call(id, c, node.span),
@@ -147,20 +167,59 @@ Executor = {
         })
     }
 
-    // Required builder members do not retain a memo for every record field.
-    // Resolve an unmemoized global enum expression in its owning module;
-    // runtime locals cannot be reconstructed outside their lexical scope.
-    backend_value = (self :: @Self, id: ExprId, access: Access, at: Span)
-                    Res<Value, PlanError> {
+    // `Mode.Release`, `b.os`, `b.target().arch`: an enum value from std.build,
+    // or a field of the Builder or of a Target.
+    access = (self :: @Self, id: ExprId, access: Access, at: Span) Res<Value, PlanError> {
+        self.global_base(access.base).match({
+            true  => {
+                owner = self.enum_owner(id, at).try();
+                Ok(Value.VariantValue(Variant(
+                    owner: owner,
+                    name: access.name.text
+                )))
+            },
+            false => self.eval(access.base).try().match({
+                BuilderValue   => self.target_part(
+                    self.plan.target,
+                    access.name.text,
+                    at
+                ),
+                TargetValue(t) => self.target_part(t, access.name.text, at),
+                _              => Err(unsupported(at)),
+            }),
+        })
+    }
+
+    target_part = (self: @Self, target: Target, name: str, at: Span) Res<Value, PlanError> {
+        name.match({
+            "os"   => Ok(Value.VariantValue(Variant(
+                owner: "Os",
+                name: target.os.variant_name()
+            ))),
+            "arch" => Ok(Value.VariantValue(Variant(
+                owner: "Arch",
+                name: target.arch.variant_name()
+            ))),
+            "abi"  => Ok(Value.VariantValue(Variant(
+                owner: "Abi",
+                name: target.abi.variant_name()
+            ))),
+            _      => Err(unsupported(at)),
+        })
+    }
+
+    // The std.build enum an expression's checked type names. Required builder
+    // members do not retain a memo for every record field, so an unmemoized
+    // global expression is typed again in its owning module; runtime locals
+    // cannot be reconstructed outside their lexical scope.
+    enum_owner = (self :: @Self, id: ExprId, at: Span) Res<str, PlanError> {
         ty    = self.check.expr_memo.get(id).match({
             Ok(ty) => ty,
             None   => {
-                self.global_base(access.base).ensure(unsupported(at)).try();
                 module  = Range(0, self.tree.module_count()).find((index) {
                     self.tree.module_at(index).match({
-                        Ok(module) => module.span.file.eq(
-                            at.file
-                        ), None => false,
+                        Ok(module) => module.span.file.eq(at.file),
+                        None       => false,
                     })
                 }).ok_or(unsupported(at)).try();
                 unknown = self.check.types.unknown().try(PlanError.OutOfMemory);
@@ -170,16 +229,43 @@ Executor = {
                 ).try(PlanError.OutOfMemory)
             },
         });
-        known = self.check.types.at(ty).match({
-            Named(named) => named.name.eq("Codegen")
-                && self.check.world.module_name(named.decl).eq("std.build.build"),
-            _            => false,
-        });
-        known.ensure(unsupported(at)).try();
-        backend = access.name.text.match({
-            "C" => Ok(Codegen.C), "Js" => Ok(Codegen.Js), "Asm" => Ok(Codegen.Asm), _ => None,
+        owner = self.check.types.at(ty).match({
+            Named(named) => self.check.world.module_name(named.decl).eq("std.build.build").match({
+                true  => Ok(named.name),
+                false => None,
+            }),
+            _            => None,
         }).ok_or(unsupported(at)).try();
-        Ok(Value.BackendValue(backend))
+        known = owner.eq("Codegen") || owner.eq("Mode") || owner.eq("Optimize")
+            || owner.eq("Cc") || owner.eq("Os") || owner.eq("Arch") || owner.eq("Abi");
+        known.ensure(unsupported(at)).try();
+        Ok(owner)
+    }
+
+    // The first arm whose pattern accepts the scrutinee's planned value.
+    choose = (self :: @Self, m: Match, at: Span) Res<Value, PlanError> {
+        value = self.eval(m.scrutinee).try();
+        arm   = m.arms.find((arm) { self.accepts(arm.pattern, value) }).ok_or(refused(PlanFault.NoArm(at))).try();
+        self.eval(arm.body)
+    }
+
+    accepts = (self: @Self, id: PatternId, value: Value) bool {
+        self.tree.pattern_at(id).kind.match({
+            Wild       => true,
+            Name(n)    => value.match({
+                VariantValue(v) => v.name.eq(n.name.last_segment()),
+                CcValue(cc)     => cc.variant_name().eq(n.name.last_segment()),
+                _               => false,
+            }),
+            Literal(l) => value.match({
+                BoolValue(b) => l.text.eq(
+                    b.match({ true => "true", false => "false" })
+                ),
+                TextValue(t) => l.text.len == t.len + 2 && l.text.slice(1, l.text.len - 1).eq(t),
+                _            => false,
+            }),
+            _          => false,
+        })
     }
 
     global_base = (self: @Self, id: ExprId) bool {
@@ -304,8 +390,12 @@ Executor = {
     // memo exists; the checked receiver type is the proof.
     access_call = (self :: @Self, id: ExprId, c: Call, a: Access, at: Span)
                   Res<Value, PlanError> {
+        custom = a.name.text.eq("Custom") && self.global_base(a.base);
+        custom.then(
+            () { self.enum_owner(id, at).try().eq("Cc").ensure(unsupported(at)).try(); }
+        );
         // Evaluate the receiver once, so chained registrations retain order.
-        (a.name.text.eq("Vec") && c.args.len == 0).match({
+        (a.name.text.eq("Vec") && c.args.len == 0 || custom).match({
             true  => self.value_call(c, a, at),
             false => self.eval(a.base).try().match({
                 BuilderValue => self.builder_call(a.name.text, c, at),
@@ -316,9 +406,16 @@ Executor = {
 
     value_call = (self :: @Self, c: Call, a: Access, at: Span)
                  Res<Value, PlanError> {
-        (a.name.text.eq("Vec") && c.args.len == 0).match({
-            true  => Ok(Value.EmptyList),
-            false => self.local_add(c, a, at),
+        a.name.text.match({
+            "Vec"    => (c.args.len == 0).match({
+                true  => Ok(Value.EmptyList),
+                false => self.local_add(c, a, at),
+            }),
+            "Custom" => self.eval(self.one_arg(c, at).try()).try().match({
+                PathValue(path) => Ok(Value.CcValue(Cc.Custom(path))),
+                _               => Err(unsupported(at)),
+            }),
+            _        => self.local_add(c, a, at),
         })
     }
 
@@ -381,6 +478,13 @@ Executor = {
         name.match({
             "target"   => (c.args.len == 0).match({
                 true  => Ok(Value.TargetValue(self.plan.target)),
+                false => Err(unsupported(at)),
+            }),
+            "mode"     => (c.args.len == 0).match({
+                true  => Ok(Value.VariantValue(Variant(
+                    owner: "Mode",
+                    name: self.mode.variant_name()
+                ))),
                 false => Err(unsupported(at)),
             }),
             "c_import" => self.add_import(c, at),
@@ -470,27 +574,25 @@ Executor = {
         Ok(Value.DepValue(dep))
     }
 
-    optional_texts_field = (self :: @Self, r: Record, name: str) Res<Vec<str>, PlanError> {
-        r.entries.find((m) { m.named(name) }).match({
-            Ok(_) => self.texts_field(r, name),
-            None  => Ok(self.alloc.Vec<str>()),
-        })
-    }
-
     add_exe = (self :: @Self, c: Call, at: Span, role: ExecutableRole) Res<Value, PlanError> {
         name = self.name_arg(c, at).try();
         self.unique(name).try();
-        r    = self.record(self.arg(c, 1, at).try()).try();
+        r = self.record(self.arg(c, 1, at).try()).try();
+        self.only(r, EXE_FIELDS).try();
         spec = Exe(
             src: self.path_field(r, "src").try(),
             deps: self.deps_field(r, "deps").try(),
             backend: self.backend_field(r).try(),
-            optimize: self.optional_text_field(r, "optimize", "speed"),
-            language: self.optional_text_field(r, "language", "c"),
+            optimize: self.optimize_field(r).try(),
+            language: self.optional_text_field(r, "language", "c").try(),
             frameworks: Ok(self.optional_texts_field(r, "frameworks").try()),
-            strip: self.optional_bool_field(r, "strip", false),
-            web: self.optional_bool_field(r, "web", false),
-            out: self.optional_path_field(r, "out")
+            strip: self.optional_bool_field(r, "strip", false).try(),
+            cc: self.cc_field(r).try(),
+            cflags: Ok(self.optional_texts_field(r, "cflags").try()),
+            defines: Ok(self.optional_texts_field(r, "defines").try()),
+            libs: Ok(self.optional_texts_field(r, "libs").try()),
+            web: self.optional_bool_field(r, "web", false).try(),
+            out: self.optional_path_field(r, "out").try()
         );
         node = ExeNode(name: name, spec: spec);
         role.match({
@@ -617,69 +719,128 @@ Executor = {
         })
     }
 
-    // Omission preserves the C default. An explicitly written selection
-    // must evaluate successfully; unsupported expressions never fall back.
-    backend_field = (self :: @Self, record: Record) Res<Codegen, PlanError> {
-        record.entries.find((member) { member.named("backend") }).match({
-            None  => Ok(Codegen.C),
-            Ok(_) => {
-                id = self.field(record, "backend").try();
-                self.eval(id).try().match({
-                    BackendValue(backend) => Ok(backend),
-                    _                     => Err(unsupported(
-                        self.tree.expr_at(id).span
-                    )),
-                })
+    // An omitted optional field takes its default. A written one must
+    // evaluate to its type; anything else is an error naming the field, never
+    // a silent fallback.
+    optional = (self :: @Self, r: Record, name: str) Res<Res<Value>, PlanError> {
+        r.entries.find((m) { m.named(name) }).match({
+            None  => Ok(None),
+            Ok(m) => {
+                id    = self.field(r, name).try();
+                fault = PlanFault.BadField(FieldFault(
+                    at: self.tree.expr_at(id).span,
+                    name: name
+                ));
+                value = self.eval(id).map_err((e) {
+                    e.match({ OutOfMemory => PlanError.OutOfMemory, Refused(_) => refused(
+                        fault
+                    ) })
+                }).try();
+                Ok(Ok(value))
             },
         })
     }
 
-    // An absent, valueless, or refused optional field is None.
-    optional_value = (self :: @Self, r: Record, name: str) Res<Value> {
-        r.entries.find((m) { m.named(name) }).match({
-            None  => None,
-            Ok(m) => m.kind.match({
-                Field(f) => f.value.match({
-                    None   => None,
-                    Ok(id) => self.eval(id).match({
-                        Ok(value) => Ok(value),
-                        Err(_)    => None,
-                    }),
-                }),
-                _        => None,
+    // Refuse a field the target type does not declare. `known` lists the
+    // declared names separated by spaces.
+    only = (self: @Self, r: Record, known: str) Res<(), PlanError> {
+        r.entries.loop((m) {
+            m.kind.match({
+                Field(f) => {
+                    declared = known.split(' ').loop((h, name) { f.name.text.eq(name).then(() { h.break(name); }); });
+                    declared.match({
+                        Ok(_) => (),
+                        None  => Err(refused(PlanFault.UnknownField(FieldFault(
+                            at: m.span,
+                            name: f.name.text
+                        )))).try(),
+                    });
+                },
+                _        => (),
+            });
+        });
+        Ok(())
+    }
+
+    // The error for a field whose value has the wrong shape.
+    misplaced = (self: @Self, r: Record, name: str) PlanError {
+        at = self.field(r, name).match({ Ok(id) => self.tree.expr_at(id).span, Err(_) => nowhere() });
+        refused(PlanFault.BadField(FieldFault(at: at, name: name)))
+    }
+
+    backend_field = (self :: @Self, r: Record) Res<Codegen, PlanError> {
+        self.optional(r, "backend").try().match({
+            None                => Ok(Codegen.C),
+            Ok(VariantValue(v)) => v.name.match({
+                "C"   => Ok(Codegen.C),
+                "Js"  => Ok(Codegen.Js),
+                "Asm" => Ok(Codegen.Asm),
+                _     => Err(self.misplaced(r, "backend")),
             }),
+            Ok(_)               => Err(self.misplaced(r, "backend")),
         })
     }
 
-    optional_path_field = (self :: @Self, r: Record, name: str) Res<Path> {
-        self.optional_value(r, name).match({
-            Ok(PathOption(value)) => value,
-            Ok(PathValue(value))  => Ok(value),
-            _                     => None,
+    optimize_field = (self :: @Self, r: Record) Res<Res<Optimize>, PlanError> {
+        self.optional(r, "optimize").try().match({
+            None                => Ok(None),
+            Ok(VariantValue(v)) => v.name.match({
+                "Debug" => Ok(Ok(Optimize.Debug)),
+                "Speed" => Ok(Ok(Optimize.Speed)),
+                "Size"  => Ok(Ok(Optimize.Size)),
+                _       => Err(self.misplaced(r, "optimize")),
+            }),
+            Ok(_)               => Err(self.misplaced(r, "optimize")),
         })
     }
 
-    optional_text_field = (
-        self    :: @Self,
-        r       : Record,
-        name    : str,
-        fallback: str
-    ) str {
-        self.optional_value(r, name).match({
-            Ok(TextValue(value)) => value,
-            _                    => fallback,
+    cc_field = (self :: @Self, r: Record) Res<Res<Cc>, PlanError> {
+        self.optional(r, "cc").try().match({
+            None                => Ok(None),
+            Ok(CcValue(cc))     => Ok(Ok(cc)),
+            Ok(VariantValue(v)) => v.name.match({
+                "Clang" => Ok(Ok(Cc.Clang)),
+                "Gcc"   => Ok(Ok(Cc.Gcc)),
+                "Tcc"   => Ok(Ok(Cc.Tcc)),
+                _       => Err(self.misplaced(r, "cc")),
+            }),
+            Ok(_)               => Err(self.misplaced(r, "cc")),
         })
     }
 
-    optional_bool_field = (
-        self    :: @Self,
-        r       : Record,
-        name    : str,
-        fallback: bool
-    ) bool {
-        self.optional_value(r, name).match({
-            Ok(BoolValue(value)) => value,
-            _                    => fallback,
+    optional_texts_field = (self :: @Self, r: Record, name: str) Res<Vec<str>, PlanError> {
+        self.optional(r, name).try().match({
+            None            => Ok(self.alloc.Vec<str>()),
+            Ok(TextList(v)) => Ok(v),
+            Ok(EmptyList)   => Ok(self.alloc.Vec<str>()),
+            Ok(_)           => Err(self.misplaced(r, name)),
+        })
+    }
+
+    optional_path_field = (self :: @Self, r: Record, name: str) Res<Res<Path>, PlanError> {
+        self.optional(r, name).try().match({
+            None                  => Ok(None),
+            Ok(PathOption(value)) => Ok(value),
+            Ok(PathValue(value))  => Ok(Ok(value)),
+            Ok(_)                 => Err(self.misplaced(r, name)),
+        })
+    }
+
+    optional_text_field = (self :: @Self, r: Record, name: str, fallback: str)
+                          Res<str, PlanError> {
+        self.optional(r, name).try().match({
+            None                 => Ok(fallback),
+            Ok(TextValue(value)) => Ok(value),
+            Ok(_)                => Err(self.misplaced(r, name)),
+        })
+    }
+
+    optional_bool_field = (self :: @Self, r: Record, name: str, fallback: bool)
+                          Res<bool, PlanError> {
+        self.optional(r, name).try().match({
+            None                 => Ok(fallback),
+            Ok(BoolValue(value)) => Ok(value),
+            Ok(_)                => Err(self.misplaced(r, name)),
         })
     }
 
@@ -707,13 +868,13 @@ Executor = {
     }
 }
 
-plan* = (a: Alloc, tree: Ast, check: Checker, target: Target)
+plan* = (a: Alloc, tree: Ast, check: Checker, target: Target, mode: Mode)
         Res<BuildPlan, PlanError> {
     (check.diag_count() > 0).match({
         true  => Err(refused(PlanFault.CheckedFaults)),
         false => tree.build_function().match({
             Err(e) => Err(e),
-            Ok(f)  => plan_function(a, tree, check, target, f),
+            Ok(f)  => plan_function(a, tree, check, target, mode, f),
         }),
     })
 }
@@ -723,6 +884,7 @@ plan_function = (
     tree   : Ast,
     check  : Checker,
     target : Target,
+    mode   : Mode,
     f      : Function
 ) Res<BuildPlan, PlanError> {
     f.body.match({
@@ -734,6 +896,7 @@ plan_function = (
                 tree,
                 check,
                 target,
+                mode,
                 p.name.text,
                 tree.block_at(body)
             ),
@@ -746,6 +909,7 @@ execute_function = (
     tree    : Ast,
     check   : Checker,
     target  : Target,
+    mode    : Mode,
     builder : str,
     body    : Block
 ) Res<BuildPlan, PlanError> {
@@ -754,6 +918,7 @@ execute_function = (
         tree: tree,
         check: check,
         builder: builder,
+        mode: mode,
         locals: a.Vec<Local>(),
         plan: BuildPlan(
             target: target,

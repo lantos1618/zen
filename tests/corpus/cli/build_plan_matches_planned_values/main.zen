@@ -1,0 +1,69 @@
+// A build file can match on the mode, the platform and the target while it
+// is planned, and a written field the planner cannot evaluate is an error
+// that names the field.
+
+Build = zen.zen_build
+plan = zen.zen_build_plan
+Target, Os, Arch, Abi, Mode, Exe = std.build
+
+show = (
+    env    : Env,
+    a      : Alloc,
+    root   : str,
+    target : Target,
+    mode   : Mode
+) Res<(), AllocError> {
+    b ::= a.Build(env, root);
+    b.set_std_root("src");
+    checked = b.whole("build.zen", a.Map<str, str>()).try();
+    plan(a, b.tree, checked, target, mode).match({
+        Err(OutOfMemory)          => println("out of memory"),
+        Err(Refused(BadField(f))) => println(
+            "field `{}` refused at line {}",
+            f.name,
+            f.at.start.line
+        ),
+        Err(Refused(_))           => println("refused"),
+        Ok(p)                     => p.exes.loop(
+            (exe) { describe(a, mode, exe.name, exe.spec).try(); }
+        ),
+    });
+    Ok(())
+}
+
+describe = (a: Alloc, mode: Mode, name: str, spec: Exe) Res<(), AllocError> {
+    out ::= a.String().try();
+    out.fmt("{} {}:", mode.stable_name(), name).try();
+    spec.optimize.match({
+        Ok(o) => out.fmt(" optimize={}", o.variant_name()).try(),
+        None  => out.add(" optimize=mode").try(),
+    });
+    out.fmt(" strip={}", spec.strip).try();
+    spec.cc.match({
+        Ok(Custom(path)) => out.fmt(" cc={}", path.text).try(),
+        Ok(cc)           => out.fmt(" cc={}", cc.variant_name()).try(),
+        None             => (),
+    });
+    spec.cflags.when_ok(
+        (words) { words.loop((w) { out.fmt(" {}", w).try(); }); }
+    );
+    spec.defines.when_ok(
+        (words) { words.loop((w) { out.fmt(" -D{}", w).try(); }); }
+    );
+    spec.libs.when_ok(
+        (words) { words.loop((w) { out.fmt(" -l{}", w).try(); }); }
+    );
+    println("{}", out.view());
+    Ok(())
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    linux = Target(os: Os.Linux, arch: Arch.X86_64, abi: Abi.Gnu);
+    mac   = Target(os: Os.Macos, arch: Arch.Arm64, abi: Abi.Darwin);
+    show(env, a, "src/modes", linux, Mode.Debug).try();
+    show(env, a, "src/modes", linux, Mode.Small).try();
+    show(env, a, "src/modes", mac, Mode.Release).try();
+    show(env, a, "src/refused", linux, Mode.Debug).try();
+    Ok(0)
+}

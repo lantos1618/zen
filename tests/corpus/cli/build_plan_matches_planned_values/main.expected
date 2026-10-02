@@ -1,0 +1,7 @@
+debug app: optimize=Debug strip=false cc=Gcc -DPLATFORM_OTHER -pipe -DNAME=zen -lm
+debug plain: optimize=mode strip=false
+small app: optimize=Size strip=true cc=Gcc -DPLATFORM_OTHER -pipe -DNAME=zen -lm
+small plain: optimize=mode strip=false
+release app: optimize=Speed strip=true cc=/opt/cross/cc -DPLATFORM_MAC -pipe -DNAME=zen -lm
+release plain: optimize=mode strip=false
+field `optimize` refused at line 9

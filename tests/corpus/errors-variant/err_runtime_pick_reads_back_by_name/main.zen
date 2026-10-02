@@ -41,7 +41,7 @@ show = (n: i32) Res<(), AllocError> {
 }
 
 main = (env: Env) Res<i32, AllocError> {
-    show(0);
-    show(1);
+    show(0).try();
+    show(1).try();
     Ok(0);
 }

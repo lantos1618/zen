@@ -17,6 +17,6 @@ main = (env: Env) Res<(), AllocError> {
         meta: Meta(attempt: 3),
     );
     encoded = request.to_json(env.mem.alloc()).try();
-    env.out.println("{}", encoded.view());
+    env.out.println("{}", encoded.view()).ignore();
     Ok(())
 }

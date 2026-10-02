@@ -45,7 +45,7 @@ main = (env: Env) Res<(), AllocError> {
     resolve(alloc, "localhost").match({
         Ok(a)  => {
             // Print the IP to stderr so the exact-match expected stays stable.
-            env.out.errorln("{}", a.ip.view());
+            env.out.errorln("{}", a.ip.view()).ignore();
             println("local");
         },
         Err(e) => {

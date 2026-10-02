@@ -9,7 +9,7 @@ Worker = {}
 
 Worker.impl(Actor, {
     process = (self :: @Self, ctx: Context, payload: Reply) {
-        ctx.env.out.println("received")
+        ctx.env.out.println("received").ignore()
     }
 })
 

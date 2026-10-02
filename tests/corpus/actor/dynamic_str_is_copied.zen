@@ -5,7 +5,7 @@ Reader = {}
 
 Reader.impl(Actor, {
     read = (self :: @Self, ctx: Context, text: str) {
-        ctx.env.out.println("{}", text)
+        ctx.env.out.println("{}", text).ignore()
     }
 })
 

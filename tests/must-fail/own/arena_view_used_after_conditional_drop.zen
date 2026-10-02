@@ -2,6 +2,6 @@ main = (env: Env) Res<i32, AllocError> {
     arena ::= env.mem.alloc();
     text = "hello".dup(arena).try();
     true.then(() { (consume arena).drop(); });
-    env.out.println("{}", text);
+    env.out.println("{}", text).ignore();
     Ok(0)
 }

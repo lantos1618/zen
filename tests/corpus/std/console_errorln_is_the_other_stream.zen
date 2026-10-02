@@ -12,9 +12,9 @@
 main = (env: Env) Res<i32, IoError> {
     n = 7;
     b = true;
-    env.out.println("answer 1");
+    env.out.println("answer 1").try();
     env.out.errorln("count {} bool {}", n, b).try();
-    env.out.println("answer 2");
+    env.out.println("answer 2").try();
     env.out.errorln("narration 2").try();
     Ok(0);
 }

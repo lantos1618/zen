@@ -23,7 +23,7 @@ Noisy = {
 }
 
 Noisy.impl(Drop, {
-    drop = (self :: @Self) { self.env.out.println("drop {}", self.id) }
+    drop = (self :: @Self) { self.env.out.println("drop {}", self.id).ignore() }
 })
 
 handed = (env: Env) Noisy {

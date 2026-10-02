@@ -28,7 +28,7 @@ main = (env: Env) Res<i32, AllocError> {
         rows.get(i).match({
             Ok(p) => m.set(p, p),
             None  => Ok(()),
-        });
+        }).try();
     });
 
     m.get("alpha").match({

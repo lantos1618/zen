@@ -7,7 +7,7 @@ Printer = {
 
 Printer.impl(Actor, {
     started = (self :: @Self, ctx: Context) {
-        ctx.env.out.println("printer {} started", self.tag)
+        ctx.env.out.println("printer {} started", self.tag).ignore()
     }
 
     answer = (self :: @Self, ctx: Context, n: u64) {
@@ -24,7 +24,7 @@ Printer.impl(Actor, {
     }
 
     stopped = (self :: @Self, ctx: Context) {
-        ctx.env.out.println("printer {} stopped", self.tag)
+        ctx.env.out.println("printer {} stopped", self.tag).ignore()
     }
 })
 

@@ -49,7 +49,7 @@ written_secret, written_pointer = sema.sema_secret
 
 // Bound the reachable set by functions lowered. Crossing it reports Overrun
 // instead of silently emitting an incomplete translation unit.
-MAX_FUNCTIONS* : usize = 8192
+MAX_FUNCTIONS* : usize = 16384
 
 // The whole translation unit for the program rooted at module `mi`.
 emit_program* = (be :: CBackend, mi: usize, out :: Emit)

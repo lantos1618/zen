@@ -312,6 +312,12 @@ sys_body = (name: str) Res<str> {
         "atomic_cas_usize"       => Ok(
             "__atomic_compare_exchange_n(a0, &a1, a2, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); return a1;"
         ),
+        "spin_hint"              => Ok(
+            "#if defined(__x86_64__) || defined(__i386__)\n    __builtin_ia32_pause();\n#elif defined(__aarch64__)\n    __asm__ __volatile__(\"yield\");\n#endif"
+        ),
+        "envp"                   => Ok(
+            "extern char **environ; return (uint8_t **)environ;"
+        ),
         "call_entry"             => Ok(
             "((void (*)(uint8_t *, uint8_t *))(uintptr_t)a0)(a1, a2);"
         ),

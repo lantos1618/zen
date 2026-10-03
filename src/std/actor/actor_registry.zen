@@ -1,0 +1,154 @@
+// The registry: every actor alive has a slot, found from its Ref in O(1)
+// with no lock. A slot holds the life word (see actor_layout), the body's
+// address and the cycle walk's link. Slots are made in chunks of
+// CHUNK_SLOTS and never freed or moved, so a sender holding a stale Ref
+// only ever touches a live word, sees another generation, and answers
+// Closed.
+//
+// Spawns take slot indices from their thread's cache; the cache refills
+// from (and spills to) one shared free list under a spin lock, a batch at a
+// time. Index 0 is never used, so Ref 0 names no actor.
+
+{ Ptr, null_ptr } = std.mem
+{ Range, loop } = std.core
+{ atomic_load_usize, atomic_store_usize } = std.sys
+{ pointer_at, address_of, mmap, munmap, map_private_anonymous } = std.sys
+{ word_at, load, store, lock, unlock } = std.actor.actor_pool
+{ G_SLOT_LOCK, G_SLOT_FREE, G_SLOT_NFREE, G_SLOT_CAP, G_SLOT_FRESH } = std.actor.actor_layout
+{ G_CHUNKS, CHUNK_SLOTS, CHUNK_SHIFT, CHUNKS, SLOT_CACHE } = std.actor.actor_layout
+{ L_SLOTS_N, L_SLOTS } = std.actor.actor_layout
+
+SLOT_BYTES: usize = 32
+
+// The slot at `index`; its chunk exists once the index has been handed out.
+slot_at* = (globals: Ptr<u8>, index: usize) Ptr<u8> {
+    chunk = atomic_load_usize(word_at(
+        globals.offset(G_CHUNKS),
+        index >> CHUNK_SHIFT
+    ));
+    pointer_at(chunk + (index & (CHUNK_SLOTS - 1)) * SLOT_BYTES)
+}
+
+// The slot a Ref names. Refs come only from spawns, so the index has a
+// slot; Ref 0 names none.
+slot_of_ref* = (globals: Ptr<u8>, r: usize) Ptr<u8> {
+    index = r & 4294967295;
+    (index == 0).match({
+        true  => null_ptr<u8>(),
+        false => slot_at(globals, index),
+    })
+}
+
+local_slots = (local: Ptr<u8>) Ptr<usize> { word_at(local, L_SLOTS) }
+
+// A free slot index for a spawn, 0 when the registry is full or out of
+// memory. The slot's life word holds its current generation.
+take_slot* = (globals: Ptr<u8>, local: Ptr<u8>) usize {
+    (load(local, L_SLOTS_N) == 0).then(() { refill(globals, local); });
+    n = load(local, L_SLOTS_N);
+    (n == 0).match({
+        true  => 0,
+        false => {
+            store(local, L_SLOTS_N, n - 1);
+            local_slots(local).read(n - 1)
+        },
+    })
+}
+
+// Keep a finalised actor's index for the next spawn on this thread.
+give_slot* = (globals: Ptr<u8>, local: Ptr<u8>, index: usize) {
+    (load(local, L_SLOTS_N) == SLOT_CACHE).then(() { spill(globals, local); });
+    n = load(local, L_SLOTS_N);
+    local_slots(local).write(n, index);
+    store(local, L_SLOTS_N, n + 1);
+}
+
+// Refill half the cache: recycled indices first, then fresh ones (making a
+// chunk when one is first needed). Fresh indices go in descending order, so
+// the cache hands out the lowest first and a new program's actors are dense.
+refill = (globals: Ptr<u8>, local: Ptr<u8>) {
+    lock(globals.offset(G_SLOT_LOCK * 8).to<u32>());
+    free = pointer(globals, G_SLOT_FREE).to<usize>();
+    want = SLOT_CACHE / 2;
+    got :: usize = 0;
+    loop(() { got < want && load(globals, G_SLOT_NFREE) > 0 }, (h) {
+        nfree = load(globals, G_SLOT_NFREE) - 1;
+        store(globals, G_SLOT_NFREE, nfree);
+        local_slots(local).write(got, free.read(nfree));
+        got = got + 1;
+    });
+    fresh = load(globals, G_SLOT_FRESH);
+    room  = CHUNKS * CHUNK_SLOTS - fresh;
+    take  = (want - got > room).match({ true => room, false => want - got });
+    ready = take == 0 || ensure_chunks(globals, fresh, fresh + take);
+    count = ready.match({ true => take, false => 0 });
+    Range(0, count).loop((i) {
+        local_slots(local).write(got + i, fresh + count - 1 - i);
+    });
+    atomic_store_usize(word_at(globals, G_SLOT_FRESH), fresh + count);
+    unlock(globals.offset(G_SLOT_LOCK * 8).to<u32>());
+    store(local, L_SLOTS_N, got + count);
+}
+
+// Make every chunk indices [from, to) need. A fresh chunk is zero: every
+// life word starts at generation 0. False when the memory cannot be had.
+ensure_chunks = (globals: Ptr<u8>, from: usize, to: usize) bool {
+    ok ::= true;
+    Range(from >> CHUNK_SHIFT, ((to - 1) >> CHUNK_SHIFT) + 1).loop((c) {
+        table = word_at(globals.offset(G_CHUNKS), c);
+        (ok && table.read(0) == 0).then(() {
+            bytes = CHUNK_SLOTS * SLOT_BYTES;
+            got   = mmap(0, bytes, 3, map_private_anonymous(), -1, 0);
+            (got < 0).match({
+                true  => { ok = false; },
+                false => {
+                    atomic_store_usize(table, got.to_usize().value_or(0));
+                },
+            });
+        });
+    });
+    ok
+}
+
+// Give half the cache back to the shared free list.
+spill = (globals: Ptr<u8>, local: Ptr<u8>) {
+    lock(globals.offset(G_SLOT_LOCK * 8).to<u32>());
+    keep  = SLOT_CACHE / 2;
+    n     = load(local, L_SLOTS_N);
+    nfree = load(globals, G_SLOT_NFREE);
+    (nfree + n - keep > load(globals, G_SLOT_CAP)).then(() { grow_free(globals, nfree + n - keep); });
+    free = pointer(globals, G_SLOT_FREE).to<usize>();
+    Range(keep, n).loop((i) {
+        free.write(nfree + i - keep, local_slots(local).read(i));
+    });
+    store(globals, G_SLOT_NFREE, nfree + n - keep);
+    unlock(globals.offset(G_SLOT_LOCK * 8).to<u32>());
+    store(local, L_SLOTS_N, keep);
+}
+
+// Grow the shared free list to hold at least `want` indices. Its old
+// mapping is released after the copy (the lock is held).
+grow_free = (globals: Ptr<u8>, want: usize) {
+    cap ::= load(globals, G_SLOT_CAP);
+    (cap == 0).then(() { cap = 16384; });
+    loop(() { cap < want }, (h) { cap = cap * 2; });
+    got = mmap(0, cap * 8, 3, map_private_anonymous(), -1, 0);
+    (got >= 0).then(() {
+        fresh = pointer_at(got.to_usize().value_or(0)).to<usize>();
+        old   = pointer(globals, G_SLOT_FREE).to<usize>();
+        nfree = load(globals, G_SLOT_NFREE);
+        Range(0, nfree).loop((i) { fresh.write(i, old.read(i)); });
+        (load(globals, G_SLOT_CAP) > 0).then(() {
+            munmap(
+                load(globals, G_SLOT_FREE),
+                load(globals, G_SLOT_CAP) * 8
+            ).discard();
+        });
+        store(globals, G_SLOT_FREE, address_of(fresh.to<u8>()));
+        store(globals, G_SLOT_CAP, cap);
+    });
+}
+
+pointer = (p: Ptr<u8>, i: usize) Ptr<u8> { pointer_at(load(p, i)) }
+
+discard = (code: i64) {}

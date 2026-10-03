@@ -108,6 +108,8 @@ runtime_call* = (
             ))).try();
             Ok(out)
         },
+        // A spin-wait hint; the native targets spin without one.
+        "spin_hint"     => lo.unit(),
         "process_block" => {
             out = lo.temp(lo.type_of(id).try()).try();
             lo.add(Instruction.Startup(Start(

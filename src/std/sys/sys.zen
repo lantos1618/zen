@@ -119,6 +119,10 @@ nanosleep_ns* = (ns: u64) i64
 // them on `clone_thread` and futexes (native Linux).
 pthread_threads* = () i32
 
+// A hint inside a spin-wait loop (x86 `pause`, AArch64 `yield`); nothing
+// where the target has none.
+spin_hint* = () ()
+
 // One machine word private to the calling thread, zero when the thread
 // starts. The actor runtime keeps its per-thread worker here.
 thread_word* = () usize

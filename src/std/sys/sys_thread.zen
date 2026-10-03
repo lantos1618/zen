@@ -22,7 +22,7 @@
 { thread_self, clone_thread, pthread_start, pthread_join } = std.sys
 { pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_mutex_destroy } = std.sys
 { pthread_cond_init, pthread_cond_wait, pthread_cond_signal, pthread_cond_broadcast } = std.sys
-{ pthread_cond_destroy, pthread_threads, nanosleep_ns, monotonic_ns, Pages, NO_MEMORY } = std.sys
+{ pthread_cond_destroy, pthread_threads, platform_darwin, nanosleep_ns, monotonic_ns, Pages, NO_MEMORY } = std.sys
 { atomic_load_u32, atomic_store_u32, atomic_swap_u32, atomic_add_u32, atomic_cas_u32 } = std.sys
 { Res, Ok, Err, loop } = std.core
 
@@ -173,6 +173,89 @@ cond_destroy* = (c: Ptr<u8>) {
 }
 
 // ---------------------------------------------------------------------
+// parkers
+// ---------------------------------------------------------------------
+
+// A parker lets one thread sleep until another wakes it, holding at most
+// one pending wake: `unpark` before `park` makes that `park` return at
+// once. It lives in caller memory of PARKER_BYTES at a stable address and
+// is initialised before first use; only its owner parks on it.
+//
+// Linux (either backend): a futex word, 0 idle, 1 woken, 2 sleeping. The
+// sleeper announces 2 before waiting, so `unpark` makes the system call
+// only when someone may be asleep. macOS: a flag under a lock and a
+// condition.
+PARKER_BYTES*: usize = 128
+PARKER_FLAG: usize = 112
+
+futex_parker = () bool { platform_darwin() == 0 }
+
+parker_init* = (p: Ptr<u8>) Res<(), i64> {
+    futex_parker().match({
+        true  => atomic_store_u32(p.to<u32>(), 0),
+        false => {
+            mutex_init(p).try();
+            cond_init(p.offset(MUTEX_BYTES)).try();
+            p.offset(PARKER_FLAG).to<u32>().write(0, 0);
+            Ok
+        },
+    })
+}
+
+// Sleep until woken; consumes the pending wake.
+park* = (p: Ptr<u8>) {
+    futex_parker().match({ true => park_futex(p.to<u32>()), false => park_locked(p) });
+}
+
+park_futex = (word: Ptr<u32>) {
+    loop(() { atomic_cas_u32(word, 1, 0) != 1 }, (h) {
+        // Announce the sleep; a wake that arrived meanwhile is taken by the
+        // loop's next test instead.
+        (atomic_cas_u32(word, 0, 2) != 1 && atomic_load_u32(word) == 2).then(() {
+            wait_word(word, FUTEX_WAIT_PRIVATE, 2);
+        });
+    });
+}
+
+park_locked = (p: Ptr<u8>) {
+    flag = p.offset(PARKER_FLAG).to<u32>();
+    mutex_lock(p);
+    loop(() { atomic_load_u32(flag) == 0 }, (h) {
+        cond_wait(p.offset(MUTEX_BYTES), p);
+    });
+    atomic_store_u32(flag, 0);
+    mutex_unlock(p);
+}
+
+// Wake the owner, or make its next `park` return at once.
+unpark* = (p: Ptr<u8>) {
+    futex_parker().match({
+        true  => {
+            word = p.to<u32>();
+            (atomic_swap_u32(word, 1) == 2).then(() { wake_word(word, 1); });
+        },
+        false => {
+            mutex_lock(p);
+            atomic_store_u32(p.offset(PARKER_FLAG).to<u32>(), 1);
+            cond_signal(p.offset(MUTEX_BYTES));
+            mutex_unlock(p);
+        },
+    });
+}
+
+// Drop a pending wake, if any, without sleeping.
+park_clear* = (p: Ptr<u8>) {
+    futex_parker().match({
+        true  => atomic_cas_u32(p.to<u32>(), 1, 0).ignore_word(),
+        false => {
+            mutex_lock(p);
+            atomic_store_u32(p.offset(PARKER_FLAG).to<u32>(), 0);
+            mutex_unlock(p);
+        },
+    });
+}
+
+// ---------------------------------------------------------------------
 // threads
 // ---------------------------------------------------------------------
 
@@ -279,3 +362,6 @@ sleep_ns* = (ns: u64) {
 }
 
 ignore_none = (r: Res<()>) { r.match({ Ok(_) => (), None => () }); }
+
+// A word the caller has no use for.
+ignore_word = (word: u32) {}

@@ -1,0 +1,25 @@
+// A final `expr;` in a body whose success is `()` is a statement, so a
+// failure it computes is dropped as any statement's is: the body does not
+// return it, and it must be handled in writing.
+//
+// position: the final statement, whose failure nothing reads.
+
+{ Res, Ok, Err, Error } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+
+Jam = { Paper | Ink }
+Jam.impl(Error, {})
+
+count = (n: i32) Res<i32, Jam> {
+    (n > 3).match({ true => Err(Jam.Paper), false => Ok(n * 2) })
+}
+
+feed = (n: i32) Res<Jam> {
+    count(n);
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    feed(1).ignore();
+    Ok(0)
+}

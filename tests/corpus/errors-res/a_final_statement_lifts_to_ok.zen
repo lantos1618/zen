@@ -1,0 +1,63 @@
+{ Res, Ok, Err, Error } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+// A body whose result is a unit success runs a final `expr;` as a
+// statement: its value is dropped and the body's `()` lifts to `Ok`. The
+// tail here unwraps an `i32`, which the body does not return.
+//
+// one-line break: make the final `expr;` the body's value again, and every
+// body below is refused as a type mismatch.
+
+Jam = { Paper | Ink }
+Jam.impl(Error, {})
+
+count = (n: i32) Res<i32, Jam> {
+    (n > 3).match({ true => Err(Jam.Paper), false => Ok(n * 2) })
+}
+
+tally = (n: i32) i32 {
+    println("tallied {}", n);
+    n + 1
+}
+
+feed = (n: i32) Res<Jam> {
+    count(n).try();
+}
+
+note = (n: i32) Res<(), Jam> {
+    println("noting {}", n);
+    tally(n);
+}
+
+Tray = {
+    pages: i32,
+
+    add = (self: @Self, n: i32) Res<Tray, Jam> {
+        (n > 3).match({
+            true  => Err(Jam.Ink),
+            false => Ok(Tray(pages: self.pages + n)),
+        })
+    }
+}
+
+chain = (n: i32) Res<Jam> {
+    Tray(pages: 0).add(n).try().add(n + 1).try();
+}
+
+report = (r: Res<Jam>) {
+    r.match({
+        Ok     => println("ok"),
+        Err(e) => println("jam {}", e.variant_name()),
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    report(feed(2));
+    report(feed(5));
+    report(note(1));
+    report(chain(2));
+    report(chain(3));
+    Ok(0)
+}

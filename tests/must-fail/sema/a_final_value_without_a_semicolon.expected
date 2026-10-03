@@ -1,0 +1,2 @@
+type mismatch: expected Res<(), Jam>, found i32
+19:5

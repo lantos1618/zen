@@ -245,14 +245,30 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse((self.root / "build/linux-x86_64/test").exists())
 
+    def test_a_final_registration_statement_is_the_whole_build(self):
+        # A unit-success body runs a final `expr;` as a statement and lifts
+        # its `()` to `Ok`, so the chain's Builder is not the result.
+        self.write("hello.zen", '{ println } = std.io\nmain = () { println("hello"); }\n')
+        self.write("build.zen", "{ Res, Path } = std.core\n"
+                   "{ Builder, BuildError } = std.build\n"
+                   "build = (b :: Builder) Res<BuildError> {\n"
+                   '    b.exe("app", { src: Path("hello.zen"), deps: [] }).try();\n'
+                   "}\n")
+        result = self.run_zen("run")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "hello\n")
+
     def test_init_creates_a_runnable_project_and_never_overwrites(self):
         created = self.run_zen("init", "fresh app")
         self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
         self.assertIn("Next: cd fresh app && zen run", created.stdout)
         project = self.root / "fresh app"
         self.assertEqual((project / ".gitignore").read_text(), "build/\n")
-        self.assertIn('b.exe("fresh-app"', (project / "build.zen").read_text())
-        ran = subprocess.run([str(ZEN), "run"], cwd=project,
+        graph = (project / "build.zen").read_text()
+        self.assertIn('b.exe("fresh-app"', graph)
+        self.assertIn("build = (b :: Builder) Res<BuildError> {", graph)
+        self.assertNotIn("Ok(())", graph)
+        ran =subprocess.run([str(ZEN), "run"], cwd=project,
                              env={**os.environ, "ZEN_STD": str(ROOT / "src")},
                              capture_output=True, text=True, timeout=90)
         self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr)

@@ -15,7 +15,7 @@
 { String, str } = std.text
 { Res, Ok, Err, None, loop, Range } = std.core
 { decode_literal } = std.lex
-{ Ast, ExprId, BlockId, TypeId, Function, Literal, Bind, Deferred } = std.ast
+{ Ast, ExprId, BlockId, TypeId, Function, Literal, Bind, Deferred, Stmt } = std.ast
 { Span } = std.source
 { BinOp, UnOp, Match, Call, Expr, Pattern, Lambda, Param, Access, Index } = std.ast
 { TParam, Arg } = std.ast
@@ -1568,7 +1568,10 @@ Lowerer* = {
         )).try(LowerError.OutOfMemory);
         last ::= self.unit().try();
         block.stmts.loop((h, i, s) {
-            tail = i + 1 == block.stmts.len && block.value.match({ Ok(_) => false, None => true });
+            // A final `expr;` sema ran as a statement (`sema_hoist.statement_tail`)
+            // leaves the block `()`, which the unit-success result lifts to `Ok`.
+            ends = i + 1 == block.stmts.len && block.value.match({ Ok(_) => false, None => true });
+            tail = ends && !self.runs_as_statement(s);
             last = s.kind.match({
                 Expr(e)     => tail.match({
                     // A semicolon-terminated tail may settle the block value.
@@ -1616,6 +1619,17 @@ Lowerer* = {
         self.scopes.take(self.scopes.len - 1);
         self.release_locals(mark);
         Ok(value)
+    }
+
+    // A final `expr;` sema ran as a statement (`sema_hoist.statement_tail`).
+    runs_as_statement = (self: @Self, s: Stmt) bool {
+        s.kind.match({
+            Expr(e) => self.check.statement_tails.get(e.expr).match({
+                Ok(_) => true,
+                None  => false,
+            }),
+            _       => false,
+        })
     }
 
     // The name of the binding a block's value reads, if any.

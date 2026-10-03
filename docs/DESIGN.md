@@ -480,6 +480,14 @@ first_even = (n: i32) Res<Jam> {
 }
 ```
 
+**A final `expr;` in a unit-success body is a statement.** Where the body returns `Res<R>` or `Res<(), E>`, a last expression ended by `;` whose value is neither `()` nor a result with a `()` success has that value dropped, under the must-use rule every statement follows, and the body's `()` lifts to `Ok`; without the `;` it is still the body's value, so a value of another type there is still a type mismatch:
+
+```groovy fragment
+build = (b :: Builder) Res<BuildError> {
+    b.exe("app", { src: Path("src/main.zen"), deps: [] }).try();   // drops the Builder; Ok
+}
+```
+
 Only `()` lifts this way. Where the success is a value, a body that ends in a statement or a binding has left it out, and is refused as a missing success value rather than returning a zeroed one.
 
 **Error sets.** The error type of a `Res` is a union, and propagation merges sets. `A | B` is an anonymous enum of two variants — a structural enum, not a new kind of type — so `Res<T, E>` never changes shape and a single error type is a set of one.

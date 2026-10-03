@@ -115,7 +115,7 @@ Offers = {
     seen       :: Map<str, bool>,
     out        :: Vec<Item>,
 
-    offer = (self :: @Self, item: Item) Res<(), AllocError> { /* ... */ }
+    offer = (self :: @Self, item: Item) Res<AllocError> { /* ... */ }
 }
 ```
 
@@ -222,7 +222,7 @@ A signature should answer whether the operation allocates, mutates, fails, or
 escapes.
 
 ```zen
-add* = (self :: @Self, value: T) Res<(), AllocError>
+add* = (self :: @Self, value: T) Res<AllocError>
 len* = (self: @Self) usize
 map* = <T, U>(items: Vec<T>, alloc: Alloc, body: (item: T) U)
        Res<Vec<U>, AllocError>

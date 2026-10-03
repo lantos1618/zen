@@ -54,7 +54,7 @@ executable stripped. A target can choose for itself:
 ```zen
 { Builder, BuildError, Optimize, Cc } = std.build
 
-build = (b :: Builder) Res<(), BuildError> {
+build = (b :: Builder) Res<BuildError> {
     b.exe("app", {
         src: Path("src/main.zen"),
         deps: [],
@@ -65,7 +65,6 @@ build = (b :: Builder) Res<(), BuildError> {
         defines: ["APP_NAME=app"],
         libs: ["m"],
     }).try();
-    Ok(())
 }
 ```
 
@@ -385,7 +384,7 @@ A `Sink` dissolves it. A console is a sink, a `String` is a sink, and `println` 
 
 **A function type may not be written where a value is expected.** `f = (a: i32) () i32` and "returns unit, and the next member is named `i32`" are the same tokens — a signature always writes its return type, so `()` in return position and `()` as an empty parameter list cannot be told apart by looking left. The tree-sitter grammar dodges it with a declared GLR conflict; a recursive-descent parser has no such move, so the rule is: after a `)`, a `(` or a `<` never begins a return type in **expression** position. A zero-parameter function type is therefore written only in *parameter* position — `cond: () bool`, `body: () Res<T, E>` — where the following token is a `,` or a `)` and nothing is ambiguous. Every one in the standard library already sits there, so this costs nothing today; it is written down because it is a restriction the parser enforces and no reader could derive.
 
-**A trailing `Res<T>` parameter may be omitted; omission supplies `None`.** Thus `known_header("accept")` and `known_header("accept", None)` are the same call. Several trailing `Res<T>` parameters may be omitted from the right. Omission never skips a parameter, and `Res<T, E>` remains required because failure is not absence. A present bare `T` still uses the ordinary hoisting rule, so `known_header(":method", "GET")` is identical to passing `Ok("GET")`. Two overloads may not accept the same call after this rule is applied.
+**A trailing `Res<T>` parameter may be omitted; omission supplies `None`.** Thus `known_header("accept")` and `known_header("accept", None)` are the same call. Several trailing `Res<T>` parameters may be omitted from the right. Omission never skips a parameter, and a failing `Res` — `Res<R>` with R an Error, or `Res<T, E>` — remains required because failure is not absence. A present bare `T` still uses the ordinary hoisting rule, so `known_header(":method", "GET")` is identical to passing `Ok("GET")`. Two overloads may not accept the same call after this rule is applied.
 
 ```groovy fragment
 Vec*<T> = { .. }                 // declaration: struct. no semicolon.
@@ -442,6 +441,43 @@ Rebinding a function (`op ::= add_i32` in the example program at the end of this
 
 # Errors
 
+**Errors are values, and a type is an error because it implements std.core's `Error` bound.** Never because of its name: `Fault`, `ParseError` and `Late` are errors when an impl beside them says so, and a type called `Error` is not one unless it does. A union is an error when each of its members is one. `Error` has one member, `message`, whose default writes the name of the variant the value holds; an impl rebinds it when the payload has more to say.
+
+```groovy
+Jam = { Paper | Ink }
+Jam.impl(Error, {})
+```
+
+**`Res` reads by what its arguments are**, and the reading is fixed where `Res<…>` is written:
+
+| Written | V or R | Means |
+|---|---|---|
+| `Res<V>` | V does not implement Error | `Ok(V) \| None` — absence |
+| `Res<R>` | R implements Error | `Ok \| Err(R)` — a unit success or a failure |
+| `Res<V, R>` | any | `Ok(V) \| Err(R)` |
+
+`Res<R>` is the same type as `Res<(), R>`, which stays legal. An unconstrained type parameter is never an error, whatever it is instantiated with, so `Res<T>` in generic code always means absence; generic failure is written `<E: Error>` and `Res<E>`, or as the second argument of `Res<V, E>`. An `Err` offered where a one-argument `Res` means absence is refused as such, with a hint to implement Error or write `Res<V, E>`.
+
+**A unit payload is written without parentheses.** A variant whose payload is `()` is constructed and matched bare: `Ok` is `Ok(())`, `Shape.Empty` is `Shape.Empty(())`, and the pattern `Ok =>` matches it.
+
+**A unit result lifts to `Ok`.** This is the hoisting rule — a bare T lifts when exactly one variant carries T — applied to `()`. A body returning `Res<R>` (or `Res<(), R>`) may end in a statement, and a `()`-valued arm beside a `Res` arm of a match is that `Res`'s `Ok`:
+
+```groovy fragment
+print_page = (n: i32) Res<Jam> {
+    feed(n).try();
+    println("printed {}", n);          // the body succeeds
+}
+
+first_even = (n: i32) Res<Jam> {
+    (n % 2 == 0).match({
+        true  => println("even {}", n),  // Ok
+        false => Err(Jam.Ink),
+    })
+}
+```
+
+Only `()` lifts this way. Where the success is a value, a body that ends in a statement or a binding has left it out, and is refused as a missing success value rather than returning a zeroed one.
+
 **Error sets.** The error type of a `Res` is a union, and propagation merges sets. `A | B` is an anonymous enum of two variants — a structural enum, not a new kind of type — so `Res<T, E>` never changes shape and a single error type is a set of one.
 
 ```groovy
@@ -463,10 +499,10 @@ row = table.get("ada").try();                        // ERROR: Res<User> is not 
 row = table.get("ada").ok_or(Error.NotFound).try();  // required form
 ```
 
-**A failure is handled or discarded in writing.** A `Res<T, E>` that a statement computes and nothing reads — or that is the tail of a block whose value is `()`, such as a unit function's body or a `.loop` body — is refused, and the diagnostic names the three ways out: `.try()`, `.match`, or `.ignore()` when dropping it is the decision. `Res<T>` is absence, not failure, so `v.pop();` stays legal; a `Res<T>` that holds a failure (a `.then` whose body produced one) is refused at the failure.
+**A failure is handled or discarded in writing.** A failing `Res` (`Res<R>` or `Res<T, E>`) that a statement computes and nothing reads — or that is the tail of a block whose value is `()`, such as a unit function's body or a `.loop` body — is refused, and the diagnostic names the three ways out: `.try()`, `.match`, or `.ignore()` when dropping it is the decision. A `Res<V>` that reads as absence is not a failure, so `v.pop();` stays legal; one that holds a failure (a `.then` whose body produced one) is refused at the failure.
 
 ```groovy fragment
-out.fmt("{}\n", n);           // ERROR: this `Res<(), WriteError>` is dropped
+out.fmt("{}\n", n);           // ERROR: this `Res<WriteError>` is dropped
 out.fmt("{}\n", n).try();     // propagate
 out.fmt("{}\n", n).ignore();  // a best-effort write, dropped on purpose
 ```
@@ -503,7 +539,7 @@ This is a rule about **declarations**, not about every parameter list. A closure
 `@Self` is the type being declared, supplied by the compiler inside a struct or impl body. The `@` says exactly that: like `@meta`, it is not a name you could have written yourself.
 
 ```groovy fragment
-add* = (self :: @Self, value: T) Res<(), AllocError> { ... }   // mutates
+add* = (self :: @Self, value: T) Res<AllocError> { ... }   // mutates
 get* = (self: @Self, i: usize) Res<T> { ... }                  // does not
 
 v = alloc.Vec<i32>();    v.add(1);   // ERROR: add needs a mutable receiver
@@ -513,8 +549,8 @@ w ::= alloc.Vec<i32>();  w.add(1);   // ok
 `@Self` is spelled `Vec<T>` when you write the same function outside the body — the two forms are the same function, and the second is what the first means:
 
 ```groovy fragment
-Vec*<T> = { add* = (self :: @Self, value: T) Res<(), AllocError> { ... } }
-add*    = (v :: Vec<T>, value: T) Res<(), AllocError> { ... }   // identical
+Vec*<T> = { add* = (self :: @Self, value: T) Res<AllocError> { ... } }
+add*    = (v :: Vec<T>, value: T) Res<AllocError> { ... }   // identical
 ```
 
 So `::` on a receiver means the method mutates it, and it is not a receiver rule at all — it is the ordinary binding marker doing its ordinary job on the ordinary first parameter. One function form, one binding rule, nothing added.
@@ -736,7 +772,7 @@ main = () i32 {
 
 They are bodyless declarations whose bodies the compiler supplies, recognised by **declaration identity**: sema validates them where `std.io` declares them and records each as a printer, and every backend lowers a call that selected one. A `println` imported from any other module is that module's function and nothing more. A leading string literal is read as a format at compile time exactly as `Sink.fmt` reads one — holes, `{name}` lookups and the hole count are checked at the call — and any other first argument is written as a value.
 
-**They answer `()`, and a failed write is not reported.** A closed pipe ends the process with `SIGPIPE`; any other failure loses the bytes. The alternative, `Res<(), IoError>`, puts a `.try()` or `.ignore()` on every diagnostic line a program prints, and a result that is ignored everywhere teaches readers to ignore results — the opposite of what a must-use `Res` is for. Output whose arrival matters goes through `env.out`, whose `println` returns `Res<(), IoError>`, and a function that should be handed its output rather than reach for it takes a `Console` or a `Sink`.
+**They answer `()`, and a failed write is not reported.** A closed pipe ends the process with `SIGPIPE`; any other failure loses the bytes. The alternative, `Res<IoError>`, puts a `.try()` or `.ignore()` on every diagnostic line a program prints, and a result that is ignored everywhere teaches readers to ignore results — the opposite of what a must-use `Res` is for. Output whose arrival matters goes through `env.out`, whose `println` returns `Res<IoError>`, and a function that should be handed its output rather than reach for it takes a `Console` or a `Sink`.
 
 **This is the one ambient effect in the standard library.** `Env` carries every other authority, so a function's signature says what it can touch. Standard output is exempt because hello-world should not need a capability parameter, and the exemption is visible: a module that prints this way says `{ println } = std.io` at the top.
 
@@ -985,7 +1021,7 @@ str* = {
 String* = {
     data :: Vec<u8>,
 
-    add* = (self :: @Self, fmt: str, args: ...) Res<(), WriteError>
+    add* = (self :: @Self, fmt: str, args: ...) Res<WriteError>
     view* = (self: @Self) str
 }
 
@@ -993,19 +1029,19 @@ String* = {
 // is one, which is what lets `{}` format into either without the
 // format machinery knowing which it has
 Sink* = {
-    write* = (self :: @Self, bytes: str) Res<(), WriteError>
+    write* = (self :: @Self, bytes: str) Res<WriteError>
 
     // a sink that takes bytes but not A byte forces every integer
     // writer to allocate, which is the exact cost this design
     // exists to avoid: digits are produced one at a time, `str`
     // BORROWS bytes, and the only way to get a `str` to borrow is
     // a `Ptr` from an Alloc. so one byte is its own member
-    write_byte* = (self :: @Self, byte: u8) Res<(), WriteError>
+    write_byte* = (self :: @Self, byte: u8) Res<WriteError>
 }
 
 String.impl(Sink, {
-    write      = (self :: @Self, bytes: str) Res<(), WriteError> { .. }
-    write_byte = (self :: @Self, byte: u8) Res<(), WriteError> { .. }
+    write      = (self :: @Self, bytes: str) Res<WriteError> { .. }
+    write_byte = (self :: @Self, byte: u8) Res<WriteError> { .. }
 })
 
 Display* = {
@@ -1015,13 +1051,13 @@ Display* = {
     // member-filtered view of members; self.at(field) is the
     // comptime-substituted projection — this instance's value
     // for that field
-    dump* = (self: @Self, out :: Sink) Res<(), WriteError> {
+    dump* = (self: @Self, out :: Sink) Res<WriteError> {
         out.fmt("{} {", @meta(self: @Self).name);
         @meta(self: @Self).fields().loop((h, field) {
             out.fmt(" {}: {},", field.name, self.at(field));
         });
         out.fmt(" }");
-        Ok(());
+        Ok;
     }
 
     // outlined only (::=, no body): the pretty representation,
@@ -1029,7 +1065,7 @@ Display* = {
     // it, falling back to dump when a type hasn't defined one.
     // writes into a sink the CALLER owns, so nesting never
     // allocates and printing never allocates at all
-    toString* ::= (self: @Self, out :: Sink) Res<(), WriteError>
+    toString* ::= (self: @Self, out :: Sink) Res<WriteError>
 
     // sealed overload (=): the allocating form, derived from
     // the sink form, so the two can never diverge. overload
@@ -1135,7 +1171,7 @@ FsError* = { NotFound | Denied | IsDir | Failed | OutOfMemory }
 
 Fs* = {
     read*   = (self: @Self, a: Alloc, path: str) Res<String, FsError>
-    write*  = (self: @Self, path: str, bytes: str) Res<(), FsError>
+    write*  = (self: @Self, path: str, bytes: str) Res<FsError>
     remove* = (self: @Self, path: str) Res<bool, FsError>
     exists* = (self: @Self, path: str) bool
     is_dir* = (self: @Self, path: str) bool
@@ -1278,11 +1314,11 @@ Vec*<T> = {
     // the handle
     // in self.alloc stays usable: `:` is shallow, it protects
     // the field's own bytes, not what it points at
-    add* = (self :: @Self, value: T) Res<(), AllocError> {
+    add* = (self :: @Self, value: T) Res<AllocError> {
         (self.len == self.capacity).then(() { self.grow().try() });
         self.data.write(self.len, value);
         self.len = self.len + 1;
-        Ok(());
+        Ok;
     }
 
     // moves an element OUT, leaving the vec one shorter. without this a
@@ -1294,14 +1330,14 @@ Vec*<T> = {
         });
     }
 
-    grow = (self :: @Self) Res<(), AllocError> {
+    grow = (self :: @Self) Res<AllocError> {
         cap = (self.capacity == 0).match({
             true => 8,
             false => self.capacity * 2,
         });
         self.data = self.alloc.realloc(self.data, cap).try();
         self.capacity = cap;
-        Ok(());
+        Ok;
     }
 }
 
@@ -1318,11 +1354,10 @@ Entry<K, V> = {
 Map*<K: Eq + Hash, V> = {
     entries :: Vec<Entry<K, V>>,
 
-    set* = (self :: @Self, key: K, value: V) Res<(), AllocError> {
+    set* = (self :: @Self, key: K, value: V) Res<AllocError> {
         h = key.hash(Hasher());
         // probe: overwrite where hash matches AND key.eq, else:
         self.entries.add(Entry(hash: h, key: key, value: value)).try();
-        Ok(());
     }
 
     get* = (self: @Self, key: K) Res<V> {
@@ -1349,10 +1384,10 @@ Tester* = {
     alloc: Alloc,   // per-test arena: dropped after each test,
                     // so leaks are contained and reported
 
-    expect* = (self: @Self, cond: bool) Res<(), TestError>
+    expect* = (self: @Self, cond: bool) Res<TestError>
 
     // dumps both sides via Display.dump on failure
-    expect_eq* = <T: Eq>(self: @Self, a: T, b: T) Res<(), TestError>
+    expect_eq* = <T: Eq>(self: @Self, a: T, b: T) Res<TestError>
 }
 
 // benchmarking: same discovery shape, take a Bencher instead.
@@ -1413,7 +1448,7 @@ Builder* = {
     // are programs, no separate manifest format). fetched into
     // a content-addressed cache, verified against hash
     add* ::= (self :: @Self, name: str, pkg: Package) Res<Dep, BuildError>
-    remove* ::= (self :: @Self, name: str) Res<(), BuildError>
+    remove* ::= (self :: @Self, name: str) Res<BuildError>
 
     // build-time budget: total and per-target compile times are
     // tracked against a rolling median
@@ -1632,7 +1667,7 @@ json_pkg = Package(
     hash: "sha256:9f2a...",
 )
 
-build = (b :: Builder) Res<(), BuildError> {
+build = (b :: Builder) Res<BuildError> {
 
     // and build programs can branch on the target, match on
     // b.os right here, no cfg annotations, no ifdef
@@ -1707,8 +1742,6 @@ build = (b :: Builder) Res<(), BuildError> {
     // and the build budgets itself: per-target compile times are
     // tracked, so a build never quietly grows to 20 minutes
     b.budget(Duration.seconds(60));
-
-    Ok(());
 }
 ```
 
@@ -1719,28 +1752,25 @@ build = (b :: Builder) Res<(), BuildError> {
 { Res, Ok } = std.core
 { Tester, TestError, Bencher } = std.test
 
-vec_grows* = (t: Tester) Res<(), TestError> {
+vec_grows* = (t: Tester) Res<TestError> {
     v ::= t.alloc.Vec<i32>();
     v.add(1).try();
     v.add(2).try();
     t.expect_eq(v.len, 2).try();
-    Ok(());
 }
 
-shape_prints* = (t: Tester) Res<(), TestError> {
+shape_prints* = (t: Tester) Res<TestError> {
     s = Shape.Unit;
     out = t.alloc.String("{}", s).try();
     t.expect_eq(out.view(), "unit").try();
-    Ok(());
 }
 
 // a bench: found by the Bencher filter in build.zen
-vec_add* = (bn: Bencher) Res<(), TestError> {
+vec_add* = (bn: Bencher) Res<TestError> {
     bn.iter(() {
         v ::= bn.alloc.Vec<i32>();
         v.add(1);
     });
-    Ok(());
 }
 ```
 
@@ -1793,7 +1823,7 @@ Shape = { Circle: Circle | Rect: Rect | Unit }
 Shape.impl(Display, {
     // defining the outlined toString: pretty output for {}.
     // dump stays available for free alongside it
-    toString ::= (self: @Self, out :: Sink) Res<(), WriteError> {
+    toString ::= (self: @Self, out :: Sink) Res<WriteError> {
         self.match({
             Circle(circle) => out.fmt("circle: {}", circle.radius),
             Rect(rect) => out.fmt("rect: {} {}", rect.width, rect.height),
@@ -1802,28 +1832,28 @@ Shape.impl(Display, {
     }
 })
 
-DumpAst = (sb :: String, n: Enum) Res<(), AllocError> {
+DumpAst = (sb :: String, n: Enum) Res<AllocError> {
     sb.fmt("Enum {}", n.name);
     n.variants.loop((h, variant) {
         sb.fmt("{}: {}", variant.name, variant.payload);
     });
 }
 
-DumpAst = (sb :: String, n: Struct) Res<(), AllocError> {
+DumpAst = (sb :: String, n: Struct) Res<AllocError> {
     sb.fmt("Struct {}", n.name);
     n.fields().loop((h, field) {
         sb.fmt("{}: {}", field.name, field.value);
     });
 }
 
-DumpAst = (sb :: String, n: Function) Res<(), AllocError> {
+DumpAst = (sb :: String, n: Function) Res<AllocError> {
     sb.fmt("Function {}", n.name);
     n.params.loop((h, param) {
         sb.fmt("{}: {}", param.name, param.value);
     });
 }
 
-DumpAst = (sb :: String, n: Other) Res<(), AllocError> {
+DumpAst = (sb :: String, n: Other) Res<AllocError> {
     sb.fmt("Other {}", n.name);
 }
 
@@ -1832,7 +1862,7 @@ DumpAst = (sb :: String, n: Other) Res<(), AllocError> {
 // so the arm BINDS n with its type refined, and overload
 // resolution just works, no casts, no as_* anything. these are
 // ast.zen's own nodes — the same ones gen_c consumes
-DumpAst<T> = (sb :: String, n: T) Res<(), IoError> {
+DumpAst<T> = (sb :: String, n: T) Res<IoError> {
     @meta(n).kind.match({
         Enum(e) => DumpAst(sb, e),
         Struct(s) => DumpAst(sb, s),

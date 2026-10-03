@@ -28,5 +28,21 @@ build = (b :: Builder) Res<BuildError> {
         "ring-asm",
         { src: Path("ring.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/ring")) }
     ).try();
+    b.exe(
+        "fanin",
+        { src: Path("fanin.zen"), deps: [], backend: Codegen.C, out: Ok(Path("bin/c/fanin")) }
+    ).try();
+    b.exe(
+        "fanin-asm",
+        { src: Path("fanin.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/fanin")) }
+    ).try();
+    b.exe(
+        "churn",
+        { src: Path("churn.zen"), deps: [], backend: Codegen.C, out: Ok(Path("bin/c/churn")) }
+    ).try();
+    b.exe(
+        "churn-asm",
+        { src: Path("churn.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/churn")) }
+    ).try();
     Ok
 }

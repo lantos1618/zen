@@ -109,7 +109,7 @@ heap_end = (heap: Ptr<u8>, c: usize) Ptr<usize> { word_at(
 //
 //     +0                  per class: lock (u32), then the batch stack
 //     +CLASSES * 16       the span lock, the next slab, the span's end
-CENTRAL_BYTES*: usize = 600
+CENTRAL_BYTES*: usize = 608
 
 central_lock = (central: Ptr<u8>, c: usize) Ptr<u32> { central.offset(
     c * 16
@@ -127,6 +127,15 @@ span_lock = (central: Ptr<u8>) Ptr<u32> { central.offset(
 span_next = (central: Ptr<u8>) Ptr<usize> { word_at(central, CLASSES * 2 + 1) }
 
 span_end = (central: Ptr<u8>) Ptr<usize> { word_at(central, CLASSES * 2 + 2) }
+
+// Checked mode: every block gets its own mapping and freeing unmaps it, so
+// a use after free faults at once instead of reading a recycled block. For
+// sanitizer and stress runs only (each block costs a system call).
+set_checked* = (central: Ptr<u8>, on: bool) {
+    store(central, CLASSES * 2 + 3, on.match({ true => 1, false => 0 }));
+}
+
+checked = (central: Ptr<u8>) bool { load(central, CLASSES * 2 + 3) != 0 }
 
 // `bytes` of fresh zeroed memory starting on a SLAB_BYTES boundary; null
 // when the kernel refuses.
@@ -173,7 +182,7 @@ new_slab = (central: Ptr<u8>) Ptr<u8> {
 // A block of at least `bytes`, 16-byte aligned; null when out of memory.
 // Its contents are whatever the last user left.
 alloc* = (heap: Ptr<u8>, central: Ptr<u8>, bytes: usize) Ptr<u8> {
-    (bytes > LARGEST).match({
+    (bytes > LARGEST || checked(central)).match({
         true  => alloc_large(bytes),
         false => {
             c    = class_of(bytes);

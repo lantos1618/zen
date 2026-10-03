@@ -43,7 +43,7 @@
 { cpu_count, monotonic_ns, nanosleep_ns, spin_hint, env_var, mmap, map_private_anonymous } = std.sys
 { thread_spawn, thread_join, mutex_init, mutex_lock, mutex_unlock, cond_init } = std.sys.sys_thread
 { cond_wait, cond_signal, cond_broadcast, parker_init, park, unpark, park_clear } = std.sys.sys_thread
-{ word_at, load, store, lock, unlock, alloc, free, size_of } = std.actor.actor_pool
+{ word_at, load, store, lock, unlock, alloc, free, size_of, set_checked } = std.actor.actor_pool
 { slot_at, slot_of_ref, take_slot, give_slot } = std.actor.actor_registry
 { MAX_MESSAGE_BYTES } = std.actor.actor_limits
 { PB_ONCE, PB_GLOBALS, MAX_WORKERS, TURN_BATCH, RING, RING_MASK, BOUND, CYCLE_WALK } = std.actor.actor_layout
@@ -1312,6 +1312,8 @@ setup = (g: Ptr<u8>, entry: usize) bool {
     wanted = env_number("ZEN_ACTOR_WORKERS", cpu_count());
     n      = (wanted == 0).match({ true => 1, false => (wanted > MAX_WORKERS).match({ true => MAX_WORKERS, false => wanted }) });
     store(g, G_SYSMON_NS, env_number("ZEN_ACTOR_SYSMON_US", 1000) * 1000);
+    // ZEN_ACTOR_CHECKED=1: one mapping per block, unmapped when freed.
+    set_checked(central_of(g), env_number("ZEN_ACTOR_CHECKED", 0) != 0);
     base = map(n * WORKER_BYTES);
     ready ::= !base.is_null();
     ready.then(() {

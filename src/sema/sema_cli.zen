@@ -2,7 +2,7 @@
 // `T.impl(Cli, {..})`: the table names real fields, variants and settings,
 // a Spec sets only what the type does not decide, every field has a shape a
 // command line can fill, and every subcommand is itself a command line. The
-// parser is written by the backend (gen_c_cli.zen), which trusts these.
+// parser is written by the backend (gen_c_args.zen), which trusts these.
 
 { Decl, Impl, Member, Variant, ExprId, TypeId } = std.ast
 { AllocError } = std.mem

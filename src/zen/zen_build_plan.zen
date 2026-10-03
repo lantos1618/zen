@@ -151,7 +151,7 @@ Executor = {
             Unit       => Ok(Value.UnitValue),
             Name(n)    => n.text.eq(self.builder).match({
                 true  => Ok(Value.BuilderValue),
-                false => self.local(n.text, node.span),
+                false => self.named(n.text, node.span),
             }),
             Literal(l) => l.kind.match({
                 Str  => self.text(l.text, node.span),
@@ -842,6 +842,14 @@ Executor = {
             None                 => Ok(fallback),
             Ok(BoolValue(value)) => Ok(value),
             Ok(_)                => Err(self.misplaced(r, name)),
+        })
+    }
+
+    // A bare `Ok` is `Ok(())`, unless build.zen binds the name itself.
+    named = (self: @Self, name: str, at: Span) Res<Value, PlanError> {
+        (name.eq("Ok") && !self.has_local(name)).match({
+            true  => Ok(Value.UnitValue),
+            false => self.local(name, at),
         })
     }
 

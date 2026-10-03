@@ -106,7 +106,9 @@ failure_res = (s :: Scan, args: Vec<TypeId>, error: TyId)
     first  = args.get(0).ok_or(AllocError.OutOfMemory).try();
     second = args.get(1).ok_or(AllocError.OutOfMemory).try();
     unit   = s.c.tree.type_at(first).kind.match({ Unit => true, _ => false });
-    (s.forms && unit).match({
+    // An inferred set, `Res<(), _>`, has no written R to read as an Error.
+    named  = s.c.tree.type_at(second).kind.match({ Infer => false, _ => true });
+    (s.forms && unit && named).match({
         false => Ok(()),
         true  => s.c.implements_error(error, s.mi).try().match({
             false => Ok(()),

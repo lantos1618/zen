@@ -44,5 +44,21 @@ build = (b :: Builder) Res<BuildError> {
         "churn-asm",
         { src: Path("churn.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/churn")) }
     ).try();
+    b.exe(
+        "parked",
+        { src: Path("parked.zen"), deps: [], backend: Codegen.C, out: Ok(Path("bin/c/parked")) }
+    ).try();
+    b.exe(
+        "parked-asm",
+        { src: Path("parked.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/parked")) }
+    ).try();
+    b.exe(
+        "overload",
+        { src: Path("overload.zen"), deps: [], backend: Codegen.C, out: Ok(Path("bin/c/overload")) }
+    ).try();
+    b.exe(
+        "overload-asm",
+        { src: Path("overload.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/overload")) }
+    ).try();
     Ok
 }

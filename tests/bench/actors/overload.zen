@@ -1,0 +1,95 @@
+// Overload: PRODUCERS actors each feed one consumer as fast as they can
+// for DURATION seconds; a consumer spends WORK hashing rounds per item, so producers
+// outrun consumers many times over and keep parking on full mailboxes.
+// Memory must stay flat, throughput must level off at the consumers'
+// capacity, and nothing may be lost or reordered.
+
+{ Res, Ok, None, loop } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+{ param, rss } = common
+
+Tally = { left :: usize, consumed :: usize = 0, lost :: usize = 0, disorder :: usize = 0, seconds: usize, check :: u64 = 0 }
+
+Tally.impl(Actor, {
+    report = (self :: @Self, ctx: Context, consumed: u64, sent: u64, disorder: u64, check: u64) {
+        self.left     = self.left - 1;
+        self.check    = self.check ^ check;
+        self.consumed = self.consumed + consumed.to_usize().value_or(0);
+        self.lost     = self.lost + (sent - consumed).to_usize().value_or(0);
+        self.disorder = self.disorder + disorder.to_usize().value_or(0);
+        (self.left == 0).then(() {
+            println(
+                "bench=overload consumed_per_s={} lost={} out_of_order={} rss_mb={} check={}",
+                self.consumed / self.seconds,
+                self.lost,
+                self.disorder,
+                rss(ctx.env, ctx.alloc) / 1048576,
+                self.check % 10
+            );
+        });
+    }
+})
+
+Consumer = { work: u64, next :: u64 = 0, disorder :: u64 = 0, sink :: u64 = 1 }
+
+Consumer.impl(Actor, {
+    item = (self :: @Self, ctx: Context, n: u64) {
+        (n != self.next).then(() { self.disorder = self.disorder + 1; });
+        self.next = n + 1;
+        i :: u64 = 0;
+        loop(() { i < self.work }, (h) {
+            self.sink = self.sink *% 6364136223846793005 +% 1442695040888963407;
+            i         = i + 1;
+        });
+    }
+
+    // Sent by its producer after the last item, so it runs after them all.
+    finish = (self :: @Self, ctx: Context, sent: u64, tally: Ref<Tally>) {
+        tally.report(self.next, sent, self.disorder, self.sink).ignore();
+    }
+})
+
+BURST: u64 = 32
+
+Producer = { to: Ref<Consumer>, tally: Ref<Tally>, until: u64, me :: Res<Ref<Producer>> = None, sent :: u64 = 0 }
+
+Producer.impl(Actor, {
+    link = (self :: @Self, ctx: Context, me: Ref<Producer>) { self.me = Ok(
+        me
+    ); }
+
+    go = (self :: @Self, ctx: Context) {
+        (ctx.env.clock.since_start().ns < self.until).match({
+            true  => {
+                end = self.sent + BURST;
+                loop(() { self.sent < end }, (h) {
+                    self.to.item(self.sent).ignore();
+                    self.sent = self.sent + 1;
+                });
+                self.me.match({ Ok(me) => me.go().ignore(), None => () });
+            },
+            false => self.to.finish(self.sent, self.tally).ignore(),
+        });
+    }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    pairs   = param(env, "PRODUCERS", 4);
+    seconds = param(env, "DURATION", 10);
+    work    = param(env, "WORK", 200).to_u64();
+    tally   = env.spawn(Tally(left: pairs, seconds: seconds)).try();
+    until   = env.clock.since_start().ns + seconds.to_u64() * 1000000000;
+    i :: usize = 0;
+    loop(() { i < pairs }, (h) {
+        c = env.spawn(Consumer(work: work)).try();
+        p = env.spawn(Producer(to: c, tally: tally, until: until)).try();
+        p.link(p).try();
+        p.go().try();
+        i = i + 1;
+    });
+    Ok(0)
+}

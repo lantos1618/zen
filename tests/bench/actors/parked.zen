@@ -1,0 +1,90 @@
+// A million waiting: N clients each ask one gate, which answers only once
+// every client is waiting, then each client reports to a tally. The gate's
+// mailbox overflows N times over, so most clients wait in their outboxes
+// for room (send-or-park at scale). Bytes per waiting client (actor, its
+// waiting request, the gate's record of it) and the time to resume all.
+
+{ Res, Ok, None, loop } = std.core
+{ Env } = std.env
+{ Vec } = std.collections
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+{ param, rss } = common
+
+Tally = { left :: usize, start :: u64 = 0 }
+
+Tally.impl(Actor, {
+    begin = (self :: @Self, ctx: Context, at: u64) { self.start = at; }
+
+    done = (self :: @Self, ctx: Context) {
+        self.left = self.left - 1;
+        (self.left == 0).then(() {
+            ms = (ctx.env.clock.since_start().ns - self.start) / 1000000;
+            println("bench=parked resumed_all_ms={}", ms);
+        });
+    }
+})
+
+Gate = { expected: usize, base: usize, waiting :: Res<Vec<Ref<Client>>> = None, tally: Ref<Tally> }
+
+Gate.impl(Actor, {
+    ask = (self :: @Self, ctx: Context, from: Ref<Client>) {
+        self.waiting.match({ Ok(_) => false, None => true }).then(() {
+            made ::= ctx.alloc.Vec<Ref<Client>>();
+            made.reserve(self.expected).ignore();
+            self.waiting = Ok(made);
+        });
+        // The match binds a copy of the Vec: add to it, then put it back.
+        count = self.waiting.match({
+            Ok(list) => {
+                grown ::= list;
+                grown.add(from).ignore();
+                self.waiting = Ok(grown);
+                grown.len
+            },
+            None     => 0,
+        });
+        (count == self.expected).then(() {
+            now = rss(ctx.env, ctx.alloc);
+            println(
+                "bench=parked clients={} parked_bytes={}",
+                self.expected,
+                (now - self.base) / self.expected
+            );
+            self.tally.begin(ctx.env.clock.since_start().ns).ignore();
+            self.waiting.match({ Ok(list) => answer_all(list), None => () });
+        });
+    }
+})
+
+answer_all = (list: Vec<Ref<Client>>) { list.loop(
+    (c) { c.answer(7).ignore(); }
+); }
+
+Client = { gate: Ref<Gate>, tally: Ref<Tally>, me :: Res<Ref<Client>> = None }
+
+Client.impl(Actor, {
+    go = (self :: @Self, ctx: Context, me: Ref<Client>) { self.gate.ask(
+        me
+    ).ignore(); }
+
+    answer = (self :: @Self, ctx: Context, n: u64) { self.tally.done().ignore(); }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    a     = env.mem.alloc();
+    n     = param(env, "N", 1000000);
+    tally = env.spawn(Tally(left: n)).try();
+    env.threads.sleep(100);
+    base = rss(env, a);
+    gate = env.spawn(Gate(expected: n, base: base, tally: tally)).try();
+    i :: usize = 0;
+    loop(() { i < n }, (h) {
+        c = env.spawn(Client(gate: gate, tally: tally)).try();
+        c.go(c).try();
+        i = i + 1;
+    });
+    Ok(0)
+}

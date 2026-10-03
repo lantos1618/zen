@@ -43,7 +43,7 @@
 { emit_native_features, emit_proc } = gen.gen_c.gen_c_proc
 { emit_threads, emit_spawn_envs } = gen.gen_c.gen_c_threads
 { emit_actor_floor, emit_actor_defs } = gen.gen_c.gen_c_actor
-{ emit_sys } = gen.gen_c.gen_c_sys
+{ emit_sys, uses_sys } = gen.gen_c.gen_c_sys
 { borrows, passes_address } = gen.gen_c.gen_c_borrow
 { emit_machine, function_attributes } = gen.gen_c.gen_c_machine
 { written_secret, written_pointer } = sema.sema_secret
@@ -76,7 +76,7 @@ emit_prelude = (be :: CBackend, out :: Emit) Res<AllocError> {
     be.emit_native_features(out).try();
     be.emit_c_headers(out).try();
     emit_banner(out).try();
-    emit_floor(out).try();
+    emit_floor(out, be.uses_sys()).try();
     be.emit_machine(out).try();
     be.emit_proc(out).try();
     emit_scope_floor(be, out).try();

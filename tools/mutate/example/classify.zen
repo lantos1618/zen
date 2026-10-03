@@ -1,4 +1,4 @@
-{ Res, Ok } = std.core
+{ Res, Ok, Error } = std.core
 
 // The code under mutation. Each guard names its own failure.
 Fail* = { Low | High | Zero }

@@ -559,6 +559,79 @@ inst_bound_holds = (
     })
 }
 
+// Whether `ty`, written in module `mi`, implements std.core's Error. A named
+// type does when an impl beside it names that bound, and a union when each
+// member does: a union is its members. A type parameter does when its own
+// declaration bounds it by Error; an unbounded one never does, whatever it
+// is instantiated with. The bound is compared by declaration, never by name.
+implements_error* = (c :: Checker, ty: TyId, mi: usize) Res<bool, AllocError> {
+    c.types.at(c.set_of(ty)).match({
+        Named(n) => c.named_implements_error(n),
+        Union(u) => c.members_implement_error(u.members, mi),
+        Var(_)   => c.tparam_bounded_by_error(ty, mi),
+        _        => Ok(false),
+    })
+}
+
+named_implements_error = (c :: Checker, n: TyNamed) Res<bool, AllocError> {
+    c.world.is_core_decl(n.decl, "Error").try().match({
+        true  => Ok(true),
+        false => c.error_impl_beside(n),
+    })
+}
+
+// Impls live in their target's module, so that module reads the bound.
+error_impl_beside = (c :: Checker, n: TyNamed) Res<bool, AllocError> {
+    ids ::= c.alloc.Vec<ImplId>();
+    c.world.impls_named(c.tree, n.name, ids).try();
+    hit ::= false;
+    ids.loop((h, id) {
+        (id.decl.module == n.decl.module).then(() {
+            c.world.impl_at(c.tree, id).match({
+                None   => (),
+                Ok(im) => c.names_error(im.bound, n.decl.module.to_usize())
+                    .try().then(() { hit = true; h.break(); }),
+            });
+        });
+    });
+    Ok(hit)
+}
+
+members_implement_error = (c :: Checker, members: Vec<TyId>, mi: usize)
+                          Res<bool, AllocError> {
+    all ::= members.len > 0;
+    members.loop((h, m) {
+        c.implements_error(m, mi).try().match({
+            true  => (),
+            false => { all = false; h.break(); },
+        });
+    });
+    Ok(all)
+}
+
+tparam_bounded_by_error = (c :: Checker, ty: TyId, mi: usize)
+                          Res<bool, AllocError> {
+    c.tparam_decls.get(ty).match({
+        None     => Ok(false),
+        Ok(decl) => {
+            hit ::= false;
+            decl.bounds.loop((h, b) {
+                c.names_error(b, mi).try().then(() { hit = true; h.break(); });
+            });
+            Ok(hit)
+        },
+    })
+}
+
+// A written bound, read without resolving it as a type: deciding what a
+// `Res` means must not depend on types still being read.
+names_error = (c :: Checker, written: TypeId, mi: usize) Res<bool, AllocError> {
+    c.tree.type_at(written).kind.match({
+        Named(n) => c.world.names_core(mi, n.name.text, "Error"),
+        _        => Ok(false),
+    })
+}
+
 // Poison, a hole and a type parameter carry no answer to check.
 unbounded = (c: Checker, ty: TyId) bool {
     c.opaque(ty) || c.is_tvar(ty)

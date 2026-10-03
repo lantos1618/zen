@@ -1,7 +1,7 @@
 { Ast, ExprId, TypeId, BlockId } = std.ast
 { Span } = std.source
 { nowhere } = std.source
-{ BinOp, Unary, Binary, Access } = std.ast
+{ BinOp, Unary, Binary, Access, TParam } = std.ast
 { Alloc, AllocError } = std.mem
 { Vec, Map } = std.collections
 { str, String } = std.text
@@ -190,6 +190,11 @@ Checker* = {
 
     tvars :: Vec<Binding>,
     bounds :: Vec<Binding>,
+
+    // The declaration of every type parameter met so far, so a written
+    // `Res<T>` can ask what `T`'s own bounds say without depending on which
+    // bounds happen to be in scope while it is read.
+    tparam_decls* :: Map<TyId, TParam>,
 
     alloc*: Alloc,
 
@@ -592,8 +597,9 @@ Checker* = {
 
     tvar_mark* = (self: @Self) usize { self.tvars.len }
 
-    push_tvar* = (self :: @Self, name: str, ty: TyId) Res<(), AllocError> {
-        self.tvars.add(Binding(name, ty))
+    push_tvar* = (self :: @Self, tp: TParam, ty: TyId) Res<(), AllocError> {
+        self.tparam_decls.set(ty, tp).try();
+        self.tvars.add(Binding(tp.name.text, ty))
     }
 
     release_tvars* = (self :: @Self, mark: usize) Res<(), AllocError> {
@@ -822,15 +828,27 @@ Checker* = {
 
     mismatch* = (self :: @Self, file: str, span: Span, got: TyId, want: TyId,
                  name: str) Res<(), AllocError> {
+        fault = TypeFault(name: name, expected: want, found: got);
         self.report(
             file,
             span,
-            SemaFault.TypeMismatch(TypeFault(
-                name: name,
-                expected: want,
-                found: got
-            ))
+            self.failure_into_absence(got, want).match({
+                true  => SemaFault.ErrWithoutError(fault),
+                false => SemaFault.TypeMismatch(fault),
+            })
         )
+    }
+
+    // An `Err` offered where a one-argument `Res` reads as absence.
+    failure_into_absence = (self: @Self, got: TyId, want: TyId) bool {
+        self.types.at(got).match({
+            Res(g) => g.form.match({ Failure => true, _ => false })
+                && self.types.at(want).match({
+                    Res(w) => w.form.match({ Absence => true, _ => false }),
+                    _      => false,
+                }),
+            _      => false,
+        })
     }
 
     // A nullary generic variant carries only its declaration. A written
@@ -947,6 +965,7 @@ Checker* = (a: Alloc, tree: Ast) Res<Checker, AllocError> {
         block_base: 0,
         tvars: a.Vec<Binding>(),
         bounds: a.Vec<Binding>(),
+        tparam_decls: a.Map<TyId, TParam>(),
         alloc: a,
     );
     c.check_import_gate().try();

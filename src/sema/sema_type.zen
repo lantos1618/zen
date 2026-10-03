@@ -32,7 +32,7 @@
 { seed_left_spine, spine_ahead } = sema.sema_spine
 { type_from_ast, self_type, declared_or_alias } = sema.sema_denote
 { local_decl } = sema.sema_local
-{ Res, Ok, None } = std.core
+{ Res, Ok, None, is_in } = std.core
 
 type_of* = (c :: Checker, id: ExprId, ctx: Ctx) Res<TyId, AllocError> {
     c.walk_projection_type(id, ctx).try().match({
@@ -171,7 +171,7 @@ name_type = (c :: Checker, id: ExprId, node: Expr, text: str, ctx: Ctx)
             Res<TyId, AllocError> {
     c.walk_name(text).match({
         WalkNone => c.lookup(text).match({
-            None  => c.unbound_name_type(node, text, ctx),
+            None  => c.unbound_name_type(id, node, text, ctx),
             Ok(b) => c.bound_name_type(id, b),
         }),
         _        => c.meta_refused(node),
@@ -187,18 +187,27 @@ bound_name_type = (c :: Checker, id: ExprId, b: Binding)
     Ok(b.ty);
 }
 
-// A bare `None` is absence when the name resolves to std.core's
-// variant; a module's own `None` reads as written.
-unbound_name_type = (c :: Checker, node: Expr, text: str, ctx: Ctx)
+// A bare `None` is absence and a bare `Ok` is `Ok(())` when the name
+// resolves to std.core's variant; a module's own `None` or `Ok` reads as
+// written.
+unbound_name_type = (c :: Checker, id: ExprId, node: Expr, text: str, ctx: Ctx)
                     Res<TyId, AllocError> {
-    (text.eq("None")
+    (text.is_in(["None", "Ok"])
         && c.world.names_res_variant(c.tree, ctx.module, text).try()).match({
         true  => {
             c.require_bound(ctx.module, text, node.span).try();
-            c.none_type()
+            text.eq("Ok").match({
+                true  => c.bare_ok_type(),
+                false => c.none_type(),
+            })
         },
-        false => c.global_name_type(node, text, ctx),
+        false => c.global_name_type(id, node, text, ctx),
     })
+}
+
+bare_ok_type = (c :: Checker) Res<TyId, AllocError> {
+    unit = c.types.unit().try();
+    c.types.res_open(unit)
 }
 
 none_type = (c :: Checker) Res<TyId, AllocError> {
@@ -206,10 +215,10 @@ none_type = (c :: Checker) Res<TyId, AllocError> {
     c.types.res_absence(hole)
 }
 
-global_name_type* = (c :: Checker, node: Expr, text: str, ctx: Ctx)
+global_name_type* = (c :: Checker, id: ExprId, node: Expr, text: str, ctx: Ctx)
                    Res<TyId, AllocError> {
     c.world.first_def_of(ctx.module, text).try().match({
-        None  => c.variant_name_type(node, text, ctx),
+        None  => c.variant_name_type(id, node, text, ctx),
         Ok(d) => c.value_def_type(node, d),
     })
 }
@@ -221,7 +230,7 @@ value_def_type = (c :: Checker, node: Expr, d: Def) Res<TyId, AllocError> {
     })
 }
 
-variant_name_type = (c :: Checker, node: Expr, text: str, ctx: Ctx)
+variant_name_type = (c :: Checker, id: ExprId, node: Expr, text: str, ctx: Ctx)
                     Res<TyId, AllocError> {
     found ::= c.alloc.Vec<Def>();
     c.world.variant_defs(c.tree, ctx.module, text, found).try();
@@ -230,7 +239,7 @@ variant_name_type = (c :: Checker, node: Expr, text: str, ctx: Ctx)
             false => c.unresolved_name(node, text),
             true  => c.granted_name_type(node, text, ctx),
         }),
-        Ok(d) => c.bare_variant_type(d, text),
+        Ok(d) => c.bare_variant_type(id, d, text),
     })
 }
 
@@ -244,10 +253,10 @@ granted_name_type = (c :: Checker, node: Expr, text: str, ctx: Ctx)
     })
 }
 
-bare_variant_type = (c :: Checker, d: Def, text: str)
+bare_variant_type = (c :: Checker, id: ExprId, d: Def, text: str)
                    Res<TyId, AllocError> {
     ty = c.decl_as_type(d).try();
-    c.variant_type(ty, text)
+    c.variant_type(id, ty, text)
 }
 
 unresolved_name = (c :: Checker, node: Expr, text: str)

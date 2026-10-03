@@ -1,11 +1,12 @@
-// Compile-time enum variant-name reflection. A successful call is recorded for
+// Compile-time variant-name reflection. A successful call is recorded for
 // lowering; no runtime method or standard-library declaration is involved.
 
 { Enum, Expr, ExprId, Call, Access } = std.ast
 { AllocError } = std.mem
 { TyId } = sema.sema_ty
 { decl_at } = sema.sema_def
-{ Checker } = sema.sema_check
+{ Checker, Ctx } = sema.sema_check
+{ is_bound_ty } = sema.sema_bound
 { Base } = sema.sema_member
 { SemaFault, NameFault } = sema.sema_diag
 { Res, Ok, None } = std.core
@@ -19,16 +20,36 @@ EnumValue* = {
     value*: Enum,
 }
 
+// What `value.variant_name()` reads. An enum value names the variant it
+// holds; a struct is its type's one variant, so it answers its type's name.
+// Inside a bound's own default body `@Self` is whichever type implements the
+// bound, and each implementor's lowering of that body answers for itself.
+NameSource* = { Variants: EnumValue | TypeName: str | Implementor }
+
 // The nominal enum behind a settled value type. Generic arguments remain on
 // `ty`; names come from the shared declaration because variants do not depend
 // on those arguments.
 enum_value* = (c: Checker, ty: TyId) Res<EnumValue> {
+    c.name_source(ty).match({
+        Ok(source) => source.match({ Variants(e) => Ok(e), _ => None }),
+        None       => None,
+    })
+}
+
+name_source* = (c: Checker, ty: TyId) Res<NameSource> {
     c.types.at(ty).match({
         Named(n) => decl_at(c.tree, n.decl).match({
             None    => None,
             Ok(row) => row.kind.match({
-                Enum(e) => Ok(EnumValue(ty: ty, value: e)),
-                _       => None,
+                Enum(e)   => Ok(NameSource.Variants(EnumValue(
+                    ty: ty,
+                    value: e
+                ))),
+                Struct(_) => c.is_bound_ty(ty).match({
+                    true  => Ok(NameSource.Implementor),
+                    false => Ok(NameSource.TypeName(n.name)),
+                }),
+                _         => None,
             }),
         }),
         _        => None,
@@ -41,17 +62,18 @@ variant_name_member_call* = (
     node : Expr,
     call : Call,
     ac   : Access,
-    base : Base
+    base : Base,
+    ctx  : Ctx
 ) Res<VariantNameAnswer, AllocError> {
     ac.name.text.eq("variant_name").match({
         false => Ok(VariantNameAnswer.NotVariantName),
-        true  => c.enum_value(base.ty).match({
-            None    => Ok(VariantNameAnswer.NotVariantName),
-            Ok(row) => (!base.is_type && call.args.len == 0).match({
+        true  => c.answers_variant_name(base, call, ctx).match({
+            false => Ok(VariantNameAnswer.NotVariantName),
+            true  => (!base.is_type && call.args.len == 0).match({
                 true  => {
                     c.mark_variant_name_call(
                         id,
-                        VariantNameCall(ty: row.ty)
+                        VariantNameCall(ty: base.ty)
                     ).try();
                     Ok(VariantNameAnswer.VariantNameAnswered(
                         c.types.str_ty().try()
@@ -59,6 +81,21 @@ variant_name_member_call* = (
                 },
                 false => c.invalid_variant_name_call(node),
             }),
+        }),
+    })
+}
+
+// A bound value met anywhere but its own body is some implementor chosen at
+// run time, and names nothing this call could fold. A struct's function of
+// the same name that takes arguments is that function.
+answers_variant_name = (c: Checker, base: Base, call: Call, ctx: Ctx) bool {
+    c.name_source(base.ty).match({
+        None       => false,
+        Ok(source) => source.match({
+            Variants(_) => true,
+            TypeName(_) => call.args.len == 0,
+            Implementor => ctx.has_self && ctx.self_ty.eq(base.ty)
+                && call.args.len == 0,
         }),
     })
 }

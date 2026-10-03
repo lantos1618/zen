@@ -1,0 +1,19 @@
+// `Res<V>` reads as `Ok(V) | None` when V does not implement Error, so it
+// has no `Err` to return. The fix is an Error impl or a two-argument Res.
+//
+// position: the Err.
+
+{ Res, Ok, Err } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+
+Reason = { text: str }
+
+check = (n: i32) Res<Reason> {
+    Err(Reason(text: "no"))
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    check(1).match({ Ok(_) => (), None => () });
+    Ok(0)
+}

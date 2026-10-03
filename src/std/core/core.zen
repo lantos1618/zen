@@ -44,6 +44,8 @@
 
 { Display* } = std.core.display
 
+{ Error* } = std.core.error
+
 { IoError*, WriteError*, Sink* } = std.core.io
 { Path*, join_path* } = std.core.path
 { Duration* } = std.core.time

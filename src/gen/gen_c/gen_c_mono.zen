@@ -451,8 +451,7 @@ enter_tparams* = (be :: CBackend, tparams: Vec<TParam>, owner: str)
 }
 
 enter_one = (be :: CBackend, tp: TParam, owner: str) Res<(), AllocError> {
-    text = tp.name.text;
-    be.check.push_tvar(text, intern_var(be.check, text, owner).try())
+    be.check.push_tvar(tp, intern_var(be.check, tp.name.text, owner).try())
 }
 
 leave_tparams* = (be :: CBackend, mark: usize) Res<(), AllocError> {

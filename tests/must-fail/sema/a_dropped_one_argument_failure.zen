@@ -1,0 +1,20 @@
+// `Res<R>` with R an Error is a failure, and a failure left unread in a
+// statement is refused as `Res<(), R>` is.
+//
+// position: the dropped call.
+
+{ Res, Ok, Err, Error } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+
+Busy = { Locked | Held }
+Busy.impl(Error, {})
+
+lock = (n: i32) Res<Busy> {
+    (n > 0).match({ true => Err(Busy.Locked), false => Ok })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    lock(1);
+    Ok(0)
+}

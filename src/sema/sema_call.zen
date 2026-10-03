@@ -384,7 +384,8 @@ CallCheck = {
                         self.node,
                         self.call,
                         ac,
-                        b
+                        b,
+                        self.ctx
                     ).try().match({
                         VariantNameAnswered(ty) => Ok(ty),
                         NotVariantName          => b.is_type.match({

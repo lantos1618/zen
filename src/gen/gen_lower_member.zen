@@ -28,6 +28,7 @@
 { actor_of_ref, actor_member } = gen.gen_lower_actor
 { class_of } = gen.gen_lower_shape
 { inst_of_named } = sema.sema_inst
+{ name_source } = sema.sema_variant_name
 
 // How a member call reaches its body.
 Target = { Static: Callee | Dynamic: Bound }
@@ -107,7 +108,7 @@ resolved_member_call = (
 ) Res<Value, LowerError> {
     method_inst = lo.call_inst(checked.inst).try();
     lo.check.variant_name_call_of(id).match({
-        Ok(_) => lo.variant_name(id, receiver, span),
+        Ok(_) => lo.lower_variant_name(id, receiver, span),
         None  => lo.bound_of(recv_ty).try().match({
             Ok(bound) => lo.dynamic_call(
                 id,
@@ -337,15 +338,27 @@ resolve* = (
     ))
 }
 
-// `value.variant_name()`: the name of the alternative it holds, as a str.
-variant_name = (
+// `value.variant_name()`: the name of the alternative it holds, as a str. A
+// struct holds its one variant, named after the type.
+lower_variant_name = (
     lo       :: Lowerer,
     id       : ExprId,
     receiver : ExprId,
     span     : Span
 ) Res<Value, LowerError> {
-    value    = lo.expr(receiver).try();
-    ty       = lo.type_of(id).try();
+    value = lo.expr(receiver).try();
+    ty    = lo.type_of(id).try();
+    name_source(lo.check, value.ty).match({
+        Ok(source) => source.match({
+            TypeName(name) => lo.string(name, ty),
+            _              => lo.variant_switch(value, ty, span),
+        }),
+        None       => lo.variant_switch(value, ty, span),
+    })
+}
+
+variant_switch = (lo :: Lowerer, value: Value, ty: TyId, span: Span)
+                 Res<Value, LowerError> {
     variants = lo.variants_of(value.ty).try();
     tag      = lo.tag_of(value).try();
     out      = lo.temp(ty).try();

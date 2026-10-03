@@ -1,0 +1,35 @@
+{ Res, Ok, Error, Sink, WriteError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+// Error's default `message` writes the name of the variant a value holds;
+// a struct is its type's one variant. An impl may rebind it.
+//
+// one-line break: lower the default once against the bound instead of per
+// implementor, and every line names `Error` or fails to compile.
+
+Drain = { Clogged | Dry }
+Drain.impl(Error, {})
+
+Leak = { litres: i32 }
+Leak.impl(Error, {})
+
+Flood = { Basement | Attic }
+Flood.impl(Error, {
+    message = (self: @Self, out :: Sink) Res<(), WriteError> {
+        out.write("water in the ").try();
+        out.write(self.variant_name())
+    },
+})
+
+main = (env: Env) Res<i32, WriteError> {
+    alloc ::= env.mem.alloc();
+    out   ::= alloc.String().try();
+    Drain.Dry.message(out).try();
+    out.write(", ").try();
+    Leak(litres: 3).message(out).try();
+    out.write(", ").try();
+    Flood.Attic.message(out).try();
+    println("{}", out.view());
+    Ok(0);
+}

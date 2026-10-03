@@ -75,25 +75,34 @@ type_access = (
     ctx  : Ctx
 ) Res<TyId, AllocError> {
     c.is_case(ty, ac.name.text).try().match({
-        true  => c.variant_type(ty, ac.name.text),
+        true  => c.variant_type(id, ty, ac.name.text),
         false => c.static_member(id, node, ac, ty, ctx),
     })
 }
 
-variant_type* = (c :: Checker, ty: TyId, name: str) Res<TyId, AllocError> {
+variant_type* = (c :: Checker, id: ExprId, ty: TyId, name: str)
+                Res<TyId, AllocError> {
     cases ::= c.alloc.Vec<Case>();
     c.cases_of(ty, cases).try();
     cases.find_case(name).match({
         None   => c.types.unknown(),
-        Ok(cs) => c.variant_value(ty, cs),
+        Ok(cs) => c.variant_value(id, ty, cs),
     })
 }
 
-variant_value = (c :: Checker, ty: TyId, cs: Case) Res<TyId, AllocError> {
-    cs.has_payload.match({
+// A variant whose payload is `()` is written without one: `Shape.Empty`
+// is `Shape.Empty(())`. Called, it is still its constructor.
+variant_value = (c :: Checker, id: ExprId, ty: TyId, cs: Case)
+                Res<TyId, AllocError> {
+    (cs.has_payload && !c.bare_unit_case(id, cs)).match({
         true  => c.variant_ctor(ty, cs),
         false => Ok(ty),
     })
+}
+
+bare_unit_case = (c: Checker, id: ExprId, cs: Case) bool {
+    c.prim_name(cs.payload).eq("()")
+        && c.callee_access.get(id).value_or(false) == false
 }
 
 variant_ctor = (c :: Checker, ty: TyId, cs: Case) Res<TyId, AllocError> {

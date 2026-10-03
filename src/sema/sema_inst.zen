@@ -198,8 +198,7 @@ decl_tparam_vars* = (c :: Checker, d: Decl, owner: str, out :: Vec<TyId>)
 push_tparams* = (c :: Checker, tparams: Vec<TParam>, owner: str)
                 Res<(), AllocError> {
     tparams.loop((h, tp) {
-        text = tp.name.text;
-        c.push_tvar(text, c.types.var(text, owner).try()).try();
+        c.push_tvar(tp, c.types.var(tp.name.text, owner).try()).try();
     });
     Ok(());
 }

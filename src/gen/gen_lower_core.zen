@@ -448,7 +448,7 @@ Lowerer* = {
                 tp.name.text,
                 owner
             ).try(LowerError.OutOfMemory);
-            self.check.push_tvar(tp.name.text, var).try(LowerError.OutOfMemory);
+            self.check.push_tvar(tp, var).try(LowerError.OutOfMemory);
         });
         Ok(())
     }

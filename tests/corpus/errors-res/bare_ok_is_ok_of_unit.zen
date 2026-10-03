@@ -1,0 +1,40 @@
+{ Res, Ok, Err, Error } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+// A variant whose payload is `()` is written without one: bare `Ok` is
+// `Ok(())`, `Shape.Empty` is `Shape.Empty(())`, and `Ok =>` matches either.
+// Called with its unit, the constructor still reads as before.
+//
+// one-line break: type a bare unit-payload variant as its constructor again
+// and `blank = Shape.Empty` is a function, so `area(blank)` is refused.
+
+Shape = { Empty: () | Square: i32 }
+
+Late = { Missed | Lost }
+Late.impl(Error, {})
+
+area = (s: Shape) i32 {
+    s.match({ Empty => 0, Square(n) => n * n })
+}
+
+deliver = (on_time: bool) Res<Late> {
+    on_time.match({ true => Ok, false => Err(Late.Missed) })
+}
+
+spelled_out = () Res<Late> { Ok(()) }
+
+main = (env: Env) Res<i32, AllocError> {
+    blank = Shape.Empty;
+    println(
+        "{} {} {}",
+        area(blank),
+        area(Shape.Empty(())),
+        area(Shape.Square(3))
+    );
+    deliver(true).match({ Ok => println("delivered"), Err(l) => println("{}", l.variant_name()) });
+    deliver(false).match({ Ok => println("delivered"), Err(l) => println("{}", l.variant_name()) });
+    spelled_out().match({ Ok => println("same"), Err(_) => println("?") });
+    Ok(0);
+}

@@ -12,7 +12,7 @@
 { def_type } = sema.sema_type
 { Inst, push_tparams, module_name, tparam_vars, zip } = sema.sema_inst
 { TBound } = sema.sema_cand
-{ inst_bounds_hold } = sema.sema_bound
+{ inst_bounds_hold, implements_error } = sema.sema_bound
 { missing_import, require_bound } = sema.sema_import
 { Res, Ok, None, Range } = std.core
 
@@ -156,7 +156,7 @@ named_type = (
     c.res_sugar(name.text, ctx.module).try().match({
         true  => {
             c.require_bound(ctx.module, name.text, name.span).try();
-            c.res_type(tys)
+            c.res_type(tys, ctx.module)
         },
         false => c.declared_type(node, name, tys, ctx),
     })
@@ -179,12 +179,27 @@ res_sugar* = (c :: Checker, name: str, mi: usize)
     })
 }
 
-res_type = (c :: Checker, args: Vec<TyId>) Res<TyId, AllocError> {
+// `Res` has three readings, fixed where it is written: `Res<V>` is
+// `Ok(V) | None`, `Res<R>` with R an Error is `Ok | Err(R)`, and `Res<V, R>`
+// is `Ok(V) | Err(R)`. An instantiation substitutes into the reading the
+// declaration chose and never re-reads it.
+res_type = (c :: Checker, args: Vec<TyId>, mi: usize) Res<TyId, AllocError> {
     value = args.get(0).match({ Ok(v) => v, None => UNRESOLVED });
     args.len.match({
-        1 => c.types.res_absence(value),
+        1 => c.one_argument_res(value, mi),
         2 => c.res_failure_of(args, value),
         _ => c.types.unknown(),
+    })
+}
+
+one_argument_res = (c :: Checker, arg: TyId, mi: usize)
+                   Res<TyId, AllocError> {
+    c.implements_error(arg, mi).try().match({
+        true  => {
+            unit = c.types.unit().try();
+            c.types.res_failure(unit, arg)
+        },
+        false => c.types.res_absence(arg),
     })
 }
 

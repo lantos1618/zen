@@ -1,0 +1,21 @@
+// An unbounded `T` in `Res<T>` is absence for every instantiation, so it
+// has no `Err`, even if the program only ever passes an Error. Failure in a
+// generic is written `<E: Error>`.
+//
+// position: the Err.
+
+{ Res, Ok, Err, Error } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+
+Busy = { Locked | Held }
+Busy.impl(Error, {})
+
+refuse = <T>(reason: T) Res<T> {
+    Err(reason)
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    refuse(Busy.Locked).match({ Ok(_) => (), None => () });
+    Ok(0)
+}

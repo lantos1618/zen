@@ -722,8 +722,7 @@ is_res = (c: Checker, ty: TyId) bool {
 enter_generics = (c :: Checker, f: Function, owner: str, mi: usize)
                  Res<(), AllocError> {
     f.tparams.loop((h, tp) {
-        text = tp.name.text;
-        c.push_tvar(text, c.types.var(text, owner).try()).try();
+        c.push_tvar(tp, c.types.var(tp.name.text, owner).try()).try();
     });
     poison = c.types.unknown().try();
     ctx    = Ctx(mi, poison);

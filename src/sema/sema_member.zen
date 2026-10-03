@@ -139,7 +139,7 @@ materialize_receiver* = (
 named_base = (c :: Checker, id: ExprId, node: Expr, text: str, ctx: Ctx)
              Res<Base, AllocError> {
     b = c.lookup(text).match({
-        None  => c.global_base(node, text, ctx),
+        None  => c.global_base(id, node, text, ctx),
         Ok(l) => c.bound_base(id, l),
     }).try();
     b.is_type.match({
@@ -157,18 +157,18 @@ bound_base = (c :: Checker, id: ExprId, b: Binding) Res<Base, AllocError> {
     Ok(Base(ty: b.ty, is_type: false));
 }
 
-global_base = (c :: Checker, node: Expr, text: str, ctx: Ctx)
+global_base = (c :: Checker, id: ExprId, node: Expr, text: str, ctx: Ctx)
               Res<Base, AllocError> {
     text.is_prim().match({
         true  => {
             ty = c.types.prim(text).try();
             Ok(Base(ty: ty, is_type: true));
         },
-        false => c.decl_base(node, text, ctx),
+        false => c.decl_base(id, node, text, ctx),
     })
 }
 
-decl_base = (c :: Checker, node: Expr, text: str, ctx: Ctx)
+decl_base = (c :: Checker, id: ExprId, node: Expr, text: str, ctx: Ctx)
             Res<Base, AllocError> {
     c.world.first_def_of(ctx.module, text).try().match({
         Ok(d) => {
@@ -177,7 +177,7 @@ decl_base = (c :: Checker, node: Expr, text: str, ctx: Ctx)
         },
         // An undefined name is reported by `type_of` alone.
         None  => {
-            ty = c.global_name_type(node, text, ctx).try();
+            ty = c.global_name_type(id, node, text, ctx).try();
             Ok(Base(ty: ty, is_type: false));
         },
     })

@@ -1,0 +1,51 @@
+{ Res, Ok, Err, None, Error } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+// A one-argument Res reads by what its argument is, where it is written:
+// a value that is no Error is present or absent, an Error is the reason a
+// unit success failed, and two arguments are a value or a reason.
+//
+// one-line break: read `Res<Stale>` as absence again and `refresh` cannot
+// return `Err(Stale.Expired)`; read `Res<Entry>` as failure and `lookup`
+// cannot return `None`.
+
+Stale = { Expired | Revoked }
+Stale.impl(Error, {})
+
+Entry = { id: i32 }
+
+lookup = (id: i32) Res<Entry> {
+    (id > 0).match({ true => Ok(Entry(id: id)), false => None })
+}
+
+refresh = (id: i32) Res<Stale> {
+    (id > 9).match({ true => Err(Stale.Expired), false => Ok })
+}
+
+load = (id: i32) Res<Entry, Stale> {
+    refresh(id).try();
+    lookup(id).match({
+        Ok(e) => Ok(e),
+        None  => Err(Stale.Revoked),
+    })
+}
+
+show = (r: Res<Entry, Stale>) {
+    r.match({
+        Ok(e)  => println("entry {}", e.id),
+        Err(s) => println("stale {}", s.variant_name()),
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    lookup(3).match({ Ok(e) => println("found {}", e.id), None => println("absent") });
+    lookup(0).match({ Ok(e) => println("found {}", e.id), None => println("absent") });
+    refresh(1).match({ Ok => println("fresh"), Err(s) => println("{}", s.variant_name()) });
+    refresh(10).match({ Ok => println("fresh"), Err(s) => println("{}", s.variant_name()) });
+    show(load(4));
+    show(load(0));
+    show(load(12));
+    Ok(0);
+}

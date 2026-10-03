@@ -1,12 +1,13 @@
 // Lower `value.variant_name()` to one evaluation of `value` and a switch over
-// its private dense enum tag. Every result is static borrowed text.
+// its private dense enum tag, or to its type's name for a struct. Every result
+// is static borrowed text.
 
 { Access, Variant } = std.ast
 { AllocError } = std.mem
 { str, String } = std.text
 { TyId } = sema.sema_ty
 { Ctx } = sema.sema_check
-{ VariantNameCall, EnumValue, enum_value } = sema.sema_variant_name
+{ VariantNameCall, EnumValue, NameSource, name_source } = sema.sema_variant_name
 { sym_variant } = gen.gen_name
 { CBackend } = gen.gen_c.gen_c_state
 { expr, lower_meta_name } = gen.gen_c.gen_c_expr
@@ -21,13 +22,44 @@ lower_variant_name_call* = (
     ctx  : Ctx,
     out  :: String
 ) Res<(), AllocError> {
-    shape = be.required_enum_value(call.ty).try();
+    ty = be.named_receiver(call.ty, ctx);
     code ::= be.alloc.String().try();
-    expr(be, ac.base, ctx, shape.ty, code).try();
+    expr(be, ac.base, ctx, ty, code).try();
+    name_source(be.check, ty).match({
+        Ok(source) => source.match({
+            Variants(shape) => be.variant_switch(shape, code.view(), out),
+            TypeName(name)  => be.type_name_text(name, code.view(), out),
+            Implementor     => Err(AllocError.OutOfMemory),
+        }),
+        None       => Err(AllocError.OutOfMemory),
+    })
+}
+
+// A bound's default body names `@Self`; this lowering of it is for one
+// implementor, the context's.
+named_receiver = (be: CBackend, ty: TyId, ctx: Ctx) TyId {
+    name_source(be.check, ty).match({
+        Ok(source) => source.match({
+            Implementor => ctx.has_self.match({ true => ctx.self_ty, false => ty }),
+            _           => ty,
+        }),
+        None       => ty,
+    })
+}
+
+// The receiver is still evaluated once, for any effect it has.
+type_name_text = (be :: CBackend, name: str, code: str, out :: String)
+                 Res<(), AllocError> {
+    be.fmt("(void)({});\n", code).try();
+    lower_meta_name(name, out)
+}
+
+variant_switch = (be :: CBackend, shape: EnumValue, code: str, out :: String)
+                 Res<(), AllocError> {
     text  = be.check.types.str_ty().try();
     dst   = be.temp(text, "variant_name").try();
     qname = be.enum_qname(shape.ty).try();
-    be.fmt("switch (({}).zg_tag) {\n", code.view()).try();
+    be.fmt("switch (({}).zg_tag) {\n", code).try();
     be.indent();
     shape.value.variants.loop((h, variant) {
         be.write_variant_name_case(qname.view(), variant, dst.view()).try();
@@ -53,14 +85,6 @@ write_variant_name_case = (
     be.writeln("break;").try();
     be.dedent();
     Ok(())
-}
-
-required_enum_value = (be: CBackend, ty: TyId)
-                      Res<EnumValue, AllocError> {
-    enum_value(be.check, ty).match({
-        Ok(shape) => Ok(shape),
-        None      => Err(AllocError.OutOfMemory),
-    })
 }
 
 enum_qname = (be :: CBackend, ty: TyId) Res<String, AllocError> {

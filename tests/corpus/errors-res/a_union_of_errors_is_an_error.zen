@@ -1,0 +1,49 @@
+{ Res, Ok, Err, Error } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+// A union is its members, so a union of Errors is an Error: `Res<Fault>`
+// and `Res<Busy | Gone>` are failures with a unit success.
+//
+// one-line break: ask the union itself for an impl instead of its members,
+// and both functions read as absence, so `Err(..)` is refused.
+
+Busy = { Waiting | Locked }
+Busy.impl(Error, {})
+
+Gone = { at: i32 }
+Gone.impl(Error, {})
+
+Fault = Busy | Gone
+
+claim = (n: i32) Res<Fault> {
+    n.match({
+        0 => Ok,
+        1 => Err(Busy.Locked),
+        _ => Err(Gone(at: n)),
+    })
+}
+
+release = (n: i32) Res<Busy | Gone> {
+    claim(n).try();
+    println("released {}", n);
+}
+
+report = (r: Res<Fault>) {
+    r.match({
+        Ok     => println("ok"),
+        Err(f) => f.match({
+            Busy(b) => println("busy {}", b.variant_name()),
+            Gone(g) => println("gone at {}", g.at),
+        }),
+    })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    report(claim(0));
+    report(claim(1));
+    release(0).match({ Ok => println("ok"), Err(_) => println("failed") });
+    release(7).match({ Ok => println("ok"), Err(_) => println("failed") });
+    Ok(0);
+}

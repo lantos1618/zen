@@ -1,0 +1,37 @@
+{ Res, Ok, Err, None, Error } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+// The reading of `Res<T>` is fixed where it is written. An unbounded `T`
+// means absence, and an instantiation with an Error type does not flip it;
+// failure in a generic is written `<E: Error> .. Res<E>`.
+//
+// one-line break: decide the reading at instantiation instead of
+// declaration, and `first(Jam.Paper)` becomes a failure whose `None` arm is
+// no variant, so the program is refused.
+
+Jam = { Paper | Ink }
+Jam.impl(Error, {})
+
+first = <T>(item: T) Res<T> { Ok(item) }
+
+nothing = <T>(item: T) Res<T> { None }
+
+refuse = <E: Error>(reason: E) Res<E> { Err(reason) }
+
+main = (env: Env) Res<i32, AllocError> {
+    first(Jam.Paper).match({
+        Ok(j) => println("present {}", j.variant_name()),
+        None  => println("absent"),
+    });
+    nothing(Jam.Ink).match({
+        Ok(j) => println("present {}", j.variant_name()),
+        None  => println("absent"),
+    });
+    refuse(Jam.Ink).match({
+        Ok     => println("fine"),
+        Err(j) => println("failed {}", j.variant_name()),
+    });
+    Ok(0);
+}

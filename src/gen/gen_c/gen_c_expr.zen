@@ -17,7 +17,7 @@
 { literal_byte_len } = std.lex
 { Vec } = std.collections
 { str, String } = std.text
-{ Res, Ok, None, loop, Range } = std.core
+{ Res, Ok, None, loop, Range, is_in } = std.core
 { TyId } = sema.sema_ty
 { Def, decl_at } = sema.sema_def
 { Ctx } = sema.sema_check
@@ -1118,15 +1118,16 @@ lower_global_name = (
     want : TyId,
     out  :: String
 ) Res<(), AllocError> {
-    be.names_none(text, ctx).try().match({
-        true  => be.res_value(id, want, "None", out),
+    be.names_bare_res(text, ctx).try().match({
+        true  => be.res_value(id, want, text, out),
         false => be.lower_global_value(id, text, ctx, want, out),
     })
 }
 
-// A bare `None` is absence when it resolves to std.core's variant.
-names_none = (be :: CBackend, text: str, ctx: Ctx) Res<bool, AllocError> {
-    text.eq("None").match({
+// A bare `None` is absence, and a bare `Ok` is `Ok(())`, when the name
+// resolves to std.core's variant. Neither carries a payload to store.
+names_bare_res = (be :: CBackend, text: str, ctx: Ctx) Res<bool, AllocError> {
+    text.is_in(["None", "Ok"]).match({
         false => Ok(false),
         true  => be.check.world.names_res_variant(be.tree, ctx.module, text),
     })

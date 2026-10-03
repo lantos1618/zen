@@ -338,8 +338,23 @@ scan_commands* = (
     version   : str
 ) Res<Pick, Stop> {
     help_only.match({
-        true  => Err(helped(cmd).try((e) { Stop.Failed(e) })),
+        true  => cmd.deeper(argv, start, count),
         false => cmd.commands_from(a, env, argv, start, program, count, version),
+    })
+}
+
+// Only help is wanted, and the next word may name the subcommand whose help
+// it is: `tool -h remote add` is add's.
+deeper = (cmd: Command<usize>, argv: Vec<str>, start: usize, count: usize)
+         Res<Pick, Stop> {
+    word = argv.get(start).value_or("");
+    chosen: Res<usize> = cmd.subcommand(word).match({
+        Ok(id) => (id < count).match({ true => Ok(id), false => None }),
+        None   => None,
+    });
+    chosen.match({
+        Ok(id) => Ok(Pick(variant: id, next: start + 1, help: true)),
+        None   => Err(helped(cmd).try((e) { Stop.Failed(e) })),
     })
 }
 

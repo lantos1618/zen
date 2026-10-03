@@ -1,0 +1,128 @@
+$ tool build --target x --mode fast in
+tool: invalid value `fast` for `--mode`: expected debug, release or small
+Build one input
+
+Usage: tool build [OPTIONS] <INPUT>
+
+Arguments:
+  <INPUT>
+
+Options:
+      --mode <MODE>      Build mode [default: debug] [possible values: debug, release, small]
+      --jobs <JOBS>      [default: 2]
+      --level <LEVEL>    [default: 0]
+      --target <TARGET>  Platform to build for
+  -h, --help             Print help
+$ tool build --target x --jobs 256 in
+tool: invalid value `256` for `--jobs`: expected an integer from 0 to 255
+Build one input
+
+Usage: tool build [OPTIONS] <INPUT>
+
+Arguments:
+  <INPUT>
+
+Options:
+      --mode <MODE>      Build mode [default: debug] [possible values: debug, release, small]
+      --jobs <JOBS>      [default: 2]
+      --level <LEVEL>    [default: 0]
+      --target <TARGET>  Platform to build for
+  -h, --help             Print help
+$ tool build --target x --level -32769 in
+tool: invalid value `-32769` for `--level`: expected an integer from -32768 to 32767
+Build one input
+
+Usage: tool build [OPTIONS] <INPUT>
+
+Arguments:
+  <INPUT>
+
+Options:
+      --mode <MODE>      Build mode [default: debug] [possible values: debug, release, small]
+      --jobs <JOBS>      [default: 2]
+      --level <LEVEL>    [default: 0]
+      --target <TARGET>  Platform to build for
+  -h, --help             Print help
+$ tool build --target x --jobs many in
+tool: invalid value `many` for `--jobs`: expected an integer from 0 to 255
+Build one input
+
+Usage: tool build [OPTIONS] <INPUT>
+
+Arguments:
+  <INPUT>
+
+Options:
+      --mode <MODE>      Build mode [default: debug] [possible values: debug, release, small]
+      --jobs <JOBS>      [default: 2]
+      --level <LEVEL>    [default: 0]
+      --target <TARGET>  Platform to build for
+  -h, --help             Print help
+$ tool build --target x
+tool: required argument `INPUT` is missing
+Build one input
+
+Usage: tool build [OPTIONS] <INPUT>
+
+Arguments:
+  <INPUT>
+
+Options:
+      --mode <MODE>      Build mode [default: debug] [possible values: debug, release, small]
+      --jobs <JOBS>      [default: 2]
+      --level <LEVEL>    [default: 0]
+      --target <TARGET>  Platform to build for
+  -h, --help             Print help
+$ tool build in
+tool: required argument `--target` is missing
+Build one input
+
+Usage: tool build [OPTIONS] <INPUT>
+
+Arguments:
+  <INPUT>
+
+Options:
+      --mode <MODE>      Build mode [default: debug] [possible values: debug, release, small]
+      --jobs <JOBS>      [default: 2]
+      --level <LEVEL>    [default: 0]
+      --target <TARGET>  Platform to build for
+  -h, --help             Print help
+$ tool build --target x --bogus in
+tool: unknown option `--bogus` for `tool build`
+Build one input
+
+Usage: tool build [OPTIONS] <INPUT>
+
+Arguments:
+  <INPUT>
+
+Options:
+      --mode <MODE>      Build mode [default: debug] [possible values: debug, release, small]
+      --jobs <JOBS>      [default: 2]
+      --level <LEVEL>    [default: 0]
+      --target <TARGET>  Platform to build for
+  -h, --help             Print help
+$ tool build --target x --mode release --jobs 255 --level -32768 in
+accepted
+$ tool clean extra
+tool: unexpected argument `extra` for `tool clean`
+Remove the outputs
+
+Usage: tool clean
+
+Options:
+  -h, --help  Print help
+$ tool deploy
+tool: unknown command `deploy` for `tool`
+Build things
+
+Usage: tool <COMMAND>
+
+Commands:
+  build       Build one input
+  clean       Remove the outputs
+  help        Print help for tool or one of its commands
+
+Options:
+  -h, --help  Print help

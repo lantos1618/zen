@@ -1,0 +1,65 @@
+// A derived command refuses a command line in the words of its types: an
+// enum lists its variants, an integer states its type's range, a missing
+// field is named, and an unknown option names the subcommand it was given
+// to. Each refusal comes with the help of the command it addressed.
+
+{ Res, Ok, Err } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Env } = std.env
+{ println, print } = std.io
+{ Cli, Spec, outcome } = std.cli
+
+Mode = { Debug | Release | Small }
+
+Build = {
+    mode :: Mode = Mode.Debug,
+    jobs :: u8 = 2,
+    level :: i16 = 0,
+    target :: str,
+    input: str,
+}
+
+Build.impl(Cli, {
+    about: "Build one input",
+    mode: Spec(help: "Build mode"),
+    target: Spec(help: "Platform to build for"),
+})
+
+Cmd = { Build: Build | Clean }
+Cmd.impl(Cli, { name: "tool", about: "Build things", Clean: Spec(help: "Remove the outputs") })
+
+run = (env: Env, a: Alloc, words: str) Res<AllocError> {
+    argv ::= a.Vec<str>();
+    argv.add("tool").try();
+    words.split(' ').loop((w) { argv.add(w).try(); });
+    println("$ tool {}", words);
+    outcome<Cmd>(env, a, argv).match({
+        Ok(_)     => println("accepted"),
+        Err(stop) => stop.match({
+            Help(text)       => print("{}", text.view()),
+            Refused(refusal) => {
+                println("{}: {}", refusal.program, refusal.message.view());
+                print("{}", refusal.help.view());
+            },
+            Failed(_)        => println("out of memory"),
+        }),
+    });
+    Ok
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    run(env, a, "build --target x --mode fast in").try();
+    run(env, a, "build --target x --jobs 256 in").try();
+    run(env, a, "build --target x --level -32769 in").try();
+    run(env, a, "build --target x --jobs many in").try();
+    run(env, a, "build --target x").try();
+    run(env, a, "build in").try();
+    run(env, a, "build --target x --bogus in").try();
+    run(env, a, "build --target x --mode release --jobs 255 --level -32768 in").try();
+    run(env, a, "clean extra").try();
+    run(env, a, "deploy").try();
+    Ok(0)
+}

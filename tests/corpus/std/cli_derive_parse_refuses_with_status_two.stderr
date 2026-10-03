@@ -1,0 +1,2 @@
+tool: invalid value `300` for `--count`: expected an integer from 0 to 255
+Usage: tool [OPTIONS] <NAME>

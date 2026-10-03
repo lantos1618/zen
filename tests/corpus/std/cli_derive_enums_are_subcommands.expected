@@ -1,0 +1,120 @@
+$ git fetch --all origin
+fetch all=true remote=origin
+$ git remote add origin https://example.com/r
+remote add origin https://example.com/r
+$ git remote show
+remote show
+$ git remote dry-run
+remote dry-run
+$ git init
+init
+$ git -V
+git 2.0.1
+$ git 
+refused: []
+Track changes
+
+Usage: git [OPTIONS] <COMMAND>
+
+Commands:
+  fetch          Download objects
+  remote         Manage remotes
+  init           Create a repository
+  help           Print help for git or one of its commands
+
+Options:
+  -V, --version  Print the version
+  -h, --help     Print help
+
+See the manual for more.
+$ git -h
+Track changes
+
+Usage: git [OPTIONS] <COMMAND>
+
+Commands:
+  fetch          Download objects
+  remote         Manage remotes
+  init           Create a repository
+  help           Print help for git or one of its commands
+
+Options:
+  -V, --version  Print the version
+  -h, --help     Print help
+
+See the manual for more.
+$ git help remote
+Manage remotes
+
+Usage: git remote <COMMAND>
+
+Commands:
+  add         Add a remote
+  show        List the remotes
+  dry-run     Say what would change
+  help        Print help for git remote or one of its commands
+
+Options:
+  -h, --help  Print help
+$ git remote -h
+Manage remotes
+
+Usage: git remote <COMMAND>
+
+Commands:
+  add         Add a remote
+  show        List the remotes
+  dry-run     Say what would change
+  help        Print help for git remote or one of its commands
+
+Options:
+  -h, --help  Print help
+$ git -h remote add
+Add a remote
+
+Usage: git remote add <NAME> <URL>
+
+Arguments:
+  <NAME>
+  <URL>
+
+Options:
+  -h, --help  Print help
+$ git remote help add
+Add a remote
+
+Usage: git remote add <NAME> <URL>
+
+Arguments:
+  <NAME>
+  <URL>
+
+Options:
+  -h, --help  Print help
+$ git help help
+Print help for git or one of its commands
+
+Usage: git help [COMMAND]
+
+Arguments:
+  [COMMAND]   The command to describe
+
+Options:
+  -h, --help  Print help
+$ git help push
+refused: [unknown command `push` for `git`]
+Track changes
+
+Usage: git [OPTIONS] <COMMAND>
+
+Commands:
+  fetch          Download objects
+  remote         Manage remotes
+  init           Create a repository
+  help           Print help for git or one of its commands
+
+Options:
+  -V, --version  Print the version
+  -h, --help     Print help
+
+See the manual for more.

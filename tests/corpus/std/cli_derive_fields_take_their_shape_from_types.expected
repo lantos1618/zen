@@ -1,0 +1,31 @@
+$ tool in.zen
+verbose=false jobs=2 depth=1 offset=0 shift=-3 level=Normal label=none
+define= out=- retries=0 tone=- input=in.zen output=-
+$ tool -v -j 9 --depth 255 --offset -42 --shift 127 --level very-loud --label x -D a -D b -o out.c --retries 65535 --tone quiet in.zen out
+verbose=true jobs=9 depth=255 offset=-42 shift=127 level=VeryLoud label=x
+define=[a][b] out=out.c retries=65535 tone=Quiet input=in.zen output=out
+$ tool --jobs=4294967295 --offset -9223372036854775808 --shift -128 in.zen
+verbose=false jobs=4294967295 depth=1 offset=-9223372036854775808 shift=-128 level=Normal label=none
+define= out=- retries=0 tone=- input=in.zen output=-
+$ tool -h
+Build one input
+
+Usage: tool [OPTIONS] <INPUT> [OUTPUT]
+
+Arguments:
+  <INPUT>                  The input file
+  [OUTPUT]
+
+Options:
+  -v, --verbose            Print more detail
+  -j, --jobs <N>           Worker count [default: 2]
+      --depth <DEPTH>      [default: 1]
+      --offset <OFFSET>    [default: 0]
+      --shift <SHIFT>
+      --level <LEVEL>      [default: normal] [possible values: quiet, normal, very-loud]
+      --label <LABEL>      [default: none]
+  -D, --define <NAME>      Add a definition [repeatable]
+  -o, --out <OUT>          Write here
+      --retries <RETRIES>
+      --tone <TONE>        [possible values: quiet, normal, very-loud]
+  -h, --help               Print help

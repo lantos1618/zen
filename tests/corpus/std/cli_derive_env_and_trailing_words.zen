@@ -1,0 +1,67 @@
+// A field's Spec may name an environment variable, consulted when the
+// command line leaves the field out; the command line still wins. A
+// Vec<str> field whose Spec says `trailing: true` takes the words after
+// `--` untouched, options included. The variables come from the `.env`
+// file beside this test.
+
+{ Res, Ok, Err } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Env } = std.env
+{ println, print } = std.io
+{ Cli, Spec, outcome } = std.cli
+
+Run = {
+    jobs :: u32 = 1,
+    color :: bool = false,
+    profile :: Res<str>,
+    target: Res<str>,
+    args :: Vec<str>,
+}
+
+Run.impl(Cli, {
+    name: "tool",
+    about: "Run a target",
+    jobs: Spec(help: "Worker count", env: "CLI_DERIVE_JOBS"),
+    color: Spec(help: "Color the output", env: "CLI_DERIVE_COLOR"),
+    profile: Spec(help: "Profile to use", env: "CLI_DERIVE_UNSET"),
+    args: Spec(trailing: true),
+})
+
+run = (env: Env, a: Alloc, words: str) Res<AllocError> {
+    argv ::= a.Vec<str>();
+    argv.add("tool").try();
+    (!words.is_empty()).then(() { words.split(' ').loop((w) { argv.add(w).try(); }); });
+    println("$ tool {}", words);
+    outcome<Run>(env, a, argv).match({
+        Ok(r)     => {
+            rest ::= a.String().try();
+            r.args.loop((w) { rest.fmt("[{}]", w).try(); });
+            println(
+                "jobs={} color={} profile={} target={} args={}",
+                r.jobs,
+                r.color,
+                r.profile.value_or("-"),
+                r.target.value_or("-"),
+                rest.view()
+            );
+        },
+        Err(stop) => stop.match({
+            Help(text)       => print("{}", text.view()),
+            Refused(refusal) => println("refused: {}", refusal.message.view()),
+            Failed(_)        => println("out of memory"),
+        }),
+    });
+    Ok
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    run(env, a, "").try();
+    run(env, a, "--jobs 3 app").try();
+    run(env, a, "app -- --jobs 9 -h x").try();
+    run(env, a, "-- a b").try();
+    run(env, a, "-h").try();
+    Ok(0)
+}

@@ -1,0 +1,21 @@
+// Moving a payload out of `h.saved` leaves the place dead until it is
+// assigned again; once it is, it can be matched and moved out once more.
+
+{ Res, Ok, None, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+Buf = { id: i32 }
+Buf.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id) } })
+sink = (b: Buf) { g = consume b; println("sink {}", g.id) }
+Holder = { saved :: Res<Buf> = None }
+
+main = (env: Env) Res<i32, IoError> {
+    h ::= Holder();
+    h.saved = Ok(Buf(id: 7));
+    h.saved.match({ Ok(m) => sink(consume m), None => () });
+    h.saved = Ok(Buf(id: 8));
+    h.saved.match({ Ok(m) => sink(consume m), None => () });
+    h.saved = None;
+    Ok(0)
+}

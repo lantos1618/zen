@@ -44,6 +44,9 @@ OwnVar* = {
     // A match binding of a value this frame reaches through a parameter it
     // does not own: the parameter's name. The bound value is the caller's.
     lent* :: Res<str> = None,
+    // A match binding of a place this frame owns: the matched place.
+    // Moving the binding out moves the payload out of that place.
+    from :: Res<ExprId> = None,
 }
 
 // Field overrides are immutable between snapshots. An absent field inherits
@@ -1162,6 +1165,7 @@ consume_name = (c :: Checker, o :: Own, id: ExprId, text: str)
         None  => Ok,
         Ok(i) => {
             c.refuse_lent(o, node.span, i).try();
+            c.move_matched(o, node.span, i).try();
             o.kill(i, "", node.span)
         },
     }).try();
@@ -1637,11 +1641,15 @@ own_match = (c :: Checker, o :: Own, m: Match, ctx: Ctx)
     });
     joined ::= c.alloc.Vec<Place>();
     lent    = c.lent_scrutinee(o, m.scrutinee);
+    from: Res<ExprId> = lent.match({
+        Ok(_) => None,
+        None  => c.path_root(o, m.scrutinee).match({ None => None, Ok(_) => Ok(m.scrutinee) }),
+    });
     m.arms.loop((h, a) {
         o.restore_provenance(before);
         o.set_dead(entry).try();
         vmark = o.vars.len;
-        c.bind_pattern(o, a.pattern, lent).try();
+        c.bind_pattern(o, a.pattern, lent, from).try();
         c.own_expr(o, a.body, ctx).try();
         o.release(vmark).try();
         o.join_provenance(origins).try();
@@ -1674,16 +1682,26 @@ lent_scrutinee = (c :: Checker, o :: Own, id: ExprId) Res<str> {
 }
 
 // The names a destructuring pattern binds, scoped to its arm.
-bind_pattern = (c :: Checker, o :: Own, id: PatternId, lent: Res<str>)
-               Res<AllocError> {
+bind_pattern = (
+    c    :: Checker,
+    o    :: Own,
+    id   : PatternId,
+    lent : Res<str>,
+    from : Res<ExprId>
+) Res<AllocError> {
     c.tree.pattern_at(id).kind.match({
-        Destructure(d) => c.bind_binder(o, d.binder, lent),
+        Destructure(d) => c.bind_binder(o, d.binder, lent, from),
         _              => Ok,
     })
 }
 
-bind_binder = (c :: Checker, o :: Own, id: PatternId, lent: Res<str>)
-              Res<AllocError> {
+bind_binder = (
+    c    :: Checker,
+    o    :: Own,
+    id   : PatternId,
+    lent : Res<str>,
+    from : Res<ExprId>
+) Res<AllocError> {
     node = c.tree.pattern_at(id);
     node.kind.match({
         Name(pn)       => (pn.name.segments.len == 1).match({
@@ -1700,10 +1718,11 @@ bind_binder = (c :: Checker, o :: Own, id: PatternId, lent: Res<str>)
                 source: None,
                 fields: o.alloc.Vec<FieldOrigin>(),
                 span: node.span,
-                lent: lent
+                lent: lent,
+                from: from
             )),
         }),
-        Destructure(d) => c.bind_binder(o, d.binder, lent),
+        Destructure(d) => c.bind_binder(o, d.binder, lent, from),
         _              => Ok,
     })
 }
@@ -1720,6 +1739,29 @@ refuse_lent = (c :: Checker, o :: Own, span: Span, root: usize)
                 name: var.name,
                 param: par
             ))),
+        }),
+    })
+}
+
+// Moving a match binding out takes its payload out of the matched place,
+// which is dead from there on, as if the place itself had been consumed.
+move_matched = (c :: Checker, o :: Own, span: Span, root: usize)
+               Res<AllocError> {
+    o.vars.get(root).match({
+        None    => Ok,
+        Ok(var) => var.from.match({
+            None        => Ok,
+            Ok(matched) => c.path_root(o, matched).match({
+                None    => Ok,
+                Ok(top) => {
+                    field = c.tree.expr_at(matched).kind.match({
+                        Access(a) => a.name.text,
+                        _         => "",
+                    });
+                    c.refuse_pinned_at(o, span, top).try();
+                    o.kill(top, field, span)
+                },
+            }),
         }),
     })
 }

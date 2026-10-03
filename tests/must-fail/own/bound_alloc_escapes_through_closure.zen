@@ -1,0 +1,30 @@
+// `fill(arena)` builds an Alloc over the place `arena` names, and the Vec
+// the closure returns keeps that Alloc. Moving `arena` into the Doc leaves
+// the Vec pointing at the moved-from slot in `open`'s frame, which is gone
+// once `open` returns.
+
+{ Res, Ok, Drop, Range } = std.core
+{ Alloc, AllocError, Arena } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ println } = std.io
+
+Doc = {
+    arena :: Arena,
+    items :: Vec<u8>,
+}
+Doc.impl(Drop, { drop = (self :: @Self) { self.arena.drop(); } })
+doc_in = (arena :: Arena, fill: (a: Alloc) Vec<u8>) Doc {
+    items = fill(arena);
+    Doc(arena: consume arena, items: items)
+}
+open = (env: Env) Doc {
+    arena ::= env.mem.alloc();
+    doc_in(consume arena, (a) Vec<u8> { a.Vec<u8>() })
+}
+main = (env: Env) Res<i32, AllocError> {
+    d ::= open(env);
+    Range(0, 100).loop((h, i) { d.items.add(7).ignore(); });
+    println("{}", d.items.len);
+    Ok(0)
+}

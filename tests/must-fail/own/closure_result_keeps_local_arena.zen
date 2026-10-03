@@ -1,0 +1,19 @@
+// The closure turns `arena` into an Alloc and returns a Vec that keeps it.
+// That Alloc points at `arena` in this frame, so the Vec may not leave it.
+
+{ Res, Ok, Range } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ Env } = std.env
+{ println } = std.io
+
+mkvec = (env: Env, fill: (a: Alloc) Vec<u8>) Vec<u8> {
+    arena ::= env.mem.alloc();
+    fill(arena)
+}
+main = (env: Env) Res<i32, AllocError> {
+    v ::= mkvec(env, (a) Vec<u8> { a.Vec<u8>() });
+    Range(0, 100).loop((h, i) { v.add(7).ignore(); });
+    println("{}", v.len);
+    Ok(0)
+}

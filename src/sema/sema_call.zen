@@ -1728,13 +1728,18 @@ sig_args_handle_check = (
         }),
         _       => false,
     });
+    params ::= c.alloc.Vec<TyId>();
+    c.fn_params(ty, params).try();
     spliced.match({
-        true  => Ok,
-        false => {
-            params ::= c.alloc.Vec<TyId>();
-            c.fn_params(ty, params).try();
-            c.args_handle_check(call.args, params, off, ctx)
+        // A loop handle may travel through an inlined closure, but a
+        // concrete value it turns into a bound value is a view all the same.
+        true  => {
+            call.args.loop((h, i, a) {
+                c.note_bound_view(a.value, params.ty_at(i + off)).try();
+            });
+            Ok
         },
+        false => c.args_handle_check(call.args, params, off, ctx),
     })
 }
 

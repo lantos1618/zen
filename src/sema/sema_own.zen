@@ -554,11 +554,11 @@ Own* = {
 
     // The moved-out places at this point, to restore or join later.
     dead_state = (self: @Self) Res<Vec<Place>, AllocError> {
-        self.dead.filter(self.alloc, (p) { true })
+        copy_places(self.alloc, self.dead)
     }
 
     set_dead = (self :: @Self, saved: Vec<Place>) Res<AllocError> {
-        self.dead = saved.filter(self.alloc, (p) { true }).try();
+        self.dead = copy_places(self.alloc, saved).try();
         Ok
     }
 
@@ -590,6 +590,12 @@ Own* = {
             .try();
         self.vars.truncate(mark);
     }
+}
+
+copy_places = (a: Alloc, from: Vec<Place>) Res<Vec<Place>, AllocError> {
+    out ::= a.Vec<Place>();
+    from.loop((h, p) { out.add(p).try(); });
+    Ok(out)
 }
 
 Own* = (a: Alloc) Res<Own, AllocError> {

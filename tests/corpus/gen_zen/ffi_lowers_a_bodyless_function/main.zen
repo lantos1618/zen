@@ -8,7 +8,7 @@
 { Checker } = sema.sema_check
 { Emit } = gen.gen_emit
 { CBackend, emit_program } = gen.gen_c
-{ Cli, cli } = zen
+{ cli } = zen
 { Res, Ok } = std.core
 { println } = std.io
 { Build } = zen.zen_build

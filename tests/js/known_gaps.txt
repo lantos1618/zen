@@ -90,6 +90,7 @@ tests/corpus/env/proc_streams_before_exit # UNSUPPORTED: proc_streams_before_exi
 tests/corpus/env/thread_periodic_worker # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ev
 tests/corpus/env/threads_spawn_joins_two_bodies # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/env/threads_spawn_many_and_join_in_order # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
+tests/corpus/errors-res/a_union_of_errors_is_an_error # UNSUPPORTED: a_union_of_errors_is_an_error.zen:24:14: error: unsupported by this backend: a value conversion this backend does not model (`
 tests/corpus/errors-try/fallible_inline_helper_in_thread/main # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/errors-try/inlined_helpers_keep_lexical_returns/main # UNSUPPORTED: main.zen:96:9: error: unsupported by this backend: an expression without a checked type
 tests/corpus/errors-try/try_on_an_all_ok_match_never_widens/ # UNSUPPORTED: main.zen:20:5: error: unsupported by this backend: an unknown variant (`Res!i32,main.Fail|main.Kind|

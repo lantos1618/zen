@@ -243,6 +243,8 @@ The scanner reads the whole literal as one token, and the parser keeps its value
 
 A field the construction omits **is its default**, not zero. `Cursor()` on a `Cursor` whose every field declares a value is that value in every field, and the same is true of the fields a partial construction leaves out.
 
+**A field written `Res<T>` with no default may be omitted, and omission supplies `None`**, never the `Ok` of a zero: `Foo(name: 1)` on `Foo = { name: i32, a: Res<i32> }` has `a` equal to `None`. It is the field form of the trailing `Res<T>` parameter rule, with the same limit: a failing `Res` — `Res<R>` with R an Error, or `Res<T, E>` — is required, because failure is not absence. Every other field with no default is required.
+
 **The values in a list run left to right.** A call's arguments, a construction's field values, and an array literal's elements evaluate in the order they are written — `three(a.tick(), b.tick())` runs the left tick first, `Pair(x: d.tick(), y: d.tick())` reads for `x` before it reads for `y`, and `[a.tick(), b.tick()]` runs the left element first. C leaves both questions open — a call's arguments are unordered (C11 6.5.2.2p10) and a compound literal's initialiser expressions are indeterminately sequenced (C11 6.7.9p23) — so the backend holds each side-effecting value in a temporary of its own and never asks the C compiler. A Zen program means one thing; which C compiler builds its output is nobody's business but the build's.
 
 **Method rules**, everywhere. Export (`*`) and overridability (`=` / `::=`) are orthogonal: exported-but-final is `name* = sig {..}`, and on methods `::=` means impls may rebind, not runtime mutation.

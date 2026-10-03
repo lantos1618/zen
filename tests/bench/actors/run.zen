@@ -80,7 +80,10 @@ run_one = (
         Err(_)   => out.add("FAILED to start").try(),
         Ok(done) => {
             done.out.view().split('\n').loop((l) {
-                l.starts_with("bench=").then(() { out.add(l).try(); });
+                l.starts_with("bench=").then(() {
+                    (out.len() > 0).then(() { out.add(" ").try(); });
+                    out.add(l).try();
+                });
             });
             (out.len() == 0).then(
                 () { out.fmt("FAILED exit {}", done.code).try(); }

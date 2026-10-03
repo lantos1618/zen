@@ -1,0 +1,9 @@
+// Fails only in a declaration no importer names, the shape std.net.url
+// once had: a mutable number with no written type is an i64, and a u16
+// field refuses it. The gate imports `Port`, so it must still find this.
+Port* = { value*: u16 }
+
+default_port = (secure: bool) Port {
+    port ::= secure.match({ true => 443, false => 80 });
+    Port(value: port)
+}

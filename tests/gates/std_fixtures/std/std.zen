@@ -1,0 +1,2 @@
+// The fixture library's root module; its only export is a re-export.
+{ answer* } = std.clean

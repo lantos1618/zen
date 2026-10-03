@@ -1,0 +1,2 @@
+// Exports nothing, so no program can import it.
+hidden = () u16 { 7 }

@@ -31,7 +31,7 @@ parse_url* = (url: str) Res<ParsedUrl, UrlError> {
     (secure || scheme.eq_ignore_case("http")).ensure(UrlError.Invalid).try();
 
     host ::= host_port;
-    port ::= secure.match({ true => 443, false => 80 });
+    port :: u16 = secure.match({ true => 443, false => 80 });
     host_port.find(':').match({
         None      => (),
         Ok(colon) => {

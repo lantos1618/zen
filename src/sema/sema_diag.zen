@@ -769,7 +769,11 @@ write_under_view = (out :: String, f: CaptureFault) Res<AllocError> {
 // that copy when the block ends, after this statement.
 write_under_defer = (out :: String, f: CaptureFault, how: str)
                     Res<AllocError> {
-    out.fmt(" {} is {} while a deferred closure that reads it at the end of the block is pending (captured at ", f.place, how).try();
+    out.fmt(
+        " {} is {} while a deferred closure that reads it at the end of the block is pending (captured at ",
+        f.place,
+        how
+    ).try();
     out.write_at(f.at).try();
     out.add(
         ") — the closure keeps the value it copied then, which can be dropped before the closure runs; register the defer after the last move or assignment of it"

@@ -58,8 +58,12 @@ check_instance_copies* = (c :: Checker, id: ExprId) Res<AllocError> {
         Ok(call) => {
             found :: Res<Span> = None;
             Range(0, call.inst.len()).loop((h, i) {
-                var = call.inst.var_at(i).match({ Ok(v) => v, None => UNRESOLVED });
-                arg = call.inst.arg_at(i).match({ Ok(a) => a, None => UNRESOLVED });
+                var = call.inst.var_at(
+                    i
+                ).match({ Ok(v) => v, None => UNRESOLVED });
+                arg = call.inst.arg_at(
+                    i
+                ).match({ Ok(a) => a, None => UNRESOLVED });
                 c.contains_drop(arg).try().then(() {
                     seen ::= c.alloc.Vec<BlockId>();
                     found = c.copy_site(call.body, var, seen).try();
@@ -109,7 +113,11 @@ copy_site = (c :: Checker, body: Res<BlockId>, var: TyId, seen :: Vec<BlockId>)
                 sites.calls.loop((h, call) {
                     found.match({
                         Ok(_) => h.break(),
-                        None  => { found = c.call_copy_site(call, var, seen).try(); },
+                        None  => { found = c.call_copy_site(
+                            call,
+                            var,
+                            seen
+                        ).try(); },
                     });
                 });
                 Ok(found)
@@ -120,8 +128,8 @@ copy_site = (c :: Checker, body: Res<BlockId>, var: TyId, seen :: Vec<BlockId>)
 
 copied_name = (c :: Checker, names: Vec<ExprId>, var: TyId) Res<Span> {
     names.find((e) { c.holds_var(c.expr_type(e), var) }).match({
-        None    => None,
-        Ok(e)   => Ok(c.tree.expr_at(e).span),
+        None  => None,
+        Ok(e) => Ok(c.tree.expr_at(e).span),
     })
 }
 
@@ -148,8 +156,12 @@ call_copy_site = (c :: Checker, id: ExprId, var: TyId, seen :: Vec<BlockId>)
             Ok(call) => {
                 found :: Res<Span> = None;
                 Range(0, call.inst.len()).loop((h, i) {
-                    inner = call.inst.var_at(i).match({ Ok(v) => v, None => UNRESOLVED });
-                    arg   = call.inst.arg_at(i).match({ Ok(a) => a, None => UNRESOLVED });
+                    inner = call.inst.var_at(
+                        i
+                    ).match({ Ok(v) => v, None => UNRESOLVED });
+                    arg   = call.inst.arg_at(
+                        i
+                    ).match({ Ok(a) => a, None => UNRESOLVED });
                     c.holds_var(arg, var).then(() {
                         found = c.copy_site(call.body, inner, seen).try();
                     });

@@ -566,9 +566,7 @@ Own* = {
     // write on one path does not refill the place on another.
     join_dead = (self :: @Self, other: Vec<Place>) Res<AllocError> {
         other.loop((h, p) {
-            (p.root < self.vars.len && !self.is_dead(p.root, p.field)).then(
-                () { self.dead.add(p).try(); }
-            );
+            (p.root < self.vars.len && !self.is_dead(p.root, p.field)).then(() { self.dead.add(p).try(); });
         });
         Ok
     }
@@ -1615,9 +1613,12 @@ report_back_edge = (c :: Checker, o :: Own, entry: Vec<Place>)
     o.newly_dead(entry).try().loop((h, p) {
         p.invalidated.match({
             true  => c.report_consumed(o, p.span, p.root, p.field).try(),
-            false => c.refuse(p.span, SemaFault.ConsumedPerRun(NameFault(
-                name: c.place_name(o, p.root, p.field).try()
-            ))).try(),
+            false => c.refuse(
+                p.span,
+                SemaFault.ConsumedPerRun(NameFault(
+                    name: c.place_name(o, p.root, p.field).try()
+                ))
+            ).try(),
         });
     });
     Ok;
@@ -1640,7 +1641,7 @@ own_match = (c :: Checker, o :: Own, m: Match, ctx: Ctx)
         )).try();
     });
     joined ::= c.alloc.Vec<Place>();
-    lent    = c.lent_scrutinee(o, m.scrutinee);
+    lent              = c.lent_scrutinee(o, m.scrutinee);
     from: Res<ExprId> = lent.match({
         Ok(_) => None,
         None  => c.path_root(o, m.scrutinee).match({ None => None, Ok(_) => Ok(m.scrutinee) }),
@@ -1675,7 +1676,10 @@ lent_scrutinee = (c :: Checker, o :: Own, id: ExprId) Res<str> {
             None  => None,
             Ok(v) => v.lent.match({
                 Ok(root) => Ok(root),
-                None     => v.owned.match({ true => None, false => Ok(v.name) }),
+                None     => v.owned.match({
+                    true  => None,
+                    false => Ok(v.name),
+                }),
             }),
         }),
     })
@@ -1735,10 +1739,13 @@ refuse_lent = (c :: Checker, o :: Own, span: Span, root: usize)
         None    => Ok,
         Ok(var) => var.lent.match({
             None    => Ok,
-            Ok(par) => c.refuse(span, SemaFault.ConsumeLentPayload(LentFault(
-                name: var.name,
-                param: par
-            ))),
+            Ok(par) => c.refuse(
+                span,
+                SemaFault.ConsumeLentPayload(LentFault(
+                    name: var.name,
+                    param: par
+                ))
+            ),
         }),
     })
 }

@@ -71,9 +71,10 @@ refuse_dropped_before_defer = (c :: Checker, o :: Own, span: Span, root: usize)
         false => Ok,
         true  => c.place_name(o, root, "").match({
             Err(_)    => Ok,
-            Ok(place) => c.refuse(span, SemaFault.DroppedBeforeDefer(NameFault(
-                name: place
-            ))),
+            Ok(place) => c.refuse(
+                span,
+                SemaFault.DroppedBeforeDefer(NameFault(name: place))
+            ),
         }),
     })
 }
@@ -127,10 +128,13 @@ refuse_deferred_write* = (c :: Checker, o :: Own, span: Span, root: usize)
             false => Ok,
             true  => c.place_name(o, root, "").match({
                 Err(_)    => Ok,
-                Ok(place) => c.refuse(span, SemaFault.WrittenUnderDefer(CaptureFault(
-                    place: place,
-                    at: pin.span
-                ))),
+                Ok(place) => c.refuse(
+                    span,
+                    SemaFault.WrittenUnderDefer(CaptureFault(
+                        place: place,
+                        at: pin.span
+                    ))
+                ),
             }),
         }),
     })

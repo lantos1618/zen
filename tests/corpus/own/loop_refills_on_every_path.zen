@@ -8,7 +8,9 @@
 Buf = { id: i32 }
 Buf.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id) } })
 sink = (b: Buf) { println("sink {}", b.id) }
-fresh = (n: i32) Res<Buf> { (n > 1).match({ true => Ok(Buf(id: n)), false => None }) }
+fresh = (n: i32) Res<Buf> { (n > 1).match({ true => Ok(Buf(
+    id: n
+)), false => None }) }
 
 main = (env: Env) Res<i32, IoError> {
     cur ::= Buf(id: 1);

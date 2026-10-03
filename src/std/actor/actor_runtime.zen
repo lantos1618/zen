@@ -40,7 +40,8 @@
 { atomic_swap_usize, atomic_load_u32, atomic_cas_u32, atomic_store_u32 } = std.sys
 { atomic_store_release_usize } = std.sys
 { thread_word, set_thread_word, process_block, call_entry, guarded_call, pointer_at, address_of } = std.sys
-{ cpu_count, monotonic_ns, nanosleep_ns, spin_hint, env_var, mmap, map_private_anonymous } = std.sys
+{ cpu_count, monotonic_ns, nanosleep_ns, spin_hint, env_var, mmap, map_private_anonymous, write_all } = std.sys
+{ str } = std.text
 { thread_spawn, thread_join, mutex_init, mutex_lock, mutex_unlock, cond_init } = std.sys.sys_thread
 { cond_wait, cond_signal, cond_broadcast, parker_init, park, unpark, park_clear } = std.sys.sys_thread
 { word_at, load, store, lock, unlock, alloc, free, size_of, set_checked } = std.actor.actor_pool
@@ -1638,6 +1639,7 @@ actor_shutdown* = () {
             });
         });
         astore(g, G_STATE, 2);
+        (env_number("ZEN_ACTOR_STATS", 0) != 0).then(() { print_stats(g, l); });
         Range(0, load(g, G_WORKERS)).loop((i) { unpark(parker_of(worker_at(g, i))); });
         mutex_lock(g.offset(G_SPARE_LOCK));
         cond_broadcast(g.offset(G_SPARE_COND));
@@ -1678,3 +1680,44 @@ ignore_word = (word: usize) {}
 
 // A status the caller has no use for.
 ignore_status = (code: i32) {}
+
+// ZEN_ACTOR_STATS=1: the runtime's counters on stderr at exit, one line.
+STAT_NAMES: str = "queued closed full releases breaks finalized handoffs preempts steals spreads failed"
+
+print_stats = (g: Ptr<u8>, l: Ptr<u8>) {
+    buf = new_block(g, l, 512);
+    (!buf.is_null()).then(() {
+        n :: usize = 0;
+        n = put_text(buf, n, "actor-runtime:");
+        i :: usize = 0;
+        STAT_NAMES.split(' ').loop((name) {
+            n = put_text(buf, n, " ");
+            n = put_text(buf, n, name);
+            n = put_text(buf, n, "=");
+            n = put_number(buf, n, aload(g, G_STATS + i));
+            i = i + 1;
+        });
+        n = put_text(buf, n, "\n");
+        write_all(2, str(data: buf, len: n)).ignore();
+        free_block(g, l, buf);
+    });
+}
+
+put_text = (buf: Ptr<u8>, at: usize, text: str) usize {
+    (text.len > 0).then(() { buf.offset(at).copy_from(text.ptr(), text.len); });
+    at + text.len
+}
+
+put_number = (buf: Ptr<u8>, at: usize, value: usize) usize {
+    digits :: usize = 1;
+    scale  ::= value;
+    loop(() { scale >= 10 }, (h) { scale = scale / 10; digits = digits + 1; });
+    v ::= value;
+    k ::= digits;
+    loop(() { k > 0 }, (h) {
+        k = k - 1;
+        buf.write(at + k, (48 + v % 10).to_u8().value_or(48));
+        v = v / 10;
+    });
+    at + digits
+}

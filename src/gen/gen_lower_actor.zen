@@ -48,8 +48,10 @@ ActorLayout* = {
     context_ty*: TyId,
     arena_ty*: TyId,
     alloc_ty*: TyId,
+    arena_state_ty*: TyId,
     context*: usize,
     arena*: usize,
+    arena_state*: usize,
     size*: usize,
 }
 
@@ -122,22 +124,29 @@ layout_of = (
     ).try();
     arena_ty   = lo.std_type("Arena", "std.mem.mem_arena.Arena", span).try();
     alloc_ty   = lo.field_type(context_ty, "alloc", span).try();
+    pages_ty   = lo.pointee_of(
+        lo.field_type(arena_ty, "state", span).try()
+    ).try();
     state      = lo.class_of(actor_ty).try();
     context    = lo.class_of(context_ty).try();
     arena      = lo.class_of(arena_ty).try();
+    pages      = lo.class_of(pages_ty).try();
     at_context = round_up(size_of(state), align_of(context).larger(8));
     at_arena   = round_up(
         at_context + size_of(context),
         align_of(arena).larger(8)
     );
+    at_pages   = round_up(at_arena + size_of(arena), align_of(pages).larger(8));
     Ok(ActorLayout(
         actor_ty: actor_ty,
         context_ty: context_ty,
         arena_ty: arena_ty,
         alloc_ty: alloc_ty,
+        arena_state_ty: pages_ty,
         context: at_context,
         arena: at_arena,
-        size: round_up(at_arena + size_of(arena), 16)
+        arena_state: at_pages,
+        size: round_up(at_pages + size_of(pages), 16)
     ))
 }
 
@@ -202,36 +211,14 @@ spawn_actor* = (
         offset: 0,
         value: actor.slot
     ))).try();
-    // The arena's state is fresh zeroed pages, as `Mem.alloc()` makes it.
-    arena_state_ty = lo.pointee_of(
-        lo.field_type(layout.arena_ty, "state", span).try()
-    ).try();
-    state_bytes    = lo.word_const(
-        Scalar.U64,
-        size_of(lo.class_of(arena_state_ty).try()).larger(1).to_i64_bits()
-    ).try();
-    arena_state    = lo.slot_of(Scalar.Ptr).try();
-    lo.add(Instruction.MapPages(Pages(
-        out: arena_state,
-        bytes: state_bytes
-    ))).try();
-    no_arena   = lo.label().try();
-    have_arena = lo.label().try();
-    lo.branch_to(lo.is_null(arena_state).try(), no_arena, have_arena).try();
-    lo.start(no_arena);
-    lo.drop_value(
-        Place(base: Base.Through(record), offset: 0, ty: actor_ty),
-        span
-    ).try();
-    lo.actor_call(
-        "actor_discard",
-        lo.one(Source.Computed(cell)).try(),
-        span
-    ).try();
-    lo.fail(out, ty, "OutOfMemory", span).try();
-    lo.jump(done).try();
-    lo.start(have_arena);
-    arena = Place(
+    // The arena's state lives in the record, zeroed by the runtime: an
+    // arena with no pages yet, as `Mem.alloc()` makes it.
+    arena_state = lo.address(Place(
+        base: Base.Through(record),
+        offset: layout.arena_state,
+        ty: layout.arena_state_ty
+    )).try();
+    arena       = Place(
         base: Base.Through(record),
         offset: layout.arena,
         ty: layout.arena_ty
@@ -275,7 +262,6 @@ spawn_actor* = (
         Place(base: Base.Through(record), offset: 0, ty: actor_ty),
         span
     ).try();
-    lo.drop_value(arena, span).try();
     lo.actor_call(
         "actor_discard",
         lo.one(Source.Computed(cell)).try(),
@@ -756,12 +742,20 @@ actor_function* = (lo :: Lowerer, entry: ActorEntry) Res<Func, LowerError> {
     entry.kind.match({
         Stopped => {
             lo.drop_value(state, nowhere()).try();
-            lo.drop_value(
-                Place(
-                    base: Base.Through(record),
-                    offset: layout.arena,
-                    ty: layout.arena_ty
-                ),
+            // The Arena's state is in the record, which the runtime frees:
+            // give back its pages only.
+            pages = lo.address(Place(
+                base: Base.Through(record),
+                offset: layout.arena_state,
+                ty: layout.arena_state_ty
+            )).try();
+            lo.std_call(
+                "std.mem.mem_arena",
+                "release_pages",
+                lo.one(Source.Computed(Value(
+                    slot: pages,
+                    ty: lo.field_type(layout.arena_ty, "state", nowhere()).try()
+                ))).try(),
                 nowhere()
             ).try();
         },

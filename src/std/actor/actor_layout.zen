@@ -67,6 +67,7 @@ G_SPARE_IDLE*: usize = 19    // spare threads asleep, waiting for a worker
 G_ORPHANS*: usize = 20       // workers handed off, waiting for a thread (bit set)
 G_THREADS*: usize = 21       // threads started (workers, spares, sysmon)
 G_SYSMON_NS*: usize = 22     // sysmon tick; 0 when preemption is off
+G_ENV*: usize = 23           // the compilers' shared copy of the process Env
 G_STATS*: usize = 24         // counters, STATS words
 STATS*: usize = 16
 // Regions, in bytes.

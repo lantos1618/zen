@@ -141,17 +141,24 @@ Arena.impl(Alloc, {
 // Drop consumes the Arena owner and releases its page chain exactly once.
 Arena.impl(Drop, {
     drop = (self :: @Self) {
-        s = self.state.read(0);
-        page ::= s.head;
-        loop(!page.is_null(), (h) {
-            // Read the link before releasing: the header lives in the page.
-            prev = page.read(0).prev;
-            s.mem.release(page);
-            page = prev;
-        });
-        s.mem.release(self.state);
+        release_pages(self.state);
+        self.state.read(0).mem.release(self.state);
     }
 })
+
+// Release an arena's page chain, leaving its state where it is: for an
+// arena whose state lives inside another owner's memory (an actor's record,
+// which the actor runtime frees itself).
+release_pages* = (state: Ptr<ArenaState>) {
+    s = state.read(0);
+    page ::= s.head;
+    loop(!page.is_null(), (h) {
+        // Read the link before releasing: the header lives in the page.
+        prev = page.read(0).prev;
+        s.mem.release(page);
+        page = prev;
+    });
+}
 
 Mem* = {
     alloc* = (self: @Self) Arena

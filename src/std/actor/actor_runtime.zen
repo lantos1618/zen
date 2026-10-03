@@ -48,7 +48,7 @@
 { PB_ONCE, PB_GLOBALS, MAX_WORKERS, TURN_BATCH, RING, RING_MASK, BOUND, CYCLE_WALK } = std.actor.actor_layout
 { G_STATE, G_WORKERS, G_WORKER_BASE, G_IDLE, G_SPINNING, G_SLEEPING, G_DETACHED } = std.actor.actor_layout
 { G_LIVE, G_INJ_HEAD, G_INJ_TAIL, G_INJ_STUB, G_INJ_LOCK, G_SLOT_FRESH, G_JOINERS } = std.actor.actor_layout
-{ G_ENTRY, G_SPARE_IDLE, G_ORPHANS, G_THREADS, G_SYSMON_NS, G_STATS, G_CENTRAL } = std.actor.actor_layout
+{ G_ENTRY, G_SPARE_IDLE, G_ORPHANS, G_THREADS, G_SYSMON_NS, G_ENV, G_STATS, G_CENTRAL } = std.actor.actor_layout
 { G_JOIN_LOCK, G_JOIN_COND, G_SPARE_LOCK, G_SPARE_COND, G_EXIT_PARKER } = std.actor.actor_layout
 { G_THREAD_LIST, MAX_THREADS, GLOBALS_BYTES } = std.actor.actor_layout
 { S_QUEUED, S_CLOSED, S_FULL, S_RELEASES, S_BREAKS, S_FINALIZED, S_HANDOFFS } = std.actor.actor_layout
@@ -1345,7 +1345,23 @@ actor_new* = (record_bytes: usize, entry: usize, exit: usize) Ptr<u8> {
     })
 }
 
-// Where the compiler's record (state, Context, allocator) lives in a body.
+// One process-wide copy of `bytes` at `init`, made by the first caller; later
+// callers (and `bytes` 0) get the same copy. The compilers keep the process
+// Env here, so an actor's record need not carry its own copy of the Context:
+// a turn builds the Context from this and the actor's allocator.
+actor_env* = (bytes: usize, init: Ptr<u8>) Ptr<u8> {
+    g = globals();
+    (!g.is_null() && aload(g, G_ENV) == 0 && bytes > 0).then(() {
+        made = new_block(g, local(), bytes);
+        (!made.is_null()).then(() {
+            made.copy_from(init, bytes);
+            (acas(g, G_ENV, 0, addr(made)) != 0).then(() { free_block(g, local(), made); });
+        });
+    });
+    g.is_null().match({ true => g, false => at(aload(g, G_ENV)) })
+}
+
+// Where the compiler's record (state, allocator) lives in a body.
 actor_record* = (cell: Ptr<u8>) Ptr<u8> { cell.offset(B_RECORD) }
 
 // Release a body whose actor never started.

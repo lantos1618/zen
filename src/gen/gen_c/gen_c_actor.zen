@@ -214,10 +214,14 @@ emit_actor_defs* = (be :: CBackend, out :: Emit) Res<AllocError> {
 // The C symbol of a std.actor.actor_runtime entry point, queued so its body
 // (and everything it reaches) is emitted.
 runtime_symbol = (be :: CBackend, name: str) Res<String, AllocError> {
+    be.std_symbol("std.actor.actor_runtime", name)
+}
+
+std_symbol = (be :: CBackend, module: str, name: str) Res<String, AllocError> {
     defs ::= be.alloc.Vec<Def>();
     be.world().exported_named(name, defs).try();
     sym   ::= be.alloc.String().try();
-    qname ::= be.alloc.String("std.actor.actor_runtime.{name}").try();
+    qname ::= be.alloc.String("{module}.{name}").try();
     defs.find((d) { d.qname.eq(qname.view()) }).match({
         None    => Err(AllocError.OutOfMemory),
         Ok(def) => be.call_symbol(def, sym),
@@ -352,7 +356,8 @@ ActorSend = {
             Ok(t) => t,
             None  => TyId(index: 0),
         });
-        view       = be.write_record_view(n, self.actor_ty, context_ty).try();
+        view       = be.write_record_view(n, self.actor_ty).try();
+        context    = be.context_helper(context_ty).try();
         proto ::= be.alloc.String().try();
         proto.fmt(
             "{}void {}(uint8_t *zg_rec, uint8_t *zg_raw)",
@@ -366,6 +371,13 @@ ActorSend = {
             view.view()
         ).try();
         body.fmt("    {payload} *zg_msg = ({payload} *)zg_raw;\n").try();
+        context_c ::= be.alloc.String().try();
+        be.ctype(context_ty, context_c).try();
+        body.fmt(
+            "    {} *zg_ctx = {}((uint8_t *)&zg_self->zg_arena);\n",
+            context_c.view(),
+            context.view()
+        ).try();
         Range(2, sig.len).loop((h, i) {
             be.check.actor_byte_buffer(sig.ty_at(i)).then(() {
                 be.write_buffer_move(
@@ -386,8 +398,8 @@ ActorSend = {
         ).try();
         body.fmt("    (void)({}(&zg_self->zg_state, ", sym.view()).try();
         context_by_address.match({
-            true  => body.add("&zg_self->zg_ctx"),
-            false => body.add("zg_self->zg_ctx"),
+            true  => body.add("zg_ctx"),
+            false => body.add("*zg_ctx"),
         }).try();
         Range(2, sig.len).loop((h, i) {
             body.add(", ").try();
@@ -746,7 +758,9 @@ write_actor_spawn = (be :: CBackend, layout: ActorSpawnLayout)
     ))
 }
 
-// The record after the runtime's header: the state, the Context, the Arena.
+// The record after the runtime's header: the state, the Arena behind
+// Context.alloc, and that Arena's state. A turn builds its Context from the
+// Arena (`context_helper`), so the record holds no copy of the Env.
 write_actor_record = (
     be     :: CBackend,
     layout : ActorSpawnLayout,
@@ -754,42 +768,108 @@ write_actor_record = (
 ) Res<AllocError> {
     a ::= be.alloc.String().try();
     be.ctype(layout.spawn.actor_ty, a).try();
-    c ::= be.alloc.String().try();
-    be.ctype(layout.context_ty, c).try();
     ar ::= be.alloc.String().try();
     be.ctype(layout.arena_ty, ar).try();
+    st ::= be.alloc.String().try();
+    be.ctype(layout.state_ty, st).try();
     text ::= be.alloc.String().try();
     text.fmt(
-        "typedef struct {name} {{ {} zg_state; {} zg_ctx; {} zg_arena; }} {name};",
+        "typedef struct {name} {{ {} zg_state; {} zg_arena; {} zg_arena_state; }} {name};",
         a.view(),
-        c.view(),
-        ar.view()
+        ar.view(),
+        st.view()
     ).try();
     be.add_actor_def(text)
 }
 
 // What a turn entry sees of the record: its first two fields, laid out as
 // in every record of the actor type.
-write_record_view = (be :: CBackend, n: usize, actor: TyId, context: TyId)
+write_record_view = (be :: CBackend, n: usize, actor: TyId)
                     Res<String, AllocError> {
     name ::= be.alloc.String().try();
     sym_gen(name, "actor_view", n).try();
+    arena_ty = be.named_type_at("Arena", "std.mem.mem_arena.Arena").try().ok_or(AllocError.OutOfMemory).try();
     be.request_type(actor).try();
-    be.request_type(context).try();
+    be.request_type(arena_ty).try();
     a ::= be.alloc.String().try();
     be.ctype(actor, a).try();
-    c ::= be.alloc.String().try();
-    be.ctype(context, c).try();
+    ar ::= be.alloc.String().try();
+    be.ctype(arena_ty, ar).try();
     text ::= be.alloc.String().try();
     text.fmt(
-        "typedef struct {} {{ {} zg_state; {} zg_ctx; }} {};",
+        "typedef struct {} {{ {} zg_state; {} zg_arena; }} {};",
         name.view(),
         a.view(),
-        c.view(),
+        ar.view(),
         name.view()
     ).try();
     be.add_actor_def(text).try();
     Ok(name)
+}
+
+// The Context a turn receives, built per thread instead of stored in every
+// actor: the process Env (one copy, kept by the runtime, copied into the
+// thread's Context once) and the running actor's allocator. Only one turn
+// runs on a thread at a time and the Context is borrowed for the call, so
+// one per thread is enough.
+context_helper = (be :: CBackend, context: TyId) Res<String, AllocError> {
+    name ::= be.alloc.String("zg_actor_context").try();
+    be.need_thunk(name.view()).try().then(() {
+        env_ty   = be.field_of(context, "env").try().ok_or(AllocError.OutOfMemory).try();
+        alloc_ty = be.field_of(context, "alloc").try().ok_or(AllocError.OutOfMemory).try();
+        arena_ty = be.named_type_at("Arena", "std.mem.mem_arena.Arena").try().ok_or(AllocError.OutOfMemory).try();
+        [context, env_ty, alloc_ty, arena_ty].loop((h, ty) { be.request_type(ty).try() });
+        shared = be.runtime_symbol("actor_env").try();
+        c ::= be.alloc.String().try();
+        be.ctype(context, c).try();
+        e ::= be.alloc.String().try();
+        be.ctype(env_ty, e).try();
+        ar ::= be.alloc.String().try();
+        be.ctype(arena_ty, ar).try();
+        env_field   = be.actor_field("env").try();
+        alloc_field = be.actor_field("alloc").try();
+        handle ::= be.alloc.String().try();
+        be.fat_value("arena", arena_ty, alloc_ty, handle).try();
+        proto ::= be.alloc.String().try();
+        proto.fmt(
+            "{}{} *{}(uint8_t *raw)",
+            be.linkage(),
+            c.view(),
+            name.view()
+        ).try();
+        body ::= be.alloc.String().try();
+        body.fmt(
+            "    static __thread {} ctx;\n    static __thread int ready;\n",
+            c.view()
+        ).try();
+        body.fmt("    {} *arena = ({} *)raw;\n", ar.view(), ar.view()).try();
+        body.fmt(
+            "    if (!ready) {{ ctx.{} = *({} *){}(0, NULL); ready = 1; }}\n",
+            env_field,
+            e.view(),
+            shared.view()
+        ).try();
+        body.fmt(
+            "    ctx.{} = {};\n    return &ctx;\n",
+            alloc_field,
+            handle.view()
+        ).try();
+        be.add_function(name, proto, body).try();
+    });
+    Ok(name)
+}
+
+// `zg_ctx`, the Context a lifecycle entry passes, from the record's Arena.
+write_context = (be :: CBackend, body :: String) Res<AllocError> {
+    context = be.named_type_at("Context", "std.actor.actor_context.Context").try().ok_or(AllocError.OutOfMemory).try();
+    helper  = be.context_helper(context).try();
+    c ::= be.alloc.String().try();
+    be.ctype(context, c).try();
+    body.fmt(
+        "    {} *zg_ctx = {}((uint8_t *)&zg_self->zg_arena);\n",
+        c.view(),
+        helper.view()
+    )
 }
 
 // A byte buffer arrives as bytes copied into the message. Before the
@@ -823,7 +903,7 @@ write_buffer_move = (
     body.add("    {\n        unsigned char *bytes = NULL;\n").try();
     body.fmt("        if ({}.{len}) {{\n", field.view()).try();
     body.fmt(
-        "            {} result = zg_self->zg_ctx.{allocator}.{raw}(zg_self->zg_ctx.{allocator}.zg_self, {}.{len}, 1);\n",
+        "            {} result = zg_ctx->{allocator}.{raw}(zg_ctx->{allocator}.zg_self, {}.{len}, 1);\n",
         result_c.view(),
         field.view()
     ).try();
@@ -835,7 +915,7 @@ write_buffer_move = (
         field.view()
     ).try();
     body.fmt(
-        "        {}.{data} = bytes; {}.{capacity} = {}.{len}; {}.{allocator} = zg_self->zg_ctx.{allocator};\n    }}\n",
+        "        {}.{data} = bytes; {}.{capacity} = {}.{len}; {}.{allocator} = zg_ctx->{allocator};\n    }}\n",
         field.view(),
         field.view(),
         field.view(),
@@ -880,6 +960,7 @@ add_lifecycle_callback = (
     ).try();
     body ::= be.alloc.String().try();
     body.fmt("    {rec} *zg_self = ({rec} *)zg_rec;\n    (void)zg_raw;\n").try();
+    be.write_context(body).try();
     body.fmt(
         "    (void)({}(&zg_self->zg_state, {}));\n",
         sym.view(),
@@ -888,9 +969,9 @@ add_lifecycle_callback = (
     be.add_function(name, proto, body)
 }
 
-// A lifecycle behavior's context argument. The context lives in the actor
-// record for the whole call, so a borrowed context parameter
-// (gen_c_borrow.zen) receives its address.
+// A lifecycle behavior's context argument. The thread's Context outlives
+// the call, so a borrowed context parameter (gen_c_borrow.zen) receives its
+// address.
 context_arg = (
     be    :: CBackend,
     actor : TyId,
@@ -900,8 +981,8 @@ context_arg = (
     sig ::= be.alloc.Vec<TyId>();
     be.method_sig(actor, hit.site.decl, hit.f, hit.mi, inst, sig).try();
     be.passes_address(hit.f, 1, sig.ty_at(1)).try().match({
-        true  => Ok("&zg_self->zg_ctx"),
-        false => Ok("zg_self->zg_ctx"),
+        true  => Ok("zg_ctx"),
+        false => Ok("*zg_ctx"),
     })
 }
 
@@ -913,8 +994,8 @@ behavior_symbol = (be :: CBackend, actor: TyId, hit: BehaviorHit)
     be.member_symbol(actor, hit.site, hit.f.name.text, sig, inst)
 }
 
-// The stopped entry: the actor's own `stopped`, then Drop for its state and
-// its Arena (which releases every page the actor allocated).
+// The stopped entry: the actor's own `stopped`, then Drop for its state, then
+// every page its Arena allocated.
 write_stopped_callback = (
     be    :: CBackend,
     n     : usize,
@@ -936,6 +1017,7 @@ write_stopped_callback = (
     be.behavior_of(actor, "stopped").try().match({
         None    => Ok,
         Ok(hit) => {
+            be.write_context(body).try();
             sym = be.behavior_symbol(actor, hit).try();
             body.fmt(
                 "    (void)({}(&zg_self->zg_state, {}));\n",
@@ -948,10 +1030,10 @@ write_stopped_callback = (
         None    => Ok,
         Ok(sym) => body.fmt("    (void)({}(&zg_self->zg_state));\n", sym.view()),
     }).try();
-    be.drop_symbol(arena).try().match({
-        None    => Ok,
-        Ok(sym) => body.fmt("    (void)({}(&zg_self->zg_arena));\n", sym.view()),
-    }).try();
+    // The Arena's state lives in the record, which the runtime frees: give
+    // back the pages only.
+    release = be.std_symbol("std.mem.mem_arena", "release_pages").try();
+    body.fmt("    {}(&zg_self->zg_arena_state);\n", release.view()).try();
     be.add_function(name, proto, body).try();
     Ok(name)
 }
@@ -1015,18 +1097,9 @@ write_spawn_value = (be :: CBackend, lifecycle: ActorLifecycle)
         thread.view(),
         shutdown.view()
     ).try();
-    be.fmt(
-        "{} *{} = ({} *)malloc(sizeof({}));\n",
-        state_c.view(),
-        arena_state.view(),
-        state_c.view(),
-        state_c.view()
-    ).try();
     dst = be.temp(spawn.result_ty, "t").try();
-    be.fmt("if (!{} || !{}) {{\n", cell.view(), arena_state.view()).try();
+    be.fmt("if (!{}) {{\n", cell.view()).try();
     be.indent();
-    be.fmt("free({});\n", arena_state.view()).try();
-    be.fmt("if ({}) {}({});\n", cell.view(), discard.view(), cell.view()).try();
     be.drop_symbol(spawn.actor_ty).try().match({
         None       => Ok,
         Ok(symbol) => be.fmt("(void)({}(&{}));\n", symbol.view(), actor.view()),
@@ -1042,6 +1115,20 @@ write_spawn_value = (be :: CBackend, lifecycle: ActorLifecycle)
         lifecycle.record,
         record.view(),
         cell.view()
+    ).try();
+    // The process Env, kept once for every turn's Context.
+    shared = be.runtime_symbol("actor_env").try();
+    be.fmt(
+        "(void){}(sizeof({}), (uint8_t *)&{});\n",
+        shared.view(),
+        env.view(),
+        env.view()
+    ).try();
+    be.fmt(
+        "{} *{} = &{}->zg_arena_state;\n",
+        state_c.view(),
+        arena_state.view(),
+        rec.view()
     ).try();
     be.init_actor_fields(
         lifecycle,
@@ -1060,8 +1147,8 @@ write_spawn_value = (be :: CBackend, lifecycle: ActorLifecycle)
     ).try();
     be.fmt("if ({} != 0) {{\n", status.view()).try();
     be.indent();
-    // No turn will ever run: drop the state and let Arena.drop release both
-    // its pages and its state cell.
+    // No turn will ever run: drop the state. The Arena has allocated
+    // nothing yet, and its state goes with the body.
     be.write_failed_spawn_drop(layout, rec.view()).try();
     be.fmt("{}({});\n", discard.view(), cell.view()).try();
     be.write_assign_err(spawn.result_ty, "Unavailable", dst.view()).try();
@@ -1092,14 +1179,6 @@ write_failed_spawn_drop = (
         None       => Ok,
         Ok(symbol) => be.fmt(
             "(void)({}(&{}->zg_state));\n",
-            symbol.view(),
-            rec
-        ),
-    }).try();
-    be.drop_symbol(layout.arena_ty).try().match({
-        None       => Ok,
-        Ok(symbol) => be.fmt(
-            "(void)({}(&{}->zg_arena));\n",
             symbol.view(),
             rec
         ),
@@ -1134,28 +1213,6 @@ init_actor_fields = (
         "{rec}->zg_arena = (({}){{ .{} = {arena_state} }});\n",
         arena_c.view(),
         arena_field.view()
-    ).try();
-    alloc_value ::= be.alloc.String().try();
-    addr        ::= be.alloc.String().try();
-    addr.fmt("&{rec}->zg_arena").try();
-    be.fat_value(
-        addr.view(),
-        layout.arena_ty,
-        layout.alloc_ty,
-        alloc_value
-    ).try();
-    context_c ::= be.alloc.String().try();
-    be.ctype(layout.context_ty, context_c).try();
-    context_env ::= be.alloc.String().try();
-    context_env.sym_member("env").try();
-    context_alloc ::= be.alloc.String().try();
-    context_alloc.sym_member("alloc").try();
-    be.fmt(
-        "{rec}->zg_ctx = (({}){{ .{} = {env}, .{} = {} }});\n",
-        context_c.view(),
-        context_env.view(),
-        context_alloc.view(),
-        alloc_value.view()
     ).try();
     be.fmt("{rec}->zg_state = {actor};\n").try();
 }

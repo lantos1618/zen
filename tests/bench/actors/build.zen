@@ -1,0 +1,10 @@
+// The actor runtime benchmarks and stress scenarios, each for the C and the
+// native backend. Run them on dev-box, pinned: see README.md.
+{ Builder, BuildError, Codegen } = std.build
+{ Res, Ok, Path } = std.core
+
+build = (b :: Builder) Res<BuildError> {
+    b.exe("spawn", { src: Path("spawn.zen"), deps: [], backend: Codegen.C, out: Ok(Path("bin/c/spawn")) }).try();
+    b.exe("spawn-asm", { src: Path("spawn.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/spawn")) }).try();
+    Ok
+}

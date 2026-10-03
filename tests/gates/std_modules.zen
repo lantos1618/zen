@@ -1,0 +1,291 @@
+// Every standard-library module must check when a program imports it. A module
+// that no test imports is otherwise checked by nothing, so a language rule can
+// change underneath it unnoticed until a user's program imports it.
+//
+//     std_modules ZEN ROOT WORK FILE...
+//
+// ROOT is the standard library root (the directory holding `std`), and every
+// FILE lies under ROOT/std. For each FILE the gate writes WORK/import.zen, a
+// one-line program `{ Name } = std.x.y` importing one of the module's own
+// exports, and runs `ZEN check WORK --std ROOT --entry import.zen` on it. The
+// checker checks every declaration of an imported module, generic bodies
+// included, not only the names the program uses.
+//
+//     0   every module checks
+//     1   at least one does not; each is named on a `std_modules:` line,
+//         followed by the compiler's diagnostics indented beneath it
+//     2   the gate could not run on some module
+//
+// THE IMPORT NAMES AN EXPORT, NOT THE MODULE. An exported item wins over a
+// module of the same path, so `m = std.core.bool` binds the `bool` that
+// std.core exports and need not load std/core/bool.zen at all.
+//
+// THE FILE LIST ARRIVES ON ARGV, for the reason `line_cap.zen` gives at
+// length: `std.env.Fs` has no listing, so a gate over a file SET cannot
+// compute its own inputs.
+
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Res, Ok, None, Range, loop } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+FIRST_FILE: usize = 4
+ENTRY: str = "import.zen"
+
+Verdict = { Clean | Broken | Unrun }
+
+Tally = {
+    clean :: usize,
+    broken :: usize,
+    unrun :: usize,
+
+    count = (self :: @Self, v: Verdict) {
+        v.match({
+            Clean  => { self.clean = self.clean + 1; },
+            Broken => { self.broken = self.broken + 1; },
+            Unrun  => { self.unrun = self.unrun + 1; },
+        });
+    }
+}
+
+Gate = {
+    env: Env,
+    alloc: Alloc,
+    zen: str,
+    root: str,
+    work: str,
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    alloc ::= env.mem.alloc();
+    (env.argv.len <= FIRST_FILE).match({
+        true  => no_files(),
+        false => run(env, alloc),
+    })
+}
+
+no_files = () Res<i32, AllocError> {
+    println("usage: std_modules ZEN ROOT WORK FILE...");
+    println(
+        "std_modules: no module files given — this gate is checking nothing."
+    );
+    Ok(2);
+}
+
+run = (env: Env, alloc: Alloc) Res<i32, AllocError> {
+    gate = Gate(
+        env: env,
+        alloc: alloc,
+        zen: arg(env, 1),
+        root: arg(env, 2),
+        work: arg(env, 3),
+    );
+    tally ::= Tally(clean: 0, broken: 0, unrun: 0);
+    Range(FIRST_FILE, env.argv.len).loop((h, i) {
+        tally.count(check(gate, arg(env, i)).try());
+    });
+    report(tally)
+}
+
+check = (gate: Gate, file: str) Res<Verdict, AllocError> {
+    module ::= gate.alloc.String().try();
+    module_path(gate.root, file, module).try().match({
+        false => {
+            println(
+                "std_modules: {}: not a .zen file under {}/std",
+                file,
+                gate.root
+            );
+            Ok(Verdict.Unrun)
+        },
+        true  => gate.env.fs.read(gate.alloc, file).match({
+            Err(_)   => {
+                println("std_modules: {}: could not be read", file);
+                Ok(Verdict.Unrun)
+            },
+            Ok(text) => first_export(text.view()).match({
+                None     => {
+                    println(
+                        "std_modules: {} ({}) exports nothing at top level, so no program can import it",
+                        module.view(),
+                        file
+                    );
+                    Ok(Verdict.Broken)
+                },
+                Ok(name) => compile(gate, file, module.view(), name),
+            }),
+        }),
+    })
+}
+
+compile = (
+    gate   : Gate,
+    file   : str,
+    module : str,
+    name   : str
+) Res<Verdict, AllocError> {
+    entry ::= gate.alloc.String().try();
+    entry.fmt("{}/{}", gate.work, ENTRY).try();
+    program ::= gate.alloc.String().try();
+    program.fmt("{{ {} }} = {}\n", name, module).try();
+    argv ::= gate.alloc.Vec<str>();
+    [str, 7](gate.zen, "check", gate.work, "--std", gate.root, "--entry", ENTRY)
+        .loop((w) { argv.add(w).try(); });
+
+    gate.env.fs.write(entry.view(), program.view()).match({
+        Err(_) => {
+            println("std_modules: could not write {}", entry.view());
+            Ok(Verdict.Unrun)
+        },
+        Ok(_)  => gate.env.proc.run_argv(gate.alloc, "", argv).match({
+            Err(_)  => {
+                println("std_modules: could not run {}", gate.zen);
+                Ok(Verdict.Unrun)
+            },
+            Ok(got) => (got.code == 0).match({
+                true  => Ok(Verdict.Clean),
+                false => {
+                    println(
+                        "std_modules: {} ({}) does not check when imported:",
+                        module,
+                        file
+                    );
+                    indent(got.out.view());
+                    indent(got.err.view());
+                    Ok(Verdict.Broken)
+                },
+            }),
+        }),
+    })
+}
+
+// `ROOT/std/a/b.zen` is module `std.a.b`, and a folder's own file
+// `ROOT/std/a/a.zen` is module `std.a`. False when FILE is not a .zen file
+// under ROOT/std.
+module_path = (root: str, file: str, out :: String) Res<bool, AllocError> {
+    under = file.len > root.len + 5
+        && file.starts_with(root)
+        && file.index(root.len) == '/'
+        && file.ends_with(".zen");
+    body  = under.match({
+        true  => file.slice(root.len + 1, file.len - 4),
+        false => "",
+    });
+    named = (body == "std" || body.starts_with("std/")).match({
+        true  => folder_module(body),
+        false => "",
+    });
+    named.len.match({
+        0 => Ok(false),
+        _ => {
+            Range(0, named.len).loop((h, i) {
+                b = named.index(i);
+                (b == '/').match({ true => out.add('.'), false => out.add(b) }).try();
+            });
+            Ok(true)
+        },
+    })
+}
+
+folder_module = (body: str) str {
+    body.rfind('/').match({
+        None    => body,
+        Ok(cut) => {
+            folder = body.slice(0, cut);
+            (folder.after_last('/') == body.slice(cut + 1, body.len)).match({
+                true  => folder,
+                false => body,
+            })
+        },
+    })
+}
+
+// The first name the module exports at top level: `Name* = …` or `Name*: T`
+// at the start of a line, or the first `Name*` of a `{ … } = path` re-export.
+// Members of a type are indented, so they never match.
+first_export = (text: str) Res<str> {
+    found :: Res<str> = None;
+    lines ::= text.lines();
+    loop((h) {
+        lines.next().match({
+            None     => h.break(),
+            Ok(line) => exported(line).match({
+                Ok(name) => { found = Ok(name); h.break(); },
+                None     => (),
+            }),
+        });
+    });
+    found
+}
+
+exported = (line: str) Res<str> {
+    (line.len == 0).match({
+        true  => None,
+        false => (line.index(0) == '{').match({
+            true  => first_starred(line),
+            false => starred_at(line, 0),
+        }),
+    })
+}
+
+first_starred = (line: str) Res<str> {
+    found :: Res<str> = None;
+    Range(1, line.len).loop((h, i) {
+        (!line.index(i - 1).is_ident_cont()).then(() {
+            starred_at(line, i).match({
+                Ok(name) => { found = Ok(name); h.break(); },
+                None     => (),
+            });
+        });
+    });
+    found
+}
+
+// The identifier starting at `from`, when a `*` follows it directly.
+starred_at = (line: str, from: usize) Res<str> {
+    end = ident_end(line, from);
+    (end > from && end < line.len && line.index(end) == '*').match({
+        true  => Ok(line.slice(from, end)),
+        false => None,
+    })
+}
+
+ident_end = (line: str, from: usize) usize {
+    (from < line.len && line.index(from).is_ident_start()).match({
+        false => from,
+        true  => Range(from + 1, line.len)
+            .find((i) { !line.index(i).is_ident_cont() })
+            .match({ Ok(i) => i, None => line.len }),
+    })
+}
+
+indent = (text: str) {
+    lines ::= text.lines();
+    loop((h) {
+        lines.next().match({
+            None     => h.break(),
+            Ok(line) => (!line.is_empty()).then(() { println("    {}", line); }),
+        });
+    });
+}
+
+arg = (env: Env, i: usize) str {
+    env.argv.get(i).match({ Ok(s) => s, None => "" })
+}
+
+// A module the gate could not run on is not a module that checks: exit 2 is
+// that answer rather than exit 0's.
+report = (tally: Tally) Res<i32, AllocError> {
+    println(
+        "std_modules: {} module(s) check, {} do not, {} not run",
+        tally.clean,
+        tally.broken,
+        tally.unrun
+    );
+    (tally.unrun > 0).match({
+        true  => Ok(2),
+        false => (tally.broken > 0).match({ true => Ok(1), false => Ok(0) }),
+    })
+}

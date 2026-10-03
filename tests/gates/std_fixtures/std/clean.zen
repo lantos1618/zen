@@ -1,0 +1,2 @@
+// Checks: the control that the gate passes a sound module.
+answer* = () u16 { 42 }

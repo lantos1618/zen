@@ -1,0 +1,4 @@
+std_modules: std.port (tests/gates/std_fixtures/std/port/port.zen) does not check when imported:
+std_modules: std.silent (tests/gates/std_fixtures/std/silent.zen) exports nothing at top level, so no program can import it
+std_modules: 2 module(s) check, 2 do not, 0 not run
+exit 1

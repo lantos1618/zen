@@ -42,7 +42,7 @@ J       ?= $(shell nproc 2>/dev/null || echo 4)
 CACHE   ?= $(shell command -v ccache 2>/dev/null)
 ZCC      = $(CACHE) $(CC)
 
-.PHONY: jscheck archcheck reviewcheck projectcheck lspcheck all check build dev-build dev-check dev-run bootstrap buildcheck runnercheck editorcheck seed test verify differential runtimecheck warnings lint parse cap dupcomments faults lextile determinism fixpoint grammar fmt asan ubsan leak profile clean clean-obj clean-reports clean-all help
+.PHONY: jscheck stdcheck archcheck reviewcheck projectcheck lspcheck all check build dev-build dev-check dev-run bootstrap buildcheck runnercheck editorcheck seed test verify differential runtimecheck warnings lint parse cap dupcomments faults lextile determinism fixpoint grammar fmt asan ubsan leak profile clean clean-obj clean-reports clean-all help
 
 # These gates share ./zen, build/, and grammar/zen.so. Keep their dependency
 # graphs serial even when an operator invokes `make -j verify`.
@@ -162,7 +162,7 @@ lspcheck: build
 ## are built once per invocation, then formatting and determinism inspect the
 ## same compiler that ran the test suite.
 verify: override TEST_CACHE_ARGS := --result-cache "$(TEST_RESULTS)" --refresh-result-cache
-verify: warnings nativecheck jscheck test archcheck fmt determinism fixpoint mutatecheck differential runtimecheck ownershipcheck actorcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck ctcheck
+verify: warnings nativecheck jscheck test stdcheck archcheck fmt determinism fixpoint mutatecheck differential runtimecheck ownershipcheck actorcheck tracecheck poolcheck ubsan buildcheck runnercheck reviewcheck editorcheck lspcheck projectcheck ctcheck
 
 .PHONY: ctcheck
 ## ctcheck: the constant-time tooling's self-test (tools/ct/check.zen): the
@@ -292,6 +292,29 @@ cap: build
 	@$(call gate,line_cap)
 	@$(call nonempty,cap,$(ROOT) -name '*.zen' -print0 | LC_ALL=C sort -z); \
 	  build/gates/line_cap "$${files[@]}"
+
+## stdcheck: every standard-library module checks when a program imports it.
+## The test suites check only the modules their programs import, so a module
+## nothing imports can break under a language rule change and stay green;
+## std.net.url did. A Zen gate — tests/gates/std_modules.zen; see `gate`
+## above. It checks one module per program, importing one of the module's
+## own exports, and the checker covers every declaration of an imported
+## module, not only the names used.
+## The fixture library runs first and must report exactly
+## tests/gates/std_fixtures/expected (the gate's own lines and its exit
+## status), so a gate that stopped finding a broken module fails here before
+## it can pass the real tree.
+stdcheck: build
+	@mkdir -p build/gates/std_modules.d
+	@$(call gate,std_modules)
+	@$(call nonempty,stdcheck,tests/gates/std_fixtures/std -name '*.zen' -print0 | LC_ALL=C sort -z); \
+	  status=0; build/gates/std_modules ./zen tests/gates/std_fixtures build/gates/std_modules.d \
+	    "$${files[@]}" > build/gates/std_fixtures.out || status=$$?; \
+	  { grep '^std_modules:' build/gates/std_fixtures.out; echo "exit $$status"; } \
+	    | diff -u tests/gates/std_fixtures/expected - \
+	    || { cat build/gates/std_fixtures.out; echo 'stdcheck: the fixture library no longer reports as expected'; exit 1; }
+	@$(call nonempty,stdcheck,$(ROOT)/std -name '*.zen' -print0 | LC_ALL=C sort -z); \
+	  build/gates/std_modules ./zen $(ROOT) build/gates/std_modules.d "$${files[@]}"
 
 ## archcheck: backends consume gen_ir plus a Target, never the AST or sema.
 ## docs/IR_ARCHITECTURE.md §3 is the rule; tests/gates/arch_boundary.zen says

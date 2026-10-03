@@ -479,8 +479,26 @@ NamedCallSite = {
                 Res<(), AllocError> {
         be.check.types.at(self.want).match({
             Res(r) => self.write_res(be, r, out),
-            _      => be.untyped(self.site.id, self.name, out),
+            _      => be.is_unit(self.want).match({
+                true  => self.discard_res(be, out),
+                false => be.untyped(self.site.id, self.name, out),
+            }),
         })
+    }
+
+    // A Res built where `()` is wanted, such as an arm of a match whose
+    // value is `()`: nothing keeps it, so only its payload's effects run.
+    discard_res = (self: @Self, be :: CBackend, out :: String)
+                  Res<(), AllocError> {
+        self.site.c.args.get(0).match({
+            None  => Ok(()),
+            Ok(a) => {
+                unknown = be.check.types.unknown().try();
+                payload = be.ty_of(a.value, self.site.ctx, unknown).try();
+                be.run_for_effect(a.value, payload, self.site.ctx)
+            },
+        }).try();
+        out.add("0")
     }
 
     write_res = (self: @Self, be :: CBackend, r: TyRes, out :: String)
@@ -781,7 +799,10 @@ res_value* = (
 ) Res<(), AllocError> {
     be.check.types.at(want).match({
         Res(_) => be.write_res_tagged(want, variant, out),
-        _      => be.untyped(id, variant, out),
+        _      => be.is_unit(want).match({
+            true  => out.add("0"),
+            false => be.untyped(id, variant, out),
+        }),
     })
 }
 

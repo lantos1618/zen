@@ -24,6 +24,15 @@ look = (r: Res<i32>) Res<Smudge> {
     });
 }
 
+// An `Ok` arm beside a `()` arm leaves the match `()`: the arm builds
+// nothing the match keeps.
+count = (r: Res<i32>) Res<Smudge> {
+    r.match({
+        Ok(n) => println("count {}", n),
+        None  => Ok,
+    });
+}
+
 say = (r: Res<Smudge>) {
     r.match({ Ok => println("ok"), Err(s) => println("{}", s.variant_name()) })
 }
@@ -32,5 +41,7 @@ main = (env: Env) Res<i32, AllocError> {
     say(look(Ok(5)));
     say(look(Ok(1)));
     say(look(None));
+    say(count(Ok(3)));
+    say(count(None));
     Ok(0);
 }

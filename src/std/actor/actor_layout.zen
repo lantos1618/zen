@@ -12,11 +12,11 @@
 // the process block
 // ---------------------------------------------------------------------
 
-// Words of the 256-byte process block the runtime owns: a once-word
-// (0 absent, 1 being made, 2 ready, 3 failed) and the globals' address.
-// Words 1 and 2 belong to the thread-per-actor runtime this replaces.
-PB_ONCE*: usize = 4
-PB_GLOBALS*: usize = 5
+// Words of the 256-byte process block the runtime owns, after std.sys's
+// exit hook in word 0: a once-word (0 absent, 1 being made, 2 ready,
+// 3 failed) and the globals' address.
+PB_ONCE*: usize = 1
+PB_GLOBALS*: usize = 2
 
 // ---------------------------------------------------------------------
 // limits

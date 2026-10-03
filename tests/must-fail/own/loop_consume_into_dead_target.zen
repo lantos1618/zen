@@ -1,0 +1,20 @@
+// `keep` is moved before the loop; each run moves `cur` into it. Writing
+// the dead `keep` is fine, but the second run moves `cur` again after the
+// first run already did, and nothing assigned it in between.
+
+{ Res, Ok, Drop, Range, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+Buf = { id: i32 }
+Buf.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id) } })
+sink = (b: Buf) { println("sink {}", b.id) }
+
+main = (env: Env) Res<i32, IoError> {
+    keep ::= Buf(id: 1);
+    cur  ::= Buf(id: 2);
+    gone = consume keep;
+    sink(gone);
+    Range(0, 2).loop((h, i) { keep = consume cur; });
+    Ok(0)
+}

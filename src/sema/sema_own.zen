@@ -534,16 +534,33 @@ Own* = {
         equal
     }
 
-    // Move out every place killed since `mark`.
-    take_dead = (self :: @Self, mark: usize, out :: Vec<Place>)
-                Res<AllocError> {
-        Range(mark, self.dead.len).loop((h, i) {
-            self.dead.get(i).match({
-                Ok(p) => out.add(p).try(),
-                None  => (),
-            });
+    // The moved-out places at this point, to restore or join later.
+    dead_state = (self: @Self) Res<Vec<Place>, AllocError> {
+        self.dead.filter(self.alloc, (p) { true })
+    }
+
+    set_dead = (self :: @Self, saved: Vec<Place>) Res<AllocError> {
+        self.dead = saved.filter(self.alloc, (p) { true }).try();
+        Ok
+    }
+
+    // Where paths meet, a place is dead if it is dead on any of them: a
+    // write on one path does not refill the place on another.
+    join_dead = (self :: @Self, other: Vec<Place>) Res<AllocError> {
+        other.loop((h, p) {
+            (p.root < self.vars.len && !self.is_dead(p.root, p.field)).then(
+                () { self.dead.add(p).try(); }
+            );
         });
-        self.dead.truncate(mark);
+        Ok
+    }
+
+    // A place dead now that was live in `before`.
+    newly_dead = (self: @Self, before: Vec<Place>) Res<Vec<Place>, AllocError> {
+        self.dead.filter(self.alloc, (p) {
+            before.find((q) { q.root == p.root && q.field.eq(p.field) })
+                .match({ Ok(_) => false, None => true })
+        })
     }
 
     // Drop the bindings declared since `mark`, and every dead place or
@@ -1365,7 +1382,7 @@ own_lambda = (
 ) Res<AllocError> {
     repeats.then(() { c.loop_provenance(o, l, ctx).try() });
     before ::= o.provenance().try();
-    dmark     = o.dead.len;
+    entry     = o.dead_state().try();
     vmark     = o.vars.len;
     outer     = o.escaped;
     o.escaped = (escapes && (outer == 0)).match({
@@ -1378,7 +1395,9 @@ own_lambda = (
     o.release(vmark).try();
     o.join_provenance(before).try();
     o.restore_provenance(before);
-    repeats.then(() { c.report_back_edge(o, dmark).try() });
+    repeats.then(() { c.report_back_edge(o, entry).try() });
+    // The body may not run at all, so what was dead before it stays dead.
+    o.join_dead(entry).try();
     Ok;
 }
 
@@ -1533,30 +1552,27 @@ flow_binary = (c :: Checker, o :: Own, first: Binary, ctx: Ctx)
     Ok
 }
 
-// Everything moved inside the body that outlives it names a binding the
-// body did not declare, and a second run would read it dead.
-report_back_edge = (c :: Checker, o :: Own, dmark: usize)
+// Everything the body leaves dead that was live on entry names a binding
+// the body did not declare, and a second run would read it dead.
+report_back_edge = (c :: Checker, o :: Own, entry: Vec<Place>)
                    Res<AllocError> {
-    Range(dmark, o.dead.len).loop((h, i) {
-        c.report_moved_again(o, i).try();
+    o.newly_dead(entry).try().loop((h, p) {
+        p.invalidated.match({
+            true  => c.report_consumed(o, p.span, p.root, p.field).try(),
+            false => c.refuse(p.span, SemaFault.ConsumedPerRun(NameFault(
+                name: c.place_name(o, p.root, p.field).try()
+            ))).try(),
+        });
     });
     Ok;
 }
 
-report_moved_again = (c :: Checker, o :: Own, i: usize)
-                     Res<AllocError> {
-    o.dead.get(i).match({
-        None  => Ok,
-        Ok(p) => c.report_consumed(o, p.span, p.root, p.field),
-    })
-}
-
-// match: each arm starts from the scrutinee's state, and a place any arm
-// moved is dead after the match.
+// match: each arm starts from the scrutinee's state, and a place dead at
+// the end of any arm is dead after the match.
 own_match = (c :: Checker, o :: Own, m: Match, ctx: Ctx)
             Res<AllocError> {
     c.own_expr(o, m.scrutinee, ctx).try();
-    dmark  = o.dead.len;
+    entry  = o.dead_state().try();
     before = o.provenance().try();
     origins ::= c.alloc.Vec<Provenance>();
     before.loop((h, _) {
@@ -1570,12 +1586,19 @@ own_match = (c :: Checker, o :: Own, m: Match, ctx: Ctx)
     joined ::= c.alloc.Vec<Place>();
     m.arms.loop((h, a) {
         o.restore_provenance(before);
+        o.set_dead(entry).try();
         c.own_expr(o, a.body, ctx).try();
         o.join_provenance(origins).try();
-        o.take_dead(dmark, joined).try();
+        out = o.dead_state().try();
+        o.set_dead(joined).try();
+        o.join_dead(out).try();
+        joined = o.dead_state().try();
     });
     o.restore_provenance(origins);
-    joined.loop((h, p) { o.dead.add(p).try() });
+    (m.arms.len == 0).match({
+        true  => o.set_dead(entry).try(),
+        false => o.set_dead(joined).try(),
+    });
     Ok;
 }
 

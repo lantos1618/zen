@@ -177,6 +177,7 @@ SemaFault* =
 
     // ownership
     | ConsumedUse: NameFault           // a place that was moved out of
+    | ConsumedPerRun: NameFault        // moved in a body that runs again, not refilled on every path
     | UnassignedUse: InitFault         // a deferred local used before every path assigns it
     | AssignedTwice: NameFault         // an immutable deferred local assigned again
     | NeverAssigned: UnsetFault        // a deferred local no statement assigns
@@ -306,6 +307,7 @@ message* = (fault: SemaFault) str {
         NegativeArrayCount(_)        => "an array count cannot be negative: fixed-array lengths are zero or greater",
         ComptimeBudget(_)            => "comptime evaluation ran out of steps: the evaluator is budgeted so the build fails rather than hangs — docs/design_meta.md",
         ConsumedUse(_)               => "use after move:",
+        ConsumedPerRun(_)            => "use after move:",
         UnassignedUse(_)             => "",
         AssignedTwice(_)             => "",
         NeverAssigned(_)             => "",
@@ -408,7 +410,11 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
 
         ConsumedUse(f)               => out.write_place(
             f,
-            " was consumed, and a binding is dead from the move onwards"
+            " was consumed, and a binding is dead from the move onwards — assign it again on every path that reaches this use"
+        ),
+        ConsumedPerRun(f)            => out.write_place(
+            f,
+            " was consumed in a body that runs again, and not every path back to its start assigns it — assign it on every path, or consume it outside the body"
         ),
         UnassignedUse(f)             => out.write_unassigned(f),
         AssignedTwice(f)             => out.write_assigned_twice(f),

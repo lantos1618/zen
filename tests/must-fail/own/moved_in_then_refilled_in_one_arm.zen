@@ -1,0 +1,24 @@
+// `b` may have been moved by the `then` body. The `true` arm assigns it
+// again, but that write is on its own path: the `false` arm still sees the
+// `b` the `then` body may have moved, and uses it after the move.
+
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+Buf = {
+    id :: i32,
+    poke = (self :: @Self) { self.id = self.id + 10; println("poke {}", self.id) }
+}
+Buf.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id) } })
+sink = (b: Buf) { println("sink {}", b.id) }
+
+main = (env: Env) Res<i32, IoError> {
+    b ::= Buf(id: 1);
+    (env.argv.len > 0).then(() { g = consume b; sink(g); });
+    (env.argv.len > 1).match({
+        true  => { b = Buf(id: 2); },
+        false => { b.poke(); },
+    });
+    Ok(0)
+}

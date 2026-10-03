@@ -1,0 +1,6 @@
+sink 1
+drop 1
+sink 0
+drop 0
+last 2
+drop 2

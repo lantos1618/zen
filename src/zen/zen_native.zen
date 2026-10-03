@@ -102,7 +102,7 @@ same_arch = (left: Arch, right: Arch) bool {
 // A foreign-architecture Linux executable runs under qemu user mode; a
 // native one runs directly. The program path is appended by the caller.
 launcher* = (target: Target, argv :: Vec<str>)
-            Res<(), AllocError> {
+            Res<AllocError> {
     host_target().match({
         None     => (),
         Ok(host) => (!same_arch(host.arch, target.arch)).then(() {
@@ -112,7 +112,7 @@ launcher* = (target: Target, argv :: Vec<str>)
             });
         }),
     });
-    Ok(())
+    Ok
 }
 
 tool = (env: Env, a: Alloc, argv: Vec<str>, log :: String)

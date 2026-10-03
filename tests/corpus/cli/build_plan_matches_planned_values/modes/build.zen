@@ -1,7 +1,7 @@
 { Builder, BuildError, Mode, Optimize, Cc } = std.build
 { Res, Ok, Path } = std.core
 
-build = (b :: Builder) Res<(), BuildError> {
+build = (b :: Builder) Res<BuildError> {
     flags = b.os.match({
         Macos => ["-DPLATFORM_MAC", "-pipe"],
         _     => ["-DPLATFORM_OTHER", "-pipe"],
@@ -23,5 +23,5 @@ build = (b :: Builder) Res<(), BuildError> {
         libs: ["m"],
     }).try();
     b.exe("plain", { src: Path("src/main.zen"), deps: [] }).try();
-    Ok(())
+    Ok
 }

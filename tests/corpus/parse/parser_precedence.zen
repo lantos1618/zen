@@ -85,7 +85,7 @@ show = (env: Env, tree: Ast, id: ExprId, depth: usize) {
     });
 }
 
-run = (env: Env, alloc: Alloc, text: str) Res<(), AllocError> {
+run = (env: Env, alloc: Alloc, text: str) Res<AllocError> {
     println("== {}", text);
     lexed = scan(alloc, Source(file: "t.zen", text: text)).try();
     p ::= alloc.Parser(lexed);
@@ -93,7 +93,6 @@ run = (env: Env, alloc: Alloc, text: str) Res<(), AllocError> {
     id = p.expr().try();
     show(env, p.tree, id, 0);
     println("lex {} parse {}", lexed.diags.len, p.diags.len);
-    Ok(());
 }
 
 main = (env: Env) Res<i32, AllocError> {

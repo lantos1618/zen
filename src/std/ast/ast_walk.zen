@@ -29,7 +29,7 @@ WalkEvent* = { Enter: WalkNode | Leave: WalkNode }
 
 // A synchronous visitor borrows its mutable state for the traversal.
 WalkVisitor* = {
-    visit* = (self :: @Self, event: WalkEvent) Res<(), AllocError>
+    visit* = (self :: @Self, event: WalkEvent) Res<AllocError>
 }
 
 // The root must belong to this immutable Ast snapshot. Successful traversal
@@ -41,7 +41,7 @@ walk* = (
     alloc   : Alloc,
     root    : WalkNode,
     visitor :: WalkVisitor
-) Res<(), AllocError> {
+) Res<AllocError> {
     walker ::= Walker(tree: tree, pending: alloc.Vec<WalkEvent>());
     walker.node(root).try();
     loop(() { walker.pending.len > 0 }, (h) {
@@ -61,7 +61,7 @@ walk* = (
             },
         });
     });
-    Ok(())
+    Ok
 }
 
 Walker = { tree: Ast, pending :: Vec<WalkEvent> }
@@ -80,11 +80,11 @@ reverse_children = (walker :: Walker, first: usize) {
     });
 }
 
-node = (walker :: Walker, node: WalkNode) Res<(), AllocError> {
+node = (walker :: Walker, node: WalkNode) Res<AllocError> {
     walker.pending.add(WalkEvent.Enter(node))
 }
 
-children = (walker :: Walker, root: WalkNode) Res<(), AllocError> {
+children = (walker :: Walker, root: WalkNode) Res<AllocError> {
     root.match({
         Declaration(d) => walker.declaration(d).try(),
         Member(m)      => walker.member(m).try(),
@@ -111,7 +111,7 @@ children = (walker :: Walker, root: WalkNode) Res<(), AllocError> {
             });
         },
     });
-    Ok(())
+    Ok
 }
 
 signature = (
@@ -119,7 +119,7 @@ signature = (
     tparams : Vec<TParam>,
     params  : Vec<Param>,
     ret     : Res<TypeId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     tparams.loop((p) {
         p.bounds.loop((bound) { walker.node(WalkNode.Type(bound)).try(); });
     });
@@ -127,16 +127,16 @@ signature = (
         p.type.when_ok((ty) { walker.node(WalkNode.Type(ty)).try(); });
     });
     ret.when_ok((ty) { walker.node(WalkNode.Type(ty)).try(); });
-    Ok(())
+    Ok
 }
 
-function = (walker :: Walker, f: Function) Res<(), AllocError> {
+function = (walker :: Walker, f: Function) Res<AllocError> {
     walker.signature(f.tparams, f.params, f.ret).try();
     f.body.when_ok((body) { walker.node(WalkNode.Block(body)).try(); });
-    Ok(())
+    Ok
 }
 
-declaration = (walker :: Walker, d: DeclVisit) Res<(), AllocError> {
+declaration = (walker :: Walker, d: DeclVisit) Res<AllocError> {
     d.value.kind.match({
         Struct(s)   => {
             s.tparams.loop((p) {
@@ -199,10 +199,10 @@ declaration = (walker :: Walker, d: DeclVisit) Res<(), AllocError> {
             walker.node(WalkNode.Expr(c.value)).try();
         },
     });
-    Ok(())
+    Ok
 }
 
-member = (walker :: Walker, m: MemberVisit) Res<(), AllocError> {
+member = (walker :: Walker, m: MemberVisit) Res<AllocError> {
     m.value.kind.match({
         Field(f)    => {
             f.type.when_ok((ty) { walker.node(WalkNode.Type(ty)).try(); });
@@ -216,10 +216,10 @@ member = (walker :: Walker, m: MemberVisit) Res<(), AllocError> {
         },
         Function(f) => walker.function(f).try(),
     });
-    Ok(())
+    Ok
 }
 
-statement = (walker :: Walker, s: StmtVisit) Res<(), AllocError> {
+statement = (walker :: Walker, s: StmtVisit) Res<AllocError> {
     s.value.kind.match({
         Bind(b)     => {
             walker.node(WalkNode.Expr(b.target)).try();
@@ -237,10 +237,9 @@ statement = (walker :: Walker, s: StmtVisit) Res<(), AllocError> {
         ))).try(),
         Block(id)   => walker.node(WalkNode.Block(id)).try(),
     });
-    Ok(())
 }
 
-expression = (walker :: Walker, id: ExprId) Res<(), AllocError> {
+expression = (walker :: Walker, id: ExprId) Res<AllocError> {
     walker.tree.expr_at(id).kind.match({
         Name(_)       => (),
         Literal(_)    => (),
@@ -302,10 +301,10 @@ expression = (walker :: Walker, id: ExprId) Res<(), AllocError> {
         Consume(c)    => walker.node(WalkNode.Expr(c.operand)).try(),
         Block(body)   => walker.node(WalkNode.Block(body)).try(),
     });
-    Ok(())
+    Ok
 }
 
-type = (walker :: Walker, id: TypeId) Res<(), AllocError> {
+type = (walker :: Walker, id: TypeId) Res<AllocError> {
     walker.tree.type_at(id).kind.match({
         Named(n) => { n.args.loop(
             (ty) { walker.node(WalkNode.Type(ty)).try(); }
@@ -323,5 +322,5 @@ type = (walker :: Walker, id: TypeId) Res<(), AllocError> {
         Infer    => (),
         Variadic => (),
     });
-    Ok(())
+    Ok
 }

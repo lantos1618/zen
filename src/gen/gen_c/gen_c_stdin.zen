@@ -28,14 +28,14 @@
 // `ferror` separates them and only the error becomes an `Err`. The
 // `fflush` before blocking keeps a request/response server over two
 // pipes from deadlocking on a block-buffered stdout.
-emit_stdin* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+emit_stdin* = (be :: CBackend, out :: Emit) Res<AllocError> {
     be.uses_stdin().match({
-        false => Ok(()),
+        false => Ok,
         true  => write_stdin(out),
     })
 }
 
-write_stdin = (out :: Emit) Res<(), AllocError> {
+write_stdin = (out :: Emit) Res<AllocError> {
     comment(
         out,
         "IoError, by ordinal, in the order std.core.io declares it"
@@ -63,7 +63,6 @@ write_stdin = (out :: Emit) Res<(), AllocError> {
     out.dedent();
     out.say("}").try();
     out.line().try();
-    Ok(());
 }
 
 // The lowering: `env.in.read(buf, n)`
@@ -84,7 +83,7 @@ lower_stdin_read* = (
     ctx : Ctx,
     out :: String
 )
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     be.need_stdin();
     be.request_type(aty).try();
     usize_ty = be.check.types.prim("usize").try();
@@ -114,14 +113,14 @@ lower_stdin_read* = (
 // `<ctype> *<name>;` — a temporary the ordinary declarer cannot write,
 // because a pointer to a Zen type is not itself a Zen type here.
 declare_pointer = (be :: CBackend, ty: TyId, name: str)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     cty ::= be.alloc.String().try();
     be.ctype(ty, cty).try();
     be.fmt("{} *{name};\n", cty.view())
 }
 
 hold_buffer = (be :: CBackend, c: Call, aty: TyId, ctx: Ctx, buf: str)
-              Res<(), AllocError> {
+              Res<AllocError> {
     arg ::= be.alloc.String().try();
     be.arg_text(c, 0, aty, ctx, arg).try();
     value ::= be.alloc.String().try();
@@ -130,14 +129,14 @@ hold_buffer = (be :: CBackend, c: Call, aty: TyId, ctx: Ctx, buf: str)
 }
 
 hold_count = (be :: CBackend, c: Call, usize_ty: TyId, ctx: Ctx, want: str)
-             Res<(), AllocError> {
+             Res<AllocError> {
     value ::= be.alloc.String().try();
     be.arg_text(c, 1, usize_ty, ctx, value).try();
     be.set_line(want, value.view())
 }
 
 write_stdin_call = (be :: CBackend, rc: str, buf: str, want: str, got: str)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     data ::= be.alloc.String().try();
     arrow(buf, "data", data).try();
     len ::= be.alloc.String().try();
@@ -155,13 +154,13 @@ write_stdin_call = (be :: CBackend, rc: str, buf: str, want: str, got: str)
 // The bytes that arrived are now part of the buffer, and this is the one
 // field the floor does not write: a `len` bumped inside the C would be a
 // second place that knows what a `Vec` is.
-advance_len = (be :: CBackend, buf: str, got: str) Res<(), AllocError> {
+advance_len = (be :: CBackend, buf: str, got: str) Res<AllocError> {
     len ::= be.alloc.String().try();
     arrow(buf, "len", len).try();
     be.fmt("{} = {} + {got};\n", len.view(), len.view())
 }
 
-arrow = (ptr: str, name: str, out :: String) Res<(), AllocError> {
+arrow = (ptr: str, name: str, out :: String) Res<AllocError> {
     out.fmt("{ptr}->").try();
     out.sym_member(name)
 }
@@ -171,17 +170,15 @@ arrow = (ptr: str, name: str, out :: String) Res<(), AllocError> {
 // — so there is no third arm and nothing here reports it. The names are
 // `IoError`'s and the test is on the runtime's own macro.
 io_chain = (be :: CBackend, ret: TyId, rc: str, dst: str)
-           Res<(), AllocError> {
+           Res<AllocError> {
     be.open_full_test(rc).try();
     be.write_assign_err(ret, "Full", dst).try();
     be.close_else().try();
     be.write_assign_err(ret, "Closed", dst).try();
     be.close_brace().try();
-    Ok(());
 }
 
-open_full_test = (be :: CBackend, rc: str) Res<(), AllocError> {
+open_full_test = (be :: CBackend, rc: str) Res<AllocError> {
     be.fmt("if ({rc} == ZG_IO_FULL) {\n").try();
     be.indent();
-    Ok(());
 }

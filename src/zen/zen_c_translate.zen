@@ -12,7 +12,7 @@
 { Source, Lexed, scan, is_zen_name } = std.lex
 { Parser, module } = std.parse
 { CImportRequest, CImportModule } = zen.zen_c_import
-{ Res, Ok, Err, None, Range } = std.core
+{ Res, Ok, Err, None, Range, Error } = std.core
 { Env } = std.env
 
 ClangExit* = {
@@ -32,6 +32,7 @@ CTranslateFault* = { NoMemory
     | IdentityMismatch
     | GeneratedLex: usize
     | GeneratedParse: usize }
+CTranslateFault.impl(Error, {})
 
 CModule* = {
     source*: String,

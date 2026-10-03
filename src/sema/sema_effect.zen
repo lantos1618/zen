@@ -16,9 +16,9 @@ check_statement* = (
     n     : usize,
     s     : Stmt,
     ty    : TyId
-) Res<(), AllocError> {
+) Res<AllocError> {
     is_tail(block, i, n).match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.check_discarded(s, ty),
     })
 }
@@ -27,21 +27,21 @@ is_tail = (block: Block, i: usize, n: usize) bool {
     block.value.match({ Ok(_) => false, None => i + 1 == n })
 }
 
-check_discarded = (c :: Checker, s: Stmt, ty: TyId) Res<(), AllocError> {
+check_discarded = (c :: Checker, s: Stmt, ty: TyId) Res<AllocError> {
     s.kind.match({
         Expr(e)  => c.discarded_expr(s, e, ty),
         Block(_) => c.check_dropped(s.span, ty),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
 discarded_expr = (c :: Checker, s: Stmt, e: ExprStmt, ty: TyId)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     c.dropped_in(e.expr, ty).match({
         Ok(d) => c.report_dropped(d),
         None  => (c.statement_value(ty) && c.pure_read(e.expr)).match({
             true  => c.report_discarded(s, ty),
-            false => Ok(()),
+            false => Ok,
         }),
     })
 }
@@ -50,12 +50,12 @@ discarded_expr = (c :: Checker, s: Stmt, e: ExprStmt, ty: TyId)
 // body, a `.loop` body. A failure in that tail is dropped as surely as one
 // in a statement.
 check_dropped_tail* = (c :: Checker, tail: ExprId, got: TyId, want: TyId)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     c.prim_name(want).eq("()").match({
-        false => Ok(()),
+        false => Ok,
         true  => c.dropped_in(tail, got).match({
             Ok(d) => c.report_dropped(d),
-            None  => Ok(()),
+            None  => Ok,
         }),
     })
 }
@@ -65,17 +65,17 @@ check_dropped_tail* = (c :: Checker, tail: ExprId, got: TyId, want: TyId)
 // the failure inside a `Res<T>`. That failure is dropped exactly when the
 // call's result is, so it is remembered here and reported when it is.
 note_lambda_tail* = (c :: Checker, lambda: ExprId, tail: ExprId, got: TyId)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     c.dropped_in(tail, got).match({
         Ok(d) => c.note_lambda_failure(lambda, d),
-        None  => Ok(()),
+        None  => Ok,
     })
 }
 
-check_dropped = (c :: Checker, at: Span, ty: TyId) Res<(), AllocError> {
+check_dropped = (c :: Checker, at: Span, ty: TyId) Res<AllocError> {
     c.carries_failure(ty).match({
         true  => c.report_dropped(Dropped(at: at, ty: ty)),
-        false => Ok(()),
+        false => Ok,
     })
 }
 
@@ -165,7 +165,7 @@ pure_arms = (c :: Checker, arms: Vec<Arm>) bool {
         .match({ Ok(_) => false, None => true })
 }
 
-report_dropped = (c :: Checker, d: Dropped) Res<(), AllocError> {
+report_dropped = (c :: Checker, d: Dropped) Res<AllocError> {
     c.refuse(
         d.at,
         SemaFault.DroppedFailure(TypeFault(
@@ -176,7 +176,7 @@ report_dropped = (c :: Checker, d: Dropped) Res<(), AllocError> {
     )
 }
 
-report_discarded = (c :: Checker, s: Stmt, ty: TyId) Res<(), AllocError> {
+report_discarded = (c :: Checker, s: Stmt, ty: TyId) Res<AllocError> {
     unit = c.types.prim("()").try();
     c.refuse(
         s.span,

@@ -31,7 +31,7 @@ main = (env: Env) Res<i32, AllocError> {
     Range(0, rows.len).loop((h, i) {
         rows.get(i).match({
             Ok(p) => m.set(p, p),
-            None  => Ok(()),
+            None  => Ok,
         }).try();
     });
 

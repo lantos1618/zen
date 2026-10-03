@@ -16,11 +16,10 @@ Reader.impl(Actor, {
 
 Error = AllocError | IoError | ActorStartError | ActorError
 
-send_from_short_arena = (env: Env, reader: Ref<Reader>) Res<(), Error> {
+send_from_short_arena = (env: Env, reader: Ref<Reader>) Res<Error> {
     arena ::= env.mem.alloc();
     text = arena.String("dynamic {}", "bytes survive").try();
     reader.read(text.view()).try();
-    Ok(())
 }
 
 main = (env: Env) Res<i32, Error> {

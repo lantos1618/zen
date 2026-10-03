@@ -104,31 +104,31 @@ Slot* = {
 }
 
 slots_of* = (be :: CBackend, ty: TyId, out :: Vec<Slot>)
-            Res<(), AllocError> {
+            Res<AllocError> {
     be.fat_decl(ty).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(s) => be.collect_slots(ty, s, out),
     })
 }
 
 collect_slots = (be :: CBackend, ty: TyId, s: Struct, out :: Vec<Slot>)
-                Res<(), AllocError> {
+                Res<AllocError> {
     s.members.loop((h, m) { be.collect_slot(ty, m, out).try() });
-    Ok(());
+    Ok;
 }
 
 collect_slot = (be :: CBackend, ty: TyId, m: Member, out :: Vec<Slot>)
-               Res<(), AllocError> {
+               Res<AllocError> {
     m.kind.match({
         Function(f) => be.add_slot(ty, f, out),
-        _           => Ok(()),
+        _           => Ok,
     })
 }
 
 add_slot = (be :: CBackend, ty: TyId, f: Function, out :: Vec<Slot>)
-           Res<(), AllocError> {
+           Res<AllocError> {
     site_of(be, ty).try().match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(s) => be.add_slot_at(ty, s, f, out),
     })
 }
@@ -142,7 +142,7 @@ add_slot_at = (
     s   : Site,
     f   : Function,
     out :: Vec<Slot>
-) Res<(), AllocError> {
+) Res<AllocError> {
     owner ::= be.alloc.String().try();
     qualify(owner, s.qname, f.name.text).try();
     sctx = be.check.self_ctx(s.decl.module.to_usize(), ty).try();
@@ -164,37 +164,36 @@ add_slot_at = (
         ret: ret,
         elems: f.tparams.len
     )).try();
-    Ok(());
 }
 
 // The bound's own arguments, carried into the same substitution the
 // erasure uses: a `Bound<i32>`'s members are read at `i32` for the same
 // reason a `Vec<i32>`'s are.
-carry_inst = (from: Inst, out :: Inst) Res<(), AllocError> {
+carry_inst = (from: Inst, out :: Inst) Res<AllocError> {
     Range(0, from.len()).loop((h, i) { carry_one(from, i, out).try() });
-    Ok(());
+    Ok;
 }
 
-carry_one = (from: Inst, i: usize, out :: Inst) Res<(), AllocError> {
+carry_one = (from: Inst, i: usize, out :: Inst) Res<AllocError> {
     from.var_at(i).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(v) => carry_bound(from, i, v, out),
     })
 }
 
 carry_bound = (from: Inst, i: usize, v: TyId, out :: Inst)
-              Res<(), AllocError> {
+              Res<AllocError> {
     from.arg_at(i).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(t) => out.bind(v, t),
     })
 }
 
 erase_tparams = (be :: CBackend, f: Function, owner: str, out :: Inst)
-                Res<(), AllocError> {
+                Res<AllocError> {
     byte = be.check.types.prim("u8").try();
     f.tparams.loop((h, tp) { be.erase_one(tp, owner, byte, out).try() });
-    Ok(());
+    Ok;
 }
 
 erase_one = (
@@ -203,7 +202,7 @@ erase_one = (
     owner : str,
     byte  : TyId,
     out   :: Inst
-) Res<(), AllocError> {
+) Res<AllocError> {
     out.bind(intern_var(be.check, tp.name.text, owner).try(), byte)
 }
 
@@ -213,11 +212,11 @@ erased_params = (
     sctx  : Ctx,
     erase : Inst,
     out   :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     f.params.loop((h, i, p) {
         be.erased_param(p, i, sctx, erase, out).try();
     });
-    Ok(());
+    Ok;
 }
 
 // The receiver is `void *` in the record, so it takes no slot
@@ -229,9 +228,9 @@ erased_param = (
     sctx  : Ctx,
     erase : Inst,
     out   :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     (i == 0).match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.add_erased(p, sctx, erase, out),
     })
 }
@@ -242,7 +241,7 @@ add_erased = (
     sctx  : Ctx,
     erase : Inst,
     out   :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     declared = be.check.param_type(p, sctx).try();
     out.add(be.sub_with(declared, erase).try())
 }
@@ -262,16 +261,15 @@ slot_sym = (be :: CBackend, f: Function, out: Vec<Slot>)
     sym_member(sym, f.name.text).try();
     n = same_named(out, f.name.text);
     (n > 0).match({
-        false => Ok(()),
+        false => Ok,
         true  => number_sym(sym, n + 1),
     }).try();
     Ok(sym);
 }
 
-number_sym = (sym :: String, n: usize) Res<(), AllocError> {
+number_sym = (sym :: String, n: usize) Res<AllocError> {
     sym.add("_").try();
     sym.write_usize(n).try();
-    Ok(());
 }
 
 same_named = (out: Vec<Slot>, name: str) usize {
@@ -287,57 +285,54 @@ same_named = (out: Vec<Slot>, name: str) usize {
 // per type parameter, and the receiver is `void *` because a record
 // serves every impl at once.
 slot_field* = (be :: CBackend, s: Slot, out :: String)
-              Res<(), AllocError> {
+              Res<AllocError> {
     be.ctype(s.ret, out).try();
     out.fmt(" (*{})(void *", s.sym.view()).try();
     s.params.loop((h, p) { be.slot_param(p, out).try() });
     Range(0, s.elems).loop((h, _) { out.add(", size_t").try() });
     out.add(");").try();
-    Ok(());
 }
 
-slot_param = (be :: CBackend, p: TyId, out :: String) Res<(), AllocError> {
+slot_param = (be :: CBackend, p: TyId, out :: String) Res<AllocError> {
     out.add(", ").try();
     be.ctype(p, out).try();
-    Ok(());
 }
 
 // Every type a slot spells needs a definition, but none constrains
 // definition order: a slot is a function pointer, not by-value
 // containment. Feeding these to the dependency walk would make `Eq`
 // depend on `Eq` and report a by-value cycle that is not there.
-request_slots* = (be :: CBackend, ty: TyId) Res<(), AllocError> {
+request_slots* = (be :: CBackend, ty: TyId) Res<AllocError> {
     be.is_fat(ty).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.request_slot_types(ty),
     })
 }
 
-request_slot_types = (be :: CBackend, ty: TyId) Res<(), AllocError> {
+request_slot_types = (be :: CBackend, ty: TyId) Res<AllocError> {
     slots ::= be.alloc.Vec<Slot>();
     be.slots_of(ty, slots).try();
     slots.loop((h, s) { be.request_slot(s).try() });
-    Ok(());
+    Ok;
 }
 
-request_slot = (be :: CBackend, s: Slot) Res<(), AllocError> {
+request_slot = (be :: CBackend, s: Slot) Res<AllocError> {
     s.params.loop((h, p) { be.request_if_real(p).try() });
     be.request_if_real(s.ret).try();
-    Ok(());
 }
 
-request_if_real = (be :: CBackend, t: TyId) Res<(), AllocError> {
+request_if_real = (be :: CBackend, t: TyId) Res<AllocError> {
     (be.is_unit(t) || has_var(be.check, t)).match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.request_named_only(t),
     })
 }
 
-request_named_only = (be :: CBackend, t: TyId) Res<(), AllocError> {
+request_named_only = (be :: CBackend, t: TyId) Res<AllocError> {
     be.types().at(t).match({
         Named(_) => be.request_type(t),
         Res(_)   => be.request_type(t),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
@@ -352,7 +347,7 @@ fat_value* = (
     cty  : TyId,
     tty  : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.request_type(tty).try();
     slots ::= be.alloc.Vec<Slot>();
     be.slots_of(tty, slots).try();
@@ -361,7 +356,6 @@ fat_value* = (
     out.fmt("(({}){ .zg_self = (void *){addr}", rec.view()).try();
     slots.loop((h, s) { be.slot_init(s, cty, out).try() });
     out.add(" })").try();
-    Ok(());
 }
 
 // A slot no impl answers is NULL rather than a symbol nothing defines.
@@ -369,7 +363,7 @@ fat_value* = (
 // supplied, and never called — a null there is honest where a dangling
 // name would not link.
 slot_init = (be :: CBackend, s: Slot, cty: TyId, out :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
     out.fmt(", .{} = ", s.sym.view()).try();
     be.thunk_for(s, cty).try().match({
         None     => out.add("NULL"),
@@ -434,7 +428,7 @@ write_thunk = (be :: CBackend, s: Slot, cty: TyId, cs: Site, f: Function)
     name ::= be.alloc.String().try();
     thunk_name(name, sym.view()).try();
     be.need_thunk(name.view()).try().match({
-        false => Ok(()),
+        false => Ok,
         true  => be.emit_thunk(s, cty, f, sig, sym.view(), name.view()),
     }).try();
     Ok(Ok(name));
@@ -450,13 +444,12 @@ real_sig = (
     owner : str,
     inst  : Inst,
     out   :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     sctx = be.check.self_ctx(cs.decl.module.to_usize(), cty).try();
     mark = be.enter_struct_tparams(cs.decl).try();
     be.enter_tparams(f.tparams, owner).try();
     f.params.loop((h, p) { be.add_real(p, sctx, inst, out).try() });
     be.leave_tparams(mark).try();
-    Ok(());
 }
 
 add_real = (
@@ -465,7 +458,7 @@ add_real = (
     sctx : Ctx,
     inst : Inst,
     out  :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     declared = be.check.param_type(p, sctx).try();
     out.add(be.sub_with(declared, inst).try())
 }
@@ -473,7 +466,7 @@ add_real = (
 // `zg_v` and the function's own symbol without its `zu_`: the name is a
 // pure function of the target, which is what makes two requests for one
 // shim one shim.
-thunk_name = (out :: String, sym: str) Res<(), AllocError> {
+thunk_name = (out :: String, sym: str) Res<AllocError> {
     out.fmt("{}v{}", GEN, sym.slice(USR.len, sym.len))
 }
 
@@ -489,7 +482,7 @@ emit_thunk = (
     sig  : Vec<TyId>,
     sym  : str,
     name : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     head ::= be.alloc.String().try();
     be.thunk_head(s, name, head).try();
     body ::= be.alloc.String().try();
@@ -500,14 +493,13 @@ emit_thunk = (
 }
 
 thunk_head = (be :: CBackend, s: Slot, name: str, out :: String)
-             Res<(), AllocError> {
+             Res<AllocError> {
     ret ::= be.alloc.String().try();
     be.ctype(s.ret, ret).try();
     out.fmt("{}{} {name}(void *zg_self", be.linkage(), ret.view()).try();
     s.params.loop((h, i, p) { be.thunk_param(p, "a", i, out).try() });
     Range(0, s.elems).loop((h, i) { be.thunk_param(be.size_ty(), "e", i, out).try() });
     out.add(")").try();
-    Ok(());
 }
 
 size_ty = (be :: CBackend) TyId {
@@ -515,12 +507,11 @@ size_ty = (be :: CBackend) TyId {
 }
 
 thunk_param* = (be :: CBackend, p: TyId, stem: str, i: usize, out :: String)
-              Res<(), AllocError> {
+              Res<AllocError> {
     out.add(", ").try();
     nm ::= be.alloc.String().try();
     sym_gen(nm, stem, i).try();
     be.declarator(p, nm.view(), out).try();
-    Ok(());
 }
 
 // `self :: @Self` takes the receiver by reference, so the shim hands
@@ -538,7 +529,7 @@ thunk_body = (
     sym : str,
     out :: String
 )
-             Res<(), AllocError> {
+             Res<AllocError> {
     call ::= be.alloc.String().try();
     call.fmt("{sym}(").try();
     be.thunk_recv(cty, f, call).try();
@@ -546,14 +537,14 @@ thunk_body = (
     call.add(")").try();
     out.add("    ").try();
     be.is_unit(s.ret).match({
-        true  => Ok(()),
+        true  => Ok,
         false => out.add("return "),
     }).try();
     out.fmt("{};\n", call.view())
 }
 
 thunk_recv = (be :: CBackend, cty: TyId, f: Function, out :: String)
-             Res<(), AllocError> {
+             Res<AllocError> {
     // A borrowed receiver (gen_c_borrow.zen) wants the address too.
     by_address = be.passes_address(f, 0, cty).try();
     by_address.match({
@@ -563,10 +554,9 @@ thunk_recv = (be :: CBackend, cty: TyId, f: Function, out :: String)
     be.ctype(cty, out).try();
     out.add(" *)zg_self").try();
     by_address.match({
-        true  => Ok(()),
+        true  => Ok,
         false => out.add(")"),
     }).try();
-    Ok(());
 }
 
 // A count beside an erased pointer is an element count, but the impl
@@ -580,7 +570,7 @@ thunk_arg = (
     sig : Vec<TyId>,
     i   : usize,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     out.add(", ").try();
     // The shim's own parameter is a by-value copy, so lending its
     // address to a borrowing impl is always safe.
@@ -614,7 +604,7 @@ is_pointer* = (be: CBackend, t: TyId) bool {
     be.types().at(t).match({ Named(n) => is_ptr_named(be.types(), n), _ => false })
 }
 
-scaled_arg = (be :: CBackend, nm: str, out :: String) Res<(), AllocError> {
+scaled_arg = (be :: CBackend, nm: str, out :: String) Res<AllocError> {
     e0 ::= be.alloc.String().try();
     sym_gen(e0, "e", 0).try();
     out.fmt("({nm} * {})", e0.view())
@@ -630,7 +620,7 @@ cast_arg = (
     i   : usize,
     nm  : str,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     want = sig.get(i + 1).match({ Ok(t) => t, None => TyId(index: 0) });
     got  = s.params.get(i).match({ Ok(t) => t, None => TyId(index: 0) });
     (want.eq(got) || (be.is_pointer(want) == false)).match({
@@ -674,7 +664,7 @@ write_fat_value* = (
     cty  : TyId,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     addr ::= be.alloc.String().try();
     be.address_of(code, cty, addr).try();
     be.fat_value(addr.view(), cty, want, out)
@@ -683,19 +673,19 @@ write_fat_value* = (
 // The receiver's address, without copying it where that would move the
 // storage the record points at.
 address_of* = (be :: CBackend, code: str, cty: TyId, out :: String)
-             Res<(), AllocError> {
+             Res<AllocError> {
     is_place(code).match({
         true  => write_amp(code, out),
         false => be.spill_address(code, cty, out),
     })
 }
 
-write_amp = (code: str, out :: String) Res<(), AllocError> {
+write_amp = (code: str, out :: String) Res<AllocError> {
     out.fmt("&({code})")
 }
 
 spill_address* = (be :: CBackend, code: str, cty: TyId, out :: String)
-                Res<(), AllocError> {
+                Res<AllocError> {
     tmp ::= be.init_temp(cty, "t", code).try();
     out.fmt("&{}", tmp.view())
 }

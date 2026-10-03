@@ -12,7 +12,7 @@ json_pkg = Package(
     hash: "sha256:9f2a...",
 )
 
-build = (b :: Builder) Res<(), BuildError> {
+build = (b :: Builder) Res<BuildError> {
 
     // Target-specific configuration is ordinary Zen control flow.
     lib_paths = b.os.match({
@@ -74,6 +74,4 @@ build = (b :: Builder) Res<(), BuildError> {
 
     // The build also carries its own time budget.
     b.budget(seconds(60));
-
-    Ok(());
 }

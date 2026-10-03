@@ -26,7 +26,7 @@ Counting.impl(Alloc, {
     }
 })
 
-turn = <T>(env: Env, server :: Server, request: T) Res<(), AllocError> {
+turn = <T>(env: Env, server :: Server, request: T) Res<AllocError> {
     temporary ::= env.mem.alloc();
     message = request.to_json(temporary).try();
     output ::= temporary.String().try();

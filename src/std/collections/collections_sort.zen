@@ -55,7 +55,7 @@ swap_pair<T> = (xs :: Vec<T>, j: usize, lft: T, rgt: T) {
 // Stable O(n log n) sorting with O(n) scratch from the caller's allocator.
 // Allocation failure leaves the input unchanged. Scratch storage follows the
 // allocator owner's lifetime and reclamation policy.
-sort*<T: Ordered> = (xs :: Vec<T>, a: Alloc) Res<(), AllocError> {
+sort*<T: Ordered> = (xs :: Vec<T>, a: Alloc) Res<AllocError> {
     (xs.len > 1).then(() {
         scratch ::= a.Vec<T>();
         scratch.reserve(xs.len).try();
@@ -69,7 +69,7 @@ sort*<T: Ordered> = (xs :: Vec<T>, a: Alloc) Res<(), AllocError> {
             xs.ptr().copy_from(sorting.source, xs.len);
         });
     });
-    Ok(())
+    Ok
 }
 
 // Each pass initializes the entire destination before it becomes the source.

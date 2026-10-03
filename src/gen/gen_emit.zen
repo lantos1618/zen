@@ -19,7 +19,7 @@ Emit* = {
     // writing
 
     // Every `\n` in `s` ends a line, so a multi-line run indents each line.
-    bytes* = (self :: @Self, s: str) Res<(), AllocError> {
+    bytes* = (self :: @Self, s: str) Res<AllocError> {
         lines ::= s.split('\n');
         self.run(lines.next().value_or("")).try();
         loop((h) {
@@ -28,19 +28,19 @@ Emit* = {
                 Ok(rest) => { self.line().try(); self.run(rest).try(); },
             });
         });
-        Ok(())
+        Ok
     }
 
     // `s` holds no `\n`. Empty writes nothing, so a blank line stays blank.
-    run = (self :: @Self, s: str) Res<(), AllocError> {
+    run = (self :: @Self, s: str) Res<AllocError> {
         (!s.is_empty()).then(() {
             self.open_line().try();
             self.text.add(s).try();
         });
-        Ok(())
+        Ok
     }
 
-    byte* = (self :: @Self, b: u8) Res<(), AllocError> {
+    byte* = (self :: @Self, b: u8) Res<AllocError> {
         (b == '\n').match({
             true  => self.line(),
             false => {
@@ -50,31 +50,31 @@ Emit* = {
         })
     }
 
-    number* = (self :: @Self, v: usize) Res<(), AllocError> {
+    number* = (self :: @Self, v: usize) Res<AllocError> {
         self.open_line().try();
         self.text.write_usize(v)
     }
 
     // End the line. A blank line is `line` twice and gets no indent.
-    line* = (self :: @Self) Res<(), AllocError> {
+    line* = (self :: @Self) Res<AllocError> {
         self.text.add('\n').try();
         self.fresh = true;
-        Ok(());
+        Ok;
     }
 
-    say* = (self :: @Self, s: str) Res<(), AllocError> {
+    say* = (self :: @Self, s: str) Res<AllocError> {
         self.bytes(s).try();
         self.line()
     }
 
-    open_line = (self :: @Self) Res<(), AllocError> {
+    open_line = (self :: @Self) Res<AllocError> {
         self.fresh.then(() {
             Range(0, self.depth).loop((h, _) {
                 self.text.add(INDENT).try();
             });
             self.fresh = false;
         });
-        Ok(());
+        Ok;
     }
 
     // depth

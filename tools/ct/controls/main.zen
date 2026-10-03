@@ -353,7 +353,7 @@ leaky_second_half* = (key: Ptr<u8>, table: Ptr<u8>) u8 {
     table.read(h.hi.lane(0).truncate_u8().to_usize())
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a     = env.mem.alloc();
     bytes = a.raw(256, 16).try();
     Range<usize>(0, 256).loop((i) { bytes.write(i, i.truncate_u8() *% 29); });
@@ -421,5 +421,4 @@ main = (env: Env) Res<(), AllocError> {
     schedule = Schedule(keys: bytes, powers: bytes.offset(128), rounds: 3);
     schedule_mix(schedule, mixed);
     println("{} {}", mixed.read(1), leaky_schedule(schedule, bytes));
-    Ok(())
 }

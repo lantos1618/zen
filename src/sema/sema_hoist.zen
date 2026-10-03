@@ -25,18 +25,18 @@ can_hoist* = (c: Checker, got: TyId, want: TyId) bool {
 }
 
 hoist_check = (c :: Checker, file: str, span: Span, got: TyId, want: TyId)
-               Res<(), AllocError> {
+               Res<AllocError> {
     c.assignable(got, want).match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.hoist_into(file, span, got, want),
     })
 }
 
 hoist_into = (c :: Checker, file: str, span: Span, got: TyId, want: TyId)
-             Res<(), AllocError> {
+             Res<AllocError> {
     c.types.at(want).match({
         Res(r) => c.hoist_into_res(file, span, got, want, r),
-        _      => Ok(()),
+        _      => Ok,
     })
 }
 
@@ -47,9 +47,9 @@ hoist_into_res = (
     got  : TyId,
     want : TyId,
     r    : TyRes
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.countable(r).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.count_carriers(file, span, got, want, r),
     })
 }
@@ -61,7 +61,7 @@ count_carriers = (
     got  : TyId,
     want : TyId,
     r    : TyRes
-) Res<(), AllocError> {
+) Res<AllocError> {
     ok  = c.assignable(got, r.value);
     err = c.carries_failure(got, r);
     (ok && err).match({
@@ -71,10 +71,10 @@ count_carriers = (
 }
 
 lone_failure = (c :: Checker, file: str, span: Span, err: bool)
-               Res<(), AllocError> {
+               Res<AllocError> {
     err.match({
         true  => c.failure_never_lifts(file, span),
-        false => Ok(()),
+        false => Ok,
     })
 }
 
@@ -94,7 +94,7 @@ settled = (c: Checker, t: TyId) bool {
 }
 
 two_readings = (c :: Checker, file: str, span: Span, got: TyId, want: TyId)
-               Res<(), AllocError> {
+               Res<AllocError> {
     c.report(
         file,
         span,
@@ -107,12 +107,12 @@ two_readings = (c :: Checker, file: str, span: Span, got: TyId, want: TyId)
 }
 
 failure_never_lifts = (c :: Checker, file: str, span: Span)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     c.report(file, span, SemaFault.HoistNotSuccess(NameFault(name: "Err")))
 }
 
 check_return* = (c :: Checker, body: BlockId, ctx: Ctx, got: TyId)
-                Res<(), AllocError> {
+                Res<AllocError> {
     blk = c.tree.block_at(body);
     c.tail_expr(blk).match({
         None  => c.owed_without_tail(blk, got, ctx.ret),
@@ -124,16 +124,16 @@ check_return* = (c :: Checker, body: BlockId, ctx: Ctx, got: TyId)
 }
 
 tail_fits = (c :: Checker, blk: Block, id: ExprId, got: TyId, want: TyId)
-            Res<(), AllocError> {
+            Res<AllocError> {
     c.return_fits(blk, id, got, want).try();
     c.value_was_asked_for(blk, got, want).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.check_arms(id, want),
     })
 }
 
 return_fits = (c :: Checker, blk: Block, id: ExprId, got: TyId, want: TyId)
-              Res<(), AllocError> {
+              Res<AllocError> {
     node = c.tree.expr_at(id);
     c.assignable(got, want).match({
         true  => c.check_literal(id, want),
@@ -147,7 +147,7 @@ refuse_return = (
     node : Expr,
     got  : TyId,
     want : TyId
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.types.at(want).match({
         Res(r) => c.res_return(blk, node, got, want, r),
         _      => c.wrong_return(blk, node, got, want),
@@ -161,7 +161,7 @@ res_return = (
     got  : TyId,
     want : TyId,
     r    : TyRes
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.types.at(got).match({
         Res(_) => c.wrong_return(blk, node, got, want),
         _      => c.lift_or_refuse(blk, node, got, want, r),
@@ -175,10 +175,10 @@ lift_or_refuse = (
     got  : TyId,
     want : TyId,
     r    : TyRes
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.hoist_into_res(node.span.file, node.span, got, want, r).try();
     (c.lands_somewhere(got, r) || (node.was_written() == false)).match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.wrong_return(blk, node, got, want),
     })
 }
@@ -193,9 +193,9 @@ lands_somewhere = (c: Checker, got: TyId, r: TyRes) bool {
 }
 
 wrong_return = (c :: Checker, blk: Block, node: Expr, got: TyId, want: TyId)
-               Res<(), AllocError> {
+               Res<AllocError> {
     c.value_was_asked_for(blk, got, want).match({
-        false => Ok(()),
+        false => Ok,
         true  => (c.unit_ty(got) && c.owes_success(want)).match({
             true  => c.missing_success(node.span, got, want),
             false => c.coerce(node.span.file, node.span, got, want, ""),
@@ -204,7 +204,7 @@ wrong_return = (c :: Checker, blk: Block, node: Expr, got: TyId, want: TyId)
 }
 
 missing_success = (c :: Checker, at: Span, got: TyId, want: TyId)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     c.report(
         at.file,
         at,
@@ -235,9 +235,9 @@ owes_success = (c: Checker, want: TyId) bool {
 
 // A body with no expression to end on, `{}` or one ending in a binding.
 owed_without_tail = (c :: Checker, blk: Block, got: TyId, want: TyId)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     c.owes_success(want).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.missing_success(blk.span, got, want),
     })
 }
@@ -249,7 +249,7 @@ written_value = (blk: Block) bool {
 unit_ty = (c: Checker, t: TyId) bool { c.prim_name(t).eq("()") }
 
 hoist_at* = (c :: Checker, id: ExprId, got: TyId, want: TyId)
-           Res<(), AllocError> {
+           Res<AllocError> {
     node = c.tree.expr_at(id);
     c.hoist_check(node.span.file, node.span, got, want)
 }
@@ -323,13 +323,13 @@ last_stmt = (blk: Block) Res<Stmt> {
     })
 }
 
-check_arms* = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
+check_arms* = (c :: Checker, id: ExprId, want: TyId) Res<AllocError> {
     c.arms_owe(id, want, Blame.Position)
 }
 
-check_arms_agree* = (c :: Checker, id: ExprId) Res<(), AllocError> {
+check_arms_agree* = (c :: Checker, id: ExprId) Res<AllocError> {
     c.expr_memo.get(id).match({
-        None       => Ok(()),
+        None       => Ok,
         Ok(joined) => c.arms_owe(id, joined, Blame.Arms),
     })
 }
@@ -337,23 +337,23 @@ check_arms_agree* = (c :: Checker, id: ExprId) Res<(), AllocError> {
 Blame* = { Position | Arms }
 
 arms_owe = (c :: Checker, id: ExprId, want: TyId, blame: Blame)
-           Res<(), AllocError> {
+           Res<AllocError> {
     node = c.tree.expr_at(id);
     node.kind.match({
         Match(m) => c.arms_within(m, want, blame),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
 // A nested match's arms are the values, as in `literal_within`.
 arms_within = (c :: Checker, m: Match, want: TyId, blame: Blame)
-              Res<(), AllocError> {
+              Res<AllocError> {
     m.arms.loop((h, a) { c.arm_within(a.body, want, blame).try() });
-    Ok(());
+    Ok;
 }
 
 arm_within = (c :: Checker, id: ExprId, want: TyId, blame: Blame)
-             Res<(), AllocError> {
+             Res<AllocError> {
     node = c.tree.expr_at(id);
     node.kind.match({
         Match(m) => c.arms_within(m, want, blame),
@@ -362,23 +362,23 @@ arm_within = (c :: Checker, id: ExprId, want: TyId, blame: Blame)
 }
 
 arm_fits = (c :: Checker, id: ExprId, node: Expr, want: TyId, blame: Blame)
-           Res<(), AllocError> {
+           Res<AllocError> {
     c.expr_memo.get(id).match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(got) => c.arm_agrees(node, got, want, blame),
     })
 }
 
 arm_agrees = (c :: Checker, node: Expr, got: TyId, want: TyId, blame: Blame)
-             Res<(), AllocError> {
+             Res<AllocError> {
     c.assignable(got, want).match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.refuse_arm(node, got, want, blame),
     })
 }
 
 refuse_arm = (c :: Checker, node: Expr, got: TyId, want: TyId, blame: Blame)
-             Res<(), AllocError> {
+             Res<AllocError> {
     c.types.at(want).match({
         Res(r) => c.arm_into_res(node, got, want, r, blame),
         _      => c.arm_refused(node, got, want, blame),
@@ -392,7 +392,7 @@ arm_into_res = (
     want  : TyId,
     r     : TyRes,
     blame : Blame
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.types.at(got).match({
         Res(_) => c.arm_refused(node, got, want, blame),
         _      => c.hoist_into_res(node.span.file, node.span, got, want, r),
@@ -400,7 +400,7 @@ arm_into_res = (
 }
 
 arm_refused = (c :: Checker, node: Expr, got: TyId, want: TyId, blame: Blame)
-              Res<(), AllocError> {
+              Res<AllocError> {
     blame.match({
         Position => c.coerce(node.span.file, node.span, got, want, ""),
         Arms     => c.arms_disagree(node, got, want),
@@ -408,7 +408,7 @@ arm_refused = (c :: Checker, node: Expr, got: TyId, want: TyId, blame: Blame)
 }
 
 arms_disagree = (c :: Checker, node: Expr, got: TyId, want: TyId)
-                Res<(), AllocError> {
+                Res<AllocError> {
     c.report(
         node.span.file,
         node.span,
@@ -417,13 +417,13 @@ arms_disagree = (c :: Checker, node: Expr, got: TyId, want: TyId)
 }
 
 check_ctor_fields* = (c :: Checker, call: Call, ty: TyId, ctx: Ctx)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     call.args.loop((h, i, a) { c.check_ctor_field(a, i, ty, ctx).try() });
-    Ok(());
+    Ok;
 }
 
 check_ctor_field = (c :: Checker, a: Arg, i: usize, ty: TyId, ctx: Ctx)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     a.name.match({
         None   => c.check_positional_field(a, i, ty, ctx),
         Ok(nm) => c.check_named_field(a, nm.span, nm.text, ty, ctx),
@@ -436,10 +436,10 @@ check_positional_field = (
     i   : usize,
     ty  : TyId,
     ctx : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     name = c.storage_seat_name(ty, i).try();
     name.eq("").match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.check_named_field(a, a.span, name, ty, ctx),
     })
 }
@@ -452,7 +452,7 @@ check_named_field = (
     ty   : TyId,
     ctx  : Ctx
 )
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     found ::= c.alloc.Vec<Found>();
     c.members_of(ty, name, found).try();
     found.get(0).match({
@@ -462,7 +462,7 @@ check_named_field = (
 }
 
 ctor_no_member = (c :: Checker, a: Arg, name: str, ty: TyId)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     poison = c.types.unknown().try();
     c.report(
         a.span.file,
@@ -483,7 +483,7 @@ ctor_field_or_constant = (
     at   : Span,
     ty   : TyId,
     ctx  : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     f.constant.match({
         true  => c.ctor_names_constant(a, name, at, ty, ctx),
         false => c.field_fits(a, f.ty, ctx),
@@ -498,7 +498,7 @@ ctor_names_constant = (
     ty   : TyId,
     ctx  : Ctx
 )
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     c.report(
         a.span.file,
         at,
@@ -513,7 +513,7 @@ ctor_names_constant = (
 // A field is a typed slot: check lifting, assignability, match arms, literal
 // range, and whether the value is a non-storable loop handle.
 field_fits = (c :: Checker, a: Arg, want: TyId, ctx: Ctx)
-             Res<(), AllocError> {
+             Res<AllocError> {
     got = c.type_of(a.value, ctx).try();
     c.refuse_handle_value(a.value, got).try();
     c.hoist_at(a.value, got, want).try();

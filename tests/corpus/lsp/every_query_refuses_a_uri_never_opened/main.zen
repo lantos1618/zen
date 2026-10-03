@@ -72,7 +72,7 @@ main = (env: Env) Res<i32, AllocError> {
 }
 
 open_doc = (a: Alloc, uri: str, text: str, into :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
@@ -86,7 +86,7 @@ open_doc = (a: Alloc, uri: str, text: str, into :: String)
 
 // A request naming only a document.
 ask = (a: Alloc, id: usize, method: str, uri: str, into :: String)
-      Res<(), AllocError> {
+      Res<AllocError> {
     body ::= a.String().try();
     opening(a, id, method, uri, body).try();
     body.add("}}}").try();
@@ -98,7 +98,7 @@ ask = (a: Alloc, id: usize, method: str, uri: str, into :: String)
 // position up before the document would answer about the position — and
 // the two orders are told apart by the message, not by the code.
 ask_at = (a: Alloc, id: usize, method: str, uri: str, into :: String)
-         Res<(), AllocError> {
+         Res<AllocError> {
     body ::= a.String().try();
     opening(a, id, method, uri, body).try();
     body.add("},\"position\":{\"line\":0,\"character\":0}}}").try();
@@ -107,7 +107,7 @@ ask_at = (a: Alloc, id: usize, method: str, uri: str, into :: String)
 
 // And the same, with the `range` and `context` a codeAction carries.
 ask_range = (a: Alloc, id: usize, method: str, uri: str, into :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
     body ::= a.String().try();
     opening(a, id, method, uri, body).try();
     body.add(
@@ -118,7 +118,7 @@ ask_range = (a: Alloc, id: usize, method: str, uri: str, into :: String)
 
 // Everything up to the close of `textDocument`, which both shapes share.
 opening = (a: Alloc, id: usize, method: str, uri: str, body :: String)
-          Res<(), AllocError> {
+          Res<AllocError> {
     body.add("{\"jsonrpc\":\"2.0\",\"id\":").try();
     body.write_usize(id).try();
     body.add(",\"method\":").try();

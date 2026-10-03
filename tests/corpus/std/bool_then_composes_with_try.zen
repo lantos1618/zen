@@ -3,11 +3,12 @@
 // .try() carries it out of the frame. this is the guard clause,
 // written without a conditional
 
-{ Res, Ok } = std.core
+{ Res, Ok, Error } = std.core
 { Env } = std.env
 { println } = std.io
 
 GuardError = { | NotPositive }
+GuardError.impl(Error, {})
 
 checked_double = (n: i32) Res<i32, GuardError> {
     v = (n > 0).then(() { n * 2 }).ok_or(GuardError.NotPositive).try();

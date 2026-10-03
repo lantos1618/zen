@@ -15,12 +15,12 @@
 { AllocError } = std.mem
 { Res, Ok } = std.core
 
-write_runtime* = (out :: String) Res<(), AllocError> {
+write_runtime* = (out :: String) Res<AllocError> {
     LINES.loop((line) {
         out.add(line).try();
         out.add("\n").try();
     });
-    Ok(())
+    Ok
 }
 
 LINES = [

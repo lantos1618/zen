@@ -19,9 +19,9 @@
 Log = {
     text :: String,
 
-    fmt* = (self :: @Self, fmt: str, args: ...) Res<(), AllocError>
+    fmt* = (self :: @Self, fmt: str, args: ...) Res<AllocError>
 
-    write* = (self :: @Self, s: str) Res<(), AllocError> {
+    write* = (self :: @Self, s: str) Res<AllocError> {
         self.text.add(s)
     }
 }

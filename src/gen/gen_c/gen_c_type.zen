@@ -31,7 +31,7 @@
 // Ordinary types are checked by `spellable` at their use site. Native
 // records also validate their explicit header contract here. Invalid
 // types fall back to `int` so C remains parseable around the diagnostic.
-ctype* = (be :: CBackend, id: TyId, out :: String) Res<(), AllocError> {
+ctype* = (be :: CBackend, id: TyId, out :: String) Res<AllocError> {
     be.types().at(id).match({
         Prim(p)  => {
             machine_prim(p.name).then(() { be.need_machine() });
@@ -43,12 +43,11 @@ ctype* = (be :: CBackend, id: TyId, out :: String) Res<(), AllocError> {
         Array(_) => be.named_ctype(id, out),
         _        => out.add("int"),
     }).try();
-    Ok(());
 }
 
 // The zero value used for a compiler-synthesised argument, field or
 // deferred local. `str` and the vectors are structs in C.
-write_zero* = (be :: CBackend, t: TyId, out :: String) Res<(), AllocError> {
+write_zero* = (be :: CBackend, t: TyId, out :: String) Res<AllocError> {
     be.check.types.at(t).match({
         Prim(p) => (is_vector(p.name) || p.name.eq("str")).match({
             true  => be.write_zero_struct(t, out),
@@ -59,14 +58,14 @@ write_zero* = (be :: CBackend, t: TyId, out :: String) Res<(), AllocError> {
 }
 
 write_zero_struct = (be :: CBackend, t: TyId, out :: String)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     cty ::= be.alloc.String().try();
     be.ctype(t, cty).try();
     out.fmt("({}){0}", cty.view())
 }
 
 write_none* = (be :: CBackend, t: TyId, out :: String)
-              Res<(), AllocError> {
+              Res<AllocError> {
     cty ::= be.alloc.String().try();
     be.ctype(t, cty).try();
     tag ::= be.alloc.String().try();
@@ -84,7 +83,7 @@ write_none* = (be :: CBackend, t: TyId, out :: String)
 // writes the spelling, a space and the name, which is `uint8_t *p` — a
 // legal C declarator with the `*` bound to the name.
 maybe_ptr = (be :: CBackend, id: TyId, n: TyNamed, out :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
     is_ptr_named(be.types(), n).match({
         true  => be.ptr_ctype(n, out),
         false => be.maybe_scope(id, n, out),
@@ -98,7 +97,7 @@ maybe_ptr = (be :: CBackend, id: TyId, n: TyNamed, out :: String)
 // storage for a member that has no body and never will, since
 // `gen_c_scope.zen` is its body.
 maybe_scope = (be :: CBackend, id: TyId, n: TyNamed, out :: String)
-              Res<(), AllocError> {
+              Res<AllocError> {
     is_scope_named(be.types(), n).match({
         true  => out.add("zg_scope *"),
         false => be.maybe_named_ctype(id, n, out),
@@ -109,7 +108,7 @@ maybe_scope = (be :: CBackend, id: TyId, n: TyNamed, out :: String)
 // If an unsupported by-value use reaches here after its diagnostic, keep
 // the surrounding C parseable without inventing a struct definition.
 maybe_named_ctype = (be :: CBackend, id: TyId, n: TyNamed, out :: String)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     be.native_record_decl(n).match({
         Ok(s) => be.write_native_record(n, s, out),
         None  => be.foreign_binding(n).match({
@@ -142,7 +141,7 @@ native_record_spelling = (name: str) bool {
 }
 
 write_native_record = (be :: CBackend, n: TyNamed, s: Struct, out :: String)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     spelling = s.native_symbol.value_or("");
     header   = s.native_header.value_or("");
     valid ::= native_record_spelling(spelling) && s.tparams.len == 0;
@@ -184,7 +183,7 @@ native_record_contract = (
     ctx      : Ctx,
     inst     : Inst,
     spelling : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.need_c_header("stdint.h", true).try();
     be.need_c_header("stddef.h", true).try();
     be.need_c_header("stdbool.h", true).try();
@@ -196,12 +195,12 @@ native_record_contract = (
                     m.name().text,
                     c_prim(p.name)
                 ),
-                _       => Ok(()),
+                _       => Ok,
             }),
-            None  => Ok(()),
+            None  => Ok,
         }).try();
     });
-    Ok(())
+    Ok
 }
 
 native_scalar_contract = (
@@ -209,7 +208,7 @@ native_scalar_contract = (
     spelling : str,
     field    : str,
     scalar   : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     line ::= be.alloc.String().try();
     line.fmt(
         "extern char zg_native_scalar_field_type_mismatch[__builtin_types_compatible_p(__typeof__((({} *)0)->{}), {}) ? 1 : -1];",
@@ -218,7 +217,7 @@ native_scalar_contract = (
         scalar
     ).try();
     be.c_headers.find((item) { item.view().eq(line.view()) }).match({
-        Ok(_) => Ok(()),
+        Ok(_) => Ok,
         None  => be.c_headers.add(line),
     })
 }
@@ -268,14 +267,14 @@ is_res* = (be :: CBackend, id: TyId) bool {
 }
 
 ptr_ctype = (be :: CBackend, n: TyNamed, out :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
     n.args.get(0).match({
         Ok(t) => be.elem_ctype(t, out),
         None  => out.add("void *"),
     })
 }
 
-elem_ctype = (be :: CBackend, t: TyId, out :: String) Res<(), AllocError> {
+elem_ctype = (be :: CBackend, t: TyId, out :: String) Res<AllocError> {
     be.types().at(t).match({
         Named(n) => be.foreign_binding(n).match({
             Ok(raw) => write_opaque_ptr(raw, out),
@@ -286,7 +285,7 @@ elem_ctype = (be :: CBackend, t: TyId, out :: String) Res<(), AllocError> {
 }
 
 write_opaque_ptr = (raw: COpaque, out :: String)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     raw.spelling.is_identifier().match({
         true  => out.add(raw.spelling),
         false => out.add("int"),
@@ -295,13 +294,13 @@ write_opaque_ptr = (raw: COpaque, out :: String)
 }
 
 write_elem_ctype = (be :: CBackend, t: TyId, out :: String)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     be.request_type(t).try();
     be.ctype(t, out).try();
     out.add(" *")
 }
 
-named_ctype = (be :: CBackend, id: TyId, out :: String) Res<(), AllocError> {
+named_ctype = (be :: CBackend, id: TyId, out :: String) Res<AllocError> {
     be.request_type(id).try();
     sym_type(out, be.alloc, be.types(), be.world(), id)
 }
@@ -309,7 +308,7 @@ named_ctype = (be :: CBackend, id: TyId, out :: String) Res<(), AllocError> {
 // A declarator: the spelling, a space, the name. A pointer type's
 // asterisk is part of the spelling `ctype` writes — see `maybe_ptr`.
 declarator* = (be :: CBackend, id: TyId, name: str, out :: String)
-              Res<(), AllocError> {
+              Res<AllocError> {
     cty ::= be.alloc.String().try();
     be.ctype(id, cty).try();
     out.fmt("{} {name}", cty.view())
@@ -317,10 +316,10 @@ declarator* = (be :: CBackend, id: TyId, name: str, out :: String)
 
 // A `_` binding is still declared so its initializer runs; the cast says
 // the value is dropped on purpose.
-void_discard* = (be :: CBackend, name: str, cname: str) Res<(), AllocError> {
+void_discard* = (be :: CBackend, name: str, cname: str) Res<AllocError> {
     name.eq("_").match({
         true  => be.fmt("(void){cname};\n"),
-        false => Ok(()),
+        false => Ok,
     })
 }
 
@@ -445,7 +444,7 @@ is_signed* = (name: str) bool {
 
 // Register a type for definition, keyed by the mangled name that is
 // its identity (see the header).
-request_type* = (be :: CBackend, id: TyId) Res<(), AllocError> {
+request_type* = (be :: CBackend, id: TyId) Res<AllocError> {
     ptr_element(be, id).match({
         Ok(et) => be.request_type(et),
         None   => be.request_defined(id),
@@ -454,9 +453,9 @@ request_type* = (be :: CBackend, id: TyId) Res<(), AllocError> {
 
 // Runtime scopes and header-owned native types already have definitions.
 // Queueing them would synthesize a competing Zen storage layout.
-request_defined = (be :: CBackend, id: TyId) Res<(), AllocError> {
+request_defined = (be :: CBackend, id: TyId) Res<AllocError> {
     (be.is_scope_type(id) || be.is_foreign_opaque(id) || be.is_native_record(id)).match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.queue_definition(id),
     })
 }
@@ -496,47 +495,45 @@ named_element = (types: Types, n: TyNamed) Res<TyId> {
     })
 }
 
-queue_definition = (be :: CBackend, id: TyId) Res<(), AllocError> {
+queue_definition = (be :: CBackend, id: TyId) Res<AllocError> {
     name ::= be.alloc.String().try();
     sym_type(name, be.alloc, be.types(), be.world(), id).try();
     be.type_index(name.view()).match({
         None  => be.queue_type(name, id),
-        Ok(_) => Ok(()),
+        Ok(_) => Ok,
     })
 }
 
-close_types* = (be :: CBackend) Res<(), AllocError> {
+close_types* = (be :: CBackend) Res<AllocError> {
     cursor :: usize = 0;
     loop(cursor < be.type_queue.len, (h) {
         be.request_children(cursor).try();
         cursor = cursor + 1;
     });
-    Ok(());
+    Ok;
 }
 
-request_children = (be :: CBackend, i: usize) Res<(), AllocError> {
+request_children = (be :: CBackend, i: usize) Res<AllocError> {
     be.type_id_at(i).match({
-        None   => Ok(()),
+        None   => Ok,
         Ok(id) => be.request_members(id),
     }).try();
-    Ok(());
 }
 
-request_members = (be :: CBackend, id: TyId) Res<(), AllocError> {
+request_members = (be :: CBackend, id: TyId) Res<AllocError> {
     be.types().at(id).match({
         Named(n) => be.request_named_members(n, id),
         Res(r)   => be.request_res_members(r),
         Union(u) => be.request_union_members(u.members),
         Array(a) => be.request_if_composite(a.elem),
-        _        => Ok(()),
+        _        => Ok,
     }).try();
-    Ok(());
 }
 
 request_union_members = (be :: CBackend, members: Vec<TyId>)
-                        Res<(), AllocError> {
+                        Res<AllocError> {
     members.loop((h, m) { be.request_if_composite(m).try() });
-    Ok(());
+    Ok;
 }
 
 // A bound's slots need definitions too, and they are requested here
@@ -545,41 +542,39 @@ request_union_members = (be :: CBackend, members: Vec<TyId>)
 // Feeding them to the dependency walk would record `Eq -> Eq` and
 // report a cycle that is not there.
 request_named_members = (be :: CBackend, n: TyNamed, id: TyId)
-                        Res<(), AllocError> {
+                        Res<AllocError> {
     be.request_decl_members(n).try();
     be.request_slots(id).try();
-    Ok(());
 }
 
-request_res_members = (be :: CBackend, r: TyRes) Res<(), AllocError> {
+request_res_members = (be :: CBackend, r: TyRes) Res<AllocError> {
     be.request_if_composite(r.value).try();
     is_failure(r.form).then(() { be.request_if_composite(r.error).try() });
-    Ok(());
+    Ok;
 }
 
-request_if_composite = (be :: CBackend, id: TyId) Res<(), AllocError> {
+request_if_composite = (be :: CBackend, id: TyId) Res<AllocError> {
     be.is_unit(id).match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.request_if_named(id),
     })
 }
 
-request_if_named = (be :: CBackend, id: TyId) Res<(), AllocError> {
+request_if_named = (be :: CBackend, id: TyId) Res<AllocError> {
     be.types().at(id).match({
         Named(_) => be.request_type(id),
         Res(_)   => be.request_type(id),
         Union(_) => be.request_type(id),
         Array(_) => be.request_type(id),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
-request_decl_members = (be :: CBackend, n: TyNamed) Res<(), AllocError> {
+request_decl_members = (be :: CBackend, n: TyNamed) Res<AllocError> {
     decl_at(be.tree, n.decl).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(d) => be.request_from_decl(n, d),
     }).try();
-    Ok(());
 }
 
 // A declaration's member types are read at the type's own arguments.
@@ -588,17 +583,16 @@ request_decl_members = (be :: CBackend, n: TyNamed) Res<(), AllocError> {
 // the answer — the same two steps every other reader of a generic
 // declaration takes, and `decl_inst` is the second one.
 request_from_decl = (be :: CBackend, n: TyNamed, d: Decl)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     ctx  = be.decl_ctx(n);
     inst = be.decl_inst(n).try();
     mark = be.enter_struct_tparams(n.decl).try();
     d.kind.match({
         Struct(s) => be.request_fields(s.members, ctx, inst),
         Enum(e)   => be.request_variants(n, e.variants, ctx, inst),
-        _         => Ok(()),
+        _         => Ok,
     }).try();
     be.leave_tparams(mark).try();
-    Ok(());
 }
 
 // What a type's own arguments bound its declaration's parameters to.
@@ -611,14 +605,14 @@ request_fields = (
     members : Vec<Member>,
     ctx     : Ctx,
     inst    : Inst
-) Res<(), AllocError> {
+) Res<AllocError> {
     members.loop((h, m) {
         be.field_type(m, ctx, inst).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(t) => be.request_if_composite(t),
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
 request_variants = (
@@ -627,14 +621,14 @@ request_variants = (
     variants : Vec<Variant>,
     ctx      : Ctx,
     inst     : Inst
-) Res<(), AllocError> {
+) Res<AllocError> {
     variants.loop((h, v) {
         variant_type(be, n, v, ctx, inst).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(t) => be.request_if_composite(t),
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
 // The struct a declaration is, when it is one — the DeclId→Decl→Struct
@@ -766,7 +760,7 @@ named_field_of = (be :: CBackend, n: TyNamed, name: str)
     mark = be.enter_struct_tparams(n.decl).try();
     found ::= be.alloc.Vec<TyId>();
     decl_at(be.tree, n.decl).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(d) => be.collect_field(d, name, ctx, inst, found),
     }).try();
     be.leave_tparams(mark).try();
@@ -780,10 +774,10 @@ collect_field = (
     ctx  : Ctx,
     inst : Inst,
     out  :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     d.kind.match({
         Struct(s) => be.keep_fields(s, name, ctx, inst, out),
-        _         => Ok(()),
+        _         => Ok,
     })
 }
 
@@ -794,11 +788,11 @@ keep_fields = (
     ctx  : Ctx,
     inst : Inst,
     out  :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     s.members.loop((h, m) {
         be.keep_named_field(m, name, ctx, inst, out).try();
     });
-    Ok(());
+    Ok;
 }
 
 keep_named_field = (
@@ -808,9 +802,9 @@ keep_named_field = (
     ctx  : Ctx,
     inst : Inst,
     out  :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     m.named(name).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.add_field_type(m, ctx, inst, out),
     })
 }
@@ -821,9 +815,9 @@ add_field_type = (
     ctx  : Ctx,
     inst : Inst,
     out  :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.field_type(m, ctx, inst).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(t) => out.add(t),
     })
 }

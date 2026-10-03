@@ -16,7 +16,7 @@ Protocol = {
     root: str,
     uri: str,
 
-    initialize = (self: @Self, mappings: str, out :: String) Res<(), AllocError> {
+    initialize = (self: @Self, mappings: str, out :: String) Res<AllocError> {
         body ::= self.a.String().try();
         body.add(
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":"
@@ -31,7 +31,7 @@ Protocol = {
         write_frame(body.view(), out)
     }
 
-    open = (self: @Self, uri: str, text: str, out :: String) Res<(), AllocError> {
+    open = (self: @Self, uri: str, text: str, out :: String) Res<AllocError> {
         body ::= self.a.String().try();
         body.add(
             "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
@@ -43,7 +43,7 @@ Protocol = {
         write_frame(body.view(), out)
     }
 
-    query = (self: @Self, method: str, character: usize, out :: String) Res<(), AllocError> {
+    query = (self: @Self, method: str, character: usize, out :: String) Res<AllocError> {
         body ::= self.a.String().try();
         body.add("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":").try();
         write_text(method, body).try();
@@ -82,7 +82,7 @@ Protocol = {
     }
 }
 
-main = (env: Env) Res<(), AllocError | FsError> {
+main = (env: Env) Res<AllocError | FsError> {
     a      = env.mem.alloc();
     parent = Path(env.argv.get(0).value_or("")).parent().value_or(Path(""));
     root   = a.String("{}/project", parent.text).try().view();
@@ -242,5 +242,5 @@ main = (env: Env) Res<(), AllocError | FsError> {
             answer.view().contains("-32602")
         );
     });
-    Ok(())
+    Ok
 }

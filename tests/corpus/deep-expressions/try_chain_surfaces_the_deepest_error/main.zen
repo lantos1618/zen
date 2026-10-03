@@ -9,12 +9,13 @@
 // BOTH routes of Res are exercised through identical nesting and any
 // join-slot mix-up shows up as an arithmetic mismatch, not a crash.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
 ChainError = { tag: i32 }
+ChainError.impl(Error, {})
 
 level_12 = (n: i32) Res<i32, ChainError> {
     Err(ChainError(tag: n));

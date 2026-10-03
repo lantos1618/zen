@@ -53,7 +53,7 @@ module* = (p :: Parser, name: str) Res<Module, AllocError> {
 }
 
 // Recover at the next identifier outside brackets.
-recover = (p :: Parser) Res<(), AllocError> {
+recover = (p :: Parser) Res<AllocError> {
     p.bump().try();
     depth   :: usize = 0;
     running ::= !p.at_eof();
@@ -66,7 +66,7 @@ recover = (p :: Parser) Res<(), AllocError> {
         });
         running = running && !p.at_eof();
     });
-    Ok(());
+    Ok;
 }
 
 declaration* = (p :: Parser, module_level: bool) Res<Decl, AllocError> {
@@ -163,13 +163,13 @@ decl_names = (
     p       :: Parser,
     names   :: Vec<ImportName>,
     tparams :: Vec<TParam>
-) Res<(), AllocError> {
+) Res<AllocError> {
     names.add(p.one_decl_name(tparams).try()).try();
     loop(p.at_kind(TokenKind.Comma), (h) {
         p.bump().try();
         names.add(p.one_decl_name(tparams).try()).try();
     });
-    Ok(());
+    Ok;
 }
 
 one_decl_name = (
@@ -406,7 +406,7 @@ enum_decl = (
             "an enum's integer domain comes from its final payload catch-all; remove the type after its name",
             head.name.span
         ),
-        None  => Ok(()),
+        None  => Ok,
     }).try();
     p.at_kind(TokenKind.BraceOpen).match({
         true  => p.braced_enum(m, head, tparams),
@@ -484,7 +484,7 @@ braced_enum = (p :: Parser, m: Mark, head: ImportName, tparams: Vec<TParam>)
     members.loop((h, mem) {
         p.enum_member(mem).try();
         variants.find((v) { v.name.text.eq(mem.name().text) }).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(_) => p.error_at(
                 "a member and a variant share this name, and `Type.name` could mean either: rename one",
                 mem.span
@@ -539,17 +539,17 @@ braced_variant = (p :: Parser) Res<Variant, AllocError> {
 }
 
 // An enum has no storage beyond its variants, and its methods have bodies.
-enum_member = (p :: Parser, mem: Member) Res<(), AllocError> {
+enum_member = (p :: Parser, mem: Member) Res<AllocError> {
     mem.kind.match({
         Field(_)    => p.error_at(
             "an enum stores only its variants: after the `,` that ends them come methods and constants, not fields",
             mem.span
         ),
         Function(f) => f.body.match({
-            Ok(_) => Ok(()),
+            Ok(_) => Ok,
             None  => p.error_at("an enum's method needs a body", mem.span),
         }),
-        _           => Ok(()),
+        _           => Ok,
     })
 }
 

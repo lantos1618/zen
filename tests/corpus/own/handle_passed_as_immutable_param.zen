@@ -16,12 +16,11 @@
 { Env } = std.env
 { println } = std.io
 
-fill = (a: Alloc, v :: Vec<i32>) Res<(), AllocError> {
+fill = (a: Alloc, v :: Vec<i32>) Res<AllocError> {
     v.add(1).try();
     w ::= a.Vec<i32>();
     w.add(2).try();
     v.add(3).try();
-    Ok(());
 }
 
 Error = AllocError | IoError

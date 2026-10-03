@@ -19,7 +19,7 @@ Tag = {
 }
 
 Tag.impl(Display, {
-    toString ::= (self: @Self, out :: Sink) Res<(), WriteError> {
+    toString ::= (self: @Self, out :: Sink) Res<WriteError> {
         out.fmt("<").try();
         out.write_byte(self.ch).try();
         out.fmt(">")
@@ -38,7 +38,7 @@ Row = {
 }
 
 Row.impl(Display, {
-    toString ::= (self: @Self, out :: Sink) Res<(), WriteError> {
+    toString ::= (self: @Self, out :: Sink) Res<WriteError> {
         out.fmt("{} { {} {} {} }", self.name, self.depth, self.count, self.open)
     }
 })
@@ -51,7 +51,7 @@ Pair = {
 }
 
 Pair.impl(Display, {
-    toString ::= (self: @Self, out :: Sink) Res<(), WriteError> {
+    toString ::= (self: @Self, out :: Sink) Res<WriteError> {
         out.fmt("pair {} and {}", self.left, self.right)
     }
 })

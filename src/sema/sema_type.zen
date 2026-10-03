@@ -182,7 +182,7 @@ bound_name_type = (c :: Checker, id: ExprId, b: Binding)
                   Res<TyId, AllocError> {
     b.param.match({
         true  => c.param_memo.set(id, true),
-        false => Ok(()),
+        false => Ok,
     }).try();
     Ok(b.ty);
 }
@@ -309,7 +309,7 @@ written_or_value = (c :: Checker, k: Const, ctx: Ctx) Res<TyId, AllocError> {
 binary_type* = (c :: Checker, id: ExprId, node: Expr, b: Binary, ctx: Ctx)
               Res<TyId, AllocError> {
     c.spine_ahead(b.lhs).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.seed_left_spine(b.lhs, ctx),
     }).try();
     lhs     = c.type_of(b.lhs, ctx).try();
@@ -394,11 +394,11 @@ no_address = (c :: Checker, node: Expr, a: Access, inner: TyId)
 // The block's own tail only: a trailing block statement refused its
 // tail when it was typed, so `sema_hoist.tail_expr` would repeat it.
 refuse_handle_tail = (c :: Checker, block: Block, got: TyId)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     block.own_tail().match({
-        None   => Ok(()),
+        None   => Ok,
         Ok(id) => c.is_handle_ty(got).match({
-            false => Ok(()),
+            false => Ok,
             true  => c.refuse_handle_at(id),
         }),
     })

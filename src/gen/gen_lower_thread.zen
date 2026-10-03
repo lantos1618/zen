@@ -535,7 +535,7 @@ store_capture = (
     lo     :: Lowerer,
     record : usize,
     c      : Capture
-) Res<(), LowerError> {
+) Res<LowerError> {
     lo.lookup(c.name).match({
         Ok(Direct(v)) => lo.add(Instruction.StoreValue(Store(
             base: record,
@@ -550,7 +550,7 @@ store_capture = (
                 value: pointer
             )))
         },
-        _             => Ok(()),
+        _             => Ok,
     })
 }
 

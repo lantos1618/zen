@@ -31,7 +31,7 @@ Dest* = { Discard | Return | Into: str }
 // A block yields its explicit trailing value, or its last expression statement
 // when the parser represents a semicolon-terminated tail that way.
 block* = (be :: CBackend, id: BlockId, ctx: Ctx, want: TyId, dst: Dest)
-         Res<(), AllocError> {
+         Res<AllocError> {
     blk   = be.tree.block_at(id);
     cmark = be.check.mark();
     lmark = be.mark();
@@ -43,7 +43,6 @@ block* = (be :: CBackend, id: BlockId, ctx: Ctx, want: TyId, dst: Dest)
     close_block(be, blk, ctx, want, dst, tail).try();
     be.release(lmark).try();
     be.check.release(cmark).try();
-    Ok(());
 }
 
 // Exclude the final expression statement when it supplies the block value.
@@ -92,7 +91,7 @@ close_block = (
     want : TyId,
     dst  : Dest,
     tail : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.has_cleanup().match({
         false => be.plain_close(blk, ctx, want, dst, tail),
         true  => be.cleaned_close(blk, ctx, want, dst, tail),
@@ -120,7 +119,7 @@ plain_close = (
     want : TyId,
     dst  : Dest,
     tail : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.close_value(blk, ctx, want, dst, tail).try();
     be.leave_block(be.keep_name(blk, tail))
 }
@@ -133,7 +132,7 @@ cleaned_close = (
     want : TyId,
     dst  : Dest,
     tail : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     dst.match({
         Return => be.returning_close(blk, ctx, want, tail),
         _      => be.plain_close(blk, ctx, want, dst, tail),
@@ -147,7 +146,7 @@ returning_close = (
     ctx  : Ctx,
     want : TyId,
     tail : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.is_unit(want).match({
         true  => be.unit_return(blk, ctx, want, tail),
         false => be.spilled_return(blk, ctx, want, tail),
@@ -160,7 +159,7 @@ unit_return = (
     ctx  : Ctx,
     want : TyId,
     tail : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.close_value(blk, ctx, want, Dest.Discard, tail).try();
     be.leave_block("").try();
     be.writeln("return;")
@@ -172,7 +171,7 @@ spilled_return = (
     ctx  : Ctx,
     want : TyId,
     tail : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     tmp  ::= be.fresh_name("k").try();
     decl ::= be.alloc.String().try();
     be.declarator(want, tmp.view(), decl).try();
@@ -235,7 +234,7 @@ close_value = (
     want : TyId,
     dst  : Dest,
     tail : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     blk.value.match({
         Ok(e) => be.deliver(e, ctx, want, dst),
         None  => be.close_tail(blk, ctx, want, dst, tail),
@@ -249,7 +248,7 @@ close_tail = (
     want : TyId,
     dst  : Dest,
     tail : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     (tail == blk.stmts.len).match({
         true  => be.close_valueless(dst),
         false => be.deliver_stmt(blk, ctx, want, dst, tail),
@@ -263,9 +262,9 @@ deliver_stmt = (
     want : TyId,
     dst  : Dest,
     tail : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     blk.stmts.get(tail).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(s) => be.deliver_expr_stmt(s, ctx, want, dst),
     })
 }
@@ -276,27 +275,27 @@ deliver_expr_stmt = (
     ctx  : Ctx,
     want : TyId,
     dst  : Dest
-) Res<(), AllocError> {
+) Res<AllocError> {
     s.kind.match({
         Expr(e)  => be.deliver(e.expr, ctx, want, dst),
         Block(k) => block(be, k, ctx, want, dst),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
 // A unit return emits `return;`; an absent value for Into remains unwritten.
-close_valueless = (be :: CBackend, dst: Dest) Res<(), AllocError> {
+close_valueless = (be :: CBackend, dst: Dest) Res<AllocError> {
     dst.match({
         Return  => be.writeln("return;"),
-        Discard => Ok(()),
-        Into(_) => Ok(()),
+        Discard => Ok,
+        Into(_) => Ok,
     })
 }
 
 // Write the value of `id` into `dst`, spilling first when the form
 // cannot be a C expression.
 deliver* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId, dst: Dest)
-           Res<(), AllocError> {
+           Res<AllocError> {
     be.spills(id).match({
         true  => be.unit_lifts(id, ctx, want).try().match({
             true  => be.deliver_lifted_unit(id, ctx, want, dst),
@@ -329,7 +328,7 @@ deliver_lifted_unit = (
     ctx  : Ctx,
     want : TyId,
     dst  : Dest
-) Res<(), AllocError> {
+) Res<AllocError> {
     unit = be.check.types.prim("()").try();
     be.deliver_spilling(id, ctx, unit, Dest.Discard).try();
     be.write_unit_ok(want, dst)
@@ -342,7 +341,7 @@ deliver_spilling = (
     ctx  : Ctx,
     want : TyId,
     dst  : Dest
-) Res<(), AllocError> {
+) Res<AllocError> {
     node = be.tree.expr_at(id);
     ty   = be.destination_type(id, ctx, want).try();
     node.kind.match({
@@ -350,7 +349,7 @@ deliver_spilling = (
         Try(t)   => be.lower_try(id, node, t.operand, t.error, ctx, ty, dst),
         Block(b) => block(be, b, ctx, ty, dst),
         Paren(p) => be.deliver(p.inner, ctx, ty, dst),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
@@ -369,13 +368,13 @@ deliver_simple = (
     ctx  : Ctx,
     want : TyId,
     dst  : Dest
-) Res<(), AllocError> {
+) Res<AllocError> {
     text ::= be.alloc.String().try();
     expr(be, id, ctx, want, text).try();
     be.write_dest(dst, text.view())
 }
 
-write_dest* = (be :: CBackend, dst: Dest, text: str) Res<(), AllocError> {
+write_dest* = (be :: CBackend, dst: Dest, text: str) Res<AllocError> {
     dst.match({
         Into(name) => be.assign_line(name, text),
         Return     => be.return_line(text),
@@ -383,19 +382,19 @@ write_dest* = (be :: CBackend, dst: Dest, text: str) Res<(), AllocError> {
     })
 }
 
-assign_line = (be :: CBackend, name: str, text: str) Res<(), AllocError> {
+assign_line = (be :: CBackend, name: str, text: str) Res<AllocError> {
     be.set_line(name, text)
 }
 
-return_line = (be :: CBackend, text: str) Res<(), AllocError> {
+return_line = (be :: CBackend, text: str) Res<AllocError> {
     be.fmt("return {text};\n")
 }
 
-discard_line = (be :: CBackend, text: str) Res<(), AllocError> {
+discard_line = (be :: CBackend, text: str) Res<AllocError> {
     be.fmt("(void)({text});\n")
 }
 
-stmt* = (be :: CBackend, s: Stmt, ctx: Ctx) Res<(), AllocError> {
+stmt* = (be :: CBackend, s: Stmt, ctx: Ctx) Res<AllocError> {
     s.kind.match({
         Bind(b)     => be.lower_bind(s, b, ctx),
         Deferred(d) => be.lower_deferred(s, d, ctx),
@@ -405,25 +404,24 @@ stmt* = (be :: CBackend, s: Stmt, ctx: Ctx) Res<(), AllocError> {
     })
 }
 
-lower_nested = (be :: CBackend, id: BlockId, ctx: Ctx) Res<(), AllocError> {
+lower_nested = (be :: CBackend, id: BlockId, ctx: Ctx) Res<AllocError> {
     unit = be.check.types.prim("()").try();
     be.writeln("{").try();
     be.indent();
     block(be, id, ctx, unit, Dest.Discard).try();
     be.dedent();
     be.writeln("}").try();
-    Ok(());
 }
 
 lower_expr_stmt = (be :: CBackend, s: Stmt, id: ExprId, ctx: Ctx)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     be.check.stmt_type(s, ctx).try();
     be.deliver(id, ctx, be.check.types.unknown().try(), Dest.Discard)
 }
 
 // Only a bare name can declare a binding; member and index targets assign.
 lower_bind = (be :: CBackend, s: Stmt, b: Bind, ctx: Ctx)
-             Res<(), AllocError> {
+             Res<AllocError> {
     be.check.stmt_type(s, ctx).try();
     target = be.tree.expr_at(b.target);
     ty     = be.binding_type(b, ctx).try();
@@ -431,13 +429,12 @@ lower_bind = (be :: CBackend, s: Stmt, b: Bind, ctx: Ctx)
         Name(n) => bind_name(be, n.text, b, ty, ctx),
         _       => be.assign_target(b, ty, ctx),
     }).try();
-    Ok(());
 }
 
 // An untyped immutable bind to a name already bound in this frame is a store;
 // written types and ::= introduce declarations.
 bind_name = (be :: CBackend, name: str, b: Bind, ty: TyId, ctx: Ctx)
-            Res<(), AllocError> {
+            Res<AllocError> {
     be.is_store(name, b).match({
         true  => be.assign_target(b, ty, ctx),
         false => be.declare_local(name, b, ty, ctx),
@@ -496,7 +493,7 @@ named_slot_type = (be :: CBackend, target: ExprId) Res<TyId> {
 // Publish and register a binding only after its initializer lands so shadowing
 // initializers resolve outer names and reverse drop order remains valid.
 declare_local = (be :: CBackend, name: str, b: Bind, ty: TyId, ctx: Ctx)
-                Res<(), AllocError> {
+                Res<AllocError> {
     n = be.reserve(name).try();
     cname ::= be.alloc.String().try();
     sym_local(cname, name, n).try();
@@ -512,7 +509,6 @@ declare_local = (be :: CBackend, name: str, b: Bind, ty: TyId, ctx: Ctx)
     be.has_storage(ty).then(() { be.void_discard(name, cname.view()).try(); });
     be.publish(name, n, ty, false).try();
     be.note_drop(name, n, ty).try();
-    Ok(());
 }
 
 // `x :: T;` declares storage holding T's zero value. sema_init has proved no
@@ -521,17 +517,17 @@ declare_local = (be :: CBackend, name: str, b: Bind, ty: TyId, ctx: Ctx)
 // value's live flag starts clear, so scope exit drops only an assigned one,
 // and the first assignment arms it.
 lower_deferred = (be :: CBackend, s: Stmt, d: Deferred, ctx: Ctx)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     be.check.stmt_type(s, ctx).try();
     raw = be.check.type_from_ast(d.type, ctx).try();
     ty  = subst(be.check, raw, be.inst).try();
     be.tree.expr_at(d.target).kind.match({
         Name(n) => be.declare_unset(n.text, ty),
-        _       => Ok(()),
+        _       => Ok,
     })
 }
 
-declare_unset = (be :: CBackend, name: str, ty: TyId) Res<(), AllocError> {
+declare_unset = (be :: CBackend, name: str, ty: TyId) Res<AllocError> {
     n = be.reserve(name).try();
     cname ::= be.alloc.String().try();
     sym_local(cname, name, n).try();
@@ -551,7 +547,7 @@ declare_unset = (be :: CBackend, name: str, ty: TyId) Res<(), AllocError> {
 // displaced value, rearms the slot, then stores. Members and indices are not
 // tracked as independent bindings here.
 assign_target = (be :: CBackend, b: Bind, ty: TyId, ctx: Ctx)
-                Res<(), AllocError> {
+                Res<AllocError> {
     be.tree.expr_at(b.target).kind.match({
         Name(n) => be.has_drop(ty).try().match({
             false => be.store_plain(b, ty, ctx),
@@ -559,11 +555,10 @@ assign_target = (be :: CBackend, b: Bind, ty: TyId, ctx: Ctx)
         }),
         _       => be.store_plain(b, ty, ctx),
     }).try();
-    Ok(());
 }
 
 store_plain = (be :: CBackend, b: Bind, ty: TyId, ctx: Ctx)
-              Res<(), AllocError> {
+              Res<AllocError> {
     place ::= be.alloc.String().try();
     expr(be, b.target, ctx, ty, place).try();
     be.deliver(b.value, ctx, ty, Dest.Into(place.view())).try()
@@ -575,7 +570,7 @@ store_displacing = (
     b    : Bind,
     ty   : TyId,
     ctx  : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     place ::= be.alloc.String().try();
     expr(be, b.target, ctx, ty, place).try();
     tmp  ::= be.fresh_name("s").try();
@@ -591,7 +586,7 @@ store_displacing = (
 // its body inlined at each call (`gen_c_inline.declare_local_function`).
 // Any other declaration inside a body has no lowering.
 local_decl = (be :: CBackend, s: Stmt, d: Decl, ctx: Ctx)
-             Res<(), AllocError> {
+             Res<AllocError> {
     d.kind.match({
         Function(f) => be.declare_local_function(s, f, ctx),
         _           => be.report(

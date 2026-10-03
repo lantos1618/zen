@@ -9,9 +9,9 @@
 { Env } = std.env
 { Actor, ActorError, ActorStartError, Context } = std.actor
 
-Opener = { open* = (self :: @Self) Res<(), AllocError> }
+Opener = { open* = (self :: @Self) Res<AllocError> }
 Thing = { n :: i32 = 0 }
-Thing.impl(Opener, { open = (self :: @Self) Res<(), AllocError> { Ok(()) } })
+Thing.impl(Opener, { open = (self :: @Self) Res<AllocError> { Ok } })
 Holder<W: Opener> = { inner :: W }
 Holder.impl(Actor, {
     go = (self :: @Self, ctx: Context) {

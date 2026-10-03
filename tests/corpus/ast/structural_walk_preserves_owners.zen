@@ -15,7 +15,7 @@ Trace = {
     left :: usize = 0,
 }
 Trace.impl(WalkVisitor, {
-    visit = (self :: @Self, event: WalkEvent) Res<(), AllocError> {
+    visit = (self :: @Self, event: WalkEvent) Res<AllocError> {
         event.match({
             Enter(node) => {
                 self.depth   = self.depth + 1;
@@ -57,16 +57,14 @@ Trace.impl(WalkVisitor, {
                 self.left  = self.left + 1;
             },
         });
-        Ok(())
     }
 })
 
 Refuse = { calls :: usize = 0 }
 Refuse.impl(WalkVisitor, {
-    visit = (self :: @Self, event: WalkEvent) Res<(), AllocError> {
+    visit = (self :: @Self, event: WalkEvent) Res<AllocError> {
         self.calls = self.calls + 1;
         (self.calls < 6).ensure(AllocError.OutOfMemory).try();
-        Ok(())
     }
 })
 

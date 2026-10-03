@@ -62,7 +62,7 @@ main = (env: Env) Res<i32, AllocError> {
     Ok(0);
 }
 
-show = (env: Env, a: Alloc, argv: Vec<str>) Res<(), AllocError> {
+show = (env: Env, a: Alloc, argv: Vec<str>) Res<AllocError> {
     cli(env, a, argv).try().match({
         Build(j)         => { println(
             "build root={} entry={} emit_c={}",
@@ -75,7 +75,6 @@ show = (env: Env, a: Alloc, argv: Vec<str>) Res<(), AllocError> {
         Refused(refusal) => println("usage {}", refusal.message.view()),
         _                => println("other"),
     });
-    Ok(());
 }
 
 // `argv.get(0)` is the program path, so every line starts with one.
@@ -93,9 +92,9 @@ line = (a: Alloc, w0: str, w1: str, w2: str, w3: str, w4: str)
     Ok(v);
 }
 
-push = (v :: Vec<str>, w: str) Res<(), AllocError> {
+push = (v :: Vec<str>, w: str) Res<AllocError> {
     w.is_empty().match({
-        true  => Ok(()),
+        true  => Ok,
         false => v.add(w),
     })
 }

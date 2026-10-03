@@ -3,7 +3,7 @@
 
 { str, String } = std.text
 { AllocError } = std.mem
-{ Res, Ok, Err, loop } = std.core
+{ Res, Ok, Err, loop, Error } = std.core
 
 Envelope* = {
     body*: str,
@@ -14,6 +14,7 @@ FrameFault* = { NoBlank: usize
     | NoLength: usize
     | BadLength: usize
     | Short: usize }
+FrameFault.impl(Error, {})
 
 byte* = (f: FrameFault) usize {
     f.match({
@@ -43,7 +44,7 @@ partial* = (f: FrameFault) bool {
     })
 }
 
-write_fault* = (f: FrameFault, out :: String) Res<(), AllocError> {
+write_fault* = (f: FrameFault, out :: String) Res<AllocError> {
     out.add("lsp: bad frame at byte ").try();
     out.write_usize(f.byte()).try();
     out.add(" (").try();
@@ -119,7 +120,7 @@ is_length = (bytes: str, from: usize, stop: usize) bool {
         && bytes.slice(from, from + NAME.len).eq_ignore_case(NAME)
 }
 
-write_frame* = (body: str, out :: String) Res<(), AllocError> {
+write_frame* = (body: str, out :: String) Res<AllocError> {
     out.add("Content-Length: ").try();
     out.write_usize(body.len).try();
     out.add(BLANK).try();

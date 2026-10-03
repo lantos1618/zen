@@ -23,14 +23,14 @@ LocalImpl* = {
 // Impls are matched by type name and declaring module; a same-named type
 // elsewhere has its own impls.
 local_impls* = (c :: Checker, n: TyNamed, out :: Vec<LocalImpl>)
-               Res<(), AllocError> {
+               Res<AllocError> {
     ids ::= c.alloc.Vec<ImplId>();
     c.world.impls_named(c.tree, n.name, ids).try();
     mi = n.decl.module.to_usize();
     ids.loop((h, id) {
         (n.decl.module == id.decl.module).then(() {
             c.world.impl_at(c.tree, id).match({
-                None   => Ok(()),
+                None   => Ok,
                 Ok(im) => out.add(LocalImpl(
                     id: id,
                     im: im,
@@ -39,7 +39,7 @@ local_impls* = (c :: Checker, n: TyNamed, out :: Vec<LocalImpl>)
             }).try();
         });
     });
-    Ok(());
+    Ok;
 }
 
 // std.core's declaration of a primitive's name, as the type its impls
@@ -63,15 +63,15 @@ impl_members* = (
     ty   : TyId,
     name : str,
     out  :: Vec<Found>
-) Res<(), AllocError> {
+) Res<AllocError> {
     impls ::= c.alloc.Vec<LocalImpl>();
     c.local_impls(n, impls).try();
     impls.loop((h, li) { c.supplied(li, ty, name, out).try() });
-    Ok(());
+    Ok;
 }
 
 supplied = (c :: Checker, li: LocalImpl, ty: TyId, name: str, out :: Vec<Found>)
-           Res<(), AllocError> {
+           Res<AllocError> {
     tys     ::= c.alloc.Vec<TyId>();
     members ::= c.alloc.Vec<Member>();
     c.supplied_types(li.im, li.bound, name, ty, tys, members).try();
@@ -79,7 +79,7 @@ supplied = (c :: Checker, li: LocalImpl, ty: TyId, name: str, out :: Vec<Found>)
     module = c.bound_module(li.bound);
     tys.loop((h, i, t) {
         members.get(i).match({
-            None    => Ok(()),
+            None    => Ok,
             Ok(mem) => out.add(supplied_found(
                 name,
                 t,
@@ -91,7 +91,7 @@ supplied = (c :: Checker, li: LocalImpl, ty: TyId, name: str, out :: Vec<Found>)
             )),
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
 supplied_types = (
@@ -102,7 +102,7 @@ supplied_types = (
     self_ty : TyId,
     out     :: Vec<TyId>,
     kept    :: Vec<Member>
-) Res<(), AllocError> {
+) Res<AllocError> {
     supplied_here = im.members.has_member(name);
     all ::= c.alloc.Vec<Member>();
     c.bound_members(bound, all).try();
@@ -115,10 +115,10 @@ keep_reachable = (
     name          : str,
     supplied_here : bool,
     kept          :: Vec<Member>
-) Res<(), AllocError> {
+) Res<AllocError> {
     (m.named(name) && (m.has_body() || supplied_here)).match({
         true  => kept.add(m),
-        false => Ok(()),
+        false => Ok,
     })
 }
 
@@ -133,23 +133,23 @@ impl_bound_type* = (c :: Checker, im: Impl, mi: usize)
 }
 
 enter_impl_target_tvars = (c :: Checker, target: str, mi: usize)
-                          Res<(), AllocError> {
+                          Res<AllocError> {
     defs ::= c.alloc.Vec<Def>();
     c.world.own_defs(mi, target, defs).try();
     defs.get(0).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(d) => c.tree.decl_at(d.id).match({
             Ok(x) => c.enter_decl_tvars(x, mi),
-            None  => Ok(()),
+            None  => Ok,
         }),
     })
 }
 
-enter_decl_tvars = (c :: Checker, d: Decl, mi: usize) Res<(), AllocError> {
+enter_decl_tvars = (c :: Checker, d: Decl, mi: usize) Res<AllocError> {
     d.kind.match({
         Struct(s) => c.enter_struct_tvars(s, mi),
         Enum(e)   => c.enter_type_tvars(e.name, e.tparams, mi),
-        _         => Ok(()),
+        _         => Ok,
     })
 }
 
@@ -175,7 +175,7 @@ bound_member_types* = (
     name    : str,
     self_ty : TyId,
     out     :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     all ::= c.alloc.Vec<Member>();
     c.bound_members(bound, all).try();
     kept ::= c.alloc.Vec<Member>();
@@ -190,41 +190,40 @@ member_types = (
     ms      : Vec<Member>,
     self_ty : TyId,
     out     :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     mi    = c.bound_module(bound);
     tmark = c.tvar_mark();
     c.enter_bound_tvars(bound, mi).try();
     ms.loop((h, m) { out.add(c.member_type(m, mi, self_ty).try()).try() });
     c.release_tvars(tmark).try();
-    Ok(());
 }
 
 enter_bound_tvars = (c :: Checker, bound: TyId, mi: usize)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     c.types.at(bound).match({
         Named(n) => c.tree.decl_at(n.decl).match({
             Ok(d) => c.enter_decl_tvars(d, mi),
-            None  => Ok(()),
+            None  => Ok,
         }),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
 // The members a bound declares, in source order.
 bound_members* = (c :: Checker, bound: TyId, out :: Vec<Member>)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     c.types.at(bound).match({
         Named(n) => c.tree.decl_at(n.decl).match({
             Ok(d) => d.kind.match({
                 Struct(s) => {
                     s.members.loop((h, m) { out.add(m).try() });
-                    Ok(())
+                    Ok
                 },
-                _         => Ok(()),
+                _         => Ok,
             }),
-            None  => Ok(()),
+            None  => Ok,
         }),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 

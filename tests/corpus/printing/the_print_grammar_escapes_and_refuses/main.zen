@@ -26,9 +26,8 @@
 
 Error = AllocError | IoError
 
-show = (n: i64) Res<(), IoError> {
+show = (n: i64) Res<IoError> {
     println("callee n={n}");
-    Ok(());
 }
 
 main = (env: Env) Res<i32, Error> {

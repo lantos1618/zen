@@ -35,7 +35,7 @@ lower_unary* = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     u.op.match({
         Not    => be.wrap_unary("!", u.operand, ctx, want, out),
         Neg    => be.lower_negate(node, u, ctx, want, out),
@@ -52,7 +52,7 @@ lower_bit_not = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     operand = be.ty_of(u.operand, ctx, want).try();
     // A literal operand complements at the expected width.
     ty = be.usable(operand).match({ true => operand, false => want });
@@ -68,11 +68,10 @@ wrap_unary = (
     ctx     : Ctx,
     want    : TyId,
     out     :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     out.fmt("({op}").try();
     expr(be, operand, ctx, want, out).try();
     out.add(")").try();
-    Ok(());
 }
 
 // What a `-` writes, in the order `negate_kind` asks for them.
@@ -88,7 +87,7 @@ lower_negate = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     ty   = be.ty_of(u.operand, ctx, want).try();
     prim = be.check.prim_name(ty);
     be.negate_kind(u, prim).match({
@@ -136,14 +135,14 @@ literal_digits = (l: Literal) Res<str> {
 I64_MIN_DIGITS: str = "9223372036854775808"
 I64_MIN_C: str = "(-9223372036854775807LL - 1LL)"
 
-write_negative_literal = (digits: str, out :: String) Res<(), AllocError> {
+write_negative_literal = (digits: str, out :: String) Res<AllocError> {
     digits.eq(I64_MIN_DIGITS).match({
         true  => out.add(I64_MIN_C),
         false => write_neg(digits, out),
     })
 }
 
-write_neg = (digits: str, out :: String) Res<(), AllocError> {
+write_neg = (digits: str, out :: String) Res<AllocError> {
     out.fmt("(-{digits})")
 }
 
@@ -155,14 +154,13 @@ negate_checked = (
     ctx  : Ctx,
     ty   : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     pos ::= be.alloc.String().try();
     be.write_position(node.span.file, u.op_span, pos).try();
     be.need_helpers(prim, "sub").try();
     out.fmt("zg_sub_{prim}(0, ").try();
     expr(be, u.operand, ctx, ty, out).try();
     out.fmt(", {})", pos.view()).try();
-    Ok(());
 }
 
 lower_binary* = (
@@ -172,7 +170,7 @@ lower_binary* = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     operand = be.level_type(b, ctx, want).try();
     be.op_kind(b, operand).match({
         ShortCircuit => be.write_short_circuit(b, operand, ctx, out),
@@ -279,7 +277,7 @@ write_short_circuit = (
     bool_ty : TyId,
     ctx     : Ctx,
     out     :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     lhs ::= be.alloc.String().try();
     expr(be, b.lhs, ctx, bool_ty, lhs).try();
     tmp ::= be.init_temp(bool_ty, "b", lhs.view()).try();
@@ -293,10 +291,9 @@ write_short_circuit = (
 }
 
 // `&&` runs its right operand when the left held; `||` when it did not.
-open_guard = (be :: CBackend, op: BinOp, tmp: str) Res<(), AllocError> {
+open_guard = (be :: CBackend, op: BinOp, tmp: str) Res<AllocError> {
     be.fmt("if ({}{tmp}) {\n", negation(op)).try();
     be.indent();
-    Ok(());
 }
 
 negation = (op: BinOp) str {
@@ -342,7 +339,7 @@ lower_eq_op = (
     ctx     : Ctx,
     operand : TyId,
     out     :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     text ::= be.alloc.String().try();
     wrote = be.lower_eq_call(b.lhs, b.rhs, operand, ctx, text).try();
     wrote.match({
@@ -356,10 +353,9 @@ lower_eq_op = (
 }
 
 write_equality = (op: BinOp, text: str, out :: String)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     is_negated(op).then(() { out.add("!").try() });
     out.fmt("({text})").try();
-    Ok(());
 }
 
 is_equality = (op: BinOp) bool {
@@ -384,7 +380,7 @@ write_infix = (
     ctx     : Ctx,
     operand : TyId,
     out     :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     out.add("(").try();
     be.lower_lhs(b.lhs, be.infix_operand_held(b), ctx, operand, out).try();
     be.close_infix(b, op, ctx, operand, out)
@@ -400,7 +396,7 @@ lower_lhs = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     spine_ahead(be, id, held).match({
         false => be.value_held(id, ctx, want, held, out),
         true  => be.spine_lhs(id, ctx, want, out),
@@ -431,11 +427,10 @@ close_infix = (
     ctx     : Ctx,
     operand : TyId,
     out     :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     out.fmt(" {op} ").try();
     expr(be, b.rhs, ctx, operand, out).try();
     out.add(")").try();
-    Ok(());
 }
 
 c_op* = (op: BinOp) str {
@@ -476,14 +471,14 @@ call_helper = (
     ctx     : Ctx,
     operand : TyId,
     out     :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     open_helper(be, b, prim, out).try();
     be.lower_lhs(b.lhs, be.infix_operand_held(b), ctx, operand, out).try();
     close_helper(be, node, b, ctx, operand, out)
 }
 
 open_helper = (be :: CBackend, b: Binary, prim: str, out :: String)
-              Res<(), AllocError> {
+              Res<AllocError> {
     be.need_helpers(prim, helper_stem(b.op)).try();
     out.fmt("zg_{}_{prim}(", helper_stem(b.op))
 }
@@ -495,7 +490,7 @@ close_helper = (
     ctx     : Ctx,
     operand : TyId,
     out     :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     out.add(", ").try();
     expr(be, b.rhs, ctx, operand, out).try();
     // `.match` and not `.then`: a `.then` closure capturing more than
@@ -503,10 +498,9 @@ close_helper = (
     // substituted into the wrong argument slot, which `cc` catches.
     traps(b.op).match({
         true  => be.write_trap_args(node, b, out),
-        false => Ok(()),
+        false => Ok,
     }).try();
     out.add(")").try();
-    Ok(());
 }
 
 // A bit operator is the named bit operation of `std.core.num` spelled as
@@ -517,7 +511,7 @@ lower_bit_operator = (
     ctx     : Ctx,
     operand : TyId,
     out     :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     count = b.op.is_shift().match({
         true  => be.count_type(b, ctx),
         false => Ok(operand),
@@ -537,7 +531,7 @@ lower_bits* = (
     count : TyId,
     ctx   : Ctx,
     out   :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     lc ::= be.alloc.String().try();
     expr(be, left, ctx, word, lc).try();
     lv = be.temp(word, "bits").try();
@@ -560,10 +554,9 @@ count_type = (be :: CBackend, b: Binary, ctx: Ctx) Res<TyId, AllocError> {
 }
 
 write_trap_args = (be :: CBackend, node: Expr, b: Binary, out :: String)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     out.add(", ").try();
     be.write_position(node.span.file, b.op_span, out).try();
-    Ok(());
 }
 
 // Walk a left-associated chain iteratively, materializing each inner rung in
@@ -589,7 +582,7 @@ spine_lhs = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     rungs ::= be.alloc.Vec<Rung>();
     down  ::= id;
     hint  ::= want;
@@ -617,7 +610,6 @@ spine_lhs = (
         value = be.init_temp(ty, "s", step.view()).try();
     });
     out.add(value.view()).try();
-    Ok(());
 }
 
 // A node folds when `expr` would have reached `lower_binary` for it
@@ -697,12 +689,12 @@ infix_shaped = (be: CBackend, b: Binary, operand: TyId) bool {
 // and write nothing rather than inventing a diagnostic for a case that
 // does not arise.
 open_rung = (be :: CBackend, rungs: Vec<Rung>, at: usize, out :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
     rungs.get(at).match({
-        None     => Ok(()),
+        None     => Ok,
         Ok(rung) => be.tree.expr_at(rung.id).kind.match({
             Binary(b) => be.open_op(b, rung.operand, out),
-            _         => Ok(()),
+            _         => Ok,
         }),
     })
 }
@@ -713,9 +705,9 @@ close_rung = (
     at    : usize,
     ctx   : Ctx,
     out   :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     rungs.get(at).match({
-        None     => Ok(()),
+        None     => Ok,
         Ok(rung) => be.close_node(be.tree.expr_at(rung.id), rung, ctx, out),
     })
 }
@@ -726,15 +718,15 @@ close_node = (
     rung : Rung,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     node.kind.match({
         Binary(b) => be.close_op(node, b, rung.operand, ctx, out),
-        _         => Ok(()),
+        _         => Ok,
     })
 }
 
 open_op = (be :: CBackend, b: Binary, operand: TyId, out :: String)
-          Res<(), AllocError> {
+          Res<AllocError> {
     be.op_kind(b, operand).match({
         Helper(prim) => open_helper(be, b, prim, out),
         _            => out.add("("),
@@ -748,7 +740,7 @@ close_op = (
     operand : TyId,
     ctx     : Ctx,
     out     :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.op_kind(b, operand).match({
         Helper(_) => close_helper(be, node, b, ctx, operand, out),
         _         => be.close_infix(b, c_op(b.op), ctx, operand, out),
@@ -760,10 +752,9 @@ close_op = (
 // compilation root, which is what makes two checkouts of one tree emit
 // the same bytes.
 write_position* = (be :: CBackend, file: str, span: Span, out :: String)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     out.fmt("\"{file}\", ").try();
     out.write_usize(span.start.line).try();
     out.add(", ").try();
     out.write_usize(span.start.col).try();
-    Ok(());
 }

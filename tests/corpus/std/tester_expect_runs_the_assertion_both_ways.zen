@@ -16,9 +16,8 @@
 { Env } = std.env
 { println } = std.io
 
-one_is_one* = (t: Tester) Res<(), TestError> {
+one_is_one* = (t: Tester) Res<TestError> {
     t.expect(1 == 1).try();
-    Ok(());
 }
 
 reason_of = (e: TestError) str {

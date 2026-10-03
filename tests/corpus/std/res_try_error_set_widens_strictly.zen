@@ -17,33 +17,34 @@
 // Neither error carries a payload, because what is being checked is
 // which member the tag says it is and nothing else.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { Env } = std.env
 { println } = std.io
 
 AErr = { | AOnly }
+AErr.impl(Error, {})
 BErr = { | BOnly }
+BErr.impl(Error, {})
 CErr = { | COnly }
+CErr.impl(Error, {})
 
 Narrow = AErr | CErr
 Wide = AErr | BErr | CErr
 
-raise = () Res<(), CErr> {
+raise = () Res<CErr> {
     Err(CErr.COnly);
 }
 
 // into the smaller set, through the member it is
-through = () Res<(), Narrow> {
+through = () Res<Narrow> {
     raise().try();
-    Ok(());
 }
 
 // and out into the strictly larger one, which is a re-tagging and not a
 // copy: the member is the same member and its number is not the same
 // number
-widen = () Res<(), Wide> {
+widen = () Res<Wide> {
     through().try();
-    Ok(());
 }
 
 main = (env: Env) Res<i32, Wide> {

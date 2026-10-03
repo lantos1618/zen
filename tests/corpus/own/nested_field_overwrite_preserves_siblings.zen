@@ -16,4 +16,4 @@ word = (env: Env) Res<str, AllocError> {
     envelope.input.text = "stable";
     Ok(read(envelope))
 }
-main = (env: Env) Res<(), AllocError> { println(word(env).try()); Ok(()) }
+main = (env: Env) Res<AllocError> { println(word(env).try()); }

@@ -6,8 +6,7 @@
 // An `Arena` taken by value is this body's copy; the map made from it
 // keeps that copy's address.
 lookup = (arena: Arena) Map<str, i32> { arena.Map<str, i32>() }
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     m ::= lookup(env.mem.alloc());
     m.set("a", 1).try();
-    Ok(())
 }

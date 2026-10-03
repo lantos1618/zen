@@ -21,7 +21,7 @@ lower_variant_name_call* = (
     call : VariantNameCall,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     ty = be.named_receiver(call.ty, ctx);
     code ::= be.alloc.String().try();
     expr(be, ac.base, ctx, ty, code).try();
@@ -49,13 +49,13 @@ named_receiver = (be: CBackend, ty: TyId, ctx: Ctx) TyId {
 
 // The receiver is still evaluated once, for any effect it has.
 type_name_text = (be :: CBackend, name: str, code: str, out :: String)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     be.fmt("(void)({});\n", code).try();
     lower_meta_name(name, out)
 }
 
 variant_switch = (be :: CBackend, shape: EnumValue, code: str, out :: String)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     text  = be.check.types.str_ty().try();
     dst   = be.temp(text, "variant_name").try();
     qname = be.enum_qname(shape.ty).try();
@@ -74,7 +74,7 @@ write_variant_name_case = (
     qname   : str,
     variant : Variant,
     dst     : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     tag ::= be.alloc.String().try();
     tag.sym_variant(qname, variant.name.text).try();
     literal ::= be.alloc.String().try();
@@ -84,14 +84,13 @@ write_variant_name_case = (
     be.set_line(dst, literal.view()).try();
     be.writeln("break;").try();
     be.dedent();
-    Ok(())
 }
 
 enum_qname = (be :: CBackend, ty: TyId) Res<String, AllocError> {
     out ::= be.alloc.String().try();
     be.check.types.at(ty).match({
         Named(n) => be.write_qname(out, n),
-        _        => Ok(()),
+        _        => Ok,
     }).try();
     Ok(out)
 }

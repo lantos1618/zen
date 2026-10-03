@@ -14,12 +14,13 @@
 // an off-by-one frame count lands it one pass early or late and the
 // "at" lines move.
 
-{ Res, Ok, Err, Range } = std.core
+{ Res, Ok, Err, Range, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
 LoopError = { | NoHit }
+LoopError.impl(Error, {})
 
 go = (env2: Env) Res<i32, LoopError> {
     Range(0, 5).loop((ho, outer) {

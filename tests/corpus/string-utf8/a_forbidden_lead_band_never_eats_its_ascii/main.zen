@@ -25,7 +25,7 @@ main = (env: Env) Res<i32, AllocError> {
     loop(() { b < 194 }, (h) {
         b.to_u8().match({
             Ok(byte) => sb.add(byte),
-            None     => Ok(()),
+            None     => Ok,
         }).try();
         sb.add(65).try();
         b = b + 1;

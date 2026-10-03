@@ -105,7 +105,7 @@ named_type = (p :: Parser, m: Mark) Res<TypeId, AllocError> {
 }
 
 // Type arguments do not accept the bounds allowed on type parameters.
-type_args* = (p :: Parser, out :: Vec<TypeId>) Res<(), AllocError> {
+type_args* = (p :: Parser, out :: Vec<TypeId>) Res<AllocError> {
     open = p.here_span();
     p.bump().try();
     out.add(p.type().try()).try();
@@ -118,7 +118,7 @@ type_args* = (p :: Parser, out :: Vec<TypeId>) Res<(), AllocError> {
         "unclosed `<`: this type argument list is never closed",
         open
     ).try();
-    Ok(());
+    Ok;
 }
 
 // A fixed-array count is a comptime expression, not necessarily a literal.
@@ -159,7 +159,7 @@ fn_type = (p :: Parser, m: Mark) Res<TypeId, AllocError> {
 
 // Function types require named parameters. Lambda parameter lists may infer
 // types, so validation waits until the list is known to describe a type.
-named_params = (p :: Parser, ps: Vec<Param>) Res<(), AllocError> {
+named_params = (p :: Parser, ps: Vec<Param>) Res<AllocError> {
     ps.loop((h, param) {
         param.type.match({
             Ok(_) => (),
@@ -169,7 +169,7 @@ named_params = (p :: Parser, ps: Vec<Param>) Res<(), AllocError> {
             ).try(),
         });
     });
-    Ok(());
+    Ok;
 }
 
 fn_type_rest = (

@@ -257,20 +257,20 @@ valid_variant_call = (
             c.zip(n.args, args, inst).try();
             c.types.at(ty).match({
                 Named(r) => c.zip(n.args, r.args, inst),
-                _        => Ok(()),
+                _        => Ok,
             })
         },
-        _        => Ok(()),
+        _        => Ok,
     }).try();
     cases ::= c.alloc.Vec<Case>();
     c.cases_of(ty, cases).try();
     (cases.find_case(name).match({
-        None   => Ok(()),
+        None   => Ok,
         Ok(cs) => c.payload_says(call, ty, cs, ctx, inst),
     })).try();
     c.variant_has_type(call, ty).match({
         true  => c.variant_payload_fits(call, ty, name, ctx, inst),
-        false => Ok(()),
+        false => Ok,
     }).try();
     settled = (inst.len() == 0).match({
         true  => Ok(ty),
@@ -356,16 +356,16 @@ variant_payload_fits = (
     name : str,
     ctx  : Ctx,
     inst : Inst
-) Res<(), AllocError> {
+) Res<AllocError> {
     call.args.get(0).match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(arg) => {
             payload = c.case_payload(ty, name).try();
             want    = c.subst(payload, inst).try();
             c.check_literal(arg.value, want).try();
             got = c.type_of(arg.value, ctx).try();
             c.is_literal_ty(got).match({
-                true  => Ok(()),
+                true  => Ok,
                 false => c.coerce(arg.span.file, arg.span, got, want, ""),
             })
         },
@@ -589,19 +589,19 @@ applied_at_own_vars = (c :: Checker, ty: TyId) Res<TyId, AllocError> {
 // has nowhere to land: codegen evaluates it and drops it, and the reader is
 // told nothing. Report the first one; the rest are the same mistake.
 refuse_variant_surplus* = (c :: Checker, call: Call, ty: TyId, name: str)
-                          Res<(), AllocError> {
+                          Res<AllocError> {
     cases ::= c.alloc.Vec<Case>();
     c.cases_of(ty, cases).try();
     cases.find_case(name).match({
-        None   => Ok(()),
+        None   => Ok,
         Ok(cs) => c.refuse_surplus_payload(call, ty, cs),
     })
 }
 
 refuse_surplus_payload = (c :: Checker, call: Call, ty: TyId, cs: Case)
-                         Res<(), AllocError> {
+                         Res<AllocError> {
     call.args.get(cs.arity()).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(a) => c.report(
             a.span.file,
             a.span,
@@ -623,9 +623,9 @@ payload_says = (
     cs   : Case,
     ctx  : Ctx,
     inst :: Inst
-) Res<(), AllocError> {
+) Res<AllocError> {
     call.args.get(0).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(a) => c.unify(
             c.case_payload(ty, cs.name).try(),
             c.settled_arg_ty(a, ctx).try(),
@@ -647,7 +647,7 @@ ctor_args = (c :: Checker, call: Call, d: Def, ctx: Ctx)
     args ::= c.alloc.Vec<TyId>();
     (call.targs.len == 0).match({
         true  => c.tree.decl_at(d.id).match({
-            None    => Ok(()),
+            None    => Ok,
             Ok(dec) => c.decl_tparam_vars(dec, d.qname, args),
         }),
         false => c.denote_targs(call.targs, ctx, args),
@@ -661,9 +661,9 @@ denote_targs = (
     targs : Vec<TypeId>,
     ctx   : Ctx,
     out   :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     targs.loop((h, t) { out.add(c.type_from_ast(t, ctx).try()).try() });
-    Ok(());
+    Ok;
 }
 
 Instantiation* = { result*: TyId, inst*: Inst }
@@ -830,7 +830,7 @@ infer_callback_targs* = (
     off    : usize,
     ctx    : Ctx,
     inst   :: Inst
-) Res<(), AllocError> {
+) Res<AllocError> {
     call.args.loop((h, i, a) {
         c.annotated_callback(a.value).match({
             None  => (),
@@ -842,7 +842,7 @@ infer_callback_targs* = (
             ).try(),
         });
     });
-    Ok(());
+    Ok;
 }
 
 // Unannotated callbacks contribute arity only. Generic callbacks establish
@@ -863,7 +863,7 @@ infer_callback_types = (
     sig  : TyId,
     ctx  : Ctx,
     inst :: Inst
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.types.at(sig).match({
         Fn(f) => {
             l.params.loop((h, i, p) {
@@ -887,7 +887,6 @@ infer_callback_types = (
         },
         _     => (),
     });
-    Ok(());
 }
 
 // Inference binds each variable once. Verify all written callback types
@@ -946,30 +945,30 @@ callback_annotation_fits = (
 }
 
 infer_targs = (c :: Checker, k: Cand, actuals: Vec<Actual>, inst :: Inst)
-              Res<(), AllocError> {
+              Res<AllocError> {
     k.params.loop((h, i, p) {
         actuals.get(i).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(a) => a.is_lambda.match({
-                true  => Ok(()),
+                true  => Ok,
                 false => c.unify(p, a.ty, inst),
             }),
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
 infer_from_bounds = (c :: Checker, k: Cand, inst :: Inst)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     k.tbounds.loop((h, tb) { c.infer_one_bound(k, tb, inst).try() });
-    Ok(());
+    Ok;
 }
 
 infer_one_bound = (c :: Checker, k: Cand, tb: TBound, inst :: Inst)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     v = c.types.var(tb.name, k.owner).try();
     inst.lookup(v).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(g) => c.same_head(tb.bound, g).match({
             true  => c.infer_own_bound(tb.bound, g, inst),
             false => c.infer_impl_bound(tb.bound, g, inst),
@@ -989,7 +988,7 @@ same_head = (c: Checker, a: TyId, b: TyId) bool {
 
 // A bound's own type passed as itself settles each type argument it states.
 infer_own_bound = (c :: Checker, bound: TyId, g: TyId, inst :: Inst)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     bs ::= c.alloc.Vec<TyId>();
     gs ::= c.alloc.Vec<TyId>();
     c.named_args(bound, bs).try();
@@ -1000,25 +999,25 @@ infer_own_bound = (c :: Checker, bound: TyId, g: TyId, inst :: Inst)
             (!c.has_var(settled)).then(() { c.unify(b, settled, inst).try(); });
         });
     });
-    Ok(());
+    Ok;
 }
 
 named_args = (c :: Checker, ty: TyId, out :: Vec<TyId>)
-             Res<(), AllocError> {
+             Res<AllocError> {
     c.types.at(ty).match({
         Named(n) => n.args.loop((h, a) { out.add(a).try() }),
         _        => (),
     });
-    Ok(());
+    Ok;
 }
 
 infer_impl_bound = (c :: Checker, bound: TyId, g: TyId, inst :: Inst)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     c.types.at(g).match({
         Named(n) => c.infer_named_impl(bound, n, inst),
         Array(a) => c.infer_array_bound(bound, a.elem, inst),
         Var(v)   => c.infer_var_bound(bound, v.name, g, inst),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
@@ -1031,7 +1030,7 @@ infer_var_bound = (
     name   : str,
     actual : TyId,
     inst   :: Inst
-) Res<(), AllocError> {
+) Res<AllocError> {
     bounds ::= c.alloc.Vec<TyId>();
     c.unshadowed_tvar(name, actual).then(() {
         c.bounds_of(name, bounds).try();
@@ -1054,18 +1053,18 @@ infer_var_bound = (
             Ok(b) => c.unify(bound, b, inst).try(),
         });
     });
-    Ok(());
+    Ok;
 }
 
 infer_array_bound = (c :: Checker, bound: TyId, elem: TyId, inst :: Inst)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     c.array_range_shape(bound).match({
-        false => Ok(()),
+        false => Ok,
         true  => {
             bs ::= c.alloc.Vec<TyId>();
             c.named_args(bound, bs).try();
             bs.get(0).match({
-                None  => Ok(()),
+                None  => Ok,
                 Ok(b) => c.unify(b, elem, inst),
             })
         },
@@ -1073,11 +1072,11 @@ infer_array_bound = (c :: Checker, bound: TyId, elem: TyId, inst :: Inst)
 }
 
 infer_named_impl = (c :: Checker, bound: TyId, n: TyNamed, inst :: Inst)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     c.range_seq_arg(n, bound).match({
         Ok(arg) => c.unify(arg, c.range_value(n), inst),
         None    => c.impl_bound_at(bound, n).try().match({
-            None   => Ok(()),
+            None   => Ok,
             Ok(gb) => c.unify(bound, gb, inst),
         }),
     })

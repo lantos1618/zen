@@ -10,13 +10,15 @@
 // pins: NotFound and Denied are separate types, so nothing but the tag
 // says which one crossed.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
 NotFound = { | NotFound }
+NotFound.impl(Error, {})
 Denied   = { | Denied }
+Denied.impl(Error, {})
 Set      = Denied | NotFound
 
 raise = (n: i32) Res<i32, Set> {
@@ -31,7 +33,7 @@ raise = (n: i32) Res<i32, Set> {
     Ok(0 - 1);
 }
 
-show = (n: i32) Res<(), AllocError> {
+show = (n: i32) Res<AllocError> {
     raise(n).match({
         Ok(v)  => println("{}: ok {}", n, v),
         Err(e) => e.match({
@@ -42,7 +44,6 @@ show = (n: i32) Res<(), AllocError> {
             Denied(d)    => d.match({ Denied   => println("{}: denied", n) }),
         }),
     });
-    Ok(());
 }
 
 main = (env: Env) Res<i32, AllocError> {

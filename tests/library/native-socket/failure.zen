@@ -31,7 +31,7 @@ FailAlloc.impl(Alloc, {
         self.take().match({ true => self.base.realloc(p, count), false => Err(AllocError.OutOfMemory) })
     }
 })
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a = env.mem.alloc();
     remaining ::= a.Vec<usize>(); remaining.add(0).try();
     refused ::= a.Vec<bool>(); refused.add(false).try();
@@ -62,5 +62,4 @@ main = (env: Env) Res<(), AllocError> {
     println(
         "PASS allocator failure sweep, addrinfo cleanup and descriptor cleanup"
     );
-    Ok(())
 }

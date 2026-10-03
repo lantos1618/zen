@@ -167,7 +167,7 @@ try_mapper = (
     from : TyId,
     into : TyId,
     ctx  : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     (l.params.len == 1).match({
         false => c.try_mapper_arity(id, l, from, into),
         true  => c.check_try_mapper(l, from, into, ctx),
@@ -180,7 +180,7 @@ try_mapper_arity = (
     l    : Lambda,
     from : TyId,
     into : TyId
-) Res<(), AllocError> {
+) Res<AllocError> {
     expected_params ::= c.alloc.Vec<TyId>();
     expected_params.add(from).try();
     expected = c.types.fn_ty(expected_params, into).try();
@@ -198,13 +198,13 @@ check_try_mapper = (
     from : TyId,
     into : TyId,
     ctx  : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     smark = c.mark();
     tmark = c.tvar_mark();
     c.push_tparams(l.tparams, module_name(c, ctx.module)).try();
     l.params.get(0).match({
         Ok(p) => c.bind_try_mapper_param(p, from, ctx),
-        None  => Ok(()),
+        None  => Ok,
     }).try();
     actual = c.block_type(l.body, ctx).try();
     body   = c.tree.block_at(l.body);
@@ -218,11 +218,10 @@ check_try_mapper = (
     });
     c.release_tvars(tmark).try();
     c.release(smark).try();
-    Ok(())
 }
 
 bind_try_mapper_param = (c :: Checker, p: Param, from: TyId, ctx: Ctx)
-                        Res<(), AllocError> {
+                        Res<AllocError> {
     p.type.match({
         Ok(_) => {
             declared = c.param_type(p, ctx).try();
@@ -231,7 +230,6 @@ bind_try_mapper_param = (c :: Checker, p: Param, from: TyId, ctx: Ctx)
         None  => (),
     });
     c.bind(p.name.text, from, p.mutable, true).try();
-    Ok(())
 }
 
 try_merge = (c :: Checker, at: Span, r: TyRes, want: TyRes, got: TyId)

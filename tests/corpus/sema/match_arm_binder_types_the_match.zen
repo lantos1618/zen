@@ -15,9 +15,8 @@
 
 Diag = { code*: i32 }
 
-render = (d: Diag, out :: String) Res<(), AllocError> {
+render = (d: Diag, out :: String) Res<AllocError> {
     out.fmt("E{}", d.code).try();
-    Ok(());
 }
 
 first = (v: Vec<Diag>) Res<Diag> { v.get(0) }

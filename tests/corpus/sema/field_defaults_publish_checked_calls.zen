@@ -7,7 +7,7 @@
 { Env } = std.env
 { println } = std.io
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a      = env.mem.alloc();
     source = "make = <T>() T\nSlot<T> = { value :: T = make<T>() }\n";
     lexed  = scan(a, Source(file: "defaults.zen", text: source)).try();
@@ -48,5 +48,4 @@ main = (env: Env) Res<(), AllocError> {
         });
     });
     println("calls {}", calls);
-    Ok(())
 }

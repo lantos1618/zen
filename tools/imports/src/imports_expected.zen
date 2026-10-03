@@ -14,18 +14,18 @@
 // Move every position naming `file` in its test's sidecars as `shifts`
 // moved its lines. A file outside tests/ has no sidecar to move.
 shift_positions* = (env: Env, a: Alloc, file: str, shifts: Vec<Shift>)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     file.contains("tests/").match({
-        false => Ok(()),
+        false => Ok,
         true  => {
             file.contains("/must-fail/").then(() {
                 owning_test(env, a, file, "expected").try().match({
-                    None      => Ok(()),
+                    None      => Ok,
                     Ok(owner) => shift_file(env, a, owner, shifts),
                 }).try();
             });
             owning_test(env, a, file, "stderr").try().match({
-                None      => Ok(()),
+                None      => Ok,
                 Ok(owner) => shift_tokens_in(env, a, owner, shifts),
             })
         },
@@ -98,9 +98,9 @@ entry_name = (a: Alloc, dir: str) Res<str, AllocError> {
 }
 
 shift_file = (env: Env, a: Alloc, owner: Owner, shifts: Vec<Shift>)
-             Res<(), AllocError> {
+             Res<AllocError> {
     env.fs.read(a, owner.expected).match({
-        Err(_)   => { println("zen-imports: cannot read {}", owner.expected); Ok(()) },
+        Err(_)   => println("zen-imports: cannot read {}", owner.expected),
         Ok(text) => {
             out ::= a.String().try();
             text.view().lines().loop((h, i, line) {
@@ -119,7 +119,7 @@ shift_file = (env: Env, a: Alloc, owner: Owner, shifts: Vec<Shift>)
                     owner.expected
                 ); },
             });
-            Ok(())
+            Ok
         },
     })
 }
@@ -127,7 +127,7 @@ shift_file = (env: Env, a: Alloc, owner: Owner, shifts: Vec<Shift>)
 // One `[path:]line:col` line, moved when it names `owner`'s file; any other
 // line is copied unchanged.
 shift_line = (owner: Owner, line: str, shifts: Vec<Shift>, out :: String)
-             Res<(), AllocError> {
+             Res<AllocError> {
     position(line).match({
         None   => out.add(line),
         Ok(at) => {
@@ -188,9 +188,9 @@ base_of = (path: str) str {
 
 // Every `named:line:col` in a `.stderr`, moved; the rest is copied.
 shift_tokens_in = (env: Env, a: Alloc, owner: Owner, shifts: Vec<Shift>)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     env.fs.read(a, owner.expected).match({
-        Err(_)   => { println("zen-imports: cannot read {}", owner.expected); Ok(()) },
+        Err(_)   => println("zen-imports: cannot read {}", owner.expected),
         Ok(text) => {
             out ::= a.String().try();
             shift_tokens(text.view(), owner.named, shifts, out).try();
@@ -201,13 +201,13 @@ shift_tokens_in = (env: Env, a: Alloc, owner: Owner, shifts: Vec<Shift>)
                     owner.expected
                 ); },
             });
-            Ok(())
+            Ok
         },
     })
 }
 
 shift_tokens = (text: str, named: str, shifts: Vec<Shift>, out :: String)
-               Res<(), AllocError> {
+               Res<AllocError> {
     at :: usize = 0;
     loop((h) {
         text.slice(at, text.len).find(named).match({
@@ -233,7 +233,7 @@ shift_tokens = (text: str, named: str, shifts: Vec<Shift>, out :: String)
             },
         });
     });
-    Ok(())
+    Ok
 }
 
 // A byte that can continue a path, so `std/x.zen` is not `x.zen`.

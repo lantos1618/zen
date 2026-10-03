@@ -9,14 +9,17 @@
 // arm of the final match. The Ok line proves the value survived both
 // hops; the Err line proves the identity did too.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
 Narrow = { | Nope }
+Narrow.impl(Error, {})
 Other  = { | Also }
+Other.impl(Error, {})
 Big    = { | Boom }
+Big.impl(Error, {})
 Mid    = Narrow | Other
 All    = Big | Other | Narrow
 

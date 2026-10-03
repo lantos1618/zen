@@ -157,7 +157,7 @@ c_literal_output = (a: Alloc) Res<String, AllocError> {
     Ok(out)
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     [Codegen, 3](Codegen.C, Codegen.Js, Codegen.Asm).loop((backend) {
         a = env.mem.alloc();
         println(
@@ -251,5 +251,5 @@ main = (env: Env) Res<(), AllocError> {
             ).try()
         );
     });
-    Ok(())
+    Ok
 }

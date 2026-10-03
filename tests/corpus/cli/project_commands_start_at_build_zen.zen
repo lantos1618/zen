@@ -13,7 +13,7 @@ main = (env: Env) Res<i32, AllocError> {
     Ok(0)
 }
 
-show = (env: Env, argv: Vec<str>) Res<(), AllocError> {
+show = (env: Env, argv: Vec<str>) Res<AllocError> {
     a ::= env.mem.alloc();
     cli(env, a, argv).try().match({
         Project(job)     => println(
@@ -32,7 +32,6 @@ show = (env: Env, argv: Vec<str>) Res<(), AllocError> {
         Refused(refusal) => println("usage {}", refusal.message.view()),
         _                => println("other"),
     });
-    Ok(())
 }
 
 command = (a: Alloc, name: str, one: str, two: str, three: str)
@@ -46,6 +45,6 @@ command = (a: Alloc, name: str, one: str, two: str, three: str)
     Ok(argv)
 }
 
-add_if = (argv :: Vec<str>, word: str) Res<(), AllocError> {
-    word.is_empty().match({ true => Ok(()), false => argv.add(word) })
+add_if = (argv :: Vec<str>, word: str) Res<AllocError> {
+    word.is_empty().match({ true => Ok, false => argv.add(word) })
 }

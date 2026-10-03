@@ -74,9 +74,9 @@ local_function = (c :: Checker, f: Function, ctx: Ctx)
 
 // The tail is checked against the declared result, not the enclosing
 // function's; everything else in the body sees the enclosing context.
-local_body = (c :: Checker, f: Function, ctx: Ctx) Res<(), AllocError> {
+local_body = (c :: Checker, f: Function, ctx: Ctx) Res<AllocError> {
     f.body.match({
-        None     => Ok(()),
+        None     => Ok,
         Ok(body) => {
             smark = c.mark();
             f.params.loop((h, p) {

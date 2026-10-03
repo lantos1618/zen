@@ -1,4 +1,4 @@
-{ Res, Ok, Range } = std.core
+{ Res, Ok, Range, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
@@ -6,6 +6,7 @@
 // Guards evaluate once and propagate absence or a typed failure through
 // non-escaping callbacks, including the enclosing frame's cleanup.
 Failure = { | NotPositive }
+Failure.impl(Error, {})
 
 positive = (value: i32, checks :: usize) bool {
     checks = checks + 1;
@@ -29,7 +30,6 @@ walk = (visits :: usize) Res<()> {
         visits = visits + 1;
     });
     println("unexpected continuation");
-    Ok(())
 }
 
 main = (env: Env) Res<i32, AllocError> {

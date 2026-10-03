@@ -21,7 +21,7 @@ NodeArena<T> = {
     len :: usize = 0,
     alloc: Alloc,
 
-    add = (self :: @Self, value: T) Res<(), AllocError> {
+    add = (self :: @Self, value: T) Res<AllocError> {
         slot = self.len % NODE_PAGE;
         (slot == 0).then(() {
             page = self.alloc.realloc(null_ptr<T>(), NODE_PAGE).try();
@@ -31,7 +31,7 @@ NodeArena<T> = {
             .ok_or(AllocError.OutOfMemory).try();
         page.write(slot, value);
         self.len = self.len + 1;
-        Ok(())
+        Ok
     }
 
     at = (self: @Self, i: usize) T {
@@ -94,7 +94,7 @@ Ast* = {
         Ok(id);
     }
 
-    add_module* = (self :: @Self, node: Module) Res<(), AllocError> {
+    add_module* = (self :: @Self, node: Module) Res<AllocError> {
         self.modules.reserve(1).try();
         self.module_origins.reserve(1).try();
         self.module_origins.add(ModuleOrigin.Source).try();
@@ -191,13 +191,13 @@ Ast* = {
 
     // Collecting ids can allocate, while `types_each` has an infallible body.
     types_where* = (self: @Self, keep: (node: Type) bool, out :: Vec<TypeId>)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         id ::= TypeId(index: 0);
         Range(0, self.types.len).loop((h, _) {
             keep(self.type_at(id)).then(() { out.add(id).try() });
             id = TypeId(index: id.index + 1);
         });
-        Ok(());
+        Ok;
     }
 
     patterns_each* = (self: @Self, body: (id: PatternId, node: Pattern) ()) {
@@ -218,7 +218,7 @@ Ast* = {
 
     trivia_mark* = (self: @Self) usize { self.trivia.len }
 
-    add_trivia* = (self :: @Self, item: Trivia) Res<(), AllocError> {
+    add_trivia* = (self :: @Self, item: Trivia) Res<AllocError> {
         self.trivia.add(item)
     }
 

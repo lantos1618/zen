@@ -76,7 +76,7 @@ run = (env: Env, a: Alloc, cli: Cli) Res<i32, AllocError> {
 // Check one entry and keep what it reports for the files this run edits,
 // each missing name once per file.
 check = (env: Env, a: Alloc, cli: Cli, path: str, found :: Vec<Missing>)
-        Res<(), AllocError> {
+        Res<AllocError> {
     root    = cli.root.is_empty().match({ true => dir_of(
         path
     ), false => cli.root });
@@ -104,7 +104,6 @@ check = (env: Env, a: Alloc, cli: Cli, path: str, found :: Vec<Missing>)
             });
         }),
     });
-    Ok(())
 }
 
 // A file checked on its own is checked the way the test runner stages it:
@@ -135,7 +134,7 @@ staged = (env: Env, a: Alloc, cli: Cli, dir: str) Res<str, AllocError> {
     Ok(stage.view())
 }
 
-absolute = (cwd: str, path: str, out :: String) Res<(), AllocError> {
+absolute = (cwd: str, path: str, out :: String) Res<AllocError> {
     path.starts_with("/").match({
         true  => out.add(path),
         false => out.fmt("{}/{}", cwd, path),
@@ -149,7 +148,7 @@ keep = (
     entry : str,
     m     : Missing,
     found :: Vec<Missing>
-) Res<(), AllocError> {
+) Res<AllocError> {
     // A standard-library path is only this run's to edit when the library
     // is the root being migrated.
     mine = cli.root.is_empty().match({
@@ -161,7 +160,7 @@ keep = (
     seen = found.find((f) { f.file.eq(file.view()) && f.name.eq(m.name) })
         .match({ Ok(_) => true, None => false });
     (mine && !seen).match({
-        false => Ok(()),
+        false => Ok,
         true  => found.add(Missing(
             file: file.view(),
             name: m.name,

@@ -52,29 +52,28 @@ Walk = (a: Alloc) Walk {
 }
 
 // the rule
-check_depth* = (c :: Checker) Res<(), AllocError> {
+check_depth* = (c :: Checker) Res<AllocError> {
     w ::= c.alloc.Walk();
     c.fn_roots(w).try();
     c.type_roots(w).try();
-    Ok(());
 }
 
-fn_roots = (c :: Checker, w :: Walk) Res<(), AllocError> {
+fn_roots = (c :: Checker, w :: Walk) Res<AllocError> {
     Range(0, c.edge_count()).loop((h, i) { c.fn_root_at(i, w).try() });
-    Ok(());
+    Ok;
 }
 
-fn_root_at = (c :: Checker, i: usize, w :: Walk) Res<(), AllocError> {
+fn_root_at = (c :: Checker, i: usize, w :: Walk) Res<AllocError> {
     c.edge_at(i).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(e) => c.root_if_settled(e, w),
     })
 }
 
 root_if_settled = (c :: Checker, e: InstEdge, w :: Walk)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     c.settled(e.args).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.enter(e.to_name, e.span, e.to_owner, e.to_tvars, e.args, w),
     })
 }
@@ -90,9 +89,9 @@ enter = (
     args  : Vec<TyId>,
     w     :: Walk
 )
-        Res<(), AllocError> {
+        Res<AllocError> {
     w.done.match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.enter_now(name, span, owner, tvars, args, w),
     })
 }
@@ -106,14 +105,14 @@ enter_now = (
     args  : Vec<TyId>,
     w     :: Walk
 )
-            Res<(), AllocError> {
+            Res<AllocError> {
     w.frames.add(Frame(name: name, span: span, size: c.args_size(args))).try();
     w.over_budget().match({
         true  => c.blame(w),
         false => c.expand(owner, tvars, args, w),
     }).try();
     w.frames.take(w.frames.len - 1);
-    Ok(());
+    Ok;
 }
 
 expand = (
@@ -122,10 +121,10 @@ expand = (
     tvars : Vec<TyId>,
     args  : Vec<TyId>,
     w     :: Walk
-) Res<(), AllocError> {
+) Res<AllocError> {
     key = c.node_key(owner, args).try();
     w.visited.get(key).match({
-        Ok(_) => Ok(()),
+        Ok(_) => Ok,
         None  => c.expand_fresh(owner, tvars, args, key, w),
     })
 }
@@ -138,59 +137,59 @@ expand_fresh = (
     key   : str,
     w     :: Walk
 )
-               Res<(), AllocError> {
+               Res<AllocError> {
     w.visited.set(key, true).try();
     inst ::= c.alloc.Inst();
     c.zip(tvars, args, inst).try();
     Range(0, c.edge_count()).loop((h, i) {
         c.out_edge(owner, i, inst, w).try();
     });
-    Ok(());
+    Ok;
 }
 
 out_edge = (c :: Checker, owner: str, i: usize, inst: Inst, w :: Walk)
-           Res<(), AllocError> {
+           Res<AllocError> {
     c.edge_at(i).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(e) => c.follow(owner, e, inst, w),
     })
 }
 
 follow = (c :: Checker, owner: str, e: InstEdge, inst: Inst, w :: Walk)
-         Res<(), AllocError> {
+         Res<AllocError> {
     (e.from_owner.eq(owner) && (c.settled(e.args) == false)).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.follow_subst(e, inst, w),
     })
 }
 
 follow_subst = (c :: Checker, e: InstEdge, inst: Inst, w :: Walk)
-               Res<(), AllocError> {
+               Res<AllocError> {
     args ::= c.alloc.Vec<TyId>();
     c.subst_list(e.args, inst, args).try();
     c.settled(args).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.enter(e.to_name, e.span, e.to_owner, e.to_tvars, args, w),
     })
 }
 
 // types
-type_roots = (c :: Checker, w :: Walk) Res<(), AllocError> {
+type_roots = (c :: Checker, w :: Walk) Res<AllocError> {
     n = c.types.count_of().to_usize();
     Range(0, n).loop((h, i) { c.type_root_at(i, w).try() });
-    Ok(());
+    Ok;
 }
 
-type_root_at = (c :: Checker, i: usize, w :: Walk) Res<(), AllocError> {
+type_root_at = (c :: Checker, i: usize, w :: Walk) Res<AllocError> {
     c.types.kind_at(i).match({
         Named(n) => c.type_root(n, w),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
-type_root = (c :: Checker, n: TyNamed, w :: Walk) Res<(), AllocError> {
+type_root = (c :: Checker, n: TyNamed, w :: Walk) Res<AllocError> {
     ((n.args.len > 0) && c.settled(n.args)).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.enter_type(n.name, nowhere(), n.decl, n.args, w),
     })
 }
@@ -204,9 +203,9 @@ enter_type = (
     id   : DeclId,
     args : Vec<TyId>,
     w    :: Walk
-) Res<(), AllocError> {
+) Res<AllocError> {
     w.done.match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.enter_type_now(name, span, id, args, w),
     })
 }
@@ -218,20 +217,20 @@ enter_type_now = (
     id   : DeclId,
     args : Vec<TyId>,
     w    :: Walk
-) Res<(), AllocError> {
+) Res<AllocError> {
     w.frames.add(Frame(name: name, span: span, size: c.args_size(args))).try();
     w.over_budget().match({
         true  => c.blame(w),
         false => c.expand_type(id, args, w),
     }).try();
     w.frames.take(w.frames.len - 1);
-    Ok(());
+    Ok;
 }
 
 expand_type = (c :: Checker, id: DeclId, args: Vec<TyId>, w :: Walk)
-              Res<(), AllocError> {
+              Res<AllocError> {
     c.tree.decl_at(id).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(d) => c.expand_decl(d, id, args, w),
     })
 }
@@ -242,10 +241,10 @@ expand_decl = (
     id   : DeclId,
     args : Vec<TyId>,
     w    :: Walk
-) Res<(), AllocError> {
+) Res<AllocError> {
     d.kind.match({
         Struct(s) => c.expand_struct(s, id, args, w),
-        _         => Ok(()),
+        _         => Ok,
     })
 }
 
@@ -255,12 +254,12 @@ expand_struct = (
     id   : DeclId,
     args : Vec<TyId>,
     w    :: Walk
-) Res<(), AllocError> {
+) Res<AllocError> {
     mi    = id.module.to_usize();
     owner = c.owner_of(mi, s.name.text).try();
     key   = c.node_key(owner, args).try();
     w.visited.get(key).match({
-        Ok(_) => Ok(()),
+        Ok(_) => Ok,
         None  => c.expand_fields(s, mi, args, key, w),
     })
 }
@@ -272,7 +271,7 @@ expand_fields = (
     args : Vec<TyId>,
     key  : str,
     w    :: Walk
-) Res<(), AllocError> {
+) Res<AllocError> {
     w.visited.set(key, true).try();
     poison = c.types.unknown().try();
     inst ::= c.alloc.Inst();
@@ -281,7 +280,6 @@ expand_fields = (
     c.struct_inst(s, mi, args, inst).try();
     s.members.loop((h, m) { c.field_edge(m, mi, poison, inst, w).try() });
     c.release_tvars(tmark).try();
-    Ok(());
 }
 
 struct_inst = (
@@ -290,14 +288,13 @@ struct_inst = (
     mi   : usize,
     args : Vec<TyId>,
     inst :: Inst
-) Res<(), AllocError> {
+) Res<AllocError> {
     owner = c.owner_of(mi, s.name.text).try();
     vars ::= c.alloc.Vec<TyId>();
     s.tparams.loop((h, tp) {
         vars.add(c.types.var(tp.name.text, owner).try()).try();
     });
     c.zip(vars, args, inst).try();
-    Ok(());
 }
 
 field_edge = (
@@ -307,10 +304,10 @@ field_edge = (
     poison : TyId,
     inst   : Inst,
     w      :: Walk
-) Res<(), AllocError> {
+) Res<AllocError> {
     m.kind.match({
         Field(_) => c.field_target(m, mi, poison, inst, w),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
@@ -321,28 +318,28 @@ field_target = (
     poison : TyId,
     inst   : Inst,
     w      :: Walk
-) Res<(), AllocError> {
+) Res<AllocError> {
     declared = c.member_type(m, mi, poison).try();
     applied  = c.subst(declared, inst).try();
     c.types.at(applied).match({
         Named(n) => c.field_step(n, m.span, w),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
 field_step = (c :: Checker, n: TyNamed, span: Span, w :: Walk)
-             Res<(), AllocError> {
+             Res<AllocError> {
     ((n.args.len > 0) && c.settled(n.args)).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.enter_type(n.name, span, n.decl, n.args, w),
     })
 }
 
 // blame
-blame = (c :: Checker, w :: Walk) Res<(), AllocError> {
+blame = (c :: Checker, w :: Walk) Res<AllocError> {
     w.done = true;
     w.frames.get(w.blamed()).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(f) => c.refuse(
             f.span,
             SemaFault.InstantiationDepth(NameFault(name: f.name))

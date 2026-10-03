@@ -8,14 +8,17 @@
 // Mid orders [Narrow, Other], Wide3 orders [Other, Big, Narrow], and the
 // Err arm of each read names the member that arrived.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
 Narrow = { | Nope }
+Narrow.impl(Error, {})
 Other  = { | Also }
+Other.impl(Error, {})
 Big    = { | Boom }
+Big.impl(Error, {})
 Mid    = Narrow | Other
 Wide3  = Other | Big | Narrow
 

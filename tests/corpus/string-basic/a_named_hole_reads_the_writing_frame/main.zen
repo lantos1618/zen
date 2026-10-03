@@ -26,11 +26,10 @@
 
 Error = AllocError | WriteError
 
-line = (a: Alloc, label: str, depth: usize) Res<(), AllocError> {
+line = (a: Alloc, label: str, depth: usize) Res<AllocError> {
     sb ::= a.String().try();
     sb.fmt("{label}:{depth}").try();
     println("callee [{}]", sb.view());
-    Ok(());
 }
 
 main = (env: Env) Res<i32, Error> {

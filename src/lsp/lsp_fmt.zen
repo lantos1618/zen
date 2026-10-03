@@ -13,7 +13,7 @@ TextEdit = {
     range: TextRange,
     newText: str,
 
-    write = (self: @Self, a: Alloc, out :: String) Res<(), AllocError> {
+    write = (self: @Self, a: Alloc, out :: String) Res<AllocError> {
         edits ::= arr(out).try();
         edits.next(out).try();
         encoded ::= self.to_json(a).try();
@@ -22,7 +22,7 @@ TextEdit = {
     }
 }
 
-write_edits* = (a: Alloc, text: str, out :: String) Res<(), AllocError> {
+write_edits* = (a: Alloc, text: str, out :: String) Res<AllocError> {
     lexed  = scan(a, Source(file: "doc", text: text)).try();
     shaped = render(a, lexed).try();
     (shaped.diags.len == 0 && shaped.faithful

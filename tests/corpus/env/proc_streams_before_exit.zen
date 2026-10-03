@@ -10,12 +10,11 @@ Observe = {
 }
 
 Observe.impl(Sink, {
-    write = (self :: @Self, bytes: str) Res<(), WriteError> {
+    write = (self :: @Self, bytes: str) Res<WriteError> {
         self.text.add(bytes).try();
         self.env.fs.write(self.marker, "seen").try(IoError.Invalid);
-        Ok(())
     }
-    write_byte = (self :: @Self, byte: u8) Res<(), WriteError> {
+    write_byte = (self :: @Self, byte: u8) Res<WriteError> {
         self.text.add(byte)
     }
 })

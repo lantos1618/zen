@@ -14,7 +14,7 @@
 Holder = {
     env: Env,
 
-    say* = (self: @Self, n: i32) Res<(), IoError> {
+    say* = (self: @Self, n: i32) Res<IoError> {
         self.env.out.println("held {}", n)
     }
 }

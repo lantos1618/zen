@@ -19,9 +19,9 @@
 NONE*: usize = 18446744073709551615
 
 // Append the slots `instruction` reads to `out`.
-reads* = (instruction: Instruction, out :: Vec<usize>) Res<(), AllocError> {
+reads* = (instruction: Instruction, out :: Vec<usize>) Res<AllocError> {
     instruction.match({
-        Constant(_)         => Ok(()),
+        Constant(_)         => Ok,
         Copy(value)         => out.add(value.source),
         UnaryValue(value)   => out.add(value.input),
         BinaryValue(value)  => {
@@ -30,12 +30,12 @@ reads* = (instruction: Instruction, out :: Vec<usize>) Res<(), AllocError> {
         },
         Invoke(call)        => {
             call.args.loop((slot) { out.add(slot).try(); });
-            Ok(())
+            Ok
         },
         PrintValue(value)   => out.add(value.value),
-        Text(_)             => Ok(()),
+        Text(_)             => Ok,
         Cast(value)         => out.add(value.input),
-        AddressOf(_)        => Ok(()),
+        AddressOf(_)        => Ok,
         LoadValue(value)    => out.add(value.base),
         StoreValue(value)   => {
             out.add(value.base).try();
@@ -46,20 +46,20 @@ reads* = (instruction: Instruction, out :: Vec<usize>) Res<(), AllocError> {
             out.add(value.source).try();
             out.add(value.bytes)
         },
-        Bytes(_)            => Ok(()),
+        Bytes(_)            => Ok,
         WriteOut(value)     => {
             out.add(value.data).try();
             out.add(value.len)
         },
         System(call)        => {
             call.args.loop((slot) { out.add(slot).try(); });
-            Ok(())
+            Ok
         },
-        Startup(_)          => Ok(()),
+        Startup(_)          => Ok,
         MapPages(value)     => out.add(value.bytes),
         UnmapPages(slot)    => out.add(slot),
-        SysConst(_)         => Ok(()),
-        Flush               => Ok(()),
+        SysConst(_)         => Ok,
+        Flush               => Ok,
         AtomicLoad(value)   => out.add(value.base),
         AtomicStore(value)  => {
             out.add(value.base).try();
@@ -74,24 +74,24 @@ reads* = (instruction: Instruction, out :: Vec<usize>) Res<(), AllocError> {
             out.add(value.expected).try();
             out.add(value.desired)
         },
-        CodeAddress(_)      => Ok(()),
+        CodeAddress(_)      => Ok,
         InvokeAt(call)      => {
             out.add(call.target).try();
             call.args.loop((slot) { out.add(slot).try(); });
-            Ok(())
+            Ok
         },
         // Refused before the machine passes run (gen_verify refuses a
         // machine primitive; the driver refuses JavaScript host programs),
         // but their reads are still listed.
         Machine(call)       => {
             call.args.loop((slot) { out.add(slot).try(); });
-            Ok(())
+            Ok
         },
         Host(call)          => {
             call.args.loop((slot) { out.add(slot).try(); });
-            Ok(())
+            Ok
         },
-        Wait(_)             => Ok(()),
+        Wait(_)             => Ok,
     })
 }
 
@@ -210,15 +210,15 @@ aggregate* = (function: Func, slot: usize) bool {
 }
 
 // Blocks that `exit` may transfer to.
-successors* = (exit: Terminator, out :: Vec<usize>) Res<(), AllocError> {
+successors* = (exit: Terminator, out :: Vec<usize>) Res<AllocError> {
     exit.match({
         Jump(to)       => out.add(to),
         Branch(branch) => {
             out.add(branch.yes).try();
             out.add(branch.no)
         },
-        Return(_)      => Ok(()),
-        Trap(_)        => Ok(()),
+        Return(_)      => Ok,
+        Trap(_)        => Ok,
     })
 }
 
@@ -301,7 +301,7 @@ Flow* = {
 
     // Classify slots and count their writes. Recomputed per round because
     // simplification removes writes.
-    classify = (self :: @Self) Res<(), AllocError> {
+    classify = (self :: @Self) Res<AllocError> {
         self.local.clear();
         self.defs.clear();
         self.constants.clear();
@@ -349,10 +349,10 @@ Flow* = {
                 });
             });
         });
-        Ok(())
+        Ok
     }
 
-    positions = (self :: @Self) Res<(), AllocError> {
+    positions = (self :: @Self) Res<AllocError> {
         self.base.clear();
         at :: usize = 2;
         self.function.blocks.loop((block) {
@@ -360,10 +360,9 @@ Flow* = {
             at = at + 2 * block.code.len + 2;
         });
         self.base.add(at).try();
-        Ok(())
     }
 
-    predecessors = (self :: @Self) Res<(), AllocError> {
+    predecessors = (self :: @Self) Res<AllocError> {
         count = self.function.blocks.len;
         self.pred_at.clear();
         self.pred_list.clear();
@@ -398,14 +397,14 @@ Flow* = {
             });
         });
         self.scratch = next;
-        Ok(())
+        Ok
     }
 
     // Liveness per local slot by walking backwards from each read that is
     // not preceded by a write in its block; the walk stops at blocks that
     // write the slot. The cost is the size of the answer rather than
     // blocks times slots.
-    solve* = (self :: @Self) Res<(), AllocError> {
+    solve* = (self :: @Self) Res<AllocError> {
         self.classify().try();
         self.positions().try();
         self.predecessors().try();
@@ -484,10 +483,10 @@ Flow* = {
         grouped       = group(self.alloc, out_block, out_slot, blocks).try();
         self.out_at   = grouped.starts;
         self.out_list = grouped.values;
-        Ok(())
+        Ok
     }
 
-    note_read = (self :: @Self, block: usize, slot: usize, at: usize) Res<(), AllocError> {
+    note_read = (self :: @Self, block: usize, slot: usize, at: usize) Res<AllocError> {
         stamp = block + 1;
         self.is_local(slot).then(() {
             self.touch(slot, at);
@@ -497,10 +496,10 @@ Flow* = {
                 self.ue_block.add(block).try();
             });
         });
-        Ok(())
+        Ok
     }
 
-    note_write = (self :: @Self, block: usize, slot: usize, at: usize) Res<(), AllocError> {
+    note_write = (self :: @Self, block: usize, slot: usize, at: usize) Res<AllocError> {
         stamp = block + 1;
         self.is_local(slot).then(() {
             self.touch(slot, at);
@@ -510,7 +509,7 @@ Flow* = {
                 self.wr_block.add(block).try();
             });
         });
-        Ok(())
+        Ok
     }
 
     touch = (self :: @Self, slot: usize, at: usize) {

@@ -91,16 +91,15 @@ main = (env: Env) Res<i32, AllocError> {
 // Format, format the result, and say whether the second run moved a
 // byte. `MOVED` is the failure, and it is spelled loudly because a
 // diff-of-a-diff is what a reader of a red gate has to reconstruct.
-settles = (a: Alloc, what: str, text: str) Res<(), AllocError> {
+settles = (a: Alloc, what: str, text: str) Res<AllocError> {
     first  = formatted(a, text).try();
     second = formatted(a, first.view()).try();
     println("{}: {}", what, verdict(first.view().eq(second.view())));
-    Ok(());
 }
 
 // The FIRST pass, byte for byte. `settles` above cannot see a formatter that
 // returns its input, because identity settles; this can.
-renders = (a: Alloc, what: str, text: str, want: str) Res<(), AllocError> {
+renders = (a: Alloc, what: str, text: str, want: str) Res<AllocError> {
     got = formatted(a, text).try();
     println(
         "{}: {} {} bytes",
@@ -108,7 +107,6 @@ renders = (a: Alloc, what: str, text: str, want: str) Res<(), AllocError> {
         rendered(got.view().eq(want)),
         got.view().len
     );
-    Ok(());
 }
 
 rendered = (right: bool) str {

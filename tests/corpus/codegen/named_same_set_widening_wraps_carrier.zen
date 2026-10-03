@@ -3,26 +3,27 @@
 // same-set payload copy overreads Inner and leaves Outer's tag at A. The Err
 // path must instead construct Outer.Inner and preserve B's text payload.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
 A = { | AValue: i32 }
+A.impl(Error, {})
 B = { | BValue: str }
+B.impl(Error, {})
 Inner = A | B
 Outer = A | Inner
 
-raise = () Res<(), Inner> {
+raise = () Res<Inner> {
     Err(Inner.B(B.BValue("bee")))
 }
 
-widen = () Res<(), Outer> {
+widen = () Res<Outer> {
     raise().try();
-    Ok(())
 }
 
-show = (result: Res<(), Outer>) {
+show = (result: Res<Outer>) {
     result.match({
         Ok(_)  => println("ok"),
         Err(e) => e.match({

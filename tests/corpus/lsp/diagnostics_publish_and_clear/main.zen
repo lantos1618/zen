@@ -67,7 +67,7 @@ main = (env: Env) Res<i32, AllocError> {
 // Requests.
 
 // rootUri selects workspace checking rather than a standalone document.
-open_session = (a: Alloc, into :: String) Res<(), AllocError> {
+open_session = (a: Alloc, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":"
@@ -79,7 +79,7 @@ open_session = (a: Alloc, into :: String) Res<(), AllocError> {
 
 // didOpen carries text inside textDocument.
 open_doc = (a: Alloc, uri: str, text: str, into :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
@@ -93,7 +93,7 @@ open_doc = (a: Alloc, uri: str, text: str, into :: String)
 
 // Full sync carries the complete buffer in contentChanges[0].text.
 change_doc = (a: Alloc, uri: str, text: str, into :: String)
-             Res<(), AllocError> {
+             Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":"
@@ -108,12 +108,11 @@ change_doc = (a: Alloc, uri: str, text: str, into :: String)
 // Session output.
 
 // One batch through the server, and every frame it produced.
-batch = (s :: Server, a: Alloc, what: str, input: str) Res<(), AllocError> {
+batch = (s :: Server, a: Alloc, what: str, input: str) Res<AllocError> {
     out ::= a.String().try();
     serve(s, input, out).try();
     println("--- {}", what);
     walk(out.view());
-    Ok(());
 }
 
 // Print every frame body so frame count and ordering remain observable.

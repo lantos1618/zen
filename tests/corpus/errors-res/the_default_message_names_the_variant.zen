@@ -16,7 +16,7 @@ Leak.impl(Error, {})
 
 Flood = { Basement | Attic }
 Flood.impl(Error, {
-    message = (self: @Self, out :: Sink) Res<(), WriteError> {
+    message = (self: @Self, out :: Sink) Res<WriteError> {
         out.write("water in the ").try();
         out.write(self.variant_name())
     },

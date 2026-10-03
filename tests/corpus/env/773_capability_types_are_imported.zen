@@ -13,7 +13,7 @@
 Fail = AllocError | IoError | FsError
 
 // A helper that prints takes the capability it uses, spelled Console.
-banner = (out: Console, title: str) Res<(), IoError> {
+banner = (out: Console, title: str) Res<IoError> {
     out.println("== {} ==", title)
 }
 

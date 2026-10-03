@@ -26,13 +26,12 @@ Holder.impl(Actor, {
         println("stopped after {} turns total {}", self.turns, total);
     }
 })
-spin = <W: Weight>(env: Env, item: W, turns: u64) Res<(), ActorStartError
+spin = <W: Weight>(env: Env, item: W, turns: u64) Res<ActorStartError
     | ActorError> {
     actor = env.spawn(Holder<W>(item: item)).try();
     actor.turn(actor, turns).try();
     env.threads.sleep(50);
     actor.stop(); actor.join();
-    Ok(())
 }
 main = (env: Env) Res<i32, ActorStartError | ActorError> {
     spin(env, Light(n: 2), 3).try();

@@ -49,7 +49,7 @@ ArmTrace* = {
         Ok(child)
     }
 
-    literal* = (self :: @Self, slot: usize, text: str) Res<(), AllocError> {
+    literal* = (self :: @Self, slot: usize, text: str) Res<AllocError> {
         self.tests.add(ArmTest(slot: slot, child: 0, name: text, literal: true))
     }
 
@@ -132,7 +132,7 @@ describe = (c :: Checker, ps: Pats, want: usize, got: usize)
     Ok(out.view())
 }
 
-write_pat = (ps: Pats, i: usize, out :: String) Res<(), AllocError> {
+write_pat = (ps: Pats, i: usize, out :: String) Res<AllocError> {
     p = ps.at(i);
     p.kind.match({
         WildPat => out.add("_"),
@@ -141,12 +141,12 @@ write_pat = (ps: Pats, i: usize, out :: String) Res<(), AllocError> {
     })
 }
 
-write_ctor = (ps: Pats, p: Pat, out :: String) Res<(), AllocError> {
+write_ctor = (ps: Pats, p: Pat, out :: String) Res<AllocError> {
     out.add(p.name).try();
     p.has_sub.then(() {
         out.add("(").try();
         write_pat(ps, p.sub, out).try();
         out.add(")").try();
     });
-    Ok(())
+    Ok
 }

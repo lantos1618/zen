@@ -21,7 +21,7 @@ arg_text* = (
     want : TyId,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.args.get(i).match({
         None  => out.add("0"),
         Ok(a) => expr(be, a.value, ctx, want, out),
@@ -29,7 +29,7 @@ arg_text* = (
 }
 
 str_arg* = (be :: CBackend, c: Call, i: usize, ctx: Ctx, out :: String)
-          Res<(), AllocError> {
+          Res<AllocError> {
     sty = be.check.types.prim("str").try();
     tmp ::= be.fresh_name("t").try();
     be.declare_temp(sty, tmp.view()).try();
@@ -41,7 +41,6 @@ str_arg* = (be :: CBackend, c: Call, i: usize, ctx: Ctx, out :: String)
         tmp.view(),
         tmp.view()
     ).try();
-    Ok(())
 }
 
 // Signature argument zero is either the dot receiver or written argument zero.
@@ -64,7 +63,7 @@ write_arg* = (
     sig   : Vec<TyId>,
     ctx   : Ctx,
     out   :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.write_arg_at(value, i, false, f, sig, ctx, out)
 }
 
@@ -79,7 +78,7 @@ write_arg_at* = (
     sig   : Vec<TyId>,
     ctx   : Ctx,
     out   :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     want = sig.get(i).match({ Ok(t) => t, None => TyId(index: 0) });
     by_ref(f, i).match({
         true  => be.write_address(value, ctx, want, out),
@@ -100,10 +99,9 @@ write_address* = (
     ctx   : Ctx,
     want  : TyId,
     out   :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     code ::= be.alloc.String().try();
     be.expr(value, ctx, want, code).try();
     be.note_lend(value).try();
     be.address_of(code.view(), want, out).try();
-    Ok(())
 }

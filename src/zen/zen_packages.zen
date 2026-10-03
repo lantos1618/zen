@@ -4,7 +4,7 @@
 { str, String } = std.text
 { Vec, vararg } = std.collections
 { Package, Lib } = std.build
-{ Res, Ok, Range, Path } = std.core
+{ Res, Ok, Range, Path, Error } = std.core
 { Env } = std.env
 
 PackageFault* = { InvalidSpec
@@ -13,6 +13,7 @@ PackageFault* = { InvalidSpec
     | DirtyCache
     | Unavailable
     | MissingSource }
+PackageFault.impl(Error, {})
 PackageError* = PackageFault | AllocError
 
 resolve* = (
@@ -91,7 +92,7 @@ Cache = {
         Ok(result.out)
     }
 
-    fetch = (self: @Self, package: Package) Res<(), PackageError> {
+    fetch = (self: @Self, package: Package) Res<PackageError> {
         self.git("init", "--quiet", "--template=").try();
         self.git("remote", "add", "origin", package.url).try();
         self.git(
@@ -111,10 +112,10 @@ Cache = {
         ).try();
         fetched.view().trim().value_or("").eq(package.rev).ensure(PackageFault.CacheMismatch).try();
         self.git("checkout", "--quiet", "--detach", package.rev, "--").try();
-        Ok(())
+        Ok
     }
 
-    verify = (self: @Self, package: Package) Res<(), PackageError> {
+    verify = (self: @Self, package: Package) Res<PackageError> {
         origin = self.git("remote", "get-url", "origin").try();
         origin.view().trim().value_or("").eq(package.url).ensure(PackageFault.CacheMismatch).try();
         head = self.git("rev-parse", "--verify", "HEAD^{commit}").try();
@@ -127,6 +128,6 @@ Cache = {
         ).try();
         status.view().is_empty().ensure(PackageFault.DirtyCache).try();
         self.git("fsck", "--no-reflogs", "--no-dangling").try();
-        Ok(())
+        Ok
     }
 }

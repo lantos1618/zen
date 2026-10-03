@@ -22,7 +22,7 @@
 
 inner = () Res<i32, AllocError> { Ok(3) }
 
-hand = () Res<(), AllocError> { inner().try() }
+hand = () Res<AllocError> { inner().try() }
 
 main = (env: Env) Res<i32, AllocError> {
     hand().match({

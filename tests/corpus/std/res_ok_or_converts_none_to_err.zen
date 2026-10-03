@@ -48,7 +48,7 @@ main = (env: Env) Res<i32, Error> {
         Ok(_)  => println("wrong"),
         Err(_) => println("replaced"),
     });
-    unit :: Res<(), SourceError> = Ok(());
+    unit :: Res<(), SourceError> = Ok;
     unit.replace_err(TargetError.Replaced).match({
         Ok(_)  => println("unit"),
         Err(_) => println("wrong"),

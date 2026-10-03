@@ -48,11 +48,11 @@ Actual* = {
 // Candidate collection.
 
 cands_of* = (c :: Checker, mi: usize, name: str, out :: Vec<Cand>)
-            Res<(), AllocError> {
+            Res<AllocError> {
     defs ::= c.alloc.Vec<Def>();
     c.world.defs_of(mi, name, defs).try();
     defs.loop((h, d) { c.cand_of(d, out).try() });
-    Ok(());
+    Ok;
 }
 
 // A dot call on a type std.core declares functions for -- a primitive, `Res`,
@@ -61,12 +61,12 @@ cands_of* = (c :: Checker, mi: usize, name: str, out :: Vec<Cand>)
 // parameter takes the receiver is a candidate; every other free function is
 // called through a name the module declares or imports.
 core_cands* = (c :: Checker, name: str, rty: TyId, out :: Vec<Cand>)
-              Res<(), AllocError> {
+              Res<AllocError> {
     defs ::= c.alloc.Vec<Def>();
     c.world.core_of(name, defs).try();
     defs.loop((h, d) {
         c.tree.decl_at(d.id).match({
-            None    => Ok(()),
+            None    => Ok,
             Ok(dec) => dec.kind.match({
                 Function(f) => {
                     k = c.make_cand(d, dec, f).try();
@@ -74,13 +74,13 @@ core_cands* = (c :: Checker, name: str, rty: TyId, out :: Vec<Cand>)
                         && out.find(
                             (x) { x.id.eq(k.id) }
                         ).match({ Ok(_) => false, None => true }))
-                        .match({ true => out.add(k), false => Ok(()) })
+                        .match({ true => out.add(k), false => Ok })
                 },
-                _           => Ok(()),
+                _           => Ok,
             }),
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
 takes_receiver = (c :: Checker, k: Cand, rty: TyId) Res<bool, AllocError> {
@@ -111,22 +111,21 @@ generic_receiver = (c :: Checker, t: TyId, rty: TyId) Res<bool, AllocError> {
 }
 
 exported_cands* = (c :: Checker, mi: usize, name: str, out :: Vec<Cand>)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     defs ::= c.alloc.Vec<Def>();
     c.world.exported_defs(mi, name, defs).try();
     defs.loop((h, d) { c.cand_of(d, out).try() });
-    Ok(())
+    Ok
 }
 
-cand_of = (c :: Checker, d: Def, out :: Vec<Cand>) Res<(), AllocError> {
+cand_of = (c :: Checker, d: Def, out :: Vec<Cand>) Res<AllocError> {
     c.tree.decl_at(d.id).match({
         Ok(dec) => dec.kind.match({
             Function(f) => out.add(c.make_cand(d, dec, f).try()),
-            _           => Ok(()),
+            _           => Ok,
         }),
-        None    => Ok(()),
+        None    => Ok,
     }).try();
-    Ok(());
 }
 
 // The signature resolves in its declaring module, under its own type
@@ -162,18 +161,18 @@ make_cand = (c :: Checker, d: Def, dec: Decl, f: Function)
 }
 
 collect_bounds* = (c :: Checker, f: Function, ctx: Ctx, out :: Vec<TBound>)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     f.tparams.loop((h, tp) { c.tparam_bounds(tp, ctx, out).try() });
-    Ok(());
+    Ok;
 }
 
 tparam_bounds* = (c :: Checker, tp: TParam, ctx: Ctx, out :: Vec<TBound>)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     text = tp.name.text;
     tp.bounds.loop((h, b) {
         out.add(TBound(name: text, bound: c.type_from_ast(b, ctx).try())).try();
     });
-    Ok(());
+    Ok;
 }
 
 // Signature matching.

@@ -39,11 +39,11 @@ lower_access* = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.module_value(id, a, ctx, want, out).try().match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.native_constant(id, a, ctx, out).try().match({
-            true  => Ok(()),
+            true  => Ok,
             false => be.base_decl(a.base, ctx).match({
                 Ok(ty) => be.names_case(ty, a.name.text).try().match({
                     true  => be.write_variant_value(
@@ -118,7 +118,7 @@ lower_module_export = (
     mi   : usize,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     found ::= be.alloc.Vec<Def>();
     be.check.world.exported_defs(mi, a.name.text, found).try();
     found.get(0).match({
@@ -210,7 +210,7 @@ write_native_constant = (
     f   : Field,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     f.value.match({
         None      => out.add(f.name.text),
         Ok(value) => {
@@ -254,7 +254,7 @@ native_fallback_type = (
     cty   :: String,
     range :: String
 )
-                       Res<(), AllocError> {
+                       Res<AllocError> {
     written = f.type.ok_or(AllocError.OutOfMemory).try();
     ty      = be.check.type_from_ast(written, ctx).try();
     be.ctype(ty, cty).try();
@@ -272,7 +272,7 @@ native_fallback_type = (
             limit
         ).try();
     });
-    Ok(())
+    Ok
 }
 
 // Type constants have no receiver storage and lower like module constants.
@@ -283,7 +283,7 @@ lower_type_or_field = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.type_const(a, ctx).try().match({
         None     => be.lower_recv_const_or_field(id, a, ctx, want, out),
         Ok(pair) => be.lower_const_value(id, pair.k, pair.d, want, out),
@@ -299,7 +299,7 @@ lower_recv_const_or_field = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.recv_const(a, ctx).try().match({
         None     => be.write_field_access(id, a, ctx, out),
         Ok(pair) => be.lower_const_value(id, pair.k, pair.d, want, out),
@@ -371,11 +371,11 @@ collect_type_const = (
     d    : Def,
     name : str,
     out  :: Vec<TypeConst>
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.check.alias_module(d.id).match({
         Ok(mi) => be.collect_module_const(mi, name, out),
         None   => decl_at(be.tree, d.id).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(x) => collect_decl_const(x, d, name, out),
         }),
     })
@@ -387,19 +387,19 @@ collect_module_const = (
     mi   : usize,
     name : str,
     out  :: Vec<TypeConst>
-) Res<(), AllocError> {
+) Res<AllocError> {
     defs ::= be.alloc.Vec<Def>();
     be.check.world.exported_defs(mi, name, defs).try();
     defs.loop((h, d) {
         decl_at(be.tree, d.id).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(x) => x.kind.match({
                 Const(k) => out.add(TypeConst(k: k, d: d)),
-                _        => Ok(()),
+                _        => Ok,
             }),
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
 collect_decl_const = (
@@ -407,10 +407,10 @@ collect_decl_const = (
     d    : Def,
     name : str,
     out  :: Vec<TypeConst>
-) Res<(), AllocError> {
+) Res<AllocError> {
     x.body_members().match({
         Ok(members) => collect_body_const(members, d, name, out),
-        None        => Ok(()),
+        None        => Ok,
     })
 }
 
@@ -419,23 +419,23 @@ collect_body_const = (
     d       : Def,
     name    : str,
     out     :: Vec<TypeConst>
-) Res<(), AllocError> {
+) Res<AllocError> {
     members.loop((h, m) { keep_const(m, d, name, out).try() });
-    Ok(());
+    Ok;
 }
 
 keep_const = (m: Member, d: Def, name: str, out :: Vec<TypeConst>)
-             Res<(), AllocError> {
+             Res<AllocError> {
     m.kind.match({
         Const(k) => keep_named_const(k, d, name, out),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
 keep_named_const = (k: Const, d: Def, name: str, out :: Vec<TypeConst>)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     k.name.text.eq(name).match({
-        false => Ok(()),
+        false => Ok,
         true  => out.add(TypeConst(k: k, d: d)),
     })
 }
@@ -494,7 +494,7 @@ write_variant_value* = (
     want    : TyId,
     variant : str,
     out     :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     lit = be.nullary_ty(ty, want);
     qname ::= be.alloc.String().try();
     be.enum_qname(lit, qname).try();
@@ -541,10 +541,10 @@ same_enum_decl = (be: CBackend, a: TyId, b: TyId) bool {
     })
 }
 
-enum_qname = (be :: CBackend, ty: TyId, out :: String) Res<(), AllocError> {
+enum_qname = (be :: CBackend, ty: TyId, out :: String) Res<AllocError> {
     be.check.types.at(ty).match({
         Named(n) => be.write_qname(out, n),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
@@ -567,7 +567,7 @@ write_field_access = (
     a   : Access,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     unknown = be.check.types.unknown().try();
     rty     = be.ty_of(a.base, ctx, unknown).try();
     found ::= be.alloc.Vec<Computed>();
@@ -589,10 +589,10 @@ write_selected_field = (
     ctx   : Ctx,
     out   :: String
 )
-                       Res<(), AllocError> {
+                       Res<AllocError> {
     kept ::= be.alloc.Vec<Computed>();
     be.check.supply_memo.get(id).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(b) => keep_supplied_by(found, b, kept),
     }).try();
     kept.len.match({
@@ -602,15 +602,15 @@ write_selected_field = (
 }
 
 keep_supplied_by = (found: Vec<Computed>, b: TyId, kept :: Vec<Computed>)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     found.loop((h, cf) { keep_if_bound(cf, b, kept).try() });
-    Ok(());
+    Ok;
 }
 
 // Kept separate because loop bindings do not resolve inside nested closures.
 keep_if_bound = (cf: Computed, b: TyId, kept :: Vec<Computed>)
-                Res<(), AllocError> {
-    cf.bound.eq(b).match({ true => kept.add(cf), false => Ok(()) })
+                Res<AllocError> {
+    cf.bound.eq(b).match({ true => kept.add(cf), false => Ok })
 }
 
 write_stored_field = (
@@ -619,7 +619,7 @@ write_stored_field = (
     rty : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     unknown = be.check.types.unknown().try();
     fty     = be.field_of(rty, a.name.text).try().match({
         Ok(t) => t,
@@ -653,10 +653,10 @@ supplied_fields = (
     rty  : TyId,
     name : str,
     out  :: Vec<Computed>
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.check.types.at(rty).match({
         Named(n) => be.named_supplied(n, rty, name, out),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
@@ -666,9 +666,9 @@ named_supplied = (
     rty  : TyId,
     name : str,
     out  :: Vec<Computed>
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.declares_own(n.decl, name).match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.impls_supplying(n, rty, name, out),
     })
 }
@@ -696,11 +696,11 @@ impls_supplying = (
     rty  : TyId,
     name : str,
     out  :: Vec<Computed>
-) Res<(), AllocError> {
+) Res<AllocError> {
     ids ::= be.alloc.Vec<ImplId>();
     be.check.world.impls_named(be.tree, n.name, ids).try();
     ids.loop((h, i) { be.local_supplied(n, rty, i, name, out).try() });
-    Ok(());
+    Ok;
 }
 
 local_supplied = (
@@ -710,9 +710,9 @@ local_supplied = (
     i    : ImplId,
     name : str,
     out  :: Vec<Computed>
-) Res<(), AllocError> {
+) Res<AllocError> {
     (n.decl.module == i.decl.module).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.supplied_in_impl(n, rty, i, name, out),
     })
 }
@@ -724,10 +724,10 @@ supplied_in_impl = (
     i    : ImplId,
     name : str,
     out  :: Vec<Computed>
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.check.world.impl_at(be.tree, i).match({
         Ok(im) => be.impl_supplied_value(n, rty, im, name, out),
-        None   => Ok(()),
+        None   => Ok,
     })
 }
 
@@ -739,9 +739,9 @@ impl_supplied_value = (
     name : str,
     out  :: Vec<Computed>
 )
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     im.field_value(name).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(v) => be.add_computed(n, rty, im, name, v, out),
     })
 }
@@ -754,7 +754,7 @@ add_computed = (
     name : str,
     v    : ExprId,
     out  :: Vec<Computed>
-) Res<(), AllocError> {
+) Res<AllocError> {
     mi    = n.decl.module.to_usize();
     bound = be.check.impl_bound_type(im, mi).try();
     ty    = be.check.bound_member_type(bound, name, rty).try();
@@ -771,9 +771,9 @@ write_computed_field = (
     ctx   : Ctx,
     out   :: String
 )
-                       Res<(), AllocError> {
+                       Res<AllocError> {
     found.get(0).match({
-        None   => Ok(()),
+        None   => Ok,
         Ok(cf) => be.write_supplied_value(a, rty, cf, ctx, out),
     })
 }
@@ -785,7 +785,7 @@ write_supplied_value = (
     cf  : Computed,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     unknown = be.check.types.unknown().try();
     recv ::= be.alloc.String().try();
     expr(be, a.base, ctx, unknown, recv).try();
@@ -808,12 +808,11 @@ write_supplied_value = (
     be.check.release(cmark).try();
     be.leave_tparams(mark).try();
     be.enter_inst(held);
-    Ok(());
 }
 
 // Header-owned records and `str` retain their ABI field names.
 field_name = (be :: CBackend, rty: TyId, name: str, out :: String)
-             Res<(), AllocError> {
+             Res<AllocError> {
     (be.is_str(rty) || be.is_native_record(rty)).match({
         true  => out.add(name),
         false => out.sym_member(name),

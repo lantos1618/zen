@@ -11,13 +11,15 @@
 // carry payloads of different types so the arm taken AND the value read
 // identify what arrived.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
 A = { | A1: i64 }
+A.impl(Error, {})
 B = { | B1: str }
+B.impl(Error, {})
 
 Set = B | A
 

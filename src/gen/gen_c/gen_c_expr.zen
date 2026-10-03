@@ -524,7 +524,7 @@ res_type_of* = (be :: CBackend, id: ExprId, ctx: Ctx)
 // Returns: result hoisting, error-set widening, and construction of a bound
 // Value. Required temporaries are emitted before the consuming statement.
 expr* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId, out :: String)
-        Res<(), AllocError> {
+        Res<AllocError> {
     be.held_expression.match({
         Ok(held) => (held.id.index == id.index).match({
             true  => be.render_expr(id, ctx, want, out),
@@ -545,7 +545,7 @@ sequence_calls = (
     want : TyId,
     out  :: String
 )
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     chain ::= be.alloc.Vec<ExprId>();
     next  ::= id;
     going ::= true;
@@ -573,7 +573,7 @@ sequence_calls = (
             });
             be.render_expr(id, ctx, want, out).try();
             be.hold_expression(held);
-            Ok(())
+            Ok
         },
     })
 }
@@ -611,7 +611,7 @@ scalar_call_child = (be :: CBackend, id: ExprId, ctx: Ctx)
 }
 
 render_expr = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId, out :: String)
-              Res<(), AllocError> {
+              Res<AllocError> {
     be.door_of(id, ctx, want).try().match({
         Set   => be.set_expr(id, ctx, want, out),
         Hoist => be.hoist_expr(id, ctx, want, out),
@@ -647,7 +647,7 @@ fat_expr = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     unknown = be.check.types.unknown().try();
     cty     = be.ty_of(id, ctx, unknown).try();
     code ::= be.alloc.String().try();
@@ -661,7 +661,7 @@ fat_expr = (
 // Substitute the evaluated value beneath contextual conversion. Bypassing
 // render_expr would lose tagged-union and bound-value construction at uses.
 value_expr* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId, out :: String)
-              Res<(), AllocError> {
+              Res<AllocError> {
     be.held_expression.match({
         Ok(held) => (held.id.index == id.index).match({
             true  => out.add(held.value),
@@ -677,7 +677,7 @@ render_value_expr = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.spills(id).match({
         true  => be.spill_temp(id, ctx, want, out),
         false => be.write_expr(id, ctx, want, out),
@@ -690,7 +690,7 @@ spill_temp = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     ty = be.destination_type(id, ctx, want).try();
     be.spill_of(ty).match({
         Unsettled => be.unsupported(
@@ -740,7 +740,7 @@ spill_effect = (
     ctx : Ctx,
     ty  : TyId,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.deliver(id, ctx, ty, Dest.Discard).try();
     out.add("0")
 }
@@ -751,7 +751,7 @@ spill_valued = (
     ctx : Ctx,
     ty  : TyId,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.request_type(ty).try();
     tmp  ::= be.fresh_name("s").try();
     line ::= be.alloc.String().try();
@@ -771,7 +771,7 @@ value_held* = (
     want : TyId,
     hold : bool,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     (hold && be.holdable(id)).match({
         true  => be.hold_value(id, ctx, want, out),
         false => be.expr(id, ctx, want, out),
@@ -784,7 +784,7 @@ hold_value = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     ty = be.destination_type(id, ctx, want).try();
     be.spill_of(ty).match({
         Valued    => be.spill_valued(id, ctx, ty, out),
@@ -799,7 +799,7 @@ write_expr = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     node = be.tree.expr_at(id);
     node.kind.match({
         Literal(l)    => lower_literal(l, out),
@@ -817,7 +817,6 @@ write_expr = (
         Consume(x)    => be.lower_consume(x, ctx, want, out),
         _             => be.unsupported(id, "this expression form", out),
     }).try();
-    Ok(());
 }
 
 // `consume x` moves, and in C the bytes are simply copied — so the
@@ -832,16 +831,16 @@ lower_consume = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.release_moved(x.operand).try();
     expr(be, x.operand, ctx, want, out)
 }
 
-release_moved = (be :: CBackend, id: ExprId) Res<(), AllocError> {
+release_moved = (be :: CBackend, id: ExprId) Res<AllocError> {
     be.tree.expr_at(id).kind.match({
         Name(n)  => be.release_binding(n.text),
         Paren(p) => be.release_moved(p.inner),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
@@ -864,16 +863,15 @@ lower_paren = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     out.add("(").try();
     expr(be, be.unparen(id), ctx, want, out).try();
     out.add(")").try();
-    Ok(());
 }
 
 // Scalar literals retain their checked source spelling. Strings also carry
 // a byte length and use C spelling that preserves Zen's escape boundaries.
-lower_literal = (l: Literal, out :: String) Res<(), AllocError> {
+lower_literal = (l: Literal, out :: String) Res<AllocError> {
     l.kind.match({
         Str   => lower_str_literal(l, out),
         Int   => lower_int_literal(l, out),
@@ -881,17 +879,16 @@ lower_literal = (l: Literal, out :: String) Res<(), AllocError> {
         Char  => out.add(l.text),
         Bool  => out.add(l.text),
     }).try();
-    Ok(());
 }
 
 // C99 requires an unsigned suffix for decimal constants larger than `i64.MAX`.
 // The digits decide the suffix because their representable range is independent
 // Of the expression's settled type.
-lower_int_literal = (literal: Literal, out :: String) Res<(), AllocError> {
+lower_int_literal = (literal: Literal, out :: String) Res<AllocError> {
     out.add(literal.text).try();
     over_i64(literal).match({
         true  => out.add("ULL"),
-        false => Ok(()),
+        false => Ok,
     })
 }
 
@@ -907,19 +904,18 @@ over_i64 = (literal: Literal) bool {
     })
 }
 
-lower_str_literal = (l: Literal, out :: String) Res<(), AllocError> {
+lower_str_literal = (l: Literal, out :: String) Res<AllocError> {
     out.add("(zg_str){ (unsigned char *)").try();
     out.write_c_literal(l.text.slice(1, l.text.len - 1)).try();
     out.add(", ").try();
     out.write_usize(l.text.slice(1, l.text.len - 1).literal_byte_len()).try();
     out.add("u }").try();
-    Ok(());
 }
 
 // Append one C string from a lexer-validated, unquoted Zen literal body.
 // Zen's \0 consumes one source digit; C octal escapes can consume three.
 // Escaped backslashes stay paired so \\01 remains three ordinary bytes.
-write_c_literal* = (out :: String, raw: str) Res<(), AllocError> {
+write_c_literal* = (out :: String, raw: str) Res<AllocError> {
     out.add('"').try();
     start :: usize = 0;
     at    :: usize = 0;
@@ -951,7 +947,7 @@ lower_meta_or_access* = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     base = be.check.tree.expr_at(a.base);
     base.kind.match({
         Meta(m) => m.type.match({
@@ -987,19 +983,19 @@ lower_meta_or_access* = (
 // Meta with the written type expression — the memo key. `is_count_chain`
 // has vouched for every level between; this reads the one row.
 chain_count = (be :: CBackend, call_id: ExprId, out :: String)
-              Res<(), AllocError> {
+              Res<AllocError> {
     be.check.tree.expr_at(call_id).kind.match({
         Call(k) => be.check.tree.expr_at(k.callee).kind.match({
             Access(f) => be.check.tree.expr_at(f.base).kind.match({
                 Meta(m) => m.type.match({
                     Ok(t) => be.lower_meta_count(t, out),
-                    None  => Ok(()),
+                    None  => Ok,
                 }),
-                _       => Ok(()),
+                _       => Ok,
             }),
-            _         => Ok(()),
+            _         => Ok,
         }),
-        _       => Ok(()),
+        _       => Ok,
     })
 }
 
@@ -1008,11 +1004,10 @@ chain_count = (be :: CBackend, call_id: ExprId, out :: String)
 // and a literal is closed by `"`, and neither byte can appear in an
 // identifier the lexer accepted. So the quotes are added around the
 // text and the length is `text.len`; there is nothing to decode.
-lower_meta_name* = (text: str, out :: String) Res<(), AllocError> {
+lower_meta_name* = (text: str, out :: String) Res<AllocError> {
     out.fmt("(zg_str){ (unsigned char *)\"{}\", ", text).try();
     out.write_usize(text.len).try();
     out.add("u }").try();
-    Ok(());
 }
 
 // The count's sibling (`sema_check.meta_count_of`): `.fields().len`
@@ -1023,14 +1018,11 @@ lower_meta_count* = (
     be  :: CBackend,
     t   : TypeId,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     got = be.check.meta_count_of(t);
     got.match({
-        Ok(n) => {
-            out.write_usize(n).try();
-            Ok(())
-        },
-        None  => Ok(()),
+        Ok(n) => out.write_usize(n).try(),
+        None  => Ok,
     })
 }
 
@@ -1044,7 +1036,7 @@ lower_name = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.slot_of(text).match({
         Ok(slot) => be.write_name_slot(
             text,
@@ -1062,7 +1054,7 @@ write_name_slot* = (
     span : Span,
     slot : LocalSlot,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.closure_storage(span, slot, "a lambda read as a value").try().match({
         true  => be.has_storage(slot.ty).match({
             true  => be.write_local(name, slot, out),
@@ -1095,7 +1087,7 @@ hole_text = (be :: CBackend, name: str, s: LocalSlot, out :: String)
 // a dereference. Parenthesised, because every use of it is a use of the
 // value: `(*p).x` and `*p.x` are different C.
 write_local = (be :: CBackend, text: str, slot: LocalSlot, out :: String)
-              Res<(), AllocError> {
+              Res<AllocError> {
     slot.by_ref.match({
         false => sym_local(out, text, slot.index),
         true  => write_deref(text, slot, out),
@@ -1103,11 +1095,10 @@ write_local = (be :: CBackend, text: str, slot: LocalSlot, out :: String)
 }
 
 write_deref = (text: str, slot: LocalSlot, out :: String)
-              Res<(), AllocError> {
+              Res<AllocError> {
     out.add("(*").try();
     sym_local(out, text, slot.index).try();
     out.add(")").try();
-    Ok(());
 }
 
 lower_global_name = (
@@ -1117,7 +1108,7 @@ lower_global_name = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.names_bare_res(text, ctx).try().match({
         true  => be.res_value(id, want, text, out),
         false => be.lower_global_value(id, text, ctx, want, out),

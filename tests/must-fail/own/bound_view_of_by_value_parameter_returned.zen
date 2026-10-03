@@ -23,9 +23,9 @@ open = (tracking: Counting) Res<Session, AllocError> {
     memory = tracking.raw(64, 8).try();
     Ok(adopt(tracking, memory))
 }
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     base    = env.mem.alloc();
     session = open(Counting(base: base, tag: 1)).try();
     session.alloc.raw(8, 8).try();
-    Ok(())
+    Ok
 }

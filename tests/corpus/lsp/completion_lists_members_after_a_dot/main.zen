@@ -62,7 +62,7 @@ probes = (a: Alloc) Res<Vec<Probe>, AllocError> {
 
 // --- the requests ------------------------------------------------------
 
-open_doc = (a: Alloc, text: str, into :: String) Res<(), AllocError> {
+open_doc = (a: Alloc, text: str, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
@@ -75,7 +75,7 @@ open_doc = (a: Alloc, text: str, into :: String) Res<(), AllocError> {
 }
 
 // FULL SYNC: one change, carrying the whole next buffer and no range.
-change_doc = (a: Alloc, text: str, into :: String) Res<(), AllocError> {
+change_doc = (a: Alloc, text: str, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":"
@@ -88,7 +88,7 @@ change_doc = (a: Alloc, text: str, into :: String) Res<(), AllocError> {
 }
 
 completion = (a: Alloc, id: usize, p: Probe, into :: String)
-             Res<(), AllocError> {
+             Res<AllocError> {
     body ::= a.String().try();
     body.add("{\"jsonrpc\":\"2.0\",\"id\":").try();
     body.write_usize(id).try();

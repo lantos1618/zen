@@ -82,7 +82,7 @@ main = (env: Env) Res<i32, AllocError> {
 // `rootUri` IS WHAT MAKES THIS A BUILD: without it the server has no
 // workspace and publishes nothing at all — `lsp_diag.zen`'s refusal,
 // not a gap.
-open_session = (a: Alloc, into :: String) Res<(), AllocError> {
+open_session = (a: Alloc, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":"
@@ -93,7 +93,7 @@ open_session = (a: Alloc, into :: String) Res<(), AllocError> {
 }
 
 open_doc = (a: Alloc, uri: str, text: str, into :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
@@ -108,7 +108,7 @@ open_doc = (a: Alloc, uri: str, text: str, into :: String)
 // FULL SYNC: `contentChanges[0].text` IS the whole new buffer, because
 // `initialize` advertised `textDocumentSync: 1`.
 change_doc = (a: Alloc, uri: str, text: str, into :: String)
-             Res<(), AllocError> {
+             Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":"
@@ -123,12 +123,11 @@ change_doc = (a: Alloc, uri: str, text: str, into :: String)
 // --- the session -------------------------------------------------------
 
 // One batch through the server, and every frame it produced.
-batch = (s :: Server, a: Alloc, what: str, input: str) Res<(), AllocError> {
+batch = (s :: Server, a: Alloc, what: str, input: str) Res<AllocError> {
     out ::= a.String().try();
     serve(s, input, out).try();
     println("--- {}", what);
     walk(out.view());
-    Ok(());
 }
 
 // Every frame's body, one per line. Nothing is filtered: a count that

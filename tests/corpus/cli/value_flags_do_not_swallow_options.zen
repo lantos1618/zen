@@ -54,7 +54,7 @@ valid = (a: Alloc) Res<Vec<str>, AllocError> {
     Ok(argv);
 }
 
-show = (env: Env, argv: Vec<str>) Res<(), AllocError> {
+show = (env: Env, argv: Vec<str>) Res<AllocError> {
     a ::= env.mem.alloc();
     cli(env, a, argv).try().match({
         Build(j)         => j.emission.match({
@@ -73,5 +73,4 @@ show = (env: Env, argv: Vec<str>) Res<(), AllocError> {
         Refused(refusal) => println("usage {}", refusal.message.view()),
         _                => println("other"),
     });
-    Ok(())
 }

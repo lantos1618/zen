@@ -30,7 +30,7 @@ lower_index* = (
     ix  : Index,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     unknown = be.check.types.unknown().try();
     rty     = be.ty_of(ix.base, ctx, unknown).try();
     be.array_of(rty).match({
@@ -46,7 +46,7 @@ index_not_array = (
     rty : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.is_raw_ptr(rty).match({
         true  => be.write_subscript(ix, ctx, out),
         false => be.index_through_member(id, ix, rty, ctx, out),
@@ -117,7 +117,7 @@ is_raw_ptr = (be :: CBackend, rty: TyId) bool {
 }
 
 write_subscript = (be :: CBackend, ix: Index, ctx: Ctx, out :: String)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     unknown = be.check.types.unknown().try();
     counter = be.check.types.prim("usize").try();
     base ::= be.alloc.String().try();
@@ -134,7 +134,7 @@ index_through_member = (
     rty : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     site_of(be, rty).try().match({
         None  => be.no_index(id, out),
         Ok(s) => be.index_member(id, ix, rty, s, ctx, out),
@@ -151,7 +151,7 @@ index_member = (
     s   : Site,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     found ::= be.alloc.Vec<Member>();
     member_at(be, s, "index", found).try();
     bodied_fn(found).match({
@@ -168,7 +168,7 @@ supplied_index = (
     s   : Site,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.impl_member(s.decl, "index").try().match({
         Ok(f) => be.write_index_call(id, ix, rty, s, f, ctx, out),
         None  => be.no_index(id, out),
@@ -176,7 +176,7 @@ supplied_index = (
 }
 
 no_index = (be :: CBackend, id: ExprId, out :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
     be.unsupported(id, "an index on a type that declares no `index`", out)
 }
 
@@ -190,7 +190,7 @@ write_index_call = (
     ctx : Ctx,
     out :: String
 )
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     inst = be.recv_inst(rty).try();
     mi   = s.decl.module.to_usize();
     sig ::= be.alloc.Vec<TyId>();
@@ -215,7 +215,7 @@ emit_index_call = (
     inst : Inst,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     sym = be.member_symbol(rty, s, "index", sig, inst).try();
     base ::= be.alloc.String().try();
     be.write_arg_at(ix.base, 0, be.has_call(ix.index), f, sig, ctx, base).try();

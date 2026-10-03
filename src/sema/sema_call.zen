@@ -105,7 +105,7 @@ CallCheck = {
         })
     }
 
-    load_actuals = (self :: @Self, c :: Checker) Res<(), AllocError> {
+    load_actuals = (self :: @Self, c :: Checker) Res<AllocError> {
         c.actuals_of(self.call.args, self.ctx, self.actuals)
     }
 
@@ -243,7 +243,7 @@ CallCheck = {
                 (variants.len == 0 && !imported).then(() {
                     c.undefined_or_unimported(self.node.span, name).try();
                 });
-                Ok(())
+                Ok
             },
         }).try();
         c.types.unknown()
@@ -329,7 +329,7 @@ CallCheck = {
     // whose declared type was already checked.
     instantiated_literals = (self: @Self, c :: Checker, declared: Vec<TyId>,
                              settled: Vec<TyId>, off: usize)
-                             Res<(), AllocError> {
+                             Res<AllocError> {
         self.receiver_expr(c, off).when_ok((receiver) {
             ty   = c.type_of(receiver, self.ctx).try();
             want = settled.ty_at(0);
@@ -343,7 +343,7 @@ CallCheck = {
                 c.check_literal(arg.value, want).try();
             });
         });
-        Ok(())
+        Ok
     }
 
     receiver_expr = (self: @Self, c: Checker, off: usize) Res<ExprId> {
@@ -938,11 +938,11 @@ call_type* = (c :: Checker, id: ExprId, node: Expr, call: Call, ctx: Ctx)
 }
 
 actuals_of = (c :: Checker, args: Vec<Arg>, ctx: Ctx, out :: Vec<Actual>)
-             Res<(), AllocError> {
+             Res<AllocError> {
     args.loop((h, a) {
         out.add(c.actual_of(a, ctx).try()).try();
     });
-    Ok(());
+    Ok;
 }
 
 actual_of = (c :: Checker, a: Arg, ctx: Ctx) Res<Actual, AllocError> {
@@ -994,7 +994,7 @@ is_printer_name = (name: str) bool { name.eq("println") || name.eq("print") }
 // A bare name another module exports is named with the import that would
 // bind it; any other is undefined.
 undefined_or_unimported* = (c :: Checker, at: Span, name: str)
-                           Res<(), AllocError> {
+                           Res<AllocError> {
     c.world.importable_from(name).try().match({
         Ok(module) => c.report(
             at.file,
@@ -1024,9 +1024,9 @@ calls_res_ctor = (c :: Checker, name: str, mi: usize) Res<bool, AllocError> {
 // and then dropped on the floor: `Ok(41, "x")` is an `Ok(41)` that read
 // the string for nothing. Only the first surplus is worth naming.
 refuse_res_surplus = (c :: Checker, call: Call, name: str)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     call.args.get(1).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(a) => c.report(
             a.span.file,
             a.span,
@@ -1063,19 +1063,19 @@ infer_member_inst = (
     actuals : Vec<Actual>,
     off     : usize,
     inst    :: Inst
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.types.at(ty).match({
         Fn(f) => actuals.loop((h, i, a) {
             (a.is_lambda == false).then(() {
                 f.params.get(i + off).match({
-                    None     => Ok(()),
+                    None     => Ok,
                     Ok(want) => c.unify(want, a.ty, inst),
                 }).try();
             });
         }),
         _     => (),
     });
-    Ok(())
+    Ok
 }
 
 BoundFit = { BoundSatisfied | BoundUnresolved | BoundDisjoint }
@@ -1315,20 +1315,20 @@ args_handle_check = (
     params : Vec<TyId>,
     off    : usize,
     ctx    : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     args.loop((h, i, a) {
         c.refuse_handle_argument(a, params.ty_at(i + off), ctx).try();
         c.note_bound_view(a.value, params.ty_at(i + off)).try();
     });
-    Ok(());
+    Ok;
 }
 
 // A receiver is parameter zero, so a concrete receiver reaching a bound
 // `self` builds a bound value exactly as an argument does.
 note_receiver_view = (c :: Checker, receiver: Res<ExprId>, params: Vec<TyId>)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     receiver.match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(rid) => c.note_bound_view(rid, params.ty_at(0)),
     })
 }
@@ -1342,12 +1342,12 @@ refuse_literal_lends = (
     k       : Cand,
     params  : Vec<TyId>,
     actuals : Vec<Actual>
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.tree.decl_at(k.id).match({
-        None       => Ok(()),
+        None       => Ok,
         Ok(callee) => callee.kind.match({
             Function(f) => c.literal_lends(f, params, actuals),
-            _           => Ok(()),
+            _           => Ok,
         }),
     })
 }
@@ -1357,7 +1357,7 @@ literal_lends = (
     f       : Function,
     params  : Vec<TyId>,
     actuals : Vec<Actual>
-) Res<(), AllocError> {
+) Res<AllocError> {
     actuals.loop((h, i, a) {
         lent   = f.params.get(i).match({ Ok(p) => p.mutable, None => false });
         stored = c.prim_name(a.ty).eq("int").match({ true => "i64", false => "f64" });
@@ -1372,7 +1372,7 @@ literal_lends = (
             ).try();
         });
     });
-    Ok(());
+    Ok;
 }
 
 // Type each lambda body once, after resolution supplies its parameter types.
@@ -1382,14 +1382,14 @@ arg_lambdas = (
     params : Vec<TyId>,
     off    : usize,
     ctx    : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     args.loop((h, i, a) {
         c.spelled_lambda(a.value).match({
             Ok(l) => c.lambda_body(a.value, l, params.ty_at(i + off), ctx),
             None  => c.types.unknown(),
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
 // `arg_lambdas` for a generic callee. A type parameter that only a
@@ -1407,7 +1407,7 @@ arg_lambdas_settling = (
     off      : usize,
     ctx      : Ctx,
     inst     :: Inst
-) Res<(), AllocError> {
+) Res<AllocError> {
     args.loop((h, i, a) {
         c.spelled_lambda(a.value).match({
             None  => (),
@@ -1430,7 +1430,7 @@ arg_lambdas_settling = (
             },
         });
     });
-    Ok(());
+    Ok;
 }
 
 // Only a body type with nothing left to decide binds. A body that is a bare
@@ -1440,16 +1440,16 @@ arg_lambdas_settling = (
 // differently. A type variable of the enclosing generic body is settled per
 // emission by the backend, and stays open here.
 settle_callback_ret = (c :: Checker, declared: TyId, got: TyId, inst :: Inst)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     body = c.is_literal_ty(got).match({
         true  => c.types.prim(literal_default(c.prim_name(got))).try(),
         false => got,
     });
     c.decided(body).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.types.at(declared).match({
             Fn(f) => c.unify(f.ret, body, inst),
-            _     => Ok(()),
+            _     => Ok,
         }),
     })
 }
@@ -1508,16 +1508,16 @@ lambda_dropped_tail = (
     l   : Lambda,
     sig : TyId,
     got : TyId
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.types.at(sig).match({
         Fn(f) => c.tail_expr(c.tree.block_at(l.body)).match({
             Ok(e) => c.is_var(f.ret).match({
                 true  => c.note_lambda_tail(id, e, got),
                 false => c.check_dropped_tail(e, got, f.ret),
             }),
-            None  => Ok(()),
+            None  => Ok,
         }),
-        _     => Ok(()),
+        _     => Ok,
     })
 }
 
@@ -1528,23 +1528,23 @@ resolve_lambda_inst = (
     sig  : TyId,
     ptys : Vec<TyId>,
     ctx  : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     inst ::= c.alloc.Inst();
     l.params.loop((h, i, p) {
         p.type.match({
             Ok(_) => c.unify(c.param_type(p, ctx).try(), ptys.ty_at(i), inst),
-            None  => Ok(()),
+            None  => Ok,
         }).try();
     });
     c.types.at(sig).match({
         Fn(f) => l.ret.match({
             Ok(r) => c.unify(c.type_from_ast(r, ctx).try(), f.ret, inst),
-            None  => Ok(()),
+            None  => Ok,
         }),
-        _     => Ok(()),
+        _     => Ok,
     }).try();
     (inst.len() > 0).then(() { c.record_lambda_inst(id, inst).try(); });
-    Ok(())
+    Ok
 }
 
 lambda_param = (c :: Checker, p: Param, ptys: Vec<TyId>, i: usize, ctx: Ctx)
@@ -1578,11 +1578,11 @@ arg_literals = (
     params : Vec<TyId>,
     off    : usize,
     ctx    : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     args.loop((h, i, a) {
         c.param_literal(a.value, params, i + off, ctx).try();
     });
-    Ok(());
+    Ok;
 }
 
 // Variadic arguments beyond the declared prefix have no expected type.
@@ -1592,7 +1592,7 @@ param_literal = (
     params : Vec<TyId>,
     i      : usize,
     ctx    : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     (i < params.len).match({
         false => c.check_arms_agree(id),
         true  => c.param_wants(id, params.ty_at(i), ctx),
@@ -1600,7 +1600,7 @@ param_literal = (
 }
 
 param_wants = (c :: Checker, id: ExprId, want: TyId, ctx: Ctx)
-              Res<(), AllocError> {
+              Res<AllocError> {
     got = c.type_of(id, ctx).try();
     c.hoist_at(id, got, want).try();
     c.check_literal(id, want).try();
@@ -1636,9 +1636,9 @@ refuse_actor_payloads = (
     actuals : Vec<Actual>,
     call    : Call
 )
-                         Res<(), AllocError> {
+                         Res<AllocError> {
     c.ref_of_actor(recv).try().match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(_) => {
             actuals.loop((h, i, a) {
                 transferred = c.actor_byte_buffer(a.ty) && call.args.get(i).match({
@@ -1654,7 +1654,7 @@ refuse_actor_payloads = (
                     ).try();
                 });
             });
-            Ok(())
+            Ok
         },
     })
 }
@@ -1693,16 +1693,16 @@ found_fits = (
 
 // A member that is not a function has no parameters and fits no call.
 fn_params = (c :: Checker, ty: TyId, out :: Vec<TyId>)
-            Res<(), AllocError> {
+            Res<AllocError> {
     c.types.at(ty).match({
         Fn(f) => f.params.copy_tys(out),
-        _     => Ok(()),
+        _     => Ok,
     })
 }
 
-copy_tys = (xs: Vec<TyId>, out :: Vec<TyId>) Res<(), AllocError> {
+copy_tys = (xs: Vec<TyId>, out :: Vec<TyId>) Res<AllocError> {
     xs.loop((h, x) { out.add(x).try() });
-    Ok(());
+    Ok;
 }
 
 pick_arity = (c: Checker, found: Vec<Found>, want: usize) Res<Found> {
@@ -1720,7 +1720,7 @@ sig_args_handle_check = (
     ty   : TyId,
     off  : usize,
     ctx  : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     spliced = c.tree.expr_at(call.callee).kind.match({
         Name(n) => c.lookup(n.text).match({
             Ok(_) => true,
@@ -1729,7 +1729,7 @@ sig_args_handle_check = (
         _       => false,
     });
     spliced.match({
-        true  => Ok(()),
+        true  => Ok,
         false => {
             params ::= c.alloc.Vec<TyId>();
             c.fn_params(ty, params).try();
@@ -1739,7 +1739,7 @@ sig_args_handle_check = (
 }
 
 sig_lambdas = (c :: Checker, call: Call, ty: TyId, off: usize, ctx: Ctx)
-              Res<(), AllocError> {
+              Res<AllocError> {
     params ::= c.alloc.Vec<TyId>();
     c.fn_params(ty, params).try();
     c.arg_lambdas(call.args, params, off, ctx)
@@ -1765,25 +1765,25 @@ not_callable = (c :: Checker, node: Expr, ty: TyId) Res<TyId, AllocError> {
 }
 
 check_overloads* = (c :: Checker, mi: usize, name: str)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     cands ::= c.alloc.Vec<Cand>();
     c.cands_of(mi, name, cands).try();
     cands.loop((h, i, a) {
         Range(i + 1, cands.len).loop((h2, j) {
             cands.get(j).match({
-                None  => Ok(()),
+                None  => Ok,
                 Ok(b) => c.compare(name, a, b),
             }).try();
         });
     });
-    Ok(());
+    Ok;
 }
 
-compare = (c :: Checker, name: str, a: Cand, b: Cand) Res<(), AllocError> {
+compare = (c :: Checker, name: str, a: Cand, b: Cand) Res<AllocError> {
     (a.params.len == b.params.len).match({
         false => c.optional_overlap(a, b).match({
             true  => c.ambiguous(name, a, b),
-            false => Ok(()),
+            false => Ok,
         }),
         true  => c.same_signature(a, b).match({
             true  => c.duplicate(name, a, b),
@@ -1861,10 +1861,10 @@ same_param = (c: Checker, x: TyId, y: TyId) bool {
 }
 
 maybe_swallow = (c :: Checker, name: str, a: Cand, b: Cand)
-                Res<(), AllocError> {
+                Res<AllocError> {
     c.swallows(a, b).try().match({
         true  => c.ambiguous(name, a, b),
-        false => Ok(()),
+        false => Ok,
     })
 }
 
@@ -2006,7 +2006,7 @@ all_eats = (c: Checker, xs: Vec<TyId>, ys: Vec<TyId>, owner: str) bool {
     }).match({ Ok(_) => false, None => true })
 }
 
-duplicate = (c :: Checker, name: str, a: Cand, b: Cand) Res<(), AllocError> {
+duplicate = (c :: Checker, name: str, a: Cand, b: Cand) Res<AllocError> {
     c.report(
         a.span.file,
         a.span,
@@ -2018,7 +2018,7 @@ duplicate = (c :: Checker, name: str, a: Cand, b: Cand) Res<(), AllocError> {
     )
 }
 
-ambiguous = (c :: Checker, name: str, a: Cand, b: Cand) Res<(), AllocError> {
+ambiguous = (c :: Checker, name: str, a: Cand, b: Cand) Res<AllocError> {
     c.report(
         a.span.file,
         a.span,

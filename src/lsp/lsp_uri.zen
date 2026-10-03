@@ -65,7 +65,7 @@ uri_at* = (a: Alloc, root: str, rel: str) Res<str, AllocError> {
     Ok(out.view())
 }
 
-write_path = (path: str, out :: String) Res<(), AllocError> {
+write_path = (path: str, out :: String) Res<AllocError> {
     Range(0, path.len).loop((at) {
         byte = path[at];
         (byte.is_alpha() || byte.is_digit() || byte.is_in([
@@ -79,7 +79,7 @@ write_path = (path: str, out :: String) Res<(), AllocError> {
             },
         }).try();
     });
-    Ok(())
+    Ok
 }
 
 doc_text* = (env: Env, a: Alloc, docs: Map<str, str>, uri: str) str {

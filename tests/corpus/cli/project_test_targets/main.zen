@@ -5,7 +5,7 @@
 { Env } = std.env
 { println } = std.io
 
-run = (env: Env, a: Alloc, target: str) Res<(), AllocError> {
+run = (env: Env, a: Alloc, target: str) Res<AllocError> {
     job  = ProjectArgs(
         root: "src/app",
         target: target,
@@ -14,14 +14,12 @@ run = (env: Env, a: Alloc, target: str) Res<(), AllocError> {
     );
     code = project(env, a, job, Action.Test).try();
     println("result {} {}", target, code);
-    Ok(())
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a = env.mem.alloc();
     run(env, a, "passing").try();
     run(env, a, "failing").try();
     run(env, a, "missing").try();
     run(env, a, "").try();
-    Ok(())
 }

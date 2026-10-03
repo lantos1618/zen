@@ -14,10 +14,10 @@
 { Res, Ok, None } = std.core
 
 check_receiver* = (c :: Checker, o :: Own, k: Call, ctx: Ctx)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     c.tree.expr_at(k.callee).kind.match({
         Access(a) => c.check_method_call(o, a, k),
-        _         => Ok(()),
+        _         => Ok,
     })
 }
 
@@ -29,19 +29,19 @@ check_receiver* = (c :: Checker, o :: Own, k: Call, ctx: Ctx)
 // along every link from its binding. A value that is not a place — a call,
 // a literal, a construction — is a fresh temporary nothing else can see.
 check_lent_args* = (c :: Checker, o :: Own, id: ExprId, k: Call)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     c.lent_callee(o, id, k).match({
-        None       => Ok(()),
+        None       => Ok,
         Ok(callee) => {
             k.args.loop((h, i, a) {
                 c.check_lent(o, callee.f, i + callee.off, a.value).try()
             });
             // A member method's receiver is checked by `check_method_call`.
             (callee.off == 1 && !callee.member).match({
-                false => Ok(()),
+                false => Ok,
                 true  => c.tree.expr_at(k.callee).kind.match({
                     Access(a) => c.check_lent(o, callee.f, 0, a.base),
-                    _         => Ok(()),
+                    _         => Ok,
                 }),
             })
         },
@@ -52,25 +52,25 @@ check_lent_args* = (c :: Checker, o :: Own, id: ExprId, k: Call)
 // one in a `::` field lends that value to whoever holds the field: the
 // bound's `::` members write the value's own bytes through it.
 check_lent_fields* = (c :: Checker, o :: Own, id: ExprId, k: Call)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     c.is_construction(id).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.expr_memo.get(id).match({
-            None   => Ok(()),
+            None   => Ok,
             Ok(ty) => {
                 k.args.loop(
                     (h, i, a) { c.check_lent_field(o, ty, i, a).try() }
                 );
-                Ok(())
+                Ok
             },
         }),
     })
 }
 
 check_lent_field = (c :: Checker, o :: Own, ty: TyId, i: usize, a: Arg)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     c.reaches_through(o, a.value).match({
-        false => Ok(()),
+        false => Ok,
         true  => {
             name = a.name.match({
                 Ok(label) => label.text,
@@ -78,9 +78,9 @@ check_lent_field = (c :: Checker, o :: Own, ty: TyId, i: usize, a: Arg)
             });
             (c.field_is_lent(ty, name) && c.path_root(o, a.value).match({ Ok(_) => true, None => false }))
                 .match({
-                    false => Ok(()),
+                    false => Ok,
                     true  => c.immutable_link(o, a.value).match({
-                        None     => Ok(()),
+                        None     => Ok,
                         Ok(link) => c.refuse(
                             c.tree.expr_at(a.value).span,
                             SemaFault.ImmutableLent(LendFault(
@@ -156,16 +156,16 @@ lent_callee = (c :: Checker, o :: Own, id: ExprId, k: Call) Res<LentCallee> {
 }
 
 check_lent = (c :: Checker, o :: Own, f: Function, i: usize, value: ExprId)
-             Res<(), AllocError> {
+             Res<AllocError> {
     f.params.get(i).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(p) => (p.mutable && c.path_root(
             o,
             value
         ).match({ Ok(_) => true, None => false })).match({
-            false => Ok(()),
+            false => Ok,
             true  => c.immutable_link(o, value).match({
-                None     => Ok(()),
+                None     => Ok,
                 Ok(link) => c.refuse(
                     c.tree.expr_at(value).span,
                     SemaFault.ImmutableLent(LendFault(
@@ -180,9 +180,9 @@ check_lent = (c :: Checker, o :: Own, f: Function, i: usize, value: ExprId)
 }
 
 check_method_call = (c :: Checker, o :: Own, a: Access, k: Call)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     c.path_root(o, a.base).match({
-        None     => Ok(()),
+        None     => Ok,
         Ok(root) => c.wants_mutable(
             c.place_type(o, a.base),
             a.name.text
@@ -194,9 +194,9 @@ check_method_call = (c :: Checker, o :: Own, a: Access, k: Call)
 }
 
 // The diagnostic points at the receiver, not the method name.
-require_mutable = (c :: Checker, o :: Own, a: Access) Res<(), AllocError> {
+require_mutable = (c :: Checker, o :: Own, a: Access) Res<AllocError> {
     c.place_mutable(o, a.base).match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.refuse(
             c.tree.expr_at(a.base).span,
             SemaFault.NeedsMutableReceiver(NameFault(name: a.name.text))
@@ -206,17 +206,17 @@ require_mutable = (c :: Checker, o :: Own, a: Access) Res<(), AllocError> {
 
 // A by-value receiver is copied before an argument call writes its root.
 check_snapshotted = (c :: Checker, o :: Own, k: Call, root: usize)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     k.args.loop((h, arg) {
         c.snapshotted(o, arg.value, root).match({
-            None     => Ok(()),
+            None     => Ok,
             Ok(name) => c.refuse(
                 c.tree.expr_at(arg.value).span,
                 SemaFault.SnapshottedReceiver(NameFault(name: name))
             ),
         }).try()
     });
-    Ok(());
+    Ok;
 }
 
 // The method name when `arg` is a mutating call on `root`.
@@ -247,25 +247,25 @@ place_mutable = (c :: Checker, o :: Own, id: ExprId) bool {
 }
 
 check_write_place* = (c :: Checker, o :: Own, id: ExprId)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     node = c.tree.expr_at(id);
     node.kind.match({
         Access(_) => c.refuse_immutable_link(o, node, id),
         Index(_)  => c.refuse_immutable_link(o, node, id),
-        _         => Ok(()),
+        _         => Ok,
     })
 }
 
 refuse_immutable_link = (c :: Checker, o :: Own, node: Expr, id: ExprId)
-                        Res<(), AllocError> {
+                        Res<AllocError> {
     c.immutable_link(o, id).match({
-        None   => Ok(()),
+        None   => Ok,
         Ok(nm) => c.refuse_link(o, node, nm),
     })
 }
 
 refuse_link = (c :: Checker, o :: Own, node: Expr, nm: str)
-              Res<(), AllocError> {
+              Res<AllocError> {
     (nm.eq("self") && (o.method.len > 0)).match({
         true  => c.refuse(
             node.span,

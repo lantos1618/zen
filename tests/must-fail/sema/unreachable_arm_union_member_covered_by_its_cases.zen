@@ -1,13 +1,15 @@
 // Every case of `Kind` has its own arm, so `Err(Kind)` below them has
 // nothing left to take.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
 Kind = { Io | Protocol | Authentication }
+Kind.impl(Error, {})
 Fail = { Mismatch | Accepted }
+Fail.impl(Error, {})
 
 name = (r: Res<i32, Kind | Fail>) str {
     r.match({

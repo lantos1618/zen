@@ -55,7 +55,7 @@ Server* = {
     completion_builds* = (self: @Self) usize { self.members.builds }
 
     one* = (self :: @Self, t: Alloc, body: str, out :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
         tree ::= t.Jsons();
         turn ::= t.RequestTurn().try();
         read(t, tree, body).match({
@@ -69,7 +69,7 @@ Server* = {
     }
 
     route = (self :: @Self, tree: Jsons, req: JsonId, turn :: RequestTurn)
-            Res<(), AllocError> {
+            Res<AllocError> {
         request = Decoded(tree, req);
         request.valid().match({
             false => turn.invalid_request(),
@@ -81,7 +81,7 @@ Server* = {
     }
 
     requested = (self :: @Self, request: Decoded, turn :: RequestTurn)
-                Res<(), AllocError> {
+                Res<AllocError> {
         method = request.method();
         self.stopping.match({
             true  => turn.failed(
@@ -101,7 +101,7 @@ Server* = {
     }
 
     answered = (self :: @Self, request: Decoded, turn :: RequestTurn)
-               Res<(), AllocError> {
+               Res<AllocError> {
         request.valid_params().match({
             false => turn.failed(
                 request,
@@ -113,7 +113,7 @@ Server* = {
     }
 
     dispatched = (self :: @Self, request: Decoded, turn :: RequestTurn)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
         request_of(request.method()).match({
             Initialize => self.ready.match({
                 true  => turn.failed(
@@ -199,7 +199,7 @@ Server* = {
     }
 
     initialized = (self :: @Self, request: Decoded,
-                   turn :: RequestTurn) Res<(), AllocError> {
+                   turn :: RequestTurn) Res<AllocError> {
         self.members.invalidate();
         self.workspace = path_of(
             self.a,
@@ -226,14 +226,14 @@ Server* = {
     }
 
     unknown = (self :: @Self, request: Decoded,
-               turn :: RequestTurn) Res<(), AllocError> {
+               turn :: RequestTurn) Res<AllocError> {
         why ::= turn.alloc().String().try();
         why.add("method not found: ").try();
         why.add(request.method()).try();
         turn.failed(request, RpcFault.MethodNotFound, why.view())
     }
 
-    notified = (self :: @Self, request: Decoded) Res<(), AllocError> {
+    notified = (self :: @Self, request: Decoded) Res<AllocError> {
         request.method().eq("exit").match({
             true  => { self.exiting = true; written() },
             false => (self.ready && !self.stopping).match({
@@ -250,7 +250,7 @@ Server* = {
     }
 
     // A change to a file the client has not opened stales the build.
-    watched = (self :: @Self, request: Decoded) Res<(), AllocError> {
+    watched = (self :: @Self, request: Decoded) Res<AllocError> {
         changes = request.param("changes");
         i     :: usize = 0;
         stale ::= false;
@@ -275,14 +275,14 @@ Server* = {
         written()
     }
 
-    opened = (self :: @Self, request: Decoded) Res<(), AllocError> {
+    opened = (self :: @Self, request: Decoded) Res<AllocError> {
         request.opened().match({
             None       => written(),
             Ok(change) => self.stored(change.uri, change.text, change.version),
         })
     }
 
-    changed = (self :: @Self, request: Decoded) Res<(), AllocError> {
+    changed = (self :: @Self, request: Decoded) Res<AllocError> {
         uri = request.string_at(request.param("textDocument"), "uri");
         self.buffers.views.find((buffer) { buffer.uri.eq(uri) }).match({
             None     => written(),
@@ -297,7 +297,7 @@ Server* = {
         })
     }
 
-    closed = (self :: @Self, request: Decoded) Res<(), AllocError> {
+    closed = (self :: @Self, request: Decoded) Res<AllocError> {
         uri = request.string_at(request.param("textDocument"), "uri");
         self.buffer_index(uri).match({
             None   => written(),
@@ -318,7 +318,7 @@ Server* = {
     }
 
     stored = (self :: @Self, uri: str, text: str, version: Res<i64>)
-             Res<(), AllocError> {
+             Res<AllocError> {
         previous = self.buffer_index(uri);
         changed  = self.docs.get(uri).match({ None => true, Ok(old) => !old.eq(text) });
         changed.match({
@@ -366,7 +366,7 @@ Server* = {
     // built in another arena and moved here would keep that arena's old
     // address as its allocator. Nothing may read the retired arena, so the
     // fields are emptied before it is dropped.
-    refresh_docs = (self :: @Self, excluded: Res<usize>) Res<(), AllocError> {
+    refresh_docs = (self :: @Self, excluded: Res<usize>) Res<AllocError> {
         self.docs = self.a.Map<str, str>();
         self.open = self.a.Vec<str>();
         self.docs_arena.drop();
@@ -384,7 +384,7 @@ Server* = {
         written()
     }
 
-    settled* = (self :: @Self, t: Alloc, out :: String) Res<(), AllocError> {
+    settled* = (self :: @Self, t: Alloc, out :: String) Res<AllocError> {
         self.stopping.match({
             true  => written(),
             false => self.notes.settled(
@@ -400,7 +400,7 @@ Server* = {
 
     unopened = (self :: @Self, request: Decoded,
                 turn :: RequestTurn)
-               Res<(), AllocError> {
+               Res<AllocError> {
         turn.failed(
             request,
             RpcFault.InvalidParams,
@@ -409,7 +409,7 @@ Server* = {
     }
 
     hovered = (self :: @Self, request: Decoded, turn :: RequestTurn)
-              Res<(), AllocError> {
+              Res<AllocError> {
         t         = turn.alloc();
         uri       = request.string_at(request.param("textDocument"), "uri");
         where     = request.param("position");
@@ -439,7 +439,7 @@ Server* = {
     }
 
     coloured = (self :: @Self, request: Decoded,
-                turn :: RequestTurn) Res<(), AllocError> {
+                turn :: RequestTurn) Res<AllocError> {
         t   = turn.alloc();
         uri = request.string_at(request.param("textDocument"), "uri");
         self.docs.get(uri).match({
@@ -469,7 +469,7 @@ Server* = {
 
     shared_hover = (self :: @Self, t: Alloc, uri: str, text: str,
                     line: usize, character: usize, body :: String)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         path = path_of(t, uri).try();
         sh   = self.build_for(path, t).try();
         sh.c.match({
@@ -494,7 +494,7 @@ Server* = {
     }
 
     defined = (self :: @Self, request: Decoded, turn :: RequestTurn)
-              Res<(), AllocError> {
+              Res<AllocError> {
         t         = turn.alloc();
         uri       = request.string_at(request.param("textDocument"), "uri");
         where     = request.param("position");
@@ -527,7 +527,7 @@ Server* = {
 
     write_definition = (self :: @Self, t: Alloc, uri: str, text: str,
                         line: usize, character: usize, body :: String)
-                       Res<(), AllocError> {
+                       Res<AllocError> {
         path = path_of(t, uri).try();
         sh   = self.build_for(path, t).try();
         sh.c.match({
@@ -540,7 +540,7 @@ Server* = {
     }
 
     outlined = (self :: @Self, request: Decoded,
-                turn :: RequestTurn) Res<(), AllocError> {
+                turn :: RequestTurn) Res<AllocError> {
         t   = turn.alloc();
         uri = request.string_at(request.param("textDocument"), "uri");
         self.docs.get(uri).match({
@@ -555,7 +555,7 @@ Server* = {
     }
 
     formatted = (self :: @Self, request: Decoded,
-                 turn :: RequestTurn) Res<(), AllocError> {
+                 turn :: RequestTurn) Res<AllocError> {
         t   = turn.alloc();
         uri = request.string_at(request.param("textDocument"), "uri");
         self.docs.get(uri).match({
@@ -569,7 +569,7 @@ Server* = {
     }
 
     acted = (self :: @Self, request: Decoded, turn :: RequestTurn)
-            Res<(), AllocError> {
+            Res<AllocError> {
         t     = turn.alloc();
         uri   = request.string_at(request.param("textDocument"), "uri");
         range = request.param("range");
@@ -603,7 +603,7 @@ Server* = {
 
     shared_actions = (self :: @Self, t: Alloc, uri: str, text: str,
                       from: Position, upto: Position, body :: String)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
         path = path_of(t, uri).try();
         sh   = self.build_for(path, t).try();
         sh.c.match({
@@ -613,7 +613,7 @@ Server* = {
     }
 
     completed = (self :: @Self, request: Decoded,
-                 turn :: RequestTurn) Res<(), AllocError> {
+                 turn :: RequestTurn) Res<AllocError> {
         t         = turn.alloc();
         uri       = request.string_at(request.param("textDocument"), "uri");
         where     = request.param("position");
@@ -660,7 +660,7 @@ Server* = {
 
     write_completion = (self :: @Self, t: Alloc, uri: str, text: str,
                         line: usize, character: usize, body :: String)
-                       Res<(), AllocError> {
+                       Res<AllocError> {
         path = path_of(t, uri).try();
         sh   = self.build_for(path, t).try();
         done = sh.c.match({
@@ -705,7 +705,7 @@ Server* = {
 
     patched_completion = (self :: @Self, t: Alloc, path: str, text: str,
                           line: usize, character: usize, body :: String)
-                         Res<(), AllocError> {
+                         Res<AllocError> {
         items ::= t.Vec<Item>();
         self.members.complete(
             self.env,
@@ -752,7 +752,7 @@ Server* = (a: Alloc, env: Env) Server {
     )
 }
 
-serve* = (s :: Server, input: str, out :: String) Res<(), AllocError> {
+serve* = (s :: Server, input: str, out :: String) Res<AllocError> {
     at    :: usize = 0;
     going ::= true;
     loop(() { going && !s.stopped() && at < input.len }, (h) {

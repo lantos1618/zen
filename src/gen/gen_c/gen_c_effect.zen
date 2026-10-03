@@ -77,24 +77,21 @@ CallEffects* = {
     }
 
     visit = (self: @Self, visit: CallVisit, work :: Vec<CallVisit>)
-            Res<(), AllocError> {
+            Res<AllocError> {
         self.children(visit.id).match({
-            Leaf(found) => { self.remember(visit.id, found); Ok(()) },
+            Leaf(found) => self.remember(visit.id, found),
             One(child)  => visit.finish.match({
-                true  => { self.remember(visit.id, self.has_call(child)); Ok(()) },
+                true  => self.remember(visit.id, self.has_call(child)),
                 false => {
                     work.add(CallVisit(id: visit.id, finish: true)).try();
                     work.add(CallVisit(id: child, finish: false))
                 },
             }),
             Two(pair)   => visit.finish.match({
-                true  => {
-                    self.remember(
-                        visit.id,
-                        self.has_call(pair.left) || self.has_call(pair.right)
-                    );
-                    Ok(())
-                },
+                true  => self.remember(
+                    visit.id,
+                    self.has_call(pair.left) || self.has_call(pair.right)
+                ),
                 false => {
                     work.add(CallVisit(id: visit.id, finish: true)).try();
                     work.add(CallVisit(id: pair.right, finish: false)).try();

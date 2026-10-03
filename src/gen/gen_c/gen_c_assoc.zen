@@ -206,7 +206,7 @@ AssocSite = {
         found.loop((h, member) {
             member.kind.match({
                 Function(_) => kept.add(member),
-                _           => Ok(()),
+                _           => Ok,
             }).try();
         });
         actuals ::= be.alloc.Vec<Actual>();
@@ -227,7 +227,7 @@ AssocSite = {
         member  : Member,
         actuals : Vec<Actual>,
         out     :: Vec<Member>
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         member.kind.match({
             Function(f) => {
                 inst = be.recv_inst(self.site.ty).try();
@@ -242,9 +242,9 @@ AssocSite = {
                 ).try();
                 be.check.sig_fits(sig, actuals, 0).try()
                     .then(() { out.add(member).try() });
-                Ok(())
+                Ok
             },
-            _           => Ok(()),
+            _           => Ok,
         })
     }
 
@@ -342,7 +342,7 @@ AssocSite = {
                         out.add(" (*)(").try();
                         Range(0, sig.len).loop((i) {
                             (i > 0).then(() { out.add(", ").try(); });
-                            sig.get(i).match({ Ok(t) => be.ctype(t, out), None => Ok(()) }).try();
+                            sig.get(i).match({ Ok(t) => be.ctype(t, out), None => Ok }).try();
                         });
                         (sig.len == 0).then(() { out.add("void").try(); });
                         out.fmt(")){})", name)

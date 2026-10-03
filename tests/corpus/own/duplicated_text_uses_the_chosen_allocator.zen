@@ -9,9 +9,8 @@ copy = (env: Env, target: Alloc, text: str) Res<str, AllocError> {
     temporary = scratch.String("{}", text).try();
     temporary.view().dup(target)
 }
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     target = env.mem.alloc();
     println("nonempty {}", copy(env, target, "copied").try());
     println("empty {}", copy(env, target, "").try().len);
-    Ok(())
 }

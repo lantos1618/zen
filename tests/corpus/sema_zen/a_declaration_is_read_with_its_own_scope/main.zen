@@ -256,7 +256,7 @@ dot = (tree :: Ast, base: ExprId, field: str) Res<ExprId, AllocError> {
 // The type a member of `ty` called `name` was declared with, or the
 // word for "there is no such member".
 declared = (c :: Checker, a: Alloc, label: str, ty: TyId, name: str)
-           Res<(), AllocError> {
+           Res<AllocError> {
     found ::= a.Vec<Found>();
     members_of(c, ty, name, found).try();
     out ::= a.String().try();
@@ -265,12 +265,11 @@ declared = (c :: Checker, a: Alloc, label: str, ty: TyId, name: str)
         Ok(f) => c.types.write_name(f.ty, out),
     }).try();
     println("{} -> {}", label, out.view());
-    Ok(());
 }
 
 // What an expression is, and what asking cost in diagnostics.
 asked = (c :: Checker, a: Alloc, label: str, id: ExprId, ctx: Ctx)
-        Res<(), AllocError> {
+        Res<AllocError> {
     before = c.diag_count();
     got    = c.type_of(id, ctx).try();
     out ::= a.String().try();
@@ -281,7 +280,6 @@ asked = (c :: Checker, a: Alloc, label: str, id: ExprId, ctx: Ctx)
         out.view(),
         c.diag_count() - before
     );
-    Ok(());
 }
 
 main = (env: Env) Res<i32, AllocError> {

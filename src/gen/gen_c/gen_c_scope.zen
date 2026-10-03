@@ -58,7 +58,7 @@ scope_named = (be :: CBackend, d: Def) Res<TyId, AllocError> {
 // a search outward: "it nests, and each block gets its own", so an
 // answer from an enclosing block would be the wrong block, quietly.
 lower_scope_ref* = (be :: CBackend, id: ExprId, out :: String)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     rec = be.innermost_record();
     (rec == 0).match({
         true  => be.unsupported(id, "`@scope` where no block is open", out),
@@ -81,7 +81,7 @@ record_of = (be :: CBackend, i: usize) usize {
 }
 
 write_record_ref = (rec: usize, out :: String)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     out.add("&").try();
     sym_gen(out, "b", rec)
 }
@@ -111,7 +111,7 @@ lower_defer* = (
     a   : Access,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     recv ::= be.alloc.String().try();
     be.scope_operand(a.base, ctx, recv).try();
     c.args.get(0).match({
@@ -124,7 +124,7 @@ lower_defer* = (
 // `&zg_b1` and a `Scope` parameter is already the pointer — so both
 // spellings arrive here as the same C value.
 scope_operand = (be :: CBackend, base: ExprId, ctx: Ctx, out :: String)
-                Res<(), AllocError> {
+                Res<AllocError> {
     be.is_scope_ref(base).match({
         true  => be.lower_scope_ref(base, out),
         false => be.write_scope_value(base, ctx, out),
@@ -132,7 +132,7 @@ scope_operand = (be :: CBackend, base: ExprId, ctx: Ctx, out :: String)
 }
 
 write_scope_value = (be :: CBackend, base: ExprId, ctx: Ctx, out :: String)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     be.slot_name(base).match({
         None   => be.unsupported(
             base,
@@ -152,9 +152,9 @@ slot_name = (be :: CBackend, id: ExprId) Res<str> {
 }
 
 write_scope_local = (be :: CBackend, id: ExprId, name: str, out :: String)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     be.slot_of(name).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(s) => be.write_scope_slot(name, be.tree.expr_at(id).span, s, out),
     })
 }
@@ -165,7 +165,7 @@ write_scope_slot* = (
     span : Span,
     slot : LocalSlot,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.closure_storage(span, slot, "a lambda used as a Scope").try().match({
         true  => sym_local(out, name, slot.index),
         false => sym_local(out, name, 1),
@@ -183,7 +183,7 @@ defer_arg = (
     recv : str,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.spelled_lambda(g.value).match({
         Ok(l) => be.defer_lambda(id, l, recv, ctx, out),
         None  => be.unsupported(
@@ -201,7 +201,7 @@ defer_lambda = (
     recv : str,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     (l.params.len > 0).match({
         true  => be.unsupported(
             id,
@@ -219,7 +219,7 @@ register_closure = (
     recv : str,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.need_scope();
     caps ::= be.alloc.Vec<LocalSlot>();
     be.captures(l.body, caps).try();
@@ -234,15 +234,15 @@ register_closure = (
 
 // The record's field names are the frame's own mangled local names.
 write_env_type = (be :: CBackend, n: usize, caps: Vec<LocalSlot>)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     (caps.len == 0).match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.write_env_struct(n, caps),
     })
 }
 
 write_env_struct = (be :: CBackend, n: usize, caps: Vec<LocalSlot>)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     env ::= be.alloc.String().try();
     be.env_name(n, env).try();
     text ::= be.alloc.String().try();
@@ -253,7 +253,7 @@ write_env_struct = (be :: CBackend, n: usize, caps: Vec<LocalSlot>)
 }
 
 write_env_field = (be :: CBackend, s: LocalSlot, text :: String)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     text.add("    ").try();
     cname ::= be.alloc.String().try();
     sym_local(cname, s.name, s.index).try();
@@ -264,19 +264,18 @@ write_env_field = (be :: CBackend, s: LocalSlot, text :: String)
         true  => be.ref_field(s.ty, cname.view(), text),
     }).try();
     text.add(";\n").try();
-    Ok(());
 }
 
 // A `::` binding is an address everywhere else, so what the record
 // copies is the address and the prologue puts back a pointer of the
 // same name — which is what keeps `(*p)` reading the same storage.
 ref_field = (be :: CBackend, ty: TyId, name: str, text :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
     be.ctype(ty, text).try();
     text.fmt(" *{name}")
 }
 
-env_name = (be :: CBackend, n: usize, out :: String) Res<(), AllocError> {
+env_name = (be :: CBackend, n: usize, out :: String) Res<AllocError> {
     sym_gen(out, "env", n)
 }
 
@@ -293,7 +292,7 @@ write_thunk = (
     l    : Lambda,
     caps : Vec<LocalSlot>,
     ctx  : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     proto ::= be.alloc.String().try();
     be.thunk_proto(n, proto).try();
     held  = be.take_buf().try();
@@ -319,19 +318,18 @@ write_thunk = (
 }
 
 thunk_proto = (be :: CBackend, n: usize, out :: String)
-              Res<(), AllocError> {
+              Res<AllocError> {
     out.add(be.linkage()).try();
     out.add("void ").try();
     sym_gen(out, "d", n).try();
     out.add("(void *zg_p)").try();
-    Ok(());
 }
 
 // The prologue is the whole of the remapping: every captured name is
 // re-declared here, with the same C name it had in the enclosing frame,
 // initialised from the record. The body below it then lowers unchanged.
 write_prologue = (be :: CBackend, n: usize, caps: Vec<LocalSlot>)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     (caps.len == 0).match({
         true  => be.writeln("(void)zg_p;"),
         false => be.write_unpack(n, caps),
@@ -339,15 +337,15 @@ write_prologue = (be :: CBackend, n: usize, caps: Vec<LocalSlot>)
 }
 
 write_unpack = (be :: CBackend, n: usize, caps: Vec<LocalSlot>)
-               Res<(), AllocError> {
+               Res<AllocError> {
     env ::= be.alloc.String().try();
     be.env_name(n, env).try();
     be.fmt("{} *zg_e = ({} *)zg_p;\n", env.view(), env.view()).try();
     caps.loop((h, s) { be.write_unpack_one(s).try() });
-    Ok(());
+    Ok;
 }
 
-write_unpack_one = (be :: CBackend, s: LocalSlot) Res<(), AllocError> {
+write_unpack_one = (be :: CBackend, s: LocalSlot) Res<AllocError> {
     line  ::= be.alloc.String().try();
     cname ::= be.alloc.String().try();
     sym_local(cname, s.name, s.index).try();
@@ -370,10 +368,10 @@ write_registration = (
     caps : Vec<LocalSlot>,
     recv : str
 )
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     cell ::= be.alloc.String().try();
     (caps.len == 0).match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.fill_record(n, caps, cell),
     }).try();
     be.write_defer_call(id, n, cell.view(), recv)
@@ -384,17 +382,17 @@ fill_record = (
     n    : usize,
     caps : Vec<LocalSlot>,
     cell :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     sym_gen(cell, "c", be.next_tmp()).try();
     env ::= be.alloc.String().try();
     be.env_name(n, env).try();
     be.fmt("{} {};\n", env.view(), cell.view()).try();
     caps.loop((h, s) { be.copy_capture(s, cell.view()).try() });
-    Ok(());
+    Ok;
 }
 
 copy_capture = (be :: CBackend, s: LocalSlot, cell: str)
-               Res<(), AllocError> {
+               Res<AllocError> {
     cname ::= be.alloc.String().try();
     sym_local(cname, s.name, s.index).try();
     be.fmt("{cell}.{} = {};\n", cname.view(), cname.view())
@@ -410,7 +408,7 @@ write_defer_call = (
     n    : usize,
     cell : str,
     recv : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     node = be.tree.expr_at(id);
     line ::= be.alloc.String().try();
     line.fmt("zg_defer({recv}, ").try();
@@ -422,14 +420,14 @@ write_defer_call = (
 }
 
 write_defer_env_args = (cell: str, line :: String)
-                       Res<(), AllocError> {
+                       Res<AllocError> {
     (cell.len == 0).match({
         true  => line.add(", 0, 0"),
         false => write_env_args(cell, line),
     })
 }
 
-write_env_args = (cell: str, line :: String) Res<(), AllocError> {
+write_env_args = (cell: str, line :: String) Res<AllocError> {
     line.fmt(", &{cell}, sizeof {cell}")
 }
 
@@ -446,34 +444,34 @@ write_env_args = (cell: str, line :: String) Res<(), AllocError> {
 // frame is what will be gone.
 
 captures* = (be :: CBackend, id: BlockId, out :: Vec<LocalSlot>)
-            Res<(), AllocError> {
+            Res<AllocError> {
     blk = be.tree.block_at(id);
     blk.stmts.loop((h, s) { be.stmt_captures(s, out).try() });
     blk.value.match({
         Ok(e) => be.expr_captures(e, out),
-        None  => Ok(()),
+        None  => Ok,
     })
 }
 
 stmt_captures = (be :: CBackend, s: Stmt, out :: Vec<LocalSlot>)
-                Res<(), AllocError> {
+                Res<AllocError> {
     s.kind.match({
         Expr(e)     => be.expr_captures(e.expr, out),
         Bind(b)     => be.bind_captures(b, out),
-        Deferred(_) => Ok(()),
+        Deferred(_) => Ok,
         Block(k)    => be.captures(k, out),
-        Decl(_)     => Ok(()),
+        Decl(_)     => Ok,
     })
 }
 
 bind_captures = (be :: CBackend, b: Bind, out :: Vec<LocalSlot>)
-                Res<(), AllocError> {
+                Res<AllocError> {
     be.expr_captures(b.value, out).try();
     be.expr_captures(b.target, out)
 }
 
 expr_captures = (be :: CBackend, id: ExprId, out :: Vec<LocalSlot>)
-                Res<(), AllocError> {
+                Res<AllocError> {
     be.tree.expr_at(id).kind.match({
         Name(n)       => be.keep_capture(n.text, out),
         Paren(p)      => be.expr_captures(p.inner, out),
@@ -489,16 +487,16 @@ expr_captures = (be :: CBackend, id: ExprId, out :: Vec<LocalSlot>)
         Match(m)      => be.match_captures(m, out),
         Array(a)      => be.elem_captures(a.elems, out),
         FixedArray(a) => be.elem_captures(a.elems, out),
-        _             => Ok(()),
+        _             => Ok,
     })
 }
 
 try_captures = (be :: CBackend, t: Try, out :: Vec<LocalSlot>)
-               Res<(), AllocError> {
+               Res<AllocError> {
     be.expr_captures(t.operand, out).try();
     t.error.match({
         Ok(e) => be.expr_captures(e, out),
-        None  => Ok(()),
+        None  => Ok,
     })
 }
 
@@ -507,29 +505,29 @@ pair_captures = (
     a   : ExprId,
     b   : ExprId,
     out :: Vec<LocalSlot>
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.expr_captures(a, out).try();
     be.expr_captures(b, out)
 }
 
 call_captures = (be :: CBackend, c: Call, out :: Vec<LocalSlot>)
-                Res<(), AllocError> {
+                Res<AllocError> {
     be.expr_captures(c.callee, out).try();
     c.args.loop((h, a) { be.expr_captures(a.value, out).try() });
-    Ok(());
+    Ok;
 }
 
 match_captures = (be :: CBackend, m: Match, out :: Vec<LocalSlot>)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     be.expr_captures(m.scrutinee, out).try();
     m.arms.loop((h, a) { be.expr_captures(a.body, out).try() });
-    Ok(());
+    Ok;
 }
 
 elem_captures = (be :: CBackend, elems: Vec<ExprId>, out :: Vec<LocalSlot>)
-                Res<(), AllocError> {
+                Res<AllocError> {
     elems.loop((h, e) { be.expr_captures(e, out).try() });
-    Ok(());
+    Ok;
 }
 
 // A handle and a closure are not values and cannot be captured: `h` is
@@ -537,17 +535,17 @@ elem_captures = (be :: CBackend, elems: Vec<ExprId>, out :: Vec<LocalSlot>)
 // bytes a record could hold. A `defer` that names one is left to the
 // path that knows what it is, which will report it there.
 keep_capture = (be :: CBackend, name: str, out :: Vec<LocalSlot>)
-               Res<(), AllocError> {
+               Res<AllocError> {
     be.slot_of(name).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(s) => keep_value_slot(s, out),
     })
 }
 
 keep_value_slot = (s: LocalSlot, out :: Vec<LocalSlot>)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     (s.is_value() && (held(out, s) == false)).match({
-        false => Ok(()),
+        false => Ok,
         true  => out.add(s),
     })
 }

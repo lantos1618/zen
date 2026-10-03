@@ -26,7 +26,7 @@ Hover* = {
     end*: Position,
 
     // `null` when nothing was found, else a plaintext MarkupContent.
-    write* = (self: @Self, a: Alloc, out :: String) Res<(), AllocError> {
+    write* = (self: @Self, a: Alloc, out :: String) Res<AllocError> {
         self.found.match({
             false => out.add("null"),
             true  => {
@@ -219,15 +219,15 @@ write_prim = (c: Checker, id: TyId, p: Prim, out :: String)
     })
 }
 
-write_core_note = (c: Checker, d: Def, out :: String) Res<(), AllocError> {
+write_core_note = (c: Checker, d: Def, out :: String) Res<AllocError> {
     decl_at(c.tree, d.id).match({
-        None   => Ok(()),
+        None   => Ok,
         Ok(dd) => c.write_decl_note(dd, EXPORTED_ONLY, out),
     })
 }
 
 write_decl_note = (c: Checker, dd: Decl, all: bool, out :: String)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     doc = doc_block(c.alloc, c.tree, dd.leading).try();
     (doc.len > 0).then(() {
         out.add(" — ").try();
@@ -259,49 +259,49 @@ ShapeNote = {
     names :: Vec<str>,
     scratch :: String,
 
-    write = (self :: @Self, dd: Decl, out :: String) Res<(), AllocError> {
+    write = (self :: @Self, dd: Decl, out :: String) Res<AllocError> {
         dd.kind.match({
             Struct(s) => {
                 s.members.loop((h, m) { self.member(m, out).try(); });
-                Ok(())
+                Ok
             },
             Enum(e)   => {
                 self.variants(e.variants, out).try();
                 e.members.loop((h, m) { self.member(m, out).try(); });
-                Ok(())
+                Ok
             },
-            _         => Ok(()),
+            _         => Ok,
         })
     }
 
-    member = (self :: @Self, m: Member, out :: String) Res<(), AllocError> {
+    member = (self :: @Self, m: Member, out :: String) Res<AllocError> {
         m.kind.match({
             Field(f)    => (self.all || f.exported).match({
                 true  => self.typed(f.name.text, f.type, out),
-                false => Ok(()),
+                false => Ok,
             }),
             Const(k)    => (self.all || k.exported).match({
                 true  => self.typed(k.name.text, k.type, out),
-                false => Ok(()),
+                false => Ok,
             }),
             Function(f) => self.function(f, out),
         })
     }
 
-    separate = (self :: @Self, out :: String) Res<(), AllocError> {
+    separate = (self :: @Self, out :: String) Res<AllocError> {
         self.started.match({
             true  => out.add(", "),
             false => {
                 out.add(self.joined).try();
                 out.add("members: ").try();
                 self.started = true;
-                Ok(())
+                Ok
             },
         })
     }
 
     typed = (self :: @Self, name: str, ty: Res<TypeId>, out :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
         self.separate(out).try();
         out.add(name).try();
         self.type_suffix(ty, ": ", "", out)
@@ -315,18 +315,18 @@ ShapeNote = {
         before: str,
         after: str,
         out :: String
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         ty.match({
-            None   => Ok(()),
+            None   => Ok,
             Ok(id) => self.check.type_memo.get(id).match({
-                None     => Ok(()),
+                None     => Ok,
                 Ok(memo) => {
                     self.check.poison_free(memo).then(() {
                         out.add(before).try();
                         self.check.types.write_name(memo, out).try();
                         out.add(after).try();
                     });
-                    Ok(())
+                    Ok
                 },
             }),
         })
@@ -334,10 +334,10 @@ ShapeNote = {
 
     // Arity overloads share a name; the first visible declaration is shown.
     function = (self :: @Self, f: Function, out :: String)
-               Res<(), AllocError> {
+               Res<AllocError> {
         (self.all || f.exported).then(() {
             self.names.find((name) { name.eq(f.name.text) }).match({
-                Ok(_) => Ok(()),
+                Ok(_) => Ok,
                 None  => {
                     self.names.add(f.name.text).try();
                     self.scratch.clear();
@@ -350,11 +350,11 @@ ShapeNote = {
                 },
             }).try();
         });
-        Ok(())
+        Ok
     }
 
     variants = (self :: @Self, vs: Vec<Variant>, out :: String)
-               Res<(), AllocError> {
+               Res<AllocError> {
         vs.loop((h, i, v) {
             out.add((i == 0).match({
                 true  => self.joined,
@@ -363,7 +363,7 @@ ShapeNote = {
             out.add(v.name.text).try();
             self.type_suffix(v.payload, "(", ")", out).try();
         });
-        Ok(());
+        Ok;
     }
 }
 
@@ -404,12 +404,12 @@ after_last_blank = (tree: Ast, run: TriviaRun) usize {
     from;
 }
 
-add_doc_line = (line: str, doc :: String) Res<(), AllocError> {
+add_doc_line = (line: str, doc :: String) Res<AllocError> {
     (line.len > 0).then(() {
         (doc.len() > 0).then(() { doc.add(" ").try() });
         doc.add(line).try();
     });
-    Ok(());
+    Ok;
 }
 
 comment_text = (text: str) str {
@@ -475,9 +475,9 @@ write_decl_sig = (c: Checker, f: Function, out :: String)
     Ok(c.write_opt_ty(f.ret, out).try() && whole);
 }
 
-write_tparams = (f: Function, out :: String) Res<(), AllocError> {
+write_tparams = (f: Function, out :: String) Res<AllocError> {
     (f.tparams.len == 0).match({
-        true  => Ok(()),
+        true  => Ok,
         false => {
             out.add("<").try();
             f.tparams.loop((h, i, tparam) {
@@ -485,7 +485,7 @@ write_tparams = (f: Function, out :: String) Res<(), AllocError> {
                 out.add(tparam.name.text).try();
             });
             out.add(">").try();
-            Ok(())
+            Ok
         },
     })
 }

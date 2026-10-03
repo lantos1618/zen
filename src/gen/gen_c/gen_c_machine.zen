@@ -26,14 +26,14 @@
 { write_position } = gen.gen_c.gen_c_op
 { ELEMS } = gen.gen_c.gen_c_array
 
-emit_machine* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+emit_machine* = (be :: CBackend, out :: Emit) Res<AllocError> {
     be.uses_machine().match({
-        false => Ok(()),
+        false => Ok,
         true  => be.write_machine(out),
     })
 }
 
-write_machine = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+write_machine = (be :: CBackend, out :: Emit) Res<AllocError> {
     comment(out, "machine floor: wide integers and vectors").try();
     out.say("#if defined(__SIZEOF_INT128__)").try();
     out.say("__extension__ typedef unsigned __int128 zg_u128;").try();
@@ -129,7 +129,6 @@ write_machine = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     write_carries(out).try();
     be.write_sha(out).try();
     be.write_target_sets(out).try();
-    Ok(())
 }
 
 // Runtime CPU detection and the instructions capabilities unlock. x86 asks
@@ -139,7 +138,7 @@ write_machine = (be :: CBackend, out :: Emit) Res<(), AllocError> {
 // hw.optional sysctls. NEON is baseline on arm64. A capability cannot be
 // obtained on another architecture, so there the instruction helpers are
 // unreachable and abort.
-write_features = (out :: Emit) Res<(), AllocError> {
+write_features = (out :: Emit) Res<AllocError> {
     comment(out, "machine floor: CPU features").try();
     out.say("#if defined(__x86_64__) || defined(__i386__)").try();
     out.say("#define ZG_X86 1").try();
@@ -386,7 +385,6 @@ write_features = (out :: Emit) Res<(), AllocError> {
         "ZG_CPU_CACHED(zg_cpu_arm_sha512, \"sha512\", zg_cpu_probe_arm_sha512())"
     ).try();
     out.line().try();
-    Ok(())
 }
 
 // Add with carry and subtract with borrow, and the two-chain multi-limb
@@ -404,7 +402,7 @@ write_features = (out :: Emit) Res<(), AllocError> {
 // blocks split between the second and third rows: each needs at most
 // twelve registers, which leaves room for the frame pointer and for -O0.
 // Elsewhere the Adx capability is never detected and the helpers abort.
-write_carries = (out :: Emit) Res<(), AllocError> {
+write_carries = (out :: Emit) Res<AllocError> {
     comment(out, "machine floor: carries and multi-limb products").try();
     out.say("#if defined(__has_builtin)").try();
     out.say(
@@ -599,13 +597,12 @@ write_carries = (out :: Emit) Res<(), AllocError> {
     ).try();
     out.say("#endif").try();
     out.line().try();
-    Ok(())
 }
 
 // The SHA instructions. Each architecture implements its own set; the other
 // architecture's set is unreachable there, since its capability is never
 // detected, and aborts.
-write_sha = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+write_sha = (be :: CBackend, out :: Emit) Res<AllocError> {
     comment(out, "machine floor: SHA instructions").try();
     out.say("#if defined(ZG_X86)").try();
     write_x86_sha(out).try();
@@ -617,10 +614,9 @@ write_sha = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     be.sha_stubs(out, true, true).try();
     out.say("#endif").try();
     out.line().try();
-    Ok(())
 }
 
-write_x86_sha = (out :: Emit) Res<(), AllocError> {
+write_x86_sha = (out :: Emit) Res<AllocError> {
     out.say(
         "static inline __attribute__((target(\"sha,ssse3,sse4.1\"))) zg_u32x4 zg_sha256_rnds2(zg_u32x4 cdgh, zg_u32x4 abef, zg_u32x4 wk) {"
     ).try();
@@ -642,12 +638,11 @@ write_x86_sha = (out :: Emit) Res<(), AllocError> {
         "    return (zg_u32x4)_mm_sha256msg2_epu32((__m128i)a, (__m128i)b);"
     ).try();
     out.say("}").try();
-    Ok(())
 }
 
 // ACLE intrinsics in the instruction's operand order: the destination's
 // incoming value first.
-write_arm_sha = (out :: Emit) Res<(), AllocError> {
+write_arm_sha = (out :: Emit) Res<AllocError> {
     out.say(
         "static inline ZG_ARM_SHA2 zg_u32x4 zg_sha256h(zg_u32x4 a, zg_u32x4 b, zg_u32x4 c) { return (zg_u32x4)vsha256hq_u32((uint32x4_t)a, (uint32x4_t)b, (uint32x4_t)c); }"
     ).try();
@@ -672,12 +667,11 @@ write_arm_sha = (out :: Emit) Res<(), AllocError> {
     out.say(
         "static inline ZG_ARM_SHA512 zg_u64x2 zg_sha512su1(zg_u64x2 a, zg_u64x2 b, zg_u64x2 c) { return (zg_u64x2)vsha512su1q_u64((uint64x2_t)a, (uint64x2_t)b, (uint64x2_t)c); }"
     ).try();
-    Ok(())
 }
 
 // Aborting definitions of the x86 set, the arm64 set, or both.
 sha_stubs = (be :: CBackend, out :: Emit, x86: bool, arm: bool)
-            Res<(), AllocError> {
+            Res<AllocError> {
     x86.then(() {
         be.sha_stub(out, "sha256_rnds2", "u32x4", 3).try();
         be.sha_stub(out, "sha256_msg1", "u32x4", 2).try();
@@ -693,11 +687,11 @@ sha_stubs = (be :: CBackend, out :: Emit, x86: bool, arm: bool)
         be.sha_stub(out, "sha512su0", "u64x2", 2).try();
         be.sha_stub(out, "sha512su1", "u64x2", 3).try();
     });
-    Ok(())
+    Ok
 }
 
 sha_stub = (be :: CBackend, out :: Emit, name: str, v: str, arity: usize)
-           Res<(), AllocError> {
+           Res<AllocError> {
     line ::= be.alloc.String().try();
     (arity == 3).match({
         true  => line.fmt(
@@ -721,20 +715,19 @@ sha_stub = (be :: CBackend, out :: Emit, name: str, v: str, arity: usize)
 
 // One attribute macro per feature set a function asks for. Clang honours a
 // single target attribute, so each set is spelled as one combined list.
-write_target_sets = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+write_target_sets = (be :: CBackend, out :: Emit) Res<AllocError> {
     seq = order(be.alloc, be.target_sets).try();
     seq.loop((h, i) {
         be.target_sets.get(i).match({
-            None    => Ok(()),
+            None    => Ok,
             Ok(set) => be.write_target_set(out, set.view()),
         }).try();
     });
     out.line().try();
-    Ok(())
 }
 
 write_target_set = (be :: CBackend, out :: Emit, set: str)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     x86 ::= be.alloc.String().try();
     x86.add_feature(set, "_AVX2", "avx2").try();
     x86.add_feature(set, "_SSSE3", "ssse3").try();
@@ -801,13 +794,12 @@ write_target_set = (be :: CBackend, out :: Emit, set: str)
     line.fmt("#define ZG_TARGET{}", set).try();
     out.say(line.view()).try();
     out.say("#endif").try();
-    Ok(())
 }
 
 add_feature = (list :: String, set: str, token: str, features: str)
-              Res<(), AllocError> {
+              Res<AllocError> {
     set.contains(token).match({
-        false => Ok(()),
+        false => Ok,
         true  => {
             (list.len() > 0).then(() { list.add(",").try() });
             list.add(features)
@@ -841,7 +833,7 @@ lower_primitive* = (
     p    : Primitive,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.need_machine();
     site = PrimSite(c: c, recv: recv, p: p, ctx: ctx);
     held    ::= be.alloc.Vec<String>();
@@ -915,7 +907,7 @@ render_primitive = (
     held    : Vec<String>,
     literal : bool,
     out     :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     site.p.name.match({
         "compiler_barrier"   => {
             // An empty asm with a memory clobber: no memory access moves
@@ -945,7 +937,7 @@ render_feature = (
     held    : Vec<String>,
     literal : bool,
     out     :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     name = site.p.name;
     a    = operand(held, 0);
     b    = operand(held, 1);
@@ -981,7 +973,7 @@ value_barrier = (
     held   : str,
     marker : str,
     out    :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     wide     = be.check.prim_name(site.p.result).eq("u128");
     template = marker.is_empty().match({
         true  => "",
@@ -1033,7 +1025,7 @@ render_scalar = (
     held    : Vec<String>,
     literal : bool,
     out     :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     site.p.name.match({
         "add_carry"    => be.carry_pair(site, held, "zg_add_carry", out),
         "sub_borrow"   => be.carry_pair(site, held, "zg_sub_borrow", out),
@@ -1050,7 +1042,7 @@ carry_pair = (
     held   : Vec<String>,
     helper : str,
     out    :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     pair = be.temp(site.p.result, "carry").try();
     be.fmt(
         "{}.{}[0] = {}({}, {}, {}, &{}.{}[1]);\n",
@@ -1074,7 +1066,7 @@ limb_product = (
     held : Vec<String>,
     two  : bool,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     limbs = be.temp(site.p.result, "limbs").try();
     two.match({
         true  => be.fmt(
@@ -1103,7 +1095,7 @@ render_wide = (
     held    : Vec<String>,
     literal : bool,
     out     :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     p = site.p;
     a = operand(held, 0);
     p.name.eq("mul_wide").match({
@@ -1129,7 +1121,7 @@ render_vector = (
     held    : Vec<String>,
     literal : bool,
     out     :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     p = site.p;
     v = be.check.prim_name(p.result);
     a = operand(held, 0);
@@ -1177,7 +1169,7 @@ render_vector = (
 // A count at or beyond the lane width yields zero; C's vector shift by such
 // a count is undefined, so the guard selects the zero vector instead.
 vector_shift = (v: str, a: str, n: str, op: str, out :: String)
-               Res<(), AllocError> {
+               Res<AllocError> {
     lane  = vector_lane(v);
     width = unsigned_width(lane);
     out.fmt(
@@ -1203,7 +1195,7 @@ rotate_or_swap = (
     near : str,
     far  : str,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     count  = site.value_at(1).match({
         Ok(e) => be.check.const_int(e),
         None  => None,
@@ -1225,7 +1217,7 @@ vector_rotate = (
     near : str,
     far  : str,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     lane  = vector_lane(v);
     width = unsigned_width(lane);
     ct    = c_prim(lane);
@@ -1253,7 +1245,7 @@ lane_index = (
     index : str,
     lanes : usize,
     out   :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     at   = site.value_at(1).ok_or(AllocError.OutOfMemory).try();
     span = be.tree.expr_at(at).span;
     pos ::= be.alloc.String().try();
@@ -1267,7 +1259,7 @@ vector_lane_read = (
     a     : str,
     index : str,
     out   :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     lanes = vector_lanes(be.check.prim_name(site.p.params.get(0).match({
         Ok(t) => t,
         None  => site.p.result,
@@ -1282,7 +1274,7 @@ vector_lane_write = (
     site : PrimSite,
     held : Vec<String>,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     v     = be.check.prim_name(site.p.result);
     lanes = vector_lanes(v);
     copy  = be.temp(site.p.result, "lanes").try();
@@ -1302,7 +1294,7 @@ vector_shuffle = (
     literal : bool,
     two     : bool,
     out     :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     literal.match({
         true  => out.fmt("ZG_SHUFFLE(zg_{}, {}, {}, {})", v, a, b, pattern),
         false => {
@@ -1350,7 +1342,7 @@ vector_constructor = (
     site : PrimSite,
     held : Vec<String>,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     v     = be.check.prim_name(site.p.result);
     lanes = vector_lanes(v);
     site.p.name.starts_with("load_").match({
@@ -1392,7 +1384,7 @@ function_attributes* = (
     f   : Function,
     sig : Vec<TyId>,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     set ::= be.alloc.String().try();
     be.add_capability(sig, "Adx", "_ADX", set).try();
     be.add_capability(sig, "Aes", "_AES", set).try();
@@ -1412,7 +1404,7 @@ function_attributes* = (
     (f.inline && be.linkage().eq("static ")).then(() {
         out.add("ZG_INLINE ").try();
     });
-    Ok(())
+    Ok
 }
 
 // A call exchanging a 32-byte vector must not cross between AVX2 and
@@ -1435,10 +1427,10 @@ add_capability = (
     name : str,
     tag  : str,
     set  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     found ::= false;
     sig.loop((t) { found = found || be.capability(t).eq(name); });
-    found.match({ true => set.add(tag), false => Ok(()) })
+    found.match({ true => set.add(tag), false => Ok })
 }
 
 capability = (be :: CBackend, t: TyId) str {

@@ -30,7 +30,7 @@ fs_read* = (a: Alloc, path: str) Res<String, FsError> {
     read_file(a, path).map_err((e) { fs_error(e) })
 }
 
-fs_write* = (path: str, bytes: str) Res<(), FsError> {
+fs_write* = (path: str, bytes: str) Res<FsError> {
     scratch = Pages();
     write_file(scratch, path, bytes).map_err((e) { fs_error(e) })
 }
@@ -80,12 +80,12 @@ sleep_ms* = (ms: u64) {
 // non-blocking flock. Exists when another open file description holds it.
 // The descriptor is the Lock the compiler builds from it.
 fs_lock_fd* = (path: str) Res<i32, FsError> {
-    fs_is_dir(path).match({ true => Err(FsError.IsDir), false => Ok(()) }).try();
+    fs_is_dir(path).match({ true => Err(FsError.IsDir), false => Ok }).try();
     scratch = Pages();
     name    = c_path(scratch, path).match({ Ok(p) => Ok(p), Err(_) => Err(FsError.OutOfMemory) }).try();
     fd      = openat(at_fdcwd(), name, o_rdwr() + o_creat() + o_cloexec(), 438);
     scratch.free(name);
-    (fd < 0).match({ true => Err(fs_error(fd)), false => Ok(()) }).try();
+    (fd < 0).match({ true => Err(fs_error(fd)), false => Ok }).try();
     handle = fd.to_i32().value_or(-1);
     // LOCK_EX | LOCK_NB
     locked = flock(handle, 6);

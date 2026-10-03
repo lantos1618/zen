@@ -12,7 +12,7 @@ String* = {
     data :: Vec<u8>,
 
     // Expanded at the call site; reports this buffer's allocation floor.
-    fmt* = (self :: @Self, fmt: str, args: ...) Res<(), AllocError>
+    fmt* = (self :: @Self, fmt: str, args: ...) Res<AllocError>
 
     // Borrows the buffer until the next potentially growing write.
     view* = (self: @Self) str { str_at(self.data.ptr(), self.data.len) }
@@ -25,14 +25,14 @@ String* = {
     clear* = (self :: @Self) { self.data.clear(); }
 
     // Appends bytes verbatim; braces have no format meaning.
-    add* = (self :: @Self, s: str) Res<(), AllocError> {
+    add* = (self :: @Self, s: str) Res<AllocError> {
         self.data.add_all(s.ptr(), s.len)
     }
 
-    add* = (self :: @Self, b: u8) Res<(), AllocError> { self.data.add(b) }
+    add* = (self :: @Self, b: u8) Res<AllocError> { self.data.add(b) }
 
     // Decimal, most significant digit first, no separators.
-    write_usize* = (self :: @Self, value: usize) Res<(), AllocError> {
+    write_usize* = (self :: @Self, value: usize) Res<AllocError> {
         (value >= 10).then(() { self.write_usize(value / 10).try() });
         self.add((value % 10).digit())
     }
@@ -43,27 +43,25 @@ String* = {
         self   :: @Self,
         value  : u64,
         digits : usize
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         place :: u64 = 1;
         Range(1, digits).loop((h, _) { place = place * 16; });
         Range(0, digits).loop((h, _) {
             self.add(((value / place) % 16).hex_digit()).try();
             place = place / 16;
         });
-        Ok(())
+        Ok
     }
 }
 
 // Sink for the `{}` door; only the AllocError member of WriteError can occur.
 String.impl(Sink, {
-    write = (self :: @Self, bytes: str) Res<(), WriteError> {
+    write = (self :: @Self, bytes: str) Res<WriteError> {
         self.add(bytes).try();
-        Ok(());
     }
 
-    write_byte = (self :: @Self, b: u8) Res<(), WriteError> {
+    write_byte = (self :: @Self, b: u8) Res<WriteError> {
         self.add(b).try();
-        Ok(());
     }
 })
 

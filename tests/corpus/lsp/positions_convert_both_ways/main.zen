@@ -52,7 +52,7 @@ SRC: str = "ab\né1\n中x\n😀y\n\tz\n\ncr\r\nend"
 
 // wire -> zen -> wire, in one line, so a row surviving one direction
 // and not the other is visible rather than averaged away.
-round = (line: usize, character: usize) Res<(), AllocError> {
+round = (line: usize, character: usize) Res<AllocError> {
     p = source_position(SRC, line, character);
     w = lsp_position(SRC, p);
     println(
@@ -64,15 +64,13 @@ round = (line: usize, character: usize) Res<(), AllocError> {
         w.line,
         w.character
     );
-    Ok(());
 }
 
 // zen -> wire alone, for the byte columns no `source_position` can produce: the
 // ones inside a character.
-back = (line: usize, col: usize) Res<(), AllocError> {
+back = (line: usize, col: usize) Res<AllocError> {
     w = lsp_position(SRC, Pos(line: line, col: col));
     println("zen {}:{} -> wire {}:{}", line, col, w.line, w.character);
-    Ok(());
 }
 
 main = (env: Env) Res<i32, AllocError> {

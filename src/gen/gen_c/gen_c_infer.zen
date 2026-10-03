@@ -68,12 +68,12 @@ UnifyCall = {
     ctx: Ctx,
 
     receiver = (self: @Self, be :: CBackend, recv: Res<ExprId>, out :: Inst)
-               Res<(), AllocError> {
-        recv.match({ None => Ok(()), Ok(base) => self.arg(be, base, 0, out) })
+               Res<AllocError> {
+        recv.match({ None => Ok, Ok(base) => self.arg(be, base, 0, out) })
     }
 
     arg = (self: @Self, be :: CBackend, value: ExprId, i: usize,
-           out :: Inst) Res<(), AllocError> {
+           out :: Inst) Res<AllocError> {
         pack_slot(be.types(), self.declared).match({
             None     => self.declared_arg(be, value, i, out),
             Ok(slot) => self.packed_arg(be, value, i, slot, out),
@@ -81,9 +81,9 @@ UnifyCall = {
     }
 
     declared_arg = (self: @Self, be :: CBackend, value: ExprId, i: usize,
-                    out :: Inst) Res<(), AllocError> {
+                    out :: Inst) Res<AllocError> {
         self.declared.get(i).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(d) => self.against(be, value, d, out),
         })
     }
@@ -91,7 +91,7 @@ UnifyCall = {
     // Swallowed arguments use the pack element. Forwarded packs structurally
     // unify with the pack itself.
     packed_arg = (self: @Self, be :: CBackend, value: ExprId, i: usize,
-                  slot: usize, out :: Inst) Res<(), AllocError> {
+                  slot: usize, out :: Inst) Res<AllocError> {
         (i < slot).match({
             true  => self.declared_arg(be, value, i, out),
             false => self.swallowed(be, value, slot, out),
@@ -99,7 +99,7 @@ UnifyCall = {
     }
 
     swallowed = (self: @Self, be :: CBackend, value: ExprId, slot: usize,
-                  out :: Inst) Res<(), AllocError> {
+                  out :: Inst) Res<AllocError> {
         pack    = self.declared.get(slot).match({
             Ok(t) => t,
             None  => TyId(index: 0),
@@ -110,7 +110,7 @@ UnifyCall = {
     }
 
     against = (self: @Self, be :: CBackend, value: ExprId, d: TyId,
-               out :: Inst) Res<(), AllocError> {
+               out :: Inst) Res<AllocError> {
         unknown = be.check.types.unknown().try();
         actual  = be.arg_type(value, self.ctx, unknown).try();
         unify(be, d, actual, out)
@@ -142,9 +142,9 @@ decl_ctx = (d: Def) Ctx {
 
 // Parameter types stay as written: unification needs `Vec<T>`.
 written_param = (be :: CBackend, p: Param, dctx: Ctx, out :: Vec<TyId>)
-                Res<(), AllocError> {
+                Res<AllocError> {
     p.type.match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(t) => out.add(be.check.type_from_ast(t, dctx).try()),
     })
 }
@@ -233,7 +233,7 @@ ReturnCall = {
     // The written type arguments, bound to the member's parameters as
     // interned under `owner`.
     bind_written = (self: @Self, be :: CBackend, f: Function, owner: str,
-                    out :: Inst) Res<(), AllocError> {
+                    out :: Inst) Res<AllocError> {
         vars ::= be.alloc.Vec<TyId>();
         tparam_vars(be.check, f.tparams, owner, vars).try();
         tys ::= be.alloc.Vec<TyId>();

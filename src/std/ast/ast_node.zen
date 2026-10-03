@@ -644,7 +644,7 @@ Module* = {
         self.decls.loop((h, d) {
             d.kind.match({
                 Function(f) => found.add(f),
-                _           => Ok(()),
+                _           => Ok,
             }).try();
         });
         Ok(found);

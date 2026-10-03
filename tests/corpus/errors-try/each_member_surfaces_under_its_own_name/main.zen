@@ -16,12 +16,14 @@
 // Neither fails to compile, which is why the printed words are the
 // assertion.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { Env } = std.env
 { println } = std.io
 
 Inner = { | InnerBoom }
+Inner.impl(Error, {})
 Outer = { | OuterBoom }
+Outer.impl(Error, {})
 Any = Inner | Outer
 
 deep = () Res<i32, Inner> {

@@ -61,7 +61,7 @@ snippet = (text: str) str {
     (line.len > 60).match({ true => line.slice(0, 60), false => line })
 }
 
-describe = (m: Mutant, text: str, out :: String) Res<(), AllocError> {
+describe = (m: Mutant, text: str, out :: String) Res<AllocError> {
     out.fmt(
         "{}:{}  `{}` -> `{}`",
         m.line,
@@ -107,7 +107,7 @@ safe_paths = (cli: Cli, cwd: str, a: Alloc) Res<bool, AllocError> {
     Ok(!escapes && !nested)
 }
 
-absolute = (cwd: str, path: str, out :: String) Res<(), AllocError> {
+absolute = (cwd: str, path: str, out :: String) Res<AllocError> {
     path.starts_with("/").match({
         true  => out.add(path),
         false => out.fmt("{}/{}", cwd, path),
@@ -159,7 +159,7 @@ mutate = (env: Env, a: Alloc, cli: Cli) Res<i32, AllocError> {
 }
 
 list = (a: Alloc, cli: Cli, text: str, mutants: Vec<Mutant>, picked: Vec<usize>)
-       Res<(), AllocError> {
+       Res<AllocError> {
     picked.loop((h, i) {
         m = mutants.get(i).ok_or(AllocError.OutOfMemory).try();
         line ::= a.String().try();
@@ -172,7 +172,7 @@ list = (a: Alloc, cli: Cli, text: str, mutants: Vec<Mutant>, picked: Vec<usize>)
             line.view()
         );
     });
-    Ok(())
+    Ok
 }
 
 run_all = (
@@ -276,7 +276,7 @@ report = (
     mutants   : Vec<Mutant>,
     survivors : Vec<usize>,
     tally     : Tally
-) Res<(), AllocError> {
+) Res<AllocError> {
     judged = tally.survived + tally.killed + tally.timed_out;
     println(
         "summary: {} killed, {} timed out, {} survived, {} stillborn (did not build)",
@@ -306,5 +306,5 @@ report = (
             line.view()
         );
     });
-    Ok(())
+    Ok
 }

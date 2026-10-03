@@ -14,11 +14,10 @@ show = (p: Permutation) {
     );
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     show(Permutation.Natural);
     show(Permutation.Reverse);
     show(Permutation.Rotate);
     show(Permutation.Interleave);
     println("{}", permutation("reverse").stable_name());
-    Ok(())
 }

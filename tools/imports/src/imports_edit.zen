@@ -4,7 +4,7 @@
 // file opens with a declaration, above that declaration and the comment
 // attached to it. Names are listed in a fixed order and modules come in a
 // fixed order, so the same names always produce the same text.
-{ Res, Ok, Err, None, loop, Range } = std.core
+{ Res, Ok, Err, None, loop, Range, Error } = std.core
 { scan, Source } = std.lex
 { Parser, module } = std.parse
 { Decl } = std.ast
@@ -46,6 +46,7 @@ NAME_ORDER: [str, 90] = [str, 90](
 WIDTH: usize = 80
 
 EditError* = { Unparsed | NoDeclaration | OutOfMemory }
+EditError.impl(Error, {})
 
 // Source lines numbered `from` or later moved `down` lines down and `up`
 // lines up; one of the two is zero.

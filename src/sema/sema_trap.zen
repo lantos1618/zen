@@ -8,106 +8,106 @@
 { const_int, const_literal, fits, fits_magnitude, fold } = sema.sema_const
 { len_of, min_of } = sema.sema_const
 { Res, Ok, None } = std.core
-check_binary* = (c :: Checker, b: Binary, ty: TyId) Res<(), AllocError> {
+check_binary* = (c :: Checker, b: Binary, ty: TyId) Res<AllocError> {
     b.op.match({
         Div => c.check_divisor(b, ty),
         Rem => c.check_divisor(b, ty),
         Add => c.check_overflow(b, ty),
         Sub => c.check_overflow(b, ty),
         Mul => c.check_overflow(b, ty),
-        _   => Ok(()),
+        _   => Ok,
     })
 }
 
-check_divisor = (c :: Checker, b: Binary, ty: TyId) Res<(), AllocError> {
+check_divisor = (c :: Checker, b: Binary, ty: TyId) Res<AllocError> {
     c.const_int(b.rhs).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(d) => c.divisor_is(b, ty, d),
     })
 }
 
 divisor_is = (c :: Checker, b: Binary, ty: TyId, d: i64)
-             Res<(), AllocError> {
+             Res<AllocError> {
     (d == 0).match({
         true  => c.divide_by_zero(b),
         false => c.min_over_minus_one(b, ty, d),
     })
 }
 
-divide_by_zero = (c :: Checker, b: Binary) Res<(), AllocError> {
+divide_by_zero = (c :: Checker, b: Binary) Res<AllocError> {
     c.refuse(b.op_span, SemaFault.ProvenDivideByZero(NameFault(name: "0")))
 }
 
 // `i32.MIN / -1` is overflow, not division by zero.
 min_over_minus_one = (c :: Checker, b: Binary, ty: TyId, d: i64)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     (d == 0 - 1).match({
         true  => c.check_min_numerator(b, ty),
-        false => Ok(()),
+        false => Ok,
     })
 }
 
 check_min_numerator = (c :: Checker, b: Binary, ty: TyId)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     c.const_int(b.lhs).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(n) => c.numerator_is_min(b, ty, n),
     })
 }
 
 // `min_of` declines a non-integer name, which proves nothing.
 numerator_is_min = (c :: Checker, b: Binary, ty: TyId, n: i64)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     name = c.prim_name(ty);
     min_of(name).match({
-        None   => Ok(()),
+        None   => Ok,
         Ok(lo) => (n == lo).match({
             true  => c.overflow(b, name),
-            false => Ok(()),
+            false => Ok,
         }),
     })
 }
 
-check_overflow = (c :: Checker, b: Binary, ty: TyId) Res<(), AllocError> {
+check_overflow = (c :: Checker, b: Binary, ty: TyId) Res<AllocError> {
     c.const_int(b.lhs).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(x) => c.with_lhs(b, ty, x),
     })
 }
 
-with_lhs = (c :: Checker, b: Binary, ty: TyId, x: i64) Res<(), AllocError> {
+with_lhs = (c :: Checker, b: Binary, ty: TyId, x: i64) Res<AllocError> {
     c.const_int(b.rhs).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(y) => c.with_both(b, ty, x, y),
     })
 }
 
 with_both = (c :: Checker, b: Binary, ty: TyId, x: i64, y: i64)
-            Res<(), AllocError> {
+            Res<AllocError> {
     fold(b.op, x, y).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(v) => c.check_fits(b, ty, v),
     })
 }
 
 check_fits = (c :: Checker, b: Binary, ty: TyId, v: i64)
-             Res<(), AllocError> {
+             Res<AllocError> {
     name = c.prim_name(ty);
     fits(v, name).match({
-        None      => Ok(()),
+        None      => Ok,
         Ok(false) => c.overflow(b, name),
-        Ok(true)  => Ok(()),
+        Ok(true)  => Ok,
     })
 }
 
 // The position is the operator token, where a runtime trap prints.
-overflow = (c :: Checker, b: Binary, name: str) Res<(), AllocError> {
+overflow = (c :: Checker, b: Binary, name: str) Res<AllocError> {
     c.refuse(b.op_span, SemaFault.ProvenOverflow(NameFault(name: name)))
 }
 
 // The literal's own type is always `int`; only `want` matters.
 check_literal* = (c :: Checker, id: ExprId, want: TyId)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     c.settle_widths(id, want).try();
     is_integer(c.prim_name(want)).match({
         true  => c.literal_within(id, want),
@@ -116,23 +116,23 @@ check_literal* = (c :: Checker, id: ExprId, want: TyId)
 }
 
 element_agrees* = (c :: Checker, id: ExprId, elem: TyId)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     node = c.tree.expr_at(id);
     c.expr_memo.get(id).match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(got) => c.coerce(node.span.file, node.span, got, elem, ""),
     })
 }
 
 elements_within = (c :: Checker, id: ExprId, want: TyId)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     c.types.at(want).match({
         Array(a) => c.array_elements(id, a),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
-array_elements = (c :: Checker, id: ExprId, a: TyArray) Res<(), AllocError> {
+array_elements = (c :: Checker, id: ExprId, a: TyArray) Res<AllocError> {
     c.tree.expr_at(id).kind.match({
         Array(lit) => c.elem_literals(lit, a.elem),
         Match(m)   => c.arm_arrays(m, a),
@@ -141,28 +141,28 @@ array_elements = (c :: Checker, id: ExprId, a: TyArray) Res<(), AllocError> {
             c.tree.block_at(b).value.when_ok((value) {
                 c.array_elements(value, a).try();
             });
-            Ok(())
+            Ok
         },
-        _          => Ok(()),
+        _          => Ok,
     })
 }
 
-arm_arrays = (c :: Checker, m: Match, a: TyArray) Res<(), AllocError> {
+arm_arrays = (c :: Checker, m: Match, a: TyArray) Res<AllocError> {
     m.arms.loop((h, arm) { c.array_elements(arm.body, a).try() });
-    Ok(());
+    Ok;
 }
 
 elem_literals = (c :: Checker, lit: ArrayLit, elem: TyId)
-                Res<(), AllocError> {
+                Res<AllocError> {
     lit.elems.loop((h, i, e) {
         (i > 0).then(() { c.element_agrees(e, elem).try() });
         c.check_literal(e, elem).try();
     });
-    Ok(());
+    Ok;
 }
 
 literal_within = (c :: Checker, id: ExprId, want: TyId)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     node = c.tree.expr_at(id);
     node.kind.match({
         Match(m) => c.arm_literals(m, want),
@@ -174,39 +174,39 @@ literal_within = (c :: Checker, id: ExprId, want: TyId)
             c.tree.block_at(b).value.when_ok((value) {
                 c.literal_within(value, want).try();
             });
-            Ok(())
+            Ok
         },
         _        => c.folded_within(id, want),
     })
 }
 
-arm_literals = (c :: Checker, m: Match, want: TyId) Res<(), AllocError> {
+arm_literals = (c :: Checker, m: Match, want: TyId) Res<AllocError> {
     m.arms.loop((h, a) { c.literal_within(a.body, want).try(); });
-    Ok(());
+    Ok;
 }
 
-folded_within = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
+folded_within = (c :: Checker, id: ExprId, want: TyId) Res<AllocError> {
     c.const_int(id).match({
         None  => c.unfoldable_within(id, want),
         Ok(v) => c.value_within(id, want, v),
     })
 }
 
-unfoldable_within = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
+unfoldable_within = (c :: Checker, id: ExprId, want: TyId) Res<AllocError> {
     c.tree.expr_at(id).kind.match({
         Literal(l) => c.literal_kind_within(id, l, want),
         Name(n)    => c.held_within(id, n.text, want),
-        _          => Ok(()),
+        _          => Ok,
     })
 }
 
 // `n ::= 250` holds an i64 that changes at run time, so no use can prove it
 // fits a narrower integer type; the binding has to say which type it is.
 changing_within = (c :: Checker, id: ExprId, bnd: Binding, want: TyId)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     narrower = is_integer(c.prim_name(want)) && !c.prim_name(want).eq("i64");
     (bnd.mutable && !bnd.param && c.prim_name(bnd.ty).eq("int") && narrower).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.refuse(
             c.tree.expr_at(id).span,
             SemaFault.UntypedVariable(TypeFault(
@@ -221,9 +221,9 @@ changing_within = (c :: Checker, id: ExprId, bnd: Binding, want: TyId)
 // `big = 3000000000; z: i32 = big` is the literal written at `z`, so it is
 // refused the same way, at the use, naming the binding to widen.
 held_within = (c :: Checker, id: ExprId, name: str, want: TyId)
-              Res<(), AllocError> {
+              Res<AllocError> {
     c.lookup(name).match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(bnd) => bnd.held.match({
             None  => c.changing_within(id, bnd, want),
             Ok(v) => fits(v, c.prim_name(want)).match({
@@ -235,40 +235,40 @@ held_within = (c :: Checker, id: ExprId, name: str, want: TyId)
                         expected: want
                     ))
                 ),
-                _         => Ok(()),
+                _         => Ok,
             }),
         }),
     })
 }
 
 literal_kind_within = (c :: Checker, id: ExprId, l: Literal, want: TyId)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     name = c.prim_name(want);
     l.kind.match({
         Int => l.integer.match({
             None      => c.out_of_range(id, want),
             Ok(value) => fits_magnitude(value, name).match({
-                Ok(true)  => Ok(()),
+                Ok(true)  => Ok,
                 Ok(false) => c.out_of_range(id, want),
                 None      => c.out_of_range(id, want),
             }),
         }),
-        _   => Ok(()),
+        _   => Ok,
     })
 }
 
 value_within = (c :: Checker, id: ExprId, want: TyId, v: i64)
-               Res<(), AllocError> {
+               Res<AllocError> {
     fits(v, c.prim_name(want)).match({
-        None      => Ok(()),
+        None      => Ok,
         Ok(false) => c.out_of_range(id, want),
-        Ok(true)  => Ok(()),
+        Ok(true)  => Ok,
     })
 }
 
 // The position is the literal the author has to change, which for a
 // negated one is the `-` and not the digits after it.
-out_of_range = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
+out_of_range = (c :: Checker, id: ExprId, want: TyId) Res<AllocError> {
     node  = c.tree.expr_at(id);
     found = c.types.prim("int").try();
     name  = c.written_literal(node).try();
@@ -332,9 +332,9 @@ negate_literal = (c: Checker, id: ExprId) Res<i64> {
 }
 
 check_index* = (c :: Checker, node: Expr, x: Index, a: TyArray)
-               Res<(), AllocError> {
+               Res<AllocError> {
     c.const_int(x.index).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(i) => c.index_within(node, x, i, a.count),
     })
 }
@@ -342,16 +342,16 @@ check_index* = (c :: Checker, node: Expr, x: Index, a: TyArray)
 // Negative index tested separately: `len_of` floors at zero, so `-1`
 // would arrive as 0 and pass. `zg_idx_s` makes the same split at runtime.
 index_within = (c :: Checker, node: Expr, x: Index, i: i64, count: usize)
-               Res<(), AllocError> {
+               Res<AllocError> {
     ((i < 0) || (len_of(i) >= count)).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.out_of_bounds(node, x),
     })
 }
 
 // Points at the whole index expression, not the `[` a runtime trap
 // prints: a compile error can point at what the author must change.
-out_of_bounds = (c :: Checker, node: Expr, x: Index) Res<(), AllocError> {
+out_of_bounds = (c :: Checker, node: Expr, x: Index) Res<AllocError> {
     c.refuse(
         node.span,
         SemaFault.ProvenIndexOutOfBounds(NameFault(name: c.written_index(x)))
@@ -370,9 +370,9 @@ written_index = (c: Checker, x: Index) str {
 // an unsigned word settles it and becomes its type, so folding and lowering
 // see that width; any other settled type refuses it. One never settled is
 // refused after checking, because no context chose its width.
-defer_width* = (c :: Checker, id: ExprId) Res<(), AllocError> {
+defer_width* = (c :: Checker, id: ExprId) Res<AllocError> {
     c.bit_widths.get(id).match({
-        Ok(_) => Ok(()),
+        Ok(_) => Ok,
         None  => c.bit_widths.set(id, false),
     })
 }
@@ -381,10 +381,10 @@ unsigned_word* = (c: Checker, ty: TyId) bool {
     c.prim_name(ty).is_in(["u8", "u16", "u32", "u64", "u128", "usize"])
 }
 
-settle_widths = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
+settle_widths = (c :: Checker, id: ExprId, want: TyId) Res<AllocError> {
     (c.bit_widths.len() == 0 || c.is_literal_ty(want)
         || c.askable_width(want) == false).match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.settle_under(id, want),
     })
 }
@@ -395,13 +395,13 @@ askable_width = (c: Checker, ty: TyId) bool {
 
 // Walk the literal-typed part of an expression: arithmetic may enclose a
 // parenthesized bitwise operation, as in `(1 << 4) + 1`.
-settle_under = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
+settle_under = (c :: Checker, id: ExprId, want: TyId) Res<AllocError> {
     literal = c.expr_memo.get(id).match({
         Ok(ty) => c.is_literal_ty(ty),
         None   => false,
     });
     literal.match({
-        false => Ok(()),
+        false => Ok,
         true  => c.tree.expr_at(id).kind.match({
             Paren(p)  => c.settle_under(p.inner, want),
             Binary(b) => {
@@ -409,7 +409,7 @@ settle_under = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
                 c.settle_under(b.lhs, want).try();
                 // A shift's count keeps its own type.
                 b.op.is_shift().match({
-                    true  => Ok(()),
+                    true  => Ok,
                     false => c.settle_under(b.rhs, want),
                 })
             },
@@ -417,12 +417,12 @@ settle_under = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
                 c.settle_node(id, want).try();
                 c.settle_under(u.operand, want)
             },
-            _         => Ok(()),
+            _         => Ok,
         }),
     })
 }
 
-settle_node = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
+settle_node = (c :: Checker, id: ExprId, want: TyId) Res<AllocError> {
     c.bit_widths.get(id).match({
         Ok(false) => c.unsigned_word(want).match({
             true  => {
@@ -435,29 +435,29 @@ settle_node = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
                 c.refuse_bit_operand(id, want, c.bit_glyph(id))
             },
         }),
-        _         => Ok(()),
+        _         => Ok,
     })
 }
 
 // Each literal operand must fit the width the expression settled at.
-settle_operands = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
+settle_operands = (c :: Checker, id: ExprId, want: TyId) Res<AllocError> {
     c.tree.expr_at(id).kind.match({
         Binary(b) => {
             c.fits_width(b.lhs, want).try();
             b.op.is_shift().match({
-                true  => Ok(()),
+                true  => Ok,
                 false => c.fits_width(b.rhs, want),
             })
         },
         Unary(u)  => c.fits_width(u.operand, want),
-        _         => Ok(()),
+        _         => Ok,
     })
 }
 
-fits_width = (c :: Checker, id: ExprId, want: TyId) Res<(), AllocError> {
+fits_width = (c :: Checker, id: ExprId, want: TyId) Res<AllocError> {
     c.tree.expr_at(id).kind.match({
         Literal(l) => c.literal_kind_within(id, l, want),
-        _          => Ok(()),
+        _          => Ok,
     })
 }
 
@@ -478,7 +478,7 @@ bit_span = (c: Checker, id: ExprId) Span {
 }
 
 refuse_bit_operand* = (c :: Checker, id: ExprId, ty: TyId, glyph: str)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     at = c.tree.expr_at(id).span;
     c.report(
         at.file,
@@ -491,7 +491,7 @@ refuse_bit_operand* = (c :: Checker, id: ExprId, ty: TyId, glyph: str)
     )
 }
 
-report_unsettled_widths* = (c :: Checker) Res<(), AllocError> {
+report_unsettled_widths* = (c :: Checker) Res<AllocError> {
     open ::= c.alloc.Vec<ExprId>();
     c.bit_widths.pairs((h, id, settled) {
         (!settled).then(() { open.add(id).try(); });
@@ -509,5 +509,5 @@ report_unsettled_widths* = (c :: Checker) Res<(), AllocError> {
             ))
         ).try();
     });
-    Ok(())
+    Ok
 }

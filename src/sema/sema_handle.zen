@@ -38,7 +38,7 @@ spelled_name* = (c :: Checker, id: ExprId) str {
     })
 }
 
-refuse_handle_at* = (c :: Checker, id: ExprId) Res<(), AllocError> {
+refuse_handle_at* = (c :: Checker, id: ExprId) Res<AllocError> {
     c.refuse(
         c.tree.expr_at(id).span,
         SemaFault.HandleNotAValue(NameFault(name: c.spelled_name(id))),
@@ -46,20 +46,20 @@ refuse_handle_at* = (c :: Checker, id: ExprId) Res<(), AllocError> {
 }
 
 refuse_handle_value* = (c :: Checker, id: ExprId, got: TyId)
-                        Res<(), AllocError> {
+                        Res<AllocError> {
     c.is_handle_ty(got).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.refuse_handle_at(id),
     })
 }
 
 refuse_handle_argument* = (c :: Checker, a: Arg, want: TyId, ctx: Ctx)
-                          Res<(), AllocError> {
+                          Res<AllocError> {
     c.type_of(a.value, ctx).match({
-        Err(_) => Ok(()),
+        Err(_) => Ok,
         Ok(ty) => (c.is_handle_ty(ty) && (c.formal_takes_handle(want) == false))
             .match({
-                false => Ok(()),
+                false => Ok,
                 true  => c.refuse_handle_at(a.value),
             }),
     })

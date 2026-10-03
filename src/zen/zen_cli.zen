@@ -92,7 +92,7 @@ tool = (a: Alloc) Res<Command<Tool>, AllocError> {
 
 // The profile and toolchain options shared by build, run and test.
 profile = <T>(cmd :: Command<T>, release: T, mode: T, verbose: T, cc: T)
-          Res<(), AllocError> {
+          Res<AllocError> {
     fast   = cmd.flag(
         release,
         "--release",
@@ -122,7 +122,7 @@ profile = <T>(cmd :: Command<T>, release: T, mode: T, verbose: T, cc: T)
             help: "C compiler: clang, gcc, tcc or a path"
         )
     ).try();
-    Ok(())
+    Ok
 }
 
 BuildId = { Release
@@ -224,7 +224,7 @@ source_options = <T>(
     entry    : T,
     std_root : T,
     ffi      : T
-) Res<(), AllocError> {
+) Res<AllocError> {
     cmd.option(
         entry,
         "--entry",
@@ -236,7 +236,7 @@ source_options = <T>(
         Spec(value: "PATH", help: "Standard library root")
     ).try();
     cmd.flag(ffi, "--ffi", Spec(help: "Allow foreign-function bindings")).try();
-    Ok(())
+    Ok
 }
 
 RunId = { Release | Profile | Verbose | Cc | Project }
@@ -470,8 +470,8 @@ command_cli = (
 settled = <T>(a: Alloc, model: Command<T>, parsed: Matches<T>, asked: bool)
           Res<Res<Cli>, AllocError> {
     parsed.problem.match({
-        Ok(usage) => Ok(Ok(refusal(a, model, usage).try())),
-        None      => (asked || parsed.help).match({
+        Err(usage) => Ok(Ok(refusal(a, model, usage).try())),
+        Ok         => (asked || parsed.help).match({
             true  => Ok(Ok(Cli.Help(model.help().try()))),
             false => Ok(None),
         }),

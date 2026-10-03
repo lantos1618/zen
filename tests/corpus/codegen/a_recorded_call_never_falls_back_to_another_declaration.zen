@@ -26,7 +26,7 @@ SelectionAlloc.impl(Alloc, {
     }
 })
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a      = env.mem.alloc();
     source = "{ Unused } = absent.module\nBox = {}\nmain = () { Box() }\n";
     lexed  = scan(a, Source(file: "calls.zen", text: source)).try();
@@ -113,11 +113,11 @@ main = (env: Env) Res<(), AllocError> {
         });
         id = ExprId(index: id.index + 1);
     });
-    Ok(())
+    Ok
 }
 
 record_selection = (check :: Checker, id: ExprId, declaration: DeclId)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     check.record_call(
         id,
         CallResolution.Checked(CheckedCall(

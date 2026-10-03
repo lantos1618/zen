@@ -657,14 +657,14 @@ module_implementors = (
     impls : Vec<ImplId>,
     bound : DeclId,
     out   :: Vec<TyId>
-) Res<(), LowerError> {
+) Res<LowerError> {
     impls.loop((id) {
         lo.implementor_of(mi, id, bound).try().match({
             Ok(t) => out.add(t).try(LowerError.OutOfMemory),
             None  => (),
         });
     });
-    Ok(())
+    Ok
 }
 
 implementor_of = (
@@ -1156,7 +1156,7 @@ out_of_memory_trap = (
     lo      :: Lowerer,
     pointer : usize,
     span    : Span
-) Res<(), LowerError> {
+) Res<LowerError> {
     zero   = lo.word_const(Scalar.Ptr, 0).try();
     failed = lo.slot_of(Scalar.Bool).try();
     lo.add(Instruction.BinaryValue(Binary(
@@ -1172,7 +1172,6 @@ out_of_memory_trap = (
     lo.start(bad);
     lo.trap(TrapKind.OutOfMemory, span).try();
     lo.start(good);
-    Ok(())
 }
 
 pointee_of* = (lo :: Lowerer, ty: TyId) Res<TyId, LowerError> {
@@ -1328,7 +1327,7 @@ emit_to = (
     stream : usize,
     data   : usize,
     len    : usize
-) Res<(), LowerError> {
+) Res<LowerError> {
     one = lo.slot_of(lo.slots.get(stream).value_or(Scalar.I32)).try();
     lo.add(Instruction.Constant(Const(out: one, value: 1))).try();
     is_out = lo.slot_of(Scalar.Bool).try();

@@ -18,12 +18,11 @@ Probe.impl(Actor, {
 
 Error = AllocError | ActorStartError | ActorError
 
-send_words = (env: Env, probe: Ref<Probe>) Res<(), AllocError | ActorError> {
+send_words = (env: Env, probe: Ref<Probe>) Res<AllocError | ActorError> {
     arena ::= env.mem.alloc();
     left  = arena.String("left").try();
     right = arena.String("right").try();
     probe.show(left.view(), 7, right.view()).try();
-    Ok(())
 }
 
 main = (env: Env) Res<i32, Error> {

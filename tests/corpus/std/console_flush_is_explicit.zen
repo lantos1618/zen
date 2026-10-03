@@ -2,9 +2,8 @@
 { Env } = std.env
 { println, print } = std.io
 
-main = (env: Env) Res<(), IoError> {
+main = (env: Env) Res<IoError> {
     print("ready");
     env.out.flush().try();
     println(" now");
-    Ok(())
 }

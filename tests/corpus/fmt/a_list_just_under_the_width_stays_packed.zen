@@ -33,7 +33,7 @@ main = (env: Env) Res<i32, AllocError> {
     Ok(0);
 }
 
-shows = (a: Alloc, what: str, text: str) Res<(), AllocError> {
+shows = (a: Alloc, what: str, text: str) Res<AllocError> {
     first  = formatted(a, text).try();
     second = formatted(a, first.view()).try();
     println("== {}", what);
@@ -43,7 +43,6 @@ shows = (a: Alloc, what: str, text: str) Res<(), AllocError> {
         verdict(first.view().eq(second.view()))
     );
     show(first.view());
-    Ok(());
 }
 
 verdict = (settled: bool) str {

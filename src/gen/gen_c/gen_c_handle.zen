@@ -48,7 +48,7 @@ lower_handle_call* = (
     ctx   : Ctx,
     out   :: String
 )
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     be.loop_frame(depth).match({
         None   => be.unsupported(
             id,
@@ -68,7 +68,7 @@ handle_verb = (
     ctx  : Ctx,
     out  :: String
 )
-              Res<(), AllocError> {
+              Res<AllocError> {
     name.eq("next").match({
         true  => be.leave_pass(fr, out),
         false => be.handle_break(id, c, name, fr, ctx, out),
@@ -80,7 +80,7 @@ handle_verb = (
 // so this iteration's defers and drops run here instead. Nothing is
 // handed out of a pass that ends this way, so there is nothing to keep.
 leave_pass = (be :: CBackend, fr: LoopFrame, out :: String)
-             Res<(), AllocError> {
+             Res<AllocError> {
     be.unwind_to(fr.depth, "").try();
     be.note_next(fr.cnt);
     be.jump_to("cnt", fr.cnt, out)
@@ -95,7 +95,7 @@ handle_break = (
     ctx  : Ctx,
     out  :: String
 )
-               Res<(), AllocError> {
+               Res<AllocError> {
     name.eq("break").match({
         false => be.unsupported(
             id,
@@ -116,24 +116,24 @@ write_break = (
     fr  : LoopFrame,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     ((c.args.len > 0) && (fr.has_result == false)).match({
         true  => be.unsupported(
             id,
             "a loop whose value type nothing settles, broken with a value",
             out
         ),
-        false => Ok(()),
+        false => Ok,
     }).try();
     // A break value must fit the loop frame's settled payload: the walked
     // element or fold accumulator. The handle has no ordinary value type, so
     // this is where the argument and frame payload meet.
     ((c.args.len > 0) && (fr.has_result)).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.break_fits(id, c, fr, ctx),
     }).try();
     (fr.has_result && (c.args.len > 0)).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.write_break_value(c, fr, ctx),
     }).try();
     // The value is written before the cleanup, and the cleanup before
@@ -168,9 +168,9 @@ break_fits = (
     c   : Call,
     fr  : LoopFrame,
     ctx : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.args.get(0).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(a) => be.break_value_fits(a.value, fr, ctx, id),
     })
 }
@@ -181,7 +181,7 @@ break_value_fits = (
     fr    : LoopFrame,
     ctx   : Ctx,
     id    : ExprId
-) Res<(), AllocError> {
+) Res<AllocError> {
     payload = ok_payload(be, fr.ty).try();
     unknown = be.check.types.unknown().try();
     got     = be.ty_of(value, ctx, unknown).try();
@@ -194,9 +194,9 @@ break_value_fits = (
 // A literal fits its numeric family but must also fit the payload width. This
 // keeps ordinary inferred literals legal without allowing silent truncation.
 break_literal_fits = (be :: CBackend, value: ExprId, payload: TyId)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     be.check.literal_overflows(value, payload).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.break_range_fault(value, payload),
     })
 }
@@ -205,7 +205,7 @@ break_literal_fits = (be :: CBackend, value: ExprId, payload: TyId)
 // the `h.break` that carries it — `sema_trap.out_of_range` puts its
 // caret in the same place for the same reason.
 break_range_fault = (be :: CBackend, value: ExprId, payload: TyId)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     want ::= be.name_of_or(payload).try();
     what ::= be.alloc.String(
         "h.break(v) is not free to choose its type: the loop's own T is "
@@ -224,7 +224,7 @@ break_type_fault = (
     id      : ExprId,
     got     : TyId,
     payload : TyId
-) Res<(), AllocError> {
+) Res<AllocError> {
     want  ::= be.name_of_or(payload).try();
     found ::= be.name_of_or(got).try();
     what  ::= be.alloc.String(
@@ -247,15 +247,15 @@ name_of_or = (be :: CBackend, ty: TyId) Res<String, AllocError> {
 }
 
 write_break_value = (be :: CBackend, c: Call, fr: LoopFrame, ctx: Ctx)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     c.args.get(0).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(a) => be.assign_ok(a.value, fr, ctx),
     })
 }
 
 assign_ok = (be :: CBackend, value: ExprId, fr: LoopFrame, ctx: Ctx)
-            Res<(), AllocError> {
+            Res<AllocError> {
     payload = ok_payload(be, fr.ty).try();
     cty ::= be.alloc.String().try();
     be.ctype(fr.ty, cty).try();
@@ -269,7 +269,7 @@ assign_ok = (be :: CBackend, value: ExprId, fr: LoopFrame, ctx: Ctx)
         tag.view()
     ).try();
     be.is_unit(payload).match({
-        true  => Ok(()),
+        true  => Ok,
         false => write_ok_payload(be, value, payload, ctx, line),
     }).try();
     line.add(" };").try();
@@ -282,14 +282,13 @@ write_ok_payload = (
     payload : TyId,
     ctx     : Ctx,
     line    :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     mem ::= be.alloc.String().try();
     sym_member(mem, "Ok").try();
     line.fmt(", .zg_data.{} = ", mem.view()).try();
     // Lower the node at its own type. The enclosing Res<T> initializer then
     // converts to the frame payload without changing signed-literal reading.
     expr(be, value, ctx, payload, line).try();
-    Ok(());
 }
 
 ok_payload = (be :: CBackend, ty: TyId) Res<TyId, AllocError> {
@@ -303,7 +302,7 @@ ok_payload = (be :: CBackend, ty: TyId) Res<TyId, AllocError> {
 // the `goto` goes to the buffer and a `0` goes where the value would
 // have been. Nothing reads that `0`: control has already left.
 jump_to = (be :: CBackend, stem: str, n: usize, out :: String)
-          Res<(), AllocError> {
+          Res<AllocError> {
     be.write("goto ").try();
     be.write_label(stem, n).try();
     be.writeln(";").try();

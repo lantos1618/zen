@@ -48,7 +48,7 @@ DROPPED : str = "S = { x = 0 }\nmain = (env: i32) i32 { s ::= S(); 0 }\n"
 // a spilling right operand of `&&` would have its statements run
 // whether or not the left side held
 
-report = (a: Alloc, label: str, text: str) Res<(), AllocError> {
+report = (a: Alloc, label: str, text: str) Res<AllocError> {
     lexed = scan(a, Source(file: "main.zen", text: text)).try();
     p ::= a.Parser(lexed);
     m = p.module("main").try();
@@ -61,7 +61,6 @@ report = (a: Alloc, label: str, text: str) Res<(), AllocError> {
     be.render_diags(faults).try();
     println("{}", label);
     println("{}", faults.view());
-    Ok(());
 }
 
 main = (env: Env) Res<i32, AllocError> {

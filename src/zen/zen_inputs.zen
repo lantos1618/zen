@@ -17,7 +17,7 @@ Inputs* = {
     // is never reused.
     exact* :: bool = true,
 
-    read* = (self :: @Self, path: str, text: str) Res<(), AllocError> {
+    read* = (self :: @Self, path: str, text: str) Res<AllocError> {
         self.list('R', path).try();
         self.record.fmt(
             "R {}:{} {} {}\n",
@@ -28,7 +28,7 @@ Inputs* = {
         )
     }
 
-    probe* = (self :: @Self, path: str, found: bool) Res<(), AllocError> {
+    probe* = (self :: @Self, path: str, found: bool) Res<AllocError> {
         self.list('P', path).try();
         self.record.fmt(
             "P {}:{} {}\n",
@@ -39,11 +39,11 @@ Inputs* = {
     }
 
     // Words that select how the listed files are compiled or linked.
-    word* = (self :: @Self, text: str) Res<(), AllocError> {
+    word* = (self :: @Self, text: str) Res<AllocError> {
         self.record.fmt("W {}:{}\n", text.len, text)
     }
 
-    list = (self :: @Self, kind: u8, path: str) Res<(), AllocError> {
+    list = (self :: @Self, kind: u8, path: str) Res<AllocError> {
         path.contains('\n').then(() { self.exact = false; });
         self.paths.add(kind).try();
         self.paths.fmt(" {}\n", path)

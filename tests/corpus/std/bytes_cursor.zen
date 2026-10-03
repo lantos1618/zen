@@ -12,7 +12,7 @@ truncated = <T>(result: Res<T, ByteError>) bool {
     result.match({Err(e) => e.match({Truncated => true, _ => false}), _ => false})
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a    = env.mem.alloc();
     data = a.realloc<u8>(null_ptr<u8>(), 16).try();
     widths ::= true;
@@ -147,5 +147,4 @@ main = (env: Env) Res<(), AllocError> {
     });
     println("take borrows and advances: {}", borrowed);
     a.free(data);
-    Ok(())
 }

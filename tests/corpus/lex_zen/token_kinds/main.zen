@@ -12,13 +12,12 @@
 
 // one line per token: its NAME, so a wrong reading is legible rather than a
 // count that happens to match
-dump = (env: Env, alloc: Alloc, text: str) Res<(), AllocError> {
+dump = (env: Env, alloc: Alloc, text: str) Res<AllocError> {
     out = scan(alloc, Source(file: "in.zen", text: text)).try();
     out.tokens.loop((h, token) {
         println("  {}", kind_name(token.kind));
     });
     println("  diags {}", out.diags.len);
-    Ok(());
 }
 
 main = (env: Env) Res<i32, AllocError> {

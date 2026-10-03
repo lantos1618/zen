@@ -220,11 +220,10 @@ Diag* = {
 
     // `file:line:col: message`, then the fault's own detail.
     render* = (self: @Self, types: Types, out :: String)
-              Res<(), AllocError> {
+              Res<AllocError> {
         out.fmt("{}:{}: {}", self.file, self.span.start, message(self.fault))
             .try();
         self.fault.write_detail(types, out).try();
-        Ok(());
     }
 }
 
@@ -348,7 +347,7 @@ message* = (fault: SemaFault) str {
 }
 
 write_detail* = (fault: SemaFault, types: Types, out :: String)
-                Res<(), AllocError> {
+                Res<AllocError> {
     fault.match({
         UndefinedName(f)             => out.write_name(f),
         NotExported(f)               => out.write_export(f),
@@ -483,10 +482,9 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         AmbiguousOverload(f)         => out.write_pair(f),
         AmbiguousMember(f)           => out.write_pair(f),
     }).try();
-    Ok(());
 }
 
-write_missing_import = (out :: String, f: ExportFault) Res<(), AllocError> {
+write_missing_import = (out :: String, f: ExportFault) Res<AllocError> {
     out.fmt(
         " `{}` is not imported; add `{{ {} }} = {}`",
         f.name,
@@ -495,25 +493,25 @@ write_missing_import = (out :: String, f: ExportFault) Res<(), AllocError> {
     )
 }
 
-write_name = (out :: String, f: NameFault) Res<(), AllocError> {
+write_name = (out :: String, f: NameFault) Res<AllocError> {
     out.quote(f.name)
 }
 
-write_bare_none_binding = (out :: String, f: NameFault) Res<(), AllocError> {
+write_bare_none_binding = (out :: String, f: NameFault) Res<AllocError> {
     out.quote(f.name).try();
     out.add(
         ": `None` names no payload type, and a binding's type is fixed where it is declared, so a later use cannot supply one"
     )
 }
 
-write_literal_lent = (out :: String, f: NameFault) Res<(), AllocError> {
+write_literal_lent = (out :: String, f: NameFault) Res<AllocError> {
     out.quote(f.name).try();
     out.add(
         ": the parameter borrows the argument's storage, and a number with no written type is stored as an i64 (a float as an f64), not as the parameter's type — annotate the binding"
     )
 }
 
-write_immutable_lent = (out :: String, f: LendFault) Res<(), AllocError> {
+write_immutable_lent = (out :: String, f: LendFault) Res<AllocError> {
     out.fmt(
         " `{}` is declared `:`, and the {}",
         f.place,
@@ -525,7 +523,7 @@ write_immutable_lent = (out :: String, f: LendFault) Res<(), AllocError> {
     )
 }
 
-write_ctor_missing = (out :: String, f: NameFault) Res<(), AllocError> {
+write_ctor_missing = (out :: String, f: NameFault) Res<AllocError> {
     out.quote(f.name).try();
     out.add(
         ": a field with no default and no Res is required, and one left out is a zero nobody wrote"
@@ -533,7 +531,7 @@ write_ctor_missing = (out :: String, f: NameFault) Res<(), AllocError> {
 }
 
 write_ctor_constant = (out :: String, types: Types, f: TypeFault)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     found ::= types.name_of(f.found).try();
     out.fmt(
         " `{}` is a constant of `{}`: write `{}.{}` to read it, or `{} :: {}` for the field a construction may supply",
@@ -544,50 +542,44 @@ write_ctor_constant = (out :: String, types: Types, f: TypeFault)
         f.name,
         found.view()
     ).try();
-    Ok(())
 }
 
-write_missing = (out :: String, f: NameFault) Res<(), AllocError> {
+write_missing = (out :: String, f: NameFault) Res<AllocError> {
     out.quote(f.name).try();
     out.add(
         ": an impl supplies a value for every field the bound declares"
     ).try();
-    Ok(());
 }
 
-write_const_pattern = (out :: String, f: NameFault) Res<(), AllocError> {
+write_const_pattern = (out :: String, f: NameFault) Res<AllocError> {
     out.fmt(
         " — `{}` names a constant in scope: compare it with `==`, or rename the binder",
         f.name
     ).try();
-    Ok(());
 }
 
-write_orphan = (out :: String, f: ExportFault) Res<(), AllocError> {
+write_orphan = (out :: String, f: ExportFault) Res<AllocError> {
     out.fmt(
         ": {} is declared in module {}, so the impl belongs there",
         f.name,
         f.module
     ).try();
-    Ok(());
 }
 
 write_member = (out :: String, types: Types, f: TypeFault)
-                Res<(), AllocError> {
+                Res<AllocError> {
     found ::= types.name_of(f.found).try();
     out.fmt(": no `{}` on `{}`", f.name, found.view()).try();
-    Ok(());
 }
 
 write_ctor_surplus = (out :: String, types: Types, f: TypeFault)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     found ::= types.name_of(f.found).try();
     out.fmt(": `{}` has no storage seat left", found.view()).try();
-    Ok(())
 }
 
 write_method_value = (out :: String, types: Types, f: TypeFault)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     sig ::= types.name_of(f.found).try();
     out.fmt(
         " — `{}` is a method with signature `{}`: write the call, `{}()`",
@@ -595,11 +587,10 @@ write_method_value = (out :: String, types: Types, f: TypeFault)
         sig.view(),
         f.name
     ).try();
-    Ok(());
 }
 
 write_needs_value = (out :: String, types: Types, f: TypeFault)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     found   ::= types.name_of(f.found).try();
     carried ::= types.name_of(f.expected).try();
     out.fmt(
@@ -610,29 +601,26 @@ write_needs_value = (out :: String, types: Types, f: TypeFault)
         found.view(),
         f.name
     ).try();
-    Ok(());
 }
 
 write_needs_eq = (out :: String, types: Types, f: TypeFault)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     found ::= types.name_of(f.found).try();
     out.fmt(" — `{}` has none", found.view()).try();
-    Ok(());
 }
 
 write_discarded = (out :: String, types: Types, f: TypeFault)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     found ::= types.name_of(f.found).try();
     out.fmt(
         ": `{}` is computed and read by nothing — bind it, or delete the statement",
         found.view()
     ).try();
-    Ok(());
 }
 
 // A `Res<T>` wrapping a failure names the failure it holds.
 write_dropped = (out :: String, types: Types, f: TypeFault)
-                Res<(), AllocError> {
+                Res<AllocError> {
     found ::= types.name_of(f.found).try();
     out.fmt(": this `{}` is dropped", found.view()).try();
     (f.expected.eq(f.found) == false).then(() {
@@ -642,19 +630,17 @@ write_dropped = (out :: String, types: Types, f: TypeFault)
     out.add(
         ": handle it with `.try()` or `.match`, or discard it with `.ignore()`"
     ).try();
-    Ok(());
 }
 
 // Ownership diagnostics read as a sentence with the place as its subject.
-write_place = (out :: String, f: NameFault, tail: str) Res<(), AllocError> {
+write_place = (out :: String, f: NameFault, tail: str) Res<AllocError> {
     out.fmt(" {}{}", f.name, tail).try();
-    Ok(());
 }
 
 // The faults below have no separate headline: the detail is the whole
 // sentence, with the local or type it names as its subject.
 
-write_assigned_twice = (out :: String, f: NameFault) Res<(), AllocError> {
+write_assigned_twice = (out :: String, f: NameFault) Res<AllocError> {
     out.fmt(
         "`{}` may already hold a value here: a local declared `{}: T;` is assigned exactly once — declare it `{} :: T;` to assign it again",
         f.name,
@@ -663,7 +649,7 @@ write_assigned_twice = (out :: String, f: NameFault) Res<(), AllocError> {
     )
 }
 
-write_type_value = (out :: String, f: TypeValueFault) Res<(), AllocError> {
+write_type_value = (out :: String, f: TypeValueFault) Res<AllocError> {
     f.record.match({
         true  => out.fmt(
             "`{}` is a type, not a value: construct it with `{}()`",
@@ -679,7 +665,7 @@ write_type_value = (out :: String, f: TypeValueFault) Res<(), AllocError> {
 }
 
 write_never_assigned = (out :: String, types: Types, f: UnsetFault)
-                       Res<(), AllocError> {
+                       Res<AllocError> {
     ty ::= types.name_of(f.ty).try();
     marker = f.mutable.match({ true => " ::", false => ":" });
     out.fmt(
@@ -691,7 +677,7 @@ write_never_assigned = (out :: String, types: Types, f: UnsetFault)
     )
 }
 
-write_unassigned = (out :: String, f: InitFault) Res<(), AllocError> {
+write_unassigned = (out :: String, f: InitFault) Res<AllocError> {
     f.maybe.match({
         false => out.fmt(
             "`{}` is {} before it is assigned: no path to here assigns it",
@@ -707,21 +693,20 @@ write_unassigned = (out :: String, f: InitFault) Res<(), AllocError> {
 }
 
 // The secret the refused expression reads, when it names one directly.
-write_secret = (out :: String, f: NameFault) Res<(), AllocError> {
+write_secret = (out :: String, f: NameFault) Res<AllocError> {
     (f.name.len > 0).then(() { out.fmt(" (`{}` is secret)", f.name).try() });
-    Ok(())
+    Ok
 }
 
-write_capture = (out :: String, f: CaptureFault) Res<(), AllocError> {
+write_capture = (out :: String, f: CaptureFault) Res<AllocError> {
     out.fmt(" {} was consumed by a closure that captured it", f.place).try();
     out.add(" — the capture keeps it alive here: ").try();
     out.write_at(f.at).try();
-    Ok(());
 }
 
 // The fix is to build the bound from an owner that outlives the result.
 write_frame_view = (out :: String, f: FrameViewFault, how: str)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     out.add(" the bound value points at").try();
     (f.place.len > 0).match({
         true  => out.fmt(" `{}`", f.place),
@@ -733,10 +718,9 @@ write_frame_view = (out :: String, f: FrameViewFault, how: str)
     out.add(
         " — build the bound from an owner that outlives it: take the bound type as the parameter, or build it from the owner in the place it will live"
     ).try();
-    Ok(());
 }
 
-write_under_view = (out :: String, f: CaptureFault) Res<(), AllocError> {
+write_under_view = (out :: String, f: CaptureFault) Res<AllocError> {
     out.fmt(
         " {} is moved, but a bound value was built over its storage here: ",
         f.place
@@ -745,33 +729,29 @@ write_under_view = (out :: String, f: CaptureFault) Res<(), AllocError> {
     out.add(
         " — the record keeps that address, so after the move it points at the moved-from place; move the owner first and build the bound from its new home"
     ).try();
-    Ok(());
 }
 
-write_export = (out :: String, f: ExportFault) Res<(), AllocError> {
+write_export = (out :: String, f: ExportFault) Res<AllocError> {
     out.fmt(": {} is not exported by module {}", f.name, f.module).try();
-    Ok(());
 }
 
-write_unwritable = (out :: String, f: ExportFault) Res<(), AllocError> {
+write_unwritable = (out :: String, f: ExportFault) Res<AllocError> {
     out.fmt(": {} is not writable outside module {}", f.name, f.module).try();
-    Ok(());
 }
 
-write_module = (out :: String, f: ExportFault) Res<(), AllocError> {
+write_module = (out :: String, f: ExportFault) Res<AllocError> {
     out.fmt(
         ": `{}` names module `{}`, so write `{}.<name>`",
         f.name,
         f.module,
         f.name
     ).try();
-    Ok(());
 }
 
 // Match-arm disagreement has no expected type; contrast this arm with those
 // above it instead.
 write_arms = (out :: String, types: Types, f: TypeFault)
-             Res<(), AllocError> {
+             Res<AllocError> {
     found ::= types.name_of(f.found).try();
     above ::= types.name_of(f.expected).try();
     out.fmt(
@@ -779,33 +759,30 @@ write_arms = (out :: String, types: Types, f: TypeFault)
         found.view(),
         above.view()
     ).try();
-    Ok(());
 }
 
 write_types = (out :: String, types: Types, f: TypeFault)
-              Res<(), AllocError> {
+              Res<AllocError> {
     expected ::= types.name_of(f.expected).try();
     found    ::= types.name_of(f.found).try();
     out.quote(f.name).try();
     out.fmt(": expected {}, found {}", expected.view(), found.view()).try();
-    Ok(());
 }
 
 write_operator_types = (out :: String, types: Types, f: TypeFault)
-                       Res<(), AllocError> {
+                       Res<AllocError> {
     left  ::= types.name_of(f.expected).try();
     right ::= types.name_of(f.found).try();
     f.expected.eq(f.found).match({
         true  => out.fmt(" — `{}`", left.view()),
         false => out.fmt(" — `{}` and `{}`", left.view(), right.view()),
     }).try();
-    Ok(())
 }
 
 // A signed integer converts explicitly; a bool has logical operators; a float
 // under `^` was almost certainly meant as a power.
 write_bit_operand = (out :: String, types: Types, f: TypeFault)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     found ::= types.name_of(f.found).try();
     name = found.view();
     out.fmt(" — `{}` on `{}`", f.name, name).try();
@@ -822,15 +799,14 @@ write_bit_operand = (out :: String, types: Types, f: TypeFault)
                     ),
                     false => out.add(": convert it to an unsigned type first"),
                 }),
-                false => Ok(()),
+                false => Ok,
             }),
         }),
     }).try();
-    Ok(())
 }
 
 write_bit_widths = (out :: String, types: Types, f: TypeFault)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     left  ::= types.name_of(f.expected).try();
     right ::= types.name_of(f.found).try();
     out.fmt(
@@ -839,13 +815,12 @@ write_bit_widths = (out :: String, types: Types, f: TypeFault)
         right.view(),
         f.name
     ).try();
-    Ok(())
 }
 
 // `Range(a, b)` with an i32 `a` and a usize `b`: name both types and the
 // conversion that makes them one.
 write_args_disagree = (out :: String, types: Types, f: TypeFault)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     earlier ::= types.name_of(f.expected).try();
     here    ::= types.name_of(f.found).try();
     out.fmt(
@@ -858,39 +833,36 @@ write_args_disagree = (out :: String, types: Types, f: TypeFault)
     )
 }
 
-write_bit_untyped = (out :: String, f: TypeFault) Res<(), AllocError> {
+write_bit_untyped = (out :: String, f: TypeFault) Res<AllocError> {
     out.fmt(" — `{}`", f.name).try();
     f.name.eq("^").match({
         true  => out.add(
             ": `^` is exclusive-or, not a power; call `pow` from std.math for a power"
         ),
-        false => Ok(()),
+        false => Ok,
     }).try();
-    Ok(())
 }
 
 write_shift_count = (out :: String, types: Types, f: TypeFault)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     found ::= types.name_of(f.found).try();
     out.fmt(" — `{}` count is `{}`", f.name, found.view()).try();
-    Ok(())
 }
 
 // Include source text only when the rejected value is a direct literal.
 write_literal = (out :: String, types: Types, f: TypeFault)
-                Res<(), AllocError> {
+                Res<AllocError> {
     text = f.name;
     out.add(": literal").try();
     (text.len > 0).then(() { out.fmt(" {}", text).try() });
     expected ::= types.name_of(f.expected).try();
     out.fmt(" does not fit {}", expected.view()).try();
-    Ok(());
 }
 
 // `3000000000 does not fit in i32: give `big` a type that holds it, such as
 // `big: i64 = 3000000000``. i64 holds every value a literal binding can.
 write_held = (out :: String, types: Types, f: HeldFault)
-             Res<(), AllocError> {
+             Res<AllocError> {
     expected ::= types.name_of(f.expected).try();
     out.fmt(
         ": {} does not fit in `{}` — give `{}` a type that holds it, such as `{}: i64 = {}`",
@@ -903,7 +875,7 @@ write_held = (out :: String, types: Types, f: HeldFault)
 }
 
 write_untyped_variable = (out :: String, types: Types, f: TypeFault)
-                         Res<(), AllocError> {
+                         Res<AllocError> {
     expected ::= types.name_of(f.expected).try();
     out.fmt(
         " — `{}` is wanted as `{}`: declare it with that type, such as `{} :: {} = …`",
@@ -915,20 +887,19 @@ write_untyped_variable = (out :: String, types: Types, f: TypeFault)
 }
 
 // The two declarations may be in different files.
-write_pair = (out :: String, f: PairFault) Res<(), AllocError> {
+write_pair = (out :: String, f: PairFault) Res<AllocError> {
     out.quote(f.name).try();
     out.add(": ").try();
     out.write_at(f.first).try();
     out.add(" and ").try();
     out.write_at(f.second).try();
-    Ok(());
 }
 
-write_at = (out :: String, span: Span) Res<(), AllocError> {
+write_at = (out :: String, span: Span) Res<AllocError> {
     out.fmt("{}:{}", span.file, span.start)
 }
 
-quote = (out :: String, name: str) Res<(), AllocError> {
+quote = (out :: String, name: str) Res<AllocError> {
     (name.len > 0).then(() { out.fmt(" `{}`", name).try() });
-    Ok(());
+    Ok;
 }

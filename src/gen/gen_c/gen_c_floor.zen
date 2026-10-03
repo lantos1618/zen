@@ -46,7 +46,7 @@ lower_floor_door* = (
     f   : Function,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     sctx = be.check.self_ctx(s.decl.module.to_usize(), rty).try();
     ret  = be.answer_of(f, sctx).try();
     be.floor_of(s, sctx, ret).try().match({
@@ -86,10 +86,10 @@ keep_floor = (
     name : str,
     m    : Member,
     out  :: Vec<Floor>
-) Res<(), AllocError> {
+) Res<AllocError> {
     m.kind.match({
         Function(g) => be.keep_floor_fn(sctx, ret, name, g, out),
-        _           => Ok(()),
+        _           => Ok,
     })
 }
 
@@ -101,9 +101,9 @@ keep_floor_fn = (
     name : str,
     g    : Function,
     out  :: Vec<Floor>
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.floor_shape(g, sctx).try().match({
-        false => Ok(()),
+        false => Ok,
         true  => be.keep_if_answers(sctx, ret, name, g, out),
     })
 }
@@ -135,10 +135,10 @@ keep_if_answers = (
     name : str,
     g    : Function,
     out  :: Vec<Floor>
-) Res<(), AllocError> {
+) Res<AllocError> {
     got = be.answer_of(g, sctx).try();
     (got.index == ret.index).match({
-        false => Ok(()),
+        false => Ok,
         true  => out.add(Floor(name: name, fn: g)),
     })
 }
@@ -169,7 +169,7 @@ open_floor = (
     ret : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     inst = be.recv_inst(rty).try();
     sig ::= be.alloc.Vec<TyId>();
     be.method_sig(rty, s.decl, w.fn, s.decl.module.to_usize(), inst, sig).try();
@@ -208,7 +208,7 @@ write_floor_door = (
     inst : Inst,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     sym = be.member_symbol(rty, s, w.name, sig, inst).try();
     recv ::= be.alloc.String().try();
     be.write_arg(a.base, 0, w.fn, sig, ctx, recv).try();
@@ -230,7 +230,7 @@ write_floor_door = (
     // zero and the values start at one — the member form of the sink
     // door counts the same way.
     arg_value(c, 0).match({
-        None      => Ok(()),
+        None      => Ok,
         Ok(first) => write_pieces(be, c, first, 1, p, ctx),
     }).try();
     be.write_done(p.done).try();

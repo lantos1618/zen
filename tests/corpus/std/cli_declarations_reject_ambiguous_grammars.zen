@@ -81,16 +81,15 @@ main = (env: Env) Res<i32, AllocError> {
     Ok(0)
 }
 
-show = (env: Env, a: Alloc, model: Command<Id>) Res<(), AllocError> {
+show = (env: Env, a: Alloc, model: Command<Id>) Res<AllocError> {
     argv ::= a.Vec<str>();
     argv.add("tool").try();
     parsed = model.parse(env, argv, 1).try();
     parsed.problem.match({
-        None      => println("clean"),
-        Ok(usage) => {
+        Ok         => println("clean"),
+        Err(usage) => {
             message = usage.message(a, model.name).try();
             println("{}", message.view());
         },
     });
-    Ok(())
 }

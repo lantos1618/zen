@@ -14,7 +14,7 @@ is_x = (buf: Vec<u8>, n: usize) bool {
     n == 1 && buf.ptr().read(0) == 'x'
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     alloc = env.mem.alloc();
     TlsStream.connect(alloc, "localhost", HARNESS_PORT).match({
         Ok(s)  => {
@@ -46,5 +46,4 @@ main = (env: Env) Res<(), AllocError> {
             _         => println("mismatch failed before TLS"),
         }),
     });
-    Ok(())
 }

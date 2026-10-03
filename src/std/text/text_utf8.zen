@@ -4,10 +4,11 @@
 { str } = std.text.text_str
 { String } = std.text.text_string
 { AllocError } = std.mem.mem
-{ Res, Ok, Err, loop } = std.core
+{ Res, Ok, Err, loop, Error } = std.core
 
 Utf8Error* = { | Invalid: usize         // byte offset of the first invalid byte
              | InvalidCodepoint: u32 }  // the scalar that cannot be encoded
+Utf8Error.impl(Error, {})
 
 Codepoint* = {
     value*: u32,
@@ -42,10 +43,10 @@ codepoint_at* = (s: str, at: usize) Res<Codepoint, Utf8Error> {
     });
 }
 
-validate_utf8* = (s: str) Res<(), Utf8Error> {
+validate_utf8* = (s: str) Res<Utf8Error> {
     walk ::= s.codepoints();
     loop(!walk.is_done(), (h) { walk.next().try(); });
-    Ok(());
+    Ok;
 }
 
 // Count codepoints; str.len counts bytes instead.
@@ -139,7 +140,7 @@ four_byte = (s: str, at: usize, lead: u8) Res<Codepoint, Utf8Error> {
 
 // Append one Unicode scalar value; an invalid one is rejected before any byte
 // is written.
-push_utf8* = (out :: String, v: u32) Res<(), Utf8Error | AllocError> {
+push_utf8* = (out :: String, v: u32) Res<Utf8Error | AllocError> {
     v.scalar().match({
         false => Err(Utf8Error.InvalidCodepoint(v)),
         true  => v.encoded_len().match({
@@ -164,7 +165,7 @@ past = (v: u32, bound: u32) usize {
     (v >= bound).match({ true => 1, false => 0 })
 }
 
-two_wide = (out :: String, v: u32) Res<(), Utf8Error | AllocError> {
+two_wide = (out :: String, v: u32) Res<Utf8Error | AllocError> {
     cont = UTF8_CONT_MIN.to_u32();
     out.add(
         (UTF8_LEAD_MIN.to_u32() + v / UTF8_CONT_SCALE).narrow().try()
@@ -172,7 +173,7 @@ two_wide = (out :: String, v: u32) Res<(), Utf8Error | AllocError> {
     out.add((cont + v % UTF8_CONT_SCALE).narrow().try())
 }
 
-three_wide = (out :: String, v: u32) Res<(), Utf8Error | AllocError> {
+three_wide = (out :: String, v: u32) Res<Utf8Error | AllocError> {
     cont = UTF8_CONT_MIN.to_u32();
     out.add(
         (UTF8_LEAD_3_MIN.to_u32() + v / (UTF8_CONT_SCALE * UTF8_CONT_SCALE))
@@ -185,7 +186,7 @@ three_wide = (out :: String, v: u32) Res<(), Utf8Error | AllocError> {
     out.add((cont + v % UTF8_CONT_SCALE).narrow().try())
 }
 
-four_wide = (out :: String, v: u32) Res<(), Utf8Error | AllocError> {
+four_wide = (out :: String, v: u32) Res<Utf8Error | AllocError> {
     cont = UTF8_CONT_MIN.to_u32();
     out.add((
         UTF8_LEAD_4_MIN.to_u32()

@@ -4,7 +4,7 @@
 { Res, Ok, Range } = std.core
 { Env } = std.env
 { println } = std.io
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a = env.mem.alloc();
     p = a.raw(16, 1).try();
     Range<usize>(0, 16).loop((i) { p.write(i, (i * 17 + 1).to_u8().value_or(0)); });
@@ -14,5 +14,4 @@ main = (env: Env) Res<(), AllocError> {
     println("{} {} {}", p.read(5), p.read(12), p.read_le64(5));
     p.write_le32(0, 0xA1B2C3D4);
     println("{} {} {}", p.read(0), p.read(3), p.read_be32(0));
-    Ok(())
 }

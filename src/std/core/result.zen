@@ -1,5 +1,8 @@
-// Res<T> represents optional presence. Res<T, E> represents failure with a
-// reason. A bare success value may lift to Ok; None and Err remain explicit.
+// Res<V> is optional presence, `Ok(V) | None`, unless V implements Error:
+// then Res<R> is `Ok | Err(R)`, a unit success or a failure. Res<V, R> is
+// `Ok(V) | Err(R)`. The reading is fixed where `Res<..>` is written, so an
+// unbounded type parameter is always absence. A bare success value may lift
+// to Ok, `()` included; None and Err remain explicit.
 
 Res*<T> = { Ok: T | None }
 

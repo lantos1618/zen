@@ -6,7 +6,7 @@
 { Env } = std.env
 { println } = std.io
 
-show = (env: Env, alloc: Alloc, root: str) Res<(), AllocError> {
+show = (env: Env, alloc: Alloc, root: str) Res<AllocError> {
     build ::= alloc.Build(env, root);
     build.set_std_root("src");
     checked = build.whole("build.zen", alloc.Map<str, str>()).try();
@@ -18,7 +18,6 @@ show = (env: Env, alloc: Alloc, root: str) Res<(), AllocError> {
             println("{} {}", exe.name, exe.spec.backend.stable_name());
         }),
     });
-    Ok(())
 }
 
 main = (env: Env) Res<i32, AllocError> {

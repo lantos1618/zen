@@ -144,7 +144,7 @@ named_base = (c :: Checker, id: ExprId, node: Expr, text: str, ctx: Ctx)
     }).try();
     b.is_type.match({
         false => c.expr_memo.set(id, b.ty),
-        true  => Ok(()),
+        true  => Ok,
     }).try();
     Ok(b);
 }
@@ -152,7 +152,7 @@ named_base = (c :: Checker, id: ExprId, node: Expr, text: str, ctx: Ctx)
 bound_base = (c :: Checker, id: ExprId, b: Binding) Res<Base, AllocError> {
     b.param.match({
         true  => c.param_memo.set(id, true),
-        false => Ok(()),
+        false => Ok,
     }).try();
     Ok(Base(ty: b.ty, is_type: false));
 }
@@ -323,7 +323,7 @@ select = (
 ) Res<TyId, AllocError> {
     kept ::= c.alloc.Vec<Found>();
     found.loop((h, f) {
-        c.has_bound(f.bound).match({ true => kept.add(f), false => Ok(()) }).try();
+        c.has_bound(f.bound).match({ true => kept.add(f), false => Ok }).try();
     });
     kept.len.match({
         1 => c.first_type(id, ty, kept),
@@ -406,15 +406,15 @@ computed_member* = (c :: Checker, ac: Access, ctx: Ctx)
 }
 
 writable_member* = (c :: Checker, ac: Access, ctx: Ctx)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     c.found_of(ac, ctx).try().match({
         Ok(f) => c.written_from(ac, f, ctx),
-        None  => Ok(()),
+        None  => Ok,
     })
 }
 
 written_from = (c :: Checker, ac: Access, f: Found, ctx: Ctx)
-               Res<(), AllocError> {
+               Res<AllocError> {
     c.native_constant(f).match({
         true  => c.report(
             ac.name.span.file,
@@ -423,7 +423,7 @@ written_from = (c :: Checker, ac: Access, f: Found, ctx: Ctx)
         ),
         false => ((f.computed == false) && (f.module != ctx.module)).match({
             true  => c.not_writable(ac, f),
-            false => Ok(()),
+            false => Ok,
         }),
     })
 }
@@ -441,7 +441,7 @@ native_constant = (c: Checker, f: Found) bool {
     })
 }
 
-not_writable = (c :: Checker, ac: Access, f: Found) Res<(), AllocError> {
+not_writable = (c :: Checker, ac: Access, f: Found) Res<AllocError> {
     c.report(
         ac.name.span.file,
         ac.name.span,
@@ -455,31 +455,31 @@ not_writable = (c :: Checker, ac: Access, f: Found) Res<(), AllocError> {
 first_found* = (found: Vec<Found>) Res<Found> { found.get(0) }
 
 members_of* = (c :: Checker, ty: TyId, name: str, out :: Vec<Found>)
-              Res<(), AllocError> {
+              Res<AllocError> {
     c.types.at(ty).match({
         Named(n) => c.named_members(n, ty, name, out),
         Prim(p)  => c.prim_members(p, ty, name, out),
         Var(v)   => c.bound_reachable(v.name, ty, name, out),
-        _        => Ok(()),
+        _        => Ok,
     }).try();
     (out.len == 0).then(() { c.behavior_members(ty, name, out).try() });
-    Ok(());
+    Ok;
 }
 
 behavior_members = (c :: Checker, ty: TyId, name: str, out :: Vec<Found>)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     c.ref_of_actor(ty).try().match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(a) => c.behavior_set(a, name, out),
     })
 }
 
 behavior_set = (c :: Checker, a: TyId, name: str, out :: Vec<Found>)
-               Res<(), AllocError> {
+               Res<AllocError> {
     c.types.at(a).match({
         Named(n) => c.behavior_impls(n, a, name, out),
         Var(v)   => c.behavior_bounds(v.name, a, name, out),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
@@ -489,7 +489,7 @@ behavior_bounds = (
     a     : TyId,
     name  : str,
     out   :: Vec<Found>
-) Res<(), AllocError> {
+) Res<AllocError> {
     declared ::= c.alloc.Vec<Found>();
     c.bound_reachable(owner, a, name, declared).try();
     declared.loop((h, f) {
@@ -508,7 +508,7 @@ behavior_bounds = (
             span: f.span,
         )).try();
     });
-    Ok(())
+    Ok
 }
 
 behavior_impls = (
@@ -517,7 +517,7 @@ behavior_impls = (
     a    : TyId,
     name : str,
     out  :: Vec<Found>
-) Res<(), AllocError> {
+) Res<AllocError> {
     impls ::= c.alloc.Vec<LocalImpl>();
     c.local_impls(n, impls).try();
     impls.loop((h, li) {
@@ -525,7 +525,7 @@ behavior_impls = (
             m.named(name).then(() { c.send_found(m, a, li, out).try() });
         });
     });
-    Ok(())
+    Ok
 }
 
 send_found = (
@@ -534,10 +534,10 @@ send_found = (
     a   : TyId,
     li  : LocalImpl,
     out :: Vec<Found>
-) Res<(), AllocError> {
+) Res<AllocError> {
     m.kind.match({
         Function(f) => f.body.match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(_) => {
                 mi   = li.id.decl.module.to_usize();
                 full = c.member_type(m, mi, a).try();
@@ -554,7 +554,7 @@ send_found = (
                 ))
             },
         }),
-        _           => Ok(()),
+        _           => Ok,
     })
 }
 
@@ -653,9 +653,9 @@ prim_members = (
     ty   : TyId,
     name : str,
     out  :: Vec<Found>
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.prim_named(p).try().match({
-        None   => Ok(()),
+        None   => Ok,
         Ok(pn) => c.named_members(pn, ty, name, out),
     })
 }
@@ -666,13 +666,13 @@ bound_reachable = (
     ty    : TyId,
     name  : str,
     out   :: Vec<Found>
-) Res<(), AllocError> {
+) Res<AllocError> {
     bounds ::= c.alloc.Vec<TyId>();
     c.bounds_of(tname, bounds).try();
     bounds.loop((h, b) {
         c.bound_member(b, ty, name, out).try();
     });
-    Ok(());
+    Ok;
 }
 
 bound_member = (
@@ -681,7 +681,7 @@ bound_member = (
     ty    : TyId,
     name  : str,
     out   :: Vec<Found>
-) Res<(), AllocError> {
+) Res<AllocError> {
     tys ::= c.alloc.Vec<TyId>();
     c.bound_member_types(bound, name, ty, tys).try();
     all ::= c.alloc.Vec<Member>();
@@ -692,7 +692,7 @@ bound_member = (
     module = c.bound_module(bound);
     tys.loop((h, i, t) {
         kept.get(i).match({
-            None    => Ok(()),
+            None    => Ok,
             Ok(mem) => out.add(supplied_found(
                 name,
                 t,
@@ -704,7 +704,7 @@ bound_member = (
             )),
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
 bound_span = (c: Checker, bound: TyId) Span {
@@ -724,7 +724,7 @@ named_members = (
     ty   : TyId,
     name : str,
     out  :: Vec<Found>
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.tree.decl_at(n.decl).match({
         Ok(d) => d.kind.match({
             Struct(s) => c.own_members(
@@ -750,12 +750,12 @@ named_members = (
                 name,
                 out
             ),
-            _         => Ok(()),
+            _         => Ok,
         }),
-        None  => Ok(()),
+        None  => Ok,
     }).try();
     (out.len == 0).then(() { c.impl_members(n, ty, name, out).try() });
-    Ok(());
+    Ok;
 }
 
 // The members a struct or enum body declares under `name`.
@@ -769,9 +769,9 @@ own_members = (
     ty      : TyId,
     name    : str,
     out     :: Vec<Found>
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.world.member_rows(n.decl, name).match({
-        None     => Ok(()),
+        None     => Ok,
         Ok(rows) => {
             mi     = n.decl.module.to_usize();
             poison = c.types.unknown().try();
@@ -780,7 +780,7 @@ own_members = (
             c.enter_type_tvars(owner, tparams, mi).try();
             rows.loop((h, i) {
                 members.get(i).match({
-                    None  => Ok(()),
+                    None  => Ok,
                     Ok(m) => c.add_own(
                         m,
                         name,
@@ -794,7 +794,7 @@ own_members = (
                 }).try();
             });
             c.release_tvars(tmark).try();
-            Ok(())
+            Ok
         },
     })
 }
@@ -802,7 +802,7 @@ own_members = (
 // A struct's type parameters are owner-qualified `Ty.Var`s, not the
 // arguments of an instantiation.
 enter_struct_tvars* = (c :: Checker, s: Struct, mi: usize)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     c.enter_type_tvars(s.name, s.tparams, mi)
 }
 
@@ -812,7 +812,7 @@ enter_type_tvars* = (
     name    : Ident,
     tparams : Vec<TParam>,
     mi      : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     owner = c.owner_of(mi, name.text).try();
     c.push_tparams(tparams, owner)
 }
@@ -828,7 +828,7 @@ add_own = (
     native_constants : bool,
     out              :: Vec<Found>
 )
-          Res<(), AllocError> {
+          Res<AllocError> {
     declared = c.member_type(m, mi, ty).try();
     out.add(Found(
         name: name,

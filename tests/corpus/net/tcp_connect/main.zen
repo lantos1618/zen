@@ -29,7 +29,7 @@ is_p = (buf: Vec<u8>, n: usize) bool {
     })
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     alloc ::= env.mem.alloc();
     TcpStream.connect(alloc, "127.0.0.1", HARNESS_PORT).match({
         Ok(s)  => {
@@ -78,5 +78,4 @@ main = (env: Env) Res<(), AllocError> {
             });
         },
     });
-    Ok(())
 }

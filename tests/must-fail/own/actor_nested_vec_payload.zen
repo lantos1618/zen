@@ -18,9 +18,8 @@ Worker.impl(Actor, {
     }
 })
 
-forward = (worker: Ref<Worker>, payload: Envelope) Res<(), ActorError> {
+forward = (worker: Ref<Worker>, payload: Envelope) Res<ActorError> {
     worker.process(payload).try();
-    Ok(())
 }
 
 main = (env: Env) Res<i32, AllocError> { Ok(0) }

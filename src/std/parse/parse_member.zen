@@ -47,12 +47,12 @@ member_list = (
 
 // The members of an enum body, after the `,` that ends its variants. The
 // caller consumes the closing `}`.
-member_run* = (p :: Parser, out :: Vec<Member>) Res<(), AllocError> {
+member_run* = (p :: Parser, out :: Vec<Member>) Res<AllocError> {
     p.members_until_close(out, true)
 }
 
 members_until_close = (p :: Parser, out :: Vec<Member>, typed: bool)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     running ::= !p.at_kind(TokenKind.BraceClose) && !p.at_eof();
     running.loop((h) {
         before = p.at;
@@ -69,7 +69,7 @@ members_until_close = (p :: Parser, out :: Vec<Member>, typed: bool)
             TokenKind.BraceClose
         ) && !p.at_eof() && p.at > before;
     });
-    Ok(())
+    Ok
 }
 
 one_member = (p :: Parser, typed: bool) Res<Member, AllocError> {
@@ -292,7 +292,7 @@ fn_value* = (
     ));
 }
 
-typed_params = (p :: Parser, ps: Vec<Param>) Res<(), AllocError> {
+typed_params = (p :: Parser, ps: Vec<Param>) Res<AllocError> {
     ps.loop((h, param) {
         param.type.match({
             Ok(_) => (),
@@ -302,7 +302,7 @@ typed_params = (p :: Parser, ps: Vec<Param>) Res<(), AllocError> {
             ).try(),
         });
     });
-    Ok(());
+    Ok;
 }
 
 fn_body = (p :: Parser) Res<Res<BlockId>, AllocError> {
@@ -375,7 +375,7 @@ param_type = (p :: Parser) Res<Res<TypeId>, AllocError> {
 }
 
 // Type-parameter bounds are joined with `+`; `|` is reserved for unions.
-type_params* = (p :: Parser, out :: Vec<TParam>) Res<(), AllocError> {
+type_params* = (p :: Parser, out :: Vec<TParam>) Res<AllocError> {
     open = p.here_span();
     p.expect(TokenKind.Lt, "expected `<` to open a type parameter list").try();
     running ::= !p.at_kind(TokenKind.Gt) && !p.at_eof();
@@ -389,7 +389,7 @@ type_params* = (p :: Parser, out :: Vec<TParam>) Res<(), AllocError> {
         "unclosed `<`: this type parameter list is never closed",
         open
     ).try();
-    Ok(());
+    Ok;
 }
 
 one_tparam = (p :: Parser) Res<TParam, AllocError> {
@@ -409,11 +409,11 @@ one_tparam = (p :: Parser) Res<TParam, AllocError> {
     ));
 }
 
-type_bounds = (p :: Parser, out :: Vec<TypeId>) Res<(), AllocError> {
+type_bounds = (p :: Parser, out :: Vec<TypeId>) Res<AllocError> {
     out.add(p.type().try()).try();
     loop(p.at_kind(TokenKind.Plus), (h) {
         p.bump().try();
         out.add(p.type().try()).try();
     });
-    Ok(());
+    Ok;
 }

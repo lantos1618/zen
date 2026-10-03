@@ -10,7 +10,7 @@
 { println } = std.io
 
 recheck = (c :: Checker, id: ExprId, call: Call, ty: str)
-          Res<(), AllocError> {
+          Res<AllocError> {
     mark = c.mark();
     c.bind("value", c.types.prim(ty).try(), false, false).try();
     c.enter_recheck();
@@ -36,10 +36,9 @@ recheck = (c :: Checker, id: ExprId, call: Call, ty: str)
         c.resolved_inst(id).match({ Ok(_) => true, None => false }),
         signature
     );
-    Ok(())
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a      = env.mem.alloc();
     source = "take = <T>(v: T) T { v }\nmain = () { value: u8 = 7; take<u8>(value); }\n";
     lexed  = scan(a, Source(file: "calls.zen", text: source)).try();
@@ -60,5 +59,4 @@ main = (env: Env) Res<(), AllocError> {
             _          => (),
         });
     });
-    Ok(())
 }

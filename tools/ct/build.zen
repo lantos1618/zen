@@ -1,6 +1,6 @@
 { Builder, BuildError } = std.build
 { Res, Ok, Path } = std.core
-build = (b :: Builder) Res<(), BuildError> {
+build = (b :: Builder) Res<BuildError> {
     b.exe(
         "ct-asm",
         {src: Path("ct_asm.zen"), deps: [], out: Ok(Path("../../build/ct-asm"))}
@@ -21,5 +21,5 @@ build = (b :: Builder) Res<(), BuildError> {
         "ct",
         {src: Path("check.zen"), deps: [], out: Ok(Path("../../build/ct-check"))}
     ).try();
-    Ok(())
+    Ok
 }

@@ -27,7 +27,7 @@ FailAt.impl(Alloc, {
     }
 })
 
-check = (a: Alloc, name: str, text: str, clean: bool) Res<(), AllocError> {
+check = (a: Alloc, name: str, text: str, clean: bool) Res<AllocError> {
     calls ::= a.Vec<usize>();
     calls.add(0).try();
     baseline = scan(
@@ -50,10 +50,9 @@ check = (a: Alloc, name: str, text: str, clean: bool) Res<(), AllocError> {
         baseline.is_clean() == clean,
         refused
     );
-    Ok(())
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a = env.mem.alloc();
     check(a, "valid", "\"hello\\n\"", true).try();
     check(a, "unknown", "\"\\q\"", false).try();
@@ -61,5 +60,4 @@ main = (env: Env) Res<(), AllocError> {
     check(a, "carriage", "\"\\\r\"", false).try();
     check(a, "character", "'\\q'", false).try();
     check(a, "multiple", "\"\\q\\z\" '\\x'", false).try();
-    Ok(())
 }

@@ -6,9 +6,8 @@
 // The same rule through method syntax on a free function.
 Counter = { n :: i32 }
 bump = (counter :: Counter) { counter.n = counter.n + 1; }
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     counter = Counter(n: 1);
     counter.bump();
     println("{}", counter.n);
-    Ok(())
 }

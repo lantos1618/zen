@@ -118,11 +118,10 @@ Split = {
         self.aggregate(slot) && !self.bad.get(self.root(slot)).value_or(true)
     }
 
-    note = (self :: @Self, owner: usize, at: usize, class: Scalar) Res<(), AllocError> {
+    note = (self :: @Self, owner: usize, at: usize, class: Scalar) Res<AllocError> {
         self.owner.add(owner).try();
         self.offset.add(at).try();
         self.class.add(class).try();
-        Ok(())
     }
 
     run = (self :: @Self) Res<Func, AllocError> {
@@ -178,7 +177,7 @@ Split = {
         self.aggregate(slot).then(() { self.disqualify(slot); });
     }
 
-    survey = (self :: @Self, instruction: Instruction) Res<(), AllocError> {
+    survey = (self :: @Self, instruction: Instruction) Res<AllocError> {
         instruction.match({
             AddressOf(v)  => (self.pointee.get(v.out).value_or(0) == 0).then(() { self.disqualify(v.slot); }),
             Copy(v)       => self.aggregate(v.out).match({
@@ -224,12 +223,12 @@ Split = {
                 });
             },
         });
-        Ok(())
+        Ok
     }
 
     // Collect each good family's distinct fields; overlapping or
     // disagreeing accesses disqualify the family.
-    fields = (self :: @Self) Res<(), AllocError> {
+    fields = (self :: @Self) Res<AllocError> {
         count = self.function.slots.len;
         roots ::= self.alloc.Vec<usize>();
         order ::= self.alloc.Vec<usize>();
@@ -265,7 +264,6 @@ Split = {
             });
         });
         self.starts.add(self.layout.len).try();
-        Ok(())
     }
 
     // The slot of member `b`'s field at `at`.
@@ -662,7 +660,7 @@ Tables = {
 
     emit = (self :: @Self, b: usize, subject: usize, low: i64, span: usize, keys: Vec<i64>,
             values: Vec<i64>, fallback_value: i64, out: usize, join: usize, fallback: usize)
-           Res<(), AllocError> {
+           Res<AllocError> {
         result = self.slots.get(out).value_or(Scalar.U64);
         size   = width(result);
         table ::= self.alloc.String().try();
@@ -757,14 +755,13 @@ Tables = {
             exit: Terminator.Jump(join)
         )).try();
         self.follow.add(b).try();
-        Ok(())
     }
 }
 
 small = (value: i64) bool { value > -2147483648 && value < 2147483648 }
 
 // Append `value`'s low `size` bytes, least significant first.
-append_bytes = (out :: String, value: i64, size: usize) Res<(), AllocError> {
+append_bytes = (out :: String, value: i64, size: usize) Res<AllocError> {
     pattern ::= (value < 0).match({
         true  => u64.MAX - (-(value + 1)).to_usize().value_or(0).to_u64(),
         false => value.to_usize().value_or(0).to_u64(),
@@ -773,7 +770,7 @@ append_bytes = (out :: String, value: i64, size: usize) Res<(), AllocError> {
         out.add((pattern % 256).to_usize().value_or(0).to_u8().value_or(0)).try();
         pattern = pattern / 256;
     });
-    Ok(())
+    Ok
 }
 
 // Rewrite every table-shaped match in `function`, then drop the blocks
@@ -1016,7 +1013,7 @@ splice = (
     site   : usize,
     call   : Invocation,
     callee : Func
-) Res<(), AllocError> {
+) Res<AllocError> {
     block = blocks.get(b).value_or(BasicBlock(code: alloc.Vec<Instruction>(), exit: Terminator.Jump(b)));
     base  = slots.len;
     callee.slots.loop((ty) { slots.add(ty).try(); });
@@ -1064,7 +1061,6 @@ splice = (
         ); }
     );
     blocks.add(BasicBlock(code: tail, exit: block.exit)).try();
-    Ok(())
 }
 
 // `instruction` with every slot moved up by `base`.

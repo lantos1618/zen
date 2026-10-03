@@ -33,20 +33,20 @@ reserved_primitive = (name: str) bool {
 }
 
 primitive_signature* = (c :: Checker, d: Def, f: Function)
-                       Res<(), AllocError> {
+                       Res<AllocError> {
     module = c.world.module_name(d.id);
     module.eq(IO_MODULE).match({
         true  => c.printer_signature(d, f),
         false => (primitive_module(module) || reserved_primitive(f.name.text))
             .match({
-                false => Ok(()),
+                false => Ok,
                 true  => c.primitive_declaration(d, f, module),
             }),
     })
 }
 
 primitive_declaration = (c :: Checker, d: Def, f: Function, module: str)
-                        Res<(), AllocError> {
+                        Res<AllocError> {
     ctx = Ctx(d.id.module.to_usize(), c.types.unknown().try());
     params ::= c.alloc.Vec<TyId>();
     names  ::= c.alloc.Vec<String>();
@@ -218,10 +218,10 @@ is_capability* = (name: str) bool {
 }
 
 forged_capability* = (c :: Checker, id: ExprId, d: Def, ctx: Ctx)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     owned = c.world.module_name(d.id).eq("std.simd") && is_capability(d.name);
     (owned && !c.world.name_at(ctx.module).eq("std.simd")).match({
-        false => Ok(()),
+        false => Ok,
         true  => {
             span = c.tree.expr_at(id).span;
             c.report(

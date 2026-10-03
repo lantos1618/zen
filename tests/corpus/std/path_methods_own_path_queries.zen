@@ -3,7 +3,7 @@
 { Env } = std.env
 { println } = std.io
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     path = Path("src/app/main.zen");
     println("{}", path.name());
     println("{}", path.parent().value_or(Path("")).text);
@@ -12,5 +12,4 @@ main = (env: Env) Res<(), AllocError> {
         Ok(_) => true,
         None  => false,
     }));
-    Ok(())
 }

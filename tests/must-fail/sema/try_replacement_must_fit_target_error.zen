@@ -1,8 +1,10 @@
-{ Res, Err } = std.core
+{ Res, Err, Error } = std.core
 { Env } = std.env
 
 SourceError = { | Bad }
+SourceError.impl(Error, {})
 TargetError = { | Changed }
+TargetError.impl(Error, {})
 
 raise = () Res<i32, SourceError> { Err(SourceError.Bad) }
 

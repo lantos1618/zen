@@ -22,7 +22,7 @@
 { Alloc, AllocError } = std.mem
 { Vec, Map } = std.collections
 { str, String } = std.text
-{ Res, Ok, Err, None, loop, Range } = std.core
+{ Res, Ok, Err, None, loop, Range, Error } = std.core
 { Isa, Finding, CallShape, function_lines, global_label, parse_lines, analyze, argument_reads, with_precise, unknown_shape } = taint
 { Marked, marked_functions, seed_of, result_registers } = abi
 { Entry, manifest_entries, manifest_functions, call_shapes, audited_shape, plain_definition } = abi
@@ -33,6 +33,7 @@ AuditFault* = { | NoMarkedFunctions
     | CompileFailed
     | MissingSymbol
     | UnmatchedEntry }
+AuditFault.impl(Error, {})
 
 // `inlined`: audited functions the compiler left with no out-of-line copy
 // in the inlined audit, whose code is checked inside their callers.
@@ -423,7 +424,7 @@ measure_reads = (
     marked     : Vec<Marked>,
     shapes_x86 :: Map<str, CallShape>,
     shapes_arm :: Map<str, CallShape>
-) Res<(), AllocError> {
+) Res<AllocError> {
     marked.loop((m) {
         body = function_lines(a, asm, m.symbol).try();
         (body.len > 0).then(() {
@@ -444,7 +445,7 @@ measure_reads = (
             });
         });
     });
-    Ok(())
+    Ok
 }
 
 // Compile `c_file` to assembly, with one `extra` flag or none (""); the
@@ -735,9 +736,9 @@ clone_of = (a: Alloc, asm: str, symbol: str) Res<str, AllocError> {
 // Add a function unless one with its symbol is already listed: the first
 // description of a function (root, then Secret marking, then manifest) is
 // the one audited.
-add_new = (list :: Vec<Marked>, m: Marked) Res<(), AllocError> {
+add_new = (list :: Vec<Marked>, m: Marked) Res<AllocError> {
     list.find((k) { k.symbol.eq(m.symbol) }).match({
-        Ok(_) => Ok(()),
+        Ok(_) => Ok,
         None  => list.add(m),
     })
 }

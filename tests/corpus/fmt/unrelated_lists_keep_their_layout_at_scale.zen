@@ -5,7 +5,7 @@
 { Env } = std.env
 { println } = std.io
 
-check = (env: Env, count: usize) Res<(), AllocError> {
+check = (env: Env, count: usize) Res<AllocError> {
     a = env.mem.alloc();
     input  ::= a.String("main = () {\n").try();
     wanted ::= a.String("main = () {\n").try();
@@ -28,13 +28,11 @@ check = (env: Env, count: usize) Res<(), AllocError> {
         result.text.view().eq(wanted.view()),
         result.text.view().eq(second.text.view())
     );
-    Ok(())
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     check(env, 100).try();
     check(env, 400).try();
     check(env, 1600).try();
     check(env, 6400).try();
-    Ok(())
 }

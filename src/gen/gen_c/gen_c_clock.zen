@@ -15,14 +15,14 @@
 
 // Emit only when used. since_start uses CLOCK_MONOTONIC; unix uses
 // CLOCK_REALTIME. Both return nanoseconds in u64 arithmetic.
-emit_clock* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+emit_clock* = (be :: CBackend, out :: Emit) Res<AllocError> {
     be.uses_clock().match({
-        false => Ok(()),
+        false => Ok,
         true  => be.write_clock(out),
     })
 }
 
-write_clock = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+write_clock = (be :: CBackend, out :: Emit) Res<AllocError> {
     // Replace any earlier feature level before including the POSIX clock API.
     out.say("#undef _POSIX_C_SOURCE").try();
     out.say("#define _POSIX_C_SOURCE 200809L").try();
@@ -39,11 +39,10 @@ write_clock = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     out.line().try();
     be.write_read(out, "zg_clock_monotonic_ns", "CLOCK_MONOTONIC").try();
     be.write_read(out, "zg_clock_unix_ns", "CLOCK_REALTIME").try();
-    Ok(());
 }
 
 write_read = (be :: CBackend, out :: Emit, fn: str, which: str)
-             Res<(), AllocError> {
+             Res<AllocError> {
     head ::= be.alloc.String().try();
     head.fmt("static uint64_t {}(void) {{", fn).try();
     out.say(head.view()).try();
@@ -57,7 +56,6 @@ write_read = (be :: CBackend, out :: Emit, fn: str, which: str)
     out.dedent();
     out.say("}").try();
     out.line().try();
-    Ok(());
 }
 
 // Clock receivers carry authority only and emit no C value. A read remains a
@@ -69,7 +67,7 @@ lower_clock_read* = (
     ret  : TyId,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.need_clock();
     be.request_type(ret).try();
     ns ::= be.alloc.String().try();

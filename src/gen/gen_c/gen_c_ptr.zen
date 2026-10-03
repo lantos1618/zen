@@ -172,7 +172,7 @@ PtrCall = {
     base: str,
 
     lower = (self: @Self, be :: CBackend, out :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
         byte_order_verb(self.site.name).match({
             true  => self.byte_order(be, out),
             false => self.element_access(be, out),
@@ -180,7 +180,7 @@ PtrCall = {
     }
 
     element_access = (self: @Self, be :: CBackend, out :: String)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
         self.site.name.match({
             "read_volatile"  => self.volatile_read(be, out),
             "write_volatile" => self.volatile_write(be, out),
@@ -193,7 +193,7 @@ PtrCall = {
     // Volatile accesses go through a `volatile T *` so the C compiler
     // performs each one exactly as written: none is elided or merged.
     volatile_run = (self: @Self, be :: CBackend, out :: String)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         be.request_type(self.et).try();
         cty ::= be.alloc.String().try();
         be.ctype(self.et, cty).try();
@@ -201,7 +201,7 @@ PtrCall = {
     }
 
     volatile_read = (self: @Self, be :: CBackend, out :: String)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
         self.volatile_run(be, out).try();
         out.add("[").try();
         self.index_arg(be, 0, out).try();
@@ -209,7 +209,7 @@ PtrCall = {
     }
 
     volatile_write = (self: @Self, be :: CBackend, out :: String)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
         ptr ::= be.alloc.String().try();
         self.volatile_run(be, ptr).try();
         idx ::= be.alloc.String().try();
@@ -221,7 +221,7 @@ PtrCall = {
     }
 
     after_read = (self: @Self, be :: CBackend, out :: String)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
         self.site.name.eq("write").match({
             true  => self.write(be, out),
             false => self.after_write(be, out),
@@ -229,7 +229,7 @@ PtrCall = {
     }
 
     after_write = (self: @Self, be :: CBackend, out :: String)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         self.site.name.eq("offset").match({
             true  => self.shift(be, " + ", out),
             false => self.after_offset(be, out),
@@ -237,7 +237,7 @@ PtrCall = {
     }
 
     after_offset = (self: @Self, be :: CBackend, out :: String)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         self.site.name.eq("back").match({
             true  => self.shift(be, " - ", out),
             false => self.after_back(be, out),
@@ -245,7 +245,7 @@ PtrCall = {
     }
 
     after_back = (self: @Self, be :: CBackend, out :: String)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
         self.site.name.eq("bytes").match({
             true  => self.byte_size(be, out),
             false => self.after_bytes(be, out),
@@ -253,7 +253,7 @@ PtrCall = {
     }
 
     after_bytes = (self: @Self, be :: CBackend, out :: String)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         self.site.name.eq("copy_from").match({
             true  => self.copy_from(be, out),
             false => self.after_copy(be, out),
@@ -261,7 +261,7 @@ PtrCall = {
     }
 
     after_copy = (self: @Self, be :: CBackend, out :: String)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
         self.site.name.eq("same").match({
             true  => self.same(be, out),
             false => self.after_same(be, out),
@@ -269,7 +269,7 @@ PtrCall = {
     }
 
     after_same = (self: @Self, be :: CBackend, out :: String)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
         self.site.name.eq("is_null").match({
             true  => out.fmt("({} == NULL)", self.base),
             false => self.reinterpret(be, out),
@@ -282,7 +282,7 @@ PtrCall = {
     // and unlike a cast through a wider pointer it needs no alignment and
     // breaks no aliasing rule.
     byte_order = (self: @Self, be :: CBackend, out :: String)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
         be.is_byte(self.et).match({
             false => be.unsupported(
                 self.id,
@@ -294,7 +294,7 @@ PtrCall = {
     }
 
     byte_order_bytes = (self: @Self, be :: CBackend, out :: String)
-                       Res<(), AllocError> {
+                       Res<AllocError> {
         name  = self.site.name;
         width = byte_order_width(name);
         vty   = byte_order_value(be, width).try();
@@ -337,23 +337,22 @@ PtrCall = {
     }
 
     same = (self: @Self, be :: CBackend, out :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
         other ::= be.alloc.String().try();
         self.value_arg(be, 0, self.site.rty, other).try();
         out.fmt("({} == ({}))", self.base, other.view())
     }
 
     read = (self: @Self, be :: CBackend, out :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
         self.run(be, out).try();
         out.add("[").try();
         self.index_arg(be, 0, out).try();
         out.add("]").try();
-        Ok(())
     }
 
     write = (self: @Self, be :: CBackend, out :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
         ptr ::= be.alloc.String().try();
         self.run(be, ptr).try();
         idx ::= be.alloc.String().try();
@@ -365,26 +364,25 @@ PtrCall = {
     }
 
     run = (self: @Self, be :: CBackend, out :: String)
-          Res<(), AllocError> {
+          Res<AllocError> {
         be.request_type(self.et).try();
         out.add(self.base).try();
-        Ok(())
     }
 
     shift = (self: @Self, be :: CBackend, op: str, out :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
         count ::= be.alloc.String().try();
         self.index_arg(be, 0, count).try();
         out.fmt("({}{}({}))", self.base, op, count.view())
     }
 
     byte_size = (self: @Self, be :: CBackend, out :: String)
-                Res<(), AllocError> {
+                Res<AllocError> {
         self.scaled_bytes(be, 0, out)
     }
 
     copy_from = (self: @Self, be :: CBackend, out :: String)
-                Res<(), AllocError> {
+                Res<AllocError> {
         from ::= be.alloc.String().try();
         self.value_arg(be, 0, self.site.rty, from).try();
         n ::= be.alloc.String().try();
@@ -399,12 +397,12 @@ PtrCall = {
     }
 
     count_bytes = (self: @Self, be :: CBackend, out :: String)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         self.scaled_bytes(be, 1, out)
     }
 
     scaled_bytes = (self: @Self, be :: CBackend, i: usize,
-                    out :: String) Res<(), AllocError> {
+                    out :: String) Res<AllocError> {
         be.request_type(self.et).try();
         count ::= be.alloc.String().try();
         self.index_arg(be, i, count).try();
@@ -414,7 +412,7 @@ PtrCall = {
     }
 
     reinterpret = (self: @Self, be :: CBackend, out :: String)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         self.site.target_ptr(be).try().match({
             Ok(pt) => be.write_reinterpret(pt, self.base, out),
             None   => be.untyped(self.id, "to", out),
@@ -422,13 +420,13 @@ PtrCall = {
     }
 
     index_arg = (self: @Self, be :: CBackend, i: usize, out :: String)
-                Res<(), AllocError> {
+                Res<AllocError> {
         usize_ty = be.check.types.prim("usize").try();
         self.value_arg(be, i, usize_ty, out)
     }
 
     value_arg = (self: @Self, be :: CBackend, i: usize, want: TyId,
-                 out :: String) Res<(), AllocError> {
+                 out :: String) Res<AllocError> {
         self.site.c.args.get(i).match({
             Ok(a) => expr(be, a.value, self.site.ctx, want, out),
             None  => out.add("0"),
@@ -446,7 +444,7 @@ lower_ptr_member* = (
     want : TyId,
     out  :: String
 )
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     et = be.elem_of(rty).try();
     ptr_unit_policy(be, et, a.name.text).match({
         PtrRefuse => be.unsupported(
@@ -469,7 +467,7 @@ lower_ptr_call = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     copying = a.name.text.is_in(["read", "copy_from"]);
     (copying && be.check.contains_drop(et).try()).match({
         true  => {
@@ -493,7 +491,7 @@ emit_ptr_call = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     base ::= be.alloc.String().try();
     be.address(a.base, rty, ctx, base).try();
     site = PtrTypeSite(c: c, name: a.name.text, rty: rty, ctx: ctx, want: want);
@@ -507,7 +505,7 @@ lower_zero_run = (
     rty : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.deliver(a.base, ctx, rty, Dest.Discard).try();
     a.name.text.eq("bytes").match({
         true  => be.discard_ptr_arg(
@@ -530,10 +528,10 @@ discard_ptr_arg = (
     i    : usize,
     want : TyId,
     ctx  : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.args.get(i).match({
         Ok(a) => be.deliver(a.value, ctx, want, Dest.Discard),
-        None  => Ok(()),
+        None  => Ok,
     })
 }
 
@@ -545,11 +543,10 @@ address = (
     rty  : TyId,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     out.add("(").try();
     expr(be, base, ctx, rty, out).try();
     out.add(")").try();
-    Ok(());
 }
 
 // A `to<U>` with no written argument can only mean the expectation, and
@@ -578,7 +575,7 @@ intern_ptr = (c :: Checker, n: TyNamed, qname: str, args: Vec<TyId>)
 }
 
 write_reinterpret = (be :: CBackend, pt: TyId, base: str, out :: String)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     be.request_type(pt).try();
     cty ::= be.alloc.String().try();
     be.ctype(pt, cty).try();
@@ -595,7 +592,7 @@ write_reinterpret = (be :: CBackend, pt: TyId, base: str, out :: String)
 is_null_ptr* = (name: str) bool { name.eq("null_ptr") }
 
 lower_null_ptr* = (be :: CBackend, id: ExprId, want: TyId, out :: String)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     be.named_ptr(want).match({
         false => be.untyped(id, "null_ptr", out),
         true  => be.write_null(want, out),
@@ -603,7 +600,7 @@ lower_null_ptr* = (be :: CBackend, id: ExprId, want: TyId, out :: String)
 }
 
 write_null = (be :: CBackend, want: TyId, out :: String)
-             Res<(), AllocError> {
+             Res<AllocError> {
     be.request_type(want).try();
     cty ::= be.alloc.String().try();
     be.ctype(want, cty).try();

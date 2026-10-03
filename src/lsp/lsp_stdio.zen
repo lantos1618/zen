@@ -55,11 +55,10 @@ serve_stdio* = (env: Env, a: Alloc) Res<i32, AllocError> {
     );
 }
 
-print_settled = (server :: Server, t: Alloc) Res<(), AllocError> {
+print_settled = (server :: Server, t: Alloc) Res<AllocError> {
     out ::= t.String().try();
     server.settled(t, out).try();
     print(out.view());
-    Ok(());
 }
 
 arrived = (env: Env, held :: Vec<u8>, n: usize) Res<bool, AllocError> {
@@ -92,11 +91,10 @@ drain = (server :: Server, t: Alloc, held: str, at: usize)
     Ok(Drain(at: from, framed: framed));
 }
 
-print_answer = (server :: Server, t: Alloc, body: str) Res<(), AllocError> {
+print_answer = (server :: Server, t: Alloc, body: str) Res<AllocError> {
     out ::= t.String().try();
     server.one(t, body, out).try();
     print(out.view());
-    Ok(());
 }
 
 // Resource bounds apply to the transport, not the pure envelope parser.

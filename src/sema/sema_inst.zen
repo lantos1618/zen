@@ -23,17 +23,16 @@ Inst* = {
 
     // First binding wins: `<T>(a: T, b: T)` against `(i32, i32)` binds `T`
     // once, and a disagreeing second argument is a coercion mismatch.
-    bind* = (self :: @Self, v: TyId, arg: TyId) Res<(), AllocError> {
+    bind* = (self :: @Self, v: TyId, arg: TyId) Res<AllocError> {
         self.bound(v).match({
-            true  => Ok(()),
+            true  => Ok,
             false => self.push(v, arg),
         })
     }
 
-    push = (self :: @Self, v: TyId, arg: TyId) Res<(), AllocError> {
+    push = (self :: @Self, v: TyId, arg: TyId) Res<AllocError> {
         self.vars.add(v).try();
         self.args.add(arg).try();
-        Ok(());
     }
 
     bound* = (self: @Self, v: TyId) bool {
@@ -152,9 +151,9 @@ subst_union = (c :: Checker, members: Vec<TyId>, ty: TyId, inst: Inst)
 }
 
 subst_list* = (c :: Checker, src: Vec<TyId>, inst: Inst, out :: Vec<TyId>)
-              Res<(), AllocError> {
+              Res<AllocError> {
     src.loop((h, t) { out.add(c.subst(t, inst).try()).try() });
-    Ok(());
+    Ok;
 }
 
 has_var* = (c: Checker, ty: TyId) bool {
@@ -178,29 +177,29 @@ tparam_vars* = (
     tparams : Vec<TParam>,
     owner   : str,
     out     :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     tparams.loop((h, tp) {
         out.add(c.types.var(tp.name.text, owner).try()).try();
     });
-    Ok(());
+    Ok;
 }
 
 // A struct's or enum's type parameters as `Ty.Var`s, in declaration order.
 decl_tparam_vars* = (c :: Checker, d: Decl, owner: str, out :: Vec<TyId>)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     d.kind.match({
         Struct(s) => c.tparam_vars(s.tparams, owner, out),
         Enum(e)   => c.tparam_vars(e.tparams, owner, out),
-        _         => Ok(()),
+        _         => Ok,
     })
 }
 
 push_tparams* = (c :: Checker, tparams: Vec<TParam>, owner: str)
-                Res<(), AllocError> {
+                Res<AllocError> {
     tparams.loop((h, tp) {
         c.push_tvar(tp, c.types.var(tp.name.text, owner).try()).try();
     });
-    Ok(());
+    Ok;
 }
 
 owner_of* = (c :: Checker, mi: usize, name: str) Res<str, AllocError> {
@@ -215,16 +214,16 @@ module_name* = (c: Checker, mi: usize) str {
 inst_of_named* = (c :: Checker, n: TyNamed) Res<Inst, AllocError> {
     inst ::= c.alloc.Inst();
     (n.args.len > 0).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.fill_from_decl(n, inst),
     }).try();
     Ok(inst);
 }
 
 fill_from_decl = (c :: Checker, n: TyNamed, inst :: Inst)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     c.tree.decl_at(n.decl).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(d) => {
             owner = c.owner_of(n.decl.module.to_usize(), n.name).try();
             vars ::= c.alloc.Vec<TyId>();
@@ -237,43 +236,43 @@ fill_from_decl = (c :: Checker, n: TyNamed, inst :: Inst)
 // Bind each parameter to the argument in its position; a shorter
 // argument list binds what it can and leaves the rest unbound.
 zip* = (c :: Checker, vars: Vec<TyId>, args: Vec<TyId>, inst :: Inst)
-       Res<(), AllocError> {
+       Res<AllocError> {
     vars.loop((h, i, v) {
         args.get(i).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(t) => inst.bind(v, t),
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
 unify* = (c :: Checker, param: TyId, actual: TyId, inst :: Inst)
-         Res<(), AllocError> {
+         Res<AllocError> {
     c.types.at(param).match({
         Var(_)   => c.bind_actual(param, actual, inst),
         Named(n) => c.unify_named(n, actual, inst),
         Res(r)   => c.unify_res(r, actual, inst),
         Fn(f)    => c.unify_fn(f, actual, inst),
         Array(a) => c.unify_array(a, actual, inst),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
 unify_array = (c :: Checker, a: TyArray, actual: TyId, inst :: Inst)
-              Res<(), AllocError> {
+              Res<AllocError> {
     c.types.at(actual).match({
         Array(b) => (a.count == b.count).match({
             true  => c.unify(a.elem, b.elem, inst),
-            false => Ok(()),
+            false => Ok,
         }),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
 bind_actual = (c :: Checker, param: TyId, actual: TyId, inst :: Inst)
-              Res<(), AllocError> {
+              Res<AllocError> {
     c.usable_actual(actual).match({
-        false => Ok(()),
+        false => Ok,
         true  => inst.bind(param, actual),
     })
 }
@@ -284,35 +283,35 @@ usable_actual = (c: Checker, actual: TyId) bool {
 
 // Only applications of the same declaration unify their arguments.
 unify_named = (c :: Checker, n: TyNamed, actual: TyId, inst :: Inst)
-              Res<(), AllocError> {
+              Res<AllocError> {
     c.types.at(actual).match({
         Named(m) => n.decl.eq(m.decl).match({
-            false => Ok(()),
+            false => Ok,
             true  => c.unify_list(n.args, m.args, inst),
         }),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
 unify_res = (c :: Checker, r: TyRes, actual: TyId, inst :: Inst)
-            Res<(), AllocError> {
+            Res<AllocError> {
     c.types.at(actual).match({
         Res(s) => {
             c.unify(r.value, s.value, inst).try();
             c.unify(r.error, s.error, inst)
         },
-        _      => Ok(()),
+        _      => Ok,
     })
 }
 
 unify_fn = (c :: Checker, f: TyFn, actual: TyId, inst :: Inst)
-           Res<(), AllocError> {
+           Res<AllocError> {
     c.types.at(actual).match({
         Fn(g) => {
             c.unify_list(f.params, g.params, inst).try();
             c.unify(f.ret, g.ret, inst)
         },
-        _     => Ok(()),
+        _     => Ok,
     })
 }
 
@@ -321,12 +320,12 @@ unify_list* = (
     params  : Vec<TyId>,
     actuals : Vec<TyId>,
     inst    :: Inst
-) Res<(), AllocError> {
+) Res<AllocError> {
     params.loop((h, i, p) {
         actuals.get(i).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(a) => c.unify(p, a, inst),
         }).try();
     });
-    Ok(());
+    Ok;
 }

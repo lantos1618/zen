@@ -31,7 +31,7 @@ Map*<K: Eq + Hash, V> = {
 
     alloc: Alloc,
 
-    set* = (self :: @Self, key: K, value: V) Res<(), AllocError> {
+    set* = (self :: @Self, key: K, value: V) Res<AllocError> {
         h: u64 = key.hash(Hasher());
         entry  = Entry(hash: h, key: key, value: value);
         self.index_of(h, key).match({
@@ -60,7 +60,7 @@ Map*<K: Eq + Hash, V> = {
         });
     }
 
-    place = (self :: @Self, s: usize, entry: Entry<K, V>) Res<(), AllocError> {
+    place = (self :: @Self, s: usize, entry: Entry<K, V>) Res<AllocError> {
         held = self.slots.get(s).ok_or(AllocError.OutOfMemory).try();
         (held > SLOT_EMPTY).match({
             true  => self.entries.set(held - 1, entry).ok_or(AllocError.OutOfMemory),
@@ -68,12 +68,12 @@ Map*<K: Eq + Hash, V> = {
         });
     }
 
-    append = (self :: @Self, s: usize, entry: Entry<K, V>) Res<(), AllocError> {
+    append = (self :: @Self, s: usize, entry: Entry<K, V>) Res<AllocError> {
         self.entries.add(entry).try();
         self.slots.set(s, self.entries.len).ok_or(AllocError.OutOfMemory);
     }
 
-    insert = (self :: @Self, entry: Entry<K, V>) Res<(), AllocError> {
+    insert = (self :: @Self, entry: Entry<K, V>) Res<AllocError> {
         self.reserve().try();
         (self.slots.len == 0).match({
             true  => self.entries.add(entry),
@@ -131,21 +131,21 @@ Map*<K: Eq + Hash, V> = {
         });
     }
 
-    reserve = (self :: @Self) Res<(), AllocError> {
+    reserve = (self :: @Self) Res<AllocError> {
         want = self.entries.len + 1;
         (self.slots.len == 0).match({
             true  => (want > SMALL_MAX).match({
                 true  => self.rehash(),
-                false => Ok(()),
+                false => Ok,
             }),
             false => (want * LOAD_DEN > self.slots.len * LOAD_NUM).match({
                 true  => self.rehash(),
-                false => Ok(()),
+                false => Ok,
             }),
         });
     }
 
-    rehash = (self :: @Self) Res<(), AllocError> {
+    rehash = (self :: @Self) Res<AllocError> {
         n          = (self.slots.len == 0).match({
             true  => SLOTS_MIN * 2,
             false => self.slots.len * 2,
@@ -154,12 +154,12 @@ Map*<K: Eq + Hash, V> = {
         self.refill();
     }
 
-    refill = (self :: @Self) Res<(), AllocError> {
+    refill = (self :: @Self) Res<AllocError> {
         Range(0, self.entries.len).loop((h, i) { self.relink(i).try(); });
-        Ok(());
+        Ok;
     }
 
-    relink = (self :: @Self, i: usize) Res<(), AllocError> {
+    relink = (self :: @Self, i: usize) Res<AllocError> {
         e = self.entries.get(i).ok_or(AllocError.OutOfMemory).try();
         s = self.settle(e.hash, e.key).ok_or(AllocError.OutOfMemory).try();
         self.slots.set(s, i + 1).ok_or(AllocError.OutOfMemory);

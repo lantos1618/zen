@@ -190,7 +190,7 @@ reexport = (a: Alloc, name: str, module: str) Res<Decl, AllocError> {
     ));
 }
 
-module_of = (tree :: Ast, name: str, decls: Vec<Decl>) Res<(), AllocError> {
+module_of = (tree :: Ast, name: str, decls: Vec<Decl>) Res<AllocError> {
     tree.add_module(Module(
         name: name,
         decls: decls,
@@ -198,12 +198,11 @@ module_of = (tree :: Ast, name: str, decls: Vec<Decl>) Res<(), AllocError> {
         leading: no_trivia(),
         trailing: no_trivia()
     )).try();
-    Ok(());
 }
 
 // what a node's type is CALLED, and how many diagnostics asking it cost
 reaches = (c :: Checker, a: Alloc, label: str, id: ExprId, ctx: Ctx)
-          Res<(), AllocError> {
+          Res<AllocError> {
     before = c.diag_count();
     ty     = c.type_of(id, ctx).try();
     out ::= a.String().try();
@@ -214,7 +213,6 @@ reaches = (c :: Checker, a: Alloc, label: str, id: ExprId, ctx: Ctx)
         out.view(),
         c.diag_count() - before
     );
-    Ok(());
 }
 
 main = (env: Env) Res<i32, AllocError> {

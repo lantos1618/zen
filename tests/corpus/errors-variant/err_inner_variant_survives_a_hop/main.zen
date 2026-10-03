@@ -10,14 +10,17 @@
 // three members take a turn, so nothing here can pass by matching only
 // the first-raised case.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
 NotFound = { | NotFound }
+NotFound.impl(Error, {})
 Denied   = { | Denied }
+Denied.impl(Error, {})
 Corrupt  = { Corrupt: str | Short: i32 }
+Corrupt.impl(Error, {})
 Set      = Denied | Corrupt | NotFound
 
 probe = (n: i32) Res<i32, Set> {
@@ -36,7 +39,7 @@ probe = (n: i32) Res<i32, Set> {
     Ok(n * 10);
 }
 
-show = (n: i32) Res<(), AllocError> {
+show = (n: i32) Res<AllocError> {
     probe(n).match({
         Ok(v)  => println("{}: ok {}", n, v),
         Err(e) => e.match({
@@ -51,7 +54,6 @@ show = (n: i32) Res<(), AllocError> {
             }),
         }),
     });
-    Ok(());
 }
 
 main = (env: Env) Res<i32, AllocError> {

@@ -18,7 +18,7 @@ Point = {
 }
 
 Point.impl(Display, {
-    toString ::= (self: @Self, out :: Sink) Res<(), WriteError> {
+    toString ::= (self: @Self, out :: Sink) Res<WriteError> {
         out.fmt("{}:{}", self.x, self.y)
     }
 })

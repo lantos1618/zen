@@ -12,9 +12,9 @@
 { Env } = std.env
 { println } = std.io
 
-push = (v: u32, out :: String) Res<(), AllocError> {
+push = (v: u32, out :: String) Res<AllocError> {
     out.push_utf8(v).match({
-        Ok(_)  => Ok(()),
+        Ok(_)  => Ok,
         Err(_) => Err(AllocError.OutOfMemory),
     });
 }

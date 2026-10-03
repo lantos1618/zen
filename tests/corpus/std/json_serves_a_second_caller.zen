@@ -19,7 +19,7 @@
 // allocates but the buffer the bytes land in. A nested container opens
 // AFTER its `key`, the way every reply site does: `key` pays the comma
 // the parent owes, and `obj` writes nothing but the bracket.
-emit = (out :: String) Res<(), AllocError> {
+emit = (out :: String) Res<AllocError> {
     top ::= obj(out).try();
     top.key("name", out).try();
     write_text("std.json", out).try();
@@ -35,7 +35,7 @@ emit = (out :: String) Res<(), AllocError> {
 // Parse, re-emit. A fault prints the byte it refused — every fault but
 // `NoMemory` carries one, and `NoMemory` answers 0, which no row here
 // reaches.
-trip = (a: Alloc, doc: str) Res<(), AllocError> {
+trip = (a: Alloc, doc: str) Res<AllocError> {
     tree ::= a.Jsons();
     out  ::= a.String().try();
     read(a, tree, doc).match({
@@ -45,7 +45,6 @@ trip = (a: Alloc, doc: str) Res<(), AllocError> {
             println("round trip: {}", out.view());
         },
     });
-    Ok(())
 }
 
 // A member read out of a parsed document, named rather than indexed —

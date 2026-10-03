@@ -12,7 +12,7 @@ view = (
     envelope : Envelope
 ) str { alias = envelope; inner = alias.input; inner.text }
 put = (box :: Box, envelope: Envelope) { box.text = view(envelope); }
-fill = (env: Env, box :: Box, text: str) Res<(), AllocError> {
+fill = (env: Env, box :: Box, text: str) Res<AllocError> {
  a        = env.mem.alloc();
  local    = a.String("temporary").try();
  input    = Input(text: text, scratch: local.view());
@@ -20,8 +20,7 @@ fill = (env: Env, box :: Box, text: str) Res<(), AllocError> {
  envelope = wrap(alias);
  put(box, envelope);
  println(box.text);
- Ok(())
 }
-main = (env: Env) Res<(), AllocError> {
- box ::= Box(text: ""); fill(env, box, "caller").try(); println(box.text); Ok(())
+main = (env: Env) Res<AllocError> {
+ box ::= Box(text: ""); fill(env, box, "caller").try(); println(box.text);
 }

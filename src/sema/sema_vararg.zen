@@ -64,7 +64,7 @@ last_param = (f: Function) Res<Param> {
 // Written type nodes do not store parents, so positional validation gathers
 // all mentions and all legal final-parameter positions before comparing them.
 
-check_varargs* = (c :: Checker) Res<(), AllocError> {
+check_varargs* = (c :: Checker) Res<AllocError> {
     named ::= c.alloc.Vec<TypeId>();
     c.tree.types_where((node) { node.is_named() }, named).try();
     found ::= c.alloc.Vec<TypeId>();
@@ -72,7 +72,7 @@ check_varargs* = (c :: Checker) Res<(), AllocError> {
         c.written_pack(t).then(() { found.add(t).try() });
     });
     (found.len == 0).match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.check_mentions(found),
     })
 }
@@ -81,15 +81,15 @@ is_named = (node: Type) bool {
     node.kind.match({ Named(_) => true, _ => false })
 }
 
-check_mentions = (c :: Checker, found: Vec<TypeId>) Res<(), AllocError> {
+check_mentions = (c :: Checker, found: Vec<TypeId>) Res<AllocError> {
     tails ::= c.alloc.Vec<TypeId>();
     c.collect_tails(tails).try();
     found.loop((h, t) { c.check_mention(t, tails).try() });
-    Ok(());
+    Ok;
 }
 
 check_mention = (c :: Checker, t: TypeId, tails: Vec<TypeId>)
-                Res<(), AllocError> {
+                Res<AllocError> {
     tails.find((tail) { tail.index == t.index }).match({
         Ok(_) => c.check_element(t),
         None  => c.report_pack(
@@ -100,9 +100,9 @@ check_mention = (c :: Checker, t: TypeId, tails: Vec<TypeId>)
 }
 
 // A pack has exactly one element argument, which cannot itself be a pack.
-check_element = (c :: Checker, t: TypeId) Res<(), AllocError> {
+check_element = (c :: Checker, t: TypeId) Res<AllocError> {
     c.element_ok(t).match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.report_pack(
             t,
             SemaFault.VarargElement(NameFault(name: VARARG))
@@ -124,52 +124,52 @@ element_is_pack = (c: Checker, args: Vec<TypeId>) bool {
     })
 }
 
-report_pack = (c :: Checker, t: TypeId, fault: SemaFault) Res<(), AllocError> {
+report_pack = (c :: Checker, t: TypeId, fault: SemaFault) Res<AllocError> {
     node = c.tree.type_at(t);
     c.report(node.span.file, node.span, fault)
 }
 
-collect_tails = (c :: Checker, out :: Vec<TypeId>) Res<(), AllocError> {
+collect_tails = (c :: Checker, out :: Vec<TypeId>) Res<AllocError> {
     Range(0, c.tree.module_count()).loop((h, mi) {
         c.tree.module_at(mi).match({
             Ok(m) => m.module_tails(out),
-            None  => Ok(()),
+            None  => Ok,
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
-module_tails = (m: Module, out :: Vec<TypeId>) Res<(), AllocError> {
+module_tails = (m: Module, out :: Vec<TypeId>) Res<AllocError> {
     m.decls.loop((h, d) { d.decl_tails(out).try() });
-    Ok(());
+    Ok;
 }
 
-decl_tails = (d: Decl, out :: Vec<TypeId>) Res<(), AllocError> {
+decl_tails = (d: Decl, out :: Vec<TypeId>) Res<AllocError> {
     d.kind.match({
         Function(f) => f.fn_tail(out),
         Struct(s)   => s.members.member_tails(out),
         Enum(e)     => e.members.member_tails(out),
         Impl(im)    => im.members.member_tails(out),
-        _           => Ok(()),
+        _           => Ok,
     })
 }
 
 member_tails = (members: Vec<Member>, out :: Vec<TypeId>)
-               Res<(), AllocError> {
+               Res<AllocError> {
     members.loop((h, mem) {
         mem.kind.match({
             Function(f) => f.fn_tail(out),
-            _           => Ok(()),
+            _           => Ok,
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
-fn_tail = (f: Function, out :: Vec<TypeId>) Res<(), AllocError> {
+fn_tail = (f: Function, out :: Vec<TypeId>) Res<AllocError> {
     f.last_param().match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(p) => p.type.match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(t) => out.add(t),
         }),
     })

@@ -15,18 +15,18 @@ Limit = { at*: usize }
 
 under = (l: Limit, n: usize) bool { n < l.at }
 
-named = (rows: Vec<Row>, want: str, out :: Vec<usize>) Res<(), AllocError> {
+named = (rows: Vec<Row>, want: str, out :: Vec<usize>) Res<AllocError> {
     rows.loop((h, r) {
         r.name.eq(want).then(() { out.add(r.ty).try() });
     });
-    Ok(());
+    Ok;
 }
 
-small = (l: Limit, rows: Vec<Row>, out :: Vec<usize>) Res<(), AllocError> {
+small = (l: Limit, rows: Vec<Row>, out :: Vec<usize>) Res<AllocError> {
     rows.loop((h, r) {
         l.under(r.ty).then(() { out.add(r.ty).try() });
     });
-    Ok(());
+    Ok;
 }
 
 main = (env: Env) Res<i32, AllocError> {

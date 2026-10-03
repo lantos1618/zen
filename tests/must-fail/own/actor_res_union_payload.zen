@@ -1,14 +1,16 @@
 // Both halves of Res and every member of its error union participate in the
 // actor-transfer classification.
 
-{ Res, Ok } = std.core
+{ Res, Ok, Error } = std.core
 { AllocError } = std.mem
 { Vec } = std.collections
 { Env } = std.env
 { Actor, Ref, ActorError, Context } = std.actor
 
 HeapFault = { bytes: Vec<u8> }
+HeapFault.impl(Error, {})
 PlainFault = { code: i32 }
+PlainFault.impl(Error, {})
 Reply = Res<i32, HeapFault | PlainFault>
 
 Worker = {}
@@ -19,9 +21,8 @@ Worker.impl(Actor, {
     }
 })
 
-forward = (worker: Ref<Worker>, payload: Reply) Res<(), ActorError> {
+forward = (worker: Ref<Worker>, payload: Reply) Res<ActorError> {
     worker.process(payload).try();
-    Ok(())
 }
 
 main = (env: Env) Res<i32, AllocError> { Ok(0) }

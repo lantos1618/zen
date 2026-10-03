@@ -16,8 +16,8 @@ make = (base: Alloc) Holder {
     counting = Counting(base: base, tag: 1);
     Holder(alloc: counting)
 }
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     held = make(env.mem.alloc());
     held.alloc.raw(8, 8).try();
-    Ok(())
+    Ok
 }

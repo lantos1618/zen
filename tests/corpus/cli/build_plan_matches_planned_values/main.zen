@@ -16,7 +16,7 @@ show = (
     root   : str,
     target : Target,
     mode   : Mode
-) Res<(), AllocError> {
+) Res<AllocError> {
     b ::= a.Build(env, root);
     b.set_std_root("src");
     checked = b.whole("build.zen", a.Map<str, str>()).try();
@@ -32,10 +32,9 @@ show = (
             (exe) { describe(a, mode, exe.name, exe.spec).try(); }
         ),
     });
-    Ok(())
 }
 
-describe = (a: Alloc, mode: Mode, name: str, spec: Exe) Res<(), AllocError> {
+describe = (a: Alloc, mode: Mode, name: str, spec: Exe) Res<AllocError> {
     out ::= a.String().try();
     out.fmt("{} {}:", mode.stable_name(), name).try();
     spec.optimize.match({
@@ -58,7 +57,6 @@ describe = (a: Alloc, mode: Mode, name: str, spec: Exe) Res<(), AllocError> {
         (words) { words.loop((w) { out.fmt(" -l{}", w).try(); }); }
     );
     println("{}", out.view());
-    Ok(())
 }
 
 main = (env: Env) Res<i32, AllocError> {

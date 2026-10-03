@@ -3,7 +3,7 @@
 { AllocError, null_ptr } = std.mem
 { Env } = std.env
 { println } = std.io
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a     = env.mem.alloc();
     bytes = a.raw(515, 1).try();
     @scope.defer(() { a.free(bytes); });
@@ -22,5 +22,4 @@ main = (env: Env) Res<(), AllocError> {
         "OS fill and bounds: {}",
         filled && bytes.read(0) == 173 && bytes.read(514) == 219
     );
-    Ok(())
 }

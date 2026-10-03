@@ -27,31 +27,31 @@
 // first and its line is part of the expectation.
 
 { TestError } = std.test
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
 // A runner has more than one way to stop; a test has one.
 Halted  = { | OutOfTime }
+Halted.impl(Error, {})
 Harness = Halted | TestError
 
 // Shaped like `Tester.expect`: the condition decides, and the reason
 // travels with the failure rather than being invented at the report.
-expect = (cond: bool, why: str) Res<(), TestError> {
+expect = (cond: bool, why: str) Res<TestError> {
     cond.match({
-        true  => Ok(()),
+        true  => Ok,
         false => Err(TestError.Failed(why)),
     })
 }
 
 // The runner's frame: a test's error widens into the harness's set.
-run = (a: i32, b: i32) Res<(), Harness> {
+run = (a: i32, b: i32) Res<Harness> {
     expect(a == b, "the two operands disagree").try();
-    Ok(());
 }
 
-report = (r: Res<(), Harness>) {
+report = (r: Res<Harness>) {
     r.match({
         Ok(_)  => println("pass"),
         Err(e) => e.match({

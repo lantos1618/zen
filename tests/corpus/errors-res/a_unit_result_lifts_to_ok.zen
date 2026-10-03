@@ -30,7 +30,7 @@ first_unit = (n: i32) Res<Jam> {
     })
 }
 
-first_err = (n: i32) Res<(), Jam> {
+first_err = (n: i32) Res<Jam> {
     (n % 2 == 0).match({
         false => Err(Jam.Ink),
         true  => println("even {}", n),

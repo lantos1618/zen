@@ -4,11 +4,11 @@
 { Path } = std.core
 { Builder, BuildError } = std.build
 
-build = (b :: Builder) Res<(), BuildError> {
+build = (b :: Builder) Res<BuildError> {
     b.exe("zen-imports", {
         src: Path("src/imports.zen"),
         deps: [],
         out: Ok(Path("build/zen-imports")),
     }).try();
-    Ok(())
+    Ok
 }

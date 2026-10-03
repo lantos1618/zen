@@ -80,7 +80,7 @@ Built* = {
     }
 
     ensure* = (self :: @Self, env: Env, root: str, entry: str,
-               uris: Vec<str>, docs: Map<str, str>) Res<(), AllocError> {
+               uris: Vec<str>, docs: Map<str, str>) Res<AllocError> {
         self.matches(root, entry).match({
             true  => written(),
             false => self.rebuild(env, root, entry, uris, docs),
@@ -90,7 +90,7 @@ Built* = {
     invalidate* = (self :: @Self) { self.stale = true; }
 
     rebuild = (self :: @Self, env: Env, root: str, entry: str,
-               uris: Vec<str>, docs: Map<str, str>) Res<(), AllocError> {
+               uris: Vec<str>, docs: Map<str, str>) Res<AllocError> {
         // A refused rebuild must not expose values owned by the old arena.
         self.cur   = None;
         self.stale = true;
@@ -105,10 +105,7 @@ Built* = {
         uris.loop((h, u) {
             docs.get(u).match({
                 None     => written(),
-                Ok(text) => {
-                    over.set(path_of(self.arena, u).try(), text).try();
-                    Ok(())
-                },
+                Ok(text) => over.set(path_of(self.arena, u).try(), text).try(),
             }).try();
         });
 
@@ -144,7 +141,7 @@ Built* = {
             classed: classed
         ));
         self.stale = false;
-        Ok(());
+        Ok;
     }
 
     covers* = (self: @Self, a: Alloc, path: str) Res<bool, AllocError> {
@@ -188,7 +185,7 @@ Built* = {
 
     // Snapshot text before another build retires this arena. Shared import
     // graphs may contribute the same diagnostic more than once.
-    append_spots* = (self: @Self, a: Alloc, into :: Vec<Spot>) Res<(), AllocError> {
+    append_spots* = (self: @Self, a: Alloc, into :: Vec<Spot>) Res<AllocError> {
         self.spots().match({
             None      => written(),
             Ok(found) => {
@@ -238,7 +235,7 @@ source_file = (inner: Inner, a: Alloc, path: str) Res<str, AllocError> {
 }
 
 restore_uris = (spots :: Vec<Spot>, a: Alloc, directory: str, uris: Vec<str>)
-               Res<(), AllocError> {
+               Res<AllocError> {
     paths ::= a.Map<str, str>();
     uris.loop((uri) {
         paths.set(
@@ -263,7 +260,7 @@ restore_uris = (spots :: Vec<Spot>, a: Alloc, directory: str, uris: Vec<str>)
             },
         });
     });
-    Ok(())
+    Ok
 }
 
 Built.impl(Drop, {
@@ -275,7 +272,7 @@ Built* = (env: Env) Built {
 }
 
 parse_spots = (b: Build, a: Alloc, root: str, spots :: Vec<Spot>)
-              Res<(), AllocError> {
+              Res<AllocError> {
     Range(0, b.diag_count()).loop((h, i) {
         b.diag_at(i).match({
             None  => written(),
@@ -287,11 +284,11 @@ parse_spots = (b: Build, a: Alloc, root: str, spots :: Vec<Spot>)
             )),
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
 sema_spots = (c: Checker, a: Alloc, root: str, spots :: Vec<Spot>)
-             Res<(), AllocError> {
+             Res<AllocError> {
     Range(0, c.diag_count()).loop((h, i) {
         c.diag_at(i).match({
             None  => written(),
@@ -308,5 +305,5 @@ sema_spots = (c: Checker, a: Alloc, root: str, spots :: Vec<Spot>)
             },
         }).try();
     });
-    Ok(());
+    Ok;
 }

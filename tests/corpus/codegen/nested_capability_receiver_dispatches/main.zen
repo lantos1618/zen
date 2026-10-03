@@ -6,7 +6,7 @@
 Session = {
     env: Env,
 
-    flush = (self: @Self) Res<(), IoError> {
+    flush = (self: @Self) Res<IoError> {
         self.env.out.flush()
     }
 }

@@ -67,7 +67,7 @@ Wide = {
 }
 
 Wide.impl(Display, {
-    toString ::= (self: @Self, out :: Sink) Res<(), WriteError> {
+    toString ::= (self: @Self, out :: Sink) Res<WriteError> {
         out.fmt("w={}", self.v)
     }
 })
@@ -77,7 +77,7 @@ Tiny = {
 }
 
 Tiny.impl(Display, {
-    toString ::= (self: @Self, out :: Sink) Res<(), WriteError> {
+    toString ::= (self: @Self, out :: Sink) Res<WriteError> {
         out.fmt("t={}", self.v)
     }
 })

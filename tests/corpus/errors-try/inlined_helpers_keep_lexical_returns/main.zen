@@ -1,12 +1,14 @@
 // Helper failures return to the helper call; caller callbacks retain their lexical exit.
 // Every exited helper cleans up, while a caller handling the error remains alive.
 
-{ Res, Ok, Err, None, Drop } = std.core
+{ Res, Ok, Err, None, Drop, Error } = std.core
 { Env } = std.env
 { println } = std.io
 
 Fault = { | Bad: i32 }
+Fault.impl(Error, {})
 Other = { Replaced | Mapped: i32 }
+Other.impl(Error, {})
 Noisy = { tag: str }
 Noisy.impl(Drop, {
     drop = (self :: @Self) { println("drop {}", self.tag) }
@@ -44,10 +46,10 @@ callback_exit = () Res<i32, Fault | Other> {
     Ok(0)
 }
 
-replace = (body: () ()) Res<(), Other> {
+replace = (body: () ()) Res<Other> {
     body();
     leaf(true).try(Other.Replaced);
-    Ok(())
+    Ok
 }
 map_error = (body: () ()) Res<str, Other> {
     body();

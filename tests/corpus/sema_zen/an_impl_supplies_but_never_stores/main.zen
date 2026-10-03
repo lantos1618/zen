@@ -236,7 +236,7 @@ dot = (tree :: Ast, base: ExprId, text: str) Res<ExprId, AllocError> {
 
 // what a dot reaches, and whether it is STORAGE or a computation
 reaches = (c :: Checker, a: Alloc, label: str, ty: TyId, name: str)
-          Res<(), AllocError> {
+          Res<AllocError> {
     found ::= c.alloc.Vec<Found>();
     members_of(c, ty, name, found).try();
     println(
@@ -245,7 +245,6 @@ reaches = (c :: Checker, a: Alloc, label: str, ty: TyId, name: str)
         found.len,
         first_kind(c, a, found).try()
     );
-    Ok(());
 }
 
 first_kind = (c :: Checker, a: Alloc, found: Vec<Found>)
@@ -260,31 +259,29 @@ first_kind = (c :: Checker, a: Alloc, found: Vec<Found>)
 
 head = (found: Vec<Found>) Res<Found> { found.get(0) }
 
-describe = (c :: Checker, out :: String, f: Found) Res<(), AllocError> {
+describe = (c :: Checker, out :: String, f: Found) Res<AllocError> {
     out.add(", ").try();
     out.add(f.computed.match({ true => "computed", false => "stored" })).try();
     out.add(" ").try();
     c.types.write_name(f.ty, out).try();
-    Ok(());
 }
 
 // how many diagnostics one question added, and the last thing said
 asked = (c :: Checker, a: Alloc, label: str, before: usize)
-        Res<(), AllocError> {
+        Res<AllocError> {
     added = c.diag_count() - before;
     println("{}: {} diagnostic(s)", label, added);
     (added > 0).then(() { show(c, a, c.diag_count() - 1).try() });
-    Ok(());
+    Ok;
 }
 
-show = (c :: Checker, a: Alloc, i: usize) Res<(), AllocError> {
+show = (c :: Checker, a: Alloc, i: usize) Res<AllocError> {
     out ::= a.String().try();
     c.diag_at(i).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(d) => d.render(c.types, out),
     }).try();
     println("    {}", out.view());
-    Ok(());
 }
 
 main = (env: Env) Res<i32, AllocError> {

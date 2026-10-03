@@ -71,7 +71,7 @@ main = (env: Env) Res<i32, AllocError> {
 
 // --- the requests ------------------------------------------------------
 
-open_session = (a: Alloc, into :: String) Res<(), AllocError> {
+open_session = (a: Alloc, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":"
@@ -82,7 +82,7 @@ open_session = (a: Alloc, into :: String) Res<(), AllocError> {
 }
 
 open_doc = (a: Alloc, uri: str, text: str, into :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
@@ -97,7 +97,7 @@ open_doc = (a: Alloc, uri: str, text: str, into :: String)
 // Definition and hover take the same parameters, so they are one writer
 // — the METHOD is the only thing that differs between them.
 ask = (a: Alloc, id: usize, method: str, into :: String)
-      Res<(), AllocError> {
+      Res<AllocError> {
     body ::= a.String().try();
     body.add("{\"jsonrpc\":\"2.0\",\"id\":").try();
     body.write_usize(id).try();
@@ -113,7 +113,7 @@ ask = (a: Alloc, id: usize, method: str, into :: String)
     write_frame(body.view(), into)
 }
 
-colours = (a: Alloc, id: usize, into :: String) Res<(), AllocError> {
+colours = (a: Alloc, id: usize, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add("{\"jsonrpc\":\"2.0\",\"id\":").try();
     body.write_usize(id).try();
@@ -127,14 +127,14 @@ colours = (a: Alloc, id: usize, into :: String) Res<(), AllocError> {
 
 // --- the session -------------------------------------------------------
 
-batch = (s :: Server, a: Alloc, what: str, input: str) Res<(), AllocError> {
+batch = (s :: Server, a: Alloc, what: str, input: str) Res<AllocError> {
     out ::= a.String().try();
     serve(s, input, out).try();
     println("--- {}", what);
     walk(a, out.view())
 }
 
-walk = (a: Alloc, out: str) Res<(), AllocError> {
+walk = (a: Alloc, out: str) Res<AllocError> {
     from  :: usize = 0;
     going ::= true;
     loop(() { going && from < out.len }, (h) {
@@ -143,21 +143,21 @@ walk = (a: Alloc, out: str) Res<(), AllocError> {
             Ok(fr) => { frame(a, fr.body).try(); from = fr.next; },
         });
     });
-    Ok(());
+    Ok;
 }
 
-frame = (a: Alloc, body: str) Res<(), AllocError> {
+frame = (a: Alloc, body: str) Res<AllocError> {
     tree ::= a.Jsons();
     read(a, tree, body).match({
-        Err(_)  => Ok(()),
+        Err(_)  => Ok,
         Ok(msg) => frame_body(a, tree, msg, body),
     })
 }
 
 frame_body = (a: Alloc, tree: Jsons, msg: JsonId, body: str)
-             Res<(), AllocError> {
+             Res<AllocError> {
     data_of(tree, msg).match({
-        None      => { println("    {}", body); Ok(()); },
+        None      => println("    {}", body),
         Ok(array) => walk_groups(a, tree, array),
     })
 }
@@ -174,7 +174,7 @@ data_of = (tree: Jsons, msg: JsonId) Res<JsonId> {
 // `colour_comes_from_the_build`'s decoder: the running totals ARE the
 // encoding, so adding them back up is the whole of it.
 
-walk_groups = (a: Alloc, tree: Jsons, array: JsonId) Res<(), AllocError> {
+walk_groups = (a: Alloc, tree: Jsons, array: JsonId) Res<AllocError> {
     line      :: usize = 0;
     character :: usize = 0;
     at        :: usize = 0;
@@ -200,7 +200,7 @@ walk_groups = (a: Alloc, tree: Jsons, array: JsonId) Res<(), AllocError> {
             },
         });
     });
-    Ok(());
+    Ok;
 }
 
 whole_at = (tree: Jsons, array: JsonId, at: usize) usize {

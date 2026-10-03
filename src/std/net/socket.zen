@@ -2,7 +2,7 @@
 
 { Alloc, AllocError, Ptr, null_ptr } = std.mem
 { str, String, str_at, c_text } = std.text
-{ Res, Ok, Err, loop } = std.core
+{ Res, Ok, Err, loop, Error } = std.core
 { Drop } = std.core
 { Vec } = std.collections
 
@@ -52,6 +52,7 @@ with_flag = (flags: i32, bit: i32) i32 {
 }
 
 SocketFault* = { ConnectFault | WriteFault | ReadFault | PeerClosed }
+SocketFault.impl(Error, {})
 
 ResolvedAddr* = {
     ip*: String,
@@ -82,7 +83,7 @@ SocketFd* = {
         n.to_usize().ok_or(SocketFault.WriteFault)
     }
 
-    send* = (self: @Self, bytes: str) Res<(), SocketFault> {
+    send* = (self: @Self, bytes: str) Res<SocketFault> {
         sent :: usize = 0;
         loop(sent < bytes.len, (h) {
             n = self.send(bytes.ptr().offset(sent), bytes.len - sent, 0).try();
@@ -91,7 +92,7 @@ SocketFd* = {
                 false => { sent = sent + n; },
             });
         });
-        Ok(())
+        Ok
     }
 
     recv* = (
@@ -262,7 +263,7 @@ Socket* = {
     // Borrow the descriptor without transferring close ownership.
     handle* = (self: @Self) SocketFd { SocketFd(raw: self.raw) }
 
-    write* = (self: @Self, bytes: str) Res<(), SocketFault> {
+    write* = (self: @Self, bytes: str) Res<SocketFault> {
         self.open.ensure(SocketFault.PeerClosed).try();
         self.handle().send(bytes)
     }

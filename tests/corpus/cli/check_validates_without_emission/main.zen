@@ -16,7 +16,7 @@ args = (a: Alloc, root: str, flag: str, value: str) Res<Vec<str>, AllocError> {
     Ok(words)
 }
 
-show = (env: Env, words: Vec<str>) Res<(), AllocError> {
+show = (env: Env, words: Vec<str>) Res<AllocError> {
     a ::= env.mem.alloc();
     cli(env, a, words).try().match({
         Build(job)       => println(
@@ -29,7 +29,6 @@ show = (env: Env, words: Vec<str>) Res<(), AllocError> {
         Refused(refusal) => println("usage {}", refusal.message.view()),
         _                => println("unexpected"),
     });
-    Ok(())
 }
 
 main = (env: Env) Res<i32, AllocError | FsError> {

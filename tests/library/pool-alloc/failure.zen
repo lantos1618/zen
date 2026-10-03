@@ -2,7 +2,7 @@
 { Res, Ok, Range } = std.core
 { Env } = std.env
 { println } = std.io
-verify = (a: Alloc, pool: Ptr<Pool>) Res<(), AllocError> {
+verify = (a: Alloc, pool: Ptr<Pool>) Res<AllocError> {
     old = a.realloc<u8>(null_ptr<u8>(), 16).try();
     Range<usize>(0, 16).loop((i) { old.write(i, 42); });
     owned = pool.read(0).owned;
@@ -12,7 +12,6 @@ verify = (a: Alloc, pool: Ptr<Pool>) Res<(), AllocError> {
     (pool.read(0).owned == owned).ensure(AllocError.OutOfMemory).try();
     Range<usize>(0, 16).loop((i) { (old.read(i) == 42).ensure(AllocError.OutOfMemory).try(); });
     a.free(old);
-    Ok(())
 }
 main = (env: Env) Res<i32, AllocError> {
     owner = env.mem.alloc();

@@ -15,7 +15,7 @@
 VALID: str = "Vec<T> = {}\nBox = {\n    key = (self: @Self, ranks: Vec<Vec<usize>>, id: usize) usize { id }\n    pick = <U>(self: @Self, item: U, items: Vec<U>) U { item }\n}\nsmaller = (id: usize) usize { id }\n"
 INVALID: str = "Box = {\n    key = (self: @Self, value: Missing, id: usize) usize { id }\n}\n"
 
-show = (a: Alloc, text: str) Res<(), AllocError> {
+show = (a: Alloc, text: str) Res<AllocError> {
     parsed ::= parse_standalone(a, "doc.zen", text).try();
     parsed.module("doc").try();
     println("parse diagnostics {}", parsed.diags.len);
@@ -44,7 +44,7 @@ show = (a: Alloc, text: str) Res<(), AllocError> {
         });
         id = TypeId(index: id.index + 1);
     });
-    Ok(())
+    Ok
 }
 
 main = (env: Env) Res<i32, AllocError> {

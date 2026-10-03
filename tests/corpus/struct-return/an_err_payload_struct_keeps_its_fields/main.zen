@@ -19,7 +19,7 @@
 // same call site runs both arms across the two calls, so neither arm's
 // payload path is dead code.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
@@ -28,6 +28,7 @@ Fail = {
     code: i64,
     note: str,
 }
+Fail.impl(Error, {})
 
 attempt = (n: i64) Res<i64, Fail> {
     (n < 0).match({

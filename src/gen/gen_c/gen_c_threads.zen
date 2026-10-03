@@ -29,18 +29,18 @@
 // the floors
 
 // `nanosleep`, emitted only for a program that sleeps.
-emit_threads* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+emit_threads* = (be :: CBackend, out :: Emit) Res<AllocError> {
     be.uses_threads().match({
-        false => Ok(()),
+        false => Ok,
         true  => write_sleep(out),
     }).try();
     be.uses_spawn().match({
-        false => Ok(()),
+        false => Ok,
         true  => emit_spawn_floor(out),
     })
 }
 
-write_sleep = (out :: Emit) Res<(), AllocError> {
+write_sleep = (out :: Emit) Res<AllocError> {
     out.say("#include <errno.h>").try();
     out.line().try();
     comment(out, "the sleep floor is POSIX nanosleep").try();
@@ -61,7 +61,7 @@ write_sleep = (out :: Emit) Res<(), AllocError> {
 // are written at the call sites themselves; all a program that spawns
 // needs here is the header, with the clock's feature-macro dance in
 // front of it (`gen_c_clock.zen` says why the `#undef` is load-bearing).
-emit_spawn_floor = (out :: Emit) Res<(), AllocError> {
+emit_spawn_floor = (out :: Emit) Res<AllocError> {
     out.say("#undef _POSIX_C_SOURCE").try();
     out.say("#define _POSIX_C_SOURCE 200809L").try();
     comment(
@@ -74,7 +74,6 @@ emit_spawn_floor = (out :: Emit) Res<(), AllocError> {
     out.say("#endif").try();
     out.say("#include <pthread.h>").try();
     out.line().try();
-    Ok(());
 }
 
 // Capture records are emitted after types because their fields name those
@@ -83,14 +82,14 @@ emit_spawn_floor = (out :: Emit) Res<(), AllocError> {
 // is heap memory: the thread outlives the frame that wrote the captures,
 // so the frame cannot be the storage (law 1 is why the signature takes
 // an Alloc at all).
-emit_spawn_envs* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+emit_spawn_envs* = (be :: CBackend, out :: Emit) Res<AllocError> {
     Range(0, be.spawn_env_count()).loop((h, i) {
         be.spawn_env_at(i).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(t) => out.say(t.view()),
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
 // Lowering `env.threads.sleep(ms)`.
@@ -103,7 +102,7 @@ lower_sleep* = (
     ret : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.need_clock();
     be.need_threads();
     be.request_type(ret).try();
@@ -138,7 +137,7 @@ lower_spawn* = (
     ret : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.need_spawn();
     be.request_type(ret).try();
     c.args.get(1).match({
@@ -158,7 +157,7 @@ spawn_arg = (
     ret : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.spelled_lambda(g.value).match({
         Ok(l) => be.spawn_lambda(id, l, ret, ctx, out),
         None  => be.unsupported(
@@ -176,7 +175,7 @@ spawn_lambda = (
     ret : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     (l.params.len > 0).match({
         true  => be.unsupported(
             id,
@@ -194,7 +193,7 @@ spawn_ret = (
     ret : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     l.ret.match({
         None   => be.unsupported(
             id,
@@ -213,7 +212,7 @@ spawn_typed = (
     ret : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     rty = be.check.type_from_ast(rt, ctx).try();
     be.check.types.at(rty).match({
         Res(_) => be.spawn_res(id, l, rty, ret, ctx, out),
@@ -233,7 +232,7 @@ spawn_res = (
     ret : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.request_type(rty).try();
     caps ::= be.alloc.Vec<LocalSlot>();
     be.captures(l.body, caps).try();
@@ -247,14 +246,14 @@ spawn_res = (
 // the capture record
 
 spawn_env_name = (be :: CBackend, n: usize, out :: String)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     sym_gen(out, "sp", n)
 }
 
 write_spawn_env = (be :: CBackend, n: usize, caps: Vec<LocalSlot>)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     (caps.len == 0).match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.write_spawn_struct(n, caps),
     })
 }
@@ -263,7 +262,7 @@ write_spawn_env = (be :: CBackend, n: usize, caps: Vec<LocalSlot>)
 // same rule `gen_c_scope.zen`'s capture record obeys, because the
 // prologue's remap depends on it.
 write_spawn_struct = (be :: CBackend, n: usize, caps: Vec<LocalSlot>)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     env ::= be.alloc.String().try();
     be.spawn_env_name(n, env).try();
     text ::= be.alloc.String().try();
@@ -274,7 +273,7 @@ write_spawn_struct = (be :: CBackend, n: usize, caps: Vec<LocalSlot>)
 }
 
 write_spawn_field = (be :: CBackend, s: LocalSlot, text :: String)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     text.add("    ").try();
     cname ::= be.alloc.String().try();
     sym_local(cname, s.name, s.index).try();
@@ -293,7 +292,7 @@ write_spawn_field = (be :: CBackend, s: LocalSlot, text :: String)
 // question, not this floor's: the own pass has already refused the
 // captures that provably dangle.
 spawn_ref_field = (be :: CBackend, ty: TyId, name: str, text :: String)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     be.ctype(ty, text).try();
     text.fmt(" *{name}")
 }
@@ -312,7 +311,7 @@ write_spawn_fn = (
     caps : Vec<LocalSlot>,
     rty  : TyId,
     ctx  : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     proto ::= be.alloc.String().try();
     be.spawn_fn_proto(n, rty, caps, proto).try();
     held = be.take_buf().try();
@@ -344,7 +343,7 @@ spawn_fn_proto = (
     rty  : TyId,
     caps : Vec<LocalSlot>,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     out.add(be.linkage()).try();
     be.ctype(rty, out).try();
     out.add(" ").try();
@@ -356,7 +355,7 @@ spawn_fn_proto = (
 }
 
 spawn_fn_params = (be :: CBackend, n: usize, out :: String)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     env ::= be.alloc.String().try();
     be.spawn_env_name(n, env).try();
     out.fmt("({} *zg_e)", env.view())
@@ -367,7 +366,7 @@ spawn_fn_params = (be :: CBackend, n: usize, out :: String)
 // in the enclosing frame, initialised from the record. The body below it
 // then lowers unchanged.
 write_spawn_prologue = (be :: CBackend, n: usize, caps: Vec<LocalSlot>)
-                       Res<(), AllocError> {
+                       Res<AllocError> {
     (caps.len == 0).match({
         true  => be.writeln("(void)zg_p;"),
         false => be.write_spawn_unpack(caps),
@@ -375,13 +374,13 @@ write_spawn_prologue = (be :: CBackend, n: usize, caps: Vec<LocalSlot>)
 }
 
 write_spawn_unpack = (be :: CBackend, caps: Vec<LocalSlot>)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     caps.loop((h, s) { be.write_spawn_unpack_one(s).try() });
-    Ok(())
+    Ok
 }
 
 write_spawn_unpack_one = (be :: CBackend, s: LocalSlot)
-                         Res<(), AllocError> {
+                         Res<AllocError> {
     line  ::= be.alloc.String().try();
     cname ::= be.alloc.String().try();
     sym_local(cname, s.name, s.index).try();
@@ -413,7 +412,7 @@ write_spawn_unpack_one = (be :: CBackend, s: LocalSlot)
 // `join` reads as `Panicked`; the record itself is released here, its
 // fields already unpacked by the body.
 write_spawn_tramp = (be :: CBackend, n: usize, rty: TyId)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     name ::= be.alloc.String().try();
     sym_gen(name, "s", n).try();
     proto ::= be.alloc.String().try();
@@ -451,11 +450,11 @@ write_spawn_call = (
     caps : Vec<LocalSlot>,
     ret  : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     dst = be.temp(ret, "t").try();
     rec ::= be.alloc.String().try();
     (caps.len == 0).match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.malloc_spawn_env(n, caps, rec),
     }).try();
     pt ::= be.alloc.String().try();
@@ -481,7 +480,7 @@ write_spawn_call = (
     be.fmt("if ({}) {{\n", cond.view()).try();
     be.indent();
     (rec.view().len == 0).match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.fmt("free({});\n", rec.view()),
     }).try();
     be.write_assign_err(ret, "SpawnFailed", dst.view()).try();
@@ -499,7 +498,7 @@ malloc_spawn_env = (
     n    : usize,
     caps : Vec<LocalSlot>,
     rec  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     env ::= be.alloc.String().try();
     be.spawn_env_name(n, env).try();
     sym_gen(rec, "h", be.next_tmp()).try();
@@ -511,14 +510,14 @@ malloc_spawn_env = (
         env.view()
     ).try();
     caps.loop((h, s) { be.copy_spawn_capture(s, rec.view()).try() });
-    Ok(())
+    Ok
 }
 
 // The captures are copied here, at spawn — the rule
 // `defer_captures_at_registration` pins, and the reason is the same:
 // the values are read where they are still alive.
 copy_spawn_capture = (be :: CBackend, s: LocalSlot, cell: str)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     cname ::= be.alloc.String().try();
     sym_local(cname, s.name, s.index).try();
     s.borrowed.match({
@@ -528,7 +527,7 @@ copy_spawn_capture = (be :: CBackend, s: LocalSlot, cell: str)
 }
 
 write_spawn_ok = (be :: CBackend, ret: TyId, pt: str, dst: str)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     be.payload_type(ret, "Ok").match({
         None    => be.write_assign_ok(ret, "0", dst),
         Ok(tty) => be.write_spawn_thread(ret, tty, pt, dst),
@@ -536,7 +535,7 @@ write_spawn_ok = (be :: CBackend, ret: TyId, pt: str, dst: str)
 }
 
 write_spawn_thread = (be :: CBackend, ret: TyId, tty: TyId, pt: str, dst: str)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     cty ::= be.alloc.String().try();
     be.ctype(tty, cty).try();
     idsym ::= be.alloc.String().try();
@@ -569,7 +568,7 @@ lower_join* = (
     want : TyId,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.need_spawn();
     be.join_want(id, want, ctx).try().match({
         None   => be.unsupported(
@@ -615,7 +614,7 @@ join_settled = (
     want : TyId,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.request_type(want).try();
     recv ::= be.alloc.String().try();
     expr(be, a.base, ctx, rty, recv).try();

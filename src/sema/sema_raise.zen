@@ -15,11 +15,11 @@ settle_raised* = (
     ctx  : Ctx,
     got  : TyId,
     mark : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     raised ::= c.alloc.Vec<TyId>();
     c.take_raised(mark, raised).try();
     c.inferred_error(ctx.ret).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(_) => c.settle_signature(f, ctx, got, raised),
     })
 }
@@ -44,21 +44,21 @@ settle_signature = (
     ctx    : Ctx,
     got    : TyId,
     raised :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.report_if_exported(f).try();
     c.body_error(got, raised).try();
     set = c.types.union_ty(raised).try();
     c.write_ret(f, ctx, set)
 }
 
-report_if_exported = (c :: Checker, f: Function) Res<(), AllocError> {
+report_if_exported = (c :: Checker, f: Function) Res<AllocError> {
     f.exported.match({
-        false => Ok(()),
+        false => Ok,
         true  => c.report_hole(f),
     })
 }
 
-report_hole = (c :: Checker, f: Function) Res<(), AllocError> {
+report_hole = (c :: Checker, f: Function) Res<AllocError> {
     span = c.hole_span(f).match({ None => f.name.span, Ok(s) => s });
     c.refuse(span, SemaFault.InferredSetExported(NameFault(name: f.name.text)))
 }
@@ -85,17 +85,17 @@ arg_span = (c :: Checker, args: Vec<TypeId>, i: usize) Res<Span> {
 }
 
 body_error = (c :: Checker, got: TyId, raised :: Vec<TyId>)
-             Res<(), AllocError> {
+             Res<AllocError> {
     c.types.at(got).match({
         Res(r) => c.keep_error(r, raised),
-        _      => Ok(()),
+        _      => Ok,
     })
 }
 
 keep_error = (c :: Checker, r: TyRes, raised :: Vec<TyId>)
-             Res<(), AllocError> {
+             Res<AllocError> {
     c.carries_error(r).match({
-        false => Ok(()),
+        false => Ok,
         true  => raised.add(r.error),
     })
 }
@@ -109,23 +109,23 @@ carries_error = (c :: Checker, r: TyRes) bool {
 // The return type's own node is what every reader of the signature asks,
 // so its memo is rewritten in place.
 write_ret = (c :: Checker, f: Function, ctx: Ctx, set: TyId)
-            Res<(), AllocError> {
+            Res<AllocError> {
     f.ret.match({
-        None   => Ok(()),
+        None   => Ok,
         Ok(id) => c.write_ret_memo(id, ctx, set),
     })
 }
 
 write_ret_memo = (c :: Checker, id: TypeId, ctx: Ctx, set: TyId)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     c.types.at(ctx.ret).match({
         Res(r) => c.write_settled(id, r, set),
-        _      => Ok(()),
+        _      => Ok,
     })
 }
 
 write_settled = (c :: Checker, id: TypeId, r: TyRes, set: TyId)
-                Res<(), AllocError> {
+                Res<AllocError> {
     settled = c.types.res_failure(r.value, set).try();
     c.type_memo.set(id, settled)
 }

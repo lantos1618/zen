@@ -23,7 +23,7 @@ marked = (
     }).match({ Ok(_) => true, None => false })
 }
 
-main = (env: Env) Res<(), AllocError | FsError | UsageError> {
+main = (env: Env) Res<AllocError | FsError | UsageError> {
     a      = env.mem.alloc();
     source = env.fs.read(a, "src/program/program.zen").try();
     lexed  = scan(
@@ -121,5 +121,4 @@ main = (env: Env) Res<(), AllocError | FsError | UsageError> {
         _                 => false,
     });
     println("invalid checking cannot publish facts: {}", refused);
-    Ok(())
 }

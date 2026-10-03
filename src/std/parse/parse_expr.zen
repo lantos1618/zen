@@ -208,7 +208,7 @@ check_grouping = (
     op_span : Span,
     lhs     : ExprId,
     rhs     : ExprId
-) Res<(), AllocError> {
+) Res<AllocError> {
     p.binary_at(lhs).match({
         Ok(inner) => p.check_nested(Nested(
             op: op,
@@ -216,7 +216,7 @@ check_grouping = (
             inner: inner,
             side: Grouped.Left(rhs),
         )),
-        None      => Ok(()),
+        None      => Ok,
     }).try();
     p.binary_at(rhs).match({
         Ok(inner) => p.check_nested(Nested(
@@ -225,7 +225,7 @@ check_grouping = (
             inner: inner,
             side: Grouped.Right(lhs),
         )),
-        None      => Ok(()),
+        None      => Ok,
     })
 }
 
@@ -248,13 +248,13 @@ binary_at = (p: Parser, id: ExprId) Res<Binary> {
     })
 }
 
-check_nested = (p :: Parser, n: Nested) Res<(), AllocError> {
+check_nested = (p :: Parser, n: Nested) Res<AllocError> {
     same    = n.op.glyph().eq(n.inner.op.glyph());
     bitwise = n.op.is_bitwise() || n.inner.op.is_bitwise();
     (same && n.op.is_shift()).match({
         true  => p.refuse_grouping(n, "shifts do not chain", false, n.op_span),
         false => (!same && bitwise).match({
-            false => Ok(()),
+            false => Ok,
             true  => p.refuse_mixing(n),
         }),
     })
@@ -263,7 +263,7 @@ check_nested = (p :: Parser, n: Nested) Res<(), AllocError> {
 // Two bitwise operators, or a bitwise operator beside arithmetic, could be
 // meant either way round; beside a comparison or a logical operator only the
 // bitwise operation can be the operand.
-refuse_mixing = (p :: Parser, n: Nested) Res<(), AllocError> {
+refuse_mixing = (p :: Parser, n: Nested) Res<AllocError> {
     (n.op.is_bitwise() && n.inner.op.is_bitwise()).match({
         true  => p.refuse_grouping(
             n,
@@ -308,7 +308,7 @@ refuse_grouping = (
     reason : str,
     both   : bool,
     at     : Span
-) Res<(), AllocError> {
+) Res<AllocError> {
     a = p.snippet(n.inner.lhs);
     b = p.snippet(n.inner.rhs);
     o = n.op.glyph();
@@ -321,7 +321,7 @@ refuse_grouping = (
             message.fmt("({} {} {}) {} {}`", a, i, b, o, c).try();
             both.match({
                 true  => message.fmt(" or `{} {} ({} {} {})`", a, i, b, o, c),
-                false => Ok(()),
+                false => Ok,
             }).try();
         },
         Right(left) => {
@@ -329,7 +329,7 @@ refuse_grouping = (
             message.fmt("{} {} ({} {} {})`", c, o, a, i, b).try();
             both.match({
                 true  => message.fmt(" or `({} {} {}) {} {}`", c, o, a, i, b),
-                false => Ok(()),
+                false => Ok,
             }).try();
         },
     });

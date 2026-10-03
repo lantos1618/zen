@@ -147,26 +147,26 @@ rest_step = (f: str, from: usize) FmtStep {
 }
 
 // Arguments are type-directed and expanded at the call site.
-fmt* = (out :: Sink, fmt: str, args: ...) Res<(), WriteError>
+fmt* = (out :: Sink, fmt: str, args: ...) Res<WriteError>
 
 // Decimal without separators.
-add_u64* = (out :: Sink, v: u64) Res<(), WriteError> {
+add_u64* = (out :: Sink, v: u64) Res<WriteError> {
     (v >= 10).then(() { out.add_u64(v / 10).try() });
     out.write_byte((v % 10).digit());
 }
 
-add_i64* = (out :: Sink, v: i64) Res<(), WriteError> {
+add_i64* = (out :: Sink, v: i64) Res<WriteError> {
     (v < 0).then(() { out.write_byte('-').try() });
     // Keeping the value non-positive handles i64.MIN without negating it.
     out.add_digits((v < 0).match({ true => v, false => 0 - v }));
 }
 
-add_digits = (out :: Sink, v: i64) Res<(), WriteError> {
+add_digits = (out :: Sink, v: i64) Res<WriteError> {
     (v <= -10).then(() { out.add_digits(v / 10).try() });
     out.write_byte((0 - (v % 10)).digit());
 }
 
-add_bool* = (out :: Sink, v: bool) Res<(), WriteError> {
+add_bool* = (out :: Sink, v: bool) Res<WriteError> {
     v.match({
         true  => out.write("true"),
         false => out.write("false"),
@@ -175,4 +175,4 @@ add_bool* = (out :: Sink, v: bool) Res<(), WriteError> {
 
 // Uses C `%g`: six significant digits, exponent notation when selected by
 // `%g`, and the C spellings for non-finite values.
-add_f64* = (out :: Sink, v: f64) Res<(), WriteError>
+add_f64* = (out :: Sink, v: f64) Res<WriteError>

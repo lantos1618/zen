@@ -177,22 +177,22 @@ CBackend* = {
 
     diag_at* = (self: @Self, i: usize) Res<GenDiag> { self.diags.get(i) }
 
-    render_diags* = (self: @Self, out :: String) Res<(), AllocError> {
+    render_diags* = (self: @Self, out :: String) Res<AllocError> {
         self.diags.loop((h, d) {
             d.render(out).try();
             out.add("\n").try();
         });
-        Ok(());
+        Ok;
     }
 
     report* = (self :: @Self, file: str, span: Span, fault: GenFault)
-              Res<(), AllocError> {
+              Res<AllocError> {
         self.diags.add(GenDiag(file: file, span: span, fault: fault))
     }
 
     // Report at an expression's source span.
     report_expr* = (self :: @Self, id: ExprId, fault: GenFault)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         node = self.tree.expr_at(id);
         self.report(node.span.file, node.span, fault)
     }
@@ -223,16 +223,16 @@ CBackend* = {
     known_width* = (self: @Self, ty: TyId) Res<usize> { self.widths.get(ty) }
 
     remember_width* = (self :: @Self, ty: TyId, bytes: usize)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
         self.widths.set(ty, bytes)
     }
 
     queue_type* = (self :: @Self, name: String, id: TyId)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         index = self.type_queue.len;
         key   = name.view();
         self.type_lookup.get(key).match({
-            Ok(_) => Ok(()),
+            Ok(_) => Ok,
             None  => {
                 self.type_queue.reserve(1).try();
                 self.type_lookup.set(key, index).try();
@@ -245,24 +245,23 @@ CBackend* = {
         Ok(self.type_queue.get(i).try().id)
     }
 
-    mark_done* = (self :: @Self, i: usize) Res<(), AllocError> {
+    mark_done* = (self :: @Self, i: usize) Res<AllocError> {
         row ::= self.type_queue.get(i).ok_or(AllocError.OutOfMemory).try();
         row.done = true;
         self.type_queue.set(i, row).ok_or(AllocError.OutOfMemory).try();
-        Ok(())
     }
 
     // Keep primitive ordering stable while requesting only operations used.
-    need_helpers* = (self :: @Self, prim: str, op: str) Res<(), AllocError> {
+    need_helpers* = (self :: @Self, prim: str, op: str) Res<AllocError> {
         self.has_helper(prim, op).match({
-            true  => Ok(()),
+            true  => Ok,
             false => {
                 // Primitive names and operation stems belong to the backend's
                 // type arena or static operator table for its full lifetime.
                 self.helper_ops.add(ArithmeticHelper(prim: prim, op: op)).try();
                 self.has_helpers(prim).match({
                     false => self.add_helpers(prim),
-                    true  => Ok(()),
+                    true  => Ok,
                 })
             },
         })
@@ -286,7 +285,7 @@ CBackend* = {
         }).match({ Ok(_) => true, None => false })
     }
 
-    add_helpers = (self :: @Self, prim: str) Res<(), AllocError> {
+    add_helpers = (self :: @Self, prim: str) Res<AllocError> {
         owned ::= self.alloc.String().try();
         owned.add(prim).try();
         self.helper_types.add(owned)
@@ -330,10 +329,10 @@ CBackend* = {
 
     set_lowering_avx2* = (self :: @Self, avx: bool) { self.lowering_avx2 = avx; }
 
-    need_target* = (self :: @Self, set: str) Res<(), AllocError> {
+    need_target* = (self :: @Self, set: str) Res<AllocError> {
         self.machine_used = true;
         self.target_sets.find((s) { s.view().eq(set) }).match({
-            Ok(_) => Ok(()),
+            Ok(_) => Ok,
             None  => {
                 owned ::= self.alloc.String().try();
                 owned.add(set).try();
@@ -351,7 +350,7 @@ CBackend* = {
         self.spawn_sites
     }
 
-    add_spawn_env* = (self :: @Self, text: String) Res<(), AllocError> {
+    add_spawn_env* = (self :: @Self, text: String) Res<AllocError> {
         self.spawn_envs.add(text)
     }
 
@@ -370,7 +369,7 @@ CBackend* = {
         self.actor_sites
     }
 
-    add_actor_def* = (self :: @Self, text: String) Res<(), AllocError> {
+    add_actor_def* = (self :: @Self, text: String) Res<AllocError> {
         self.actor_defs.add(text)
     }
 
@@ -391,10 +390,9 @@ CBackend* = {
     }
 
     add_defer_env* = (self :: @Self, text: String, n: usize)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
         self.defer_envs.add(text).try();
         self.defer_env_ids.add(n).try();
-        Ok(());
     }
 
     defer_env_count* = (self: @Self) usize { self.defer_envs.len }
@@ -407,25 +405,25 @@ CBackend* = {
         self.defer_env_ids.get(i).match({ Ok(n) => n, None => 0 })
     }
 
-    open_block* = (self :: @Self, rec: usize) Res<(), AllocError> {
+    open_block* = (self :: @Self, rec: usize) Res<AllocError> {
         self.blocks.add(BlockFrame(mark: self.drops.len, rec: rec))
     }
 
     // Leaving a block forgets its bindings. The cleanup was written
     // before this ran — closing the frame is bookkeeping, not an exit.
-    close_block* = (self :: @Self) Res<(), AllocError> {
+    close_block* = (self :: @Self) Res<AllocError> {
         self.blocks.take(self.blocks.len - 1).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(f) => self.forget_drops(f.mark),
         })
     }
 
-    forget_drops = (self :: @Self, mark: usize) Res<(), AllocError> {
+    forget_drops = (self :: @Self, mark: usize) Res<AllocError> {
         extra = self.drops.len - mark;
         Range(0, extra).loop((h, _) {
             self.drops.take(self.drops.len - 1);
         });
-        Ok(());
+        Ok;
     }
 
     block_depth* = (self: @Self) usize { self.blocks.len }
@@ -458,19 +456,19 @@ CBackend* = {
 
     drop_at* = (self: @Self, i: usize) Res<DropEntry> { self.drops.get(i) }
 
-    own_binding* = (self :: @Self, e: DropEntry) Res<(), AllocError> {
+    own_binding* = (self :: @Self, e: DropEntry) Res<AllocError> {
         self.drops.add(e)
     }
 
     // Body-buffer operations keep Emit storage private to the backend.
-    write* = (self :: @Self, s: str) Res<(), AllocError> { self.buf.bytes(s) }
+    write* = (self :: @Self, s: str) Res<AllocError> { self.buf.bytes(s) }
 
-    writeln* = (self :: @Self, s: str) Res<(), AllocError> { self.buf.say(s) }
+    writeln* = (self :: @Self, s: str) Res<AllocError> { self.buf.say(s) }
 
     // Format into the body buffer without an implicit newline.
-    fmt* = (self :: @Self, fmt: str, args: ...) Res<(), AllocError>
+    fmt* = (self :: @Self, fmt: str, args: ...) Res<AllocError>
 
-    newline* = (self :: @Self) Res<(), AllocError> { self.buf.line() }
+    newline* = (self :: @Self) Res<AllocError> { self.buf.line() }
 
     indent* = (self :: @Self) { self.buf.indent(); }
 
@@ -479,14 +477,14 @@ CBackend* = {
     text* = (self: @Self) str { self.buf.view() }
 
     // Emit one assignment statement.
-    set_line* = (self :: @Self, dst: str, value: str) Res<(), AllocError> {
+    set_line* = (self :: @Self, dst: str, value: str) Res<AllocError> {
         self.fmt("{dst} = {value};\n")
     }
 
     // Start a fresh function body buffer.
-    open_buf* = (self :: @Self) Res<(), AllocError> {
+    open_buf* = (self :: @Self) Res<AllocError> {
         self.buf = self.alloc.Emit().try();
-        Ok(());
+        Ok;
     }
 
     // Detach the completed body and open its successor without copying.
@@ -503,10 +501,10 @@ CBackend* = {
     // Queue a function for lowering, once.
     // The mangled symbol includes signature and instantiation and is the key.
     need_function* = (self :: @Self, d: Def, inst: Inst, sym: str)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
         self.seen_function(sym).match({
             false => self.push_function(d, inst, sym),
-            true  => Ok(()),
+            true  => Ok,
         })
     }
 
@@ -563,10 +561,10 @@ CBackend* = {
 
     // Queue a member once using the shared emitted-symbol set.
     need_method* = (self :: @Self, m: MethodRef, inst: Inst, sym: str)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         self.seen_function(sym).match({
             false => self.push_method(m, inst, sym),
-            true  => Ok(()),
+            true  => Ok,
         })
     }
 
@@ -584,22 +582,20 @@ CBackend* = {
     }
 
     push_method = (self :: @Self, m: MethodRef, inst: Inst, sym: str)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         self.m_queue.reserve(1).try();
         self.remember(sym).try();
         self.m_queue.add(QueuedMethod(method: m, inst: inst)).try();
-        Ok(());
     }
 
     push_function = (self :: @Self, d: Def, inst: Inst, sym: str)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
         self.fn_queue.reserve(1).try();
         self.remember(sym).try();
         self.fn_queue.add(QueuedFunction(definition: d, inst: inst)).try();
-        Ok(());
     }
 
-    remember = (self :: @Self, sym: str) Res<(), AllocError> {
+    remember = (self :: @Self, sym: str) Res<AllocError> {
         owned ::= self.alloc.String().try();
         owned.add(sym).try();
         key = owned.view();
@@ -617,17 +613,17 @@ CBackend* = {
     // One lowered function, held apart for C ordering and tagged as source or
     // generated for the optional symbol map.
     add_function* = (self :: @Self, name: String, proto: String,
-                     body: String) Res<(), AllocError> {
+                     body: String) Res<AllocError> {
         self.keep_function(name, proto, body, FnOrigin.Generated)
     }
 
     add_source_function* = (self :: @Self, name: String, proto: String,
-                            body: String, span: Span) Res<(), AllocError> {
+                            body: String, span: Span) Res<AllocError> {
         self.keep_function(name, proto, body, FnOrigin.Source(span))
     }
 
     keep_function = (self :: @Self, name: String, proto: String,
-                     body: String, origin: FnOrigin) Res<(), AllocError> {
+                     body: String, origin: FnOrigin) Res<AllocError> {
         self.functions.add(EmittedFunction(
             name: name,
             proto: proto,
@@ -678,12 +674,12 @@ CBackend* = {
         self.locals = held;
     }
 
-    release* = (self :: @Self, mark: usize) Res<(), AllocError> {
+    release* = (self :: @Self, mark: usize) Res<AllocError> {
         extra = self.locals.len - mark;
         Range(0, extra).loop((h, _) {
             self.locals.take(self.locals.len - 1);
         });
-        Ok(());
+        Ok;
     }
 
     // Introduce a binding, and answer with the number its C name
@@ -698,9 +694,9 @@ CBackend* = {
     }
 
     // Record that borrowed parameter `name` is lent to a `::` parameter.
-    note_lent* = (self :: @Self, name: str) Res<(), AllocError> {
+    note_lent* = (self :: @Self, name: str) Res<AllocError> {
         self.lent.find((l) { l.view().eq(name) }).match({
-            Ok(_) => Ok(()),
+            Ok(_) => Ok,
             None  => {
                 owned ::= self.alloc.String().try();
                 owned.add(name).try();
@@ -741,7 +737,7 @@ CBackend* = {
     }
 
     publish* = (self :: @Self, name: str, n: usize, ty: TyId, by_ref: bool)
-               Res<(), AllocError> {
+               Res<AllocError> {
         self.publish_slot(name, n, ty, by_ref, false)
     }
 
@@ -752,7 +748,7 @@ CBackend* = {
         ty       : TyId,
         by_ref   : bool,
         borrowed : bool
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         self.locals.add(LocalSlot(
             name: name,
             index: n,
@@ -762,14 +758,13 @@ CBackend* = {
             handle: 0,
             closure: 0
         )).try();
-        Ok(());
     }
 
     // Bind a name to a lambda. Like a handle, it has no C storage: what
     // the name means is a body to inline, and the index is where it is
     // kept.
     declare_closure* = (self :: @Self, name: str, cl: Closure)
-                       Res<(), AllocError> {
+                       Res<AllocError> {
         self.closures.add(cl).try();
         self.locals.add(LocalSlot(
             name: name,
@@ -780,7 +775,6 @@ CBackend* = {
             handle: 0,
             closure: self.closures.len
         )).try();
-        Ok(());
     }
 
     closure_at* = (self: @Self, i: usize) Res<Closure> {
@@ -795,7 +789,7 @@ CBackend* = {
     // still live afterwards, so they cannot be dropped.
 
     detach* = (self :: @Self, mark: usize, saved :: Vec<LocalSlot>)
-              Res<(), AllocError> {
+              Res<AllocError> {
         extra = self.locals.len - mark;
         Range(0, extra).loop((h, _) {
             self.locals.take(self.locals.len - 1).match({
@@ -803,11 +797,11 @@ CBackend* = {
                 None  => (),
             });
         });
-        Ok(());
+        Ok;
     }
 
     // `saved` came off the top, so it goes back bottom-first.
-    reattach* = (self :: @Self, saved: Vec<LocalSlot>) Res<(), AllocError> {
+    reattach* = (self :: @Self, saved: Vec<LocalSlot>) Res<AllocError> {
         n = saved.len;
         Range(0, n).loop((h, i) {
             saved.get(n - i - 1).match({
@@ -815,7 +809,7 @@ CBackend* = {
                 None  => (),
             });
         });
-        Ok(());
+        Ok;
     }
 
     // Select the lexical function that a non-local exit must leave.
@@ -853,10 +847,10 @@ CBackend* = {
         self.inline_returns.set(index, target);
     }
 
-    finish_inline_return* = (self :: @Self, index: usize) Res<(), AllocError> {
+    finish_inline_return* = (self :: @Self, index: usize) Res<AllocError> {
         target = self.inline_return(index);
         target.used.then(() { self.fmt("{}: ;\n", target.label).try(); });
-        Ok(())
+        Ok
     }
 
     // Lower what follows as a different function's body, beginning at
@@ -873,7 +867,7 @@ CBackend* = {
     // no declaration is written for it: what the name means is a pair
     // of labels, and `depth` is where to read them.
     declare_handle* = (self :: @Self, name: str, ty: TyId, depth: usize)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
         self.locals.add(LocalSlot(
             name: name,
             index: 0,
@@ -891,13 +885,13 @@ CBackend* = {
     // has two loops open at once, and `h.break` in the inner body must
     // reach the outer one's labels rather than the innermost.
 
-    push_loop* = (self :: @Self, frame: LoopFrame) Res<(), AllocError> {
+    push_loop* = (self :: @Self, frame: LoopFrame) Res<AllocError> {
         self.loops.add(frame)
     }
 
-    pop_loop* = (self :: @Self) Res<(), AllocError> {
+    pop_loop* = (self :: @Self) Res<AllocError> {
         self.loops.take(self.loops.len - 1).match({
-            Ok(_) => Ok(()),
+            Ok(_) => Ok,
             None  => Err(AllocError.OutOfMemory),
         })
     }
@@ -974,7 +968,7 @@ CBackend* = {
 
     // Everything a function's frame holds, dropped between functions.
     // The temporary counter is reset here and nowhere else.
-    reset_frame* = (self :: @Self) Res<(), AllocError> {
+    reset_frame* = (self :: @Self) Res<AllocError> {
         self.release(0).try();
         self.lent.truncate(0);
         extra = self.declared.len;
@@ -999,7 +993,7 @@ CBackend* = {
         self.depth     = 0;
         self.floor     = 0;
         self.tmp       = 0;
-        Ok(());
+        Ok;
     }
 
     next_tmp* = (self :: @Self) usize {

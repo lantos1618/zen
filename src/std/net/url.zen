@@ -2,9 +2,10 @@
 // allocates nothing; protocols map Invalid into their own error set.
 
 { str } = std.text
-{ Res, Ok, ok_or } = std.core
+{ Res, Ok, ok_or, Error } = std.core
 
 UrlError* = { | Invalid }
+UrlError.impl(Error, {})
 
 ParsedUrl* = {
     scheme*: str,

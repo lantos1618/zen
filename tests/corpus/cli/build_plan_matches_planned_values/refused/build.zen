@@ -3,11 +3,11 @@
 
 pick = () Optimize { Optimize.Size }
 
-build = (b :: Builder) Res<(), BuildError> {
+build = (b :: Builder) Res<BuildError> {
     // Valid Zen, but no planner value: the field is an error, not a default.
     b.exe(
         "app",
         { src: Path("src/main.zen"), deps: [], optimize: pick() }
     ).try();
-    Ok(())
+    Ok
 }

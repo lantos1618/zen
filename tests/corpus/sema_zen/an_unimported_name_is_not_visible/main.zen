@@ -95,7 +95,7 @@ import_decl = (a: Alloc, name: str, module: str) Res<Decl, AllocError> {
 }
 
 module_of = (tree :: Ast, name: str, decls: Vec<Decl>)
-            Res<(), AllocError> {
+            Res<AllocError> {
     tree.add_module(Module(
         name: name,
         decls: decls,
@@ -103,7 +103,6 @@ module_of = (tree :: Ast, name: str, decls: Vec<Decl>)
         leading: no_trivia(),
         trailing: no_trivia()
     )).try();
-    Ok(());
 }
 
 // The question, and the answer as a reader can check it: how many
@@ -111,7 +110,7 @@ module_of = (tree :: Ast, name: str, decls: Vec<Decl>)
 // came from — because "two modules may define the same top-level name"
 // means a count alone would not tell them apart.
 visible = (w :: World, a: Alloc, label: str, mi: usize, name: str)
-          Res<(), AllocError> {
+          Res<AllocError> {
     found ::= a.Vec<Def>();
     w.defs_of(mi, name, found).try();
     out ::= a.String().try();
@@ -120,7 +119,6 @@ visible = (w :: World, a: Alloc, label: str, mi: usize, name: str)
         out.add(d.qname).try();
     });
     println("{}: {}{}", label, found.len, out.view());
-    Ok(());
 }
 
 main = (env: Env) Res<i32, AllocError> {

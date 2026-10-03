@@ -32,7 +32,7 @@ printer_named* = (name: str) Res<Printer> {
 // Every bodyless declaration in std.io must be one of the two printers,
 // exported, taking only `args: ...` and answering `()`.
 printer_signature* = (c :: Checker, d: Def, f: Function)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     printer_named(f.name.text).match({
         None    => c.invalid_printer(d),
         Ok(how) => c.printer_shape(d, f).try().match({
@@ -59,7 +59,7 @@ printer_shape = (c :: Checker, d: Def, f: Function) Res<bool, AllocError> {
     })
 }
 
-invalid_printer = (c :: Checker, d: Def) Res<(), AllocError> {
+invalid_printer = (c :: Checker, d: Def) Res<AllocError> {
     c.report(
         d.span.file,
         d.span,

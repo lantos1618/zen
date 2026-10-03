@@ -836,7 +836,7 @@ Scan = {
     weight :: Vec<usize>,
     used :: Vec<bool>,
 
-    run = (self :: @Self) Res<(), AllocError> {
+    run = (self :: @Self) Res<AllocError> {
         function = self.flow.function;
         slots    = function.slots.len;
         limit    = self.flow.limit();
@@ -870,12 +870,12 @@ Scan = {
                 at = next.get(v).value_or(0);
             });
         });
-        Ok(())
+        Ok
     }
 
     // Loop depth comes from back edges in emission order: a branch to an
     // earlier (or the same) block closes a loop over the blocks between.
-    weigh = (self :: @Self) Res<(), AllocError> {
+    weigh = (self :: @Self) Res<AllocError> {
         function = self.flow.function;
         blocks   = function.blocks.len;
         opens   ::= zeros(self.alloc, blocks + 1).try();
@@ -912,7 +912,7 @@ Scan = {
             });
             exit_read(block.exit).when_ok((slot) { self.weight.set(slot, self.weight.get(slot).value_or(0) + cost); });
         });
-        Ok(())
+        Ok
     }
 
     // Uses per position of an interval, scaled: the cost of keeping it in
@@ -922,7 +922,7 @@ Scan = {
         self.weight.get(slot).value_or(0) * 1024 / span
     }
 
-    constants_and_hints = (self :: @Self) Res<(), AllocError> {
+    constants_and_hints = (self :: @Self) Res<AllocError> {
         // A unit value has no bits; reading one yields zero. A unit slot
         // whose address is taken keeps its frame slot.
         taken ::= self.alloc.Vec<bool>();
@@ -957,14 +957,14 @@ Scan = {
                 });
             });
         });
-        Ok(())
+        Ok
     }
 
     suggest = (self :: @Self, out: usize, from: usize) {
         (self.hint.get(out).value_or(0) == 0).then(() { self.hint.set(out, from + 1); });
     }
 
-    clobber_map = (self :: @Self, limit: usize) Res<(), AllocError> {
+    clobber_map = (self :: @Self, limit: usize) Res<AllocError> {
         function = self.flow.function;
         marks ::= zeros(self.alloc, limit + 1).try();
         // Aggregate parameters are copied in on entry, through registers
@@ -985,7 +985,7 @@ Scan = {
             total = total + m;
             self.crossing.add(total).try();
         });
-        Ok(())
+        Ok
     }
 
     crosses = (self: @Self, slot: usize) bool {
@@ -999,7 +999,7 @@ Scan = {
         self.holder.get(register).value_or(1) == 0
     }
 
-    assign = (self :: @Self, v: usize) Res<(), AllocError> {
+    assign = (self :: @Self, v: usize) Res<AllocError> {
         first = self.flow.first.get(v).value_or(0);
         // Expire intervals that ended before this one starts.
         kept ::= self.alloc.Vec<usize>();
@@ -1066,14 +1066,14 @@ Scan = {
             self.used.set(choice, true);
             self.active.add(v).try();
         });
-        Ok(())
+        Ok
     }
 
-    drop_active = (self :: @Self, slot: usize) Res<(), AllocError> {
+    drop_active = (self :: @Self, slot: usize) Res<AllocError> {
         kept ::= self.alloc.Vec<usize>();
         self.active.loop((a) { (a != slot).then(() { kept.add(a).try(); }); });
         self.active = kept;
-        Ok(())
+        Ok
     }
 
     home = (self: @Self, slot: usize) Home {

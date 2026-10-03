@@ -135,7 +135,7 @@ res_cases = (c :: Checker, r: TyRes, out :: Vec<Case>) Res<bool, AllocError> {
     Ok(true);
 }
 
-add_none = (c :: Checker, out :: Vec<Case>) Res<(), AllocError> {
+add_none = (c :: Checker, out :: Vec<Case>) Res<AllocError> {
     unit = c.types.unit().try();
     out.add(Case(name: "None", payload: unit, has_payload: false))
 }

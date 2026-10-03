@@ -4,9 +4,10 @@
 { Alloc } = std.mem
 { Env } = std.env
 { str } = std.text
-{ Res, Ok, Err, Eq, IoError } = std.core
+{ Res, Ok, Err, Eq, IoError, Error } = std.core
 
 TestError* = { | Failed: str }
+TestError.impl(Error, {})
 
 Tester* = {
     env*: Env,
@@ -14,16 +15,16 @@ Tester* = {
     // Per-test arena, dropped after the test.
     alloc*: Alloc,
 
-    expect* = (self: @Self, cond: bool) Res<(), TestError> {
+    expect* = (self: @Self, cond: bool) Res<TestError> {
         cond.match({
-            true  => Ok(()),
+            true  => Ok,
             false => Err(TestError.Failed("expectation was false")),
         })
     }
 
-    expect_eq* = <T: Eq>(self: @Self, a: T, b: T) Res<(), TestError> {
+    expect_eq* = <T: Eq>(self: @Self, a: T, b: T) Res<TestError> {
         a.eq(b).match({
-            true  => Ok(()),
+            true  => Ok,
             false => Err(TestError.Failed("values are not equal")),
         })
     }
@@ -50,7 +51,7 @@ Suite* = {
     failed :: usize = 0,
 
     run* = (self :: @Self, name: str, body: (test: Tester) Res<(), TestError>)
-           Res<(), IoError> {
+           Res<IoError> {
         arena ::= self.env.mem.alloc();
         test = Tester(env: self.env, alloc: arena);
         body(test).match({

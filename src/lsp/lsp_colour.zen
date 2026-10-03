@@ -35,7 +35,7 @@ index_of* = (colour: Colour) usize {
     })
 }
 
-write_legend* = (out :: String) Res<(), AllocError> {
+write_legend* = (out :: String) Res<AllocError> {
     legend ::= obj(out).try();
     legend.key("tokenTypes", out).try();
     types ::= arr(out).try();
@@ -56,7 +56,7 @@ write_legend* = (out :: String) Res<(), AllocError> {
 }
 
 listed = (colour: Colour, types :: Nest, out :: String)
-         Res<(), AllocError> {
+         Res<AllocError> {
     types.next(out).try();
     write_text(colour.variant_name(), out)
 }
@@ -124,7 +124,7 @@ Painter = {
     source_units :: usize,
 
     put = (self :: @Self, line: usize, character: usize, length: usize,
-           colour: Colour, runs :: Nest, out :: String) Res<(), AllocError> {
+           colour: Colour, runs :: Nest, out :: String) Res<AllocError> {
         runs.next(out).try();
         delta_line      = line - self.line;
         delta_character = (delta_line == 0).match({
@@ -141,11 +141,11 @@ Painter = {
         out.add(",0").try();
         self.line      = line;
         self.character = character;
-        Ok(());
+        Ok;
     }
 
     paint = (self :: @Self, text: str, token: Token, colour: Colour,
-             runs :: Nest, out :: String) Res<(), AllocError> {
+             runs :: Nest, out :: String) Res<AllocError> {
         stop = token.span.end.offset;
         from      ::= token.span.start.offset;
         line      ::= token.span.start.line.zero_based();
@@ -158,7 +158,7 @@ Painter = {
             line      = line + 1;
             character = 0;
         });
-        Ok(());
+        Ok;
     }
 
     character_at = (self :: @Self, text: str, upto: usize) usize {
@@ -181,7 +181,7 @@ Painter = {
     run = (self :: @Self, text: str, line: usize, character: usize,
            from: usize, upto: usize, colour: Colour, runs :: Nest,
            out :: String)
-          Res<(), AllocError> {
+          Res<AllocError> {
         (upto > from).match({
             true  => self.put(
                 line,
@@ -246,7 +246,7 @@ write_tokens* = (
     text  : str,
     names : Vec<Classed>,
     out   :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     lexed = scan(a, Source(file: name, text: text)).try();
     painter ::= Painter(line: 0, character: 0, source_at: 0, source_units: 0);
     answer  ::= obj(out).try();

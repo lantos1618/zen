@@ -1,7 +1,8 @@
-{ Res, Ok } = std.core
+{ Res, Ok, Error } = std.core
 { Env } = std.env
 
 Fault = { | Bad }
+Fault.impl(Error, {})
 
 read = (value: Res<i32, Fault>) i32 {
     value.match({ Ok(n) => n, Err(_) => 0 })

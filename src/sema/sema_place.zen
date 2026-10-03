@@ -33,14 +33,14 @@ bind_stmt* = (c :: Checker, b: Bind, ctx: Ctx) Res<TyId, AllocError> {
 // value position as a constructor or as a member's base, never alone, so
 // the binding is refused here rather than left to a backend with nothing to
 // lower.
-refuse_type_value = (c :: Checker, id: ExprId, ctx: Ctx) Res<(), AllocError> {
+refuse_type_value = (c :: Checker, id: ExprId, ctx: Ctx) Res<AllocError> {
     node = c.tree.expr_at(id);
     node.kind.match({
         Paren(p) => c.refuse_type_value(p.inner, ctx),
         Name(n)  => c.lookup(n.text).match({
-            Ok(_) => Ok(()),
+            Ok(_) => Ok,
             None  => c.world.first_def_of(ctx.module, n.text).try().match({
-                None  => Ok(()),
+                None  => Ok,
                 Ok(d) => d.kind.match({
                     StructDef => c.refuse(
                         node.span,
@@ -56,11 +56,11 @@ refuse_type_value = (c :: Checker, id: ExprId, ctx: Ctx) Res<(), AllocError> {
                             record: false
                         ))
                     ),
-                    _         => Ok(()),
+                    _         => Ok,
                 }),
             }),
         }),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
@@ -71,7 +71,7 @@ deferred_stmt* = (c :: Checker, d: Deferred, ctx: Ctx) Res<TyId, AllocError> {
     target = c.tree.expr_at(d.target);
     target.kind.match({
         Name(n) => c.bind_deferred(n.text, ty, d.mutable, target.span),
-        _       => Ok(()),
+        _       => Ok,
     }).try();
     c.types.prim("()")
 }
@@ -79,7 +79,7 @@ deferred_stmt* = (c :: Checker, d: Deferred, ctx: Ctx) Res<TyId, AllocError> {
 // An unannotated declaration takes its initializer's type, and a binding's
 // type never changes after its declaration. A bare `None` names no payload
 // type, so nothing could ever supply the payload the storage needs.
-refuse_bare_none = (c :: Checker, b: Bind, want: TyId) Res<(), AllocError> {
+refuse_bare_none = (c :: Checker, b: Bind, want: TyId) Res<AllocError> {
     written = b.type.match({ Ok(_) => true, None => false });
     stores  = c.assign_binding(b).match({ Ok(_) => true, None => false });
     target  = c.tree.expr_at(b.target);
@@ -92,7 +92,7 @@ refuse_bare_none = (c :: Checker, b: Bind, want: TyId) Res<(), AllocError> {
         }),
         _       => (),
     });
-    Ok(());
+    Ok;
 }
 
 // A bare `None` is an absence whose payload nothing has named.
@@ -212,20 +212,19 @@ settled_elem = (c :: Checker, ty: TyId, a: TyArray) Res<TyId, AllocError> {
 }
 
 check_assign = (c :: Checker, b: Bind, got: TyId, want: TyId, ctx: Ctx)
-               Res<(), AllocError> {
+               Res<AllocError> {
     node = c.tree.expr_at(b.value);
     (c.assignable(got, want) || c.nullary_settles(got, want)).match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.mismatch(node.span.file, node.span, got, want, ""),
     }).try();
     // `literal_fits` accepts every integer literal for every integer
     // type; the value is checked against the width here.
     c.check_literal(b.value, want).try();
     c.written_want(b, want).try();
-    Ok(());
 }
 
-written_want = (c :: Checker, b: Bind, want: TyId) Res<(), AllocError> {
+written_want = (c :: Checker, b: Bind, want: TyId) Res<AllocError> {
     b.type.match({
         Ok(_) => c.check_arms(b.value, want),
         None  => c.check_arms_agree(b.value),
@@ -233,14 +232,13 @@ written_want = (c :: Checker, b: Bind, want: TyId) Res<(), AllocError> {
 }
 
 bind_target = (c :: Checker, b: Bind, ty: TyId, ctx: Ctx)
-              Res<(), AllocError> {
+              Res<AllocError> {
     target = c.tree.expr_at(b.target);
     target.kind.match({
         Name(n)   => c.bind_name(b, n.text, target, ty, ctx),
         Access(a) => c.assign_access(target, a, ctx),
-        _         => Ok(()),
+        _         => Ok,
     }).try();
-    Ok(());
 }
 
 // A write introduces no binding; a plain `=` on no local is a fresh
@@ -253,7 +251,7 @@ bind_name = (
     ty     : TyId,
     ctx    : Ctx
 )
-           Res<(), AllocError> {
+           Res<AllocError> {
     c.assign_binding(b).match({
         Ok(old) => c.refuse_immutable_store(b, old, target),
         None    => c.fresh_or_refused(b, name, target, ty, ctx),
@@ -265,10 +263,10 @@ bind_name = (
 // block already reports it as a rebinding, and a deferred local's one
 // assignment is sema_init's to check.
 refuse_immutable_store = (c :: Checker, b: Bind, old: Binding, target: Expr)
-                         Res<(), AllocError> {
+                         Res<AllocError> {
     same_block = c.rebound_of(b).match({ Ok(_) => true, None => false });
     (old.mutable || old.deferred || same_block).match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.refuse(
             target.span,
             SemaFault.ImmutableWrite(NameFault(name: old.name))
@@ -284,7 +282,7 @@ fresh_or_refused = (
     ty     : TyId,
     ctx    : Ctx
 )
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     plain_write(b).match({
         false => c.bind_fresh(b, name, target, ty),
         true  => c.const_def(name, ctx).try().match({
@@ -301,7 +299,7 @@ fresh_or_refused = (
 // value, so a use that wants a type checks the value exactly as it would
 // check the literal written there.
 bind_fresh = (c :: Checker, b: Bind, name: str, target: Expr, ty: TyId)
-             Res<(), AllocError> {
+             Res<AllocError> {
     held: Res<i64> = (!b.mutable && c.prim_name(ty).eq("int")).match({
         true  => c.const_int(b.value),
         false => None,
@@ -315,15 +313,15 @@ bind_fresh = (c :: Checker, b: Bind, name: str, target: Expr, ty: TyId)
 // `c.width = 5` on an impl-supplied field: there is nothing to assign
 // into.
 assign_access = (c :: Checker, target: Expr, a: Access, ctx: Ctx)
-                Res<(), AllocError> {
+                Res<AllocError> {
     c.writable_member(a, ctx).try();
     c.computed_member(a, ctx).try().match({
         true  => c.no_storage(target, a),
-        false => Ok(()),
+        false => Ok,
     })
 }
 
-no_storage = (c :: Checker, target: Expr, a: Access) Res<(), AllocError> {
+no_storage = (c :: Checker, target: Expr, a: Access) Res<AllocError> {
     c.refuse(
         target.span,
         SemaFault.ComputedFieldAssign(NameFault(name: a.name.text))

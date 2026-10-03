@@ -38,14 +38,14 @@
 { impl_bound_type } = sema.sema_supply
 
 // Every declaration rule, for one module.
-check_module* = (c :: Checker, mi: usize) Res<(), AllocError> {
+check_module* = (c :: Checker, mi: usize) Res<AllocError> {
     c.world.table_at(mi).match({
         Ok(t) => c.check_table(t, mi),
-        None  => Ok(()),
+        None  => Ok,
     })
 }
 
-check_all* = (c :: Checker) Res<(), AllocError> {
+check_all* = (c :: Checker) Res<AllocError> {
     c.check_union_imports().try();
     c.check_numeric_conversions().try();
     Range(0, c.world.count()).loop((h, mi) {
@@ -58,57 +58,54 @@ check_all* = (c :: Checker) Res<(), AllocError> {
     c.check_depth().try();
     // Vararg legality is positional, while type nodes do not store parents.
     check_varargs(c).try();
-    Ok(());
 }
 
 check_table = (c :: Checker, t: ModuleTable, mi: usize)
-              Res<(), AllocError> {
+              Res<AllocError> {
     c.check_overload_sets(t, mi).try();
     t.impls.loop((h, id) { c.check_impl(id, mi).try() });
     c.check_bodies(mi).try();
-    Ok(());
 }
 
 check_overload_sets = (c :: Checker, t: ModuleTable, mi: usize)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     seen ::= c.alloc.Vec<str>();
     t.defs.loop((h, d) { c.one_set(d, mi, seen).try() });
-    Ok(());
+    Ok;
 }
 
 one_set = (c :: Checker, d: Def, mi: usize, seen :: Vec<str>)
-          Res<(), AllocError> {
+          Res<AllocError> {
     (is_fn_def(d.kind) && (d.name.is_in(seen) == false)).match({
         true  => c.new_set(d.name, mi, seen),
-        false => Ok(()),
+        false => Ok,
     })
 }
 
 new_set = (c :: Checker, name: str, mi: usize, seen :: Vec<str>)
-          Res<(), AllocError> {
+          Res<AllocError> {
     seen.add(name).try();
     c.check_overloads(mi, name).try();
-    Ok(());
 }
 
 is_fn_def = (k: DefKind) bool {
     k.match({ FunctionDef => true, _ => false })
 }
 
-check_bodies = (c :: Checker, mi: usize) Res<(), AllocError> {
+check_bodies = (c :: Checker, mi: usize) Res<AllocError> {
     c.tree.module_at(mi).match({
         Ok(m) => c.check_decls(m, mi),
-        None  => Ok(()),
+        None  => Ok,
     })
 }
 
-check_decls = (c :: Checker, m: Module, mi: usize) Res<(), AllocError> {
+check_decls = (c :: Checker, m: Module, mi: usize) Res<AllocError> {
     m.decls.loop((h, d) { c.check_decl(d, m, mi).try() });
-    Ok(());
+    Ok;
 }
 
 check_decl = (c :: Checker, d: Decl, m: Module, mi: usize)
-             Res<(), AllocError> {
+             Res<AllocError> {
     d.kind.match({
         Function(f) => c.check_function(f, m, mi),
         Struct(s)   => c.struct_bodies(s, m, mi),
@@ -120,32 +117,31 @@ check_decl = (c :: Checker, d: Decl, m: Module, mi: usize)
         },
         Impl(im)    => c.impl_bodies(im, m, mi),
         Const(k)    => c.const_body(k, mi),
-        _           => Ok(()),
+        _           => Ok,
     })
 }
 
 // A constant's written type is a typed position: the same family and
 // literal-fit checks as a written local binding.
-const_body = (c :: Checker, k: Const, mi: usize) Res<(), AllocError> {
+const_body = (c :: Checker, k: Const, mi: usize) Res<AllocError> {
     ctx = Ctx(mi, c.types.unknown().try());
     got = c.type_of(k.value, ctx).try();
     k.type.match({
         Ok(t) => c.const_fits(k.value, t, got, ctx),
-        None  => Ok(()),
+        None  => Ok,
     })
 }
 
 const_fits = (c :: Checker, id: ExprId, t: TypeId, got: TyId, ctx: Ctx)
-             Res<(), AllocError> {
+             Res<AllocError> {
     want = c.type_from_ast(t, ctx).try();
     node = c.tree.expr_at(id);
     c.coerce(node.span.file, node.span, got, want, "").try();
     c.check_literal(id, want).try();
-    Ok(());
 }
 
 // Resolve every variant payload eagerly in the enum's type-parameter scope.
-enum_payloads = (c :: Checker, e: Enum, mi: usize) Res<(), AllocError> {
+enum_payloads = (c :: Checker, e: Enum, mi: usize) Res<AllocError> {
     tmark = c.tvar_mark();
     owner = c.owner_of(mi, e.name.text).try();
     c.push_tparams(e.tparams, owner).try();
@@ -158,9 +154,9 @@ enum_payloads = (c :: Checker, e: Enum, mi: usize) Res<(), AllocError> {
 // existing types into a union: every name must be a type, and anything an
 // enum would write there is reported with the braced form as the fix.
 check_members = (c :: Checker, e: Enum, mi: usize)
-                Res<(), AllocError> {
+                Res<AllocError> {
     e.braced.match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.check_union_members(e, mi),
     })
 }
@@ -168,7 +164,7 @@ check_members = (c :: Checker, e: Enum, mi: usize)
 // Names that bind nothing are misspelled union members when others are
 // types, and an enum written without braces when none is.
 check_union_members = (c :: Checker, e: Enum, mi: usize)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     enum_like ::= e.variants.len < 2 || e.leading_bar.match({
         Ok(_) => true,
         None  => false,
@@ -203,7 +199,7 @@ check_union_members = (c :: Checker, e: Enum, mi: usize)
                     SemaFault.UndefinedName(NameFault(name: v.name.text))
                 ).try();
             });
-            Ok(())
+            Ok
         },
     })
 }
@@ -234,7 +230,7 @@ binds_a_type = (c :: Checker, mi: usize, name: str) Res<bool, AllocError> {
 // Member bodies receive the same typing, return, and ownership checks as
 // top-level function bodies. Lowering consumes their memoized answers.
 struct_bodies = (c :: Checker, s: Struct, m: Module, mi: usize)
-                Res<(), AllocError> {
+                Res<AllocError> {
     c.check_fields(s).try();
     self_ty = c.named_self(s.name.text, mi).try();
     tmark   = c.tvar_mark();
@@ -248,19 +244,18 @@ struct_bodies = (c :: Checker, s: Struct, m: Module, mi: usize)
                 true  => c.native_field_default(field, self_ty, mi),
                 false => c.field_default(field, self_ty, mi),
             }),
-            _            => Ok(()),
+            _            => Ok,
         }).try();
     });
     c.release_bounds(bmark).try();
     c.release_tvars(tmark).try();
-    Ok(());
 }
 
 // An enum body's methods and constants get the same checks as a struct's.
 enum_bodies = (c :: Checker, e: Enum, m: Module, mi: usize)
-              Res<(), AllocError> {
+              Res<AllocError> {
     (e.members.len == 0).match({
-        true  => Ok(()),
+        true  => Ok,
         false => {
             self_ty = c.named_self(e.name.text, mi).try();
             tmark   = c.tvar_mark();
@@ -268,7 +263,7 @@ enum_bodies = (c :: Checker, e: Enum, m: Module, mi: usize)
             c.check_member_overloads(e.members, self_ty, mi).try();
             e.members.loop((mem) { c.member_body(mem, self_ty, m, mi).try(); });
             c.release_tvars(tmark).try();
-            Ok(())
+            Ok
         },
     })
 }
@@ -276,7 +271,7 @@ enum_bodies = (c :: Checker, e: Enum, m: Module, mi: usize)
 // The parser restricts native fallbacks to integer literals. Fixed-width
 // ranges are checked here; target-dependent C ranges are checked by C headers.
 native_field_default = (c :: Checker, field: Field, self_ty: TyId, mi: usize)
-                       Res<(), AllocError> {
+                       Res<AllocError> {
     field.value.when_ok((value) {
         ctx = c.self_ctx(mi, self_ty).try();
         field.type.when_ok((written) {
@@ -284,14 +279,14 @@ native_field_default = (c :: Checker, field: Field, self_ty: TyId, mi: usize)
             c.check_literal(value, want).try();
         });
     });
-    Ok(())
+    Ok
 }
 
 // Defaults belong to the declaration's module and type-parameter scope.
 // Check even unused defaults so lowering receives the same call facts as it
 // does for function bodies; no construction-site locals are in scope here.
 field_default = (c :: Checker, field: Field, self_ty: TyId, mi: usize)
-                Res<(), AllocError> {
+                Res<AllocError> {
     field.value.when_ok((value) {
         ctx = c.self_ctx(mi, self_ty).try();
         got = c.type_of(value, ctx).try();
@@ -310,7 +305,7 @@ field_default = (c :: Checker, field: Field, self_ty: TyId, mi: usize)
             c.check_arms(value, want).try();
         });
     });
-    Ok(())
+    Ok
 }
 
 check_member_overloads = (
@@ -318,7 +313,7 @@ check_member_overloads = (
     members : Vec<Member>,
     self_ty : TyId,
     mi      : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     seen ::= c.alloc.Vec<Member>();
     members.loop((h, m) {
         m.kind.match({
@@ -328,13 +323,13 @@ check_member_overloads = (
                 });
                 seen.add(m)
             },
-            _           => Ok(()),
+            _           => Ok,
         }).try();
     });
     members.loop((h, m) {
         c.check_free_member_overloads(m, self_ty, mi).try();
     });
-    Ok(())
+    Ok
 }
 
 check_free_member_overloads = (
@@ -342,10 +337,10 @@ check_free_member_overloads = (
     m       : Member,
     self_ty : TyId,
     mi      : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     m.kind.match({
         Function(f) => c.is_receiver_fn(f).match({
-            false => Ok(()),
+            false => Ok,
             true  => {
                 cands ::= c.alloc.Vec<Cand>();
                 c.cands_of(mi, f.name.text, cands).try();
@@ -358,18 +353,18 @@ check_free_member_overloads = (
                     });
                 });
                 (local.len == 0).match({
-                    true  => Ok(()),
+                    true  => Ok,
                     false => {
                         mty = c.member_type(m, mi, self_ty).try();
                         local.loop((h, k) {
                             c.compare_free_member(m, f, mty, k).try();
                         });
-                        Ok(())
+                        Ok
                     },
                 })
             },
         }),
-        _           => Ok(()),
+        _           => Ok,
     })
 }
 
@@ -386,12 +381,12 @@ compare_free_member = (
     f   : Function,
     mty : TyId,
     k   : Cand
-) Res<(), AllocError> {
+) Res<AllocError> {
     fty = c.types.fn_ty(k.params, k.ret).try();
     c.same_fn_signature(mty, fty).match({
         true  => c.report_cross_duplicate(m, k),
         false => c.cross_signatures_overlap(mty, f, k).match({
-            false => Ok(()),
+            false => Ok,
             true  => c.report_cross_ambiguous(m, k),
         }),
     })
@@ -437,7 +432,7 @@ cross_prefix_overlaps = (c: Checker, a: Vec<TyId>, b: Vec<TyId>, n: usize)
 }
 
 report_cross_duplicate = (c :: Checker, m: Member, k: Cand)
-                         Res<(), AllocError> {
+                         Res<AllocError> {
     c.report(
         m.span.file,
         m.span,
@@ -450,7 +445,7 @@ report_cross_duplicate = (c :: Checker, m: Member, k: Cand)
 }
 
 report_cross_ambiguous = (c :: Checker, m: Member, k: Cand)
-                         Res<(), AllocError> {
+                         Res<AllocError> {
     c.report(
         m.span.file,
         m.span,
@@ -468,15 +463,15 @@ compare_member_signatures = (
     b       : Member,
     self_ty : TyId,
     mi      : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     a.name().text.eq(b.name().text).match({
-        false => Ok(()),
+        false => Ok,
         true  => {
             aty = c.member_type(a, mi, self_ty).try();
             bty = c.member_type(b, mi, self_ty).try();
             c.same_fn_signature(aty, bty).match({
                 false => c.fn_signatures_overlap(aty, bty).match({
-                    false => Ok(()),
+                    false => Ok,
                     true  => c.report(
                         a.span.file,
                         a.span,
@@ -501,19 +496,19 @@ compare_member_signatures = (
     })
 }
 
-check_fields = (c :: Checker, s: Struct) Res<(), AllocError> {
+check_fields = (c :: Checker, s: Struct) Res<AllocError> {
     seen ::= c.alloc.Vec<Ident>();
     s.members.loop((h, mem) {
         mem.kind.match({
             Field(f) => c.unique_field(f.name, seen),
-            _        => Ok(()),
+            _        => Ok,
         }).try();
     });
-    Ok(())
+    Ok
 }
 
 unique_field = (c :: Checker, name: Ident, seen :: Vec<Ident>)
-               Res<(), AllocError> {
+               Res<AllocError> {
     Range(0, seen.len).find((i) {
         seen.get(i).match({
             Ok(first) => first.text.eq(name.text),
@@ -538,7 +533,7 @@ unique_field = (c :: Checker, name: Ident, seen :: Vec<Ident>)
 
 // Impl bodies are checked in the target type's parameter scope.
 impl_bodies = (c :: Checker, im: Impl, m: Module, mi: usize)
-              Res<(), AllocError> {
+              Res<AllocError> {
     name    = im.target.text;
     self_ty = c.named_self(name, mi).try();
     tmark   = c.tvar_mark();
@@ -548,7 +543,6 @@ impl_bodies = (c :: Checker, im: Impl, m: Module, mi: usize)
     im.members.loop((h, mem) { c.field_value(mem, im, self_ty, mi).try() });
     c.release_bounds(bmark).try();
     c.release_tvars(tmark).try();
-    Ok(());
 }
 
 // An impl-supplied field is checked against the corresponding bound member
@@ -559,7 +553,7 @@ field_value = (
     im      : Impl,
     self_ty : TyId,
     mi      : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     bound = c.impl_bound_type(im, mi).try();
     mem.kind.match({
         Field(f) => f.value.match({
@@ -581,11 +575,11 @@ field_value = (
                     c.check_literal(v, want).try();
                     c.check_arms(v, want).try();
                 });
-                Ok(())
+                Ok
             },
-            None  => Ok(()),
+            None  => Ok,
         }),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
@@ -604,10 +598,10 @@ named_self = (c :: Checker, name: str, mi: usize) Res<TyId, AllocError> {
 }
 
 enter_target_tvars = (c :: Checker, name: str, mi: usize)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     c.target_decl(name, mi).try().match({
         Ok(d) => c.target_tvars(d, mi),
-        None  => Ok(()),
+        None  => Ok,
     })
 }
 
@@ -616,19 +610,19 @@ target_decl = (c :: Checker, name: str, mi: usize)
     c.world.first_def_of(mi, name)
 }
 
-target_tvars = (c :: Checker, d: Def, mi: usize) Res<(), AllocError> {
+target_tvars = (c :: Checker, d: Def, mi: usize) Res<AllocError> {
     decl_at(c.tree, d.id).match({
         Ok(x) => c.target_decl_tvars(x, mi),
-        None  => Ok(()),
+        None  => Ok,
     })
 }
 
 target_decl_tvars = (c :: Checker, d: Decl, mi: usize)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     d.kind.match({
         Struct(s) => c.enter_struct_generics(s, mi),
         Enum(e)   => c.enter_type_tvars(e.name, e.tparams, mi),
-        _         => Ok(()),
+        _         => Ok,
     })
 }
 
@@ -636,12 +630,12 @@ target_decl_tvars = (c :: Checker, d: Decl, mi: usize)
 // function's body sees its own: `self.profile.step(n)` on a field of type
 // `P: Profile` resolves through `Profile` rather than typing as unknown.
 enter_struct_generics = (c :: Checker, s: Struct, mi: usize)
-                        Res<(), AllocError> {
+                        Res<AllocError> {
     c.enter_struct_tvars(s, mi).try();
     poison = c.types.unknown().try();
     ctx    = Ctx(mi, poison);
     s.tparams.loop((h, tp) { c.push_bounds(tp, ctx).try() });
-    Ok(());
+    Ok;
 }
 
 member_body = (
@@ -650,16 +644,16 @@ member_body = (
     self_ty : TyId,
     m       : Module,
     mi      : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     mem.kind.match({
         Function(f) => c.check_body(f, f.body, Ok(self_ty), m, mi),
-        _           => Ok(()),
+        _           => Ok,
     })
 }
 
 // A top-level function has no `@Self`.
 check_function* = (c :: Checker, f: Function, m: Module, mi: usize)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     c.check_body(f, f.body, None, m, mi)
 }
 
@@ -671,7 +665,7 @@ check_body = (
     self_ty : Res<TyId>,
     m       : Module,
     mi      : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     smark = c.mark();
     tmark = c.tvar_mark();
     bmark = c.bound_mark();
@@ -681,16 +675,15 @@ check_body = (
     c.bind_params(f, ctx).try();
     body.match({
         Ok(b) => c.check_block(f, b, ctx, owner),
-        None  => Ok(()),
+        None  => Ok,
     }).try();
     c.release_bounds(bmark).try();
     c.release_tvars(tmark).try();
     c.release(smark).try();
-    Ok(());
 }
 
 check_block = (c :: Checker, f: Function, body: BlockId, ctx: Ctx, owner: str)
-              Res<(), AllocError> {
+              Res<AllocError> {
     rmark = c.raised_mark();
     c.enter_owner(owner);
     got = c.block_type(body, ctx).try();
@@ -720,29 +713,29 @@ is_res = (c: Checker, ty: TyId) bool {
 }
 
 enter_generics = (c :: Checker, f: Function, owner: str, mi: usize)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     f.tparams.loop((h, tp) {
         c.push_tvar(tp, c.types.var(tp.name.text, owner).try()).try();
     });
     poison = c.types.unknown().try();
     ctx    = Ctx(mi, poison);
     f.tparams.loop((h, tp) { c.push_bounds(tp, ctx).try() });
-    Ok(());
+    Ok;
 }
 
-push_bounds = (c :: Checker, tp: TParam, ctx: Ctx) Res<(), AllocError> {
+push_bounds = (c :: Checker, tp: TParam, ctx: Ctx) Res<AllocError> {
     text = tp.name.text;
     tp.bounds.loop((h, b) {
         c.push_bound(text, c.type_from_ast(b, ctx).try()).try();
     });
-    Ok(());
+    Ok;
 }
 
-bind_params = (c :: Checker, f: Function, ctx: Ctx) Res<(), AllocError> {
+bind_params = (c :: Checker, f: Function, ctx: Ctx) Res<AllocError> {
     f.params.loop((h, p) {
         text    = p.name.text;
         mutable = p.mutable;
         c.bind(text, c.param_type(p, ctx).try(), mutable, true).try();
     });
-    Ok(());
+    Ok;
 }

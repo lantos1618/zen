@@ -147,7 +147,7 @@ Jsons* = {
     }
 
     // Write compact JSON while preserving array and object insertion order.
-    write* = (self: @Self, id: JsonId, out :: String) Res<(), AllocError> {
+    write* = (self: @Self, id: JsonId, out :: String) Res<AllocError> {
         self.at(id).match({
             Null     => out.add("null"),
             Bool(b)  => out.add(b.match({ true => "true", false => "false" })),
@@ -158,7 +158,7 @@ Jsons* = {
         })
     }
 
-    write_items = (self: @Self, run: Run, out :: String) Res<(), AllocError> {
+    write_items = (self: @Self, run: Run, out :: String) Res<AllocError> {
         items ::= arr(out).try();
         Range(0, run.len).loop((h, i) {
             items.next(out).try();
@@ -170,7 +170,7 @@ Jsons* = {
         items.close(out)
     }
 
-    write_pairs = (self: @Self, run: Run, out :: String) Res<(), AllocError> {
+    write_pairs = (self: @Self, run: Run, out :: String) Res<AllocError> {
         pairs ::= obj(out).try();
         Range(0, run.len).loop((h, i) {
             p = self.pairs.get(run.at + i).value_or(Pair(key: "", value: JsonId(index: 0)));
@@ -185,7 +185,7 @@ Jsons* = (a: Alloc) Jsons {
     Jsons(nodes: a.Vec<Json>(), items: a.Vec<JsonId>(), pairs: a.Vec<Pair>())
 }
 
-written* = () Res<(), AllocError> { Ok(()) }
+written* = () Res<AllocError> { Ok }
 
 // Nest streams container punctuation without building an arena value. It
 // owns separator placement, key escaping, and the closing bracket.
@@ -193,25 +193,25 @@ Nest* = {
     said :: bool,
     ends: u8,
 
-    next* = (self :: @Self, out :: String) Res<(), AllocError> {
+    next* = (self :: @Self, out :: String) Res<AllocError> {
         owed      = self.said;
         self.said = true;
         owed.match({ true => out.add(','), false => written() })
     }
 
-    key* = (self :: @Self, name: str, out :: String) Res<(), AllocError> {
+    key* = (self :: @Self, name: str, out :: String) Res<AllocError> {
         self.next(out).try();
         write_text(name, out).try();
         out.add(':')
     }
 
     text* = (self :: @Self, name: str, v: str, out :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
         self.key(name, out).try();
         write_text(v, out)
     }
 
-    close* = (self: @Self, out :: String) Res<(), AllocError> {
+    close* = (self: @Self, out :: String) Res<AllocError> {
         out.add(self.ends)
     }
 }
@@ -228,7 +228,7 @@ arr* = (out :: String) Res<Nest, AllocError> {
 
 // Write a quoted JSON string. Quotes, backslashes, and control bytes are
 // escaped; slash and UTF-8 bytes above 127 pass through unchanged.
-write_text* = (s: str, out :: String) Res<(), AllocError> {
+write_text* = (s: str, out :: String) Res<AllocError> {
     out.add('"').try();
     Range(0, s.len).loop((h, i) {
         s.index(i).escaped(out).try();
@@ -237,7 +237,7 @@ write_text* = (s: str, out :: String) Res<(), AllocError> {
 }
 
 // Controls without a short escape are written `\u00XX`.
-escaped = (b: u8, out :: String) Res<(), AllocError> {
+escaped = (b: u8, out :: String) Res<AllocError> {
     b.match({
         '"'  => out.add("\\\""),
         '\\' => out.add("\\\\"),
@@ -251,7 +251,7 @@ escaped = (b: u8, out :: String) Res<(), AllocError> {
     })
 }
 
-hex_escape = (b: u8, out :: String) Res<(), AllocError> {
+hex_escape = (b: u8, out :: String) Res<AllocError> {
     out.add("\\u00").try();
     out.add(hex_digit(b / HEX_BASE)).try();
     out.add(hex_digit(b % HEX_BASE))

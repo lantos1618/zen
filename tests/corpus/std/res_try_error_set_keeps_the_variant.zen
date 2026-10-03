@@ -18,26 +18,23 @@
 
 Error = AllocError | IoError
 
-raise = () Res<(), IoError> {
+raise = () Res<IoError> {
     Err(IoError.Full);
 }
 
 // into the named set of existing types
-through_named = () Res<(), WriteError> {
+through_named = () Res<WriteError> {
     raise().try();
-    Ok(());
 }
 
 // into the structural union the inferred set spells it as
 through_structural = () Res<(), _> {
     through_named().try();
-    Ok(());
 }
 
 // and back into a wider named set
-through_wider = () Res<(), Error> {
+through_wider = () Res<Error> {
     through_structural().try();
-    Ok(());
 }
 
 main = (env: Env) Res<i32, Error> {

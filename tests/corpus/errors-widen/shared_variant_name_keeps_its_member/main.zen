@@ -9,13 +9,15 @@
 // payload types so the binder types check out only when the member is
 // read correctly too.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
 FaultA = { | Hit | Miss }
+FaultA.impl(Error, {})
 SnagB  = { | Hit }
+SnagB.impl(Error, {})
 
 Wide2 = FaultA | SnagB
 

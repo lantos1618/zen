@@ -17,38 +17,38 @@
 { res_sugar } = sema.sema_denote
 { Res, Ok, None } = std.core
 
-check_impl* = (c :: Checker, id: ImplId, mi: usize) Res<(), AllocError> {
+check_impl* = (c :: Checker, id: ImplId, mi: usize) Res<AllocError> {
     c.world.impl_at(c.tree, id).match({
         Ok(im) => {
             c.check_home(im, id, mi).try();
             c.check_impl_body(im, id, mi)
         },
-        None   => Ok(()),
+        None   => Ok,
     })
 }
 
 check_home = (c :: Checker, im: Impl, id: ImplId, mi: usize)
-             Res<(), AllocError> {
+             Res<AllocError> {
     defs ::= c.alloc.Vec<Def>();
     c.target_defs(im.target.text, mi, defs).try();
     defs.get(0).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(d) => (d.id.module.to_usize() == mi).match({
-            true  => Ok(()),
+            true  => Ok,
             false => c.orphan(im, id, d),
         }),
     })
 }
 
 target_defs = (c :: Checker, name: str, mi: usize, out :: Vec<Def>)
-              Res<(), AllocError> {
+              Res<AllocError> {
     name.is_prim().match({
         true  => c.world.core_of(name, out),
         false => c.world.defs_of(mi, name, out),
     })
 }
 
-orphan = (c :: Checker, im: Impl, id: ImplId, d: Def) Res<(), AllocError> {
+orphan = (c :: Checker, im: Impl, id: ImplId, d: Def) Res<AllocError> {
     span = c.impl_span(id);
     c.report(
         span.file,
@@ -61,16 +61,16 @@ orphan = (c :: Checker, im: Impl, id: ImplId, d: Def) Res<(), AllocError> {
 }
 
 check_impl_body = (c :: Checker, im: Impl, id: ImplId, mi: usize)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     bound = c.impl_bound_type(im, mi).try();
     members ::= c.alloc.Vec<Member>();
     c.bound_members(bound, members).try();
     span = c.impl_span(id);
     members.loop((h, m) { c.owed(im, m, span).try() });
-    Ok(());
+    Ok;
 }
 
-owed = (c :: Checker, im: Impl, m: Member, span: Span) Res<(), AllocError> {
+owed = (c :: Checker, im: Impl, m: Member, span: Span) Res<AllocError> {
     name = m.name().text;
     (m.required() && (im.members.has_member(name) == false)).match({
         true  => c.report(
@@ -78,7 +78,7 @@ owed = (c :: Checker, im: Impl, m: Member, span: Span) Res<(), AllocError> {
             span,
             SemaFault.ImplMissingField(NameFault(name: name))
         ),
-        false => Ok(()),
+        false => Ok,
     })
 }
 
@@ -91,9 +91,9 @@ required = (m: Member) bool {
 }
 
 check_ctor_shape* = (c :: Checker, call: Call, ty: TyId, span: Span)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     c.refuse_surplus_arg(call, ty).try().match({
-        true  => Ok(()),
+        true  => Ok,
         false => {
             call.args.loop((h, i, a) { c.arg_fits_field(a, i, ty).try() });
             c.absent_fields(call, ty, span)
@@ -130,7 +130,7 @@ refuse_surplus_one = (c :: Checker, a: Arg, i: usize, ty: TyId)
 }
 
 arg_fits_field = (c :: Checker, a: Arg, i: usize, ty: TyId)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     a.name.match({
         None   => c.positional_arg_fits(a, i, ty),
         Ok(nm) => c.named_arg_fits(a, nm.text, ty),
@@ -138,35 +138,35 @@ arg_fits_field = (c :: Checker, a: Arg, i: usize, ty: TyId)
 }
 
 positional_arg_fits = (c :: Checker, a: Arg, i: usize, ty: TyId)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     name = c.storage_seat_name(ty, i).try();
     name.eq("").match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.named_arg_fits(a, name, ty),
     })
 }
 
 named_arg_fits = (c :: Checker, a: Arg, name: str, ty: TyId)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     found ::= c.alloc.Vec<Found>();
     c.members_of(ty, name, found).try();
     found.get(0).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(f) => c.arg_value_fits(a, f.ty),
     })
 }
 
-arg_value_fits = (c :: Checker, a: Arg, want: TyId) Res<(), AllocError> {
+arg_value_fits = (c :: Checker, a: Arg, want: TyId) Res<AllocError> {
     c.expr_memo.get(a.value).match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(got) => c.fits_or_refuse(a, got, want),
     })
 }
 
 fits_or_refuse = (c :: Checker, a: Arg, got: TyId, want: TyId)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     (c.assignable(got, want) || c.want_is_res(want)).match({
-        true  => Ok(()),
+        true  => Ok,
         false => {
             c.refuse_unless_bound(
                 c.tree.expr_at(a.value).span,
@@ -183,9 +183,9 @@ want_is_res = (c :: Checker, want: TyId) bool {
 }
 
 refuse_unless_bound = (c :: Checker, span: Span, got: TyId, want: TyId)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     c.satisfies_bound(got, want).try().match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.coerce(span.file, span, got, want, ""),
     })
 }
@@ -199,11 +199,11 @@ refuse_unless_bound = (c :: Checker, span: Span, got: TyId, want: TyId)
 // is only as long-lived as that frame. Recording the argument here lets the
 // ownership walk refuse the bound value wherever it would outlive the frame.
 note_bound_view* = (c :: Checker, value: ExprId, want: TyId)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     c.expr_memo.get(value).match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(got) => c.builds_bound_view(got, want).try().match({
-            false => Ok(()),
+            false => Ok,
             true  => c.bound_views.set(value, !c.in_lent_param(value)),
         }),
     })
@@ -288,15 +288,15 @@ behaviour_only = (s: Struct) bool {
 }
 
 absent_fields = (c :: Checker, call: Call, ty: TyId, span: Span)
-                Res<(), AllocError> {
+                Res<AllocError> {
     members ::= c.alloc.Vec<Member>();
     c.bound_members(ty, members).try();
     members.loop((h, m) { c.absent_field(call, ty, m, span).try() });
-    Ok(());
+    Ok;
 }
 
 absent_field = (c :: Checker, call: Call, ty: TyId, m: Member, span: Span)
-               Res<(), AllocError> {
+               Res<AllocError> {
     name     = m.name().text;
     supplied = c.seat_written(call, ty, name).try();
     (c.ctor_required(m, ty).try() && (supplied == false)).match({
@@ -305,7 +305,7 @@ absent_field = (c :: Checker, call: Call, ty: TyId, m: Member, span: Span)
             span,
             SemaFault.CtorMissingField(NameFault(name: name))
         ),
-        false => Ok(()),
+        false => Ok,
     })
 }
 
@@ -637,9 +637,9 @@ unbounded = (c: Checker, ty: TyId) bool {
     c.opaque(ty) || c.is_tvar(ty)
 }
 
-check_eq* = (c :: Checker, b: Binary, operand: TyId) Res<(), AllocError> {
+check_eq* = (c :: Checker, b: Binary, operand: TyId) Res<AllocError> {
     (b.op.is_eq_op() && c.dispatches_eq(operand)).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.prove_eq(b, operand),
     })
 }
@@ -660,18 +660,18 @@ scalar_eq = (c: Checker, ty: TyId) bool {
     })
 }
 
-prove_eq = (c :: Checker, b: Binary, operand: TyId) Res<(), AllocError> {
+prove_eq = (c :: Checker, b: Binary, operand: TyId) Res<AllocError> {
     found ::= c.alloc.Vec<Found>();
     c.members_of(operand, "eq", found).try();
     (found.len > 0).match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.eq_needs_impl(b, operand),
     })
 }
 
 // A left-nested equality expression begins at its left operand.
 eq_needs_impl = (c :: Checker, b: Binary, operand: TyId)
-                Res<(), AllocError> {
+                Res<AllocError> {
     poison = c.types.unknown().try();
     at     = c.tree.expr_at(b.lhs).span;
     c.report(

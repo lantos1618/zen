@@ -5,7 +5,7 @@
 { Alloc, AllocError } = std.mem
 { Vec } = std.collections
 { str, String } = std.text
-{ Res, Ok } = std.core
+{ Res, Ok, Error } = std.core
 { Env } = std.env
 
 // Survived: every test passed with the mutation in place, so no test
@@ -23,6 +23,7 @@ outcome_name* = (o: Outcome) str {
 }
 
 RunError* = { Copy | Write | Spawn | OutOfMemory }
+RunError.impl(Error, {})
 
 run_message* = (e: RunError) str {
     e.match({
@@ -76,14 +77,13 @@ Runner* = {
 
     // The copy never exists before this call: a previous one is removed
     // first, so a stale file cannot leak into this mutant.
-    stage = (self: @Self, dir: str, text: str) Res<(), RunError> {
+    stage = (self: @Self, dir: str, text: str) Res<RunError> {
         self.exec([str, 4]("rm", "-rf", dir, "")).try();
         (self.exec([str, 4]("cp", "-R", self.plan.root, dir)).try() == 0)
             .ensure(RunError.Copy).try();
         path ::= self.alloc.String().try(RunError.OutOfMemory);
         path.fmt("{}/{}", dir, self.plan.file).try(RunError.OutOfMemory);
         self.env.fs.write(path.view(), text).try(RunError.Write);
-        Ok(())
     }
 
     shell = (self: @Self, dir: str, cmd: str) Res<i32, RunError> {
@@ -133,7 +133,7 @@ Runner* = {
         })
     }
 
-    prepare* = (self: @Self) Res<(), RunError> {
+    prepare* = (self: @Self) Res<RunError> {
         (self.exec([str, 4]("mkdir", "-p", self.plan.work, "")).try() == 0)
             .ensure(RunError.Copy)
     }

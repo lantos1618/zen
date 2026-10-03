@@ -18,11 +18,10 @@ Counting.impl(Alloc, {
 Owner = { counting :: Counting }
 Holder = { alloc: Alloc }
 lend = (owner :: Owner) Holder { Holder(alloc: owner.counting) }
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     owner ::= Owner(counting: Counting(base: env.mem.alloc(), calls: 0));
     held = lend(owner);
     p    = held.alloc.raw(16, 8).try();
     p.write(0, 42);
     println("{}", p.read(0));
-    Ok(())
 }

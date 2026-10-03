@@ -4,12 +4,8 @@
 
 Reject = {}
 Reject.impl(Sink, {
-    write = (self :: @Self, bytes: str) Res<(), WriteError> { Err(
-        IoError.Full
-    ) }
-    write_byte = (self :: @Self, byte: u8) Res<(), WriteError> { Err(
-        IoError.Full
-    ) }
+    write = (self :: @Self, bytes: str) Res<WriteError> { Err(IoError.Full) }
+    write_byte = (self :: @Self, byte: u8) Res<WriteError> { Err(IoError.Full) }
 })
 
 main = (env: Env) Res<i32, ProcStreamError> {

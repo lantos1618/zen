@@ -29,11 +29,11 @@ SseDecoder* = {
         bytes  : B,
         event_a: Alloc,
         events :: Vec<SseEvent>
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         bytes.loop((byte) {
             self.feed_byte(byte, event_a, events).try();
         });
-        Ok(())
+        Ok
     }
 
     feed_byte* = (
@@ -41,18 +41,17 @@ SseDecoder* = {
         byte   : u8,
         event_a: Alloc,
         events :: Vec<SseEvent>
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         self.saw_cr.match({
             true  => {
                 self.saw_cr = false;
                 (byte == '\n').match({
-                    true  => Ok(()),
+                    true  => Ok,
                     false => self.consume_byte(byte, event_a, events),
                 })
             },
             false => self.consume_byte(byte, event_a, events),
         }).try();
-        Ok(())
     }
 
     consume_byte = (
@@ -60,13 +59,13 @@ SseDecoder* = {
         byte   : u8,
         event_a: Alloc,
         events :: Vec<SseEvent>
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         (byte == '\r' || byte == '\n').match({
             true  => {
                 self.consume_line(event_a, events).try();
                 self.line.clear();
                 (byte == '\r').then(() { self.saw_cr = true; });
-                Ok(())
+                Ok
             },
             false => self.line.add(byte),
         })
@@ -98,12 +97,12 @@ SseDecoder* = {
         self   :: @Self,
         event_a: Alloc,
         events :: Vec<SseEvent>
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         line = self.first(self.line.view());
         line.is_empty().match({
             true  => self.dispatch(event_a, events),
             false => (line.index(0) == ':').match({
-                true  => Ok(()),
+                true  => Ok,
                 false => self.field(line, events),
             }),
         })
@@ -113,7 +112,7 @@ SseDecoder* = {
         self   :: @Self,
         line   : str,
         events :: Vec<SseEvent>
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         parts     = line.split_once(':').match({
             Ok(pair) => pair,
             None     => SplitPair(
@@ -136,7 +135,7 @@ SseDecoder* = {
                 self.kind.add(value)
             },
             "id"    => value.contains('\0').match({
-                true  => Ok(()),
+                true  => Ok,
                 false => {
                     self.last_id.clear();
                     self.last_id.add(value)
@@ -144,9 +143,9 @@ SseDecoder* = {
             }),
             "retry" => value.parse_usize().match({
                 Ok(ms) => events.add(SseEvent.Retry(ms)),
-                None   => Ok(()),
+                None   => Ok,
             }),
-            _       => Ok(()),
+            _       => Ok,
         })
     }
 
@@ -154,12 +153,9 @@ SseDecoder* = {
         self   :: @Self,
         event_a: Alloc,
         events :: Vec<SseEvent>
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         self.data.is_empty().match({
-            true  => {
-                self.kind.clear();
-                Ok(())
-            },
+            true  => self.kind.clear(),
             false => {
                 raw  = self.data.view();
                 body = raw.slice(0, raw.len - 1);
@@ -174,7 +170,7 @@ SseDecoder* = {
                 ))).try();
                 self.data.clear();
                 self.kind.clear();
-                Ok(())
+                Ok
             },
         })
     }

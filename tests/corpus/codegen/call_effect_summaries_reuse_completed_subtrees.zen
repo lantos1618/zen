@@ -29,7 +29,7 @@ CountAlloc.impl(Alloc, {
     }
 })
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a = env.mem.alloc();
     source ::= a.String("main = () i32 { 1").try();
     Range(1, 10000).loop((index) { source.add(" + 1").try(); });
@@ -78,5 +78,4 @@ main = (env: Env) Res<(), AllocError> {
         });
     });
     println("allocation refusal conservative {}", refused);
-    Ok(())
 }

@@ -22,7 +22,7 @@ lower_numeric* = (
     operation : NumericConversion,
     ctx       : Ctx,
     out       :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     target = be.check.prim_name(operation.target);
     operation.kind.match({
         Widen      => {
@@ -42,7 +42,7 @@ checked_numeric = (
     operation : NumericConversion,
     ctx       : Ctx,
     out       :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.request_type(operation.result).try();
     code ::= be.alloc.String().try();
     be.expr(value, ctx, operation.source, code).try();
@@ -71,7 +71,7 @@ checked_numeric = (
 }
 
 numeric_fits = (be :: CBackend, value: str, source: str, target: NarrowTarget)
-               Res<(), AllocError> {
+               Res<AllocError> {
     signed  = source.is_in(["i64", "i32", "c_int"]);
     minimum = target.match({ I32 => "INT32_MIN", CInt => "INT_MIN", U8 => "0", U16 => "0", U64 => "0", Usize => "0" });
     maximum = target.match({
@@ -99,7 +99,7 @@ numeric_fits = (be :: CBackend, value: str, source: str, target: NarrowTarget)
 // range: a NaN fails every comparison, and the round trip then rejects a
 // fractional f64 or an integer that has no f64 of its own.
 exact_fits = (be :: CBackend, value: str, source: str, target: str)
-             Res<(), AllocError> {
+             Res<AllocError> {
     source.match({
         "f64" => target.eq("i32").match({
             true  => be.fmt(
@@ -145,7 +145,7 @@ rounded_numeric = (
     operation : NumericConversion,
     ctx       : Ctx,
     out       :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     target = be.check.prim_name(operation.target);
     code ::= be.alloc.String().try();
     be.expr(value, ctx, operation.source, code).try();
@@ -198,7 +198,7 @@ lower_integer_bits* = (
     operation : IntegerBitOperation,
     ctx       : Ctx,
     out       :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     word  = be.check.prim_name(operation.word);
     count = be.check.types.prim(
         operation.name.starts_with(
@@ -213,7 +213,7 @@ lower_integer_bits* = (
 // shifts are guarded, since a count at or above the width yields zero. The
 // result is cast back because C promotes u8 and u16 operands to int.
 write_bits* = (name: str, word: str, l: str, r: str, out :: String)
-              Res<(), AllocError> {
+              Res<AllocError> {
     ct    = c_prim(word);
     width = word_width(word);
     mask  = width - 1;
@@ -293,7 +293,7 @@ arithmetic_shift = (
     word  : str,
     width : usize,
     out   :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     ct  = c_prim(word);
     top = width - 1;
     out.fmt(

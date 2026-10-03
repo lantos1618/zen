@@ -39,9 +39,9 @@ hoist_expr* = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.check.types.at(want).match({
         Res(r) => be.write_res_payload(id, want, "Ok", id, r.value, ctx, out),
-        _      => Ok(()),
+        _      => Ok,
     })
 }

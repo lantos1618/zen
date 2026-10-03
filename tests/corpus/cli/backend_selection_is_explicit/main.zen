@@ -5,7 +5,7 @@
 { println } = std.io
 { cli } = zen.zen_cli
 
-show = (env: Env, words: Vec<str>) Res<(), AllocError> {
+show = (env: Env, words: Vec<str>) Res<AllocError> {
     a ::= env.mem.alloc();
     cli(env, a, words).try().match({
         Build(job)       => {
@@ -17,7 +17,6 @@ show = (env: Env, words: Vec<str>) Res<(), AllocError> {
         Refused(refusal) => println("usage {}", refusal.message.view()),
         _                => println("unexpected command"),
     });
-    Ok(())
 }
 
 args = (

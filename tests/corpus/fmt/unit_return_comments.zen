@@ -6,7 +6,7 @@
 { println } = std.io
 SOURCE: str = "// f = () () {} remains comment text\nfirst = () /* before */ () /* after */ {}\ninside = () (/* unit */) {}\nlast = () () { /* () */ } // ()\n"
 WANTED: str = "// f = () () {} remains comment text\nfirst = () /* before */ /* after */ {}\ninside = () /* unit */ {}\nlast = () { /* () */ } // ()\n"
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a      = env.mem.alloc();
     result = render(
         a,
@@ -23,5 +23,4 @@ main = (env: Env) Res<(), AllocError> {
         result.text.view().eq(second.text.view()),
         result.diags.len
     );
-    Ok(())
 }

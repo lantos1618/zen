@@ -30,7 +30,7 @@ main = (env: Env) Res<i32, AllocError> {
     Ok(0)
 }
 
-show = (env: Env, argv: Vec<str>) Res<(), AllocError> {
+show = (env: Env, argv: Vec<str>) Res<AllocError> {
     a ::= env.mem.alloc();
     cli(env, a, argv).try().match({
         Build(job)       => job.emission.match({
@@ -55,7 +55,6 @@ show = (env: Env, argv: Vec<str>) Res<(), AllocError> {
         Run(job)         => println("run {} {}", job.root, job.target),
         _                => println("other"),
     });
-    Ok(())
 }
 
 line = (a: Alloc, w0: str, w1: str, w2: str, w3: str, w4: str, w5: str)
@@ -72,6 +71,6 @@ line = (a: Alloc, w0: str, w1: str, w2: str, w3: str, w4: str, w5: str)
     Ok(argv)
 }
 
-push = (argv :: Vec<str>, word: str) Res<(), AllocError> {
-    word.is_empty().match({ true => Ok(()), false => argv.add(word) })
+push = (argv :: Vec<str>, word: str) Res<AllocError> {
+    word.is_empty().match({ true => Ok, false => argv.add(word) })
 }

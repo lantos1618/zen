@@ -26,13 +26,13 @@ type_from_ast* = (c :: Checker, id: TypeId, ctx: Ctx)
         c.note_resolved_type(id).try();
         c.tree.type_at(id).kind.match({
             Named(written) => c.lookup_tvar(written.name.text).match({
-                Ok(_) => Ok(()),
+                Ok(_) => Ok,
                 None  => c.types.at(ty).match({
                     Named(n) => c.resolved_type_decls.set(id, n.decl),
-                    _        => Ok(()),
+                    _        => Ok,
                 }),
             }),
-            _              => Ok(()),
+            _              => Ok,
         }).try();
     });
     Ok(ty)

@@ -79,7 +79,7 @@ write_borrow* = (
     ctx   : Ctx,
     want  : TyId,
     out   :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     code ::= be.alloc.String().try();
     be.value_held(value, ctx, want, hold, code).try();
     held = hold && be.holdable(value);
@@ -113,14 +113,14 @@ stays_put = (be :: CBackend, value: ExprId, f: Function) bool {
 // written from here; the lend is recorded and `gen_c_decl.own_lent` gives
 // the parameter its own copy, so a write this rule does not see lands in
 // this call's copy rather than in the caller's value.
-note_lend* = (be :: CBackend, value: ExprId) Res<(), AllocError> {
+note_lend* = (be :: CBackend, value: ExprId) Res<AllocError> {
     be.place_root(value).match({
-        None     => Ok(()),
+        None     => Ok,
         Ok(name) => be.slot_of(name).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(s) => s.borrowed.match({
                 true  => be.note_lent(name),
-                false => Ok(()),
+                false => Ok,
             }),
         }),
     })

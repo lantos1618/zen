@@ -9,7 +9,7 @@ Counter = { n :: i32 }
 Pair = { inner :: Counter }
 bump = (counter :: Counter) { counter.n = counter.n + 1; }
 twice = (counter :: Counter) { bump(counter); counter.bump(); }
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     counter ::= Counter(n: 1);
     bump(counter);
     counter.bump();
@@ -18,5 +18,4 @@ main = (env: Env) Res<(), AllocError> {
     bump(pair.inner);
     bump(Counter(n: 100));
     println("{} {}", counter.n, pair.inner.n);
-    Ok(())
 }

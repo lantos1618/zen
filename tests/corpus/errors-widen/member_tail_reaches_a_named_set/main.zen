@@ -11,19 +11,21 @@
 // members, and an argument. Reading back the member by name pins that
 // the tag, not just the C type, was built.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
 Narrow = { | Nope }
+Narrow.impl(Error, {})
 Other  = { | Boom }
+Other.impl(Error, {})
 Mid    = Narrow | Other
 
 make  = (n: i32) Res<i32, Narrow> { (n > 0).match({ true => Ok(n), false => Err(Narrow.Nope) }) }
 makeo = (n: i32) Res<i32, Other> { (n > 0).match({ true => Ok(n), false => Err(Other.Boom) }) }
 
-ensured   = (n: i32) Res<(), Mid> { (n > 0).ensure(Other.Boom) }
+ensured   = (n: i32) Res<Mid> { (n > 0).ensure(Other.Boom) }
 tail_call = (n: i32) Res<i32, Mid> { make(n) }
 raised    = () Res<i32, Mid> { Err(Narrow.Nope) }
 either    = (n: i32) Res<i32, Mid> { (n > 0).match({ true => make(n - 5), false => makeo(n) }) }
@@ -32,7 +34,7 @@ read = (r: Res<i32, Mid>) i32 {
     r.match({ Ok(v) => v, Err(Narrow) => -1, Err(Other) => -2 })
 }
 
-read_unit = (r: Res<(), Mid>) i32 {
+read_unit = (r: Res<Mid>) i32 {
     r.match({ Ok(_) => 0, Err(Narrow) => -1, Err(Other) => -2 })
 }
 

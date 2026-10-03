@@ -4,7 +4,7 @@
 { str, String, push_utf8 } = std.text
 { Vec } = std.collections
 { Alloc } = std.mem
-{ Res, Ok, Err, None, loop, Range } = std.core
+{ Res, Ok, Err, None, loop, Range, Error } = std.core
 { HEX_BASE } = std.core.byte
 { Jsons, Json, JsonId, Pair } = std.json.json_write
 
@@ -29,6 +29,7 @@ JsonFault* = { Unexpected: usize   // a byte that cannot begin what is expected 
         })
     }
 }
+JsonFault.impl(Error, {})
 
 // Bounds recursive DOM reads and the incremental decoder's frame stack.
 MAX_NESTING*: usize = 64
@@ -93,28 +94,28 @@ Reader* = {
     }
 
     // A leading zero stands alone: `0` is a number and `01` is two.
-    integer_part = (self :: @Self) Res<(), JsonFault> {
+    integer_part = (self :: @Self) Res<JsonFault> {
         b = self.peek().try();
         (b == '0').match({
-            true  => { self.at = self.at + 1; Ok(()) },
+            true  => { self.at = self.at + 1; Ok },
             false => b.is_digit().match({
                 false => Err(JsonFault.BadNumber(self.at)),
-                true  => { self.digits(); Ok(()) },
+                true  => { self.digits(); Ok },
             }),
         })
     }
 
     // `1.` is not a JSON number.
-    fraction_part = (self :: @Self) Res<(), JsonFault> {
+    fraction_part = (self :: @Self) Res<JsonFault> {
         self.byte_if('.').match({
-            false => Ok(()),
+            false => Ok,
             true  => self.at_least_one_digit(),
         })
     }
 
-    exponent_part = (self :: @Self) Res<(), JsonFault> {
+    exponent_part = (self :: @Self) Res<JsonFault> {
         (self.byte_if('e') || self.byte_if('E')).match({
-            false => Ok(()),
+            false => Ok,
             true  => {
                 self.byte_if('+') || self.byte_if('-');
                 self.at_least_one_digit()
@@ -122,12 +123,12 @@ Reader* = {
         })
     }
 
-    at_least_one_digit = (self :: @Self) Res<(), JsonFault> {
+    at_least_one_digit = (self :: @Self) Res<JsonFault> {
         from = self.at;
         self.digits();
         (self.at == from).match({
             true  => Err(JsonFault.BadNumber(from)),
-            false => Ok(()),
+            false => Ok,
         })
     }
 
@@ -190,9 +191,9 @@ Reader* = {
     }
 
     // A container missing its close at EOF reports Truncated(text.len).
-    close = (self :: @Self, b: u8) Res<(), JsonFault> {
+    close = (self :: @Self, b: u8) Res<JsonFault> {
         self.byte_if(b).match({
-            true  => Ok(()),
+            true  => Ok,
             false => (self.at >= self.text.len).match({
                 true  => Err(JsonFault.Truncated(self.text.len)),
                 false => Err(JsonFault.Unexpected(self.at)),
@@ -254,7 +255,7 @@ Reader* = {
     }
 
     // `self.at` is on the byte after the backslash.
-    escape = (self :: @Self, out :: String) Res<(), JsonFault> {
+    escape = (self :: @Self, out :: String) Res<JsonFault> {
         b       = self.peek().try();
         self.at = self.at + 1;
         b.unescaped().match({
@@ -268,7 +269,7 @@ Reader* = {
 
     // Decode `\uXXXX`, combining a high and low surrogate when present. A
     // lone surrogate is BadEscape.
-    unicode = (self :: @Self, out :: String) Res<(), JsonFault> {
+    unicode = (self :: @Self, out :: String) Res<JsonFault> {
         hi = self.four_hex().try();
         (hi >= SURROGATE_HI_MIN && hi <= SURROGATE_HI_MAX).match({
             false => (hi >= SURROGATE_LO_MIN && hi <= SURROGATE_LO_MAX).match({
@@ -279,7 +280,7 @@ Reader* = {
         })
     }
 
-    low_half = (self :: @Self, hi: u32, out :: String) Res<(), JsonFault> {
+    low_half = (self :: @Self, hi: u32, out :: String) Res<JsonFault> {
         (self.byte_if('\\') && self.byte_if('u')).match({
             false => Err(JsonFault.BadEscape(self.at)),
             true  => {
@@ -345,9 +346,9 @@ Reader* = {
     }
 
     // Bytes after a complete value are Trailing.
-    at_end = (self: @Self) Res<(), JsonFault> {
+    at_end = (self: @Self) Res<JsonFault> {
         (self.at == self.text.len).match({
-            true  => Ok(()),
+            true  => Ok,
             false => Err(JsonFault.Trailing(self.at)),
         })
     }
@@ -358,11 +359,11 @@ Reader* = {
         Ok(out)
     }
 
-    down = (self :: @Self) Res<(), JsonFault> {
+    down = (self :: @Self) Res<JsonFault> {
         self.depth = self.depth + 1;
         (self.depth > MAX_NESTING).match({
             true  => Err(JsonFault.TooDeep(self.at)),
-            false => Ok(()),
+            false => Ok,
         })
     }
 

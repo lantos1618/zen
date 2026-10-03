@@ -89,10 +89,10 @@ PatMatrix* = {
         self.cells.ptr().read(i);
     }
 
-    add_row* = (self :: @Self, row: Vec<usize>) Res<(), AllocError> {
+    add_row* = (self :: @Self, row: Vec<usize>) Res<AllocError> {
         row.loop((h, v) { self.cells.add(v).try() });
         self.n = self.n + 1;
-        Ok(());
+        Ok;
     }
 }
 
@@ -134,11 +134,11 @@ norm_arms = (
     sty  : TyId,
     rows :: Vec<usize>,
     ctx  : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     mt.arms.loop((h, arm) {
         rows.add(c.norm_pattern(ps, arm.pattern, sty, ctx).try()).try();
     });
-    Ok(());
+    Ok;
 }
 
 norm_pattern* = (c :: Checker, ps :: Pats, pid: PatternId, ty: TyId, ctx: Ctx)
@@ -343,13 +343,13 @@ check_coverage = (
     mt   : Match,
     sty  : TyId,
     rows : Vec<usize>
-) Res<(), AllocError> {
+) Res<AllocError> {
     coverage ::= MatchCoverage(ps, sty);
     coverage.check(c, node, rows).try();
     // Coverage synthesises wildcard patterns. Publish a possibly-grown arena
     // before arm binding reads it again.
     ps = coverage.pats;
-    Ok(())
+    Ok
 }
 
 // Poison, holes, and unsubstituted parameters have no reliable case list.
@@ -382,37 +382,36 @@ MatchCoverage = {
     sty  : TyId,
 
     check = (self :: @Self, c :: Checker, node: Expr, rows: Vec<usize>)
-            Res<(), AllocError> {
+            Res<AllocError> {
         c.checkable(self.sty).match({
-            false => Ok(()),
+            false => Ok,
             true  => self.run(c, node, rows),
         })
     }
 
     run = (self :: @Self, c :: Checker, node: Expr, rows: Vec<usize>)
-          Res<(), AllocError> {
+          Res<AllocError> {
         self.check_reachable(c, rows).try();
         self.check_exhaustive(c, node, rows).try();
-        Ok(())
     }
 
     // Reachability is checked in source order against each arm's prefix.
     check_reachable = (self :: @Self, c :: Checker, rows: Vec<usize>)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
         Range(0, rows.len).loop((h, i) {
             self.arm_reachable(c, rows, i).try();
         });
-        Ok(())
+        Ok
     }
 
     arm_reachable = (self :: @Self, c :: Checker, rows: Vec<usize>, i: usize)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
         m   = self.prefix_matrix(rows, i).try();
         q   = self.one_row(rows, i).try();
         tys = self.one_ty().try();
         self.useful(c, m, q, tys).try().match({
             false => self.report_unreachable(c, rows, i),
-            true  => Ok(()),
+            true  => Ok,
         })
     }
 
@@ -421,7 +420,7 @@ MatchCoverage = {
         c    :: Checker,
         rows : Vec<usize>,
         i    : usize
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         p = self.pats.at(rows.get(i).value_or(0));
         c.report(
             p.span.file,
@@ -436,7 +435,7 @@ MatchCoverage = {
         c    :: Checker,
         node : Expr,
         rows : Vec<usize>
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         m    = self.prefix_matrix(rows, rows.len).try();
         hole = self.pats.wild(node.span).try();
         q ::= c.alloc.Vec<usize>();
@@ -444,7 +443,7 @@ MatchCoverage = {
         tys = self.one_ty().try();
         self.useful(c, m, q, tys).try().match({
             true  => self.report_not_exhaustive(c, node, m),
-            false => Ok(()),
+            false => Ok,
         })
     }
 
@@ -454,7 +453,7 @@ MatchCoverage = {
         c    :: Checker,
         node : Expr,
         m    : PatMatrix
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         cases ::= c.alloc.Vec<Case>();
         c.cases_of(self.sty, cases).try();
         name = self.first_uncovered(c, m, cases).try();
@@ -678,14 +677,13 @@ MatchCoverage = {
         r     : usize,
         name  : str,
         arity : usize
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         head = self.pats.at(m.at(r, 0));
         head.kind.match({
             WildPat => self.spec_wild(out, m, r, arity, head),
             CtorPat => self.spec_ctor(out, m, r, name, arity, head),
-            LitPat  => Ok(()),
+            LitPat  => Ok,
         }).try();
-        Ok(())
     }
 
     // A wildcard row could have been this case, so it survives with its
@@ -697,7 +695,7 @@ MatchCoverage = {
         r     : usize,
         arity : usize,
         head  : Pat
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         hole = self.pats.wild(head.span).try();
         self.emit_row(out, m, r, arity, hole)
     }
@@ -710,10 +708,10 @@ MatchCoverage = {
         name  : str,
         arity : usize,
         head  : Pat
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         head.name.eq(name).match({
             true  => self.spec_keep(out, m, r, arity, head),
-            false => Ok(()),
+            false => Ok,
         })
     }
 
@@ -724,7 +722,7 @@ MatchCoverage = {
         r     : usize,
         arity : usize,
         head  : Pat
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         filler = self.pats.sub_index(head).try();
         self.emit_row(out, m, r, arity, filler)
     }
@@ -744,10 +742,10 @@ MatchCoverage = {
         m    : PatMatrix,
         r    : usize,
         text : str
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         keeps_lit(self.pats.at(m.at(r, 0)), text).match({
             true  => self.emit_row(out, m, r, 0, 0),
-            false => Ok(()),
+            false => Ok,
         })
     }
 
@@ -767,10 +765,10 @@ MatchCoverage = {
         out  :: PatMatrix,
         m    : PatMatrix,
         r    : usize
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         is_wild(self.pats.at(m.at(r, 0))).match({
             true  => self.emit_row(out, m, r, 0, 0),
-            false => Ok(()),
+            false => Ok,
         })
     }
 
@@ -781,7 +779,7 @@ MatchCoverage = {
         r      : usize,
         arity  : usize,
         filler : usize
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         row ::= self.pats.alloc.Vec<usize>();
         Range(0, arity).loop((h, _) { row.add(filler).try() });
         Range(1, m.width).loop((h, k) { row.add(m.at(r, k)).try() });
@@ -906,28 +904,27 @@ arm_closure_type = (c :: Checker, id: ExprId, l: Lambda, ctx: Ctx)
 // The names a pattern introduces, in the arm's own scope: `Ok(n)` binds
 // `n` to the payload type.
 bind_pattern = (c :: Checker, ps: Pats, i: usize, ty: TyId)
-                Res<(), AllocError> {
+                Res<AllocError> {
     p = ps.at(i);
     p.kind.match({
         CtorPat => c.bind_sub(ps, p, ty),
         WildPat => c.bind_binder(p, ty),
-        LitPat  => Ok(()),
+        LitPat  => Ok,
     }).try();
-    Ok(());
 }
 
-bind_binder = (c :: Checker, p: Pat, ty: TyId) Res<(), AllocError> {
+bind_binder = (c :: Checker, p: Pat, ty: TyId) Res<AllocError> {
     (p.binder.len > 0).then(() { c.bind(p.binder, ty, false, false).try() });
-    Ok(());
+    Ok;
 }
 
-bind_sub = (c :: Checker, ps: Pats, p: Pat, ty: TyId) Res<(), AllocError> {
+bind_sub = (c :: Checker, ps: Pats, p: Pat, ty: TyId) Res<AllocError> {
     p.has_sub.then(() { c.bind_payload(ps, p, ty).try() });
-    Ok(());
+    Ok;
 }
 
 bind_payload = (c :: Checker, ps: Pats, p: Pat, ty: TyId)
-               Res<(), AllocError> {
+               Res<AllocError> {
     payload = c.case_payload(ty, p.name).try();
     c.bind_pattern(ps, p.sub, payload)
 }
@@ -1022,14 +1019,14 @@ lit_pat* = (text: str, span: Span) Pat {
 }
 
 // `src` without its first column.
-append_tail = (out :: Vec<usize>, src: Vec<usize>) Res<(), AllocError> {
+append_tail = (out :: Vec<usize>, src: Vec<usize>) Res<AllocError> {
     Range(1, src.len).loop((h, i) { out.add(src.get(i).value_or(0)).try() });
-    Ok(());
+    Ok;
 }
 
-append_tys = (out :: Vec<TyId>, src: Vec<TyId>) Res<(), AllocError> {
+append_tys = (out :: Vec<TyId>, src: Vec<TyId>) Res<AllocError> {
     Range(1, src.len).loop((h, i) {
         out.add(src.get(i).value_or(UNRESOLVED)).try();
     });
-    Ok(());
+    Ok;
 }

@@ -12,7 +12,7 @@
 Full* = { | Full }
 
 push = (n: i32) Res<(), Full> {
-    (n > 2).match({ true => Err(Full.Full), false => Ok(()) })
+    (n > 2).match({ true => Err(Full.Full), false => Ok })
 }
 
 first = (n: i32) Res<i32> {

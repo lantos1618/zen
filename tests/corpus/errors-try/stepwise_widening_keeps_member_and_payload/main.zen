@@ -15,13 +15,16 @@
 // prints "leaf age 0" -- a readable lie, which is why the printed field
 // is part of the assertion.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { Env } = std.env
 { println } = std.io
 
 Leaf = { age: i64 }
+Leaf.impl(Error, {})
 Stem = { snapped: bool }
+Stem.impl(Error, {})
 Tree = { rooted: bool }
+Tree.impl(Error, {})
 
 Grove = Leaf | Stem
 Forest = Grove | Tree

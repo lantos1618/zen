@@ -48,7 +48,7 @@ portable_product* = (x: [u64, 4], y: [u64, 4]) [u64, 2] {
     [u64, 2](p00.truncate_u64(), b[0].bit_xor(a[1]).bit_xor(b[1]))
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     n = env.argv.len.to_u64();
     x = [u64, 4](n, n *% 3, n *% 5, 18446744073709551615);
     y = [u64, 4](n *% 7, 18446744073709551615, n, n *% 11);
@@ -66,5 +66,4 @@ main = (env: Env) Res<(), AllocError> {
         },
         None    => (),
     });
-    Ok(())
 }

@@ -104,7 +104,7 @@ Assembly = {
     at :: usize = 0,
     code :: Vec<Instruction>,
 
-    render = (self :: @Self) Res<(), AllocError> {
+    render = (self :: @Self) Res<AllocError> {
         self.out.add(".text\n").try();
         self.program.functions.loop((h, i, function) {
             self.function(i, function).try();
@@ -160,7 +160,7 @@ Assembly = {
     }
 
     function = (self :: @Self, id: usize, original: Func)
-               Res<(), AllocError> {
+               Res<AllocError> {
         self.function_id = id;
         self.plan        = plan(
             self.alloc,
@@ -225,9 +225,9 @@ Assembly = {
                                 branch.yes,
                                 branch.no
                             ),
-                            _              => Ok(()),
+                            _              => Ok,
                         }),
-                        _                    => Ok(()),
+                        _                    => Ok,
                     }).try();
                 }),
                 false => self.terminator(function, block.exit).try(),
@@ -238,7 +238,7 @@ Assembly = {
     }
 
     instruction = (self :: @Self, instruction: Instruction)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         instruction.match({
             // A fixed slot's constant is materialized where it is read.
             Constant(value)     => self.move(
@@ -262,7 +262,7 @@ Assembly = {
                 self.settle(value.out, d)
             },
             AddressOf(value)    => self.plan.home(value.out).match({
-                Pointer(_) => Ok(()),
+                Pointer(_) => Ok,
                 _          => {
                 self.slot_address(value.slot, "%rax").try();
                 // The slot may now change through the pointer.
@@ -310,8 +310,8 @@ Assembly = {
             },
             // JavaScript-host instructions; `refused_by_asm` rejects such
             // programs before any renderer runs.
-            Host(_)             => Ok(()),
-            Wait(_)             => Ok(()),
+            Host(_)             => Ok,
+            Wait(_)             => Ok,
             SysConst(value)     => {
                 self.out.fmt(
                     "    movq ${}, %rax\n",
@@ -355,7 +355,7 @@ Assembly = {
     // Sequentially consistent atomics. A plain load is enough on x86-64;
     // every write is an implicitly locked `xchg` or a `lock`-prefixed update,
     // which also orders it before later loads.
-    atomic_load = (self :: @Self, value: Load) Res<(), AllocError> {
+    atomic_load = (self :: @Self, value: Load) Res<AllocError> {
         ty = self.slot_type(value.out);
         self.load(value.base, "%rcx").try();
         (width(ty) == 4).match({
@@ -366,7 +366,7 @@ Assembly = {
         self.store(value.out, "%rax")
     }
 
-    atomic_store = (self :: @Self, value: Store) Res<(), AllocError> {
+    atomic_store = (self :: @Self, value: Store) Res<AllocError> {
         ty = self.slot_type(value.value);
         self.load(value.base, "%rcx").try();
         self.load(value.value, "%rax").try();
@@ -374,10 +374,9 @@ Assembly = {
             true  => self.out.fmt("    xchgl %eax, {}(%rcx)\n", value.offset),
             false => self.out.fmt("    xchgq %rax, {}(%rcx)\n", value.offset),
         }).try();
-        Ok(())
     }
 
-    atomic_update = (self :: @Self, value: Update) Res<(), AllocError> {
+    atomic_update = (self :: @Self, value: Update) Res<AllocError> {
         ty = self.slot_type(value.out);
         self.load(value.base, "%rcx").try();
         self.load(value.value, "%rax").try();
@@ -390,7 +389,7 @@ Assembly = {
         self.store(value.out, "%rax")
     }
 
-    compare_swap = (self :: @Self, value: Compare) Res<(), AllocError> {
+    compare_swap = (self :: @Self, value: Compare) Res<AllocError> {
         ty = self.slot_type(value.out);
         self.load(value.base, "%rcx").try();
         self.load(value.desired, "%rdx").try();
@@ -404,7 +403,7 @@ Assembly = {
     }
 
     // A call through a code address: word arguments in registers only.
-    call_at = (self :: @Self, call: IndirectCall) Res<(), AllocError> {
+    call_at = (self :: @Self, call: IndirectCall) Res<AllocError> {
         call.args.loop(
             (h, i, slot) { self.load(slot, argument_register(i)).try(); }
         );
@@ -414,7 +413,7 @@ Assembly = {
     }
 
     terminator = (self :: @Self, function: Func,
-                  exit: Terminator) Res<(), AllocError> {
+                  exit: Terminator) Res<AllocError> {
         exit.match({
             Return(value)  => {
                 is_block(function.result).match({
@@ -468,7 +467,7 @@ Assembly = {
         })
     }
 
-    copy = (self :: @Self, out: usize, source: usize) Res<(), AllocError> {
+    copy = (self :: @Self, out: usize, source: usize) Res<AllocError> {
         ty = self.slot_type(out);
         is_block(ty).match({
             true  => self.copy_block(
@@ -502,7 +501,7 @@ Assembly = {
         })
     }
 
-    settle = (self :: @Self, slot: usize, register: usize) Res<(), AllocError> {
+    settle = (self :: @Self, slot: usize, register: usize) Res<AllocError> {
         self.plan.home(slot).match({
             Register(r) => (register_number(r) != register).match({
                 true  => self.out.fmt(
@@ -510,10 +509,10 @@ Assembly = {
                     register_name(register, 8),
                     pool_register(r)
                 ),
-                false => Ok(()),
+                false => Ok,
             }),
-            Fixed(_)    => Ok(()),
-            Pointer(_)  => Ok(()),
+            Fixed(_)    => Ok,
+            Pointer(_)  => Ok,
             Frame       => self.out.fmt(
                 "    movq {}, -{}(%rbp)\n",
                 register_name(register, 8),
@@ -523,7 +522,7 @@ Assembly = {
     }
 
     // The whole 64-bit value of an operand into a register.
-    into = (self :: @Self, register: usize, source: Operand) Res<(), AllocError> {
+    into = (self :: @Self, register: usize, source: Operand) Res<AllocError> {
         source.match({
             Reg(n)    => (n != register).match({
                 true  => self.out.fmt(
@@ -531,7 +530,7 @@ Assembly = {
                     register_name(n, 8),
                     register_name(register, 8)
                 ),
-                false => Ok(()),
+                false => Ok,
             }),
             Mem(off)  => self.out.fmt(
                 "    movq -{}(%rbp), {}\n",
@@ -548,7 +547,7 @@ Assembly = {
     }
 
     // Append an operand as `size` bytes.
-    put = (self :: @Self, value: Operand, size: usize) Res<(), AllocError> {
+    put = (self :: @Self, value: Operand, size: usize) Res<AllocError> {
         value.match({
             Reg(n)    => self.out.add(register_name(n, size)),
             Mem(off)  => self.out.fmt("-{}(%rbp)", off),
@@ -560,7 +559,7 @@ Assembly = {
 
     // `mnemonic source, dest` on `size`-byte operands.
     op2 = (self :: @Self, mnemonic: str, size: usize, source: Operand, dest: Operand)
-          Res<(), AllocError> {
+          Res<AllocError> {
         self.out.fmt("    {}{} ", mnemonic, suffix(size)).try();
         self.put(source, size).try();
         self.out.add(", ").try();
@@ -587,11 +586,11 @@ Assembly = {
         })
     }
 
-    move = (self :: @Self, out: usize, from: Operand) Res<(), AllocError> {
+    move = (self :: @Self, out: usize, from: Operand) Res<AllocError> {
         self.plan.home(out).match({
             Register(r) => self.into(register_number(r), from),
-            Fixed(_)    => Ok(()),
-            Pointer(_)  => Ok(()),
+            Fixed(_)    => Ok,
+            Pointer(_)  => Ok,
             Frame       => from.match({
                 Reg(n)   => self.out.fmt(
                     "    movq {}, -{}(%rbp)\n",
@@ -625,7 +624,7 @@ Assembly = {
         })
     }
 
-    unary = (self :: @Self, value: Unary) Res<(), AllocError> {
+    unary = (self :: @Self, value: Unary) Res<AllocError> {
         ty = self.slot_type(value.input);
         d  = self.destination(value.out);
         self.into(d, self.operand(value.input)).try();
@@ -644,7 +643,7 @@ Assembly = {
 
     // Compare the 64-bit result with its value re-extended from the type's
     // width; any difference is an overflow.
-    range_check = (self :: @Self, ty: Scalar, span: Span, register: usize) Res<(), AllocError> {
+    range_check = (self :: @Self, ty: Scalar, span: Span, register: usize) Res<AllocError> {
         self.out.fmt("    movq {}, %rdx\n", register_name(register, 8)).try();
         self.canon(ty, 2).try();
         self.out.fmt("    cmpq %rdx, {}\n", register_name(register, 8)).try();
@@ -652,7 +651,7 @@ Assembly = {
     }
 
     // Truncate a register to `ty`'s width and extend it back to 64 bits.
-    canon = (self :: @Self, ty: Scalar, n: usize) Res<(), AllocError> {
+    canon = (self :: @Self, ty: Scalar, n: usize) Res<AllocError> {
         full  = register_name(n, 8);
         dword = register_name(n, 4);
         ty.match({
@@ -681,14 +680,14 @@ Assembly = {
             ),
             I32  => self.out.fmt("    movslq {}, {}\n", dword, full),
             U32  => self.out.fmt("    movl {}, {}\n", dword, dword),
-            _    => Ok(()),
+            _    => Ok,
         })
     }
 
-    convert = (self :: @Self, from: Scalar, to: Scalar, n: usize) Res<(), AllocError> {
+    convert = (self :: @Self, from: Scalar, to: Scalar, n: usize) Res<AllocError> {
         to.match({
             Bool => (width(from) == 1 && !signed(from)).match({
-                true  => Ok(()),
+                true  => Ok,
                 false => self.out.fmt(
                     "    testq {}, {}\n    setne {}\n    movzbl {}, {}\n",
                     register_name(n, 8),
@@ -702,7 +701,7 @@ Assembly = {
         })
     }
 
-    binary = (self :: @Self, value: Binary) Res<(), AllocError> {
+    binary = (self :: @Self, value: Binary) Res<AllocError> {
         ty = self.slot_type(value.left);
         value.op.match({
             Div          => self.divide_op(value, ty, false),
@@ -732,7 +731,7 @@ Assembly = {
 
     // An unsigned 64-bit product by 2^k overflows exactly when any of the
     // top k bits is set.
-    shift_checked = (self :: @Self, value: Binary, power: usize) Res<(), AllocError> {
+    shift_checked = (self :: @Self, value: Binary, power: usize) Res<AllocError> {
         d = self.destination(value.out);
         self.into(d, self.operand(value.left)).try();
         (power > 0).then(() {
@@ -750,7 +749,7 @@ Assembly = {
         self.settle(value.out, d)
     }
 
-    multiply_wide = (self :: @Self, value: Binary) Res<(), AllocError> {
+    multiply_wide = (self :: @Self, value: Binary) Res<AllocError> {
         self.load(value.left, "%rax").try();
         self.load(value.right, "%rcx").try();
         self.out.add("    mulq %rcx\n").try();
@@ -763,7 +762,7 @@ Assembly = {
     // (writing a 32-bit register clears the upper half) and flags check
     // 32- and 64-bit overflow directly; narrower classes compute in 64 bits
     // and compare against the re-extended result.
-    arithmetic = (self :: @Self, value: Binary, ty: Scalar) Res<(), AllocError> {
+    arithmetic = (self :: @Self, value: Binary, ty: Scalar) Res<AllocError> {
         w        = width(ty);
         size     = operation_size(value.op, ty);
         mnemonic = value.op.match({
@@ -825,14 +824,14 @@ Assembly = {
             WrapAdd => self.wrapped(ty, d),
             WrapSub => self.wrapped(ty, d),
             WrapMul => self.wrapped(ty, d),
-            _       => Ok(()),
+            _       => Ok,
         }).try();
         self.settle(value.out, d)
     }
 
     // Checked add/sub: flags for 32- and 64-bit words, range for narrower
     // ones.
-    checked = (self :: @Self, ty: Scalar, span: Span, d: usize) Res<(), AllocError> {
+    checked = (self :: @Self, ty: Scalar, span: Span, d: usize) Res<AllocError> {
         w = width(ty);
         (w >= 4).match({
             true  => {
@@ -843,7 +842,7 @@ Assembly = {
                 ).try();
                 (w == 4 && signed(ty)).match({
                     true  => self.canon(ty, d),
-                    false => Ok(()),
+                    false => Ok,
                 })
             },
             false => self.range_check(ty, span, d),
@@ -852,16 +851,16 @@ Assembly = {
 
     // A wrapped result re-extended from its class width. A 32-bit
     // instruction already truncated an unsigned 32-bit result.
-    wrapped = (self :: @Self, ty: Scalar, d: usize) Res<(), AllocError> {
+    wrapped = (self :: @Self, ty: Scalar, d: usize) Res<AllocError> {
         ty.match({
-            U32 => Ok(()),
+            U32 => Ok,
             _   => self.canon(ty, d),
         })
     }
 
     // Counts at or beyond the width produce zero, as the std contract says;
     // rotation counts are taken modulo the width.
-    shift_op = (self :: @Self, value: Binary, ty: Scalar) Res<(), AllocError> {
+    shift_op = (self :: @Self, value: Binary, ty: Scalar) Res<AllocError> {
         w = width(ty);
         d = self.destination(value.out);
         self.operand(value.right).match({
@@ -892,7 +891,7 @@ Assembly = {
                                     register_name(d, 2),
                                     register_name(d, 4)
                                 ),
-                                _ => Ok(()),
+                                _ => Ok,
                             })
                         },
                     }),
@@ -912,7 +911,7 @@ Assembly = {
                             ).try();
                             value.op.match({
                                 Shl => self.canon(ty, d),
-                                _   => signed(ty).match({ true => self.canon(ty, d), false => Ok(()) }),
+                                _   => signed(ty).match({ true => self.canon(ty, d), false => Ok }),
                             })
                         },
                     }),
@@ -955,7 +954,7 @@ Assembly = {
                             register_name(d, 2),
                             register_name(d, 4)
                         ),
-                        _ => Ok(()),
+                        _ => Ok,
                     }),
                     _    => self.canon(ty, d),
                 }).try();
@@ -964,7 +963,7 @@ Assembly = {
         self.settle(value.out, d)
     }
 
-    divide_op = (self :: @Self, value: Binary, ty: Scalar, remainder: bool) Res<(), AllocError> {
+    divide_op = (self :: @Self, value: Binary, ty: Scalar, remainder: bool) Res<AllocError> {
         power = self.operand(value.right).match({ Imm(c) => log2(c), _ => NONE });
         (power != NONE && power < 31 && !signed(ty)).match({
             // An unsigned division by a power of two is a shift and its
@@ -984,7 +983,7 @@ Assembly = {
                             power,
                             register_name(d, 8)
                         ),
-                        false => Ok(()),
+                        false => Ok,
                     }),
                 }).try();
                 self.settle(value.out, d)
@@ -993,7 +992,7 @@ Assembly = {
         })
     }
 
-    divide_general = (self :: @Self, value: Binary, ty: Scalar, remainder: bool) Res<(), AllocError> {
+    divide_general = (self :: @Self, value: Binary, ty: Scalar, remainder: bool) Res<AllocError> {
         self.load(value.left, "%rax").try();
         self.load(value.right, "%rcx").try();
         self.divide(ty, value.span, remainder).try();
@@ -1029,7 +1028,7 @@ Assembly = {
         Ok(swapped)
     }
 
-    compare_op = (self :: @Self, value: Binary, ty: Scalar) Res<(), AllocError> {
+    compare_op = (self :: @Self, value: Binary, ty: Scalar) Res<AllocError> {
         swapped = self.compare_flags(value.left, value.right).try();
         d       = self.destination(value.out);
         self.out.fmt(
@@ -1070,7 +1069,7 @@ Assembly = {
         })
     }
 
-    compare_branch = (self :: @Self, compare: Binary, yes: usize, no: usize) Res<(), AllocError> {
+    compare_branch = (self :: @Self, compare: Binary, yes: usize, no: usize) Res<AllocError> {
         swapped = self.compare_flags(compare.left, compare.right).try();
         self.branch(
             condition(
@@ -1085,7 +1084,7 @@ Assembly = {
 
     // Branch on `cc` to `yes`, else to `no`, falling through to whichever
     // is the next block.
-    branch = (self :: @Self, cc: str, yes: usize, no: usize) Res<(), AllocError> {
+    branch = (self :: @Self, cc: str, yes: usize, no: usize) Res<AllocError> {
         next = self.block_id + 1;
         (no == next).match({
             true  => self.out.fmt(
@@ -1113,9 +1112,9 @@ Assembly = {
         })
     }
 
-    jump = (self :: @Self, block: usize) Res<(), AllocError> {
+    jump = (self :: @Self, block: usize) Res<AllocError> {
         (block == self.block_id + 1).match({
-            true  => Ok(()),
+            true  => Ok,
             false => self.out.fmt(
                 "    jmp .Lza_f{}_b{}\n",
                 self.function_id,
@@ -1126,7 +1125,7 @@ Assembly = {
 
     // Zero divisors and MIN / -1 trap at the operator; idiv would fault.
     divide = (self :: @Self, ty: Scalar, span: Span, remainder: bool)
-             Res<(), AllocError> {
+             Res<AllocError> {
         self.out.add("    testq %rcx, %rcx\n").try();
         self.trap_if("z", span, TrapKind.DivideByZero).try();
         signed(ty).match({
@@ -1143,10 +1142,10 @@ Assembly = {
             false => self.out.add("    xorl %edx, %edx\n    divq %rcx\n"),
         }).try();
         remainder.then(() { self.out.add("    movq %rdx, %rax\n").try(); });
-        Ok(())
+        Ok
     }
 
-    load_memory = (self :: @Self, value: Load) Res<(), AllocError> {
+    load_memory = (self :: @Self, value: Load) Res<AllocError> {
         ty = self.slot_type(value.out);
         is_block(ty).match({
             true  => {
@@ -1199,7 +1198,7 @@ Assembly = {
         })
     }
 
-    store_memory = (self :: @Self, value: Store) Res<(), AllocError> {
+    store_memory = (self :: @Self, value: Store) Res<AllocError> {
         ty = self.slot_type(value.value);
         is_block(ty).match({
             true  => {
@@ -1244,7 +1243,7 @@ Assembly = {
             },
         });
         // The store may have written any slot whose address was taken.
-        Ok(())
+        Ok
     }
 
     // Copy `size` bytes between two spots. Up to SMALL_AGGREGATE bytes the
@@ -1252,7 +1251,7 @@ Assembly = {
     // needs %rdi, %rsi and %rcx, and is a clobbering instruction for the
     // allocator (see `gen_asm_flow.clobbers`).
     copy_block = (self :: @Self, dest: Spot, source: Spot, size: usize)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
         (size > SMALL_AGGREGATE).match({
             true  => {
                 self.out.add("    leaq ").try();
@@ -1282,7 +1281,6 @@ Assembly = {
                 });
             },
         });
-        Ok(())
     }
 
     // A frame slot's storage.
@@ -1306,7 +1304,7 @@ Assembly = {
         })
     }
 
-    put_spot = (self :: @Self, spot: Spot, at: usize) Res<(), AllocError> {
+    put_spot = (self :: @Self, spot: Spot, at: usize) Res<AllocError> {
         self.out.fmt(
             "{}+{}-{}({})",
             spot.above,
@@ -1316,7 +1314,7 @@ Assembly = {
         )
     }
 
-    call = (self :: @Self, call: Invocation) Res<(), AllocError> {
+    call = (self :: @Self, call: Invocation) Res<AllocError> {
         callee  = self.program.functions.get(call.function).match({
             Ok(f) => Ok(f),
             None  => None,
@@ -1348,20 +1346,20 @@ Assembly = {
             self.out.fmt("    addq ${}, %rsp\n", (stacked + padding) * 8).try();
         });
         hidden.match({
-            true  => Ok(()),
+            true  => Ok,
             false => self.store(call.out, "%rax"),
         })
     }
 
     // A word travels by value; an aggregate by the address of its slot.
-    argument = (self :: @Self, slot: usize, register: str) Res<(), AllocError> {
+    argument = (self :: @Self, slot: usize, register: str) Res<AllocError> {
         is_block(self.slot_type(slot)).match({
             true  => self.slot_address(slot, register),
             false => self.load(slot, register),
         })
     }
 
-    system = (self :: @Self, call: SysCall) Res<(), AllocError> {
+    system = (self :: @Self, call: SysCall) Res<AllocError> {
         call.args.loop((h, i, slot) {
             self.load(slot, system_register(i)).try();
         });
@@ -1382,7 +1380,7 @@ Assembly = {
         self.store(call.out, "%rax")
     }
 
-    print = (self :: @Self, value: Print) Res<(), AllocError> {
+    print = (self :: @Self, value: Print) Res<AllocError> {
         fd = descriptor(value.stream);
         value.ty.match({
             Bool => {
@@ -1409,10 +1407,9 @@ Assembly = {
                 })
             },
         }).try();
-        Ok(())
     }
 
-    text = (self :: @Self, bytes: str) Res<(), AllocError> {
+    text = (self :: @Self, bytes: str) Res<AllocError> {
         (!bytes.is_empty()).then(() {
             label = self.literal(bytes).try();
             self.out.fmt(
@@ -1421,7 +1418,7 @@ Assembly = {
                 bytes.len
             ).try();
         });
-        Ok(())
+        Ok
     }
 
     // Numeric bytes preserve quotes, backslashes, embedded NULs and UTF-8
@@ -1433,7 +1430,7 @@ Assembly = {
         Ok(label)
     }
 
-    data_bytes = (self :: @Self, bytes: str) Res<(), AllocError> {
+    data_bytes = (self :: @Self, bytes: str) Res<AllocError> {
         bytes.loop((h, i, byte) {
             (i % 32 == 0).then(() {
                 (i > 0).then(() { self.data.add("\n").try(); });
@@ -1443,7 +1440,7 @@ Assembly = {
             self.data.fmt("{}", byte).try();
         });
         (!bytes.is_empty()).then(() { self.data.add("\n").try(); });
-        Ok(())
+        Ok
     }
 
     label = (self :: @Self) usize {
@@ -1453,13 +1450,13 @@ Assembly = {
     }
 
     slot_address = (self :: @Self, slot: usize, register: str)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         self.out.fmt("    leaq -{}(%rbp), {}\n", self.offset(slot), register)
     }
 
     // Find the memory operand of every word access in `block` and mark the
     // pointer arithmetic it absorbs.
-    addressing = (self :: @Self, block: BasicBlock) Res<(), AllocError> {
+    addressing = (self :: @Self, block: BasicBlock) Res<AllocError> {
         self.addresses.clear();
         self.absorbed.clear();
         block.code.loop((_) {
@@ -1536,7 +1533,7 @@ Assembly = {
             self.from_memory.add(fold).try();
             fold.then(() { self.absorbed.set(k - 1, true); });
         });
-        Ok(())
+        Ok
     }
 
     // The load at `k` in the block being rendered.
@@ -1619,7 +1616,7 @@ Assembly = {
     }
 
     // The displacement is written as a sum the assembler folds.
-    put_place = (self :: @Self, place: Place) Res<(), AllocError> {
+    put_place = (self :: @Self, place: Place) Res<AllocError> {
         self.out.fmt(
             "{}+{}-{}",
             place.displacement,
@@ -1637,7 +1634,7 @@ Assembly = {
         })
     }
 
-    load = (self :: @Self, slot: usize, register: str) Res<(), AllocError> {
+    load = (self :: @Self, slot: usize, register: str) Res<AllocError> {
         self.plan.home(slot).match({
             Register(r)  => (!register.eq(pool_register(r))).match({
                 true  => self.out.fmt(
@@ -1645,7 +1642,7 @@ Assembly = {
                     pool_register(r),
                     register
                 ),
-                false => Ok(()),
+                false => Ok,
             }),
             Fixed(value) => self.immediate(value, register),
             Pointer(s)   => self.slot_address(s, register),
@@ -1657,7 +1654,7 @@ Assembly = {
         })
     }
 
-    store = (self :: @Self, slot: usize, register: str) Res<(), AllocError> {
+    store = (self :: @Self, slot: usize, register: str) Res<AllocError> {
         self.plan.home(slot).match({
             Register(r) => (!register.eq(pool_register(r))).then(() {
                 self.out.fmt(
@@ -1676,10 +1673,10 @@ Assembly = {
                 self.offset(slot)
             ).try(),
         });
-        Ok(())
+        Ok
     }
 
-    immediate = (self :: @Self, value: i64, register: str) Res<(), AllocError> {
+    immediate = (self :: @Self, value: i64, register: str) Res<AllocError> {
         (value == 0).match({
             true  => self.out.fmt(
                 "    xorl {}, {}\n",
@@ -1697,7 +1694,7 @@ Assembly = {
     // form a parallel assignment (a home may be another argument's incoming
     // register), ordered so no source is overwritten before it is read and
     // with %rax breaking any cycle.
-    parameters = (self :: @Self, function: Func, first: usize) Res<(), AllocError> {
+    parameters = (self :: @Self, function: Func, first: usize) Res<AllocError> {
         sources ::= self.alloc.Vec<usize>();
         targets ::= self.alloc.Vec<usize>();
         Range(0, function.parameters).loop((i) {
@@ -1738,13 +1735,13 @@ Assembly = {
                 });
             });
         });
-        Ok(())
+        Ok
     }
 
     // Branch to an out-of-line trap when `condition` holds after a check;
     // "mp" makes the branch unconditional.
     trap_if = (self :: @Self, condition: str, span: Span, what: TrapKind)
-              Res<(), AllocError> {
+              Res<AllocError> {
         label = self.label();
         site  = self.location(label, span, what).try();
         self.traps.add(site).try();
@@ -1772,7 +1769,7 @@ Assembly = {
         ))
     }
 
-    trap_stubs = (self :: @Self) Res<(), AllocError> {
+    trap_stubs = (self :: @Self) Res<AllocError> {
         self.traps.loop((site) {
             self.out.fmt(
                 ".Lza_trap{}:\n    leaq .Lza_d{}(%rip), %rdi\n    movl ${}, %esi\n    jmp za_trap\n",
@@ -1782,14 +1779,13 @@ Assembly = {
             ).try();
         });
         self.traps.clear();
-        Ok(())
     }
 
     // The runtime: buffered standard output, decimal integers, traps and
     // process exit, all through raw Linux system calls. Every routine may
     // clobber caller-saved registers; generated code keeps no value live in
     // a register across these calls.
-    runtime = (self :: @Self) Res<(), AllocError> {
+    runtime = (self :: @Self) Res<AllocError> {
         write = linux_x86_64(Sys.Write).value_or(0);
         exit  = linux_x86_64(Sys.ExitGroup).value_or(0);
         // exit(edi status): run the exit hook installed in za_globals, if
@@ -1964,7 +1960,7 @@ parallel_moves = (
     sources :: Vec<usize>,
     targets :: Vec<usize>
 )
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     done ::= alloc.Vec<bool>();
     sources.loop(
         (h, i, s) { done.add(s == targets.get(i).value_or(s)).try(); }
@@ -2008,7 +2004,7 @@ parallel_moves = (
             });
         });
     });
-    Ok(())
+    Ok
 }
 
 // Called only for the register prefix; later arguments use the stack.

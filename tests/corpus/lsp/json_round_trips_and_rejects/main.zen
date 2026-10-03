@@ -35,7 +35,7 @@
 // Parse, re-emit, and parse the OUTPUT again — a conversion tested one
 // way passes with the error present in both, and a writer that drops a
 // byte is only visible on the second pass.
-trip = (a: Alloc, doc: str) Res<(), AllocError> {
+trip = (a: Alloc, doc: str) Res<AllocError> {
     trip_as(a, doc, doc)
 }
 
@@ -45,20 +45,19 @@ trip = (a: Alloc, doc: str) Res<(), AllocError> {
 // still being PARSED as itself. Dropping the CR from the input instead
 // would have deleted the assertion that JSON's whitespace is exactly
 // space, tab, CR and LF.
-trip_as = (a: Alloc, label: str, doc: str) Res<(), AllocError> {
+trip_as = (a: Alloc, label: str, doc: str) Res<AllocError> {
     once ::= a.String().try();
     tree ::= a.Jsons();
     read(a, tree, doc).match({
         Err(f) => println("{} !! {} at byte {}", label, why(f), at_byte(f)),
         Ok(id) => { tree.write(id, once).try(); refeed(a, label, once.view()).try(); },
     });
-    Ok(());
 }
 
 // The fixpoint check. If `emit(parse(emit(parse(x))))` differs from
 // `emit(parse(x))`, the writer and the reader disagree about something
 // and the second line says which.
-refeed = (a: Alloc, doc: str, out: str) Res<(), AllocError> {
+refeed = (a: Alloc, doc: str, out: str) Res<AllocError> {
     twice ::= a.String().try();
     tree  ::= a.Jsons();
     read(a, tree, out).match({
@@ -81,14 +80,13 @@ refeed = (a: Alloc, doc: str, out: str) Res<(), AllocError> {
             });
         },
     });
-    Ok(());
 }
 
 // A field read out of a parsed document, which is the only thing the
 // server ever does with one. It is here because `field` has a rule of
 // its own — LAST WINS on a duplicate key — and a rule with no test is a
 // comment.
-pick = (a: Alloc, doc: str, name: str) Res<(), AllocError> {
+pick = (a: Alloc, doc: str, name: str) Res<AllocError> {
     tree ::= a.Jsons();
     out  ::= a.String().try();
     read(a, tree, doc).match({
@@ -99,7 +97,6 @@ pick = (a: Alloc, doc: str, name: str) Res<(), AllocError> {
                         println("{} . {} -> {}", doc, name, out.view()); },
         }),
     });
-    Ok(());
 }
 
 // The byte a refusal names. `NoMemory` is the one fault with no

@@ -46,7 +46,7 @@ main = (env: Env) Res<i32, AllocError> {
     Ok(0);
 }
 
-open_session = (a: Alloc, into :: String) Res<(), AllocError> {
+open_session = (a: Alloc, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":"
@@ -56,7 +56,7 @@ open_session = (a: Alloc, into :: String) Res<(), AllocError> {
     write_frame(body.view(), into)
 }
 
-open_doc = (a: Alloc, into :: String) Res<(), AllocError> {
+open_doc = (a: Alloc, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
@@ -68,7 +68,7 @@ open_doc = (a: Alloc, into :: String) Res<(), AllocError> {
     write_frame(body.view(), into)
 }
 
-ask = (a: Alloc, into :: String) Res<(), AllocError> {
+ask = (a: Alloc, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/completion\",\"params\":{\"textDocument\":{\"uri\":"
@@ -97,7 +97,7 @@ shown = (i: usize, body: str) {
     });
 }
 
-dependency = (a: Alloc, text: str, into :: String) Res<(), AllocError> {
+dependency = (a: Alloc, text: str, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file://src/app/shape.zen\",\"text\":"
@@ -107,7 +107,7 @@ dependency = (a: Alloc, text: str, into :: String) Res<(), AllocError> {
     write_frame(body.view(), into)
 }
 
-change_dependency = (a: Alloc, text: str, into :: String) Res<(), AllocError> {
+change_dependency = (a: Alloc, text: str, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file://src/app/shape.zen\",\"version\":2},\"contentChanges\":[{\"text\":"

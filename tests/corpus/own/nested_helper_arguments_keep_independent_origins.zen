@@ -11,15 +11,13 @@ put = (box :: Box, input: Input) {
     envelope = Envelope(input: input, other: "static");
     box.text = read(envelope);
 }
-fill = (env: Env, box :: Box) Res<(), AllocError> {
+fill = (env: Env, box :: Box) Res<AllocError> {
     a    = env.mem.alloc();
     text = a.String("temporary").try();
     put(box, Input(text: "caller", scratch: text.view()));
-    Ok(())
 }
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     box ::= Box(text: "");
     fill(env, box).try();
     println(box.text);
-    Ok(())
 }

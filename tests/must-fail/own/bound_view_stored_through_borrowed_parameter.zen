@@ -14,10 +14,10 @@ Counting.impl(Alloc, {
 Holder = { alloc: Alloc }
 Box = { held :: Holder }
 fill = (out :: Box, counting: Counting) { out.held = Holder(alloc: counting); }
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     base = env.mem.alloc();
     out ::= Box(held: Holder(alloc: base));
     fill(out, Counting(base: base, tag: 1));
     out.held.alloc.raw(8, 8).try();
-    Ok(())
+    Ok
 }

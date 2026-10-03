@@ -29,7 +29,7 @@ construct* = (
     d   : Def,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     ty = be.construct_type(id, d, ctx).try();
     be.request_type(ty).try();
     decl_at(be.tree, d.id).match({
@@ -59,7 +59,7 @@ construct_decl = (
     ty  : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     x.kind.match({
         Struct(s) => s.native_header.match({
             Ok(_) => s.native_record.match({
@@ -87,7 +87,7 @@ construct_struct = (
     ctx : Ctx,
     out :: String
 )
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     named = be.prim_named(s, ty).try();
     built = be.settle_construction(c, s, d, named, ctx).try();
     be.layout_open(s, d, built).try().match({
@@ -143,7 +143,7 @@ unify_field = (
     dctx  : Ctx,
     ctx   : Ctx,
     out   :: Inst
-) Res<(), AllocError> {
+) Res<AllocError> {
     fields   = Storage(decl: s, inst: empty, ctx: dctx);
     name     = fields.field_name(be, a, i).try();
     declared = fields.ty_of(be, name);
@@ -165,9 +165,9 @@ rebuilt_type = (be :: CBackend, d: Def, s: Struct, found: Inst, ty: TyId)
     })
 }
 
-keep_arg = (found: Inst, v: TyId, out :: Vec<TyId>) Res<(), AllocError> {
+keep_arg = (found: Inst, v: TyId, out :: Vec<TyId>) Res<AllocError> {
     found.lookup(v).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(t) => out.add(t),
     })
 }
@@ -182,7 +182,7 @@ prim_named = (be :: CBackend, s: Struct, ty: TyId) Res<TyId, AllocError> {
 
 // Primitive fields use floor names; declared fields use mangled names.
 designator = (be :: CBackend, ty: TyId, name: str, out :: String)
-             Res<(), AllocError> {
+             Res<AllocError> {
     (be.is_prim_ty(ty) || be.is_native_record(ty)).match({
         true  => out.add(name),
         false => out.sym_member(name),
@@ -221,12 +221,11 @@ write_literal = (
     ty  : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     cty ::= be.alloc.String().try();
     be.ctype(ty, cty).try();
     out.fmt("({})", cty.view()).try();
     write_initialisers(be, c, s, d, ty, ctx, out).try();
-    Ok(());
 }
 
 write_initialisers = (
@@ -238,7 +237,7 @@ write_initialisers = (
     ctx : Ctx,
     out :: String
 )
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     dctx  = be.decl_ctx_of(d);
     mark  = be.enter_tparams(s.tparams, d.qname).try();
     dinst = be.recv_inst(ty).try();
@@ -250,7 +249,6 @@ write_initialisers = (
     );
     init.write(be, out).try();
     be.leave_tparams(mark).try();
-    Ok(());
 }
 
 // Field lookup at one receiver instantiation. Methods and constants do not
@@ -321,7 +319,7 @@ Initialisers = {
     call_ctx: Ctx,
 
     write = (self: @Self, be :: CBackend, out :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
         out.add("{ ").try();
         seen :: usize = 0;
         self.call.args.loop((h, i, a) {
@@ -373,7 +371,7 @@ Initialisers = {
     // Restore the caller on either success or allocation failure so supplied
     // arguments and subsequent expressions keep their own generic context.
     default_value = (self: @Self, be :: CBackend, v: ExprId, name: str,
-                     out :: String) Res<(), AllocError> {
+                     out :: String) Res<AllocError> {
         caller = be.inst;
         locals = be.hold_locals();
         floor  = be.floor;
@@ -433,7 +431,7 @@ Initialisers = {
     }
 
     write_one = (self: @Self, be :: CBackend, a: Arg, name: str,
-                 hold: bool, out :: String) Res<(), AllocError> {
+                 hold: bool, out :: String) Res<AllocError> {
         des ::= be.alloc.String().try();
         be.designator(self.ty, name, des).try();
         out.fmt(".{} = ", des.view()).try();

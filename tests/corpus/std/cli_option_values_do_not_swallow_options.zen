@@ -33,13 +33,13 @@ main = (env: Env) Res<i32, AllocError> {
     Ok(0)
 }
 
-show = (a: Alloc, parsed: Matches<Id>) Res<(), AllocError> {
+show = (a: Alloc, parsed: Matches<Id>) Res<AllocError> {
     parsed.problem.match({
-        Ok(usage) => {
+        Err(usage) => {
             message = usage.message(a, "tool").try();
             println("error: {}", message.view());
         },
-        None      => parsed.found.loop((f) {
+        Ok         => parsed.found.loop((f) {
             f.id.match({
                 Text     => println("text `{}`", f.text),
                 Number   => println("number `{}`", f.text),
@@ -48,7 +48,6 @@ show = (a: Alloc, parsed: Matches<Id>) Res<(), AllocError> {
             });
         }),
     });
-    Ok(())
 }
 
 line = (a: Alloc, words: str) Res<Vec<str>, AllocError> {

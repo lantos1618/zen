@@ -9,9 +9,10 @@
 { is_escape, escape_value } = std.lex.lex_byte
 { Alloc, AllocError } = std.mem
 { str, String } = std.text
-{ Res, Ok, loop, Range } = std.core
+{ Res, Ok, loop, Range, Error } = std.core
 
 LiteralError* = { OutOfMemory | IncompleteEscape: usize | UnknownEscape: usize }
+LiteralError.impl(Error, {})
 
 // Byte length of an unquoted, lexer-validated literal body or format fragment.
 // Each Zen escape denotes one byte; counting needs no decoded allocation.
@@ -56,7 +57,7 @@ decode_literal* = (raw: str, a: Alloc) Res<str, LiteralError> {
 
 // String line/end faults are anchored at the opening quote. `"""` opens a
 // multi-line string instead.
-string* = (lx :: Lexer) Res<(), AllocError> {
+string* = (lx :: Lexer) Res<AllocError> {
     lx.at_triple_quote().match({
         true  => lx.text_block(),
         false => lx.line_string(),
@@ -67,7 +68,7 @@ at_triple_quote = (lx: Lexer) bool {
     lx.cur.at_byte('"') && lx.cur.at_byte(1, '"') && lx.cur.at_byte(2, '"')
 }
 
-line_string = (lx :: Lexer) Res<(), AllocError> {
+line_string = (lx :: Lexer) Res<AllocError> {
     from = lx.cur.pos();
     lx.cur.bump();
     loop((h) {
@@ -91,7 +92,7 @@ line_string = (lx :: Lexer) Res<(), AllocError> {
             Ok(_)    => { lx.cur.bump(); },
         });
     });
-    Ok(());
+    Ok;
 }
 
 // The closing `"""` of a multi-line string and the whitespace before it on
@@ -106,24 +107,24 @@ Closing = { Closed: BlockEnd | Reported | Unclosed }
 // `"""` as the first text on its own line (DESIGN.md, "Multi-line strings").
 // The whole literal is one Str token; `text_block_literal` reads its value.
 // A literal with any fault yields no token.
-text_block = (lx :: Lexer) Res<(), AllocError> {
+text_block = (lx :: Lexer) Res<AllocError> {
     from   = lx.cur.pos();
     faults = lx.diags.len;
     lx.cur.bump();
     lx.cur.bump();
     lx.cur.bump();
     lx.block_opening().try().match({
-        true  => Ok(()),
+        true  => Ok,
         false => lx.block_close().try().match({
             Unclosed    => lx.report(LexFault.UnterminatedTextBlock, from),
-            Reported    => Ok(()),
+            Reported    => Ok,
             Closed(end) => {
                 (lx.diags.len == faults).then(() {
                     lx.block_indents(from, end).try();
                 });
                 (lx.diags.len == faults).match({
                     true  => lx.emit(TokenKind.Str, from),
-                    false => Ok(()),
+                    false => Ok,
                 })
             },
         }),
@@ -228,7 +229,7 @@ block_end = (lx :: Lexer, line: Pos) Res<Closing, AllocError> {
 // Every line of text begins with the closing indentation, except a line of
 // only whitespace, which is an empty line of text. The first line that does
 // not is the fault, at its first byte of text.
-block_indents = (lx :: Lexer, from: Pos, end: BlockEnd) Res<(), AllocError> {
+block_indents = (lx :: Lexer, from: Pos, end: BlockEnd) Res<AllocError> {
     whole = lx.since(from);
     stop  = end.at.offset - end.indent.len - from.offset;
     at   ::= whole.newline_in(0, stop) + 1;
@@ -252,7 +253,7 @@ block_indents = (lx :: Lexer, from: Pos, end: BlockEnd) Res<(), AllocError> {
     });
     bad.match({
         Ok(pos) => lx.report(LexFault.TextBlockIndent, pos),
-        None    => Ok(()),
+        None    => Ok,
     })
 }
 
@@ -346,7 +347,7 @@ text_block_at* = (raw: str, offset: usize) SourceAt {
     })
 }
 
-add_block_line = (out :: String, line: str, indent: str) Res<(), AllocError> {
+add_block_line = (out :: String, line: str, indent: str) Res<AllocError> {
     text = line.starts_with(indent).match({
         true  => line.slice(indent.len, line.len),
         false => "",
@@ -369,11 +370,11 @@ add_block_line = (out :: String, line: str, indent: str) Res<(), AllocError> {
             },
         });
     });
-    Ok(())
+    Ok
 }
 
 // Character literals contain exactly one byte, not one Unicode code point.
-character* = (lx :: Lexer) Res<(), AllocError> {
+character* = (lx :: Lexer) Res<AllocError> {
     from = lx.cur.pos();
     lx.cur.bump();
     lx.cur.peek().match({
@@ -383,7 +384,7 @@ character* = (lx :: Lexer) Res<(), AllocError> {
         Ok('\\') => {
             reported = lx.escape().try();
             (lx.cur.is_done() && reported).match({
-                true  => Ok(()),
+                true  => Ok,
                 false => lx.close_char(from),
             })
         },
@@ -391,7 +392,7 @@ character* = (lx :: Lexer) Res<(), AllocError> {
     });
 }
 
-close_char = (lx :: Lexer, from: Pos) Res<(), AllocError> {
+close_char = (lx :: Lexer, from: Pos) Res<AllocError> {
     lx.cur.at_byte('\'').match({
         true  => { lx.cur.bump(); lx.emit(TokenKind.Char, from) },
         false => lx.overlong_char(from),
@@ -399,7 +400,7 @@ close_char = (lx :: Lexer, from: Pos) Res<(), AllocError> {
 }
 
 // Resynchronize at the closing quote or the end of the line.
-overlong_char = (lx :: Lexer, from: Pos) Res<(), AllocError> {
+overlong_char = (lx :: Lexer, from: Pos) Res<AllocError> {
     lx.cur.bump_while((b) { (b != '\'') && (b != '\n') });
     lx.cur.peek().match({
         Ok('\'') => { lx.cur.bump(); lx.report(LexFault.CharTooLong, from) },
@@ -436,7 +437,7 @@ escape = (lx :: Lexer) Res<bool, AllocError> {
 
 // Integers are decimal or `0x` hexadecimal. Floats are decimal. Neither form
 // accepts separators or type suffixes.
-number* = (lx :: Lexer) Res<(), AllocError> {
+number* = (lx :: Lexer) Res<AllocError> {
     from = lx.cur.pos();
     lx.is_hex_prefix().match({
         true  => lx.hex_number(from),
@@ -449,7 +450,7 @@ is_hex_prefix = (lx: Lexer) bool {
         && (lx.cur.at_byte(1, 'x') || lx.cur.at_byte(1, 'X'))
 }
 
-hex_number = (lx :: Lexer, from: Pos) Res<(), AllocError> {
+hex_number = (lx :: Lexer, from: Pos) Res<AllocError> {
     lx.cur.bump();
     lx.cur.bump();
     digits_at = lx.cur.pos();
@@ -467,13 +468,13 @@ hex_number = (lx :: Lexer, from: Pos) Res<(), AllocError> {
     })
 }
 
-decimal_number = (lx :: Lexer, from: Pos) Res<(), AllocError> {
+decimal_number = (lx :: Lexer, from: Pos) Res<AllocError> {
     lx.cur.bump_while((b) { b.is_digit() });
     whole = lx.since(from);
 
     has_leading_zero(whole).match({
         true  => lx.report(LexFault.LeadingZero, from),
-        false => Ok(()),
+        false => Ok,
     }).try();
 
     is_float = lx.fraction().try();
@@ -502,24 +503,24 @@ after_dot = (lx :: Lexer) Res<bool, AllocError> {
     lx.cur.bump();
     digit_follows.match({
         false => lx.report(LexFault.FloatNeedsDigit, dot),
-        true  => Ok(()),
+        true  => Ok,
     }).try();
     lx.cur.bump_while((b) { b.is_digit() });
     Ok(digit_follows);
 }
 
 // Identifier bytes glued to a number (`1abc`, `0xffg`) are a fault.
-suffix = (lx :: Lexer) Res<(), AllocError> {
+suffix = (lx :: Lexer) Res<AllocError> {
     at = lx.cur.pos();
     lx.cur.bump_while((b) { b.is_ident_cont() });
     (lx.cur.pos().offset > at.offset).match({
         true  => lx.report(LexFault.SuffixOnNumber, at),
-        false => Ok(()),
+        false => Ok,
     });
 }
 
 // Values beyond u64 produce a fault and no token.
-emit_int = (lx :: Lexer, value: Res<u64>, from: Pos) Res<(), AllocError> {
+emit_int = (lx :: Lexer, value: Res<u64>, from: Pos) Res<AllocError> {
     value.match({
         Ok(v) => lx.emit(TokenKind.Int(v), from),
         None  => lx.report(LexFault.IntegerOutOfRange, from),

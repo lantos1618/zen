@@ -6,7 +6,7 @@
 { Env } = std.env
 { Vec } = std.collections
 { str } = std.text
-{ Res, Ok, None, Range, Path, Duration } = std.core
+{ Res, Ok, None, Range, Path, Duration, Error } = std.core
 
 Module* = {
     functions* = (self: @Self, a: Alloc) Res<Vec<Function>, AllocError>
@@ -15,6 +15,7 @@ Module* = {
 Function* = {}
 
 BuildFault* = { NotFound | FetchFailed | VersionConflict | HashMismatch }
+BuildFault.impl(Error, {})
 
 BuildError* = BuildFault | AllocError
 
@@ -362,7 +363,7 @@ Builder* = {
     mode* = (self: @Self) Mode
 
     add* ::= (self :: @Self, name: str, pkg: Package) Res<Dep, BuildError>
-    remove* ::= (self :: @Self, name: str) Res<(), BuildError>
+    remove* ::= (self :: @Self, name: str) Res<BuildError>
 
     exe* = (self :: @Self, name: str, target: Exe) Res<Builder, BuildError>
     lib* = (self :: @Self, name: str, target: Lib) Res<Dep, BuildError>
@@ -370,9 +371,9 @@ Builder* = {
     c_import* = (self :: @Self, name: str, import: CImport)
         Res<Dep, BuildError>
     // Function-discovery tests and executable tests are distinct contracts.
-    test* = (self :: @Self, name: str, target: Test) Res<(), BuildError>
+    test* = (self :: @Self, name: str, target: Test) Res<BuildError>
     exe_test* = (self :: @Self, name: str, target: Exe) Res<Builder, BuildError>
-    bench* = (self :: @Self, name: str, target: Bench) Res<(), BuildError>
+    bench* = (self :: @Self, name: str, target: Bench) Res<BuildError>
 
     budget* = (self :: @Self, d: Duration) ()
 }

@@ -9,7 +9,7 @@
 { Env } = std.env
 { println } = std.io
 
-dump = (env: Env, alloc: Alloc, label: str, text: str) Res<(), AllocError> {
+dump = (env: Env, alloc: Alloc, label: str, text: str) Res<AllocError> {
     out = scan(alloc, Source(file: "in.zen", text: text)).try();
     println(
         "{}: {} token(s), {} diag(s)",
@@ -25,7 +25,7 @@ dump = (env: Env, alloc: Alloc, label: str, text: str) Res<(), AllocError> {
             t.span.start.col
         );
     });
-    Ok(());
+    Ok;
 }
 
 // a byte no string literal can spell: the escape set is closed at

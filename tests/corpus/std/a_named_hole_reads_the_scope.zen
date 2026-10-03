@@ -19,10 +19,9 @@
 
 Error = AllocError | IoError
 
-show = (a: Alloc, tag: str, depth: usize) Res<(), Error> {
+show = (a: Alloc, tag: str, depth: usize) Res<Error> {
     // a parameter is a binding like any other, and so is a `::` one
     println("{tag} at {depth}");
-    Ok(());
 }
 
 main = (env: Env) Res<i32, Error> {

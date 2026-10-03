@@ -44,7 +44,7 @@ sum = (counting: Counting) Res<i32, AllocError> {
     Ok(v.get(0).value_or(0) + v.get(1).value_or(0))
 }
 refusing = () Holder { keep(Refusing()) }
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     base  = env.mem.alloc();
     calls = base.realloc<usize>(null_ptr<usize>(), 1).try();
     calls.write(0, 0);
@@ -62,5 +62,4 @@ main = (env: Env) Res<(), AllocError> {
         ).match({ Ok(_) => "allocated", Err(_) => "refused" })
     );
     println("{}", calls.read(0) >= 4);
-    Ok(())
 }

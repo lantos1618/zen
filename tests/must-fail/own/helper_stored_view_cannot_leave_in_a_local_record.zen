@@ -11,4 +11,4 @@ bad = (env: Env) Res<Box, AllocError> {
     put(box, text.view());
     Ok(box)
 }
-main = (env: Env) Res<(), AllocError> { bad(env).try(); Ok(()) }
+main = (env: Env) Res<AllocError> { bad(env).try(); Ok }

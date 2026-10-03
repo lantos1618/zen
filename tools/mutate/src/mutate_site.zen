@@ -10,7 +10,7 @@
 { Alloc, AllocError } = std.mem
 { Vec } = std.collections
 { str, String } = std.text
-{ Res, Ok, None } = std.core
+{ Res, Ok, None, Error } = std.core
 
 Operator* = { SwapError
     | FlipEquality
@@ -60,6 +60,7 @@ ErrorUse = {
 }
 
 ParseFailed* = { Lexical | Syntax | OutOfMemory }
+ParseFailed.impl(Error, {})
 
 // Every mutant of `text`, or why the file does not parse.
 collect* = (a: Alloc, file: str, text: str) Res<Vec<Mutant>, ParseFailed> {
@@ -94,7 +95,7 @@ Sites = {
     variants :: Vec<ErrorUse>,
 
     add = (self :: @Self, op: Operator, span: Span, replacement: str)
-          Res<(), AllocError> {
+          Res<AllocError> {
         from = span.start.offset_in(self.text).value_or(0);
         to   = span.end.offset_in(self.text).value_or(0);
         (to > from).then(() {
@@ -107,14 +108,14 @@ Sites = {
                 col: span.start.col
             )).try();
         });
-        Ok(())
+        Ok
     }
 
     source = (self: @Self, span: Span) str {
         span.text_in(self.text).value_or("")
     }
 
-    declared = (self :: @Self, decl: Decl) Res<(), AllocError> {
+    declared = (self :: @Self, decl: Decl) Res<AllocError> {
         decl.kind.match({
             Enum(e) => e.variants.loop((h, v) {
                 self.variants.add(ErrorUse(
@@ -125,25 +126,25 @@ Sites = {
             }),
             _       => (),
         });
-        Ok(())
+        Ok
     }
 
-    expr = (self :: @Self, id: ExprId) Res<(), AllocError> {
+    expr = (self :: @Self, id: ExprId) Res<AllocError> {
         node = self.tree.expr_at(id);
         node.kind.match({
             Binary(b)  => self.binary(b),
             Unary(u)   => u.op.match({
                 Not => self.add(Operator.Negate, u.op_span, ""),
-                _   => Ok(()),
+                _   => Ok,
             }),
             Literal(l) => self.constant(node, l.text),
             Call(c)    => self.call(c),
             Match(m)   => self.arms(m),
-            _          => Ok(()),
+            _          => Ok,
         })
     }
 
-    binary = (self :: @Self, b: Binary) Res<(), AllocError> {
+    binary = (self :: @Self, b: Binary) Res<AllocError> {
         b.op.match({
             Equal     => self.add(Operator.FlipEquality, b.op_span, "!="),
             NotEqual  => self.add(Operator.FlipEquality, b.op_span, "=="),
@@ -151,21 +152,21 @@ Sites = {
             LessEq    => self.add(Operator.FlipOrder, b.op_span, "<"),
             Greater   => self.add(Operator.FlipOrder, b.op_span, ">="),
             GreaterEq => self.add(Operator.FlipOrder, b.op_span, ">"),
-            _         => Ok(()),
+            _         => Ok,
         })
     }
 
-    constant = (self :: @Self, node: Expr, text: str) Res<(), AllocError> {
+    constant = (self :: @Self, node: Expr, text: str) Res<AllocError> {
         text.match({
             "0" => self.add(Operator.Constant, node.span, "1"),
             "1" => self.add(Operator.Constant, node.span, "0"),
-            _   => Ok(()),
+            _   => Ok,
         })
     }
 
     // `cond.ensure(..)` and `cond.then(..)` read their receiver as the
     // condition; `Err(..)` and `.ensure(..)` name the failure.
-    call = (self :: @Self, c: Call) Res<(), AllocError> {
+    call = (self :: @Self, c: Call) Res<AllocError> {
         self.tree.expr_at(c.callee).kind.match({
             Access(x) => self.method_call(c, x.base, x.name.text).try(),
             Name(n)   => n.text.eq("Err").then(() {
@@ -173,32 +174,32 @@ Sites = {
             }),
             _         => (),
         });
-        Ok(())
+        Ok
     }
 
     method_call = (self :: @Self, c: Call, base: ExprId, name: str)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         (name.eq("ensure") || name.eq("then")).then(() {
             self.negate(base).try();
         });
         name.eq("ensure").then(() { self.failure_args(c).try(); });
-        Ok(())
+        Ok
     }
 
-    negate = (self :: @Self, base: ExprId) Res<(), AllocError> {
+    negate = (self :: @Self, base: ExprId) Res<AllocError> {
         span = self.tree.expr_at(base).span;
         out ::= self.alloc.String().try();
         out.fmt("(!({}))", self.source(span)).try();
         self.add(Operator.Negate, span, out.view())
     }
 
-    failure_args = (self :: @Self, c: Call) Res<(), AllocError> {
+    failure_args = (self :: @Self, c: Call) Res<AllocError> {
         c.args.loop((h, arg) { self.failure(arg.value).try(); });
-        Ok(())
+        Ok
     }
 
     // `Group.Variant`, or the callee of `Group.Variant(payload)`.
-    failure = (self :: @Self, id: ExprId) Res<(), AllocError> {
+    failure = (self :: @Self, id: ExprId) Res<AllocError> {
         self.tree.expr_at(id).kind.match({
             Access(x)   => self.tree.expr_at(x.base).kind.match({
                 Name(g) => self.errors.add(ErrorUse(
@@ -211,20 +212,19 @@ Sites = {
             Call(inner) => self.failure(inner.callee).try(),
             _           => (),
         });
-        Ok(())
     }
 
     // Adjacent arms exchange bodies: the text from the first body's start
     // to the second body's end is rewritten with the two bodies swapped.
-    arms = (self :: @Self, m: Match) Res<(), AllocError> {
+    arms = (self :: @Self, m: Match) Res<AllocError> {
         m.arms.loop((h, i, arm) {
             (i > 0).then(() { self.swap_with_previous(m, i).try(); });
         });
-        Ok(())
+        Ok
     }
 
     swap_with_previous = (self :: @Self, m: Match, i: usize)
-                         Res<(), AllocError> {
+                         Res<AllocError> {
         before = m.arms.get(i - 1).ok_or(AllocError.OutOfMemory).try();
         after  = m.arms.get(i).ok_or(AllocError.OutOfMemory).try();
         self.swap(
@@ -233,7 +233,7 @@ Sites = {
         )
     }
 
-    swap = (self :: @Self, first: Span, second: Span) Res<(), AllocError> {
+    swap = (self :: @Self, first: Span, second: Span) Res<AllocError> {
         a       = self.source(first);
         b       = self.source(second);
         between = Span(file: first.file, start: first.end, end: second.start);
@@ -245,29 +245,29 @@ Sites = {
         (a.eq(b) == false).then(() {
             self.add(Operator.SwapArms, whole, out.view()).try();
         });
-        Ok(())
+        Ok
     }
 
     // A statement evaluated for its effect (`check().try();`,
     // `ok.ensure(E.Bad).try();`) is removed with its semicolon.
-    statement = (self :: @Self, s: Stmt) Res<(), AllocError> {
+    statement = (self :: @Self, s: Stmt) Res<AllocError> {
         s.kind.match({
             Expr(_) => self.add(Operator.DeleteStatement, s.span, ""),
-            _       => Ok(()),
+            _       => Ok,
         })
     }
 
     // Each failure named in the file becomes the next other variant of its
     // group, in sorted order, drawn from every variant the file declares or
     // names. A group with one known variant has nothing to swap to.
-    swap_errors = (self :: @Self) Res<(), AllocError> {
+    swap_errors = (self :: @Self) Res<AllocError> {
         self.errors.loop((h, use) {
             self.next_variant(use).match({
                 None    => (),
                 Ok(alt) => self.add(Operator.SwapError, use.span, alt).try(),
             });
         });
-        Ok(())
+        Ok
     }
 
     next_variant = (self: @Self, use: ErrorUse) Res<str> {
@@ -313,14 +313,14 @@ Sites = (a: Alloc, tree: Ast, text: str) Res<Sites, AllocError> {
 }
 
 Sites.impl(WalkVisitor, {
-    visit = (self :: @Self, event: WalkEvent) Res<(), AllocError> {
+    visit = (self :: @Self, event: WalkEvent) Res<AllocError> {
         event.match({
             Enter(node) => node.match({
                 Expr(id)     => self.expr(id),
                 Statement(s) => self.statement(s.value),
-                _            => Ok(()),
+                _            => Ok,
             }),
-            Leave(_)    => Ok(()),
+            Leave(_)    => Ok,
         })
     }
 })

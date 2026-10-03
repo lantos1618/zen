@@ -140,7 +140,7 @@ inline_call* = (
     ctx  : Ctx,
     out  :: String
 )
-               Res<(), AllocError> {
+               Res<AllocError> {
     (be.depth > INLINE_DEPTH).match({
         true  => be.unsupported(id, "an inlining that does not terminate", out),
         false => be.inline_free(id, c, d, f, recv, ctx, out),
@@ -157,7 +157,7 @@ inline_free = (
     ctx  : Ctx,
     out  :: String
 )
-              Res<(), AllocError> {
+              Res<AllocError> {
     mi   = d.id.module.to_usize();
     dctx = be.plain_ctx(mi);
     raw  = be.inst_at(id).try();
@@ -204,7 +204,7 @@ inline_method* = (
     ctx  : Ctx,
     out  :: String
 )
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     (be.depth > INLINE_DEPTH).match({
         true  => be.unsupported(id, "an inlining that does not terminate", out),
         false => be.inline_member(id, c, a, rty, decl, f, ctx, out),
@@ -222,7 +222,7 @@ inline_member = (
     ctx  : Ctx,
     out  :: String
 )
-                Res<(), AllocError> {
+                Res<AllocError> {
     mi    = decl.module.to_usize();
     sctx  = be.check.self_ctx(mi, rty).try();
     inst  = be.method_inst(id, c, rty, decl, f, ctx).try();
@@ -268,7 +268,7 @@ InlineExpansion = {
     caller_ctx: Ctx,
 
     run = (self: @Self, be :: CBackend, out :: String)
-          Res<(), AllocError> {
+          Res<AllocError> {
         loop((h) {
             has_var(be.check, self.ret).then(() {
                 be.unsupported(
@@ -344,11 +344,11 @@ InlineExpansion = {
                 },
             });
         });
-        Ok(())
+        Ok
     }
 }
 
-bind_absent = (be :: CBackend, p: Param, ty: TyId) Res<(), AllocError> {
+bind_absent = (be :: CBackend, p: Param, ty: TyId) Res<AllocError> {
     n = be.declare(p.name.text, ty, p.mutable).try();
     be.check.bind(p.name.text, ty, p.mutable, true).try();
     cname ::= be.alloc.String().try();
@@ -376,7 +376,7 @@ InlineSite = {
     check_home: usize,
     ctx: Ctx,
 
-    bind = (self: @Self, be :: CBackend) Res<(), AllocError> {
+    bind = (self: @Self, be :: CBackend) Res<AllocError> {
         be.spelled_lambda(self.value).match({
             // A lambda has no C storage; its parameter names the body and
             // lexical frame captured here.
@@ -420,7 +420,7 @@ InlineSite = {
 
     // A value is lowered before its parameter can shadow a caller name, then
     // declared in the callee frame.
-    bind_value = (self: @Self, be :: CBackend) Res<(), AllocError> {
+    bind_value = (self: @Self, be :: CBackend) Res<AllocError> {
         text ::= be.alloc.String().try();
         self.param.mutable.match({
             true  => be.write_address(self.value, self.ctx, self.ty, text),
@@ -449,7 +449,7 @@ InlineSite = {
 // goes, or the `(void)(..)` a discarded statement wraps it in does not
 // parse — the same `0` the four report helpers write.
 write_result = (be :: CBackend, keeps: bool, result: str, out :: String)
-               Res<(), AllocError> {
+               Res<AllocError> {
     keeps.match({
         true  => out.add(result),
         false => out.add("0"),
@@ -466,7 +466,7 @@ wants_value = (be :: CBackend, ret: TyId) bool {
 }
 
 open_temp = (be :: CBackend, ret: TyId, result :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
     sym_gen(result, "n", be.next_tmp()).try();
     line ::= be.alloc.String().try();
     be.declarator(ret, result.view(), line).try();
@@ -491,7 +491,7 @@ copy_fn_types = (ft: TyFn, ptys :: Vec<TyId>) Res<TyId, AllocError> {
 // that were visible where it was written, and never itself. The checker
 // binds the name as it did during checking; lowering binds the closure.
 declare_local_function* = (be :: CBackend, s: Stmt, f: Function, ctx: Ctx)
-                          Res<(), AllocError> {
+                          Res<AllocError> {
     home       = be.mark();
     check_home = be.check.mark();
     be.check.stmt_type(s, ctx).try();
@@ -540,7 +540,7 @@ lower_closure_call* = (
     want : TyId,
     out  :: String
 )
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     be.closure_at(s.closure).match({
         Ok(cl) => be.run_closure(id, c, cl, ctx, want, out),
         None   => unresolved(be, id, s.name, out),
@@ -555,7 +555,7 @@ run_closure = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     (be.depth > INLINE_DEPTH).match({
         true  => be.unsupported(id, "an inlining that does not terminate", out),
         false => be.run_lambda(id, c, cl, ctx, want, out),
@@ -570,7 +570,7 @@ run_lambda = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     inst  = be.inst_at(id).try();
     full  = be.compose(cl.inst, inst).try();
     ready = be.instantiate_closure(cl, full).try();
@@ -667,11 +667,11 @@ lower_args = (
     ctx  : Ctx,
     argt :: Vec<String>,
     hnd  :: Vec<usize>
-) Res<(), AllocError> {
+) Res<AllocError> {
     Range(0, c.args.len).loop((h, i) {
         be.lower_one_arg(c, cl, i, ctx, argt, hnd).try();
     });
-    Ok(());
+    Ok;
 }
 
 lower_one_arg = (
@@ -683,10 +683,10 @@ lower_one_arg = (
     argt :: Vec<String>,
     hnd  :: Vec<usize>
 )
-                Res<(), AllocError> {
+                Res<AllocError> {
     c.args.get(i).match({
         Ok(a) => be.lower_arg_value(a.value, cl, i, ctx, argt, hnd),
-        None  => Ok(()),
+        None  => Ok,
     })
 }
 
@@ -701,7 +701,7 @@ lower_arg_value = (
     argt  :: Vec<String>,
     hnd   :: Vec<usize>
 )
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     depth = be.handle_depth(value);
     hnd.add(depth).try();
     unknown = be.check.types.unknown().try();
@@ -716,11 +716,11 @@ bind_lambda_params = (
     cl   : Closure,
     argt : Vec<String>,
     hnd  : Vec<usize>
-) Res<(), AllocError> {
+) Res<AllocError> {
     Range(0, cl.lam.params.len).loop((h, i) {
         be.bind_lambda_param(cl, argt, hnd, i).try();
     });
-    Ok(());
+    Ok;
 }
 
 bind_lambda_param = (
@@ -729,10 +729,10 @@ bind_lambda_param = (
     argt : Vec<String>,
     hnd  : Vec<usize>,
     i    : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     cl.lam.params.get(i).match({
         Ok(p) => be.bind_lambda_named(cl, argt, hnd, i, p),
-        None  => Ok(()),
+        None  => Ok,
     })
 }
 
@@ -744,7 +744,7 @@ bind_lambda_named = (
     i    : usize,
     p    : Param
 )
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     unknown = be.check.types.unknown().try();
     ty      = cl.ptys.get(i).match({ Ok(t) => t, None => unknown });
     depth   = hnd.get(i).match({ Ok(d) => d, None => 0 });
@@ -755,10 +755,9 @@ bind_lambda_named = (
 }
 
 bind_passed_handle = (be :: CBackend, p: Param, ty: TyId, depth: usize)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     be.declare_handle(p.name.text, ty, depth).try();
     be.check.bind(p.name.text, ty, false, true).try();
-    Ok(());
 }
 
 bind_copied_arg = (
@@ -767,15 +766,15 @@ bind_copied_arg = (
     i    : usize,
     p    : Param,
     ty   : TyId
-) Res<(), AllocError> {
+) Res<AllocError> {
     argt.get(i).match({
         Ok(s) => be.declare_bound(p, ty, s.view()),
-        None  => Ok(()),
+        None  => Ok,
     })
 }
 
 declare_bound = (be :: CBackend, p: Param, ty: TyId, text: str)
-                Res<(), AllocError> {
+                Res<AllocError> {
     n = be.declare(p.name.text, ty, false).try();
     be.check.bind(p.name.text, ty, false, true).try();
     cname ::= be.alloc.String().try();

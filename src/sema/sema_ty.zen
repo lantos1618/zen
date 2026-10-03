@@ -374,24 +374,23 @@ Types* = {
     }
 
     // The members of a set; a set of one lists its member.
-    members_of* = (self: @Self, set: TyId, out :: Vec<TyId>) Res<(), AllocError> {
+    members_of* = (self: @Self, set: TyId, out :: Vec<TyId>) Res<AllocError> {
         self.at(set).match({
             Union(u) => self.copy_members(out, u.members),
             _        => out.add(set),
         }).try();
-        Ok(());
     }
 
     // Named so both `members_of` arms have one type: a bare `loop`
     // yields `Res<T>`.
     copy_members = (self: @Self, out :: Vec<TyId>, members: Vec<TyId>)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         members.loop((h, m) { out.add(m).try() });
-        Ok(());
+        Ok;
     }
 
 
-    write_name* = (self: @Self, id: TyId, out :: String) Res<(), AllocError> {
+    write_name* = (self: @Self, id: TyId, out :: String) Res<AllocError> {
         self.at(id).match({
             Prim(p)  => out.add(p.name),
             Var(v)   => out.add(v.name),
@@ -403,7 +402,6 @@ Types* = {
             Union(u) => self.write_union(u, out),
             Array(a) => self.write_array(a, out),
         }).try();
-        Ok(());
     }
 
     // The outermost `Res<T, E>` in a chain of `Res<T>` values.
@@ -428,42 +426,39 @@ Types* = {
     // writing names and keys
     // -----------------------------------------------------------------
 
-    write_res = (self: @Self, r: TyRes, out :: String) Res<(), AllocError> {
+    write_res = (self: @Self, r: TyRes, out :: String) Res<AllocError> {
         out.add("Res<").try();
         self.write_name(r.value, out).try();
         r.form.match({
             Failure => self.write_res_error(r, out),
-            Absence => Ok(()),
-            Open    => Ok(()),
+            Absence => Ok,
+            Open    => Ok,
         }).try();
         out.add(">").try();
-        Ok(());
     }
 
-    write_res_error = (self: @Self, r: TyRes, out :: String) Res<(), AllocError> {
+    write_res_error = (self: @Self, r: TyRes, out :: String) Res<AllocError> {
         out.add(", ").try();
         self.write_name(r.error, out).try();
-        Ok(());
     }
 
-    write_named = (self: @Self, n: TyNamed, out :: String) Res<(), AllocError> {
+    write_named = (self: @Self, n: TyNamed, out :: String) Res<AllocError> {
         out.add(n.name).try();
         (n.args.len > 0).then(() { self.write_arg_names(n.args, out).try() });
-        Ok(());
+        Ok;
     }
 
     write_arg_names = (self: @Self, args: Vec<TyId>, out :: String)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
         out.add("<").try();
         args.loop((h, i, a) {
             (i > 0).then(() { out.add(", ").try() });
             self.write_name(a, out).try();
         });
         out.add(">").try();
-        Ok(());
     }
 
-    write_fn = (self: @Self, f: TyFn, out :: String) Res<(), AllocError> {
+    write_fn = (self: @Self, f: TyFn, out :: String) Res<AllocError> {
         out.add("(").try();
         f.params.loop((h, i, p) {
             (i > 0).then(() { out.add(", ").try() });
@@ -471,40 +466,37 @@ Types* = {
         });
         out.add(") ").try();
         self.write_name(f.ret, out).try();
-        Ok(());
     }
 
     // `[i32, 4]`, the source spelling.
     write_array = (self: @Self, a: TyArray, out :: String)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         out.add("[").try();
         self.write_name(a.elem, out).try();
         out.add(", ").try();
         out.write_usize(a.count).try();
         out.add("]").try();
-        Ok(());
     }
 
-    write_union = (self: @Self, u: TyUnion, out :: String) Res<(), AllocError> {
+    write_union = (self: @Self, u: TyUnion, out :: String) Res<AllocError> {
         u.members.loop((h, i, m) {
             (i > 0).then(() { out.add(" | ").try() });
             self.write_name(m, out).try();
         });
-        Ok(());
+        Ok;
     }
 
     write_args = (self: @Self, key :: String, args: Vec<TyId>)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
         (args.len > 0).then(() { self.write_args_run(key, args).try() });
-        Ok(());
+        Ok;
     }
 
     write_args_run = (self: @Self, key :: String, args: Vec<TyId>)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
         key.add("<").try();
         args.loop((h, a) { key.fmt("{},", self.key_at(a)).try() });
         key.add(">").try();
-        Ok(());
     }
 
     build_union = (self :: @Self, canon: Vec<TyId>) Res<TyId, AllocError> {
@@ -515,14 +507,14 @@ Types* = {
 
     // A nested union contributes its members.
     flatten_into = (self: @Self, out :: Vec<TyId>, members: Vec<TyId>)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         members.loop((h, m) {
             self.at(m).match({
                 Union(u) => self.flatten_into(out, u.members),
                 _        => out.add(m),
             }).try();
         });
-        Ok(());
+        Ok;
     }
 
     // Insertion sort, deduplicated.
@@ -532,7 +524,7 @@ Types* = {
             // The fallible arm first so the match retains AllocError.
             id.is_in(out).match({
                 false => self.insert_ordered(out, id),
-                true  => Ok(()),
+                true  => Ok,
             }).try();
         });
         Ok(out);
@@ -540,7 +532,7 @@ Types* = {
 
     // Append, then walk the new element down to its place.
     insert_ordered = (self: @Self, out :: Vec<TyId>, id: TyId)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
         out.add(id).try();
         n = out.len;
         Range(1, n).loop((h, k) {
@@ -552,7 +544,7 @@ Types* = {
                 put(out, j, prev).try();
             });
         });
-        Ok(());
+        Ok;
     }
 
     // Lexicographic order on intern keys: stable across runs, unlike
@@ -583,9 +575,9 @@ Types* = (a: Alloc) Types {
     )
 }
 
-put = (out :: Vec<TyId>, i: usize, v: TyId) Res<(), AllocError> {
+put = (out :: Vec<TyId>, i: usize, v: TyId) Res<AllocError> {
     out.set(i, v).match({
         None  => Err(AllocError.OutOfMemory),
-        Ok(_) => Ok(()),
+        Ok(_) => Ok,
     })
 }

@@ -88,7 +88,7 @@ main = (env: Env) Res<i32, AllocError> {
 // --- the requests ------------------------------------------------------
 
 // `rootUri` IS THE WHOLE OF WHAT MAKES THIS A BUILD.
-open_session = (a: Alloc, into :: String) Res<(), AllocError> {
+open_session = (a: Alloc, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":"
@@ -99,7 +99,7 @@ open_session = (a: Alloc, into :: String) Res<(), AllocError> {
 }
 
 open_doc = (a: Alloc, uri: str, text: str, into :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
@@ -111,7 +111,7 @@ open_doc = (a: Alloc, uri: str, text: str, into :: String)
     write_frame(body.view(), into)
 }
 
-definition = (a: Alloc, id: usize, into :: String) Res<(), AllocError> {
+definition = (a: Alloc, id: usize, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add("{\"jsonrpc\":\"2.0\",\"id\":").try();
     body.write_usize(id).try();

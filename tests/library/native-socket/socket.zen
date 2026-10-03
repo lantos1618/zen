@@ -18,7 +18,7 @@ drop_socket = (a: Alloc) Res<i32, SocketFault> {
     socket = Socket.tcp_connect(a, HOST, PORT).try();
     Ok(socket.handle().raw_handle())
 }
-main = (env: Env) Res<(), AllocError | SocketFault> {
+main = (env: Env) Res<AllocError | SocketFault> {
     a  = env.mem.alloc();
     v4 = resolve_addr(a, "127.0.0.1").try();
     check(v4.ip.view() == "127.0.0.1" && !v4.is_v6);
@@ -67,5 +67,4 @@ main = (env: Env) Res<(), AllocError | SocketFault> {
     broken.close();
     check(Native.probe_fds() == before);
     println("PASS DNS, loopback, CLOEXEC, close/drop, refusal and SIGPIPE");
-    Ok(())
 }

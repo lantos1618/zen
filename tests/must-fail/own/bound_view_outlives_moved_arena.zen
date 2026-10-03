@@ -7,18 +7,17 @@
 // into `owner` takes its pages but leaves that address behind, so the map
 // may not follow it into caller storage.
 Owner = { arena :: Arena, names :: Map<str, i32> }
-refill = (owner :: Owner, env: Env) Res<(), AllocError> {
+refill = (owner :: Owner, env: Env) Res<AllocError> {
     fresh ::= env.mem.alloc();
     names ::= fresh.Map<str, i32>();
     names.set("a", 1).try();
     owner.arena.drop();
     owner.arena = consume fresh;
     owner.names = names;
-    Ok(())
+    Ok
 }
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     base = env.mem.alloc();
     owner ::= Owner(arena: env.mem.alloc(), names: base.Map<str, i32>());
     refill(owner, env).try();
-    Ok(())
 }

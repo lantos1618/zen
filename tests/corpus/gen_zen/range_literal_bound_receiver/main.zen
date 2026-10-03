@@ -15,7 +15,7 @@ STD_IO: str = "println* = (args: ...) ()\n"
 // execute the program. Other runtime helpers have separate warning coverage.
 // The constant start must need no receiver copy; end and at still use their
 // receiver, and constructing the range must happen exactly once.
-main = (env: Env) Res<(), AllocError | FsError> {
+main = (env: Env) Res<AllocError | FsError> {
     a      = env.mem.alloc();
     source = env.fs.read(a, "src/program/program.zen").try();
     lexed  = scan(a, Source(file: "program.zen", text: source.view())).try();
@@ -56,5 +56,4 @@ main = (env: Env) Res<(), AllocError | FsError> {
         });
     });
     println("receiver effects and runtime bounds: {}", ran);
-    Ok(())
 }

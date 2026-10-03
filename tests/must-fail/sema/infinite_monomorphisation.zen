@@ -9,11 +9,10 @@
 { Vec } = std.collections
 { Env } = std.env
 
-grow = <T>(alloc: Alloc, x: T) Res<(), AllocError> {
+grow = <T>(alloc: Alloc, x: T) Res<AllocError> {
     v ::= alloc.Vec<T>();
     v.add(x).try();
     grow<Vec<T>>(alloc, v).try();
-    Ok(());
 }
 
 main = (env: Env) Res<i32, AllocError> {

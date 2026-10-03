@@ -24,7 +24,7 @@ Sym* = {
     name_span*: Span,
 
     write = (self: @Self, a: Alloc, uri: str, text: str, list :: Nest,
-             out :: String) Res<(), AllocError> {
+             out :: String) Res<AllocError> {
         list.next(out).try();
         encoded ::= SymbolInformation(name: self.name, kind: self.kind.discriminant(), location: SymbolLocation(uri: uri, range: text_range(text, self.span)), selectionRange: text_range(text, self.name_span)).to_json(a).try();
         out.add(encoded.view())
@@ -74,7 +74,7 @@ symbol = (self: Ident, kind: SymbolKind, span: Span) Res<Sym> {
 }
 
 write_symbols* = (a: Alloc, uri: str, text: str, syms: Vec<Sym>, out :: String)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     list ::= arr(out).try();
     syms.loop((symbol) { symbol.write(a, uri, text, list, out).try(); });
     list.close(out)

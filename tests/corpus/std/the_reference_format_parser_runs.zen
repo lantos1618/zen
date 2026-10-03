@@ -12,7 +12,7 @@ Error = AllocError | IoError
 // every step of `f`, one line each. Spent when `next` reaches the end --
 // `hole` false is not the terminator, since a doubled brace ends a run
 // without being a hole
-walk = (label: str, f: str) Res<(), Error> {
+walk = (label: str, f: str) Res<Error> {
     println("{label}");
     at :: usize = 0;
     loop(() { at < f.len }, (h) {
@@ -26,7 +26,7 @@ walk = (label: str, f: str) Res<(), Error> {
         );
         at = s.next;
     });
-    Ok(());
+    Ok;
 }
 
 main = (env: Env) Res<i32, Error> {

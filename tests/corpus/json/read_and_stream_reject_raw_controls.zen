@@ -24,14 +24,13 @@ read_one = (a: Alloc, text: str) {
     });
 }
 
-stream_one = (a: Alloc, text: str) Res<(), JsonFault> {
+stream_one = (a: Alloc, text: str) Res<JsonFault> {
     decoder ::= a.Decoder().try();
     events  ::= a.Vec<JsonEvent>();
     decoder.feed(text, events).match({
         Ok(_)      => println("stream accepted"),
         Err(fault) => println("stream refused {}", fault_at(fault)),
     });
-    Ok(())
 }
 
 main = (env: Env) Res<i32, JsonFault> {

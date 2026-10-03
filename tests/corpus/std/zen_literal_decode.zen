@@ -14,7 +14,7 @@ Refuse.impl(Alloc, {
     }
 })
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a = env.mem.alloc();
     println("plain no allocation {}", "plain\0é".decode_literal(
         Refuse()
@@ -38,5 +38,4 @@ main = (env: Env) Res<(), AllocError> {
     println("allocation error {}", "\\n".decode_literal(Refuse()).match({
         Err(OutOfMemory) => true, _ => false,
     }));
-    Ok(())
 }

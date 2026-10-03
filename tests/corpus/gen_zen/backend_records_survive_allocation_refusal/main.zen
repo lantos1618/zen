@@ -38,10 +38,10 @@ publish = (
     proto     : String,
     body      : String
 )
-          Res<(), AllocError> {
+          Res<AllocError> {
     operation.match({
         Function => be.add_function(name, proto, body),
-        Foreign  => { be.need_extern(name.view(), proto).try(); Ok(()) },
+        Foreign  => { be.need_extern(name.view(), proto).try(); Ok },
         Type     => be.queue_type(name, TyId(index: 7)),
     })
 }
@@ -108,7 +108,7 @@ trial = (
     Ok(Observation(allocations: allocations, refused: refused, intact: intact))
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a = env.mem.alloc();
     [Operation.Function, Operation.Foreign, Operation.Type].loop((operation) {
         baseline = trial(a, operation, usize.MAX).try();
@@ -119,5 +119,5 @@ main = (env: Env) Res<(), AllocError> {
         });
         println("publication and retry {}", intact);
     });
-    Ok(())
+    Ok
 }

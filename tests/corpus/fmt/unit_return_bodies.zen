@@ -6,7 +6,7 @@
 { println } = std.io
 SOURCE: str = "plain = () () {}\ngeneric = <T>(value: T) () {}\nThing = {\n    run = (self: @Self) () {}\n    hook ::= (self: @Self) () {}\n}\nThing.impl(Drop, { drop = (self :: @Self) () {} })\n"
 WANTED: str = "plain = () {}\ngeneric = <T>(value: T) {}\nThing = {\n    run = (self: @Self) {}\n    hook ::= (self: @Self) {}\n}\nThing.impl(Drop, { drop = (self :: @Self) {} })\n"
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a      = env.mem.alloc();
     result = render(
         a,
@@ -23,5 +23,4 @@ main = (env: Env) Res<(), AllocError> {
         result.text.view().eq(second.text.view()),
         result.diags.len
     );
-    Ok(())
 }

@@ -119,7 +119,7 @@ JavaScript = {
     frame :: usize = 0,
     next_constant :: usize = 0,
 
-    render = (self :: @Self) Res<(), AllocError> {
+    render = (self :: @Self) Res<AllocError> {
         self.find_suspending().try();
         self.program.functions.loop((h, index, function) {
             self.function(index, function).try();
@@ -130,7 +130,7 @@ JavaScript = {
 
     // A function suspends when it contains `Wait` or invokes a function that
     // suspends; iterate to the fixed point over the call graph.
-    find_suspending = (self :: @Self) Res<(), AllocError> {
+    find_suspending = (self :: @Self) Res<AllocError> {
         self.program.functions.loop((function) {
             waits ::= false;
             function.blocks.loop((block) {
@@ -166,7 +166,7 @@ JavaScript = {
                 });
             });
         });
-        Ok(())
+        Ok
     }
 
     suspending = (self: @Self, index: usize) bool { self.suspends.get(index).value_or(false) }
@@ -211,7 +211,7 @@ JavaScript = {
         self.frame = round_up(cursor, 16);
     }
 
-    function = (self :: @Self, id: usize, function: Func) Res<(), AllocError> {
+    function = (self :: @Self, id: usize, function: Func) Res<AllocError> {
         self.function_id = id;
         self.layout_frame(function);
         star: str = self.suspending(id).match({ true => "*", false => "" });
@@ -283,7 +283,7 @@ JavaScript = {
     // ---- slot access ------------------------------------------------
 
     // The low half (or the whole value) of a word slot.
-    lo = (self :: @Self, slot: usize) Res<(), AllocError> {
+    lo = (self :: @Self, slot: usize) Res<AllocError> {
         ty = self.slot_type(slot);
         self.in_memory(slot).match({
             false => self.out.fmt("v{}", slot),
@@ -294,7 +294,7 @@ JavaScript = {
         })
     }
 
-    hi = (self :: @Self, slot: usize) Res<(), AllocError> {
+    hi = (self :: @Self, slot: usize) Res<AllocError> {
         self.in_memory(slot).match({
             false => self.out.fmt("v{}h", slot),
             true  => self.out.fmt(
@@ -305,13 +305,13 @@ JavaScript = {
     }
 
     // The heap address of a slot kept in memory.
-    at = (self :: @Self, slot: usize) Res<(), AllocError> {
+    at = (self :: @Self, slot: usize) Res<AllocError> {
         self.out.fmt("(fp + {})", self.home(slot))
     }
 
     // Begin and end an assignment of a value to a slot's low half (or whole
     // word): `vN = <expr>;` or `zm.setX(fp + k, <expr>, true);`.
-    open = (self :: @Self, slot: usize) Res<(), AllocError> {
+    open = (self :: @Self, slot: usize) Res<AllocError> {
         self.in_memory(slot).match({
             false => self.out.fmt("      v{} = ", slot),
             true  => {
@@ -321,7 +321,7 @@ JavaScript = {
         })
     }
 
-    close = (self :: @Self, slot: usize) Res<(), AllocError> {
+    close = (self :: @Self, slot: usize) Res<AllocError> {
         self.in_memory(slot).match({
             false => self.out.add(";\n"),
             true  => {
@@ -336,7 +336,7 @@ JavaScript = {
     }
 
     // After `open`/`close` of a 64-bit slot: its high half from `zH`.
-    set_high = (self :: @Self, slot: usize) Res<(), AllocError> {
+    set_high = (self :: @Self, slot: usize) Res<AllocError> {
         self.in_memory(slot).match({
             false => self.out.fmt("      v{}h = zH;\n", slot),
             true  => self.out.fmt(
@@ -349,13 +349,13 @@ JavaScript = {
     // `zset<class>(address, ` for a store of `ty` at `fp + home`; the
     // caller writes the value and the closing parenthesis. 64-bit values
     // take two arguments (low, high) and pointers store a zero high half.
-    store_to = (self :: @Self, ty: Scalar, home: usize) Res<(), AllocError> {
+    store_to = (self :: @Self, ty: Scalar, home: usize) Res<AllocError> {
         self.out.add(setter(ty)).try();
         self.out.fmt("(fp + {}, ", home)
     }
 
     // A whole assignment from an expression producing (low, zH).
-    assign_wide = (self :: @Self, slot: usize, expr: str) Res<(), AllocError> {
+    assign_wide = (self :: @Self, slot: usize, expr: str) Res<AllocError> {
         self.open(slot).try();
         self.out.add(expr).try();
         self.close(slot).try();
@@ -364,7 +364,7 @@ JavaScript = {
 
     // ---- instructions -----------------------------------------------
 
-    instruction = (self :: @Self, instruction: Instruction) Res<(), AllocError> {
+    instruction = (self :: @Self, instruction: Instruction) Res<AllocError> {
         instruction.match({
             Constant(value)    => self.constant(value.out, value.value),
             Copy(value)        => self.copy(value.out, value.source),
@@ -377,7 +377,7 @@ JavaScript = {
                     name = self.static_bytes(bytes).try();
                     self.out.fmt("      zwrite(1, zk{}, {});\n", name, bytes.len)
                 },
-                false => Ok(()),
+                false => Ok,
             }),
             Cast(value)        => self.convert(value),
             AddressOf(value)   => {
@@ -470,24 +470,24 @@ JavaScript = {
         })
     }
 
-    clear_high = (self :: @Self, slot: usize) Res<(), AllocError> {
+    clear_high = (self :: @Self, slot: usize) Res<AllocError> {
         wide(self.slot_type(slot)).match({
             true  => {
                 self.out.add("      zH = 0;\n").try();
                 self.set_high(slot)
             },
-            false => Ok(()),
+            false => Ok,
         })
     }
 
-    constant = (self :: @Self, out: usize, value: i64) Res<(), AllocError> {
+    constant = (self :: @Self, out: usize, value: i64) Res<AllocError> {
         ty   = self.slot_type(out);
         bits = bits64(value);
         low  = bits % 4294967296;
         high = bits / 4294967296;
         ty.match({
-            Unit     => Ok(()),
-            Block(_) => Ok(()),
+            Unit     => Ok,
+            Block(_) => Ok,
             F64      => {
                 name = self.constant_name();
                 self.data.fmt(
@@ -538,10 +538,10 @@ JavaScript = {
         Ok(name)
     }
 
-    copy = (self :: @Self, out: usize, source: usize) Res<(), AllocError> {
+    copy = (self :: @Self, out: usize, source: usize) Res<AllocError> {
         ty = self.slot_type(out);
         ty.match({
-            Unit     => Ok(()),
+            Unit     => Ok,
             Block(l) => {
                 self.out.add("      zcopy(").try();
                 self.at(out).try();
@@ -569,7 +569,7 @@ JavaScript = {
     }
 
     // Pre-formatted `file:line:col: ` for a trap report, as a hex literal.
-    position = (self :: @Self, span: Span) Res<(), AllocError> {
+    position = (self :: @Self, span: Span) Res<AllocError> {
         self.location.clear();
         self.location.fmt(
             "{}:{}:{}: ",
@@ -580,7 +580,7 @@ JavaScript = {
         self.out.hex_literal(self.location.view())
     }
 
-    unary = (self :: @Self, value: Unary) Res<(), AllocError> {
+    unary = (self :: @Self, value: Unary) Res<AllocError> {
         ty = self.slot_type(value.input);
         value.op.match({
             Not => {
@@ -625,13 +625,13 @@ JavaScript = {
         })
     }
 
-    pair = (self :: @Self, slot: usize) Res<(), AllocError> {
+    pair = (self :: @Self, slot: usize) Res<AllocError> {
         self.lo(slot).try();
         self.out.add(", ").try();
         self.hi(slot)
     }
 
-    binary = (self :: @Self, value: Binary) Res<(), AllocError> {
+    binary = (self :: @Self, value: Binary) Res<AllocError> {
         ty = self.slot_type(value.left);
         ty.match({
             F64  => self.float_binary(value),
@@ -645,7 +645,7 @@ JavaScript = {
     }
 
     // `(left <op> right)` with plain JS operators.
-    infix = (self :: @Self, value: Binary, op: str) Res<(), AllocError> {
+    infix = (self :: @Self, value: Binary, op: str) Res<AllocError> {
         self.out.add("(").try();
         self.lo(value.left).try();
         self.out.fmt(" {} ", op).try();
@@ -667,9 +667,9 @@ JavaScript = {
         })
     }
 
-    float_binary = (self :: @Self, value: Binary) Res<(), AllocError> {
+    float_binary = (self :: @Self, value: Binary) Res<AllocError> {
         self.compare(value).try().match({
-            true  => Ok(()),
+            true  => Ok,
             false => {
                 op = value.op.match({ Add => "+", Sub => "-", Mul => "*", Div => "/", _ => "%" });
                 self.open(value.out).try();
@@ -681,9 +681,9 @@ JavaScript = {
 
     // Pointer comparisons, and pointer steps by a U64 byte count (whose
     // high half is irrelevant below the 2^31-byte heap limit).
-    pointer_binary = (self :: @Self, value: Binary) Res<(), AllocError> {
+    pointer_binary = (self :: @Self, value: Binary) Res<AllocError> {
         self.compare(value).try().match({
-            true  => Ok(()),
+            true  => Ok,
             false => {
                 self.open(value.out).try();
                 self.out.add("(").try();
@@ -699,9 +699,9 @@ JavaScript = {
     }
 
     // Words of 32 bits or fewer, and Bool.
-    small_binary = (self :: @Self, value: Binary, ty: Scalar) Res<(), AllocError> {
+    small_binary = (self :: @Self, value: Binary, ty: Scalar) Res<AllocError> {
         self.compare(value).try().match({
-            true  => Ok(()),
+            true  => Ok,
             false => {
                 self.open(value.out).try();
                 value.op.match({
@@ -742,7 +742,7 @@ JavaScript = {
 
     // Exact in float64 for these widths; an out-of-range product of two
     // 32-bit values stays out of range after rounding.
-    checked = (self :: @Self, value: Binary, ty: Scalar, op: str) Res<(), AllocError> {
+    checked = (self :: @Self, value: Binary, ty: Scalar, op: str) Res<AllocError> {
         self.out.add("zrange(").try();
         self.infix(value, op).try();
         self.out.fmt(", {}, {}, ", minimum(ty), maximum(ty)).try();
@@ -750,7 +750,7 @@ JavaScript = {
         self.out.add(")")
     }
 
-    division = (self :: @Self, value: Binary, ty: Scalar, helper: str) Res<(), AllocError> {
+    division = (self :: @Self, value: Binary, ty: Scalar, helper: str) Res<AllocError> {
         self.out.fmt("{}(", helper).try();
         self.lo(value.left).try();
         self.out.add(", ").try();
@@ -760,13 +760,13 @@ JavaScript = {
         self.out.add(")")
     }
 
-    wrapped = (self :: @Self, value: Binary, ty: Scalar, op: str) Res<(), AllocError> {
+    wrapped = (self :: @Self, value: Binary, ty: Scalar, op: str) Res<AllocError> {
         self.canonical(ty).try();
         self.infix(value, op).try();
         self.out.add(")")
     }
 
-    shift = (self :: @Self, value: Binary, ty: Scalar, helper: str) Res<(), AllocError> {
+    shift = (self :: @Self, value: Binary, ty: Scalar, helper: str) Res<AllocError> {
         self.canonical(ty).try();
         self.out.fmt("{}(", helper).try();
         self.unsigned_form(value.left, ty).try();
@@ -776,7 +776,7 @@ JavaScript = {
     }
 
     // The slot's bits read as unsigned, for bit operations on signed words.
-    unsigned_form = (self :: @Self, slot: usize, ty: Scalar) Res<(), AllocError> {
+    unsigned_form = (self :: @Self, slot: usize, ty: Scalar) Res<AllocError> {
         ty.match({
             I8  => { self.out.add("(").try(); self.lo(slot).try(); self.out.add(" & 255)") },
             I16 => { self.out.add("(").try(); self.lo(slot).try(); self.out.add(" & 65535)") },
@@ -786,11 +786,11 @@ JavaScript = {
     }
 
     // `(`-prefixed canonicalisation for a class; the caller closes it.
-    canonical = (self :: @Self, ty: Scalar) Res<(), AllocError> {
+    canonical = (self :: @Self, ty: Scalar) Res<AllocError> {
         self.out.add(canon_prefix(ty))
     }
 
-    wide_binary = (self :: @Self, value: Binary, ty: Scalar) Res<(), AllocError> {
+    wide_binary = (self :: @Self, value: Binary, ty: Scalar) Res<AllocError> {
         flag = truth(signed_class(ty));
         value.op.match({
             Equal        => self.wide_equal(value, ""),
@@ -845,7 +845,7 @@ JavaScript = {
     }
 
     // helper(left pair, right pair[, extra][, where])
-    wide_call = (self :: @Self, value: Binary, helper: str, extra: str, traps: bool) Res<(), AllocError> {
+    wide_call = (self :: @Self, value: Binary, helper: str, extra: str, traps: bool) Res<AllocError> {
         self.out.fmt("{}(", helper).try();
         self.pair(value.left).try();
         self.out.add(", ").try();
@@ -858,7 +858,7 @@ JavaScript = {
         self.out.add(")")
     }
 
-    wide_equal = (self :: @Self, value: Binary, lead: str) Res<(), AllocError> {
+    wide_equal = (self :: @Self, value: Binary, lead: str) Res<AllocError> {
         self.open(value.out).try();
         self.out.add(lead).try();
         self.out.add("((").try();
@@ -874,7 +874,7 @@ JavaScript = {
     }
 
     // left < right, optionally negated and/or with the operands swapped.
-    wide_order = (self :: @Self, value: Binary, negate: bool, swap: bool, flag: str) Res<(), AllocError> {
+    wide_order = (self :: @Self, value: Binary, negate: bool, swap: bool, flag: str) Res<AllocError> {
         first  = swap.match({ true => value.right, false => value.left });
         second = swap.match({ true => value.left, false => value.right });
         self.open(value.out).try();
@@ -888,7 +888,7 @@ JavaScript = {
         self.close(value.out)
     }
 
-    wide_bits = (self :: @Self, value: Binary, op: str) Res<(), AllocError> {
+    wide_bits = (self :: @Self, value: Binary, op: str) Res<AllocError> {
         self.out.add("      zH = (").try();
         self.hi(value.left).try();
         self.out.fmt(" {} ", op).try();
@@ -905,7 +905,7 @@ JavaScript = {
     }
 
     // Truncate or extend between integer classes, Bool, Ptr and F64.
-    convert = (self :: @Self, value: Convert) Res<(), AllocError> {
+    convert = (self :: @Self, value: Convert) Res<AllocError> {
         from = self.slot_type(value.input);
         to   = self.slot_type(value.out);
         to.match({
@@ -995,10 +995,10 @@ JavaScript = {
         })
     }
 
-    load = (self :: @Self, value: Load) Res<(), AllocError> {
+    load = (self :: @Self, value: Load) Res<AllocError> {
         ty = self.slot_type(value.out);
         ty.match({
-            Unit     => Ok(()),
+            Unit     => Ok,
             Block(l) => {
                 self.out.add("      zcopy(").try();
                 self.at(value.out).try();
@@ -1030,10 +1030,10 @@ JavaScript = {
         })
     }
 
-    store = (self :: @Self, value: Store) Res<(), AllocError> {
+    store = (self :: @Self, value: Store) Res<AllocError> {
         ty = self.slot_type(value.value);
         ty.match({
-            Unit     => Ok(()),
+            Unit     => Ok,
             Block(l) => {
                 self.out.add("      zcopy(").try();
                 self.lo(value.base).try();
@@ -1057,7 +1057,7 @@ JavaScript = {
         })
     }
 
-    call = (self :: @Self, call: Invocation) Res<(), AllocError> {
+    call = (self :: @Self, call: Invocation) Res<AllocError> {
         result = self.program.functions.get(
             call.function
         ).match({ Ok(f) => f.result, None => Scalar.Unit });
@@ -1079,14 +1079,14 @@ JavaScript = {
                 self.arguments(call, result).try();
                 self.out.add("))").try();
                 self.close(call.out).try();
-                wide(result).match({ true => self.set_high(call.out), false => Ok(()) })
+                wide(result).match({ true => self.set_high(call.out), false => Ok })
             },
         })
     }
 
     // A `js.bind` call through its stub; the stub converts each argument to
     // its JavaScript form and the result back.
-    host = (self :: @Self, call: HostCall) Res<(), AllocError> {
+    host = (self :: @Self, call: HostCall) Res<AllocError> {
         stub = self.stub(call).try();
         out  = self.slot_type(call.out);
         call.result.match({
@@ -1126,7 +1126,7 @@ JavaScript = {
         })
     }
 
-    host_arguments = (self :: @Self, call: HostCall) Res<(), AllocError> {
+    host_arguments = (self :: @Self, call: HostCall) Res<AllocError> {
         call.args.loop((h, i, slot) {
             (i > 0).then(() { self.out.add(", ").try(); });
             ty = self.slot_type(slot);
@@ -1143,7 +1143,7 @@ JavaScript = {
                 }),
             }).try();
         });
-        Ok(())
+        Ok
     }
 
     // The stub's number for this binding signature, written on first use.
@@ -1177,7 +1177,7 @@ JavaScript = {
     // The object is a global path, or the receiver followed by the path
     // after its first segment. Names are emitted only when they are plain
     // identifiers; any other spelling becomes a stub that throws.
-    write_stub = (self :: @Self, index: usize, call: HostCall) Res<(), AllocError> {
+    write_stub = (self :: @Self, index: usize, call: HostCall) Res<AllocError> {
         self.data.fmt("function zj{}(", index).try();
         Range(0, call.args.len).loop((i) {
             (i > 0).then(() { self.data.add(", ").try(); });
@@ -1192,7 +1192,7 @@ JavaScript = {
 
     // function zjN(a0, a1, a2) { return +(zcopyin(zobj(a0), a1, zview(a2))); }
     // A std.js operation: the runtime function the verifier admitted.
-    write_runtime_stub = (self :: @Self, call: HostCall) Res<(), AllocError> {
+    write_runtime_stub = (self :: @Self, call: HostCall) Res<AllocError> {
         self.data.add("  return ").try();
         self.data.add(result_open(call.result)).try();
         release = call.member.eq("release");
@@ -1208,7 +1208,7 @@ JavaScript = {
         self.data.add(";\n}\n")
     }
 
-    write_binding_stub = (self :: @Self, call: HostCall) Res<(), AllocError> {
+    write_binding_stub = (self :: @Self, call: HostCall) Res<AllocError> {
         valid ::= identifier(call.member);
         call.object.split('.').loop((segment) { valid = valid && identifier(segment); });
         valid.match({
@@ -1262,7 +1262,7 @@ JavaScript = {
     }
 
     // Argument `i` converted to its JavaScript form inside a stub.
-    argument_js = (self :: @Self, call: HostCall, i: usize) Res<(), AllocError> {
+    argument_js = (self :: @Self, call: HostCall, i: usize) Res<AllocError> {
         call.marshal.get(i).value_or(Marshal.Nothing).match({
             Number  => self.data.fmt("a{}", i),
             Flag    => self.data.fmt("(a{} !== 0)", i),
@@ -1274,7 +1274,7 @@ JavaScript = {
         })
     }
 
-    arguments = (self :: @Self, call: Invocation, result: Scalar) Res<(), AllocError> {
+    arguments = (self :: @Self, call: Invocation, result: Scalar) Res<AllocError> {
         first ::= true;
         call.args.loop((h, slot) {
             (!first).then(() { self.out.add(", ").try(); });
@@ -1290,10 +1290,10 @@ JavaScript = {
             (!first).then(() { self.out.add(", ").try(); });
             self.at(call.out).try();
         });
-        Ok(())
+        Ok
     }
 
-    print = (self :: @Self, value: Print) Res<(), AllocError> {
+    print = (self :: @Self, value: Print) Res<AllocError> {
         fd = descriptor(value.stream);
         value.ty.match({
             Unit => self.out.fmt("      zprint({}, \"()\");\n", fd),
@@ -1324,7 +1324,7 @@ JavaScript = {
 
     // Arguments reach the host as JS numbers (exact below 2^53); the result
     // is a word in the -errno convention.
-    system = (self :: @Self, call: SysCall) Res<(), AllocError> {
+    system = (self :: @Self, call: SysCall) Res<AllocError> {
         ty = self.slot_type(call.out);
         self.open(call.out).try();
         wide(ty).then(() { self.out.add("zfromnum(").try(); });
@@ -1344,10 +1344,10 @@ JavaScript = {
         self.out.add("])").try();
         wide(ty).then(() { self.out.add(")").try(); });
         self.close(call.out).try();
-        wide(ty).match({ true => self.set_high(call.out), false => Ok(()) })
+        wide(ty).match({ true => self.set_high(call.out), false => Ok })
     }
 
-    terminator = (self :: @Self, function: Func, exit: Terminator) Res<(), AllocError> {
+    terminator = (self :: @Self, function: Func, exit: Terminator) Res<AllocError> {
         exit.match({
             Return(value)  => function.result.match({
                 Unit     => self.out.add("      zsp = zs; return 0;\n"),
@@ -1523,7 +1523,7 @@ bits64 = (value: i64) u64 {
 
 // Hex spelling preserves arbitrary bytes without placing source text in
 // JavaScript syntax.
-hex_literal = (out :: String, text: str) Res<(), AllocError> {
+hex_literal = (out :: String, text: str) Res<AllocError> {
     out.add('"').try();
     text.loop((byte) { out.write_hex_fixed(byte.to_u64(), 2).try(); });
     out.add('"')

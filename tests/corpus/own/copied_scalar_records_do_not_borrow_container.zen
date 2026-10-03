@@ -15,8 +15,7 @@ position = (env: Env) Res<Position, AllocError> {
     positions.add(Position(line: 42, column: 7)).try();
     read(positions)
 }
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     value = position(env).try();
     println("{}:{}", value.line, value.column);
-    Ok(())
 }

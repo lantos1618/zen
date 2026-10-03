@@ -44,7 +44,7 @@ FailAlloc.impl(Alloc, {
     }
 })
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     alloc ::= env.mem.alloc();
     resolve(alloc, "localhost").match({
         Ok(a)  => {
@@ -76,5 +76,4 @@ main = (env: Env) Res<(), AllocError> {
             false => println("resolution failed before allocation"),
         }),
     });
-    Ok(())
 }

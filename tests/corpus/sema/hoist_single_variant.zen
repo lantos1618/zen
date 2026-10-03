@@ -3,11 +3,12 @@
 // must-fail/sema/hoist_ambiguous, and Err never lifts at all --
 // must-fail/sema/hoist_err_not_lifted.
 
-{ Res, Ok } = std.core
+{ Res, Ok, Error } = std.core
 { Env } = std.env
 { println } = std.io
 
 CfgError = { Missing | Bad }
+CfgError.impl(Error, {})
 
 Holder = {
     bar: Res<i32>,

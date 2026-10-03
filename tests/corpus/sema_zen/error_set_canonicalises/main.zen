@@ -58,11 +58,10 @@ set_of3 = (t :: Types, mem: Alloc, a: TyId, b: TyId, c: TyId)
     t.union_ty(parts)
 }
 
-show = (t: Types, mem: Alloc, label: str, id: TyId) Res<(), AllocError> {
+show = (t: Types, mem: Alloc, label: str, id: TyId) Res<AllocError> {
     out ::= mem.String().try();
     t.write_name(id, out).try();
     println("{} {}", label, out.view());
-    Ok(());
 }
 
 same = (label: str, a: TyId, b: TyId) {

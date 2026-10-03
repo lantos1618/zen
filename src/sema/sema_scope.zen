@@ -39,20 +39,20 @@
 // views of this frame (`sema_own.rehome_arena`).
 
 check_scope_returned* = (c :: Checker, o :: Own, id: BlockId, b: Block)
-                         Res<(), AllocError> {
+                         Res<AllocError> {
     (id.index == o.body.index).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.tail_expr(b).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(v) => c.refuse_scope_returned(o, v),
         }),
     })
 }
 
 check_scope_stored* = (c :: Checker, id: ExprId, k: Call)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     c.is_construction(id).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.refuse_scope_args(k),
     })
 }
@@ -71,12 +71,12 @@ decl_is_struct = (c :: Checker, d: DeclId) bool {
     })
 }
 
-refuse_scope_args = (c :: Checker, k: Call) Res<(), AllocError> {
+refuse_scope_args = (c :: Checker, k: Call) Res<AllocError> {
     k.args.loop((h, a) { c.refuse_scope_expr(a.value).try() });
-    Ok(());
+    Ok;
 }
 
-refuse_scope_expr = (c :: Checker, id: ExprId) Res<(), AllocError> {
+refuse_scope_expr = (c :: Checker, id: ExprId) Res<AllocError> {
     node = c.tree.expr_at(id);
     node.kind.match({
         Scope    => c.refuse(
@@ -84,14 +84,14 @@ refuse_scope_expr = (c :: Checker, id: ExprId) Res<(), AllocError> {
             SemaFault.ScopeEscapes(NameFault(name: ""))
         ),
         Paren(p) => c.refuse_scope_expr(p.inner),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
 check_scope_captured* = (c :: Checker, o :: Own, span: Span, text: str)
-                        Res<(), AllocError> {
+                        Res<AllocError> {
     o.captures_scope(text).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.refuse(span, SemaFault.ScopeEscapes(NameFault(name: text))),
     })
 }
@@ -162,15 +162,15 @@ scope_alias* = (c :: Checker, o :: Own, id: ExprId) bool {
 }
 
 refuse_scope_returned = (c :: Checker, o :: Own, id: ExprId)
-                        Res<(), AllocError> {
+                        Res<AllocError> {
     c.scope_escape(o, id).match({
-        None   => Ok(()),
+        None   => Ok,
         Ok(at) => c.refuse_scope_node(at),
     })
 }
 
 // A binding leaves with its name in the message, the keyword without one.
-refuse_scope_node = (c :: Checker, at: ExprId) Res<(), AllocError> {
+refuse_scope_node = (c :: Checker, at: ExprId) Res<AllocError> {
     node = c.tree.expr_at(at);
     name = node.kind.match({ Name(n) => n.text, _ => "" });
     c.refuse(node.span, SemaFault.ScopeEscapes(NameFault(name: name)))
@@ -244,19 +244,19 @@ param_is_alloc = (c :: Checker, p: Param, mi: usize) bool {
 }
 
 check_arena_returned* = (c :: Checker, o :: Own, id: BlockId, b: Block)
-                        Res<(), AllocError> {
+                        Res<AllocError> {
     (id.index == o.body.index).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.tail_expr(b).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(v) => c.refuse_if_arena(o, v),
         }),
     })
 }
 
-refuse_if_arena = (c :: Checker, o :: Own, id: ExprId) Res<(), AllocError> {
+refuse_if_arena = (c :: Checker, o :: Own, id: ExprId) Res<AllocError> {
     c.arena_name(o, id).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(n) => c.frame_view_at(c.arena_source(o, id)).match({
             Ok(formed) => c.refuse_frame_view(o, formed, id, id, false),
             None       => c.frame_view_within(id).match({
@@ -295,7 +295,7 @@ frame_view_at* = (c: Checker, source: Res<ExprId>) Res<ExprId> {
 // otherwise the arena refusal stands, so an ambiguous origin is never
 // excused by the `carries_bound` filter.
 refuse_mixed_view = (c :: Checker, o :: Own, formed: ExprId, id: ExprId, n: str)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     c.carries_bound(c.place_type(o, id)).try().match({
         true  => c.refuse_frame_view(o, formed, id, id, false),
         false => c.refuse(
@@ -342,9 +342,9 @@ refuse_frame_view* = (
     value  : ExprId,
     at     : ExprId,
     stored : bool
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.carries_bound(c.place_type(o, value)).try().match({
-        false => Ok(()),
+        false => Ok,
         true  => {
             fault = FrameViewFault(
                 place: c.field_root_name(formed),
@@ -501,7 +501,7 @@ is_pointerish = (name: str) bool { name.len == 0 || name.eq("str") }
 
 // Preserve the completed value while the block's local names still exist.
 remember_block_origin* = (c :: Checker, o :: Own, id: BlockId, b: Block)
-                         Res<(), AllocError> {
+                         Res<AllocError> {
     c.tail_expr(b).match({
         None      => o.remember_block(id, false, None, None),
         Ok(value) => o.remember_block(
@@ -520,13 +520,13 @@ check_arena_stored* = (
     o      :: Own,
     target : ExprId,
     value  : ExprId
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.path_root(o, target).match({
-        None     => Ok(()),
+        None     => Ok,
         Ok(root) => o.owned_at(root).match({
-            true  => Ok(()),
+            true  => Ok,
             false => c.arena_name(o, value).match({
-                None     => Ok(()),
+                None     => Ok,
                 Ok(name) => c.frame_view_at(c.arena_source(o, value)).match({
                     None       => c.refuse(
                         c.tree.expr_at(target).span,
@@ -629,17 +629,17 @@ stored_arena_backed* = (
 // Moving the allocation owner into caller storage ends this body's ownership.
 // Only dependents with that definite source lose their local-arena origin.
 release_stored_arena* = (c :: Checker, o :: Own, target: ExprId, value: ExprId)
-                       Res<(), AllocError> {
+                       Res<AllocError> {
     c.path_root(o, target).match({
-        None     => Ok(()),
+        None     => Ok,
         Ok(root) => o.owned_at(root).match({
-            true  => Ok(()),
+            true  => Ok,
             false => c.tree.expr_at(value).kind.match({
                 Paren(p)   => c.release_stored_arena(o, target, p.inner),
                 Consume(x) => c.is_arena_ty(c.place_type(o, x.operand)).match({
-                    false => Ok(()),
+                    false => Ok,
                     true  => c.arena_source(o, x.operand).match({
-                        None       => Ok(()),
+                        None       => Ok,
                         Ok(source) => c.rehome_arena(
                             o,
                             source,
@@ -647,7 +647,7 @@ release_stored_arena* = (c :: Checker, o :: Own, target: ExprId, value: ExprId)
                         ),
                     }),
                 }),
-                _          => Ok(()),
+                _          => Ok,
             }),
         }),
     })

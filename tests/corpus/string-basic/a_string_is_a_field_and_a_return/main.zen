@@ -45,9 +45,8 @@ render = (a: Alloc, base: str, k: i32) Res<String, AllocError> {
     Ok(out);
 }
 
-grow = (sb :: String, tail: str) Res<(), AllocError> {
+grow = (sb :: String, tail: str) Res<AllocError> {
     sb.add(tail).try();
-    Ok(());
 }
 
 main = (env: Env) Res<i32, Error> {

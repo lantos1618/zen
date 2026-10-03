@@ -11,24 +11,24 @@ source = (calls :: usize) Split {
     "first,skip,last,unseen".split(',')
 }
 
-fail = () Res<(), AllocError> { Err(AllocError.OutOfMemory) }
+fail = () Res<AllocError> { Err(AllocError.OutOfMemory) }
 
-try_loop = (seen :: usize) Res<(), AllocError> {
+try_loop = (seen :: usize) Res<AllocError> {
     "first,fail,unseen".split(',').loop((h, value) {
         seen = seen + 1;
         value.eq("fail").then(() { fail().try(); });
     });
     seen = seen + 100;
-    Ok(());
+    Ok;
 }
 
-try_value_loop = (seen :: usize) Res<(), AllocError> {
+try_value_loop = (seen :: usize) Res<AllocError> {
     "first,fail,unseen".split(',').loop((value) {
         seen = seen + 1;
         value.eq("fail").then(() { fail().try(); });
     });
     seen = seen + 100;
-    Ok(());
+    Ok;
 }
 
 main = (env: Env) Res<i32, AllocError> {

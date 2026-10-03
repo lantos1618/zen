@@ -1,2 +1,2 @@
 expected TargetError, found bool
-10:17
+12:17

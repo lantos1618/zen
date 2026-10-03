@@ -218,7 +218,7 @@ write_all* = (fd: i32, bytes: str) Res<(), i64> {
         (n < 0 && n != 0 - eintr()).then(() { h.break(n); });
         (n > 0).then(() { done = done + n.to_usize().value_or(0); });
     });
-    failure.match({ Ok(e) => Err(e), None => Ok(()) })
+    failure.match({ Ok(e) => Err(e), None => Ok })
 }
 
 // Read until `n` bytes arrive at `base` or input ends. The count read, or
@@ -250,7 +250,7 @@ c_path* = (a: Alloc, path: str) Res<Ptr<u8>, AllocError> {
 read_file* = (a: Alloc, path: str) Res<String, i64> {
     name = c_path(a, path).match({ Ok(p) => Ok(p), Err(_) => Err(NO_MEMORY) }).try();
     fd   = openat(at_fdcwd(), name, o_rdonly() + o_cloexec(), 0);
-    (fd < 0).match({ true => Err(fd), false => Ok(()) }).try();
+    (fd < 0).match({ true => Err(fd), false => Ok }).try();
     handle = fd.to_i32().value_or(-1);
     out ::= a.String().match({ Ok(s) => Ok(s), Err(_) => Err(NO_MEMORY) }).try();
     chunk             = a.raw(65536, 16).match({ Ok(p) => Ok(p), Err(_) => Err(NO_MEMORY) }).try();
@@ -278,7 +278,7 @@ write_file* = (a: Alloc, path: str, bytes: str) Res<(), i64> {
         o_wronly() + o_creat() + o_trunc() + o_cloexec(),
         420
     );
-    (fd < 0).match({ true => Err(fd), false => Ok(()) }).try();
+    (fd < 0).match({ true => Err(fd), false => Ok }).try();
     handle  = fd.to_i32().value_or(-1);
     written = write_all(handle, bytes);
     close(handle);
@@ -303,21 +303,19 @@ random_bytes* = (buf: Ptr<u8>, len: usize) Res<(), i64> {
         (n < 0 && n != 0 - eintr()).then(() { h.break(n); });
         (n > 0).then(() { done = done + n.to_usize().value_or(0); });
     });
-    failure.match({ Ok(e) => Err(e), None => Ok(()) })
+    failure.match({ Ok(e) => Err(e), None => Ok })
 }
 
 // A Sink over a standard stream; `{}` of a Display value writes through it.
 StreamSink* = { stream: i32 }
 
 StreamSink.impl(Sink, {
-    write = (self :: @Self, bytes: str) Res<(), WriteError> {
+    write = (self :: @Self, bytes: str) Res<WriteError> {
         emit(self.stream, bytes.ptr(), bytes.len);
-        Ok(())
     }
 
-    write_byte = (self :: @Self, b: u8) Res<(), WriteError> {
+    write_byte = (self :: @Self, b: u8) Res<WriteError> {
         emit_byte(self.stream, b);
-        Ok(())
     }
 })
 

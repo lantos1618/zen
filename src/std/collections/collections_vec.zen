@@ -3,7 +3,7 @@
 { Alloc, AllocError, Ptr, null_ptr } = std.mem
 { Range } = std.core.range
 { Seq } = std.core.seq
-{ Res, Ok, None, loop } = std.core
+{ Res, Ok, None, loop, Error } = std.core
 
 // An index at or past `len`, named so a caller can propagate the miss
 // honestly instead of borrowing an unrelated error such as OutOfMemory.
@@ -11,6 +11,7 @@ OutOfBounds* = {
     index*: usize,
     len*:   usize,
 }
+OutOfBounds.impl(Error, {})
 
 Vec*<T> = {
     data :: Ptr<T> = null_ptr<T>(),
@@ -18,14 +19,14 @@ Vec*<T> = {
     capacity :: usize = 0,
     alloc: Alloc,
 
-    add* = (self :: @Self, value: T) Res<(), AllocError> {
+    add* = (self :: @Self, value: T) Res<AllocError> {
         (self.len == self.capacity).match({
             true  => self.grow(),
-            false => Ok(()),
+            false => Ok,
         }).try();
         self.data.write(self.len, value);
         self.len = self.len + 1;
-        Ok(());
+        Ok;
     }
 
     get* = (self: @Self, i: usize) Res<T> {
@@ -49,7 +50,7 @@ Vec*<T> = {
             true  => {
                 _ = self.data.take(i);
                 self.data.write(i, value);
-                Ok(())
+                Ok
             },
             false => None,
         });
@@ -75,11 +76,11 @@ Vec*<T> = {
         });
     }
 
-    reserve* = (self :: @Self, n: usize) Res<(), AllocError> {
+    reserve* = (self :: @Self, n: usize) Res<AllocError> {
         (n <= usize.MAX - self.len).ensure(AllocError.OutOfMemory).try();
         want = self.len + n;
         (want <= self.capacity).match({
-            true  => Ok(()),
+            true  => Ok,
             false => self.reallocate(
                 (want <= usize.MAX / 2).match({true => want * 2, false => want})
             ),
@@ -90,7 +91,7 @@ Vec*<T> = {
     // The caller owns the source bounds and lifetime. An aliased run must
     // lie wholly within this Vec's initialized prefix; that run remains
     // supported even when reallocation moves storage.
-    add_all* = (self :: @Self, source: Ptr<T>, count: usize) Res<(), AllocError> {
+    add_all* = (self :: @Self, source: Ptr<T>, count: usize) Res<AllocError> {
         (count <= usize.MAX - self.len).ensure(AllocError.OutOfMemory).try();
         (count > 0).then(() {
             at                = self.len;
@@ -106,10 +107,10 @@ Vec*<T> = {
             self.data.offset(at).copy_from(from, count);
             self.len = at + count;
         });
-        Ok(())
+        Ok
     }
 
-    grow = (self :: @Self) Res<(), AllocError> {
+    grow = (self :: @Self) Res<AllocError> {
         (self.capacity < usize.MAX).ensure(AllocError.OutOfMemory).try();
         self.reallocate((self.capacity == 0).match({
             true  => 1,
@@ -117,10 +118,10 @@ Vec*<T> = {
         }))
     }
 
-    reallocate = (self :: @Self, cap: usize) Res<(), AllocError> {
+    reallocate = (self :: @Self, cap: usize) Res<AllocError> {
         self.data     = self.alloc.realloc(self.data, cap).try();
         self.capacity = cap;
-        Ok(());
+        Ok;
     }
 }
 

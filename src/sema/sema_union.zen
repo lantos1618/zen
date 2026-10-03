@@ -16,52 +16,51 @@ named_or_union* = (c :: Checker, d: Def, args: Vec<TyId>)
     Ok(id);
 }
 
-record_set = (c :: Checker, id: TyId, decl: DeclId) Res<(), AllocError> {
+record_set = (c :: Checker, id: TyId, decl: DeclId) Res<AllocError> {
     c.set_memo.get(id).match({
-        Ok(_) => Ok(()),
+        Ok(_) => Ok,
         None  => c.record_if_union(id, decl),
     })
 }
 
 record_if_union = (c :: Checker, id: TyId, decl: DeclId)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     c.union_reading(decl).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.compute_set(id, decl),
     })
 }
 
-compute_set = (c :: Checker, id: TyId, decl: DeclId) Res<(), AllocError> {
+compute_set = (c :: Checker, id: TyId, decl: DeclId) Res<AllocError> {
     c.set_memo.set(id, id).try();
     members ::= c.alloc.Vec<TyId>();
     c.collect_members(decl, members).try();
     set = c.types.union_ty(members).try();
     c.set_memo.set(id, set).try();
-    Ok(());
 }
 
 collect_members = (c :: Checker, decl: DeclId, out :: Vec<TyId>)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     decl_at(c.tree, decl).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(d) => c.decl_members(decl, d, out),
     })
 }
 
 decl_members = (c :: Checker, decl: DeclId, d: Decl, out :: Vec<TyId>)
-               Res<(), AllocError> {
+               Res<AllocError> {
     d.kind.match({
         Enum(e) => c.enum_members(decl, e, out),
-        _       => Ok(()),
+        _       => Ok,
     })
 }
 
 enum_members = (c :: Checker, decl: DeclId, e: Enum, out :: Vec<TyId>)
-               Res<(), AllocError> {
+               Res<AllocError> {
     e.variants.loop((h, v) {
         out.add(c.variant_member_type(decl, v.name.text).try()).try();
     });
-    Ok(());
+    Ok;
 }
 
 union_member* = (c :: Checker, decl: DeclId, name: str)

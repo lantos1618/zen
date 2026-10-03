@@ -55,7 +55,7 @@ lower_format_door* = (
     recv : Res<ExprId>,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     site = FormatCall(id: id, c: c, d: d, f: f, recv: recv, ctx: ctx);
     be.is_sink_door(d, f).match({
         true  => be.lower_sink_door(id, c, d, f, recv, ctx, out),
@@ -67,7 +67,7 @@ lower_alloc_door = (
     be   :: CBackend,
     site : FormatCall,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.empty_form(site.d).try().match({
         None  => be.unsupported(
             site.id,
@@ -88,17 +88,17 @@ empty_form = (be :: CBackend, d: Def) Res<Res<Def>, AllocError> {
 }
 
 keep_empty = (be :: CBackend, x: Def, out :: Vec<Def>)
-             Res<(), AllocError> {
+             Res<AllocError> {
     decl_at(be.tree, x.id).match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(dec) => dec.kind.match({
             Function(fn) => (
                 (fn.params.len == 1) && (bodyless(fn) == false)
             ).match({
-                false => Ok(()),
+                false => Ok,
                 true  => out.add(x),
             }),
-            _            => Ok(()),
+            _            => Ok,
         }),
     })
 }
@@ -108,7 +108,7 @@ lower_with_empty = (
     site : FormatCall,
     e    : Def,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     ret = be.door_return(site.d, site.f).try();
     be.check.types.at(ret).match({
         Res(r) => be.write_door(site, e, r.value, ret, out),
@@ -141,7 +141,7 @@ write_door = (
     buf  : TyId,
     ret  : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     tmp ::= be.fresh_name("t").try();
     be.declare_temp(ret, tmp.view()).try();
     done = be.next_tmp();
@@ -158,19 +158,19 @@ write_empty_call = (
     e    : Def,
     ret  : TyId,
     tmp  : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     line ::= be.alloc.String("{tmp} = ").try();
     be.call_symbol(e, line).try();
     line.fmt("(").try();
     recv_arg(site.c, site.recv).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(a) => be.write_alloc(e, a, site.ctx, line),
     }).try();
     be.fmt("{});\n", line.view())
 }
 
 write_alloc = (be :: CBackend, e: Def, a: ExprId, ctx: Ctx, out :: String)
-              Res<(), AllocError> {
+              Res<AllocError> {
     sig  ::= be.alloc.Vec<TyId>();
     inst ::= be.alloc.Inst();
     be.signature_of(e, inst, sig).try();
@@ -186,7 +186,7 @@ write_buffer_pieces = (
     ret  : TyId,
     tmp  : str,
     done : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     addr ::= be.alloc.String("&({tmp}.zg_data.").try();
     addr.sym_member("Ok").try();
     addr.fmt(")").try();
@@ -217,7 +217,7 @@ write_failure_arm = (
     tmp  : str,
     fail : usize,
     done : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.write_goto(done).try();
     be.write_done(fail).try();
     be.write_assign_err(ret, "OutOfMemory", tmp)

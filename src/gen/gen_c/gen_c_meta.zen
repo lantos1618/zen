@@ -25,10 +25,10 @@ lower_meta_walk* = (
     names : Vec<str>,
     ctx   : Ctx,
     out   :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     out.add("0").try();
     (names.len == 0).match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.args.get(0).match({
             None  => be.unsupported(id, "a field walk with no body", out),
             Ok(a) => be.spelled_lambda(a.value).match({
@@ -45,7 +45,7 @@ walk_unrolled = (
     lam   : Lambda,
     names : Vec<str>,
     ctx   : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     brk  = be.next_tmp();
     unit = be.check.types.prim("()").try();
     names.loop((h, fname) {
@@ -53,7 +53,6 @@ walk_unrolled = (
     });
     be.write_label("brk", brk).try();
     be.writeln(": ;").try();
-    Ok(())
 }
 
 // Each pass gets a C scope so body locals may be redeclared safely.
@@ -64,7 +63,7 @@ walk_pass = (
     fname : str,
     unit  : TyId,
     ctx   : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.writeln("{").try();
     be.indent();
     lmark = be.mark();
@@ -88,25 +87,23 @@ walk_pass = (
     be.release(lmark).try();
     be.dedent();
     be.writeln("}").try();
-    Ok(())
 }
 
 // The handle stores the loop-frame depth. Field uses were folded by sema and
 // need no runtime slot.
-bind_walk_params = (be :: CBackend, lam: Lambda) Res<(), AllocError> {
+bind_walk_params = (be :: CBackend, lam: Lambda) Res<AllocError> {
     unknown = be.check.types.unknown().try();
     lam.params.get(0).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(p) => {
             be.declare_handle(p.name.text, unknown, be.loop_depth()).try();
             be.check.bind(p.name.text, unknown, false, false)
         },
     }).try();
     lam.params.get(1).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(p) => be.check.bind(p.name.text, unknown, false, false),
     }).try();
-    Ok(())
 }
 
 // Rewrite the current meta projection as an ordinary field access. A marker
@@ -118,7 +115,7 @@ lower_meta_proj* = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.check.walk_field_now().match({
         None     => be.unsupported(
             id,

@@ -5,9 +5,10 @@
 // behind the handle controls lifetime and cleanup.
 
 { Ptr } = std.mem.mem_ptr
-{ Res } = std.core
+{ Res, Error } = std.core
 
 AllocError* = { | OutOfMemory }
+AllocError.impl(Error, {})
 
 // Allocator interface implemented by arenas, fixed buffers, or foreign heaps.
 Alloc* = {

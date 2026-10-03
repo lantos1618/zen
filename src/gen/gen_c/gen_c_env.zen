@@ -24,14 +24,14 @@
 // every other borrowed run in the program is, so the lowering has
 // nothing left to build.
 
-emit_env* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+emit_env* = (be :: CBackend, out :: Emit) Res<AllocError> {
     be.uses_env().match({
-        false => Ok(()),
+        false => Ok,
         true  => write_env(out),
     })
 }
 
-write_env = (out :: Emit) Res<(), AllocError> {
+write_env = (out :: Emit) Res<AllocError> {
     comment(
         out,
         "a borrowed str is not NUL-terminated and getenv wants a NUL"
@@ -59,7 +59,6 @@ write_env = (out :: Emit) Res<(), AllocError> {
     out.dedent();
     out.say("}").try();
     out.line().try();
-    Ok(());
 }
 
 // The lowering: `env.var("HOME")`
@@ -73,7 +72,7 @@ lower_env_var* = (
     ret : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.need_env();
     sty = be.check.types.prim("str").try();
     name ::= be.alloc.String().try();
@@ -92,12 +91,11 @@ lower_env_var* = (
 }
 
 write_getenv_call = (be :: CBackend, got: str, name: str)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     be.fmt("{got} = zg_env_var({name});\n")
 }
 
-open_absent_test = (be :: CBackend, got: str) Res<(), AllocError> {
+open_absent_test = (be :: CBackend, got: str) Res<AllocError> {
     be.fmt("if ({got}.data == NULL) {\n").try();
     be.indent();
-    Ok(());
 }

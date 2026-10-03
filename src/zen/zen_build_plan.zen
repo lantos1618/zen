@@ -7,7 +7,7 @@
 { Alloc, AllocError } = std.mem
 { str } = std.text
 { Vec } = std.collections
-{ Res, Ok, Err, None, Range, Path } = std.core
+{ Res, Ok, Err, None, Range, Path, Error } = std.core
 
 { Ast, ExprId, Expr, Call, Access, Record, Block, Function, Try } = std.ast
 { Match, PatternId } = std.ast
@@ -32,6 +32,7 @@ PlanFault* = { MissingBuild: str
 FieldFault* = { at*: Span, name*: str }
 
 PlanError* = { OutOfMemory | Refused: PlanFault }
+PlanError.impl(Error, {})
 
 refused = (fault: PlanFault) PlanError { PlanError.Refused(fault) }
 
@@ -111,7 +112,7 @@ Executor = {
     locals :: Vec<Local>,
     plan :: BuildPlan,
 
-    block = (self :: @Self, body: Block) Res<(), PlanError> {
+    block = (self :: @Self, body: Block) Res<PlanError> {
         body.stmts.loop((h, stmt) {
             stmt.kind.match({
                 Bind(b) => self.bind(b).try(),
@@ -120,12 +121,12 @@ Executor = {
             });
         });
         body.value.match({
-            None      => Ok(()),
-            Ok(value) => { self.eval(value).try(); Ok(()) },
+            None      => Ok,
+            Ok(value) => { self.eval(value).try(); Ok },
         })
     }
 
-    bind = (self :: @Self, b: Bind) Res<(), PlanError> {
+    bind = (self :: @Self, b: Bind) Res<PlanError> {
         target = self.tree.expr_at(b.target);
         target.kind.match({
             Name(n) => {
@@ -137,7 +138,7 @@ Executor = {
                             name: n.text,
                             value: value
                         )).try(PlanError.OutOfMemory);
-                        Ok(())
+                        Ok
                     },
                 })
             },
@@ -603,7 +604,7 @@ Executor = {
         Ok(Value.BuilderValue)
     }
 
-    unique = (self: @Self, name: str) Res<(), PlanError> {
+    unique = (self: @Self, name: str) Res<PlanError> {
         duplicate = self.plan.imports.find((n) { n.name.eq(name) }).match({
                 Ok(_) => true, None => false,
             })
@@ -624,7 +625,7 @@ Executor = {
             });
         duplicate.match({
             true  => Err(refused(PlanFault.DuplicateTarget(name))),
-            false => Ok(()),
+            false => Ok,
         })
     }
 
@@ -744,7 +745,7 @@ Executor = {
 
     // Refuse a field the target type does not declare. `known` lists the
     // declared names separated by spaces.
-    only = (self: @Self, r: Record, known: str) Res<(), PlanError> {
+    only = (self: @Self, r: Record, known: str) Res<PlanError> {
         r.entries.loop((m) {
             m.kind.match({
                 Field(f) => {
@@ -760,7 +761,7 @@ Executor = {
                 _        => (),
             });
         });
-        Ok(())
+        Ok
     }
 
     // The error for a field whose value has the wrong shape.

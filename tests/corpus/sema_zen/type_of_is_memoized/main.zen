@@ -50,12 +50,11 @@ int_lit = (tree :: Ast, text: str) Res<ExprId, AllocError> {
 
 // what a node's type is CALLED, which is the only readable form of a TyId
 show = (c :: Checker, a: Alloc, label: str, id: ExprId, ctx: Ctx)
-       Res<(), AllocError> {
+       Res<AllocError> {
     ty = c.type_of(id, ctx).try();
     out ::= a.String().try();
     c.types.write_name(ty, out).try();
     println("{} {}", label, out.view());
-    Ok(());
 }
 
 main = (env: Env) Res<i32, AllocError> {

@@ -16,7 +16,7 @@ entry_is = (shared: Shared, file: str) bool {
     })
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a     ::= env.mem.alloc();
     notes ::= env.Diagnostics(a);
     uris  ::= a.Vec<str>();
@@ -55,5 +55,4 @@ main = (env: Env) Res<(), AllocError> {
     }));
     other = notes.shared(env, ".", uris, docs, "src/app/other.zen", a).try();
     println("independent rebuilds {}", other.entry_is("app/other.zen"));
-    Ok(())
 }

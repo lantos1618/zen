@@ -10,13 +10,15 @@
 // a number. 22 - 20 pins both that `Over` arrived (not `Miss`, not Ok)
 // and that it carried the iteration it was raised in.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
 A = { | Miss: i64 }
+A.impl(Error, {})
 B = { | Over: i64 }
+B.impl(Error, {})
 Set = B | A
 
 scan = (limit: i64) Res<i64, Set> {

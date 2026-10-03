@@ -3,11 +3,11 @@
 
 choose = () Codegen { Codegen.C }
 
-build = (builder :: Builder) Res<(), BuildError> {
+build = (builder :: Builder) Res<BuildError> {
     // This call is valid Zen but outside the build interpreter's subset.
     // An explicit unsupported selection must not fall back to the default.
     builder.exe("refused", {
         src: Path("src/main.zen"), deps: [], backend: choose()
     }).try();
-    Ok(())
+    Ok
 }

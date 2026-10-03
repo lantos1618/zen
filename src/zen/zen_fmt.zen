@@ -28,13 +28,12 @@ Fmt = {
     // Files that check mode found unformatted.
     unformatted :: usize = 0,
 
-    one = (self :: @Self, path: str) Res<(), AllocError> {
+    one = (self :: @Self, path: str) Res<AllocError> {
         self.route(path).try().match({
             Failed  => { self.faults = self.faults + 1; },
             Differs => { self.unformatted = self.unformatted + 1; },
             _       => (),
         });
-        Ok(());
     }
 
     route = (self: @Self, path: str) Res<Outcome, AllocError> {

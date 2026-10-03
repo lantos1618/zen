@@ -7,8 +7,8 @@
 Holder = { alloc: Alloc }
 keep = (alloc: Alloc) Holder { Holder(alloc: alloc) }
 wrap = <A>(owner: A) Holder { keep(owner) }
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     held = wrap(env.mem.alloc());
     held.alloc.raw(8, 8).try();
-    Ok(())
+    Ok
 }

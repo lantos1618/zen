@@ -65,12 +65,12 @@ Build* = {
 
     // A dependency's modules are named under `deps.`, the root a module
     // imports them through: `b.add("audio", ..)` is module `deps.audio`.
-    register_library* = (self :: @Self, name: str, path: str) Res<(), AllocError> {
+    register_library* = (self :: @Self, name: str, path: str) Res<AllocError> {
         entries ::= self.libraries.value_or(self.alloc.Vec<Unit>());
         full    ::= self.alloc.String("{}.{}", DEPS, name).try();
         entries.add(Unit(name: full.view(), path: path, rel: path)).try();
         self.libraries = Ok(entries);
-        Ok(())
+        Ok
     }
 
     // The dependency this target registered under `name`.
@@ -135,14 +135,14 @@ Build* = {
         self.sources = Ok(self.alloc.Map<str, str>());
     }
 
-    keep_source = (self :: @Self, file: str, text: str) Res<(), AllocError> {
+    keep_source = (self :: @Self, file: str, text: str) Res<AllocError> {
         self.sources.match({
-            None      => Ok(()),
+            None      => Ok,
             Ok(saved) => {
                 texts ::= saved;
                 texts.set(file, text).try();
                 self.sources = Ok(texts);
-                Ok(())
+                Ok
             },
         })
     }
@@ -152,9 +152,9 @@ Build* = {
     // disables reuse.
     inputs* :: Res<Inputs> = None,
 
-    record_inputs* = (self :: @Self) Res<(), AllocError> {
+    record_inputs* = (self :: @Self) Res<AllocError> {
         self.inputs = Ok(inputs(self.alloc).try());
-        Ok(())
+        Ok
     }
 
     note_read = (self :: @Self, path: str, text: str) {
@@ -196,7 +196,7 @@ Build* = {
 
     // Breadth first from the entry. `seen` is queue and set; the index walks
     // it while it grows.
-    walk* = (self :: @Self, entry: Unit) Res<(), AllocError> {
+    walk* = (self :: @Self, entry: Unit) Res<AllocError> {
         seen ::= self.alloc.Vec<Unit>();
         self.entry_rel = entry.rel;
         seen.add(entry).try();
@@ -211,13 +211,13 @@ Build* = {
             i = i + 1;
             self.front(u, seen).try();
         });
-        Ok(());
+        Ok;
     }
 
     // Load `std.core`, which declares the built-in types' members, into every
     // program. It binds no name. Roots without a stdlib are valid and load
     // nothing.
-    seed_core = (self :: @Self, seen :: Vec<Unit>) Res<(), AllocError> {
+    seed_core = (self :: @Self, seen :: Vec<Unit>) Res<AllocError> {
         flat = self.dotted_path(CORE, false).try();
         self.exists(flat).match({
             true  => self.queue(flat, seen),
@@ -226,11 +226,11 @@ Build* = {
     }
 
     seed_core_folder = (self :: @Self, seen :: Vec<Unit>)
-                       Res<(), AllocError> {
+                       Res<AllocError> {
         nest = self.dotted_path(CORE, true).try();
         self.exists(nest).match({
             true  => self.queue(nest, seen),
-            false => Ok(()),
+            false => Ok,
         })
     }
 
@@ -247,9 +247,9 @@ Build* = {
         Ok(out.view());
     }
 
-    front = (self :: @Self, u: Unit, seen :: Vec<Unit>) Res<(), AllocError> {
+    front = (self :: @Self, u: Unit, seen :: Vec<Unit>) Res<AllocError> {
         self.read(u.path).match({
-            None     => Ok(()),
+            None     => Ok,
             Ok(text) => self.lex_it(u, text, seen),
         })
     }
@@ -289,7 +289,7 @@ Build* = {
     }
 
     // Retain each diagnostic and optionally report it in discovery order.
-    report = (self :: @Self, d: Diag) Res<(), AllocError> {
+    report = (self :: @Self, d: Diag) Res<AllocError> {
         at          = self.diags.len;
         self.faults = self.faults + 1;
         self.diags.add(d).try();
@@ -297,12 +297,12 @@ Build* = {
             Ok(held) => self.speaking.then(() { held.say(); }),
             None     => (),
         });
-        Ok(());
+        Ok;
     }
 
     // Files with lexical faults are reported without invoking the parser.
     lex_it = (self :: @Self, u: Unit, text: str, seen :: Vec<Unit>)
-             Res<(), AllocError> {
+             Res<AllocError> {
         self.keep_source(u.rel, text).try();
         // Tokens live only through this parse; a per-module arena returns them.
         scratch ::= self.env.mem.alloc();
@@ -316,7 +316,7 @@ Build* = {
     // Lexer faults become parse diagnostics so `diags` has one shape. The
     // span is rebuilt by hand: no file can name both `lex.Span` and
     // `ast.Span` (`parser.zen:span_of` is the same conversion).
-    lex_faults = (self :: @Self, lexed: Lexed) Res<(), AllocError> {
+    lex_faults = (self :: @Self, lexed: Lexed) Res<AllocError> {
         lexed.diags.loop((h, d) {
             at = Span(
                 file: d.file,
@@ -325,12 +325,12 @@ Build* = {
             );
             self.report(diag(message(d.fault), at)).try();
         });
-        Ok(());
+        Ok;
     }
 
     // Parse each module into the shared tree. The entry is module zero.
     parse_it = (self :: @Self, u: Unit, lexed: Lexed, seen :: Vec<Unit>)
-               Res<(), AllocError> {
+               Res<AllocError> {
         p ::= self.alloc.Parser(lexed, self.tree);
         m = p.module(u.name).try();
         p.diags.loop((h, d) { self.report(d).try(); });
@@ -338,30 +338,29 @@ Build* = {
         self.tree  = p.tree;
         self.units = self.units + 1;
         self.imports_of(m, seen).try();
-        Ok(());
     }
 
     // Queue imports and module-alias candidates in the configured walk order.
     imports_of = (self :: @Self, m: Module, seen :: Vec<Unit>)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
         Range(0, m.decls.len).loop((h, i) {
             m.decls.get(self.permute.index(m.decls.len, i)).match({
-                None  => Ok(()),
+                None  => Ok,
                 Ok(d) => d.kind.match({
                     Import(im) => self.enqueue_import(
                         self.package_import(m.name, im).try(),
                         seen
                     ),
                     Alias(al)  => self.alias_of(m.name, al, seen),
-                    _          => Ok(()),
+                    _          => Ok,
                 }),
             }).try();
         });
-        Ok(());
+        Ok;
     }
 
     enqueue_import = (self :: @Self, im: Import, seen :: Vec<Unit>)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
         (im.names.len == 1).match({
             true  => self.enqueue_named(im, seen),
             false => self.enqueue(im.module, seen),
@@ -393,7 +392,7 @@ Build* = {
     }
 
     enqueue = (self :: @Self, q: QualifiedName, seen :: Vec<Unit>)
-              Res<(), AllocError> {
+              Res<AllocError> {
         q.segment_at(0).eq(DEPS).match({
             false => self.enqueue_source(q, seen),
             true  => self.library(q.segment_at(1)).match({
@@ -405,7 +404,7 @@ Build* = {
 
     // `deps.x` names only what this target's `deps` list in build.zen grants.
     not_a_dependency = (self :: @Self, q: QualifiedName)
-                       Res<(), AllocError> {
+                       Res<AllocError> {
         why ::= self.alloc.String().try();
         why.fmt(
             "`{}` is not a dependency of this target: add it to the target's `deps` in build.zen",
@@ -419,7 +418,7 @@ Build* = {
     // existing `a.b` is still loaded; it is only required when `a.b.c` is
     // not a module.
     enqueue_named = (self :: @Self, im: Import, seen :: Vec<Unit>)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
         whole = self.named_path(im).try();
         // Module names are lowercase, so a capitalised segment names an item.
         // Probing it would find `Env.zen` as `env.zen` on a case-insensitive
@@ -435,7 +434,7 @@ Build* = {
     }
 
     enqueue_whole = (self :: @Self, im: Import, whole: QualifiedName,
-                     seen :: Vec<Unit>) Res<(), AllocError> {
+                     seen :: Vec<Unit>) Res<AllocError> {
         whole.segment_at(0).eq(DEPS).match({
             true  => self.enqueue_named_dep(im, whole, seen),
             false => self.source_module(whole).try().match({
@@ -456,20 +455,20 @@ Build* = {
         im    : Import,
         whole : QualifiedName,
         seen  :: Vec<Unit>
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         self.library(whole.segment_at(1)).match({
             None     => self.not_a_dependency(whole),
             Ok(root) => (whole.segments.len == 2).match({
-                true  => Ok(()),
+                true  => Ok,
                 false => self.library_module(root, whole).try().match({
                     None     => self.enqueue(im.module, seen),
                     Ok(unit) => {
                         queue_unit(unit, seen).try();
                         (im.module.segments.len > 2).match({
-                            false => Ok(()),
+                            false => Ok,
                             true  => self.library_module(root, im.module)
                                 .try().match({
-                                    None  => Ok(()),
+                                    None  => Ok,
                                     Ok(u) => queue_unit(u, seen),
                                 }),
                         })
@@ -484,7 +483,7 @@ Build* = {
         segments ::= self.alloc.Vec<Ident>();
         im.module.segments.loop((h, s) { segments.add(s).try() });
         im.names.get(0).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(n) => segments.add(n.source),
         }).try();
         Ok(QualifiedName(segments: segments, span: im.module.span))
@@ -510,9 +509,9 @@ Build* = {
 
     // Load module `q` if it exists, silently otherwise.
     probe_module = (self :: @Self, q: QualifiedName, seen :: Vec<Unit>)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         self.source_module(q).try().match({
-            None     => Ok(()),
+            None     => Ok,
             Ok(path) => {
                 self.queue(path, seen).try();
                 self.folder_root(path, seen)
@@ -521,9 +520,9 @@ Build* = {
     }
 
     enqueue_library = (self :: @Self, root: Unit, q: QualifiedName,
-                       seen :: Vec<Unit>) Res<(), AllocError> {
+                       seen :: Vec<Unit>) Res<AllocError> {
         (q.segments.len <= 2).match({
-            true  => Ok(()),
+            true  => Ok,
             false => self.library_module(root, q).try().match({
                 Ok(unit) => queue_unit(unit, seen),
                 None     => {
@@ -574,10 +573,10 @@ Build* = {
     }
 
     enqueue_source = (self :: @Self, q: QualifiedName, seen :: Vec<Unit>)
-              Res<(), AllocError> {
+              Res<AllocError> {
         // Empty recovery segments were already diagnosed by the parser.
         q.segments.find((s) { s.text.is_empty() }).match({
-            Ok(_) => Ok(()),
+            Ok(_) => Ok,
             None  => {
                 base   = self.import_root(q);
                 flat   = joined(self.alloc, base, q, false).try();
@@ -629,7 +628,7 @@ Build* = {
 
     // Anchor a missing module at the import site and name both probed paths.
     missing_import = (self :: @Self, q: QualifiedName, flat: str, folder: str)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
         why ::= self.alloc.String().try();
         why.fmt(
             "{}: tried `{}` and `{}`",
@@ -638,7 +637,7 @@ Build* = {
             relative_to(self.root, folder)
         ).try();
         self.library(q.segment_at(0)).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(_) => why.fmt(
                 "; `{}` is a dependency, reached as `{}.{}`",
                 q.segment_at(0),
@@ -652,10 +651,10 @@ Build* = {
     // Queue a nested module's folder root so starred exports make sibling UFCS
     // candidates visible. A folder root does not enqueue itself again.
     folder_root = (self :: @Self, path: str, seen :: Vec<Unit>)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         parent = Path(path).parent().value_or(Path(""));
         (parent.text.len > self.root.len).match({
-            false => Ok(()),
+            false => Ok,
             true  => self.queue_folder_root(parent.text, path, seen),
         })
     }
@@ -663,7 +662,7 @@ Build* = {
     // Probed, not required: a folder with no root file is the module
     // graph's diagnostic, not this import's.
     queue_folder_root = (self :: @Self, dir: str, path: str, seen :: Vec<Unit>)
-                        Res<(), AllocError> {
+                        Res<AllocError> {
         root_file ::= self.alloc.String(
             "{}/{}.zen",
             dir,
@@ -672,40 +671,40 @@ Build* = {
         skip = root_file.view().eq(path)
             || !self.exists(root_file.view());
         skip.match({
-            true  => Ok(()),
+            true  => Ok,
             false => self.queue(root_file.view(), seen),
         })
     }
 
     // Deduplicate modules by resolved path rather than import spelling.
     queue = (self :: @Self, path: str, seen :: Vec<Unit>)
-            Res<(), AllocError> {
+            Res<AllocError> {
         seen.find((u) { u.path.eq(path) }).match({
-            Ok(_) => Ok(()),
+            Ok(_) => Ok,
             None  => self.queue_fresh(path, seen),
         })
     }
 
     queue_fresh = (self :: @Self, path: str, seen :: Vec<Unit>)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         seen.add(unit_at(self.alloc, self.root_for_path(path), path).try())
     }
 
     // Before sema, a bare alias target may name a module; probe it without
     // turning a missing candidate into an import fault.
     alias_of = (self :: @Self, owner: str, al: Alias, seen :: Vec<Unit>)
-               Res<(), AllocError> {
+               Res<AllocError> {
         self.tree.type_at(al.target).kind.match({
             Named(n) => self.alias_named(owner, n, seen),
-            _        => Ok(()),
+            _        => Ok,
         })
     }
 
     // `Vec<u8>` names no module: a module path takes no type arguments.
     alias_named = (self :: @Self, owner: str, n: Named, seen :: Vec<Unit>)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         (n.args.len == 0).match({
-            false => Ok(()),
+            false => Ok,
             true  => self.probe(owner, n.name, seen),
         })
     }
@@ -713,12 +712,12 @@ Build* = {
     // A bare alias target is a project module, or inside a dependency one of
     // the dependency's own.
     probe = (self :: @Self, owner: str, name: Ident, seen :: Vec<Unit>)
-            Res<(), AllocError> {
+            Res<AllocError> {
         pkg = package_of(owner);
         pkg.is_empty().match({
             true  => self.probe_source(name.text, seen),
             false => self.library(pkg).match({
-                None     => Ok(()),
+                None     => Ok,
                 Ok(root) => {
                     one ::= self.alloc.Vec<Ident>();
                     one.add(name).try();
@@ -727,7 +726,7 @@ Build* = {
                         QualifiedName(segments: one, span: name.span)
                     ).try();
                     self.library_module(root, q).try().match({
-                        None     => Ok(()),
+                        None     => Ok,
                         Ok(unit) => queue_unit(unit, seen),
                     })
                 },
@@ -736,12 +735,12 @@ Build* = {
     }
 
     probe_source = (self :: @Self, name: str, seen :: Vec<Unit>)
-            Res<(), AllocError> {
+            Res<AllocError> {
         paths     = candidate_paths(self.alloc, self.root, name).try();
         take_flat = self.exists(paths.flat) || !self.exists(paths.nest);
         u         = paths.choose(self.alloc, self.root, take_flat).try();
         self.exists(u.path).match({
-            false => Ok(()),
+            false => Ok,
             true  => self.queue(u.path, seen),
         })
     }
@@ -775,16 +774,16 @@ Build* = {
 
     // Check and emission share one Checker so backend types are never
     // re-derived. No parsed units means an earlier phase already diagnosed why.
-    back_end* = (self :: @Self, job: BuildArgs) Res<(), AllocError> {
+    back_end* = (self :: @Self, job: BuildArgs) Res<AllocError> {
         (self.units == 0).match({
-            true  => Ok(()),
+            true  => Ok,
             false => self.check_tree(job),
         })
     }
 
     // check_all owns declaration scope and traversal order.
-    check_tree = (self :: @Self, job: BuildArgs) Res<(), AllocError> {
-        c      ::= self.checked().try();
+    check_tree = (self :: @Self, job: BuildArgs) Res<AllocError> {
+        c ::= self.checked().try();
         (self.faults == 0).then(() {
             self.env.var("ZEN_MIGRATE_RES").match({
                 Ok(mode) => migrate_res(
@@ -809,7 +808,7 @@ Build* = {
         self.faults = self.faults + absent;
         // Any earlier phase fault suppresses emission of a poisoned tree.
         (self.faults == 0).then(() { self.emit(c, job).try(); });
-        Ok(());
+        Ok;
     }
 
     // A syntax fragment is not checked again for a missing entry point.
@@ -856,7 +855,7 @@ Build* = {
 
     // Called only after all frontend and graph checks succeed. Generation
     // owns backend state; Publisher owns the requested destinations.
-    emit = (self :: @Self, c :: Checker, job: BuildArgs) Res<(), AllocError> {
+    emit = (self :: @Self, c :: Checker, job: BuildArgs) Res<AllocError> {
         job.emits().then(() {
             // Only native assembly depends on the machine; other generators
             // never probe the host.
@@ -912,7 +911,7 @@ Build* = {
                 () { println("{}", report.view()); }
             );
         });
-        Ok(())
+        Ok
     }
 
     // -----------------------------------------------------------------
@@ -1070,9 +1069,9 @@ host_target* = () Res<Target> {
 }
 
 // Add a dependency module to the walk unless it is already queued.
-queue_unit = (unit: Unit, seen :: Vec<Unit>) Res<(), AllocError> {
+queue_unit = (unit: Unit, seen :: Vec<Unit>) Res<AllocError> {
     seen.find((u) { u.name.eq(unit.name) }).match({
-        Ok(_) => Ok(()),
+        Ok(_) => Ok,
         None  => seen.add(unit),
     })
 }

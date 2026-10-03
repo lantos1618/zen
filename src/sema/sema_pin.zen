@@ -19,11 +19,11 @@ Pin* = {
 // A record over this frame's binding is tracked as a view of the frame
 // (`sema_own.rehome_arena`). A record over a `::` parameter's place may
 // leave with the result, so that place must stay where the record points.
-pin_viewed* = (c :: Checker, o :: Own, id: ExprId) Res<(), AllocError> {
+pin_viewed* = (c :: Checker, o :: Own, id: ExprId) Res<AllocError> {
     c.bound_views.get(id).match({
-        None      => Ok(()),
+        None      => Ok,
         Ok(local) => c.path_root(o, id).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(i) => local.match({
                 true  => o.views.add(ViewRoot(root: i, at: id)),
                 false => o.pinned.add(Pin(
@@ -37,11 +37,11 @@ pin_viewed* = (c :: Checker, o :: Own, id: ExprId) Res<(), AllocError> {
 }
 
 pin_captured* = (c :: Checker, o :: Own, node: Expr, text: str)
-                Res<(), AllocError> {
+                Res<AllocError> {
     o.find_var(text).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(i) => ((i < o.escaped) && o.owned_at(i)).match({
-            false => Ok(()),
+            false => Ok,
             true  => o.pinned.add(Pin(root: i, span: node.span, view: false)),
         }),
     })
@@ -53,19 +53,19 @@ first_pin = (o: Own, root: usize) Res<Pin> {
 }
 
 refuse_pinned* = (c :: Checker, o :: Own, span: Span, text: str)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     o.find_var(text).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(i) => c.refuse_pinned_at(o, span, i),
     })
 }
 
 refuse_pinned_at* = (c :: Checker, o :: Own, span: Span, root: usize)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     o.first_pin(root).match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(pin) => c.place_name(o, pin.root, "").match({
-            Err(_)    => Ok(()),
+            Err(_)    => Ok,
             Ok(place) => c.refuse(span, pin.view.match({
                 true  => SemaFault.ConsumedUnderView(CaptureFault(
                     place: place,

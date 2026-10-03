@@ -4,11 +4,11 @@
 { println } = std.io
 
 Box = { value :: str }
-fill = (output :: Box, alloc: Alloc, letters: str) Res<(), AllocError> {
+fill = (output :: Box, alloc: Alloc, letters: str) Res<AllocError> {
     buffer ::= alloc.String().try();
     buffer.add(letters).try();
     output.value = buffer.view();
-    Ok(())
+    Ok
 }
 main = (env: Env) Res<i32, AllocError> {
     output ::= Box(value: "safe");

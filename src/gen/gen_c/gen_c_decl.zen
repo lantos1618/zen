@@ -53,26 +53,25 @@ MAX_FUNCTIONS* : usize = 16384
 
 // The whole translation unit for the program rooted at module `mi`.
 emit_program* = (be :: CBackend, mi: usize, out :: Emit)
-                Res<(), AllocError> {
+                Res<AllocError> {
     be.lower_program(mi).try();
     be.emit_prelude(out).try();
     be.emit_protos(out).try();
     be.emit_bodies(out).try();
     be.emit_main(mi, out).try();
-    Ok(());
 }
 
 // The lowering, with nothing assembled. Its own name because a
 // multi-file emission runs it once and then assembles many files off
 // the one result — the walk is over the whole program either way.
-lower_program* = (be :: CBackend, mi: usize) Res<(), AllocError> {
+lower_program* = (be :: CBackend, mi: usize) Res<AllocError> {
     be.seed(mi).try();
     drain(be)
 }
 
 // Everything a translation unit needs above its first prototype. The
 // top of the single file, and the top of `zen.h` when there are many.
-emit_prelude = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+emit_prelude = (be :: CBackend, out :: Emit) Res<AllocError> {
     be.emit_native_features(out).try();
     be.emit_c_headers(out).try();
     emit_banner(out).try();
@@ -97,26 +96,25 @@ emit_prelude = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     be.emit_spawn_envs(out).try();
     be.emit_actor_defs(out).try();
     emit_scope(be, out).try();
-    Ok(());
 }
 
-emit_c_headers = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+emit_c_headers = (be :: CBackend, out :: Emit) Res<AllocError> {
     Range(0, be.c_headers.len).loop((h, i) {
         be.c_headers.get(i).match({
-            None       => Ok(()),
+            None       => Ok,
             Ok(header) => out.say(header.view()),
         }).try();
     });
     (be.c_headers.len > 0).then(() { out.line().try() });
-    Ok(())
+    Ok
 }
 
 // Seed each concrete root declaration in source order. Overload lookup uses
 // the same Def identities as call resolution; generic functions and functions
 // with body parameters are reached through their call sites instead.
-seed = (be :: CBackend, mi: usize) Res<(), AllocError> {
+seed = (be :: CBackend, mi: usize) Res<AllocError> {
     be.tree.module_at(mi).match({
-        None       => Ok(()),
+        None       => Ok,
         Ok(module) => {
             module.decls.loop((decl) {
                 be.root_function(decl).match({
@@ -126,7 +124,7 @@ seed = (be :: CBackend, mi: usize) Res<(), AllocError> {
                     },
                 });
             });
-            Ok(())
+            Ok
         },
     })
 }
@@ -140,7 +138,7 @@ root_function = (be: CBackend, decl: Decl) Res<Function> {
     Ok(function)
 }
 
-seed_overloads = (be :: CBackend, mi: usize, name: str) Res<(), AllocError> {
+seed_overloads = (be :: CBackend, mi: usize, name: str) Res<AllocError> {
     found ::= be.alloc.Vec<Def>();
     be.check.world.own_defs(mi, name, found).try();
     // A concrete overload's name also finds its generic siblings. Only
@@ -155,13 +153,13 @@ seed_overloads = (be :: CBackend, mi: usize, name: str) Res<(), AllocError> {
             Ok(_) => { be.seed_root(definition).try(); },
         });
     });
-    Ok(())
+    Ok
 }
 
 // The symbol is built the same way a call site builds it, because the
 // queue's identity is the symbol: a root queued under one name and
 // called under another would be emitted twice.
-seed_root = (be :: CBackend, d: Def) Res<(), AllocError> {
+seed_root = (be :: CBackend, d: Def) Res<AllocError> {
     inst ::= be.alloc.Inst();
     sig  ::= be.alloc.Vec<TyId>();
     be.signature_of(d, inst, sig).try();
@@ -173,7 +171,7 @@ seed_root = (be :: CBackend, d: Def) Res<(), AllocError> {
 // Interleaves free-function and member queues until both reach a fixpoint.
 // `MAX_FUNCTIONS` bounds the reachable set and turns exhaustion into a
 // Diagnostic rather than incomplete output.
-drain = (be :: CBackend) Res<(), AllocError> {
+drain = (be :: CBackend) Res<AllocError> {
     fi :: usize = 0;
     mi :: usize = 0;
     loop(be.more(fi, mi), (h) {
@@ -187,7 +185,6 @@ drain = (be :: CBackend) Res<(), AllocError> {
         });
     });
     be.report_overrun(fi, mi).try();
-    Ok(());
 }
 
 // Something left to lower, and room left to lower it in.
@@ -197,48 +194,45 @@ more = (be :: CBackend, fi: usize, mi: usize) bool {
 }
 
 // Report an exhausted bound rather than leaving unresolved calls in emitted C.
-report_overrun = (be :: CBackend, fi: usize, mi: usize) Res<(), AllocError> {
+report_overrun = (be :: CBackend, fi: usize, mi: usize) Res<AllocError> {
     (fi < be.fn_queue.len).then(() { be.overrun_at_fn(fi).try() });
     ((fi >= be.fn_queue.len) && (mi < be.m_queue.len)).then(() {
         be.overrun_at_method(mi).try()
     });
-    Ok(());
+    Ok;
 }
 
 // Reported at the first thing that was not lowered, which is the only
 // position that tells a reader anything: it is where the walk stopped.
-overrun_at_fn = (be :: CBackend, fi: usize) Res<(), AllocError> {
+overrun_at_fn = (be :: CBackend, fi: usize) Res<AllocError> {
     be.fn_queue.get(fi).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(d) => be.report(
             d.definition.span.file,
             d.definition.span,
             GenFault.Overrun(MAX_FUNCTIONS)
         ),
     }).try();
-    Ok(());
 }
 
-overrun_at_method = (be :: CBackend, mi: usize) Res<(), AllocError> {
+overrun_at_method = (be :: CBackend, mi: usize) Res<AllocError> {
     be.m_queue.get(mi).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(m) => be.overrun_at_decl(m.method),
     }).try();
-    Ok(());
 }
 
 // A member has no `Def` of its own, so its position is its owning
 // declaration's — the same `DeclId` the queue entry already carries.
-overrun_at_decl = (be :: CBackend, m: MethodRef) Res<(), AllocError> {
+overrun_at_decl = (be :: CBackend, m: MethodRef) Res<AllocError> {
     decl_at(be.tree, m.decl).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(x) => be.report(
             x.span.file,
             x.span,
             GenFault.Overrun(MAX_FUNCTIONS)
         ),
     }).try();
-    Ok(());
 }
 
 // The instantiation is entered before the body and not inside it. Every
@@ -246,30 +240,29 @@ overrun_at_decl = (be :: CBackend, m: MethodRef) Res<(), AllocError> {
 // place that knows which emission this is has to be the one that sets
 // it — and a queue entry carries the instantiation precisely so the
 // symbol above the body is the symbol the call site wrote.
-lower_queued = (be :: CBackend, i: usize) Res<(), AllocError> {
+lower_queued = (be :: CBackend, i: usize) Res<AllocError> {
     queued = be.fn_queue.get(i).ok_or(AllocError.OutOfMemory).try();
     be.enter_inst(queued.inst);
     be.lower_def(queued.definition)
 }
 
-lower_queued_method = (be :: CBackend, i: usize) Res<(), AllocError> {
+lower_queued_method = (be :: CBackend, i: usize) Res<AllocError> {
     queued = be.m_queue.get(i).ok_or(AllocError.OutOfMemory).try();
     be.enter_inst(queued.inst);
     be.lower_method_ref(queued.method)
 }
 
-lower_def = (be :: CBackend, d: Def) Res<(), AllocError> {
+lower_def = (be :: CBackend, d: Def) Res<AllocError> {
     decl_at(be.tree, d.id).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(x) => be.lower_decl(d, x),
     }).try();
-    Ok(());
 }
 
-lower_decl = (be :: CBackend, d: Def, x: Decl) Res<(), AllocError> {
+lower_decl = (be :: CBackend, d: Def, x: Decl) Res<AllocError> {
     x.kind.match({
         Function(f) => be.lower_function(d, x, f),
-        _           => Ok(()),
+        _           => Ok,
     })
 }
 
@@ -278,9 +271,9 @@ lower_decl = (be :: CBackend, d: Def, x: Decl) Res<(), AllocError> {
 // A declaration with no body — `Required` or `Hook` — has nothing to
 // lower and is not a fault.
 lower_function = (be :: CBackend, d: Def, x: Decl, f: Function)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     f.body.match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(blk) => be.lower_body(d, x, f, blk),
     })
 }
@@ -290,13 +283,12 @@ lower_function = (be :: CBackend, d: Def, x: Decl, f: Function)
 // and `T` means nothing unless bound. What each one became is
 // `be.inst`, set by the queue entry.
 lower_body = (be :: CBackend, d: Def, x: Decl, f: Function, blk: BlockId)
-             Res<(), AllocError> {
+             Res<AllocError> {
     mi   = d.id.module.to_usize();
     ctx  = be.plain_ctx(mi);
     mark = be.enter_tparams(f.tparams, d.qname).try();
     be.lower_shape(f, blk, d.qname, d.name, d.span, ctx, ctx.self_ty, mi).try();
     be.leave_tparams(mark).try();
-    Ok(());
 }
 
 // one member function
@@ -304,9 +296,9 @@ lower_body = (be :: CBackend, d: Def, x: Decl, f: Function, blk: BlockId)
 // named `self`" — so it goes through the same shape, with `@Self` bound
 // and a qualified name carrying the type rather than the module.
 
-lower_method_ref = (be :: CBackend, m: MethodRef) Res<(), AllocError> {
+lower_method_ref = (be :: CBackend, m: MethodRef) Res<AllocError> {
     decl_at(be.tree, m.decl).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(x) => be.method_in_decl(m, x),
     })
 }
@@ -314,10 +306,10 @@ lower_method_ref = (be :: CBackend, m: MethodRef) Res<(), AllocError> {
 // A struct's or enum's own body members first; `method_member` falls back
 // to what an impl supplies.
 method_in_decl = (be :: CBackend, m: MethodRef, x: Decl)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     x.body_members().match({
         Ok(members) => be.method_member(m, members),
-        None        => Ok(()),
+        None        => Ok,
     })
 }
 
@@ -328,7 +320,7 @@ method_in_decl = (be :: CBackend, m: MethodRef, x: Decl)
 // `pick_member` reads a receiver's members by: a name naming two members
 // names neither on its own.
 method_member = (be :: CBackend, m: MethodRef, members: Vec<Member>)
-                Res<(), AllocError> {
+                Res<AllocError> {
     found ::= be.alloc.Vec<Member>();
     members.loop((h, mem) {
         mem.named(m.name).then(() { found.add(mem).try() });
@@ -339,11 +331,11 @@ method_member = (be :: CBackend, m: MethodRef, members: Vec<Member>)
     })
 }
 
-supplied_member = (be :: CBackend, m: MethodRef) Res<(), AllocError> {
+supplied_member = (be :: CBackend, m: MethodRef) Res<AllocError> {
     found ::= be.alloc.Vec<Member>();
     be.impl_member_at(m.decl, m.name, found).try();
     be.by_sig(m, found).try().match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(mem) => be.method_body(m, mem),
     })
 }
@@ -377,10 +369,10 @@ keep_same_sig = (
     m    : MethodRef,
     mem  : Member,
     kept :: Vec<Member>
-) Res<(), AllocError> {
+) Res<AllocError> {
     mem.kind.match({
         Function(f) => be.keep_if_same_sig(m, mem, f, kept),
-        _           => Ok(()),
+        _           => Ok,
     })
 }
 
@@ -393,7 +385,7 @@ keep_if_same_sig = (
     mem  : Member,
     f    : Function,
     kept :: Vec<Member>
-) Res<(), AllocError> {
+) Res<AllocError> {
     sig ::= be.alloc.Vec<TyId>();
     f.tparams.len.eq(0).match({
         true  => be.method_sig(
@@ -423,7 +415,7 @@ keep_if_same_sig = (
     }).try();
     same_tys(sig, m.sig).match({
         true  => kept.add(mem),
-        false => Ok(()),
+        false => Ok,
     })
 }
 
@@ -434,17 +426,17 @@ same_tys = (a: Vec<TyId>, b: Vec<TyId>) bool {
 }
 
 method_body = (be :: CBackend, m: MethodRef, mem: Member)
-              Res<(), AllocError> {
+              Res<AllocError> {
     mem.kind.match({
         Function(f) => be.method_fn(m, mem, f),
-        _           => Ok(()),
+        _           => Ok,
     })
 }
 
 method_fn = (be :: CBackend, m: MethodRef, mem: Member, f: Function)
-            Res<(), AllocError> {
+            Res<AllocError> {
     f.body.match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(blk) => be.method_shape(m, mem, f, blk),
     })
 }
@@ -458,7 +450,7 @@ method_shape = (
     mem : Member,
     f   : Function,
     blk : BlockId
-) Res<(), AllocError> {
+) Res<AllocError> {
     mi      = m.decl.module.to_usize();
     self_ty = be.method_self(m).try();
     ctx     = be.check.self_ctx(mi, self_ty).try();
@@ -471,7 +463,6 @@ method_shape = (
     be.enter_tparams(f.tparams, owner).try();
     be.lower_shape(f, blk, m.qname, m.name, mem.span, ctx, self_ty, mi).try();
     be.leave_tparams(mark).try();
-    Ok(());
 }
 
 method_tparam_owner = (be :: CBackend, f: Function, mi: usize, queued: str)
@@ -528,7 +519,7 @@ lower_shape = (
     self_ty : TyId,
     mi      : usize
 )
-              Res<(), AllocError> {
+              Res<AllocError> {
     ret = be.return_type(f, sctx).try();
     // Before the body, because lowering a body keeps thunks as well as
     // the function itself and they belong in the same file.
@@ -544,7 +535,6 @@ lower_shape = (
     be.write_body(blk, mi, ret, self_ty, sctx.has_self).try();
     be.own_lent(f, sig).try();
     be.keep(qname, sig, proto, span).try();
-    Ok(());
 }
 
 // A borrowed parameter (gen_c_borrow.zen) that this body lent to a `::`
@@ -554,15 +544,15 @@ lower_shape = (
 // was lowered reading `(*p)`, so it moves into a block where `p` is the
 // address of the copy.
 own_lent = (be :: CBackend, f: Function, sig: Vec<TyId>)
-           Res<(), AllocError> {
+           Res<AllocError> {
     be.any_lent().match({
-        false => Ok(()),
+        false => Ok,
         true  => be.wrap_lent(f, sig),
     })
 }
 
 wrap_lent = (be :: CBackend, f: Function, sig: Vec<TyId>)
-            Res<(), AllocError> {
+            Res<AllocError> {
     body = be.take_buf().try();
     copies ::= be.alloc.String().try();
     points ::= be.alloc.String().try();
@@ -594,7 +584,6 @@ wrap_lent = (be :: CBackend, f: Function, sig: Vec<TyId>)
     text.bytes(body.view()).try();
     text.bytes("    }\n").try();
     be.put_buf(text);
-    Ok(());
 }
 
 // Written, then substituted: `Vec<T>.get` returns `Res<T>` and this
@@ -655,11 +644,11 @@ self_body_ctx* = (
 // prototype has to print and the type it has is the one `type_of` must
 // answer with.
 bind_params = (be :: CBackend, f: Function, ctx: Ctx, sig :: Vec<TyId>)
-              Res<(), AllocError> {
+              Res<AllocError> {
     f.params.loop((h, i, p) {
         bind_param(be, f, i, p, ctx, sig).try();
     });
-    Ok(());
+    Ok;
 }
 
 // `param_type` resolves `@Self`. C declarations use the current concrete
@@ -672,7 +661,7 @@ bind_param = (
     p   : Param,
     ctx : Ctx,
     sig :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     declared = be.check.param_type(p, ctx).try();
     ty       = sub(be, declared).try();
     sig.add(ty).try();
@@ -683,7 +672,6 @@ bind_param = (
         false => be.declare(p.name.text, ty, p.mutable),
     }).try();
     be.check.bind(p.name.text, declared, p.mutable, true).try();
-    Ok(());
 }
 
 // `<linkage><ret> <symbol>(<params>)`. Static when the translation unit
@@ -700,7 +688,7 @@ write_proto = (
     sig   : Vec<TyId>,
     out   :: String
 )
-              Res<(), AllocError> {
+              Res<AllocError> {
     be.check_spellable(name, span, ret, sig).try();
     out.add(be.linkage()).try();
     be.function_attributes(f, sig, out).try();
@@ -710,7 +698,6 @@ write_proto = (
     out.add("(").try();
     be.write_params(f, sig, out).try();
     out.add(")").try();
-    Ok(());
 }
 
 // ` /* zen:secret zu_l3key *zu_l3out */` after the parameter list names
@@ -726,7 +713,7 @@ secret_marker = (
     sig : Vec<TyId>,
     out :: String
 )
-                Res<(), AllocError> {
+                Res<AllocError> {
     marked ::= false;
     f.params.loop((h, i, p) {
         p.type.when_ok((t) {
@@ -752,11 +739,11 @@ secret_marker = (
     });
     (marked && public).then(() { out.add(" public-result").try(); });
     marked.then(() { out.add(" */").try(); });
-    Ok(())
+    Ok
 }
 
 write_params = (be :: CBackend, f: Function, sig: Vec<TyId>, out :: String)
-               Res<(), AllocError> {
+               Res<AllocError> {
     (f.params.len == 0).match({
         true  => out.add("void"),
         false => be.write_param_list(f, sig, out),
@@ -768,7 +755,7 @@ write_param_list = (
     f   : Function,
     sig : Vec<TyId>,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     written ::= false;
     unknown = be.check.types.unknown().try();
     f.params.loop((h, i, p) {
@@ -780,7 +767,7 @@ write_param_list = (
         });
     });
     (written == false).then(() { out.add("void").try() });
-    Ok(());
+    Ok;
 }
 
 // A `::` parameter is declared as a pointer — see `ref_declarator` — and
@@ -792,7 +779,7 @@ write_param = (
     i   : usize,
     sig : Vec<TyId>,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     ty = sig.get(i).match({ Ok(t) => t, None => TyId(index: 0) });
     name ::= be.alloc.String().try();
     be.slot_index(p.name.text, p.name.span, name).try();
@@ -809,20 +796,20 @@ write_param = (
 // the body writes the caller's own bytes and every read of the name is
 // a dereference, which is what `LocalSlot.by_ref` records.
 ref_declarator* = (be :: CBackend, ty: TyId, name: str, out :: String)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     be.ctype(ty, out).try();
     out.fmt(" *{name}")
 }
 
 // A borrowed `:` parameter: the address of storage the callee only reads.
 borrow_declarator* = (be :: CBackend, ty: TyId, name: str, out :: String)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     out.add("const ").try();
     be.ref_declarator(ty, name, out)
 }
 
 slot_index = (be :: CBackend, name: str, span: Span, out :: String)
-             Res<(), AllocError> {
+             Res<AllocError> {
     be.slot_of(name).match({
         Ok(s) => be.write_param_slot(name, span, s, out),
         None  => sym_local(out, name, 1),
@@ -835,7 +822,7 @@ write_param_slot* = (
     span : Span,
     s    : LocalSlot,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.closure_storage(span, s, "a lambda-holding parameter").try().match({
         true  => sym_local(out, name, s.index),
         false => sym_local(out, name, 1),
@@ -850,16 +837,16 @@ check_spellable = (
     span : Span,
     ret  : TyId,
     sig  : Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.report_unspellable(name, span, ret).try();
     sig.loop((h, t) { be.report_unspellable(name, span, t).try() });
-    Ok(());
+    Ok;
 }
 
 report_unspellable = (be :: CBackend, name: str, span: Span, t: TyId)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     be.spellable(t).match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.report(span.file, span, GenFault.Unspellable(name)),
     })
 }
@@ -875,11 +862,10 @@ write_body = (
     ret      : TyId,
     self_ty  : TyId,
     has_self : bool
-) Res<(), AllocError> {
+) Res<AllocError> {
     ctx = be.self_body_ctx(mi, ret, self_ty, has_self);
     be.indent();
     block(be, blk, ctx, ret, be.destination(ret)).try();
-    Ok(());
 }
 
 destination = (be :: CBackend, ret: TyId) Dest {
@@ -890,7 +876,7 @@ destination = (be :: CBackend, ret: TyId) Dest {
 }
 
 keep = (be :: CBackend, qname: str, sig: Vec<TyId>, proto: String, span: Span)
-       Res<(), AllocError> {
+       Res<AllocError> {
     name ::= be.alloc.String().try();
     sym_fn(name, be.check.types, be.check.world, qname, sig, be.inst).try();
     text = be.take_buf().try().into_string();
@@ -900,25 +886,25 @@ keep = (be :: CBackend, qname: str, sig: Vec<TyId>, proto: String, span: Span)
 // assembly
 
 // Paths are root-relative like diagnostics; escaping keeps one record per row.
-render_symbol_map* = (be :: CBackend, out :: String) Res<(), AllocError> {
+render_symbol_map* = (be :: CBackend, out :: String) Res<AllocError> {
     out.add("zen-symbol-map-v1\n").try();
     out.add("symbol\tfile\tline\tcolumn\n").try();
     seq = order(be.alloc, be.functions, (entry) { entry.name.view() }).try();
     seq.loop((h, i) { be.write_symbol_at(i, out).try() });
-    Ok(());
+    Ok;
 }
 
 write_symbol_at = (be :: CBackend, i: usize, out :: String)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     entry = be.functions.get(i).ok_or(AllocError.OutOfMemory).try();
     entry.origin.match({
-        Generated    => Ok(()),
+        Generated    => Ok,
         Source(span) => write_symbol_row(entry.name.view(), span, out),
     })
 }
 
 write_symbol_row = (symbol: str, span: Span, out :: String)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     write_map_field(symbol, out).try();
     out.add('\t').try();
     write_map_field(span.file, out).try();
@@ -929,7 +915,7 @@ write_symbol_row = (symbol: str, span: Span, out :: String)
     out.add('\n')
 }
 
-write_map_field = (text: str, out :: String) Res<(), AllocError> {
+write_map_field = (text: str, out :: String) Res<AllocError> {
     Range(0, text.len).loop((h, i) {
         text.index(i).match({
             '\\' => out.add("\\\\"),
@@ -939,10 +925,10 @@ write_map_field = (text: str, out :: String) Res<(), AllocError> {
             b    => out.add(b),
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
-emit_protos = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+emit_protos = (be :: CBackend, out :: Emit) Res<AllocError> {
     externs = order(
         be.alloc,
         be.foreign_functions,
@@ -958,32 +944,29 @@ emit_protos = (be :: CBackend, out :: Emit) Res<(), AllocError> {
         write_proto_line(out, entry.proto).try();
     });
     out.line().try();
-    Ok(());
 }
 
-write_proto_line = (out :: Emit, proto: String) Res<(), AllocError> {
+write_proto_line = (out :: Emit, proto: String) Res<AllocError> {
     out.bytes(proto.view()).try();
     out.say(";").try();
-    Ok(());
 }
 
-emit_bodies = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+emit_bodies = (be :: CBackend, out :: Emit) Res<AllocError> {
     seq = order(be.alloc, be.functions, (entry) { entry.name.view() }).try();
     seq.loop((h, i) {
         be.write_body_at(out, i).try();
     });
-    Ok(());
+    Ok;
 }
 
 write_body_at = (be :: CBackend, out :: Emit, i: usize)
-                Res<(), AllocError> {
+                Res<AllocError> {
     entry = be.functions.get(i).ok_or(AllocError.OutOfMemory).try();
     out.bytes(entry.proto.view()).try();
     out.say(" {").try();
     out.bytes(entry.body.view()).try();
     out.say("}").try();
     out.line().try();
-    Ok(());
 }
 
 // The same program, in one file per module. Nothing here re-lowers:
@@ -997,14 +980,13 @@ write_body_at = (be :: CBackend, out :: Emit, i: usize)
 // what already lets the bodies be sorted by name rather than by
 // dependency, so this file is the single-file top with the bodies cut
 // off it.
-emit_header* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+emit_header* = (be :: CBackend, out :: Emit) Res<AllocError> {
     out.say("#ifndef ZEN_H").try();
     out.say("#define ZEN_H").try();
     out.line().try();
     be.emit_prelude(out).try();
     be.emit_protos(out).try();
     out.say("#endif").try();
-    Ok(());
 }
 
 // Completed module selection: body indices retain the global mangled-name
@@ -1047,15 +1029,14 @@ emit_unit* = (
     group : ModuleBodies,
     out   :: Emit
 )
-             Res<(), AllocError> {
+             Res<AllocError> {
     out.say("#include \"zen.h\"").try();
     out.line().try();
     group.functions.loop((h, index) {
         be.write_body_at(out, index).try();
     });
     (group.unit == root).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.emit_main(root, out),
     }).try();
-    Ok(());
 }

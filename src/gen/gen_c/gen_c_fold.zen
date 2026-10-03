@@ -48,7 +48,7 @@ lower_fold* = (
     want : TyId,
     out  :: String
 )
-             Res<(), AllocError> {
+             Res<AllocError> {
     args.from_end(2).match({
         None  => be.unsupported(id, "a fold with no seed", out),
         Ok(s) => be.lower_seeded(id, sh, args, s, lam, ctx, want, out),
@@ -65,7 +65,7 @@ lower_seeded = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     aty = be.acc_type(seed, ctx, want).try();
     has_var(be.check, aty).match({
         true  => be.unsupported(
@@ -115,7 +115,7 @@ lower_with_acc = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     cell ::= be.fresh_name("a").try();
     decl ::= be.alloc.String().try();
     be.declarator(aty, cell.view(), decl).try();
@@ -137,9 +137,9 @@ lower_with_acc = (
 // The accumulator parameter follows the index/value parameters selected by
 // the declared loop shape.
 bind_acc* = (be :: CBackend, sh: Shape, lam: Lambda, fold: Fold)
-           Res<(), AllocError> {
+           Res<AllocError> {
     fold.has.match({
-        false => Ok(()),
+        false => Ok,
         true  => be.bind_element(lam, acc_slot(sh), fold.cell, fold.ty),
     })
 }
@@ -205,15 +205,15 @@ call_seed = (c: Call) Res<ExprId> {
 
 // Normal completion changes the result temporary from None to Ok(acc).
 write_fold_result* = (be :: CBackend, st: LoopFrame, fold: Fold)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     (fold.has && st.has_result).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.write_ok_acc(st, fold),
     })
 }
 
 write_ok_acc = (be :: CBackend, st: LoopFrame, fold: Fold)
-               Res<(), AllocError> {
+               Res<AllocError> {
     cty ::= be.alloc.String().try();
     be.ctype(st.ty, cty).try();
     tag ::= be.alloc.String().try();

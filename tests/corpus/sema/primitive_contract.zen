@@ -57,12 +57,11 @@ foreign_keeps_binding = (a: Alloc) Res<bool, AllocError> {
 }
 
 row = (a: Alloc, label: str, text: str, owner: str, bits: bool)
-      Res<(), AllocError> {
+      Res<AllocError> {
     println("{}: {}", label, accepts(a, text, owner, bits).try());
-    Ok(())
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a   = env.mem.alloc();
     num = "std.core.num";
     a.row(
@@ -344,5 +343,4 @@ main = (env: Env) Res<(), AllocError> {
         false
     ).try();
     println("foreign: {}", foreign_keeps_binding(a).try());
-    Ok(())
 }

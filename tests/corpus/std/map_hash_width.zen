@@ -25,7 +25,7 @@ key = (id: usize, comparisons: Ptr<usize>) Key {
     Key(hash_value: id.to_u64() *% 4294967296 +% 7, comparisons: comparisons)
 }
 
-probe = (alloc: Alloc, count: usize) Res<(), AllocError> {
+probe = (alloc: Alloc, count: usize) Res<AllocError> {
     comparisons = alloc.create<usize>().try();
     comparisons.write(0, 0);
     map ::= alloc.Map<Key, usize>();
@@ -46,12 +46,10 @@ probe = (alloc: Alloc, count: usize) Res<(), AllocError> {
         missing,
         comparisons.read(0)
     );
-    Ok(())
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     alloc = env.mem.alloc();
     probe(alloc, 4).try();
     probe(alloc, 12).try();
-    Ok(())
 }

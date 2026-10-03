@@ -119,7 +119,7 @@ behavior_of* = (be :: CBackend, actor: TyId, name: str)
                Res<Res<BehaviorHit>, AllocError> {
     found ::= be.alloc.Vec<BehaviorHit>();
     site_of(be, actor).try().match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(s) => be.behavior_at(s, name, found),
     }).try();
     Ok(found.get(0))
@@ -130,11 +130,11 @@ behavior_at = (
     s     : Site,
     name  : str,
     found :: Vec<BehaviorHit>
-) Res<(), AllocError> {
+) Res<AllocError> {
     ids ::= be.alloc.Vec<ImplId>();
     be.world().impls_named(be.tree, be.decl_name_at(s), ids).try();
     ids.loop((h, id) { be.behavior_in(s, name, id, found).try() });
-    Ok(())
+    Ok
 }
 
 decl_name_at = (be: CBackend, s: Site) str {
@@ -147,11 +147,11 @@ behavior_in = (
     name  : str,
     id    : ImplId,
     found :: Vec<BehaviorHit>
-) Res<(), AllocError> {
+) Res<AllocError> {
     ((id.decl.module == s.decl.module) && (found.len == 0)).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.world().impl_at(be.tree, id).match({
-            None   => Ok(()),
+            None   => Ok,
             Ok(im) => be.behavior_members(s, name, im.members, found),
         }),
     })
@@ -163,7 +163,7 @@ behavior_members = (
     name  : str,
     ms    : Vec<Member>,
     found :: Vec<BehaviorHit>
-) Res<(), AllocError> {
+) Res<AllocError> {
     ms.loop((h, m) {
         m.kind.match({
             Function(f) => (f.name.text.eq(name) && has_body(f)).then(() {
@@ -177,19 +177,19 @@ behavior_members = (
             _           => (),
         });
     });
-    Ok(())
+    Ok
 }
 
 // Runtime records are independent of Zen layouts. Concrete actor/message
 // records are emitted later, after the Zen type definitions they contain.
-emit_actor_floor* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+emit_actor_floor* = (be :: CBackend, out :: Emit) Res<AllocError> {
     be.uses_actor().match({
-        false => Ok(()),
+        false => Ok,
         true  => be.write_actor_floor(out),
     })
 }
 
-write_actor_floor = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+write_actor_floor = (be :: CBackend, out :: Emit) Res<AllocError> {
     out.say("#undef _POSIX_C_SOURCE").try();
     out.say("#define _POSIX_C_SOURCE 200809L").try();
     out.say("#if defined(__GLIBC__)").try();
@@ -278,10 +278,9 @@ write_actor_floor = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     write_actor_send_floor(out).try();
     write_actor_start_floor(out).try();
     write_actor_stop_floor(out).try();
-    Ok(())
 }
 
-write_actor_worker = (out :: Emit) Res<(), AllocError> {
+write_actor_worker = (out :: Emit) Res<AllocError> {
     out.say("static void *zg_actor_worker(void *raw) {").try();
     out.say("    zg_actor *a = (zg_actor *)raw;").try();
     out.say("    if (a->started) a->started(a);").try();
@@ -322,11 +321,10 @@ write_actor_worker = (out :: Emit) Res<(), AllocError> {
     out.say("    return NULL;").try();
     out.say("}").try();
     out.line().try();
-    Ok(())
 }
 
 // 0 accepted, 1 closed, 2 full (including allocation refusal).
-write_actor_send_floor = (out :: Emit) Res<(), AllocError> {
+write_actor_send_floor = (out :: Emit) Res<AllocError> {
     out.say(
         "static int zg_actor_send_owned(zg_actor *a, zg_actor_turn turn, const void *data, size_t size, const zg_actor_slice *slices, size_t slice_count, int (*prepare)(zg_actor *, void *, zg_actor_owned **)) {"
     ).try();
@@ -442,11 +440,10 @@ write_actor_send_floor = (out :: Emit) Res<(), AllocError> {
     ).try();
     out.say("}").try();
     out.line().try();
-    Ok(())
 }
 
 // 0 started, 1 allocation/setup failure, 2 worker unavailable.
-write_actor_start_floor = (out :: Emit) Res<(), AllocError> {
+write_actor_start_floor = (out :: Emit) Res<AllocError> {
     out.say("static int zg_actor_start(zg_actor *a) {").try();
     out.say("    if (pthread_mutex_init(&a->lock, NULL) != 0) return 1;").try();
     out.say(
@@ -472,10 +469,9 @@ write_actor_start_floor = (out :: Emit) Res<(), AllocError> {
     out.say("    return 0;").try();
     out.say("}").try();
     out.line().try();
-    Ok(())
 }
 
-write_actor_stop_floor = (out :: Emit) Res<(), AllocError> {
+write_actor_stop_floor = (out :: Emit) Res<AllocError> {
     out.say("static void zg_actor_stop_worker(zg_actor *a) {").try();
     out.say("    if (!a) return;").try();
     out.say("    pthread_mutex_lock(&a->lock);").try();
@@ -570,27 +566,26 @@ write_actor_stop_floor = (out :: Emit) Res<(), AllocError> {
     out.say("    pthread_mutex_unlock(&zg_actor_registry_lock);").try();
     out.say("}").try();
     out.line().try();
-    Ok(())
 }
 
-emit_actor_defs* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+emit_actor_defs* = (be :: CBackend, out :: Emit) Res<AllocError> {
     be.actor_defs_loop(out)
 }
 
-actor_defs_loop = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+actor_defs_loop = (be :: CBackend, out :: Emit) Res<AllocError> {
     Range(0, be.actor_def_count()).loop((h, i) {
         be.actor_def_at(i).match({
-            None    => Ok(()),
+            None    => Ok,
             Ok(def) => out.say(def.view()),
         }).try();
     });
     (be.actor_def_count() > 0).then(() { out.line().try() });
-    Ok(())
+    Ok
 }
 
-emit_actor_globals* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+emit_actor_globals* = (be :: CBackend, out :: Emit) Res<AllocError> {
     be.uses_actor().match({
-        false => Ok(()),
+        false => Ok,
         true  => {
             out.say(
                 "pthread_mutex_t zg_actor_registry_lock = PTHREAD_MUTEX_INITIALIZER;"
@@ -607,9 +602,9 @@ emit_actor_globals* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
     })
 }
 
-write_actor_shutdown* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+write_actor_shutdown* = (be :: CBackend, out :: Emit) Res<AllocError> {
     be.uses_actor().match({
-        false => Ok(()),
+        false => Ok,
         true  => out.say("zg_actor_shutdown();"),
     })
 }
@@ -622,7 +617,7 @@ lower_actor_stop* = (
     rty : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.need_actor();
     recv ::= be.alloc.String().try();
     expr(be, a.base, ctx, rty, recv).try();
@@ -642,7 +637,7 @@ lower_actor_join* = (
     rty : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.need_actor();
     recv ::= be.alloc.String().try();
     expr(be, a.base, ctx, rty, recv).try();
@@ -670,7 +665,7 @@ ActorSend = {
     ctx: Ctx,
 
     lower = (self: @Self, be :: CBackend, out :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
         be.need_actor();
         // In a generic body the call's sema type still names type variables.
         ret = be.sub(be.check.type_of(self.id, self.ctx).try()).try();
@@ -712,7 +707,7 @@ ActorSend = {
     }
 
     write_message = (self: @Self, be :: CBackend, ret: TyId, sig: Vec<TyId>, out :: String)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
         n       = be.next_actor_site();
         payload = be.write_message_record(n, sig).try();
         turn    = self.write_turn(be, n, payload.view(), sig).try();
@@ -799,7 +794,7 @@ ActorSendEmission = {
     prepare: str,
 
     write = (self: @Self, be :: CBackend, out :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
         recv_code ::= be.alloc.String().try();
         expr(
             be,
@@ -906,7 +901,7 @@ lower_actor_send* = (
     actor_ty : TyId,
     ctx      : Ctx,
     out      :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.behavior_of(actor_ty, a.name.text).try().match({
         None    => be.unsupported(id, "an unresolved actor behavior", out),
         Ok(hit) => ActorSend(
@@ -972,7 +967,7 @@ write_slice_descriptor = (
     message : str,
     arg     : usize,
     buffer  : bool
-) Res<(), AllocError> {
+) Res<AllocError> {
     data_field = buffer.match({ true => be.actor_field(
         "data"
     ).try(), false => "data" });
@@ -1030,7 +1025,7 @@ lower_actor_spawn* = (
     rty : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     // Substitute the instantiation being lowered: a spawn inside a generic
     // function must record the concrete actor state type.
     ret = be.sub(be.check.type_of(id, ctx).try()).try();
@@ -1060,7 +1055,7 @@ lower_actor_spawn* = (
 }
 
 resolve_actor_spawn = (be :: CBackend, spawn: ActorSpawn, out :: String)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     be.actor_named_type("Context").try().match({
         None           => be.unsupported(spawn.id, "std.actor.Context", out),
         Ok(context_ty) => be.named_type_at(
@@ -1143,7 +1138,7 @@ write_actor_record = (
     be     :: CBackend,
     layout : ActorSpawnLayout,
     name   : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     a ::= be.alloc.String().try();
     be.ctype(layout.spawn.actor_ty, a).try();
     c ::= be.alloc.String().try();
@@ -1190,7 +1185,7 @@ write_mailbox_bridge = (
     record    : str,
     storage   : TyId,
     storage_c : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     ["take", "give"].loop((h, operation) {
         symbol = be.mailbox_symbol(storage, operation).try();
         name  ::= be.alloc.String("{record}_storage_{operation}").try();
@@ -1224,7 +1219,7 @@ write_mailbox_bridge = (
         });
         be.add_function(name, proto, body).try();
     });
-    Ok(())
+    Ok
 }
 
 write_started_callback = (be :: CBackend, n: usize, rec: str, actor: TyId)
@@ -1253,7 +1248,7 @@ add_lifecycle_callback = (
     hit     : BehaviorHit,
     context : bool
 )
-                         Res<(), AllocError> {
+                         Res<AllocError> {
     sym = be.behavior_symbol(actor, hit).try();
     proto ::= be.alloc.String().try();
     proto.fmt("{}void {}(zg_actor *zg_base)", be.linkage(), name.view()).try();
@@ -1311,7 +1306,7 @@ write_stopped_callback = (
     body ::= be.alloc.String().try();
     body.fmt("    {rec} *zg_self = ({rec} *)zg_base;\n").try();
     be.behavior_of(actor, "stopped").try().match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(hit) => {
             sym = be.behavior_symbol(actor, hit).try();
             body.fmt(
@@ -1322,7 +1317,7 @@ write_stopped_callback = (
         },
     }).try();
     be.drop_symbol(actor).try().match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(sym) => body.fmt("    (void)({}(&zg_self->zg_state));\n", sym.view()),
     }).try();
     storage       = be.mailbox_type().try();
@@ -1332,7 +1327,7 @@ write_stopped_callback = (
         close_storage.view()
     ).try();
     be.drop_symbol(arena).try().match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(sym) => body.fmt("    (void)({}(&zg_self->zg_arena));\n", sym.view()),
     }).try();
     be.add_function(name, proto, body).try();
@@ -1397,7 +1392,7 @@ write_spawn_value = (be :: CBackend, lifecycle: ActorLifecycle)
     be.indent();
     be.fmt("free({});\nfree({});\n", cell.view(), arena_state.view()).try();
     be.drop_symbol(spawn.actor_ty).try().match({
-        None       => Ok(()),
+        None       => Ok,
         Ok(symbol) => be.fmt("(void)({}(&{}));\n", symbol.view(), actor.view()),
     }).try();
     be.write_assign_err(spawn.result_ty, "OutOfMemory", dst.view()).try();
@@ -1440,9 +1435,9 @@ write_failed_spawn_drop = (
     be     :: CBackend,
     layout : ActorSpawnLayout,
     cell   : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.drop_symbol(layout.spawn.actor_ty).try().match({
-        None       => Ok(()),
+        None       => Ok,
         Ok(symbol) => be.fmt(
             "(void)({}(&{}->zg_state));\n",
             symbol.view(),
@@ -1450,7 +1445,7 @@ write_failed_spawn_drop = (
         ),
     }).try();
     be.drop_symbol(layout.arena_ty).try().match({
-        None       => Ok(()),
+        None       => Ok,
         Ok(symbol) => be.fmt(
             "(void)({}(&{}->zg_arena));\n",
             symbol.view(),
@@ -1466,7 +1461,7 @@ init_actor_fields = (
     arena_state : str,
     env         : str,
     actor       : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     layout = lifecycle.layout;
     mem ::= be.alloc.String().try();
     mem.sym_member("mem").try();
@@ -1524,7 +1519,6 @@ init_actor_fields = (
     be.fmt("{cell}->zg_base.stopped = {};\n", lifecycle.stopped).try();
     be.fmt("{cell}->zg_base.joined = 0;\n").try();
     be.fmt("{cell}->zg_base.joining = 0;\n").try();
-    Ok(())
 }
 
 write_ref_value = (
@@ -1532,7 +1526,7 @@ write_ref_value = (
     ref_ty : TyId,
     cell   : str,
     out    :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     cty ::= be.alloc.String().try();
     be.ctype(ref_ty, cty).try();
     id ::= be.alloc.String().try();

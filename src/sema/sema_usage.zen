@@ -9,10 +9,11 @@
 { Checker } = sema.sema_check
 { DeclId } = sema.sema_id
 { obj, arr, Nest, write_text } = std.json
-{ Res, Ok, None, loop } = std.core
+{ Res, Ok, None, loop, Error } = std.core
 
 RootPolicy* = { Main | LoadedExports }
 UsageError* = { OutOfMemory | InvalidInput | InvalidRoots }
+UsageError.impl(Error, {})
 CallKind* = { Direct | Constructor | Intrinsic | Unresolved }
 
 Declaration* = {

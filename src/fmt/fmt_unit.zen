@@ -14,7 +14,7 @@ Omissions = {
     parsed: Parsed,
     removed :: Vec<bool>,
     changed :: bool = false,
-    unit = (self :: @Self, ret: Res<TypeId>) Res<(), AllocError> {
+    unit = (self :: @Self, ret: Res<TypeId>) Res<AllocError> {
         ret.match({
             None   => {},
             Ok(id) => {
@@ -42,13 +42,16 @@ Omissions = {
                     _    => {},
                 });
             },
-        }); Ok(())
+        });
     }
-    function = (self :: @Self, f: Function) Res<(), AllocError> {
-        f.body.match({Ok(_) => self.unit(f.ret), None => Ok(())})
+    function = (self :: @Self, f: Function) Res<AllocError> {
+        f.body.match({Ok(_) => self.unit(f.ret), None => Ok})
     }
-    members = (self :: @Self, members: Vec<Member>) Res<(), AllocError> {
-        members.loop((m) { m.kind.match({Function(f) => self.function(f).try(), _ => {}}); }); Ok(())
+    members = (self :: @Self, members: Vec<Member>) Res<AllocError> {
+        members.loop((m) {
+            m.kind.match({ Function(f) => self.function(f).try(), _ => {} });
+        });
+        Ok
     }
 }
 omit_unit_returns* = (

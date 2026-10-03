@@ -8,7 +8,7 @@ Error* = {
     // What went wrong, for a reader. The default writes the name of the
     // variant the value holds (a struct's is its type's name); an impl
     // rebinds it when the payload has more to say.
-    message* ::= (self: @Self, out :: Sink) Res<(), WriteError> {
+    message* ::= (self: @Self, out :: Sink) Res<WriteError> {
         out.write(self.variant_name())
     }
 }

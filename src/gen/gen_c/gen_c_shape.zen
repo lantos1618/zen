@@ -404,32 +404,32 @@ shape_of* = (be :: CBackend, f: Function) Res<Shape, AllocError> {
 }
 
 body_params = (be :: CBackend, f: Function, out :: Vec<Param>)
-              Res<(), AllocError> {
+              Res<AllocError> {
     f.params.get(f.params.len - 1).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(p) => be.collect_fn_params(p, out),
     })
 }
 
 collect_fn_params = (be :: CBackend, p: Param, out :: Vec<Param>)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     p.type.match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(tid) => be.copy_fn_params(tid, out),
     })
 }
 
 copy_fn_params = (be :: CBackend, tid: TypeId, out :: Vec<Param>)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     be.tree.type_at(tid).kind.match({
         Fn(ft) => add_params(ft.params, out),
-        _      => Ok(()),
+        _      => Ok,
     })
 }
 
-add_params = (params: Vec<Param>, out :: Vec<Param>) Res<(), AllocError> {
+add_params = (params: Vec<Param>, out :: Vec<Param>) Res<AllocError> {
     params.loop((h, p) { out.add(p).try(); });
-    Ok(());
+    Ok;
 }
 
 // `h` is parameter zero of every body and is not one of the three, so

@@ -40,7 +40,7 @@ FailAfter.impl(Alloc, {
     }
 })
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     alloc ::= env.mem.alloc();
     left  ::= alloc.Vec<usize>();
     left.add(0).try();
@@ -62,5 +62,4 @@ main = (env: Env) Res<(), AllocError> {
         });
     });
     println("allocation failures {} completion {}", errors && valid, completed);
-    Ok(())
 }

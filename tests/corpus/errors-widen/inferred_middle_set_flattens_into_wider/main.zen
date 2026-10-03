@@ -9,13 +9,15 @@
 // leaves one of the caller's lines unreachable. The order (true first,
 // then false) pins which member each arm contributed.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
 Small = { | Tiny }
+Small.impl(Error, {})
 Big   = { | Huge }
+Big.impl(Error, {})
 Both  = Small | Big
 
 small_fail = () Res<i32, Small> { Err(Small.Tiny); }

@@ -77,7 +77,7 @@ CapabilityCall* = {
     want: TyId,
 
     lower = (self: @Self, be :: CBackend, out :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
         id  = self.id;
         c   = self.call;
         a   = self.access;
@@ -103,7 +103,7 @@ CapabilityCall* = {
     }
 
     lower_typed = (self: @Self, be :: CBackend, ret: TyId,
-                   out :: String) Res<(), AllocError> {
+                   out :: String) Res<AllocError> {
         id  = self.id;
         c   = self.call;
         a   = self.access;
@@ -246,7 +246,7 @@ capability_owner = (be :: CBackend, n: TyNamed) str {
 }
 
 lower_capability* = (be :: CBackend, call: CapabilityCall, out :: String)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     call.lower(be, out)
 }
 
@@ -263,7 +263,7 @@ lower_alloc = (
     ret : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.field_of(ret, "state").try().match({
         None    => be.unsupported(id, "an Arena with no state field", out),
         Ok(pty) => be.with_state(id, a, rty, ret, pty, ctx, out),
@@ -279,7 +279,7 @@ with_state = (
     pty : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.pointee(pty).match({
         None     => be.unsupported(
             id,
@@ -299,7 +299,7 @@ write_arena = (
     cell : TyId,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     recv ::= be.alloc.String().try();
     expr(be, a.base, ctx, rty, recv).try();
     tmp ::= be.alloc.String().try();
@@ -318,7 +318,7 @@ write_arena = (
 }
 
 write_malloc = (be :: CBackend, tmp: str, cell: TyId, extra: str)
-               Res<(), AllocError> {
+               Res<AllocError> {
     cty ::= be.alloc.String().try();
     be.ctype(cell, cty).try();
     be.fmt("{tmp} = ({} *)malloc(sizeof({}){extra});\n", cty.view(), cty.view())
@@ -326,7 +326,7 @@ write_malloc = (be :: CBackend, tmp: str, cell: TyId, extra: str)
 
 // Arena creation has no error channel, so allocation failure traps.
 write_oom_guard = (be :: CBackend, a: Access, tmp: str)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     pos ::= be.alloc.String().try();
     be.write_position(a.name.span.file, a.name.span, pos).try();
     be.fmt("if (!{tmp}) zg_trap({}, \"out of memory\");\n", pos.view())
@@ -336,15 +336,15 @@ write_oom_guard = (be :: CBackend, a: Access, tmp: str)
 // declaration has no such field: std owns the shape, so a field it
 // drops is a line this file stops writing rather than a diagnostic.
 set_field = (be :: CBackend, tmp: str, cell: TyId, name: str, value: str)
-            Res<(), AllocError> {
+            Res<AllocError> {
     be.field_of(cell, name).try().match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(_) => be.write_arrow_set(tmp, name, value),
     })
 }
 
 write_arrow_set = (be :: CBackend, tmp: str, name: str, value: str)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     sym ::= be.alloc.String().try();
     sym_member(sym, name).try();
     be.fmt("{tmp}->{} = {value};\n", sym.view())
@@ -363,7 +363,7 @@ lower_page = (
     ret : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.payload_type(ret, "Ok").match({
         None    => be.unsupported(
             id,
@@ -382,7 +382,7 @@ page_cell = (
     pty : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.pointee(pty).match({
         None     => be.unsupported(
             id,
@@ -400,7 +400,7 @@ write_page = (
     cell : TyId,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     usize_ty = be.check.types.prim("usize").try();
     cty ::= be.alloc.String().try();
     be.ctype(cell, cty).try();
@@ -438,7 +438,7 @@ write_page = (
 }
 
 write_page_malloc = (be :: CBackend, raw: str, header: str, szt: str)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     be.fmt(
         "{raw} = ({szt} > SIZE_MAX - {header}) ? NULL : (unsigned char *)malloc({header} + {szt});\n"
     )
@@ -455,7 +455,7 @@ write_page_header = (
     szt    : str,
     prev   : str,
     header : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     cast ::= be.alloc.String().try();
     cast.fmt("(({cty} *){raw})").try();
     base ::= be.alloc.String().try();
@@ -463,21 +463,19 @@ write_page_header = (
     be.set_field(cast.view(), cell, "prev", prev).try();
     be.set_field(cast.view(), cell, "base", base.view()).try();
     be.set_field(cast.view(), cell, "size", szt).try();
-    Ok(());
 }
 
 write_page_ok = (be :: CBackend, ret: TyId, cty: str, raw: str, dst: str)
-                Res<(), AllocError> {
+                Res<AllocError> {
     value ::= be.alloc.String().try();
     value.fmt("({cty} *){raw}").try();
     be.write_assign_ok(ret, value.view(), dst).try();
-    Ok(());
 }
 
 // `mem.release(page)` — one `free`, and the unit value every other
 // void-returning lowering writes.
 lower_release = (be :: CBackend, c: Call, ctx: Ctx, out :: String)
-                Res<(), AllocError> {
+                Res<AllocError> {
     unknown = be.check.types.unknown().try();
     page ::= be.alloc.String().try();
     be.arg_text(c, 0, unknown, ctx, page).try();
@@ -487,7 +485,7 @@ lower_release = (be :: CBackend, c: Call, ctx: Ctx, out :: String)
 
 // The `prev` argument, or a null pointer when the call left it out.
 prev_text = (be :: CBackend, c: Call, ctx: Ctx, out :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
     unknown = be.check.types.unknown().try();
     c.args.get(1).match({
         None  => out.add("NULL"),

@@ -14,9 +14,8 @@
 Bag = {
     items :: Vec<i32>,
 
-    fill* = (self :: @Self, n: i32) Res<(), AllocError> {
+    fill* = (self :: @Self, n: i32) Res<AllocError> {
         self.items.add(n).try();
-        Ok(());
     }
 }
 

@@ -235,7 +235,7 @@ range_element_type* = (be :: CBackend, rty: TyId)
 // Bind the impl receiver only while lowering its expressions so it cannot
 // shadow an enclosing self in the loop body.
 bind_self = (be :: CBackend, ri: RangeImpl, rty: TyId, rng: str)
-            Res<(), AllocError> {
+            Res<AllocError> {
     be.bind_text(self_name(ri), rty, rng)
 }
 
@@ -255,7 +255,7 @@ first_param_name = (f: Function) str {
 // temporary this file wrote and the counter is a local it declared, and
 // neither of them is an AST node to lower.
 bind_text* = (be :: CBackend, name: str, ty: TyId, text: str)
-            Res<(), AllocError> {
+            Res<AllocError> {
     n = be.declare(name, ty, false).try();
     be.check.bind(name, ty, false, false).try();
     cname ::= be.alloc.String().try();
@@ -276,7 +276,7 @@ supplied_bound* = (
     value  : ExprId,
     target : str,
     rng    : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     usize_ty = be.check.types.prim("usize").try();
     ictx     = be.impl_ctx(ri, usize_ty, rty);
     inst     = be.recv_inst(rty).try();
@@ -295,7 +295,6 @@ supplied_bound* = (
     be.check.release(cmark).try();
     be.leave_tparams(mark).try();
     be.enter_inst(held);
-    Ok(());
 }
 
 literal_bound = (be: CBackend, value: ExprId) bool {
@@ -333,7 +332,7 @@ take_pass* = (
     rng     : str,
     value   :: String
 )
-            Res<(), AllocError> {
+            Res<AllocError> {
     ri.at.match({
         None  => value.add(counter),
         Ok(f) => be.run_at(ri, rty, pass, f, counter, rng, value),
@@ -350,7 +349,7 @@ run_at = (
     rng     : str,
     value   :: String
 )
-         Res<(), AllocError> {
+         Res<AllocError> {
     tmp  ::= be.fresh_name("a").try();
     decl ::= be.alloc.String().try();
     be.declarator(pass, tmp.view(), decl).try();
@@ -374,7 +373,7 @@ inline_at = (
     rng     : str,
     tmp     : str
 )
-            Res<(), AllocError> {
+            Res<AllocError> {
     usize_ty = be.check.types.prim("usize").try();
     ictx     = be.impl_ctx(ri, pass, rty);
     inst     = be.recv_inst(rty).try();
@@ -392,7 +391,6 @@ inline_at = (
     be.check.release(cmark).try();
     be.leave_tparams(mark).try();
     be.enter_inst(held);
-    Ok(());
 }
 
 // Parameter one of `at`. Parameter zero is the receiver and is already
@@ -402,17 +400,17 @@ bind_index_param = (
     f        : Function,
     usize_ty : TyId,
     counter  : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     f.params.get(1).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(p) => be.bind_text(p.name.text, usize_ty, counter),
     })
 }
 
 run_at_body = (be :: CBackend, f: Function, ictx: Ctx, pass: TyId, tmp: str)
-              Res<(), AllocError> {
+              Res<AllocError> {
     f.body.match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(blk) => {
             held_return = be.return_to;
             target      = be.open_inline_return(tmp).try();
@@ -427,7 +425,7 @@ run_at_body = (be :: CBackend, f: Function, ictx: Ctx, pass: TyId, tmp: str)
 
 // The guard is emitted directly in the walk's while body. Missing an element
 // completes iteration naturally, so a fold still publishes its accumulator.
-write_pass_guard = (be :: CBackend, tmp: str) Res<(), AllocError> {
+write_pass_guard = (be :: CBackend, tmp: str) Res<AllocError> {
     tag ::= be.alloc.String().try();
     sym_variant(tag, RES_PATH, "Ok").try();
     be.fmt("if ({tmp}.zg_tag != {}) { break; }\n", tag.view())

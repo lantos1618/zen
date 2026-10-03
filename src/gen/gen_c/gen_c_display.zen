@@ -208,7 +208,7 @@ display_call = (
     text : str,
     sink : str,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     inst = be.recv_inst(ty).try();
     sig ::= be.alloc.Vec<TyId>();
     be.method_sig(ty, s.decl, f, s.decl.module.to_usize(), inst, sig).try();
@@ -229,10 +229,9 @@ display_call = (
 // an lvalue holding the enclosing block's storage — so the console
 // outlives the call it is written into and nothing is copied.
 write_sink_arg = (f: Function, sink: str, out :: String)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     by_ref(f, 1).then(() { out.add("&").try() });
     out.add(sink).try();
-    Ok(());
 }
 
 // the console, as a Sink
@@ -340,7 +339,7 @@ console_name = (
     out    :: String,
     member : str,
     stream : ConsoleStream
-) Res<(), AllocError> {
+) Res<AllocError> {
     prefix = stream.match({ Stdout => "zg_console_", Stderr => "zg_econsole_" });
     out.fmt("{prefix}{member}")
 }
@@ -371,9 +370,9 @@ byte_body = (member: str, stream: ConsoleStream) str {
 }
 
 need_console_fn = (be :: CBackend, s: Slot, name: str, stream: ConsoleStream)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     be.need_thunk(name).try().match({
-        false => Ok(()),
+        false => Ok,
         true  => be.emit_console_fn(s, name, stream),
     })
 }
@@ -392,7 +391,7 @@ emit_console_fn = (
     name   : str,
     stream : ConsoleStream
 )
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     head ::= be.alloc.String().try();
     be.console_head(s, name, head).try();
     ok ::= be.alloc.String().try();
@@ -408,11 +407,10 @@ emit_console_fn = (
 }
 
 console_head = (be :: CBackend, s: Slot, name: str, out :: String)
-               Res<(), AllocError> {
+               Res<AllocError> {
     ret ::= be.alloc.String().try();
     be.ctype(s.ret, ret).try();
     out.fmt("{}{} {name}(void *zg_self", be.linkage(), ret.view()).try();
     s.params.loop((h, i, p) { be.thunk_param(p, "a", i, out).try() });
     out.add(")").try();
-    Ok(());
 }

@@ -1,9 +1,9 @@
 { Builder, BuildError } = std.build
 { Res, Ok, Path } = std.core
 
-build = (b :: Builder) Res<(), BuildError> {
+build = (b :: Builder) Res<BuildError> {
     b.exe_test("passing", {src: Path("pass.zen"), deps: []}).try();
     b.exe_test("failing", {src: Path("fail.zen"), deps: []}).try();
     b.exe_test("after_failure", {src: Path("pass.zen"), deps: []}).try();
-    Ok(())
+    Ok
 }

@@ -2,12 +2,13 @@
 
 { Alloc } = std.mem
 { str } = std.text
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { Drop } = std.core
 { Vec } = std.collections
 { Socket, SocketFault } = std.net.socket
 
 TcpError* = { ConnectFailed | WriteFailed | ReadFailed | Closed }
+TcpError.impl(Error, {})
 
 tcp_error = (fault: SocketFault) TcpError {
     fault.match({
@@ -28,7 +29,7 @@ TcpStream* = {
         })
     }
 
-    write* = (self: @Self, bytes: str) Res<(), TcpError> {
+    write* = (self: @Self, bytes: str) Res<TcpError> {
         self.socket.write(bytes).map_err((e) { e.tcp_error() })
     }
 

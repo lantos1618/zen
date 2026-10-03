@@ -20,7 +20,7 @@ Noisy.impl(Drop, {
     drop = (self :: @Self) { self.env.out.println("drop {}", self.id).ignore() }
 })
 
-append = (env: Env, alloc: Alloc) Res<(), AllocError> {
+append = (env: Env, alloc: Alloc) Res<AllocError> {
     outer = Noisy(env: env, id: 1);
     {
         inner = Noisy(env: env, id: 2);
@@ -29,7 +29,7 @@ append = (env: Env, alloc: Alloc) Res<(), AllocError> {
         values.add(7).try();
         println("len {}", values.len);
     }
-    Ok(())
+    Ok
 }
 
 main = (env: Env) i32 {

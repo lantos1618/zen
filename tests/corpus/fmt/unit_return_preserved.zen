@@ -6,7 +6,7 @@
 { println } = std.io
 SOURCE: str = "Native = c.bind(\"unit.h\", { call = () () })\nContract = {\n    required = () ()\n    hook ::= () ()\n}\nCallback = (value: i32) ()\nunit_value: () = ()\nfallible = () Res<(), ()> { Ok(()) }\napply = () { map(<T>(value: T) () { use(value); }); }\ntext: str = \"f = () () {}\"\n"
 WANTED: str = "Native = c.bind(\"unit.h\", { call = () () })\nContract = {\n    required = () ()\n    hook ::= () ()\n}\nCallback = (value: i32) ()\nunit_value: () = ()\nfallible = () Res<(), ()> { Ok(()) }\napply = () { map(<T>(value: T) () { use(value); }); }\ntext: str = \"f = () () {}\"\n"
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a      = env.mem.alloc();
     result = render(
         a,
@@ -23,5 +23,4 @@ main = (env: Env) Res<(), AllocError> {
         result.text.view().eq(second.text.view()),
         result.diags.len
     );
-    Ok(())
 }

@@ -271,31 +271,29 @@ args_3 = (a: Alloc, x: ExprId, y: ExprId, z: ExprId)
 
 // what a call resolved TO, in the only readable form a TyId has
 picked = (c :: Checker, a: Alloc, label: str, id: ExprId, ctx: Ctx)
-         Res<(), AllocError> {
+         Res<AllocError> {
     got = c.type_of(id, ctx).try();
     out ::= a.String().try();
     c.types.write_name(got, out).try();
     println("{} -> {}", label, out.view());
-    Ok(());
 }
 
 // what one overload set says about itself
-declared = (c :: Checker, a: Alloc, name: str) Res<(), AllocError> {
+declared = (c :: Checker, a: Alloc, name: str) Res<AllocError> {
     before = c.diag_count();
     c.check_overloads(0, name).try();
     println("`{}` as a set: {} diagnostic(s)", name, c.diag_count() - before);
     Range(before, c.diag_count()).loop((h, i) { show(c, a, i).try() });
-    Ok(());
+    Ok;
 }
 
-show = (c :: Checker, a: Alloc, i: usize) Res<(), AllocError> {
+show = (c :: Checker, a: Alloc, i: usize) Res<AllocError> {
     out ::= a.String().try();
     c.diag_at(i).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(d) => d.render(c.types, out),
     }).try();
     println("    {}", out.view());
-    Ok(());
 }
 
 main = (env: Env) Res<i32, AllocError> {

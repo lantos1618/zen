@@ -1,10 +1,12 @@
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
 Left = { | Number: i32 }
+Left.impl(Error, {})
 Right = { | Text: str }
+Right.impl(Error, {})
 
 left = () Res<i32, Left | Right> { Err(Left.Number(7)) }
 right = () Res<i32, Left | Right> { Err(Right.Text("hello")) }

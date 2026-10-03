@@ -23,7 +23,7 @@ GenDiag* = {
 
     // Writes `file:line:col: message` and the detail, without a trailing
     // newline.
-    render* = (self: @Self, out :: String) Res<(), AllocError> {
+    render* = (self: @Self, out :: String) Res<AllocError> {
         out.fmt(
             "{}:{}: {}",
             self.file,
@@ -48,7 +48,7 @@ message = (fault: GenFault) str {
     })
 }
 
-detail = (fault: GenFault, out :: String) Res<(), AllocError> {
+detail = (fault: GenFault, out :: String) Res<AllocError> {
     fault.match({
         CopyFromPointer(w) => out.write_quoted(w),
         Unsupported(w)     => out.write_quoted(w),
@@ -61,11 +61,11 @@ detail = (fault: GenFault, out :: String) Res<(), AllocError> {
     })
 }
 
-write_quoted = (out :: String, w: str) Res<(), AllocError> {
+write_quoted = (out :: String, w: str) Res<AllocError> {
     out.fmt(" `{w}`")
 }
 
-write_bound = (out :: String, n: usize) Res<(), AllocError> {
+write_bound = (out :: String, n: usize) Res<AllocError> {
     out.add(" gen_c_decl.MAX_FUNCTIONS = ").try();
     out.write_usize(n)
 }

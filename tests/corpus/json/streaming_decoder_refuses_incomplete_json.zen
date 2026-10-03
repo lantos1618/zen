@@ -16,7 +16,7 @@ at = (fault: JsonFault) usize {
     })
 }
 
-reject = (a: Alloc, left: str, right: str) Res<(), JsonFault> {
+reject = (a: Alloc, left: str, right: str) Res<JsonFault> {
     decoder ::= a.Decoder().try();
     events  ::= a.Vec<JsonEvent>();
     decoder.feed(left, events).match({
@@ -29,7 +29,6 @@ reject = (a: Alloc, left: str, right: str) Res<(), JsonFault> {
             }),
         }),
     });
-    Ok(())
 }
 
 main = (env: Env) Res<i32, JsonFault> {

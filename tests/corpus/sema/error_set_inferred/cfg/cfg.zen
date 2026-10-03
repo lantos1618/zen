@@ -5,9 +5,10 @@
 //               inferred -- the inference-order case TESTING.md names
 //   read_cfg*   exported, so the set is written out
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 
 CfgError* = { Missing | Bad }
+CfgError.impl(Error, {})
 
 read_num = (s: str) Res<i32, _> {
     (s == "7").match({

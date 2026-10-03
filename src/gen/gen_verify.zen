@@ -5,7 +5,7 @@
 // predecessors until stable, so a backedge cannot invent an initial value.
 { Alloc } = std.mem
 { Vec } = std.collections
-{ Res, Ok, Err, None, loop, Range } = std.core
+{ Res, Ok, Err, None, loop, Range, Error } = std.core
 { str } = std.text
 { Program, Func, Scalar, Instruction, Terminator, Op, Marshal } = gen.gen_ir
 { Guards, TagGuard, PayloadRead, Binary } = gen.gen_ir
@@ -46,6 +46,7 @@ message* = (reason: IrReason) str {
 
 IrFault* = { function*: usize, block*: usize, reason*: IrReason }
 VerifyError* = { OutOfMemory | Invalid: IrFault }
+VerifyError.impl(Error, {})
 
 // The most arguments an indirect call may pass: the smallest register
 // argument count among the targets (System V has six).
@@ -89,16 +90,14 @@ Check = {
         self.function.slots.get(index).ok_or(self.fault(IrReason.Slot))
     }
 
-    expect = (self: @Self, index: usize, ty: Scalar) Res<(), VerifyError> {
+    expect = (self: @Self, index: usize, ty: Scalar) Res<VerifyError> {
         self.slot(index).try().same(ty).ensure(self.fault(IrReason.Type)).try();
-        Ok(())
     }
 
-    target = (self: @Self, index: usize) Res<(), VerifyError> {
+    target = (self: @Self, index: usize) Res<VerifyError> {
         (index < self.function.blocks.len).ensure(self.fault(
             IrReason.Target
         )).try();
-        Ok(())
     }
 
     word_slot = (self: @Self, index: usize) Res<Scalar, VerifyError> {
@@ -107,12 +106,12 @@ Check = {
         Ok(ty)
     }
 
-    instruction = (self: @Self, instruction: Instruction) Res<(), VerifyError> {
+    instruction = (self: @Self, instruction: Instruction) Res<VerifyError> {
         instruction.match({
             Constant(value)     => {
                 ty = self.slot(value.out).try();
                 fits(ty, value.value).ensure(self.fault(IrReason.Constant)).try();
-                Ok(())
+                Ok
             },
             Copy(value)         => self.expect(
                 value.out,
@@ -149,11 +148,11 @@ Check = {
                     .ensure(self.fault(IrReason.Type)).try();
                 self.expect(value.value, value.ty)
             },
-            Text(_)             => Ok(()),
+            Text(_)             => Ok,
             Cast(value)         => {
                 self.word_slot(value.input).try();
                 self.word_slot(value.out).try();
-                Ok(())
+                Ok
             },
             AddressOf(value)    => {
                 self.slot(value.slot).try();
@@ -191,7 +190,7 @@ Check = {
             UnmapPages(slot)    => {
                 self.expect(slot, Scalar.Ptr)
             },
-            Flush               => Ok(()),
+            Flush               => Ok,
             Host(call)          => {
                 (call.args.len == call.marshal.len).ensure(self.fault(
                     IrReason.Arguments
@@ -222,15 +221,12 @@ Check = {
                     Nothing => same(out, Scalar.Unit),
                     _       => false,
                 }).ensure(self.fault(IrReason.Type)).try();
-                Ok(())
+                Ok
             },
             Wait(slot)          => {
                 self.expect(slot, Scalar.U32)
             },
-            SysConst(value)     => {
-                integer(self.slot(value.out).try()).ensure(self.fault(IrReason.Type)).try();
-                Ok(())
-            },
+            SysConst(value)     => integer(self.slot(value.out).try()).ensure(self.fault(IrReason.Type)).try(),
             Startup(value)      => {
                 ty = value.value.match({ Argc => Scalar.U64, _ => Scalar.Ptr });
                 self.expect(value.out, ty)
@@ -271,7 +267,7 @@ Check = {
                 call.args.loop((slot) { self.word_slot(slot).try(); });
                 out = self.slot(call.out).try();
                 (word(out) || same(out, Scalar.Unit)).ensure(self.fault(IrReason.Type)).try();
-                Ok(())
+                Ok
             },
         })
     }
@@ -284,7 +280,7 @@ Check = {
     }
 
     binary = (self: @Self, left: usize, right: usize, out: usize, op: Op)
-             Res<(), VerifyError> {
+             Res<VerifyError> {
         input        = self.slot(left).try();
         rhs          = self.slot(right).try();
         pointer_step = same(input, Scalar.Ptr) && same(rhs, Scalar.U64)
@@ -323,7 +319,7 @@ Check = {
         self.expect(out, result)
     }
 
-    exit = (self: @Self, exit: Terminator) Res<(), VerifyError> {
+    exit = (self: @Self, exit: Terminator) Res<VerifyError> {
         exit.match({
             Return(slot)   => self.expect(slot, self.function.result),
             Jump(target)   => self.target(target),
@@ -332,11 +328,11 @@ Check = {
                 self.target(branch.yes).try();
                 self.target(branch.no)
             },
-            Trap(_)        => Ok(()),
+            Trap(_)        => Ok,
         })
     }
 
-    structure = (self :: @Self) Res<(), VerifyError> {
+    structure = (self :: @Self) Res<VerifyError> {
         (self.function.parameters <= self.function.slots.len)
             .ensure(self.fault(IrReason.ParameterSlots)).try();
         (self.function.blocks.len > 0).ensure(self.fault(
@@ -349,17 +345,16 @@ Check = {
             );
             self.exit(block.exit).try();
         });
-        Ok(())
+        Ok
     }
 
-    initialized = (self: @Self, flags: Vec<bool>, slot: usize) Res<(), VerifyError> {
+    initialized = (self: @Self, flags: Vec<bool>, slot: usize) Res<VerifyError> {
         flags.get(slot).value_or(false).ensure(self.fault(IrReason.Uninitialized)).try();
-        Ok(())
     }
 
-    reads = (self: @Self, flags: Vec<bool>, instruction: Instruction) Res<(), VerifyError> {
+    reads = (self: @Self, flags: Vec<bool>, instruction: Instruction) Res<VerifyError> {
         instruction.match({
-            Constant(_)         => Ok(()),
+            Constant(_)         => Ok,
             Copy(value)         => self.initialized(flags, value.source),
             UnaryValue(value)   => self.initialized(flags, value.input),
             BinaryValue(value)  => {
@@ -368,12 +363,12 @@ Check = {
             },
             Invoke(call)        => {
                 call.args.loop((slot) { self.initialized(flags, slot).try(); });
-                Ok(())
+                Ok
             },
             PrintValue(value)   => self.initialized(flags, value.value),
-            Text(_)             => Ok(()),
+            Text(_)             => Ok,
             Cast(value)         => self.initialized(flags, value.input),
-            AddressOf(_)        => Ok(()),
+            AddressOf(_)        => Ok,
             LoadValue(value)    => self.initialized(flags, value.base),
             StoreValue(value)   => {
                 self.initialized(flags, value.base).try();
@@ -384,29 +379,29 @@ Check = {
                 self.initialized(flags, value.source).try();
                 self.initialized(flags, value.bytes)
             },
-            Bytes(_)            => Ok(()),
+            Bytes(_)            => Ok,
             WriteOut(value)     => {
                 self.initialized(flags, value.data).try();
                 self.initialized(flags, value.len)
             },
             System(call)        => {
                 call.args.loop((slot) { self.initialized(flags, slot).try(); });
-                Ok(())
+                Ok
             },
-            Startup(_)          => Ok(()),
+            Startup(_)          => Ok,
             MapPages(value)     => self.initialized(flags, value.bytes),
             UnmapPages(slot)    => self.initialized(flags, slot),
-            SysConst(_)         => Ok(()),
-            Flush               => Ok(()),
+            SysConst(_)         => Ok,
+            Flush               => Ok,
             Machine(call)       => {
                 call.args.loop((slot) { self.initialized(flags, slot).try(); });
-                Ok(())
+                Ok
             },
             Host(call)          => {
                 call.args.loop((slot) { self.initialized(flags, slot).try(); });
-                Ok(())
+                Ok
             },
-            Wait(_)             => Ok(()),
+            Wait(_)             => Ok,
             AtomicLoad(value)   => self.initialized(flags, value.base),
             AtomicStore(value)  => {
                 self.initialized(flags, value.base).try();
@@ -421,21 +416,21 @@ Check = {
                 self.initialized(flags, value.expected).try();
                 self.initialized(flags, value.desired)
             },
-            CodeAddress(_)      => Ok(()),
+            CodeAddress(_)      => Ok,
             InvokeAt(call)      => {
                 self.initialized(flags, call.target).try();
                 call.args.loop((slot) { self.initialized(flags, slot).try(); });
-                Ok(())
+                Ok
             },
         })
     }
 
-    exit_reads = (self: @Self, flags: Vec<bool>, exit: Terminator) Res<(), VerifyError> {
+    exit_reads = (self: @Self, flags: Vec<bool>, exit: Terminator) Res<VerifyError> {
         exit.match({
             Return(slot)   => self.initialized(flags, slot),
             Branch(branch) => self.initialized(flags, branch.value),
-            Jump(_)        => Ok(()),
-            Trap(_)        => Ok(()),
+            Jump(_)        => Ok,
+            Trap(_)        => Ok,
         })
     }
 }
@@ -485,14 +480,14 @@ Flow = {
     outgoing :: Vec<Vec<bool>>,
     scratch :: Vec<bool>,
 
-    connect = (self :: @Self, from: usize, to: usize) Res<(), VerifyError> {
+    connect = (self :: @Self, from: usize, to: usize) Res<VerifyError> {
         pred ::= self.predecessors.get(to).ok_or(self.check.fault(IrReason.Target)).try();
         pred.add(from).try(VerifyError.OutOfMemory);
         self.predecessors.set(to, pred);
-        Ok(())
+        Ok
     }
 
-    graph = (self :: @Self) Res<(), VerifyError> {
+    graph = (self :: @Self) Res<VerifyError> {
         self.check.function.blocks.loop((_) {
             self.predecessors.add(
                 self.alloc.Vec<usize>()
@@ -509,8 +504,8 @@ Flow = {
                     self.connect(index, branch.yes).try();
                     self.connect(index, branch.no)
                 },
-                Return(_)      => Ok(()),
-                Trap(_)        => Ok(()),
+                Return(_)      => Ok,
+                Trap(_)        => Ok,
             }).try();
         });
         self.reachable.set(0, true);
@@ -522,23 +517,23 @@ Flow = {
             self.check.function.blocks.get(index).ok_or(self.check.fault(IrReason.Target)).try().exit.match({
                 Jump(to)       => self.visit(to, work),
                 Branch(branch) => { self.visit(branch.yes, work).try(); self.visit(branch.no, work) },
-                Return(_)      => Ok(()),
-                Trap(_)        => Ok(()),
+                Return(_)      => Ok,
+                Trap(_)        => Ok,
             }).try();
             at = at + 1;
         });
-        Ok(())
+        Ok
     }
 
-    visit = (self :: @Self, block: usize, work :: Vec<usize>) Res<(), VerifyError> {
+    visit = (self :: @Self, block: usize, work :: Vec<usize>) Res<VerifyError> {
         (!self.reachable.get(block).value_or(false)).then(() {
             self.reachable.set(block, true);
             work.add(block).try(VerifyError.OutOfMemory);
         });
-        Ok(())
+        Ok
     }
 
-    incoming = (self: @Self, block: usize, incoming :: Vec<bool>) Res<(), VerifyError> {
+    incoming = (self: @Self, block: usize, incoming :: Vec<bool>) Res<VerifyError> {
         Range(0, incoming.len).loop((slot) { incoming.set(slot, true); });
         (block == 0).then(() {
             Range(self.check.function.parameters, incoming.len).loop((slot) { incoming.set(slot, false); });
@@ -552,10 +547,10 @@ Flow = {
                 });
             });
         });
-        Ok(())
+        Ok
     }
 
-    solve = (self :: @Self) Res<(), VerifyError> {
+    solve = (self :: @Self) Res<VerifyError> {
         changed ::= true;
         loop(() { changed }, (h) {
             changed = false;
@@ -585,17 +580,17 @@ Flow = {
                 self.check.exit_reads(state, block.exit).try();
             });
         });
-        Ok(())
+        Ok
     }
 }
 
 // The one verifier. A program that passes it is well formed for every
 // renderer; whether a renderer implements each construct is its `supports`.
-verify* = (program: Program, alloc: Alloc) Res<(), VerifyError> {
+verify* = (program: Program, alloc: Alloc) Res<VerifyError> {
     checked(program, alloc)
 }
 
-checked = (program: Program, alloc: Alloc) Res<(), VerifyError> {
+checked = (program: Program, alloc: Alloc) Res<VerifyError> {
     entry = program.functions.get(program.entry).ok_or(VerifyError.Invalid(IrFault(function: program.entry, block: 0, reason: IrReason.EntryFunction))).try();
     (entry.parameters == 0).ensure(VerifyError.Invalid(IrFault(
         function: program.entry,
@@ -631,7 +626,7 @@ checked = (program: Program, alloc: Alloc) Res<(), VerifyError> {
             payloads.check().try();
         });
     });
-    Ok(())
+    Ok
 }
 
 // Rule 3 of docs/IR_ARCHITECTURE.md §4.1: a payload read sits behind a test
@@ -667,7 +662,7 @@ Payloads = {
         ))
     }
 
-    check = (self :: @Self) Res<(), VerifyError> {
+    check = (self :: @Self) Res<VerifyError> {
         self.guards.tests.loop((g) {
             self.block = g.block;
             self.genuine(g).ensure(self.fault(IrReason.Guard)).try();
@@ -680,7 +675,7 @@ Payloads = {
             (known == UNREACHED || known == r.variant)
                 .ensure(self.fault(IrReason.UnguardedPayload)).try();
         });
-        Ok(())
+        Ok
     }
 
     // The only instruction writing `slot`, when exactly one does.
@@ -752,7 +747,7 @@ Payloads = {
         })
     }
 
-    solve = (self :: @Self) Res<(), VerifyError> {
+    solve = (self :: @Self) Res<VerifyError> {
         slots = self.function.slots.len;
         self.function.blocks.loop((_) {
             self.entry.add(
@@ -796,7 +791,7 @@ Payloads = {
                 });
             });
         });
-        Ok(())
+        Ok
     }
 
     // Meet `incoming` into the entry facts of `block`; true when they changed.

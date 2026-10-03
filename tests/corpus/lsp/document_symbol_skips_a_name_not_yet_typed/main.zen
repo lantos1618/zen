@@ -47,7 +47,7 @@ main = (env: Env) Res<i32, AllocError> {
     Ok(0);
 }
 
-open_doc = (a: Alloc, into :: String) Res<(), AllocError> {
+open_doc = (a: Alloc, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
@@ -59,7 +59,7 @@ open_doc = (a: Alloc, into :: String) Res<(), AllocError> {
     write_frame(body.view(), into)
 }
 
-ask = (a: Alloc, into :: String) Res<(), AllocError> {
+ask = (a: Alloc, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/documentSymbol\",\"params\":{\"textDocument\":{\"uri\":"

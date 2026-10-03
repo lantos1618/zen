@@ -17,12 +17,13 @@
 
 { str } = std.text
 { Vec } = std.collections
-{ Res, Ok, Err, None, Range } = std.core
+{ Res, Ok, Err, None, Range, Error } = std.core
 { Env } = std.env
 
 // Two faces and no third: a required field was absent, or it was there
 // and did not parse as its type. The payload is the field name.
 ArgError* = { Missing: str | Parse: str }
+ArgError.impl(Error, {})
 
 // argv is bounded at this many words for the door: the claim mask is one
 // u64. Longer command lines answer `Parse("argv")`.
@@ -138,7 +139,7 @@ take* = (env: Env, mask: u64) u64 {
 
 // What nothing consumed. An unknown flag is Parse of the flag word; a
 // word left over is Parse of the last positional field.
-finish* = (env: Env, mask: u64, field: str) Res<(), ArgError> {
+finish* = (env: Env, mask: u64, field: str) Res<ArgError> {
     (env.argv.len <= ARGV_CAP).ensure(ArgError.Parse("argv")).try();
     unknown ::= "";
     Range(1, env.argv.len).loop((h, i) {
@@ -150,7 +151,7 @@ finish* = (env: Env, mask: u64, field: str) Res<(), ArgError> {
     unknown.is_empty().ensure(ArgError.Parse(unknown)).try();
     env.next_word(mask).match({
         Ok(_) => Err(ArgError.Parse(field)),
-        None  => Ok(()),
+        None  => Ok,
     })
 }
 

@@ -131,11 +131,11 @@ impl_member_at* = (
     decl : DeclId,
     name : str,
     out  :: Vec<Member>
-) Res<(), AllocError> {
+) Res<AllocError> {
     ids ::= be.alloc.Vec<ImplId>();
     be.check.world.impls_named(be.tree, be.decl_name(decl), ids).try();
     ids.loop((h, i) { be.collect_impl_fn(decl, i, name, out).try() });
-    Ok(());
+    Ok;
 }
 
 // The name a declaration's type goes by — the key `impls_named` is
@@ -180,18 +180,18 @@ collect_impl_fn = (
     i    : ImplId,
     name : str,
     out  :: Vec<Member>
-) Res<(), AllocError> {
+) Res<AllocError> {
     (decl.module == i.decl.module).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.impl_fn_at(i, name, out),
     })
 }
 
 impl_fn_at = (be :: CBackend, i: ImplId, name: str, out :: Vec<Member>)
-             Res<(), AllocError> {
+             Res<AllocError> {
     be.check.world.impl_at(be.tree, i).match({
         Ok(im) => be.keep_impl_fn(i, im, name, out),
-        None   => Ok(()),
+        None   => Ok,
     })
 }
 
@@ -204,7 +204,7 @@ keep_impl_fn = (
     im   : Impl,
     name : str,
     out  :: Vec<Member>
-) Res<(), AllocError> {
+) Res<AllocError> {
     im.members.loop((h, m) { keep_named_fn(m, name, out).try() });
     be.keep_bound_default(i, im, name, out)
 }
@@ -215,33 +215,33 @@ keep_bound_default = (
     im   : Impl,
     name : str,
     out  :: Vec<Member>
-) Res<(), AllocError> {
+) Res<AllocError> {
     bound = be.check.impl_bound_type(im, i.decl.module.to_usize()).try();
     members ::= be.alloc.Vec<Member>();
     be.check.bound_members(bound, members).try();
     members.loop((h, m) { keep_named_fn(m, name, out).try() });
-    Ok(());
+    Ok;
 }
 
 keep_named_fn = (m: Member, name: str, out :: Vec<Member>)
-                Res<(), AllocError> {
+                Res<AllocError> {
     m.named(name).match({
-        false => Ok(()),
+        false => Ok,
         true  => add_bodied(m, out),
     })
 }
 
-add_bodied = (m: Member, out :: Vec<Member>) Res<(), AllocError> {
+add_bodied = (m: Member, out :: Vec<Member>) Res<AllocError> {
     m.kind.match({
         Function(f) => add_if_bodied(m, f, out),
-        _           => Ok(()),
+        _           => Ok,
     })
 }
 
 add_if_bodied = (m: Member, f: Function, out :: Vec<Member>)
-                Res<(), AllocError> {
+                Res<AllocError> {
     has_body(f).match({
-        false => Ok(()),
+        false => Ok,
         true  => out.add(m),
     })
 }
@@ -283,20 +283,20 @@ keep_alias = (
     decl : DeclId,
     name : str,
     out  :: Vec<str>
-) Res<(), AllocError> {
+) Res<AllocError> {
     (i.decl.module == decl.module).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.impl_alias_at(i, name, out),
     })
 }
 
 impl_alias_at = (be :: CBackend, i: ImplId, name: str, out :: Vec<str>)
-                Res<(), AllocError> {
+                Res<AllocError> {
     be.check.world.impl_at(be.tree, i).match({
-        None   => Ok(()),
+        None   => Ok,
         Ok(im) => {
             im.field_value(name).match({
-                None  => Ok(()),
+                None  => Ok,
                 Ok(x) => be.add_alias(x, out),
             })
         },
@@ -305,9 +305,9 @@ impl_alias_at = (be :: CBackend, i: ImplId, name: str, out :: Vec<str>)
 
 // A bare Name and nothing else: `widen_u32 = to_u32` aliases a function;
 // `start = 0` is a value, not a function to call
-add_alias = (be :: CBackend, x: ExprId, out :: Vec<str>) Res<(), AllocError> {
+add_alias = (be :: CBackend, x: ExprId, out :: Vec<str>) Res<AllocError> {
     be.tree.expr_at(x).kind.match({
         Name(n) => out.add(n.text),
-        _       => Ok(()),
+        _       => Ok,
     })
 }

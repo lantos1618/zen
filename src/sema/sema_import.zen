@@ -54,12 +54,12 @@ report_missing = (c :: Checker, mi: usize, name: str, module: str, span: Span)
 // A name the language resolves by its spelling — `Res`, `Ok`, `Err` and
 // `None` — must still be bound in the module that writes it.
 require_bound* = (c :: Checker, mi: usize, name: str, span: Span)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     c.binds(mi, name).try().match({
-        true  => Ok(()),
+        true  => Ok,
         false => {
             c.missing_import(mi, name, span).try();
-            Ok(())
+            Ok
         },
     })
 }
@@ -104,35 +104,35 @@ core_source = (c: Checker, name: str) Res<str> {
 // `A = IoError | AllocError` joins types only when its members name types,
 // so a member naming an unimported standard type would silently become an
 // enum variant. Each such member is reported before any union is classified.
-check_union_imports* = (c :: Checker) Res<(), AllocError> {
+check_union_imports* = (c :: Checker) Res<AllocError> {
     Range(0, c.world.count()).loop((h, mi) { c.module_unions(mi).try() });
-    Ok(());
+    Ok;
 }
 
-module_unions = (c :: Checker, mi: usize) Res<(), AllocError> {
+module_unions = (c :: Checker, mi: usize) Res<AllocError> {
     c.world.table_at(mi).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(t) => {
             t.defs.loop((h, d) {
                 decl_at(c.tree, d.id).match({
-                    None    => Ok(()),
+                    None    => Ok,
                     Ok(row) => row.kind.match({
                         Enum(e) => c.union_members(mi, e),
-                        _       => Ok(()),
+                        _       => Ok,
                     }),
                 }).try();
             });
-            Ok(())
+            Ok
         },
     })
 }
 
-union_members = (c :: Checker, mi: usize, e: Enum) Res<(), AllocError> {
+union_members = (c :: Checker, mi: usize, e: Enum) Res<AllocError> {
     e.variants.loop((h, v) { c.union_member(mi, v).try() });
-    Ok(());
+    Ok;
 }
 
-union_member = (c :: Checker, mi: usize, v: Variant) Res<(), AllocError> {
+union_member = (c :: Checker, mi: usize, v: Variant) Res<AllocError> {
     name = v.name.text;
     bare = v.payload.match({ Ok(_) => false, None => true });
     own ::= c.alloc.Vec<Def>();
@@ -142,12 +142,12 @@ union_member = (c :: Checker, mi: usize, v: Variant) Res<(), AllocError> {
         None  => false,
     });
     (bare && own.len == 0 && !imported).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.standard_type(name).try().match({
-            false => Ok(()),
+            false => Ok,
             true  => {
                 c.missing_import(mi, name, v.name.span).try();
-                Ok(())
+                Ok
             },
         }),
     })

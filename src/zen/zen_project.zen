@@ -3,7 +3,7 @@
 
 { Alloc, AllocError } = std.mem
 { str, String } = std.text
-{ Res, Ok, Err, None, loop, Range, Path, join_path, Duration } = std.core
+{ Res, Ok, Err, None, loop, Range, Path, join_path, Duration, Error } = std.core
 { Map, Vec } = std.collections
 
 { BuildArgs, ProjectArgs, Emission, Target, Os, Arch, Abi, Dep, Codegen } = std.build
@@ -168,9 +168,9 @@ Trace = {
         });
     }
 
-    command = (self: @Self, a: Alloc, argv: Vec<str>) Res<(), AllocError> {
+    command = (self: @Self, a: Alloc, argv: Vec<str>) Res<AllocError> {
         self.on.match({
-            false => Ok(()),
+            false => Ok,
             true  => {
                 line ::= a.String().try();
                 argv.loop((h, i, word) {
@@ -178,7 +178,7 @@ Trace = {
                     line.add(word).try();
                 });
                 self.say(line.view());
-                Ok(())
+                Ok
             },
         })
     }
@@ -234,6 +234,7 @@ prepare_packages = (
 // An empty selection means `zen build` builds every executable. `zen run`
 // requires one unambiguous target.
 Unselected = { Unknown | Ambiguous | Empty }
+Unselected.impl(Error, {})
 
 select_exe = (planned: BuildPlan, named: str, execute: bool)
              Res<Res<ExeNode>, Unselected> {
@@ -725,11 +726,11 @@ Project = {
     // The listing is written before the record, so a record on disk always
     // has the listing it was built from.
     save_inputs = (self: @Self, head: Inputs, body: Res<Inputs>, record_path: str, paths_path: str)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         body.match({
-            None         => Ok(()),
+            None         => Ok,
             Ok(recorded) => recorded.exact.match({
-                false => Ok(()),
+                false => Ok,
                 true  => {
                     record ::= self.a.String().try();
                     record.add(head.record.view()).try();
@@ -741,7 +742,7 @@ Project = {
                             record.view()
                         ).ignore(),
                     });
-                    Ok(())
+                    Ok
                 },
             }),
         })
@@ -1032,7 +1033,7 @@ Project = {
         argv      :: Vec<str>,
         flags     : Vec<str>,
         family    : Family
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         optimize = exe.spec.optimize.value_or(self.job.mode.match({
             Debug   => Optimize.Debug,
             Release => Optimize.Speed,
@@ -1103,7 +1104,6 @@ Project = {
         });
         argv.add("-o").try();
         argv.add(output).try();
-        Ok(())
     }
 
     // CC/CFLAGS use quoted command words, never shell evaluation.
@@ -1149,7 +1149,7 @@ Project = {
     }
 
     add_dep = (self: @Self, name: str, argv :: Vec<str>)
-              Res<(), AllocError> {
+              Res<AllocError> {
         self.planned.libs.find((node) { node.name.eq(name) }).match({
             None       => {},
             Ok(native) => self.add_link_options(
@@ -1177,7 +1177,6 @@ Project = {
                 argv.add(option.view()).try();
             }),
         });
-        Ok(())
     }
 
     add_link_options = (
@@ -1185,7 +1184,7 @@ Project = {
         paths : Vec<str>,
         libs  : Vec<str>,
         argv  :: Vec<str>
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         paths.loop((h, path) {
             resolved = self.project_path(path).try();
             option   = self.a.String("-L{}", resolved.view()).try();
@@ -1195,16 +1194,16 @@ Project = {
             option = self.a.String("-l{}", lib).try();
             argv.add(option.view()).try();
         });
-        Ok(())
+        Ok
     }
 
     // Native implementations used by std travel with the toolchain, not each
     // project's build file. Generated calls identify the floors that survived
     // reachability, matching the compiler test harness's link contract.
     add_std_floors = (self: @Self, generated: str, argv :: Vec<str>)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
         self.env.fs.read(self.a, generated).match({
-            Err(_)     => Ok(()),
+            Err(_)     => Ok,
             Ok(source) => {
                 tls  ::= false;
                 math ::= false;
@@ -1217,7 +1216,7 @@ Project = {
                     argv.add("-lssl").try();
                     argv.add("-lcrypto").try();
                 });
-                Ok(())
+                Ok
             },
         })
     }

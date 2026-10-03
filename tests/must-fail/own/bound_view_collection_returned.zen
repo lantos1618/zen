@@ -15,8 +15,7 @@ Counting.impl(Alloc, {
     }
 })
 numbers = (counting: Counting) Vec<i32> { counting.Vec<i32>() }
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     v ::= numbers(Counting(base: env.mem.alloc(), tag: 1));
     v.add(1).try();
-    Ok(())
 }

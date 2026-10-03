@@ -35,9 +35,9 @@ Aligned* = {
 
     // One entry per source line by construction; a line past the table
     // is dropped.
-    record = (self :: @Self, line: usize, p: Pad) Res<(), AllocError> {
+    record = (self :: @Self, line: usize, p: Pad) Res<AllocError> {
         self.pads.set(line, p);
-        Ok(())
+        Ok
     }
 
     pad_at = (self: @Self, line: usize) Pad {
@@ -78,7 +78,7 @@ Aligned* = {
 
     // Pad every op in `[from, to)` to one column past the widest left side.
     align = (self :: @Self, ops: Vec<Op>, from: usize, to: usize)
-            Res<(), AllocError> {
+            Res<AllocError> {
         col :: usize = 0;
         Range(from, to).loop((h, i) {
             op = ops.ptr().read(i);
@@ -96,42 +96,42 @@ Aligned* = {
                 )).try();
             });
         });
-        Ok(());
+        Ok;
     }
 
-    align_all = (self :: @Self, ops: Vec<Op>) Res<(), AllocError> {
+    align_all = (self :: @Self, ops: Vec<Op>) Res<AllocError> {
         self.align(ops, 0, ops.len)
     }
 
     align_expr = (self :: @Self, a: Alloc, tree: Ast, e: Expr)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
         e.kind.match({
             Match(mt) => self.align_all(self.src.arm_ops(a, tree, mt).try()),
             Lambda(l) => self.align_all(self.src.param_ops(a, l.params).try()),
-            _         => Ok(()),
+            _         => Ok,
         })
     }
 
-    align_type = (self :: @Self, a: Alloc, t: Type) Res<(), AllocError> {
+    align_type = (self :: @Self, a: Alloc, t: Type) Res<AllocError> {
         t.kind.match({
             Fn(f) => self.align_all(self.src.param_ops(a, f.params).try()),
-            _     => Ok(()),
+            _     => Ok,
         })
     }
 
-    align_decl = (self :: @Self, a: Alloc, d: Decl) Res<(), AllocError> {
+    align_decl = (self :: @Self, a: Alloc, d: Decl) Res<AllocError> {
         d.kind.match({
             Function(f) => self.align_all(
                 self.src.param_ops(a, f.params).try()
             ),
-            _           => Ok(()),
+            _           => Ok,
         })
     }
 
     // Bindings align in runs: consecutive statements whose operators have
     // the same width.
     align_block = (self :: @Self, a: Alloc, tree: Ast, b: Block)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         ops = self.src.stmt_ops(a, tree, b).try();
         from :: usize = 0;
         Range(1, ops.len).loop((h, i) {
@@ -147,10 +147,10 @@ Aligned* = {
         b.stmts.loop((h, s) {
             s.kind.match({
                 Decl(d) => self.align_decl(a, d),
-                _       => Ok(()),
+                _       => Ok,
             }).try();
         });
-        Ok(());
+        Ok;
     }
 }
 

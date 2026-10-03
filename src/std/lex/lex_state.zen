@@ -15,14 +15,14 @@ Lexer* = {
     diags* :: Vec<Diag>,
 
     // Emit a token spanning `from` to the cursor.
-    emit* = (self :: @Self, kind: TokenKind, from: Pos) Res<(), AllocError> {
+    emit* = (self :: @Self, kind: TokenKind, from: Pos) Res<AllocError> {
         self.tokens.add(Token(kind: kind, span: self.span_from(from)));
     }
 
     // Report a fault spanning `from` to the cursor. `from` is where the fix
     // belongs, not where the scanner noticed: an unterminated string is
     // reported at its opening quote.
-    report* = (self :: @Self, fault: LexFault, from: Pos) Res<(), AllocError> {
+    report* = (self :: @Self, fault: LexFault, from: Pos) Res<AllocError> {
         self.diags.add(Diag(
             file: self.source.file,
             fault: fault,

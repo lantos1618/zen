@@ -5,12 +5,11 @@
 
 // A unit `.try()` in statement position evaluates its operand and emits no
 // payload read. Unit-payload Res has no stored Ok member to read.
-inner = () Res<(), AllocError> { Ok(()); }
+inner = () Res<AllocError> { Ok; }
 
-step = () Res<(), AllocError> {
+step = () Res<AllocError> {
     inner().try();
     println("stepped");
-    Ok(())
 }
 
 main = (env: Env) Res<i32, AllocError> {

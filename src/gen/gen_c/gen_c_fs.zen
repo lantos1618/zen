@@ -30,7 +30,7 @@ FsResult = {
     dst: str,
 
     chain = (self: @Self, be :: CBackend, n: usize)
-            Res<(), AllocError> {
+            Res<AllocError> {
         (n > 4).match({
             true  => be.write_assign_err(self.ret, fs_name(n), self.dst),
             false => self.branch(be, n),
@@ -38,13 +38,12 @@ FsResult = {
     }
 
     branch = (self: @Self, be :: CBackend, n: usize)
-             Res<(), AllocError> {
+             Res<AllocError> {
         be.open_ordinal_test(self.rc, n).try();
         be.write_assign_err(self.ret, fs_name(n), self.dst).try();
         be.close_else().try();
         self.chain(be, n + 1).try();
         be.close_brace().try();
-        Ok(())
     }
 }
 
@@ -58,17 +57,17 @@ FsSite = {
     ctx: Ctx,
 
     path = (self: @Self, be :: CBackend, i: usize, out :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
         be.str_arg(self.c, i, self.ctx, out)
     }
 
     reject = (self: @Self, be :: CBackend, what: str, out :: String)
-             Res<(), AllocError> {
+             Res<AllocError> {
         be.unsupported(self.id, what, out)
     }
 
     lock = (self: @Self, be :: CBackend, out :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
         be.need_fs();
         be.payload_type(self.ret, "Ok").match({
             None    => self.reject(
@@ -81,7 +80,7 @@ FsSite = {
     }
 
     lock_value = (self: @Self, be :: CBackend, lty: TyId, out :: String)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
         be.request_type(lty).try();
         i32_ty = be.check.types.prim("i32").try();
         path ::= be.alloc.String().try();
@@ -108,7 +107,7 @@ FsSite = {
     }
 
     cwd = (self: @Self, be :: CBackend, aty: TyId, out :: String)
-          Res<(), AllocError> {
+          Res<AllocError> {
         be.need_fs();
         be.payload_type(self.ret, "Ok").match({
             None    => self.reject(
@@ -121,7 +120,7 @@ FsSite = {
     }
 
     cwd_string = (self: @Self, be :: CBackend, sty: TyId, aty: TyId, out :: String)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
         be.field_of(sty, "data").try().match({
             None    => self.reject(
                 be,
@@ -133,7 +132,7 @@ FsSite = {
     }
 
     cwd_run = (self: @Self, be :: CBackend, sty: TyId, vty: TyId, aty: TyId,
-               out :: String) Res<(), AllocError> {
+               out :: String) Res<AllocError> {
         be.request_type(sty).try();
         be.request_type(vty).try();
         usize_ty = be.check.types.prim("usize").try();
@@ -179,7 +178,7 @@ FsSite = {
     }
 
     read = (self: @Self, be :: CBackend, aty: TyId, out :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
         be.need_fs();
         be.payload_type(self.ret, "Ok").match({
             None    => self.reject(
@@ -192,7 +191,7 @@ FsSite = {
     }
 
     read_string = (self: @Self, be :: CBackend, sty: TyId, aty: TyId,
-                   out :: String) Res<(), AllocError> {
+                   out :: String) Res<AllocError> {
         be.field_of(sty, "data").try().match({
             None    => self.reject(
                 be,
@@ -204,7 +203,7 @@ FsSite = {
     }
 
     read_run = (self: @Self, be :: CBackend, sty: TyId, vty: TyId,
-                aty: TyId, out :: String) Res<(), AllocError> {
+                aty: TyId, out :: String) Res<AllocError> {
         usize_ty = be.check.types.prim("usize").try();
         i32_ty   = be.check.types.prim("i32").try();
         be.request_type(sty).try();
@@ -264,7 +263,7 @@ FsBuffer = {
     rc: str,
     dst: str,
 
-    body = (self: @Self, be :: CBackend) Res<(), AllocError> {
+    body = (self: @Self, be :: CBackend) Res<AllocError> {
         call ::= be.alloc.String().try();
         args ::= be.alloc.String().try();
         args.fmt(", {}, 16", self.want).try();
@@ -279,7 +278,7 @@ FsBuffer = {
     }
 
     run = (self: @Self, be :: CBackend, slot: Slot, call: str)
-          Res<(), AllocError> {
+          Res<AllocError> {
         run ::= be.init_temp(slot.ret, "t", call).try();
         be.open_not_ok(run.view()).try();
         be.write_assign_err(self.ret, "OutOfMemory", self.dst).try();
@@ -312,11 +311,10 @@ FsBuffer = {
         self.write_ok(be, buf.view()).try();
         be.close_brace().try();
         be.close_brace().try();
-        Ok(())
     }
 
     write_ok = (self: @Self, be :: CBackend, buf: str)
-               Res<(), AllocError> {
+               Res<AllocError> {
         value ::= be.alloc.String().try();
         value.add("(").try();
         be.ctype(self.sty, value).try();
@@ -329,7 +327,7 @@ FsBuffer = {
     }
 
     write_vec = (self: @Self, be :: CBackend, buf: str, out :: String)
-                Res<(), AllocError> {
+                Res<AllocError> {
         out.add("(").try();
         be.ctype(self.vty, out).try();
         out.add("){ ").try();
@@ -338,7 +336,6 @@ FsBuffer = {
         be.write_vec_field(self.vty, "capacity", self.want, out, false).try();
         be.write_vec_field(self.vty, "alloc", self.al, out, false).try();
         out.add(" }").try();
-        Ok(())
     }
 }
 
@@ -348,12 +345,11 @@ FsBuffer = {
 // A path that cannot be stat'd is, for the purpose of "should I try to
 // open this", a path that is not there.
 lower_probe* = (be :: CBackend, c: Call, name: str, ctx: Ctx, out :: String)
-              Res<(), AllocError> {
+              Res<AllocError> {
     be.need_fs();
     path ::= be.alloc.String().try();
     be.str_arg(c, 0, ctx, path).try();
     out.fmt("(zg_fs_kind({}){})", path.view(), probe_test(name)).try();
-    Ok(());
 }
 
 probe_test = (name: str) str {
@@ -370,7 +366,7 @@ lower_write* = (
     ret : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.need_fs();
     i32_ty = be.check.types.prim("i32").try();
     path ::= be.alloc.String().try();
@@ -391,7 +387,7 @@ lower_write* = (
 }
 
 write_fs_call = (be :: CBackend, rc: str, fn: str, first: str, second: str)
-                Res<(), AllocError> {
+                Res<AllocError> {
     be.fmt("{rc} = {fn}{first}, {second});\n")
 }
 
@@ -404,14 +400,14 @@ lower_lock* = (
     ret : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     FsSite(id: id, c: c, ret: ret, ctx: ctx).lock(be, out)
 }
 
 // Status and descriptor are separate: a raw fd could collide with an error
 // ordinal. The caller owns `fd` because the Ok payload reads it afterward.
 write_lock_call = (be :: CBackend, rc: str, path: str, fd: str)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     line ::= be.alloc.String().try();
     line.add(rc).try();
     line.add(" = zg_fs_lock(").try();
@@ -434,7 +430,7 @@ lower_unlock* = (
     ret : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.need_fs();
     unknown = be.check.types.unknown().try();
     recv ::= be.alloc.String().try();
@@ -451,13 +447,12 @@ lower_unlock* = (
     arrow_field(ptr.view(), "fd", field).try();
     be.unlock_line(field.view()).try();
     out.add("0").try();
-    Ok(())
 }
 
 // `zg_fs_unlock(<field>);\n` — one statement, spelled here so no
 // format hole is asked to carry it. The fd is not a str and the floor
 // door converts nothing.
-unlock_line = (be :: CBackend, field: str) Res<(), AllocError> {
+unlock_line = (be :: CBackend, field: str) Res<AllocError> {
     be.fmt("zg_fs_unlock(").try();
     be.write(field).try();
     be.write(");\n")
@@ -466,7 +461,7 @@ unlock_line = (be :: CBackend, field: str) Res<(), AllocError> {
 // `<addr>-><name>` — the fd through a Lock pointer, spelled with the
 // member mangler so the C name cannot drift from the type's own.
 arrow_field = (addr: str, name: str, out :: String)
-              Res<(), AllocError> {
+              Res<AllocError> {
     out.add(addr).try();
     out.add("->").try();
     out.sym_member(name)
@@ -481,7 +476,7 @@ lower_remove* = (
     ret : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.need_fs();
     i32_ty  = be.check.types.prim("i32").try();
     bool_ty = be.check.types.prim("bool").try();
@@ -503,7 +498,7 @@ lower_remove* = (
 }
 
 write_remove_call = (be :: CBackend, rc: str, yes: str, path: str)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     be.fmt("{rc} = zg_fs_remove({path}, &{yes});\n")
 }
 
@@ -517,7 +512,7 @@ lower_mkdir* = (
     ret : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.need_fs();
     i32_ty  = be.check.types.prim("i32").try();
     bool_ty = be.check.types.prim("bool").try();
@@ -539,7 +534,7 @@ lower_mkdir* = (
 }
 
 write_mkdir_call = (be :: CBackend, rc: str, yes: str, path: str)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     be.fmt("{rc} = zg_fs_mkdir({path}, &{yes});\n")
 }
 
@@ -553,7 +548,7 @@ lower_read* = (
     aty : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     FsSite(id: id, c: c, ret: ret, ctx: ctx).read(be, aty, out)
 }
 
@@ -564,44 +559,42 @@ hold_alloc = (
     aty : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     sym_gen(out, "t", be.next_tmp()).try();
     value ::= be.alloc.String().try();
     be.arg_text(c, 0, aty, ctx, value).try();
     be.declare_temp(aty, out.view()).try();
     be.set_line(out.view(), value.view()).try();
-    Ok(());
 }
 
 write_size_call = (be :: CBackend, rc: str, path: str, want: str)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     be.fmt("{rc} = zg_fs_size({path}, &{want});\n")
 }
 
 unsupported_line = (be :: CBackend, id: ExprId, what: str)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     sink ::= be.alloc.String().try();
     be.unsupported(id, what, sink)
 }
 
-declare_ptr = (be :: CBackend, name: str) Res<(), AllocError> {
+declare_ptr = (be :: CBackend, name: str) Res<AllocError> {
     be.fmt("unsigned char *{name};\n")
 }
 
 read_ok_payload = (be :: CBackend, run: str, buf: str)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     value ::= be.alloc.String().try();
     value.fmt("(unsigned char *){run}.zg_data.").try();
     sym_member(value, "Ok").try();
     be.set_line(buf, value.view())
 }
 
-open_not_ok = (be :: CBackend, run: str) Res<(), AllocError> {
+open_not_ok = (be :: CBackend, run: str) Res<AllocError> {
     tag ::= be.alloc.String().try();
     sym_variant(tag, RES_PATH, "Ok").try();
     be.fmt("if ({run}.zg_tag != {}) {\n", tag.view()).try();
     be.indent();
-    Ok(());
 }
 
 write_read_call = (
@@ -611,7 +604,7 @@ write_read_call = (
     buf  : str,
     want : str,
     got  : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.fmt("{rc} = zg_fs_read({path}, {buf}, {want}, &{got});\n")
 }
 
@@ -624,9 +617,9 @@ write_vec_field = (
     value : str,
     out   :: String,
     first : bool
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.field_of(vty, name).try().match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(_) => write_named_init(name, value, out, first),
     })
 }
@@ -636,12 +629,11 @@ write_named_init = (
     value : str,
     out   :: String,
     first : bool
-) Res<(), AllocError> {
-    first.match({ true => Ok(()), false => out.add(", ") }).try();
+) Res<AllocError> {
+    first.match({ true => Ok, false => out.add(", ") }).try();
     out.add(".").try();
     out.sym_member(name).try();
     out.fmt(" = {value}").try();
-    Ok(());
 }
 
 // the failure chain — see the file header for the ordinal/name rule
@@ -667,17 +659,16 @@ fs_name_4 = (n: usize) str {
 // The final ordinal is a plain else; `remove` enters at 2 because absence is
 // not an error for that operation.
 fs_chain* = (be :: CBackend, ret: TyId, rc: str, dst: str, n: usize)
-           Res<(), AllocError> {
+           Res<AllocError> {
     FsResult(ret: ret, rc: rc, dst: dst).chain(be, n)
 }
 
 open_ordinal_test = (be :: CBackend, rc: str, n: usize)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     ord ::= be.alloc.String().try();
     ord.write_usize(n).try();
     be.fmt("if ({rc} == {}) {\n", ord.view()).try();
     be.indent();
-    Ok(());
 }
 
 lower_cwd* = (
@@ -688,6 +679,6 @@ lower_cwd* = (
     aty : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     FsSite(id: id, c: c, ret: ret, ctx: ctx).cwd(be, aty, out)
 }

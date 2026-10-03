@@ -2,7 +2,7 @@
 { Res, Ok, Err, Range } = std.core
 { Env } = std.env
 { println } = std.io
-check = (a: Alloc, pool: Ptr<Pool>) Res<(), AllocError> {
+check = (a: Alloc, pool: Ptr<Pool>) Res<AllocError> {
     bytes = a.raw(0, 16).try();
     (!bytes.is_null()).ensure(AllocError.OutOfMemory).try();
     a.free(bytes);
@@ -34,7 +34,6 @@ check = (a: Alloc, pool: Ptr<Pool>) Res<(), AllocError> {
     before = pool.read(0).allocations;
     Range<usize>(0, 1000).loop((i) { reusable = a.realloc<u64>(null_ptr<u64>(), 16).try(); a.free(reusable); });
     (pool.read(0).allocations == before && pool.read(0).reuses >= 1000).ensure(AllocError.OutOfMemory).try();
-    Ok(())
 }
 main = (env: Env) Res<i32, AllocError> {
     owner = env.mem.alloc();

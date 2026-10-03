@@ -27,11 +27,11 @@ ready_count = (result: WaitResult) usize { result.match({Ready(n) => n, Interrup
     false,
     1
 ); 0 }}) }
-drop_readiness = (a: Alloc) Res<(), ReadinessError> {
+drop_readiness = (a: Alloc) Res<ReadinessError> {
     readiness = Readiness.open(a, 8).try();
-    Ok(())
+    Ok
 }
-main = (env: Env) Res<(), AllocError | ReadinessError> {
+main = (env: Env) Res<AllocError | ReadinessError> {
     a = env.mem.alloc();
     check(Native.fixture_start() == 1, 2);
     before = Native.fixture_fd_count();
@@ -142,5 +142,4 @@ main = (env: Env) Res<(), AllocError | ReadinessError> {
     println(
         "PASS readiness read/write, identity, level triggering, timeout, interruption, modify/remove, EOF, invalid fd and close cleanup"
     );
-    Ok(())
 }

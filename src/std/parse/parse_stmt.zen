@@ -87,7 +87,7 @@ one_item = (p :: Parser, stmts :: Vec<Stmt>) Res<Res<ExprId>, AllocError> {
     });
 }
 
-nested_block = (p :: Parser, stmts :: Vec<Stmt>, m: Mark) Res<(), AllocError> {
+nested_block = (p :: Parser, stmts :: Vec<Stmt>, m: Mark) Res<AllocError> {
     id = p.block().try();
     p.push(stmts, StmtKind.Block(id), m);
 }
@@ -114,7 +114,7 @@ binding_item = (
     });
 }
 
-impl_item = (p :: Parser, stmts :: Vec<Stmt>, m: Mark) Res<(), AllocError> {
+impl_item = (p :: Parser, stmts :: Vec<Stmt>, m: Mark) Res<AllocError> {
     p.error(
         "`.impl` declares an impl, so it is legal only at module level, never inside a body"
     ).try();
@@ -123,11 +123,11 @@ impl_item = (p :: Parser, stmts :: Vec<Stmt>, m: Mark) Res<(), AllocError> {
 
 // A declaration, like its module-level form, ends at its body: a stray `;`
 // after a local function is named rather than read as a missing expression.
-decl_item = (p :: Parser, stmts :: Vec<Stmt>, m: Mark) Res<(), AllocError> {
+decl_item = (p :: Parser, stmts :: Vec<Stmt>, m: Mark) Res<AllocError> {
     d = p.declaration(false).try();
     p.push(stmts, StmtKind.Decl(d), m).try();
     p.at_kind(TokenKind.Semicolon).match({
-        false => Ok(()),
+        false => Ok,
         true  => {
             p.error(
                 "a declaration takes no `;`: `name = (..) T { .. }` inside a body declares a local function"
@@ -184,7 +184,7 @@ bind_mutable_typed = (
     stmts  :: Vec<Stmt>,
     m      : Mark,
     target : ExprId
-) Res<(), AllocError> {
+) Res<AllocError> {
     p.bump().try();
     p.at_kind(TokenKind.Eq).match({
         true  => p.bind_rest(stmts, m, target, None, true),
@@ -209,7 +209,7 @@ bind_typed = (
     stmts  :: Vec<Stmt>,
     m      : Mark,
     target : ExprId
-) Res<(), AllocError> {
+) Res<AllocError> {
     p.bump().try();
     p.at_kind(TokenKind.Eq).match({
         true  => {
@@ -237,7 +237,7 @@ old_typed_mutable = (
     m      : Mark,
     target : ExprId,
     t      : TypeId
-) Res<(), AllocError> {
+) Res<AllocError> {
     p.error(
         "a typed mutable local is written `x :: T = v`: `::` marks it mutable, as on a field or parameter, and the value follows `=`"
     ).try();
@@ -253,9 +253,9 @@ deferred = (
     target  : ExprId,
     t       : TypeId,
     mutable : bool
-) Res<(), AllocError> {
+) Res<AllocError> {
     p.tree.expr_at(target).kind.match({
-        Name(_) => Ok(()),
+        Name(_) => Ok,
         _       => p.error_at(
             "only a local name is declared without a value: write `name :: T;` or `name: T;`",
             p.tree.expr_at(target).span
@@ -275,7 +275,7 @@ bind = (
     m       : Mark,
     target  : ExprId,
     mutable : bool
-) Res<(), AllocError> {
+) Res<AllocError> {
     p.bind_rest(stmts, m, target, None, mutable)
 }
 
@@ -286,7 +286,7 @@ bind_rest = (
     target  : ExprId,
     t       : Res<TypeId>,
     mutable : bool
-) Res<(), AllocError> {
+) Res<AllocError> {
     p.eat(TokenKind.Eq).try() || p.eat(TokenKind.ColonColonEq).try();
     value = p.expr().try();
     p.expect_after(
@@ -306,7 +306,7 @@ expr_stmt = (
     stmts :: Vec<Stmt>,
     m     : Mark,
     e     : ExprId
-) Res<(), AllocError> {
+) Res<AllocError> {
     p.bump().try();
     p.push(stmts, StmtKind.Expr(ExprStmt(expr: e)), m);
 }
@@ -317,7 +317,7 @@ push = (
     stmts :: Vec<Stmt>,
     kind  : StmtKind,
     m     : Mark
-) Res<(), AllocError> {
+) Res<AllocError> {
     end = p.prev_end;
     stmts.add(Stmt(
         kind: kind,
@@ -328,9 +328,9 @@ push = (
 }
 
 // Recovery consumes one token to guarantee forward progress.
-skip_one = (p :: Parser) Res<(), AllocError> {
+skip_one = (p :: Parser) Res<AllocError> {
     (!p.at_eof()).then(() { p.bump().try(); });
-    Ok(());
+    Ok;
 }
 
 // Depth-limit recovery consumes no closer, so it must not claim trailing

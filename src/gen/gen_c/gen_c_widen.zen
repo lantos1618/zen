@@ -111,7 +111,7 @@ widen_expr* = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     unknown = be.check.types.unknown().try();
     cty     = be.ty_of(id, ctx, unknown).try();
     code ::= be.alloc.String().try();
@@ -205,7 +205,7 @@ set_expr* = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     unknown = be.check.types.unknown().try();
     cty     = be.ty_of(id, ctx, unknown).try();
     code ::= be.alloc.String().try();
@@ -229,7 +229,7 @@ write_set_value* = (
     member : TyId,
     set    : TyId,
     out    :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     out.add("(").try();
     be.ctype(set, out).try();
     out.add("){ .zg_tag = ").try();

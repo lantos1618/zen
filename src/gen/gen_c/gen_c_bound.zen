@@ -38,7 +38,7 @@
 // way back, under the header's rule that a conversion rebuilds.
 
 convert* = (be :: CBackend, code: str, src: TyId, dst: TyId, out :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
     src.eq(dst).match({
         true  => out.add(code),
         false => be.convert_kind(code, src, dst, out),
@@ -51,7 +51,7 @@ convert_kind = (
     src  : TyId,
     dst  : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.types().at(dst).match({
         Named(n) => be.convert_declared(code, src, dst, n, out),
         Res(r)   => be.convert_res(code, src, dst, r, out),
@@ -78,7 +78,7 @@ convert_set = (
     src  : TyId,
     dst  : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.tags_as_member(src, dst).match({
         false => out.add(code),
         true  => be.write_set_value(code, src, dst, out),
@@ -102,7 +102,7 @@ convert_declared = (
     dst  : TyId,
     n    : TyNamed,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.declared_carrier(src, dst).match({
         None  => be.convert_named(code, dst, n, out),
         Ok(v) => be.wrap_error(dst, v, code, out),
@@ -126,7 +126,7 @@ convert_named = (
     dst  : TyId,
     n    : TyNamed,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     is_ptr_named(be.types(), n).match({
         true  => be.write_cast(code, dst, out),
         false => out.add(code),
@@ -134,7 +134,7 @@ convert_named = (
 }
 
 write_cast* = (be :: CBackend, code: str, dst: TyId, out :: String)
-             Res<(), AllocError> {
+             Res<AllocError> {
     cty ::= be.alloc.String().try();
     be.ctype(dst, cty).try();
     out.fmt("(({}){code})", cty.view())
@@ -147,7 +147,7 @@ convert_res = (
     dst  : TyId,
     d    : TyRes,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.types().at(src).match({
         Res(s) => rebuild_res(be, code, src, s, dst, d, out),
         _      => out.add(code),
@@ -164,7 +164,7 @@ rebuild_res = (
     dst  : TyId,
     d    : TyRes,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.request_type(dst).try();
     tmp ::= be.init_temp(src, "t", code).try();
     out.fmt("({}.zg_tag == ", tmp.view()).try();
@@ -183,7 +183,7 @@ fail_arm = (
     d   : TyRes,
     dst : TyId,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     is_failure(d.form).match({
         true  => be.res_arm(tmp, "Err", s.error, d.error, dst, out),
         false => be.bare_arm("None", dst, out),
@@ -198,7 +198,7 @@ res_arm = (
     dp  : TyId,
     dst : TyId,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.is_unit(dp).match({
         true  => be.bare_arm(v, dst, out),
         false => be.payload_arm(tmp, v, sp, dp, dst, out),
@@ -206,10 +206,9 @@ res_arm = (
 }
 
 bare_arm = (be :: CBackend, v: str, dst: TyId, out :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
     be.arm_head(v, dst, out).try();
     out.add(" })").try();
-    Ok(());
 }
 
 payload_arm = (
@@ -220,7 +219,7 @@ payload_arm = (
     dp  : TyId,
     dst : TyId,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.arm_head(v, dst, out).try();
     mem ::= be.alloc.String().try();
     mem.sym_member(v).try();
@@ -233,12 +232,11 @@ payload_arm = (
 }
 
 arm_head = (be :: CBackend, v: str, dst: TyId, out :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
     cty ::= be.alloc.String().try();
     be.ctype(dst, cty).try();
     out.fmt("(({}){ .zg_tag = ", cty.view()).try();
     out.sym_variant(RES_PATH, v).try();
-    Ok(());
 }
 
 // Calls through a bound record dispatch through the receiver's slot. A call
@@ -254,7 +252,7 @@ lower_fat_call* = (
     f   : Function,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.member_answered(f, rty, a.name.text).try().match({
         false => be.unsupported(
             id,
@@ -446,9 +444,9 @@ BoundDispatch = {
     // or argument to say it any other way: the written type arguments
     // bind the member's own parameters, in order.
     explicit_targs = (self: @Self, be :: CBackend, owner: str, out :: Inst)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
         (self.call.targs.len > 0).match({
-            false => Ok(()),
+            false => Ok,
             true  => {
                 vars ::= be.alloc.Vec<TyId>();
                 tparam_vars(be.check, self.slot.f.tparams, owner, vars).try();
@@ -462,7 +460,7 @@ BoundDispatch = {
     }
 
     lower = (self: @Self, be :: CBackend, id: ExprId, a: Access,
-             out :: String) Res<(), AllocError> {
+             out :: String) Res<AllocError> {
         call = self.settle(be).try();
         call.settled(be).match({
             false => be.unsupported(
@@ -503,7 +501,7 @@ BoundCall = {
     // The receiver is evaluated once because the slot and `zg_self` both read
     // it. Arguments are converted from settled declarations to erased slots.
     emit = (self: @Self, be :: CBackend, a: Access, out :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
         recv ::= be.alloc.String().try();
         expr(be, a.base, self.dispatch.ctx, self.dispatch.receiver, recv).try();
         r    ::= be.init_temp(self.dispatch.receiver, "t", recv.view()).try();
@@ -521,16 +519,16 @@ BoundCall = {
     }
 
     args = (self: @Self, be :: CBackend, out :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
         self.dispatch.call.args.loop((h, i, arg) {
             hold = be.holds(self.dispatch.call, i + 1, 1);
             self.arg(be, arg, i, hold, out).try();
         });
-        Ok(())
+        Ok
     }
 
     arg = (self: @Self, be :: CBackend, arg: Arg, i: usize, hold: bool,
-           out :: String) Res<(), AllocError> {
+           out :: String) Res<AllocError> {
         want = be.sub_with(
             self.declared.get(i).value_or(TyId(index: 0)),
             self.targs
@@ -544,19 +542,18 @@ BoundCall = {
             self.dispatch.slot.params.get(i).value_or(TyId(index: 0)),
             out
         ).try();
-        Ok(())
     }
 
     sizes = (self: @Self, be :: CBackend, out :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
         Range(0, self.targs.len()).loop((h, i) {
             self.size(be, i, out).try();
         });
-        Ok(())
+        Ok
     }
 
     size = (self: @Self, be :: CBackend, i: usize, out :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
         self.targs.arg_at(i).match({
             None  => out.add(", 1"),
             Ok(t) => be.write_sizeof(t, out),
@@ -566,7 +563,7 @@ BoundCall = {
     // Unit slots run for effect. Value slots rebuild the erased result at the
     // settled return type.
     result = (self: @Self, be :: CBackend, call: str, out :: String)
-             Res<(), AllocError> {
+             Res<AllocError> {
         be.is_unit(self.dispatch.slot.ret).match({
             true  => be.fat_effect(call, out),
             false => self.value_back(be, call, out),
@@ -574,7 +571,7 @@ BoundCall = {
     }
 
     value_back = (self: @Self, be :: CBackend, call: str, out :: String)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
         real = self.real_ret(be).try();
         be.request_type(self.dispatch.slot.ret).try();
         be.request_type(real).try();
@@ -611,9 +608,9 @@ declared_params = (
     f    : Function,
     sctx : Ctx,
     out  :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     f.params.loop((h, i, p) { be.declared_param(p, i, sctx, out).try() });
-    Ok(());
+    Ok;
 }
 
 declared_param = (
@@ -622,15 +619,15 @@ declared_param = (
     i    : usize,
     sctx : Ctx,
     out  :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     (i == 0).match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.add_declared(p, sctx, out),
     })
 }
 
 add_declared = (be :: CBackend, p: Param, sctx: Ctx, out :: Vec<TyId>)
-               Res<(), AllocError> {
+               Res<AllocError> {
     out.add(be.check.param_type(p, sctx).try())
 }
 
@@ -640,11 +637,11 @@ infer_targs = (
     declared : Vec<TyId>,
     ctx      : Ctx,
     out      :: Inst
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.args.loop((h, i, arg) {
         be.infer_one(arg, i, declared, ctx, out).try();
     });
-    Ok(());
+    Ok;
 }
 
 infer_one = (
@@ -654,15 +651,15 @@ infer_one = (
     declared : Vec<TyId>,
     ctx      : Ctx,
     out      :: Inst
-) Res<(), AllocError> {
+) Res<AllocError> {
     declared.get(i).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(d) => be.infer_against(arg, d, ctx, out),
     })
 }
 
 infer_against = (be :: CBackend, arg: Arg, d: TyId, ctx: Ctx, out :: Inst)
-                Res<(), AllocError> {
+                Res<AllocError> {
     unknown = be.check.types.unknown().try();
     actual  = be.arg_type(arg.value, ctx, unknown).try();
     unify(be, d, actual, out)
@@ -684,7 +681,7 @@ all_closed = (be: CBackend, targs: Inst) bool {
 
 // Let C size concrete layouts; unit has no C object type and occupies one byte.
 write_sizeof* = (be :: CBackend, t: TyId, out :: String)
-               Res<(), AllocError> {
+               Res<AllocError> {
     be.is_unit(t).match({
         true  => out.add(", 1"),
         false => {
@@ -697,7 +694,7 @@ write_sizeof* = (be :: CBackend, t: TyId, out :: String)
 }
 
 fat_effect = (be :: CBackend, call: str, out :: String)
-             Res<(), AllocError> {
+             Res<AllocError> {
     be.fmt("{call};\n").try();
     out.add("0")
 }

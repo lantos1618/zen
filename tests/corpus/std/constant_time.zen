@@ -45,7 +45,7 @@ edge = (i: usize) u64 {
     })
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     // Every u8 pair: eq, ne, lt, gt and select.
     bad :: usize = 0;
     Range<usize>(0, 256).loop((i) {
@@ -221,5 +221,4 @@ main = (env: Env) Res<(), AllocError> {
     println("span swap(1): {} {}", p.read(0), q.read(0));
     ct_cmov(p, q, 4, t);
     println("span cmov(1): {} {}", p.read(3), q.read(3));
-    Ok(())
 }

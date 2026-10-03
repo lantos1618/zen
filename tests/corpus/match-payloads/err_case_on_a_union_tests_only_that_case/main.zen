@@ -11,13 +11,15 @@
 // members are read off its declaration rather than the inline spelling,
 // and through member names (`Err(Fail)`), which test the member tag.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
 Kind = { Io | Protocol | Authentication }
+Kind.impl(Error, {})
 Fail = { Mismatch | Accepted }
+Fail.impl(Error, {})
 Both = Kind | Fail
 
 pick = (n: i32) Res<i32, Kind | Fail> {
@@ -61,8 +63,8 @@ declared = (r: Res<i32, Both>) str {
 
 // The shape the vacuous check took in practice: one case accepted,
 // everything else a failure.
-expect_protocol = (r: Res<i32, Kind | Fail>) Res<(), Fail> {
-    r.match({ Err(Protocol) => Ok(()), _ => Err(Fail.Accepted) });
+expect_protocol = (r: Res<i32, Kind | Fail>) Res<Fail> {
+    r.match({ Err(Protocol) => Ok, _ => Err(Fail.Accepted) });
 }
 
 main = (env: Env) Res<i32, AllocError> {

@@ -42,7 +42,7 @@ quarter = (a: u32x4, b: u32x4, c: u32x4, d: u32x4) u32x4 {
     lanes_u32x4(a2.lane(0), b2.lane(0), c2.lane(0), d2.lane(0))
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a = lanes_u32x4(1, 2, 3, 4294967295);
     b = splat_u32x4(16);
     show(a.add_wrap(b));
@@ -119,5 +119,4 @@ main = (env: Env) Res<(), AllocError> {
         once(calls, 4)
     );
     println("once: {} {}", once_vec.lane(3), calls);
-    Ok(())
 }

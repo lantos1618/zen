@@ -776,7 +776,7 @@ Mangled = {
         n = self.number().try();
         (self.at + n <= self.text.len).ensure().try();
         self.at = self.at + n;
-        Ok(())
+        Ok
     }
 
     types = (self :: @Self) Res<()> {
@@ -791,7 +791,7 @@ Mangled = {
         tag = self.text.index(self.at);
         self.at = self.at + 1;
         (tag == 'z' || tag == 'q').match({
-            true  => Ok(()),
+            true  => Ok,
             false => (tag == 'b').match({
                 true  => self.component(),
                 false => (tag == 't').match({
@@ -805,7 +805,7 @@ Mangled = {
                                 self.at = self.at + 1;
                                 self.types()
                             },
-                            false => Ok(()),
+                            false => Ok,
                         })
                     },
                     false => (tag == 'f').match({

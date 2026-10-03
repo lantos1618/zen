@@ -17,15 +17,16 @@
 // arm naming a member of a union-of-enums is a catch-all (issue #735), so
 // `Err(_)` is the only arm a caller can spell.
 
-{ Res, Ok, IoError, WriteError, Sink } = std.core
+{ Res, Ok, IoError, WriteError, Sink, Error } = std.core
 { Alloc, AllocError } = std.mem
 { String } = std.text
 { Env } = std.env
 { println } = std.io
 
 ParseError = { | NotANumber }
+ParseError.impl(Error, {})
 
-format_label = (out :: Sink) Res<(), WriteError> {
+format_label = (out :: Sink) Res<WriteError> {
     out.fmt("label {}", 1)
 }
 

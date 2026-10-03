@@ -110,7 +110,7 @@ Graph = {
         comp.add(mi).try();
         onward.loop((h, j) {
             (j == mi).match({
-                true  => Ok(()),
+                true  => Ok,
                 false => self.add_if_reaches(mi, j, comp),
             }).try();
         });
@@ -118,10 +118,10 @@ Graph = {
     }
 
     add_if_reaches = (self: @Self, mi: usize, j: usize, comp :: Vec<usize>)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
         back = self.reach_from(j).try();
         mi.is_in(back).match({
-            false => Ok(()),
+            false => Ok,
             true  => comp.add(j),
         })
     }
@@ -215,25 +215,25 @@ Graph = {
 
     // The constant graph: an edge from each module-level constant to
     // every other module whose constant it names.
-    add_edges = (self :: @Self) Res<(), AllocError> {
+    add_edges = (self :: @Self) Res<AllocError> {
         sites = self.const_sites().try();
         eid ::= ExprId(index: 0);
         Range(0, self.tree.expr_ids()).loop((h, _) {
             e = self.tree.expr_at(eid);
             e.kind.match({
                 Name(n) => self.name_edges(sites, e.span, n.text),
-                _       => Ok(()),
+                _       => Ok,
             }).try();
             eid = ExprId(index: eid.index + 1);
         });
-        Ok(());
+        Ok;
     }
 
     const_sites = (self: @Self) Res<Vec<ConstSite>, AllocError> {
         sites ::= self.alloc.Vec<ConstSite>();
         Range(0, self.tree.module_count()).loop((h, mi) {
             self.tree.module_at(mi).match({
-                None  => Ok(()),
+                None  => Ok,
                 Ok(m) => decl_const_sites(m, mi, sites),
             }).try();
         });
@@ -241,30 +241,30 @@ Graph = {
     }
 
     name_edges = (self :: @Self, sites: Vec<ConstSite>, at: Span, name: str)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
         site_of(sites, at).match({
-            None   => Ok(()),
+            None   => Ok,
             Ok(mi) => self.resolved_edges(mi, name),
         })
     }
 
     resolved_edges = (self :: @Self, mi: usize, name: str)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
         found ::= self.alloc.Vec<Def>();
         self.world.defs_of(mi, name, found).try();
         found.loop((h, d) {
             other = d.id.module.to_usize();
             (is_const(d.kind) && other != mi).match({
-                false => Ok(()),
+                false => Ok,
                 true  => self.add_edge(Edge(from: mi, to: other)),
             }).try();
         });
-        Ok(());
+        Ok;
     }
 
-    add_edge = (self :: @Self, e: Edge) Res<(), AllocError> {
+    add_edge = (self :: @Self, e: Edge) Res<AllocError> {
         e.is_in(self.edges).match({
-            true  => Ok(()),
+            true  => Ok,
             false => self.edges.add(e),
         })
     }
@@ -286,10 +286,10 @@ Search = {
     closed :: Vec<usize>,
 
     // The first edge back to `start` closes a shortest cycle.
-    take = (self :: @Self, to: usize, at: usize) Res<(), AllocError> {
+    take = (self :: @Self, to: usize, at: usize) Res<AllocError> {
         (to == self.start).match({
             true  => (self.closed.len == 0).match({
-                false => Ok(()),
+                false => Ok,
                 true  => self.closed.add(at),
             }),
             false => self.open(to, at),
@@ -297,9 +297,9 @@ Search = {
     }
 
     // Inside the component only: an edge leaving it never comes back.
-    open = (self :: @Self, to: usize, at: usize) Res<(), AllocError> {
+    open = (self :: @Self, to: usize, at: usize) Res<AllocError> {
         (to.is_in(self.comp) && !to.is_in(self.order)).match({
-            false => Ok(()),
+            false => Ok,
             true  => { self.order.add(to).try(); self.prev.add(at) },
         })
     }
@@ -341,14 +341,14 @@ say_self_import = (m: Module, at: Span, out :: String)
 }
 
 decl_const_sites = (m: Module, mi: usize, sites :: Vec<ConstSite>)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     m.decls.loop((h, d) {
         d.kind.match({
             Const(_) => sites.add(ConstSite(module: mi, span: d.span)),
-            _        => Ok(()),
+            _        => Ok,
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
 // Which module-level constant this expression is written inside.
@@ -372,6 +372,6 @@ is_const = (k: DefKind) bool {
     })
 }
 
-write_where = (out :: String, at: Span) Res<(), AllocError> {
+write_where = (out :: String, at: Span) Res<AllocError> {
     out.fmt("{}:{}: ", at.file, at.start)
 }

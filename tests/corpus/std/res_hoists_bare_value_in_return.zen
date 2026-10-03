@@ -3,11 +3,12 @@
 // Res<i32, E> function exactly as `Ok(n * 2);` does. only success
 // lifts - the Err below is written out, and always will be
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { Env } = std.env
 { println } = std.io
 
 CalcError = { | Negative }
+CalcError.impl(Error, {})
 
 // closes with a bare i32 on one path and an explicit Err on the
 // other. if hoisting fired for failure too, the reason would be

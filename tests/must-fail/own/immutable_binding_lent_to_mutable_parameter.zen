@@ -8,9 +8,8 @@
 // caller's counter; `counter` is a `:` binding.
 Counter = { n :: i32 }
 bump = (counter :: Counter) { counter.n = counter.n + 1; }
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     counter = Counter(n: 1);
     bump(counter);
     println("{}", counter.n);
-    Ok(())
 }

@@ -101,23 +101,22 @@ binary = (tree :: Ast, op: BinOp, lhs: ExprId, rhs: ExprId, line: usize)
 // ---------------------------------------------------------------------
 
 asked = (c :: Checker, a: Alloc, label: str, id: ExprId, ctx: Ctx)
-        Res<(), AllocError> {
+        Res<AllocError> {
     before = c.diag_count();
     c.type_of(id, ctx).try();
     added = c.diag_count() - before;
     println("{}: {} diagnostic(s)", label, added);
     (added > 0).then(() { show(c, a, c.diag_count() - 1).try() });
-    Ok(());
+    Ok;
 }
 
-show = (c :: Checker, a: Alloc, i: usize) Res<(), AllocError> {
+show = (c :: Checker, a: Alloc, i: usize) Res<AllocError> {
     out ::= a.String().try();
     c.diag_at(i).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(d) => d.render(c.types, out),
     }).try();
     println("    {}", out.view());
-    Ok(());
 }
 
 main = (env: Env) Res<i32, AllocError> {

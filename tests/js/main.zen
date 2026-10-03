@@ -242,7 +242,7 @@ Runner = {
     }
 
     // KEEP_ARTIFACTS=1 keeps a passing test's directory too.
-    settle = (self: @Self, dir: str, o: Outcome, compile: str, run: str, out: str, err: str) Res<(), AllocError> {
+    settle = (self: @Self, dir: str, o: Outcome, compile: str, run: str, out: str, err: str) Res<AllocError> {
         is_pass(o.verdict).match({
             true  => {
                 (!self.keep).then(() {
@@ -260,7 +260,7 @@ Runner = {
                 self.write(dir, "verdict.txt", self.a.String("{} {}\n", verdict_name(o.verdict), o.reason).try().view());
             },
         });
-        Ok(())
+        Ok
     }
 
     write = (self: @Self, dir: str, name: str, text: str) {
@@ -486,7 +486,7 @@ clip = (text: str) str {
 }
 
 // Pass rate per corpus lane, then the total.
-report_lanes = (a: Alloc, outcomes: Vec<Outcome>) Res<(), AllocError> {
+report_lanes = (a: Alloc, outcomes: Vec<Outcome>) Res<AllocError> {
     lanes ::= a.Vec<Name>();
     outcomes.loop((o) { (!named(lanes, o.lane)).then(() { lanes.add(Name(text: o.lane)).try(); }); });
     sort(lanes, a).try();
@@ -512,7 +512,6 @@ report_lanes = (a: Alloc, outcomes: Vec<Outcome>) Res<(), AllocError> {
         println("{}\t{}\t{}\t{}\t{}\t{}", lane, pass, fail, unsupported, broken, pass + fail + unsupported + broken);
     });
     println("js-corpus: {} of {} pass", all_pass, outcomes.len);
-    Ok(())
 }
 
 // Sorting orders test paths and lane names bytewise.

@@ -22,9 +22,9 @@
 // caller receives is whatever the epilogue's last call left behind
 // instead of a built Res. The match below then answers neither arm and
 // traps in its unreachable one instead of printing ok.
-inner = () Res<(), AllocError> { Ok(()) }
+inner = () Res<AllocError> { Ok }
 
-unitTail = () Res<(), AllocError> {
+unitTail = () Res<AllocError> {
     s = @scope;
     s.defer(() { println("cleanup") });
     inner().try()

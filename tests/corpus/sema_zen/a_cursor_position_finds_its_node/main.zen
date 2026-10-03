@@ -20,7 +20,7 @@ SRC: str = "add = (a: i32, b: i32) i32 { a + b }\npick = (n: i32) i32 { [i32, 4]
 // what the node under `line:col` is, and what type it has. Two asks of
 // one position, which is what a hover does.
 hover = (c :: Checker, a: Alloc, line: usize, col: usize)
-        Res<(), AllocError> {
+        Res<AllocError> {
     p = Pos(line: line, col: col);
     c.tree.expr_node_at("in.zen", p).match({
         None  => println("{}:{} is in no expression", line, col),
@@ -31,7 +31,7 @@ hover = (c :: Checker, a: Alloc, line: usize, col: usize)
 // `check_all` has already typed every node, so hover reads the memo rather
 // than checking the expression again.
 show = (c :: Checker, a: Alloc, line: usize, col: usize, e: ExprId)
-       Res<(), AllocError> {
+       Res<AllocError> {
     out ::= a.String().try();
     c.expr_memo.get(e).match({
         None     => out.add("not checked").try(),
@@ -48,17 +48,15 @@ show = (c :: Checker, a: Alloc, line: usize, col: usize, e: ExprId)
         span.end.col,
         out.view()
     );
-    Ok(());
 }
 
 // the family the general query answers with, so the same position can
 // be shown to reach a TYPE node as well as an expression
-family = (c :: Checker, line: usize, col: usize) Res<(), AllocError> {
+family = (c :: Checker, line: usize, col: usize) Res<AllocError> {
     c.tree.node_at("in.zen", Pos(line: line, col: col)).match({
         None     => println("{}:{} is in no node", line, col),
         Ok(node) => println("{}:{} -> {}", line, col, kind_of(node)),
     });
-    Ok(());
 }
 
 kind_of = (node: NodeRef) str {

@@ -89,7 +89,7 @@ Out = {
 
     // Declarations and their trivia, in source order.
     write_module = (self :: @Self, a: Alloc, al: Aligned, p: Parsed)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         p.m.decls.loop((h, i, d) {
             self.write_trivia(p.tree, d.leading).try();
             self.write_decl(a, al, p, i, d).try();
@@ -99,7 +99,7 @@ Out = {
 
     // Comments are copied as source slices and are not rewrapped.
     write_trivia = (self :: @Self, tree: Ast, run: TriviaRun)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         Range(0, run.len).loop((h, i) {
             piece = tree.trivia_at(run, i);
             piece.kind.match({
@@ -107,7 +107,7 @@ Out = {
                 _     => self.say_at(piece.span.start.col, piece.text),
             }).try();
         });
-        Ok(());
+        Ok;
     }
 
     // A declaration's bytes run to the next printable item, not to
@@ -119,36 +119,36 @@ Out = {
         p    : Parsed,
         i    : usize,
         d    : Decl
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         from = p.src.offset(d.span.start);
         to   = p.src.trim_back(from, p.src.offset(p.next_start(i)));
         text = al.padded(a, from, to, d.span.start.line).try();
         self.say(text.view())
     }
 
-    say = (self :: @Self, s: str) Res<(), AllocError> {
+    say = (self :: @Self, s: str) Res<AllocError> {
         self.say_at(FIRST, s)
     }
 
-    say_at = (self :: @Self, col: usize, s: str) Res<(), AllocError> {
+    say_at = (self :: @Self, col: usize, s: str) Res<AllocError> {
         self.open().try();
         Range(FIRST, col).loop((h, _) { self.text.add(' ').try() });
         self.text.add(s).try();
         self.text.add('\n')
     }
 
-    blank = (self :: @Self) Res<(), AllocError> {
+    blank = (self :: @Self) Res<AllocError> {
         self.owed = true;
-        Ok(());
+        Ok;
     }
 
-    open = (self :: @Self) Res<(), AllocError> {
+    open = (self :: @Self) Res<AllocError> {
         (self.owed && self.started).then(() {
             self.text.add('\n').try();
         });
         self.owed    = false;
         self.started = true;
-        Ok(());
+        Ok;
     }
 
     view = (self: @Self) str { self.text.view() }

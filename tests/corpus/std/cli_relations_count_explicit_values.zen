@@ -40,13 +40,13 @@ main = (env: Env) Res<i32, AllocError> {
     Ok(0)
 }
 
-show = (a: Alloc, model: Command<Id>, parsed: Matches<Id>) Res<(), AllocError> {
+show = (a: Alloc, model: Command<Id>, parsed: Matches<Id>) Res<AllocError> {
     parsed.problem.match({
-        Ok(usage) => {
+        Err(usage) => {
             message = usage.message(a, model.name).try();
             println("error: {}", message.view());
         },
-        None      => {
+        Ok         => {
             out ::= a.String().try();
             parsed.found.loop((f) {
                 origin = f.origin.match({ Line => "line", Variable => "env", Default => "default" });
@@ -55,7 +55,6 @@ show = (a: Alloc, model: Command<Id>, parsed: Matches<Id>) Res<(), AllocError> {
             println("ok{}", out.view());
         },
     });
-    Ok(())
 }
 
 line = (a: Alloc, words: str) Res<Vec<str>, AllocError> {

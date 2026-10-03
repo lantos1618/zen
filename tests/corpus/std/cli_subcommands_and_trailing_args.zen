@@ -49,15 +49,15 @@ run = (
     a     : Alloc,
     root  : Command<Tool>,
     words : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     argv   = line(a, words).try();
     parsed = root.parse(env, argv, 1).try();
     parsed.problem.match({
-        Ok(usage) => {
+        Err(usage) => {
             message = usage.message(a, root.name).try();
             println("error: {}", message.view());
         },
-        None      => parsed.picked.match({
+        Ok         => parsed.picked.match({
             None       => println("no command; help={}", parsed.help),
             Ok(picked) => picked.id.match({
                 Verbose => (),
@@ -71,11 +71,11 @@ run = (
                             print("{}", text.view());
                         },
                         false => child.problem.match({
-                            Ok(usage) => {
+                            Err(usage) => {
                                 message = usage.message(a, model.name).try();
                                 println("error: {}", message.view());
                             },
-                            None      => {
+                            Ok         => {
                                 dry  ::= false;
                                 name ::= "";
                                 child.found.loop((f) {
@@ -98,7 +98,6 @@ run = (
             }),
         }),
     });
-    Ok(())
 }
 
 line = (a: Alloc, words: str) Res<Vec<str>, AllocError> {

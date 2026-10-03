@@ -20,70 +20,69 @@ Layout = {
     path :: Vec<Frame>,
     done :: Vec<DeclId>,
 
-    all = (self :: @Self, c :: Checker) Res<(), AllocError> {
+    all = (self :: @Self, c :: Checker) Res<AllocError> {
         Range(0, c.world.count()).loop((h, mi) {
             self.module(c, mi).try();
         });
-        Ok(())
+        Ok
     }
 
-    module = (self :: @Self, c :: Checker, mi: usize) Res<(), AllocError> {
+    module = (self :: @Self, c :: Checker, mi: usize) Res<AllocError> {
         c.world.table_at(mi).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(t) => self.table(c, t),
         })
     }
 
     table = (self :: @Self, c :: Checker, t: ModuleTable)
-            Res<(), AllocError> {
+            Res<AllocError> {
         t.defs.loop((h, d) { self.root(c, d).try() });
-        Ok(())
+        Ok
     }
 
-    root = (self :: @Self, c :: Checker, d: Def) Res<(), AllocError> {
+    root = (self :: @Self, c :: Checker, d: Def) Res<AllocError> {
         c.struct_of(d.id).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(s) => self.enter(c, d.id, s, s.name),
         })
     }
 
     enter = (self :: @Self, c :: Checker, id: DeclId, s: Struct, site: Ident)
-            Res<(), AllocError> {
+            Res<AllocError> {
         id.is_in(self.done).match({
-            true  => Ok(()),
+            true  => Ok,
             false => self.walk(c, id, s, site),
         })
     }
 
     walk = (self :: @Self, c :: Checker, id: DeclId, s: Struct, site: Ident)
-           Res<(), AllocError> {
+           Res<AllocError> {
         self.path.add(Frame(id: id, site: site)).try();
         s.members.loop((h, m) { self.field(c, m).try() });
         self.path.take(self.path.len - 1);
         self.done.add(id).try();
-        Ok(())
     }
 
     // Constants and methods occupy no per-instance storage.
-    field = (self :: @Self, c :: Checker, m: Member) Res<(), AllocError> {
+    field = (self :: @Self, c :: Checker, m: Member) Res<AllocError> {
         m.kind.match({
             Field(f) => self.typed(c, f),
-            _        => Ok(()),
+            _        => Ok,
         })
     }
 
-    typed = (self :: @Self, c :: Checker, f: Field) Res<(), AllocError> {
+    typed = (self :: @Self, c :: Checker, f: Field) Res<AllocError> {
         f.type.match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(t) => self.edge_from_top(c, t, f.name),
         })
     }
 
     // Field types resolve in the module of the struct atop the path.
     edge_from_top = (self :: @Self, c :: Checker, t: TypeId, site: Ident)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
         self.path.get(self.path.len - 1).match({
-            None   => Ok(()),
+            None   => Ok,
             Ok(fr) => self.edge_from(c, fr, t, site),
         })
     }
@@ -95,18 +94,18 @@ Layout = {
         fr    : Frame,
         t     : TypeId,
         site  : Ident
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         poison = c.types.unknown().try();
         ctx    = Ctx(fr.id.module.to_usize(), poison);
         ty     = c.type_from_ast(t, ctx).try();
         c.named_decl(ty).match({
-            None     => Ok(()),
+            None     => Ok,
             Ok(next) => self.step(c, next, site),
         })
     }
 
     step = (self :: @Self, c :: Checker, next: DeclId, site: Ident)
-           Res<(), AllocError> {
+           Res<AllocError> {
         index_on(self.path, next).match({
             Ok(k) => self.close(c, k, site),
             None  => self.descend(c, next, site),
@@ -114,16 +113,16 @@ Layout = {
     }
 
     descend = (self :: @Self, c :: Checker, next: DeclId, site: Ident)
-              Res<(), AllocError> {
+              Res<AllocError> {
         c.struct_of(next).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(s) => self.enter(c, next, s, site),
         })
     }
 
     // Diagnose the earliest source edge in the cycle for a stable result.
     close = (self :: @Self, c :: Checker, k: usize, site: Ident)
-            Res<(), AllocError> {
+            Res<AllocError> {
         blame ::= site;
         Range(k + 1, self.path.len).loop((h, i) {
             blame = earlier(blame, site_at(self.path, i, blame));
@@ -134,18 +133,17 @@ Layout = {
             SemaFault.InfiniteSize(NameFault(name: blame.text))
         ).try();
         self.seal(k).try();
-        Ok(())
     }
 
     // Mark all structs in the cycle to avoid rotated duplicate diagnostics.
-    seal = (self :: @Self, k: usize) Res<(), AllocError> {
+    seal = (self :: @Self, k: usize) Res<AllocError> {
         Range(k, self.path.len).loop((h, i) {
             self.path.get(i).match({
-                None   => Ok(()),
+                None   => Ok,
                 Ok(fr) => self.done.add(fr.id),
             }).try();
         });
-        Ok(())
+        Ok
     }
 }
 
@@ -154,7 +152,7 @@ Layout = (a: Alloc) Layout {
 }
 
 // Reject every by-value struct cycle in the program.
-check_layout* = (c :: Checker) Res<(), AllocError> {
+check_layout* = (c :: Checker) Res<AllocError> {
     state ::= c.alloc.Layout();
     state.all(c)
 }

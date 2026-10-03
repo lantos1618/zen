@@ -12,29 +12,29 @@
 
 // `g = f` on a value with a `Drop` impl would drop it twice.
 check_drop_copy* = (c :: Checker, o :: Own, b: Bind, ctx: Ctx)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     node = c.tree.expr_at(b.value);
     node.kind.match({
         Name(n) => c.drop_copy_of_name(o, node, n.text),
         // Construction arguments follow constructor ownership rules.
-        _       => Ok(()),
+        _       => Ok,
     })
 }
 
 // A name this frame does not bind is a global or a constant, and it is
 // not a place this rule has an opinion about.
 drop_copy_of_name = (c :: Checker, o :: Own, node: Expr, text: str)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     o.find_var(text).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(_) => c.refuse_if_drop(node.span, o.var_type(text), text),
     })
 }
 
 refuse_if_drop = (c :: Checker, span: Span, ty: TyId, text: str)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     c.is_drop_type(ty).try().match({
-        false => Ok(()),
+        false => Ok,
         true  => c.refuse(
             span,
             SemaFault.CopyOfDropValue(NameFault(name: text))

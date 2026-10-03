@@ -38,7 +38,7 @@ Twice = {
     }
 
     // SECOND, and the one a Sink argument selects.
-    render* ::= (self: @Self, out :: Sink) Res<(), WriteError>
+    render* ::= (self: @Self, out :: Sink) Res<WriteError>
 }
 
 Point = {
@@ -47,7 +47,7 @@ Point = {
 }
 
 Point.impl(Twice, {
-    render ::= (self: @Self, out :: Sink) Res<(), WriteError> {
+    render ::= (self: @Self, out :: Sink) Res<WriteError> {
         out.fmt("{}:{}", self.x, self.y)
     }
 })

@@ -39,7 +39,7 @@ Worker.impl(Actor, {
     }
 })
 Error = AllocError | IoError | FsError | ActorStartError | ActorError
-send = (env: Env, worker: Ref<Worker>) Res<(), Error> {
+send = (env: Env, worker: Ref<Worker>) Res<Error> {
     arena ::= env.mem.alloc();
     buf   ::= arena.Vec<u8>();
     buf.add(7).try();
@@ -48,7 +48,6 @@ send = (env: Env, worker: Ref<Worker>) Res<(), Error> {
     alias.set(0, 99).match({ Ok(_) => (), None => Native.abort() });
     empty ::= arena.Vec<u8>();
     worker.process(consume empty).try();
-    Ok(())
 }
 main = (env: Env) Res<i32, Error> {
     worker = env.spawn(Worker()).try();

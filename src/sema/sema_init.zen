@@ -84,7 +84,7 @@ InitWalk = {
 }
 
 check_init* = (c :: Checker, f: Function, body: BlockId)
-              Res<(), AllocError> {
+              Res<AllocError> {
     w ::= InitWalk(
         alloc: c.alloc,
         slots: c.alloc.Vec<Slot>(),
@@ -163,12 +163,12 @@ same = (x: State, y: State) bool {
 
 // scopes
 
-push = (w :: InitWalk, slot: Slot) Res<(), AllocError> {
+push = (w :: InitWalk, slot: Slot) Res<AllocError> {
     slot.deferred.then(() { w.tracked = w.tracked + 1; });
     w.slots.add(slot)
 }
 
-pop_to = (c :: Checker, w :: InitWalk, mark: usize) Res<(), AllocError> {
+pop_to = (c :: Checker, w :: InitWalk, mark: usize) Res<AllocError> {
     Range(mark, w.slots.len).loop((h, i) {
         w.slots.get(i).match({
             Ok(s) => s.deferred.then(() {
@@ -185,7 +185,6 @@ pop_to = (c :: Checker, w :: InitWalk, mark: usize) Res<(), AllocError> {
         });
     });
     truncate(w.slots, mark);
-    Ok(())
 }
 
 assigned = (name: str, frame: usize) Slot {
@@ -213,22 +212,21 @@ find_slot = (w: InitWalk, name: str) Res<usize> {
 }
 
 init_param = (c :: Checker, w :: InitWalk, p: Param, frame: usize)
-             Res<(), AllocError> {
+             Res<AllocError> {
     w.push(assigned(p.name.text, frame))
 }
 
 // statements
 
-init_block = (c :: Checker, w :: InitWalk, id: BlockId) Res<(), AllocError> {
+init_block = (c :: Checker, w :: InitWalk, id: BlockId) Res<AllocError> {
     b    = c.tree.block_at(id);
     mark = w.slots.len;
     b.stmts.loop((h, s) { c.init_stmt(w, s).try() });
-    b.value.match({ Ok(v) => c.init_expr(w, v), None => Ok(()) }).try();
+    b.value.match({ Ok(v) => c.init_expr(w, v), None => Ok }).try();
     c.pop_to(w, mark).try();
-    Ok(())
 }
 
-init_stmt = (c :: Checker, w :: InitWalk, s: Stmt) Res<(), AllocError> {
+init_stmt = (c :: Checker, w :: InitWalk, s: Stmt) Res<AllocError> {
     s.kind.match({
         Bind(b)     => c.init_bind(w, b),
         Deferred(d) => c.init_deferred(w, d),
@@ -238,17 +236,17 @@ init_stmt = (c :: Checker, w :: InitWalk, s: Stmt) Res<(), AllocError> {
             Function(f) => {
                 local_lambda(f).match({
                     Ok(l) => c.init_closure(w, l),
-                    None  => Ok(()),
+                    None  => Ok,
                 }).try();
                 w.push(assigned(f.name.text, 0))
             },
-            _           => Ok(()),
+            _           => Ok,
         }),
     })
 }
 
 init_deferred = (c :: Checker, w :: InitWalk, d: Deferred)
-                Res<(), AllocError> {
+                Res<AllocError> {
     c.tree.expr_at(d.target).kind.match({
         Name(n) => w.push(Slot(
             name: n.text,
@@ -261,14 +259,14 @@ init_deferred = (c :: Checker, w :: InitWalk, d: Deferred)
             span: c.tree.expr_at(d.target).span,
             ty: c.type_memo.get(d.type).value_or(UNRESOLVED)
         )),
-        _       => Ok(()),
+        _       => Ok,
     })
 }
 
 // The value is evaluated before the target is written. A plain `x = v` on a
 // visible local writes it; every other spelling declares a new binding,
 // which is the rule sema_place.plain_write states.
-init_bind = (c :: Checker, w :: InitWalk, b: Bind) Res<(), AllocError> {
+init_bind = (c :: Checker, w :: InitWalk, b: Bind) Res<AllocError> {
     c.init_expr(w, b.value).try();
     plain  = !b.mutable && b.type.match({ Ok(_) => false, None => true });
     target = c.tree.expr_at(b.target);
@@ -286,9 +284,9 @@ init_bind = (c :: Checker, w :: InitWalk, b: Bind) Res<(), AllocError> {
 }
 
 init_assign = (c :: Checker, w :: InitWalk, i: usize, span: Span)
-              Res<(), AllocError> {
+              Res<AllocError> {
     w.slots.get(i).match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(old) => {
             twice = old.deferred && !old.mutable && old.may && w.live;
             (twice && !w.quiet).then(() {
@@ -303,18 +301,21 @@ init_assign = (c :: Checker, w :: InitWalk, i: usize, span: Span)
             row.may     = true;
             row.touched = true;
             w.slots.set(i, row);
-            Ok(())
+            Ok
         },
     })
 }
 
 // expressions
 
-init_expr = (c :: Checker, w :: InitWalk, id: ExprId) Res<(), AllocError> {
+init_expr = (c :: Checker, w :: InitWalk, id: ExprId) Res<AllocError> {
     node = c.tree.expr_at(id);
     node.kind.match({
         Name(n)       => c.init_use(w, node.span, n.text, "read"),
-        Meta(m)       => m.value.match({ Ok(v) => c.init_expr(w, v), None => Ok(()) }),
+        Meta(m)       => m.value.match({
+            Ok(v) => c.init_expr(w, v),
+            None  => Ok,
+        }),
         Paren(p)      => c.init_expr(w, p.inner),
         Array(a)      => c.init_exprs(w, a.elems),
         FixedArray(a) => c.init_exprs(w, a.elems),
@@ -324,7 +325,7 @@ init_expr = (c :: Checker, w :: InitWalk, id: ExprId) Res<(), AllocError> {
         Try(t)        => {
             c.init_expr(w, t.operand).try();
             t.error.match({
-                None    => Ok(()),
+                None    => Ok,
                 Ok(err) => c.init_exit(w, err),
             })
         },
@@ -333,13 +334,13 @@ init_expr = (c :: Checker, w :: InitWalk, id: ExprId) Res<(), AllocError> {
                 m.kind.match({
                     Field(f)    => f.value.match({
                         Ok(v) => c.init_expr(w, v),
-                        None  => Ok(()),
+                        None  => Ok,
                     }),
                     Const(k)    => c.init_expr(w, k.value),
-                    Function(_) => Ok(()),
+                    Function(_) => Ok,
                 }).try();
             });
-            Ok(())
+            Ok
         },
         Access(a)     => c.init_expr(w, a.base),
         Index(x)      => {
@@ -358,38 +359,37 @@ init_expr = (c :: Checker, w :: InitWalk, id: ExprId) Res<(), AllocError> {
             _       => c.init_expr(w, x.operand),
         }),
         Block(b)      => c.init_block(w, b),
-        _             => Ok(()),
+        _             => Ok,
     })
 }
 
 init_exprs = (c :: Checker, w :: InitWalk, ids: Vec<ExprId>)
-             Res<(), AllocError> {
+             Res<AllocError> {
     ids.loop((h, e) { c.init_expr(w, e).try() });
-    Ok(())
+    Ok
 }
 
 // The replacement a failing `.try(..)` computes runs only on the way out of
 // the function, so the state after it is the state before it.
-init_exit = (c :: Checker, w :: InitWalk, id: ExprId) Res<(), AllocError> {
+init_exit = (c :: Checker, w :: InitWalk, id: ExprId) Res<AllocError> {
     before = w.snapshot().try();
     c.spelled_lambda(id).match({
         Ok(l) => c.init_once(w, l),
         None  => c.init_expr(w, id),
     }).try();
     w.restore(before);
-    Ok(())
 }
 
 // A read of a deferred local needs an assignment on every path to it. After
 // one report the local counts as assigned, so one mistake is one diagnostic.
 init_use = (c :: Checker, w :: InitWalk, span: Span, text: str, verb: str)
-           Res<(), AllocError> {
+           Res<AllocError> {
     w.find_slot(text).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(i) => w.slots.get(i).match({
-            None    => Ok(()),
+            None    => Ok,
             Ok(old) => (old.deferred && !old.must && w.live).match({
-                false => Ok(()),
+                false => Ok,
                 true  => {
                     (!w.quiet).then(() {
                         c.refuse(span, SemaFault.UnassignedUse(InitFault(
@@ -401,7 +401,7 @@ init_use = (c :: Checker, w :: InitWalk, span: Span, text: str, verb: str)
                     row ::= old;
                     row.must = true;
                     w.slots.set(i, row);
-                    Ok(())
+                    Ok
                 },
             }),
         }),
@@ -412,7 +412,7 @@ init_use = (c :: Checker, w :: InitWalk, span: Span, text: str, verb: str)
 // right side of `&&` or `||` may not run, so the state after it joins the
 // state before it.
 init_binary = (c :: Checker, w :: InitWalk, first: Binary)
-              Res<(), AllocError> {
+              Res<AllocError> {
     rights ::= w.alloc.Vec<Binary>();
     left   ::= first.lhs;
     done   ::= false;
@@ -433,11 +433,11 @@ init_binary = (c :: Checker, w :: InitWalk, first: Binary)
             Ok(bin) => c.init_operand(w, bin).try(),
         });
     });
-    Ok(())
+    Ok
 }
 
 init_operand = (c :: Checker, w :: InitWalk, bin: Binary)
-               Res<(), AllocError> {
+               Res<AllocError> {
     bin.op.match({
         And => c.init_maybe(w, bin.rhs),
         Or  => c.init_maybe(w, bin.rhs),
@@ -445,17 +445,16 @@ init_operand = (c :: Checker, w :: InitWalk, bin: Binary)
     })
 }
 
-init_maybe = (c :: Checker, w :: InitWalk, id: ExprId) Res<(), AllocError> {
+init_maybe = (c :: Checker, w :: InitWalk, id: ExprId) Res<AllocError> {
     before = w.snapshot().try();
     c.init_expr(w, id).try();
     after = w.snapshot().try();
     w.restore(join(w.alloc, before, after).try());
-    Ok(())
 }
 
 // Each arm starts from the scrutinee's state; after the match, a local is
 // assigned when every arm that finishes assigned it.
-init_match = (c :: Checker, w :: InitWalk, m: Match) Res<(), AllocError> {
+init_match = (c :: Checker, w :: InitWalk, m: Match) Res<AllocError> {
     c.init_expr(w, m.scrutinee).try();
     before = w.snapshot().try();
     joined ::= dead(w.alloc);
@@ -468,26 +467,25 @@ init_match = (c :: Checker, w :: InitWalk, m: Match) Res<(), AllocError> {
         joined = join(w.alloc, joined, w.snapshot().try()).try();
     });
     w.restore(joined);
-    Ok(())
 }
 
 // A pattern's bare names bind, shadowing any local of the same name.
 init_pattern = (c :: Checker, w :: InitWalk, id: PatternId)
-               Res<(), AllocError> {
+               Res<AllocError> {
     c.tree.pattern_at(id).kind.match({
         Name(pn)       => (pn.name.segments.len == 1).match({
             true  => w.push(assigned(pn.name.segment_at(0), 0)),
-            false => Ok(()),
+            false => Ok,
         }),
         Destructure(d) => c.init_pattern(w, d.binder),
-        _              => Ok(()),
+        _              => Ok,
     })
 }
 
 // calls and closures
 
 init_call = (c :: Checker, w :: InitWalk, id: ExprId, k: Call)
-            Res<(), AllocError> {
+            Res<AllocError> {
     c.handle_jump(w, k).match({
         Ok(jump) => c.init_jump(w, k, jump),
         None     => {
@@ -495,7 +493,7 @@ init_call = (c :: Checker, w :: InitWalk, id: ExprId, k: Call)
             repeats = c.repeating_body(id).try();
             bare    = c.bare_loop(id, k);
             k.args.loop((h, a) { c.init_arg(w, a, repeats, bare).try() });
-            Ok(())
+            Ok
         },
     })
 }
@@ -537,11 +535,11 @@ handle_frame = (c :: Checker, w: InitWalk, id: ExprId) Res<usize> {
 }
 
 init_jump = (c :: Checker, w :: InitWalk, k: Call, jump: Jump)
-            Res<(), AllocError> {
+            Res<AllocError> {
     k.args.loop((h, a) { c.init_expr(w, a.value).try() });
     c.record_jump(w, jump.frame, jump.breaks, !jump.breaks).try();
     w.live = false;
-    Ok(())
+    Ok
 }
 
 // Add the current state to the frame's exits: after the loop, back to its
@@ -552,10 +550,10 @@ record_jump = (
     frame  : usize,
     breaks : bool,
     nexts  : bool
-) Res<(), AllocError> {
+) Res<AllocError> {
     now = w.snapshot().try();
     w.frames.get(frame - 1).match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(old) => {
             row ::= old;
             breaks.then(
@@ -563,7 +561,7 @@ record_jump = (
             );
             nexts.then(() { row.nexts = join(w.alloc, row.nexts, now).try(); });
             w.frames.set(frame - 1, row);
-            Ok(())
+            Ok
         },
     })
 }
@@ -584,7 +582,7 @@ bare_loop = (c :: Checker, id: ExprId, k: Call) bool {
 }
 
 init_arg = (c :: Checker, w :: InitWalk, a: Arg, repeats: bool, bare: bool)
-           Res<(), AllocError> {
+           Res<AllocError> {
     c.spelled_lambda(a.value).match({
         Ok(l) => repeats.match({
             true  => c.init_repeating(w, l, bare),
@@ -593,7 +591,7 @@ init_arg = (c :: Checker, w :: InitWalk, a: Arg, repeats: bool, bare: bool)
         None  => {
             c.init_holes(w, a.value).try();
             c.handle_frame(w, a.value).match({
-                None      => Ok(()),
+                None      => Ok,
                 Ok(frame) => c.record_jump(w, frame, true, true),
             }).try();
             c.init_expr(w, a.value)
@@ -602,19 +600,19 @@ init_arg = (c :: Checker, w :: InitWalk, a: Arg, repeats: bool, bare: bool)
 }
 
 // `{name}` in a format string reads that binding where the string is written.
-init_holes = (c :: Checker, w :: InitWalk, id: ExprId) Res<(), AllocError> {
+init_holes = (c :: Checker, w :: InitWalk, id: ExprId) Res<AllocError> {
     node = c.tree.expr_at(id);
     node.kind.match({
         Literal(l) => l.kind.match({
             Str => c.init_hole_names(w, node.span, l.text),
-            _   => Ok(()),
+            _   => Ok,
         }),
-        _          => Ok(()),
+        _          => Ok,
     })
 }
 
 init_hole_names = (c :: Checker, w :: InitWalk, span: Span, raw: str)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     end = (raw.len > 1).match({ true => raw.len - 1, false => 1 });
     i :: usize = 1;
     loop(() { i < end }, (h) {
@@ -635,16 +633,15 @@ init_hole_names = (c :: Checker, w :: InitWalk, span: Span, raw: str)
         });
         i = at.next;
     });
-    Ok(())
+    Ok
 }
 
 // `cond.then(() { .. })` runs its body at most once.
-init_once = (c :: Checker, w :: InitWalk, l: Lambda) Res<(), AllocError> {
+init_once = (c :: Checker, w :: InitWalk, l: Lambda) Res<AllocError> {
     before = w.snapshot().try();
     c.run_closure(w, l, w.quiet).try();
     after = w.snapshot().try();
     w.restore(join(w.alloc, before, after).try());
-    Ok(())
 }
 
 // A closure a call may run any number of times. Its entry state joins the
@@ -653,7 +650,7 @@ init_once = (c :: Checker, w :: InitWalk, l: Lambda) Res<(), AllocError> {
 // local is assigned when every way out of the loop assigned it: a break,
 // or, unless the loop stops only by breaking, the entry itself.
 init_repeating = (c :: Checker, w :: InitWalk, l: Lambda, bare: bool)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     start = w.snapshot().try();
     entry  ::= start;
     stable ::= w.tracked == 0;
@@ -672,17 +669,15 @@ init_repeating = (c :: Checker, w :: InitWalk, l: Lambda, bare: bool)
         false => join(w.alloc, entry, frame.breaks).try(),
     });
     w.restore(after);
-    Ok(())
 }
 
 // A closure that is not called where it is written — a local function, or
 // a lambda held as a value — is checked as if it ran any number of times
 // from here, and leaves the state after it unchanged.
-init_closure = (c :: Checker, w :: InitWalk, l: Lambda) Res<(), AllocError> {
+init_closure = (c :: Checker, w :: InitWalk, l: Lambda) Res<AllocError> {
     start = w.snapshot().try();
     c.init_repeating(w, l, false).try();
     w.restore(start);
-    Ok(())
 }
 
 // Walk one closure body from the current state, leaving its end state.

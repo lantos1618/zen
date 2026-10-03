@@ -11,14 +11,17 @@
 // changes. Each member carries its own number as payload, so the arm
 // taken and the value read identify exactly which member survived.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
 A = { | AOnly: i64 }
+A.impl(Error, {})
 B = { | BOnly: i64 }
+B.impl(Error, {})
 C = { | COnly: i64 }
+C.impl(Error, {})
 
 Narrow = A | C
 Mid    = C | A            // same members, opposite order: a copy

@@ -22,7 +22,7 @@ Refuse.impl(Alloc, {
     }
 })
 
-reverse = (a: Alloc, comparisons: Ptr<usize>, n: usize) Res<(), AllocError> {
+reverse = (a: Alloc, comparisons: Ptr<usize>, n: usize) Res<AllocError> {
     values ::= a.Vec<Item>();
     Range(0, n).loop((i) {
         values.add(Item(key: n - i, index: i, comparisons: comparisons)).try();
@@ -37,7 +37,6 @@ reverse = (a: Alloc, comparisons: Ptr<usize>, n: usize) Res<(), AllocError> {
         comparisons.read(0),
         correct
     );
-    Ok(())
 }
 
 main = (env: Env) Res<i32, AllocError> {

@@ -77,7 +77,7 @@ lower_dot_call* = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     // Meta walks and projections are sema-marked compile-time operations;
     // neither may fall through to ordinary dot-call resolution.
     be.check.meta_walk_of(id).match({
@@ -110,11 +110,11 @@ lower_marked_dot = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     // Valid meta calls are folded by sema. Any remaining meta receiver is an
     // Invalid form and has no runtime lowering.
     be.tree.expr_at(a.base).kind.match({
-        Meta(_) => Ok(()),
+        Meta(_) => Ok,
         _       => {
             depth = be.handle_depth(a.base);
             (depth > 0).match({
@@ -137,7 +137,7 @@ lower_resolved_dot = (
     want : TyId,
     out  :: String
 )
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     be.check.checked_call(d.id).match({
         Ok(checked) => checked.declaration.match({
             Ok(_) => {
@@ -169,7 +169,7 @@ lower_unselected_dot = (
     want : TyId,
     out  :: String
 )
-                       Res<(), AllocError> {
+                       Res<AllocError> {
     b = be.check.base_of(d.a.base, ctx).try();
     b.is_type.match({
         true  => be.lower_static_call(d, b.ty, ctx, want, out),
@@ -190,11 +190,11 @@ lower_static_call = (
     want : TyId,
     out  :: String
 )
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     be.check.is_case(ty, d.a.name.text).try().match({
         true  => be.write_variant_call(d, ty, ctx, out),
         false => be.lower_assoc_call(d.id, d.c, d.a, ty, ctx, out).try().match({
-            true  => Ok(()),
+            true  => Ok,
             false => be.unsupported(
                 d.id,
                 "a call on a type that is not a variant",
@@ -224,7 +224,7 @@ case_ty = (be :: CBackend, d: Dot, base: TyId, ctx: Ctx)
 }
 
 write_variant_call = (be :: CBackend, d: Dot, ty: TyId, ctx: Ctx, out :: String)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     cases ::= be.alloc.Vec<Case>();
     be.check.cases_of(ty, cases).try();
     find_case(cases, d.a.name.text).match({
@@ -245,18 +245,17 @@ write_case_value = (
     cs  : Case,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     qname = be.type_qname(ty).try();
     cty ::= be.alloc.String().try();
     be.ctype(ty, cty).try();
     out.fmt("({}){ .zg_tag = ", cty.view()).try();
     out.sym_variant(qname.view(), cs.name).try();
     be.no_payload(c, cs).match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.write_payload_arg(c, cs, ctx, out),
     }).try();
     out.add(" }").try();
-    Ok(());
 }
 
 no_payload = (be :: CBackend, c: Call, cs: Case) bool {
@@ -264,7 +263,7 @@ no_payload = (be :: CBackend, c: Call, cs: Case) bool {
 }
 
 write_payload_arg = (be :: CBackend, c: Call, cs: Case, ctx: Ctx, out :: String)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     out.add(", .zg_data.").try();
     out.sym_member(cs.name).try();
     out.add(" = ").try();
@@ -284,7 +283,7 @@ lower_receiver_call = (
     want : TyId,
     out  :: String
 )
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     unknown = be.check.types.unknown().try();
     raw     = be.ty_of(d.a.base, ctx, unknown).try();
     rty     = be.materialize_literal(sub(be, raw).try()).try();
@@ -305,7 +304,7 @@ lower_receiver_site = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     site_of(be, rty).try().match({
         None  => be.lower_ufcs(d, rty, ctx, want, out),
         Ok(s) => be.with_site(d, s, ctx, want, out),
@@ -320,7 +319,7 @@ with_site = (
     want : TyId,
     out  :: String
 )
-            Res<(), AllocError> {
+            Res<AllocError> {
     own ::= be.alloc.Vec<Member>();
     member_at(be, s, d.a.name.text, own).try();
     be.pick_member(d.c, s, own, ctx).try().match({
@@ -337,7 +336,7 @@ supplied_or_ufcs = (
     want : TyId,
     out  :: String
 )
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     found ::= be.alloc.Vec<Member>();
     be.impl_member_at(s.decl, d.a.name.text, found).try();
     be.pick_member(d.c, s, found, ctx).try().match({
@@ -357,7 +356,7 @@ supplied_or_refused = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.generic_enum(s.decl).match({
         true  => be.unsupported(
             d.id,
@@ -379,7 +378,7 @@ declared_member = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     m.kind.match({
         Function(f) => be.lower_method(d, s, f, ctx, want, out),
         _           => be.unsupported(
@@ -400,7 +399,7 @@ supplied_member = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     m.kind.match({
         Function(f) => be.lower_method(d, s, f, ctx, want, out),
         _           => be.lower_ufcs(d, s.ty, ctx, want, out),
@@ -460,10 +459,10 @@ keep_fits = (
     s       : Site,
     actuals : Vec<Actual>,
     kept    :: Vec<Member>
-) Res<(), AllocError> {
+) Res<AllocError> {
     m.kind.match({
         Function(f) => be.keep_if_fits(m, f, s, actuals, kept),
-        _           => Ok(()),
+        _           => Ok,
     })
 }
 
@@ -476,18 +475,18 @@ keep_if_fits = (
     s       : Site,
     actuals : Vec<Actual>,
     kept    :: Vec<Member>
-) Res<(), AllocError> {
+) Res<AllocError> {
     inst = be.recv_inst(s.ty).try();
     sig  = s.signature(be, f, inst).try();
     be.check.recv_sig_fits(sig, actuals).try()
         .then(() { kept.add(m).try() });
-    Ok(())
+    Ok
 }
 
 call_actuals* = (be :: CBackend, c: Call, ctx: Ctx, out :: Vec<Actual>)
-               Res<(), AllocError> {
+               Res<AllocError> {
     c.args.loop((h, x) { out.add(be.arg_actual(x, ctx).try()).try() });
-    Ok(());
+    Ok;
 }
 
 // What resolution reads off an argument, and no more. A lambda has no
@@ -609,35 +608,34 @@ type_qname = (be :: CBackend, ty: TyId) Res<String, AllocError> {
     out ::= be.alloc.String().try();
     be.check.types.at(ty).match({
         Named(n) => qualify(out, be.check.world.module_name(n.decl), n.name),
-        _        => Ok(()),
+        _        => Ok,
     }).try();
     Ok(out)
 }
 
 // The member of `s` called `name`, when its declaration has one.
 member_at* = (be :: CBackend, s: Site, name: str, out :: Vec<Member>)
-             Res<(), AllocError> {
+             Res<AllocError> {
     decl_at(be.tree, s.decl).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(d) => struct_member(d, name, out),
     }).try();
-    Ok(());
 }
 
 // What a struct or enum body declares under `name`.
-struct_member = (d: Decl, name: str, out :: Vec<Member>) Res<(), AllocError> {
+struct_member = (d: Decl, name: str, out :: Vec<Member>) Res<AllocError> {
     d.body_members().match({
         Ok(members) => keep_named(members, name, out),
-        None        => Ok(()),
+        None        => Ok,
     })
 }
 
 keep_named = (members: Vec<Member>, name: str, out :: Vec<Member>)
-             Res<(), AllocError> {
+             Res<AllocError> {
     members.loop((h, m) {
         m.named(name).then(() { out.add(m).try() });
     });
-    Ok(());
+    Ok;
 }
 
 // a member the type declares
@@ -654,7 +652,7 @@ MethodCallSite = {
     ctx: Ctx,
 
     emit = (self: @Self, be :: CBackend, out :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
         (be.inst_open(self.inst) || be.any_open(self.sig)).match({
             true  => be.unsupported(
                 self.dot.id,
@@ -668,7 +666,7 @@ MethodCallSite = {
     // The receiver is argument zero; written arguments start at one and use
     // the shared free-call packer so variadic methods have one packing rule.
     write = (self: @Self, be :: CBackend, out :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
         sym = be.member_symbol(
             self.site.ty,
             self.site,
@@ -753,7 +751,7 @@ lower_method = (
     want : TyId,
     out  :: String
 )
-               Res<(), AllocError> {
+               Res<AllocError> {
     be.method_kind(d, s, f, ctx).try().match({
         Inlined      => be.inline_method(
             d.id,
@@ -788,7 +786,7 @@ lower_method = (
             ctx,
             out
         ).try().match({
-            true  => Ok(()),
+            true  => Ok,
             false => be.unsupported(d.id, "an allocator create intrinsic", out),
         }),
         FloorDoor    => be.lower_floor_door(
@@ -877,14 +875,13 @@ method_sig* = (
     mi   : usize,
     inst : Inst,
     sig  :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     sctx = be.check.self_ctx(mi, rty).try();
     mark = be.enter_struct_tparams(decl).try();
     f.params.loop(
         (h, p) { sig.add(be.method_param(p, sctx, inst).try()).try() }
     );
     be.leave_tparams(mark).try();
-    Ok(());
 }
 
 // `method_sig` deliberately does not introduce member type parameters: many
@@ -900,7 +897,7 @@ generic_method_sig* = (
     owner : str,
     inst  : Inst,
     sig   :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     sctx = be.check.self_ctx(mi, rty).try();
     mark = be.enter_struct_tparams(decl).try();
     be.enter_tparams(f.tparams, owner).try();
@@ -908,7 +905,6 @@ generic_method_sig* = (
         (h, p) { sig.add(be.method_param(p, sctx, inst).try()).try() }
     );
     be.leave_tparams(mark).try();
-    Ok(())
 }
 
 method_param = (
@@ -1007,9 +1003,9 @@ lower_ufcs = (
     want : TyId,
     out  :: String
 )
-             Res<(), AllocError> {
+             Res<AllocError> {
     be.lower_create(d.id, d.c, d.a, rty, ctx, out).try().match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.ufcs_or_impl(d, rty, ctx, want, out),
     })
 }
@@ -1022,7 +1018,7 @@ ufcs_or_impl = (
     want : TyId,
     out  :: String
 )
-               Res<(), AllocError> {
+               Res<AllocError> {
     be.reaches(rty, d.a.name.text, d.c.args.len + 1).try().match({
         true  => be.impl_alias(d, rty, ctx, want, out),
         false => be.lower_plain_call(
@@ -1048,7 +1044,7 @@ impl_alias = (
     want : TyId,
     out  :: String
 )
-             Res<(), AllocError> {
+             Res<AllocError> {
     site_of(be, rty).try().match({
         None  => be.unsupported(d.id, "a call to an impl-supplied member", out),
         Ok(s) => be.alias_of(s.decl, d.a.name.text).try().match({

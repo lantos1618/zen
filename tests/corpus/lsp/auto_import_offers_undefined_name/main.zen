@@ -82,7 +82,7 @@ main = (env: Env) Res<i32, AllocError> {
     Ok(0);
 }
 
-open_session = (a: Alloc, into :: String) Res<(), AllocError> {
+open_session = (a: Alloc, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":"
@@ -93,7 +93,7 @@ open_session = (a: Alloc, into :: String) Res<(), AllocError> {
 }
 
 open_doc = (a: Alloc, uri: str, text: str, into :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
@@ -116,7 +116,7 @@ ask = (
     el   : usize,
     ec   : usize,
     into :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     body ::= a.String().try();
     body.add("{\"jsonrpc\":\"2.0\",\"id\":").try();
     body.write_usize(id).try();

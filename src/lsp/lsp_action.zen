@@ -18,7 +18,7 @@ Action = {
     module: str,
 
     write = (self: @Self, t: Alloc, at: Position, uri: str, list :: Nest,
-             out :: String) Res<(), AllocError> {
+             out :: String) Res<AllocError> {
         stmt  ::= t.String("{{ {} }} = {}", self.name, self.module).try();
         title ::= t.String("Import {}", stmt.view()).try();
         stmt.add("\n").try();
@@ -57,7 +57,7 @@ write_actions* = (
     from : Position,
     upto : Position,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     fixes ::= Fixes(c: c, t: t, file: file, found: t.Vec<Action>());
     lo = source_position(text, from.line, from.character);
     hi = source_position(text, upto.line, upto.character);
@@ -78,7 +78,7 @@ Fixes = {
     found :: Vec<Action>,
 
     offer = (self :: @Self, d: Diag, from: Pos, upto: Pos)
-            Res<(), AllocError> {
+            Res<AllocError> {
         (d.file.eq(self.file) && d.span.overlaps(from, upto)).match({
             false => written(),
             true  => d.fault.match({
@@ -91,7 +91,7 @@ Fixes = {
 
     // The import a missing-import diagnostic names.
     offer_import = (self :: @Self, name: str, module: str)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         self.found.find((a) { a.name.eq(name) && a.module.eq(module) })
             .match({
                 Ok(_) => written(),
@@ -99,7 +99,7 @@ Fixes = {
             })
     }
 
-    offer_name = (self :: @Self, name: str) Res<(), AllocError> {
+    offer_name = (self :: @Self, name: str) Res<AllocError> {
         self.found.find((a) { a.name.eq(name) }).match({
             Ok(_) => written(),
             None  => {
@@ -112,13 +112,13 @@ Fixes = {
                         Ok(table) => self.offer_at(name, mi, table),
                     }).try();
                 });
-                Ok(())
+                Ok
             },
         })
     }
 
     offer_at = (self :: @Self, name: str, mi: usize, table: ModuleTable)
-               Res<(), AllocError> {
+               Res<AllocError> {
         offered = self.spoken_home(name, mi, table).try();
         self.found.find((a) { a.name.eq(name) && a.module.eq(offered) }).match({
             Ok(_) => written(),
@@ -174,7 +174,7 @@ Fixes = {
     }
 
     write = (self: @Self, text: str, uri: str, out :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
         at = self.insert_at(text);
         list ::= arr(out).try();
         self.found.loop((h, a) { a.write(self.t, at, uri, list, out).try(); });

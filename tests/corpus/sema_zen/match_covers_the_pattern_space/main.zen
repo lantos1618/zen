@@ -164,22 +164,21 @@ count = (
     ctx    : Ctx,
     before : usize
 )
-        Res<(), AllocError> {
+        Res<AllocError> {
     c.type_of(id, ctx).try();
     added = c.diag_count() - before;
     println("{}: {} diagnostic(s)", label, added);
     (added > 0).then(() { show_last(c, a).try() });
-    Ok(());
+    Ok;
 }
 
-show_last = (c :: Checker, a: Alloc) Res<(), AllocError> {
+show_last = (c :: Checker, a: Alloc) Res<AllocError> {
     out ::= a.String().try();
     c.diag_at(c.diag_count() - 1).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(d) => d.render(c.types, out),
     }).try();
     println("    {}", out.view());
-    Ok(());
 }
 
 main = (env: Env) Res<i32, AllocError> {

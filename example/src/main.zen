@@ -31,7 +31,7 @@ Shape.impl(Display, {
     // out is a Sink, not a String: println hands over the console it
     // already holds, so printing allocates nothing. writing into a
     // String is the same call with a different sink behind it
-    toString ::= (self: @Self, out :: Sink) Res<(), WriteError> {
+    toString ::= (self: @Self, out :: Sink) Res<WriteError> {
         self.match({
             Circle(circle) => out.fmt("circle: {}", circle.radius),
             Rect(rect)     => out.fmt("rect: {} {}", rect.width, rect.height),

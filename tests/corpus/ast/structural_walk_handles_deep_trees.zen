@@ -37,7 +37,7 @@ Trace = {
     stop: usize,
 }
 Trace.impl(WalkVisitor, {
-    visit = (self :: @Self, event: WalkEvent) Res<(), AllocError> {
+    visit = (self :: @Self, event: WalkEvent) Res<AllocError> {
         event.match({
             Enter(_) => {
                 self.entered = self.entered + 1;
@@ -49,11 +49,10 @@ Trace.impl(WalkVisitor, {
         (self.entered + self.left < self.stop).ensure(
             AllocError.OutOfMemory
         ).try();
-        Ok(())
     }
 })
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a = env.mem.alloc();
     source ::= a.String("main = () i32 { 1").try();
     Range(1, 10000).loop((index) { source.add(" + 1").try(); });
@@ -100,5 +99,4 @@ main = (env: Env) Res<(), AllocError> {
         "visitor stops {}",
         result.match({ Err(_) => true, Ok(_) => false }) && observer.entered + observer.left == 17
     );
-    Ok(())
 }

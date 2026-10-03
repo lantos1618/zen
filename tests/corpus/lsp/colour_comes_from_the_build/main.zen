@@ -123,7 +123,7 @@ main = (env: Env) Res<i32, AllocError> {
 // `rootUri` IS WHAT MAKES THIS A BUILD — without one there is nothing
 // to classify with, which is `colour_comes_from_the_lexer`'s whole
 // point.
-open_session = (a: Alloc, into :: String) Res<(), AllocError> {
+open_session = (a: Alloc, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":"
@@ -134,7 +134,7 @@ open_session = (a: Alloc, into :: String) Res<(), AllocError> {
 }
 
 open_doc = (a: Alloc, uri: str, text: str, into :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
@@ -147,7 +147,7 @@ open_doc = (a: Alloc, uri: str, text: str, into :: String)
 }
 
 change_doc = (a: Alloc, uri: str, text: str, into :: String)
-             Res<(), AllocError> {
+             Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":"
@@ -159,7 +159,7 @@ change_doc = (a: Alloc, uri: str, text: str, into :: String)
     write_frame(body.view(), into)
 }
 
-colours = (a: Alloc, id: usize, uri: str, into :: String) Res<(), AllocError> {
+colours = (a: Alloc, id: usize, uri: str, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add("{\"jsonrpc\":\"2.0\",\"id\":").try();
     body.write_usize(id).try();
@@ -177,14 +177,14 @@ colours = (a: Alloc, id: usize, uri: str, into :: String) Res<(), AllocError> {
 // reply DECODED and anything else printed verbatim. `text` is what the
 // rows are sliced from — the buffer as the client last sent it.
 batch = (s :: Server, a: Alloc, what: str, text: str, input: str)
-        Res<(), AllocError> {
+        Res<AllocError> {
     out ::= a.String().try();
     serve(s, input, out).try();
     println("--- {}", what);
     walk(a, out.view(), text)
 }
 
-walk = (a: Alloc, out: str, text: str) Res<(), AllocError> {
+walk = (a: Alloc, out: str, text: str) Res<AllocError> {
     from  :: usize = 0;
     going ::= true;
     loop(() { going && from < out.len }, (h) {
@@ -193,21 +193,21 @@ walk = (a: Alloc, out: str, text: str) Res<(), AllocError> {
             Ok(fr) => { frame(a, fr.body, text).try(); from = fr.next; },
         });
     });
-    Ok(());
+    Ok;
 }
 
-frame = (a: Alloc, body: str, text: str) Res<(), AllocError> {
+frame = (a: Alloc, body: str, text: str) Res<AllocError> {
     tree ::= a.Jsons();
     read(a, tree, body).match({
-        Err(_)  => Ok(()),
+        Err(_)  => Ok,
         Ok(msg) => frame_body(a, tree, msg, body, text),
     })
 }
 
 frame_body = (a: Alloc, tree: Jsons, msg: JsonId, body: str, text: str)
-             Res<(), AllocError> {
+             Res<AllocError> {
     data_of(tree, msg).match({
-        None      => { println("    {}", body); Ok(()); },
+        None      => println("    {}", body),
         Ok(array) => walk_groups(a, tree, array, text),
     })
 }
@@ -225,7 +225,7 @@ data_of = (tree: Jsons, msg: JsonId) Res<JsonId> {
 // the client would be holding after every group, which is exactly what
 // the encoding means.
 walk_groups = (a: Alloc, tree: Jsons, array: JsonId, text: str)
-              Res<(), AllocError> {
+              Res<AllocError> {
     line      :: usize = 0;
     character :: usize = 0;
     at        :: usize = 0;
@@ -253,7 +253,7 @@ walk_groups = (a: Alloc, tree: Jsons, array: JsonId, text: str)
             },
         });
     });
-    Ok(());
+    Ok;
 }
 
 whole_at = (tree: Jsons, array: JsonId, at: usize) usize {

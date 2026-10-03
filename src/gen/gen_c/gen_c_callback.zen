@@ -25,7 +25,7 @@ lower_native_callback* = (
     call : Call,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     candidate = be.callback_definition(call, ctx).try();
     candidate.match({
         None  => be.unsupported(
@@ -59,7 +59,7 @@ callback_definition = (be :: CBackend, call: Call, ctx: Ctx)
 }
 
 emit_callback = (be :: CBackend, id: ExprId, d: Def, out :: String)
-                Res<(), AllocError> {
+                Res<AllocError> {
     function: Res<Function> = decl_at(be.tree, d.id).match({
         None     => None,
         Ok(decl) => decl.kind.match({ Function(f) => Ok(f), _ => None }),
@@ -80,7 +80,7 @@ callback_signature = (
     d   : Def,
     f   : Function,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     valid = f.tparams.len == 0 && f.body.match({ Ok(_) => true, None => false }) &&
         f.params.find(
             (p) { p.mutable || p.type.match({ Ok(_) => false, None => true }) }
@@ -101,7 +101,7 @@ callback_abi = (
     d   : Def,
     f   : Function,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     inst ::= be.alloc.Inst();
     sig  ::= be.alloc.Vec<TyId>();
     be.signature_of(d, inst, sig).try();

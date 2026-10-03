@@ -3,7 +3,8 @@
 { Alloc, AllocError, Ptr, null_ptr } = std.mem
 { str, String, str_at, c_text } = std.text
 { Vec } = std.collections
-{ Res, Ok, Err, ok_or, loop, Range, IoError, WriteError, Sink } = std.core
+{ Res, Ok, Err, ok_or, loop, Range, IoError, WriteError, Sink,
+    Error } = std.core
 
 zg_os_proc_pipe = (fds: Ptr<i32>) i32
 zg_os_proc_close = (fd: i32) ()
@@ -29,6 +30,7 @@ FileCreation = c.bind("sys/stat.h", {
 })
 
 ProcError* = { SpawnFailed | WaitFailed | ReadFailed }
+ProcError.impl(Error, {})
 ProcStreamError* = ProcError | AllocError | IoError
 ProcOutput* = { code*: i32, out*: String, err*: String }
 
@@ -57,7 +59,7 @@ Arguments = {
     }
 }
 
-wait_for = (pid: i32, code: Ptr<i32>) Res<(), ProcError> {
+wait_for = (pid: i32, code: Ptr<i32>) Res<ProcError> {
     rc ::= zg_os_proc_wait(pid, code);
     loop(rc == -2, (h) { rc = zg_os_proc_wait(pid, code); });
     (rc == 0).ensure(ProcError.WaitFailed)
@@ -82,7 +84,7 @@ Stream = {
         })
     }
 
-    spawn = (self: @Self, a: Alloc, args: Arguments) Res<(), ProcError> {
+    spawn = (self: @Self, a: Alloc, args: Arguments) Res<ProcError> {
         pipes = a.realloc<i32>(null_ptr<i32>(), 4).try(ProcError.ReadFailed);
         Range<usize>(0, 4).loop((i) { pipes.write(i, -1); });
         @scope.defer(() {
@@ -106,7 +108,6 @@ Stream = {
         (rc == 0).ensure(ProcError.SpawnFailed).try();
         child.pid = self.code.read(0);
         self.child.write(0, child);
-        Ok(())
     }
 
     // 0 is EOF; 1 and 2 identify stdout and stderr. Rotate the first pipe

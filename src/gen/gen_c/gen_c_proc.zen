@@ -13,21 +13,21 @@ uses_proc = (be: CBackend) bool {
 
 // Feature selection precedes every header: glibc otherwise hides POSIX
 // declarations under strict C modes, including when std.proc is not used.
-emit_native_features* = (be: CBackend, out :: Emit) Res<(), AllocError> {
+emit_native_features* = (be: CBackend, out :: Emit) Res<AllocError> {
     (be.uses_proc() || be.c_headers.len > 0).then(() {
         out.say("#ifndef _GNU_SOURCE").try();
         out.say("#define _GNU_SOURCE").try();
         out.say("#endif").try();
     });
-    Ok(())
+    Ok
 }
 
-emit_proc* = (be: CBackend, out :: Emit) Res<(), AllocError> {
+emit_proc* = (be: CBackend, out :: Emit) Res<AllocError> {
     be.uses_proc().then(() { write_proc(out).try(); });
-    Ok(())
+    Ok
 }
 
-write_proc = (out :: Emit) Res<(), AllocError> {
+write_proc = (out :: Emit) Res<AllocError> {
     out.say("#include <errno.h>").try();
     out.say("#include <fcntl.h>").try();
     out.say("#include <poll.h>").try();
@@ -128,5 +128,4 @@ write_proc = (out :: Emit) Res<(), AllocError> {
     out.say(
         "static void zg_os_proc_kill(int32_t pid) { kill((pid_t)pid, SIGKILL); }"
     ).try();
-    Ok(())
 }

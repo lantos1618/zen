@@ -37,7 +37,7 @@ refusal = (env: Env, a: Alloc, backend: Codegen) Res<str, AllocError> {
     }))
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     [Codegen, 3](Codegen.C, Codegen.Js, Codegen.Asm).loop((backend) {
         a = env.mem.alloc();
         println(
@@ -46,5 +46,5 @@ main = (env: Env) Res<(), AllocError> {
             refusal(env, a, backend).try()
         );
     });
-    Ok(())
+    Ok
 }

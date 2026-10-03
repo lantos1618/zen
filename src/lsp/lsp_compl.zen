@@ -42,7 +42,7 @@ Item* = {
     kind*: CompletionKind,
 
     write = (self: @Self, a: Alloc, offers :: Nest, out :: String)
-            Res<(), AllocError> {
+            Res<AllocError> {
         offers.next(out).try();
         encoded ::= CompletionItem(label: self.label, kind: self.kind.discriminant()).to_json(a).try();
         out.add(encoded.view())
@@ -129,7 +129,7 @@ MemberCache* = {
     }
 
     refill = (self :: @Self, env: Env, workspace: str, path: str,
-              patched: str, docs: Map<str, str>) Res<(), AllocError> {
+              patched: str, docs: Map<str, str>) Res<AllocError> {
         qa    ::= env.mem.alloc();
         found ::= qa.Vec<Item>();
         workspace.is_empty().match({
@@ -183,11 +183,11 @@ MemberCache* = {
         self.cur    = Ok(fresh);
         self.stale  = false;
         self.builds = self.builds + 1;
-        Ok(())
+        Ok
     }
 
     filtered = (self: @Self, prefix: str, out :: Vec<Item>)
-               Res<(), AllocError> {
+               Res<AllocError> {
         self.cur.match({
             None       => written(),
             Ok(answer) => {
@@ -196,7 +196,7 @@ MemberCache* = {
                         out.add(item).try();
                     });
                 });
-                Ok(())
+                Ok
             },
         })
     }
@@ -216,7 +216,7 @@ complete_at* = (
     line      : usize,
     character : usize,
     out       :: Vec<Item>
-) Res<(), AllocError> {
+) Res<AllocError> {
     trig = trigger_at(a, text, line, character).try();
     c ::= check_standalone(a, "doc", trig.text).try();
     c.items_from(a, "doc", trig, out)
@@ -245,7 +245,7 @@ items_from = (
     file : str,
     trig : Trigger,
     out  :: Vec<Item>
-) Res<(), AllocError> {
+) Res<AllocError> {
     completion ::= Completion(c: c, a: a, file: file);
     completion.add(trig, out)
 }
@@ -285,7 +285,7 @@ no_access = () Access {
     Access(base: ExprId(index: 0), name: Ident(text: "", span: nowhere()))
 }
 
-member_names = (ms: Vec<Member>, cands :: Vec<Item>) Res<(), AllocError> {
+member_names = (ms: Vec<Member>, cands :: Vec<Item>) Res<AllocError> {
     ms.loop((h, m) {
         kind = m.kind.match({
             Field(_)    => CompletionKind.Field,
@@ -294,7 +294,7 @@ member_names = (ms: Vec<Member>, cands :: Vec<Item>) Res<(), AllocError> {
         });
         cands.add(Item(label: m.name().text, kind: kind)).try();
     });
-    Ok(());
+    Ok;
 }
 
 // `Completion` discovers candidates; `Offers` filters and deduplicates them.
@@ -304,7 +304,7 @@ Completion = {
     file : str,
 
     add = (self :: @Self, trig: Trigger, out :: Vec<Item>)
-          Res<(), AllocError> {
+          Res<AllocError> {
         trig.dot.match({
             true  => self.member_items(trig.prefix, out),
             false => {
@@ -316,7 +316,7 @@ Completion = {
     }
 
     member_items = (self :: @Self, prefix: str, out :: Vec<Item>)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         self.access_named(DUMMY).match({
             None   => written(),
             Ok(ac) => self.base_items(ac, prefix, out),
@@ -341,7 +341,7 @@ Completion = {
     }
 
     base_items = (self :: @Self, ac: Access, prefix: str,
-                  out :: Vec<Item>) Res<(), AllocError> {
+                  out :: Vec<Item>) Res<AllocError> {
         self.c.expr_memo.get(ac.base).match({
             Ok(ty) => self.items_of_type(ty, prefix, out),
             None   => self.c.tree.expr_at(ac.base).kind.match({
@@ -352,7 +352,7 @@ Completion = {
     }
 
     named_base_items = (self :: @Self, base: str, prefix: str,
-                        out :: Vec<Item>) Res<(), AllocError> {
+                        out :: Vec<Item>) Res<AllocError> {
         module_index_of(self.c.tree, self.file).match({
             None   => written(),
             Ok(mi) => {
@@ -371,7 +371,7 @@ Completion = {
     }
 
     items_of_type = (self :: @Self, ty: TyId, prefix: str,
-                     out :: Vec<Item>) Res<(), AllocError> {
+                     out :: Vec<Item>) Res<AllocError> {
         self.c.is_unknown(ty).match({
             true  => written(),
             false => self.known_type_items(ty, prefix, out),
@@ -379,7 +379,7 @@ Completion = {
     }
 
     known_type_items = (self :: @Self, ty: TyId, prefix: str,
-                        out :: Vec<Item>) Res<(), AllocError> {
+                        out :: Vec<Item>) Res<AllocError> {
         offers ::= self.offers(prefix, out).try();
         cases  ::= self.a.Vec<Case>();
         self.c.cases_of(ty, cases).try();
@@ -393,7 +393,7 @@ Completion = {
     }
 
     collect_members = (self: @Self, ty: TyId, cands :: Vec<Item>)
-                      Res<(), AllocError> {
+                      Res<AllocError> {
         self.c.types.at(ty).match({
             Named(n) => self.collect_named(n, cands),
             Prim(p)  => self.collect_prim(p.name, cands),
@@ -402,7 +402,7 @@ Completion = {
     }
 
     collect_named = (self: @Self, n: TyNamed, cands :: Vec<Item>)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
         decl_at(self.c.tree, n.decl).match({
             None  => written(),
             Ok(d) => d.body_members().match({
@@ -414,20 +414,20 @@ Completion = {
     }
 
     collect_impls = (self: @Self, n: TyNamed, cands :: Vec<Item>)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
         self.c.world.table_at(n.decl.module.to_usize()).match({
             None  => written(),
             Ok(t) => {
                 t.impls.loop(
                     (h, iid) { self.collect_impl(n.name, iid, cands).try() }
                 );
-                Ok(())
+                Ok
             },
         })
     }
 
     collect_impl = (self: @Self, name: str, iid: ImplId,
-                    cands :: Vec<Item>) Res<(), AllocError> {
+                    cands :: Vec<Item>) Res<AllocError> {
         decl_at(self.c.tree, iid.decl).match({
             None  => written(),
             Ok(d) => d.kind.match({
@@ -441,7 +441,7 @@ Completion = {
     }
 
     collect_prim = (self: @Self, name: str, cands :: Vec<Item>)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         defs ::= self.a.Vec<Def>();
         self.c.world.core_of(name, defs).try();
         defs.get(0).match({
@@ -475,33 +475,33 @@ Offers = {
     seen       :: Map<str, bool>,
     items      :: Vec<Item>,
 
-    scope_items = (self :: @Self) Res<(), AllocError> {
+    scope_items = (self :: @Self) Res<AllocError> {
         module_index_of(self.completion.c.tree, self.completion.file).match({
             None   => written(),
             Ok(mi) => {
                 Range(0, self.completion.c.world.count()).loop((h, table) {
                     self.table_names(mi, table).try();
                 });
-                Ok(())
+                Ok
             },
         }).try();
         self.keyword_items()
     }
 
     table_names = (self :: @Self, mi: usize, table: usize)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         self.completion.c.world.table_at(table).match({
             None   => written(),
             Ok(tb) => {
                 tb.defs.loop((h, d) { self.offer_global(mi, d.name).try() });
                 tb.imports.loop((h, b) { self.offer_global(mi, b.name).try() });
-                Ok(())
+                Ok
             },
         })
     }
 
     offer_global = (self :: @Self, mi: usize, name: str)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         (name.starts_with(self.prefix) && !self.known(name)).match({
             false => written(),
             true  => {
@@ -518,7 +518,7 @@ Offers = {
         })
     }
 
-    keyword_items = (self :: @Self) Res<(), AllocError> {
+    keyword_items = (self :: @Self) Res<AllocError> {
         Range(0, KEYWORD_COUNT).loop((h, i) {
             keyword_at(i).match({
                 Ok(keyword) => self.offer(
@@ -528,11 +528,11 @@ Offers = {
                 None        => (),
             });
         });
-        Ok(())
+        Ok
     }
 
     offer_member = (self :: @Self, ty: TyId, cand: Item)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         self.visible(ty, cand.label).match({
             Err(e)    => Err(e),
             Ok(true)  => self.offer(cand.label, cand.kind),
@@ -560,21 +560,21 @@ Offers = {
     }
 
     offer = (self :: @Self, label: str, kind: CompletionKind)
-            Res<(), AllocError> {
+            Res<AllocError> {
         (label.starts_with(self.prefix) && !self.known(label)).match({
             true  => self.remember(Item(label: label, kind: kind)),
             false => written(),
         })
     }
 
-    remember = (self :: @Self, item: Item) Res<(), AllocError> {
+    remember = (self :: @Self, item: Item) Res<AllocError> {
         self.items.add(item).try();
         self.seen.set(item.label, true)
     }
 
-    append_to = (self: @Self, out :: Vec<Item>) Res<(), AllocError> {
+    append_to = (self: @Self, out :: Vec<Item>) Res<AllocError> {
         self.items.loop((h, item) { out.add(item).try(); });
-        Ok(())
+        Ok
     }
 
     known = (self: @Self, label: str) bool {
@@ -598,7 +598,7 @@ CompletionItem = {
 }
 
 write_items* = (a: Alloc, items: Vec<Item>, out :: String)
-               Res<(), AllocError> {
+               Res<AllocError> {
     list ::= obj(out).try();
     list.key("isIncomplete", out).try();
     out.add("false").try();

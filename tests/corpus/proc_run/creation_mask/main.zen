@@ -1,9 +1,10 @@
 { CreationMask, Process } = std.proc
-{ Res, Ok } = std.core
+{ Res, Ok, Error } = std.core
 { Env } = std.env
 { println } = std.io
 Failure = { | WrongMask }
-main = (env: Env) Res<(), Failure> {
+Failure.impl(Error, {})
+main = (env: Env) Res<Failure> {
     original = env.proc.creation_mask(CreationMask.OwnerOnly);
     @scope.defer(() { env.proc.creation_mask(original); });
     previous = env.proc.creation_mask(CreationMask.Bits(23));
@@ -15,5 +16,4 @@ main = (env: Env) Res<(), Failure> {
         Failure.WrongMask
     ).try();
     println("creation mask: owner-only and previous-mask restoration passed");
-    Ok(())
 }

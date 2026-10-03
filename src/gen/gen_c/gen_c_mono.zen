@@ -49,15 +49,15 @@ constructed* = (be :: CBackend, d: Def) Res<TyId, AllocError> {
     sub(be, raw)
 }
 
-decl_vars = (c :: Checker, d: Def, out :: Vec<TyId>) Res<(), AllocError> {
+decl_vars = (c :: Checker, d: Def, out :: Vec<TyId>) Res<AllocError> {
     decl_at(c.tree, d.id).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(x) => decl_vars_of(c, d, x, out),
     })
 }
 
 decl_vars_of = (c :: Checker, d: Def, x: Decl, out :: Vec<TyId>)
-               Res<(), AllocError> {
+               Res<AllocError> {
     decl_tparams_of(c, d, x, out)
 }
 
@@ -65,11 +65,11 @@ decl_vars_of = (c :: Checker, d: Def, x: Decl, out :: Vec<TyId>)
 // declaration order. An enum's variants carry its parameters exactly as
 // a struct's fields do (`Opt<T> = Some(T)`).
 decl_tparams_of = (c :: Checker, d: Def, x: Decl, out :: Vec<TyId>)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     x.kind.match({
         Struct(s) => c.tparam_vars(s.tparams, d.qname, out),
         Enum(e)   => c.tparam_vars(e.tparams, d.qname, out),
-        _         => Ok(()),
+        _         => Ok,
     })
 }
 
@@ -321,7 +321,7 @@ settle_one = (
     owner : str,
     inst  : Inst,
     out   :: Inst
-) Res<(), AllocError> {
+) Res<AllocError> {
     v = intern_var(be.check, tp.name.text, owner).try();
     inst.lookup(v).match({
         None  => out.bind(v, v),
@@ -330,7 +330,7 @@ settle_one = (
 }
 
 settle_bound = (be :: CBackend, v: TyId, t: TyId, out :: Inst)
-               Res<(), AllocError> {
+               Res<AllocError> {
     arg = sub(be, t).try();
     out.bind(v, be.materialize_literal(arg).try())
 }
@@ -358,58 +358,57 @@ materialize_literal* = (be :: CBackend, t: TyId) Res<TyId, AllocError> {
 // else reports, not a silent rebind.
 
 unify* = (be :: CBackend, declared: TyId, actual: TyId, out :: Inst)
-         Res<(), AllocError> {
+         Res<AllocError> {
     be.check.types.at(declared).match({
         Var(_)   => out.bind(declared, actual),
         Named(n) => unify_named(be, n, actual, out),
         Res(r)   => unify_res(be, r, actual, out),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
 unify_named = (be :: CBackend, n: TyNamed, actual: TyId, out :: Inst)
-              Res<(), AllocError> {
+              Res<AllocError> {
     be.check.types.at(actual).match({
         Named(m) => unify_args(be, n.args, m.args, out),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
 unify_args = (be :: CBackend, ds: Vec<TyId>, ts: Vec<TyId>, out :: Inst)
-             Res<(), AllocError> {
+             Res<AllocError> {
     (ds.len == ts.len).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.unify_each(ds, ts, out),
     })
 }
 
 unify_each = (be :: CBackend, ds: Vec<TyId>, ts: Vec<TyId>, out :: Inst)
-             Res<(), AllocError> {
+             Res<AllocError> {
     ds.loop((h, i, d) { unify_at(be, d, ts, i, out).try() });
-    Ok(());
+    Ok;
 }
 
 unify_at = (be :: CBackend, d: TyId, ts: Vec<TyId>, i: usize, out :: Inst)
-           Res<(), AllocError> {
+           Res<AllocError> {
     ts.get(i).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(t) => unify(be, d, t, out),
     })
 }
 
 unify_res = (be :: CBackend, r: TyRes, actual: TyId, out :: Inst)
-            Res<(), AllocError> {
+            Res<AllocError> {
     be.check.types.at(actual).match({
         Res(q) => unify_res_parts(be, r, q, out),
-        _      => Ok(()),
+        _      => Ok,
     })
 }
 
 unify_res_parts = (be :: CBackend, r: TyRes, q: TyRes, out :: Inst)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     unify(be, r.value, q.value, out).try();
     unify(be, r.error, q.error, out).try();
-    Ok(());
 }
 
 // The type of an argument as the backend knows it. A local is declared
@@ -450,11 +449,11 @@ enter_tparams* = (be :: CBackend, tparams: Vec<TParam>, owner: str)
     Ok(mark);
 }
 
-enter_one = (be :: CBackend, tp: TParam, owner: str) Res<(), AllocError> {
+enter_one = (be :: CBackend, tp: TParam, owner: str) Res<AllocError> {
     be.check.push_tvar(tp, intern_var(be.check, tp.name.text, owner).try())
 }
 
-leave_tparams* = (be :: CBackend, mark: usize) Res<(), AllocError> {
+leave_tparams* = (be :: CBackend, mark: usize) Res<AllocError> {
     be.check.release_tvars(mark)
 }
 
@@ -465,31 +464,31 @@ enter_struct_tparams* = (be :: CBackend, decl: DeclId)
                         Res<usize, AllocError> {
     mark = be.check.tvar_mark();
     decl_at(be.tree, decl).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(d) => be.enter_decl_tparams(decl, d),
     }).try();
     Ok(mark);
 }
 
 enter_decl_tparams = (be :: CBackend, decl: DeclId, d: Decl)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
     d.kind.match({
         Struct(s) => be.enter_struct_of(decl, s),
         Enum(e)   => be.enter_enum_of(decl, e),
-        _         => Ok(()),
+        _         => Ok,
     })
 }
 
 enter_enum_of = (be :: CBackend, decl: DeclId, e: Enum)
-                Res<(), AllocError> {
+                Res<AllocError> {
     owner = owner_of(be.check, decl.module.to_usize(), e.name.text).try();
     e.tparams.loop((h, tp) { be.enter_one(tp, owner).try() });
-    Ok(());
+    Ok;
 }
 
 enter_struct_of = (be :: CBackend, decl: DeclId, s: Struct)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     owner = owner_of(be.check, decl.module.to_usize(), s.name.text).try();
     s.tparams.loop((h, tp) { be.enter_one(tp, owner).try() });
-    Ok(());
+    Ok;
 }

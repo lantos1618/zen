@@ -11,9 +11,8 @@ adopt = (arena :: Arena) Owner {
     names = arena.Map<str, i32>();
     Owner(arena: consume arena, names: names)
 }
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     arena ::= env.mem.alloc();
     owner ::= adopt(arena);
     owner.names.set("a", 1).try();
-    Ok(())
 }

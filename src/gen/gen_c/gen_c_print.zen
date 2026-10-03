@@ -43,7 +43,7 @@ pair = (stream: str, stdout: str, stderr: str) str {
 
 // Writes are statements; the expression result is unit.
 lower_print* = (be :: CBackend, c: Call, how: Printer, ctx: Ctx, out :: String)
-               Res<(), AllocError> {
+               Res<AllocError> {
     name = how.match({ Line => "println", Bare => "print" });
     write_pieces(be, c, name, "stdout", ctx).try();
     out.add("0")
@@ -58,7 +58,7 @@ lower_console_print* = (
     ret  : TyId,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     stream = stream_of(name);
     write_pieces(be, c, name, stream, ctx).try();
     cty ::= be.alloc.String().try();
@@ -72,7 +72,7 @@ lower_console_flush* = (
     be  :: CBackend,
     ret : TyId,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.need_print();
     cty ::= be.alloc.String().try();
     be.ctype(ret, cty).try();
@@ -87,7 +87,7 @@ write_pieces = (
     name   : str,
     stream : str,
     ctx    : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     stream.eq("stdout").then(() { be.need_print(); });
     stream.eq("stderr").then(() { be.need_stderr(); });
     write_args(be, c, stream, ctx).try();
@@ -95,7 +95,7 @@ write_pieces = (
         be.writeln(pair(stream, "zg_print_nl();", "zg_eprint_nl();")).try()
     });
     name.eq("error").then(() { be.writeln("fflush(stderr);").try(); });
-    Ok(());
+    Ok;
 }
 
 write_args = (
@@ -103,9 +103,9 @@ write_args = (
     c      : Call,
     stream : str,
     ctx    : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.args.get(0).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(a) => write_from(be, c, a, stream, ctx),
     })
 }
@@ -117,7 +117,7 @@ write_from = (
     first  : Arg,
     stream : str,
     ctx    : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     format_of(be, first.value).match({
         Ok(raw) => write_format(be, c, first.value, raw, stream, ctx),
         None    => write_values(be, c, 0, stream, ctx),
@@ -146,11 +146,11 @@ write_values = (
     from   : usize,
     stream : str,
     ctx    : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     Range(from, c.args.len).loop((h, i) {
         write_value_at(be, c, i, stream, ctx).try();
     });
-    Ok(());
+    Ok;
 }
 
 write_value_at = (
@@ -159,9 +159,9 @@ write_value_at = (
     i      : usize,
     stream : str,
     ctx    : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.args.get(i).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(a) => write_value(be, a.value, stream, ctx),
     })
 }
@@ -176,7 +176,7 @@ write_format = (
     raw    : str,
     stream : str,
     ctx    : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     end = body_end(raw);
     start :: usize = 1;
     used  :: usize = 1;
@@ -193,7 +193,6 @@ write_format = (
     });
     write_piece(be, raw, start, end, stream).try();
     write_surplus(be, c, used, stream, ctx).try();
-    Ok(());
 }
 
 // Report arguments left after the final hole.
@@ -203,11 +202,11 @@ write_surplus = (
     used   : usize,
     stream : str,
     ctx    : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     (used < c.args.len).match({
-        false => Ok(()),
+        false => Ok,
         true  => c.args.get(used).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(a) => be.report_expr(
                 a.value,
                 GenFault.Unsupported(ARGUMENT_WITHOUT_HOLE)
@@ -225,7 +224,7 @@ write_what = (
     used   : usize,
     stream : str,
     ctx    : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     at.what.match({
         Hole     => write_hole(be, c, id, at, used, stream, ctx),
         Named(n) => write_named(be, id, at, n, stream),
@@ -235,7 +234,7 @@ write_what = (
             at,
             GenFault.Unsupported(NOT_A_HOLE)
         ),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
@@ -246,7 +245,7 @@ write_named = (
     at     : FmtAt,
     name   : str,
     stream : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     text ::= be.alloc.String().try();
     be.named_hole(name, text).try().match({
         None  => report_in_format(be, id, at, GenFault.Unresolved(name)),
@@ -291,7 +290,7 @@ report_in_format* = (
     id    : ExprId,
     at    : FmtAt,
     fault : GenFault
-) Res<(), AllocError> {
+) Res<AllocError> {
     node          = be.tree.expr_at(id);
     lit           = node.span;
     raw: Res<str> = node.kind.match({ Literal(l) => l.block, _ => None });
@@ -332,7 +331,7 @@ write_hole = (
     used   : usize,
     stream : str,
     ctx    : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.args.get(used).match({
         None  => report_in_format(
             be,
@@ -351,14 +350,14 @@ write_piece = (
     start  : usize,
     stop   : usize,
     stream : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     (stop > start).match({
-        false => Ok(()),
+        false => Ok,
         true  => write_chunk(be, raw.slice(start, stop), stream),
     })
 }
 
-write_chunk = (be :: CBackend, piece: str, stream: str) Res<(), AllocError> {
+write_chunk = (be :: CBackend, piece: str, stream: str) Res<AllocError> {
     line ::= be.alloc.String(
         "{}(",
         pair(stream, "zg_print_bytes", "zg_eprint_bytes")
@@ -377,7 +376,7 @@ write_value = (
     arg    : ExprId,
     stream : str,
     ctx    : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     unknown = be.check.types.unknown().try();
     ty      = be.ty_of(arg, ctx, unknown).try();
     prim    = be.check.prim_name(ty);
@@ -393,7 +392,7 @@ write_typed = (
     prim   : str,
     text   : str,
     stream : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     prim.eq("()").match({
         true  => {
             // Unit has no printable payload, but its expression still runs.
@@ -474,7 +473,7 @@ integer_cast = (prim: str) str {
 }
 
 write_write = (be :: CBackend, fn: str, cast: str, text: str)
-              Res<(), AllocError> {
+              Res<AllocError> {
     be.fmt("{fn}({cast}({text}));\n")
 }
 
@@ -485,17 +484,17 @@ write_display = (
     ty     : TyId,
     text   : str,
     stream : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     stream.eq("stderr").match({
         true  => be.stderr_console(ty, text),
         false => be.console_display(ty, text),
     }).try().match({
-        true  => Ok(()),
+        true  => Ok,
         false => print_fault(be, arg),
     })
 }
 
 // Report an unwritable value at its argument.
-print_fault = (be :: CBackend, arg: ExprId) Res<(), AllocError> {
+print_fault = (be :: CBackend, arg: ExprId) Res<AllocError> {
     be.report_expr(arg, GenFault.Unsupported("printing a value of this type"))
 }

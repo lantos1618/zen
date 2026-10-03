@@ -61,7 +61,7 @@ lower_env_args* = (
     declared : TyId,
     ctx      : Ctx,
     out      :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     // The call names its record explicitly (`env.args<Cli>()`). The
     // capability path binds @Self but not that <T>; `res_type_of` settles
     // the call the way a `.try()` or `.match` around it does, so the
@@ -86,7 +86,7 @@ args_named = (
     n   : TyNamed,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     decl_at(be.tree, n.decl).match({
         None     => be.unsupported(id, "env.args of an unknown type", out),
         Ok(decl) => decl.kind.match({
@@ -138,7 +138,7 @@ ArgsLower = {
         n      : TyNamed,
         record : Struct,
         ctx    : Ctx
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         be.request_type(self.ret).try();
         be.request_type(self.record_ty).try();
         be.declare_temp(self.ret, self.dst.view()).try();
@@ -175,7 +175,7 @@ ArgsLower = {
         record : Struct,
         dctx   : Ctx,
         inst   : Inst
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         raw_ty = be.helper_ret("text").try();
         record.members.loop((h, member) {
             member.kind.match({
@@ -200,20 +200,20 @@ ArgsLower = {
                 _        => (),
             });
         });
-        Ok(())
+        Ok
     }
 
     // Every std.env.env_args helper takes `env: Env` first. A wide `:`
     // parameter is borrowed (gen_c_borrow.zen), and the temporary this
     // lowering declared is the storage lent.
     write_env = (self: @Self, be :: CBackend, out :: String)
-                Res<(), AllocError> {
+                Res<AllocError> {
         be.wide(self.env_ty).try().then(() { out.add("&").try() });
         out.add(self.envv.view())
     }
 
     // Pass one: every flag and variable, claiming argv slots as it goes.
-    flags = (self: @Self, be :: CBackend) Res<(), AllocError> {
+    flags = (self: @Self, be :: CBackend) Res<AllocError> {
         self.slots.loop((h, slot) {
             flag = be.flag_of(slot.name).try();
             name = be.env_of(slot.name).try();
@@ -245,20 +245,20 @@ ArgsLower = {
             ).try();
             be.call_into(self.mask.view(), "claim", claim.view()).try();
         });
-        Ok(())
+        Ok
     }
 
     // Pass two: a positional field nothing filled takes the next unclaimed
     // word and claims it.
-    positionals = (self: @Self, be :: CBackend) Res<(), AllocError> {
+    positionals = (self: @Self, be :: CBackend) Res<AllocError> {
         self.slots.loop((h, slot) {
             slot.positional().then(() { self.positional(be, slot).try(); });
         });
-        Ok(())
+        Ok
     }
 
     positional = (self: @Self, be :: CBackend, slot: Slot)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
         be.open_absent(slot.raw.view()).try();
         args ::= be.alloc.String().try();
         self.write_env(be, args).try();
@@ -269,7 +269,7 @@ ArgsLower = {
     }
 
     // Pass three: every field lands in the record or the call fails by name.
-    fill = (self: @Self, be :: CBackend, dctx: Ctx) Res<(), AllocError> {
+    fill = (self: @Self, be :: CBackend, dctx: Ctx) Res<AllocError> {
         self.slots.loop((h, slot) {
             place = self.place(be, slot.name).try();
             slot.ask.match({
@@ -303,11 +303,11 @@ ArgsLower = {
                 ).try(),
             });
         });
-        Ok(())
+        Ok
     }
 
     fill_text = (self: @Self, be :: CBackend, slot: Slot, place: str, dctx: Ctx)
-                Res<(), AllocError> {
+                Res<AllocError> {
         slot.default.match({
             Ok(d) => {
                 be.open_absent(slot.raw.view()).try();
@@ -327,7 +327,7 @@ ArgsLower = {
     }
 
     fill_num = (self: @Self, be :: CBackend, slot: Slot, prim: str, place: str,
-                dctx: Ctx) Res<(), AllocError> {
+                dctx: Ctx) Res<AllocError> {
         slot.default.match({
             Ok(d) => {
                 be.open_absent(slot.raw.view()).try();
@@ -346,7 +346,7 @@ ArgsLower = {
     }
 
     fill_opt_num = (self: @Self, be :: CBackend, slot: Slot, prim: str,
-                    place: str) Res<(), AllocError> {
+                    place: str) Res<AllocError> {
         be.open_absent(slot.raw.view()).try();
         none ::= be.alloc.String().try();
         be.write_none(slot.ty, none).try();
@@ -395,14 +395,14 @@ ArgsLower = {
     }
 
     assign_default = (self: @Self, be :: CBackend, slot: Slot, d: ExprId,
-                      place: str, dctx: Ctx) Res<(), AllocError> {
+                      place: str, dctx: Ctx) Res<AllocError> {
         rendered ::= be.alloc.String().try();
         expr(be, d, dctx, slot.ty, rendered).try();
         be.set_line(place, rendered.view())
     }
 
     // Unknown flags and surplus words, named after the last positional field.
-    finish = (self: @Self, be :: CBackend) Res<(), AllocError> {
+    finish = (self: @Self, be :: CBackend) Res<AllocError> {
         last ::= "argv";
         self.slots.loop((h, slot) {
             slot.positional().then(() { last = slot.name; });
@@ -421,7 +421,7 @@ ArgsLower = {
     // Err payload is ArgError in every helper and in the answer, so it is
     // copied across result types by member.
     fail_unless_ok = (self: @Self, be :: CBackend, res: str)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
         ok ::= be.alloc.String().try();
         ok.sym_variant(RES_PATH, "Ok").try();
         err ::= be.alloc.String().try();
@@ -525,7 +525,7 @@ env_of = (be :: CBackend, field: str) Res<String, AllocError> {
 // A borrowed str literal in C. Field names and flags are identifiers, so
 // only the quote and the backslash could need escaping, and they cannot
 // appear; the length is the byte count regardless.
-lit = (be :: CBackend, text: str, out :: String) Res<(), AllocError> {
+lit = (be :: CBackend, text: str, out :: String) Res<AllocError> {
     out.add("(zg_str){ (unsigned char *)\"").try();
     Range(0, text.len).loop((h, i) {
         b = text.index(i);
@@ -543,22 +543,20 @@ ok_of = (be :: CBackend, res: str) Res<String, AllocError> {
 }
 
 // `if (<res>.zg_tag != Ok) {`
-open_absent = (be :: CBackend, res: str) Res<(), AllocError> {
+open_absent = (be :: CBackend, res: str) Res<AllocError> {
     ok ::= be.alloc.String().try();
     ok.sym_variant(RES_PATH, "Ok").try();
     be.fmt("if ({}.zg_tag != {}) {{\n", res, ok.view()).try();
     be.indent();
-    Ok(())
 }
 
-open_else = (be :: CBackend) Res<(), AllocError> {
+open_else = (be :: CBackend) Res<AllocError> {
     be.dedent();
     be.writeln("} else {").try();
     be.indent();
-    Ok(())
 }
 
-close = (be :: CBackend) Res<(), AllocError> {
+close = (be :: CBackend) Res<AllocError> {
     be.dedent();
     be.writeln("}")
 }
@@ -566,7 +564,7 @@ close = (be :: CBackend) Res<(), AllocError> {
 // `<dst> = std.env.env_args.<helper>(<args>);`, or a diagnostic naming the
 // helper the std tree no longer has.
 call_into = (be :: CBackend, dst: str, helper: str, args: str)
-            Res<(), AllocError> {
+            Res<AllocError> {
     be.args_helper(helper).try().match({
         None    => be.report_expr(
             ExprId(index: 0),

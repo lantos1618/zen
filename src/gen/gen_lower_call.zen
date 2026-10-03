@@ -488,7 +488,7 @@ js_runtime_call = (
                 ).try().slot
             ).try(LowerError.OutOfMemory);
             kinds.add(Marshal.Number).try(LowerError.OutOfMemory);
-            Ok(())
+            Ok
         },
         "copy"    => {
             source = lo.expr(sources.source_expr(0, span).try()).try();
@@ -507,7 +507,7 @@ js_runtime_call = (
             into = lo.expr(sources.source_expr(2, span).try()).try();
             args.add(into.slot).try(LowerError.OutOfMemory);
             kinds.add(Marshal.Bytes).try(LowerError.OutOfMemory);
-            Ok(())
+            Ok
         },
         _         => Err(unsupported(span, "this std.js operation")),
     }).try();
@@ -686,7 +686,7 @@ unify = (
     actual : TyId,
     known  : Inst,
     extra  :: Inst
-) Res<(), LowerError> {
+) Res<LowerError> {
     lo.check.types.at(raw).match({
         Var(_)   => (!lo.settled(lo.arg_for(known, raw)) && lo.settled(actual)).then(() {
             extra.bind(raw, actual).try(LowerError.OutOfMemory);
@@ -712,7 +712,6 @@ unify = (
         }),
         _        => (),
     });
-    Ok(())
 }
 
 // A traversal `<R: Seq<T>, T>` whose element type sema left open takes it
@@ -991,7 +990,7 @@ field_index = (fields: Vec<FieldAt>, name: str) Res<usize> {
 source_index = (sources: Vec<Source>, e: ExprId) Res<usize> {
     found: Res<usize> = loop<usize>((h) {
         sources.loop((sh, i, s) {
-            s.match({ Given(g) => (g == e).then(() { h.break(i); }), _ => Ok(()) });
+            s.match({ Given(g) => (g == e).then(() { h.break(i); }), _ => Ok });
         });
         h.break();
     });
@@ -1404,9 +1403,9 @@ intrinsic = (
     lo.check.primitives.get(decl).match({
         Ok(p) => machine_op(p.name).match({
             Ok(op) => Err(unsupported(span, machine_refusal(op))),
-            None   => Ok(()),
+            None   => Ok,
         }),
-        None  => Ok(()),
+        None  => Ok,
     }).try();
     // Numeric operations are free functions validated by declaration.
     numeric    = callee.member.match({ None => true, Ok(_) => false });
@@ -1738,10 +1737,10 @@ bit_word = (
     ty   : TyId,
     name : str,
     span : Span
-) Res<(), LowerError> {
+) Res<LowerError> {
     word = lo.prim_name(ty);
     word.is_in(["u8", "u16", "u32", "u64", "usize"]).match({
-        true  => Ok(()),
+        true  => Ok,
         false => Err(unsupported(span, (name.eq("shift_right") && word.is_in(["i8", "i16", "i32", "i64"])).match({
             true  => "an arithmetic shift of a signed word",
             false => lo.alloc.String(
@@ -2279,7 +2278,7 @@ fold_loop = (
     brk         : usize,
     span        : Span
 )
-            Res<(), LowerError> {
+            Res<LowerError> {
     acc_ty = lo.check.types.at(ty).match({ Res(r) => lo.concrete(r.value), _ => Err(unsupported(span, "a fold without a Res result")) }).try();
     init   = lo.argument_value(
         sources.get(1).value_or(Source.Absent),
@@ -2319,7 +2318,7 @@ plain_loop = (
     brk         : usize,
     span        : Span
 )
-             Res<(), LowerError> {
+             Res<LowerError> {
     (f.params.len == 1).match({
         // loop((h) {..}) or loop((h, index) {..})
         true  => {
@@ -2371,7 +2370,6 @@ plain_loop = (
             ).try(),
         }),
     });
-    Ok(())
 }
 
 // A loop's Res<T> is settled by its context, else by the first
@@ -2445,7 +2443,7 @@ BreakFinder = {
 }
 
 BreakFinder.impl(WalkVisitor, {
-    visit = (self :: @Self, event: WalkEvent) Res<(), AllocError> {
+    visit = (self :: @Self, event: WalkEvent) Res<AllocError> {
         event.match({
             Enter(node) => node.match({
                 Expr(id) => self.found.match({
@@ -2469,7 +2467,6 @@ BreakFinder.impl(WalkVisitor, {
             }),
             Leave(_)    => (),
         });
-        Ok(())
     }
 })
 
@@ -2552,7 +2549,7 @@ range_loop = (
     acc         : Res<Value>,
     span        : Span
 )
-             Res<(), LowerError> {
+             Res<LowerError> {
     range_expr = sources.source_expr(0, span).try();
     range      = lo.expr(range_expr).try();
     usize_ty   = lo.prim("usize").try();
@@ -3050,7 +3047,7 @@ format_call* = (
     newline : bool,
     to      : FmtTo,
     span    : Span
-) Res<(), LowerError> {
+) Res<LowerError> {
     raw: Res<str> = args.get(first).match({
         None    => None,
         Ok(arg) => lo.tree.expr_at(arg.value).kind.match({
@@ -3064,14 +3061,14 @@ format_call* = (
             args.loop((h, i, arg) {
                 (i >= first).then(() { lo.print_expr(arg.value, to).try(); });
             });
-            Ok(())
+            Ok
         },
     }).try();
     newline.then(() { lo.text("\n", to).try(); });
-    Ok(())
+    Ok
 }
 
-text = (lo :: Lowerer, bytes: str, to: FmtTo) Res<(), LowerError> {
+text = (lo :: Lowerer, bytes: str, to: FmtTo) Res<LowerError> {
     (!bytes.is_empty()).then(() {
         to.match({
             Console(stream) => stream.match({
@@ -3099,10 +3096,10 @@ text = (lo :: Lowerer, bytes: str, to: FmtTo) Res<(), LowerError> {
             },
         });
     });
-    Ok(())
+    Ok
 }
 
-print_expr = (lo :: Lowerer, id: ExprId, to: FmtTo) Res<(), LowerError> {
+print_expr = (lo :: Lowerer, id: ExprId, to: FmtTo) Res<LowerError> {
     e             = lo.tree.expr_at(id);
     raw: Res<str> = e.kind.match({
         Literal(l) => l.kind.match({ Str => Ok(l.text), _ => None }),
@@ -3126,7 +3123,7 @@ print_value* = (
     value : Value,
     to    : FmtTo,
     span  : Span
-) Res<(), LowerError> {
+) Res<LowerError> {
     class     = lo.class_of(value.ty).try();
     is_str    = lo.prim_name(value.ty).eq("str");
     primitive = word(class) && lo.plain_word(value.ty);
@@ -3205,7 +3202,7 @@ display = (
     value : Value,
     sink  : Value,
     span  : Span
-) Res<(), LowerError> {
+) Res<LowerError> {
     callee = lo.resolve(
         value.ty,
         "toString",
@@ -3219,7 +3216,7 @@ display = (
     sources.add(Source.Computed(value)).try(LowerError.OutOfMemory);
     sources.add(Source.Computed(sink)).try(LowerError.OutOfMemory);
     lo.real_call(callee, sources, span).try();
-    Ok(())
+    Ok
 }
 
 // A Sink over a console stream (std.sys.StreamSink).
@@ -3259,7 +3256,7 @@ sink_for_place = (
 
 // Append a str to the text at `place`: String.add, or Sink.write through a
 // handle.
-write_str = (lo :: Lowerer, place: Place, value: Value) Res<(), LowerError> {
+write_str = (lo :: Lowerer, place: Place, value: Value) Res<LowerError> {
     lo.bound_of(place.ty).try().match({
         None      => lo.string_add(place, value),
         Ok(bound) => {
@@ -3276,7 +3273,7 @@ write_str = (lo :: Lowerer, place: Place, value: Value) Res<(), LowerError> {
                 result_ty,
                 nowhere()
             ).try();
-            Ok(())
+            Ok
         },
     })
 }
@@ -3311,17 +3308,17 @@ fmt_helper = (
     sink  : Value,
     value : Value,
     span  : Span
-) Res<(), LowerError> {
+) Res<LowerError> {
     callee = lo.std_callee("std.text.text_fmt", name, span).try();
     sources ::= lo.alloc.Vec<Source>();
     sources.add(Source.Computed(sink)).try(LowerError.OutOfMemory);
     sources.add(Source.Computed(value)).try(LowerError.OutOfMemory);
     lo.real_call(callee, sources, span).try();
-    Ok(())
+    Ok
 }
 
 // `String.add(s: str)` on the String at `place`.
-string_add = (lo :: Lowerer, place: Place, value: Value) Res<(), LowerError> {
+string_add = (lo :: Lowerer, place: Place, value: Value) Res<LowerError> {
     callee = lo.resolve(
         place.ty,
         "add",
@@ -3335,7 +3332,7 @@ string_add = (lo :: Lowerer, place: Place, value: Value) Res<(), LowerError> {
     sources.add(Source.Located(place)).try(LowerError.OutOfMemory);
     sources.add(Source.Computed(value)).try(LowerError.OutOfMemory);
     lo.real_call(callee, sources, nowhere()).try();
-    Ok(())
+    Ok
 }
 
 // A non-generic type declared in a std module.
@@ -3392,7 +3389,7 @@ format = (
     to    : FmtTo,
     span  : Span
 )
-         Res<(), LowerError> {
+         Res<LowerError> {
     end = raw.len - 1;
     start :: usize = 1;
     i     :: usize = 1;
@@ -3440,7 +3437,6 @@ format = (
         span,
         "an argument without a format hole"
     )).try();
-    Ok(())
 }
 
 raw_text = (
@@ -3448,7 +3444,7 @@ raw_text = (
     raw  : str,
     to   : FmtTo,
     span : Span
-) Res<(), LowerError> {
+) Res<LowerError> {
     decoded = raw.decode_literal(lo.alloc).match({
         Ok(t)  => Ok(t),
         Err(_) => Err(unsupported(span, "a malformed literal escape")),

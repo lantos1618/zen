@@ -29,7 +29,7 @@ Target* = {
     end*: Position,
 
     // `null` when nothing was found, else a Location.
-    write* = (self: @Self, a: Alloc, out :: String) Res<(), AllocError> {
+    write* = (self: @Self, a: Alloc, out :: String) Res<AllocError> {
         self.found.match({
             false => out.add("null"),
             true  => {

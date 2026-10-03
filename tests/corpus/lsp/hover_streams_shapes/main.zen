@@ -8,7 +8,7 @@
 { println } = std.io
 
 show = (a: Alloc, label: str, declaration: str, name: str)
-       Res<(), AllocError> {
+       Res<AllocError> {
     text ::= a.String().try();
     text.add(declaration).try();
     text.fmt("\ninspect = (value: {}) {{}}", name).try();
@@ -20,7 +20,6 @@ show = (a: Alloc, label: str, declaration: str, name: str)
         18
     ).try();
     println("{}: {} / {}", label, hover.found, hover.shown);
-    Ok(())
 }
 
 main = (env: Env) Res<i32, AllocError> {

@@ -19,13 +19,13 @@
 
 Error = AllocError | WriteError
 
-build = (a: Alloc, sb :: String, depth: u8) Res<(), AllocError> {
+build = (a: Alloc, sb :: String, depth: u8) Res<AllocError> {
     (depth == 0).match({
-        true  => Ok(()),
+        true  => Ok,
         false => {
             build(a, sb, depth - 1).try();
             sb.add('0' + depth).try();
-            Ok(());
+            Ok;
         },
     })
 }

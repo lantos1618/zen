@@ -48,7 +48,7 @@ Decoder* = {
         self   :: @Self,
         bytes  : B,
         events :: Vec<JsonEvent>
-    ) Res<(), JsonFault> {
+    ) Res<JsonFault> {
         self.finished.match({
             true  => Err(JsonFault.Trailing(self.at)),
             false => self.feed_open(bytes, events),
@@ -59,11 +59,11 @@ Decoder* = {
         self   :: @Self,
         bytes  : B,
         events :: Vec<JsonEvent>
-    ) Res<(), JsonFault> {
+    ) Res<JsonFault> {
         bytes.loop((h, byte) {
             self.consume_byte(byte, events).try();
         });
-        Ok(())
+        Ok
     }
 
     // A delimiter may finish an atom before being processed as structure;
@@ -72,19 +72,19 @@ Decoder* = {
         self   :: @Self,
         byte   : u8,
         events :: Vec<JsonEvent>
-    ) Res<(), JsonFault> {
+    ) Res<JsonFault> {
         (!self.finished).ensure(JsonFault.Trailing(self.at)).try();
         self.consume_byte(byte, events)
     }
 
     consume_byte = (self :: @Self, byte: u8, events :: Vec<JsonEvent>)
-                   Res<(), JsonFault> {
+                   Res<JsonFault> {
         consumed ::= false;
         loop(!consumed, (h) {
             consumed = self.step(byte, events).try();
         });
         self.at = self.at + 1;
-        Ok(())
+        Ok
     }
 
     step = (
@@ -203,13 +203,13 @@ Decoder* = {
         Ok(true)
     }
 
-    open = (self :: @Self, phase: Phase) Res<(), JsonFault> {
+    open = (self :: @Self, phase: Phase) Res<JsonFault> {
         (self.frames.len >= MAX_NESTING).match({
             true  => Err(JsonFault.TooDeep(self.at)),
             false => {
                 self.value_done();
                 self.frames.add(phase).try(JsonFault.NoMemory);
-                Ok(())
+                Ok
             },
         })
     }
@@ -326,12 +326,11 @@ Decoder* = {
     finish_atom = (
         self   :: @Self,
         events :: Vec<JsonEvent>
-    ) Res<(), JsonFault> {
+    ) Res<JsonFault> {
         event = self.atom_event().try();
         events.add(event).try(JsonFault.NoMemory);
         self.mode = Mode.Ready;
         self.value_done();
-        Ok(())
     }
 
     decoded_text = (self: @Self) Res<String, JsonFault> {
@@ -389,7 +388,7 @@ Decoder* = {
     finish* = (
         self   :: @Self,
         events :: Vec<JsonEvent>
-    ) Res<(), JsonFault> {
+    ) Res<JsonFault> {
         self.finished.match({
             true  => Err(JsonFault.Trailing(self.at)),
             false => {
@@ -404,7 +403,7 @@ Decoder* = {
                 });
                 incomplete.match({
                     true  => Err(JsonFault.Truncated(self.at)),
-                    false => Ok(()),
+                    false => Ok,
                 })
             },
         })

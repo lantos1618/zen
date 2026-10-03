@@ -112,7 +112,7 @@ Diagnostics* = {
 
     settled* = (self :: @Self, env: Env, workspace: str, uris: Vec<str>,
                 docs: Map<str, str>, t: Alloc, out :: String)
-               Res<(), AllocError> {
+               Res<AllocError> {
         turn = WorkspaceTurn(
             env: env,
             workspace: workspace,
@@ -130,7 +130,7 @@ Diagnostics* = {
     // Check every open entry, including independent import graphs. All borrowed
     // diagnostic text is copied before the next build can retire its arena.
     publish_snapshot = (self :: @Self, turn: WorkspaceTurn, out :: String)
-                       Res<(), AllocError> {
+                       Res<AllocError> {
         spots ::= turn.temp.Vec<Spot>();
         now   ::= turn.temp.Vec<str>();
         count ::= turn.uris.len;
@@ -186,7 +186,7 @@ Diagnostics* = {
     }
 
     collect = (self :: @Self, turn: WorkspaceTurn, uri: str,
-               spots :: Vec<Spot>, uris :: Vec<str>) Res<(), AllocError> {
+               spots :: Vec<Spot>, uris :: Vec<str>) Res<AllocError> {
         path = path_of(turn.temp, uri).try();
         root = turn.root(path);
         (!turn.workspace.is_empty() && !root.is_empty()).then(() {
@@ -208,7 +208,7 @@ Diagnostics* = {
     }
 
     say_changed = (self: @Self, uri: str, body: str, out :: String)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         same = self.said.get(uri).match({ None => false, Ok(previous) => previous.eq(body) });
         (!same).then(() { write_frame(body, out).try(); });
         written()
@@ -234,18 +234,18 @@ Diagnostics* = (env: Env, a: Alloc) Diagnostics {
     )
 }
 
-uris_of = (spots: Vec<Spot>, into :: Vec<str>) Res<(), AllocError> {
+uris_of = (spots: Vec<Spot>, into :: Vec<str>) Res<AllocError> {
     spots.loop((h, s) {
         into.find((u) { u.eq(s.uri) }).match({
             Ok(_) => written(),
             None  => into.add(s.uri),
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
 publish* = (a: Alloc, uri: str, text: str, spots: Vec<Spot>, out :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
     body ::= a.String().try();
     write_notification(a, uri, text, spots, body).try();
     write_frame(body.view(), out)
@@ -257,7 +257,7 @@ write_notification = (
     text  : str,
     spots : Vec<Spot>,
     body  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     top ::= obj(body).try();
     top.text("jsonrpc", "2.0", body).try();
     top.text("method", "textDocument/publishDiagnostics", body).try();
@@ -278,7 +278,7 @@ write_notification = (
 }
 
 write_spot = (s: Spot, a: Alloc, text: str, out :: String)
-             Res<(), AllocError> {
+             Res<AllocError> {
     s.note.match({
         None  => s.write_plain_spot(a, text, out),
         Ok(n) => s.write_noted_spot(a, n, text, out),
@@ -286,7 +286,7 @@ write_spot = (s: Spot, a: Alloc, text: str, out :: String)
 }
 
 write_plain_spot = (s: Spot, a: Alloc, text: str, out :: String)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     encoded ::= Diagnostic(range: text_range(text, s.span), severity: ERROR, source: "zen", message: s.message).to_json(a).try();
     out.add(encoded.view())
 }
@@ -294,7 +294,7 @@ write_plain_spot = (s: Spot, a: Alloc, text: str, out :: String)
 // Typed JSON cannot omit a field, so a spot with relatedInformation is
 // streamed by hand.
 write_noted_spot = (s: Spot, a: Alloc, n: Note, text: str, out :: String)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     spot ::= obj(out).try();
     spot.key("range", out).try();
     range ::= text_range(text, s.span).to_json(a).try();
@@ -315,7 +315,7 @@ write_related = (
     spot :: Nest,
     out  :: String
 )
-                Res<(), AllocError> {
+                Res<AllocError> {
     spot.key("relatedInformation", out).try();
     notes ::= arr(out).try();
     notes.next(out).try();

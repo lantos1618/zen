@@ -23,7 +23,7 @@ deliver = (on_time: bool) Res<Late> {
     on_time.match({ true => Ok, false => Err(Late.Missed) })
 }
 
-spelled_out = () Res<Late> { Ok(()) }
+spelled_out = () Res<Late> { Ok }
 
 main = (env: Env) Res<i32, AllocError> {
     blank = Shape.Empty;

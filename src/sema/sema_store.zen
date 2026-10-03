@@ -80,7 +80,7 @@ StoreEffects* = (a: Alloc) StoreEffects {
     )
 }
 
-finish_ownership* = (c :: Checker) Res<(), AllocError> {
+finish_ownership* = (c :: Checker) Res<AllocError> {
     c.store_effects.solve(c).try();
     saved = c.saved_bindings().try();
     c.own_checks.loop((job) {
@@ -88,10 +88,9 @@ finish_ownership* = (c :: Checker) Res<(), AllocError> {
         c.check_own_body(job.function, job.body, job.ctx).try();
     });
     c.use_bindings(saved);
-    Ok(())
 }
 
-solve = (effects :: StoreEffects, c: Checker) Res<(), AllocError> {
+solve = (effects :: StoreEffects, c: Checker) Res<AllocError> {
     work       ::= effects.alloc.Vec<BlockId>();
     pending    ::= effects.alloc.Map<BlockId, bool>();
     dependents ::= effects.alloc.Map<BlockId, Vec<BlockId>>();
@@ -158,7 +157,7 @@ solve = (effects :: StoreEffects, c: Checker) Res<(), AllocError> {
             });
         });
     });
-    Ok(())
+    Ok
 }
 
 // Written arguments are matched by parameter identity, including named
@@ -199,7 +198,7 @@ selected_summary* = (
 }
 
 call_stores* = (c :: Checker, own :: Own, id: ExprId, call: Call)
-               Res<(), AllocError> {
+               Res<AllocError> {
     c.store_effects.selected_summary(c, id).when_ok((summary) {
         summary.stores.loop((effect) {
             actual(c, id, call, summary.function, effect.target).when_ok((target) {
@@ -214,11 +213,11 @@ call_stores* = (c :: Checker, own :: Own, id: ExprId, call: Call)
             });
         });
     });
-    Ok(())
+    Ok
 }
 
 transfer_call_stores* = (c :: Checker, own :: Own, id: ExprId, call: Call)
-                        Res<(), AllocError> {
+                        Res<AllocError> {
     c.store_effects.selected_summary(c, id).when_ok((summary) {
         summary.stores.loop((effect) {
             actual(c, id, call, summary.function, effect.target).when_ok((target) {
@@ -233,7 +232,7 @@ transfer_call_stores* = (c :: Checker, own :: Own, id: ExprId, call: Call)
             });
         });
     });
-    Ok(())
+    Ok
 }
 
 OriginBinding = { name: str, origins :: Vec<Source>, fields :: Vec<Returned>, target: Res<usize> }
@@ -328,7 +327,7 @@ StoreScan = {
     }
 
     inherit_fields = (self: @Self, id: ExprId, call: Call, function: Function,
-                      returned: Returned, fields :: Vec<Returned>) Res<(), AllocError> {
+                      returned: Returned, fields :: Vec<Returned>) Res<AllocError> {
 returned.sources.loop((source) {
                             source.projectable.then(() {
                                 actual(self.check, id, call, function, source.parameter).when_ok((argument) {
@@ -348,7 +347,7 @@ returned.sources.loop((source) {
                                 });
                             });
                         });
-        Ok(())
+        Ok
     }
 
     root = (self: @Self, id: ExprId) Res<usize> {
@@ -385,7 +384,7 @@ returned.sources.loop((source) {
 
     // Mutations join possible paths because the visitor also scans conditional
     // branches. Copies keep their previous field snapshots.
-    mutate = (self :: @Self, target: ExprId, field: str, sources: Vec<Source>) Res<(), AllocError> {
+    mutate = (self :: @Self, target: ExprId, field: str, sources: Vec<Source>) Res<AllocError> {
         self.local_root(target).when_ok((i) {
             row ::= self.vars.get(i).ok_or(AllocError.OutOfMemory).try();
             row.target.match({
@@ -444,11 +443,11 @@ returned.sources.loop((source) {
                 },
             });
         });
-        Ok(())
+        Ok
     }
 
     add_store = (self :: @Self, target: usize, field: str, sources: Vec<Source>)
-                Res<(), AllocError> {
+                Res<AllocError> {
         sources.loop((value) {
             source = Source(
                 parameter: value.parameter,
@@ -467,11 +466,11 @@ returned.sources.loop((source) {
                     )).try(),
                 });
         });
-        Ok(())
+        Ok
     }
 
     // A deferred local starts with no origins; each assignment joins its own.
-    deferred = (self :: @Self, d: Deferred) Res<(), AllocError> {
+    deferred = (self :: @Self, d: Deferred) Res<AllocError> {
         self.check.tree.expr_at(d.target).kind.match({
             Name(n) => self.vars.add(OriginBinding(
                 name: n.text,
@@ -479,11 +478,11 @@ returned.sources.loop((source) {
                 fields: self.alloc.Vec<Returned>(),
                 target: None
             )),
-            _       => Ok(()),
+            _       => Ok,
         })
     }
 
-    bind = (self :: @Self, bind: Bind) Res<(), AllocError> {
+    bind = (self :: @Self, bind: Bind) Res<AllocError> {
         sources = self.origins(bind.value);
         self.root(bind.target).when_ok((target) { self.add_store(target, self.local_path(bind.target).try(), sources).try(); });
         self.check.tree.expr_at(bind.target).kind.match({
@@ -534,14 +533,14 @@ returned.sources.loop((source) {
                     ).try();
                     row.origins.merge(sources).try();
                     self.vars.set(i, row);
-                    Ok(())
+                    Ok
                 },
             }),
             _       => self.mutate(bind.target, "", sources),
         })
     }
 
-    expression = (self :: @Self, id: ExprId) Res<(), AllocError> {
+    expression = (self :: @Self, id: ExprId) Res<AllocError> {
         node = self.check.tree.expr_at(id);
         origins ::= self.alloc.Vec<Source>();
         fields  ::= self.alloc.Vec<Returned>();
@@ -566,7 +565,7 @@ returned.sources.loop((source) {
                                 ).try();
                             });
                         });
-                        Ok(())
+                        Ok
                     },
                 }).try();
             },
@@ -736,7 +735,7 @@ returned.sources.loop((source) {
 }
 
 StoreScan.impl(WalkVisitor, {
-    visit = (self :: @Self, event: WalkEvent) Res<(), AllocError> {
+    visit = (self :: @Self, event: WalkEvent) Res<AllocError> {
         event.match({
             Enter(node) => node.match({
                 Block(_) => self.scopes.add(self.vars.len).try(),
@@ -793,7 +792,6 @@ StoreScan.impl(WalkVisitor, {
                 _            => (),
             }),
         });
-        Ok(())
     }
 })
 
@@ -825,14 +823,14 @@ StoreScan = (a: Alloc, c: Checker, effects: StoreEffects, summary: Summary)
     ))
 }
 
-merge = (into :: Vec<Source>, values: Vec<Source>) Res<(), AllocError> {
+merge = (into :: Vec<Source>, values: Vec<Source>) Res<AllocError> {
     values.loop((value) { into.include(value).try(); });
-    Ok(())
+    Ok
 }
 
-include = (into :: Vec<Source>, value: Source) Res<(), AllocError> {
+include = (into :: Vec<Source>, value: Source) Res<AllocError> {
     into.find((source) { source.eq(value) }).match({
-        Ok(_) => Ok(()), None => into.add(value),
+        Ok(_) => Ok, None => into.add(value),
     })
 }
 
@@ -861,7 +859,7 @@ include_return = (
     sources : Vec<Source>,
     a       : Alloc
 )
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     index = Range(0, into.len).find((i) {
         into.get(i).match({ None => false, Ok(field) => field.field.eq(path) })
     });
@@ -872,7 +870,7 @@ include_return = (
             values ::= prior.sources.map(a, (source) { source }).try();
             values.merge(sources).try();
             into.set(i, Returned(field: path, sources: values));
-            Ok(())
+            Ok
         },
     })
 }

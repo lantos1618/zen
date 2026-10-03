@@ -49,12 +49,12 @@ Documents* = {
     owners :: Vec<Document>,
     views* :: Vec<DocumentView>,
 
-    reserve* = (self :: @Self, count: usize) Res<(), AllocError> {
+    reserve* = (self :: @Self, count: usize) Res<AllocError> {
         self.owners.reserve(count).try();
         self.views.reserve(count)
     }
 
-    add* = (self :: @Self, document: Document) Res<(), AllocError> {
+    add* = (self :: @Self, document: Document) Res<AllocError> {
         self.reserve(1).try();
         view = DocumentView(
             uri: document.uri,

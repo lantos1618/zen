@@ -28,7 +28,7 @@ lower_discriminant_call* = (
     kind : DiscriminantCall,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     kind.match({
         Encode(ty) => be.lower_discriminant_encode(ac, ty, ctx, out),
         Decode(ty) => be.lower_discriminant_decode(id, call, ty, ctx, out),
@@ -41,7 +41,7 @@ lower_discriminant_encode = (
     ty  : TyId,
     ctx : Ctx,
     out :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     shape = be.required_represented(ty).try();
     code ::= be.alloc.String().try();
     expr(be, ac.base, ctx, shape.ty, code).try();
@@ -61,7 +61,7 @@ lower_discriminant_encode = (
                     ac.base,
                     true
                 ),
-                false => Ok(()),
+                false => Ok,
             }),
             Ok(value) => be.write_encode_case(
                 held.view(),
@@ -86,7 +86,7 @@ write_encode_case = (
     v         : Variant,
     value     : ExprId,
     catch_all : bool
-) Res<(), AllocError> {
+) Res<AllocError> {
     tag ::= be.alloc.String().try();
     tag.sym_variant(qname, v.name.text).try();
     be.fmt("case {}:\n", tag.view()).try();
@@ -108,7 +108,6 @@ write_encode_case = (
     }).try();
     be.writeln("break;").try();
     be.dedent();
-    Ok(())
 }
 
 lower_discriminant_decode = (
@@ -118,7 +117,7 @@ lower_discriminant_decode = (
     ty   : TyId,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     shape = be.required_represented(ty).try();
     arg   = call.args.get(0).ok_or(AllocError.OutOfMemory).try();
     code ::= be.alloc.String().try();
@@ -140,7 +139,7 @@ lower_discriminant_decode = (
                 value,
                 open
             ),
-            None      => Ok(()),
+            None      => Ok,
         }).try();
         v.discriminant.match({ Ok(_) => { open = false; }, None => () });
     });
@@ -159,7 +158,7 @@ write_decode_exact = (
     v     : Variant,
     value : ExprId,
     first : bool
-) Res<(), AllocError> {
+) Res<AllocError> {
     n = be.check.const_int(value).match({ Ok(x) => x, None => 0 });
     line ::= be.alloc.String().try();
     first.match({
@@ -184,7 +183,7 @@ write_decode_fallback = (
     raw   : str,
     dst   : str,
     qname : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.writeln("else {").try();
     be.indent();
     catch_all_variant(shape.value).match({
@@ -211,7 +210,7 @@ represented_qname = (be :: CBackend, shape: RepresentedEnum)
     out ::= be.alloc.String().try();
     be.check.types.at(shape.ty).match({
         Named(n) => be.write_qname(out, n),
-        _        => Ok(()),
+        _        => Ok,
     }).try();
     Ok(out)
 }
@@ -257,7 +256,7 @@ catch_all_variant = (e: Enum) Res<Variant> {
 }
 
 set_closed_ok = (be :: CBackend, ret: TyId, dst: str, value: str)
-                Res<(), AllocError> {
+                Res<AllocError> {
     cty    ::= be.alloc.String().try();
     tag    ::= be.alloc.String().try();
     member ::= be.alloc.String().try();
@@ -273,7 +272,7 @@ set_closed_ok = (be :: CBackend, ret: TyId, dst: str, value: str)
 }
 
 set_closed_none = (be :: CBackend, ret: TyId, dst: str)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     cty ::= be.alloc.String().try();
     tag ::= be.alloc.String().try();
     be.ctype(ret, cty).try();

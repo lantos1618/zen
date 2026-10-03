@@ -16,8 +16,7 @@ main = (env: Env) Res<i32, AllocError> {
     Ok(0);
 }
 
-run = (env: Env, a: Alloc, root: str) Res<(), AllocError> {
+run = (env: Env, a: Alloc, root: str) Res<AllocError> {
     code = build(env, a, BuildArgs(root: root, repeat: 1)).try();
     println("{} -> {}", root, code);
-    Ok(());
 }

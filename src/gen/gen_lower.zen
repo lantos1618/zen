@@ -20,7 +20,7 @@
 { Checker } = sema.sema
 { Program } = gen.gen_ir
 { lower_native } = gen.gen_lower_core
-{ Res } = std.core
+{ Res, Error } = std.core
 
 // Lower the program whose `main` is in module `entry`.
 lower* = (
@@ -34,6 +34,7 @@ lower* = (
 
 Fault* = { span*: Span, what*: str }
 LowerError* = { OutOfMemory | Unsupported: Fault }
+LowerError.impl(Error, {})
 
 unsupported* = (span: Span, what: str) LowerError {
     LowerError.Unsupported(Fault(span: span, what: what))

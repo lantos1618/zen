@@ -12,7 +12,7 @@ inline = (x: u32) u32 { x + 1 }
 
 twice = inline <T>(value: T) T { value }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a     = env.mem.alloc();
     words = a.raw(32, 16).try().to<u32>();
     Range<usize>(0, 8).loop((i) { words.write_volatile(i, i.truncate_u32() *% 16843009); });
@@ -29,5 +29,4 @@ main = (env: Env) Res<(), AllocError> {
     println("mix: {} {}", mix(1, 2), mix(4294967295, 1));
     // A function merely named `inline` is still an ordinary call.
     println("named inline: {} {}", inline(41), twice(5));
-    Ok(())
 }

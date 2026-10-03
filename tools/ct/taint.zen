@@ -325,7 +325,7 @@ instruction = (a: Alloc, text: str, raw: str) Res<Line, AllocError> {
 // The count a `rep` string instruction repeats, when an instruction just
 // before it in the same block put a constant in %rcx (GCC's `movl $16,
 // %ecx; rep movsq`): added as its second operand, `$16`.
-repeat_counts = (a: Alloc, lines :: Vec<Line>) Res<(), AllocError> {
+repeat_counts = (a: Alloc, lines :: Vec<Line>) Res<AllocError> {
     known :: Res<str> = None;
     Range(0, lines.len).loop((i) {
         l = lines.get(i).ok_or(AllocError.OutOfMemory).try();
@@ -355,7 +355,7 @@ repeat_counts = (a: Alloc, lines :: Vec<Line>) Res<(), AllocError> {
             }),
         });
     });
-    Ok(())
+    Ok
 }
 
 parse_lines* = (a: Alloc, isa: Isa, body: Vec<str>) Res<Vec<Line>, AllocError> {
@@ -521,7 +521,7 @@ has_slot = (set: Vec<i64>, at: i64) bool {
     set.find((s) { s == at }).match({ Ok(_) => true, None => false })
 }
 
-put = (set :: Vec<str>, name: str, on: bool) Res<(), AllocError> {
+put = (set :: Vec<str>, name: str, on: bool) Res<AllocError> {
     present = name.is_in(set);
     (on && !present).then(() { set.add(name).try(); });
     (!on && present).then(() {
@@ -529,10 +529,10 @@ put = (set :: Vec<str>, name: str, on: bool) Res<(), AllocError> {
         last = set.take(set.len - 1).ok_or(AllocError.OutOfMemory).try();
         (at < set.len).then(() { set.ptr().write(at, last); });
     });
-    Ok(())
+    Ok
 }
 
-put_slot = (set :: Vec<i64>, at: i64, on: bool) Res<(), AllocError> {
+put_slot = (set :: Vec<i64>, at: i64, on: bool) Res<AllocError> {
     present = has_slot(set, at);
     (on && !present).then(() { set.add(at).try(); });
     (!on && present).then(() {
@@ -540,7 +540,7 @@ put_slot = (set :: Vec<i64>, at: i64, on: bool) Res<(), AllocError> {
         last = set.take(set.len - 1).ok_or(AllocError.OutOfMemory).try();
         (i < set.len).then(() { set.ptr().write(i, last); });
     });
-    Ok(())
+    Ok
 }
 
 // The stack byte bitmap covers entry-relative offsets WINDOW_LOW up to
@@ -619,21 +619,21 @@ addr_of = (s: State, reg: str) Res<i64> {
 // Whether `reg` holds some stack address, exact or not.
 on_stack = (s: State, reg: str) bool { entry_of(s, reg).match({ Ok(_) => true, None => false }) }
 
-drop_addr = (list :: Vec<StackAddr>, reg: str) Res<(), AllocError> {
+drop_addr = (list :: Vec<StackAddr>, reg: str) Res<AllocError> {
     Range(0, list.len).find((i) { list.get(i).match({ Ok(e) => e.reg.eq(reg), None => false }) }).when_ok((i) {
         last = list.take(list.len - 1).ok_or(AllocError.OutOfMemory).try();
         (i < list.len).then(() { list.ptr().write(i, last); });
     });
-    Ok(())
+    Ok
 }
 
-set_addr = (list :: Vec<StackAddr>, reg: str, at: Res<i64>) Res<(), AllocError> {
+set_addr = (list :: Vec<StackAddr>, reg: str, at: Res<i64>) Res<AllocError> {
     drop_addr(list, reg).try();
     at.when_ok((o) { list.add(StackAddr(reg: reg, at: o, exact: true)).try(); });
-    Ok(())
+    Ok
 }
 
-set_somewhere = (list :: Vec<StackAddr>, reg: str) Res<(), AllocError> {
+set_somewhere = (list :: Vec<StackAddr>, reg: str) Res<AllocError> {
     drop_addr(list, reg).try();
     list.add(StackAddr(reg: reg, at: 0, exact: false))
 }
@@ -806,28 +806,28 @@ Analysis* = {
         Range(0, self.labels.len).find((i) { self.labels.get(i).value_or("").eq(name) })
     }
 
-    report = (self :: @Self, kind: str, text: str) Res<(), AllocError> {
+    report = (self :: @Self, kind: str, text: str) Res<AllocError> {
         self.observed = true;
         self.reporting.match({
-            false => Ok(()),
+            false => Ok,
             true  => self.findings.add(Finding(kind: kind, text: text)),
         })
     }
 
     // Send the current state along a jump to `label`.
-    flow = (self :: @Self, label: str, s: State) Res<(), AllocError> {
+    flow = (self :: @Self, label: str, s: State) Res<AllocError> {
         self.state_at(label).when_ok((i) {
             into ::= self.states.get(i).ok_or(AllocError.OutOfMemory).try();
             grew = join(self.alloc, into, s).try();
             self.states.ptr().write(i, into);
             grew.then(() { self.grew = true; });
         });
-        Ok(())
+        Ok
     }
 
     // A return: a public-result function must not return a secret, nor a
     // pointer into secret memory (callers take its result as plain data).
-    returns = (self :: @Self, cur: State, line: Line) Res<(), AllocError> {
+    returns = (self :: @Self, cur: State, line: Line) Res<AllocError> {
         [str, 6]("rax", "rdx", "mm0", "x0", "x1", "v0").loop((r) {
             has(cur.val, r).then(() { self.observed = true; });
         });
@@ -838,7 +838,7 @@ Analysis* = {
             secret = has(cur.val, r) && !(byte && has(cur.low, r));
             (secret || has(cur.pts, r) || has(cur.pts2, r)).then(() { self.report("result", line.text).try(); });
         });
-        Ok(())
+        Ok
     }
 }
 
@@ -908,15 +908,15 @@ entry_state = (a: Alloc, seed: Seed) Res<State, AllocError> {
 }
 
 // The secret stack bytes, for CT_TRACE.
-show_bytes = (shown :: String, bits: Vec<u64>) Res<(), AllocError> {
+show_bytes = (shown :: String, bits: Vec<u64>) Res<AllocError> {
     Range(0, bits.len * 64).loop((b) {
         word = bits.get(b / 64).value_or(0);
         (word.shift_right(b % 64).bit_and(1) == 1).then(() { shown.fmt(" {}", WINDOW_LOW + wide(b)).try(); });
     });
-    Ok(())
+    Ok
 }
 
-pass = (an :: Analysis, seed: Seed) Res<(), AllocError> {
+pass = (an :: Analysis, seed: Seed) Res<AllocError> {
     cur ::= entry_state(an.alloc, seed).try();
     // A label no path reaches, while instructions follow it: code the
     // analysis never saw, reported rather than passed.
@@ -962,13 +962,13 @@ pass = (an :: Analysis, seed: Seed) Res<(), AllocError> {
             }); },
         });
     });
-    Ok(())
+    Ok
 }
 
 // The taken edge of a conditional branch: to a label of this function, or
 // out of it, a conditional tail call (Clang's `jne f # TAILCALL`), which
 // is a call and a return on that path.
-branch_to = (an :: Analysis, cur: State, target: str, l: Line) Res<(), AllocError> {
+branch_to = (an :: Analysis, cur: State, target: str, l: Line) Res<AllocError> {
     an.state_at(target).match({
         Ok(_) => an.flow(target, cur).try(),
         None  => { (!target.starts_with(".") && !target.starts_with("L")).then(() {
@@ -980,15 +980,15 @@ branch_to = (an :: Analysis, cur: State, target: str, l: Line) Res<(), AllocErro
             an.returns(taken, l).try();
         }); },
     });
-    Ok(())
+    Ok
 }
 
 // An indirect jump that is not a return (a jump table, a computed goto, a
 // tail call through a pointer): its targets are not written, so every
 // label of the function may be one.
-flow_everywhere = (an :: Analysis, cur: State) Res<(), AllocError> {
+flow_everywhere = (an :: Analysis, cur: State) Res<AllocError> {
     an.labels.loop((label) { an.flow(label, cur).try(); });
-    Ok(())
+    Ok
 }
 
 // ---------------------------------------------------------------------
@@ -1014,13 +1014,13 @@ stack_points2 = (cur: State, place: Place, width: usize) bool {
 
 // Record that the 8-byte stack slot at `place` holds a pointer to pointers
 // to secrets (after the store that cleared it).
-stack_mark_points2 = (cur :: State, place: Place, width: usize, on: bool) Res<(), AllocError> {
+stack_mark_points2 = (cur :: State, place: Place, width: usize, on: bool) Res<AllocError> {
     place.match({
         Exact(o)  => { (on && width == 8).then(() { put_slot(cur.p2slots, o, true).try(); }); },
         Somewhere => (),
         Elsewhere => (),
     });
-    Ok(())
+    Ok
 }
 
 stack_points = (cur: State, place: Place, width: usize) bool {
@@ -1039,7 +1039,7 @@ guarded = (cur: State, o: i64, width: usize) bool {
 // After a store of `width` bytes at `place`: the slots it overwrote no
 // longer hold the guard, and it holds the guard again when `guard` (an
 // 8-byte store of the guard value).
-stack_guard = (cur :: State, place: Place, width: usize, guard: bool) Res<(), AllocError> {
+stack_guard = (cur :: State, place: Place, width: usize, guard: bool) Res<AllocError> {
     place.match({
         Exact(o)  => {
             // Every 8-byte guard slot overlapping the stored bytes.
@@ -1049,7 +1049,7 @@ stack_guard = (cur :: State, place: Place, width: usize, guard: bool) Res<(), Al
         Somewhere => (),
         Elsewhere => (),
     });
-    Ok(())
+    Ok
 }
 
 // A store of `width` bytes at `place`.
@@ -1059,7 +1059,7 @@ stack_store = (
     width  : usize,
     secret : bool,
     points : bool
-) Res<(), AllocError> {
+) Res<AllocError> {
     place.match({
         Exact(o)  => {
             placed = mark(cur.slots, o, width, secret).try();
@@ -1073,7 +1073,7 @@ stack_store = (
         Somewhere => { (secret && !cur.precise).then(() { cur.smear = true; }); },
         Elsewhere => (),
     });
-    Ok(())
+    Ok
 }
 
 // Calls that never return end the path: what follows them in the file is
@@ -1280,7 +1280,7 @@ call = (
     target : str,
     line   : Line,
     conv   : Convention
-) Res<(), AllocError> {
+) Res<AllocError> {
     // A GCC clone (`f.isra.0`, `f.constprop.0`, `f.part.0`) may take its
     // arguments differently from f's prototype: ISRA passes fields of an
     // aggregate in registers of their own.
@@ -1433,7 +1433,7 @@ call = (
     });
     cur.flags = false;
     cur.carry = false;
-    Ok(())
+    Ok
 }
 
 // The runtime library's 128-bit divisions, which take variable time.
@@ -1647,11 +1647,11 @@ x86_address = (
     cur  : State,
     m    : X86Mem,
     line : Line
-) Res<(), AllocError> {
+) Res<AllocError> {
     secret = m.base.match({ Ok(b) => has(cur.val, b), None => false })
         || m.index.match({ Ok(i) => has(cur.val, i), None => false });
     secret.then(() { an.report("address", line.text).try(); });
-    Ok(())
+    Ok
 }
 
 x86_points = (an :: Analysis, cur: State, op: str, width: usize) bool {
@@ -1678,12 +1678,12 @@ x86_points2 = (an :: Analysis, cur: State, op: str, width: usize) bool {
 }
 
 // After a write to `op`, record that it points at pointers to secrets.
-x86_mark_points2 = (an :: Analysis, cur :: State, op: str, width: usize, on: bool) Res<(), AllocError> {
+x86_mark_points2 = (an :: Analysis, cur :: State, op: str, width: usize, on: bool) Res<AllocError> {
     x86_is_mem(op).match({
         true  => { x86_mem(an.alloc, op).when_ok((m) { stack_mark_points2(cur, x86_place(cur, m), width, on).try(); }); },
         false => { x86_reg(an.alloc, op).when_ok((r) { put(cur.pts2, r, on).try(); }); },
     });
-    Ok(())
+    Ok
 }
 
 // Write a value (and whether it points at secrets) to a destination. An
@@ -1696,7 +1696,7 @@ x86_write = (
     points : bool,
     line   : Line,
     width  : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     x86_is_mem(op).match({
         true  => {
             m = x86_mem(an.alloc, op).ok_or(AllocError.OutOfMemory).try();
@@ -1720,7 +1720,7 @@ x86_write = (
             set_addr(cur.addr, r, None).try();
         }); },
     });
-    Ok(())
+    Ok
 }
 
 x86_imm = (op: str) i64 {
@@ -1786,7 +1786,7 @@ x86_string = (
     op       : str,
     repeated : bool,
     count    : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     size: usize = op.ends_with("b").match({
         true  => 1,
         false => op.ends_with("w").match({ true => 2, false => (op.ends_with("q")).match({ true => 8, false => 4 }) }),
@@ -1848,15 +1848,15 @@ x86_string = (
         });
     });
     (repeated && !kind.is_in(["cmps", "scas"])).then(() { put(cur.val, "rcx", false).try(); });
-    Ok(())
+    Ok
 }
 
-x86_call = (an :: Analysis, cur :: State, target: str, l: Line) Res<(), AllocError> {
+x86_call = (an :: Analysis, cur :: State, target: str, l: Line) Res<AllocError> {
     conv = x86_convention(an.alloc).try();
     an.call(cur, target, l, conv)
 }
 
-x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
+x86 = (an :: Analysis, cur :: State, l: Line) Res<AllocError> {
     m     = l.mnemonic;
     ops   = l.operands;
     n     = ops.len;
@@ -2216,7 +2216,7 @@ x86 = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
         });
         h.break();
     });
-    Ok(())
+    Ok
 }
 
 // ---------------------------------------------------------------------
@@ -2348,15 +2348,15 @@ arm_address = (
     cur  : State,
     m    : ArmMem,
     line : Line
-) Res<(), AllocError> {
+) Res<AllocError> {
     secret = m.base.match({ Ok(b) => has(cur.val, b), None => false })
         || m.index.match({ Ok(i) => has(cur.val, i), None => false });
     secret.then(() { an.report("address", line.text).try(); });
-    Ok(())
+    Ok
 }
 
 arm_set = (an :: Analysis, cur :: State, reg: str, secret: bool, points: bool)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     put(cur.val, reg, secret).try();
     put(cur.low, reg, false).try();
     put(cur.pts, reg, points).try();
@@ -2364,7 +2364,6 @@ arm_set = (an :: Analysis, cur :: State, reg: str, secret: bool, points: bool)
     put(cur.rps, reg, false).try();
     put(cur.guards, reg, false).try();
     set_addr(cur.addr, reg, None).try();
-    Ok(())
 }
 
 // Loads and stores: registers before the memory operand, then an optional
@@ -2376,7 +2375,7 @@ arm_memory = (
     cur   :: State,
     l     : Line,
     store : bool
-) Res<(), AllocError> {
+) Res<AllocError> {
     at      = Range(0, l.operands.len).find((i) { arm_is_mem(l.operands.get(i).value_or("")) }).value_or(0);
     mem     = arm_mem(an.alloc, l.operands.get(at).value_or("[]")).ok_or(AllocError.OutOfMemory).try();
     post    = l.operands.get(at + 1).value_or("");
@@ -2476,10 +2475,10 @@ arm_memory = (
             });
         });
     });
-    Ok(())
+    Ok
 }
 
-arm_call = (an :: Analysis, cur :: State, target: str, l: Line) Res<(), AllocError> {
+arm_call = (an :: Analysis, cur :: State, target: str, l: Line) Res<AllocError> {
     conv = arm_convention(an.alloc).try();
     an.call(cur, target, l, conv)
 }
@@ -2548,7 +2547,7 @@ arm_suffix = (mnemonic: str) str {
     })
 }
 
-arm = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
+arm = (an :: Analysis, cur :: State, l: Line) Res<AllocError> {
     m     = arm_operation(l.mnemonic);
     ops   = l.operands;
     n     = ops.len;
@@ -2711,5 +2710,5 @@ arm = (an :: Analysis, cur :: State, l: Line) Res<(), AllocError> {
             .then(() { cur.flags = secret; });
         h.break();
     });
-    Ok(())
+    Ok
 }

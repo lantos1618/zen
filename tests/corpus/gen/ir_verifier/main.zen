@@ -66,7 +66,7 @@ example = (a: Alloc) Res<Example, AllocError> {
     Ok(Example(alloc: a, slots: slots, code: code, exit: Terminator.Return(0)))
 }
 
-structure = (a: Alloc) Res<(), AllocError> {
+structure = (a: Alloc) Res<AllocError> {
     show("missing entry", Program(functions: a.Vec<Func>(), entry: 0), a);
     e ::= example(a).try();
     show("valid scalars", e.program().try(), a);
@@ -123,10 +123,9 @@ structure = (a: Alloc) Res<(), AllocError> {
     e.code.take(e.code.len - 1);
     e.code.clear();
     show("uninitialized return", e.program().try(), a);
-    Ok(())
 }
 
-calls = (a: Alloc) Res<(), AllocError> {
+calls = (a: Alloc) Res<AllocError> {
     e    ::= example(a).try();
     args ::= a.Vec<usize>();
     args.add(1).try();
@@ -194,7 +193,6 @@ calls = (a: Alloc) Res<(), AllocError> {
         )
     );
     show("missing block", p, a);
-    Ok(())
 }
 
 constant_block = (a: Alloc, initialize: bool, exit: Terminator)
@@ -251,7 +249,7 @@ cycle = (a: Alloc, initialize: bool) Res<Program, AllocError> {
     flow_program(a, blocks)
 }
 
-unreachable = (a: Alloc) Res<(), AllocError> {
+unreachable = (a: Alloc) Res<AllocError> {
     e = example(a).try();
     code ::= a.Vec<Instruction>();
     code.add(Instruction.PrintValue(Print(value: 1, ty: Scalar.I32))).try();
@@ -270,7 +268,6 @@ unreachable = (a: Alloc) Res<(), AllocError> {
     show("unreachable read", program, a);
     code.set(0, Instruction.PrintValue(Print(value: 1, ty: Scalar.Bool)));
     show("unreachable type", program, a);
-    Ok(())
 }
 
 // Read v0's payload word into v6.
@@ -341,7 +338,7 @@ guarded = (
     Ok(Program(functions: functions, entry: 0))
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a = env.mem.alloc();
     structure(a).try();
     calls(a).try();
@@ -358,5 +355,4 @@ main = (env: Env) Res<(), AllocError> {
         guarded(a, 0, 1, 1, 1).try(),
         a
     );
-    Ok(())
 }

@@ -50,13 +50,13 @@ Decoded* = {
             self.valid_position(self.field(range, "start").try()).try();
             self.valid_position(self.field(range, "end").try()).try();
         });
-        Ok(())
+        Ok
     }
 
     valid_position = (self: @Self, value: JsonId) Res<()> {
         self.tree.whole(self.field(value, "line").try()).try();
         self.tree.whole(self.field(value, "character").try()).try();
-        Ok(())
+        Ok
     }
 
     method* = (self: @Self) str { self.string_at(self.request, "method") }
@@ -172,7 +172,7 @@ RequestTurn* = {
     view* = (self: @Self) str { self.response.view() }
 
     result* = (self :: @Self, request: Decoded, body: str)
-              Res<(), AllocError> {
+              Res<AllocError> {
         request.id.match({
             None    => written(),
             Ok(rid) => {
@@ -185,7 +185,7 @@ RequestTurn* = {
     }
 
     failed* = (self :: @Self, request: Decoded, code: RpcFault, why: str)
-              Res<(), AllocError> {
+              Res<AllocError> {
         request.id.match({
             None    => written(),
             Ok(rid) => {
@@ -195,7 +195,7 @@ RequestTurn* = {
         })
     }
 
-    invalid_request* = (self :: @Self) Res<(), AllocError> {
+    invalid_request* = (self :: @Self) Res<AllocError> {
         reply ::= self.envelope().try();
         self.response.add("null").try();
         self.finish_error(
@@ -205,7 +205,7 @@ RequestTurn* = {
         )
     }
 
-    parse_error* = (self :: @Self, f: JsonFault) Res<(), AllocError> {
+    parse_error* = (self :: @Self, f: JsonFault) Res<AllocError> {
         reply ::= self.envelope().try();
         self.response.add("null").try();
         why ::= self.temporary.String().try();
@@ -231,7 +231,7 @@ RequestTurn* = {
     }
 
     finish_error = (self :: @Self, reply :: Nest, code: RpcFault, why: str)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         reply.key("error", self.response).try();
         encoded ::= RpcError(code: code.rpc_code(), message: why)
             .to_json(self.temporary).try();
@@ -290,7 +290,7 @@ ServerCapabilities = {
     codeActionKind: str = "quickfix",
     semanticTokensFull: bool = true,
 
-    write = (self: @Self, out :: String) Res<(), AllocError> {
+    write = (self: @Self, out :: String) Res<AllocError> {
         caps ::= obj(out).try();
         caps.key("textDocumentSync", out).try();
         out.write_usize(self.textDocumentSync).try();
@@ -321,7 +321,7 @@ StringListOption = {
     name: str,
     value: str,
 
-    write = (self: @Self, out :: String) Res<(), AllocError> {
+    write = (self: @Self, out :: String) Res<AllocError> {
         option ::= obj(out).try();
         option.key(self.name, out).try();
         values ::= arr(out).try();
@@ -332,7 +332,7 @@ StringListOption = {
     }
 }
 
-write_capabilities* = (a: Alloc, out :: String) Res<(), AllocError> {
+write_capabilities* = (a: Alloc, out :: String) Res<AllocError> {
     result ::= obj(out).try();
     result.key("capabilities", out).try();
     ServerCapabilities().write(out).try();

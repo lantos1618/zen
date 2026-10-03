@@ -9,7 +9,7 @@ spawn_failed = <T>(result: Res<T, ProcError>) bool {
     result.match({ Ok(_) => false, Err(e) => e.match({ SpawnFailed => true, _ => false }) })
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a = env.mem.alloc();
     env.proc.run(a, "", "printf '%s' \"$0\"").match({
         Ok(value) => println("shell {}", value.out.view()),
@@ -64,5 +64,4 @@ main = (env: Env) Res<(), AllocError> {
     );
     argv.set(0, bad.view());
     println("nul argv {}", spawn_failed(env.proc.run_argv(a, "", argv)));
-    Ok(())
 }

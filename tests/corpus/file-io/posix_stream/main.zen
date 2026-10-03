@@ -2,7 +2,7 @@
 { AllocError, Ptr, null_ptr } = std.mem
 { str_at } = std.text
 { callback } = std.native
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { Env, FsError } = std.env
 { println } = std.io
 Native = c.bind("unistd.h", {
@@ -23,6 +23,7 @@ Wait = c.bind("sys/wait.h", {
     waitpid = (pid: i32, status: Ptr<i32>, options: i32) i32
 })
 Failure = { | Check }
+Failure.impl(Error, {})
 interrupted = (number: i32) {}
 
 main = (env: Env) Res<i32, AllocError | FileError | FsError | Failure> {
@@ -43,26 +44,29 @@ main = (env: Env) Res<i32, AllocError | FileError | FsError | Failure> {
     (str_at(bytes, 8) == "abcdefgh").ensure(Failure.Check).try();
     reader.read_exact(bytes, 1).match({
         Ok(_)      => Err(Failure.Check),
-        Err(error) => error.match({UnexpectedEnd => Ok(()), _ => Err(Failure.Check)}),
+        Err(error) => error.match({
+            UnexpectedEnd => Ok,
+            _             => Err(Failure.Check),
+        }),
     }).try();
     bad = Descriptor(fd: -1);
     bad.read_exact(null_ptr<u8>(), 0).try();
     bad.write_all("").try();
     bad.read_exact(bytes, 1).match({
         Ok(_)      => Err(Failure.Check),
-        Err(error) => error.match({ReadFailed => Ok(()), _ => Err(Failure.Check)}),
+        Err(error) => error.match({ReadFailed => Ok, _ => Err(Failure.Check)}),
     }).try();
     bad.write_all("x").match({
         Ok(_)      => Err(Failure.Check),
-        Err(error) => error.match({WriteFailed => Ok(()), _ => Err(Failure.Check)}),
+        Err(error) => error.match({WriteFailed => Ok, _ => Err(Failure.Check)}),
     }).try();
     open_read(a, "bad\0path").match({
         Ok(_)      => Err(Failure.Check),
-        Err(error) => error.match({InvalidPath => Ok(()), _ => Err(Failure.Check)}),
+        Err(error) => error.match({InvalidPath => Ok, _ => Err(Failure.Check)}),
     }).try();
     create_temporary(a, "missing-template", 0).match({
         Ok(_)      => Err(Failure.Check),
-        Err(error) => error.match({InvalidPath => Ok(()), _ => Err(Failure.Check)}),
+        Err(error) => error.match({InvalidPath => Ok, _ => Err(Failure.Check)}),
     }).try();
     // Force a partial read followed by EINTR before the final bytes arrive.
     // The child uses only native calls after fork; no actor/runtime work.

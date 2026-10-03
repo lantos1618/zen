@@ -13,7 +13,7 @@ Request = {
     meta: Meta,
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     request = Request(
         prompt: "quote: \" slash: \\ newline:\n",
         stream: true,
@@ -21,5 +21,4 @@ main = (env: Env) Res<(), AllocError> {
     );
     encoded = request.to_json(env.mem.alloc()).try();
     env.out.println("{}", encoded.view()).ignore();
-    Ok(())
 }

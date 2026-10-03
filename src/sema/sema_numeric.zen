@@ -28,7 +28,7 @@ NumericConversion* = {
     kind*: ConversionKind,
 }
 
-check_numeric_conversions* = (c :: Checker) Res<(), AllocError> {
+check_numeric_conversions* = (c :: Checker) Res<AllocError> {
     Range(0, c.world.count()).loop((h, mi) {
         c.world.table_at(mi).match({
             None      => (),
@@ -37,10 +37,10 @@ check_numeric_conversions* = (c :: Checker) Res<(), AllocError> {
             ),
         });
     });
-    Ok(())
+    Ok
 }
 
-numeric_declaration = (c :: Checker, d: Def) Res<(), AllocError> {
+numeric_declaration = (c :: Checker, d: Def) Res<AllocError> {
     // Translated C declarations retain their recorded foreign binding even
     // when a native function happens to have a conversion-shaped name.
     foreign = c.tree.module_origin_at(d.id.module.to_usize()).match({
@@ -48,23 +48,23 @@ numeric_declaration = (c :: Checker, d: Def) Res<(), AllocError> {
         None       => false,
     });
     foreign.match({
-        true  => Ok(()),
+        true  => Ok,
         false => c.source_numeric_declaration(d),
     })
 }
 
-source_numeric_declaration = (c :: Checker, d: Def) Res<(), AllocError> {
+source_numeric_declaration = (c :: Checker, d: Def) Res<AllocError> {
     decl_at(c.tree, d.id).match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(row) => row.kind.match({
             Function(f) => f.body.match({
-                Ok(_) => Ok(()),
+                Ok(_) => Ok,
                 None  => conversion_name(f.name.text).match({
                     None       => c.integer_bit_signature(d, f),
                     Ok(target) => c.numeric_signature(d, f, target),
                 }),
             }),
-            _           => Ok(()),
+            _           => Ok,
         }),
     })
 }
@@ -87,7 +87,7 @@ conversion_name = (name: str) Res<str> {
 }
 
 numeric_signature = (c :: Checker, d: Def, f: Function, target: str)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     (c.world.module_name(d.id).eq("std.core.num") && f.exported
         && f.params.len == 1 && f.tparams.len == 0).match({
         false => c.invalid_numeric(d),
@@ -117,7 +117,7 @@ register_numeric = (
     target : str,
     rounds : bool,
     result : TyId
-) Res<(), AllocError> {
+) Res<AllocError> {
     name = c.prim_name(source);
     float_kind(name, target, rounds).match({
         Ok(kind) => Ok(kind),
@@ -218,7 +218,7 @@ float_kind = (source: str, target: str, rounds: bool) Res<ConversionKind> {
     })
 }
 
-invalid_numeric = (c :: Checker, d: Def) Res<(), AllocError> {
+invalid_numeric = (c :: Checker, d: Def) Res<AllocError> {
     c.report(
         d.span.file,
         d.span,
@@ -254,7 +254,7 @@ integer_bit_signature = (
     c :: Checker,
     d : Def,
     f : Function
-) Res<(), AllocError> {
+) Res<AllocError> {
     scalar = integer_bit_name(f.name.text)
         && !c.world.module_name(d.id).eq("std.simd");
     scalar.match({

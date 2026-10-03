@@ -26,7 +26,7 @@
 // to land. Only a block that writes `@scope` gets one; storage is
 // automatic, so re-entering the block (a loop's next pass) starts from
 // an empty stack.
-enter_block* = (be :: CBackend, id: BlockId) Res<(), AllocError> {
+enter_block* = (be :: CBackend, id: BlockId) Res<AllocError> {
     rec = be.block_record(id).try();
     be.open_block(rec)
 }
@@ -51,9 +51,9 @@ open_record = (be :: CBackend) Res<usize, AllocError> {
 
 // A block leaving by its own closing brace. `keep` is a binding the
 // block is handing out, and "" when it is handing out nothing.
-leave_block* = (be :: CBackend, keep: str) Res<(), AllocError> {
+leave_block* = (be :: CBackend, keep: str) Res<AllocError> {
     (be.block_depth() == 0).match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.run_frame(be.block_depth() - 1, keep),
     }).try();
     be.close_block()
@@ -65,34 +65,34 @@ leave_block* = (be :: CBackend, keep: str) Res<(), AllocError> {
 // statements left to write, and the `}` will run this again for the
 // path that falls through to it.
 unwind_to* = (be :: CBackend, depth: usize, keep: str)
-             Res<(), AllocError> {
+             Res<AllocError> {
     n = be.block_depth();
     (n > depth).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.unwind_frames(depth, n, keep),
     })
 }
 
 unwind_frames = (be :: CBackend, depth: usize, n: usize, keep: str)
-                Res<(), AllocError> {
+                Res<AllocError> {
     Range(0, n - depth).loop((h, k) {
         be.run_frame(n - 1 - k, keep).try();
     });
-    Ok(());
+    Ok;
 }
 
 // One block leaving, and the only place that says what that means.
-run_frame = (be :: CBackend, i: usize, keep: str) Res<(), AllocError> {
+run_frame = (be :: CBackend, i: usize, keep: str) Res<AllocError> {
     be.block_at(i).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(f) => be.run_cleanup(f, i, keep),
     })
 }
 
 run_cleanup = (be :: CBackend, f: BlockFrame, i: usize, keep: str)
-              Res<(), AllocError> {
+              Res<AllocError> {
     (f.rec > 0).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.run_defers(f.rec),
     }).try();
     be.unwind_drops(f.mark, be.frame_end(i), keep)
@@ -106,7 +106,7 @@ frame_end = (be :: CBackend, i: usize) usize {
     })
 }
 
-run_defers = (be :: CBackend, rec: usize) Res<(), AllocError> {
+run_defers = (be :: CBackend, rec: usize) Res<AllocError> {
     name ::= be.alloc.String().try();
     sym_gen(name, "b", rec).try();
     be.fmt("zg_scope_run(&{});\n", name.view())
@@ -114,30 +114,30 @@ run_defers = (be :: CBackend, rec: usize) Res<(), AllocError> {
 
 // Reverse declaration order, for the reason the file header gives.
 unwind_drops = (be :: CBackend, mark: usize, end: usize, keep: str)
-               Res<(), AllocError> {
+               Res<AllocError> {
     (end > mark).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.drop_range(mark, end, keep),
     })
 }
 
 drop_range = (be :: CBackend, mark: usize, end: usize, keep: str)
-             Res<(), AllocError> {
+             Res<AllocError> {
     Range(0, end - mark).loop((h, k) {
         be.drop_at(end - 1 - k).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(e) => be.drop_unless_kept(e, keep),
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
 // A binding the block is handing out is left alone: undropped leaks,
 // but dropping it is a use-after-free — only one is recoverable.
 drop_unless_kept = (be :: CBackend, e: DropEntry, keep: str)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     e.name.eq(keep).match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.write_drop(e),
     })
 }
@@ -150,9 +150,9 @@ drop_unless_kept = (be :: CBackend, e: DropEntry, keep: str)
 // match arm's payload binder, which names part of a value somebody
 // else still owns.
 note_drop* = (be :: CBackend, name: str, index: usize, ty: TyId)
-             Res<(), AllocError> {
+             Res<AllocError> {
     be.has_drop(ty).try().match({
-        false => Ok(()),
+        false => Ok,
         true  => own_binding(be, name, index, ty),
     })
 }
@@ -160,9 +160,9 @@ note_drop* = (be :: CBackend, name: str, index: usize, ty: TyId)
 // A deferred binding (`x :: T;`) is registered before it holds a value: its
 // flag starts clear, and the assignment that gives it one arms the flag.
 note_unset_drop* = (be :: CBackend, name: str, index: usize, ty: TyId)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     be.has_drop(ty).try().match({
-        false => Ok(()),
+        false => Ok,
         true  => {
             live = be.open_live_flag(false).try();
             be.own_binding(DropEntry(
@@ -176,7 +176,7 @@ note_unset_drop* = (be :: CBackend, name: str, index: usize, ty: TyId)
 }
 
 own_binding = (be :: CBackend, name: str, index: usize, ty: TyId)
-              Res<(), AllocError> {
+              Res<AllocError> {
     live = be.open_live_flag(true).try();
     be.own_binding(DropEntry(name: name, index: index, ty: ty, live: live))
 }
@@ -205,7 +205,7 @@ open_live_flag = (be :: CBackend, armed: bool) Res<usize, AllocError> {
 // one `slot_of` would have found — and only that one: clearing every
 // entry with the name disarms the drop of an outer binding the inner
 // shadow stood in front of, and that value leaks at scope exit.
-release_binding* = (be :: CBackend, name: str) Res<(), AllocError> {
+release_binding* = (be :: CBackend, name: str) Res<AllocError> {
     n = be.drop_count();
     Range(0, n).find((k) {
         be.drop_at(n - k - 1).match({
@@ -213,24 +213,23 @@ release_binding* = (be :: CBackend, name: str) Res<(), AllocError> {
             None  => false,
         })
     }).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(k) => be.drop_at(n - k - 1).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(e) => be.clear_if_named(e, name),
         }),
     }).try();
-    Ok(());
 }
 
 clear_if_named = (be :: CBackend, e: DropEntry, name: str)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     (e.name.eq(name) && (e.live > 0)).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.write_clear(e.live),
     })
 }
 
-write_clear = (be :: CBackend, live: usize) Res<(), AllocError> {
+write_clear = (be :: CBackend, live: usize) Res<AllocError> {
     name ::= be.alloc.String().try();
     sym_gen(name, "o", live).try();
     be.fmt("{} = 0;\n", name.view())
@@ -252,7 +251,7 @@ write_clear = (be :: CBackend, live: usize) Res<(), AllocError> {
 // `revive`. The entry stays in the frame that declared the binding, so a
 // store made inside a nested block -- a match arm -- is dropped when the
 // binding's own scope ends, not when the arm's does.
-displace* = (be :: CBackend, name: str) Res<(), AllocError> {
+displace* = (be :: CBackend, name: str) Res<AllocError> {
     n = be.drop_count();
     Range(0, n).find((k) {
         be.drop_at(n - k - 1).match({
@@ -260,24 +259,23 @@ displace* = (be :: CBackend, name: str) Res<(), AllocError> {
             None  => false,
         })
     }).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(k) => be.drop_at(n - k - 1).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(e) => be.displace_one(e),
         }),
     }).try();
-    Ok(());
 }
 
-displace_one = (be :: CBackend, e: DropEntry) Res<(), AllocError> {
+displace_one = (be :: CBackend, e: DropEntry) Res<AllocError> {
     be.write_drop(e).try();
     (e.live > 0).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.write_arm(e.live),
     })
 }
 
-write_arm = (be :: CBackend, live: usize) Res<(), AllocError> {
+write_arm = (be :: CBackend, live: usize) Res<AllocError> {
     name ::= be.alloc.String().try();
     sym_gen(name, "o", live).try();
     be.fmt("{} = 1;\n", name.view())
@@ -297,17 +295,17 @@ site_has_drop = (be :: CBackend, s: Site) Res<bool, AllocError> {
     })
 }
 
-write_drop = (be :: CBackend, e: DropEntry) Res<(), AllocError> {
+write_drop = (be :: CBackend, e: DropEntry) Res<AllocError> {
     site_of(be, e.ty).try().match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(s) => be.drop_through(e, s),
     })
 }
 
 drop_through = (be :: CBackend, e: DropEntry, s: Site)
-               Res<(), AllocError> {
+               Res<AllocError> {
     be.drop_fn(s.decl).try().match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(f) => be.guarded_drop(e, s, f),
     })
 }
@@ -315,7 +313,7 @@ drop_through = (be :: CBackend, e: DropEntry, s: Site)
 // The flag is the whole of "exactly once" on a value that is moved on
 // one path and not another: cleared at the move, tested at every exit.
 guarded_drop = (be :: CBackend, e: DropEntry, s: Site, f: Function)
-               Res<(), AllocError> {
+               Res<AllocError> {
     (e.live == 0).match({
         true  => be.call_drop(e, s, f),
         false => be.flagged_drop(e, s, f),
@@ -323,7 +321,7 @@ guarded_drop = (be :: CBackend, e: DropEntry, s: Site, f: Function)
 }
 
 flagged_drop = (be :: CBackend, e: DropEntry, s: Site, f: Function)
-               Res<(), AllocError> {
+               Res<AllocError> {
     flag ::= be.alloc.String().try();
     sym_gen(flag, "o", e.live).try();
     be.fmt("if ({}) {\n", flag.view()).try();
@@ -331,7 +329,6 @@ flagged_drop = (be :: CBackend, e: DropEntry, s: Site, f: Function)
     be.call_drop(e, s, f).try();
     be.dedent();
     be.writeln("}").try();
-    Ok(());
 }
 
 // The compiler-inserted call is exempt from the receiver rule. `drop`
@@ -340,7 +337,7 @@ flagged_drop = (be :: CBackend, e: DropEntry, s: Site, f: Function)
 // binding" — so the address is taken whatever the binding was written
 // as.
 call_drop = (be :: CBackend, e: DropEntry, s: Site, f: Function)
-            Res<(), AllocError> {
+            Res<AllocError> {
     inst = be.recv_inst(e.ty).try();
     sig ::= be.alloc.Vec<TyId>();
     be.method_sig(e.ty, s.decl, f, s.decl.module.to_usize(), inst, sig).try();
@@ -356,7 +353,7 @@ by_address = (f: Function) bool {
 }
 
 write_drop_call = (be :: CBackend, e: DropEntry, sym: str, addr: bool)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     name ::= be.alloc.String().try();
     sym_local(name, e.name, e.index).try();
     be.fmt("{}({}{});\n", sym, ampersand(addr), name.view())
@@ -386,17 +383,17 @@ collect_drop = (
     decl  : DeclId,
     i     : ImplId,
     found :: Vec<Function>
-) Res<(), AllocError> {
+) Res<AllocError> {
     (decl.module == i.decl.module).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.drop_in_impl(i, found),
     })
 }
 
 drop_in_impl = (be :: CBackend, i: ImplId, found :: Vec<Function>)
-               Res<(), AllocError> {
+               Res<AllocError> {
     be.check.world.impl_at(be.tree, i).match({
-        None   => Ok(()),
+        None   => Ok,
         Ok(im) => be.keep_drop_member(i, im, found),
     })
 }
@@ -406,9 +403,9 @@ keep_drop_member = (
     i     : ImplId,
     im    : Impl,
     found :: Vec<Function>
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.bounds_drop(i, im).try().match({
-        false => Ok(()),
+        false => Ok,
         true  => scan_drop_members(im, found),
     })
 }
@@ -430,30 +427,30 @@ bounds_drop = (be :: CBackend, i: ImplId, im: Impl) Res<bool, AllocError> {
 // below. One collects a Drop impl's `drop`, the other an impl's
 // supplied function; the meaning differs per layer.
 scan_drop_members = (im: Impl, found :: Vec<Function>)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     im.members.loop((h, m) { keep_bodied_drop(m, found).try() });
-    Ok(());
+    Ok;
 }
 
 keep_bodied_drop = (m: Member, found :: Vec<Function>)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     m.named("drop").match({
-        false => Ok(()),
+        false => Ok,
         true  => add_bodied(m, found),
     })
 }
 
-add_bodied = (m: Member, found :: Vec<Function>) Res<(), AllocError> {
+add_bodied = (m: Member, found :: Vec<Function>) Res<AllocError> {
     m.kind.match({
         Function(f) => add_if_bodied(f, found),
-        _           => Ok(()),
+        _           => Ok,
     })
 }
 
 add_if_bodied = (f: Function, found :: Vec<Function>)
-                Res<(), AllocError> {
+                Res<AllocError> {
     f.body.match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(_) => found.add(f),
     })
 }

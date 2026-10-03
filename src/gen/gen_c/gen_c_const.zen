@@ -30,7 +30,7 @@ lower_global_value* = (
     ctx  : Ctx,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     found ::= be.alloc.Vec<Def>();
     be.check.world.defs_of(ctx.module, text, found).try();
     found.get(0).match({
@@ -63,7 +63,7 @@ lower_variant_value = (
     want : TyId,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     found ::= be.alloc.Vec<Def>();
     be.check.world.variant_defs(be.tree, ctx.module, text, found).try();
     found.get(0).match({
@@ -79,7 +79,7 @@ lower_bare_variant = (
     text : str,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     intern_named(be, d).match({
         None   => unresolved(be, id, text, out),
         Ok(ty) => be.write_variant_value(id, ty, want, text, out),
@@ -93,7 +93,7 @@ lower_def_value = (
     text : str,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     d.kind.match({
         ConstDef => be.lower_const(id, d, text, want, out),
         _        => unresolved(be, id, text, out),
@@ -109,7 +109,7 @@ lower_const* = (
     text : str,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     decl_at(be.tree, d.id).match({
         None  => unresolved(be, id, text, out),
         Ok(x) => be.lower_const_decl(id, x, d, text, want, out),
@@ -124,7 +124,7 @@ lower_const_decl = (
     text : str,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     x.kind.match({
         Const(k) => be.lower_const_value(id, k, d, want, out),
         _        => unresolved(be, id, text, out),
@@ -141,7 +141,7 @@ lower_const_value* = (
     d    : Def,
     want : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     dctx = be.plain_ctx(d.id.module.to_usize());
     ty   = k.type.match({
         Ok(t) => be.check.type_from_ast(t, dctx),

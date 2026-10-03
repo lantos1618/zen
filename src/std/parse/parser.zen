@@ -218,9 +218,9 @@ Parser* = {
         Ok(QualifiedName(segments: segments, span: self.span_from(start)));
     }
 
-    skip* = (self :: @Self) Res<(), AllocError> {
+    skip* = (self :: @Self) Res<AllocError> {
         self.bump().try();
-        Ok(());
+        Ok;
     }
 
     empty_span* = (self: @Self) Span {
@@ -245,7 +245,7 @@ Parser* = {
 
     // Move onto the next non-trivia token, recording everything passed
     // over. Called after every bump, and once before the first.
-    drain* = (self :: @Self) Res<(), AllocError> {
+    drain* = (self :: @Self) Res<AllocError> {
         mark = self.tree.trivia_mark();
         stop ::= self.tokens.len;
         Range(self.at, self.tokens.len).loop((h, k) {
@@ -259,7 +259,7 @@ Parser* = {
         self.blank_before(self.token_at(stop)).try();
         self.at      = stop;
         self.pending = self.tree.trivia_run(mark);
-        Ok(());
+        Ok;
     }
 
     token_at = (self: @Self, k: usize) Token {
@@ -269,7 +269,7 @@ Parser* = {
         });
     }
 
-    keep_trivia = (self :: @Self, t: Token) Res<(), AllocError> {
+    keep_trivia = (self :: @Self, t: Token) Res<AllocError> {
         self.blank_before(t).try();
         self.tree.add_trivia(Trivia(
             kind: t.kind.trivia_kind(),
@@ -280,14 +280,14 @@ Parser* = {
 
     // Derive blank-line trivia from the gap between token spans. One Blank
     // represents a run of one or more blank lines.
-    blank_before = (self :: @Self, t: Token) Res<(), AllocError> {
+    blank_before = (self :: @Self, t: Token) Res<AllocError> {
         (t.span.start.line > self.gap_line + 1).then(() {
             self.keep_blank(t).try();
         });
-        Ok(());
+        Ok;
     }
 
-    keep_blank = (self :: @Self, t: Token) Res<(), AllocError> {
+    keep_blank = (self :: @Self, t: Token) Res<AllocError> {
         self.tree.add_trivia(Trivia(
             kind: TriviaKind.Blank,
             text: "",
@@ -357,16 +357,16 @@ Parser* = {
         Ok(false);
     }
 
-    error* = (self :: @Self, message: str) Res<(), AllocError> {
+    error* = (self :: @Self, message: str) Res<AllocError> {
         self.error_at(message, self.here_span())
     }
 
-    error_at* = (self :: @Self, message: str, span: Span) Res<(), AllocError> {
+    error_at* = (self :: @Self, message: str, span: Span) Res<AllocError> {
         (!self.hushed()).then(() { self.say(message, span).try(); });
-        Ok(());
+        Ok;
     }
 
-    say = (self :: @Self, message: str, span: Span) Res<(), AllocError> {
+    say = (self :: @Self, message: str, span: Span) Res<AllocError> {
         self.said = true;
         self.diags.add(diag(
             truncated(message, span, self.at_eof(), self.here_span().start),
@@ -423,7 +423,7 @@ Parser* = {
 
     // Depth counts AST links, including links produced by iterative postfix
     // parsing. Excess depth becomes a diagnostic rather than a stack overflow.
-    enter* = (self :: @Self) Res<(), AllocError> {
+    enter* = (self :: @Self) Res<AllocError> {
         (self.depth == self.run_base).then(
             () { self.anchor = self.here_span(); }
         );
@@ -435,7 +435,7 @@ Parser* = {
                 self.anchor,
             )).try();
         });
-        Ok(());
+        Ok;
     }
 
     run_from* = (self :: @Self) usize {

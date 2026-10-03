@@ -304,7 +304,7 @@ fail = (
     ty   : TyId,
     name : str,
     span : Span
-) Res<(), LowerError> {
+) Res<LowerError> {
     err_ty = lo.payload_type(ty, "Err").try();
     reason = lo.variant_value(err_ty, name, None, span).try();
     failed = lo.variant_value(ty, "Err", Ok(reason), span).try();
@@ -379,9 +379,9 @@ behavior = (
 }
 
 // Run a value's Drop at its place, when its type has one.
-drop_value = (lo :: Lowerer, place: Place, span: Span) Res<(), LowerError> {
+drop_value = (lo :: Lowerer, place: Place, span: Span) Res<LowerError> {
     lo.check.is_drop_type(place.ty).try(LowerError.OutOfMemory).match({
-        false => Ok(()),
+        false => Ok,
         true  => {
             defs ::= lo.alloc.Vec<Def>();
             lo.check.world.exported_named(
@@ -406,7 +406,7 @@ drop_value = (lo :: Lowerer, place: Place, span: Span) Res<(), LowerError> {
                 lo.one(Source.Located(place)).try(),
                 span
             ).try();
-            Ok(())
+            Ok
         },
     })
 }
@@ -605,7 +605,7 @@ outcome = (
     reason : Res<str>,
     done   : usize,
     span   : Span
-) Res<(), LowerError> {
+) Res<LowerError> {
     expected = lo.word_const(Scalar.I32, code).try();
     test     = lo.slot_of(Scalar.Bool).try();
     lo.add(Instruction.BinaryValue(Binary(
@@ -631,7 +631,6 @@ outcome = (
     });
     lo.jump(done).try();
     lo.start(no);
-    Ok(())
 }
 
 // Slice descriptor `at` bytes into the descriptor array for a str stored at
@@ -644,7 +643,7 @@ describe = (
     offset      : usize,
     span        : Span
 )
-           Res<(), LowerError> {
+           Res<LowerError> {
     text        = lo.spill(value);
     data        = lo.read(lo.field_place(text, "data", span).try()).try();
     len         = lo.read(lo.field_place(text, "len", span).try()).try();
@@ -696,7 +695,7 @@ transferable = (
     formal : TyId,
     actual : TyId,
     span   : Span
-) Res<(), LowerError> {
+) Res<LowerError> {
     same_shape = lo.check.actor_byte_buffer(formal) == lo.check.actor_byte_buffer(actual)
         && lo.is_str(formal) == lo.is_str(actual);
     same_shape.ensure(unsupported(
@@ -708,7 +707,6 @@ transferable = (
             span,
             "an actor payload without a concrete mailbox transfer"
         )).try();
-    Ok(())
 }
 
 // ---------------------------------------------------------------------
@@ -785,7 +783,7 @@ own_buffer = (
     layout : ActorLayout,
     record : usize,
     buffer : Place
-) Res<(), LowerError> {
+) Res<LowerError> {
     span    = nowhere();
     context = Place(
         base: Base.Through(record),

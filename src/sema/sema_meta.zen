@@ -607,27 +607,26 @@ walk_refused = (c :: Checker, target: Expr) Res<bool, AllocError> {
 }
 
 walk_collect = (c :: Checker, s: Struct, out :: Vec<str>)
-               Res<(), AllocError> {
+               Res<AllocError> {
     s.members.loop((h, m) {
         m.kind.match({
             Field(f) => out.add(f.name.text).try(),
             _        => (),
         });
     });
-    Ok(())
+    Ok
 }
 
 // Typecheck one pass per field. Recheck bypasses stale memo reads while writes
 // remain available to backend lowering. Empty structs perform no passes.
 walk_check = (c :: Checker, lam: Lambda, names: Vec<str>, ctx: Ctx)
-             Res<(), AllocError> {
+             Res<AllocError> {
     unknown = c.types.unknown().try();
     c.enter_recheck();
     names.loop((h, fname) {
         c.walk_pass(lam, fname, unknown, ctx).try();
     });
     c.leave_recheck();
-    Ok(())
 }
 
 walk_pass = (
@@ -636,11 +635,11 @@ walk_pass = (
     fname   : str,
     unknown : TyId,
     ctx     : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     lam.params.get(0).match({
-        None   => Ok(()),
+        None   => Ok,
         Ok(p0) => lam.params.get(1).match({
-            None   => Ok(()),
+            None   => Ok,
             Ok(p1) => c.walk_pass_with(lam, p0, p1, fname, unknown, ctx),
         }),
     })
@@ -654,7 +653,7 @@ walk_pass_with = (
     fname   : str,
     unknown : TyId,
     ctx     : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     c.push_walk(WalkBind(
         h_name: p0.name.text,
         h_span: p0.name.span,
@@ -668,7 +667,6 @@ walk_pass_with = (
     c.block_type(lam.body, ctx).try();
     c.release(mark).try();
     c.pop_walk();
-    Ok(())
 }
 
 is_walk_chain = (c :: Checker, call: Call, ac: Access) bool {

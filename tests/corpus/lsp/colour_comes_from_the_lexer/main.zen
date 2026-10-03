@@ -68,7 +68,7 @@ URI*: str = "file:///a.zen"
 // wire is an index into the array `initialize` advertises, so these must
 // agree, and the only way a reader can check that they do is to see
 // them together.
-said_legend = (a: Alloc) Res<(), AllocError> {
+said_legend = (a: Alloc) Res<AllocError> {
     out ::= a.String().try();
     write_legend(out).try();
     println("legend {}", out.view());
@@ -81,7 +81,6 @@ said_legend = (a: Alloc) Res<(), AllocError> {
     one_colour(Colour.type);
     one_colour(Colour.function);
     one_colour(Colour.parameter);
-    Ok(());
 }
 
 one_colour = (colour: Colour) {
@@ -90,7 +89,7 @@ one_colour = (colour: Colour) {
 
 // --- the requests ------------------------------------------------------
 
-open_doc = (a: Alloc, into :: String) Res<(), AllocError> {
+open_doc = (a: Alloc, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
@@ -102,7 +101,7 @@ open_doc = (a: Alloc, into :: String) Res<(), AllocError> {
     write_frame(body.view(), into)
 }
 
-colours = (a: Alloc, id: usize, uri: str, into :: String) Res<(), AllocError> {
+colours = (a: Alloc, id: usize, uri: str, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add("{\"jsonrpc\":\"2.0\",\"id\":").try();
     body.write_usize(id).try();
@@ -157,7 +156,7 @@ main = (env: Env) Res<i32, AllocError> {
 // Every reply, in order. The first is `initialize` — printed whole,
 // because the legend it carries is what every index below is against —
 // and the one holding `data` is decoded.
-replies = (a: Alloc, out: str) Res<(), AllocError> {
+replies = (a: Alloc, out: str) Res<AllocError> {
     at    :: usize = 0;
     seen  :: usize = 0;
     going ::= true;
@@ -171,10 +170,10 @@ replies = (a: Alloc, out: str) Res<(), AllocError> {
             ).try(); seen = seen + 1; },
         });
     });
-    Ok(());
+    Ok;
 }
 
-reply = (a: Alloc, i: usize, body: str) Res<(), AllocError> {
+reply = (a: Alloc, i: usize, body: str) Res<AllocError> {
     println("");
     println("reply {}: {}", i, body);
     decoded(a, body)
@@ -187,10 +186,10 @@ reply = (a: Alloc, i: usize, body: str) Res<(), AllocError> {
 // A reply with no `data` in it — `initialize`'s, and the `-32602` — is
 // left alone, so this walks every frame and prints under only the one
 // that has tokens.
-decoded = (a: Alloc, body: str) Res<(), AllocError> {
+decoded = (a: Alloc, body: str) Res<AllocError> {
     tree ::= a.Jsons();
     read(a, tree, body).match({
-        Err(_)  => Ok(()),
+        Err(_)  => Ok,
         Ok(msg) => walked(tree, data_of(tree, msg)),
     })
 }
@@ -206,14 +205,14 @@ data_of = (tree: Jsons, msg: JsonId) Res<JsonId> {
 // the client would be holding after every group, which is exactly what
 // the encoding means — so a decoder that reproduces the source text has
 // proved the encoder, and one that drifts down the file shows it.
-walked = (tree: Jsons, data: Res<JsonId>) Res<(), AllocError> {
+walked = (tree: Jsons, data: Res<JsonId>) Res<AllocError> {
     data.match({
-        None      => Ok(()),
+        None      => Ok,
         Ok(array) => walk_groups(tree, array),
     })
 }
 
-walk_groups = (tree: Jsons, array: JsonId) Res<(), AllocError> {
+walk_groups = (tree: Jsons, array: JsonId) Res<AllocError> {
     line      :: usize = 0;
     character :: usize = 0;
     at        :: usize = 0;
@@ -240,7 +239,7 @@ walk_groups = (tree: Jsons, array: JsonId) Res<(), AllocError> {
             },
         });
     });
-    Ok(());
+    Ok;
 }
 
 whole_at = (tree: Jsons, array: JsonId, at: usize) usize {

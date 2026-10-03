@@ -7,7 +7,7 @@
 { Env } = std.env
 { println } = std.io
 
-inspect = (a: Alloc, name: str, source: str) Res<(), AllocError> {
+inspect = (a: Alloc, name: str, source: str) Res<AllocError> {
     lexed = scan(a, Source(file: "calls.zen", text: source)).try();
     parser ::= a.Parser(lexed);
     parsed = parser.module("calls").try();
@@ -33,10 +33,9 @@ inspect = (a: Alloc, name: str, source: str) Res<(), AllocError> {
         instances,
         checker.edge_count()
     );
-    Ok(())
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a = env.mem.alloc();
     inspect(
         a,
@@ -58,5 +57,4 @@ main = (env: Env) Res<(), AllocError> {
         "constructor",
         "Box = { value: i32 }\nmain = () { Box(value: true); }\n"
     ).try();
-    Ok(())
 }

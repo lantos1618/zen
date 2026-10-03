@@ -45,7 +45,7 @@ URI*: str = "file:///a.zen"
 
 // Requests.
 
-open_doc = (a: Alloc, text: str, into :: String) Res<(), AllocError> {
+open_doc = (a: Alloc, text: str, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\"file:///a.zen\",\"text\":"
@@ -56,7 +56,7 @@ open_doc = (a: Alloc, text: str, into :: String) Res<(), AllocError> {
 }
 
 // Full sync carries the whole replacement buffer and no range.
-change_doc = (a: Alloc, text: str, into :: String) Res<(), AllocError> {
+change_doc = (a: Alloc, text: str, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":\"file:///a.zen\"},\"contentChanges\":[{\"text\":"
@@ -73,7 +73,7 @@ hover = (
     line      : usize,
     character : usize,
     into      :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     body ::= a.String().try();
     body.add("{\"jsonrpc\":\"2.0\",\"id\":").try();
     body.write_usize(id).try();
@@ -97,7 +97,7 @@ hover = (
 // session. Everything a server actually wrote is still spelled out —
 // `\r` and `\n` are escapes in this rendering, so the four bytes of a
 // header terminator are visible as four.
-show = (label: str, bytes: str, a: Alloc) Res<(), AllocError> {
+show = (label: str, bytes: str, a: Alloc) Res<AllocError> {
     out ::= a.String().try();
     Range(0, bytes.len).loop((h, i) {
         breaking(bytes, i, out).try();
@@ -106,22 +106,21 @@ show = (label: str, bytes: str, a: Alloc) Res<(), AllocError> {
     });
     println("{}:", label);
     println("{}", out.view());
-    Ok(());
 }
 
 // A frame starts here, and it is not the first.
-breaking = (bytes: str, i: usize, out :: String) Res<(), AllocError> {
+breaking = (bytes: str, i: usize, out :: String) Res<AllocError> {
     (i > 0 && spells(bytes, i, "Content-Length: ")).match({
         true  => out.add('\n'),
-        false => Ok(()),
+        false => Ok,
     })
 }
 
 // The `\r\n\r\n` that ends a header block just finished.
-after_header = (bytes: str, i: usize, out :: String) Res<(), AllocError> {
+after_header = (bytes: str, i: usize, out :: String) Res<AllocError> {
     (i >= 3 && spells(bytes, i - 3, "\r\n\r\n")).match({
         true  => out.add('\n'),
-        false => Ok(()),
+        false => Ok,
     })
 }
 
@@ -133,7 +132,7 @@ spells = (bytes: str, at: usize, word: str) bool {
     same;
 }
 
-visible = (b: u8, out :: String) Res<(), AllocError> {
+visible = (b: u8, out :: String) Res<AllocError> {
     (b == '\r').match({
         true  => out.add("\\r"),
         false => (b == '\n').match({
@@ -148,7 +147,7 @@ visible = (b: u8, out :: String) Res<(), AllocError> {
 // ONE `serve` CALL FOR THE WHOLE SESSION, so the frame WALKER is
 // exercised too: a server that answered the first message and then lost
 // its place in the stream would pass a one-frame test and fail this one.
-session = (env: Env, a: Alloc) Res<(), AllocError> {
+session = (env: Env, a: Alloc) Res<AllocError> {
     s     ::= a.Server(env);
     input ::= a.String().try();
 
@@ -199,7 +198,7 @@ session = (env: Env, a: Alloc) Res<(), AllocError> {
 // A separate call, because a malformed frame ENDS a session — see
 // `serve`'s header for why framing cannot recover — and ending the one
 // above would hide everything after it.
-broken = (env: Env, a: Alloc, label: str, input: str) Res<(), AllocError> {
+broken = (env: Env, a: Alloc, label: str, input: str) Res<AllocError> {
     s   ::= a.Server(env);
     out ::= a.String().try();
     serve(s, input, out).try();

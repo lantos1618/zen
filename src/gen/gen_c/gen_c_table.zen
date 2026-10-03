@@ -100,7 +100,7 @@ write_table = (
     st  : TyId,
     ty  : TyId,
     dst : Dest
-) Res<(), AllocError> {
+) Res<AllocError> {
     scrut ::= be.fresh_name("s").try();
     be.declare_temp(st, scrut.view()).try();
     be.deliver(m.scrutinee, ctx, st, Dest.Into(scrut.view())).try();

@@ -2,14 +2,12 @@
 { Res, Ok } = std.core
 { AllocError } = std.mem
 { Env } = std.env
-bad = (env: Env, box :: Box) Res<(), AllocError> {
+bad = (env: Env, box :: Box) Res<AllocError> {
     a    = env.mem.alloc();
     text = a.String("hello").try();
     store(box, text.view());
-    Ok(())
 }
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     box ::= Box(text: "");
     bad(env, box).try();
-    Ok(())
 }

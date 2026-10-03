@@ -30,9 +30,9 @@ RepresentedEnum* = {
 }
 
 check_enum_discriminants* = (c :: Checker, e: Enum, mi: usize)
-                            Res<(), AllocError> {
+                            Res<AllocError> {
     e.enum_has_discriminants().match({
-        false => Ok(()),
+        false => Ok,
         true  => c.check_represented_enum(e, mi),
     })
 }
@@ -55,7 +55,7 @@ check_represented_enum = (
     c  :: Checker,
     e  : Enum,
     mi : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     ctx        = Ctx(mi, c.types.unknown().try());
     repr       = c.inferred_discriminant_repr(e, ctx).try();
     name       = c.prim_name(repr);
@@ -88,7 +88,7 @@ check_discriminant_rows = (
     repr : TyId,
     name : str,
     ctx  : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     values ::= c.alloc.Vec<i64>();
     spans  ::= c.alloc.Vec<Span>();
     valid  ::= true;
@@ -102,7 +102,7 @@ check_discriminant_rows = (
         }).try();
         (!valid).then(() { h.break() });
     });
-    Ok(())
+    Ok
 }
 
 reject_discriminant = (c :: Checker, v: Variant) Res<bool, AllocError> {
@@ -191,7 +191,7 @@ check_catch_all = (
     })
 }
 
-invalid_discriminant = (c :: Checker, v: Variant) Res<(), AllocError> {
+invalid_discriminant = (c :: Checker, v: Variant) Res<AllocError> {
     c.report(
         v.span.file,
         v.span,

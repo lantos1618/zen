@@ -24,9 +24,9 @@
 
 Error = AllocError | WriteError
 
-grow = (sb :: String) Res<(), AllocError> {
+grow = (sb :: String) Res<AllocError> {
     Range(0, 20).loop((h, i) { sb.add('g').try(); });
-    Ok(());
+    Ok;
 }
 
 main = (env: Env) Res<i32, Error> {

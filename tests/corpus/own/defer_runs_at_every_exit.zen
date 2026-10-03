@@ -3,11 +3,12 @@
 // program — falling off the end, `h.next()`, `h.break()`, and `.try()`
 // returning through a frame.
 
-{ Res, Ok, Err, IoError } = std.core
+{ Res, Ok, Err, IoError, Error } = std.core
 { Env } = std.env
 { println } = std.io
 
 Fail = { | Boom }
+Fail.impl(Error, {})
 
 fails = () Res<i32, Fail> {
     Err(Fail.Boom);

@@ -169,9 +169,8 @@ Lowerer* = {
     // blocks and slots
     // -------------------------------------------------------------------
 
-    add* = (self :: @Self, instruction: Instruction) Res<(), LowerError> {
+    add* = (self :: @Self, instruction: Instruction) Res<LowerError> {
         self.code.add(instruction).try(LowerError.OutOfMemory);
-        Ok(())
     }
 
     slot_of* = (self :: @Self, class: Scalar) Res<usize, LowerError> {
@@ -198,7 +197,7 @@ Lowerer* = {
 
     // After a terminator, code is unreachable until the next `start`; it is
     // collected into a detached block that nothing branches to.
-    finish* = (self :: @Self, exit: Terminator) Res<(), LowerError> {
+    finish* = (self :: @Self, exit: Terminator) Res<LowerError> {
         self.current.when_ok((id) {
             self.blocks.set(id, Ok(BasicBlock(code: self.code, exit: exit)))
                 .ok_or(unsupported(nowhere(), "an unreserved block")).try();
@@ -206,15 +205,14 @@ Lowerer* = {
         self.current = None;
         dead         = self.label().try();
         self.start(dead);
-        Ok(())
     }
 
-    jump* = (self :: @Self, target: usize) Res<(), LowerError> {
+    jump* = (self :: @Self, target: usize) Res<LowerError> {
         self.finish(Terminator.Jump(target))
     }
 
     branch_to* = (self :: @Self, value: usize, yes: usize, no: usize)
-                 Res<(), LowerError> {
+                 Res<LowerError> {
         // A branch on a tag test is a guard the verifier can hold payload
         // reads to.
         self.current.when_ok((block) {
@@ -231,13 +229,12 @@ Lowerer* = {
     }
 
     // Continue emitting into `id`; the detached block ends by jumping there.
-    enter* = (self :: @Self, id: usize) Res<(), LowerError> {
+    enter* = (self :: @Self, id: usize) Res<LowerError> {
         self.jump(id).try();
         self.start(id);
-        Ok(())
     }
 
-    trap* = (self :: @Self, what: TrapKind, span: Span) Res<(), LowerError> {
+    trap* = (self :: @Self, what: TrapKind, span: Span) Res<LowerError> {
         self.finish(Terminator.Trap(Fault(what: what, span: span)))
     }
 
@@ -441,7 +438,7 @@ Lowerer* = {
     }
 
     enter_vars = (self :: @Self, module: usize, name: str, tparams: Vec<TParam>)
-                 Res<(), LowerError> {
+                 Res<LowerError> {
         owner = self.check.owner_of(module, name).try(LowerError.OutOfMemory);
         tparams.loop((tp) {
             var = self.check.types.var(
@@ -450,7 +447,7 @@ Lowerer* = {
             ).try(LowerError.OutOfMemory);
             self.check.push_tvar(tp, var).try(LowerError.OutOfMemory);
         });
-        Ok(())
+        Ok
     }
 
     prim* = (self :: @Self, name: str) Res<TyId, LowerError> {
@@ -482,18 +479,17 @@ Lowerer* = {
     // locals
     // -------------------------------------------------------------------
 
-    bind_local* = (self :: @Self, name: str, kind: LocalKind) Res<(), LowerError> {
+    bind_local* = (self :: @Self, name: str, kind: LocalKind) Res<LowerError> {
         self.locals.add(Local(
             name: name,
             frame: self.frame,
             kind: kind
         )).try(LowerError.OutOfMemory);
-        Ok(())
     }
 
     // Scope-exit cleanup (`Drop`) is not lowered yet; a program binding
     // such a value is refused rather than silently skipping its drop.
-    refuse_drop = (self :: @Self, ty: TyId) Res<(), LowerError> {
+    refuse_drop = (self :: @Self, ty: TyId) Res<LowerError> {
         // An Arena's pages are returned to the kernel at exit instead.
         arena    = self.qualified(ty).eq("std.mem.mem_arena.Arena");
         dropping = !arena && self.check.is_drop_type(
@@ -503,7 +499,6 @@ Lowerer* = {
             nowhere(),
             self.described("values with Drop cleanup", ty)
         )).try();
-        Ok(())
     }
 
     lookup* = (self: @Self, name: str) Res<LocalKind> {
@@ -607,7 +602,7 @@ Lowerer* = {
         Ok(out)
     }
 
-    write* = (self :: @Self, place: Place, value: Value) Res<(), LowerError> {
+    write* = (self :: @Self, place: Place, value: Value) Res<LowerError> {
         whole  = place.base.match({ InSlot(_) => place.offset == 0, Through(_) => false });
         target = place.base.match({ InSlot(s) => s, Through(_) => 0 });
         (whole && same(
@@ -1661,7 +1656,7 @@ Lowerer* = {
 
     // Leave one scope: armed defers last-in first-out, then live Drop
     // bindings in reverse declaration order.
-    run_scope = (self :: @Self, index: usize, keep: str) Res<(), LowerError> {
+    run_scope = (self :: @Self, index: usize, keep: str) Res<LowerError> {
         scope      = self.scopes.get(index).ok_or(unsupported(nowhere(), "a missing scope")).try();
         drops_end  = self.scopes.get(
             index + 1
@@ -1677,12 +1672,12 @@ Lowerer* = {
             entry = self.drops.get(drops_end - 1 - (k - scope.drops)).ok_or(unsupported(nowhere(), "a missing drop")).try();
             (!entry.name.eq(keep)).then(() { self.guarded_drop(entry).try(); });
         });
-        Ok(())
+        Ok
     }
 
     // An armed defer runs its closure with the locals it captured, and
     // disarms so a later pass through the same block starts clear.
-    run_defer = (self :: @Self, entry: DeferEntry) Res<(), LowerError> {
+    run_defer = (self :: @Self, entry: DeferEntry) Res<LowerError> {
         yes  = self.label().try();
         done = self.label().try();
         self.branch_to(entry.armed, yes, done).try();
@@ -1746,16 +1741,16 @@ Lowerer* = {
     }
 
     // Run every scope above `depth` for a jump that leaves them.
-    unwind* = (self :: @Self, depth: usize) Res<(), LowerError> {
+    unwind* = (self :: @Self, depth: usize) Res<LowerError> {
         n = self.scopes.len;
         (n > depth).then(() {
             Range(0, n - depth).loop((k) { self.run_scope(n - 1 - k, "").try(); });
         });
-        Ok(())
+        Ok
     }
 
     // Drop a binding's value if it is still live, and mark it dropped.
-    guarded_drop = (self :: @Self, entry: DropEntry) Res<(), LowerError> {
+    guarded_drop = (self :: @Self, entry: DropEntry) Res<LowerError> {
         yes  = self.label().try();
         done = self.label().try();
         self.branch_to(entry.live, yes, done).try();
@@ -1796,13 +1791,13 @@ Lowerer* = {
     }
 
     // Register a fresh binding for cleanup when its type implements Drop.
-    note_drop = (self :: @Self, name: str, value: Value) Res<(), LowerError> {
+    note_drop = (self :: @Self, name: str, value: Value) Res<LowerError> {
         self.note_drop_live(name, value, 1)
     }
 
     // `armed` is 0 for a binding declared before it holds a value.
     note_drop_live = (self :: @Self, name: str, value: Value, armed: i64)
-                     Res<(), LowerError> {
+                     Res<LowerError> {
         self.check.is_drop_type(value.ty).try(LowerError.OutOfMemory).then(() {
             live = self.word_const(Scalar.Bool, armed).try();
             self.drops.add(DropEntry(
@@ -1817,7 +1812,7 @@ Lowerer* = {
                 live: live
             )).try(LowerError.OutOfMemory);
         });
-        Ok(())
+        Ok
     }
 
     // The nearest cleanup entry for a name in this frame.
@@ -1831,7 +1826,7 @@ Lowerer* = {
         found
     }
 
-    bind = (self :: @Self, b: Bind, span: Span) Res<(), LowerError> {
+    bind = (self :: @Self, b: Bind, span: Span) Res<LowerError> {
         target = self.tree.expr_at(b.target);
         target.kind.match({
             Name(n) => {
@@ -1890,7 +1885,7 @@ Lowerer* = {
     // `x :: T;` reserves the binding's slot. sema_init has proved no read
     // reaches it before an assignment, so it holds nothing until then; a
     // Drop value's live flag starts clear and that assignment arms it.
-    deferred = (self :: @Self, d: Deferred, span: Span) Res<(), LowerError> {
+    deferred = (self :: @Self, d: Deferred, span: Span) Res<LowerError> {
         target = self.tree.expr_at(d.target);
         name   = target.kind.match({ Name(n) => Ok(n.text), _ => None })
             .ok_or(unsupported(target.span, "an assignment target")).try();
@@ -2137,7 +2132,7 @@ Lowerer* = {
         })
     }
 
-    bounds = (self :: @Self, index: usize, count: usize, span: Span) Res<(), LowerError> {
+    bounds = (self :: @Self, index: usize, count: usize, span: Span) Res<LowerError> {
         inside = self.slot_of(Scalar.Bool).try();
         self.add(Instruction.BinaryValue(Binary(
             out: inside,
@@ -2152,7 +2147,6 @@ Lowerer* = {
         self.start(fail);
         self.trap(TrapKind.OutOfBounds, span).try();
         self.start(ok);
-        Ok(())
     }
 
     array = (self :: @Self, id: ExprId, elems: Vec<ExprId>, span: Span) Res<Value, LowerError> {
@@ -2349,7 +2343,7 @@ Lowerer* = {
     // for a literal's value. A nested reading tests the payload only after
     // its case matched.
     test_pattern = (self :: @Self, reading: PatReading, at: usize, node: PatternId,
-                    subject: Value, yes: usize, no: usize, read :: Vec<TestedPayload>) Res<(), LowerError> {
+                    subject: Value, yes: usize, no: usize, read :: Vec<TestedPayload>) Res<LowerError> {
         p = reading.pats.at(at);
         p.kind.match({
             WildPat => self.jump(yes),
@@ -2560,18 +2554,18 @@ Lowerer* = {
     // whole subject, a constructor binds inside its payload. A payload is
     // read only when something beneath it binds.
     bind_pattern = (self :: @Self, reading: PatReading, at: usize, node: PatternId,
-                    subject: Value, read :: Vec<TestedPayload>) Res<(), LowerError> {
+                    subject: Value, read :: Vec<TestedPayload>) Res<LowerError> {
         p = reading.pats.at(at);
         p.kind.match({
             WildPat => p.binder.is_empty().match({
-                true  => Ok(()),
+                true  => Ok,
                 false => {
                     copy = self.copy_value(subject).try();
                     self.bind_local(p.binder, LocalKind.Direct(copy))
                 },
             }),
             CtorPat => (p.has_sub && binds(reading, p.sub)).match({
-                false => Ok(()),
+                false => Ok,
                 true  => {
                     payload = read.find((t) { t.at == p.sub }).match({
                         Ok(t) => t.value,
@@ -2589,7 +2583,7 @@ Lowerer* = {
                     )
                 },
             }),
-            LitPat  => Ok(()),
+            LitPat  => Ok,
         })
     }
 
@@ -3241,7 +3235,7 @@ NameFinder* = {
 }
 
 NameFinder.impl(WalkVisitor, {
-    visit = (self :: @Self, event: WalkEvent) Res<(), AllocError> {
+    visit = (self :: @Self, event: WalkEvent) Res<AllocError> {
         event.match({
             Enter(node) => node.match({
                 Expr(id) => self.tree.expr_at(id).kind.match({
@@ -3255,7 +3249,6 @@ NameFinder.impl(WalkVisitor, {
             }),
             Leave(_)    => (),
         });
-        Ok(())
     }
 })
 

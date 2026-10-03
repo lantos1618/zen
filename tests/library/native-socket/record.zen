@@ -14,7 +14,7 @@ Native = c.bind("probe.h", {
     fixture_verify* = (records: Ptr<Record>) i32
     probe_check* = (yes: i32) ()
 })
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a = env.mem.alloc();
     records ::= a.Vec<Record>();
     records.add(Record(value: 71, pointer: null_ptr<u8>())).try();
@@ -30,5 +30,4 @@ main = (env: Env) Res<(), AllocError> {
     println(
         "PASS record layout, hidden initialization, pointer stride and header constant"
     );
-    Ok(())
 }

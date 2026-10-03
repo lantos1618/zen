@@ -7,9 +7,9 @@
 { Res, Ok } = std.core
 
 Display* = {
-    dump* ::= (self: @Self, out :: Sink) Res<(), WriteError>
+    dump* ::= (self: @Self, out :: Sink) Res<WriteError>
 
-    toString* ::= (self: @Self, out :: Sink) Res<(), WriteError>
+    toString* ::= (self: @Self, out :: Sink) Res<WriteError>
 
     toString* = (self: @Self, a: Alloc) Res<String, WriteError> {
         sb ::= a.String().try();

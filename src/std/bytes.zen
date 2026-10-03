@@ -2,8 +2,9 @@
 // The caller keeps the declared memory region live throughout cursor use.
 { Ptr } = std.mem
 { str, str_at } = std.text
-{ Res, Ok, Range } = std.core
+{ Res, Ok, Range, Error } = std.core
 ByteError* = { Invalid | Truncated }
+ByteError.impl(Error, {})
 ByteReader* = {
     bytes: Ptr<u8>,
     length: usize,
@@ -54,17 +55,17 @@ ByteWriter* = {
     }
     remaining* = (self: @Self) usize { self.length - self.position }
     written* = (self: @Self) usize { self.position }
-    write_be* = (self :: @Self, value: u64, width: usize) Res<(), ByteError> { self.write_order(
+    write_be* = (self :: @Self, value: u64, width: usize) Res<ByteError> { self.write_order(
         value,
         width,
         false
     ) }
-    write_le* = (self :: @Self, value: u64, width: usize) Res<(), ByteError> { self.write_order(
+    write_le* = (self :: @Self, value: u64, width: usize) Res<ByteError> { self.write_order(
         value,
         width,
         true
     ) }
-    write_order = (self :: @Self, value: u64, width: usize, little: bool) Res<(), ByteError> {
+    write_order = (self :: @Self, value: u64, width: usize, little: bool) Res<ByteError> {
         (width > 0 && width <= 8).ensure(ByteError.Invalid).try();
         (width <= self.remaining()).ensure(ByteError.Truncated).try();
         rest ::= value;
@@ -78,6 +79,6 @@ ByteWriter* = {
             rest = rest / 256;
         });
         self.position = self.position + width;
-        Ok(())
+        Ok
     }
 }

@@ -33,19 +33,21 @@
 // panic. `true => return 7` is a syntax error in both compilers, so
 // there is no divergent arm to exempt.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { Env, ArgError } = std.env
 { println } = std.io
 
 Fault = { | Bad }
+Fault.impl(Error, {})
 Snag  = { | Low }
+Snag.impl(Error, {})
 
-fails = (n: usize) Res<(), Fault> {
-    (n == 0).match({ true => Err(Fault.Bad), false => Ok(()) });
+fails = (n: usize) Res<Fault> {
+    (n == 0).match({ true => Err(Fault.Bad), false => Ok });
 }
 
-faults = (n: usize) Res<(), Snag> {
-    (n == 0).match({ true => Err(Snag.Low), false => Ok(()) });
+faults = (n: usize) Res<Snag> {
+    (n == 0).match({ true => Err(Snag.Low), false => Ok });
 }
 
 takes = (r: Res<i32, Fault>) i32 { r.match({ Ok(v) => v, Err(_) => -1 }) }
@@ -59,7 +61,7 @@ open_arm = (b: bool) i32 {
 }
 
 // 2. two error sets widened into the PARAMETER's union
-wide = (r: Res<(), Fault | Snag>) i32 { r.match({ Ok(_) => 1, Err(_) => 0 }) }
+wide = (r: Res<Fault | Snag>) i32 { r.match({ Ok(_) => 1, Err(_) => 0 }) }
 
 widened_arm = (n: usize) i32 {
     wide((n > 1).match({

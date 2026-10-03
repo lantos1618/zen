@@ -337,7 +337,7 @@ boundaries = (a: Alloc) Res<bool, AllocError> {
     Ok(allocation && invalid)
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a = env.mem.alloc();
     expected ::= a.String(
         "13 4 false true 8 204\n18 8 65 2 3 -13\nfalse true false false true true false\nunit:()\nquoted:\"\\"
@@ -427,5 +427,4 @@ main = (env: Env) Res<(), AllocError> {
     );
     println("IR cycle and arbitrary bytes {}", direct(env, a).try());
     println("allocation and verifier boundaries {}", boundaries(a).try());
-    Ok(())
 }

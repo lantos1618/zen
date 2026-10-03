@@ -8,7 +8,7 @@
 { Env } = std.env
 { println } = std.io
 
-inspect = (a: Alloc, source: str) Res<(), AllocError> {
+inspect = (a: Alloc, source: str) Res<AllocError> {
     lexed = scan(a, Source(file: "members.zen", text: source)).try();
     parser ::= a.Parser(lexed);
     parsed = parser.module("members").try();
@@ -25,10 +25,9 @@ inspect = (a: Alloc, source: str) Res<(), AllocError> {
         id = ExprId(index: id.index + 1);
     });
     println("valid {} selected {}", checker.diag_count() == 0, selected);
-    Ok(())
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a      = env.mem.alloc();
     prefix = "Readable = { read = (self: @Self) i32 }\nValue = {}\nValue.impl(Readable, { read = (self: @Self) i32 { 7 } })\n";
     dot ::= a.String().try();
@@ -43,5 +42,4 @@ main = (env: Env) Res<(), AllocError> {
     associated.add(prefix).try();
     associated.add("main = () i32 { v = Value(); Value.read<i32>(v) }\n").try();
     inspect(a, associated.view()).try();
-    Ok(())
 }

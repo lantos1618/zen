@@ -30,28 +30,30 @@
 // spelling are not part of its identity", so `Both` is the set `either`
 // already answers with and `.try()` carries the value into it unchanged.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { Env } = std.env
 { println } = std.io
 
 Fault = { | Bad | Worse }
+Fault.impl(Error, {})
 Snag  = { | Low | High }
+Snag.impl(Error, {})
 
 Both = Fault | Snag
 
 // one arm's set
-fails = (n: usize) Res<(), Fault> {
+fails = (n: usize) Res<Fault> {
     (n == 0).match({
         true  => Err(Fault.Worse),
-        false => Ok(()),
+        false => Ok,
     });
 }
 
 // the other's, sharing not one member with it
-faults = (n: usize) Res<(), Snag> {
+faults = (n: usize) Res<Snag> {
     (n == 0).match({
         true  => Err(Snag.Low),
-        false => Ok(()),
+        false => Ok,
     });
 }
 
@@ -59,7 +61,7 @@ faults = (n: usize) Res<(), Snag> {
 // of producing ONE value, so the match carries the union of their sets
 // and each arm is widened into it where it lands — which for a trailing
 // match is the function's own return.
-either = (n: usize) Res<(), Fault | Snag> {
+either = (n: usize) Res<Fault | Snag> {
     (n > 1).match({
         true  => fails(n - 2),
         false => faults(n),
@@ -67,9 +69,8 @@ either = (n: usize) Res<(), Fault | Snag> {
 }
 
 // the same set under its declared name
-through_named = (n: usize) Res<(), Both> {
+through_named = (n: usize) Res<Both> {
     either(n).try();
-    Ok(());
 }
 
 show = (n: usize) Res<i32, Both> {

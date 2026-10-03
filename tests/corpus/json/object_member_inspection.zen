@@ -5,7 +5,7 @@
 { Env } = std.env
 { println } = std.io
 
-main = (env: Env) Res<(), JsonFault> {
+main = (env: Env) Res<JsonFault> {
     a = env.mem.alloc();
     tree ::= a.Jsons();
     root = read(
@@ -68,5 +68,4 @@ main = (env: Env) Res<(), JsonFault> {
             18446744073709551615
         ).match({ None => true, Ok(_) => false })
     );
-    Ok(())
 }

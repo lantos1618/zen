@@ -19,7 +19,7 @@
 { println } = std.io
 
 // how many tokens survived, and every fault with where it points
-dump = (env: Env, alloc: Alloc, label: str, text: str) Res<(), AllocError> {
+dump = (env: Env, alloc: Alloc, label: str, text: str) Res<AllocError> {
     out = scan(alloc, Source(file: "in.zen", text: text)).try();
     println("{}: {} token(s)", label, out.tokens.len);
     out.diags.loop((h, d) {
@@ -30,7 +30,7 @@ dump = (env: Env, alloc: Alloc, label: str, text: str) Res<(), AllocError> {
             message(d.fault)
         );
     });
-    Ok(());
+    Ok;
 }
 
 // the three bytes of a UTF-8 byte-order mark, which no string literal can

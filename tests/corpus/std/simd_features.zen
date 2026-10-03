@@ -80,7 +80,7 @@ clmul_known_answer = (cpu: Clmul) bool {
         && high.lane(0) == hi.truncate_u64() && high.lane(1) == hi.shift_right(64).truncate_u64()
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     bytes      = env.mem.alloc().raw(256, 16).try();
     dispatched = avx2().match({ Ok(cpu) => digest8(cpu, 7), None => digest(7) });
     println("avx2 dispatch agrees: {}", dispatched == digest(7));
@@ -104,5 +104,4 @@ main = (env: Env) Res<(), AllocError> {
         wide.lane(2),
         wide.lane(3)
     );
-    Ok(())
 }

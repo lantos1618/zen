@@ -30,70 +30,67 @@
 // Forward typedefs, then tag constants, then definitions — three
 // passes because C wants that order: a tag is a plain `enum` constant,
 // and a definition may mention any tag or typedef.
-emit_types* = (be :: CBackend, out :: Emit) Res<(), AllocError> {
+emit_types* = (be :: CBackend, out :: Emit) Res<AllocError> {
     be.close_types().try();
     seq = order(be.alloc, be.type_queue, (entry) { entry.name.view() }).try();
     seq.loop((h, i) { be.emit_typedef(out, i).try() });
     out.line().try();
     be.emit_tags(out, seq).try();
     seq.loop((h, i) { be.define_type(out, i).try() });
-    Ok(());
+    Ok;
 }
 
-emit_typedef = (be :: CBackend, out :: Emit, i: usize) Res<(), AllocError> {
+emit_typedef = (be :: CBackend, out :: Emit, i: usize) Res<AllocError> {
     name = be.type_queue.get(i).ok_or(AllocError.OutOfMemory).try().name.view();
     out.bytes("typedef struct ").try();
     out.bytes(name).try();
     out.bytes(" ").try();
     out.bytes(name).try();
     out.say(";").try();
-    Ok(());
 }
 
 // tags — a function of the declaration, never an instantiation (see
 // file header)
 
 emit_tags = (be :: CBackend, out :: Emit, seq: Vec<usize>)
-            Res<(), AllocError> {
+            Res<AllocError> {
     seen ::= be.alloc.Vec<String>();
     seq.loop((h, i) { be.collect_tags(i, seen).try() });
     (seen.len > 0).then(() { be.emit_tag_block(out, seen).try() });
-    Ok(());
+    Ok;
 }
 
 emit_tag_block = (be :: CBackend, out :: Emit, seen: Vec<String>)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     tags = order(be.alloc, seen).try();
     out.say("enum {").try();
     out.indent();
     tags.loop((h, i) {
         seen.get(i).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(s) => out.say(s.view()),
         }).try();
     });
     out.dedent();
     out.say("};").try();
     out.line().try();
-    Ok(());
 }
 
 collect_tags = (be :: CBackend, i: usize, seen :: Vec<String>)
-               Res<(), AllocError> {
+               Res<AllocError> {
     be.type_id_at(i).match({
-        None   => Ok(()),
+        None   => Ok,
         Ok(id) => be.collect_tags_of(id, seen),
     }).try();
-    Ok(());
 }
 
 collect_tags_of = (be :: CBackend, id: TyId, seen :: Vec<String>)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     be.types().at(id).match({
         Res(r)   => be.collect_res_tags(r, seen),
         Named(n) => be.collect_enum_tags(id, n, seen),
         Union(u) => be.collect_union_tags(id, u, seen),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
@@ -108,9 +105,9 @@ collect_union_tags = (
     id   : TyId,
     u    : TyUnion,
     seen :: Vec<String>
-) Res<(), AllocError> {
+) Res<AllocError> {
     u.members.loop((h, i, m) { be.add_union_tag(id, m, i, seen).try() });
-    Ok(());
+    Ok;
 }
 
 add_union_tag = (
@@ -119,7 +116,7 @@ add_union_tag = (
     m     : TyId,
     value : usize,
     seen  :: Vec<String>
-) Res<(), AllocError> {
+) Res<AllocError> {
     line ::= be.alloc.String().try();
     sym_union_variant(line, be.types(), be.world(), id, m).try();
     line.add(" = ").try();
@@ -127,18 +124,17 @@ add_union_tag = (
     line.add(",").try();
     has_line(seen, line.view()).match({
         false => seen.add(line),
-        true  => Ok(()),
+        true  => Ok,
     })
 }
 
 collect_res_tags = (be :: CBackend, r: TyRes, seen :: Vec<String>)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     be.add_tag(seen, RES_PATH, "Ok", 0).try();
     is_failure(r.form).match({
         true  => be.add_tag(seen, RES_PATH, "Err", 1),
         false => be.add_tag(seen, RES_PATH, "None", 1),
     }).try();
-    Ok(());
 }
 
 collect_enum_tags = (
@@ -146,12 +142,11 @@ collect_enum_tags = (
     id   : TyId,
     n    : TyNamed,
     seen :: Vec<String>
-) Res<(), AllocError> {
+) Res<AllocError> {
     decl_at(be.tree, n.decl).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(d) => be.collect_decl_tags(id, n, d, seen),
     }).try();
-    Ok(());
 }
 
 collect_decl_tags = (
@@ -160,12 +155,12 @@ collect_decl_tags = (
     n    : TyNamed,
     d    : Decl,
     seen :: Vec<String>
-) Res<(), AllocError> {
+) Res<AllocError> {
     qname ::= be.alloc.String().try();
     be.write_qname(qname, n).try();
     d.kind.match({
         Enum(e) => be.write_enum_tags(id, n, e, qname.view(), seen),
-        _       => Ok(()),
+        _       => Ok,
     })
 }
 
@@ -179,7 +174,7 @@ write_enum_tags = (
     e     : Enum,
     qname : str,
     seen  :: Vec<String>
-) Res<(), AllocError> {
+) Res<AllocError> {
     ranks ::= be.alloc.Vec<usize>();
     be.variant_ranks(id, n, e.variants, ranks).try();
     (ranks.len == e.variants.len).match({
@@ -201,9 +196,9 @@ variant_ranks = (
     variants : Vec<Variant>,
     ranks    :: Vec<usize>
 )
-                Res<(), AllocError> {
+                Res<AllocError> {
     be.canonical_members(id).match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(mem) => be.collect_ranks(n, variants, mem, ranks),
     })
 }
@@ -224,18 +219,17 @@ collect_ranks = (
     members  : Vec<TyId>,
     ranks    :: Vec<usize>
 )
-                Res<(), AllocError> {
+                Res<AllocError> {
     ctx  = be.decl_ctx(n);
     inst = be.decl_inst(n).try();
     mark = be.enter_struct_tparams(n.decl).try();
     variants.loop((h, v) {
         be.variant_rank(n, v, members, ctx, inst).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(r) => ranks.add(r),
         }).try();
     });
     be.leave_tparams(mark).try();
-    Ok(());
 }
 
 variant_rank = (
@@ -265,14 +259,14 @@ write_ranked_tags = (
     qname    : str,
     seen     :: Vec<String>
 )
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     variants.loop((h, i, v) {
         ranks.get(i).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(r) => be.add_tag(seen, qname, v.name.text, r),
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
 write_variant_tags = (
@@ -280,11 +274,11 @@ write_variant_tags = (
     variants : Vec<Variant>,
     qname    : str,
     seen     :: Vec<String>
-) Res<(), AllocError> {
+) Res<AllocError> {
     variants.loop((h, i, v) {
         be.add_tag(seen, qname, v.name.text, i).try();
     });
-    Ok(());
+    Ok;
 }
 
 // `zu_e<path> = <n>,` as one line, deduped by the whole line — two
@@ -296,7 +290,7 @@ add_tag = (
     qname   : str,
     variant : str,
     value   : usize
-) Res<(), AllocError> {
+) Res<AllocError> {
     line ::= be.alloc.String().try();
     sym_variant(line, qname, variant).try();
     line.add(" = ").try();
@@ -304,7 +298,7 @@ add_tag = (
     line.add(",").try();
     has_line(seen, line.view()).match({
         false => seen.add(line),
-        true  => Ok(()),
+        true  => Ok,
     })
 }
 
@@ -317,15 +311,14 @@ has_line = (seen: Vec<String>, text: str) bool {
 // The module-qualified name of a declared type, which is what a tag
 // constant is a path of.
 write_qname* = (be :: CBackend, out :: String, n: TyNamed)
-               Res<(), AllocError> {
+               Res<AllocError> {
     write_dotted(out, be.world().module_name(n.decl)).try();
     out.add(n.name).try();
-    Ok(());
 }
 
-write_dotted = (out :: String, name: str) Res<(), AllocError> {
+write_dotted = (out :: String, name: str) Res<AllocError> {
     (name.len > 0).then(() { out.fmt("{name}.").try() });
-    Ok(());
+    Ok;
 }
 
 // definitions
@@ -333,99 +326,95 @@ write_dotted = (out :: String, name: str) Res<(), AllocError> {
 // before the children are walked, so a by-value cycle terminates — it
 // is a sema error and is reported there, and this only has to not hang.
 
-define_type = (be :: CBackend, out :: Emit, i: usize) Res<(), AllocError> {
+define_type = (be :: CBackend, out :: Emit, i: usize) Res<AllocError> {
     be.type_queue.get(i).ok_or(AllocError.OutOfMemory).try().done.match({
         false => be.define_fresh(out, i),
-        true  => Ok(()),
+        true  => Ok,
     })
 }
 
-define_fresh = (be :: CBackend, out :: Emit, i: usize) Res<(), AllocError> {
+define_fresh = (be :: CBackend, out :: Emit, i: usize) Res<AllocError> {
     be.mark_done(i).try();
     be.define_deps(out, i).try();
     entry = be.type_queue.get(i).ok_or(AllocError.OutOfMemory).try();
     be.write_definition(out, entry.name.view(), entry.id).try();
-    Ok(());
 }
 
-define_deps = (be :: CBackend, out :: Emit, i: usize) Res<(), AllocError> {
+define_deps = (be :: CBackend, out :: Emit, i: usize) Res<AllocError> {
     deps ::= be.alloc.Vec<TyId>();
     be.type_id_at(i).match({
-        None   => Ok(()),
+        None   => Ok,
         Ok(id) => be.by_value_deps(id, deps),
     }).try();
     deps.loop((h, d) { be.define_dep(out, d).try() });
-    Ok(());
+    Ok;
 }
 
-define_dep = (be :: CBackend, out :: Emit, id: TyId) Res<(), AllocError> {
+define_dep = (be :: CBackend, out :: Emit, id: TyId) Res<AllocError> {
     name ::= be.alloc.String().try();
     sym_type(name, be.alloc, be.types(), be.world(), id).try();
     be.type_index(name.view()).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(j) => be.define_type(out, j),
     }).try();
-    Ok(());
 }
 
 by_value_deps = (be :: CBackend, id: TyId, deps :: Vec<TyId>)
-                Res<(), AllocError> {
+                Res<AllocError> {
     be.types().at(id).match({
         Named(n) => be.decl_deps(n, deps),
         Res(r)   => be.res_deps(r, deps),
         Union(u) => be.union_deps(u.members, deps),
         Array(a) => be.keep_composite(a.elem, deps),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
 // Every member is held by value in the payload union, so every member
 // needs a complete type above it.
 union_deps = (be :: CBackend, members: Vec<TyId>, deps :: Vec<TyId>)
-             Res<(), AllocError> {
+             Res<AllocError> {
     members.loop((h, m) { be.keep_composite(m, deps).try() });
-    Ok(());
+    Ok;
 }
 
 res_deps = (be :: CBackend, r: TyRes, deps :: Vec<TyId>)
-           Res<(), AllocError> {
+           Res<AllocError> {
     be.keep_composite(r.value, deps).try();
     is_failure(r.form).then(() { be.keep_composite(r.error, deps).try() });
-    Ok(());
+    Ok;
 }
 
 keep_composite = (be :: CBackend, id: TyId, deps :: Vec<TyId>)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     be.types().at(id).match({
         Named(_) => deps.add(id),
         Res(_)   => deps.add(id),
         Union(_) => deps.add(id),
         Array(_) => deps.add(id),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
 decl_deps = (be :: CBackend, n: TyNamed, deps :: Vec<TyId>)
-            Res<(), AllocError> {
+            Res<AllocError> {
     decl_at(be.tree, n.decl).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(d) => be.decl_kind_deps(n, d, deps),
     }).try();
-    Ok(());
 }
 
 decl_kind_deps = (be :: CBackend, n: TyNamed, d: Decl, deps :: Vec<TyId>)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     ctx  = be.decl_ctx(n);
     inst = be.decl_inst(n).try();
     mark = be.enter_struct_tparams(n.decl).try();
     d.kind.match({
         Struct(s) => be.field_deps(s.members, ctx, inst, deps),
         Enum(e)   => be.variant_deps(n, e.variants, ctx, inst, deps),
-        _         => Ok(()),
+        _         => Ok,
     }).try();
     be.leave_tparams(mark).try();
-    Ok(());
 }
 
 field_deps = (
@@ -434,14 +423,14 @@ field_deps = (
     ctx     : Ctx,
     inst    : Inst,
     deps    :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     members.loop((h, m) {
         be.field_type(m, ctx, inst).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(t) => be.keep_composite(t, deps),
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
 variant_deps = (
@@ -451,38 +440,37 @@ variant_deps = (
     ctx      : Ctx,
     inst     : Inst,
     deps     :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     variants.loop((h, v) {
         variant_type(be, n, v, ctx, inst).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(t) => be.keep_composite(t, deps),
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
 write_definition = (be :: CBackend, out :: Emit, name: str, id: TyId)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     be.types().at(id).match({
         Res(r)   => be.write_res_def(out, name, r),
         Named(n) => be.write_named_def(out, name, n, id),
         Union(u) => be.write_union_def(out, name, u),
         Array(a) => be.write_array_def(out, name, a),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
 // A structural set uses the same tag-and-payload representation as a declared
 // Set. Payloads preserve the concrete member value, not only its tag.
 write_union_def = (be :: CBackend, out :: Emit, name: str, u: TyUnion)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     open_struct(out, name).try();
     payloads ::= be.alloc.Vec<TyId>();
     names    ::= be.alloc.Vec<String>();
     u.members.loop((h, m) { be.add_union_payload(payloads, names, m).try() });
     be.write_union(out, payloads, names).try();
     close_struct(out).try();
-    Ok(());
 }
 
 add_union_payload = (
@@ -490,9 +478,9 @@ add_union_payload = (
     payloads :: Vec<TyId>,
     names    :: Vec<String>,
     m        : TyId
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.is_unit(m).match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.push_union_payload(payloads, names, m),
     })
 }
@@ -502,30 +490,28 @@ push_union_payload = (
     payloads :: Vec<TyId>,
     names    :: Vec<String>,
     m        : TyId
-) Res<(), AllocError> {
+) Res<AllocError> {
     field ::= be.alloc.String().try();
     sym_union_member(field, be.types(), be.world(), m).try();
     payloads.add(m).try();
     names.add(field).try();
-    Ok(());
 }
 
 // `struct { int32_t zg_tag; union { T zu_m2Ok; E zu_m3Err; } zg_data; }`.
 // A unit payload takes no member: `Ok(())` carries nothing, and a void
 // member is illegal C.
 write_res_def = (be :: CBackend, out :: Emit, name: str, r: TyRes)
-                Res<(), AllocError> {
+                Res<AllocError> {
     open_struct(out, name).try();
     payloads ::= be.alloc.Vec<TyId>();
     names    ::= be.alloc.Vec<String>();
     be.add_payload(payloads, names, r.value, "Ok").try();
     is_failure(r.form).match({
         true  => be.add_payload(payloads, names, r.error, "Err"),
-        false => Ok(()),
+        false => Ok,
     }).try();
     be.write_union(out, payloads, names).try();
     close_struct(out).try();
-    Ok(());
 }
 
 add_payload = (
@@ -534,9 +520,9 @@ add_payload = (
     names    :: Vec<String>,
     id       : TyId,
     variant  : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     be.is_unit(id).match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.push_payload(payloads, names, id, variant),
     })
 }
@@ -547,12 +533,11 @@ push_payload = (
     names    :: Vec<String>,
     id       : TyId,
     variant  : str
-) Res<(), AllocError> {
+) Res<AllocError> {
     m ::= be.alloc.String().try();
     sym_member(m, variant).try();
     payloads.add(id).try();
     names.add(m).try();
-    Ok(());
 }
 
 write_named_def = (
@@ -561,7 +546,7 @@ write_named_def = (
     name : str,
     n    : TyNamed,
     id   : TyId
-) Res<(), AllocError> {
+) Res<AllocError> {
     decl_at(be.tree, n.decl).match({
         None  => write_opaque(out, name),
         Ok(d) => be.write_decl_def(out, name, n, d, id),
@@ -575,7 +560,7 @@ write_decl_def = (
     n    : TyNamed,
     d    : Decl,
     id   : TyId
-) Res<(), AllocError> {
+) Res<AllocError> {
     ctx  = be.decl_ctx(n);
     inst = be.decl_inst(n).try();
     mark = be.enter_struct_tparams(n.decl).try();
@@ -585,7 +570,6 @@ write_decl_def = (
         _         => write_opaque(out, name),
     }).try();
     be.leave_tparams(mark).try();
-    Ok(());
 }
 
 // A bound value is a stack-allocated record containing a receiver pointer and
@@ -599,7 +583,7 @@ write_struct_or_fat = (
     inst : Inst,
     id   : TyId
 )
-                      Res<(), AllocError> {
+                      Res<AllocError> {
     be.is_fat(id).match({
         true  => be.write_fat_def(out, name, id),
         false => be.write_struct_def(out, name, s, ctx, inst),
@@ -611,18 +595,17 @@ write_struct_or_fat = (
 // declaration, which is what lets two programs compile one bound to one
 // shape.
 write_fat_def = (be :: CBackend, out :: Emit, name: str, id: TyId)
-                Res<(), AllocError> {
+                Res<AllocError> {
     slots ::= be.alloc.Vec<Slot>();
     be.slots_of(id, slots).try();
     open_struct(out, name).try();
     out.say("void *zg_self;").try();
     slots.loop((h, s) { be.write_slot_line(out, s).try() });
     close_struct(out).try();
-    Ok(());
 }
 
 write_slot_line = (be :: CBackend, out :: Emit, s: Slot)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     line ::= be.alloc.String().try();
     be.slot_field(s, line).try();
     out.say(line.view())
@@ -642,7 +625,7 @@ write_struct_def = (
     s    : Struct,
     ctx  : Ctx,
     inst : Inst
-) Res<(), AllocError> {
+) Res<AllocError> {
     fields ::= be.alloc.Vec<TyId>();
     be.storage_types(s, ctx, inst, fields).try();
     be.any_open(fields).match({
@@ -658,28 +641,28 @@ storage_types = (
     ctx  : Ctx,
     inst : Inst,
     out  :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     s.members.loop((h, m) {
         be.field_type(m, ctx, inst).match({
             None  => be.refuse_dropped_field(m),
             Ok(t) => be.has_storage(t).match({
                 true  => out.add(t),
-                false => Ok(()),
+                false => Ok,
             }),
         }).try();
     });
-    Ok(());
+    Ok;
 }
 
 // A method or constant has no storage. A Field whose type walk failed does.
-refuse_dropped_field = (be :: CBackend, m: Member) Res<(), AllocError> {
+refuse_dropped_field = (be :: CBackend, m: Member) Res<AllocError> {
     m.kind.match({
         Field(_) => be.report(
             m.span.file,
             m.span,
             GenFault.Unspellable(m.name().text)
         ),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
@@ -692,14 +675,14 @@ write_fields_def = (
     inst   : Inst,
     fields : Vec<TyId>
 )
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     open_struct(out, name).try();
     s.members.loop((h, m) {
         be.field_type(m, ctx, inst).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(t) => be.has_storage(t).match({
                 true  => be.write_field(out, m, t),
-                false => Ok(()),
+                false => Ok,
             }),
         }).try();
     });
@@ -707,11 +690,10 @@ write_fields_def = (
     // empty struct and an empty struct used as a field agree.
     (fields.len == 0).then(() { out.say("char zg_pad;").try() });
     close_struct(out).try();
-    Ok(());
 }
 
 write_field = (be :: CBackend, out :: Emit, m: Member, t: TyId)
-              Res<(), AllocError> {
+              Res<AllocError> {
     name ::= be.alloc.String().try();
     name.sym_member(m.name().text).try();
     decl ::= be.alloc.String().try();
@@ -728,41 +710,37 @@ write_enum_def = (
     e    : Enum,
     ctx  : Ctx,
     inst : Inst
-) Res<(), AllocError> {
+) Res<AllocError> {
     open_struct(out, name).try();
     payloads ::= be.alloc.Vec<TyId>();
     names    ::= be.alloc.Vec<String>();
     e.variants.loop((h, v) {
         variant_type(be, n, v, ctx, inst).match({
-            None  => Ok(()),
+            None  => Ok,
             Ok(t) => be.add_payload(payloads, names, t, v.name.text),
         }).try();
     });
     be.write_union(out, payloads, names).try();
     close_struct(out).try();
-    Ok(());
 }
 
-open_struct = (out :: Emit, name: str) Res<(), AllocError> {
+open_struct = (out :: Emit, name: str) Res<AllocError> {
     out.bytes("struct ").try();
     out.bytes(name).try();
     out.say(" {").try();
     out.indent();
-    Ok(());
 }
 
-close_struct = (out :: Emit) Res<(), AllocError> {
+close_struct = (out :: Emit) Res<AllocError> {
     out.dedent();
     out.say("};").try();
     out.line().try();
-    Ok(());
 }
 
-write_opaque = (out :: Emit, name: str) Res<(), AllocError> {
+write_opaque = (out :: Emit, name: str) Res<AllocError> {
     open_struct(out, name).try();
     out.say("char zg_pad;").try();
     close_struct(out).try();
-    Ok(());
 }
 
 write_union = (
@@ -770,12 +748,12 @@ write_union = (
     out      :: Emit,
     payloads : Vec<TyId>,
     names    : Vec<String>
-) Res<(), AllocError> {
+) Res<AllocError> {
     out.say("int32_t zg_tag;").try();
     (payloads.len > 0).then(() {
         be.write_union_body(out, payloads, names).try();
     });
-    Ok(());
+    Ok;
 }
 
 write_union_body = (
@@ -783,7 +761,7 @@ write_union_body = (
     out      :: Emit,
     payloads : Vec<TyId>,
     names    : Vec<String>
-) Res<(), AllocError> {
+) Res<AllocError> {
     out.say("union {").try();
     out.indent();
     payloads.loop((h, i, t) {
@@ -791,7 +769,6 @@ write_union_body = (
     });
     out.dedent();
     out.say("} zg_data;").try();
-    Ok(());
 }
 
 write_union_member = (
@@ -800,15 +777,15 @@ write_union_member = (
     names : Vec<String>,
     i     : usize,
     t     : TyId
-) Res<(), AllocError> {
+) Res<AllocError> {
     names.get(i).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(m) => be.write_member_line(out, m.view(), t),
     })
 }
 
 write_member_line = (be :: CBackend, out :: Emit, name: str, t: TyId)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     decl ::= be.alloc.String().try();
     be.declarator(t, name, decl).try();
     decl.add(";").try();

@@ -33,7 +33,7 @@ show = (
     line      : usize,
     character : usize
 )
-       Res<(), AllocError> {
+       Res<AllocError> {
     docs ::= a.Map<str, str>();
     d = definition_with(
         env,
@@ -48,5 +48,4 @@ show = (
         character
     ).try();
     println("{} {}", d.found, d.uri);
-    Ok(())
 }

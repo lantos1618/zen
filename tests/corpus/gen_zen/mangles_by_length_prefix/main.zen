@@ -16,18 +16,16 @@
 { Env } = std.env
 { println } = std.io
 
-show = (a: Alloc, label: str, out: String) Res<(), AllocError> {
+show = (a: Alloc, label: str, out: String) Res<AllocError> {
     println("{} {}", label, out.view());
-    Ok(());
 }
 
-joined = (a: Alloc, first: str, second: str) Res<(), AllocError> {
+joined = (a: Alloc, first: str, second: str) Res<AllocError> {
     out ::= a.String().try();
     count(out, 2).try();
     comp(out, first).try();
     comp(out, second).try();
     println("{} + {} -> {}", first, second, out.view());
-    Ok(());
 }
 
 main = (env: Env) Res<i32, AllocError> {

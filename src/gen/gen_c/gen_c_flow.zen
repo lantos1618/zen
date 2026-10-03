@@ -58,7 +58,7 @@ PatternSite = {
     }
 
     open = (self: @Self, be :: CBackend, arm: Arm, i: usize, ctx: Ctx)
-           Res<(), AllocError> {
+           Res<AllocError> {
         cond ::= be.alloc.String().try();
         be.arm_trace.restart();
         self.cond(be, arm.pattern, cond).try();
@@ -71,7 +71,7 @@ PatternSite = {
     }
 
     cond = (self: @Self, be :: CBackend, pid: PatternId, out :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
         pat = be.tree.pattern_at(pid);
         pat.kind.match({
             Wild           => out.add("1"),
@@ -79,7 +79,6 @@ PatternSite = {
             Name(p)        => self.name_cond(be, p.name, out),
             Destructure(d) => self.destructure_cond(be, d, out),
         }).try();
-        Ok(())
     }
 
     destructure_cond = (
@@ -87,7 +86,7 @@ PatternSite = {
         be   :: CBackend,
         d    : Destructure,
         out  :: String
-    ) Res<(), AllocError> {
+    ) Res<AllocError> {
         member = d.name.last_segment();
         member_of(be.check, self.ty, member).match({
             None  => self.plain_ctor_cond(be, d, out),
@@ -96,13 +95,13 @@ PatternSite = {
     }
 
     plain_ctor_cond = (self: @Self, be :: CBackend, d: Destructure,
-                       out :: String) Res<(), AllocError> {
+                       out :: String) Res<AllocError> {
         child = self.tag_name(be, d.name.last_segment(), out).try();
         self.payload_cond(be, d, child, out)
     }
 
     member_ctor_cond = (self: @Self, be :: CBackend, d: Destructure,
-                        mty: TyId, out :: String) Res<(), AllocError> {
+                        mty: TyId, out :: String) Res<AllocError> {
         be.names_member_case(mty, d.name.last_segment()).try().match({
             true  => self.member_case_cond(be, d, mty, out),
             false => self.member_leaf_cond(be, d, mty, out),
@@ -110,7 +109,7 @@ PatternSite = {
     }
 
     member_leaf_cond = (self: @Self, be :: CBackend, d: Destructure,
-                        mty: TyId, out :: String) Res<(), AllocError> {
+                        mty: TyId, out :: String) Res<AllocError> {
         member = d.name.last_segment();
         child  = self.tag_name(be, member, out).try();
         place ::= be.alloc.String().try();
@@ -123,7 +122,7 @@ PatternSite = {
     // inside the member. Read as the member itself, it tested only `Kind`
     // (so `Io(..)` matched too) and bound `c` to the whole `Kind`.
     member_case_cond = (self: @Self, be :: CBackend, d: Destructure,
-                        mty: TyId, out :: String) Res<(), AllocError> {
+                        mty: TyId, out :: String) Res<AllocError> {
         leaf ::= be.leaf_name_of(mty).try();
         child = self.tag_name(be, leaf, out).try();
         place ::= be.alloc.String().try();
@@ -133,16 +132,16 @@ PatternSite = {
     }
 
     leaf_cond = (self: @Self, be :: CBackend, pid: PatternId,
-                 out :: String) Res<(), AllocError> {
+                 out :: String) Res<AllocError> {
         be.narrows(pid, self.ty).then(() {
             out.add(" && ").try();
             self.cond(be, pid, out).try();
         });
-        Ok(())
+        Ok
     }
 
     payload_cond = (self: @Self, be :: CBackend, d: Destructure,
-                    child: usize, out :: String) Res<(), AllocError> {
+                    child: usize, out :: String) Res<AllocError> {
         be.payload_type(self.ty, d.name.last_segment()).match({
             None  => be.bare_payload(d),
             Ok(t) => self.nested_cond(be, d, t, child, out),
@@ -151,16 +150,16 @@ PatternSite = {
 
     nested_cond = (self: @Self, be :: CBackend, d: Destructure,
                    ty: TyId, child: usize, out :: String)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         be.narrows(d.binder, ty).match({
-            false => Ok(()),
+            false => Ok,
             true  => self.write_nested_cond(be, d, ty, child, out),
         })
     }
 
     write_nested_cond = (self: @Self, be :: CBackend, d: Destructure,
                          ty: TyId, child: usize, out :: String)
-                        Res<(), AllocError> {
+                        Res<AllocError> {
         place ::= be.alloc.String().try();
         be.payload_place(d.name.last_segment(), self.place, place).try();
         out.add(" && ").try();
@@ -168,7 +167,7 @@ PatternSite = {
     }
 
     literal_cond = (self: @Self, be :: CBackend, pat: Pattern,
-                    l: Literal, out :: String) Res<(), AllocError> {
+                    l: Literal, out :: String) Res<AllocError> {
         self.trace_literal(be, l).try();
         l.kind.match({
             Bool  => bool_cond(l.text, self.place, out),
@@ -182,7 +181,7 @@ PatternSite = {
     // `true` and `false` are the two cases of `bool`; other literals are
     // compared by their text, as sema compares them.
     trace_literal = (self: @Self, be :: CBackend, l: Literal)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
         l.kind.match({
             Bool => self.trace_case(be, l.text),
             _    => be.arm_trace.literal(self.slot, l.text),
@@ -190,13 +189,13 @@ PatternSite = {
     }
 
     trace_case = (self: @Self, be :: CBackend, name: str)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
         be.arm_trace.tag(self.slot, name).try();
-        Ok(())
+        Ok
     }
 
     str_cond = (self: @Self, be :: CBackend, pat: Pattern, l: Literal,
-                out :: String) Res<(), AllocError> {
+                out :: String) Res<AllocError> {
         be.is_str(self.ty).match({
             false => be.unsupported_cond(pat, out),
             true  => write_str_cond(l, self.place, out),
@@ -204,7 +203,7 @@ PatternSite = {
     }
 
     name_cond = (self: @Self, be :: CBackend, q: QualifiedName,
-                 out :: String) Res<(), AllocError> {
+                 out :: String) Res<AllocError> {
         be.is_variant(self.ty, q.last_segment()).match({
             true  => self.tag_cond(be, q, out),
             false => self.set_name_cond(be, q.last_segment(), out),
@@ -212,7 +211,7 @@ PatternSite = {
     }
 
     set_name_cond = (self: @Self, be :: CBackend, text: str,
-                     out :: String) Res<(), AllocError> {
+                     out :: String) Res<AllocError> {
         member_of(be.check, self.ty, text).match({
             None    => out.add("1"),
             Ok(mty) => self.set_name_arm(be, mty, text, out),
@@ -220,20 +219,20 @@ PatternSite = {
     }
 
     set_name_arm = (self: @Self, be :: CBackend, mty: TyId, text: str,
-                    out :: String) Res<(), AllocError> {
+                    out :: String) Res<AllocError> {
         leaf ::= be.leaf_name_of(mty).try();
         child = self.tag_name(be, leaf, out).try();
         place ::= be.alloc.String().try();
         be.set_member_place(mty, self.place, place).try();
         be.check.is_case(mty, text).try().match({
-            false => Ok(()),
+            false => Ok,
             true  => self.under(mty, place.view(), child)
                 .leaf_case_cond(be, text, out),
         })
     }
 
     leaf_case_cond = (self: @Self, be :: CBackend, case: str,
-                      out :: String) Res<(), AllocError> {
+                      out :: String) Res<AllocError> {
         qname ::= be.alloc.String().try();
         be.enum_path(self.ty, qname).try();
         be.arm_trace.tag(self.slot, case).try();
@@ -242,9 +241,9 @@ PatternSite = {
     }
 
     tag_cond = (self: @Self, be :: CBackend, q: QualifiedName,
-                out :: String) Res<(), AllocError> {
+                out :: String) Res<AllocError> {
         self.tag_name(be, q.last_segment(), out).try();
-        Ok(())
+        Ok
     }
 
     // Writes the tag comparison and returns the trace slot of the payload
@@ -278,25 +277,25 @@ PatternSite = {
     }
 
     bind = (self: @Self, be :: CBackend, pid: PatternId)
-           Res<(), AllocError> {
+           Res<AllocError> {
         be.tree.pattern_at(pid).kind.match({
             Name(p)        => self.bind_name(be, p.name),
             Destructure(d) => self.bind_payload(be, d),
-            _              => Ok(()),
+            _              => Ok,
         })
     }
 
     bind_name = (self: @Self, be :: CBackend, q: QualifiedName)
-                Res<(), AllocError> {
+                Res<AllocError> {
         name = q.last_segment();
         be.names_case(self.ty, name).match({
-            true  => Ok(()),
+            true  => Ok,
             false => be.bind_local(name, self.ty, self.place),
         })
     }
 
     bind_payload = (self: @Self, be :: CBackend, d: Destructure)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         member = d.name.last_segment();
         member_of(be.check, self.ty, member).match({
             None    => self.enum_bind_payload(be, d),
@@ -305,7 +304,7 @@ PatternSite = {
     }
 
     enum_bind_payload = (self: @Self, be :: CBackend, d: Destructure)
-                        Res<(), AllocError> {
+                        Res<AllocError> {
         be.payload_type(self.ty, d.name.last_segment()).match({
             // A written unit payload still introduces a Zen binding even
             // though it has no C field. Publishing the storage-free slot is
@@ -316,15 +315,15 @@ PatternSite = {
     }
 
     bind_unit_payload = (self: @Self, be :: CBackend, pid: PatternId)
-                        Res<(), AllocError> {
+                        Res<AllocError> {
         be.tree.pattern_at(pid).kind.match({
             Name(p) => self.bind_unit_name(be, p.name.last_segment()),
-            _       => Ok(()),
+            _       => Ok,
         })
     }
 
     bind_unit_name = (self: @Self, be :: CBackend, name: str)
-                     Res<(), AllocError> {
+                     Res<AllocError> {
         unit = be.check.types.prim("()").try();
         n    = be.reserve(name).try();
         be.publish(name, n, unit, false).try();
@@ -332,7 +331,7 @@ PatternSite = {
     }
 
     set_bind_payload = (self: @Self, be :: CBackend, d: Destructure,
-                        mty: TyId) Res<(), AllocError> {
+                        mty: TyId) Res<AllocError> {
         place ::= be.alloc.String().try();
         be.set_member_place(mty, self.place, place).try();
         member = self.at(mty, place.view());
@@ -343,7 +342,7 @@ PatternSite = {
     }
 
     bind_inner = (self: @Self, be :: CBackend, d: Destructure, ty: TyId)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
         place ::= be.alloc.String().try();
         be.payload_place(d.name.last_segment(), self.place, place).try();
         self.at(ty, place.view()).bind(be, d.binder)
@@ -359,10 +358,10 @@ lower_match* = (
     ctx  : Ctx,
     ty   : TyId,
     dst  : Dest
-) Res<(), AllocError> {
+) Res<AllocError> {
     // A dense integer table of literals is one load (gen_c_table.zen).
     be.lower_table(m, ctx, ty, dst).try().match({
-        true  => Ok(()),
+        true  => Ok,
         false => be.lower_arms(node, m, ctx, ty, dst),
     })
 }
@@ -374,7 +373,7 @@ lower_arms = (
     ctx  : Ctx,
     ty   : TyId,
     dst  : Dest
-) Res<(), AllocError> {
+) Res<AllocError> {
     st = be.res_type_of(m.scrutinee, ctx).try();
     scrut ::= be.fresh_name("s").try();
     be.declare_temp(st, scrut.view()).try();
@@ -389,10 +388,9 @@ lower_arms = (
         be.release(lmark).try();
     });
     be.close_arms(node, m).try();
-    Ok(());
 }
 
-declare_temp* = (be :: CBackend, ty: TyId, name: str) Res<(), AllocError> {
+declare_temp* = (be :: CBackend, ty: TyId, name: str) Res<AllocError> {
     decl ::= be.alloc.String().try();
     be.declarator(ty, name, decl).try();
     be.fmt("{};\n", decl.view())
@@ -411,44 +409,40 @@ init_temp* = (be :: CBackend, ty: TyId, stem: str, value: str)
     Ok(name)
 }
 
-first_arm = (be :: CBackend, cond: str) Res<(), AllocError> {
+first_arm = (be :: CBackend, cond: str) Res<AllocError> {
     be.fmt("if ({cond}) {\n").try();
     be.indent();
-    Ok(());
 }
 
-chain_arm = (be :: CBackend, cond: str) Res<(), AllocError> {
+chain_arm = (be :: CBackend, cond: str) Res<AllocError> {
     be.dedent();
     be.fmt("} else if ({cond}) {\n").try();
     be.indent();
-    Ok(());
 }
 
 // The chain's `else`: a value that matched no arm traps at the `match`
 // token rather than leaving the destination uninitialised.
-close_arms = (be :: CBackend, node: Expr, m: Match) Res<(), AllocError> {
+close_arms = (be :: CBackend, node: Expr, m: Match) Res<AllocError> {
     (m.arms.len == 0).match({
         true  => be.write_unreachable(node, m),
         false => be.close_chain(node, m),
     })
 }
 
-close_chain = (be :: CBackend, node: Expr, m: Match) Res<(), AllocError> {
+close_chain = (be :: CBackend, node: Expr, m: Match) Res<AllocError> {
     be.dedent();
     be.writeln("} else {").try();
     be.indent();
     be.write_unreachable(node, m).try();
     be.dedent();
     be.writeln("}").try();
-    Ok(());
 }
 
 write_unreachable = (be :: CBackend, node: Expr, m: Match)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     pos ::= be.alloc.String().try();
     be.write_position(node.span.file, m.name_span, pos).try();
     be.fmt("zg_unreachable({});\n", pos.view()).try();
-    Ok(());
 }
 
 // patterns
@@ -457,14 +451,14 @@ write_unreachable = (be :: CBackend, node: Expr, m: Match)
 // disagreement means the emitted C selects different values than coverage
 // and reachability were proved for, so it is refused, never compiled.
 check_arm = (be :: CBackend, pid: PatternId, st: TyId, ctx: Ctx)
-            Res<(), AllocError> {
+            Res<AllocError> {
     be.check.arm_disagreement(be.arm_trace, pid, st, ctx).try().match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(why) => be.report_arm(pid, why),
     })
 }
 
-report_arm = (be :: CBackend, pid: PatternId, why: str) Res<(), AllocError> {
+report_arm = (be :: CBackend, pid: PatternId, why: str) Res<AllocError> {
     pat = be.tree.pattern_at(pid);
     be.report(pat.span.file, pat.span, GenFault.ArmDisagrees(why))
 }
@@ -473,11 +467,11 @@ report_arm = (be :: CBackend, pid: PatternId, why: str) Res<(), AllocError> {
 // `.zg_data` for it would be a union member nothing declared. The arm
 // is refused rather than narrowed, which keeps the rule this file works
 // by: lower it exactly, or report it.
-bare_payload = (be :: CBackend, d: Destructure) Res<(), AllocError> {
+bare_payload = (be :: CBackend, d: Destructure) Res<AllocError> {
     inner = be.tree.pattern_at(d.binder);
     inner.kind.match({
         Literal(_) => be.report_nested(inner),
-        _          => Ok(()),
+        _          => Ok,
     })
 }
 
@@ -518,7 +512,7 @@ payload_place = (
     variant : str,
     scrut   : str,
     out     :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     out.fmt("{scrut}.zg_data.").try();
     sym_member(out, variant)
 }
@@ -532,13 +526,12 @@ set_member_place = (
     member : TyId,
     scrut  : str,
     out    :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     out.fmt("{scrut}.zg_data.").try();
     sym_union_member(out, be.types(), be.world(), member).try();
-    Ok(())
 }
 
-report_nested = (be :: CBackend, inner: Pattern) Res<(), AllocError> {
+report_nested = (be :: CBackend, inner: Pattern) Res<AllocError> {
     be.report(
         inner.span.file,
         inner.span,
@@ -546,30 +539,30 @@ report_nested = (be :: CBackend, inner: Pattern) Res<(), AllocError> {
     )
 }
 
-bool_cond = (text: str, scrut: str, out :: String) Res<(), AllocError> {
+bool_cond = (text: str, scrut: str, out :: String) Res<AllocError> {
     text.eq("true").match({
         true  => out.add(scrut),
         false => negate(scrut, out),
     })
 }
 
-negate = (scrut: str, out :: String) Res<(), AllocError> {
+negate = (scrut: str, out :: String) Res<AllocError> {
     out.fmt("!{scrut}")
 }
 
-equality = (scrut: str, text: str, out :: String) Res<(), AllocError> {
+equality = (scrut: str, text: str, out :: String) Res<AllocError> {
     out.fmt("{scrut} == {text}")
 }
 
 write_str_cond = (l: Literal, scrut: str, out :: String)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     n = l.text.slice(1, l.text.len - 1).literal_byte_len();
     out.fmt("{scrut}.len == ").try();
     out.write_usize(n).try();
     out.add("u").try();
     (n > 0).match({
         true  => str_bytes_cond(l, scrut, n, out),
-        false => Ok(()),
+        false => Ok,
     })
 }
 
@@ -577,20 +570,19 @@ write_str_cond = (l: Literal, scrut: str, out :: String)
 // may carry a null `data`, and that is not a pointer `memcmp` may be
 // handed even for zero bytes.
 str_bytes_cond = (l: Literal, scrut: str, n: usize, out :: String)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     out.fmt(" && memcmp({scrut}.data, ").try();
     out.write_c_literal(l.text.slice(1, l.text.len - 1)).try();
     out.add(", ").try();
     out.write_usize(n).try();
     out.add("u) == 0").try();
-    Ok(());
 }
 
 // A string pattern on a scrutinee that is not a `str`. The arm is
 // reported and its condition is never true, which keeps the chain total
 // without inventing a comparison.
 unsupported_cond = (be :: CBackend, pat: Pattern, out :: String)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     be.report(
         pat.span.file,
         pat.span,
@@ -609,7 +601,7 @@ leaf_name_of = (be :: CBackend, mty: TyId) Res<str, AllocError> {
 // A C declaration for a pattern binding, plus the same binding in
 // sema's own scope so `type_of` answers for every use of it.
 bind_local = (be :: CBackend, name: str, ty: TyId, init: str)
-             Res<(), AllocError> {
+             Res<AllocError> {
     n = be.declare(name, ty, false).try();
     be.check.bind(name, ty, false, false).try();
     cname ::= be.alloc.String().try();
@@ -668,11 +660,11 @@ variants_have = (variants: Vec<Variant>, name: str) bool {
 }
 
 // The path a tag constant is built from.
-enum_path* = (be :: CBackend, st: TyId, out :: String) Res<(), AllocError> {
+enum_path* = (be :: CBackend, st: TyId, out :: String) Res<AllocError> {
     be.check.types.at(st).match({
         Res(_)   => out.add(RES_PATH),
         Named(n) => be.write_qname(out, n),
-        _        => Ok(()),
+        _        => Ok,
     })
 }
 
@@ -743,7 +735,7 @@ collect_payload = (
     variants : Vec<Variant>,
     variant  : str,
     found    :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     ctx  = be.decl_ctx(n);
     inst = be.decl_inst(n).try();
     mark = be.enter_struct_tparams(n.decl).try();
@@ -751,7 +743,6 @@ collect_payload = (
         be.keep_payload(n, v, variant, ctx, inst, found).try();
     });
     be.leave_tparams(mark).try();
-    Ok(());
 }
 
 keep_payload = (
@@ -763,9 +754,9 @@ keep_payload = (
     inst    : Inst,
     found   :: Vec<TyId>
 )
-               Res<(), AllocError> {
+               Res<AllocError> {
     v.name.text.eq(variant).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.add_payload_type(n, v, ctx, inst, found),
     })
 }
@@ -777,10 +768,10 @@ add_payload_type = (
     ctx   : Ctx,
     inst  : Inst,
     found :: Vec<TyId>
-) Res<(), AllocError> {
+) Res<AllocError> {
     variant_type(be, n, v, ctx, inst).match({
         Ok(t) => found.add(t),
-        None  => Ok(()),
+        None  => Ok,
     })
 }
 
@@ -793,19 +784,19 @@ first_payload = (be :: CBackend, found: Vec<TyId>) Res<TyId> {
 
 // Floors choose a result variant and payload; flow owns its C shape.
 write_assign_none* = (be :: CBackend, ret: TyId, dst: str)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     value ::= be.res_head(ret, "None").try();
     be.finish_res(value, dst)
 }
 
 write_assign_ok_unit* = (be :: CBackend, ret: TyId, dst: str)
-                       Res<(), AllocError> {
+                       Res<AllocError> {
     value ::= be.res_head(ret, "Ok").try();
     be.finish_res(value, dst)
 }
 
 write_assign_ok* = (be :: CBackend, ret: TyId, payload: str, dst: str)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
     value ::= be.res_head(ret, "Ok").try();
     value.add(", .zg_data.").try();
     sym_member(value, "Ok").try();
@@ -814,25 +805,25 @@ write_assign_ok* = (be :: CBackend, ret: TyId, payload: str, dst: str)
 }
 
 write_assign_err* = (be :: CBackend, ret: TyId, name: str, dst: str)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     value ::= be.res_head(ret, "Err").try();
     be.payload_type(ret, "Err").match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(ety) => be.write_err_payload(ety, name, value),
     }).try();
     be.finish_res(value, dst)
 }
 
 write_err_payload = (be :: CBackend, ety: TyId, name: str, out :: String)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     be.is_variant(ety, name).match({
-        false => Ok(()),
+        false => Ok,
         true  => be.write_err_variant(ety, name, out),
     })
 }
 
 write_err_variant = (be :: CBackend, ety: TyId, name: str, out :: String)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
     path ::= be.alloc.String().try();
     be.enum_path(ety, path).try();
     out.add(", .zg_data.").try();
@@ -842,7 +833,6 @@ write_err_variant = (be :: CBackend, ety: TyId, name: str, out :: String)
     out.add("){ .zg_tag = ").try();
     out.sym_variant(path.view(), name).try();
     out.add(" })").try();
-    Ok(());
 }
 
 res_head = (be :: CBackend, ret: TyId, variant: str)
@@ -855,33 +845,29 @@ res_head = (be :: CBackend, ret: TyId, variant: str)
 }
 
 finish_res = (be :: CBackend, value :: String, dst: str)
-             Res<(), AllocError> {
+             Res<AllocError> {
     value.add(" })").try();
     be.set_line(dst, value.view())
 }
 
 // Small C block transitions shared by capability floors.
-open_rc_test* = (be :: CBackend, rc: str) Res<(), AllocError> {
+open_rc_test* = (be :: CBackend, rc: str) Res<AllocError> {
     be.fmt("if ({rc} != 0) {\n").try();
     be.indent();
-    Ok(())
 }
 
-open_null_test* = (be :: CBackend, raw: str) Res<(), AllocError> {
+open_null_test* = (be :: CBackend, raw: str) Res<AllocError> {
     be.fmt("if ({raw} == NULL) {\n").try();
     be.indent();
-    Ok(())
 }
 
-close_else* = (be :: CBackend) Res<(), AllocError> {
+close_else* = (be :: CBackend) Res<AllocError> {
     be.dedent();
     be.writeln("} else {").try();
     be.indent();
-    Ok(())
 }
 
-close_brace* = (be :: CBackend) Res<(), AllocError> {
+close_brace* = (be :: CBackend) Res<AllocError> {
     be.dedent();
     be.writeln("}").try();
-    Ok(())
 }

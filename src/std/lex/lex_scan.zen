@@ -21,14 +21,14 @@ scan* = (alloc: Alloc, source: Source) Res<Lexed, AllocError> {
     Ok(Lexed(source: source, tokens: lx.tokens, diags: lx.diags));
 }
 
-step = (lx :: Lexer) Res<(), AllocError> {
+step = (lx :: Lexer) Res<AllocError> {
     lx.cur.peek().match({
         Ok(b) => lx.dispatch(b),
-        None  => Ok(()),
+        None  => Ok,
     });
 }
 
-dispatch = (lx :: Lexer, b: u8) Res<(), AllocError> {
+dispatch = (lx :: Lexer, b: u8) Res<AllocError> {
     class_of(b).match({
         Space  => lx.skip(),
         Slash  => lx.slash(),
@@ -41,12 +41,11 @@ dispatch = (lx :: Lexer, b: u8) Res<(), AllocError> {
     });
 }
 
-skip = (lx :: Lexer) Res<(), AllocError> {
+skip = (lx :: Lexer) Res<AllocError> {
     lx.cur.bump();
-    Ok(());
 }
 
-slash = (lx :: Lexer) Res<(), AllocError> {
+slash = (lx :: Lexer) Res<AllocError> {
     lx.cur.at_byte(1, '/').match({
         true  => lx.line_comment(),
         false => lx.cur.at_byte(1, '*').match({
@@ -57,14 +56,14 @@ slash = (lx :: Lexer) Res<(), AllocError> {
 }
 
 // A line-comment token excludes its newline.
-line_comment = (lx :: Lexer) Res<(), AllocError> {
+line_comment = (lx :: Lexer) Res<AllocError> {
     from = lx.cur.pos();
     lx.cur.bump_while((b) { b != '\n' });
     lx.emit(TokenKind.LineComment, from);
 }
 
 // Block comments do not nest; the first `*/` closes the token.
-block_comment = (lx :: Lexer) Res<(), AllocError> {
+block_comment = (lx :: Lexer) Res<AllocError> {
     from = lx.cur.pos();
     lx.cur.bump();
     lx.cur.bump();
@@ -86,7 +85,7 @@ block_comment = (lx :: Lexer) Res<(), AllocError> {
     });
 }
 
-name = (lx :: Lexer) Res<(), AllocError> {
+name = (lx :: Lexer) Res<AllocError> {
     from = lx.cur.pos();
     lx.cur.bump_while((b) { b.is_ident_cont() });
     lx.emit(word_kind(lx.since(from)), from);
@@ -125,7 +124,7 @@ is_keyword* = (word: str) bool {
 
 is_zen_name* = (word: str) bool { word.is_identifier() && !is_keyword(word) }
 
-at_name = (lx :: Lexer) Res<(), AllocError> {
+at_name = (lx :: Lexer) Res<AllocError> {
     from = lx.cur.pos();
     lx.cur.bump();
     lx.cur.bump_while((b) { b.is_ident_cont() });
@@ -144,7 +143,7 @@ at_kind = (word: str) Res<TokenKind> {
     });
 }
 
-punctuation = (lx :: Lexer, b: u8) Res<(), AllocError> {
+punctuation = (lx :: Lexer, b: u8) Res<AllocError> {
     from = lx.cur.pos();
     lx.cur.punct_kind(b).match({
         Ok(kind) => lx.emit(kind, from),
@@ -153,7 +152,7 @@ punctuation = (lx :: Lexer, b: u8) Res<(), AllocError> {
 }
 
 // Report a maximal invalid-byte run once; identify a misplaced BOM separately.
-stray = (lx :: Lexer) Res<(), AllocError> {
+stray = (lx :: Lexer) Res<AllocError> {
     from          = lx.cur.pos();
     misplaced_bom = lx.cur.at_bom();
     lx.cur.bump_while((b) { begins_no_token(b) });

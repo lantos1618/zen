@@ -45,7 +45,7 @@ Tag = {
 }
 
 Tag.impl(Display, {
-    toString ::= (self: @Self, out :: Sink) Res<(), WriteError> {
+    toString ::= (self: @Self, out :: Sink) Res<WriteError> {
         out.fmt("<").try();
         out.write_byte(self.ch).try();
         out.fmt(">")
@@ -58,16 +58,16 @@ Counter = {
 }
 
 Counter.impl(Sink, {
-    write ::= (self :: @Self, bytes: str) Res<(), WriteError> {
+    write ::= (self :: @Self, bytes: str) Res<WriteError> {
         self.bytes = self.bytes + bytes.len;
         self.calls = self.calls + 1;
-        Ok(());
+        Ok;
     },
 
-    write_byte ::= (self :: @Self, b: u8) Res<(), WriteError> {
+    write_byte ::= (self :: @Self, b: u8) Res<WriteError> {
         self.bytes = self.bytes + 1;
         self.calls = self.calls + 1;
-        Ok(());
+        Ok;
     },
 })
 

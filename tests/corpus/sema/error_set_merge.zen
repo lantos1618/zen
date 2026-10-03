@@ -2,13 +2,15 @@
 // propagated with .try(), land in the union the caller declares. no
 // conversion happens -- the errors keep their identity, the SET widens.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { Env } = std.env
 { println } = std.io
 
 AError = { Zero | Negative }
+AError.impl(Error, {})
 
 BError = { TooBig | Odd }
+BError.impl(Error, {})
 
 Both = AError | BError
 

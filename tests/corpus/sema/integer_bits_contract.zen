@@ -45,7 +45,7 @@ foreign_keeps_binding = (a: Alloc) Res<bool, AllocError> {
     )
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     a = env.mem.alloc();
     println(
         "registered: {}",
@@ -196,5 +196,4 @@ main = (env: Env) Res<(), AllocError> {
         ).try()
     );
     println("foreign: {}", foreign_keeps_binding(a).try());
-    Ok(())
 }

@@ -4,14 +4,15 @@
 //
 // position: each dropped tail.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 
 Full* = { | Full }
+Full.impl(Error, {})
 
-push = (n: i32) Res<(), Full> {
-    (n > 2).match({ true => Err(Full.Full), false => Ok(()) })
+push = (n: i32) Res<Full> {
+    (n > 2).match({ true => Err(Full.Full), false => Ok })
 }
 
 fill = () () { push(3) }

@@ -19,7 +19,7 @@ show = (events: Vec<SseEvent>) {
     });
 }
 
-main = (env: Env) Res<(), AllocError> {
+main = (env: Env) Res<AllocError> {
     state   ::= env.mem.alloc();
     event   ::= env.mem.alloc();
     decoder ::= state.SseDecoder().try();
@@ -54,5 +54,4 @@ main = (env: Env) Res<(), AllocError> {
     decoder.feed("event: cleared\n\ndata: default\n\n", event, events).try();
     decoder.feed("retry: +25\n\n", event, events).try();
     events.show();
-    Ok(())
 }

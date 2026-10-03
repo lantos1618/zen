@@ -102,18 +102,18 @@ door_decl = (be :: CBackend) Res<Res<Def>, AllocError> {
     Ok(kept.get(0));
 }
 
-keep_door = (be :: CBackend, x: Def, out :: Vec<Def>) Res<(), AllocError> {
+keep_door = (be :: CBackend, x: Def, out :: Vec<Def>) Res<AllocError> {
     be.door_fn(x).match({
-        None  => Ok(()),
+        None  => Ok,
         Ok(g) => be.keep_shaped(g, x, out),
     })
 }
 
 keep_shaped = (be :: CBackend, g: Function, x: Def, out :: Vec<Def>)
-              Res<(), AllocError> {
+              Res<AllocError> {
     be.sink_door_shape(g).match({
         true  => out.add(x),
-        false => Ok(()),
+        false => Ok,
     })
 }
 
@@ -167,7 +167,7 @@ BufferCall = {
             ret: ret
         );
         fmt_arg(self.c, self.recv).match({
-            None      => Ok(()),
+            None      => Ok,
             Ok(first) => write_pieces(
                 be,
                 self.c,
@@ -213,7 +213,7 @@ buffer_sink = (
     cty  : TyId,
     sty  : TyId,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     value ::= be.alloc.String().try();
     be.fat_value(addr, cty, sty, value).try();
     sym_gen(out, "t", be.next_tmp()).try();
@@ -235,7 +235,7 @@ Piece* = {
     ret: TyId,
 
     write_typed = (self: @Self, be :: CBackend, a: ExprId, ty: TyId,
-                   text: str) Res<(), AllocError> {
+                   text: str) Res<AllocError> {
         v = SinkValue(id: a, ty: ty, text: text);
         call ::= be.alloc.String().try();
         self.value_call(be, ty, text, call).try().match({
@@ -262,7 +262,7 @@ Piece* = {
     }
 
     write_wider = (self: @Self, be :: CBackend, v: SinkValue)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         self.floor.is_empty().match({
             true  => self.unsupported(be, v.id, self.hole_fault()),
             false => self.through_sink(be, v),
@@ -270,7 +270,7 @@ Piece* = {
     }
 
     through_sink = (self: @Self, be :: CBackend, v: SinkValue)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         be.door_decl().try().match({
             None  => self.unsupported(be, v.id, self.hole_fault()),
             Ok(d) => self.sink_at_door(be, v, d),
@@ -278,7 +278,7 @@ Piece* = {
     }
 
     sink_at_door = (self: @Self, be :: CBackend, v: SinkValue, d: Def)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         be.door_fn(d).match({
             None  => self.unsupported(be, v.id, self.hole_fault()),
             Ok(f) => self.sink_over_receiver(be, v, d, f),
@@ -287,7 +287,7 @@ Piece* = {
 
     sink_over_receiver = (self: @Self, be :: CBackend, v: SinkValue,
                           d: Def, f: Function)
-                          Res<(), AllocError> {
+                          Res<AllocError> {
         sty  = be.sink_type(d, f).try();
         wret = declared_type(be, d, f.ret).try();
         self.wider_is_sound(be, sty).try().match({
@@ -306,7 +306,7 @@ Piece* = {
 
     write_through_sink = (self: @Self, be :: CBackend, v: SinkValue,
                           d: Def, sty: TyId, wret: TyId)
-                          Res<(), AllocError> {
+                          Res<AllocError> {
         rec ::= be.alloc.String().try();
         be.buffer_sink(self.sink, self.rty, sty, rec).try();
         wtmp ::= be.fresh_name("t").try();
@@ -330,7 +330,7 @@ Piece* = {
     }
 
     wider_guarded = (self: @Self, be :: CBackend, call: str, wtmp: str)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
         be.set_line(wtmp, call).try();
         tag ::= be.alloc.String().try();
         sym_variant(tag, RES_PATH, "Ok").try();
@@ -340,7 +340,6 @@ Piece* = {
         be.write_goto(self.done).try();
         be.dedent();
         be.writeln("}").try();
-        Ok(())
     }
 
     hole_fault = (self: @Self) str {
@@ -419,13 +418,13 @@ Piece* = {
     }
 
     write_guarded = (self: @Self, be :: CBackend, call: str)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
         be.set_line(self.tmp, call).try();
         be.write_jump_unless_ok(self.tmp, self.done)
     }
 
     unsupported = (self: @Self, be :: CBackend, id: ExprId, what: str)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         be.report_expr(id, GenFault.Unsupported(what))
     }
 }
@@ -437,7 +436,7 @@ SinkWalk = {
     ctx: Ctx,
 
     write = (self: @Self, be :: CBackend, first: ExprId, used: usize)
-            Res<(), AllocError> {
+            Res<AllocError> {
         raw = format_of(be, first);
         (raw.len == 0).match({
             true  => self.write_values(be, first, used),
@@ -446,13 +445,13 @@ SinkWalk = {
     }
 
     write_values = (self: @Self, be :: CBackend, first: ExprId, used: usize)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
         self.write_value(be, first).try();
         self.write_rest(be, used)
     }
 
     walk_format = (self: @Self, be :: CBackend, id: ExprId, raw: str,
-                   used0: usize) Res<(), AllocError> {
+                   used0: usize) Res<AllocError> {
         end = body_end(raw);
         start :: usize = 1;
         used  ::= used0;
@@ -472,7 +471,7 @@ SinkWalk = {
     }
 
     write_what = (self: @Self, be :: CBackend, id: ExprId, at: FmtAt,
-                  used: usize) Res<(), AllocError> {
+                  used: usize) Res<AllocError> {
         at.what.match({
             Hole     => self.write_hole(be, id, at, used),
             Named(n) => self.write_named(be, id, at, n),
@@ -482,12 +481,12 @@ SinkWalk = {
                 at,
                 GenFault.Unsupported(NOT_A_HOLE)
             ),
-            _        => Ok(()),
+            _        => Ok,
         })
     }
 
     write_named = (self: @Self, be :: CBackend, id: ExprId, at: FmtAt,
-                   name: str) Res<(), AllocError> {
+                   name: str) Res<AllocError> {
         text ::= be.alloc.String().try();
         be.named_hole(name, text).try().match({
             None  => report_in_format(be, id, at, GenFault.Unresolved(name)),
@@ -496,7 +495,7 @@ SinkWalk = {
     }
 
     write_hole = (self: @Self, be :: CBackend, id: ExprId, at: FmtAt,
-                  used: usize) Res<(), AllocError> {
+                  used: usize) Res<AllocError> {
         arg_value(self.c, used).match({
             None  => report_in_format(
                 be,
@@ -509,11 +508,11 @@ SinkWalk = {
     }
 
     write_surplus = (self: @Self, be :: CBackend, used: usize)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
         (used < self.c.args.len).match({
-            false => Ok(()),
+            false => Ok,
             true  => arg_value(self.c, used).match({
-                None   => Ok(()),
+                None   => Ok,
                 Ok(id) => be.report_expr(
                     id,
                     GenFault.Unsupported(ARGUMENT_WITHOUT_HOLE)
@@ -523,26 +522,26 @@ SinkWalk = {
     }
 
     write_rest = (self: @Self, be :: CBackend, used: usize)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
         Range(used, self.c.args.len).loop((h, i) {
             arg_value(self.c, i).match({
-                None  => Ok(()),
+                None  => Ok,
                 Ok(a) => self.write_value(be, a),
             }).try();
         });
-        Ok(())
+        Ok
     }
 
     write_chunk = (self: @Self, be :: CBackend, raw: str, start: usize,
-                   stop: usize) Res<(), AllocError> {
+                   stop: usize) Res<AllocError> {
         (stop > start).match({
-            false => Ok(()),
+            false => Ok,
             true  => self.write_literal(be, raw.slice(start, stop)),
         })
     }
 
     write_literal = (self: @Self, be :: CBackend, piece: str)
-                    Res<(), AllocError> {
+                    Res<AllocError> {
         text ::= be.alloc.String("(zg_str){{ (unsigned char *)").try();
         text.write_c_literal(piece).try();
         text.fmt(", {}u }}", piece.literal_byte_len()).try();
@@ -554,7 +553,7 @@ SinkWalk = {
     }
 
     write_value = (self: @Self, be :: CBackend, a: ExprId)
-                  Res<(), AllocError> {
+                  Res<AllocError> {
         unknown = be.check.types.unknown().try();
         ty      = be.ty_of(a, self.ctx, unknown).try();
         text ::= be.alloc.String().try();
@@ -572,7 +571,7 @@ DoorCall = {
     recv: Res<ExprId>,
     ctx: Ctx,
 
-    lower = (self: @Self, be :: CBackend, out :: String) Res<(), AllocError> {
+    lower = (self: @Self, be :: CBackend, out :: String) Res<AllocError> {
         ret = declared_type(be, self.d, self.f.ret).try();
         sty = be.sink_type(self.d, self.f).try();
         sink ::= be.alloc.String().try();
@@ -583,7 +582,7 @@ DoorCall = {
     }
 
     write = (self: @Self, be :: CBackend, ret: TyId, sty: TyId, sink: str,
-             out :: String) Res<(), AllocError> {
+             out :: String) Res<AllocError> {
         tmp ::= be.fresh_name("t").try();
         be.declare_temp(ret, tmp.view()).try();
         be.write_ok(ret, tmp.view()).try();
@@ -599,7 +598,7 @@ DoorCall = {
             ret: ret
         );
         fmt_arg(self.c, self.recv).match({
-            None      => Ok(()),
+            None      => Ok,
             Ok(first) => write_pieces(
                 be,
                 self.c,
@@ -623,7 +622,7 @@ lower_sink_door* = (
     recv : Res<ExprId>,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     site ::= DoorCall(id: id, c: c, d: d, f: f, recv: recv, ctx: ctx);
     site.lower(be, out)
 }
@@ -689,7 +688,7 @@ spill_sink = (
 // `zg_tN = (Res){ .zg_tag = Ok };` — the answer a door with no failing
 // write gives, written first so that falling off the end is `Ok` and
 // only a failure has to say anything.
-write_ok* = (be :: CBackend, ret: TyId, tmp: str) Res<(), AllocError> {
+write_ok* = (be :: CBackend, ret: TyId, tmp: str) Res<AllocError> {
     cty ::= be.alloc.String().try();
     be.ctype(ret, cty).try();
     tag ::= be.alloc.String().try();
@@ -715,7 +714,7 @@ write_pieces* = (
     used0 : usize,
     p     : Piece,
     ctx   : Ctx
-) Res<(), AllocError> {
+) Res<AllocError> {
     walk = SinkWalk(c: c, p: p, ctx: ctx);
     walk.write(be, first, used0)
 }
@@ -794,41 +793,41 @@ module_decl = (be :: CBackend, mi: usize, name: str)
 }
 
 keep_fn = (be :: CBackend, x: Def, out :: Vec<Def>)
-          Res<(), AllocError> {
+          Res<AllocError> {
     decl_at(be.tree, x.id).match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(dec) => keep_fn_decl(dec, x, out),
     })
 }
 
 keep_fn_decl = (dec: Decl, x: Def, out :: Vec<Def>)
-               Res<(), AllocError> {
+               Res<AllocError> {
     dec.kind.match({
         Function(_) => out.add(x),
-        _           => Ok(()),
+        _           => Ok,
     })
 }
 
 keep_bodied = (be :: CBackend, x: Def, out :: Vec<Def>)
-              Res<(), AllocError> {
+              Res<AllocError> {
     decl_at(be.tree, x.id).match({
-        None    => Ok(()),
+        None    => Ok,
         Ok(dec) => keep_bodied_decl(dec, x, out),
     })
 }
 
 keep_bodied_decl = (dec: Decl, x: Def, out :: Vec<Def>)
-                   Res<(), AllocError> {
+                   Res<AllocError> {
     dec.kind.match({
         Function(fn) => keep_bodied_fn(fn, x, out),
-        _            => Ok(()),
+        _            => Ok,
     })
 }
 
 keep_bodied_fn = (fn: Function, x: Def, out :: Vec<Def>)
-                 Res<(), AllocError> {
+                 Res<AllocError> {
     bodyless(fn).match({
-        true  => Ok(()),
+        true  => Ok,
         false => out.add(x),
     })
 }
@@ -839,7 +838,7 @@ keep_bodied_fn = (fn: Function, x: Def, out :: Vec<Def>)
 // reaches its body: "was this already emitted" and "what do I call"
 // have to be the same question.
 call_symbol* = (be :: CBackend, d: Def, out :: String)
-               Res<(), AllocError> {
+               Res<AllocError> {
     sig  ::= be.alloc.Vec<TyId>();
     inst ::= be.alloc.Inst();
     be.signature_of(d, inst, sig).try();
@@ -851,7 +850,7 @@ call_symbol* = (be :: CBackend, d: Def, out :: String)
 
 // `if (zg_tN.zg_tag != Ok) { goto done; }`
 write_jump_unless_ok* = (be :: CBackend, tmp: str, done: usize)
-                        Res<(), AllocError> {
+                        Res<AllocError> {
     tag ::= be.alloc.String().try();
     sym_variant(tag, RES_PATH, "Ok").try();
     be.fmt("if ({tmp}.zg_tag != {}) {\n", tag.view()).try();
@@ -859,10 +858,9 @@ write_jump_unless_ok* = (be :: CBackend, tmp: str, done: usize)
     be.write_goto(done).try();
     be.dedent();
     be.writeln("}").try();
-    Ok(());
 }
 
-write_goto* = (be :: CBackend, done: usize) Res<(), AllocError> {
+write_goto* = (be :: CBackend, done: usize) Res<AllocError> {
     name = be.done_name(done).try();
     be.fmt("goto {};\n", name.view())
 }
@@ -871,7 +869,7 @@ write_goto* = (be :: CBackend, done: usize) Res<(), AllocError> {
 // `f<n>: ;`. A loop's break label is a different thing with a stem and a
 // number (`gen_c_loop.zen`'s write_label); this one has exactly one name,
 // which is why it is not that function.
-write_done* = (be :: CBackend, done: usize) Res<(), AllocError> {
+write_done* = (be :: CBackend, done: usize) Res<AllocError> {
     name = be.done_name(done).try();
     be.fmt("{}: ;\n", name.view())
 }

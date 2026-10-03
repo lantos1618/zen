@@ -8,11 +8,12 @@
 // prints the same four lines in a different order, which is exactly
 // what makes this worth an expectation.
 
-{ Res, Ok, Err, Drop, IoError } = std.core
+{ Res, Ok, Err, Drop, IoError, Error } = std.core
 { Env } = std.env
 { println } = std.io
 
 Fail = { | Boom }
+Fail.impl(Error, {})
 
 Noisy = {
     env: Env,

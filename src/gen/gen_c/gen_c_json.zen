@@ -39,7 +39,7 @@ lower_json_door* = (
     recv : Res<ExprId>,
     ctx  : Ctx,
     out  :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     recv.match({
         None         => be.unsupported(id, "to_json without a receiver", out),
         Ok(receiver) => be.json_receiver(id, c, d, receiver, ctx, out),
@@ -54,7 +54,7 @@ json_receiver = (
     receiver : ExprId,
     ctx      : Ctx,
     out      :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     unknown  = be.check.types.unknown().try();
     value_ty = be.ty_of(receiver, ctx, unknown).try();
     value ::= be.fresh_name("json_value").try();
@@ -75,7 +75,7 @@ json_result = (
     value    : str,
     ctx      : Ctx,
     out      :: String
-) Res<(), AllocError> {
+) Res<AllocError> {
     ret = be.check.type_of(id, ctx).try();
     tmp ::= be.fresh_name("json_result").try();
     be.declare_temp(ret, tmp.view()).try();
@@ -169,7 +169,7 @@ JsonLower = {
     result: str,
     done: usize,
 
-    guard_result = (self: @Self, be :: CBackend) Res<(), AllocError> {
+    guard_result = (self: @Self, be :: CBackend) Res<AllocError> {
         ok ::= be.alloc.String().try();
         ok.sym_variant("std.core.result.Res", "Ok").try();
         be.fmt("if ({}.zg_tag != {}) {{\n", self.result, ok.view()).try();
@@ -177,11 +177,10 @@ JsonLower = {
         be.write_goto(self.done).try();
         be.dedent();
         be.writeln("}").try();
-        Ok(())
     }
 
     value = (self: @Self, be :: CBackend, ty: TyId, value: str)
-            Res<(), AllocError> {
+            Res<AllocError> {
         be.check.types.at(ty).match({
             Prim(p)  => self.primitive(be, p.name, value),
             Named(n) => self.named(be, n, value),
@@ -190,7 +189,7 @@ JsonLower = {
     }
 
     primitive = (self: @Self, be :: CBackend, name: str, value: str)
-                Res<(), AllocError> {
+                Res<AllocError> {
         helper = name.match({
             "str"   => "write_str",
             "bool"  => "write_bool",
@@ -214,7 +213,7 @@ JsonLower = {
     }
 
     named = (self: @Self, be :: CBackend, named: TyNamed, value: str)
-            Res<(), AllocError> {
+            Res<AllocError> {
         (named.name.eq("String")
             && be.check.world.module_name(named.decl)
                 .eq("std.text.text_string"))
@@ -225,7 +224,7 @@ JsonLower = {
     }
 
     record = (self: @Self, be :: CBackend, named: TyNamed, value: str)
-             Res<(), AllocError> {
+             Res<AllocError> {
         decl_at(be.tree, named.decl).match({
             None     => self.unsupported(be),
             Ok(decl) => decl.kind.match({
@@ -236,7 +235,7 @@ JsonLower = {
     }
 
     fields = (self: @Self, be :: CBackend, named: TyNamed, record: Struct,
-              value: str) Res<(), AllocError> {
+              value: str) Res<AllocError> {
         self.raw(be, "{").try();
         inst = be.decl_inst(named).try();
         dctx = be.decl_ctx(named);
@@ -266,7 +265,7 @@ JsonLower = {
     // `raw` is JSON punctuation plus identifier-derived field names. It is
     // escaped for the containing C literal, while the zg_str length remains
     // the number of runtime bytes, never the number of C source backslashes.
-    raw = (self: @Self, be :: CBackend, raw: str) Res<(), AllocError> {
+    raw = (self: @Self, be :: CBackend, raw: str) Res<AllocError> {
         literal ::= be.alloc.String("(zg_str){{ (unsigned char *)\"").try();
         Range(0, raw.len).loop((h, i) {
             b = raw.index(i);
@@ -278,9 +277,9 @@ JsonLower = {
     }
 
     write = (self: @Self, be :: CBackend, helper: str, value: str)
-            Res<(), AllocError> {
+            Res<AllocError> {
         be.json_helper(helper).try().match({
-            None       => Ok(()),
+            None       => Ok,
             Ok(writer) => {
                 call ::= be.alloc.String().try();
                 be.call_symbol(writer, call).try();
@@ -299,12 +298,12 @@ JsonLower = {
                 be.write_goto(self.done).try();
                 be.dedent();
                 be.writeln("}").try();
-                Ok(())
+                Ok
             },
         })
     }
 
-    unsupported = (self: @Self, be :: CBackend) Res<(), AllocError> {
+    unsupported = (self: @Self, be :: CBackend) Res<AllocError> {
         be.report_expr(
             self.id,
             GenFault.Unsupported("a value that cannot be encoded as JSON")

@@ -9,7 +9,9 @@
 { Env } = std.env
 { println } = std.io
 
-show = (a: Alloc, uri: str) Res<(), AllocError> { println("{}", path_of(a, uri).try()); Ok(()) }
+show = (a: Alloc, uri: str) Res<AllocError> {
+    println("{}", path_of(a, uri).try());
+}
 
 main = (env: Env) Res<i32, AllocError> {
     a ::= env.mem.alloc();

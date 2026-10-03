@@ -37,7 +37,7 @@ main = (env: Env) Res<i32, AllocError> {
     Ok(0)
 }
 
-initialize = (into :: String) Res<(), AllocError> {
+initialize = (into :: String) Res<AllocError> {
     write_frame(
         "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"rootUri\":\"file://.\"}}",
         into
@@ -45,7 +45,7 @@ initialize = (into :: String) Res<(), AllocError> {
 }
 
 open_doc = (a: Alloc, uri: str, text: str, into :: String)
-           Res<(), AllocError> {
+           Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":"
@@ -57,7 +57,7 @@ open_doc = (a: Alloc, uri: str, text: str, into :: String)
     write_frame(body.view(), into)
 }
 
-close_doc = (a: Alloc, uri: str, into :: String) Res<(), AllocError> {
+close_doc = (a: Alloc, uri: str, into :: String) Res<AllocError> {
     body ::= a.String().try();
     body.add(
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":"

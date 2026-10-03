@@ -12,7 +12,7 @@
 { Env } = std.env
 { println } = std.io
 
-dump = (env: Env, alloc: Alloc, text: str) Res<(), AllocError> {
+dump = (env: Env, alloc: Alloc, text: str) Res<AllocError> {
     src = Source(file: "in.zen", text: text);
     out = scan(alloc, src).try();
     println("[{}]", text);
@@ -27,7 +27,7 @@ dump = (env: Env, alloc: Alloc, text: str) Res<(), AllocError> {
             message(d.fault)
         );
     });
-    Ok(());
+    Ok;
 }
 
 main = (env: Env) Res<i32, AllocError> {

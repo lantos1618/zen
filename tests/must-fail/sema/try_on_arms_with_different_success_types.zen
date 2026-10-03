@@ -7,16 +7,18 @@
 //
 // position: the arm whose success type disagrees with the arms above it.
 
-{ Res, Ok, Err } = std.core
+{ Res, Ok, Err, Error } = std.core
 { AllocError } = std.mem
 { Env } = std.env
 { println } = std.io
 
 Kind = { | Bad | Worse }
+Kind.impl(Error, {})
 Fail = { | Broke }
+Fail.impl(Error, {})
 Both = Kind | Fail
 
-one = (k: i32) Res<(), Fail> { (k == 0).match({ true => Ok(()), false => Err(Fail.Broke) }) }
+one = (k: i32) Res<Fail> { (k == 0).match({ true => Ok, false => Err(Fail.Broke) }) }
 two = (k: i32) Res<i32, Kind> { (k == 0).match({ true => Ok(4), false => Err(Kind.Bad) }) }
 
 pick = (p: bool) Res<i32, Both> {

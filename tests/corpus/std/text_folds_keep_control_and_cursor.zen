@@ -13,26 +13,26 @@ line_source = (calls :: usize) Lines {
     "a\r\nskip\nccc\nunseen\n".lines()
 }
 
-fail = () Res<(), AllocError> { Err(AllocError.OutOfMemory) }
+fail = () Res<AllocError> { Err(AllocError.OutOfMemory) }
 
-split_failure = (seen :: usize) Res<(), AllocError> {
+split_failure = (seen :: usize) Res<AllocError> {
     "a,fail,unseen".split(',').loop(0, (value, acc: usize) {
         seen = seen + 1;
         value.eq("fail").then(() { fail().try(); });
         acc + value.len
     });
     seen = seen + 100;
-    Ok(())
+    Ok
 }
 
-line_failure = (seen :: usize) Res<(), AllocError> {
+line_failure = (seen :: usize) Res<AllocError> {
     "a\nfail\nunseen".lines().loop(0, (h, index, value, acc: usize) {
         seen = seen + 1;
         value.eq("fail").then(() { fail().try(); });
         acc + value.len
     });
     seen = seen + 100;
-    Ok(())
+    Ok
 }
 
 main = () {

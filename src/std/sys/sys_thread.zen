@@ -50,7 +50,7 @@ darwin = () bool { platform_darwin() == 1 }
 
 // 0 from the pthread family is success; anything else is already -errno.
 status = (code: i64) Res<(), i64> {
-    (code == 0).match({ true => Ok(()), false => Err(code) })
+    (code == 0).match({ true => Ok, false => Err(code) })
 }
 
 // Futex waits and wakes whose results the caller does not need: a wait
@@ -77,7 +77,7 @@ ignore_status = (code: i64) { status(code).ignore(); }
 mutex_init* = (m: Ptr<u8>) Res<(), i64> {
     darwin().match({
         true  => status(pthread_mutex_init(m, 0)),
-        false => { atomic_store_u32(m.to<u32>(), 0); Ok(()) },
+        false => atomic_store_u32(m.to<u32>(), 0),
     })
 }
 
@@ -125,7 +125,7 @@ mutex_destroy* = (m: Ptr<u8>) {
 cond_init* = (c: Ptr<u8>) Res<(), i64> {
     darwin().match({
         true  => status(pthread_cond_init(c, 0)),
-        false => { atomic_store_u32(c.to<u32>(), 0); Ok(()) },
+        false => atomic_store_u32(c.to<u32>(), 0),
     })
 }
 
@@ -190,13 +190,13 @@ thread_spawn* = (entry: usize, arg: Ptr<u8>) Res<Ptr<u8>, i64> {
 spawn_clone = (entry: usize, arg: Ptr<u8>) Res<Ptr<u8>, i64> {
     total = GUARD_BYTES + STACK_BYTES;
     got   = mmap(0, total, 3, map_private_anonymous(), -1, 0);
-    (got < 0).match({ true => Err(got), false => Ok(()) }).try();
+    (got < 0).match({ true => Err(got), false => Ok }).try();
     base    = got.to_usize().value_or(0);
     guarded = mprotect(base, GUARD_BYTES, 0);
     (guarded < 0).then(
         () { munmap(base, total).ignore_status(); }
     ).ignore_none();
-    (guarded < 0).match({ true => Err(guarded), false => Ok(()) }).try();
+    (guarded < 0).match({ true => Err(guarded), false => Ok }).try();
     block = pointer_at(base + total - BLOCK_BYTES);
     fill_block(block, entry, arg, base, total);
     started = clone_thread(CLONE_THREAD_FLAGS, address_of(block), block);
@@ -240,7 +240,7 @@ thread_join* = (t: Ptr<u8>) Res<(), i64> {
         true  => {
             status(pthread_join(words.read(4), 0)).try();
             Pages().free(t);
-            Ok(())
+            Ok
         },
         false => {
             tid = t.offset(BLOCK_TID).to<u32>();
@@ -251,7 +251,7 @@ thread_join* = (t: Ptr<u8>) Res<(), i64> {
                 ).ignore_none();
             });
             munmap(words.read(5), words.read(6)).ignore_status();
-            Ok(())
+            Ok
         },
     })
 }

@@ -26,7 +26,7 @@ ParseError = { | NotANumber }
 
 // AllocError from String(), IoError from the Sink format door, and ParseError
 // from ok_or: three sets merged by three .try()s.
-format_label = (out :: Sink) Res<(), WriteError> {
+format_label = (out :: Sink) Res<WriteError> {
     out.fmt("label {} of {}", 7, 12).try();
     out.fmt(" rev {}", 3)
 }

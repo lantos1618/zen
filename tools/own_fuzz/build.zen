@@ -1,0 +1,14 @@
+// zen-own-fuzz: random ownership programs checked against a run-time
+// oracle. See src/main.zen.
+{ Res, Ok } = std.core
+{ Path } = std.core
+{ Builder, BuildError } = std.build
+
+build = (b :: Builder) Res<BuildError> {
+    b.exe("zen-own-fuzz", {
+        src: Path("src/main.zen"),
+        deps: [],
+        out: Ok(Path("build/zen-own-fuzz")),
+    }).try();
+    Ok
+}

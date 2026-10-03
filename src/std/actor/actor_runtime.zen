@@ -530,10 +530,12 @@ deliver = (
     gen     = ref_gen(r);
     me      = at(load(l, L_ACTOR));
     on_core = load(l, L_WORKER) != 0;
+    // One compare-and-swap admits the message and, when nobody owns the
+    // receiver, takes ownership to schedule it: a stale or closed receiver,
+    // or a full one, leaves the word untouched.
     loop<i32>((h) {
-        old = aadd(slot, S_LIFE, 1);
+        old = aload(slot, S_LIFE);
         (gen_of(old) != gen || (old & CLOSED) != 0).then(() {
-            asub(slot, S_LIFE, 1);
             stat(g, S_CLOSED);
             free_block(g, l, m);
             h.break(SEND_CLOSED);
@@ -549,7 +551,6 @@ deliver = (
             stat(g, S_BREAKS);
         });
         full.then(() {
-            asub(slot, S_LIFE, 1);
             (mode == MODE_OFFER).then(() {
                 stat(g, S_FULL);
                 free_block(g, l, m);
@@ -561,9 +562,9 @@ deliver = (
             });
             nanosleep_ns(2000).discard();
         });
-        (!full).then(() {
+        (!full && acas(slot, S_LIFE, old, (old + 1) | SCHED) == old).then(() {
             mailbox_put(a, addr(m));
-            ((old & SCHED) == 0 && try_acquire(slot, gen)).then(() { schedule(g, l, a); });
+            ((old & SCHED) == 0).then(() { schedule(g, l, a); });
             h.break(SEND_OK);
         });
     }).value_or(SEND_CLOSED)

@@ -114,7 +114,7 @@ make verify
 CI installs these dependencies explicitly; they are not compiler runtime dependencies.
 
 [Code generation](docs/BACKENDS.md) describes the C, JavaScript, and assembly
-backends and the runnable `example/backends` project.
+backends.
 
 `make help` lists the rest. [Build iteration](docs/BUILD_ITERATION.md) explains
 cache invalidation and the clean bootstrap path. [Parallel work](docs/PARALLEL_WORK.md)

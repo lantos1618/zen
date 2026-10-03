@@ -21,8 +21,8 @@ The starting tree (`remove-std-http`, b2b31884) had:
 Measured corpus reach at that point: **0 of 961** executable corpus tests lower
 through the scalar path (837 stop at "supports only i32, bool and unit",
 the rest need compiler-internal roots or other constructs). The only programs
-the asm backend could build were the hand-made IR tests and
-`example/backends`.
+the asm backend could build were the hand-made IR tests and a scalar `fib`
+demo.
 
 ### Gap list: what `gen_c` does that the IR path does not
 

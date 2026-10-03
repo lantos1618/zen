@@ -7,33 +7,29 @@ deliberately checked: unsupported reachable code produces a source
 diagnostic before the output callback runs. Selecting another backend never
 falls back to C.
 
-## Running the same source
+## Selecting a backend
 
-After `make build`, enter the example project:
+A project picks the backend per executable in `build.zen`:
 
-```sh
-cd example/backends
-../../zen run c
-../../zen run js
-../../zen run asm
+```zen
+b.exe("app", { src: Path("main.zen"), deps: [], backend: Codegen.Js }).try();
 ```
 
-Each prints `fib(10) = 55`. JavaScript runs on Node.js. Assembly projects run on
-Linux x86-64, Linux AArch64 and macOS arm64 and need only the system assembler
-and linker (`as`, `ld`): no C compiler and no libc. The renderer writes `.s`
-directly. See [the native backend](NATIVE_BACKEND.md) for the OS policy.
+`Codegen.C`, `Codegen.Js`, and `Codegen.Asm` select the recipe. JavaScript
+runs on Node.js and defaults to `build/{os}-{arch}/{name}.js`; an explicit
+output path is used exactly. C and assembly produce native executables.
+Assembly runs on Linux x86-64, Linux AArch64 and macOS arm64 and needs only the
+system assembler and linker (`as`, `ld`): no C compiler and no libc. The
+renderer writes `.s` directly. See [the native backend](NATIVE_BACKEND.md) for
+the OS policy. Arguments after the project target are passed to the selected
+runtime, although the scalar subset does not yet expose `Env.args` to the
+program.
 
-`Codegen.C`, `Codegen.Js`, and `Codegen.Asm` select the recipe in `build.zen`.
-JavaScript defaults to `build/{os}-{arch}/{name}.js`; an explicit output path is
-used exactly. C and assembly produce native executables. Arguments after the
-project target are passed to the selected runtime, although the scalar subset
-does not yet expose `Env.args` to the program.
-
-From the repository root, select a backend explicitly for raw source emission:
+For raw source emission, select a backend explicitly:
 
 ```sh
-./zen build example/backends --entry main.zen --std src --backend js -o build/fib.js
-./zen build example/backends --entry main.zen --std src --backend asm -o build/fib.s
+./zen build path/to/project --entry main.zen --std src --backend js -o build/main.js
+./zen build path/to/project --entry main.zen --std src --backend asm -o build/main.s
 ```
 
 `--backend` selects source output; omitting `-o` writes it to stdout. Existing

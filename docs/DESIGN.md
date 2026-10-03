@@ -448,6 +448,10 @@ Jam = { Paper | Ink }
 Jam.impl(Error, {})
 ```
 
+**`{}` writes an error's message.** `Error` also supplies Display's `toString`, sealed, as a call to `message`, so `println("failed {}", e)`, `out.fmt("{}", e)` and `a.String("{}", e)` write what `message` writes, and an impl that rebinds `message` changes all three. The format doors find that `toString` the way they find any type's: they look for the member and never ask whether the type is an Error. An error has one written form, so an impl that wants different text rebinds `message`, never `toString`. A type that implemented both Display and Error would get `toString` from two impls, which is the ambiguity the impl rule forbids. The checker does not diagnose two impls that supply one name yet (ISSUES.md); until it does, the impl written first wins. `Error` does not make a type satisfy `<T: Display>`, because one bound cannot imply another; a generic function that prints an error bounds it by `Error`.
+
+**A union prints the member it holds.** A union has no `toString` of its own because a union is its members, so `{}` of an `IoError | AllocError` writes whichever member the value holds, exactly as that member alone would be written. A union of Errors therefore writes the held error's message. The same rule prints `u32 | str`. A union that has a unit member has no payload to write and is refused.
+
 **`Res` reads by what its arguments are**, and the reading is fixed where `Res<…>` is written:
 
 | Written | V or R | Means |
@@ -1064,7 +1068,8 @@ Display* = {
     // impls define THIS one. format machinery routes {} through
     // it, falling back to dump when a type hasn't defined one.
     // writes into a sink the CALLER owns, so nesting never
-    // allocates and printing never allocates at all
+    // allocates and printing never allocates at all. Error
+    // supplies it as `message`; a union writes the member it holds
     toString* ::= (self: @Self, out :: Sink) Res<WriteError>
 
     // sealed overload (=): the allocating form, derived from

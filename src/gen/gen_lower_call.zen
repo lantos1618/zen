@@ -3124,6 +3124,45 @@ print_value* = (
     to    : FmtTo,
     span  : Span
 ) Res<LowerError> {
+    lo.check.types.at(lo.check.set_of(value.ty)).match({
+        Union(_) => lo.print_member(value, to, span),
+        _        => lo.print_one(value, to, span),
+    })
+}
+
+// A union is its members and has no `toString` of its own, so `{}` writes
+// the member the value holds, as that member alone would be written: a
+// union of Errors writes the held error's message.
+print_member = (
+    lo    :: Lowerer,
+    value : Value,
+    to    : FmtTo,
+    span  : Span
+) Res<LowerError> {
+    variants = lo.variants_of(value.ty).try();
+    done     = lo.label().try();
+    variants.loop((h, i, _) {
+        yes  = lo.label().try();
+        next = lo.label().try();
+        test = lo.tag_test(value, i).try();
+        lo.branch_to(test, yes, next).try();
+        lo.start(yes);
+        member = lo.payload_of(value, i).try();
+        lo.print_value(member, to, span).try();
+        lo.jump(done).try();
+        lo.start(next);
+    });
+    lo.trap(TrapKind.Unreachable, span).try();
+    lo.start(done);
+    Ok
+}
+
+print_one = (
+    lo    :: Lowerer,
+    value : Value,
+    to    : FmtTo,
+    span  : Span
+) Res<LowerError> {
     class     = lo.class_of(value.ty).try();
     is_str    = lo.prim_name(value.ty).eq("str");
     primitive = word(class) && lo.plain_word(value.ty);

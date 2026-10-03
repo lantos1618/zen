@@ -1,0 +1,7 @@
+stored
+failed Full
+failed OutOfMemory
+fault Locked
+fault Gone
+write Closed
+[Locked][Gone] OutOfMemory

@@ -648,9 +648,10 @@ write_tag_case = (
     be.fmt("case {}: {} = {}; break;\n", from.view(), tag.view(), to.view())
 }
 
-// `retaggable` has already established that both sets can name the member.
-write_member_tag = (be :: CBackend, set: TyId, m: TyId, out :: String)
-                   Res<AllocError> {
+// The constant tagging member `m` in `set`. Callers name a member the set
+// holds: `retaggable` establishes it for both sets of a retag.
+write_member_tag* = (be :: CBackend, set: TyId, m: TyId, out :: String)
+                    Res<AllocError> {
     be.check.types.at(set).match({
         Union(_) => sym_union_variant(out, be.types(), be.world(), set, m),
         _        => be.write_variant_tag(set, m, out),

@@ -1,0 +1,45 @@
+{ Res, Ok, Err, Error, Sink, WriteError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+// An impl that rebinds `message` changes what `{}` writes, because `{}` of an
+// Error is its message and never a second representation beside it. A
+// message may itself format another error with `{}`.
+//
+// one-line break: bind `{}` to the default message rather than the impl's and
+// the payloads below disappear from every line.
+
+Cause = { Denied | Missing }
+Cause.impl(Error, {})
+
+Open = { path: str, cause: Cause }
+Open.impl(Error, {
+    message = (self: @Self, out :: Sink) Res<WriteError> {
+        out.fmt("cannot open {}: {}", self.path, self.cause)
+    },
+})
+
+Late = { Minutes: i32 | Never }
+Late.impl(Error, {
+    message = (self: @Self, out :: Sink) Res<WriteError> {
+        self.match({
+            Minutes(m) => out.fmt("{} minutes late", m),
+            Never      => out.write("never arrived"),
+        })
+    },
+})
+
+open_it = (path: str) Res<Open> {
+    Err(Open(path: path, cause: Cause.Denied))
+}
+
+main = (env: Env) Res<i32, WriteError> {
+    open_it("/etc/shadow").match({ Ok => println("opened"), Err(e) => println("{}", e) });
+    println("{} / {}", Late.Minutes(12), Late.Never);
+    alloc ::= env.mem.alloc();
+    out   ::= alloc.String().try();
+    out.fmt("<{}>", Open(path: "a.txt", cause: Cause.Missing)).try();
+    Late.Never.message(out).try();
+    println("{}", out.view());
+    Ok(0);
+}

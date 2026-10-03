@@ -1,0 +1,8 @@
+built
+failed MissingSrc
+BadTarget Leak
+generic: Leak
+generic: MissingSrc
+sink: BadTarget
+string: MissingSrc and Leak
+owned: BadTarget

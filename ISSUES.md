@@ -21,6 +21,40 @@ faster than the code does.
 
 ## INBOX — paste below this line
 
+**Two impls that supply one member name are not refused; file order picks.**
+DESIGN says "with no bound to disambiguate it is an error — never file order",
+but the checker accepts this, and every backend calls whichever impl is written
+first (swap the impls and it prints 3):
+
+```zen
+{ println } = std.io
+A = { foo = (self: @Self) i32 }
+B = { foo = (self: @Self) i32 }
+T = { x: i32 }
+T.impl(A, { foo = (self: @Self) i32 { 1 } })
+T.impl(B, { foo = (self: @Self) i32 { 3 } })
+main = () i32 { println("{}", T(x: 0).foo()); 0 }
+```
+
+It prints 1. A bodied bound default counts as a supply too, so a type that
+implements both `Error` (which supplies `toString` as `message`) and `Display`
+prints through whichever impl comes first.
+
+**A sealed bound member can be rebound by an impl.** `= sig {..}` is "provided,
+cannot be overridden", but `X.impl(B, { foo = .. })` replaces B's sealed `foo`
+without a diagnostic, and so `X.impl(Error, { toString = .. })` changes what
+`{}` writes for an error while `message` still says something else:
+
+```zen
+{ println } = std.io
+B = { foo = (self: @Self) i32 { 2 } }
+X = { x: i32 }
+X.impl(B, { foo = (self: @Self) i32 { 9 } })
+main = () i32 { println("{}", X(x: 1).foo()); 0 }
+```
+
+It prints 9.
+
 **Local TLS loopback verification still times out.**
 `tests/corpus/net/tls_connect` compiles with the installed OpenSSL include/library
 paths and an explicit runtime rpath, but the program exceeds the 20-second

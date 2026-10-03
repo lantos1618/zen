@@ -36,7 +36,7 @@
 { HOLE_WITHOUT_ARGUMENT, ARGUMENT_WITHOUT_HOLE } = gen.gen_c.gen_c_print
 { slot_call } = gen.gen_c.gen_c_bound
 { fat_value } = gen.gen_c.gen_c_fat
-{ sink_display } = gen.gen_c.gen_c_display
+{ sink_display, HeldUnion, hold_union } = gen.gen_c.gen_c_display
 
 // recognising the door
 
@@ -236,6 +236,26 @@ Piece* = {
 
     write_typed = (self: @Self, be :: CBackend, a: ExprId, ty: TyId,
                    text: str) Res<AllocError> {
+        be.hold_union(ty, text).try().match({
+            Ok(held) => self.write_members(be, a, held),
+            None     => self.write_one(be, a, ty, text),
+        })
+    }
+
+    // A union writes the member it holds, as that member would be written.
+    write_members = (self: @Self, be :: CBackend, a: ExprId, held: HeldUnion)
+                     Res<AllocError> {
+        held.members.loop((h, m) {
+            place ::= be.alloc.String().try();
+            held.open(be, m, place).try();
+            self.write_typed(be, a, m, place.view()).try();
+            held.close(be).try();
+        });
+        held.finish(be)
+    }
+
+    write_one = (self: @Self, be :: CBackend, a: ExprId, ty: TyId,
+                 text: str) Res<AllocError> {
         v = SinkValue(id: a, ty: ty, text: text);
         call ::= be.alloc.String().try();
         self.value_call(be, ty, text, call).try().match({

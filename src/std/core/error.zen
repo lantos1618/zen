@@ -11,4 +11,11 @@ Error* = {
     message* ::= (self: @Self, out :: Sink) Res<WriteError> {
         out.write(self.variant_name())
     }
+
+    // `{}` writes an error's message. This is Display's `toString`, so
+    // every format door reaches it the way it reaches any other. It is
+    // sealed because an error has one written form: rebind `message`.
+    toString* = (self: @Self, out :: Sink) Res<WriteError> {
+        self.message(out)
+    }
 }

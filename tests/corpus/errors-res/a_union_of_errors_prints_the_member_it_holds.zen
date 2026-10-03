@@ -1,0 +1,55 @@
+{ Res, Ok, Err, Error, IoError, Sink, WriteError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+// A union is its members, so `{}` of one writes the member it holds, as that
+// member alone would be written: a union of Errors writes the held error's
+// message. Written inline, declared under a name, or std's own WriteError.
+//
+// one-line break: write a union through its own `toString` instead of its
+// members' and every union below is refused as having no printable form.
+
+Busy = { Waiting | Locked }
+Busy.impl(Error, {})
+
+Gone = { at: i32 }
+Gone.impl(Error, {})
+
+Fault = Busy | Gone
+
+store = (n: i32) Res<IoError | AllocError> {
+    n.match({
+        0 => Ok,
+        1 => Err(IoError.Full),
+        _ => Err(AllocError.OutOfMemory),
+    })
+}
+
+claim = (n: i32) Res<Fault> {
+    n.match({
+        0 => Err(Busy.Locked),
+        _ => Err(Gone(at: n)),
+    })
+}
+
+report = (out :: Sink, e: Fault) Res<WriteError> {
+    out.fmt("[{}]", e)
+}
+
+main = (env: Env) Res<i32, WriteError> {
+    store(0).match({ Ok => println("stored"), Err(e) => println("failed {}", e) });
+    store(1).match({ Ok => println("stored"), Err(e) => println("failed {}", e) });
+    store(2).match({ Ok => println("stored"), Err(e) => println("failed {}", e) });
+    claim(0).match({ Ok => println("claimed"), Err(f) => println("fault {}", f) });
+    claim(4).match({ Ok => println("claimed"), Err(f) => println("fault {}", f) });
+    w: WriteError = IoError.Closed;
+    println("write {}", w);
+    alloc ::= env.mem.alloc();
+    out   ::= alloc.String().try();
+    claim(0).match({ Ok => (), Err(f) => report(out, f).try() });
+    claim(7).match({ Ok => (), Err(f) => report(out, f).try() });
+    store(2).match({ Ok => (), Err(e) => out.fmt(" {}", e).try() });
+    println("{}", out.view());
+    Ok(0);
+}

@@ -19,6 +19,7 @@
 { is_c_integer, is_signed, ctype } = gen.gen_c.gen_c_type
 { expr, ty_of, named_hole, write_c_literal } = gen.gen_c.gen_c_expr
 { console_display, stderr_console } = gen.gen_c.gen_c_display
+{ HeldUnion, hold_union } = gen.gen_c.gen_c_display
 
 // Console includes a raw stderr write for incremental diagnostics.
 is_console_print* = (name: str) bool {
@@ -399,14 +400,30 @@ write_typed = (
             be.fmt("(void)({});\n", text).try();
             write_chunk(be, "()", stream)
         },
-        false => {
-            fn = printer(prim, stream);
-            fn.is_empty().match({
-                true  => write_display(be, arg, ty, text, stream),
-                false => write_write(be, fn, cast_of(prim), text),
-            })
-        },
+        false => be.hold_union(ty, text).try().match({
+            Ok(held) => write_members(be, arg, held, stream),
+            None     => {
+                fn = printer(prim, stream);
+                fn.is_empty().match({
+                    true  => write_display(be, arg, ty, text, stream),
+                    false => write_write(be, fn, cast_of(prim), text),
+                })
+            },
+        }),
     })
+}
+
+// A union writes the member it holds, as that member would be written.
+write_members = (be :: CBackend, arg: ExprId, held: HeldUnion, stream: str)
+                Res<AllocError> {
+    held.members.loop((h, m) {
+        place ::= be.alloc.String().try();
+        held.open(be, m, place).try();
+        write_typed(be, arg, m, be.check.prim_name(m), place.view(), stream)
+            .try();
+        held.close(be).try();
+    });
+    held.finish(be)
 }
 
 // Empty means the value must use Display rather than a primitive helper.

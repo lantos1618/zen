@@ -1,0 +1,45 @@
+{ Res, Ok, Err, Error, Sink, WriteError } = std.core
+{ Env } = std.env
+{ println, print } = std.io
+
+// `{}` writes an Error's message, through every format door: the ambient
+// printers, a Sink, and a String. Error supplies Display's
+// `toString` as the message, so nothing at a door names Error.
+//
+// one-line break: drop Error's `toString` and every `{}` below is refused as
+// a value with no printable form.
+
+Build = { MissingSrc | BadTarget }
+Build.impl(Error, {})
+
+Leak = { litres: i32 }
+Leak.impl(Error, {})
+
+build_it = (ok: bool) Res<Build> {
+    ok.match({ true => (), false => Err(Build.MissingSrc) })
+}
+
+report = (out :: Sink, e: Build) Res<WriteError> {
+    out.fmt("sink: {}\n", e)
+}
+
+describe = <E: Error>(e: E) {
+    println("generic: {}", e);
+}
+
+main = (env: Env) Res<i32, WriteError> {
+    build_it(true).match({ Ok => println("built"), Err(e) => println("failed {}", e) });
+    build_it(false).match({ Ok => println("built"), Err(e) => println("failed {}", e) });
+    print("{} ", Build.BadTarget);
+    println(Leak(litres: 3));
+    describe(Leak(litres: 9));
+    describe(Build.MissingSrc);
+    alloc ::= env.mem.alloc();
+    out   ::= alloc.String().try();
+    report(out, Build.BadTarget).try();
+    out.fmt("string: {} and {}", Build.MissingSrc, Leak(litres: 1)).try();
+    println("{}", out.view());
+    owned = alloc.String("owned: {}", Build.BadTarget).try();
+    println("{}", owned.view());
+    Ok(0);
+}

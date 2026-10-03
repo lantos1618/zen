@@ -1,0 +1,184 @@
+// Soak: for DURATION seconds at once, ping-pong pairs, producers outrunning
+// consumers, and churn (actors spawned and stopped continuously, each with
+// two messages). Every INTERVAL seconds main asks the stats actor for a
+// line: events per second per kind and the resident set. Rates must not
+// drift and memory must level off.
+
+{ Res, Ok, None, loop } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+{ param, rss } = common
+
+Stats = {
+    hops :: u64 = 0,
+    items :: u64 = 0,
+    churned :: u64 = 0,
+    since :: u64 = 0,
+    window :: u64 = 0,
+}
+
+Stats.impl(Actor, {
+    begin = (self :: @Self, ctx: Context) { self.since = ctx.env.clock.since_start().ns; }
+
+    count = (self :: @Self, ctx: Context, kind: u64, n: u64) {
+        kind.match({
+            0 => { self.hops = self.hops + n; },
+            1 => { self.items = self.items + n; },
+            _ => { self.churned = self.churned + n; },
+        });
+    }
+
+    report = (self :: @Self, ctx: Context) {
+        now         = ctx.env.clock.since_start().ns;
+        ms          = (now - self.since) / 1000000 + 1;
+        self.window = self.window + 1;
+        println(
+            "bench=soak window={} hops_per_s={} items_per_s={} churn_per_s={} rss_mb={}",
+            self.window,
+            self.hops * 1000 / ms,
+            self.items * 1000 / ms,
+            self.churned * 1000 / ms,
+            rss(ctx.env, ctx.alloc) / 1048576
+        );
+        self.hops    = 0;
+        self.items   = 0;
+        self.churned = 0;
+        self.since   = now;
+    }
+})
+
+REPORT_EVERY: u64 = 10000
+
+Pong = { ping :: Res<Ref<Ping>> = None }
+
+Pong.impl(Actor, {
+    link = (self :: @Self, ctx: Context, p: Ref<Ping>) { self.ping = Ok(p); }
+    ball = (self :: @Self, ctx: Context, n: u64) {
+        self.ping.match({ Ok(p) => p.ball(n).ignore(), None => () });
+    }
+})
+
+Ping = { pong: Ref<Pong>, stats: Ref<Stats>, until: u64, n :: u64 = 0 }
+
+Ping.impl(Actor, {
+    ball = (self :: @Self, ctx: Context, k: u64) {
+        self.n = self.n + 1;
+        (self.n % REPORT_EVERY == 0).then(() {
+            self.stats.count(0, REPORT_EVERY).ignore();
+        });
+        (self.n % 1024 != 0 || ctx.env.clock.since_start().ns < self.until).then(() {
+            self.pong.ball(k).ignore();
+        });
+    }
+})
+
+Consumer = { stats: Ref<Stats>, next :: u64 = 0, bad :: u64 = 0, x :: u64 = 1 }
+
+Consumer.impl(Actor, {
+    item = (self :: @Self, ctx: Context, n: u64) {
+        (n != self.next).then(() { self.bad = self.bad + 1; });
+        self.next = n + 1;
+        i :: u64 = 0;
+        loop(
+            () { i < 200 },
+            (h) { self.x = self.x *% 6364136223846793005 +% 1; i = i + 1; }
+        );
+        (self.next % REPORT_EVERY == 0).then(
+            () { self.stats.count(1, REPORT_EVERY).ignore(); }
+        );
+    }
+
+    stopped = (self :: @Self, ctx: Context) {
+        (self.bad > 0).then(
+            () { println(
+                "FAIL consumer saw {} out of order ({})",
+                self.bad,
+                self.x % 2
+            ); }
+        );
+    }
+})
+
+Producer = { to: Ref<Consumer>, until: u64, me :: Res<Ref<Producer>> = None, sent :: u64 = 0 }
+
+Producer.impl(Actor, {
+    link = (self :: @Self, ctx: Context, me: Ref<Producer>) { self.me = Ok(
+        me
+    ); }
+
+    go = (self :: @Self, ctx: Context) {
+        (ctx.env.clock.since_start().ns < self.until).then(() {
+            end = self.sent + 32;
+            loop(() { self.sent < end }, (h) {
+                self.to.item(self.sent).ignore();
+                self.sent = self.sent + 1;
+            });
+            self.me.match({ Ok(me) => me.go().ignore(), None => () });
+        });
+    }
+})
+
+Short = { puts :: u64 = 0 }
+
+Short.impl(Actor, {
+    put = (self :: @Self, ctx: Context) { self.puts = self.puts + 1; }
+})
+
+Spawner = { stats: Ref<Stats>, until: u64, me :: Res<Ref<Spawner>> = None }
+
+Spawner.impl(Actor, {
+    link = (self :: @Self, ctx: Context, me: Ref<Spawner>) { self.me = Ok(me); }
+
+    batch = (self :: @Self, ctx: Context) {
+        i :: u64 = 0;
+        loop(() { i < 100 }, (h) {
+            ctx.env.spawn(Short()).match({
+                Err(_) => (),
+                Ok(s)  => { s.put().ignore(); s.put().ignore(); s.stop(); },
+            });
+            i = i + 1;
+        });
+        self.stats.count(2, 100).ignore();
+        (ctx.env.clock.since_start().ns < self.until).then(() {
+            self.me.match({ Ok(me) => me.batch().ignore(), None => () });
+        });
+    }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    duration = param(env, "DURATION", 600);
+    interval = param(env, "INTERVAL", 60);
+    until    = env.clock.since_start().ns + duration.to_u64() * 1000000000;
+    stats    = env.spawn(Stats()).try();
+    stats.begin().try();
+    i :: usize = 0;
+    loop(() { i < 64 }, (h) {
+        pong = env.spawn(Pong()).try();
+        ping = env.spawn(Ping(pong: pong, stats: stats, until: until)).try();
+        pong.link(ping).try();
+        ping.ball(0).try();
+        i = i + 1;
+    });
+    i = 0;
+    loop(() { i < 4 }, (h) {
+        c = env.spawn(Consumer(stats: stats)).try();
+        p = env.spawn(Producer(to: c, until: until)).try();
+        p.link(p).try();
+        p.go().try();
+        i = i + 1;
+    });
+    spawner = env.spawn(Spawner(stats: stats, until: until)).try();
+    spawner.link(spawner).try();
+    spawner.batch().try();
+    windows = duration / interval;
+    w :: usize = 0;
+    loop(() { w < windows }, (h) {
+        env.threads.sleep(interval.to_u64() * 1000);
+        stats.report().try();
+        w = w + 1;
+    });
+    Ok(0)
+}

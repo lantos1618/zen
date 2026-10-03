@@ -68,5 +68,17 @@ build = (b :: Builder) Res<BuildError> {
         "preempt-asm",
         { src: Path("preempt.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/preempt")) }
     ).try();
+    b.exe(
+        "soak",
+        { src: Path("soak.zen"), deps: [], backend: Codegen.C, out: Ok(Path("bin/c/soak")) }
+    ).try();
+    b.exe(
+        "soak-asm",
+        { src: Path("soak.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/soak")) }
+    ).try();
+    b.exe(
+        "run",
+        { src: Path("run.zen"), deps: [], backend: Codegen.C, out: Ok(Path("bin/c/run")) }
+    ).try();
     Ok
 }

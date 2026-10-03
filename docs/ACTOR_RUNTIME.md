@@ -1,56 +1,46 @@
-# Bounded actor runtime
+# Actor runtime
 
-An actor owns its state and processes accepted messages in FIFO admission order.
-Admission includes the executing message: at most 64 messages and 32 MiB,
-including message and pool metadata. Oversized requests and arithmetic overflow
-are rejected before allocation or payload copying. Full and Closed are explicit
-results; producers choose whether to retry, coalesce or drop.
+The runtime is Zen: `std.actor.actor_runtime` with `actor_registry`,
+`actor_pool` and `actor_layout`, over `std.sys` (threads, parkers, atomics,
+pages). Both backends compile it into every program that spawns an actor;
+`gen_c_actor` and `gen_lower_actor` generate only what depends on the actor's
+type (its record, one turn entry per behaviour send site, the started and
+stopped entries) and call the runtime's entry points. The design and its
+measurements are in `reports/actors/w2-runtime.md` of the workspace.
 
-Mailbox storage policy lives in `std.actor.actor_storage` and uses `std.mem.Pool`.
-Each actor retains at most 1 MiB or 64 free blocks; blocks above 64 KiB payload
-are not cached. Cache lookup is exact-size. Changing message sizes can therefore
-cause allocation churn even while retained memory remains bounded. Native
-control records and actor-lifetime arena storage are additional allocations.
-Spawning does not yet accept a caller-selected allocator.
+## Semantics
 
-`stop()` closes admission, drains accepted work, and runs the stopped callback.
-Concurrent external `join()` callers share one native join. A self-join returns
-without calling pthread_join; it is not a wait for the current turn to finish.
-Failed native joins can be retried. External users must stop accessing actors
-before process-wide runtime teardown. Joining a blocked native operation has no
-hard deadline or cancellation guarantee.
-
-The runtime currently uses one pthread per actor. A global registry/send lock
-covers lookup and message allocation/copy, followed by mailbox synchronization.
-This preserves lifetime safety but can serialize independent senders. A worker
-pool or narrower lock design needs a separately proven lifetime/reservation
-protocol; bounded mailbox memory alone does not establish scalability.
-
-## Native backend
-
-The asm backend runs the same semantics through `std.sys.sys_actor`, a Zen
-runtime over `std.sys.sys_thread` (futexes and `clone` on Linux, pthreads on
-macOS); `NATIVE_BACKEND.md` describes it. Admission limits and the mailbox
-cache limits come from `std.actor.actor_limits` on both backends, and the
-native runtime charges the same header and storage overhead per message, so
-the same sends are refused. It caches retired message blocks per actor
-itself rather than through `std.mem.Pool`, which needs the C heap. A
-byte-buffer argument is copied into the message and moved into the actor's
-own allocator by its turn, rather than into a per-message arena.
+- An actor owns its state; only one worker runs it at a time, and its
+  messages run in FIFO order per sender.
+- Workers: one per CPU the process may use (`ZEN_ACTOR_WORKERS` overrides).
+  A turn runs up to 100 messages.
+- A mailbox holds 256 messages. A send from a turn to a full mailbox waits
+  in the sender's outbox: the sender runs no more turns until the receiver has
+  taken those messages. A send whose receiver waits, through full mailboxes, on
+  the sender itself goes through instead, so a cycle never wedges. A send from
+  any other thread waits for room. A send to a stopped actor is `Closed`; a
+  message larger than `MAX_MESSAGE_BYTES` (32 MiB) is `Full`.
+- `stop()` closes admission; accepted messages still run, then `stopped`,
+  then Drop of the state and of the actor's allocator, then the memory is
+  freed. Senders still waiting for room in a stopped actor are refused.
+- `join()` waits until that has happened; from the actor itself it returns
+  at once. A worker thread that joins hands its worker to another thread
+  while it waits.
+- At process exit the runtime waits until every accepted message, and every
+  message those sent, has run; then it stops every actor still alive.
+- A str argument is copied into the message; a consumed `Vec<u8>` is copied
+  into the message and moved into the receiver's allocator before its
+  behaviour runs.
+- Preemption: a sysmon thread flags a turn that outlives one tick
+  (`ZEN_ACTOR_SYSMON_US`, default 1000; 0 turns it off). The runtime's
+  `actor_yield_check` (for compiler-inserted loop checks) then hands the
+  worker to another thread.
 
 ## Executable checks
 
-`make actorcheck` runs admission/overflow/fault injection, concurrent joins,
-typed storage reuse, and multi-producer contention against generated runtime
-code. Deliberate regressions must fail the gates. The contention workload checks
-64,000 messages from eight producers, exact delivery and producer order, a
-stop/send race, and zero additional allocations in its second steady-size round.
-The observed first-round growth is 63 native allocations; this is workload and
-ABI specific, not a public byte-count contract. UBSan covers storage/contention.
-
-The host ASan startup issue remains unresolved: a minimal independent C control
-also stalled before main. UBSan and accounting tests do not replace ASan or prove
-freedom from all lifetime errors. Full `make verify` remains the integration gate.
+`make actorcheck` runs the actor corpus (`tests/corpus/actor`), whose
+one-worker tests fix the interleaving of send-or-park, and the page
+allocation checks. Stress scenarios and benchmarks are in `tests/bench/actors`.
 
 ## Trace records
 

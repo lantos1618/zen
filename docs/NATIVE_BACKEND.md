@@ -268,14 +268,9 @@ libSystem pthreads on macOS, one API above both.
   `thread_spawn` maps an 8 MiB stack with a 64 KiB guard below it and the
   control block above it; `thread_join` waits on the id word with a shared
   futex (the kernel's `CHILD_CLEARTID` wake), then unmaps the stack.
-* **`std.sys.sys_actor` (Zen).** The actor runtime with the C backend's
-  semantics (`ACTOR_RUNTIME.md`): one worker per actor, a bounded FIFO
-  mailbox with the same admission and byte accounting (Full/Closed), stop
-  draining before the stopped hook, shared joins with self-join returning
-  at once, a registry that refuses stale Refs, and shutdown (the exit hook)
-  draining accepted work, including sends made while draining, then stopping
-  and joining every worker. Retired message blocks are cached per actor under
-  `std.actor.actor_limits`' cache limits.
+* **`std.actor.actor_runtime` (Zen).** The actor runtime both backends
+  share (`ACTOR_RUNTIME.md`): workers per CPU over std.sys threads, parkers
+  and atomics; the native backend reaches it exactly as the C backend does.
 * **Lowering** (`gen_lower_thread`, `gen_lower_actor`). A spawned closure is
   lifted into a synthesized function over a capture record (values copied,
   `::` bindings by address, capabilities free); its answer is written into

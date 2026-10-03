@@ -1,4 +1,3 @@
-{ MailboxStorage*, MailboxOps* } = std.actor.actor_storage
 { Error } = std.core
 ActorError* = { Closed | Full }
 ActorError.impl(Error, {})

@@ -1,13 +1,5 @@
-// Runtime admission policy, shared with the C backend. Counts include the
-// executing message. Bytes include runtime headers, typed fields and copied
-// str/slice payloads; native allocations inside a behavior are outside this cap.
-MAX_MESSAGES*: usize = 64
+// Admission policy shared by every backend: a message larger than this
+// (its payload record plus copied str and byte-buffer arguments) is refused
+// as Full before anything is copied. The mailbox bound and every other
+// runtime limit live in std.actor.actor_layout.
 MAX_MESSAGE_BYTES*: usize = 33554432
-
-// Mailbox storage policy: each actor retains at most CACHE_BYTES (headers
-// included) in at most CACHE_COUNT retired blocks, none larger than
-// CACHE_BLOCK payload bytes. std.actor.actor_storage applies it on the C
-// backend, std.sys.sys_actor on the native one.
-CACHE_BYTES*: usize = 1048576
-CACHE_BLOCK*: usize = 65536
-CACHE_COUNT*: usize = 64

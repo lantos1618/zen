@@ -1,0 +1,22 @@
+// A field whose type no command-line argument has is refused at the field,
+// with the shapes that are supported: a float has no parser here, and a
+// repeatable option repeats words (Vec<str>), not numbers.
+//
+// positions: the `ratio` and `counts` fields.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Env } = std.env
+{ Cli } = std.cli
+
+Args = {
+    ratio :: f64 = 1.0,
+    counts :: Vec<u32>,
+    input: str,
+}
+
+Args.impl(Cli, { about: "Measure one input" })
+
+main = (env: Env) Res<i32, AllocError> { Ok(0) }

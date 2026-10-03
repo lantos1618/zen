@@ -1,0 +1,3 @@
+a Cli field is bool (a switch), str, Path, an integer, an enum of bare variants
+15:5
+16:5

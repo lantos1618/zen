@@ -36,6 +36,7 @@
 { check_union_imports } = sema.sema_import
 { alias_module } = sema.sema_module
 { impl_bound_type } = sema.sema_supply
+{ cli_entry } = sema.sema_cli
 
 // Every declaration rule, for one module.
 check_module* = (c :: Checker, mi: usize) Res<AllocError> {
@@ -568,6 +569,7 @@ field_value = (
                     mem.name().text,
                     self_ty
                 ).try();
+                c.cli_entry(mem, im, mi, bound, got, v).try();
                 node = c.tree.expr_at(v);
                 data = (c.supplies_fn(got) == false);
                 data.then(() {

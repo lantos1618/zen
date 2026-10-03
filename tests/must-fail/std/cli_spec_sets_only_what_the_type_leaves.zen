@@ -1,0 +1,20 @@
+// The field's type decides an argument's kind, choices, range, default and
+// whether it is required or repeats; a table Spec that sets one of those is
+// refused at that member instead of being ignored.
+//
+// position: the `default` member.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ Cli, Spec } = std.cli
+
+Args = {
+    jobs :: u32 = 2,
+}
+
+Args.impl(Cli, {
+    jobs: Spec(help: "Worker count", default: "4"),
+})
+
+main = (env: Env) Res<i32, AllocError> { Ok(0) }

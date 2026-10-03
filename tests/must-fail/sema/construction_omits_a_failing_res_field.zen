@@ -1,0 +1,18 @@
+// A `Res<E>` with E an Error is `Ok | Err(E)`: it says whether something
+// failed, not whether a value is there. Leaving `done` out cannot mean
+// `None`, which this Res does not have, and `Ok` would claim a success
+// nobody wrote. Failure is not absence, so the field is required.
+//
+// position: the construction.
+
+{ Res, Ok, Err, Error } = std.core
+
+Fail = { code: i32 }
+Fail.impl(Error, {})
+
+Job = { id: i32, done: Res<Fail> }
+
+main = () i32 {
+    j = Job(id: 1);
+    j.id
+}

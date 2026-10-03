@@ -1,0 +1,53 @@
+{ println } = std.io
+{ Res, Ok, None } = std.core
+
+// A field written `Res<T>` may be left out, and what a construction leaves
+// out is `None` whatever the payload: never the `Ok` of a zero.
+Point = { x: i32, y: i32 }
+
+Foo = {
+    name: i32,
+    a: Res<i32>,
+    b: Res<str>,
+    p: Res<Point>,
+    n: Res<Res<i32>>,
+    d :: Res<i32> = Ok(1),
+}
+
+Outer = { inner: Foo, extra: Res<u64> }
+
+Boxed<T> = { tag: i32, v: Res<T> }
+
+show_i32 = (tag: str, r: Res<i32>) {
+    r.match({ Ok(v) => println("{} = {}", tag, v), None => println("{} = none", tag) })
+}
+
+show = (f: Foo) {
+    show_i32("a", f.a);
+    f.b.match({ Ok(v) => println("b = {}", v), None => println("b = none") });
+    f.p.match({ Ok(v) => println("p = {} {}", v.x, v.y), None => println("p = none") });
+    f.n.match({
+        Ok(r) => show_i32("n.ok", r),
+        None  => println("n = none"),
+    });
+    show_i32("d", f.d);
+}
+
+main = () i32 {
+    show(Foo(name: 1));
+    show(Foo(1));
+    show(Foo(
+        name: 2,
+        a: 32,
+        b: "hi",
+        p: Point(x: 3, y: 4),
+        n: Ok(None),
+        d: None
+    ));
+    o = Outer(inner: Foo(name: 3));
+    show(o.inner);
+    o.extra.match({ Ok(v) => println("extra = {}", v), None => println("extra = none") });
+    b = Boxed<i32>(tag: 4);
+    b.v.match({ Ok(v) => println("boxed = {}", v), None => println("boxed = none") });
+    0
+}

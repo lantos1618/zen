@@ -1,0 +1,13 @@
+// `Res<T, E>` is `Ok(T) | Err(E)` and has no `None` for an omission to
+// supply, so a field of that type is required like any other.
+//
+// position: the construction.
+
+{ Res, Ok, Err } = std.core
+
+Job = { id: i32, out: Res<i32, str> }
+
+main = () i32 {
+    j = Job(id: 1);
+    j.id
+}

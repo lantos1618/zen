@@ -16,6 +16,7 @@
 { constructed, recv_inst, intern_named } = gen.gen_c.gen_c_mono
 { unify, arg_type, enter_tparams, leave_tparams } = gen.gen_c.gen_c_mono
 { ctype, field_type, request_type, has_storage, is_native_record } = gen.gen_c.gen_c_type
+{ write_none } = gen.gen_c.gen_c_type
 { expr, ty_of } = gen.gen_c.gen_c_expr
 { is_pure_value } = gen.gen_c.gen_c_const
 { holds, value_held } = gen.gen_c.gen_c_expr
@@ -349,11 +350,30 @@ Initialisers = {
         })
     }
 
+    // An omitted field is its written default, or `None` for a `Res<T>`.
+    // `Ok` is a Res's first variant, so a zeroed field would read as
+    // `Ok(0)`: the `None` is written, never left to the zero fill.
     member_default = (self: @Self, be :: CBackend, m: Member, name: str,
                       seen: usize, out :: String) Res<usize, AllocError> {
         declared_value(m).match({
-            None  => Ok(0),
+            None  => self.absent(be, name, seen, out),
             Ok(v) => self.write_default(be, v, name, seen, out),
+        })
+    }
+
+    absent = (self: @Self, be :: CBackend, name: str, seen: usize,
+              out :: String) Res<usize, AllocError> {
+        fty = self.fields.ty_of(be, name);
+        absence(be, fty).match({
+            false => Ok(0),
+            true  => {
+                (seen > 0).then(() { out.add(", ").try() });
+                des ::= be.alloc.String().try();
+                be.designator(self.ty, name, des).try();
+                out.fmt(".{} = ", des.view()).try();
+                be.write_none(fty, out).try();
+                Ok(1)
+            },
         })
     }
 
@@ -438,6 +458,15 @@ Initialisers = {
         want = self.fields.ty_of(be, name);
         be.value_held(a.value, self.call_ctx, want, hold, out)
     }
+}
+
+// A `Res<T>` reads as `Ok(T) | None`; only that reading has a `None` for an
+// omission to supply.
+absence = (be :: CBackend, ty: TyId) bool {
+    be.check.types.at(ty).match({
+        Res(r) => r.form.match({ Absence => true, _ => false }),
+        _      => false,
+    })
 }
 
 // Both field-like AST forms store their optional declared value here.

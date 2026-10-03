@@ -120,6 +120,7 @@ SemaFault* =
     // impls and bounds
     | ImplMissingField: NameFault      // an impl supplies every field, or it is not one
     | CtorMissingField: NameFault      // a required field the construction never named
+    | CtorMissingFailure: NameFault    // a failing Res field left out: failure is not absence
     | CtorNamesNoMember: TypeFault     // an argument naming a member the type does not declare
     | CtorSurplusArgument: TypeFault   // a positional argument with no storage seat
     | CtorArgsDisagree: TypeFault      // two field values settle one type parameter differently
@@ -263,6 +264,7 @@ message* = (fault: SemaFault) str {
         AmbiguousOverload(_)         => "ambiguous overload: these two signatures accept the same call",
         ImplMissingField(_)          => "impl is missing field",
         CtorMissingField(_)          => "construction is missing a required field",
+        CtorMissingFailure(_)        => "construction is missing a required field",
         CtorNamesNoMember(_)         => "construction names no member: every argument must name a field of the type, so a name it does not declare is not an argument to discard",
         CtorSurplusArgument(_)       => "construction has a surplus positional argument",
         CtorArgsDisagree(_)          => "these values must have one type, and there is no implicit conversion between types",
@@ -362,6 +364,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         ForgedCapability(f)          => out.write_name(f),
         ImplMissingField(f)          => out.write_missing(f),
         CtorMissingField(f)          => out.write_ctor_missing(f),
+        CtorMissingFailure(f)        => out.write_ctor_failure(f),
         CtorNamesNoMember(f)         => out.write_member(types, f),
         CtorSurplusArgument(f)       => out.write_ctor_surplus(types, f),
         CtorArgsDisagree(f)          => out.write_args_disagree(types, f),
@@ -527,6 +530,13 @@ write_ctor_missing = (out :: String, f: NameFault) Res<AllocError> {
     out.quote(f.name).try();
     out.add(
         ": a field with no default and no Res is required, and one left out is a zero nobody wrote"
+    )
+}
+
+write_ctor_failure = (out :: String, f: NameFault) Res<AllocError> {
+    out.quote(f.name).try();
+    out.add(
+        ": only a `Res<T>` may be left out, and it is `None`; a failing Res — `Res<E>` with E an Error, or `Res<T, E>` — is required, because failure is not absence"
     )
 }
 

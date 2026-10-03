@@ -1568,7 +1568,13 @@ Lowerer* = {
         )).try(LowerError.OutOfMemory);
         last ::= self.unit().try();
         block.stmts.loop((h, i, s) {
-            tail = i + 1 == block.stmts.len && block.value.match({ Ok(_) => false, None => true });
+            // A final `expr;` sema ran as a statement (`sema_hoist.statement_tail`)
+            // leaves the block `()`, which the unit-success result lifts to `Ok`.
+            tail = i + 1 == block.stmts.len && block.value.match({ Ok(_) => false, None => true })
+                && s.kind.match({
+                    Expr(e) => self.check.statement_tails.get(e.expr).match({ Ok(_) => false, None => true }),
+                    _       => true,
+                });
             last = s.kind.match({
                 Expr(e)     => tail.match({
                     // A semicolon-terminated tail may settle the block value.

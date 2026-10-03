@@ -171,6 +171,11 @@ Checker* = {
     // `false` when it is a `::` parameter's, which the caller owns.
     bound_views* :: Map<ExprId, bool>,
 
+    // Final `expr;` statements of bodies whose result is a unit success.
+    // Each runs as a statement and the body's `()` lifts to `Ok`
+    // (`sema_hoist.statement_tail`), so it is not the body's value.
+    statement_tails* :: Map<ExprId, bool>,
+
     // `sema_copy.carries_bound`, once per type.
     carrier_memo* :: Map<TyId, bool>,
 
@@ -957,6 +962,7 @@ Checker* = (a: Alloc, tree: Ast) Res<Checker, AllocError> {
         callee_access: a.Map<ExprId, bool>(),
         lambda_insts: a.Map<ExprId, Inst>(),
         bound_views: a.Map<ExprId, bool>(),
+        statement_tails: a.Map<ExprId, bool>(),
         carrier_memo: a.Map<TyId, bool>(),
         edges: a.Vec<InstEdge>(),
         set_memo: a.Map<TyId, TyId>(),

@@ -24,7 +24,7 @@
 { variant_payload } = sema.sema_case
 { owner_of, push_tparams } = sema.sema_inst
 { settle_raised } = sema.sema_raise
-{ check_return } = sema.sema_hoist
+{ check_return, statement_tail } = sema.sema_hoist
 { check_literal, report_unsettled_widths } = sema.sema_trap
 { check_arms } = sema.sema_hoist
 { check_own } = sema.sema_own
@@ -686,8 +686,9 @@ check_block = (c :: Checker, f: Function, body: BlockId, ctx: Ctx, owner: str)
               Res<AllocError> {
     rmark = c.raised_mark();
     c.enter_owner(owner);
-    got = c.block_type(body, ctx).try();
+    typed = c.block_type(body, ctx).try();
     c.enter_owner("");
+    got = c.statement_tail(body, ctx.ret, typed).try();
     c.check_return(body, ctx, got).try();
     c.settle_raised(f, ctx, got, rmark).try();
     c.check_secret(f, body, ctx.module).try();

@@ -1,0 +1,25 @@
+// A final expression without `;` is the body's value, whatever the body
+// returns. Only `expr;` runs as a statement where the success is `()`, so
+// this unwrapped `i32` is still offered as the `Res<Jam>` and refused.
+//
+// position: the tail, which has no semicolon.
+
+{ Res, Ok, Err, Error } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+
+Jam = { Paper | Ink }
+Jam.impl(Error, {})
+
+count = (n: i32) Res<i32, Jam> {
+    (n > 3).match({ true => Err(Jam.Paper), false => Ok(n * 2) })
+}
+
+feed = (n: i32) Res<Jam> {
+    count(n).try()
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    feed(1).ignore();
+    Ok(0)
+}

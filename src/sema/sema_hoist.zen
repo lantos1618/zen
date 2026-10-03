@@ -11,7 +11,7 @@
 { storage_seat_name } = sema.sema_supply
 { check_literal } = sema.sema_trap
 { refuse_handle_value } = sema.sema_handle
-{ check_dropped_tail } = sema.sema_effect
+{ check_dropped_tail, check_discarded } = sema.sema_effect
 { type_of } = sema.sema_type
 { Res, Ok, None, loop } = std.core
 
@@ -109,6 +109,62 @@ two_readings = (c :: Checker, file: str, span: Span, got: TyId, want: TyId)
 failure_never_lifts = (c :: Checker, file: str, span: Span)
                       Res<AllocError> {
     c.report(file, span, SemaFault.HoistNotSuccess(NameFault(name: "Err")))
+}
+
+// A body whose result is a unit success, `Res<R>` or `Res<(), E>`, runs a
+// final `expr;` as a statement: its value is dropped under the must-use
+// rule every statement follows, and the body's `()` lifts to `Ok`. A tail
+// that is `()` or a result whose success is `()` stays the body's value,
+// and so does a tail without the `;`, whatever its type.
+statement_tail* = (c :: Checker, body: BlockId, want: TyId, got: TyId)
+                  Res<TyId, AllocError> {
+    c.semicolon_tail(c.tree.block_at(body)).match({
+        None  => Ok(got),
+        Ok(s) => (c.unit_success(want) && c.droppable(got)).match({
+            false => Ok(got),
+            true  => c.drop_tail(s, got),
+        }),
+    })
+}
+
+semicolon_tail = (c: Checker, blk: Block) Res<Stmt> {
+    blk.value.match({
+        Ok(_) => None,
+        None  => blk.last_stmt().match({
+            None  => None,
+            Ok(s) => s.kind.match({ Expr(_) => Ok(s), _ => None }),
+        }),
+    })
+}
+
+unit_success = (c: Checker, want: TyId) bool {
+    c.types.at(want).match({
+        Res(r) => r.form.match({ Failure => c.unit_ty(r.value), _ => false }),
+        _      => false,
+    })
+}
+
+// Whether a tail's value could not be the body's: neither `()` nor a
+// result whose success is `()` or not yet settled.
+droppable = (c: Checker, got: TyId) bool {
+    c.types.at(got).match({
+        Res(r)  => (c.unit_ty(r.value) || c.is_infer(r.value)
+            || c.is_unknown(r.value)) == false,
+        Prim(p) => p.name.eq("()") == false,
+        Unknown => false,
+        Infer   => false,
+        Var(_)  => false,
+        _       => true,
+    })
+}
+
+drop_tail = (c :: Checker, s: Stmt, got: TyId) Res<TyId, AllocError> {
+    s.kind.match({
+        Expr(e) => c.statement_tails.set(e.expr, true).try(),
+        _       => (),
+    });
+    c.check_discarded(s, got).try();
+    c.types.unit()
 }
 
 check_return* = (c :: Checker, body: BlockId, ctx: Ctx, got: TyId)
@@ -267,7 +323,7 @@ tail_expr* = (c: Checker, blk: Block) Res<ExprId> {
             None  => current.last_stmt().match({
                 None  => { walking = false; },
                 Ok(s) => s.kind.match({
-                    Expr(e)  => { result = Ok(e.expr); walking = false; },
+                    Expr(e)  => { result = c.valued(e.expr); walking = false; },
                     Block(b) => { current = c.tree.block_at(b); },
                     _        => { walking = false; },
                 }),
@@ -275,6 +331,11 @@ tail_expr* = (c: Checker, blk: Block) Res<ExprId> {
         });
     });
     result
+}
+
+// A final `expr;` that `statement_tail` ran as a statement is no value.
+valued = (c: Checker, id: ExprId) Res<ExprId> {
+    c.statement_tails.get(id).match({ Ok(_) => None, None => Ok(id) })
 }
 
 // Whether a callback body's value has one type. A body ending in a match

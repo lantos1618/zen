@@ -15,7 +15,7 @@
 { Checker, Ctx } = sema.sema_check
 { SemaFault, NameFault } = sema.sema_diag
 { param_type, ret_type, signature_type } = sema.sema_denote
-{ check_return } = sema.sema_hoist
+{ check_return, statement_tail } = sema.sema_hoist
 { block_type } = sema.sema_type
 { Res, Ok, None } = std.core
 
@@ -83,7 +83,7 @@ local_body = (c :: Checker, f: Function, ctx: Ctx) Res<AllocError> {
                 ty = c.param_type(p, ctx).try();
                 c.bind(p.name.text, ty, p.mutable, true).try();
             });
-            got = c.block_type(body, ctx).try();
+            typed = c.block_type(body, ctx).try();
             own = Ctx(
                 module: ctx.module,
                 ret: c.ret_type(f, ctx).try(),
@@ -91,6 +91,7 @@ local_body = (c :: Checker, f: Function, ctx: Ctx) Res<AllocError> {
                 self_ty: ctx.self_ty,
                 has_self: ctx.has_self
             );
+            got = c.statement_tail(body, own.ret, typed).try();
             c.check_return(body, own, got).try();
             c.release(smark)
         },

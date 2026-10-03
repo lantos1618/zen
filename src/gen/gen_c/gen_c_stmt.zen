@@ -277,10 +277,21 @@ deliver_expr_stmt = (
     dst  : Dest
 ) Res<AllocError> {
     s.kind.match({
-        Expr(e)  => be.deliver(e.expr, ctx, want, dst),
+        Expr(e)  => be.check.statement_tails.get(e.expr).match({
+            None  => be.deliver(e.expr, ctx, want, dst),
+            Ok(_) => be.deliver_after(s, ctx, want, dst),
+        }),
         Block(k) => block(be, k, ctx, want, dst),
         _        => Ok,
     })
+}
+
+// A final `expr;` that sema ran as a statement (`sema_hoist.statement_tail`):
+// it runs, and the body's `Ok` is written after it.
+deliver_after = (be :: CBackend, s: Stmt, ctx: Ctx, want: TyId, dst: Dest)
+                Res<AllocError> {
+    be.stmt(s, ctx).try();
+    be.write_unit_ok(want, dst)
 }
 
 // A unit return emits `return;`; an absent value for Into remains unwritten.

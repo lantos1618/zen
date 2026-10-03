@@ -32,7 +32,9 @@ Run.impl(Cli, {
 run = (env: Env, a: Alloc, words: str) Res<AllocError> {
     argv ::= a.Vec<str>();
     argv.add("tool").try();
-    (!words.is_empty()).then(() { words.split(' ').loop((w) { argv.add(w).try(); }); });
+    (!words.is_empty()).then(
+        () { words.split(' ').loop((w) { argv.add(w).try(); }); }
+    );
     println("$ tool {}", words);
     outcome<Run>(env, a, argv).match({
         Ok(r)     => {

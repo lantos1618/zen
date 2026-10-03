@@ -28,7 +28,9 @@ Build.impl(Cli, {
 })
 
 Cmd = { Build: Build | Clean }
-Cmd.impl(Cli, { name: "tool", about: "Build things", Clean: Spec(help: "Remove the outputs") })
+Cmd.impl(Cli, { name: "tool", about: "Build things", Clean: Spec(
+    help: "Remove the outputs"
+) })
 
 run = (env: Env, a: Alloc, words: str) Res<AllocError> {
     argv ::= a.Vec<str>();
@@ -58,7 +60,11 @@ main = (env: Env) Res<i32, AllocError> {
     run(env, a, "build --target x").try();
     run(env, a, "build in").try();
     run(env, a, "build --target x --bogus in").try();
-    run(env, a, "build --target x --mode release --jobs 255 --level -32768 in").try();
+    run(
+        env,
+        a,
+        "build --target x --mode release --jobs 255 --level -32768 in"
+    ).try();
     run(env, a, "clean extra").try();
     run(env, a, "deploy").try();
     Ok(0)

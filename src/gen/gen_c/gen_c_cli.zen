@@ -130,7 +130,13 @@ CliLower = {
     // The type named at the door, as the program's own command.
     root = (self: @Self, be :: CBackend, top: TyId) Res<String, AllocError> {
         name = self.table_str(be, top, "name").try();
-        self.call_into(be, self.program.view(), "program", self.argv.view(), name.view()).try();
+        self.call_into(
+            be,
+            self.program.view(),
+            "program",
+            self.argv.view(),
+            name.view()
+        ).try();
         self.command(be, top, self.program.view(), "1", "0")
     }
 
@@ -145,13 +151,40 @@ CliLower = {
         be.check.types.at(ty).match({
             Named(n) => decl_at(be.tree, n.decl).match({
                 Ok(decl) => decl.kind.match({
-                    Struct(record) => self.fields(be, ty, n, record, value.view(), path, start, help),
-                    Enum(choice)   => self.variants(be, ty, n, choice, value.view(), path, start, help),
-                    _              => self.refuse(be, "a command line type that is not a struct or an enum"),
+                    Struct(record) => self.fields(
+                        be,
+                        ty,
+                        n,
+                        record,
+                        value.view(),
+                        path,
+                        start,
+                        help
+                    ),
+                    Enum(choice)   => self.variants(
+                        be,
+                        ty,
+                        n,
+                        choice,
+                        value.view(),
+                        path,
+                        start,
+                        help
+                    ),
+                    _              => self.refuse(
+                        be,
+                        "a command line type that is not a struct or an enum"
+                    ),
                 }),
-                None     => self.refuse(be, "a command line type without a declaration"),
+                None     => self.refuse(
+                    be,
+                    "a command line type without a declaration"
+                ),
             }),
-            _        => self.refuse(be, "a command line type that is not a struct or an enum"),
+            _        => self.refuse(
+                be,
+                "a command line type that is not a struct or an enum"
+            ),
         }).try();
         Ok(value)
     }
@@ -181,8 +214,8 @@ CliLower = {
         record.members.loop((h, member) {
             member.kind.match({
                 Field(f) => be.field_type(member, dctx, inst).match({
-                    None      => Ok,
-                    Ok(fty)   => {
+                    None    => Ok,
+                    Ok(fty) => {
                         entry = be.spec_entry(table, f.name.text, dctx).try();
                         slots.add(Slot(
                             id: slots.len,
@@ -199,14 +232,24 @@ CliLower = {
             });
         });
         slots.loop((slot) { self.declare(be, ty, cmd.view(), slot).try(); });
-        scanned = self.checked(be, "scan_fields", self.alloc.view(), cmd.view(),
-                               self.env.view(), self.argv.view(), start,
-                               self.program.view(), help).try();
+        scanned = self.checked(
+            be,
+            "scan_fields",
+            self.alloc.view(),
+            cmd.view(),
+            self.env.view(),
+            self.argv.view(),
+            start,
+            self.program.view(),
+            help
+        ).try();
         matches = ok_of(be, scanned.view()).try();
         zero ::= be.alloc.String().try();
         be.write_zero(ty, zero).try();
         be.set_line(value, zero.view()).try();
-        slots.loop((slot) { self.fill(be, slot, value, matches.view(), dctx).try(); });
+        slots.loop(
+            (slot) { self.fill(be, slot, value, matches.view(), dctx).try(); }
+        );
         be.leave_tparams(mark)
     }
 
@@ -215,7 +258,14 @@ CliLower = {
             Res<String, AllocError> {
         about = self.table_str(be, ty, "about").try();
         note  = self.table_str(be, ty, "note").try();
-        self.call(be, "derived", self.alloc.view(), path, about.view(), note.view())
+        self.call(
+            be,
+            "derived",
+            self.alloc.view(),
+            path,
+            about.view(),
+            note.view()
+        )
     }
 
     // The type's impl of std.cli's Cli, which holds its table.
@@ -245,12 +295,22 @@ CliLower = {
     table_str = (self: @Self, be :: CBackend, ty: TyId, key: str)
                 Res<String, AllocError> {
         str_ty = be.check.types.prim("str").try();
-        held = be.fresh_name("cli_text").try();
+        held   = be.fresh_name("cli_text").try();
         be.declare_temp(str_ty, held.view()).try();
         rendered ::= be.alloc.String().try();
-        be.str_entry(self.table(be, ty).try(), key, self.table_ctx(be, ty)).try().match({
+        be.str_entry(
+            self.table(be, ty).try(),
+            key,
+            self.table_ctx(be, ty)
+        ).try().match({
             None    => lit(be, "", rendered).try(),
-            Ok(eid) => expr(be, eid, self.table_ctx(be, ty), str_ty, rendered).try(),
+            Ok(eid) => expr(
+                be,
+                eid,
+                self.table_ctx(be, ty),
+                str_ty,
+                rendered
+            ).try(),
         });
         be.set_line(held.view(), rendered.view()).try();
         Ok(held)
@@ -277,7 +337,7 @@ CliLower = {
     declare = (self: @Self, be :: CBackend, ty: TyId, cmd: str, slot: Slot)
               Res<AllocError> {
         spec = self.spec(be, ty, slot.entry).try();
-        id ::= be.alloc.String("{}u", slot.id).try();
+        id   ::= be.alloc.String("{}u", slot.id).try();
         long ::= be.alloc.String().try();
         lit(be, flag_of(be, slot.name).try().view(), long).try();
         upper ::= be.alloc.String().try();
@@ -288,7 +348,7 @@ CliLower = {
             Ok(text) => lit(be, text.view(), default),
             None     => lit(be, "", default),
         }).try();
-        has = shown.match({ Ok(_) => true, None => false });
+        has  = shown.match({ Ok(_) => true, None => false });
         site = Site(
             cmd: cmd,
             id: id.view(),
@@ -300,10 +360,29 @@ CliLower = {
             has: has
         );
         slot.form.match({
-            Switch      => self.checked_unit(be, "switch_field", cmd, id.view(), long.view(), spec.view()),
+            Switch      => self.checked_unit(
+                be,
+                "switch_field",
+                cmd,
+                id.view(),
+                long.view(),
+                spec.view()
+            ),
             Rest        => self.call_into(be, "", "trailing_field", cmd),
-            Many        => self.word_field(be, site, Word.Text, slot.positional, true),
-            One(word)   => self.word_field(be, site, word, slot.default.match({ Ok(_) => false, None => true }), false),
+            Many        => self.word_field(
+                be,
+                site,
+                Word.Text,
+                slot.positional,
+                true
+            ),
+            One(word)   => self.word_field(
+                be,
+                site,
+                word,
+                slot.default.match({ Ok(_) => false, None => true }),
+                false
+            ),
             Maybe(word) => self.word_field(be, site, word, false, false),
             Unfit       => self.refuse(be, "a field std.cli cannot parse"),
         })
@@ -329,12 +408,18 @@ CliLower = {
             Location    => "text_field",
             Unsigned(p) => { be.limits_into(p, limits).try(); "number_field" },
             Signed(p)   => { be.limits_into(p, limits).try(); "number_field" },
-            Choice(e)   => { lit(be, choices_of(be, e).try().view(), choices).try(); "choice_field" },
+            Choice(e)   => { lit(
+                be,
+                choices_of(be, e).try().view(),
+                choices
+            ).try(); "choice_field" },
         });
         (!limits.view().is_empty()).then(() {
             limits.view().split('|').loop((part) { args.add(part).try(); });
         });
-        (!choices.view().is_empty()).then(() { args.add(choices.view()).try(); });
+        (!choices.view().is_empty()).then(
+            () { args.add(choices.view()).try(); }
+        );
         tmp = self.call_list(be, helper, args).try();
         self.stop_unless_ok(be, tmp.view())
     }
@@ -353,17 +438,33 @@ CliLower = {
                     Ok(eid) => {
                         rendered ::= be.alloc.String().try();
                         expr(be, eid, dctx, slot.ty, rendered).try();
-                        both ::= be.alloc.String("({} || {})", got.view(), rendered.view()).try();
+                        both ::= be.alloc.String(
+                            "({} || {})",
+                            got.view(),
+                            rendered.view()
+                        ).try();
                         be.set_line(place.view(), both.view())
                     },
                 })
             },
             Many        => {
-                got = self.checked(be, "texts_of", self.alloc.view(), matches, id.view()).try();
+                got = self.checked(
+                    be,
+                    "texts_of",
+                    self.alloc.view(),
+                    matches,
+                    id.view()
+                ).try();
                 be.set_line(place.view(), ok_of(be, got.view()).try().view())
             },
             Rest        => {
-                got = self.checked(be, "rest_of", self.alloc.view(), self.argv.view(), matches).try();
+                got = self.checked(
+                    be,
+                    "rest_of",
+                    self.alloc.view(),
+                    self.argv.view(),
+                    matches
+                ).try();
                 be.set_line(place.view(), ok_of(be, got.view()).try().view())
             },
             One(word)   => {
@@ -390,7 +491,7 @@ CliLower = {
                 be.set_line(place.view(), none.view()).try();
                 open_else(be).try();
                 inner = be.res_inner(slot.ty);
-                held = be.fresh_name("cli_word").try();
+                held  = be.fresh_name("cli_word").try();
                 be.request_type(inner).try();
                 be.declare_temp(inner, held.view()).try();
                 self.convert(be, word, inner, got.view(), held.view()).try();
@@ -466,24 +567,52 @@ CliLower = {
         mark  = be.enter_struct_tparams(n.decl).try();
         table = self.table(be, ty).try();
         choice.variants.loop((h, i, v) {
-            id ::= be.alloc.String("{}u", i).try();
+            id   ::= be.alloc.String("{}u", i).try();
             name ::= be.alloc.String().try();
             lit(be, kebab(be, v.name.text).try().view(), name).try();
             about = self.variant_about(be, ty, n, v, table, dctx, inst).try();
-            self.checked_unit(be, "command_field", cmd.view(), id.view(), name.view(), about.view()).try();
+            self.checked_unit(
+                be,
+                "command_field",
+                cmd.view(),
+                id.view(),
+                name.view(),
+                about.view()
+            ).try();
         });
         count ::= be.alloc.String("{}u", choice.variants.len).try();
-        self.checked_unit(be, "help_field", self.alloc.view(), cmd.view(), count.view(), self.program.view()).try();
+        self.checked_unit(
+            be,
+            "help_field",
+            self.alloc.view(),
+            cmd.view(),
+            count.view(),
+            self.program.view()
+        ).try();
         version = self.table_str(be, ty, "version").try();
         be.str_entry(table, "version", dctx).try().when_ok((_) {
             after ::= be.alloc.String("{}u", choice.variants.len + 1).try();
-            self.checked_unit(be, "version_field", cmd.view(), after.view()).try();
+            self.checked_unit(
+                be,
+                "version_field",
+                cmd.view(),
+                after.view()
+            ).try();
         });
-        picked = self.checked(be, "scan_commands", self.alloc.view(), cmd.view(),
-                              self.env.view(), self.argv.view(), start,
-                              self.program.view(), help, count.view(),
-                              version.view()).try();
-        pick = ok_of(be, picked.view()).try();
+        picked = self.checked(
+            be,
+            "scan_commands",
+            self.alloc.view(),
+            cmd.view(),
+            self.env.view(),
+            self.argv.view(),
+            start,
+            self.program.view(),
+            help,
+            count.view(),
+            version.view()
+        ).try();
+        pick   = ok_of(be, picked.view()).try();
         variant ::= be.alloc.String("{}.", pick.view()).try();
         variant.sym_member("variant").try();
         next ::= be.alloc.String("{}.", pick.view()).try();
@@ -495,7 +624,19 @@ CliLower = {
             label ::= be.alloc.String("case {}u: {{\n", i).try();
             be.fmt("{}", label.view()).try();
             be.indent();
-            self.chosen(be, ty, n, v, table, dctx, inst, value, path, next.view(), asked.view()).try();
+            self.chosen(
+                be,
+                ty,
+                n,
+                v,
+                table,
+                dctx,
+                inst,
+                value,
+                path,
+                next.view(),
+                asked.view()
+            ).try();
             be.writeln("break;").try();
             be.dedent();
             be.writeln("}").try();
@@ -521,11 +662,27 @@ CliLower = {
     ) Res<AllocError> {
         sub ::= be.alloc.String().try();
         lit(be, kebab(be, v.name.text).try().view(), sub).try();
-        joined = self.checked(be, "joined", self.alloc.view(), path, sub.view()).try();
-        sub_path = self.call(be, "spelled", ok_of(be, joined.view()).try().view()).try();
-        built = be.variant_type(n, v, dctx, inst).match({
+        joined   = self.checked(
+            be,
+            "joined",
+            self.alloc.view(),
+            path,
+            sub.view()
+        ).try();
+        sub_path = self.call(
+            be,
+            "spelled",
+            ok_of(be, joined.view()).try().view()
+        ).try();
+        built    = be.variant_type(n, v, dctx, inst).match({
             Ok(pty) => {
-                inner = self.command(be, pty, sub_path.view(), next, asked).try();
+                inner = self.command(
+                    be,
+                    pty,
+                    sub_path.view(),
+                    next,
+                    asked
+                ).try();
                 enum_value(be, ty, v.name.text, inner.view()).try()
             },
             None    => {
@@ -536,10 +693,25 @@ CliLower = {
                 });
                 note ::= be.alloc.String().try();
                 lit(be, "", note).try();
-                cmd = self.call(be, "derived", self.alloc.view(), sub_path.view(), about.view(), note.view()).try();
-                self.checked(be, "scan_fields", self.alloc.view(), cmd.view(),
-                             self.env.view(), self.argv.view(), next,
-                             self.program.view(), asked).try();
+                cmd = self.call(
+                    be,
+                    "derived",
+                    self.alloc.view(),
+                    sub_path.view(),
+                    about.view(),
+                    note.view()
+                ).try();
+                self.checked(
+                    be,
+                    "scan_fields",
+                    self.alloc.view(),
+                    cmd.view(),
+                    self.env.view(),
+                    self.argv.view(),
+                    next,
+                    self.program.view(),
+                    asked
+                ).try();
                 enum_value(be, ty, v.name.text, "").try()
             },
         });
@@ -569,8 +741,8 @@ CliLower = {
                   out :: String) Res<bool, AllocError> {
         entry = be.spec_entry(table, name, self.table_ctx(be, ty)).try();
         entry.match({
-            None    => Ok(false),
-            Ok(_)   => {
+            None  => Ok(false),
+            Ok(_) => {
                 held = self.spec(be, ty, entry).try();
                 out.add(held.view()).try();
                 out.add(".").try();
@@ -682,10 +854,10 @@ entry_typed = (be :: CBackend, table: Res<Impl>, key: str, ctx: Ctx, spec: bool)
         None   => None,
     });
     entry.match({
-        None      => Ok(None),
-        Ok(eid)   => {
+        None    => Ok(None),
+        Ok(eid) => {
             unknown = be.check.types.unknown().try();
-            ty = be.ty_of(eid, ctx, unknown).try();
+            ty      = be.ty_of(eid, ctx, unknown).try();
             is_spec = be.check.types.at(ty).match({
                 Named(n) => n.name.eq("Spec") && be.check.world.module_name(n.decl).eq("std.cli.cli"),
                 _        => false,
@@ -809,7 +981,7 @@ choices_of = (be :: CBackend, ty: TyId) Res<String, AllocError> {
 kebab = (be :: CBackend, name: str) Res<String, AllocError> {
     out ::= be.alloc.String().try();
     Range(0, name.len).loop((h, i) {
-        b = name.index(i);
+        b     = name.index(i);
         upper = b >= 'A' && b <= 'Z';
         (upper && i > 0).then(() { out.add('-').try(); });
         out.add(upper.match({ true => b + 32, false => b })).try();
@@ -832,7 +1004,9 @@ upper_of = (be :: CBackend, field: str) Res<String, AllocError> {
     out ::= be.alloc.String().try();
     Range(0, field.len).loop((h, i) {
         b = field.index(i);
-        out.add((b >= 'a' && b <= 'z').match({ true => b - 32, false => b })).try();
+        out.add(
+            (b >= 'a' && b <= 'z').match({ true => b - 32, false => b })
+        ).try();
     });
     Ok(out)
 }

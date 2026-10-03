@@ -56,8 +56,8 @@ Spec* = {
     holds = (self: @Self, n: i64) bool {
         low  = self.min.match({ Ok(least) => n >= least, None => true });
         high = self.max.match({
-            None       => true,
-            Ok(most)   => (n < 0).match({
+            None     => true,
+            Ok(most) => (n < 0).match({
                 true  => true,
                 false => n.to_usize().match({ Ok(u) => u.to_u64() <= most, None => false }),
             }),
@@ -75,15 +75,17 @@ Spec* = {
                 choices.split('|').loop((choice) { count = count + 1; });
                 choices.split('|').loop((h, i, choice) {
                     (i > 0).then(() {
-                        out.add((i + 1 == count).match({ true => " or ", false => ", " })).try();
+                        out.add(
+                            (i + 1 == count).match({ true => " or ", false => ", " })
+                        ).try();
                     });
                     out.add(choice).try();
                 });
                 Ok
             },
             None        => self.max.match({
-                None       => Ok,
-                Ok(most)   => {
+                None     => Ok,
+                Ok(most) => {
                     low = self.min.value_or(0);
                     out.fmt(": expected an integer from {} to {}", low, most)
                 },
@@ -290,7 +292,9 @@ Param<T> = {
                 Ok(n) => self.spec.max.match({ Ok(most) => n <= most, None => true }),
                 None  => false,
             }),
-            Signed   => value.parse_i64().match({ Ok(n) => self.spec.holds(n), None => false }),
+            Signed   => value.parse_i64().match({ Ok(n) => self.spec.holds(
+                n
+            ), None => false }),
         });
         listed = self.spec.choices.match({
             None        => true,

@@ -42,7 +42,11 @@ Cmd.impl(Cli, {
 
 describe = (c: Cmd) {
     c.match({
-        Fetch(f)  => println("fetch all={} remote={}", f.all, f.remote.value_or("-")),
+        Fetch(f)  => println(
+            "fetch all={} remote={}",
+            f.all,
+            f.remote.value_or("-")
+        ),
         Remote(r) => r.match({
             Add(add) => println("remote add {} {}", add.name, add.url),
             Show     => println("remote show"),
@@ -55,7 +59,9 @@ describe = (c: Cmd) {
 run = (env: Env, a: Alloc, words: str) Res<AllocError> {
     argv ::= a.Vec<str>();
     argv.add("git").try();
-    (!words.is_empty()).then(() { words.split(' ').loop((w) { argv.add(w).try(); }); });
+    (!words.is_empty()).then(
+        () { words.split(' ').loop((w) { argv.add(w).try(); }); }
+    );
     println("$ git {}", words);
     outcome<Cmd>(env, a, argv).match({
         Ok(c)     => describe(c),

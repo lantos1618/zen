@@ -81,7 +81,11 @@ stopped* = (env: Env, stop: Stop) i32 {
         },
         Refused(refusal) => {
             (!refusal.message.view().is_empty()).then(() {
-                env.out.errorln("{}: {}\n", refusal.program, refusal.message.view()).ignore();
+                env.out.errorln(
+                    "{}: {}\n",
+                    refusal.program,
+                    refusal.message.view()
+                ).ignore();
             });
             env.out.error("{}", refusal.help.view()).ignore();
             2
@@ -146,12 +150,7 @@ declare_into = (
 // A bool field: present or absent.
 switch_field* = (cmd :: Command<usize>, id: usize, long: str, spec: Spec)
                 Res<Stop> {
-    cmd.flag(id, long, Spec(
-        help: spec.help,
-        short: spec.short,
-        env: spec.env,
-        hidden: spec.hidden
-    )).try((e) { Stop.Failed(e) });
+    cmd.flag(id, long, Spec(help: spec.help, short: spec.short, env: spec.env, hidden: spec.hidden)).try((e) { Stop.Failed(e) });
     Ok
 }
 
@@ -169,16 +168,21 @@ text_field* = (
     default    : str,
     has        : bool
 ) Res<Stop> {
-    cmd.declare_into(id, long, positional, Spec(
-        help: spec.help,
-        short: spec.short,
-        value: named(spec, upper),
-        env: spec.env,
-        default: shown(default, has),
-        required: required,
-        many: many,
-        hidden: spec.hidden
-    ))
+    cmd.declare_into(
+        id,
+        long,
+        positional,
+        Spec(
+            help: spec.help,
+            short: spec.short,
+            value: named(spec, upper),
+            env: spec.env,
+            default: shown(default, has),
+            required: required,
+            many: many,
+            hidden: spec.hidden
+        )
+    )
 }
 
 // An integer field, checked against its type's range.
@@ -197,19 +201,24 @@ number_field* = (
     min        : i64,
     max        : u64
 ) Res<Stop> {
-    cmd.declare_into(id, long, positional, Spec(
-        help: spec.help,
-        short: spec.short,
-        value: named(spec, upper),
-        kind: signed.match({ true => Kind.Signed, false => Kind.Unsigned }),
-        min: Ok(min),
-        max: Ok(max),
-        env: spec.env,
-        default: shown(default, has),
-        required: required,
-        many: many,
-        hidden: spec.hidden
-    ))
+    cmd.declare_into(
+        id,
+        long,
+        positional,
+        Spec(
+            help: spec.help,
+            short: spec.short,
+            value: named(spec, upper),
+            kind: signed.match({ true => Kind.Signed, false => Kind.Unsigned }),
+            min: Ok(min),
+            max: Ok(max),
+            env: spec.env,
+            default: shown(default, has),
+            required: required,
+            many: many,
+            hidden: spec.hidden
+        )
+    )
 }
 
 // An enum field: one of its variants' names, `|`-separated in `choices`.
@@ -226,17 +235,22 @@ choice_field* = (
     has        : bool,
     choices    : str
 ) Res<Stop> {
-    cmd.declare_into(id, long, positional, Spec(
-        help: spec.help,
-        short: spec.short,
-        value: named(spec, upper),
-        choices: Ok(choices),
-        env: spec.env,
-        default: shown(default, has),
-        required: required,
-        many: many,
-        hidden: spec.hidden
-    ))
+    cmd.declare_into(
+        id,
+        long,
+        positional,
+        Spec(
+            help: spec.help,
+            short: spec.short,
+            value: named(spec, upper),
+            choices: Ok(choices),
+            env: spec.env,
+            default: shown(default, has),
+            required: required,
+            many: many,
+            hidden: spec.hidden
+        )
+    )
 }
 
 // A Vec<str> field marked `trailing`: the words after `--`.
@@ -307,7 +321,9 @@ fields_from = (
 ) Res<Matches<usize>, Stop> {
     parsed = cmd.parse(env, argv, start).try((e) { Stop.Failed(e) });
     parsed.problem.match({
-        Err(usage) => Err(refused(a, cmd, program, usage).try((e) { Stop.Failed(e) })),
+        Err(usage) => Err(
+            refused(a, cmd, program, usage).try((e) { Stop.Failed(e) })
+        ),
         Ok         => parsed.help.match({
             true  => Err(helped(cmd).try((e) { Stop.Failed(e) })),
             false => Ok(parsed),
@@ -339,7 +355,15 @@ scan_commands* = (
 ) Res<Pick, Stop> {
     help_only.match({
         true  => cmd.deeper(argv, start, count),
-        false => cmd.commands_from(a, env, argv, start, program, count, version),
+        false => cmd.commands_from(
+            a,
+            env,
+            argv,
+            start,
+            program,
+            count,
+            version
+        ),
     })
 }
 
@@ -347,7 +371,7 @@ scan_commands* = (
 // it is: `tool -h remote add` is add's.
 deeper = (cmd: Command<usize>, argv: Vec<str>, start: usize, count: usize)
          Res<Pick, Stop> {
-    word = argv.get(start).value_or("");
+    word               = argv.get(start).value_or("");
     chosen: Res<usize> = cmd.subcommand(word).match({
         Ok(id) => (id < count).match({ true => Ok(id), false => None }),
         None   => None,
@@ -370,11 +394,25 @@ commands_from = (
 ) Res<Pick, Stop> {
     parsed = cmd.parse(env, argv, start).try((e) { Stop.Failed(e) });
     parsed.problem.match({
-        Err(usage) => Err(refused(a, cmd, program, usage).try((e) { Stop.Failed(e) })),
+        Err(usage) => Err(
+            refused(a, cmd, program, usage).try((e) { Stop.Failed(e) })
+        ),
         Ok         => parsed.picked.match({
             Ok(picked) => (picked.id == count).match({
-                false => Ok(Pick(variant: picked.id, next: picked.next, help: parsed.help)),
-                true  => topic(a, cmd, env, argv, picked.next, program, parsed.help),
+                false => Ok(Pick(
+                    variant: picked.id,
+                    next: picked.next,
+                    help: parsed.help
+                )),
+                true  => topic(
+                    a,
+                    cmd,
+                    env,
+                    argv,
+                    picked.next,
+                    program,
+                    parsed.help
+                ),
             }),
             None       => parsed.help.match({
                 true  => Err(helped(cmd).try((e) { Stop.Failed(e) })),
@@ -403,8 +441,8 @@ topic = (
     program : str,
     asked   : bool
 ) Res<Pick, Stop> {
-    path   = a.String("{} help", cmd.name).try((e) { Stop.Failed(e) });
-    about  = a.String("Print help for {} or one of its commands", cmd.name).try((e) { Stop.Failed(e) });
+    path  = a.String("{} help", cmd.name).try((e) { Stop.Failed(e) });
+    about = a.String("Print help for {} or one of its commands", cmd.name).try((e) { Stop.Failed(e) });
     model ::= command<usize>(a, path.view(), about.view());
     model.positional(0, "COMMAND", Spec(help: "The command to describe"))
         .try((e) { Stop.Failed(e) });
@@ -417,11 +455,7 @@ topic = (
                 Ok(id) => Ok(Pick(variant: id, next: argv.len, help: true)),
                 None   => Err(Stop.Refused(Refusal(
                     program: program,
-                    message: a.String(
-                        "unknown command `{}` for `{}`",
-                        choice,
-                        cmd.name
-                    ).try((e) { Stop.Failed(e) }),
+                    message: a.String("unknown command `{}` for `{}`", choice, cmd.name).try((e) { Stop.Failed(e) }),
                     help: cmd.help().try((e) { Stop.Failed(e) })
                 ))),
             }),
@@ -457,8 +491,8 @@ signed_of* = (m: Matches<usize>, id: usize) Res<i64> {
 // The position of the chosen name among `choices`.
 choice_of* = (m: Matches<usize>, id: usize, choices: str) Res<usize> {
     chosen = m.text_of(id).try();
-    at     :: usize = 0;
-    found  :: Res<usize> = None;
+    at    :: usize = 0;
+    found :: Res<usize> = None;
     choices.split('|').loop((h, choice) {
         choice.eq(chosen).then(() { found = Ok(at); h.break(); });
         at = at + 1;

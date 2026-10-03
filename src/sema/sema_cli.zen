@@ -62,21 +62,27 @@ cli_entry* = (
     c.is_cli(bound).match({
         false => Ok,
         true  => {
-            name    = mem.name().text;
-            owned   = c.names_member(im, mi, name).try();
-            setting = is_setting(name);
-            spec    = c.is_spec(got);
-            text    = c.is_str(got);
+            name                  = mem.name().text;
+            owned                 = c.names_member(im, mi, name).try();
+            setting               = is_setting(name);
+            spec                  = c.is_spec(got);
+            text                  = c.is_str(got);
             fault: Res<SemaFault> = (setting && text).match({
                 true  => None,
                 false => owned.match({
                     true  => spec.match({
                         true  => None,
-                        false => Ok(SemaFault.CliEntryType(NameFault(name: name))),
+                        false => Ok(SemaFault.CliEntryType(NameFault(
+                            name: name
+                        ))),
                     }),
                     false => setting.match({
-                        true  => Ok(SemaFault.CliEntryType(NameFault(name: name))),
-                        false => Ok(SemaFault.CliUnknownEntry(NameFault(name: name))),
+                        true  => Ok(SemaFault.CliEntryType(NameFault(
+                            name: name
+                        ))),
+                        false => Ok(SemaFault.CliUnknownEntry(NameFault(
+                            name: name
+                        ))),
                     }),
                 }),
             });
@@ -98,7 +104,11 @@ spec_members = (c :: Checker, value: ExprId) Res<AllocError> {
             k.args.loop((h, a) {
                 a.name.when_ok((n) {
                     (!is_spec_member(n.text)).then(() {
-                        c.report(a.span.file, a.span, SemaFault.CliDerivedSpec(NameFault(name: n.text))).try();
+                        c.report(
+                            a.span.file,
+                            a.span,
+                            SemaFault.CliDerivedSpec(NameFault(name: n.text))
+                        ).try();
                     });
                 });
             });
@@ -118,10 +128,15 @@ target = (c :: Checker, im: Impl, mi: usize) Res<Res<Decl>, AllocError> {
 
 // Whether `name` is a field of the implementing struct or a variant of the
 // implementing enum.
-names_member = (c :: Checker, im: Impl, mi: usize, name: str) Res<bool, AllocError> {
+names_member = (
+    c    :: Checker,
+    im   : Impl,
+    mi   : usize,
+    name : str
+) Res<bool, AllocError> {
     c.target(im, mi).try().match({
-        None    => Ok(false),
-        Ok(d)   => Ok(d.kind.match({
+        None  => Ok(false),
+        Ok(d) => Ok(d.kind.match({
             Struct(s) => s.members.find((m) {
                 m.kind.match({ Field(f) => f.name.text.eq(name), _ => false })
             }).match({ Ok(_) => true, None => false }),
@@ -138,13 +153,20 @@ cli_shapes* = (c :: Checker, im: Impl, id: ImplId, mi: usize, bound: TyId)
     c.is_cli(bound).match({
         false => Ok,
         true  => c.target(im, mi).try().match({
-            None    => Ok,
-            Ok(d)   => d.kind.match({
+            None  => Ok,
+            Ok(d) => d.kind.match({
                 Struct(s) => {
                     s.members.loop((h, m) {
                         m.kind.match({
                             Field(f) => f.type.match({
-                                Ok(t) => c.field_shape(im, m, f.name.text, t, !f.mutable, mi).try(),
+                                Ok(t) => c.field_shape(
+                                    im,
+                                    m,
+                                    f.name.text,
+                                    t,
+                                    !f.mutable,
+                                    mi
+                                ).try(),
                                 None  => (),
                             }),
                             _        => (),
@@ -158,7 +180,11 @@ cli_shapes* = (c :: Checker, im: Impl, id: ImplId, mi: usize, bound: TyId)
                 },
                 _         => {
                     span = c.impl_span(id);
-                    c.report(span.file, span, SemaFault.CliPayload(NameFault(name: im.target.text)))
+                    c.report(
+                        span.file,
+                        span,
+                        SemaFault.CliPayload(NameFault(name: im.target.text))
+                    )
                 },
             }),
         }),
@@ -174,10 +200,10 @@ field_shape = (
     positional : bool,
     mi         : usize
 ) Res<AllocError> {
-    poison = c.types.unknown().try();
-    ty = c.type_from_ast(t, Ctx(mi, poison)).try();
+    poison   = c.types.unknown().try();
+    ty       = c.type_from_ast(t, Ctx(mi, poison)).try();
     trailing = c.trailing_in(im.field_value(name));
-    fits = c.is_unknown(ty) || c.types.at(ty).match({
+    fits     = c.is_unknown(ty) || c.types.at(ty).match({
         Prim(p)  => p.name.eq("bool").match({
             true  => !positional && !trailing,
             false => c.is_word(ty) && !trailing,
@@ -188,7 +214,11 @@ field_shape = (
     });
     fits.match({
         true  => Ok,
-        false => c.report(m.span.file, m.span, SemaFault.CliFieldShape(NameFault(name: name))),
+        false => c.report(
+            m.span.file,
+            m.span,
+            SemaFault.CliFieldShape(NameFault(name: name))
+        ),
     })
 }
 
@@ -246,17 +276,21 @@ is_str_vec = (c: Checker, n: TyNamed) bool {
 // Cli impl.
 payload_shape = (c :: Checker, v: Variant, mi: usize) Res<AllocError> {
     v.payload.match({
-        None    => Ok,
-        Ok(t)   => {
+        None  => Ok,
+        Ok(t) => {
             poison = c.types.unknown().try();
-            ty = c.type_from_ast(t, Ctx(mi, poison)).try();
-            fits = c.is_unknown(ty) || c.types.at(ty).match({
+            ty     = c.type_from_ast(t, Ctx(mi, poison)).try();
+            fits   = c.is_unknown(ty) || c.types.at(ty).match({
                 Named(n) => c.commands(n).try(),
                 _        => false,
             });
             fits.match({
                 true  => Ok,
-                false => c.report(v.span.file, v.span, SemaFault.CliPayload(NameFault(name: v.name.text))),
+                false => c.report(
+                    v.span.file,
+                    v.span,
+                    SemaFault.CliPayload(NameFault(name: v.name.text))
+                ),
             })
         },
     })
@@ -265,5 +299,9 @@ payload_shape = (c :: Checker, v: Variant, mi: usize) Res<AllocError> {
 commands = (c :: Checker, n: TyNamed) Res<bool, AllocError> {
     impls ::= c.alloc.Vec<LocalImpl>();
     c.local_impls(n, impls).try();
-    Ok(impls.find((li) { c.is_cli(li.bound) }).match({ Ok(_) => true, None => false }))
+    Ok(
+        impls.find(
+            (li) { c.is_cli(li.bound) }
+        ).match({ Ok(_) => true, None => false })
+    )
 }

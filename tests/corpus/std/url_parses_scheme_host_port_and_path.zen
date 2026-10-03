@@ -1,0 +1,21 @@
+// std.net.url splits an http(s) URL into borrowed slices and a port. The port
+// is a u16: written explicitly, or the scheme's default (80 or 443).
+
+{ println } = std.io
+{ parse_url } = std.net.url
+
+show = (url: str) {
+    parse_url(url).match({
+        Ok(u)  => println("{} {} {} {}", u.scheme, u.host, u.port, u.path),
+        Err(_) => println("invalid {}", url),
+    });
+}
+
+main = () i32 {
+    show("http://example.com:8080/x");
+    show("https://example.com/");
+    show("http://example.com");
+    show("http://example.com:70000/");
+    show("ftp://example.com/");
+    0
+}

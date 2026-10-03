@@ -1,0 +1,5 @@
+http example.com 8080 /x
+https example.com 443 /
+http example.com 80 /
+invalid http://example.com:70000/
+invalid ftp://example.com/

@@ -51,7 +51,6 @@ G_IDLE*: usize = 3           // bit i: worker i is asleep
 G_SPINNING*: usize = 4       // workers looking for work
 G_SLEEPING*: usize = 5       // workers committed to sleep (quiescence)
 G_DETACHED*: usize = 6       // threads finishing a turn without a worker
-G_LIVE*: usize = 7           // actors spawned and not yet finalised
 G_INJ_HEAD*: usize = 8       // injector: producers' end (a node address)
 G_INJ_TAIL*: usize = 9       // injector: consumer's end, under the lock
 G_INJ_STUB*: usize = 10      // injector: the stub node's link

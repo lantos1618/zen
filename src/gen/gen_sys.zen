@@ -33,6 +33,7 @@ Sys* = { Read
     | Clone
     | Nanosleep
     | Mprotect
+    | Madvise
     | Flock
     // Threads. `ThreadSelf` reads the calling thread's pointer: the thread
     // control block the runtime installed as TLS on Linux, `pthread_self()`
@@ -88,6 +89,7 @@ arity* = (call: Sys) usize {
         Clone            => 5,
         Nanosleep        => 2,
         Mprotect         => 3,
+        Madvise          => 3,
         Flock            => 2,
         ThreadSelf       => 0,
         CloneThread      => 3,
@@ -135,6 +137,7 @@ linux_x86_64* = (call: Sys) Res<usize> {
         Clone            => Ok(56),
         Nanosleep        => Ok(35),
         Mprotect         => Ok(10),
+        Madvise          => Ok(28),
         Flock            => Ok(73),
         SchedGetaffinity => Ok(204),
         _                => None,
@@ -167,6 +170,7 @@ linux_arm64* = (call: Sys) Res<usize> {
         Clone            => Ok(220),
         Nanosleep        => Ok(101),
         Mprotect         => Ok(226),
+        Madvise          => Ok(233),
         Flock            => Ok(32),
         SchedGetaffinity => Ok(123),
         _                => None,
@@ -206,6 +210,7 @@ darwin_symbol* = (call: Sys) Res<str> {
         Clone            => None,
         Nanosleep        => Ok("nanosleep"),
         Mprotect         => Ok("mprotect"),
+        Madvise          => Ok("madvise"),
         Flock            => Ok("flock"),
         ThreadSelf       => Ok("pthread_self"),
         CloneThread      => None,
@@ -324,6 +329,7 @@ sys_named* = (name: str) Res<Sys> {
         "clone"                  => Ok(Sys.Clone),
         "nanosleep"              => Ok(Sys.Nanosleep),
         "mprotect"               => Ok(Sys.Mprotect),
+        "madvise"                => Ok(Sys.Madvise),
         "flock"                  => Ok(Sys.Flock),
         "thread_self"            => Ok(Sys.ThreadSelf),
         "clone_thread"           => Ok(Sys.CloneThread),

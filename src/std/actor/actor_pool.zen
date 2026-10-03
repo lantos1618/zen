@@ -19,7 +19,7 @@
 
 { Ptr, null_ptr } = std.mem
 { Res, Ok, Err, None, loop, Range } = std.core
-{ mmap, munmap, map_private_anonymous, pointer_at, address_of } = std.sys
+{ mmap, munmap, madvise, map_private_anonymous, pointer_at, address_of, platform_darwin } = std.sys
 { atomic_swap_u32, atomic_store_u32 } = std.sys
 
 // The address of word `i` of the block at `p`, and plain word access.
@@ -40,7 +40,7 @@ lock* = (word: Ptr<u32>) {
 unlock* = (word: Ptr<u32>) { atomic_store_u32(word, 0); }
 
 SLAB_BYTES: usize = 65536
-SPAN_BYTES: usize = 2097152
+SPAN_BYTES*: usize = 2097152
 // A slab's header: its class, then (for a large block) its mapping's length.
 SLAB_HEADER: usize = 64
 LARGE: usize = 65535
@@ -137,31 +137,42 @@ set_checked* = (central: Ptr<u8>, on: bool) {
 
 checked = (central: Ptr<u8>) bool { load(central, CLASSES * 2 + 3) != 0 }
 
-// `bytes` of fresh zeroed memory starting on a SLAB_BYTES boundary; null
+// `bytes` of fresh zeroed memory starting on an `align` boundary; null
 // when the kernel refuses.
-map_aligned = (bytes: usize) Ptr<u8> {
-    total = bytes + SLAB_BYTES;
+map_aligned* = (bytes: usize, align: usize) Ptr<u8> {
+    total = bytes + align;
     got   = mmap(0, total, 3, map_private_anonymous(), -1, 0);
     (got < 0).match({
         true  => null_ptr<u8>(),
         false => {
             raw     = got.to_usize().value_or(0);
-            aligned = (raw + SLAB_BYTES - 1) / SLAB_BYTES * SLAB_BYTES;
+            aligned = (raw + align - 1) / align * align;
             lead    = aligned - raw;
             (lead > 0).then(() { munmap(raw, lead).discard(); });
-            (SLAB_BYTES - lead > 0).then(() {
-                munmap(aligned + bytes, SLAB_BYTES - lead).discard();
+            (align - lead > 0).then(() {
+                munmap(aligned + bytes, align - lead).discard();
             });
             pointer_at(aligned)
         },
     })
 }
 
+// A whole 2 MiB span, asking Linux for one huge page: a million actors'
+// bodies and slots then cost a few hundred page faults instead of tens of
+// thousands. (MADV_HUGEPAGE; macOS has no such advice.)
+map_span* = () Ptr<u8> {
+    span = map_aligned(SPAN_BYTES, SPAN_BYTES);
+    (!span.is_null() && platform_darwin() == 0).then(() {
+        madvise(address_of(span), SPAN_BYTES, 14).discard();
+    });
+    span
+}
+
 // A fresh slab, cut from the current span (a new span when it is used up).
 new_slab = (central: Ptr<u8>) Ptr<u8> {
     lock(span_lock(central));
     (span_next(central).read(0) >= span_end(central).read(0)).then(() {
-        span = map_aligned(SPAN_BYTES);
+        span = map_span();
         (!span.is_null()).then(() {
             span_next(central).write(0, address_of(span));
             span_end(central).write(0, address_of(span) + SPAN_BYTES);
@@ -246,7 +257,7 @@ alloc_large = (bytes: usize) Ptr<u8> {
         false => null_ptr<u8>(),
         true  => {
             total = (bytes + SLAB_HEADER + 4095) / 4096 * 4096;
-            base  = map_aligned(total);
+            base  = map_aligned(total, SLAB_BYTES);
             base.is_null().match({
                 true  => base,
                 false => {

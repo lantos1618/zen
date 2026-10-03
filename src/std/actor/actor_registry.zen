@@ -13,7 +13,7 @@
 { Range, loop } = std.core
 { atomic_load_usize, atomic_store_usize } = std.sys
 { pointer_at, address_of, mmap, munmap, map_private_anonymous } = std.sys
-{ word_at, load, store, lock, unlock } = std.actor.actor_pool
+{ word_at, load, store, lock, unlock, map_span } = std.actor.actor_pool
 { G_SLOT_LOCK, G_SLOT_FREE, G_SLOT_NFREE, G_SLOT_CAP, G_SLOT_FRESH } = std.actor.actor_layout
 { G_CHUNKS, CHUNK_SLOTS, CHUNK_SHIFT, CHUNKS, SLOT_CACHE } = std.actor.actor_layout
 { L_SLOTS_N, L_SLOTS } = std.actor.actor_layout
@@ -97,13 +97,11 @@ ensure_chunks = (globals: Ptr<u8>, from: usize, to: usize) bool {
     Range(from >> CHUNK_SHIFT, ((to - 1) >> CHUNK_SHIFT) + 1).loop((c) {
         table = word_at(globals.offset(G_CHUNKS), c);
         (ok && table.read(0) == 0).then(() {
-            bytes = CHUNK_SLOTS * SLOT_BYTES;
-            got   = mmap(0, bytes, 3, map_private_anonymous(), -1, 0);
-            (got < 0).match({
+            // A chunk is one 2 MiB span (CHUNK_SLOTS * SLOT_BYTES).
+            chunk = map_span();
+            chunk.is_null().match({
                 true  => { ok = false; },
-                false => {
-                    atomic_store_usize(table, got.to_usize().value_or(0));
-                },
+                false => atomic_store_usize(table, address_of(chunk)),
             });
         });
     });

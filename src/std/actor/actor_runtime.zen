@@ -48,7 +48,7 @@
 { MAX_MESSAGE_BYTES } = std.actor.actor_limits
 { PB_ONCE, PB_GLOBALS, MAX_WORKERS, TURN_BATCH, RING, RING_MASK, BOUND, CYCLE_WALK } = std.actor.actor_layout
 { G_STATE, G_WORKERS, G_WORKER_BASE, G_IDLE, G_SPINNING, G_SLEEPING, G_DETACHED } = std.actor.actor_layout
-{ G_LIVE, G_INJ_HEAD, G_INJ_TAIL, G_INJ_STUB, G_INJ_LOCK, G_SLOT_FRESH, G_JOINERS } = std.actor.actor_layout
+{ G_INJ_HEAD, G_INJ_TAIL, G_INJ_STUB, G_INJ_LOCK, G_SLOT_FRESH, G_JOINERS } = std.actor.actor_layout
 { G_ENTRY, G_SPARE_IDLE, G_ORPHANS, G_THREADS, G_SYSMON_NS, G_ENV, G_STATS, G_CENTRAL } = std.actor.actor_layout
 { G_JOIN_LOCK, G_JOIN_COND, G_SPARE_LOCK, G_SPARE_COND, G_EXIT_PARKER } = std.actor.actor_layout
 { G_THREAD_LIST, MAX_THREADS, GLOBALS_BYTES } = std.actor.actor_layout
@@ -445,9 +445,10 @@ schedule = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>) {
 
 stub_of = (a: Ptr<u8>) usize { addr(a) + B_STUB * 8 }
 
+// The body is not yet reachable: the slot's publication orders these.
 mailbox_init = (a: Ptr<u8>) {
-    astore(a, B_STUB, 0);
-    astore(a, B_HEAD, stub_of(a));
+    store(a, B_STUB, 0);
+    store(a, B_HEAD, stub_of(a));
     store(a, B_TAIL, stub_of(a));
 }
 
@@ -933,7 +934,6 @@ finalize = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>, slot: Ptr<u8>, v: usize) bool {
             astore(slot, S_BODY, 0);
             free_block(g, l, a);
             give_slot(g, l, index);
-            asub(g, G_LIVE, 1);
             stat(g, S_FINALIZED);
             (aload(g, G_JOINERS) > 0).then(() {
                 mutex_lock(g.offset(G_JOIN_LOCK));
@@ -1404,22 +1404,21 @@ actor_start* = (cell: Ptr<u8>, started: usize, stopped: usize) i32 {
             store(cell, B_REF, as_ref(index, gen));
             store(cell, B_STOPPED, stopped);
             mailbox_init(cell);
-            astore(slot, S_WAITING, 0);
-            astore(slot, S_BODY, addr(cell));
-            aadd(g, G_LIVE, 1);
+            arel(slot, S_WAITING, 0);
+            arel(slot, S_BODY, addr(cell));
             m = (started == 0).match({ true => null_ptr<u8>(), false => new_block(
                 g,
                 l,
                 M_PAYLOAD
             ) });
-            m.is_null().match({
-                true  => astore(slot, S_LIFE, gen << GEN_SHIFT),
-                false => {
-                    store(m, M_TURN, started);
-                    mailbox_put(cell, addr(m));
-                    astore(slot, S_LIFE, (gen << GEN_SHIFT) | SCHED | 1);
-                    schedule(g, l, cell);
-                },
+            // The life word already holds this generation, with nothing
+            // accepted; a stale sender may be adding and taking back a
+            // count this moment, so the started turn is added, not stored.
+            (!m.is_null()).then(() {
+                store(m, M_TURN, started);
+                mailbox_put(cell, addr(m));
+                aadd(slot, S_LIFE, SCHED + 1);
+                schedule(g, l, cell);
             });
             0
         },
@@ -1601,7 +1600,7 @@ actor_shutdown* = () {
         before ::= usize.MAX;
         loop((h) {
             wait_quiet(g);
-            live = aload(g, G_LIVE);
+            live = live_actors(g);
             // Nothing left, or the last round of stops freed nothing: actors
             // still alive are wedged waiting for each other.
             (live == 0 || live == before).then(() { h.break(); });
@@ -1622,6 +1621,15 @@ actor_shutdown* = () {
             (t != 0).then(() { thread_join(at(t)).ignore(); });
         });
     });
+}
+
+// Actors spawned and not yet finalised (a scan of the registry).
+live_actors = (g: Ptr<u8>) usize {
+    n :: usize = 0;
+    Range(1, aload(g, G_SLOT_FRESH)).loop((i) {
+        (aload(slot_at(g, i), S_BODY) != 0).then(() { n = n + 1; });
+    });
+    n
 }
 
 // Every worker asleep with nothing queued, and no thread finishing a turn

@@ -83,6 +83,8 @@ clone* = (
 ) i64
 nanosleep* = (request: Ptr<u8>, remaining: Ptr<u8>) i64
 mprotect* = (addr: usize, len: usize, prot: i32) i64
+// Advice about a mapping (Linux: MADV_HUGEPAGE asks for huge pages).
+madvise* = (addr: usize, len: usize, advice: i32) i64
 flock* = (fd: i32, op: i32) i64
 
 // Threads. std.sys.sys_thread builds its portable API on these; programs

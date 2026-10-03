@@ -1220,13 +1220,25 @@ sys_call* = (
                     )).try(),
                 });
             });
-            out = lo.temp(ty).try();
+            // The kernel answers a word; an operation declared with another
+            // result (a usize thread word, a unit store) takes it from there.
+            word = lo.slot_of(Scalar.I64).try();
             lo.add(Instruction.System(SysCall(
-                out: out.slot,
+                out: word,
                 call: op,
                 args: args
             ))).try();
-            Ok(out)
+            lo.is_unit(ty).match({
+                true  => lo.unit(),
+                false => {
+                    out = lo.temp(ty).try();
+                    lo.add(Instruction.Cast(Convert(
+                        out: out.slot,
+                        input: word
+                    ))).try();
+                    Ok(out)
+                },
+            })
         },
         None   => constant_named(name).match({
             Ok(c) => {

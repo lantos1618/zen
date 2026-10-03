@@ -35,6 +35,7 @@
 { value_held, holds } = gen.gen_c.gen_c_expr
 { Dest, deliver } = gen.gen_c.gen_c_stmt
 { lower_print } = gen.gen_c.gen_c_print
+{ is_sys_op, need_sys } = gen.gen_c.gen_c_sys
 { lower_dot_call } = gen.gen_c.gen_c_member
 { lower_loop } = gen.gen_c.gen_c_loop
 { is_loop_shape } = gen.gen_c.gen_c_shape
@@ -716,9 +717,33 @@ ForeignCall = {
 
     write = (self: @Self, be :: CBackend, out :: String)
             Res<AllocError> {
-        be.tree.module_origin_at(self.def.id.module.to_usize()).match({
-            Ok(ModuleOrigin.CBinding(id)) => self.from_binding(be, id, out),
-            _                             => self.raw(be, out),
+        be.is_sys_op(self.def).match({
+            true  => self.sys(be, out),
+            false => be.tree.module_origin_at(
+                self.def.id.module.to_usize()
+            ).match({
+                Ok(ModuleOrigin.CBinding(id)) => self.from_binding(be, id, out),
+                _                             => self.raw(be, out),
+            }),
+        })
+    }
+
+    // A std.sys operation: a C function the prelude defines (gen_c_sys).
+    sys = (self: @Self, be :: CBackend, out :: String) Res<AllocError> {
+        symbol ::= be.alloc.String().try();
+        be.need_sys(
+            self.def.name,
+            self.fn,
+            self.ret,
+            self.sig,
+            symbol
+        ).try().match({
+            false => be.unsupported(
+                self.site.id,
+                "a std.sys operation the C backend does not provide",
+                out
+            ),
+            true  => self.site.emit(be, self.fn, self.sig, symbol.view(), out),
         })
     }
 

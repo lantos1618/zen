@@ -1,7 +1,8 @@
-// Threads, locks and condition variables for the native backend, as
-// ordinary Zen over std.sys. Linux builds everything on raw `clone` and
-// futexes; macOS goes through libSystem's pthreads, because Darwin's kernel
-// interface is not a stable ABI. Callers see one API either way.
+// Threads, locks and condition variables as ordinary Zen over std.sys.
+// Native Linux builds everything on raw `clone` and futexes; macOS goes
+// through libSystem's pthreads, because Darwin's kernel interface is not a
+// stable ABI, and the C backend goes through the C library's pthreads on
+// every OS. Callers see one API either way.
 //
 // Locks and conditions live in caller memory of MUTEX_BYTES / COND_BYTES at
 // a stable address (the OS objects must never move or be copied), and are
@@ -21,7 +22,7 @@
 { thread_self, clone_thread, pthread_start, pthread_join } = std.sys
 { pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_mutex_destroy } = std.sys
 { pthread_cond_init, pthread_cond_wait, pthread_cond_signal, pthread_cond_broadcast } = std.sys
-{ pthread_cond_destroy, platform_darwin, nanosleep_ns, monotonic_ns, Pages, NO_MEMORY } = std.sys
+{ pthread_cond_destroy, pthread_threads, nanosleep_ns, monotonic_ns, Pages, NO_MEMORY } = std.sys
 { atomic_load_u32, atomic_store_u32, atomic_swap_u32, atomic_add_u32, atomic_cas_u32 } = std.sys
 { Res, Ok, Err, loop } = std.core
 
@@ -46,7 +47,7 @@ FUTEX_WAIT: i32 = 0
 FUTEX_WAIT_PRIVATE: i32 = 128
 FUTEX_WAKE_PRIVATE: i32 = 129
 
-darwin = () bool { platform_darwin() == 1 }
+pthreads = () bool { pthread_threads() == 1 }
 
 // 0 from the pthread family is success; anything else is already -errno.
 status = (code: i64) Res<(), i64> {
@@ -75,14 +76,14 @@ ignore_status = (code: i64) { status(code).ignore(); }
 // in Drepper's "Futexes Are Tricky". Unlocking a 2 wakes one waiter, which
 // then takes the lock as 2 so a later unlock wakes the next.
 mutex_init* = (m: Ptr<u8>) Res<(), i64> {
-    darwin().match({
+    pthreads().match({
         true  => status(pthread_mutex_init(m, 0)),
         false => atomic_store_u32(m.to<u32>(), 0),
     })
 }
 
 mutex_lock* = (m: Ptr<u8>) {
-    darwin().match({
+    pthreads().match({
         true  => pthread_mutex_lock(m).ignore_status(),
         false => {
             word = m.to<u32>();
@@ -99,7 +100,7 @@ lock_contended = (word: Ptr<u32>) {
 }
 
 mutex_unlock* = (m: Ptr<u8>) {
-    darwin().match({
+    pthreads().match({
         true  => pthread_mutex_unlock(m).ignore_status(),
         false => {
             word = m.to<u32>();
@@ -109,7 +110,7 @@ mutex_unlock* = (m: Ptr<u8>) {
 }
 
 mutex_destroy* = (m: Ptr<u8>) {
-    darwin().match({ true => pthread_mutex_destroy(
+    pthreads().match({ true => pthread_mutex_destroy(
         m
     ).ignore_status(), false => () });
 }
@@ -123,14 +124,14 @@ mutex_destroy* = (m: Ptr<u8>) {
 // signal between the release and the sleep is never lost. Wakeups may be
 // spurious; callers wait in a loop on their own condition.
 cond_init* = (c: Ptr<u8>) Res<(), i64> {
-    darwin().match({
+    pthreads().match({
         true  => status(pthread_cond_init(c, 0)),
         false => atomic_store_u32(c.to<u32>(), 0),
     })
 }
 
 cond_wait* = (c: Ptr<u8>, m: Ptr<u8>) {
-    darwin().match({
+    pthreads().match({
         true  => pthread_cond_wait(c, m).ignore_status(),
         false => {
             word = c.to<u32>();
@@ -144,7 +145,7 @@ cond_wait* = (c: Ptr<u8>, m: Ptr<u8>) {
 }
 
 cond_signal* = (c: Ptr<u8>) {
-    darwin().match({
+    pthreads().match({
         true  => pthread_cond_signal(c).ignore_status(),
         false => {
             word = c.to<u32>();
@@ -155,7 +156,7 @@ cond_signal* = (c: Ptr<u8>) {
 }
 
 cond_broadcast* = (c: Ptr<u8>) {
-    darwin().match({
+    pthreads().match({
         true  => pthread_cond_broadcast(c).ignore_status(),
         false => {
             word = c.to<u32>();
@@ -166,7 +167,7 @@ cond_broadcast* = (c: Ptr<u8>) {
 }
 
 cond_destroy* = (c: Ptr<u8>) {
-    darwin().match({ true => pthread_cond_destroy(
+    pthreads().match({ true => pthread_cond_destroy(
         c
     ).ignore_status(), false => () });
 }
@@ -178,7 +179,7 @@ cond_destroy* = (c: Ptr<u8>) {
 // Start a thread running the compiler-provided function at `entry` with
 // `arg`. The handle is the thread's control block; join it exactly once.
 thread_spawn* = (entry: usize, arg: Ptr<u8>) Res<Ptr<u8>, i64> {
-    darwin().match({
+    pthreads().match({
         true  => spawn_pthread(entry, arg),
         false => spawn_clone(entry, arg),
     })
@@ -236,7 +237,7 @@ fill_block = (
 // the thread can no longer touch its stack.
 thread_join* = (t: Ptr<u8>) Res<(), i64> {
     words = t.to<usize>();
-    darwin().match({
+    pthreads().match({
         true  => {
             status(pthread_join(words.read(4), 0)).try();
             Pages().free(t);
@@ -260,7 +261,7 @@ self_word = () usize { thread_self().to_usize().value_or(0) }
 
 // Whether the calling thread is the one `t` started.
 thread_is_current* = (t: Ptr<u8>) bool {
-    darwin().match({
+    pthreads().match({
         true  => self_word() == t.to<usize>().read(4),
         false => self_word() == address_of(t),
     })

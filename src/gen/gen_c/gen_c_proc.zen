@@ -3,6 +3,7 @@
 { AllocError } = std.mem
 { Emit } = gen.gen_emit
 { CBackend } = gen.gen_c.gen_c_state
+{ uses_sys } = gen.gen_c.gen_c_sys
 { Res, Ok } = std.core
 
 uses_proc = (be: CBackend) bool {
@@ -14,7 +15,7 @@ uses_proc = (be: CBackend) bool {
 // Feature selection precedes every header: glibc otherwise hides POSIX
 // declarations under strict C modes, including when std.proc is not used.
 emit_native_features* = (be: CBackend, out :: Emit) Res<AllocError> {
-    (be.uses_proc() || be.c_headers.len > 0).then(() {
+    (be.uses_proc() || be.c_headers.len > 0 || be.uses_sys()).then(() {
         out.say("#ifndef _GNU_SOURCE").try();
         out.say("#define _GNU_SOURCE").try();
         out.say("#endif").try();

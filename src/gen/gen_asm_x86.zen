@@ -1366,9 +1366,16 @@ Assembly = {
         call.call.match({
             // The first word of every thread control block is its own
             // address, and %fs points at the running thread's block.
-            ThreadSelf  => self.out.add("    movq %fs:0, %rax\n"),
-            CloneThread => self.out.add("    call za_clone\n"),
-            _           => linux_x86_64(call.call).match({
+            ThreadSelf    => self.out.add("    movq %fs:0, %rax\n"),
+            // The runtime word is the block's eighth word.
+            ThreadWordGet => self.out.add(
+                "    movq %fs:0, %rax\n    movq 56(%rax), %rax\n"
+            ),
+            ThreadWordSet => self.out.add(
+                "    movq %fs:0, %rax\n    movq %rdi, 56(%rax)\n    xorl %eax, %eax\n"
+            ),
+            CloneThread   => self.out.add("    call za_clone\n"),
+            _             => linux_x86_64(call.call).match({
                 Ok(number) => self.out.fmt(
                     "    movl ${}, %eax\n    syscall\n",
                     number

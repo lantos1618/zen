@@ -1,0 +1,343 @@
+// std.sys on the C backend. The native backend issues each bodiless
+// std.sys operation as a system call or a libSystem call; here each one
+// becomes a small static C function over the C library, emitted only when a
+// program reaches it. The results keep std.sys's contract on every OS: a
+// negative value is `-errno`, so the Zen code above this layer (threads,
+// the actor runtime, pages) is the same on both backends.
+//
+// Threads, locks and conditions go through pthreads here on every OS, as on
+// native macOS: `pthread_threads` answers 1, and the raw-clone operations
+// answer -ENOSYS. Atomics are the compiler's sequentially consistent
+// `__atomic` builtins. Two operations carry process state: the 256-byte
+// process block and the per-thread runtime word. They are declared in the
+// shared prelude and defined once, beside `main`, so a program split into
+// many C files still has one of each.
+
+{ Function } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str, String } = std.text
+{ Res, Ok, None, Range } = std.core
+{ TyId } = sema.sema_ty
+{ Def } = sema.sema_def
+{ Emit } = gen.gen_emit
+{ CBackend, ForeignFunction } = gen.gen_c.gen_c_state
+{ ctype } = gen.gen_c.gen_c_type
+{ comment } = gen.gen_c.gen_c_runtime
+
+SYS_MODULE: str = "std.sys.sys"
+
+// Whether `d` is one of std.sys's bodiless operations.
+is_sys_op* = (be: CBackend, d: Def) bool {
+    be.check.world.module_name(d.id).eq(SYS_MODULE)
+}
+
+// The C function implementing std.sys's `name`, written into `symbol`, with
+// its definition queued for the prelude. False when this backend has no C
+// implementation of that operation.
+need_sys* = (
+    be     :: CBackend,
+    name   : str,
+    f      : Function,
+    ret    : TyId,
+    sig    : Vec<TyId>,
+    symbol :: String
+) Res<bool, AllocError> {
+    sys_body(name).match({
+        None  => Ok(false),
+        Ok(_) => {
+            symbol.fmt("zg_sys_{}", name).try();
+            be.sys_ops.find((entry) { entry.name.view().eq(name) }).match({
+                Ok(_) => Ok(true),
+                None  => {
+                    proto ::= be.alloc.String().try();
+                    proto.fmt("static ").try();
+                    be.ctype(ret, proto).try();
+                    proto.fmt(" {}(", symbol.view()).try();
+                    (f.params.len == 0).then(() { proto.add("void").try() });
+                    Range(0, f.params.len).loop((h, i) {
+                        (i > 0).then(() { proto.add(", ").try() });
+                        ty = sig.get(i).value_or(TyId(index: 0));
+                        be.ctype(ty, proto).try();
+                        proto.add(" a").try();
+                        proto.write_usize(i).try();
+                    });
+                    proto.add(")").try();
+                    owned ::= be.alloc.String().try();
+                    owned.add(name).try();
+                    be.sys_ops.add(ForeignFunction(
+                        name: owned,
+                        proto: proto
+                    )).try();
+                    Ok(true)
+                },
+            })
+        },
+    })
+}
+
+uses_sys* = (be: CBackend) bool { be.sys_ops.len > 0 }
+
+// The headers, the shared state's declarations and every operation the
+// program reached, in the order they were first reached.
+emit_sys* = (be :: CBackend, out :: Emit) Res<AllocError> {
+    be.uses_sys().match({
+        false => Ok,
+        true  => be.write_sys(out),
+    })
+}
+
+write_sys = (be :: CBackend, out :: Emit) Res<AllocError> {
+    comment(
+        out,
+        "std.sys over the C library; results are -errno on failure"
+    ).try();
+    out.say("#include <errno.h>").try();
+    out.say("#include <fcntl.h>").try();
+    out.say("#include <pthread.h>").try();
+    out.say("#include <sched.h>").try();
+    out.say("#include <string.h>").try();
+    out.say("#include <time.h>").try();
+    out.say("#include <unistd.h>").try();
+    out.say("#include <sys/file.h>").try();
+    out.say("#include <sys/mman.h>").try();
+    out.say("#include <sys/random.h>").try();
+    out.say("#include <sys/socket.h>").try();
+    out.say("#if defined(__linux__)").try();
+    out.say("#include <sys/epoll.h>").try();
+    out.say("#include <sys/syscall.h>").try();
+    out.say("#elif defined(__APPLE__)").try();
+    out.say("#include <sys/event.h>").try();
+    out.say("#endif").try();
+    out.say("extern uint64_t zg_sys_globals[32];").try();
+    out.say("extern __thread uintptr_t zg_sys_word;").try();
+    out.say("static inline void *zg_sys_thread_main(void *raw) {").try();
+    out.say("    uint8_t *block = (uint8_t *)raw;").try();
+    out.say("    uintptr_t entry, arg;").try();
+    out.say("    memcpy(&entry, block + 8, sizeof entry);").try();
+    out.say("    memcpy(&arg, block + 16, sizeof arg);").try();
+    out.say("    ((void (*)(uint8_t *))entry)((uint8_t *)arg);").try();
+    out.say("    return NULL;").try();
+    out.say("}").try();
+    out.say(
+        "static inline int64_t zg_sys_result(int64_t r) { return r < 0 ? -(int64_t)errno : r; }"
+    ).try();
+    Range(0, be.sys_ops.len).loop((h, i) {
+        entry = be.sys_ops.get(i).ok_or(AllocError.OutOfMemory).try();
+        out.bytes(entry.proto.view()).try();
+        out.say(" {").try();
+        out.bytes("    ").try();
+        out.say(sys_body(entry.name.view()).value_or("return 0;")).try();
+        out.say("}").try();
+    });
+    out.line()
+}
+
+// The definitions of the shared state, written once beside `main`.
+emit_sys_globals* = (be :: CBackend, out :: Emit) Res<AllocError> {
+    be.uses_sys().match({
+        false => Ok,
+        true  => {
+            out.say(
+                "uint64_t zg_sys_globals[32] __attribute__((aligned(16)));"
+            ).try();
+            out.say("__thread uintptr_t zg_sys_word;").try();
+            out.line()
+        },
+    })
+}
+
+// After `main` returns: call the exit hook std.sys's runtime installed in
+// the process block's first word, as the native runtimes do.
+write_sys_exit_hook* = (be :: CBackend, out :: Emit) Res<AllocError> {
+    be.uses_sys().match({
+        false => Ok,
+        true  => out.say(
+            "if (zg_sys_globals[0]) ((void (*)(void))(uintptr_t)zg_sys_globals[0])();"
+        ),
+    })
+}
+
+// Each body names its parameters a0, a1, ... in declaration order.
+sys_body = (name: str) Res<str> {
+    name.match({
+        "read"                   => Ok(
+            "return zg_sys_result((int64_t)read((int)a0, a1, (size_t)a2));"
+        ),
+        "write"                  => Ok(
+            "return zg_sys_result((int64_t)write((int)a0, a1, (size_t)a2));"
+        ),
+        "openat"                 => Ok(
+            "return zg_sys_result((int64_t)openat((int)a0, (const char *)a1, (int)a2, (mode_t)a3));"
+        ),
+        "close"                  => Ok(
+            "return zg_sys_result((int64_t)close((int)a0));"
+        ),
+        "mmap"                   => Ok(
+            "void *p = mmap((void *)(uintptr_t)a0, (size_t)a1, (int)a2, (int)a3, (int)a4, (off_t)a5); return p == MAP_FAILED ? -(int64_t)errno : (int64_t)(uintptr_t)p;"
+        ),
+        "munmap"                 => Ok(
+            "return zg_sys_result((int64_t)munmap((void *)(uintptr_t)a0, (size_t)a1));"
+        ),
+        "mprotect"               => Ok(
+            "return zg_sys_result((int64_t)mprotect((void *)(uintptr_t)a0, (size_t)a1, (int)a2));"
+        ),
+        "exit_group"             => Ok("_exit((int)a0); return 0;"),
+        "clock_gettime"          => Ok(
+            "struct timespec t; if (clock_gettime((clockid_t)a0, &t) != 0) return -(int64_t)errno; int64_t w[2] = { (int64_t)t.tv_sec, (int64_t)t.tv_nsec }; memcpy(a1, w, sizeof w); return 0;"
+        ),
+        "clock_ns"               => Ok(
+            "struct timespec t; clock_gettime((clockid_t)a0, &t); return (uint64_t)t.tv_sec * UINT64_C(1000000000) + (uint64_t)t.tv_nsec;"
+        ),
+        "getrandom"              => Ok(
+            "size_t done = 0; while (done < (size_t)a1) { size_t n = (size_t)a1 - done; if (n > 256) n = 256; if (getentropy(a0 + done, n) != 0) return -(int64_t)errno; done += n; } return (int64_t)done;"
+        ),
+        "socket"                 => Ok(
+            "return zg_sys_result((int64_t)socket((int)a0, (int)a1, (int)a2));"
+        ),
+        "bind"                   => Ok(
+            "return zg_sys_result((int64_t)bind((int)a0, (const struct sockaddr *)(void *)a1, (socklen_t)a2));"
+        ),
+        "listen"                 => Ok(
+            "return zg_sys_result((int64_t)listen((int)a0, (int)a1));"
+        ),
+        "connect"                => Ok(
+            "return zg_sys_result((int64_t)connect((int)a0, (const struct sockaddr *)(void *)a1, (socklen_t)a2));"
+        ),
+        "accept4"                => Ok(
+            "socklen_t *len = (socklen_t *)(void *)a2;\n#if defined(__linux__)\n    return zg_sys_result((int64_t)accept4((int)a0, (struct sockaddr *)(void *)a1, len, (int)a3));\n#else\n    if (a3 != 0) return -(int64_t)EINVAL; return zg_sys_result((int64_t)accept((int)a0, (struct sockaddr *)(void *)a1, len));\n#endif"
+        ),
+        "epoll_create1"          => Ok(
+            "#if defined(__linux__)\n    return zg_sys_result((int64_t)epoll_create1((int)a0));\n#else\n    return -(int64_t)ENOSYS;\n#endif"
+        ),
+        "epoll_ctl"              => Ok(
+            "#if defined(__linux__)\n    return zg_sys_result((int64_t)epoll_ctl((int)a0, (int)a1, (int)a2, (struct epoll_event *)(void *)a3));\n#else\n    (void)a0; (void)a1; (void)a2; (void)a3; return -(int64_t)ENOSYS;\n#endif"
+        ),
+        "epoll_pwait"            => Ok(
+            "#if defined(__linux__)\n    (void)a4; (void)a5; return zg_sys_result((int64_t)epoll_wait((int)a0, (struct epoll_event *)(void *)a1, (int)a2, (int)a3));\n#else\n    (void)a0; (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; return -(int64_t)ENOSYS;\n#endif"
+        ),
+        "kqueue"                 => Ok(
+            "#if defined(__APPLE__)\n    return zg_sys_result((int64_t)kqueue());\n#else\n    return -(int64_t)ENOSYS;\n#endif"
+        ),
+        "kevent"                 => Ok(
+            "#if defined(__APPLE__)\n    return zg_sys_result((int64_t)kevent((int)a0, (const struct kevent *)(void *)a1, (int)a2, (struct kevent *)(void *)a3, (int)a4, (const struct timespec *)(void *)a5));\n#else\n    (void)a0; (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; return -(int64_t)ENOSYS;\n#endif"
+        ),
+        "futex"                  => Ok(
+            "#if defined(__linux__)\n    return zg_sys_result((int64_t)syscall(SYS_futex, a0, (int)a1, (unsigned)a2, (void *)(uintptr_t)a3, (void *)(uintptr_t)a4, (unsigned)a5));\n#else\n    (void)a0; (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; return -(int64_t)ENOSYS;\n#endif"
+        ),
+        "clone"                  => Ok(
+            "(void)a0; (void)a1; (void)a2; (void)a3; (void)a4; return -(int64_t)ENOSYS;"
+        ),
+        "clone_thread"           => Ok(
+            "(void)a0; (void)a1; (void)a2; return -(int64_t)ENOSYS;"
+        ),
+        "nanosleep"              => Ok(
+            "return zg_sys_result((int64_t)nanosleep((const struct timespec *)(void *)a0, (struct timespec *)(void *)a1));"
+        ),
+        "nanosleep_ns"           => Ok(
+            "struct timespec t; t.tv_sec = (time_t)(a0 / UINT64_C(1000000000)); t.tv_nsec = (long)(a0 % UINT64_C(1000000000)); return zg_sys_result((int64_t)nanosleep(&t, NULL));"
+        ),
+        "flock"                  => Ok(
+            "return zg_sys_result((int64_t)flock((int)a0, (int)a1));"
+        ),
+        "sched_getaffinity"      => Ok(
+            "#if defined(__linux__)\n    return zg_sys_result((int64_t)syscall(SYS_sched_getaffinity, (int)a0, (size_t)a1, (void *)a2));\n#else\n    (void)a0; (void)a1; (void)a2; return -(int64_t)ENOSYS;\n#endif"
+        ),
+        "sysconf"                => Ok(
+            "return zg_sys_result((int64_t)sysconf((int)a0));"
+        ),
+        "thread_self"            => Ok(
+            "return (int64_t)(uintptr_t)pthread_self();"
+        ),
+        "pthread_start"          => Ok(
+            "pthread_t t; pthread_attr_t at; pthread_attr_init(&at); pthread_attr_setstacksize(&at, 8388608); int r = pthread_create(&t, &at, zg_sys_thread_main, a0); pthread_attr_destroy(&at); if (r != 0) return -(int64_t)r; memcpy(a0 + 32, &t, sizeof t); return 0;"
+        ),
+        "pthread_join"           => Ok(
+            "pthread_t t; memcpy(&t, &a0, sizeof t); (void)a1; return -(int64_t)pthread_join(t, NULL);"
+        ),
+        "pthread_mutex_init"     => Ok(
+            "(void)a1; return -(int64_t)pthread_mutex_init((pthread_mutex_t *)(void *)a0, NULL);"
+        ),
+        "pthread_mutex_lock"     => Ok(
+            "return -(int64_t)pthread_mutex_lock((pthread_mutex_t *)(void *)a0);"
+        ),
+        "pthread_mutex_unlock"   => Ok(
+            "return -(int64_t)pthread_mutex_unlock((pthread_mutex_t *)(void *)a0);"
+        ),
+        "pthread_mutex_destroy"  => Ok(
+            "return -(int64_t)pthread_mutex_destroy((pthread_mutex_t *)(void *)a0);"
+        ),
+        "pthread_cond_init"      => Ok(
+            "(void)a1; return -(int64_t)pthread_cond_init((pthread_cond_t *)(void *)a0, NULL);"
+        ),
+        "pthread_cond_wait"      => Ok(
+            "return -(int64_t)pthread_cond_wait((pthread_cond_t *)(void *)a0, (pthread_mutex_t *)(void *)a1);"
+        ),
+        "pthread_cond_signal"    => Ok(
+            "return -(int64_t)pthread_cond_signal((pthread_cond_t *)(void *)a0);"
+        ),
+        "pthread_cond_broadcast" => Ok(
+            "return -(int64_t)pthread_cond_broadcast((pthread_cond_t *)(void *)a0);"
+        ),
+        "pthread_cond_destroy"   => Ok(
+            "return -(int64_t)pthread_cond_destroy((pthread_cond_t *)(void *)a0);"
+        ),
+        "atomic_load_u32"        => Ok(
+            "return __atomic_load_n(a0, __ATOMIC_SEQ_CST);"
+        ),
+        "atomic_store_u32"       => Ok(
+            "__atomic_store_n(a0, a1, __ATOMIC_SEQ_CST);"
+        ),
+        "atomic_swap_u32"        => Ok(
+            "return __atomic_exchange_n(a0, a1, __ATOMIC_SEQ_CST);"
+        ),
+        "atomic_add_u32"         => Ok(
+            "return __atomic_fetch_add(a0, a1, __ATOMIC_SEQ_CST);"
+        ),
+        "atomic_cas_u32"         => Ok(
+            "__atomic_compare_exchange_n(a0, &a1, a2, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); return a1;"
+        ),
+        "atomic_load_usize"      => Ok(
+            "return __atomic_load_n(a0, __ATOMIC_SEQ_CST);"
+        ),
+        "atomic_store_usize"     => Ok(
+            "__atomic_store_n(a0, a1, __ATOMIC_SEQ_CST);"
+        ),
+        "atomic_swap_usize"      => Ok(
+            "return __atomic_exchange_n(a0, a1, __ATOMIC_SEQ_CST);"
+        ),
+        "atomic_add_usize"       => Ok(
+            "return __atomic_fetch_add(a0, a1, __ATOMIC_SEQ_CST);"
+        ),
+        "atomic_cas_usize"       => Ok(
+            "__atomic_compare_exchange_n(a0, &a1, a2, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); return a1;"
+        ),
+        "call_entry"             => Ok(
+            "((void (*)(uint8_t *, uint8_t *))(uintptr_t)a0)(a1, a2);"
+        ),
+        "process_block"          => Ok("return (uint8_t *)zg_sys_globals;"),
+        "thread_word"            => Ok("return zg_sys_word;"),
+        "set_thread_word"        => Ok("zg_sys_word = a0;"),
+        "at_fdcwd"               => Ok("return AT_FDCWD;"),
+        "o_rdonly"               => Ok("return O_RDONLY;"),
+        "o_wronly"               => Ok("return O_WRONLY;"),
+        "o_rdwr"                 => Ok("return O_RDWR;"),
+        "o_creat"                => Ok("return O_CREAT;"),
+        "o_trunc"                => Ok("return O_TRUNC;"),
+        "o_append"               => Ok("return O_APPEND;"),
+        "o_cloexec"              => Ok("return O_CLOEXEC;"),
+        "o_directory"            => Ok("return O_DIRECTORY;"),
+        "clock_monotonic"        => Ok("return CLOCK_MONOTONIC;"),
+        "clock_realtime"         => Ok("return CLOCK_REALTIME;"),
+        "eintr"                  => Ok("return EINTR;"),
+        "eagain"                 => Ok("return EAGAIN;"),
+        "map_private_anonymous"  => Ok("return MAP_PRIVATE | MAP_ANONYMOUS;"),
+        "platform_darwin"        => Ok(
+            "#if defined(__APPLE__)\n    return 1;\n#else\n    return 0;\n#endif"
+        ),
+        "pthread_threads"        => Ok("return 1;"),
+        "pointer_at"             => Ok("return (uint8_t *)(uintptr_t)a0;"),
+        "address_of"             => Ok("return (size_t)(uintptr_t)a0;"),
+        _                        => None,
+    })
+}

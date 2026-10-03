@@ -36,7 +36,14 @@ show = (f: Foo) {
 main = () i32 {
     show(Foo(name: 1));
     show(Foo(1));
-    show(Foo(name: 2, a: 32, b: "hi", p: Point(x: 3, y: 4), n: Ok(None), d: None));
+    show(Foo(
+        name: 2,
+        a: 32,
+        b: "hi",
+        p: Point(x: 3, y: 4),
+        n: Ok(None),
+        d: None
+    ));
     o = Outer(inner: Foo(name: 3));
     show(o.inner);
     o.extra.match({ Ok(v) => println("extra = {}", v), None => println("extra = none") });

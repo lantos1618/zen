@@ -17,7 +17,6 @@
 { unify, arg_type, enter_tparams, leave_tparams } = gen.gen_c.gen_c_mono
 { ctype, field_type, request_type, has_storage, is_native_record } = gen.gen_c.gen_c_type
 { write_none } = gen.gen_c.gen_c_type
-{ omittable } = sema.sema_cand
 { expr, ty_of } = gen.gen_c.gen_c_expr
 { is_pure_value } = gen.gen_c.gen_c_const
 { holds, value_held } = gen.gen_c.gen_c_expr
@@ -365,7 +364,7 @@ Initialisers = {
     absent = (self: @Self, be :: CBackend, name: str, seen: usize,
               out :: String) Res<usize, AllocError> {
         fty = self.fields.ty_of(be, name);
-        be.check.omittable(fty).match({
+        absence(be, fty).match({
             false => Ok(0),
             true  => {
                 (seen > 0).then(() { out.add(", ").try() });
@@ -459,6 +458,15 @@ Initialisers = {
         want = self.fields.ty_of(be, name);
         be.value_held(a.value, self.call_ctx, want, hold, out)
     }
+}
+
+// A `Res<T>` reads as `Ok(T) | None`; only that reading has a `None` for an
+// omission to supply.
+absence = (be :: CBackend, ty: TyId) bool {
+    be.check.types.at(ty).match({
+        Res(r) => r.form.match({ Absence => true, _ => false }),
+        _      => false,
+    })
 }
 
 // Both field-like AST forms store their optional declared value here.

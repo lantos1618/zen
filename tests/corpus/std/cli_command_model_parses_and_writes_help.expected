@@ -2,7 +2,7 @@ ok verbose= jobs=4 input=main.zen define=one
 ok input=main.zen define=two define=three mode=small jobs=2 (default)
 error: invalid value `nope` for `--jobs`
 error: option `--jobs` requires a value
-error: invalid value `fast` for `--mode`
+error: invalid value `fast` for `--mode`: expected debug, release or small
 error: required argument `INPUT` is missing
 error: argument `--verbose` cannot be used more than once
 error: unknown option `--bogus` for `tool build`

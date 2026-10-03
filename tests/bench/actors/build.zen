@@ -4,7 +4,29 @@
 { Res, Ok, Path } = std.core
 
 build = (b :: Builder) Res<BuildError> {
-    b.exe("spawn", { src: Path("spawn.zen"), deps: [], backend: Codegen.C, out: Ok(Path("bin/c/spawn")) }).try();
-    b.exe("spawn-asm", { src: Path("spawn.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/spawn")) }).try();
+    b.exe(
+        "spawn",
+        { src: Path("spawn.zen"), deps: [], backend: Codegen.C, out: Ok(Path("bin/c/spawn")) }
+    ).try();
+    b.exe(
+        "spawn-asm",
+        { src: Path("spawn.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/spawn")) }
+    ).try();
+    b.exe(
+        "pingpong",
+        { src: Path("pingpong.zen"), deps: [], backend: Codegen.C, out: Ok(Path("bin/c/pingpong")) }
+    ).try();
+    b.exe(
+        "pingpong-asm",
+        { src: Path("pingpong.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/pingpong")) }
+    ).try();
+    b.exe(
+        "ring",
+        { src: Path("ring.zen"), deps: [], backend: Codegen.C, out: Ok(Path("bin/c/ring")) }
+    ).try();
+    b.exe(
+        "ring-asm",
+        { src: Path("ring.zen"), deps: [], backend: Codegen.Asm, out: Ok(Path("bin/asm/ring")) }
+    ).try();
     Ok
 }

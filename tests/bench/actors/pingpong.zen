@@ -1,0 +1,75 @@
+// PAIRS pairs of actors each bounce one message ROUNDS round trips; a
+// tally reports when every pair is done. ns per round trip (per pair) and
+// messages per second overall.
+
+{ Res, Ok, None, loop } = std.core
+{ Env } = std.env
+{ Actor, Ref, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+{ param } = common
+
+Tally = { left :: usize, pairs: usize, rounds: usize, start :: u64 = 0 }
+
+Tally.impl(Actor, {
+    begin = (self :: @Self, ctx: Context) { self.start = ctx.env.clock.since_start().ns; }
+
+    done = (self :: @Self, ctx: Context) {
+        self.left = self.left - 1;
+        (self.left == 0).then(() {
+            ns   = (ctx.env.clock.since_start().ns - self.start).to_usize().value_or(
+                0
+            );
+            msgs = self.pairs * self.rounds * 2;
+            println(
+                "bench=pingpong pairs={} rounds={} round_trip_ns={} msgs_per_s={}",
+                self.pairs,
+                self.rounds,
+                ns / self.rounds,
+                msgs * 1000 / (ns / 1000000 + 1)
+            );
+        });
+    }
+})
+
+Pong = { ping :: Res<Ref<Ping>> = None }
+
+Pong.impl(Actor, {
+    link = (self :: @Self, ctx: Context, p: Ref<Ping>) { self.ping = Ok(p); }
+    ball = (self :: @Self, ctx: Context, n: u64) {
+        self.ping.match({ Ok(p) => p.ball(n).ignore(), None => () });
+    }
+})
+
+Ping = { pong: Ref<Pong>, tally: Ref<Tally> }
+
+Ping.impl(Actor, {
+    ball = (self :: @Self, ctx: Context, n: u64) {
+        (n == 0).match({
+            true  => self.tally.done().ignore(),
+            false => self.pong.ball(n - 1).ignore(),
+        });
+    }
+})
+
+Error = ActorStartError | ActorError
+
+main = (env: Env) Res<i32, Error> {
+    pairs  = param(env, "PAIRS", 1);
+    rounds = param(env, "ROUNDS", 10000000);
+    tally  = env.spawn(Tally(left: pairs, pairs: pairs, rounds: rounds)).try();
+    a      = env.mem.alloc();
+    pings ::= a.Vec<Ref<Ping>>();
+    i     :: usize = 0;
+    loop(() { i < pairs }, (h) {
+        pong = env.spawn(Pong()).try();
+        ping = env.spawn(Ping(pong: pong, tally: tally)).try();
+        pong.link(ping).try();
+        pings.add(ping).ignore();
+        i = i + 1;
+    });
+    env.threads.sleep(100);
+    tally.begin().try();
+    env.threads.sleep(10);
+    pings.loop((p) { p.ball(rounds.to_u64()).ignore(); });
+    Ok(0)
+}

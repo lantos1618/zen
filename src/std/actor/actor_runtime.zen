@@ -38,6 +38,7 @@
 { Res, Ok, None, loop, Range } = std.core
 { atomic_load_usize, atomic_store_usize, atomic_add_usize, atomic_cas_usize } = std.sys
 { atomic_swap_usize, atomic_load_u32, atomic_cas_u32, atomic_store_u32 } = std.sys
+{ atomic_store_release_usize } = std.sys
 { thread_word, set_thread_word, process_block, call_entry, pointer_at, address_of } = std.sys
 { cpu_count, monotonic_ns, nanosleep_ns, spin_hint, env_var, mmap, map_private_anonymous } = std.sys
 { thread_spawn, thread_join, mutex_init, mutex_lock, mutex_unlock, cond_init } = std.sys.sys_thread
@@ -86,6 +87,12 @@ asub = (p: Ptr<u8>, i: usize, value: usize) usize { atomic_add_usize(
 
 acas = (p: Ptr<u8>, i: usize, expected: usize, desired: usize) usize {
     atomic_cas_usize(word_at(p, i), expected, desired)
+}
+
+// A release store: for words other threads only read as hints (turn
+// counters, the preemption flag) or that publish what was written before.
+arel = (p: Ptr<u8>, i: usize, value: usize) {
+    atomic_store_release_usize(word_at(p, i), value);
 }
 
 aswap = (p: Ptr<u8>, i: usize, value: usize) usize { atomic_swap_usize(
@@ -283,6 +290,8 @@ ring_slot = (w: Ptr<u8>, i: usize) Ptr<usize> { word_at(
     i & RING_MASK
 ) }
 
+ring_size = (w: Ptr<u8>) usize { aload(w, W_TAIL) -% aload(w, W_HEAD) }
+
 ring_room = (w: Ptr<u8>) bool { aload(w, W_TAIL) - aload(w, W_HEAD) < RING }
 
 // The owner's push; the caller checked for room.
@@ -404,18 +413,24 @@ try_acquire = (slot: Ptr<u8>, gen: usize) bool {
     }).value_or(false)
 }
 
-// Queue an actor this thread just acquired: next on this worker (its
-// LIFO slot) when there is one, else the injector.
+// Queue an actor this thread just acquired: next on this worker (its LIFO
+// slot) when there is one, else the injector. An actor placed in the LIFO
+// slot wakes nobody: it runs as soon as the current turn ends, on this
+// core. Only the actor it displaces to the ring, or one in the injector, is
+// work another worker should come for. (sysmon covers the case of a LIFO
+// actor stuck behind a long turn.)
 schedule = (g: Ptr<u8>, l: Ptr<u8>, a: Ptr<u8>) {
     w = at(load(l, L_WORKER));
     w.is_null().match({
-        true  => inject(g, a),
+        true  => { inject(g, a); wake_one(g); },
         false => {
             displaced = aswap(w, W_NEXT, addr(a));
-            (displaced != 0).then(() { ring_push(g, w, at(displaced)); });
+            (displaced != 0).then(() {
+                ring_push(g, w, at(displaced));
+                wake_one(g);
+            });
         },
     });
-    wake_one(g);
 }
 
 // ---------------------------------------------------------------------
@@ -437,9 +452,10 @@ mailbox_init = (a: Ptr<u8>) {
 }
 
 mailbox_put = (a: Ptr<u8>, node: usize) {
-    astore(at(node), M_NEXT, 0);
+    // The node is private until the exchange publishes it.
+    store(at(node), M_NEXT, 0);
     prev = aswap(a, B_HEAD, node);
-    astore(at(prev), M_NEXT, node);
+    arel(at(prev), M_NEXT, node);
 }
 
 // The running worker only.
@@ -816,9 +832,9 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
     mine = load(a, B_REF);
     slot = slot_of_ref(g, mine);
     gen  = ref_gen(mine);
-    astore(w, W_PREEMPT, 0);
-    astore(w, W_TURNS, load(w, W_TURNS) + 1);
-    astore(w, W_IN_TURN, 1);
+    arel(w, W_PREEMPT, 0);
+    arel(w, W_TURNS, load(w, W_TURNS) + 1);
+    arel(w, W_IN_TURN, 1);
     store(l, L_ACTOR, addr(a));
     taken :: usize = 0;
     ((aload(slot, S_LIFE) & BLOCKED) == 0).then(() {
@@ -844,7 +860,7 @@ run = (g: Ptr<u8>, l: Ptr<u8>, w: Ptr<u8>, a: Ptr<u8>) {
     });
     store(l, L_ACTOR, 0);
     current = at(load(l, L_WORKER));
-    (!current.is_null()).then(() { astore(current, W_IN_TURN, 0); });
+    (!current.is_null()).then(() { arel(current, W_IN_TURN, 0); });
     v       = aload(slot, S_LIFE);
     yielded = load(l, L_YIELD) != 0;
     store(l, L_YIELD, 0);
@@ -1110,7 +1126,7 @@ detach = (g: Ptr<u8>, l: Ptr<u8>) {
     (!w.is_null()).then(() {
         store(l, L_WORKER, 0);
         aadd(g, G_DETACHED, 1);
-        astore(w, W_IN_TURN, 0);
+        arel(w, W_IN_TURN, 0);
         stat(g, S_HANDOFFS);
         mutex_lock(g.offset(G_SPARE_LOCK));
         aset(g, G_ORPHANS, one_bit(load(w, W_ID)));
@@ -1198,10 +1214,14 @@ sysmon = (g: Ptr<u8>) {
         Range(0, load(g, G_WORKERS)).loop((i) {
             w    = worker_at(g, i);
             turn = aload(w, W_TURNS);
-            (aload(w, W_IN_TURN) == 1 && turn == load(w, W_SEEN) && aload(w, W_PREEMPT) == 0).then(() {
+            long = aload(w, W_IN_TURN) == 1 && turn == load(w, W_SEEN);
+            (long && aload(w, W_PREEMPT) == 0).then(() {
                 astore(w, W_PREEMPT, 1);
                 stat(g, S_PREEMPTS);
             });
+            // Work queued behind a long turn: make sure some worker is
+            // awake to steal it.
+            (long && (aload(w, W_NEXT) != 0 || ring_size(w) > 0)).then(() { wake_one(g); });
             store(w, W_SEEN, turn);
         });
     });

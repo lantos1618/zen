@@ -39,7 +39,7 @@ main = (env: Env) Res<i32, AllocError | FsError> {
     show(env, args(a, "src/library", "-o", "out.c").try()).try();
     show(env, args(a, "src/library", "--entry", "").try()).try();
     show(env, args(a, "", "", "").try()).try();
-    text = help(a, "check").try();
+    text = help(env, a, "check").try();
     println(
         "help {} {}",
         text.view().contains("--entry"),

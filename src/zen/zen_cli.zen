@@ -1,27 +1,30 @@
-// The `zen` command line. Each command is one std.cli model: the same
-// declaration parses argv, refuses a bad command line with that command's
-// help, and answers `zen help <command>`. argv and option values stay
-// borrowed. `--repeat` and `--permute` are hidden determinism controls.
+// The `zen` command line. `Line` is its commands and each command's struct is
+// that command's arguments: std.cli parses argv, refuses a bad command line
+// with that command's help and answers `zen help <command>`, all from these
+// types and their Cli tables. What the words mean for a build -- a project or
+// emitted source, a directory or a target -- is decided here. argv and option
+// values stay borrowed. `--repeat` and `--permute` are hidden determinism
+// controls (tests/determinism/README.md).
 
 { Alloc, AllocError } = std.mem
 { str, String } = std.text
 { Vec } = std.collections
 { Env } = std.env
-{ BuildArgs, ProjectArgs, Emission, Codegen, Mode, mode_named, permutation } = std.build
-{ Command, command, Spec, Kind, Matches, Usage } = std.cli
+{ BuildArgs, ProjectArgs, Emission, Codegen, Mode, Permutation } = std.build
+{ Cli, Spec, Stop, outcome } = std.cli
 { holds_build_zen } = zen.zen_path
-{ Res, Ok, None, loop } = std.core
+{ Res, Ok, Err, None } = std.core
 
 VERSION*: str = "0.1.0"
 
-Cli* = { Build: BuildArgs
+// What a command line asks zen to do.
+Job* = { Build: BuildArgs
     | Project: ProjectArgs
     | Run: ProjectArgs
     | Test: ProjectArgs
     | Fmt: FmtJob
     | Init: str
     | Lsp: LspJob
-    | Version: str
     | Help: String
     | Refused: Refusal }
 
@@ -49,448 +52,371 @@ ENVIRONMENT: str = "Environment:\n  ZEN_STD           Standard library root; def
 
 PROJECT_NOTE: str = "A word naming a directory that holds build.zen selects that project;\nany other word names a target declared by ./build.zen."
 
-Tool = { Version | Build | Check | Run | Test | Fmt | Init | Lsp | Help }
+Line = { Build: BuildLine
+    | Run: RunLine
+    | Test: TestLine
+    | Check: CheckLine
+    | Fmt: FmtLine
+    | Init: InitLine
+    | Lsp: LspLine }
 
-tool = (a: Alloc) Res<Command<Tool>, AllocError> {
-    cmd ::= command<Tool>(a, "zen", "The Zen compiler and project tool");
-    cmd.flag(
-        Tool.Version,
-        "--version",
-        Spec(short: 'V', help: "Print the version")
-    ).try();
-    cmd.command(
-        Tool.Build,
-        "build",
-        "Build project targets, or emit source from a root"
-    ).try();
-    cmd.command(Tool.Run, "run", "Build and run an executable target").try();
-    cmd.command(
-        Tool.Test,
-        "test",
-        "Build and run executable test targets"
-    ).try();
-    cmd.command(
-        Tool.Check,
-        "check",
-        "Check source without generating artifacts"
-    ).try();
-    cmd.command(Tool.Fmt, "fmt", "Format Zen source files").try();
-    cmd.command(
-        Tool.Init,
-        "init",
-        "Create a project: build.zen, src/main.zen and .gitignore"
-    ).try();
-    cmd.command(Tool.Lsp, "lsp", "Run the language server").try();
-    cmd.command(
-        Tool.Help,
-        "help",
-        "Print help for zen or one of its commands"
-    ).try();
-    cmd.note(ENVIRONMENT);
-    Ok(cmd)
+Line.impl(Cli, {
+    name: "zen",
+    about: "The Zen compiler and project tool",
+    version: VERSION,
+    note: ENVIRONMENT,
+})
+
+// The profile and toolchain options build, run and test share.
+RELEASE: Spec = Spec(help: "Build optimized: the same as --mode release")
+MODE: Spec = Spec(
+    help: "Build mode, which build.zen reads with b.mode(); debug when not given"
+)
+VERBOSE: Spec = Spec(short: 'v', help: "Print each phase, command and timing")
+CC: Spec = Spec(env: "CC", help: "C compiler: clang, gcc, tcc or a path")
+
+BuildLine = {
+    project: Res<str>,
+    release :: bool = false,
+    mode :: Res<Mode>,
+    verbose :: bool = false,
+    cc :: Res<str>,
+    target :: Res<str>,
+    emit_c :: bool = false,
+    emit_c_dir :: Res<str>,
+    output :: Res<str>,
+    backend :: Res<Codegen>,
+    entry :: Res<str>,
+    std :: Res<str>,
+    ffi :: bool = false,
+    symbol_map :: Res<str>,
+    repeat :: Res<usize>,
+    permute :: Res<Permutation>,
 }
 
-// The profile and toolchain options shared by build, run and test.
-profile = <T>(cmd :: Command<T>, release: T, mode: T, verbose: T, cc: T)
-          Res<AllocError> {
-    fast   = cmd.flag(
-        release,
-        "--release",
-        Spec(help: "Build optimized: the same as --mode release")
-    ).try();
-    chosen = cmd.option(
-        mode,
-        "--mode",
-        Spec(
-            value: "MODE",
-            choices: "debug|release|small",
-            help: "Build mode, which build.zen reads with b.mode(); debug when not given"
-        )
-    ).try();
-    cmd.conflicts(fast, chosen).try();
-    cmd.flag(
-        verbose,
-        "--verbose",
-        Spec(short: 'v', help: "Print each phase, command and timing")
-    ).try();
-    cmd.option(
-        cc,
-        "--cc",
-        Spec(
-            value: "CC",
-            env: "CC",
-            help: "C compiler: clang, gcc, tcc or a path"
-        )
-    ).try();
-    Ok
+BuildLine.impl(Cli, {
+    about: "Build project targets, or emit source from a root",
+    note: PROJECT_NOTE,
+    project: Spec(
+        help: "Target name or project directory; with --emit-c, -o or --backend, a source root"
+    ),
+    release: RELEASE,
+    mode: MODE,
+    verbose: VERBOSE,
+    cc: CC,
+    target: Spec(
+        value: "TRIPLE",
+        help: "Platform to build for, such as x86_64-linux or arm64-darwin; js-browser with --backend js"
+    ),
+    emit_c: Spec(help: "Emit C to standard output, or to -o"),
+    emit_c_dir: Spec(value: "DIR", help: "Emit one C file per module"),
+    output: Spec(
+        short: 'o',
+        value: "FILE",
+        help: "Write generated source to FILE"
+    ),
+    backend: Spec(value: "NAME", help: "Generator for emitted source"),
+    entry: Spec(value: "FILE", help: "Entry file inside the root"),
+    std: Spec(value: "PATH", help: "Standard library root"),
+    ffi: Spec(help: "Allow foreign-function bindings"),
+    symbol_map: Spec(value: "FILE", help: "Write the generated symbol map"),
+    repeat: Spec(hidden: true),
+    permute: Spec(hidden: true),
+})
+
+RunLine = {
+    target: Res<str>,
+    release :: bool = false,
+    mode :: Res<Mode>,
+    verbose :: bool = false,
+    cc :: Res<str>,
+    args :: Vec<str>,
 }
 
-BuildId = { Release
-    | Profile
-    | Verbose
-    | Cc
-    | Target
-    | Project
-    | EmitC
-    | EmitDir
-    | Out
-    | Backend
-    | Entry
-    | StdRoot
-    | Ffi
-    | SymbolMap
-    | Repeat
-    | Permute }
+RunLine.impl(Cli, {
+    about: "Build and run an executable target",
+    note: "Words after `--` are passed to the program.",
+    target: Spec(
+        help: "Executable target, or a project directory; needed when build.zen declares several"
+    ),
+    release: RELEASE,
+    mode: MODE,
+    verbose: VERBOSE,
+    cc: CC,
+    args: Spec(trailing: true),
+})
 
-build_model = (a: Alloc) Res<Command<BuildId>, AllocError> {
-    cmd ::= command<BuildId>(
-        a,
-        "zen build",
-        "Build project targets, or emit source from a root"
-    );
-    cmd.positional(
-        BuildId.Project,
-        "PROJECT",
-        Spec(
-            help: "Target name or project directory; with --emit-c, -o or --backend, a source root"
-        )
-    ).try();
-    profile<BuildId>(
-        cmd,
-        BuildId.Release,
-        BuildId.Profile,
-        BuildId.Verbose,
-        BuildId.Cc
-    ).try();
-    cmd.option(
-        BuildId.Target,
-        "--target",
-        Spec(
-            value: "TRIPLE",
-            help: "Platform to build for, such as x86_64-linux or arm64-darwin; js-browser with --backend js"
-        )
-    ).try();
-    cmd.flag(
-        BuildId.EmitC,
-        "--emit-c",
-        Spec(help: "Emit C to standard output, or to -o")
-    ).try();
-    cmd.option(
-        BuildId.EmitDir,
-        "--emit-c-dir",
-        Spec(value: "DIR", help: "Emit one C file per module")
-    ).try();
-    cmd.option(
-        BuildId.Out,
-        "--output",
-        Spec(short: 'o', value: "FILE", help: "Write generated source to FILE")
-    ).try();
-    cmd.option(
-        BuildId.Backend,
-        "--backend",
-        Spec(
-            value: "NAME",
-            choices: "c|js|asm",
-            help: "Generator for emitted source"
-        )
-    ).try();
-    source_options<BuildId>(
-        cmd,
-        BuildId.Entry,
-        BuildId.StdRoot,
-        BuildId.Ffi
-    ).try();
-    cmd.option(
-        BuildId.SymbolMap,
-        "--symbol-map",
-        Spec(value: "FILE", help: "Write the generated symbol map")
-    ).try();
-    cmd.option(
-        BuildId.Repeat,
-        "--repeat",
-        Spec(kind: Kind.Unsigned, hidden: true)
-    ).try();
-    cmd.option(
-        BuildId.Permute,
-        "--permute",
-        Spec(choices: "reverse|rotate|interleave", hidden: true)
-    ).try();
-    cmd.note(PROJECT_NOTE);
-    Ok(cmd)
+TestLine = {
+    project: Res<str>,
+    target: Res<str>,
+    release :: bool = false,
+    mode :: Res<Mode>,
+    verbose :: bool = false,
+    cc :: Res<str>,
+    args :: Vec<str>,
 }
 
-source_options = <T>(
-    cmd      :: Command<T>,
-    entry    : T,
-    std_root : T,
-    ffi      : T
-) Res<AllocError> {
-    cmd.option(
-        entry,
-        "--entry",
-        Spec(value: "FILE", help: "Entry file inside the root")
-    ).try();
-    cmd.option(
-        std_root,
-        "--std",
-        Spec(value: "PATH", help: "Standard library root")
-    ).try();
-    cmd.flag(ffi, "--ffi", Spec(help: "Allow foreign-function bindings")).try();
-    Ok
+TestLine.impl(Cli, {
+    about: "Build and run executable test targets",
+    note: "Every test target builds before any runs. Words after `--` are passed\nto each test program.",
+    project: Spec(help: "Test target, or a project directory"),
+    target: Spec(help: "Test target within that project"),
+    release: RELEASE,
+    mode: MODE,
+    verbose: VERBOSE,
+    cc: CC,
+    args: Spec(trailing: true),
+})
+
+CheckLine = {
+    root: str,
+    entry :: Res<str>,
+    std :: Res<str>,
+    ffi :: bool = false,
 }
 
-RunId = { Release | Profile | Verbose | Cc | Project }
+CheckLine.impl(Cli, {
+    about: "Check source without generating artifacts",
+    root: Spec(help: "Compilation root directory"),
+    entry: Spec(value: "FILE", help: "Entry file inside the root"),
+    std: Spec(value: "PATH", help: "Standard library root"),
+    ffi: Spec(help: "Allow foreign-function bindings"),
+})
 
-run_model = (a: Alloc) Res<Command<RunId>, AllocError> {
-    cmd ::= command<RunId>(a, "zen run", "Build and run an executable target");
-    cmd.positional(
-        RunId.Project,
-        "TARGET",
-        Spec(
-            help: "Executable target, or a project directory; needed when build.zen declares several"
-        )
-    ).try();
-    profile<RunId>(
-        cmd,
-        RunId.Release,
-        RunId.Profile,
-        RunId.Verbose,
-        RunId.Cc
-    ).try();
-    cmd.trailing_args();
-    cmd.note("Words after `--` are passed to the program.");
-    Ok(cmd)
+FmtLine = {
+    check :: bool = false,
+    files: Vec<str>,
 }
 
-TestId = { Release | Profile | Verbose | Cc | Project | Target }
+FmtLine.impl(Cli, {
+    about: "Format Zen source files",
+    check: Spec(help: "Report files that would change; write nothing"),
+    files: Spec(value: "FILE", help: "Zen source file"),
+})
 
-test_model = (a: Alloc) Res<Command<TestId>, AllocError> {
-    cmd ::= command<TestId>(
-        a,
-        "zen test",
-        "Build and run executable test targets"
-    );
-    cmd.positional(
-        TestId.Project,
-        "PROJECT",
-        Spec(help: "Test target, or a project directory")
-    ).try();
-    cmd.positional(
-        TestId.Target,
-        "TARGET",
-        Spec(help: "Test target within that project")
-    ).try();
-    profile<TestId>(
-        cmd,
-        TestId.Release,
-        TestId.Profile,
-        TestId.Verbose,
-        TestId.Cc
-    ).try();
-    cmd.trailing_args();
-    cmd.note(
-        "Every test target builds before any runs. Words after `--` are passed\nto each test program."
-    );
-    Ok(cmd)
+InitLine = { dir: Res<str> }
+
+InitLine.impl(Cli, {
+    about: "Create a project: build.zen, src/main.zen and .gitignore",
+    note: "Existing files are never overwritten.",
+    dir: Spec(help: "Project directory, created when missing [default: .]"),
+})
+
+LspLine = {
+    stdio :: bool = false,
+    requests: Res<str>,
+    replies: Res<str>,
 }
 
-CheckId = { Root | Entry | StdRoot | Ffi }
+LspLine.impl(Cli, {
+    about: "Run the language server",
+    stdio: Spec(help: "Serve stdin and stdout (the default)"),
+    requests: Spec(help: "Request file; omit to serve stdin"),
+    replies: Spec(help: "Reply file, required with REQUESTS"),
+})
 
-check_model = (a: Alloc) Res<Command<CheckId>, AllocError> {
-    cmd ::= command<CheckId>(
-        a,
-        "zen check",
-        "Check source without generating artifacts"
-    );
-    cmd.positional(
-        CheckId.Root,
-        "ROOT",
-        Spec(required: true, help: "Compilation root directory")
-    ).try();
-    source_options<CheckId>(
-        cmd,
-        CheckId.Entry,
-        CheckId.StdRoot,
-        CheckId.Ffi
-    ).try();
-    Ok(cmd)
+// The one place `Line` is parsed, so its parser is written once.
+parsed = (env: Env, a: Alloc, argv: Vec<str>) Res<Line, Stop> {
+    outcome<Line>(env, a, argv)
 }
 
-FmtId = { Check | File }
-
-fmt_model = (a: Alloc) Res<Command<FmtId>, AllocError> {
-    cmd ::= command<FmtId>(a, "zen fmt", "Format Zen source files");
-    cmd.flag(
-        FmtId.Check,
-        "--check",
-        Spec(help: "Report files that would change; write nothing")
-    ).try();
-    cmd.positional(
-        FmtId.File,
-        "FILE",
-        Spec(required: true, many: true, help: "Zen source file")
-    ).try();
-    Ok(cmd)
-}
-
-InitId = { | Dir }
-
-init_model = (a: Alloc) Res<Command<InitId>, AllocError> {
-    cmd ::= command<InitId>(
-        a,
-        "zen init",
-        "Create a project: build.zen, src/main.zen and .gitignore"
-    );
-    cmd.positional(
-        InitId.Dir,
-        "DIR",
-        Spec(default: ".", help: "Project directory, created when missing")
-    ).try();
-    cmd.note("Existing files are never overwritten.");
-    Ok(cmd)
-}
-
-LspId = { Stdio | Requests | Replies }
-
-lsp_model = (a: Alloc) Res<Command<LspId>, AllocError> {
-    cmd ::= command<LspId>(a, "zen lsp", "Run the language server");
-    cmd.flag(
-        LspId.Stdio,
-        "--stdio",
-        Spec(help: "Serve stdin and stdout (the default)")
-    ).try();
-    cmd.positional(
-        LspId.Requests,
-        "REQUESTS",
-        Spec(help: "Request file; omit to serve stdin")
-    ).try();
-    cmd.positional(
-        LspId.Replies,
-        "REPLIES",
-        Spec(help: "Reply file, required with REQUESTS")
-    ).try();
-    Ok(cmd)
-}
-
-HelpId = { | Topic }
-
-help_model = (a: Alloc) Res<Command<HelpId>, AllocError> {
-    cmd ::= command<HelpId>(
-        a,
-        "zen help",
-        "Print help for zen or one of its commands"
-    );
-    cmd.positional(
-        HelpId.Topic,
-        "COMMAND",
-        Spec(help: "The command to describe")
-    ).try();
-    Ok(cmd)
-}
-
-// The help text of `zen` itself (an empty name) or of one command.
-help* = (a: Alloc, name: str) Res<String, AllocError> {
-    root = tool(a).try();
-    name.is_empty().match({
-        true  => root.help(),
-        false => root.subcommand(name).match({
-            None   => root.help(),
-            Ok(id) => help_of(a, id),
+cli* = (env: Env, a: Alloc, argv: Vec<str>) Res<Job, AllocError> {
+    parsed(env, a, argv).match({
+        Err(stop) => stop.match({
+            Help(text)       => Ok(Job.Help(text)),
+            Refused(refusal) => Ok(Job.Refused(Refusal(
+                message: refusal.message,
+                help: refusal.help
+            ))),
+            Failed(e)        => Err(e),
+        }),
+        Ok(line)  => line.match({
+            Build(b) => build_job(env, a, argv, b),
+            Run(r)   => Chosen(command: "run", words: words(a, r.target, None).try(), release: r.release, mode: r.mode, verbose: r.verbose, cc: r.cc, args_at: argv.len - r.args.len).project(env, a, argv, (job) { Job.Run(job) }),
+            Test(t)  => Chosen(command: "test", words: words(a, t.project, t.target).try(), release: t.release, mode: t.mode, verbose: t.verbose, cc: t.cc, args_at: argv.len - t.args.len).project(env, a, argv, (job) { Job.Test(job) }),
+            Check(c) => Ok(Job.Build(BuildArgs(
+                root: c.root,
+                entry: c.entry.value_or(""),
+                std_root: c.std.value_or(""),
+                ffi: c.ffi
+            ))),
+            Fmt(f)   => Ok(Job.Fmt(FmtJob(paths: f.files, check: f.check))),
+            Init(i)  => Ok(Job.Init(i.dir.value_or("."))),
+            Lsp(l)   => {
+                paired = l.requests.match({ Ok(_) => true, None => false })
+                    == l.replies.match({ Ok(_) => true, None => false });
+                paired.match({
+                    true  => Ok(Job.Lsp(LspJob(
+                        requests: l.requests,
+                        replies: l.replies
+                    ))),
+                    false => refused(
+                        env,
+                        a,
+                        "lsp",
+                        a.String("a request file needs a reply file").try()
+                    ),
+                })
+            },
         }),
     })
 }
 
-help_of = (a: Alloc, id: Tool) Res<String, AllocError> {
-    id.match({
-        Version => tool(a).try().help(),
-        Build   => build_model(a).try().help(),
-        Check   => check_model(a).try().help(),
-        Run     => run_model(a).try().help(),
-        Test    => test_model(a).try().help(),
-        Fmt     => fmt_model(a).try().help(),
-        Init    => init_model(a).try().help(),
-        Lsp     => lsp_model(a).try().help(),
-        Help    => help_model(a).try().help(),
+// The help text of `zen` itself (an empty name) or of one command.
+help* = (env: Env, a: Alloc, name: str) Res<String, AllocError> {
+    argv ::= a.Vec<str>();
+    argv.add("zen").try();
+    name.is_empty().match({
+        true  => argv.add("-h").try(),
+        false => { argv.add("help").try(); argv.add(name).try(); },
+    });
+    parsed(env, a, argv).match({
+        Err(Help(text))       => Ok(text),
+        Err(Refused(refusal)) => Ok(refusal.help),
+        Err(Failed(e))        => Err(e),
+        Ok(_)                 => a.String(),
     })
 }
 
-cli* = (env: Env, a: Alloc, argv: Vec<str>) Res<Cli, AllocError> {
-    root   = tool(a).try();
-    parsed = root.parse(env, argv, 1).try();
-    // `zen -h run` asks for run's help, so a picked command comes first.
-    parsed.picked.match({
-        Ok(picked) => command_cli(
+// A command line the types accepted and zen still refuses.
+refused = (
+    env     : Env,
+    a       : Alloc,
+    command : str,
+    message : String
+) Res<Job, AllocError> {
+    Ok(Job.Refused(Refusal(
+        message: message,
+        help: help(env, a, command).try()
+    )))
+}
+
+// `--release` and `--mode` both say which mode to build in.
+conflict = (release: bool, mode: Res<Mode>) bool {
+    release && mode.match({ Ok(_) => true, None => false })
+}
+
+released = (env: Env, a: Alloc, command: str) Res<Job, AllocError> {
+    refused(
+        env,
+        a,
+        command,
+        a.String("argument `--release` cannot be used with `--mode`").try()
+    )
+}
+
+// Whether a word of argv spells `--cc`: a C compiler from the environment
+// does not count, and the command line's own one does.
+written_cc = (argv: Vec<str>) bool {
+    argv.find(
+        (w) { w.eq("--cc") || w.starts_with("--cc=") }
+    ).match({ Ok(_) => true, None => false })
+}
+
+given = (r: Res<str>) bool { r.match({ Ok(_) => true, None => false }) }
+
+build_job = (
+    env  : Env,
+    a    : Alloc,
+    argv : Vec<str>,
+    b    : BuildLine
+) Res<Job, AllocError> {
+    // Any source-emission option selects the compilation-root interface;
+    // otherwise the build starts at build.zen.
+    source = b.emit_c || given(b.emit_c_dir) || given(b.output) || given(b.entry)
+        || given(b.symbol_map) || b.ffi
+        || b.backend.match({ Ok(_) => true, None => false })
+        || b.repeat.match({ Ok(_) => true, None => false })
+        || b.permute.match({ Ok(_) => true, None => false });
+    conflict(b.release, b.mode).match({
+        true  => released(env, a, "build"),
+        false => source.match({
+            true  => source_job(env, a, argv, b),
+            false => Chosen(command: "build", words: words(a, b.project, None).try(), release: b.release, mode: b.mode, verbose: b.verbose, cc: b.cc, triple: b.target, std_root: b.std.value_or(""), args_at: argv.len).project(env, a, argv, (job) { Job.Project(job) }),
+        }),
+    })
+}
+
+source_job = (
+    env  : Env,
+    a    : Alloc,
+    argv : Vec<str>,
+    b    : BuildLine
+) Res<Job, AllocError> {
+    root          = b.project.value_or("");
+    selected      = b.emit_c || b.emit_c_dir.match({ Ok(_) => true, None => false })
+        || b.backend.match({ Ok(_) => true, None => false });
+    profiled: str = b.release.match({
+        true  => "--release",
+        false => b.mode.match({
+            Ok(_) => "--mode",
+            None  => b.verbose.match({
+                true  => "--verbose",
+                false => written_cc(
+                    argv
+                ).match({ true => "--cc", false => "" }),
+            }),
+        }),
+    });
+    emission      = b.emit_c_dir.match({
+        Ok(dir) => Emission.Directory(dir),
+        None    => b.output.match({ Ok(file) => Emission.File(
+            file
+        ), None => Emission.Stdout }),
+    });
+    root.is_empty().match({
+        true  => refused(
             env,
             a,
-            argv,
-            picked.id,
-            picked.next,
-            parsed.help
+            "build",
+            a.String("`zen build` needs a source root to emit from").try()
         ),
-        None       => settled(a, root, parsed, false).try().match({
-            Ok(early) => Ok(early),
-            None      => (parsed.found.len == 0).match({
-                true  => Ok(Cli.Refused(Refusal(
-                    message: a.String().try(),
-                    help: root.help().try()
+        false => selected.match({
+            false => refused(
+                env,
+                a,
+                "build",
+                a.String(
+                    "`--emit-c` is required: a source build without `--emit-c` or `--backend` writes nothing"
+                ).try()
+            ),
+            true  => profiled.is_empty().match({
+                false => refused(
+                    env,
+                    a,
+                    "build",
+                    a.String(
+                        "`{}` applies to project builds, not to emitted source",
+                        profiled
+                    ).try()
+                ),
+                true  => Ok(Job.Build(BuildArgs(
+                    root: root,
+                    emission: emission,
+                    backend: b.backend.value_or(Codegen.C),
+                    entry: b.entry.value_or(""),
+                    std_root: b.std.value_or(""),
+                    symbol_map: b.symbol_map.value_or(""),
+                    ffi: b.ffi,
+                    repeat: b.repeat.match({ Ok(n) => (n == 0).match({ true => 1, false => n }), None => 1 }),
+                    permute: b.permute.value_or(Permutation.Natural),
+                    target: b.target.value_or("")
                 ))),
-                false => Ok(Cli.Version(VERSION)),
             }),
         }),
     })
 }
 
-command_cli = (
-    env   : Env,
-    a     : Alloc,
-    argv  : Vec<str>,
-    id    : Tool,
-    at    : usize,
-    asked : bool
-)
-              Res<Cli, AllocError> {
-    asked.match({
-        true  => Ok(Cli.Help(help_of(a, id).try())),
-        false => id.match({
-            Version => Ok(Cli.Version(VERSION)),
-            Build   => build_cli(env, a, argv, at),
-            Check   => check_cli(env, a, argv, at),
-            Run     => run_cli(env, a, argv, at),
-            Test    => test_cli(env, a, argv, at),
-            Fmt     => fmt_cli(env, a, argv, at),
-            Init    => init_cli(env, a, argv, at),
-            Lsp     => lsp_cli(env, a, argv, at),
-            Help    => help_cli(env, a, argv, at),
-        }),
-    })
-}
-
-// Requested help and refused command lines end parsing here; None means the
-// matches describe a command to perform.
-settled = <T>(a: Alloc, model: Command<T>, parsed: Matches<T>, asked: bool)
-          Res<Res<Cli>, AllocError> {
-    parsed.problem.match({
-        Err(usage) => Ok(Ok(refusal(a, model, usage).try())),
-        Ok         => (asked || parsed.help).match({
-            true  => Ok(Ok(Cli.Help(model.help().try()))),
-            false => Ok(None),
-        }),
-    })
-}
-
-refusal = <T>(a: Alloc, model: Command<T>, usage: Usage) Res<Cli, AllocError> {
-    Ok(Cli.Refused(Refusal(
-        message: usage.message(a, model.name).try(),
-        help: model.help().try()
-    )))
-}
-
-refused = <T>(
-    a       : Alloc,
-    model   : Command<T>,
-    message : String
-) Res<Cli, AllocError> {
-    Ok(Cli.Refused(Refusal(message: message, help: model.help().try())))
+// A project command's positional words, in order.
+words = (
+    a      : Alloc,
+    first  : Res<str>,
+    second : Res<str>
+) Res<Vec<str>, AllocError> {
+    out ::= a.Vec<str>();
+    first.when_ok((w) { out.add(w).try(); });
+    second.when_ok((w) { out.add(w).try(); });
+    Ok(out)
 }
 
 // A project command's first word: a directory holding build.zen is the
@@ -504,389 +430,61 @@ place = (env: Env, a: Alloc, word: str) Place {
     })
 }
 
-build_cli = (
-    env  : Env,
-    a    : Alloc,
-    argv : Vec<str>,
-    at   : usize
-) Res<Cli, AllocError> {
-    model  = build_model(a).try();
-    parsed = model.parse(env, argv, at).try();
-    settled(a, model, parsed, false).try().match({
-        Ok(early) => Ok(early),
-        // Any source-emission option selects the compilation-root interface;
-        // otherwise the build starts at build.zen.
-        None      => parsed.found.find((f) { f.id.emits_source() }).match({
-            Ok(_) => source_cli(a, model, parsed),
-            None  => {
-                chosen ::= Chosen(words: a.Vec<str>());
-                parsed.found.loop((f) {
-                    f.id.match({
-                        Release => { chosen.mode = Mode.Release; },
-                        Profile => { chosen.mode = mode_named(f.text).value_or(Mode.Debug); },
-                        Verbose => { chosen.verbose = true; },
-                        Cc      => { chosen.cc = Ok(f.text); },
-                        Target  => { chosen.triple = Ok(f.text); },
-                        StdRoot => { chosen.std_root = f.text; },
-                        Project => chosen.words.add(f.text).try(),
-                        _       => (),
-                    });
-                });
-                chosen.project(
-                    env,
-                    a,
-                    model,
-                    argv,
-                    argv.len,
-                    (job) { Cli.Project(job) }
-                )
-            },
-        }),
-    })
-}
-
-// Options that only make sense when emitting source from a root.
-emits_source = (id: BuildId) bool {
-    id.match({
-        EmitC     => true,
-        EmitDir   => true,
-        Out       => true,
-        Backend   => true,
-        Entry     => true,
-        Ffi       => true,
-        SymbolMap => true,
-        Repeat    => true,
-        Permute   => true,
-        _         => false,
-    })
-}
-
-source_cli = (a: Alloc, model: Command<BuildId>, parsed: Matches<BuildId>)
-             Res<Cli, AllocError> {
-    root       ::= "";
-    out        ::= "";
-    dir        ::= "";
-    emit       ::= false;
-    entry      ::= "";
-    std_root   ::= "";
-    symbol_map ::= "";
-    ffi        ::= false;
-    target     ::= "";
-    permute    ::= "";
-    profiled   ::= "";
-    repeat     :: usize = 1;
-    backend    :: Res<Codegen> = None;
-    parsed.found.loop((f) {
-        line = f.origin.match({ Line => true, _ => false });
-        f.id.match({
-            Project   => { root = f.text; },
-            EmitC     => { emit = true; },
-            EmitDir   => { dir = f.text; emit = true; },
-            Out       => { out = f.text; },
-            Backend   => { backend = Codegen(f.text); },
-            Entry     => { entry = f.text; },
-            StdRoot   => { std_root = f.text; },
-            Ffi       => { ffi = true; },
-            SymbolMap => { symbol_map = f.text; },
-            Repeat    => { repeat = f.text.parse_usize().value_or(1); },
-            Permute   => { permute = f.text; },
-            Target    => { target = f.text; },
-            Release   => { profiled = "--release"; },
-            Profile   => { profiled = "--mode"; },
-            Verbose   => { profiled = "--verbose"; },
-            Cc        => line.then(() { profiled = "--cc"; }),
-        });
-    });
-    emission               = dir.is_empty().match({
-        false => Emission.Directory(dir),
-        true  => out.is_empty().match({ true => Emission.Stdout, false => Emission.File(
-            out
-        ) }),
-    });
-    selected               = emit || backend.match({ Ok(_) => true, None => false });
-    complaint: Res<String> = loop((h) {
-        root.is_empty().then(() {
-            h.break(
-                a.String("`zen build` needs a source root to emit from").try()
-            );
-        });
-        (!selected).then(() {
-            h.break(
-                a.String(
-                    "`--emit-c` is required: a source build without `--emit-c` or `--backend` writes nothing"
-                ).try()
-            );
-        });
-        (!profiled.is_empty()).then(() {
-            h.break(
-                a.String(
-                    "`{}` applies to project builds, not to emitted source",
-                    profiled
-                ).try()
-            );
-        });
-        h.break();
-    });
-    complaint.match({
-        Ok(message) => refused(a, model, message),
-        None        => Ok(Cli.Build(BuildArgs(
-            root: root,
-            emission: emission,
-            backend: backend.value_or(Codegen.C),
-            entry: entry,
-            std_root: std_root,
-            symbol_map: symbol_map,
-            ffi: ffi,
-            repeat: (repeat == 0).match({ true => 1, false => repeat }),
-            permute: permutation(permute),
-            target: target
-        ))),
-    })
-}
-
-// The options a project command collected, before its words are placed.
+// What a project command chose, before its words are placed.
 Chosen = {
-    words :: Vec<str>,
-    std_root :: str = "",
-    mode :: Mode = Mode.Debug,
-    verbose :: bool = false,
-    cc :: Res<str> = None,
+    command: str,
+    words: Vec<str>,
+    release: bool,
+    mode: Res<Mode>,
+    verbose: bool,
+    cc: Res<str>,
     triple :: Res<str> = None,
+    std_root :: str = "",
+    // The first word after `--`, or the end of argv.
+    args_at: usize,
 
     // The first word is a project directory or a target; a second word is a
     // target within the project the first one named.
-    project = <T>(
-        self  : @Self,
-        env   : Env,
-        a     : Alloc,
-        model : Command<T>,
-        argv  : Vec<str>,
-        rest  : usize,
-        made  : (job: ProjectArgs) Cli
-    ) Res<Cli, AllocError> {
+    project = (
+        self : @Self,
+        env  : Env,
+        a    : Alloc,
+        argv : Vec<str>,
+        made : (job: ProjectArgs) Job
+    ) Res<Job, AllocError> {
         first  = self.words.get(0).value_or("");
         second = self.words.get(1);
         placed = (first.is_empty()).match({ true => Place(root: ".", target: ""), false => place(env, a, first) });
         target = second.match({ Ok(word) => word, None => placed.target });
         stray  = second.match({ Ok(word) => !placed.target.is_empty(), None => false });
-        stray.match({
-            true  => refused(
-                a,
-                model,
-                a.String(
-                    "unexpected argument `{}` for `{}`: `{}` is not a project directory",
-                    second.value_or(""),
-                    model.name,
-                    first
-                ).try()
-            ),
-            false => Ok(made(ProjectArgs(
-                root: placed.root,
-                target: target,
-                std_root: self.std_root,
-                argv: argv,
-                args_at: rest,
-                mode: self.mode,
-                verbose: self.verbose,
-                cc: self.cc,
-                triple: self.triple
-            ))),
+        conflict(self.release, self.mode).match({
+            true  => released(env, a, self.command),
+            false => stray.match({
+                true  => refused(
+                    env,
+                    a,
+                    self.command,
+                    a.String(
+                        "unexpected argument `{}` for `zen {}`: `{}` is not a project directory",
+                        second.value_or(""),
+                        self.command,
+                        first
+                    ).try()
+                ),
+                false => Ok(made(ProjectArgs(
+                    root: placed.root,
+                    target: target,
+                    std_root: self.std_root,
+                    argv: argv,
+                    args_at: self.args_at,
+                    mode: self.release.match({ true => Mode.Release, false => self.mode.value_or(
+                        Mode.Debug
+                    ) }),
+                    verbose: self.verbose,
+                    cc: self.cc,
+                    triple: self.triple
+                ))),
+            }),
         })
     }
-}
-
-run_cli = (env: Env, a: Alloc, argv: Vec<str>, at: usize) Res<Cli, AllocError> {
-    model  = run_model(a).try();
-    parsed = model.parse(env, argv, at).try();
-    settled(a, model, parsed, false).try().match({
-        Ok(early) => Ok(early),
-        None      => {
-            chosen ::= Chosen(words: a.Vec<str>());
-            parsed.found.loop((f) {
-                f.id.match({
-                    Release => { chosen.mode = Mode.Release; },
-                    Profile => { chosen.mode = mode_named(f.text).value_or(Mode.Debug); },
-                    Verbose => { chosen.verbose = true; },
-                    Cc      => { chosen.cc = Ok(f.text); },
-                    Project => chosen.words.add(f.text).try(),
-                });
-            });
-            chosen.project(
-                env,
-                a,
-                model,
-                argv,
-                parsed.rest,
-                (job) { Cli.Run(job) }
-            )
-        },
-    })
-}
-
-test_cli = (
-    env  : Env,
-    a    : Alloc,
-    argv : Vec<str>,
-    at   : usize
-) Res<Cli, AllocError> {
-    model  = test_model(a).try();
-    parsed = model.parse(env, argv, at).try();
-    settled(a, model, parsed, false).try().match({
-        Ok(early) => Ok(early),
-        None      => {
-            chosen ::= Chosen(words: a.Vec<str>());
-            parsed.found.loop((f) {
-                f.id.match({
-                    Release => { chosen.mode = Mode.Release; },
-                    Profile => { chosen.mode = mode_named(f.text).value_or(Mode.Debug); },
-                    Verbose => { chosen.verbose = true; },
-                    Cc      => { chosen.cc = Ok(f.text); },
-                    Project => chosen.words.add(f.text).try(),
-                    Target  => chosen.words.add(f.text).try(),
-                });
-            });
-            chosen.project(
-                env,
-                a,
-                model,
-                argv,
-                parsed.rest,
-                (job) { Cli.Test(job) }
-            )
-        },
-    })
-}
-
-check_cli = (
-    env  : Env,
-    a    : Alloc,
-    argv : Vec<str>,
-    at   : usize
-) Res<Cli, AllocError> {
-    model  = check_model(a).try();
-    parsed = model.parse(env, argv, at).try();
-    settled(a, model, parsed, false).try().match({
-        Ok(early) => Ok(early),
-        None      => {
-            root     ::= "";
-            entry    ::= "";
-            std_root ::= "";
-            ffi      ::= false;
-            parsed.found.loop((f) {
-                f.id.match({
-                    Root    => { root = f.text; },
-                    Entry   => { entry = f.text; },
-                    StdRoot => { std_root = f.text; },
-                    Ffi     => { ffi = true; },
-                });
-            });
-            Ok(Cli.Build(BuildArgs(
-                root: root,
-                entry: entry,
-                std_root: std_root,
-                ffi: ffi
-            )))
-        },
-    })
-}
-
-fmt_cli = (env: Env, a: Alloc, argv: Vec<str>, at: usize) Res<Cli, AllocError> {
-    model  = fmt_model(a).try();
-    parsed = model.parse(env, argv, at).try();
-    settled(a, model, parsed, false).try().match({
-        Ok(early) => Ok(early),
-        None      => {
-            paths ::= a.Vec<str>();
-            check ::= false;
-            parsed.found.loop((f) {
-                f.id.match({
-                    Check => { check = true; },
-                    File  => paths.add(f.text).try(),
-                });
-            });
-            Ok(Cli.Fmt(FmtJob(paths: paths, check: check)))
-        },
-    })
-}
-
-init_cli = (
-    env  : Env,
-    a    : Alloc,
-    argv : Vec<str>,
-    at   : usize
-) Res<Cli, AllocError> {
-    model  = init_model(a).try();
-    parsed = model.parse(env, argv, at).try();
-    settled(a, model, parsed, false).try().match({
-        Ok(early) => Ok(early),
-        None      => {
-            dir ::= ".";
-            parsed.found.loop(
-                (f) { f.id.match({ Dir => { dir = f.text; } }); }
-            );
-            Ok(Cli.Init(dir))
-        },
-    })
-}
-
-lsp_cli = (env: Env, a: Alloc, argv: Vec<str>, at: usize) Res<Cli, AllocError> {
-    model  = lsp_model(a).try();
-    parsed = model.parse(env, argv, at).try();
-    settled(a, model, parsed, false).try().match({
-        Ok(early) => Ok(early),
-        None      => {
-            requests :: Res<str> = None;
-            replies  :: Res<str> = None;
-            parsed.found.loop((f) {
-                f.id.match({
-                    Stdio    => (),
-                    Requests => { requests = Ok(f.text); },
-                    Replies  => { replies = Ok(f.text); },
-                });
-            });
-            paired = requests.match({ Ok(_) => true, None => false }) == replies.match({ Ok(_) => true, None => false });
-            paired.match({
-                true  => Ok(Cli.Lsp(LspJob(
-                    requests: requests,
-                    replies: replies
-                ))),
-                false => refused(
-                    a,
-                    model,
-                    a.String("a request file needs a reply file").try()
-                ),
-            })
-        },
-    })
-}
-
-help_cli = (
-    env  : Env,
-    a    : Alloc,
-    argv : Vec<str>,
-    at   : usize
-) Res<Cli, AllocError> {
-    model  = help_model(a).try();
-    parsed = model.parse(env, argv, at).try();
-    settled(a, model, parsed, false).try().match({
-        Ok(early) => Ok(early),
-        None      => {
-            root = tool(a).try();
-            topic :: Res<str> = None;
-            parsed.found.loop(
-                (f) { f.id.match({ Topic => { topic = Ok(f.text); } }); }
-            );
-            topic.match({
-                None     => Ok(Cli.Help(root.help().try())),
-                Ok(name) => root.subcommand(name).match({
-                    Ok(id) => Ok(Cli.Help(help_of(a, id).try())),
-                    None   => refused(
-                        a,
-                        root,
-                        a.String("unknown command `{}` for `zen`", name).try()
-                    ),
-                }),
-            })
-        },
-    })
 }

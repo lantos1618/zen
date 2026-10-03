@@ -2,7 +2,7 @@
 { Res, Ok, Range } = std.core
 { Vec } = std.collections
 { str } = std.text
-{ Cli, cli } = zen
+{ cli } = zen
 { Emission } = std.build
 { Env } = std.env
 { println } = std.io

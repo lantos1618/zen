@@ -5,7 +5,7 @@
 { Env, FsError } = std.env
 { BuildArgs, ProjectArgs } = std.build
 
-{ Cli*, FmtJob*, LspJob*, Refusal*, cli*, help } = zen.zen_cli
+{ Job*, FmtJob*, LspJob*, Refusal*, cli* } = zen.zen_cli
 { Build* } = zen.zen_build
 { fs_message } = std.env
 { std_root_for, holds_std } = zen.zen_path
@@ -27,10 +27,6 @@ main = (env: Env) Res<i32, AllocError> {
         Fmt(job)         => format(env, alloc, job),
         Init(dir)        => init(env, alloc, dir),
         Lsp(job)         => lsp(env, alloc, job),
-        Version(v)       => {
-            println("zen {}", v);
-            Ok(0)
-        },
         Help(text)       => {
             print("{}", text.view());
             Ok(0)

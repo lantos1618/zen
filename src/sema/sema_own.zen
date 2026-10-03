@@ -1,6 +1,6 @@
 { Expr, ExprId, Block, BlockId, Stmt, Bind, Deferred } = std.ast
 { Decl, Member, Function, Param } = std.ast
-{ Call, Arg, Access, Match, Arm, Lambda, Index, Consume } = std.ast
+{ Call, Arg, Access, Match, Arm, Lambda, Index, Consume, PatternId } = std.ast
 { Name, Paren, Try, Unary, Binary } = std.ast
 { Span } = std.source
 { Record, FixedArray, Field, Const } = std.ast
@@ -10,7 +10,7 @@
 { Res, Ok, None, loop, Range } = std.core
 { TyId } = sema.sema_ty
 { Checker, Ctx, UNRESOLVED, truncate } = sema.sema_check
-{ SemaFault, NameFault } = sema.sema_diag
+{ SemaFault, NameFault, LentFault } = sema.sema_diag
 { check_receiver, check_write_place, check_lent_args, check_lent_fields } = sema.sema_recv
 { check_scope_returned, check_scope_stored } = sema.sema_scope
 { check_scope_captured, is_scope_value, call_escapes } = sema.sema_scope
@@ -41,6 +41,9 @@ OwnVar* = {
     source :: Res<ExprId>,
     fields :: Vec<FieldOrigin>,
     span*: Span,
+    // A match binding of a value this frame reaches through a parameter it
+    // does not own: the parameter's name. The bound value is the caller's.
+    lent* :: Res<str> = None,
 }
 
 // Field overrides are immutable between snapshots. An absent field inherits
@@ -1157,7 +1160,10 @@ consume_name = (c :: Checker, o :: Own, id: ExprId, text: str)
     c.refuse_pinned(o, node.span, text).try();
     o.find_var(text).match({
         None  => Ok,
-        Ok(i) => o.kill(i, "", node.span),
+        Ok(i) => {
+            c.refuse_lent(o, node.span, i).try();
+            o.kill(i, "", node.span)
+        },
     }).try();
 }
 
@@ -1181,7 +1187,10 @@ consume_field_of = (
             node.span,
             SemaFault.ConsumeThroughHandle(NameFault(name: a.name.text))
         ),
-        true  => c.kill_field(o, node, a, root),
+        true  => {
+            c.refuse_lent(o, node.span, root).try();
+            c.kill_field(o, node, a, root)
+        },
     })
 }
 
@@ -1627,10 +1636,14 @@ own_match = (c :: Checker, o :: Own, m: Match, ctx: Ctx)
         )).try();
     });
     joined ::= c.alloc.Vec<Place>();
+    lent    = c.lent_scrutinee(o, m.scrutinee);
     m.arms.loop((h, a) {
         o.restore_provenance(before);
         o.set_dead(entry).try();
+        vmark = o.vars.len;
+        c.bind_pattern(o, a.pattern, lent).try();
         c.own_expr(o, a.body, ctx).try();
+        o.release(vmark).try();
         o.join_provenance(origins).try();
         out = o.dead_state().try();
         o.set_dead(joined).try();
@@ -1643,6 +1656,72 @@ own_match = (c :: Checker, o :: Own, m: Match, ctx: Ctx)
         false => o.set_dead(joined).try(),
     });
     Ok;
+}
+
+// Whose value a match on `id` binds: the parameter it is reached through,
+// when this frame does not own it.
+lent_scrutinee = (c :: Checker, o :: Own, id: ExprId) Res<str> {
+    c.path_root(o, id).match({
+        None  => None,
+        Ok(i) => o.vars.get(i).match({
+            None  => None,
+            Ok(v) => v.lent.match({
+                Ok(root) => Ok(root),
+                None     => v.owned.match({ true => None, false => Ok(v.name) }),
+            }),
+        }),
+    })
+}
+
+// The names a destructuring pattern binds, scoped to its arm.
+bind_pattern = (c :: Checker, o :: Own, id: PatternId, lent: Res<str>)
+               Res<AllocError> {
+    c.tree.pattern_at(id).kind.match({
+        Destructure(d) => c.bind_binder(o, d.binder, lent),
+        _              => Ok,
+    })
+}
+
+bind_binder = (c :: Checker, o :: Own, id: PatternId, lent: Res<str>)
+              Res<AllocError> {
+    node = c.tree.pattern_at(id);
+    node.kind.match({
+        Name(pn)       => (pn.name.segments.len == 1).match({
+            false => Ok,
+            true  => o.vars.add(OwnVar(
+                name: pn.name.segment_at(0),
+                ty: UNRESOLVED,
+                // A pattern binding is its arm's own copy, and may be
+                // written like one.
+                mutable: true,
+                owned: true,
+                scoped: false,
+                arena: false,
+                source: None,
+                fields: o.alloc.Vec<FieldOrigin>(),
+                span: node.span,
+                lent: lent
+            )),
+        }),
+        Destructure(d) => c.bind_binder(o, d.binder, lent),
+        _              => Ok,
+    })
+}
+
+// Moving a match binding of a lent value out would leave the caller's
+// value holding a moved-out payload, which it still drops.
+refuse_lent = (c :: Checker, o :: Own, span: Span, root: usize)
+              Res<AllocError> {
+    o.vars.get(root).match({
+        None    => Ok,
+        Ok(var) => var.lent.match({
+            None    => Ok,
+            Ok(par) => c.refuse(span, SemaFault.ConsumeLentPayload(LentFault(
+                name: var.name,
+                param: par
+            ))),
+        }),
+    })
 }
 
 // The binding a place path is rooted at, or nothing when the path is not

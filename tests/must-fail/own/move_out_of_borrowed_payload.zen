@@ -1,0 +1,26 @@
+// `flush` reaches `saved` through `self`, which it does not own. Moving
+// the payload out leaves `saved` still holding Ok of the same Buf, so the
+// second flush sinks and drops it again.
+
+{ Res, Ok, None, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+Buf = { id: i32 }
+Buf.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id) } })
+sink = (b: Buf) { println("sink {}", b.id) }
+
+Holder = {
+    saved :: Res<Buf> = None,
+    flush = (self :: @Self) {
+        self.saved.match({ Ok(b) => { g = consume b; sink(g); }, None => () });
+    }
+}
+
+main = (env: Env) Res<i32, IoError> {
+    h ::= Holder();
+    h.saved = Ok(Buf(id: 7));
+    h.flush();
+    h.flush();
+    Ok(0)
+}

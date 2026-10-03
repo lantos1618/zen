@@ -14,6 +14,12 @@ HeldFault* = { name*: str, value*: i64, expected*: TyId }
 // A name and the module that does not export it.
 ExportFault* = { name*: str, module*: str }
 
+// A match binding and the parameter whose value it was bound from.
+LentFault* = {
+    name*: str,
+    param*: str,
+}
+
 // A place and the capture site that keeps it alive.
 CaptureFault* = {
     place*: str,
@@ -187,6 +193,7 @@ SemaFault* =
     | PartiallyMoved: NameFault        // a hole reaches the drop
     | ConsumeNotAPlace: NameFault      // an element index is not a place
     | ConsumeThroughHandle: NameFault  // move only what this frame owns
+    | ConsumeLentPayload: LentFault    // a match binding of a value reached through a parameter
     | CopyFromPointer: NameFault
     | CopyOfDropValue: NameFault       // `g = f` would drop twice
     | CopiedByInstance: CaptureFault   // a generic copies its `T`, here a Drop owner
@@ -322,6 +329,7 @@ message* = (fault: SemaFault) str {
         PartiallyMoved(_)            => "a partial move reaches the drop:",
         ConsumeNotAPlace(_)          => "cannot consume an array element: the index is a runtime value, so which element is dead is not a fact the compiler holds",
         ConsumeThroughHandle(_)      => "cannot consume through a handle: you may only move what this frame owns, and a bitwise copy of a handle would be left pointing at a dead value",
+        ConsumeLentPayload(_)        => "cannot move out of a borrowed value:",
         CopyFromPointer(_)           => "cannot copy a Drop owner through Ptr: use take to transfer an initialized slot",
         CopyOfDropValue(_)           => "cannot copy a Drop value: drop runs exactly once, so two live names for one value would drop it twice — construct a second one, or write `consume`",
         CopiedByInstance(_)          => "cannot copy a Drop value through a generic:",
@@ -401,6 +409,11 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         InfiniteSize(f)              => out.write_name(f),
         ConsumeNotAPlace(f)          => out.write_name(f),
         ConsumeThroughHandle(f)      => out.write_name(f),
+        ConsumeLentPayload(f)        => out.fmt(
+            " {} was bound by matching a value reached through `{}`, which this function does not own: the value is still the caller's after the match, so moving its payload out would leave the caller to use and drop it again — match on a value this function owns, or copy out what you need",
+            f.name,
+            f.param
+        ),
         CopyFromPointer(f)           => out.write_name(f),
         CopyOfDropValue(f)           => out.write_name(f),
         CopiedByInstance(f)          => out.write_instance_copy(f),

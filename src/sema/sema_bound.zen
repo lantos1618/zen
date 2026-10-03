@@ -12,7 +12,7 @@
 { opaque, Found, members_of, member_type, named_as } = sema.sema_member
 { bound_members, bound_member_type, has_member, impl_span, impl_bound_type } = sema.sema_supply
 { storage_seat_name, LocalImpl, local_impls, prim_named } = sema.sema_supply
-{ Cand, TBound, is_tvar } = sema.sema_cand
+{ Cand, TBound, is_tvar, omittable } = sema.sema_cand
 { Inst, module_name, subst, inst_of_named } = sema.sema_inst
 { res_sugar } = sema.sema_denote
 { Res, Ok, None } = std.core
@@ -299,13 +299,12 @@ absent_field = (c :: Checker, call: Call, ty: TyId, m: Member, span: Span)
                Res<AllocError> {
     name     = m.name().text;
     supplied = c.seat_written(call, ty, name).try();
-    (c.ctor_required(m, ty).try() && (supplied == false)).match({
-        true  => c.report(
-            span.file,
-            span,
-            SemaFault.CtorMissingField(NameFault(name: name))
-        ),
-        false => Ok,
+    m.kind.match({
+        Field(f) => (m.required() && (supplied == false)).match({
+            false => Ok,
+            true  => c.absent_required(f, name, ty, span),
+        }),
+        _        => Ok,
     })
 }
 
@@ -326,11 +325,29 @@ arg_writes_seat = (c :: Checker, a: Arg, i: usize, ty: TyId, name: str)
     })
 }
 
-ctor_required = (c :: Checker, m: Member, ty: TyId)
-                Res<bool, AllocError> {
-    m.kind.match({
-        Field(f) => Ok(m.required() && !c.written_res(f.type, ty).try()),
-        _        => Ok(false),
+// A required field may be left out only when it is written `Res<T>`, and
+// its omission is `None`. A failing Res — `Res<E>` with E an Error, or
+// `Res<T, E>` — stays required: failure is not absence.
+absent_required = (c :: Checker, f: Field, name: str, ty: TyId, span: Span)
+                  Res<AllocError> {
+    written = c.written_res(f.type, ty).try();
+    fty     = c.field_ty(ty, name).try();
+    absence = c.omittable(fty);
+    (written && absence).match({
+        true  => Ok,
+        false => c.report(span.file, span, written.match({
+            true  => SemaFault.CtorMissingFailure(NameFault(name: name)),
+            false => SemaFault.CtorMissingField(NameFault(name: name)),
+        })),
+    })
+}
+
+field_ty = (c :: Checker, ty: TyId, name: str) Res<TyId, AllocError> {
+    found ::= c.alloc.Vec<Found>();
+    c.members_of(ty, name, found).try();
+    found.get(0).match({
+        Ok(f) => Ok(f.ty),
+        None  => c.types.unknown(),
     })
 }
 

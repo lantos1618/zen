@@ -274,9 +274,24 @@ is_pure_call = (be :: CBackend, id: ExprId, c: Call, ctx: Ctx) bool {
         }),
     });
     selected.match({
-        None  => false,
+        None  => be.pure_variant_call(c, ctx),
         Ok(d) => be.pure_callee(c, d, ctx),
     })
+}
+
+// A variant built from pure payloads, such as `Ok(1)`, is a value of its
+// declaration just as a nullary variant is.
+pure_variant_call = (be :: CBackend, c: Call, ctx: Ctx) bool {
+    be.tree.expr_at(c.callee).kind.match({
+        Name(n) => be.names_variant(n.text, ctx) && be.pure_args(c, ctx),
+        _       => false,
+    })
+}
+
+names_variant = (be :: CBackend, text: str, ctx: Ctx) bool {
+    res = be.check.world.names_res_variant(be.tree, ctx.module, text)
+        .match({ Ok(b) => b, Err(_) => false });
+    res || be.variant_is_pure_name(text, ctx)
 }
 
 pure_callee = (be :: CBackend, c: Call, d: Def, ctx: Ctx) bool {

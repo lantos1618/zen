@@ -1,0 +1,2 @@
+required field `out`: only a `Res<T>` may be left out
+11:9

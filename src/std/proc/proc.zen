@@ -3,7 +3,7 @@
 { Alloc, AllocError, Ptr, null_ptr } = std.mem
 { str, String, str_at, c_text } = std.text
 { Vec } = std.collections
-{ Res, Ok, Err, ok_or, loop, Range, IoError, WriteError, Sink,
+{ Res, Ok, Err, None, ok_or, loop, Range, IoError, WriteError, Sink,
     Error } = std.core
 
 zg_os_proc_pipe = (fds: Ptr<i32>) i32
@@ -59,23 +59,47 @@ Arguments = {
     }
 }
 
-wait_for = (pid: i32, code: Ptr<i32>) Res<ProcError> {
-    rc ::= zg_os_proc_wait(pid, code);
-    loop(rc == -2, (h) { rc = zg_os_proc_wait(pid, code); });
+// A child this program spawned. Only a positive id names one process: 0 and
+// negative ids name process groups, so `kill` or `waitpid` on them would reach
+// the caller, its siblings, or every process the user owns. `of` is the only
+// way to make a Pid, and "no child" is None rather than a sentinel id.
+Pid = {
+    id: i32,
+
+    of = (id: i32) Res<Pid> {
+        (id > 0).match({ true => Ok(Pid(id: id)), false => None })
+    }
+}
+
+// waitpid fails past EINTR only with ECHILD: the child was already reaped,
+// so its id is no longer ours. Either outcome ends ownership of `pid`.
+wait_for = (pid: Pid, code: Ptr<i32>) Res<ProcError> {
+    rc ::= zg_os_proc_wait(pid.id, code);
+    loop(rc == -2, (h) { rc = zg_os_proc_wait(pid.id, code); });
     (rc == 0).ensure(ProcError.WaitFailed)
 }
 
-Child = { pid :: i32, out_fd :: i32, err_fd :: i32, next :: i32 }
+// Signal and reap a child that has not been waited for. An unreaped child,
+// even one that has exited, keeps its id reserved, so the signal can only
+// reach that child.
+stop = (pid: Pid, code: Ptr<i32>) {
+    zg_os_proc_kill(pid.id);
+    wait_for(pid, code).ignore();
+}
 
-// The deferred cleanup and stream operations share this state. Reaping sets
-// pid to -1 before cleanup, so a completed child's PID can never be killed.
+// `pid` is present exactly while the child is spawned and not yet waited for.
+Child = { pid :: Res<Pid>, out_fd :: i32, err_fd :: i32, next :: i32 }
+
+// The deferred cleanup and stream operations share this state. Waiting clears
+// pid before cleanup, so a reaped child's id, which the system may reuse, is
+// never signalled.
 Stream = {
     child: Ptr<Child>,
     code: Ptr<i32>,
 
     open = (a: Alloc, args: Arguments) Res<Stream, ProcError> {
         child = a.create<Child>().try(ProcError.ReadFailed);
-        child.write(0, Child(pid: -1, out_fd: -1, err_fd: -1, next: 0));
+        child.write(0, Child(pid: None, out_fd: -1, err_fd: -1, next: 0));
         code   = a.create<i32>().try(ProcError.ReadFailed);
         stream = Stream(child: child, code: code);
         stream.spawn(a, args).match({
@@ -106,7 +130,7 @@ Stream = {
             self.code
         );
         (rc == 0).ensure(ProcError.SpawnFailed).try();
-        child.pid = self.code.read(0);
+        child.pid = Pid.of(self.code.read(0));
         self.child.write(0, child);
     }
 
@@ -155,9 +179,10 @@ Stream = {
 
     wait = (self: @Self) Res<i32, ProcError> {
         child ::= self.child.read(0);
-        wait_for(child.pid, self.code).try();
-        child.pid = -1;
+        pid       = child.pid.ok_or(ProcError.WaitFailed).try();
+        child.pid = None;
         self.child.write(0, child);
+        wait_for(pid, self.code).try();
         Ok(self.code.read(0))
     }
 
@@ -165,11 +190,8 @@ Stream = {
         child = self.child.read(0);
         zg_os_proc_close(child.out_fd);
         zg_os_proc_close(child.err_fd);
-        (child.pid >= 0).then(() {
-            zg_os_proc_kill(child.pid);
-            wait_for(child.pid, self.code).ignore();
-        });
-        self.child.write(0, Child(pid: -1, out_fd: -1, err_fd: -1, next: 0));
+        child.pid.match({ Ok(pid) => stop(pid, self.code), None => () });
+        self.child.write(0, Child(pid: None, out_fd: -1, err_fd: -1, next: 0));
     }
 }
 
@@ -237,17 +259,14 @@ Process* = {
 
     run_argv_inherit* = (self: @Self, a: Alloc, cwd: str, argv: Vec<str>) Res<i32, ProcError> {
         args = Arguments.prepare(a, cwd, argv).try();
-        pid  = a.create<i32>().try(ProcError.ReadFailed);
+        id   = a.create<i32>().try(ProcError.ReadFailed);
         code = a.create<i32>().try(ProcError.ReadFailed);
-        rc   = zg_os_proc_spawn(args.cwd, args.argv.ptr(), -1, -1, pid);
+        rc   = zg_os_proc_spawn(args.cwd, args.argv.ptr(), -1, -1, id);
         (rc == 0).ensure(ProcError.SpawnFailed).try();
-        wait_for(pid.read(0), code).match({
-            Ok(_)  => Ok(code.read(0)),
-            Err(e) => {
-                zg_os_proc_kill(pid.read(0));
-                wait_for(pid.read(0), code).ignore();
-                Err(e)
-            },
-        })
+        pid = Pid.of(id.read(0)).ok_or(ProcError.SpawnFailed).try();
+        // A failed wait means the child was reaped elsewhere and its id may
+        // already belong to another process, so it is not signalled.
+        wait_for(pid, code).try();
+        Ok(code.read(0))
     }
 }

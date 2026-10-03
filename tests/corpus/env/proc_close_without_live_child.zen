@@ -1,0 +1,95 @@
+// Closing a process stream that owns no live child signals nothing. A stream
+// closes with no child when spawn fails, and after `wait` has reaped it; a
+// signal sent there to pid 0 would reach the whole process group, and one
+// sent to a reaped id could reach an unrelated process.
+//
+// The streams are closed in a probe: this program run again with an argument,
+// which first moves into a process group of its own. A regression that
+// signals the group then ends only the probe, and the parent reports its exit
+// status instead of the test runner, which shares the parent's group, dying.
+{ Res, Ok, Err, IoError, WriteError, Sink } = std.core
+{ ProcError, ProcStreamError, Process } = std.proc
+{ Alloc } = std.mem
+{ Env } = std.env
+
+Group = c.bind("unistd.h", { setpgid = (pid: i32, pgid: i32) i32 })
+
+Reject = {}
+Reject.impl(Sink, {
+    write = (self :: @Self, bytes: str) Res<WriteError> { Err(IoError.Full) }
+    write_byte = (self :: @Self, byte: u8) Res<WriteError> { Err(IoError.Full) }
+})
+
+spawn_failed = <T>(result: Res<T, ProcError>) bool {
+    result.match({ Ok(_) => false, Err(e) => e.match({ SpawnFailed => true, _ => false }) })
+}
+
+probe = (env: Env, a: Alloc) Res<i32, ProcStreamError> {
+    (Group.setpgid(0, 0) == 0).match({
+        true  => close_without_child(env, a),
+        false => {
+            env.out.println("probe could not leave the runner's group").try();
+            Ok(1)
+        },
+    })
+}
+
+close_without_child = (env: Env, a: Alloc) Res<i32, ProcStreamError> {
+    // Spawn fails, so the stream closes before it ever owned a child.
+    missing ::= a.Vec<str>();
+    missing.add("/zen-no-such-executable").try();
+    env.out.println(
+        "never spawned {}",
+        spawn_failed(env.proc.run_argv(a, "", missing))
+    ).try();
+    env.out.println(
+        "never spawned inherit {}",
+        spawn_failed(env.proc.run_argv_inherit(a, "", missing))
+    ).try();
+
+    // `wait` reaps the child, so the stream closes with no child left.
+    exits ::= a.Vec<str>();
+    exits.add("/bin/sh").try();
+    exits.add("-c").try();
+    exits.add("exit 3").try();
+    reaped = env.proc.run_argv(
+        a,
+        "",
+        exits
+    ).match({ Ok(value) => value.code, Err(_) => -1 });
+    env.out.println("reaped {}", reaped).try();
+
+    // A failing sink closes while the child is still owned: that one is stopped.
+    sleeps ::= a.Vec<str>();
+    sleeps.add("/bin/sh").try();
+    sleeps.add("-c").try();
+    sleeps.add("printf first; exec sleep 5").try();
+    reject ::= Reject();
+    err    ::= a.String().try();
+    stopped = env.proc.run_argv_into(a, "", sleeps, reject, err).match({
+        Ok(_)  => false,
+        Err(e) => e.match({ IoError(Full) => true, _ => false }),
+    });
+    env.out.println("live child stopped {}", stopped).try();
+
+    env.out.println("probe group intact").try();
+    Ok(0)
+}
+
+main = (env: Env) Res<i32, ProcStreamError> {
+    a = env.mem.alloc();
+    (env.argv.len > 1).match({
+        true  => probe(env, a),
+        false => run_probe(env, a),
+    })
+}
+
+run_probe = (env: Env, a: Alloc) Res<i32, ProcStreamError> {
+    self_path = env.argv.get(0).match({ Ok(path) => path, None => "" });
+    argv ::= a.Vec<str>();
+    argv.add(self_path).try();
+    argv.add("probe").try();
+    run = env.proc.run_argv(a, "", argv).try();
+    env.out.println("{}probe exit {}", run.out.view(), run.code).try();
+    Ok(0)
+}

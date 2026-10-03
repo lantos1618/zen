@@ -1,0 +1,307 @@
+// The contract std.cli's derived parser relies on, checked at each
+// `T.impl(Cli, {..})`: the table names real fields, variants and settings,
+// a Spec sets only what the type does not decide, every field has a shape a
+// command line can fill, and every subcommand is itself a command line. The
+// parser is written by the backend (gen_c_args.zen), which trusts these.
+
+{ Decl, Impl, Member, Variant, ExprId, TypeId } = std.ast
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Res, Ok, None } = std.core
+{ TyId, TyNamed, is_failure } = sema.sema_ty
+{ Def, decl_at } = sema.sema_def
+{ Checker, Ctx } = sema.sema_check
+{ SemaFault, NameFault } = sema.sema_diag
+{ type_from_ast } = sema.sema_denote
+{ LocalImpl, local_impls, impl_span } = sema.sema_supply
+{ ImplId } = sema.sema_id
+
+CLI_MODULE: str = "std.cli.cli_derive"
+
+is_cli* = (c: Checker, bound: TyId) bool {
+    c.types.at(bound).match({
+        Named(n) => n.name.eq("Cli") && c.world.module_name(n.decl).eq(CLI_MODULE),
+        _        => false,
+    })
+}
+
+// The command settings a table may bind, each a str.
+is_setting = (name: str) bool {
+    name.eq("name") || name.eq("about") || name.eq("note") || name.eq("version")
+}
+
+// What a Spec in a table may set; the field's type decides the rest.
+is_spec_member = (name: str) bool {
+    name.eq("help") || name.eq("short") || name.eq("value") || name.eq("env")
+        || name.eq("hidden") || name.eq("trailing")
+}
+
+is_spec = (c: Checker, ty: TyId) bool {
+    c.types.at(ty).match({
+        Named(n) => n.name.eq("Spec") && c.world.module_name(n.decl).eq("std.cli.cli"),
+        _        => false,
+    })
+}
+
+is_str = (c: Checker, ty: TyId) bool {
+    c.types.at(ty).match({ Prim(p) => p.name.eq("str"), _ => false })
+}
+
+// One table entry, once its value is typed. A name that is both a setting
+// and a field is the setting when its value is a str.
+cli_entry* = (
+    c     :: Checker,
+    mem   : Member,
+    im    : Impl,
+    mi    : usize,
+    bound : TyId,
+    got   : TyId,
+    value : ExprId
+) Res<AllocError> {
+    c.is_cli(bound).match({
+        false => Ok,
+        true  => {
+            name                  = mem.name().text;
+            owned                 = c.names_member(im, mi, name).try();
+            setting               = is_setting(name);
+            spec                  = c.is_spec(got);
+            text                  = c.is_str(got);
+            fault: Res<SemaFault> = (setting && text).match({
+                true  => None,
+                false => owned.match({
+                    true  => spec.match({
+                        true  => None,
+                        false => Ok(SemaFault.CliEntryType(NameFault(
+                            name: name
+                        ))),
+                    }),
+                    false => setting.match({
+                        true  => Ok(SemaFault.CliEntryType(NameFault(
+                            name: name
+                        ))),
+                        false => Ok(SemaFault.CliUnknownEntry(NameFault(
+                            name: name
+                        ))),
+                    }),
+                }),
+            });
+            fault.match({
+                Ok(f) => c.report(mem.span.file, mem.span, f),
+                None  => spec.match({
+                    true  => c.spec_members(value),
+                    false => Ok,
+                }),
+            })
+        },
+    })
+}
+
+// A Spec written in a table names only the members it may set.
+spec_members = (c :: Checker, value: ExprId) Res<AllocError> {
+    c.tree.expr_at(value).kind.match({
+        Call(k) => {
+            k.args.loop((h, a) {
+                a.name.when_ok((n) {
+                    (!is_spec_member(n.text)).then(() {
+                        c.report(
+                            a.span.file,
+                            a.span,
+                            SemaFault.CliDerivedSpec(NameFault(name: n.text))
+                        ).try();
+                    });
+                });
+            });
+            Ok
+        },
+        _       => Ok,
+    })
+}
+
+// The implementing type's declaration.
+target = (c :: Checker, im: Impl, mi: usize) Res<Res<Decl>, AllocError> {
+    c.world.first_def_of(mi, im.target.text).try().match({
+        None    => Ok(None),
+        Ok(def) => Ok(decl_at(c.tree, def.id)),
+    })
+}
+
+// Whether `name` is a field of the implementing struct or a variant of the
+// implementing enum.
+names_member = (
+    c    :: Checker,
+    im   : Impl,
+    mi   : usize,
+    name : str
+) Res<bool, AllocError> {
+    c.target(im, mi).try().match({
+        None  => Ok(false),
+        Ok(d) => Ok(d.kind.match({
+            Struct(s) => s.members.find((m) {
+                m.kind.match({ Field(f) => f.name.text.eq(name), _ => false })
+            }).match({ Ok(_) => true, None => false }),
+            Enum(e)   => e.variants.find((v) { v.name.text.eq(name) })
+                .match({ Ok(_) => true, None => false }),
+            _         => false,
+        })),
+    })
+}
+
+// Every field has a shape, and every subcommand is a command line.
+cli_shapes* = (c :: Checker, im: Impl, id: ImplId, mi: usize, bound: TyId)
+              Res<AllocError> {
+    c.is_cli(bound).match({
+        false => Ok,
+        true  => c.target(im, mi).try().match({
+            None  => Ok,
+            Ok(d) => d.kind.match({
+                Struct(s) => {
+                    s.members.loop((h, m) {
+                        m.kind.match({
+                            Field(f) => f.type.match({
+                                Ok(t) => c.field_shape(
+                                    im,
+                                    m,
+                                    f.name.text,
+                                    t,
+                                    !f.mutable,
+                                    mi
+                                ).try(),
+                                None  => (),
+                            }),
+                            _        => (),
+                        });
+                    });
+                    Ok
+                },
+                Enum(e)   => {
+                    e.variants.loop((h, v) { c.payload_shape(v, mi).try(); });
+                    Ok
+                },
+                _         => {
+                    span = c.impl_span(id);
+                    c.report(
+                        span.file,
+                        span,
+                        SemaFault.CliPayload(NameFault(name: im.target.text))
+                    )
+                },
+            }),
+        }),
+    })
+}
+
+field_shape = (
+    c          :: Checker,
+    im         : Impl,
+    m          : Member,
+    name       : str,
+    t          : TypeId,
+    positional : bool,
+    mi         : usize
+) Res<AllocError> {
+    poison   = c.types.unknown().try();
+    ty       = c.type_from_ast(t, Ctx(mi, poison)).try();
+    trailing = c.trailing_in(im.field_value(name));
+    fits     = c.is_unknown(ty) || c.types.at(ty).match({
+        Prim(p)  => p.name.eq("bool").match({
+            true  => !positional && !trailing,
+            false => c.is_word(ty) && !trailing,
+        }),
+        Res(r)   => !is_failure(r.form) && c.is_word(r.value) && !trailing,
+        Named(n) => c.is_str_vec(n) || (c.is_word(ty) && !trailing),
+        _        => false,
+    });
+    fits.match({
+        true  => Ok,
+        false => c.report(
+            m.span.file,
+            m.span,
+            SemaFault.CliFieldShape(NameFault(name: name))
+        ),
+    })
+}
+
+// Whether a table entry is a Spec call that sets `trailing: true`.
+trailing_in = (c: Checker, entry: Res<ExprId>) bool {
+    entry.match({
+        None    => false,
+        Ok(eid) => c.tree.expr_at(eid).kind.match({
+            Call(k) => k.args.find((a) {
+                a.name.match({ Ok(n) => n.text.eq("trailing"), None => false })
+                    && c.tree.expr_at(a.value).kind.match({
+                        Literal(l) => l.text.eq("true"),
+                        _          => false,
+                    })
+            }).match({ Ok(_) => true, None => false }),
+            _       => false,
+        }),
+    })
+}
+
+// A type one word of the command line can become.
+is_word = (c: Checker, ty: TyId) bool {
+    c.types.at(ty).match({
+        Prim(p)  => p.name.eq("str") || p.name.eq("u8") || p.name.eq("u16")
+            || p.name.eq("u32") || p.name.eq("u64") || p.name.eq("usize")
+            || p.name.eq("i8") || p.name.eq("i16") || p.name.eq("i32")
+            || p.name.eq("i64"),
+        Named(n) => (n.name.eq("Path") && c.world.module_name(n.decl).eq("std.core.path"))
+            || c.bare_enum(n),
+        _        => false,
+    })
+}
+
+// An enum whose variants all lack a payload: its names are the choices.
+bare_enum = (c: Checker, n: TyNamed) bool {
+    decl_at(c.tree, n.decl).match({
+        Ok(d) => d.kind.match({
+            Enum(e) => e.variants.len > 0 && e.variants.find((v) {
+                v.payload.match({ Ok(_) => true, None => false })
+            }).match({ Ok(_) => false, None => true }),
+            _       => false,
+        }),
+        None  => false,
+    })
+}
+
+is_str_vec = (c: Checker, n: TyNamed) bool {
+    n.name.eq("Vec") && n.args.get(0).match({
+        Ok(arg) => c.is_str(arg),
+        None    => false,
+    })
+}
+
+// A variant's payload, when it has one, is a struct or an enum with its own
+// Cli impl.
+payload_shape = (c :: Checker, v: Variant, mi: usize) Res<AllocError> {
+    v.payload.match({
+        None  => Ok,
+        Ok(t) => {
+            poison = c.types.unknown().try();
+            ty     = c.type_from_ast(t, Ctx(mi, poison)).try();
+            fits   = c.is_unknown(ty) || c.types.at(ty).match({
+                Named(n) => c.commands(n).try(),
+                _        => false,
+            });
+            fits.match({
+                true  => Ok,
+                false => c.report(
+                    v.span.file,
+                    v.span,
+                    SemaFault.CliPayload(NameFault(name: v.name.text))
+                ),
+            })
+        },
+    })
+}
+
+commands = (c :: Checker, n: TyNamed) Res<bool, AllocError> {
+    impls ::= c.alloc.Vec<LocalImpl>();
+    c.local_impls(n, impls).try();
+    Ok(
+        impls.find(
+            (li) { c.is_cli(li.bound) }
+        ).match({ Ok(_) => true, None => false })
+    )
+}

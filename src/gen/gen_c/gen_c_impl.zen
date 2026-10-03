@@ -138,6 +138,30 @@ impl_member_at* = (
     Ok;
 }
 
+// The impl on the type `decl` declares of the bound named `bound` in
+// `module`, when the type has one. std.cli's derived parser reads its Cli
+// table from it.
+impl_of_bound* = (be :: CBackend, decl: DeclId, module: str, bound: str)
+                 Res<Res<Impl>, AllocError> {
+    ids ::= be.alloc.Vec<ImplId>();
+    be.check.world.impls_named(be.tree, be.decl_name(decl), ids).try();
+    mi = decl.module.to_usize();
+    found :: Res<Impl> = None;
+    ids.loop((h, id) {
+        (id.decl.module == decl.module).then(() {
+            be.check.world.impl_at(be.tree, id).when_ok((im) {
+                ty = be.check.impl_bound_type(im, mi).try();
+                be.check.types.at(ty).match({
+                    Named(n) => (n.name.eq(bound) && be.check.world.module_name(n.decl).eq(module))
+                        .then(() { found = Ok(im); }),
+                    _        => (),
+                });
+            });
+        });
+    });
+    Ok(found)
+}
+
 // The name a declaration's type goes by — the key `impls_named` is
 // asked with, and where finding a type's impls starts whatever the
 // caller wants them for. An enum carries impls the way a struct does

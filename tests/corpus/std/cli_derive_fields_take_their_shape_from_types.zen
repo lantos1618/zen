@@ -1,0 +1,98 @@
+// A struct that implements Cli is a command, and each field's type decides
+// its argument: bool is a switch, a number is checked against its type, an
+// enum offers its variants' names, Res<T> is optional, Vec<str> repeats, and
+// a `:` field is positional. Every field prints with a distinct value, so a
+// field the parser skipped or swapped shows.
+
+{ Res, Ok, Err, Path } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Env } = std.env
+{ println, print } = std.io
+{ Cli, Spec, outcome } = std.cli
+
+Level = { Quiet | Normal | VeryLoud }
+
+Args = {
+    verbose :: bool = false,
+    jobs :: u32 = 2,
+    depth :: u8 = 1,
+    offset :: i64 = 0,
+    shift :: i8 = -3,
+    level :: Level = Level.Normal,
+    label :: str = "none",
+    define :: Vec<str>,
+    out :: Res<Path>,
+    retries :: Res<u16>,
+    tone :: Res<Level>,
+    input: Path,
+    output: Res<str>,
+}
+
+Args.impl(Cli, {
+    name: "tool",
+    about: "Build one input",
+    verbose: Spec(short: 'v', help: "Print more detail"),
+    jobs: Spec(short: 'j', value: "N", help: "Worker count"),
+    define: Spec(short: 'D', value: "NAME", help: "Add a definition"),
+    out: Spec(short: 'o', help: "Write here"),
+    input: Spec(help: "The input file"),
+})
+
+run = (env: Env, a: Alloc, words: str) Res<AllocError> {
+    argv ::= a.Vec<str>();
+    argv.add("tool").try();
+    (!words.is_empty()).then(
+        () { words.split(' ').loop((w) { argv.add(w).try(); }); }
+    );
+    println("$ tool {}", words);
+    outcome<Args>(env, a, argv).match({
+        Ok(x)     => {
+            println(
+                "verbose={} jobs={} depth={} offset={} shift={} level={} label={}",
+                x.verbose,
+                x.jobs,
+                x.depth,
+                x.offset,
+                x.shift,
+                x.level.variant_name(),
+                x.label
+            );
+            defines ::= a.String().try();
+            x.define.loop((d) { defines.fmt("[{}]", d).try(); });
+            println(
+                "define={} out={} retries={} tone={} input={} output={}",
+                defines.view(),
+                x.out.match({ Ok(p) => p.text, None => "-" }),
+                x.retries.match({ Ok(n) => n.to_u32(), None => 0 }),
+                x.tone.match({ Ok(t) => t.variant_name(), None => "-" }),
+                x.input.text,
+                x.output.value_or("-")
+            );
+        },
+        Err(stop) => stop.match({
+            Help(text)       => print("{}", text.view()),
+            Refused(refusal) => println("refused: {}", refusal.message.view()),
+            Failed(_)        => println("out of memory"),
+        }),
+    });
+    Ok
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    run(env, a, "in.zen").try();
+    run(
+        env,
+        a,
+        "-v -j 9 --depth 255 --offset -42 --shift 127 --level very-loud --label x -D a -D b -o out.c --retries 65535 --tone quiet in.zen out"
+    ).try();
+    run(
+        env,
+        a,
+        "--jobs=4294967295 --offset -9223372036854775808 --shift -128 in.zen"
+    ).try();
+    run(env, a, "-h").try();
+    Ok(0)
+}

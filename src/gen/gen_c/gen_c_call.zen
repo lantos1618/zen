@@ -44,6 +44,7 @@
 { construct } = gen.gen_c.gen_c_build
 { is_format_door, lower_format_door } = gen.gen_c.gen_c_fmt
 { is_json_door, lower_json_door } = gen.gen_c.gen_c_json
+{ is_cli_door, lower_cli_door } = gen.gen_c.gen_c_args
 { recv_arg, arg_value, write_arg_at } = gen.gen_c.gen_c_arg
 { passes_address } = gen.gen_c.gen_c_borrow
 { call_callee } = sema.sema_call
@@ -235,6 +236,14 @@ CallSite = {
                 be.want_of(self.id, self.ctx).try(),
                 out
             ),
+            false => self.cli_or_json(be, d, f, out),
+        })
+    }
+
+    cli_or_json = (self: @Self, be :: CBackend, d: Def, f: Function,
+                   out :: String) Res<AllocError> {
+        is_cli_door(d, f).match({
+            true  => lower_cli_door(be, self.id, self.c, d, self.ctx, out),
             false => self.json_or_format(be, d, f, out),
         })
     }

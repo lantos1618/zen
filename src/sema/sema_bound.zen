@@ -15,6 +15,7 @@
 { Cand, TBound, is_tvar, omittable } = sema.sema_cand
 { Inst, module_name, subst, inst_of_named } = sema.sema_inst
 { res_sugar } = sema.sema_denote
+{ cli_shapes } = sema.sema_cli
 { Res, Ok, None } = std.core
 
 check_impl* = (c :: Checker, id: ImplId, mi: usize) Res<AllocError> {
@@ -67,7 +68,7 @@ check_impl_body = (c :: Checker, im: Impl, id: ImplId, mi: usize)
     c.bound_members(bound, members).try();
     span = c.impl_span(id);
     members.loop((h, m) { c.owed(im, m, span).try() });
-    Ok;
+    c.cli_shapes(im, id, mi, bound)
 }
 
 owed = (c :: Checker, im: Impl, m: Member, span: Span) Res<AllocError> {

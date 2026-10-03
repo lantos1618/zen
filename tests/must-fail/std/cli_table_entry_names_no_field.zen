@@ -1,0 +1,21 @@
+// A Cli table configures fields by name, so a misspelled field is a compile
+// error at the entry rather than a Spec that silently configures nothing.
+//
+// position: the `verbos` entry.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ Cli, Spec } = std.cli
+
+Args = {
+    verbose :: bool = false,
+    input: str,
+}
+
+Args.impl(Cli, {
+    about: "Build one input",
+    verbos: Spec(short: 'v', help: "Print more detail"),
+})
+
+main = (env: Env) Res<i32, AllocError> { Ok(0) }

@@ -1,0 +1,17 @@
+// A variant's payload is the subcommand's own command line, so it must be a
+// struct or an enum that implements Cli.
+//
+// position: the `Count` variant.
+
+{ Res, Ok } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ Cli } = std.cli
+
+Run = { target: str }
+Run.impl(Cli, { about: "Run a target" })
+
+Cmd = { Run: Run | Count: i64 }
+Cmd.impl(Cli, { about: "Run things" })
+
+main = (env: Env) Res<i32, AllocError> { Ok(0) }

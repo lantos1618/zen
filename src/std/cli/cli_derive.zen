@@ -1,0 +1,519 @@
+// Command lines derived from types. A struct that implements Cli is one
+// command: each field is an argument, and the field's type decides its shape.
+// An enum that implements Cli is a set of subcommands, one per variant.
+//
+//     Mode = { Debug | Release | Small }
+//     BuildArgs = {
+//         verbose :: bool = false,      // --verbose: a bool is a switch
+//         jobs    :: u32 = 2,           // --jobs <JOBS>, checked as a u32
+//         mode    :: Mode = Mode.Debug, // --mode <MODE>: debug, release or small
+//         define  :: Vec<str>,          // --define <DEFINE>, repeatable
+//         out     :: Res<Path>,         // --out <OUT>, optional
+//         input   : Path,               // <INPUT>: `:` declares a positional
+//     }
+//     BuildArgs.impl(Cli, {
+//         about: "Build one input",
+//         verbose: Spec(short: 'v', help: "Print more detail"),
+//         jobs: Spec(help: "Worker count", env: "TOOL_JOBS"),
+//     })
+//     Cmd = { Build: BuildArgs | Run: RunArgs }
+//     Cmd.impl(Cli, { name: "tool", about: "Build and run things" })
+//
+//     parse<Cmd>(env, a).match({ Err(exit) => Ok(exit.status), Ok(cmd) => .. })
+//
+// The compiler writes the parser for each type at the `outcome` call: the
+// declarations, the scan and the conversions below are what it calls. The
+// Command underneath is the same engine a hand-built command line uses.
+
+{ Alloc, AllocError } = std.mem
+{ str, String } = std.text
+{ Vec } = std.collections
+{ Res, Ok, Err, None, Error, Path, Range } = std.core
+{ Env } = std.env
+{ print } = std.io
+{ Command, command, Spec, Kind, Matches, Usage } = std.cli
+
+// What a type implements to be a command line. The impl's table may bind
+// `name` (the program's name; argv[0]'s file name otherwise), `about`,
+// `note` (text after the generated help) and `version` (adds -V, --version),
+// all `str`; and one Spec per field, or per variant of an enum, under that
+// field's or variant's own name. A Spec here sets `help`, `short`, `value`,
+// `env`, `hidden` and `trailing`; everything else follows from the type.
+Cli* = {}
+
+// A command line that asked for something other than a value: help (or the
+// version), a refusal, or no memory to answer with.
+Stop* = { Help: String | Refused: Refusal | Failed: AllocError }
+Stop.impl(Error, {})
+
+// A refused command line. An empty message means no command was given; the
+// help is that of the command the words addressed.
+Refusal* = {
+    program*: str,
+    message*: String,
+    help*: String,
+}
+
+// The status a program exits with when parsing stopped.
+Exit* = { status*: i32 }
+Exit.impl(Error, {})
+
+// `T` parsed from `argv`, whose first word is the program. Written by the
+// compiler for each `T`.
+outcome* = <T: Cli>(env: Env, a: Alloc, argv: Vec<str>) Res<T, Stop>
+
+// `T` parsed from the process's own arguments. Help goes to standard output
+// (status 0); a refusal goes to standard error with the help of the command
+// it addressed (status 2).
+parse* = <T: Cli>(env: Env, a: Alloc) Res<T, Exit> {
+    outcome<T>(env, a, env.argv).match({
+        Ok(value) => Ok(value),
+        Err(stop) => Err(Exit(status: stopped(env, stop))),
+    })
+}
+
+// Writes what a stop says, and answers the status to exit with.
+stopped* = (env: Env, stop: Stop) i32 {
+    stop.match({
+        Help(text)       => {
+            print("{}", text.view());
+            0
+        },
+        Refused(refusal) => {
+            (!refusal.message.view().is_empty()).then(() {
+                env.out.errorln(
+                    "{}: {}\n",
+                    refusal.program,
+                    refusal.message.view()
+                ).ignore();
+            });
+            env.out.error("{}", refusal.help.view()).ignore();
+            2
+        },
+        Failed(_)        => {
+            env.out.errorln("out of memory").ignore();
+            1
+        },
+    })
+}
+
+// The program's name: the table's, else argv[0]'s file name.
+program* = (argv: Vec<str>, name: str) str {
+    name.is_empty().match({
+        false => name,
+        true  => argv.get(0).value_or("").after_last('/'),
+    })
+}
+
+// The command one derived type parses with. `path` is the command as typed,
+// such as `tool build`.
+derived* = (a: Alloc, path: str, about: str, note: str) Command<usize> {
+    cmd ::= command<usize>(a, path, about);
+    cmd.note(note);
+    cmd
+}
+
+// A subcommand's path: its parent's and its own name.
+joined* = (a: Alloc, path: str, name: str) Res<String, Stop> {
+    Ok(a.String("{} {}", path, name).try((e) { Stop.Failed(e) }))
+}
+
+spelled* = (path: String) str { path.view() }
+
+// The Spec a field without a table entry has.
+plain* = () Spec { Spec() }
+
+// A positional is named by its Spec's `value` when the table set one, and
+// by its field's name in capitals otherwise.
+named = (spec: Spec, upper: str) str {
+    spec.value.eq("VALUE").match({ true => upper, false => spec.value })
+}
+
+shown = (default: str, has: bool) Res<str> {
+    has.match({ true => Ok(default), false => None })
+}
+
+declare_into = (
+    cmd        :: Command<usize>,
+    id         : usize,
+    long       : str,
+    positional : bool,
+    spec       : Spec
+) Res<Stop> {
+    positional.match({
+        true  => cmd.positional(id, spec.value, spec),
+        false => cmd.option(id, long, spec),
+    }).try((e) { Stop.Failed(e) });
+    Ok
+}
+
+// A bool field: present or absent.
+switch_field* = (cmd :: Command<usize>, id: usize, long: str, spec: Spec)
+                Res<Stop> {
+    cmd.flag(id, long, Spec(help: spec.help, short: spec.short, env: spec.env, hidden: spec.hidden)).try((e) { Stop.Failed(e) });
+    Ok
+}
+
+// A str or Path field. `default` is the field's default as written when
+// `has` says it can be shown.
+text_field* = (
+    cmd        :: Command<usize>,
+    id         : usize,
+    long       : str,
+    upper      : str,
+    spec       : Spec,
+    positional : bool,
+    required   : bool,
+    many       : bool,
+    default    : str,
+    has        : bool
+) Res<Stop> {
+    cmd.declare_into(
+        id,
+        long,
+        positional,
+        Spec(
+            help: spec.help,
+            short: spec.short,
+            value: named(spec, upper),
+            env: spec.env,
+            default: shown(default, has),
+            required: required,
+            many: many,
+            hidden: spec.hidden
+        )
+    )
+}
+
+// An integer field, checked against its type's range.
+number_field* = (
+    cmd        :: Command<usize>,
+    id         : usize,
+    long       : str,
+    upper      : str,
+    spec       : Spec,
+    positional : bool,
+    required   : bool,
+    many       : bool,
+    default    : str,
+    has        : bool,
+    signed     : bool,
+    min        : i64,
+    max        : u64
+) Res<Stop> {
+    cmd.declare_into(
+        id,
+        long,
+        positional,
+        Spec(
+            help: spec.help,
+            short: spec.short,
+            value: named(spec, upper),
+            kind: signed.match({ true => Kind.Signed, false => Kind.Unsigned }),
+            min: Ok(min),
+            max: Ok(max),
+            env: spec.env,
+            default: shown(default, has),
+            required: required,
+            many: many,
+            hidden: spec.hidden
+        )
+    )
+}
+
+// An enum field: one of its variants' names, `|`-separated in `choices`.
+choice_field* = (
+    cmd        :: Command<usize>,
+    id         : usize,
+    long       : str,
+    upper      : str,
+    spec       : Spec,
+    positional : bool,
+    required   : bool,
+    many       : bool,
+    default    : str,
+    has        : bool,
+    choices    : str
+) Res<Stop> {
+    cmd.declare_into(
+        id,
+        long,
+        positional,
+        Spec(
+            help: spec.help,
+            short: spec.short,
+            value: named(spec, upper),
+            choices: Ok(choices),
+            env: spec.env,
+            default: shown(default, has),
+            required: required,
+            many: many,
+            hidden: spec.hidden
+        )
+    )
+}
+
+// A Vec<str> field marked `trailing`: the words after `--`.
+trailing_field* = (cmd :: Command<usize>) { cmd.trailing_args(); }
+
+// One variant of a derived enum, as a subcommand.
+command_field* = (cmd :: Command<usize>, id: usize, name: str, about: str)
+                 Res<Stop> {
+    cmd.command(id, name, about).try((e) { Stop.Failed(e) });
+    Ok
+}
+
+// `-V, --version`, under the id after every variant and `help`.
+version_field* = (cmd :: Command<usize>, id: usize) Res<Stop> {
+    cmd.flag(id, "--version", Spec(short: 'V', help: "Print the version"))
+        .try((e) { Stop.Failed(e) });
+    Ok
+}
+
+// `help`, the last subcommand of every derived enum.
+help_field* = (a: Alloc, cmd :: Command<usize>, id: usize, program: str)
+              Res<Stop> {
+    about = a.String("Print help for {} or one of its commands", cmd.name)
+        .try((e) { Stop.Failed(e) });
+    cmd.command(id, "help", about.view()).try((e) { Stop.Failed(e) });
+    Ok
+}
+
+refused = (a: Alloc, cmd: Command<usize>, program: str, usage: Usage)
+          Res<Stop, AllocError> {
+    Ok(Stop.Refused(Refusal(
+        program: program,
+        message: usage.message(a, cmd.name).try(),
+        help: cmd.help().try()
+    )))
+}
+
+helped = (cmd: Command<usize>) Res<Stop, AllocError> {
+    Ok(Stop.Help(cmd.help().try()))
+}
+
+failed = (e: AllocError) Stop { Stop.Failed(e) }
+
+// The words of one derived struct, from `start`. Help stops here, and so
+// does a problem; otherwise the matches are the fields' values.
+scan_fields* = (
+    a         : Alloc,
+    cmd       : Command<usize>,
+    env       : Env,
+    argv      : Vec<str>,
+    start     : usize,
+    program   : str,
+    help_only : bool
+) Res<Matches<usize>, Stop> {
+    help_only.match({
+        true  => Err(helped(cmd).try((e) { Stop.Failed(e) })),
+        false => cmd.fields_from(a, env, argv, start, program),
+    })
+}
+
+fields_from = (
+    cmd     : Command<usize>,
+    a       : Alloc,
+    env     : Env,
+    argv    : Vec<str>,
+    start   : usize,
+    program : str
+) Res<Matches<usize>, Stop> {
+    parsed = cmd.parse(env, argv, start).try((e) { Stop.Failed(e) });
+    parsed.problem.match({
+        Err(usage) => Err(
+            refused(a, cmd, program, usage).try((e) { Stop.Failed(e) })
+        ),
+        Ok         => parsed.help.match({
+            true  => Err(helped(cmd).try((e) { Stop.Failed(e) })),
+            false => Ok(parsed),
+        }),
+    })
+}
+
+// The variant a derived enum's words chose, the first word that belongs to
+// it, and whether only its help was asked for.
+Pick* = {
+    variant*: usize,
+    next*: usize,
+    help*: bool,
+}
+
+// The words of one derived enum, whose `count` variants are subcommands
+// 0 to count - 1; `help` is `count` and `--version` (when `version` is not
+// empty) is `count + 1`.
+scan_commands* = (
+    a         : Alloc,
+    cmd       : Command<usize>,
+    env       : Env,
+    argv      : Vec<str>,
+    start     : usize,
+    program   : str,
+    help_only : bool,
+    count     : usize,
+    version   : str
+) Res<Pick, Stop> {
+    help_only.match({
+        true  => cmd.deeper(argv, start, count),
+        false => cmd.commands_from(
+            a,
+            env,
+            argv,
+            start,
+            program,
+            count,
+            version
+        ),
+    })
+}
+
+// Only help is wanted, and the next word may name the subcommand whose help
+// it is: `tool -h remote add` is add's.
+deeper = (cmd: Command<usize>, argv: Vec<str>, start: usize, count: usize)
+         Res<Pick, Stop> {
+    word               = argv.get(start).value_or("");
+    chosen: Res<usize> = cmd.subcommand(word).match({
+        Ok(id) => (id < count).match({ true => Ok(id), false => None }),
+        None   => None,
+    });
+    chosen.match({
+        Ok(id) => Ok(Pick(variant: id, next: start + 1, help: true)),
+        None   => Err(helped(cmd).try((e) { Stop.Failed(e) })),
+    })
+}
+
+commands_from = (
+    cmd     : Command<usize>,
+    a       : Alloc,
+    env     : Env,
+    argv    : Vec<str>,
+    start   : usize,
+    program : str,
+    count   : usize,
+    version : str
+) Res<Pick, Stop> {
+    parsed = cmd.parse(env, argv, start).try((e) { Stop.Failed(e) });
+    parsed.problem.match({
+        Err(usage) => Err(
+            refused(a, cmd, program, usage).try((e) { Stop.Failed(e) })
+        ),
+        Ok         => parsed.picked.match({
+            Ok(picked) => (picked.id == count).match({
+                false => Ok(Pick(
+                    variant: picked.id,
+                    next: picked.next,
+                    help: parsed.help
+                )),
+                true  => topic(
+                    a,
+                    cmd,
+                    env,
+                    argv,
+                    picked.next,
+                    program,
+                    parsed.help
+                ),
+            }),
+            None       => parsed.help.match({
+                true  => Err(helped(cmd).try((e) { Stop.Failed(e) })),
+                false => (parsed.found.len > 0 && !version.is_empty()).match({
+                    true  => Err(Stop.Help(
+                        a.String("{} {}\n", program, version).try((e) { Stop.Failed(e) })
+                    )),
+                    false => Err(Stop.Refused(Refusal(
+                        program: program,
+                        message: a.String().try((e) { Stop.Failed(e) }),
+                        help: cmd.help().try((e) { Stop.Failed(e) })
+                    ))),
+                }),
+            }),
+        }),
+    })
+}
+
+// `help [COMMAND]`: the named command's help, or the parent's.
+topic = (
+    a       : Alloc,
+    cmd     : Command<usize>,
+    env     : Env,
+    argv    : Vec<str>,
+    at      : usize,
+    program : str,
+    asked   : bool
+) Res<Pick, Stop> {
+    path  = a.String("{} help", cmd.name).try((e) { Stop.Failed(e) });
+    about = a.String("Print help for {} or one of its commands", cmd.name).try((e) { Stop.Failed(e) });
+    model ::= command<usize>(a, path.view(), about.view());
+    model.positional(0, "COMMAND", Spec(help: "The command to describe"))
+        .try((e) { Stop.Failed(e) });
+    words = scan_fields(a, model, env, argv, at, program, asked).try();
+    words.text_of(0).match({
+        None       => Err(helped(cmd).try((e) { Stop.Failed(e) })),
+        Ok(choice) => choice.eq("help").match({
+            true  => Err(helped(model).try((e) { Stop.Failed(e) })),
+            false => cmd.subcommand(choice).match({
+                Ok(id) => Ok(Pick(variant: id, next: argv.len, help: true)),
+                None   => Err(Stop.Refused(Refusal(
+                    program: program,
+                    message: a.String("unknown command `{}` for `{}`", choice, cmd.name).try((e) { Stop.Failed(e) }),
+                    help: cmd.help().try((e) { Stop.Failed(e) })
+                ))),
+            }),
+        }),
+    })
+}
+
+// The last value found for the field with this id.
+text_of* = (m: Matches<usize>, id: usize) Res<str> {
+    last :: Res<str> = None;
+    m.found.loop((f) { (f.id == id).then(() { last = Ok(f.text); }); });
+    last
+}
+
+switch_of* = (m: Matches<usize>, id: usize) bool {
+    m.text_of(id).match({ Ok(_) => true, None => false })
+}
+
+path_of* = (m: Matches<usize>, id: usize) Res<Path> {
+    Ok(Path(m.text_of(id).try()))
+}
+
+// The engine accepted the text as a number in the field's range, so these
+// answer None only for an absent field.
+unsigned_of* = (m: Matches<usize>, id: usize) Res<u64> {
+    m.text_of(id).try().parse_u64()
+}
+
+signed_of* = (m: Matches<usize>, id: usize) Res<i64> {
+    m.text_of(id).try().parse_i64()
+}
+
+// The position of the chosen name among `choices`.
+choice_of* = (m: Matches<usize>, id: usize, choices: str) Res<usize> {
+    chosen = m.text_of(id).try();
+    at    :: usize = 0;
+    found :: Res<usize> = None;
+    choices.split('|').loop((h, choice) {
+        choice.eq(chosen).then(() { found = Ok(at); h.break(); });
+        at = at + 1;
+    });
+    found
+}
+
+// Every value found for a repeatable field, in order.
+texts_of* = (a: Alloc, m: Matches<usize>, id: usize) Res<Vec<str>, Stop> {
+    out ::= a.Vec<str>();
+    m.found.loop((f) {
+        (f.id == id).then(() { out.add(f.text).try((e) { Stop.Failed(e) }); });
+    });
+    Ok(out)
+}
+
+// The words after `--`.
+rest_of* = (a: Alloc, argv: Vec<str>, m: Matches<usize>) Res<Vec<str>, Stop> {
+    out ::= a.Vec<str>();
+    Range(m.rest, argv.len).loop((i) {
+        out.add(argv.get(i).value_or("")).try((e) { Stop.Failed(e) });
+    });
+    Ok(out)
+}

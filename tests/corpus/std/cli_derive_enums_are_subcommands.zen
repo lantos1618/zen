@@ -1,0 +1,97 @@
+// An enum that implements Cli is a set of subcommands, one per variant,
+// named by the variant in kebab case. A payload is the subcommand's own
+// command, and a payload that is itself such an enum nests. `help` is every
+// such command's last subcommand, `-h` works at each level, and a `version`
+// in the table adds `-V`.
+
+{ Res, Ok, Err } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ str } = std.text
+{ Env } = std.env
+{ println, print } = std.io
+{ Cli, Spec, outcome } = std.cli
+
+Fetch = {
+    all :: bool = false,
+    remote: Res<str>,
+}
+Fetch.impl(Cli, {
+    about: "Download objects",
+    all: Spec(help: "Fetch every remote"),
+})
+
+Add = { name: str, url: str }
+Add.impl(Cli, { about: "Add a remote" })
+
+Remote = { Add: Add | Show | DryRun }
+Remote.impl(Cli, {
+    about: "Manage remotes",
+    Show: Spec(help: "List the remotes"),
+    DryRun: Spec(help: "Say what would change"),
+})
+
+Cmd = { Fetch: Fetch | Remote: Remote | Init }
+Cmd.impl(Cli, {
+    name: "git",
+    about: "Track changes",
+    version: "2.0.1",
+    note: "See the manual for more.",
+    Init: Spec(help: "Create a repository"),
+})
+
+describe = (c: Cmd) {
+    c.match({
+        Fetch(f)  => println(
+            "fetch all={} remote={}",
+            f.all,
+            f.remote.value_or("-")
+        ),
+        Remote(r) => r.match({
+            Add(add) => println("remote add {} {}", add.name, add.url),
+            Show     => println("remote show"),
+            DryRun   => println("remote dry-run"),
+        }),
+        Init      => println("init"),
+    })
+}
+
+run = (env: Env, a: Alloc, words: str) Res<AllocError> {
+    argv ::= a.Vec<str>();
+    argv.add("git").try();
+    (!words.is_empty()).then(
+        () { words.split(' ').loop((w) { argv.add(w).try(); }); }
+    );
+    println("$ git {}", words);
+    outcome<Cmd>(env, a, argv).match({
+        Ok(c)     => describe(c),
+        Err(stop) => stop.match({
+            Help(text)       => print("{}", text.view()),
+            Refused(refusal) => {
+                println("refused: [{}]", refusal.message.view());
+                print("{}", refusal.help.view());
+            },
+            Failed(_)        => println("out of memory"),
+        }),
+    });
+    Ok
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    run(env, a, "fetch --all origin").try();
+    run(env, a, "remote add origin https://example.com/r").try();
+    run(env, a, "remote show").try();
+    run(env, a, "remote dry-run").try();
+    run(env, a, "init").try();
+    run(env, a, "-V").try();
+    run(env, a, "").try();
+    run(env, a, "-h").try();
+    run(env, a, "help remote").try();
+    run(env, a, "remote -h").try();
+    run(env, a, "-h remote add").try();
+    run(env, a, "remote help add").try();
+    run(env, a, "help help").try();
+    run(env, a, "help push").try();
+    Ok(0)
+}

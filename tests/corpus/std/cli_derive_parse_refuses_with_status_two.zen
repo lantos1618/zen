@@ -1,0 +1,31 @@
+// `parse<T>` on the process's own arguments: a refused command line goes to
+// standard error with the help of the command it addressed, and the program
+// exits 2 without reaching its own code.
+
+{ Res, Ok, Err } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+{ Cli, Spec, parse } = std.cli
+
+Opts = {
+    count :: u8 = 1,
+    name: str,
+}
+
+Opts.impl(Cli, {
+    name: "tool",
+    about: "Greet someone",
+    count: Spec(short: 'c', help: "Times to greet"),
+})
+
+main = (env: Env) Res<i32, AllocError> {
+    a ::= env.mem.alloc();
+    parse<Opts>(env, a).match({
+        Err(exit) => Ok(exit.status),
+        Ok(opts)  => {
+            println("hello {} x{}", opts.name, opts.count);
+            Ok(0)
+        },
+    })
+}

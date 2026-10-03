@@ -1,0 +1,21 @@
+$ tool 
+jobs=12 color=true profile=- target=- args=
+$ tool --jobs 3 app
+jobs=3 color=true profile=- target=app args=
+$ tool app -- --jobs 9 -h x
+jobs=12 color=true profile=- target=app args=[--jobs][9][-h][x]
+$ tool -- a b
+jobs=12 color=true profile=- target=- args=[a][b]
+$ tool -h
+Run a target
+
+Usage: tool [OPTIONS] [TARGET] [-- <ARGS>...]
+
+Arguments:
+  [TARGET]
+
+Options:
+      --jobs <JOBS>        Worker count [default: 1] [env: CLI_DERIVE_JOBS]
+      --color              Color the output [env: CLI_DERIVE_COLOR]
+      --profile <PROFILE>  Profile to use [env: CLI_DERIVE_UNSET]
+  -h, --help               Print help

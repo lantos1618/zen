@@ -1,0 +1,10 @@
+Greet someone
+
+Usage: tool [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>
+
+Options:
+  -c, --count <COUNT>  Times to greet [default: 1]
+  -h, --help           Print help

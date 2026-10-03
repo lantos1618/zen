@@ -20,6 +20,7 @@
 { Vec } = std.collections
 { Res, Ok, Err, None, loop, Range, Error } = std.core
 { Env } = std.env
+{ Cli*, Stop*, Refusal*, Exit*, Pick*, outcome*, parse*, stopped* } = std.cli.cli_derive
 
 // Ends option parsing: later words are positionals, or the program's own
 // arguments when the command takes trailing arguments.
@@ -31,20 +32,66 @@ Kind* = { Text | Unsigned | Signed }
 
 // Everything about an argument except its id and its spelling. `value` names
 // an option's value in help; `choices` lists the accepted values separated by
-// `|`; `env` names a variable consulted when the command line omits the
-// argument. A switch's variable turns it on with `1`, `true` or `yes`. A
-// hidden argument is accepted but left out of help.
+// `|`; `min` and `max` bound a number; `env` names a variable consulted when
+// the command line omits the argument. A switch's variable turns it on with
+// `1`, `true` or `yes`. A hidden argument is accepted but left out of help.
 Spec* = {
     help* :: str = "",
     short* :: Res<u8> = None,
     value* :: str = "VALUE",
     kind* :: Kind = Kind.Text,
     choices* :: Res<str> = None,
+    min* :: Res<i64> = None,
+    max* :: Res<u64> = None,
     default* :: Res<str> = None,
     env* :: Res<str> = None,
     required* :: bool = false,
     many* :: bool = false,
     hidden* :: bool = false,
+    // Words after `--`, for a parser derived from a type (std.cli.derive). A
+    // Command built by hand says the same with `trailing_args`.
+    trailing* :: bool = false,
+
+    // Whether a signed value lies within `min` and `max`.
+    holds = (self: @Self, n: i64) bool {
+        low  = self.min.match({ Ok(least) => n >= least, None => true });
+        high = self.max.match({
+            None     => true,
+            Ok(most) => (n < 0).match({
+                true  => true,
+                false => n.to_usize().match({ Ok(u) => u.to_u64() <= most, None => false }),
+            }),
+        });
+        low && high
+    }
+
+    // `: expected debug, release or small`, or `: expected an integer from 0
+    // to 255`; nothing for an argument that accepts any text.
+    expected = (self: @Self, out :: String) Res<AllocError> {
+        self.choices.match({
+            Ok(choices) => {
+                out.add(": expected ").try();
+                count :: usize = 0;
+                choices.split('|').loop((choice) { count = count + 1; });
+                choices.split('|').loop((h, i, choice) {
+                    (i > 0).then(() {
+                        out.add(
+                            (i + 1 == count).match({ true => " or ", false => ", " })
+                        ).try();
+                    });
+                    out.add(choice).try();
+                });
+                Ok
+            },
+            None        => self.max.match({
+                None     => Ok,
+                Ok(most) => {
+                    low = self.min.value_or(0);
+                    out.fmt(": expected an integer from {} to {}", low, most)
+                },
+            }),
+        })
+    }
 }
 
 // A declared argument, as returned by its declaration.
@@ -105,11 +152,13 @@ Problem* = { UnknownOption
     | Declaration: Fault }
 
 // `word` is the argument or token at fault. `other` is the rejected value of
-// BadValue or the second argument of a relation.
+// BadValue or the second argument of a relation. `spec` is the rejecting
+// argument's, so a choice or a bounded number can say what it accepts.
 Usage* = {
     problem*: Problem,
     word*: str,
     other* :: str = "",
+    spec* :: Res<Spec> = None,
 
     message* = (self: @Self, a: Alloc, command: str) Res<String, AllocError> {
         word  = self.word;
@@ -125,9 +174,11 @@ Usage* = {
                 "unexpected argument `{word}` for `{command}`"
             ),
             MissingValue       => a.String("option `{word}` requires a value"),
-            BadValue           => a.String(
-                "invalid value `{other}` for `{word}`"
-            ),
+            BadValue           => {
+                out ::= a.String("invalid value `{other}` for `{word}`").try();
+                self.spec.when_ok((spec) { spec.expected(out).try(); });
+                Ok(out)
+            },
             Missing            => a.String(
                 "required argument `{word}` is missing"
             ),
@@ -237,8 +288,13 @@ Param<T> = {
     accepts = (self: @Self, value: str) bool {
         typed  = self.spec.kind.match({
             Text     => true,
-            Unsigned => value.parse_usize().match({ Ok(_) => true, None => false }),
-            Signed   => value.parse_i64().match({ Ok(_) => true, None => false }),
+            Unsigned => value.parse_u64().match({
+                Ok(n) => self.spec.max.match({ Ok(most) => n <= most, None => true }),
+                None  => false,
+            }),
+            Signed   => value.parse_i64().match({ Ok(n) => self.spec.holds(
+                n
+            ), None => false }),
         });
         listed = self.spec.choices.match({
             None        => true,
@@ -284,19 +340,27 @@ Param<T> = {
     notes = (self: @Self, a: Alloc) Res<String, AllocError> {
         out ::= a.String().try();
         out.add(self.spec.help).try();
-        self.spec.default.when_ok(
-            (value) { out.fmt(" [default: {}]", value).try(); }
-        );
+        self.spec.default.when_ok((value) {
+            spaced(out).try();
+            out.fmt("[default: {}]", value).try();
+        });
         self.spec.choices.when_ok((choices) {
-            out.add(" [possible values: ").try();
+            spaced(out).try();
+            out.add("[possible values: ").try();
             choices.split('|').loop((h, i, choice) {
                 (i > 0).then(() { out.add(", ").try(); });
                 out.add(choice).try();
             });
             out.add("]").try();
         });
-        self.spec.env.when_ok((name) { out.fmt(" [env: {}]", name).try(); });
-        self.spec.many.then(() { out.add(" [repeatable]").try(); });
+        self.spec.env.when_ok((name) {
+            spaced(out).try();
+            out.fmt("[env: {}]", name).try();
+        });
+        self.spec.many.then(() {
+            spaced(out).try();
+            out.add("[repeatable]").try();
+        });
         Ok(out)
     }
 }
@@ -508,6 +572,11 @@ refused = (word: str, fault: Fault) Usage {
     Usage(problem: Problem.Declaration(fault), word: word)
 }
 
+// A space before the next note, unless the column is still empty.
+spaced = (out :: String) Res<AllocError> {
+    (out.len() > 0).match({ true => out.add(' '), false => Ok })
+}
+
 // Two help columns, the left padded to one width.
 Rows = {
     out :: String,
@@ -685,7 +754,10 @@ Scan<T> = {
             Res<AllocError> {
         p.accepts(text).match({
             true  => self.record(i, p, text, origin),
-            false => self.refuse(Problem.BadValue, written, text),
+            false => {
+                self.refuse_value(written, text, p.spec);
+                Ok
+            },
         })
     }
 
@@ -769,6 +841,19 @@ Scan<T> = {
                 problem: problem,
                 word: word,
                 other: other
+            ));
+        });
+    }
+
+    // A rejected value keeps its argument's Spec, so the message can say what
+    // the argument accepts.
+    refuse_value = (self :: @Self, word: str, text: str, spec: Spec) {
+        self.clean().then(() {
+            self.out.problem = Err(Usage(
+                problem: Problem.BadValue,
+                word: word,
+                other: text,
+                spec: Ok(spec)
             ));
         });
     }

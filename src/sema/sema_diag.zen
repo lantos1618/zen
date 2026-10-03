@@ -224,7 +224,14 @@ SemaFault* =
     | SecretCompare: NameFault         // an ordinary comparison
     | SecretCall: NameFault            // an argument to a public parameter
     | SecretResult: NameFault          // a tail value of a public result
-    | SecretStore: NameFault }           // a write through a public parameter
+    | SecretStore: NameFault             // a write through a public parameter
+
+    // std.cli: a type that implements Cli is a command line
+    | CliUnknownEntry: NameFault       // a table entry names no field, variant or setting
+    | CliEntryType: NameFault          // a setting is a str, a field's or variant's entry a Spec
+    | CliDerivedSpec: NameFault        // a Spec member the field's type decides
+    | CliFieldShape: NameFault         // a field type no command line argument has
+    | CliPayload: NameFault }          // a subcommand that is not itself a command line
 
 Diag* = {
     file*: str,
@@ -362,6 +369,11 @@ message* = (fault: SemaFault) str {
         SecretCall(_)                => "a secret value is passed to a parameter not written Secret: the callee is checked as if the argument were public — mark the parameter Secret, or declassify() the argument",
         SecretResult(_)              => "a secret value is returned from a function whose result is not written Secret: callers would treat it as public — mark the result Secret, or declassify() it",
         SecretStore(_)               => "a secret value is written through a parameter not written Secret: the caller would read it as public — mark the parameter Secret",
+        CliUnknownEntry(_)           => "a Cli table binds `name`, `about`, `note` or `version`, or a Spec under the name of one of the type's own fields or variants; this is none of them:",
+        CliEntryType(_)              => "a Cli table's `name`, `about`, `note` and `version` are str, and a field's or variant's entry is a Spec:",
+        CliDerivedSpec(_)            => "in a Cli table a Spec sets only `help`, `short`, `value`, `env`, `hidden` and `trailing`; the field's type decides the rest:",
+        CliFieldShape(_)             => "a Cli field is bool (a switch), str, Path, an integer, an enum of bare variants, Res<T> of one of those (optional), or Vec<str> (repeatable, or the words after `--` when its Spec says `trailing: true`); a `:` field is positional, so it is not a bool:",
+        CliPayload(_)                => "a subcommand's payload is a struct or an enum that implements Cli, and only a struct or an enum implements Cli:",
         ImmutableLent(_)             => "an immutable place cannot be lent to a `::` parameter or field:",
     });
 }
@@ -472,6 +484,11 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         SecretCall(f)                => out.write_name(f),
         SecretResult(f)              => out.write_name(f),
         SecretStore(f)               => out.write_name(f),
+        CliUnknownEntry(f)           => out.write_name(f),
+        CliEntryType(f)              => out.write_name(f),
+        CliDerivedSpec(f)            => out.write_name(f),
+        CliFieldShape(f)             => out.write_name(f),
+        CliPayload(f)                => out.write_name(f),
         ConsumedUnderView(f)         => out.write_under_view(f),
         ConsumedUnderDefer(f)        => out.write_under_defer(f, "moved"),
         WrittenUnderDefer(f)         => out.write_under_defer(f, "assigned"),

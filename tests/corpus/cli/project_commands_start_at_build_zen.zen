@@ -1,6 +1,6 @@
 { Alloc, AllocError } = std.mem
 { Vec } = std.collections
-{ Cli, cli } = zen
+{ cli } = zen
 { Res, Ok } = std.core
 { Env } = std.env
 { println } = std.io

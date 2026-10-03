@@ -13,65 +13,38 @@
 // shared prelude and defined once, beside `main`, so a program split into
 // many C files still has one of each.
 
-{ Function } = std.ast
 { AllocError } = std.mem
 { Vec } = std.collections
 { str, String } = std.text
 { Res, Ok, None, Range } = std.core
-{ TyId } = sema.sema_ty
-{ Def } = sema.sema_def
 { Emit } = gen.gen_emit
 { CBackend, ForeignFunction } = gen.gen_c.gen_c_state
-{ ctype } = gen.gen_c.gen_c_type
 { comment } = gen.gen_c.gen_c_runtime
 
-SYS_MODULE: str = "std.sys.sys"
+// The module whose bodiless operations this file provides.
+SYS_MODULE*: str = "std.sys.sys"
 
-// Whether `d` is one of std.sys's bodiless operations.
-is_sys_op* = (be: CBackend, d: Def) bool {
-    be.check.world.module_name(d.id).eq(SYS_MODULE)
-}
+// Whether this backend has a C implementation of std.sys's `name`.
+provides_sys* = (name: str) bool { sys_body(
+    name
+).match({ Ok(_) => true, None => false }) }
 
-// The C function implementing std.sys's `name`, written into `symbol`, with
-// its definition queued for the prelude. False when this backend has no C
-// implementation of that operation.
-need_sys* = (
-    be     :: CBackend,
-    name   : str,
-    f      : Function,
-    ret    : TyId,
-    sig    : Vec<TyId>,
-    symbol :: String
-) Res<bool, AllocError> {
-    sys_body(name).match({
-        None  => Ok(false),
-        Ok(_) => {
-            symbol.fmt("zg_sys_{}", name).try();
-            be.sys_ops.find((entry) { entry.name.view().eq(name) }).match({
-                Ok(_) => Ok(true),
-                None  => {
-                    proto ::= be.alloc.String().try();
-                    proto.fmt("static ").try();
-                    be.ctype(ret, proto).try();
-                    proto.fmt(" {}(", symbol.view()).try();
-                    (f.params.len == 0).then(() { proto.add("void").try() });
-                    Range(0, f.params.len).loop((h, i) {
-                        (i > 0).then(() { proto.add(", ").try() });
-                        ty = sig.get(i).value_or(TyId(index: 0));
-                        be.ctype(ty, proto).try();
-                        proto.add(" a").try();
-                        proto.write_usize(i).try();
-                    });
-                    proto.add(")").try();
-                    owned ::= be.alloc.String().try();
-                    owned.add(name).try();
-                    be.sys_ops.add(ForeignFunction(
-                        name: owned,
-                        proto: proto
-                    )).try();
-                    Ok(true)
-                },
-            })
+// The C symbol of std.sys's `name`.
+sys_symbol* = (name: str, out :: String) Res<AllocError> { out.fmt(
+    "zg_sys_{}",
+    name
+) }
+
+// Queue the definition of std.sys's `name`, whose prototype (`proto`,
+// naming its parameters a0, a1, ...) the caller built from the
+// declaration's signature.
+need_sys* = (be :: CBackend, name: str, proto: String) Res<AllocError> {
+    be.sys_ops.find((entry) { entry.name.view().eq(name) }).match({
+        Ok(_) => Ok,
+        None  => {
+            owned ::= be.alloc.String().try();
+            owned.add(name).try();
+            be.sys_ops.add(ForeignFunction(name: owned, proto: proto))
         },
     })
 }

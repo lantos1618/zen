@@ -1,0 +1,2 @@
+b is dropped when this function returns, but this closure is deferred on a Scope passed in and runs later, at the end of the caller's block — defer on `@scope` here, or move the value to the caller and defer there
+14:41

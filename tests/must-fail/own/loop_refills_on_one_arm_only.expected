@@ -1,0 +1,2 @@
+cur was consumed in a body that runs again, and not every path back to its start assigns it — assign it on every path, or consume it outside the body
+18:21

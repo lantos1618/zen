@@ -1,0 +1,2 @@
+cannot move out of a borrowed value: b was bound by matching a value reached through `self`, which this function does not own
+16:51

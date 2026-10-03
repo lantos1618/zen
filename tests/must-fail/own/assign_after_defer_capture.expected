@@ -1,0 +1,2 @@
+b is assigned while a deferred closure that reads it at the end of the block is pending
+14:5

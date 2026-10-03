@@ -1,0 +1,2 @@
+cannot copy a Drop value through a generic: `twice` copies a value of its type parameter at
+17:9

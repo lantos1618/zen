@@ -1,4 +1,4 @@
-{ Expr, Bind, Impl } = std.ast
+{ Expr, ExprId, Bind, Impl, Call } = std.ast
 { Span } = std.source
 { AllocError } = std.mem
 { Vec } = std.collections
@@ -8,9 +8,12 @@
 { Checker, Ctx } = sema.sema_check
 { SemaFault, NameFault } = sema.sema_diag
 { Own } = sema.sema_own
+{ is_construction } = sema.sema_scope
 { Res, Ok } = std.core
 
-// `g = f` on a value with a `Drop` impl would drop it twice.
+// `g = f` on a value that holds a Drop owner anywhere inline would leave
+// two owners of one value, and both would be dropped: such a value moves
+// and is never copied (the universe rule).
 check_drop_copy* = (c :: Checker, o :: Own, b: Bind, ctx: Ctx)
                    Res<AllocError> {
     node = c.tree.expr_at(b.value);
@@ -33,12 +36,36 @@ drop_copy_of_name = (c :: Checker, o :: Own, node: Expr, text: str)
 
 refuse_if_drop = (c :: Checker, span: Span, ty: TyId, text: str)
                  Res<AllocError> {
-    c.is_drop_type(ty).try().match({
+    c.contains_drop(ty).try().match({
         false => Ok,
         true  => c.refuse(
             span,
             SemaFault.CopyOfDropValue(NameFault(name: text))
         ),
+    })
+}
+
+// A field of a constructed struct holds its own copy of the argument, so
+// a move-only binding passed by name is a second owner, as in `g = f`.
+check_construction_copies* = (c :: Checker, o :: Own, id: ExprId, k: Call)
+                             Res<AllocError> {
+    c.is_construction(id).match({
+        false => Ok,
+        true  => {
+            k.args.loop((h, a) {
+                node = c.tree.expr_at(a.value);
+                node.kind.match({
+                    Name(n) => c.bound_views.get(a.value).match({
+                        // An interface field holds a handle over the
+                        // binding's storage, not a copy of it.
+                        Ok(_) => (),
+                        None  => c.drop_copy_of_name(o, node, n.text).try(),
+                    }),
+                    _       => (),
+                });
+            });
+            Ok
+        },
     })
 }
 

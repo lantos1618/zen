@@ -1,0 +1,2 @@
+b was consumed, and a binding is dead from the move onwards — assign it again on every path that reaches this use
+21:20

@@ -1,0 +1,2 @@
+a bound value built here from a concrete value may not be returned: the bound value points at `arena`
+12:10

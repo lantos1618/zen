@@ -1,0 +1,288 @@
+// zen-own-fuzz: writes random `main` bodies that move, copy, store, defer and
+// branch over four Drop owners, keeps the ones `zen check` accepts, builds
+// and runs them. Each owner shares a liveness cell with its copies, so its
+// drop and every use can tell whether it was already dropped; the program
+// prints `ORACLE` when one was. An accepted program that prints it, or dies,
+// is a hole in the ownership checker. `sink` owns what it is given, so it
+// is only ever called with `consume`; `look` borrows.
+//
+//   zen-own-fuzz <dir> <first-seed> <count> <zen> [nodefer]
+//
+// Programs that pass, and those the checker refuses, are deleted; a trip is
+// kept as `<dir>/p<seed>.zen` with its output beside it.
+{ Res, Ok, Err, None, Range, Rng, IoError } = std.core
+{ Alloc, AllocError } = std.mem
+{ Vec } = std.collections
+{ String, str } = std.text
+{ Env, FsError } = std.env
+{ ProcError } = std.proc
+{ println } = std.io
+
+PRELUDE: str = "{ Res, Ok, Err, None, Range, Drop } = std.core\n{ Alloc, AllocError } = std.mem\n{ Vec } = std.collections\n{ Env } = std.env\n{ println } = std.io\n\nBuf = {\n    id: i32,\n    cell :: Vec<u8>,\n    alive = (self: @Self) bool { self.cell.get(0).value_or(0) == 1 }\n    poke = (self: @Self) {\n        self.alive().match({ true => println(\"use {}\", self.id), false => println(\"ORACLE use after drop {}\", self.id) })\n    }\n}\nBuf.impl(Drop, { drop = (self :: @Self) {\n    self.alive().match({ true => { self.cell.set(0, 0); }, false => println(\"ORACLE double drop {}\", self.id) })\n} })\nsink = (b: Buf) { g = consume b; g.poke() }\nlook = (b: Buf) { b.poke() }\nHolder = { saved :: Res<Buf> = None }\nPacket = { seq: u64, body: Buf }\nPair<T> = { left: T, right: T }\ntwice = <T>(x: T) Pair<T> { Pair<T>(left: x, right: x) }\nmake = (a: Alloc, id: i32) Res<Buf, AllocError> {\n    cell ::= a.Vec<u8>();\n    cell.add(1).try();\n    Ok(Buf(id: id, cell: cell))\n}\nmain = (env: Env) Res<i32, AllocError> {\n    arena ::= env.mem.alloc();\n    h ::= Holder();\n    v0 ::= make(arena, 0).try();\n    v1 ::= make(arena, 1).try();\n    v2 ::= make(arena, 2).try();\n    v3 ::= make(arena, 3).try();\n"
+
+// Refilling `h.saved` keeps a moved-out payload from failing the whole
+// program as a partial move.
+EPILOGUE: str = "    h.saved = None;\n    Ok(0)\n}\n"
+
+Gen = {
+    rng :: Rng,
+    // Leave out `defer`, to look past what it finds.
+    skip_defer: bool,
+    out :: String,
+    serial :: u64 = 0,
+
+    indent = (self :: @Self, depth: u64) Res<AllocError> {
+        Range(0, depth + 1).loop((h, i) { self.out.add("    ").try(); });
+        Ok
+    }
+
+    body = (self :: @Self, depth: u64, count: u64) Res<AllocError> {
+        Range(0, count).loop((h, i) { self.stmt(depth).try(); });
+        Ok
+    }
+
+    arm = (self :: @Self, depth: u64, head: str) Res<AllocError> {
+        self.indent(depth).try();
+        self.out.add(head).try();
+        self.body(depth + 1, 1 + self.rng.below(2)).try();
+        self.indent(depth).try();
+        self.out.add("},\n")
+    }
+
+    // One statement. Compound forms nest at most two deep.
+    stmt = (self :: @Self, depth: u64) Res<AllocError> {
+        kinds = (depth < 2).match({ true => 18, false => 14 });
+        drawn = self.rng.below(kinds);
+        // Forms the checker refuses outright (a copy without `consume`) are
+        // kept rare, so most programs reach the oracle.
+        rare        = (drawn == 5 && self.rng.below(8) != 0)
+            || (drawn == 11 && self.skip_defer);
+        k           = rare.match({ true => 2, false => drawn });
+        v           = self.rng.below(4);
+        u           = self.rng.below(4);
+        cut         = self.rng.below(3);
+        self.serial = self.serial + 1;
+        n           = self.serial;
+        self.indent(depth).try();
+        k.match({
+            0  => self.out.fmt("sink(consume v{});\n", v),
+            1  => self.out.fmt("look(v{});\n", v),
+            2  => self.out.fmt("v{}.poke();\n", v),
+            3  => self.out.fmt("v{} = make(arena, {}).try();\n", v, n + 10),
+            4  => self.out.fmt("v{} = consume v{};\n", v, u),
+            5  => self.out.fmt("v{} = v{};\n", v, u),
+            6  => self.out.fmt(
+                "p{} = twice(consume v{}); look(p{}.left); p{}.right.poke();\n",
+                n,
+                v,
+                n,
+                n
+            ),
+            7  => self.out.fmt("h.saved = Ok(consume v{});\n", v),
+            8  => self.out.add(
+                "h.saved.match({ Ok(m) => sink(consume m), None => () });\n"
+            ),
+            9  => self.out.fmt(
+                "k{} ::= Packet(seq: 1, body: consume v{}); sink(consume k{}.body); k{}.body = make(arena, {}).try(); println(\"{{}}\", k{}.seq);\n",
+                n,
+                v,
+                n,
+                n,
+                n + 10,
+                n
+            ),
+            10 => self.out.fmt(
+                "q{} = consume v{}; sink(consume q{});\n",
+                n,
+                v,
+                n
+            ),
+            11 => self.out.fmt("@scope.defer(() {{ v{}.poke() }});\n", v),
+            12 => self.out.fmt(
+                "(v{}.id > 0).then(() {{ sink(consume v{}); }});\n",
+                u,
+                v
+            ),
+            13 => self.out.fmt(
+                "make(arena, {}).match({{ Ok(f{}) => {{ v{} = consume f{}; }}, Err(_) => () }});\n",
+                n + 10,
+                n,
+                v,
+                n
+            ),
+            14 => {
+                self.out.fmt("(env.argv.len > {}).match({{\n", cut).try();
+                self.arm(depth + 1, "true => {\n").try();
+                self.arm(depth + 1, "false => {\n").try();
+                self.indent(depth).try();
+                self.out.add("});\n")
+            },
+            15 => {
+                self.out.add("Range(0, 2).loop((r, i) {\n").try();
+                self.body(depth + 1, 1 + self.rng.below(3)).try();
+                self.indent(depth).try();
+                self.out.add("});\n")
+            },
+            16 => {
+                self.out.fmt("(env.argv.len > {}).then(() {{\n", cut).try();
+                self.body(depth + 1, 1 + self.rng.below(2)).try();
+                self.indent(depth).try();
+                self.out.add("});\n")
+            },
+            _  => {
+                self.out.add("{\n").try();
+                self.body(depth + 1, 1 + self.rng.below(3)).try();
+                self.indent(depth).try();
+                self.out.add("}\n")
+            },
+        })
+    }
+}
+
+Error = AllocError | FsError | IoError | ProcError
+
+Tally = {
+    accepted :: u64 = 0,
+    clean :: u64 = 0,
+    trips :: u64 = 0,
+    ccfail :: u64 = 0,
+}
+
+// One program, from writing it to deleting it unless it tripped.
+Trial = {
+    env: Env,
+    a: Alloc,
+    dir: str,
+    zen: str,
+    name: str,
+
+    path = (self: @Self, ext: str) Res<str, AllocError> {
+        p ::= String(self.a).try();
+        p.fmt("{}/{}{}", self.dir, self.name, ext).try();
+        Ok(p.view())
+    }
+
+    entry = (self: @Self) Res<str, AllocError> {
+        p ::= String(self.a).try();
+        p.fmt("{}.zen", self.name).try();
+        Ok(p.view())
+    }
+
+    run = (self: @Self, argv: Vec<str>) Res<i32, ProcError> {
+        self.env.proc.run_argv(self.a, "", argv).match({
+            Ok(o)  => Ok(o.code),
+            Err(e) => Err(e),
+        })
+    }
+
+    zen_ok = (self: @Self, verb: str, more: Vec<str>) Res<bool, Error> {
+        argv ::= self.a.Vec<str>();
+        argv.add(self.zen).try();
+        argv.add(verb).try();
+        argv.add(self.dir).try();
+        argv.add("--entry").try();
+        argv.add(self.entry().try()).try();
+        more.loop((h, m) { argv.add(m).try(); });
+        Ok(self.run(argv).try() == 0)
+    }
+
+    drop_files = (self: @Self) Res<Error> {
+        self.env.fs.remove(self.path(".zen").try()).ignore();
+        self.env.fs.remove(self.path(".c").try()).ignore();
+        self.env.fs.remove(self.path("").try()).ignore();
+        Ok
+    }
+
+    // Accepted, built and run: does the oracle fire?
+    judge = (self: @Self, tally :: Tally) Res<Error> {
+        none ::= self.a.Vec<str>();
+        self.zen_ok("check", none).try().match({
+            false => self.drop_files(),
+            true  => {
+                tally.accepted = tally.accepted + 1;
+                emit ::= self.a.Vec<str>();
+                emit.add("--emit-c").try();
+                emit.add("-o").try();
+                emit.add(self.path(".c").try()).try();
+                cc ::= self.a.Vec<str>();
+                cc.add("cc").try();
+                cc.add("-O0").try();
+                cc.add("-w").try();
+                cc.add("-o").try();
+                cc.add(self.path("").try()).try();
+                cc.add(self.path(".c").try()).try();
+                built = self.zen_ok("build", emit).try() && (self.run(cc).try() == 0);
+                built.match({
+                    false => {
+                        tally.ccfail = tally.ccfail + 1;
+                        println("ccfail {}", self.name)
+                    },
+                    true  => self.verdict(tally).try(),
+                });
+                Ok
+            },
+        })
+    }
+
+    verdict = (self: @Self, tally :: Tally) Res<Error> {
+        argv ::= self.a.Vec<str>();
+        argv.add(self.path("").try()).try();
+        result  = self.env.proc.run_argv(self.a, "", argv).try();
+        tripped = result.code != 0 || result.out.view().contains("ORACLE");
+        tripped.match({
+            false => {
+                tally.clean = tally.clean + 1;
+                self.drop_files()
+            },
+            true  => {
+                tally.trips = tally.trips + 1;
+                println("trip {} (exit {})", self.name, result.code);
+                self.env.fs.write(
+                    self.path(".out").try(),
+                    result.out.view()
+                ).try();
+                Ok
+            },
+        })
+    }
+}
+
+main = (env: Env) Res<i32, Error> {
+    dir   = env.argv.get(1).value_or(".");
+    first = env.argv.get(2).value_or("1").parse_u64().value_or(1);
+    count = env.argv.get(3).value_or("10").parse_u64().value_or(10);
+    zen   = env.argv.get(4).value_or("zen");
+    skip  = env.argv.get(5).value_or("").eq("nodefer");
+    tally ::= Tally();
+    Range(first, first + count).loop((h, seed) {
+        arena ::= env.mem.alloc();
+        g     ::= Gen(
+            rng: Rng.seeded(seed * 2654435761 + 1),
+            skip_defer: skip,
+            out: String(arena).try()
+        );
+        g.out.add(PRELUDE).try();
+        g.body(0, 3 + g.rng.below(8)).try();
+        g.out.add(EPILOGUE).try();
+        name ::= String(arena).try();
+        name.fmt("p{}", seed).try();
+        trial = Trial(
+            env: env,
+            a: arena,
+            dir: dir,
+            zen: zen,
+            name: name.view()
+        );
+        env.fs.write(trial.path(".zen").try(), g.out.view()).try();
+        trial.judge(tally).try();
+    });
+    println(
+        "programs {} accepted {} clean {} trips {} ccfail {}",
+        count,
+        tally.accepted,
+        tally.clean,
+        tally.trips,
+        tally.ccfail
+    );
+    Ok(0)
+}

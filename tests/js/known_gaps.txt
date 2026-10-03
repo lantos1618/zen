@@ -6,6 +6,7 @@ tests/corpus/actor/a_generic_actor_matches_a_bound_methods_res # UNSUPPORTED: er
 tests/corpus/actor/a_generic_actors_bound_close_calls_the_bound_impl # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/buffer_payload_is_owned_by_receiver # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/concurrent_joins_share_one_worker # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
+tests/corpus/actor/defers_and_spawn_keep_distinct_c_names # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/dynamic_str_is_copied # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma
 tests/corpus/actor/generic_spawn_settles_state # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `sp
 tests/corpus/actor/multiple_actor_types_keep_distinct_c_names # UNSUPPORTED: error: unsupported by this backend: atomic operations and calls through code addresses (first in `ma

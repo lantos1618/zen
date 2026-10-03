@@ -284,7 +284,7 @@ write_defer_union = (be :: CBackend, out :: Emit) Res<AllocError> {
 }
 
 write_union_member = (out :: Emit, n: usize) Res<AllocError> {
-    out.bytes("    zg_env").try();
+    out.bytes("    zg_defer_env").try();
     out.number(n).try();
     out.bytes(" zg_u").try();
     out.number(n).try();

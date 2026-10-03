@@ -1,0 +1,21 @@
+// Moving `m` out of the match moves the Buf out of `h.saved`, so the
+// place is dead after the match. The second match would move the same Buf
+// out again, and it would be sunk and dropped twice.
+
+{ Res, Ok, None, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+Buf = { id: i32 }
+Buf.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id) } })
+sink = (b: Buf) { g = consume b; println("sink {}", g.id) }
+Holder = { saved :: Res<Buf> = None }
+
+main = (env: Env) Res<i32, IoError> {
+    h ::= Holder();
+    h.saved = Ok(Buf(id: 7));
+    h.saved.match({ Ok(m) => sink(consume m), None => () });
+    h.saved.match({ Ok(m) => sink(consume m), None => () });
+    h.saved = None;
+    Ok(0)
+}

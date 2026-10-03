@@ -275,8 +275,11 @@ ref_field = (be :: CBackend, ty: TyId, name: str, text :: String)
     text.fmt(" *{name}")
 }
 
+// The record types have a stem of their own: temporaries are named from
+// stems like `env` (`fresh_name`), and a temporary declared in a frame
+// hides a type of the same name for the rest of that frame.
 env_name = (be :: CBackend, n: usize, out :: String) Res<AllocError> {
-    sym_gen(out, "env", n)
+    sym_gen(out, "defer_env", n)
 }
 
 // the thunk

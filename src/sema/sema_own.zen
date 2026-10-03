@@ -1,6 +1,6 @@
 { Expr, ExprId, Block, BlockId, Stmt, Bind, Deferred } = std.ast
 { Decl, Member, Function, Param } = std.ast
-{ Call, Arg, Access, Match, Arm, Lambda, Index, Consume } = std.ast
+{ Call, Arg, Access, Match, Arm, Lambda, Index, Consume, PatternId } = std.ast
 { Name, Paren, Try, Unary, Binary } = std.ast
 { Span } = std.source
 { Record, FixedArray, Field, Const } = std.ast
@@ -10,7 +10,7 @@
 { Res, Ok, None, loop, Range } = std.core
 { TyId } = sema.sema_ty
 { Checker, Ctx, UNRESOLVED, truncate } = sema.sema_check
-{ SemaFault, NameFault } = sema.sema_diag
+{ SemaFault, NameFault, LentFault } = sema.sema_diag
 { check_receiver, check_write_place, check_lent_args, check_lent_fields } = sema.sema_recv
 { check_scope_returned, check_scope_stored } = sema.sema_scope
 { check_scope_captured, is_scope_value, call_escapes } = sema.sema_scope
@@ -19,7 +19,9 @@
 { frame_bound_view, frame_view_at, refuse_frame_view, sheds_frame_view } = sema.sema_scope
 { arena_source, release_stored_arena, stored_arena_backed } = sema.sema_scope
 { Pin, pin_captured, refuse_pinned, refuse_pinned_at, pin_viewed } = sema.sema_pin
-{ check_drop_copy, is_drop_type } = sema.sema_drop
+{ refuse_deferred_write } = sema.sema_pin
+{ check_drop_copy, check_construction_copies, is_drop_type } = sema.sema_drop
+{ check_instance_copies } = sema.sema_instcopy
 { carries_bound } = sema.sema_copy
 { is_handle_ty, refuse_handle_at, spelled_name } = sema.sema_handle
 { local_lambda } = sema.sema_local
@@ -39,6 +41,12 @@ OwnVar* = {
     source :: Res<ExprId>,
     fields :: Vec<FieldOrigin>,
     span*: Span,
+    // A match binding of a value this frame reaches through a parameter it
+    // does not own: the parameter's name. The bound value is the caller's.
+    lent* :: Res<str> = None,
+    // A match binding of a place this frame owns: the matched place.
+    // Moving the binding out moves the payload out of that place.
+    from :: Res<ExprId> = None,
 }
 
 // Field overrides are immutable between snapshots. An absent field inherits
@@ -204,6 +212,12 @@ Own* = {
     // converted argument that names the view (`sema_scope`, bound values).
     views* :: Vec<ViewRoot>,
     escaped* :: usize,
+    // Like `escaped`, for the body of a `defer` closure: bindings below it
+    // are captures the closure reads when its block ends.
+    deferring* :: usize,
+    // The `defer` is registered on a Scope passed in: its closure runs at
+    // the end of a caller's block, after this function has returned.
+    deferring_out* :: bool,
     method* :: str,
     body* :: BlockId,
     alloc*: Alloc,
@@ -410,6 +424,10 @@ Own* = {
         self.vars.get(i).match({ Ok(v) => v.scoped || v.fields.find((f) { f.scoped }).match({ Ok(_) => true, None => false }), None => false })
     }
 
+    type_at* = (self: @Self, root: usize) TyId {
+        self.vars.get(root).match({ Ok(v) => v.ty, None => UNRESOLVED })
+    }
+
     owned_at* = (self: @Self, root: usize) bool {
         self.vars.get(root).match({ Ok(v) => v.owned, None => false })
     }
@@ -534,16 +552,31 @@ Own* = {
         equal
     }
 
-    // Move out every place killed since `mark`.
-    take_dead = (self :: @Self, mark: usize, out :: Vec<Place>)
-                Res<AllocError> {
-        Range(mark, self.dead.len).loop((h, i) {
-            self.dead.get(i).match({
-                Ok(p) => out.add(p).try(),
-                None  => (),
-            });
+    // The moved-out places at this point, to restore or join later.
+    dead_state = (self: @Self) Res<Vec<Place>, AllocError> {
+        copy_places(self.alloc, self.dead)
+    }
+
+    set_dead = (self :: @Self, saved: Vec<Place>) Res<AllocError> {
+        self.dead = copy_places(self.alloc, saved).try();
+        Ok
+    }
+
+    // Where paths meet, a place is dead if it is dead on any of them: a
+    // write on one path does not refill the place on another.
+    join_dead = (self :: @Self, other: Vec<Place>) Res<AllocError> {
+        other.loop((h, p) {
+            (p.root < self.vars.len && !self.is_dead(p.root, p.field)).then(() { self.dead.add(p).try(); });
         });
-        self.dead.truncate(mark);
+        Ok
+    }
+
+    // A place dead now that was live in `before`.
+    newly_dead = (self: @Self, before: Vec<Place>) Res<Vec<Place>, AllocError> {
+        self.dead.filter(self.alloc, (p) {
+            before.find((q) { q.root == p.root && q.field.eq(p.field) })
+                .match({ Ok(_) => false, None => true })
+        })
     }
 
     // Drop the bindings declared since `mark`, and every dead place or
@@ -559,6 +592,12 @@ Own* = {
     }
 }
 
+copy_places = (a: Alloc, from: Vec<Place>) Res<Vec<Place>, AllocError> {
+    out ::= a.Vec<Place>();
+    from.loop((h, p) { out.add(p).try(); });
+    Ok(out)
+}
+
 Own* = (a: Alloc) Res<Own, AllocError> {
     Ok(Own(
         results: a.Vec<BlockOrigin>(),
@@ -567,6 +606,8 @@ Own* = (a: Alloc) Res<Own, AllocError> {
         pinned: a.Vec<Pin>(),
         views: a.Vec<ViewRoot>(),
         escaped: 0,
+        deferring: 0,
+        deferring_out: false,
         method: "",
         body: BlockId(index: 0),
         alloc: a
@@ -912,6 +953,7 @@ bind_name = (
                 source: c.arena_source(o, b.value),
                 fields: c.value_fields(o, b.value).try()
             );
+            c.refuse_deferred_write(o, span, i).try();
             o.revive(i, "").try();
             o.assign_provenance(i, value);
             Ok
@@ -952,6 +994,7 @@ revive_field = (c :: Checker, o :: Own, a: Access, value: ExprId, ctx: Ctx)
                 source: c.arena_source(o, value),
                 fields: c.value_fields(o, value).try()
             );
+            c.refuse_deferred_write(o, c.tree.expr_at(a.base).span, i).try();
             c.assign_access(o, i, a, origin).try();
             o.revive(i, a.name.text)
         },
@@ -1124,7 +1167,11 @@ consume_name = (c :: Checker, o :: Own, id: ExprId, text: str)
     c.refuse_pinned(o, node.span, text).try();
     o.find_var(text).match({
         None  => Ok,
-        Ok(i) => o.kill(i, "", node.span),
+        Ok(i) => {
+            c.refuse_lent(o, node.span, i).try();
+            c.move_matched(o, node.span, i).try();
+            o.kill(i, "", node.span)
+        },
     }).try();
 }
 
@@ -1148,7 +1195,10 @@ consume_field_of = (
             node.span,
             SemaFault.ConsumeThroughHandle(NameFault(name: a.name.text))
         ),
-        true  => c.kill_field(o, node, a, root),
+        true  => {
+            c.refuse_lent(o, node.span, root).try();
+            c.kill_field(o, node, a, root)
+        },
     })
 }
 
@@ -1192,6 +1242,8 @@ own_call = (c :: Checker, o :: Own, id: ExprId, k: Call, ctx: Ctx)
     c.check_lent_args(o, id, k).try();
     c.check_lent_fields(o, id, k).try();
     c.check_scope_stored(id, k).try();
+    c.check_construction_copies(o, id, k).try();
+    c.check_instance_copies(id).try();
     c.own_expr(o, k.callee, ctx).try();
     c.own_args(o, id, k, ctx).try();
     c.pin_views(o, id, k).try();
@@ -1325,8 +1377,33 @@ own_args = (c :: Checker, o :: Own, id: ExprId, k: Call, ctx: Ctx)
            Res<AllocError> {
     repeats = c.repeating_body(id).try();
     escapes = c.call_escapes(o, k);
+    outer   = o.deferring;
+    (c.defers_body(o, k) && (outer == 0)).then(() {
+        o.deferring     = o.vars.len;
+        o.deferring_out = !c.defers_on_own_scope(k);
+    });
     k.args.loop((h, a) { c.own_arg(o, a, repeats, escapes, ctx).try() });
+    o.deferring = outer;
     Ok;
+}
+
+// `Scope.defer` runs its closure when the block ends, after every later
+// statement of the block.
+defers_body = (c :: Checker, o :: Own, k: Call) bool {
+    c.tree.expr_at(k.callee).kind.match({
+        Access(a) => a.name.text.eq("defer") && (c.is_scope_value(a.base) || c.types.at(c.place_type(o, a.base)).match({
+            Named(n) => c.types.is_scope(n),
+            _        => false,
+        })),
+        _         => false,
+    })
+}
+
+defers_on_own_scope = (c :: Checker, k: Call) bool {
+    c.tree.expr_at(k.callee).kind.match({
+        Access(a) => c.is_scope_value(a.base),
+        _         => false,
+    })
 }
 
 own_arg = (
@@ -1365,7 +1442,7 @@ own_lambda = (
 ) Res<AllocError> {
     repeats.then(() { c.loop_provenance(o, l, ctx).try() });
     before ::= o.provenance().try();
-    dmark     = o.dead.len;
+    entry     = o.dead_state().try();
     vmark     = o.vars.len;
     outer     = o.escaped;
     o.escaped = (escapes && (outer == 0)).match({
@@ -1378,7 +1455,9 @@ own_lambda = (
     o.release(vmark).try();
     o.join_provenance(before).try();
     o.restore_provenance(before);
-    repeats.then(() { c.report_back_edge(o, dmark).try() });
+    repeats.then(() { c.report_back_edge(o, entry).try() });
+    // The body may not run at all, so what was dead before it stays dead.
+    o.join_dead(entry).try();
     Ok;
 }
 
@@ -1533,30 +1612,30 @@ flow_binary = (c :: Checker, o :: Own, first: Binary, ctx: Ctx)
     Ok
 }
 
-// Everything moved inside the body that outlives it names a binding the
-// body did not declare, and a second run would read it dead.
-report_back_edge = (c :: Checker, o :: Own, dmark: usize)
+// Everything the body leaves dead that was live on entry names a binding
+// the body did not declare, and a second run would read it dead.
+report_back_edge = (c :: Checker, o :: Own, entry: Vec<Place>)
                    Res<AllocError> {
-    Range(dmark, o.dead.len).loop((h, i) {
-        c.report_moved_again(o, i).try();
+    o.newly_dead(entry).try().loop((h, p) {
+        p.invalidated.match({
+            true  => c.report_consumed(o, p.span, p.root, p.field).try(),
+            false => c.refuse(
+                p.span,
+                SemaFault.ConsumedPerRun(NameFault(
+                    name: c.place_name(o, p.root, p.field).try()
+                ))
+            ).try(),
+        });
     });
     Ok;
 }
 
-report_moved_again = (c :: Checker, o :: Own, i: usize)
-                     Res<AllocError> {
-    o.dead.get(i).match({
-        None  => Ok,
-        Ok(p) => c.report_consumed(o, p.span, p.root, p.field),
-    })
-}
-
-// match: each arm starts from the scrutinee's state, and a place any arm
-// moved is dead after the match.
+// match: each arm starts from the scrutinee's state, and a place dead at
+// the end of any arm is dead after the match.
 own_match = (c :: Checker, o :: Own, m: Match, ctx: Ctx)
             Res<AllocError> {
     c.own_expr(o, m.scrutinee, ctx).try();
-    dmark  = o.dead.len;
+    entry  = o.dead_state().try();
     before = o.provenance().try();
     origins ::= c.alloc.Vec<Provenance>();
     before.loop((h, _) {
@@ -1568,15 +1647,136 @@ own_match = (c :: Checker, o :: Own, m: Match, ctx: Ctx)
         )).try();
     });
     joined ::= c.alloc.Vec<Place>();
+    lent              = c.lent_scrutinee(o, m.scrutinee);
+    from: Res<ExprId> = lent.match({
+        Ok(_) => None,
+        None  => c.path_root(o, m.scrutinee).match({ None => None, Ok(_) => Ok(m.scrutinee) }),
+    });
     m.arms.loop((h, a) {
         o.restore_provenance(before);
+        o.set_dead(entry).try();
+        vmark = o.vars.len;
+        c.bind_pattern(o, a.pattern, lent, from).try();
         c.own_expr(o, a.body, ctx).try();
+        o.release(vmark).try();
         o.join_provenance(origins).try();
-        o.take_dead(dmark, joined).try();
+        out = o.dead_state().try();
+        o.set_dead(joined).try();
+        o.join_dead(out).try();
+        joined = o.dead_state().try();
     });
     o.restore_provenance(origins);
-    joined.loop((h, p) { o.dead.add(p).try() });
+    (m.arms.len == 0).match({
+        true  => o.set_dead(entry).try(),
+        false => o.set_dead(joined).try(),
+    });
     Ok;
+}
+
+// Whose value a match on `id` binds: the parameter it is reached through,
+// when this frame does not own it.
+lent_scrutinee = (c :: Checker, o :: Own, id: ExprId) Res<str> {
+    c.path_root(o, id).match({
+        None  => None,
+        Ok(i) => o.vars.get(i).match({
+            None  => None,
+            Ok(v) => v.lent.match({
+                Ok(root) => Ok(root),
+                None     => v.owned.match({
+                    true  => None,
+                    false => Ok(v.name),
+                }),
+            }),
+        }),
+    })
+}
+
+// The names a destructuring pattern binds, scoped to its arm.
+bind_pattern = (
+    c    :: Checker,
+    o    :: Own,
+    id   : PatternId,
+    lent : Res<str>,
+    from : Res<ExprId>
+) Res<AllocError> {
+    c.tree.pattern_at(id).kind.match({
+        Destructure(d) => c.bind_binder(o, d.binder, lent, from),
+        _              => Ok,
+    })
+}
+
+bind_binder = (
+    c    :: Checker,
+    o    :: Own,
+    id   : PatternId,
+    lent : Res<str>,
+    from : Res<ExprId>
+) Res<AllocError> {
+    node = c.tree.pattern_at(id);
+    node.kind.match({
+        Name(pn)       => (pn.name.segments.len == 1).match({
+            false => Ok,
+            true  => o.vars.add(OwnVar(
+                name: pn.name.segment_at(0),
+                ty: UNRESOLVED,
+                // A pattern binding is its arm's own copy, and may be
+                // written like one.
+                mutable: true,
+                owned: true,
+                scoped: false,
+                arena: false,
+                source: None,
+                fields: o.alloc.Vec<FieldOrigin>(),
+                span: node.span,
+                lent: lent,
+                from: from
+            )),
+        }),
+        Destructure(d) => c.bind_binder(o, d.binder, lent, from),
+        _              => Ok,
+    })
+}
+
+// Moving a match binding of a lent value out would leave the caller's
+// value holding a moved-out payload, which it still drops.
+refuse_lent = (c :: Checker, o :: Own, span: Span, root: usize)
+              Res<AllocError> {
+    o.vars.get(root).match({
+        None    => Ok,
+        Ok(var) => var.lent.match({
+            None    => Ok,
+            Ok(par) => c.refuse(
+                span,
+                SemaFault.ConsumeLentPayload(LentFault(
+                    name: var.name,
+                    param: par
+                ))
+            ),
+        }),
+    })
+}
+
+// Moving a match binding out takes its payload out of the matched place,
+// which is dead from there on, as if the place itself had been consumed.
+move_matched = (c :: Checker, o :: Own, span: Span, root: usize)
+               Res<AllocError> {
+    o.vars.get(root).match({
+        None    => Ok,
+        Ok(var) => var.from.match({
+            None        => Ok,
+            Ok(matched) => c.path_root(o, matched).match({
+                None    => Ok,
+                Ok(top) => {
+                    field = c.tree.expr_at(matched).kind.match({
+                        Access(a) => a.name.text,
+                        _         => "",
+                    });
+                    c.refuse_pinned_at(o, span, top).try();
+                    o.kill(top, field, span)
+                },
+            }),
+        }),
+    })
 }
 
 // The binding a place path is rooted at, or nothing when the path is not

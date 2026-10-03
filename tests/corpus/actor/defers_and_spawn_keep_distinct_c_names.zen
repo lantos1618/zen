@@ -1,0 +1,28 @@
+// Each deferred closure's capture record is a C type, and a spawn names a
+// temporary in the same frame. Their generated names must not meet: a
+// temporary hides a type of the same name for the rest of the frame.
+
+{ Res, Ok, IoError } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ Actor, ActorError, ActorStartError, Context } = std.actor
+{ println } = std.io
+
+Worker = {}
+Worker.impl(Actor, {
+    take = (self :: @Self, ctx: Context, n: i32) { println("recv {}", n) }
+})
+Error = AllocError | IoError | ActorStartError | ActorError
+main = (env: Env) Res<i32, Error> {
+    w = env.spawn(Worker()).try();
+    a = 1;
+    b = 2;
+    c = 3;
+    @scope.defer(() { println("a {}", a) });
+    @scope.defer(() { println("b {}", b) });
+    @scope.defer(() { println("c {}", c) });
+    w.take(7).try();
+    w.stop();
+    w.join();
+    Ok(0)
+}

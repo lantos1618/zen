@@ -1,0 +1,23 @@
+// The loop body moves `cur` out and refills it in one match arm only. The
+// other arm reaches the next iteration with `cur` dead, and that iteration
+// moves it again: the same Buf would be sunk and dropped once per run.
+// Where paths meet, a binding is live only if every path left it live.
+
+{ Res, Ok, None, Drop, Range, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+Buf = { id: i32 }
+Buf.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id) } })
+sink = (b: Buf) { println("sink {}", b.id) }
+fresh = (n: i32) Res<Buf> { (n > 1).match({ true => Ok(Buf(id: n)), false => None }) }
+
+main = (env: Env) Res<i32, IoError> {
+    cur ::= Buf(id: 1);
+    Range(0, 3).loop((h, i) {
+        g = consume cur;
+        sink(g);
+        fresh(0).match({ Ok(n) => { cur = consume n; }, None => () });
+    });
+    Ok(0)
+}

@@ -14,6 +14,12 @@ HeldFault* = { name*: str, value*: i64, expected*: TyId }
 // A name and the module that does not export it.
 ExportFault* = { name*: str, module*: str }
 
+// A match binding and the parameter whose value it was bound from.
+LentFault* = {
+    name*: str,
+    param*: str,
+}
+
 // A place and the capture site that keeps it alive.
 CaptureFault* = {
     place*: str,
@@ -178,6 +184,7 @@ SemaFault* =
 
     // ownership
     | ConsumedUse: NameFault           // a place that was moved out of
+    | ConsumedPerRun: NameFault        // moved in a body that runs again, not refilled on every path
     | UnassignedUse: InitFault         // a deferred local used before every path assigns it
     | AssignedTwice: NameFault         // an immutable deferred local assigned again
     | NeverAssigned: UnsetFault        // a deferred local no statement assigns
@@ -187,8 +194,10 @@ SemaFault* =
     | PartiallyMoved: NameFault        // a hole reaches the drop
     | ConsumeNotAPlace: NameFault      // an element index is not a place
     | ConsumeThroughHandle: NameFault  // move only what this frame owns
+    | ConsumeLentPayload: LentFault    // a match binding of a value reached through a parameter
     | CopyFromPointer: NameFault
     | CopyOfDropValue: NameFault       // `g = f` would drop twice
+    | CopiedByInstance: CaptureFault   // a generic copies its `T`, here a Drop owner
     | ScopeEscapes: NameFault          // `@scope` left its block
     | ExplicitDropBorrow: NameFault
     | ArenaInvalidated: NameFault
@@ -200,6 +209,9 @@ SemaFault* =
     | LocalFunctionShape: NameFault    // a function declared in a body is a plain, typed closure
     | ConsumedByCapture: CaptureFault  // a capture outlives the consume
     | ConsumedUnderView: CaptureFault  // a bound value built over it outlives the consume
+    | ConsumedUnderDefer: CaptureFault // a pending `defer` closure reads it at block end
+    | WrittenUnderDefer: CaptureFault  // assigning it drops what a pending `defer` reads
+    | DroppedBeforeDefer: NameFault    // a `defer` on a passed-in Scope reads a local dropped at return
 
     // the secret discipline: a Secret-derived value may not steer timing
     | SecretBranch: NameFault          // match, then, ensure or try on a secret
@@ -308,6 +320,7 @@ message* = (fault: SemaFault) str {
         NegativeArrayCount(_)        => "an array count cannot be negative: fixed-array lengths are zero or greater",
         ComptimeBudget(_)            => "comptime evaluation ran out of steps: the evaluator is budgeted so the build fails rather than hangs — docs/design_meta.md",
         ConsumedUse(_)               => "use after move:",
+        ConsumedPerRun(_)            => "use after move:",
         UnassignedUse(_)             => "",
         AssignedTwice(_)             => "",
         NeverAssigned(_)             => "",
@@ -318,8 +331,10 @@ message* = (fault: SemaFault) str {
         PartiallyMoved(_)            => "a partial move reaches the drop:",
         ConsumeNotAPlace(_)          => "cannot consume an array element: the index is a runtime value, so which element is dead is not a fact the compiler holds",
         ConsumeThroughHandle(_)      => "cannot consume through a handle: you may only move what this frame owns, and a bitwise copy of a handle would be left pointing at a dead value",
+        ConsumeLentPayload(_)        => "cannot move out of a borrowed value:",
         CopyFromPointer(_)           => "cannot copy a Drop owner through Ptr: use take to transfer an initialized slot",
         CopyOfDropValue(_)           => "cannot copy a Drop value: drop runs exactly once, so two live names for one value would drop it twice — construct a second one, or write `consume`",
+        CopiedByInstance(_)          => "cannot copy a Drop value through a generic:",
         ScopeEscapes(_)              => "@scope may not escape: it names the enclosing block, so it may be passed inward but never stored in a struct, returned, or captured by an escaping closure",
         ExplicitDropBorrow(_)        => "explicit destruction requires an owned value: use `(consume owner).drop()` to transfer cleanup responsibility",
         ArenaInvalidated(_)          => "use after arena destruction: the backing allocation owner was explicitly dropped",
@@ -331,6 +346,9 @@ message* = (fault: SemaFault) str {
         LocalFunctionShape(_)        => "a function declared in a body is a local closure: it takes no `*` and no type parameters, and has a body",
         ConsumedByCapture(_)         => "consume after capture:",
         ConsumedUnderView(_)         => "consume under a bound value:",
+        ConsumedUnderDefer(_)        => "consume under a defer:",
+        WrittenUnderDefer(_)         => "write under a defer:",
+        DroppedBeforeDefer(_)        => "dropped before its defer runs:",
         BareNoneBinding(_)           => "`None` alone does not say which Res this is: annotate the binding",
         LiteralLent(_)               => "an unannotated number cannot be passed to the `::` parameter",
         SecretBranch(_)              => "a secret value cannot choose a branch: the path taken would reveal it — compute both outcomes and pick one with std.ct ct_select, or declassify() the condition",
@@ -394,8 +412,14 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         InfiniteSize(f)              => out.write_name(f),
         ConsumeNotAPlace(f)          => out.write_name(f),
         ConsumeThroughHandle(f)      => out.write_name(f),
+        ConsumeLentPayload(f)        => out.fmt(
+            " {} was bound by matching a value reached through `{}`, which this function does not own: the value is still the caller's after the match, so moving its payload out would leave the caller to use and drop it again — match on a value this function owns, or copy out what you need",
+            f.name,
+            f.param
+        ),
         CopyFromPointer(f)           => out.write_name(f),
         CopyOfDropValue(f)           => out.write_name(f),
+        CopiedByInstance(f)          => out.write_instance_copy(f),
         ScopeEscapes(f)              => out.write_name(f),
         ExplicitDropBorrow(f)        => out.write_name(f),
         ArenaInvalidated(f)          => out.write_name(f),
@@ -411,7 +435,11 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
 
         ConsumedUse(f)               => out.write_place(
             f,
-            " was consumed, and a binding is dead from the move onwards"
+            " was consumed, and a binding is dead from the move onwards — assign it again on every path that reaches this use"
+        ),
+        ConsumedPerRun(f)            => out.write_place(
+            f,
+            " was consumed in a body that runs again, and not every path back to its start assigns it — assign it on every path, or consume it outside the body"
         ),
         UnassignedUse(f)             => out.write_unassigned(f),
         AssignedTwice(f)             => out.write_assigned_twice(f),
@@ -445,6 +473,12 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         SecretResult(f)              => out.write_name(f),
         SecretStore(f)               => out.write_name(f),
         ConsumedUnderView(f)         => out.write_under_view(f),
+        ConsumedUnderDefer(f)        => out.write_under_defer(f, "moved"),
+        WrittenUnderDefer(f)         => out.write_under_defer(f, "assigned"),
+        DroppedBeforeDefer(f)        => out.write_place(
+            f,
+            " is dropped when this function returns, but this closure is deferred on a Scope passed in and runs later, at the end of the caller's block — defer on `@scope` here, or move the value to the caller and defer there"
+        ),
 
         NoSuchField(f)               => out.write_member(types, f),
         BareEnum(f)                  => out.write_name(f),
@@ -738,6 +772,31 @@ write_under_view = (out :: String, f: CaptureFault) Res<AllocError> {
     out.write_at(f.at).try();
     out.add(
         " — the record keeps that address, so after the move it points at the moved-from place; move the owner first and build the bound from its new home"
+    ).try();
+}
+
+// The deferred closure copied the binding when it was registered and reads
+// that copy when the block ends, after this statement.
+write_under_defer = (out :: String, f: CaptureFault, how: str)
+                    Res<AllocError> {
+    out.fmt(
+        " {} is {} while a deferred closure that reads it at the end of the block is pending (captured at ",
+        f.place,
+        how
+    ).try();
+    out.write_at(f.at).try();
+    out.add(
+        ") — the closure keeps the value it copied then, which can be dropped before the closure runs; register the defer after the last move or assignment of it"
+    ).try();
+}
+
+// The copy is written in the generic body, but only this instantiation
+// makes it a second owner.
+write_instance_copy = (out :: String, f: CaptureFault) Res<AllocError> {
+    out.fmt(" `{}` copies a value of its type parameter at ", f.place).try();
+    out.write_at(f.at).try();
+    out.add(
+        ", and this call gives that parameter a type that owns a Drop value, so both copies would be dropped — move the value once there with `consume`, or pass a type that holds no Drop value"
     ).try();
 }
 

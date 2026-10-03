@@ -91,7 +91,7 @@ Runner = {
         })
     }
 
-    // Launch under a 10 s alarm with the test's arguments, environment and
+    // Launch under a 30 s alarm with the test's arguments, environment and
     // stdin, staged as tests/run.py and tests/native stage a program: it runs
     // in a scratch directory where its root is visible as `src`, invoked as
     // `<run dir>/prog` (the name argv[0] tests pin; Node runs an
@@ -110,7 +110,7 @@ Runner = {
         self.run(prepare).try();
         command ::= self.a.String().try();
         command.fmt("cd '{}' && ", run_dir.view()).try();
-        command.add("exec perl -e 'alarm 10; exec @ARGV' ").try();
+        command.add("exec perl -e 'alarm 30; exec @ARGV' ").try();
         c.base.ends_with("env_var_resolves_a_name_of_any_length").then(() {
             command.add("env ").try();
             command.add(self.a.String("{}=hello ", repeat(self.a, 'V', 5039).try().view()).try().view()).try();

@@ -19,7 +19,7 @@
 { is_c_integer, is_signed, ctype } = gen.gen_c.gen_c_type
 { expr, ty_of, named_hole, write_c_literal } = gen.gen_c.gen_c_expr
 { console_display, stderr_console } = gen.gen_c.gen_c_display
-{ HeldUnion, hold_union } = gen.gen_c.gen_c_display
+{ HeldUnion, hold_union, close_held_case, finish_held } = gen.gen_c.gen_c_display
 
 // Console includes a raw stderr write for incremental diagnostics.
 is_console_print* = (name: str) bool {
@@ -421,9 +421,9 @@ write_members = (be :: CBackend, arg: ExprId, held: HeldUnion, stream: str)
         held.open(be, m, place).try();
         write_typed(be, arg, m, be.check.prim_name(m), place.view(), stream)
             .try();
-        held.close(be).try();
+        close_held_case(be).try();
     });
-    held.finish(be)
+    finish_held(be)
 }
 
 // Empty means the value must use Display rather than a primitive helper.

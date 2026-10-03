@@ -273,16 +273,19 @@ HeldUnion* = {
         })
     }
 
-    close* = (self: @Self, be :: CBackend) Res<AllocError> {
-        be.writeln("break;").try();
-        be.dedent();
-        be.writeln("}")
-    }
+}
 
-    finish* = (self: @Self, be :: CBackend) Res<AllocError> {
-        be.dedent();
-        be.writeln("}")
-    }
+// Ends one member's `case` of a held union's switch.
+close_held_case* = (be :: CBackend) Res<AllocError> {
+    be.writeln("break;").try();
+    be.dedent();
+    be.writeln("}")
+}
+
+// Ends a held union's switch after its last member.
+finish_held* = (be :: CBackend) Res<AllocError> {
+    be.dedent();
+    be.writeln("}")
 }
 
 // The value held and its switch opened, or `None` when `ty` is not a union.

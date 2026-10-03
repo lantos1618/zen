@@ -16,6 +16,8 @@
 //     +32 os      macOS: the pthread_t
 //     +40 base    Linux: the stack mapping to release after the join
 //     +48 length
+//     +56 word    the runtime's thread word (std.sys.thread_word, Linux)
+//     +64 guard   the innermost guarded call a trap returns to (Linux)
 
 { Ptr, AllocError } = std.mem
 { futex, mmap, munmap, mprotect, map_private_anonymous, pointer_at, address_of } = std.sys
@@ -34,7 +36,7 @@ COND_BYTES*: usize = 48
 // no-access guard below it large enough for 16 KiB and 64 KiB pages.
 STACK_BYTES*: usize = 8388608
 GUARD_BYTES: usize = 65536
-BLOCK_BYTES: usize = 64
+BLOCK_BYTES: usize = 128
 BLOCK_TID: usize = 24
 
 // CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD |

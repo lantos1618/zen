@@ -120,7 +120,7 @@ Assembly = {
         self.out.add(".section .rodata\n").try();
         self.out.add(self.data.view()).try();
         self.out.add(
-            ".bss\n.p2align 4\nza_out_buf:\n    .zero 65536\nza_out_len:\n    .zero 8\nza_start_sp:\n    .zero 8\nza_out_lock:\n    .zero 8\n.p2align 4\nza_globals:\n    .zero 256\nza_main_tcb:\n    .zero 64\n"
+            ".bss\n.p2align 4\nza_out_buf:\n    .zero 65536\nza_out_len:\n    .zero 8\nza_start_sp:\n    .zero 8\nza_out_lock:\n    .zero 8\n.p2align 4\nza_globals:\n    .zero 256\nza_main_tcb:\n    .zero 128\n"
         ).try();
         self.out.add(".section .note.GNU-stack,\"\",@progbits\n")
     }
@@ -1375,6 +1375,7 @@ Assembly = {
                 "    movq %fs:0, %rax\n    movq %rdi, 56(%rax)\n    xorl %eax, %eax\n"
             ),
             CloneThread   => self.out.add("    call za_clone\n"),
+            GuardedCall   => self.out.add("    call za_guarded_call\n"),
             _             => linux_x86_64(call.call).match({
                 Ok(number) => self.out.fmt(
                     "    movl ${}, %eax\n    syscall\n",
@@ -1854,10 +1855,19 @@ Assembly = {
             linux_x86_64(Sys.Clone).value_or(0),
             LINUX_X86_64_EXIT
         ).try();
+        // guarded_call(code, first, second): call code(first, second) with
+        // a guard a trap can return to. The guard is this frame, saved
+        // callee-saved registers and all, kept in the thread control block
+        // at +64 (the enclosing guard is saved below it); it answers 0, or 1
+        // through the trap.
+        self.out.add(
+            "za_guarded_call:\n    pushq %rbp\n    movq %rsp, %rbp\n    pushq %rbx\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n    movq %fs:0, %rax\n    pushq 64(%rax)\n    movq %rsp, 64(%rax)\n    movq %rdi, %r11\n    movq %rsi, %rdi\n    movq %rdx, %rsi\n    call *%r11\n    xorl %eax, %eax\nza_guard_out:\n    movq %fs:0, %rcx\n    popq %rdx\n    movq %rdx, 64(%rcx)\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbx\n    popq %rbp\n    ret\n"
+        ).try();
         // trap(rdi/rsi report): flush stdout first so output preceding the
-        // fault is not lost, then report on stderr and exit 134.
+        // fault is not lost, then report on stderr. Inside a guarded call
+        // the guard's caller continues with 1; otherwise exit 134.
         self.out.fmt(
-            "za_trap:\n    movq %rdi, %r12\n    movq %rsi, %r13\n    call za_flush\n    movl $2, %edi\n    movq %r12, %rsi\n    movq %r13, %rdx\n    call za_write_all\n    movl $134, %edi\n    movl ${}, %eax\n    syscall\n    ud2\n",
+            "za_trap:\n    movq %rdi, %r12\n    movq %rsi, %r13\n    call za_flush\n    movl $2, %edi\n    movq %r12, %rsi\n    movq %r13, %rdx\n    call za_write_all\n    movq %fs:0, %rax\n    movq 64(%rax), %rcx\n    testq %rcx, %rcx\n    jz 1f\n    movq %rcx, %rsp\n    movl $1, %eax\n    jmp za_guard_out\n1:\n    movl $134, %edi\n    movl ${}, %eax\n    syscall\n    ud2\n",
             exit
         ).try();
         self.data.add(

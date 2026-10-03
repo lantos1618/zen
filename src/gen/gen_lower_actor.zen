@@ -726,6 +726,17 @@ actor_function* = (lo :: Lowerer, entry: ActorEntry) Res<Func, LowerError> {
             ).try();
         });
     });
+    // A stopped entry called with a non-null second argument is for an
+    // actor a trap ended: its own `stopped` does not run.
+    skip = lo.label().try();
+    entry.kind.match({
+        Stopped => {
+            call = lo.label().try();
+            lo.branch_to(lo.is_null(data).try(), call, skip).try();
+            lo.start(call);
+        },
+        _       => (),
+    });
     entry.hook.when_ok((hook) {
         sources ::= lo.alloc.Vec<Source>();
         sources.add(Source.Located(state)).try(LowerError.OutOfMemory);
@@ -739,6 +750,8 @@ actor_function* = (lo :: Lowerer, entry: ActorEntry) Res<Func, LowerError> {
         });
         lo.real_call(hook, sources, nowhere()).try();
     });
+    lo.jump(skip).try();
+    lo.start(skip);
     entry.kind.match({
         Stopped => {
             lo.drop_value(state, nowhere()).try();

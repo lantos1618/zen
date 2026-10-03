@@ -112,15 +112,6 @@ runtime_call* = (
         },
         // A spin-wait hint; the native targets spin without one.
         "spin_hint"     => lo.unit(),
-        // The native targets cannot unwind a trap: a plain call that
-        // answers 0, and a trap still ends the process.
-        "guarded_call"  => {
-            lo.runtime_call(id, "call_entry", sources, span).try();
-            Ok(Value(
-                slot: lo.word_const(Scalar.I32, 0).try(),
-                ty: lo.type_of(id).try()
-            ))
-        },
         "process_block" => {
             out = lo.temp(lo.type_of(id).try()).try();
             lo.add(Instruction.Startup(Start(

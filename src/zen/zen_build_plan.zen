@@ -12,6 +12,7 @@
 { Ast, ExprId, Expr, Call, Access, Record, Block, Function, Try } = std.ast
 { Match, PatternId } = std.ast
 { Span } = std.source
+{ decode_literal } = std.lex
 { nowhere } = std.source
 { Stmt, Bind, Member, Field, Module } = std.ast
 { Checker, Ctx, type_of } = sema.sema
@@ -24,6 +25,7 @@ PlanFault* = { MissingBuild: str
     | UnknownName: Span
     | DuplicateTarget: str
     | Unsupported: Span
+    | NulByte: Span
     | BadField: FieldFault
     | UnknownField: FieldFault
     | NoArm: Span }
@@ -263,7 +265,10 @@ Executor = {
                 BoolValue(b) => l.text.eq(
                     b.match({ true => "true", false => "false" })
                 ),
-                TextValue(t) => l.text.len == t.len + 2 && l.text.slice(1, l.text.len - 1).eq(t),
+                TextValue(t) => self.decoded(l.text, nowhere()).match({
+                    Ok(text) => text.eq(t),
+                    Err(_)   => false,
+                }),
                 _            => false,
             }),
             _          => false,
@@ -286,14 +291,23 @@ Executor = {
         })
     }
 
+    // A string literal's value, decoded as the compiled program would see it.
+    // The parser spells a multi-line string as its one-line equivalent, so
+    // both forms arrive here quoted with Zen escapes. A planned string becomes
+    // a command argument or a path, neither of which can hold a NUL byte.
     text = (self: @Self, raw: str, at: Span) Res<Value, PlanError> {
-        escaped ::= false;
-        Range(1, raw.len - 1).loop((h, i) {
-            (raw.index(i) == '\\').then(() { escaped = true; h.break(); });
-        });
-        escaped.match({
-            true  => Err(unsupported(at)),
-            false => Ok(Value.TextValue(raw.slice(1, raw.len - 1))),
+        value = self.decoded(raw, at).try();
+        value.contains(0).match({
+            true  => Err(refused(PlanFault.NulByte(at))),
+            false => Ok(Value.TextValue(value)),
+        })
+    }
+
+    decoded = (self: @Self, raw: str, at: Span) Res<str, PlanError> {
+        raw.slice(1, raw.len - 1).decode_literal(self.alloc).match({
+            Ok(value)        => Ok(value),
+            Err(OutOfMemory) => Err(PlanError.OutOfMemory),
+            Err(_)           => Err(unsupported(at)),
         })
     }
 
@@ -723,7 +737,7 @@ Executor = {
 
     // An omitted optional field takes its default. A written one must
     // evaluate to its type; anything else is an error naming the field, never
-    // a silent fallback.
+    // a silent fallback. A NUL byte keeps its own, more precise fault.
     optional = (self :: @Self, r: Record, name: str) Res<Res<Value>, PlanError> {
         r.entries.find((m) { m.named(name) }).match({
             None  => Ok(None),
@@ -734,9 +748,13 @@ Executor = {
                     name: name
                 ));
                 value = self.eval(id).map_err((e) {
-                    e.match({ OutOfMemory => PlanError.OutOfMemory, Refused(_) => refused(
-                        fault
-                    ) })
+                    e.match({
+                        OutOfMemory  => PlanError.OutOfMemory,
+                        Refused(why) => why.match({
+                            NulByte(_) => e,
+                            _          => refused(fault),
+                        }),
+                    })
                 }).try();
                 Ok(Ok(value))
             },

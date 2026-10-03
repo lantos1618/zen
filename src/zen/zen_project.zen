@@ -110,6 +110,12 @@ explain = (why: PlanFault) {
             at.start.line,
             at.start.col
         ),
+        NulByte(at)         => println(
+            "zen: {}:{}:{}: build.zen cannot be planned: a build string cannot hold a NUL byte; command arguments and paths end at one",
+            at.file,
+            at.start.line,
+            at.start.col
+        ),
         BadField(field)     => println(
             "zen: {}:{}:{}: field `{}` cannot be planned: write a value of its declared type that the planner evaluates",
             field.at.file,
@@ -168,6 +174,8 @@ Trace = {
         });
     }
 
+    // Each word is quoted as CC and CFLAGS read them, and as a POSIX shell
+    // does, so the line shows where every argument begins and ends.
     command = (self: @Self, a: Alloc, argv: Vec<str>) Res<AllocError> {
         self.on.match({
             false => Ok,
@@ -175,13 +183,40 @@ Trace = {
                 line ::= a.String().try();
                 argv.loop((h, i, word) {
                     (i > 0).then(() { line.add(' ').try(); });
-                    line.add(word).try();
+                    add_word(line, word).try();
                 });
                 self.say(line.view());
                 Ok
             },
         })
     }
+}
+
+// A word of only unremarkable bytes is written bare. Any other is wrapped in
+// single quotes, with each `'` in it written as `'\''`: close the quotes, an
+// escaped quote, reopen.
+add_word = (line :: String, word: str) Res<AllocError> {
+    plain = word.len > 0 && Range(0, word.len).find((i) {
+        b = word.index(i);
+        !(b.is_alnum() || b.is_in([
+            '_', '-', '.', '/', '=', ':', ',', '+', '@', '%'
+        ]))
+    }).match({ Ok(_) => false, None => true });
+    plain.match({
+        true  => line.add(word).try(),
+        false => {
+            line.add('\'').try();
+            Range(0, word.len).loop((i) {
+                b = word.index(i);
+                (b == '\'').match({
+                    true  => line.add("'\\''").try(),
+                    false => line.add(b).try(),
+                });
+            });
+            line.add('\'').try();
+        },
+    });
+    Ok
 }
 
 // Resolve only dependencies of selected targets, before any compilation.

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Exercise executable test targets through the real Zen CLI."""
 import argparse
+import json
 import os
 from pathlib import Path
 import subprocess
+import shlex
 import shutil
 import sys
 import tempfile
@@ -280,16 +282,56 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual((project / "src/main.zen").read_text(), "main = () i32 { 3 }\n")
 
     def recording_compiler(self):
-        """A CC that logs its arguments, then runs the real compiler."""
+        """A CC that logs its exact arguments as JSON, then runs the real compiler."""
         compiler = self.root / "recording-cc"
-        compiler.write_text(f"#!{sys.executable}\nimport os, sys\n"
-                            f"open({str(self.root / 'cc.log')!r}, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+        compiler.write_text(f"#!{sys.executable}\nimport json, os, sys\n"
+                            f"open({str(self.root / 'cc.log')!r}, 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n"
                             f"os.execv({shutil.which('cc')!r}, [{shutil.which('cc')!r}, *sys.argv[1:]])\n")
         compiler.chmod(0o755)
         return str(compiler)
 
     def last_command(self):
-        return (self.root / "cc.log").read_text().splitlines()[-1].split()
+        return json.loads((self.root / "cc.log").read_text().splitlines()[-1])
+
+    def traced_compile(self, compiler):
+        """`zen build -v` with compiler; the arguments its trace line shows."""
+        result = self.run_zen("build", "-v", "--cc", compiler)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        line = next(line for line in result.stderr.splitlines() if f"ms {compiler} " in line)
+        words = shlex.split(line.split("ms ", 1)[1])
+        self.assertEqual(words[0], compiler)
+        return words[1:]
+
+    def test_define_with_escaped_quotes_is_one_compiler_argument(self):
+        self.build_file('b.exe("app", {src: Path("pass.zen"), deps: [], '
+                        'defines: ["APP_NAME=\\"flagsdemo\\"", "PATH_SEP=\'\\\\\\\\\'"]}).try();')
+        compiler = self.recording_compiler()
+        traced = self.traced_compile(compiler)
+        self.assertEqual(traced, self.last_command())
+        self.assertIn('-DAPP_NAME="flagsdemo"', traced)
+        self.assertIn("-DPATH_SEP='\\\\'", traced)
+
+    def test_multi_line_string_define_is_one_compiler_argument(self):
+        self.build_file('b.exe("app", {src: Path("pass.zen"), deps: [], defines: [\n'
+                        '    """\n'
+                        '    GREETING="hello, world"\n'
+                        '    """,\n'
+                        '    """\n'
+                        '    first\n'
+                        '    "second"\n'
+                        '    """.match({ "first\\n\\"second\\"" => "LINES=2", _ => "LINES=0" }),\n'
+                        ']}).try();')
+        compiler = self.recording_compiler()
+        traced = self.traced_compile(compiler)
+        self.assertEqual(traced, self.last_command())
+        self.assertIn('-DGREETING="hello, world"', traced)
+        self.assertIn("-DLINES=2", traced)
+
+    def test_a_nul_byte_in_a_build_string_is_refused(self):
+        self.build_file('b.exe("app", {src: Path("pass.zen"), deps: [], defines: ["A\\0B"]}).try();')
+        result = self.run_zen("build")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("a build string cannot hold a NUL byte", result.stdout)
 
     def test_modes_select_optimization_and_build_zen_reads_them(self):
         self.build_file('b.exe("app", {src: Path("pass.zen"), deps: [], '

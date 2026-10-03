@@ -776,6 +776,12 @@ write_unwrap = (be :: CBackend, tmp: str, dst: Dest) Res<(), AllocError> {
     be.write_dest(dst, place.view())
 }
 
+// `Ok` of a Res whose success is `()`.
+write_unit_ok* = (be :: CBackend, want: TyId, dst: Dest) Res<(), AllocError> {
+    unit = be.check.types.prim("()").try();
+    be.write_hoisted_unwrap(want, unit, "", dst)
+}
+
 // A unit payload has no C union member, so its hoisted literal contains only
 // the `Ok` tag.
 write_hoisted_unwrap = (

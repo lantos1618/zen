@@ -1,0 +1,36 @@
+{ Res, Ok, Err, None, Error } = std.core
+{ AllocError } = std.mem
+{ Env } = std.env
+{ println } = std.io
+
+// A body returning `Res<R>` may end in a match statement whose value is
+// `()`: the match runs, then the body succeeds. An arm whose last
+// expression is some other Res is not the body's result, since the match
+// as a whole answers `()`.
+//
+// one-line break: deliver such a match into the function's return again and
+// its `{}` arm returns no value while its other arm returns a `Res<i32>`.
+
+Smudge = { Ink | Blot }
+Smudge.impl(Error, {})
+
+look = (r: Res<i32>) Res<Smudge> {
+    r.match({
+        None  => {},
+        Ok(n) => {
+            println("saw {}", n);
+            (n > 1).then(() { n * 2 })
+        },
+    });
+}
+
+say = (r: Res<Smudge>) {
+    r.match({ Ok => println("ok"), Err(s) => println("{}", s.variant_name()) })
+}
+
+main = (env: Env) Res<i32, AllocError> {
+    say(look(Ok(5)));
+    say(look(Ok(1)));
+    say(look(None));
+    Ok(0);
+}

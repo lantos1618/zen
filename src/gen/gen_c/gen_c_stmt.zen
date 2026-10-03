@@ -19,7 +19,7 @@
 { GenFault } = gen.gen_diag
 { CBackend } = gen.gen_c.gen_c_state
 { lower_match } = gen.gen_c.gen_c_flow
-{ lower_try } = gen.gen_c.gen_c_try
+{ lower_try, write_unit_ok } = gen.gen_c.gen_c_try
 { declarator, is_unit, has_storage, void_discard, write_zero } = gen.gen_c.gen_c_type
 { expr, ty_of, spills } = gen.gen_c.gen_c_expr
 { declare_local_function } = gen.gen_c.gen_c_inline
@@ -298,9 +298,41 @@ close_valueless = (be :: CBackend, dst: Dest) Res<(), AllocError> {
 deliver* = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId, dst: Dest)
            Res<(), AllocError> {
     be.spills(id).match({
-        true  => be.deliver_spilling(id, ctx, want, dst),
+        true  => be.unit_lifts(id, ctx, want).try().match({
+            true  => be.deliver_lifted_unit(id, ctx, want, dst),
+            false => be.deliver_spilling(id, ctx, want, dst),
+        }),
         false => be.deliver_simple(id, ctx, want, dst),
     })
+}
+
+// A `()`-valued match or block where a Res whose success is `()` is wanted:
+// its arms answer `()`, not the Res, so it runs as a statement and its `Ok`
+// is written after it.
+unit_lifts = (be :: CBackend, id: ExprId, ctx: Ctx, want: TyId)
+             Res<bool, AllocError> {
+    be.check.types.at(want).match({
+        Res(r) => be.is_unit(r.value).match({
+            false => Ok(false),
+            true  => {
+                unknown = be.check.types.unknown().try();
+                Ok(be.is_unit(be.ty_of(id, ctx, unknown).try()))
+            },
+        }),
+        _      => Ok(false),
+    })
+}
+
+deliver_lifted_unit = (
+    be   :: CBackend,
+    id   : ExprId,
+    ctx  : Ctx,
+    want : TyId,
+    dst  : Dest
+) Res<(), AllocError> {
+    unit = be.check.types.prim("()").try();
+    be.deliver_spilling(id, ctx, unit, Dest.Discard).try();
+    be.write_unit_ok(want, dst)
 }
 
 // Spilling forms lower directly into their destination.

@@ -1,0 +1,23 @@
+// A generic body may copy a value of its type parameter when the call
+// gives that parameter a plain type; only a type that owns a Drop value
+// moves instead. Moving a value that holds a Drop owner is fine too.
+
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+Buf = { id: i32 }
+Buf.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id) } })
+
+Holder = { b: Buf }
+Pair<T> = { left: T, right: T }
+twice = <T>(x: T) Pair<T> { Pair<T>(left: x, right: x) }
+
+main = (env: Env) Res<i32, IoError> {
+    p = twice(7);
+    println("{} {}", p.left, p.right);
+    h = Holder(b: Buf(id: 1));
+    g = consume h;
+    println("{}", g.b.id);
+    Ok(0)
+}

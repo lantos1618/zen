@@ -189,6 +189,7 @@ SemaFault* =
     | ConsumeThroughHandle: NameFault  // move only what this frame owns
     | CopyFromPointer: NameFault
     | CopyOfDropValue: NameFault       // `g = f` would drop twice
+    | CopiedByInstance: CaptureFault   // a generic copies its `T`, here a Drop owner
     | ScopeEscapes: NameFault          // `@scope` left its block
     | ExplicitDropBorrow: NameFault
     | ArenaInvalidated: NameFault
@@ -323,6 +324,7 @@ message* = (fault: SemaFault) str {
         ConsumeThroughHandle(_)      => "cannot consume through a handle: you may only move what this frame owns, and a bitwise copy of a handle would be left pointing at a dead value",
         CopyFromPointer(_)           => "cannot copy a Drop owner through Ptr: use take to transfer an initialized slot",
         CopyOfDropValue(_)           => "cannot copy a Drop value: drop runs exactly once, so two live names for one value would drop it twice — construct a second one, or write `consume`",
+        CopiedByInstance(_)          => "cannot copy a Drop value through a generic:",
         ScopeEscapes(_)              => "@scope may not escape: it names the enclosing block, so it may be passed inward but never stored in a struct, returned, or captured by an escaping closure",
         ExplicitDropBorrow(_)        => "explicit destruction requires an owned value: use `(consume owner).drop()` to transfer cleanup responsibility",
         ArenaInvalidated(_)          => "use after arena destruction: the backing allocation owner was explicitly dropped",
@@ -401,6 +403,7 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         ConsumeThroughHandle(f)      => out.write_name(f),
         CopyFromPointer(f)           => out.write_name(f),
         CopyOfDropValue(f)           => out.write_name(f),
+        CopiedByInstance(f)          => out.write_instance_copy(f),
         ScopeEscapes(f)              => out.write_name(f),
         ExplicitDropBorrow(f)        => out.write_name(f),
         ArenaInvalidated(f)          => out.write_name(f),
@@ -757,6 +760,16 @@ write_under_defer = (out :: String, f: CaptureFault, how: str)
     out.write_at(f.at).try();
     out.add(
         ") — the closure keeps the value it copied then, which can be dropped before the closure runs; register the defer after the last move or assignment of it"
+    ).try();
+}
+
+// The copy is written in the generic body, but only this instantiation
+// makes it a second owner.
+write_instance_copy = (out :: String, f: CaptureFault) Res<AllocError> {
+    out.fmt(" `{}` copies a value of its type parameter at ", f.place).try();
+    out.write_at(f.at).try();
+    out.add(
+        ", and this call gives that parameter a type that owns a Drop value, so both copies would be dropped — move the value once there with `consume`, or pass a type that holds no Drop value"
     ).try();
 }
 

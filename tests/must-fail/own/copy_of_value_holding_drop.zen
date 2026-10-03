@@ -1,0 +1,19 @@
+// Holder has no Drop impl of its own, but it holds a Buf, which does. A
+// value that holds a Drop owner anywhere inline moves and is never copied:
+// `g = h` would make two Holders that own the same Buf.
+
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+Buf = { id: i32 }
+Buf.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id) } })
+
+Holder = { b: Buf }
+
+main = (env: Env) Res<i32, IoError> {
+    h = Holder(b: Buf(id: 1));
+    g = h;
+    println("{} {}", g.b.id, h.b.id);
+    Ok(0)
+}

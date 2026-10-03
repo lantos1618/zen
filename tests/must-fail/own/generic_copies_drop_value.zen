@@ -1,0 +1,20 @@
+// `twice` copies its `x: T` into both fields. For most types that is fine,
+// but here `T` is Buf, which owns a Drop value and moves: the Pair would
+// hold two owners of one Buf, and both would be dropped.
+
+{ Res, Ok, Drop, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+Buf = { id: i32 }
+Buf.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id) } })
+
+Pair<T> = { left: T, right: T }
+twice = <T>(x: T) Pair<T> { Pair<T>(left: x, right: x) }
+
+main = (env: Env) Res<i32, IoError> {
+    b = Buf(id: 1);
+    p = twice(consume b);
+    println("{} {}", p.left.id, p.right.id);
+    Ok(0)
+}

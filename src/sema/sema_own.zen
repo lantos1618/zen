@@ -20,7 +20,8 @@
 { arena_source, release_stored_arena, stored_arena_backed } = sema.sema_scope
 { Pin, pin_captured, refuse_pinned, refuse_pinned_at, pin_viewed } = sema.sema_pin
 { refuse_deferred_write } = sema.sema_pin
-{ check_drop_copy, is_drop_type } = sema.sema_drop
+{ check_drop_copy, check_construction_copies, is_drop_type } = sema.sema_drop
+{ check_instance_copies } = sema.sema_instcopy
 { carries_bound } = sema.sema_copy
 { is_handle_ty, refuse_handle_at, spelled_name } = sema.sema_handle
 { local_lambda } = sema.sema_local
@@ -1224,6 +1225,8 @@ own_call = (c :: Checker, o :: Own, id: ExprId, k: Call, ctx: Ctx)
     c.check_lent_args(o, id, k).try();
     c.check_lent_fields(o, id, k).try();
     c.check_scope_stored(id, k).try();
+    c.check_construction_copies(o, id, k).try();
+    c.check_instance_copies(id).try();
     c.own_expr(o, k.callee, ctx).try();
     c.own_args(o, id, k, ctx).try();
     c.pin_views(o, id, k).try();

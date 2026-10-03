@@ -1,0 +1,184 @@
+// A generic body may copy a value of its type parameter: `y = x`, or `x`
+// passed by name to a struct construction. That is harmless for most types,
+// but a type that holds a Drop owner moves and is never copied (the universe
+// rule), so there the copy is a second owner of one value. Which it is
+// depends on the instantiation, so the copy is refused at a call that gives
+// the parameter such a type. A call in the body that hands the parameter on
+// to another generic brings that callee's copies with it.
+
+{ Ast, ExprId, BlockId } = std.ast
+{ WalkNode, WalkEvent, WalkVisitor, walk } = std.ast
+{ Span } = std.source
+{ AllocError } = std.mem
+{ Vec } = std.collections
+{ Res, Ok, None, Range } = std.core
+{ TyId } = sema.sema_ty
+{ Checker, UNRESOLVED } = sema.sema_check
+{ SemaFault, CaptureFault } = sema.sema_diag
+{ is_construction } = sema.sema_scope
+{ spelled_name } = sema.sema_handle
+{ named_as } = sema.sema_member
+
+// What one body copies by name and which calls it makes.
+CopySites = {
+    tree: Ast,
+    copies :: Vec<ExprId>,
+    calls :: Vec<ExprId>,
+
+    enter = (self :: @Self, node: WalkNode) Res<(), AllocError> {
+        node.match({
+            Statement(s) => s.value.kind.match({
+                Bind(b) => self.tree.expr_at(b.value).kind.match({
+                    Name(_) => self.copies.add(b.value),
+                    _       => Ok,
+                }),
+                _       => Ok,
+            }),
+            Expr(id)     => self.tree.expr_at(id).kind.match({
+                Call(_) => self.calls.add(id),
+                _       => Ok,
+            }),
+            _            => Ok,
+        })
+    }
+}
+
+CopySites.impl(WalkVisitor, {
+    visit = (self :: @Self, event: WalkEvent) Res<(), AllocError> {
+        event.match({
+            Enter(node) => self.enter(node),
+            Leave(_)    => Ok(()),
+        })
+    }
+})
+
+check_instance_copies* = (c :: Checker, id: ExprId) Res<AllocError> {
+    c.checked_call(id).match({
+        None     => Ok,
+        Ok(call) => {
+            found :: Res<Span> = None;
+            Range(0, call.inst.len()).loop((h, i) {
+                var = call.inst.var_at(i).match({ Ok(v) => v, None => UNRESOLVED });
+                arg = call.inst.arg_at(i).match({ Ok(a) => a, None => UNRESOLVED });
+                c.contains_drop(arg).try().then(() {
+                    seen ::= c.alloc.Vec<BlockId>();
+                    found = c.copy_site(call.body, var, seen).try();
+                });
+                found.match({ Ok(_) => h.break(), None => () });
+            });
+            found.match({
+                None     => Ok,
+                Ok(span) => c.refuse(
+                    c.tree.expr_at(id).span,
+                    SemaFault.CopiedByInstance(CaptureFault(
+                        place: c.callee_name(id),
+                        at: span
+                    ))
+                ),
+            })
+        },
+    })
+}
+
+callee_name = (c :: Checker, id: ExprId) str {
+    c.tree.expr_at(id).kind.match({
+        Call(k) => c.tree.expr_at(k.callee).kind.match({
+            Access(a) => a.name.text,
+            _         => c.spelled_name(k.callee),
+        }),
+        _       => "",
+    })
+}
+
+// Where `body` copies a value whose type holds `var`, if anywhere.
+copy_site = (c :: Checker, body: Res<BlockId>, var: TyId, seen :: Vec<BlockId>)
+            Res<Res<Span>, AllocError> {
+    body.match({
+        None    => Ok(None),
+        Ok(blk) => seen.find((s) { s.index == blk.index }).match({
+            Ok(_) => Ok(None),
+            None  => {
+                seen.add(blk).try();
+                sites ::= CopySites(
+                    tree: c.tree,
+                    copies: c.alloc.Vec<ExprId>(),
+                    calls: c.alloc.Vec<ExprId>()
+                );
+                walk(c.tree, c.alloc, WalkNode.Block(blk), sites).try();
+                found ::= c.copied_name(sites.copies, var);
+                sites.calls.loop((h, call) {
+                    found.match({
+                        Ok(_) => h.break(),
+                        None  => { found = c.call_copy_site(call, var, seen).try(); },
+                    });
+                });
+                Ok(found)
+            },
+        }),
+    })
+}
+
+copied_name = (c :: Checker, names: Vec<ExprId>, var: TyId) Res<Span> {
+    names.find((e) { c.holds_var(c.expr_type(e), var) }).match({
+        None    => None,
+        Ok(e)   => Ok(c.tree.expr_at(e).span),
+    })
+}
+
+// A construction copies the names it is given; any other call copies what
+// its callee copies of each parameter `var` reaches.
+call_copy_site = (c :: Checker, id: ExprId, var: TyId, seen :: Vec<BlockId>)
+                 Res<Res<Span>, AllocError> {
+    c.is_construction(id).match({
+        true  => {
+            names ::= c.alloc.Vec<ExprId>();
+            c.tree.expr_at(id).kind.match({
+                Call(k) => k.args.loop((h, a) {
+                    c.tree.expr_at(a.value).kind.match({
+                        Name(_) => names.add(a.value).try(),
+                        _       => (),
+                    });
+                }),
+                _       => (),
+            });
+            Ok(c.copied_name(names, var))
+        },
+        false => c.checked_call(id).match({
+            None     => Ok(None),
+            Ok(call) => {
+                found :: Res<Span> = None;
+                Range(0, call.inst.len()).loop((h, i) {
+                    inner = call.inst.var_at(i).match({ Ok(v) => v, None => UNRESOLVED });
+                    arg   = call.inst.arg_at(i).match({ Ok(a) => a, None => UNRESOLVED });
+                    c.holds_var(arg, var).then(() {
+                        found = c.copy_site(call.body, inner, seen).try();
+                    });
+                    found.match({ Ok(_) => h.break(), None => () });
+                });
+                Ok(found)
+            },
+        }),
+    })
+}
+
+expr_type = (c: Checker, id: ExprId) TyId {
+    c.expr_memo.get(id).match({ Ok(ty) => ty, None => UNRESOLVED })
+}
+
+// Whether a copy of `ty` copies a `var` inline. A Vec, String or Ptr copy
+// shares its elements instead.
+holds_var = (c :: Checker, ty: TyId, var: TyId) bool {
+    ty.eq(var) || c.types.at(ty).match({
+        Res(r)   => c.holds_var(r.value, var) || c.holds_var(r.error, var),
+        Array(a) => c.holds_var(a.elem, var),
+        Named(n) => (c.named_as(n, "Vec", "std.collections.collections_vec")
+            || c.named_as(n, "Ptr", "std.mem.mem_ptr")).match({
+            true  => false,
+            false => n.args.find((t) { c.holds_var(t, var) }).match({
+                Ok(_) => true,
+                None  => false,
+            }),
+        }),
+        _        => false,
+    })
+}

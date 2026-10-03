@@ -19,6 +19,7 @@
 { frame_bound_view, frame_view_at, refuse_frame_view, sheds_frame_view } = sema.sema_scope
 { arena_source, release_stored_arena, stored_arena_backed } = sema.sema_scope
 { Pin, pin_captured, refuse_pinned, refuse_pinned_at, pin_viewed } = sema.sema_pin
+{ refuse_deferred_write } = sema.sema_pin
 { check_drop_copy, is_drop_type } = sema.sema_drop
 { carries_bound } = sema.sema_copy
 { is_handle_ty, refuse_handle_at, spelled_name } = sema.sema_handle
@@ -204,6 +205,12 @@ Own* = {
     // converted argument that names the view (`sema_scope`, bound values).
     views* :: Vec<ViewRoot>,
     escaped* :: usize,
+    // Like `escaped`, for the body of a `defer` closure: bindings below it
+    // are captures the closure reads when its block ends.
+    deferring* :: usize,
+    // The `defer` is registered on a Scope passed in: its closure runs at
+    // the end of a caller's block, after this function has returned.
+    deferring_out* :: bool,
     method* :: str,
     body* :: BlockId,
     alloc*: Alloc,
@@ -410,6 +417,10 @@ Own* = {
         self.vars.get(i).match({ Ok(v) => v.scoped || v.fields.find((f) { f.scoped }).match({ Ok(_) => true, None => false }), None => false })
     }
 
+    type_at* = (self: @Self, root: usize) TyId {
+        self.vars.get(root).match({ Ok(v) => v.ty, None => UNRESOLVED })
+    }
+
     owned_at* = (self: @Self, root: usize) bool {
         self.vars.get(root).match({ Ok(v) => v.owned, None => false })
     }
@@ -584,6 +595,8 @@ Own* = (a: Alloc) Res<Own, AllocError> {
         pinned: a.Vec<Pin>(),
         views: a.Vec<ViewRoot>(),
         escaped: 0,
+        deferring: 0,
+        deferring_out: false,
         method: "",
         body: BlockId(index: 0),
         alloc: a
@@ -929,6 +942,7 @@ bind_name = (
                 source: c.arena_source(o, b.value),
                 fields: c.value_fields(o, b.value).try()
             );
+            c.refuse_deferred_write(o, span, i).try();
             o.revive(i, "").try();
             o.assign_provenance(i, value);
             Ok
@@ -969,6 +983,7 @@ revive_field = (c :: Checker, o :: Own, a: Access, value: ExprId, ctx: Ctx)
                 source: c.arena_source(o, value),
                 fields: c.value_fields(o, value).try()
             );
+            c.refuse_deferred_write(o, c.tree.expr_at(a.base).span, i).try();
             c.assign_access(o, i, a, origin).try();
             o.revive(i, a.name.text)
         },
@@ -1342,8 +1357,33 @@ own_args = (c :: Checker, o :: Own, id: ExprId, k: Call, ctx: Ctx)
            Res<AllocError> {
     repeats = c.repeating_body(id).try();
     escapes = c.call_escapes(o, k);
+    outer   = o.deferring;
+    (c.defers_body(o, k) && (outer == 0)).then(() {
+        o.deferring     = o.vars.len;
+        o.deferring_out = !c.defers_on_own_scope(k);
+    });
     k.args.loop((h, a) { c.own_arg(o, a, repeats, escapes, ctx).try() });
+    o.deferring = outer;
     Ok;
+}
+
+// `Scope.defer` runs its closure when the block ends, after every later
+// statement of the block.
+defers_body = (c :: Checker, o :: Own, k: Call) bool {
+    c.tree.expr_at(k.callee).kind.match({
+        Access(a) => a.name.text.eq("defer") && (c.is_scope_value(a.base) || c.types.at(c.place_type(o, a.base)).match({
+            Named(n) => c.types.is_scope(n),
+            _        => false,
+        })),
+        _         => false,
+    })
+}
+
+defers_on_own_scope = (c :: Checker, k: Call) bool {
+    c.tree.expr_at(k.callee).kind.match({
+        Access(a) => c.is_scope_value(a.base),
+        _         => false,
+    })
 }
 
 own_arg = (

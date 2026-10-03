@@ -1,0 +1,20 @@
+// `note` defers on its caller's Scope, so the closure runs at the end of
+// `main`'s block. `b` belongs to `note` and is dropped when `note`
+// returns, before the closure reads its copy.
+
+{ Res, Ok, Drop, Scope, IoError } = std.core
+{ Env } = std.env
+{ println } = std.io
+
+Buf = { id: i32 }
+Buf.impl(Drop, { drop = (self :: @Self) { println("drop {}", self.id) } })
+
+note = (s: Scope) {
+    b = Buf(id: 5);
+    s.defer(() { println("deferred {}", b.id) });
+}
+
+main = (env: Env) Res<i32, IoError> {
+    note(@scope);
+    Ok(0)
+}

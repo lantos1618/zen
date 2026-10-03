@@ -200,6 +200,9 @@ SemaFault* =
     | LocalFunctionShape: NameFault    // a function declared in a body is a plain, typed closure
     | ConsumedByCapture: CaptureFault  // a capture outlives the consume
     | ConsumedUnderView: CaptureFault  // a bound value built over it outlives the consume
+    | ConsumedUnderDefer: CaptureFault // a pending `defer` closure reads it at block end
+    | WrittenUnderDefer: CaptureFault  // assigning it drops what a pending `defer` reads
+    | DroppedBeforeDefer: NameFault    // a `defer` on a passed-in Scope reads a local dropped at return
 
     // the secret discipline: a Secret-derived value may not steer timing
     | SecretBranch: NameFault          // match, then, ensure or try on a secret
@@ -331,6 +334,9 @@ message* = (fault: SemaFault) str {
         LocalFunctionShape(_)        => "a function declared in a body is a local closure: it takes no `*` and no type parameters, and has a body",
         ConsumedByCapture(_)         => "consume after capture:",
         ConsumedUnderView(_)         => "consume under a bound value:",
+        ConsumedUnderDefer(_)        => "consume under a defer:",
+        WrittenUnderDefer(_)         => "write under a defer:",
+        DroppedBeforeDefer(_)        => "dropped before its defer runs:",
         BareNoneBinding(_)           => "`None` alone does not say which Res this is: annotate the binding",
         LiteralLent(_)               => "an unannotated number cannot be passed to the `::` parameter",
         SecretBranch(_)              => "a secret value cannot choose a branch: the path taken would reveal it — compute both outcomes and pick one with std.ct ct_select, or declassify() the condition",
@@ -448,6 +454,12 @@ write_detail* = (fault: SemaFault, types: Types, out :: String)
         SecretResult(f)              => out.write_name(f),
         SecretStore(f)               => out.write_name(f),
         ConsumedUnderView(f)         => out.write_under_view(f),
+        ConsumedUnderDefer(f)        => out.write_under_defer(f, "moved"),
+        WrittenUnderDefer(f)         => out.write_under_defer(f, "assigned"),
+        DroppedBeforeDefer(f)        => out.write_place(
+            f,
+            " is dropped when this function returns, but this closure is deferred on a Scope passed in and runs later, at the end of the caller's block — defer on `@scope` here, or move the value to the caller and defer there"
+        ),
 
         NoSuchField(f)               => out.write_member(types, f),
         BareEnum(f)                  => out.write_name(f),
@@ -734,6 +746,17 @@ write_under_view = (out :: String, f: CaptureFault) Res<AllocError> {
     out.write_at(f.at).try();
     out.add(
         " — the record keeps that address, so after the move it points at the moved-from place; move the owner first and build the bound from its new home"
+    ).try();
+}
+
+// The deferred closure copied the binding when it was registered and reads
+// that copy when the block ends, after this statement.
+write_under_defer = (out :: String, f: CaptureFault, how: str)
+                    Res<AllocError> {
+    out.fmt(" {} is {} while a deferred closure that reads it at the end of the block is pending (captured at ", f.place, how).try();
+    out.write_at(f.at).try();
+    out.add(
+        ") — the closure keeps the value it copied then, which can be dropped before the closure runs; register the defer after the last move or assignment of it"
     ).try();
 }
 

@@ -1,7 +1,7 @@
 { Expr, ExprId } = std.ast
 { Span } = std.source
 { Checker } = sema.sema_check
-{ SemaFault, CaptureFault } = sema.sema_diag
+{ SemaFault, CaptureFault, NameFault } = sema.sema_diag
 { Own, ViewRoot, path_root, place_name } = sema.sema_own
 { Res, Ok } = std.core
 { AllocError } = std.mem
@@ -10,10 +10,15 @@
 // where the capture was written. A bound value built over a `::`
 // parameter's place pins it the same way: the record holds that address,
 // and a move would leave it pointing at the moved-from place.
+//
+// A capture of a `defer` closure pins the same way: the closure keeps a
+// copy made at registration and reads it when the block ends, after every
+// later statement. `defer` marks such a pin.
 Pin* = {
     root*: usize,
     span*: Span,
     view*: bool,
+    defer*: bool,
 }
 
 // A record over this frame's binding is tracked as a view of the frame
@@ -29,7 +34,8 @@ pin_viewed* = (c :: Checker, o :: Own, id: ExprId) Res<AllocError> {
                 false => o.pinned.add(Pin(
                     root: i,
                     span: c.tree.expr_at(id).span,
-                    view: true
+                    view: true,
+                    defer: false
                 )),
             }),
         }),
@@ -40,9 +46,34 @@ pin_captured* = (c :: Checker, o :: Own, node: Expr, text: str)
                 Res<AllocError> {
     o.find_var(text).match({
         None  => Ok,
-        Ok(i) => ((i < o.escaped) && o.owned_at(i)).match({
+        Ok(i) => ((i < o.escaped || i < o.deferring) && o.owned_at(i)).match({
             false => Ok,
-            true  => o.pinned.add(Pin(root: i, span: node.span, view: false)),
+            true  => {
+                ((i < o.deferring) && o.deferring_out).then(() {
+                    c.refuse_dropped_before_defer(o, node.span, i).try();
+                });
+                o.pinned.add(Pin(
+                    root: i,
+                    span: node.span,
+                    view: false,
+                    defer: i < o.deferring
+                ))
+            },
+        }),
+    })
+}
+
+// A `defer` on a Scope passed in runs at the end of a caller's block, and
+// this function drops what it owns when it returns, before that.
+refuse_dropped_before_defer = (c :: Checker, o :: Own, span: Span, root: usize)
+                              Res<AllocError> {
+    c.contains_drop(o.type_at(root)).try().match({
+        false => Ok,
+        true  => c.place_name(o, root, "").match({
+            Err(_)    => Ok,
+            Ok(place) => c.refuse(span, SemaFault.DroppedBeforeDefer(NameFault(
+                name: place
+            ))),
         }),
     })
 }
@@ -71,11 +102,36 @@ refuse_pinned_at* = (c :: Checker, o :: Own, span: Span, root: usize)
                     place: place,
                     at: pin.span
                 )),
-                false => SemaFault.ConsumedByCapture(CaptureFault(
+                false => pin.defer.match({
+                    true  => SemaFault.ConsumedUnderDefer(CaptureFault(
+                        place: place,
+                        at: pin.span
+                    )),
+                    false => SemaFault.ConsumedByCapture(CaptureFault(
+                        place: place,
+                        at: pin.span
+                    )),
+                }),
+            })),
+        }),
+    })
+}
+
+// Assigning a binding a `defer` closure captured drops the value its copy
+// still points into, and the closure reads that copy when the block ends.
+refuse_deferred_write* = (c :: Checker, o :: Own, span: Span, root: usize)
+                         Res<AllocError> {
+    o.pinned.find((p) { p.root == root && p.defer }).match({
+        None    => Ok,
+        Ok(pin) => c.contains_drop(o.type_at(root)).try().match({
+            false => Ok,
+            true  => c.place_name(o, root, "").match({
+                Err(_)    => Ok,
+                Ok(place) => c.refuse(span, SemaFault.WrittenUnderDefer(CaptureFault(
                     place: place,
                     at: pin.span
-                )),
-            })),
+                ))),
+            }),
         }),
     })
 }
